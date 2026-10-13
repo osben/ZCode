@@ -545,6 +545,8 @@ function overlayProviderAccess(
       return current.overlay(next as ApiKeyAccessConfig);
     case "zhipu-account":
       return current.overlay(next as ZhipuAccountAccessConfig);
+    case "chatgpt-account":
+      return current.overlay(next as ChatgptAccountAccessConfig);
   }
 }
 

@@ -8,6 +8,7 @@ import {
   ProviderApiConfig,
   ProviderConfigMap,
   ProviderConfigResolver,
+  ChatgptAccountAccessConfig,
   ZhipuAccountAccessConfig,
 } from "@zcode/provider";
 import { describe, expect, it } from "vitest";
@@ -544,6 +545,7 @@ describe("ZCode Built-in Provider Config 完整性", () => {
         "account:bigmodel-offpeak-idle-plan",
         "account:zai-highspeed-card",
         "account:bigmodel-highspeed-card",
+        "account:chatgpt-plan",
       ]);
       expect(snapshot.providerTemplates?.keys()).toEqual([
         "zai-api",
@@ -948,6 +950,14 @@ describe("ZCode Built-in Provider Config 完整性", () => {
             }),
           ]);
         }
+        if (provider.access?.type === "chatgpt-account") {
+          accountProviders.push([
+            providerId,
+            new ProviderConfig({
+              access: new ChatgptAccountAccessConfig({ entitled: true }),
+            }),
+          ]);
+        }
       }
 
       for (const [templateId, template] of snapshot.providerTemplates?.entries() ?? []) {
@@ -1006,6 +1016,7 @@ describe("ZCode Built-in Provider Config 完整性", () => {
         "account:bigmodel-offpeak-idle-plan",
         "account:zai-highspeed-card",
         "account:bigmodel-highspeed-card",
+        "account:chatgpt-plan",
         "template:zai-api",
         "template:zai-standard-api",
         "template:bigmodel-api",

@@ -49,6 +49,9 @@ describe("MCS published capability boundaries", () => {
       }
     }
     for (const provider of release.config.providerConfigRules.providerRules) {
+      // The GLM mid-conversation-system guarantee covers the zhipu system providers; the
+      // ChatGPT plan provider (openai-responses, gpt models) is a separate account domain.
+      if (provider.config.access.type !== "zhipu-account") continue;
       const { api } = provider.config;
       const config = rules.resolve({
         providerId: provider.providerId,
