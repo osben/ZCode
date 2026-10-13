@@ -55,6 +55,7 @@ import { queueItemIdForCommand } from "../zcode-protocol-v4/command-inbox.js";
 import { resolveStableForkTargetFromTranscript } from "../zcode-protocol-v4/stable-fork-target.js";
 import { shouldAutoDrainV4QueueHead } from "../zcode-protocol-v4/queue-auto-drain.js";
 import { persistAssistantFeedback } from "../zcode-protocol-v4/assistant-feedback-persistence.js";
+import { persistRowPinned } from "../zcode-protocol-v4/row-pin-persistence.js";
 import {
   persistHighspeedMetrics,
   persistHighspeedTiming,
@@ -1190,6 +1191,28 @@ export function createConversationV4Gateway(
         onPersistedEvent: (persisted) => context.v4Gateway?.ingest(sessionId, persisted),
         onLiveProjectionError: (error) =>
           context.logger?.warn("v4 assistant feedback live projection failed", {
+            error: error instanceof Error ? error.message : String(error),
+            sessionId,
+          }),
+      });
+    },
+    setRowPinned: async (sessionId, input) => {
+      const record = context.sessions.get(sessionId);
+      const sessionStore = context.deps.sessionStore;
+      if (!record || !sessionStore) throw new Error("proto.sessionNotFound");
+      // Pins follow the same transcript-first order as feedback: persist metadata so CLI restart
+      // recovers it through cold hydration, then advance eventStore/projection from the same fact.
+      await persistRowPinned({
+        sessionStore,
+        eventStore: record.eventStore,
+        sessionId,
+        messageId: input.messageId,
+        entityId: input.entityId,
+        pinned: input.pinned,
+        traceId: String(record.traceContext.traceId),
+        onPersistedEvent: (persisted) => context.v4Gateway?.ingest(sessionId, persisted),
+        onLiveProjectionError: (error) =>
+          context.logger?.warn("v4 row pin live projection failed", {
             error: error instanceof Error ? error.message : String(error),
             sessionId,
           }),

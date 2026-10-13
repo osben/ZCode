@@ -46,7 +46,7 @@ vi.mock("@/hooks/useModelSelectionView.js", () => ({
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-// 本组只验证模型恢复；群同步服务由独立组件测试和真实 Host/CLI E2E 覆盖。
+// This group only verifies model recovery; group sync services are covered by dedicated component tests and real Host/CLI E2E.
 vi.mock("@/v4/BotGroupDeliveryAction.js", () => ({
   BotGroupDeliveryProvider: ({ children }: { children: unknown }) => children,
   ConnectedBotGroupDeliveryAction: () => null,
@@ -74,7 +74,7 @@ function seedModelProviderNames(): void {
   };
 }
 
-// 永不 resolve：这些文件不测发现查询；resolve 会在环境拆除后触发 setState（未处理异常）。
+// Never resolves: these files do not test the discovery query; resolving would trigger setState after the environment is torn down (unhandled exception).
 const workflowRunsQueryMock = vi.hoisted(() =>
   vi.fn(() => new Promise<{ runs: unknown[] }>(() => {})),
 );
@@ -233,13 +233,14 @@ const projectionState = vi.hoisted(() => ({
   } | null,
 }));
 
-// Bugfix：本文件只验证 SessionPane 的模型恢复，隔离闲时入口对真实 TabStore 的依赖。
+// Bugfix: this file only verifies SessionPane's model recovery; it isolates the idle-time entry's dependency on the real TabStore.
 vi.mock("@/v4/OffPeakNewTaskEntry.js", () => ({
   OffPeakNewTaskEntry: () => null,
 }));
 
-// 同理隔离推荐提示词容器：它通过 useWorkspaceServicesResolution 依赖 TabStoreProvider，
-// 而本文件只验证草稿 provider/model 恢复链路，不提供 Tab store。
+// The suggested prompts container is isolated for the same reason: it depends on
+// TabStoreProvider through useWorkspaceServicesResolution, while this file only verifies the
+// draft provider/model recovery chain and provides no Tab store.
 vi.mock("@/v4/ConversationDraftSuggestedPromptsContainer.js", () => ({
   ConversationDraftSuggestedPromptsContainer: () => null,
 }));
@@ -270,8 +271,8 @@ vi.mock("@/v4/composer/useDraftSessionPrewarm.js", async (importOriginal) => {
     ...actual,
     useDraftSessionPrewarm: (params: Parameters<typeof actual.useDraftSessionPrewarm>[0]) => {
       prewarmHookMock.lastEnabled = params.enabled;
-      // 每个挂载实例冻结 mock/真实分支，避免测试在 rerender 中修改全局 binding
-      // 导致 Hook 数量变化；生产 hook 本身不存在这个测试替身问题。
+      // Freeze the mock/real branch per mounted instance so tests changing the global binding on
+      // rerender cannot change the hook count; the production hook has no such test-double problem.
       const useActual = useRef(prewarmHookMock.binding === undefined).current;
       return useActual
         ? actual.useDraftSessionPrewarm(params)
@@ -312,8 +313,9 @@ vi.mock("@/v4/V4ConversationContext.js", () => ({
     layer: mocks.layer,
     sendCommand: mocks.sendCommand,
     attachmentPut: mocks.attachmentPut,
-    // SessionPane 挂载即拉 journal 兜底的 run 发现查询：缺桩会在 effect 里 TypeError；
-    // 桩必须是稳定引用——effect 以 workflowRuns 为依赖，每次渲染换新函数会死循环。
+    // The run discovery query SessionPane pulls on mount as a journal fallback: without a stub it
+    // TypeErrors inside an effect; the stub must be a stable reference — the effect depends on
+    // workflowRuns, and a new function on every render would loop forever.
     workflowRuns: workflowRunsQueryMock,
   }),
 }));
@@ -635,8 +637,9 @@ async function rerenderPane(root: Root, props: Partial<ComponentProps<typeof Ses
 }
 
 async function renderPane(props: Partial<ComponentProps<typeof SessionPane>> = {}) {
-  // 本文件 mock 了 Composer owner。仅在 fixture 初始挂载时建立完整草稿，不能再让
-  // 生产 Submission helper 从 Snapshot/平铺别名救活缺失的 fixture。
+  // This file mocks the Composer owner. Build the complete draft only on the fixture's initial
+  // mount; the production Submission helper must no longer rescue a missing fixture from the
+  // Snapshot/flat aliases.
   const seed = {
     ...projectionState.current?.snapshot?.config,
     ...draftConfigMock.resolveInitialDraftConfig(),
@@ -996,7 +999,7 @@ describe("SessionPane draft prewarm admission lifecycle", () => {
       loadingOlder: false,
     };
     prewarmHookMock.binding = null;
-    // 本用例验证无预热的 createSession 埋点边界；草稿仍必须具备生产提交所要求的完整执行配置。
+    // This case verifies the no-prewarm createSession telemetry boundary; the draft must still carry the complete execution config the production submission requires.
     draftConfigMock.resolveInitialDraftConfig.mockReturnValue({
       provider: "alternate-provider",
       model: "deepseek-v4-pro",
@@ -1081,7 +1084,7 @@ describe("SessionPane draft prewarm admission lifecycle", () => {
               reasonCode: "fault.projectionEventCommit.timeout",
             });
           }
-          // Bug 复现：写入是否到达 Agent 未知，transport error 不能证明 command 未 admission。
+          // Bug reproduction: whether the write reached the Agent is unknown; a transport error cannot prove the command was not admitted.
           throw new Error("connection closed after command write");
         }
         if (envelope.type === "createSession") {
@@ -1261,8 +1264,9 @@ describe("SessionPane draft prewarm admission lifecycle", () => {
       type: "sendText",
     });
 
-    // Bug 复现：Agent 已经 admission 首发，但 MCP 初始化让 renderer ACK 仍在途。
-    // 此时 pane/owner cleanup 不能把运行中的预热会话当作未使用草稿删除。
+    // Bug reproduction: the Agent already admitted the first send, but MCP initialization leaves
+    // the renderer's ACK still in flight. At this point pane/owner cleanup must not delete the
+    // running prewarmed session as an unused draft.
     await act(async () => {
       root.unmount();
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -1340,7 +1344,7 @@ describe("SessionPane stop foreground execution", () => {
         type: "stop",
         payload: { expectedForegroundExecutionId: "foreground-1" },
       });
-      // 普通 info 在生产禁用；停止归因必须走生命周期通道，同时保留执行 ID 防误停。
+      // Plain info is disabled in production; stop attribution must go through the lifecycle channel while keeping the execution id to prevent stopping the wrong thing.
       expect(infoSpy).toHaveBeenCalledWith("[v4-pane] stop 命令发出", {
         source,
         sessionId: "session-1",
@@ -1587,7 +1591,7 @@ describe("SessionPane model switch recovery", () => {
       queueMicrotask(() => modelTransitionMock.listener?.(transition));
     };
 
-    // act 会在该 microtask 前冲刷下一轮 effect，掩盖生产调度中的 listener 空窗。
+    // act would flush the next effect round before that microtask, masking the listener gap present in production scheduling.
     const previousActEnvironment = globalThis.IS_REACT_ACT_ENVIRONMENT;
     globalThis.IS_REACT_ACT_ENVIRONMENT = false;
     const root = createRoot(installMinimalDom());
@@ -1595,7 +1599,7 @@ describe("SessionPane model switch recovery", () => {
       root.render(createPaneElement());
       await new Promise((resolve) => setTimeout(resolve, 20));
       expect(mocks.toast).toHaveBeenCalledTimes(1);
-      // 自动 fallback 只修正当前执行事实；App Recent 只能由接受的普通 Submission 写入。
+      // An automatic fallback only corrects the current execution facts; App Recent can only be written by an accepted normal Submission.
       expect(composerRecentMocks.acceptSubmission).not.toHaveBeenCalled();
     } finally {
       root.unmount();
@@ -1653,7 +1657,7 @@ describe("SessionPane model switch recovery", () => {
   });
 
   it("Highspeed 降级行按 fallbackReason 区分 Toast 文案；旧数据无原因时按卡过期处理", async () => {
-    // docs/highspeed/highspeed-card-spec.md §2.2：卡过期与加速服务不可用分别提示，且每轮只提示一次。
+    // docs/highspeed/highspeed-card-spec.md §2.2: card expiry and service unavailability toast separately, and each round toasts at most once.
     const fallbackAt = Date.now();
     const highspeedRow = (
       sourceCommandId: string,
@@ -1730,7 +1734,7 @@ describe("SessionPane model switch recovery", () => {
       });
     }
 
-    // 同一 sourceCommandId 重挂载不重复提示（模块级 claim）。
+    // Remounting with the same sourceCommandId does not toast again (module-level claim).
     mocks.toast.mockClear();
     const remountRoot = await renderWithRow(highspeedRow("command-hs-legacy", undefined));
     try {
@@ -1930,7 +1934,7 @@ describe("SessionPane model switch recovery", () => {
     mocks.sendCommand.mockImplementation(async (envelope: CommandEnvelope) =>
       ackFor(envelope, { status: "accepted" }),
     );
-    // 抽中卡：execution 携带隐藏加速 Provider 的执行 Selection，会覆盖 payload.modelSelection。
+    // Card drawn: execution carries the hidden highspeed Provider's execution Selection, which overrides payload.modelSelection.
     mocks.highspeedCardService.prepareTurn.mockResolvedValueOnce({
       kind: "accelerated",
       card: {
@@ -1969,7 +1973,7 @@ describe("SessionPane model switch recovery", () => {
       await flushMicrotasks();
     });
 
-    // payload 的 Selection 确已被执行材料覆盖为隐藏加速 Provider（证明本轮真的加速）。
+    // The payload's Selection was indeed overridden by the execution materials to the hidden highspeed Provider (proving this turn was truly accelerated).
     expect(mocks.sendCommand).toHaveBeenCalledTimes(1);
     expect(mocks.sendCommand.mock.calls[0]?.[0]).toMatchObject({
       type: "sendText",
@@ -1978,7 +1982,7 @@ describe("SessionPane model switch recovery", () => {
         mode: "build",
       },
     });
-    // Recent 只记发送前 Composer 冻结的原始选择；否则新任务草稿种子解析为空选择器。
+    // Recent records only the original selection the Composer froze before sending; otherwise the new-task draft seed resolves to an empty selector.
     expect(composerRecentMocks.acceptSubmission).toHaveBeenCalledWith(
       "/workspace",
       {
@@ -2106,7 +2110,7 @@ describe("SessionPane model switch recovery", () => {
       await flushMicrotasks();
     });
 
-    // Highspeed 抽卡依赖真实 taskId，首发先创建空 session，再按统一 sendText admission 发送。
+    // Highspeed drawing depends on a real taskId, so the first send creates an empty session first, then sends via the unified sendText admission.
     expect(mocks.sendCommand).toHaveBeenCalledTimes(3);
     expect(mocks.sendCommand.mock.calls[1]?.[0]).toMatchObject({
       type: "createSession",
@@ -2157,7 +2161,7 @@ describe("SessionPane model switch recovery", () => {
       options: { reasoningLevel: "high" },
     };
     draftConfigMock.draftConfigRef.current = { mode: "build", modelSelection: selection };
-    // Todo71：prewarm 只消费配置，不再拥有 Composer 选择；真正失效由 Ready View 留空。
+    // Todo71: prewarm only consumes config and no longer owns the Composer selection; real invalidation leaves it empty via the Ready View.
     draftConfigMock.resolveInitialDraftConfig.mockReturnValue({
       provider: "primary-provider",
       model: "deepseek-v4-flash",
@@ -2180,7 +2184,7 @@ describe("SessionPane model switch recovery", () => {
       ...projectionState.current,
       snapshot: fallbackSnapshot,
     };
-    // 普通 snapshot 差异不具备 delivery 来源，不能推断成自动 fallback。
+    // A plain snapshot difference carries no delivery origin and must not be inferred as an automatic fallback.
     await rerenderPane(root, { sessionId: null });
 
     await act(async () => {

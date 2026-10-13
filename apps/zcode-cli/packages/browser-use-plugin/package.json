@@ -15,15 +15,15 @@
     "lint": "oxlint src --no-ignore"
   },
   "dependencies": {
-    "@modelcontextprotocol/server": "2.0.0",
+    "@modelcontextprotocol/server": "2.3.1",
     "@zcode/contracts": "workspace:*",
     "@zcode/core": "workspace:*",
     "@zcode/node-repl-host": "workspace:*",
     "@zcode/shared": "workspace:*",
-    "zod": "4.6.6"
+    "zod": "4.6.7"
   },
   "devDependencies": {
-    "@modelcontextprotocol/client": "2.2.0",
+    "@modelcontextprotocol/client": "2.3.1",
     "@types/node": "^24.0.0",
     "@zcode/adapters": "workspace:*",
     "@zcode/bootstrap": "workspace:*",

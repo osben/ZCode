@@ -6,18 +6,9 @@ export const TOOL_CROSS_PRODUCT_ROOT = resolveE2ERuntimePath(
   "conversation-session-tool-cross-product",
 );
 export const TOOL_CROSS_PRODUCT_MARKER_PREFIX = "E2E_TOOL_CROSS_PRODUCT";
-export const TOOL_CROSS_PRODUCT_READ_FILE = join(
-  TOOL_CROSS_PRODUCT_ROOT,
-  "read-fixture.txt",
-);
-export const TOOL_CROSS_PRODUCT_GLOB_FILE = join(
-  TOOL_CROSS_PRODUCT_ROOT,
-  "glob-fixture.e2e",
-);
-export const TOOL_CROSS_PRODUCT_GREP_FILE = join(
-  TOOL_CROSS_PRODUCT_ROOT,
-  "grep-fixture.txt",
-);
+export const TOOL_CROSS_PRODUCT_READ_FILE = join(TOOL_CROSS_PRODUCT_ROOT, "read-fixture.txt");
+export const TOOL_CROSS_PRODUCT_GLOB_FILE = join(TOOL_CROSS_PRODUCT_ROOT, "glob-fixture.e2e");
+export const TOOL_CROSS_PRODUCT_GREP_FILE = join(TOOL_CROSS_PRODUCT_ROOT, "grep-fixture.txt");
 
 export type ToolCrossProductScenario = "compact" | "fork" | "goal";
 
@@ -56,9 +47,9 @@ export const TOOL_CROSS_PRODUCT_CASES: ToolCrossProductCase[] = [
   { markerName: "SEND_MESSAGE", toolName: "SendMessage" },
   { markerName: "AGENT", toolName: "Agent" },
   { markerName: "SKILL", toolName: "Skill" },
-  // 修复原因：当前 desktop E2E 的 agent runtime 没有注册 Workflow 工具。
-  // replay fixture 若强制调用 Workflow 会稳定得到 "Tool not found"，后续 compact/fork/goal
-  // 断言验证的是失败工具卡而不是工具历史能力，应该从正式叉乘集合剪掉。
+  // Reason for the change: the current desktop E2E agent runtime does not register the Workflow tool.
+  // If the replay fixture forcibly calls Workflow it deterministically gets "Tool not found", so the later compact/fork/goal
+  // assertions would verify the failed tool card instead of tool history capability; cut it from the formal cross-product set.
 ];
 
 export function markerForToolCase(toolCase: ToolCrossProductCase) {
@@ -90,11 +81,7 @@ export async function prepareToolCrossProductFixtures() {
     ].join("\n"),
     "utf-8",
   );
-  await writeFile(
-    TOOL_CROSS_PRODUCT_GLOB_FILE,
-    "E2E_TOOL_RESULT_GLOB\n",
-    "utf-8",
-  );
+  await writeFile(TOOL_CROSS_PRODUCT_GLOB_FILE, "E2E_TOOL_RESULT_GLOB\n", "utf-8");
   await writeFile(
     TOOL_CROSS_PRODUCT_GREP_FILE,
     "E2E_TOOL_RESULT_GREP content search fixture\n",
@@ -110,9 +97,9 @@ export async function ensureToolCrossProductFullAccessMode() {
   if (await isFullAccessModeSelected()) {
     return;
   }
-  // Bug 根因：长 suite 中上一个 mode 选择器可能仍处于打开状态；再次点击 trigger
-  // 会把菜单关闭，后续就会稳定报“找不到 Full access”。只在当前没有可见目标项时
-  // 打开选择器，避免 toggle 竞态。
+  // Bug root cause: in a long suite the previous mode selector may still be open; clicking the trigger
+  // again closes the menu, and later steps then deterministically report "Full access not found". Only open the selector
+  // when there is currently no visible target item, avoiding the toggle race.
   if (!(await hasVisibleFullAccessModeItem())) {
     await clickModeTrigger();
   }
@@ -135,9 +122,7 @@ async function hasVisibleFullAccessModeItem(): Promise<boolean> {
     const text = normalizeText(await item.getText());
     if (
       value === "yolo" ||
-      ["Full access", "完全访问", "Yolo", "全自动模式"].some((expected) =>
-        text.includes(expected),
-      )
+      ["Full access", "完全访问", "Yolo", "全自动模式"].some((expected) => text.includes(expected))
     ) {
       return true;
     }
@@ -150,29 +135,24 @@ export async function respondToToolCrossProductBlockers() {
     const normalizeText = (value: string | null | undefined) =>
       (value ?? "").replace(/\u00a0/g, " ").trim();
     const clickFirstPermissionOption = () => {
-      const listbox = Array.from(
-        document.querySelectorAll<HTMLElement>('[role="listbox"]'),
-      ).find((element) => {
-        const label = normalizeText(element.getAttribute("aria-label"));
-        return label === "Permission required" || label === "需要权限";
-      });
-      const option = listbox?.querySelector<HTMLButtonElement>(
-        'button[role="option"]',
+      const listbox = Array.from(document.querySelectorAll<HTMLElement>('[role="listbox"]')).find(
+        (element) => {
+          const label = normalizeText(element.getAttribute("aria-label"));
+          return label === "Permission required" || label === "需要权限";
+        },
       );
+      const option = listbox?.querySelector<HTMLButtonElement>('button[role="option"]');
       option?.click();
       return Boolean(option);
     };
     const clickFirstQuestionOption = () => {
-      const listbox = Array.from(
-        document.querySelectorAll<HTMLElement>('[role="listbox"]'),
-      ).find((element) =>
-        normalizeText(element.getAttribute("aria-label")).includes(
-          "E2E_TOOL_CROSS_PRODUCT_ASK_USER_QUESTION",
-        ),
+      const listbox = Array.from(document.querySelectorAll<HTMLElement>('[role="listbox"]')).find(
+        (element) =>
+          normalizeText(element.getAttribute("aria-label")).includes(
+            "E2E_TOOL_CROSS_PRODUCT_ASK_USER_QUESTION",
+          ),
       );
-      const option = listbox?.querySelector<HTMLButtonElement>(
-        'button[role="option"]',
-      );
+      const option = listbox?.querySelector<HTMLButtonElement>('button[role="option"]');
       option?.click();
       return Boolean(option);
     };
@@ -180,23 +160,15 @@ export async function respondToToolCrossProductBlockers() {
     const clickPlanApprovalSubmit = () => {
       const normalizeText = (value: string | null | undefined) =>
         (value ?? "").replace(/\u00a0/g, " ").trim();
-      const body = document.querySelector<HTMLElement>(
-        '[data-elicitation-dialog-body="true"]',
-      );
-      const footer = document.querySelector<HTMLElement>(
-        '[data-elicitation-dialog-footer="true"]',
-      );
+      const body = document.querySelector<HTMLElement>('[data-elicitation-dialog-body="true"]');
+      const footer = document.querySelector<HTMLElement>('[data-elicitation-dialog-footer="true"]');
       const hasApproveOption = Array.from(
         body?.querySelectorAll<HTMLButtonElement>('button[role="option"]') ?? [],
       ).some((button) =>
-        ["Approve", "批准"].some((label) =>
-          normalizeText(button.textContent).includes(label),
-        ),
+        ["Approve", "批准"].some((label) => normalizeText(button.textContent).includes(label)),
       );
-      const submit = Array.from(
-        footer?.querySelectorAll<HTMLButtonElement>("button") ?? [],
-      ).find((button) =>
-        ["Submit", "提交"].includes(normalizeText(button.textContent)),
+      const submit = Array.from(footer?.querySelectorAll<HTMLButtonElement>("button") ?? []).find(
+        (button) => ["Submit", "提交"].includes(normalizeText(button.textContent)),
       );
       if (!hasApproveOption || !submit || submit.disabled) {
         return false;
@@ -216,13 +188,9 @@ export async function respondToToolCrossProductBlockers() {
     permissionClicked: boolean;
   };
 
-  if (
-    result.elicitationClicked ||
-    result.planApprovalClicked ||
-    result.permissionClicked
-  ) {
-    // Bug 根因：ExitPlanMode 在 V4 中走独立计划审批弹窗，不再是 legacy
-    // PermissionDialog；只点击 permission option 会让整轮永久停在 interaction。
+  if (result.elicitationClicked || result.planApprovalClicked || result.permissionClicked) {
+    // Bug root cause: in V4 ExitPlanMode goes through a separate plan approval dialog, no longer the legacy
+    // PermissionDialog; clicking only the permission option leaves the whole turn stuck in interaction forever.
     await browser.pause(250);
   }
   return result;
@@ -241,10 +209,7 @@ async function isFullAccessModeSelected() {
               {
                 activeTaskId?: string | null;
                 configOptions?: Array<ConfigOptionLike> | null;
-                taskConfigOptionsByTaskId?: Record<
-                  string,
-                  Array<ConfigOptionLike>
-                >;
+                taskConfigOptionsByTaskId?: Record<string, Array<ConfigOptionLike>>;
               }
             >;
           };
@@ -253,10 +218,7 @@ async function isFullAccessModeSelected() {
     ).__zcodeSessionStoreE2E;
     const workspaceValues: string[] = [];
     const activeTaskValues: string[] = [];
-    const collect = (
-      options: Array<ConfigOptionLike> | null | undefined,
-      target: string[],
-    ) => {
+    const collect = (options: Array<ConfigOptionLike> | null | undefined, target: string[]) => {
       for (const option of options ?? []) {
         if (
           option.type === "select" &&
@@ -267,16 +229,11 @@ async function isFullAccessModeSelected() {
         }
       }
     };
-    for (const workspace of Object.values(
-      store?.getState?.().workspaces ?? {},
-    )) {
+    for (const workspace of Object.values(store?.getState?.().workspaces ?? {})) {
       collect(workspace.configOptions, workspaceValues);
       const activeTaskId = workspace.activeTaskId;
       if (activeTaskId) {
-        collect(
-          workspace.taskConfigOptionsByTaskId?.[activeTaskId],
-          activeTaskValues,
-        );
+        collect(workspace.taskConfigOptionsByTaskId?.[activeTaskId], activeTaskValues);
       }
     }
 
@@ -297,14 +254,15 @@ async function isFullAccessModeSelected() {
       activeTaskValues,
       labels,
       workspaceValues,
-      // Bug 根因：EnterPlanMode 后 workspace default 仍是 yolo，但 active task 已是 plan；
-      // 旧逻辑聚合后只要看到任意 yolo 就误判。可见 V4 trigger 是当前 pane 权威值，
-      // DOM 不可用时才按 active task → workspace default 的优先级降级。
-      yolo: labels.length > 0
-        ? labelShowsYolo
-        : activeTaskValues.length > 0
-          ? activeTaskValues.includes("yolo")
-          : workspaceValues.includes("yolo"),
+      // Bug root cause: after EnterPlanMode the workspace default is still yolo, but the active task is already plan;
+      // the old logic aggregated the values and misjudged as soon as it saw any yolo. The visible V4 trigger is the authoritative value for the current pane;
+      // only when the DOM is unavailable do we degrade by priority: active task → workspace default.
+      yolo:
+        labels.length > 0
+          ? labelShowsYolo
+          : activeTaskValues.length > 0
+            ? activeTaskValues.includes("yolo")
+            : workspaceValues.includes("yolo"),
     };
   })) as {
     activeTaskValues: string[];
@@ -327,8 +285,8 @@ async function clickModeTrigger() {
         if (!(await trigger.isDisplayed()) || !(await trigger.isEnabled())) {
           continue;
         }
-        // Bug 根因：旧 helper 用 renderer click，长 suite 中会命中隐藏的旧 trigger，
-        // 菜单看似打开但没有改变当前 task。只对当前可见控件走真实 WebDriver 点击。
+        // Bug root cause: the old helper used a renderer click, which in a long suite hits a hidden stale trigger;
+        // the menu looks open but the current task is unchanged. Use real WebDriver clicks only on currently visible controls.
         await trigger.click();
         return true;
       }
@@ -363,16 +321,14 @@ async function clickFullAccessModeItem() {
             text.includes(expected),
           )
         ) {
-          // Bug 根因：旧 helper 未过滤可见性，可能点击已卸载菜单留下的隐藏 item；
-          // 当前可见 item 用 WebDriver 点击，保证与用户选择 Full access 的路径一致。
+          // Bug root cause: the old helper did not filter by visibility and could click a hidden item left behind by an unmounted menu;
+          // click the currently visible item via WebDriver to stay on the same path as a user choosing Full access.
           await item.click();
           return true;
         }
       }
       latestReason =
-        (await items.length) === 0
-          ? "missing"
-          : `missing; visibleItems=${visibleTexts.join("|")}`;
+        (await items.length) === 0 ? "missing" : `missing; visibleItems=${visibleTexts.join("|")}`;
       return false;
     },
     {

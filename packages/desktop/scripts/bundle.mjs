@@ -16,6 +16,7 @@ import { collectRuntimeModuleClosureEntries } from "./runtime-dependency-closure
 import { resolveDesktopProductIdentity } from "./desktop-product-identity.mjs";
 import {
   findDesktopNativePackageViolations,
+  isTargetTranscribePlatformPackage,
   parseAsarListWithPackState,
 } from "./desktop-native-package-policy.mjs";
 import {
@@ -120,6 +121,11 @@ const requiredRuntimeModules = [
   "asn1",
   "bcrypt-pbkdf",
   "tweetnacl",
+  // Bug fix: voice dictation keeps transcribe-cpp external in the Host bundle, so the installed app
+  // must resolve it (plus koffi, unified to 2.15.6 by the pnpm override) from app.asar at runtime.
+  // The @transcribe-cpp platform packages are covered by the native package policy checks.
+  "transcribe-cpp",
+  "koffi",
 ];
 const electronBuilderRetryCount = 3;
 const electronBuilderRetryDelayMs = 5_000;
@@ -686,7 +692,7 @@ function verifyPackagedRuntimeDependencies(os, arch) {
   const runtimeModules = collectRuntimeModuleClosureEntries(
     requiredRuntimeModules,
     runtimeModuleLookupRoots,
-  );
+  ).filter((entry) => isTargetTranscribePlatformPackage(entry.moduleName, targetPlatformKey));
   const resolvableRuntimeModules = runtimeModules.filter((entry) => {
     if (!entry.sourceModulePath) {
       // afterPack injects dependencies that are actually resolvable on the current platform, so bundle

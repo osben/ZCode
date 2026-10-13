@@ -8,6 +8,7 @@ import type {
   StartPlanConcurrentLimitBannerReason,
 } from "@/lib/providerBusinessError.js";
 import type { McpUnavailableNotice } from "@/v4/mcpUnavailableBannerNotice.js";
+import { parseCodingPlanLimitResetAt } from "@/lib/codingPlanLimitAutoContinue.js";
 
 import {
   allBucketsExhausted,
@@ -33,6 +34,7 @@ export interface SessionQuotaBannerState {
   concurrentLimitReason: StartPlanConcurrentLimitBannerReason | null;
   providerLimitedBusinessCode: GlmQuotaBannerBusinessCode | null;
   providerLimitedMessage: string | null;
+  providerLimitedResetAt: number | null;
   modelName: string | null;
   /** For official Server MCP notices only: name of the MCP server with the issue, used in the message. */
   mcpServerName: string | null;
@@ -58,6 +60,7 @@ export const HIDDEN_SESSION_QUOTA_BANNER_STATE: SessionQuotaBannerState = {
   concurrentLimitReason: null,
   providerLimitedBusinessCode: null,
   providerLimitedMessage: null,
+  providerLimitedResetAt: null,
   modelName: null,
   mcpServerName: null,
   mcpNoticeRowId: null,
@@ -117,6 +120,7 @@ export function buildSessionQuotaBannerState(params: {
       concurrentLimitReason: params.serverConcurrentLimitReason ?? "initial-busy",
       providerLimitedBusinessCode: null,
       providerLimitedMessage: null,
+      providerLimitedResetAt: null,
       modelName: params.modelId,
       mcpServerName: null,
       mcpNoticeRowId: null,
@@ -140,6 +144,7 @@ export function buildSessionQuotaBannerState(params: {
       concurrentLimitReason: null,
       providerLimitedBusinessCode: null,
       providerLimitedMessage: null,
+      providerLimitedResetAt: null,
       modelName: null,
       mcpServerName: null,
       mcpNoticeRowId: null,
@@ -163,6 +168,11 @@ export function buildSessionQuotaBannerState(params: {
       concurrentLimitReason: null,
       providerLimitedBusinessCode: params.serverProviderLimitedBusinessCode,
       providerLimitedMessage: normalizeProviderLimitedBannerMessage(
+        params.serverProviderLimitedMessage,
+      ),
+      providerLimitedResetAt: parseCodingPlanLimitResetAt(
+        params.activeProviderId,
+        params.serverProviderLimitedBusinessCode,
         params.serverProviderLimitedMessage,
       ),
       modelName: params.modelId,
@@ -190,6 +200,7 @@ export function buildSessionQuotaBannerState(params: {
       concurrentLimitReason: null,
       providerLimitedBusinessCode: null,
       providerLimitedMessage: null,
+      providerLimitedResetAt: null,
       modelName: null,
       mcpServerName: params.mcpUnavailableNotice.serverName,
       mcpNoticeRowId: params.mcpUnavailableNotice.rowId,

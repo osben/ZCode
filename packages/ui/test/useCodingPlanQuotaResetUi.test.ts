@@ -92,8 +92,10 @@ describe("useCodingPlanQuotaResetUi", () => {
   });
 
   afterEach(() => {
-    // 修复原因：该文件的 service mock 由全局变量提供；若先切换 mock 再由 Testing Library
-    // 自动卸载，上一个 scope 的异步 effect 会短暂读到下一用例的 service，污染 history/read。
+    // Why: this file's service mock is provided via a global variable; if the mock is switched before
+    // Testing Library
+    // auto-unmounts, the previous scope's async effects briefly read the next case's service, polluting
+    // history/read.
     cleanup();
     mocks.services = null;
   });
@@ -232,8 +234,9 @@ describe("useCodingPlanQuotaResetUi", () => {
       granted: false,
       nextTryAt: null,
     }));
-    // 两类历史 used_at 相等 + 单一 unread 游标 → 两类本轮同时刚发现完成:
-    // 完成周期内已在做 history/read 与 entitlement 强刷,此刻发放必被 next_try_at 拒,故跳过。
+    // Both histories' used_at equal + a single unread cursor → both discovered-completed in the same round:
+    // history/read and the entitlement hard refresh are already running within the completed cycle, so a grant
+    // now would be refused by next_try_at — skip it.
     const completedUsedAt = Date.now() - 1_000;
     const completedService = createUsageStatsService({
       getCodingPlanResetStatus: vi.fn(async () =>
@@ -261,14 +264,16 @@ describe("useCodingPlanQuotaResetUi", () => {
   });
 
   it("任一类型已有机会时仍调用 opportunity 以发放另一类(后端有上限不会膨胀)", async () => {
-    // 后端对同一类型已持有未消费机会有发放上限,重复调用不叠加。因此"已有可用机会"不再阻塞
-    // scope 级 /opportunity——否则一类挂着机会会饿死另一类的发放。
+    // The backend caps grants for the same type when unconsumed opportunities already exist; repeated calls
+    // don't stack. So "already has an available opportunity" no longer blocks
+    // the scope-level /opportunity — otherwise one type holding an opportunity would starve the other type's
+    // grant.
     const requestCodingPlanResetOpportunity = vi.fn(async () => ({
       granted: false,
       nextTryAt: null,
     }));
 
-    // 只有五小时有券:仍调 opportunity,给周额度一次发放判断。
+    // Only the five-hour plan has a card: still call opportunity, giving the weekly quota one grant decision.
     mocks.services = {
       usageStatsService: createUsageStatsService({
         getCodingPlanResetStatus: vi.fn(async () =>
@@ -294,7 +299,8 @@ describe("useCodingPlanQuotaResetUi", () => {
     fiveHourOnly.unmount();
     requestCodingPlanResetOpportunity.mockClear();
 
-    // 对称场景:只有周额度有券,同样仍触发 scope 级发放判断。
+    // Mirror scenario: only the weekly quota has a card, likewise still triggering the scope-level grant
+    // decision.
     mocks.services = {
       usageStatsService: createUsageStatsService({
         getCodingPlanResetStatus: vi.fn(async () =>
@@ -317,7 +323,8 @@ describe("useCodingPlanQuotaResetUi", () => {
     weekOnly.unmount();
     requestCodingPlanResetOpportunity.mockClear();
 
-    // 两类都已有券:后端有上限,重复调用不叠加,因此仍会触发一次发放判断。
+    // Both types already have cards: the backend caps this and repeated calls don't stack, so one grant
+    // decision is still triggered.
     mocks.services = {
       usageStatsService: createUsageStatsService({
         getCodingPlanResetStatus: vi.fn(async () =>
@@ -441,8 +448,10 @@ describe("useCodingPlanQuotaResetUi", () => {
     await waitFor(() => expect(requestCodingPlanResetOpportunity).toHaveBeenCalledTimes(1));
     const statusCalls = getCodingPlanResetStatus.mock.calls.length;
 
-    // 设置页切换套餐时的 render 风暴最小复现:同一 scope、只有回调身份变化的连续重渲染。
-    // 回调若留在依赖链上会逐次重启轮询 effect,对同一 scope 连发 /opportunity。
+    // Minimal reproduction of the render storm when switching plans on the settings page: consecutive
+    // re-renders of the same scope with only the callback identity changing.
+    // If the callback stays in the dependency chain, the polling effect restarts on every render, firing
+    // /opportunity repeatedly for the same scope.
     for (let index = 0; index < 5; index += 1) {
       hook.rerender({ onEntitlementRefresh: vi.fn(async () => undefined) });
     }
@@ -502,16 +511,19 @@ describe("useCodingPlanQuotaResetUi", () => {
   });
 
   it("同一 service 下两个 scope 相同 usedAt 只上报一次 history/read（用户级共享游标契约）", async () => {
-    // 契约回归：docs/coding-plan-quota-reset-ui.md 与 bigmodelUsageQuotaProvider 均声明
-    // history/read 按用户共享已读游标（请求不带 scope）。去重 key 只按 usedAt；若按
-    // scope 拆分，同 service 双 scope 相同 usedAt 会重复 POST 无目标字段的同类请求。
+    // Contract regression: both docs/coding-plan-quota-reset-ui.md and bigmodelUsageQuotaProvider declare
+    // that history/read shares the read cursor per user (requests carry no scope). The dedup key is usedAt
+    // only; splitting it by
+    // scope would make the same service with two scopes and identical usedAt POST duplicate typeless requests
+    // of the same kind.
     const now = Date.now();
     const usedAt = now + 1_000;
     const opportunity = () => status({ availableFiveHourResets: [{ expireAt: now + 60_000 }] });
     const completed = () =>
       status({ latestFiveHourResetHistory: { usedAt }, hasUnreadHistory: true });
-    // 轮询会多次消费 status；用显式相位而不是 Once 排队，保证两个 scope 各自
-    // 在自己的窗口看到 opportunity、reset 后看到 completed。
+    // Polling consumes status multiple times; an explicit phase is used instead of Once queueing, so each of
+    // the two scopes
+    // sees opportunity in its own window and completed after the reset.
     let phase: "personal-opportunity" | "team-opportunity" | "completed" = "personal-opportunity";
     const getCodingPlanResetStatus = vi.fn(async () => {
       if (phase !== "completed") return opportunity();
@@ -667,7 +679,8 @@ describe("useCodingPlanQuotaResetUi", () => {
     });
     await waitFor(() => expect(useCodingPlanReset).toHaveBeenCalledTimes(1));
 
-    // Composer 入口尚未轮询到,仍显示 available;点击只强制对账,不得再发 /use(会用新幂等键双核销)。
+    // The Composer entry hasn't polled yet and still shows available; clicking only forces a reconciliation
+    // and must not send /use again (a new idempotency key would double-redeem).
     await act(async () => {
       await composerEntry.result.current.reset();
     });
@@ -732,7 +745,8 @@ describe("useCodingPlanQuotaResetUi", () => {
     await act(async () => settingsEntry.result.current.reset());
     expect(settingsEntry.result.current.done).toBe(true);
 
-    // Composer 入口仍基于旧轮询显示 available;点击后按共享轨迹识别为手动完成,不再 /use。
+    // The Composer entry still shows available based on the old polling; after the click the shared trail
+    // identifies it as manually completed, and no /use is sent.
     await act(async () => composerEntry.result.current.reset());
     expect(useCodingPlanReset).toHaveBeenCalledTimes(1);
     expect(composerEntry.result.current.done).toBe(true);
@@ -763,13 +777,15 @@ describe("useCodingPlanQuotaResetUi", () => {
     );
     await waitFor(() => expect(hook.result.current.done).toBe(true));
 
-    // 用户重置后又消耗额度,后端在 used_at 未变的同一周期内重新发放机会。
+    // After the user resets and consumes quota again, the backend re-grants the opportunity within the same
+    // cycle where used_at is unchanged.
     currentStatus = status({
       availableFiveHourResets: [{ expireAt: now + 120_000 }],
       latestFiveHourResetHistory: { usedAt },
       hasUnreadHistory: false,
     });
-    // 等出 status 的 1.5s 新鲜度窗口,让可见性刷新拿到新快照而不是共享缓存。
+    // Wait out status's 1.5s freshness window so the visibility refresh gets the new snapshot instead of the
+    // shared cache.
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 1_600));
     });
@@ -791,7 +807,8 @@ describe("useCodingPlanQuotaResetUi", () => {
         availableFiveHourResets: [{ expireAt: now + 60_000 }, { expireAt: now + 120_000 }],
       });
       const getCodingPlanResetStatus = vi.fn(async () => currentStatus);
-      // 模拟服务端：每次 /use 核销最早到期的一张，并写入新的 used_at 与未读历史。
+      // Simulate the server: each /use redeems the card expiring earliest and writes a new used_at plus unread
+      // history.
       const useCodingPlanReset = vi.fn(async () => {
         useCount += 1;
         currentStatus = status({
@@ -828,7 +845,8 @@ describe("useCodingPlanQuotaResetUi", () => {
 
       await act(async () => hook.result.current.reset());
 
-      // Bugfix 回归：完成态携带同一 status 快照里余下的一张机会，弹框/徽标据此继续展示。
+      // Bugfix regression: the completed state carries the remaining opportunity from the same status
+      // snapshot, so the dialog/badge keep displaying based on it.
       expect(hook.result.current.done).toBe(true);
       expect(hook.result.current.entry).toMatchObject({
         completedAt: now + 1_000,
@@ -837,7 +855,8 @@ describe("useCodingPlanQuotaResetUi", () => {
       });
       expect(hook.result.current.opportunityVisible).toBe(true);
 
-      // 不重新挂载（等价于弹框不关闭）直接再次核销：必须真实发出第二次 /use，且使用新幂等键。
+      // Redeem again directly without remounting (equivalent to the dialog staying open): a second /use must
+      // really go out, using a new idempotency key.
       await act(async () => hook.result.current.reset());
 
       expect(useCodingPlanReset).toHaveBeenCalledTimes(2);
@@ -854,8 +873,9 @@ describe("useCodingPlanQuotaResetUi", () => {
     },
   );
 
-  // 模拟服务端读数滞后：第一张 /use 即时可见；第二张 /use 之后的前 lagReads 次 status 仍返回
-  // 消费前快照（上一张的 used_at + 余下 1 张），之后才出现新的 used_at。
+  // Simulate server-side read lag: the first /use is immediately visible; for the first lagReads status
+  // calls after the second /use, the pre-consumption snapshot is still returned
+  // (the previous card's used_at + 1 remaining card), and only afterwards does the new used_at appear.
   function createLaggingSecondUseService(params: { lagReads: number; staleUnread: boolean }) {
     const now = Date.now();
     let useCount = 0;
@@ -887,7 +907,8 @@ describe("useCodingPlanQuotaResetUi", () => {
       } else {
         pendingStatus = next;
         lagReadsRemaining = params.lagReads;
-        // staleUnread=false：上一张的 history/read 已生效，滞后快照不再带 unread。
+        // staleUnread=false: the previous card's history/read has taken effect, and the lagged snapshot no
+        // longer carries unread.
         currentStatus = { ...currentStatus, hasUnreadHistory: params.staleUnread };
       }
       return { used: true as const };
@@ -930,8 +951,10 @@ describe("useCodingPlanQuotaResetUi", () => {
         opportunityCount: 1,
       });
 
-      // Bugfix 回归（CR-01）：旧判定在 /use 后第一次（0ms）对账读到上一张的 used_at 就确认成功，
-      // reset() 提前 resolve，弹框播放成功反馈且行内停留在消费前的 1 张。
+      // Bugfix regression (CR-01): the old check confirmed success when the first (0ms) reconciliation after
+      // /use read the previous card's used_at,
+      // reset() resolved early, the dialog played the success feedback, and the inline display stayed at the
+      // pre-consumption count of 1.
       await act(async () => hook.result.current.reset());
 
       expect(useCodingPlanReset).toHaveBeenCalledTimes(2);
@@ -973,7 +996,8 @@ describe("useCodingPlanQuotaResetUi", () => {
     });
 
     expect(useCodingPlanReset).toHaveBeenCalledTimes(2);
-    // 失败恢复保留点击前的机会快照，并提示失败；不再显示为已完成。
+    // Failure recovery keeps the pre-click opportunity snapshot and shows a failure; it no longer displays as
+    // completed.
     expect(hook.result.current.entry).toMatchObject({ status: "available", opportunityCount: 1 });
     expect(hook.result.current.entry?.error).toBe("coding_plan_reset_status_not_confirmed");
     expect(mocks.toast).toHaveBeenCalledTimes(1);
@@ -1065,7 +1089,7 @@ describe("useCodingPlanQuotaResetUi", () => {
 
     await waitFor(() => expect(hook.result.current.week.opportunityVisible).toBe(true));
     expect(hook.result.current.week.entry?.opportunityExpiresAt).toBe(expiresAt);
-    // 五小时无机会，不应被周机会带出 available。
+    // No five-hour opportunity; it must not be brought to available by the weekly opportunity.
     expect(hook.result.current.opportunityVisible).toBe(false);
     expect(hook.result.current.entry).toBeNull();
   });
@@ -1108,7 +1132,7 @@ describe("useCodingPlanQuotaResetUi", () => {
     expect(useCodingPlanReset).toHaveBeenCalledWith(expect.objectContaining({ resetType: "WEEK" }));
     expect(hook.result.current.week.entry?.completedAt).toBe(usedAt);
     expect(hook.result.current.week.done).toBe(true);
-    // 五小时子控制器不受周额度手动重置影响。
+    // The five-hour subcontroller is unaffected by the weekly quota's manual reset.
     expect(hook.result.current.done).toBe(false);
   });
 
@@ -1138,7 +1162,8 @@ describe("useCodingPlanQuotaResetUi", () => {
     await waitFor(() => expect(hook.result.current.week.done).toBe(true));
     expect(hook.result.current.week.entry?.startedAt).toBeNull();
     expect(hook.result.current.week.statusVisible).toBe(true);
-    // 五小时无历史，共享 has_unread_history 游标不得把它带入完成态。
+    // The five-hour plan has no history; the shared has_unread_history cursor must not drag it into the
+    // completed state.
     expect(hook.result.current.done).toBe(false);
     expect(hook.result.current.entry).toBeNull();
   });
@@ -1156,7 +1181,8 @@ describe("useCodingPlanQuotaResetUi", () => {
       }),
     };
 
-    // Root Store 跨鉴权页面保留；组件 key 只模拟入口/路由重挂载，鉴权 epoch 由 setUser 的登录边界推进。
+    // The Root Store is preserved across auth-boundary pages; the component key only simulates entry/route
+    // remounts, and the auth epoch is advanced by setUser's login boundary.
     const hookProps = {
       sourceKey: "composer:relogin-week",
       preferredProviderId: "builtin:personal-relogin-week",
@@ -1183,19 +1209,22 @@ describe("useCodingPlanQuotaResetUi", () => {
       );
     }
 
-    // 当前鉴权会话首次发现周自动完成，正常播放短提示，observedAt 落到共享 store。
+    // The auth session's first discovery of the weekly auto-complete plays the short toast normally, and
+    // observedAt lands on the shared store.
     const view = render(createElement(Harness, { mountKey: "settings-entry" }));
     await waitFor(() => expect(latest?.week.done).toBe(true));
     expect(latest?.week.entry?.observedAt).not.toBeNull();
     expect(latest?.week.statusVisible).toBe(true);
 
-    // 同一鉴权会话内 Composer 后挂载：共享 entry 不能被误判为上一次登录历史。
+    // The Composer mounts later within the same auth session: the shared entry must not be misjudged as the
+    // previous login's history.
     view.rerender(createElement(Harness, { mountKey: "composer-same-session" }));
     await waitFor(() => expect(latest?.week.done).toBe(true));
     expect(latest?.week.entry?.observedAt).not.toBeNull();
     expect(latest?.week.statusVisible).toBe(true);
 
-    // 真正重新登录会推进鉴权 epoch；同一 used_at 此时属于上一登录会话，必须静音。
+    // A real re-login advances the auth epoch; the same used_at now belongs to the previous login session and
+    // must be muted.
     act(() => startAuthenticatedSession?.());
     view.rerender(createElement(Harness, { mountKey: "composer-next-session" }));
     await waitFor(() => {
@@ -1203,7 +1232,8 @@ describe("useCodingPlanQuotaResetUi", () => {
       expect(latest?.week.statusVisible).toBe(false);
     });
 
-    // 同一旧 used_at 再轮询也不能把观察记录改写到新 epoch 后重播。
+    // Polling the same old used_at again must not rewrite the observation record into the new epoch and replay
+    // it.
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 1_600));
     });
@@ -1211,7 +1241,7 @@ describe("useCodingPlanQuotaResetUi", () => {
     await waitFor(() => expect(latest?.week.entry?.observedAt).toBeNull());
     expect(latest?.week.statusVisible).toBe(false);
 
-    // 新鉴权会话内到来的新一轮周重置仍照常播放动画。
+    // A new weekly reset arriving within the new auth session still plays the animation as usual.
     currentStatus = status({
       latestWeekResetHistory: { usedAt: secondUsedAt },
       hasUnreadHistory: true,

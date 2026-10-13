@@ -69,7 +69,6 @@ import {
   createServiceLogger,
   createSubagentsService,
   createMemoryService,
-  createOutputStyleService,
   createRemoteConversationShareArtifactSource,
   OAuthCredentialRepo,
 } from "@zcode/services/node";
@@ -439,7 +438,9 @@ export function createRemoteWorkspaceServiceCollection(params: {
     // Global instructions belong to the target host: the remote CLI reads the remote ~/.zcode/AGENTS.md.
     // Do not fall back to the local instance as Memory does, or it will silently edit a local file.
     .register(IUserInstructionsService, params.connectionServices.userInstructionsService)
-    .register(IOutputStyleService, createOutputStyleService())
+    // Output styles follow the same rule: a local instance would edit the desktop's ~/.zcode
+    // while the remote CLI reads the remote host's files.
+    .register(IOutputStyleService, params.connectionServices.outputStyleService)
     .register(
       ISettingsSyncService,
       createSettingsSyncService({ settingService: localSettingService }),

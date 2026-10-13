@@ -1913,6 +1913,7 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
           webRemoteControlTerminalTransportState={webRemoteControlTerminalTransportState}
           isSidePaneOpen={isSidePaneOpen}
           onCloseSidePane={isSidePaneOpen ? handleToggleSidePane : undefined}
+          onOpenCommandCenter={handleOpenCommandCenter}
           onSelectTask={handleSelectTaskInChat}
           onStartDraftInWorkspace={handleCreateProjectDraft}
           switcher={webRemoteControlWorkspaceSwitcher}

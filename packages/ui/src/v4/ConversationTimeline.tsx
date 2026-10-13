@@ -282,6 +282,7 @@ export interface ConversationTimelineProps {
   onFork?: (target: ConversationRowTarget) => void;
   onRetry?: (target: ConversationRowTarget) => void;
   onFeedbackChange?: AssistantFeedbackHandler;
+  onPinChange?: import("@/v4/ConversationRowView.js").RowPinChangeHandler;
   onEdit?: (
     target: ConversationRowTarget,
     newText: string,
@@ -341,6 +342,8 @@ export interface ConversationTimelineProps {
   scrollToQueryActionRef?: {
     current: ((target: { unitIndex: number; rowId: number }) => void) | null;
   };
+  /** One-time row-positioning action callable by the host (pinned-bar jump); resolves the unit from rowId. */
+  scrollToRowActionRef?: { current: ((rowId: number) => void) | null };
   selectionActions?: {
     enabled: boolean;
     sideActionDisabled?: boolean;
@@ -377,6 +380,7 @@ function ConversationTimelineImpl({
   onFork,
   onRetry,
   onFeedbackChange,
+  onPinChange,
   onEdit,
   canLoadOlder = false,
   loadingOlder = false,
@@ -400,6 +404,7 @@ function ConversationTimelineImpl({
   sessionPhase,
   scrollToBottomActionRef,
   scrollToQueryActionRef,
+  scrollToRowActionRef,
   selectionActions,
   shareSelection,
   hideTurnNavigator = false,
@@ -1520,6 +1525,32 @@ function ConversationTimelineImpl({
     };
   }, [scrollToQuery, scrollToQueryActionRef]);
 
+  // Pinned-bar jump: reuse the query-positioning path, resolving the row's product-turn unit first so
+  // virtualized (unmounted) targets still land precisely on the row.
+  const scrollToRow = useCallback(
+    (rowId: number) => {
+      const unitIndex = renderUnits.findIndex((unit) =>
+        unit.renderRows.some((row) => row.rowId === rowId),
+      );
+      if (unitIndex === -1) {
+        logger.warn("[v4-pinned-bar] 目标消息不在当前渲染单元中", { rowId });
+        return;
+      }
+      scrollToQuery({ unitIndex, rowId }, "smooth");
+    },
+    [renderUnits, scrollToQuery],
+  );
+
+  useLayoutEffect(() => {
+    if (!scrollToRowActionRef) return;
+    scrollToRowActionRef.current = scrollToRow;
+    return () => {
+      if (scrollToRowActionRef.current === scrollToRow) {
+        scrollToRowActionRef.current = null;
+      }
+    };
+  }, [scrollToRow, scrollToRowActionRef]);
+
   useEffect(
     () => () => {
       if (turnNavigatorJumpFrameRef.current !== null) {
@@ -2008,6 +2039,7 @@ function ConversationTimelineImpl({
                         onFork={onFork}
                         onRetry={onRetry}
                         onFeedbackChange={onFeedbackChange}
+                        onPinChange={onPinChange}
                         onEdit={onEdit}
                         shareSelection={shareSelection}
                       />
@@ -2039,6 +2071,7 @@ function ConversationTimelineImpl({
                     onFork={onFork}
                     onRetry={onRetry}
                     onFeedbackChange={onFeedbackChange}
+                    onPinChange={onPinChange}
                     onEdit={onEdit}
                     shareSelection={shareSelection}
                   />

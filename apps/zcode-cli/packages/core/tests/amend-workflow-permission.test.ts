@@ -32,9 +32,10 @@ import { createToolRegistry } from "../src/tool/registry.js";
 import { AMEND_WORKFLOW_ERROR_CODE } from "../src/tool/handlers/amend-workflow-resolve.js";
 import { workflowRunNotFoundFailure } from "../src/tool/handlers/workflow-run-introspection.js";
 
-// docs/dynamic-workflow/launch.md「The `AmendWorkflow` tool」与「Amending this session's runs」：
-// resolveInput 把 run_id 解析成 predecessor 事实块 → 权限服务据它放行本会话的 run / 照常 ask 别的
-// → handler 调 port.amend（service 负责停在飞前驱、等结算、导入、启动）。
+// docs/dynamic-workflow/launch.md "The `AmendWorkflow` tool" and "Amending this session's runs":
+// resolveInput resolves run_id into a predecessor facts block → the permission service uses it to
+// allow this session's runs / ask for others as usual → the handler calls port.amend (the service
+// stops the in-flight predecessor, waits for settlement, imports, starts).
 
 function cleanScript(actor: string): string {
   return [
@@ -44,7 +45,7 @@ function cleanScript(actor: string): string {
   ].join("\n");
 }
 
-/** 分析器语料里的脚本（与 create-workflow-tool.test.ts 同一份 corpus、同一条读法）。 */
+/** Scripts from the analyzer corpus (the same corpus and the same reading as create-workflow-tool.test.ts). */
 function fixture(name: string): string {
   return readFileSync(
     new URL(`../../dynamic-workflow/tests/graphs/${name}`, import.meta.url),
@@ -54,34 +55,37 @@ function fixture(name: string): string {
 
 const BROKEN_SCRIPT = 'const x: number = "s";';
 
-// 真目录而不是一个写死的 /tmp 路径：内联修订会往 `<cwd>/.zcode/workflow-drafts/` 写草稿
-// （docs/dynamic-workflow/launch.md「Script files」），用例之间不该互相看见对方的草稿。
+// A real directory rather than a hardcoded /tmp path: an inline amendment writes drafts into
+// `<cwd>/.zcode/workflow-drafts/` (docs/dynamic-workflow/launch.md "Script files"), and cases must
+// not see each other's drafts.
 const AMEND_CWD = mkdtempSync(join(tmpdir(), "dwf-amend-cwd-"));
 afterAll(() => {
   rmSync(AMEND_CWD, { force: true, recursive: true });
 });
 
-/** 本会话的 id 由用例名派生（run() 里同一条派生），所以「归属」在这里可控。 */
+/** This session's id is derived from the case name (the same derivation in run()), so ownership is controllable here. */
 function sessionOf(name: string): string {
   return createSessionId(name) as unknown as string;
 }
 
 interface StubPortOptions {
-  /** getTask 的答案：缺席即「run 不存在」。 */
+  /** getTask's answer: absent means "the run does not exist". */
   snapshot?: Partial<DynamicWorkflowRunSnapshot>;
-  /** amend 的答案；缺省成功铸 `dwfrun-amended`。 */
+  /** amend's answer; defaults to successfully minting `dwfrun-amended`. */
   amend?: DynamicWorkflowRunAmendResult;
-  /** 默认并发 D；缺席即端口没有 `defaultConcurrency`（老宿主的形状）。 */
+  /** Default concurrency D; absent means the port has no `defaultConcurrency` (the old-host shape). */
   defaultConcurrency?: number;
   /**
-   * 前驱存档的脚本，即 `getScript` 的答案（docs/dynamic-workflow/launch.md「Keeping the
-   * predecessor's script」）。缺席即端口**没有** `getScript`（老宿主的形状）；`null` 即方法在、
-   * 记录里却没有脚本（脚本落库之前的老 run）。
+   * The predecessor's stored script, i.e. `getScript`'s answer (docs/dynamic-workflow/launch.md
+   * "Keeping the predecessor's script"). Absent means the port has **no** `getScript` (the
+   * old-host shape); `null` means the method exists but the record has no script (an old run from
+   * before scripts were persisted).
    */
   storedScript?: string | null;
   /**
-   * `retuneConcurrency` 的答复（docs/dynamic-workflow/launch.md「Changing only the parallelism of a
-   * live run」）。缺席即端口**没有**这个方法（老宿主的形状）——那时只改并发的调用照旧走修订。
+   * `retuneConcurrency`'s reply (docs/dynamic-workflow/launch.md "Changing only the parallelism of
+   * a live run"). Absent means the port has **no** such method (the old-host shape) — in that era
+   * a concurrency-only call still went down the amendment path.
    */
   retune?:
     | DynamicWorkflowRunRetuneResult
@@ -107,7 +111,8 @@ function stubRunPort(options: StubPortOptions = {}): {
       async getTask(taskId: string) {
         getTaskCalls.push(taskId);
         if (options.snapshot === undefined) return undefined;
-        // 只给基类字段；`runStatus` 由用例决定——缺席即「还在跑」（resolveInput 据此读作 running）。
+        // Only base-class fields; `runStatus` is decided by the case — absent means "still running"
+        // (resolveInput reads it as running).
         return {
           runId: taskId,
           taskId,
@@ -156,7 +161,7 @@ function stubRunPort(options: StubPortOptions = {}): {
 interface RunOptions {
   broker?: PermissionBrokerPort;
   input?: Record<string, unknown>;
-  /** 宿主的模型目录；缺席即「这台机器不能选子代理模型」。 */
+  /** The host's model catalog; absent means "this machine cannot choose a subagent model". */
   modelCatalogPort?: ModelCatalogPort;
   mode?: CollaborationMode;
   name: string;
@@ -230,7 +235,8 @@ describe("AmendWorkflow — owner rule", () => {
     });
     const outcome = await run({ name, port });
 
-    // 第一次 getTask 是 resolveInput 解析前驱；之后的是后台追踪器轮询新 run（与 CreateWorkflow 同）。
+    // The first getTask is resolveInput resolving the predecessor; the later ones are the
+    // background tracker polling the new run (same as CreateWorkflow).
     expect(getTaskCalls[0]).toBe("dwfrun-prev");
     expect(outcome.permissionRequested).toHaveLength(0);
     expect(outcome.brokerRequests).toHaveLength(0);
@@ -267,7 +273,8 @@ describe("AmendWorkflow — owner rule", () => {
     expect(output.response).toContain("will not send a notification of its own");
   });
 
-  // 轨道画的是**新脚本**的站点：修订沿用前驱的锚点，两张表却必须一起从新脚本的图上取。
+  // The track draws the **new script's** sites: an amendment inherits the predecessor's anchors,
+  // yet both tables must be taken from the new script's graph together.
   it("passes the new script's phase table and its alongside table through", async () => {
     const name = "amend-alongside";
     const { port, amends } = stubRunPort({
@@ -311,12 +318,13 @@ describe("AmendWorkflow — owner rule", () => {
     expect(
       (payload.display as { causalityGraph?: { steps: unknown[] } }).causalityGraph?.steps,
     ).toHaveLength(1);
-    // 确认窗从**入参**读 lineage 行与「仍在运行」的注记（协议零新载荷）。
+    // The confirmation window reads the lineage line and the "still running" annotation from the
+    // **input** (zero new protocol payloads).
     expect(payload.input).toMatchObject({
       run_id: "dwfrun-prev",
       predecessor: { name: "triage", status: "running", owned_by_this_session: false },
     });
-    // Allow → amend 照常。
+    // Allow → amend proceeds as usual.
     expect(amends).toHaveLength(1);
   });
 
@@ -357,8 +365,8 @@ describe("AmendWorkflow — owner rule", () => {
   });
 
   it("overwrites a predecessor block the model tries to supply", async () => {
-    // 模型面 JSON schema 不列 predecessor（strict），所以带它的入参在 schema 校验就被拒——
-    // 伪造「本会话的 run」拿不到免确认。
+    // The model-face JSON schema does not list predecessor (strict), so an input carrying it is
+    // rejected at schema validation — a forged "this session's run" cannot get the free pass.
     const name = "amend-forged";
     const { port, amends, getTaskCalls } = stubRunPort({ snapshot: { parentSessionId: "x" } });
     const outcome = await run({
@@ -431,7 +439,8 @@ describe("AmendWorkflow — refusals and failures", () => {
 
   it("without a run port the script is only typechecked", async () => {
     const outcome = await run({ name: "amend-no-port" });
-    // 端口缺席：resolveInput 放行、权限照常 ask（没有归属事实）、handler 只报编译通过。
+    // Port absent: resolveInput allows, the permission ask happens as usual (no ownership facts),
+    // and the handler only reports the compile passing.
     expect(outcome.permissionRequested).toHaveLength(1);
     const output = outcome.result.output as CreateWorkflowOutput;
     expect(output.ok).toBe(true);
@@ -440,11 +449,13 @@ describe("AmendWorkflow — refusals and failures", () => {
   });
 });
 
-// 并发上界的三态（docs/dynamic-workflow/concurrency.md「Two bounds on a run」）：省略 = 沿用前驱、
-// `null` = 解除、数 = 设定。三态只活到 resolveInput——handler 与确认窗此后只面对「一个数或没有」，
-// 而 handler 自己会用 .strict() 重新 parse 一遍归一化后的入参，所以形状越界在这些用例里必炸。
+// The concurrency bound's three states (docs/dynamic-workflow/concurrency.md "Two bounds on a
+// run"): omitted = inherit the predecessor, `null` = lift it, a number = set it. The three states
+// live only up to resolveInput — the handler and the confirmation window afterwards face only "a
+// number or nothing", and the handler itself re-parses the normalized input with .strict(), so a
+// shape violation must explode in these cases.
 describe("AmendWorkflow — max_concurrency", () => {
-  /** 归一化后递到端口的那个数；键缺席即 undefined。 */
+  /** The number that reaches the port after normalization; an absent key means undefined. */
   async function amendWith(
     name: string,
     options: { defaultConcurrency?: number; inherited?: number; requested?: number | null },
@@ -528,7 +539,8 @@ describe("AmendWorkflow — max_concurrency", () => {
   });
 
   it("omitting the field inherits a raised predecessor's limit as is", async () => {
-    // 快照只在不等于默认时带 maxConcurrency：一个被调高过的前驱把它的数原样传下去，不再被钳。
+    // The snapshot carries maxConcurrency only when it differs from the default: a raised
+    // predecessor passes its number down as is, no longer clamped.
     const { amends } = await amendWith("amend-maxconc-inherit-raised", {
       defaultConcurrency: 8,
       inherited: 40,
@@ -537,14 +549,16 @@ describe("AmendWorkflow — max_concurrency", () => {
   });
 
   it("omitting it stays absent when the predecessor ran at the default", async () => {
-    // 快照只在不等于默认时带 maxConcurrency，所以「前驱没设过」在这里就是字段缺席。
+    // The snapshot carries maxConcurrency only when it differs from the default, so "the
+    // predecessor never set one" is exactly the field being absent here.
     const { amends } = await amendWith("amend-maxconc-none", { defaultConcurrency: 8 });
     expect(amends).toHaveLength(1);
     expect("maxConcurrency" in amends[0]!).toBe(false);
   });
 
   it("shows the inherited limit in the confirmation window of another session's run", async () => {
-    // 确认窗读的是归一化后的入参：沿用下来的上界必须在那里，否则用户批准的是另一个 run。
+    // The confirmation window reads the normalized input: the inherited bound must be there,
+    // otherwise the user is approving a different run.
     const { port } = stubRunPort({
       snapshot: { parentSessionId: "sess_someone-else", status: "running", maxConcurrency: 2 },
       defaultConcurrency: 8,
@@ -559,8 +573,9 @@ describe("AmendWorkflow — max_concurrency", () => {
   });
 
   it("strips null and passes a number through when the session has no run port", async () => {
-    // 端口缺席：既没有前驱也没有默认并发，三态塌成「一个数或没有」，且归一化后的入参仍要
-    // 过得了 handler 的 .strict() 重解析。
+    // Port absent: there is no predecessor and no default concurrency, the three states collapse to
+    // "a number or nothing", and the normalized input must still survive the handler's .strict()
+    // re-parse.
     const removed = await run({
       name: "amend-maxconc-no-port-null",
       input: {
@@ -584,9 +599,11 @@ describe("AmendWorkflow — max_concurrency", () => {
   });
 });
 
-// 子代理模型的三态（docs/dynamic-workflow/launch.md）：省略 = 沿用前驱、`null` = 回到会话模型、
-// 字符串 = 设定。与并发上界逐条同构，唯一的差别是**沿用的那一个也要重新解析一遍**——前驱可能
-// 是几天前起的，它选的模型此后可能被删掉或停用。
+// The subagent model's three states (docs/dynamic-workflow/launch.md): omitted = inherit the
+// predecessor, `null` = back to the session model, a string = set it. Isomorphic to the concurrency
+// bound case by case; the only difference is that **the inherited one is re-resolved too** — the
+// predecessor may have started days ago, and the model it chose may since have been deleted or
+// disabled.
 describe("AmendWorkflow — subagent_model", () => {
   function entry(
     providerId: string,
@@ -603,7 +620,7 @@ describe("AmendWorkflow — subagent_model", () => {
     ],
   };
 
-  /** 目录里只剩一个模型：前驱选过的那一个已经不在了。 */
+  /** Only one model left in the catalog: the one the predecessor chose is gone. */
   const SHRUNK_CATALOG: ModelCatalogPort = {
     listModels: () => [entry("openai", "gpt-5", { current: true })],
   };
@@ -679,8 +696,9 @@ describe("AmendWorkflow — subagent_model", () => {
   });
 
   /**
-   * 沿用的那一个也要重新解析：不重解的话，失败要等到子代理第一次开口时才发生，那时看起来像
-   * 运行时故障而不是一次可以当场改掉的选择。
+   * The inherited one is re-resolved too: without re-resolving, the failure would wait until the
+   * subagent's first utterance, looking like a runtime failure rather than a choice that could
+   * have been fixed on the spot.
    */
   it("fails now, not at the first ask, when the inherited model has vanished from the catalog", async () => {
     const { amends, outcome } = await amendWith("amend-model-vanished", {
@@ -691,7 +709,7 @@ describe("AmendWorkflow — subagent_model", () => {
     expect(amends).toHaveLength(0);
     expect(outcome.permissionRequested).toHaveLength(0);
     const message = String(outcome.result.error?.message ?? "");
-    // 文案必须说清它是**继承来的**：这次调用压根没提模型名。
+    // The wording must make clear it was **inherited**: this call never mentioned a model name.
     expect(message).toContain("inherited the predecessor run's subagent model");
     expect(message).toContain("bigmodel/GLM-4.6");
     expect(message).toContain("subagent_model: null");
@@ -710,7 +728,8 @@ describe("AmendWorkflow — subagent_model", () => {
   });
 
   it("shows the inherited model in the confirmation window of another session's run", async () => {
-    // 确认窗读的是归一化后的入参：沿用下来的模型必须在那里，否则用户批准的是另一个 run。
+    // The confirmation window reads the normalized input: the inherited model must be there,
+    // otherwise the user is approving a different run.
     const { port } = stubRunPort({
       snapshot: {
         parentSessionId: "sess_someone-else",
@@ -743,8 +762,9 @@ describe("AmendWorkflow — subagent_model", () => {
   });
 
   it("strips the field and passes a resolved id through when the session has no run port", async () => {
-    // 端口缺席：没有前驱可沿用，`null` 与省略都塌成缺席，而给了字符串仍然要解析一次——
-    // 归一化后的入参还要过得了 handler 的 .strict() 重解析。
+    // Port absent: there is no predecessor to inherit from, so `null` and omission both collapse to
+    // absence, while a given string still gets resolved once — the normalized input must also
+    // survive the handler's .strict() re-parse.
     const resolved = await run({
       name: "amend-model-no-port",
       modelCatalogPort: CATALOG,
@@ -773,10 +793,11 @@ describe("AmendWorkflow — subagent_model", () => {
   });
 });
 
-// 省略 `script` = 沿用前驱的脚本（docs/dynamic-workflow/launch.md「Keeping the predecessor's
-// script」）：与两个设定同一条规则、同一个生命周期——resolveInput 读前驱存档的脚本回填进入参并
-// 盖上 `predecessor.script_inherited`，此后 hook、确认窗、prepareApproval 与 handler 面对的都是
-// 「一份脚本」，端口也永远收到一份脚本。
+// Omitting `script` = keep the predecessor's script (docs/dynamic-workflow/launch.md "Keeping the
+// predecessor's script"): the same rule and the same lifecycle as the two settings — resolveInput
+// reads the predecessor's stored script, backfills it into the input, and stamps
+// `predecessor.script_inherited`; from then on the hook, the confirmation window, prepareApproval
+// and the handler all face "one script", and the port always receives exactly one script.
 describe("AmendWorkflow — omitted script", () => {
   const STORED = fixture("strand-fanout-two-phases-join.ts");
 
@@ -799,7 +820,8 @@ describe("AmendWorkflow — omitted script", () => {
     expect(amends).toHaveLength(1);
     expect(amends[0]!.scriptText).toBe(STORED);
     expect(amends[0]!.maxConcurrency).toBe(2);
-    // 阶段表从回填的脚本上取：侧栏轨道画的仍是将要跑的那份脚本。
+    // The phase tables are taken from the backfilled script: the sidebar track still draws the
+    // script that is about to run.
     expect(amends[0]!.phaseNames).toEqual(["A", "B", "C"]);
     expect(amends[0]!.phaseAlongside).toEqual([[], [0], []]);
     const output = outcome.result.output as CreateWorkflowOutput;
@@ -859,7 +881,8 @@ describe("AmendWorkflow — omitted script", () => {
 
     expect(outcome.permissionRequested).toHaveLength(1);
     const payload = outcome.permissionRequested[0]!;
-    // 确认窗与 hook 读的是归一化后的入参：脚本就是将要跑的那一份，flag 让窗上说「脚本不变」。
+    // The confirmation window and the hook read the normalized input: the script is exactly the one
+    // that will run, and the flag lets the window say "the script is unchanged".
     expect(payload.input).toMatchObject({
       run_id: "dwfrun-prev",
       script: stored,
@@ -955,8 +978,10 @@ describe("AmendWorkflow — omitted script", () => {
   });
 
   /**
-   * 继承来的脚本编不过（facade 在前驱之后变过）：模型这次调用没写这些行，不说清就会把诊断读成
-   * 自己传错了参数——与「继承来的模型已不可用」同一条理由。
+   * An inherited script that no longer compiles (the facade changed after the predecessor): the
+   * model wrote none of these lines in this call, and without saying so the diagnostics would be
+   * read as "you passed the wrong argument" — the same reasoning as "the inherited model is no
+   * longer available".
    */
   it("an inherited script that no longer compiles says it was inherited, and touches nothing", async () => {
     const name = "amend-keep-broken";
@@ -975,20 +1000,22 @@ describe("AmendWorkflow — omitted script", () => {
     expect(lead).toContain("run dwfrun-prev's script");
     expect(lead).toContain("inherited because you omitted both `script` and `path`");
     expect(output.response).toMatch(/L\d+:C\d+ /u);
-    // 沿用的脚本与任何不来自文件的脚本一样落成草稿（docs/dynamic-workflow/launch.md「Script files」），
-    // 所以下一步是去改那个文件，而不是把整份脚本内联再抄一遍。
+    // An inherited script lands as a draft like any script not coming from a file
+    // (docs/dynamic-workflow/launch.md "Script files"), so the next step is to edit that file, not
+    // to paste the whole script inline again.
     expect(output.response).toContain("Edit that file in place and resubmit with `path:");
     expect(output.response).toContain("Run dwfrun-prev was not touched");
   });
 });
 
-// 只改并发、run 还活着 = 就地调并发，不是一次修订（docs/dynamic-workflow/launch.md「Changing only
-// the parallelism of a live run」）：同一个 run id、不铸后继、不 supersede、不读脚本、不编译、
-// 一个窗都不弹。路由在 resolveInput 判定，handler 调的是 `port.retuneConcurrency`。
+// Concurrency-only while the run is alive = retune in place, not an amendment
+// (docs/dynamic-workflow/launch.md "Changing only the parallelism of a live run"): the same run id,
+// no successor minted, no supersede, no script read, no compile, not a single window. The routing
+// is decided in resolveInput, and the handler calls `port.retuneConcurrency`.
 describe("AmendWorkflow — 只改并发即就地生效", () => {
   const STORED = fixture("strand-fanout-two-phases-join.ts");
 
-  /** 一个还在跑、属于本会话、端口带 retuneConcurrency 的前驱。 */
+  /** A running predecessor owned by this session whose port has retuneConcurrency. */
   function liveRetunablePort(
     name: string,
     options: {
@@ -1023,7 +1050,7 @@ describe("AmendWorkflow — 只改并发即就地生效", () => {
     expect(outcome.result.success).toBe(true);
     expect(outcome.permissionRequested).toHaveLength(0);
     expect(outcome.brokerRequests).toHaveLength(0);
-    // 这条路不读脚本、不编译、不起后继。
+    // This path reads no script, compiles nothing, and starts no successor.
     expect(getScriptCalls).toHaveLength(0);
     expect(amends).toHaveLength(0);
     expect(retunes).toEqual([{ runId: "dwfrun-prev", maxConcurrency: 2 }]);
@@ -1034,19 +1061,21 @@ describe("AmendWorkflow — 只改并发即就地生效", () => {
     expect(output.status).toBeUndefined();
     expect(output.backgroundTaskId).toBeUndefined();
     expect(output.causalityGraph).toBeUndefined();
-    // 「就地生效」是一个显式的块，消费方不按形状猜；工具卡据它不画「已编译」。
+    // "Applied in place" is an explicit block; consumers do not guess from the shape, and the tool
+    // card uses it to avoid drawing "compiled".
     expect(output.retuned).toEqual({
       runId: "dwfrun-prev",
       maxConcurrency: 2,
       previous: 8,
       defaultConcurrency: 8,
     });
-    // 没有 display 载荷：这条路一行脚本都没编译，而 `create_workflow` 的 `ok` 在卡上读作「已编译」。
+    // No display payload: this path compiled not one line of script, while `create_workflow`'s `ok`
+    // reads as "compiled" on the card.
     expect(outcome.result.display).toBeUndefined();
     expect(output.response).toContain("Applied to the running run dwfrun-prev");
     expect(output.response).toContain("at most 2 subagents run at once");
     expect(output.response).toContain("no new run was started");
-    // 只点名一个 run：模型据此分辨这次调用走的是哪条路。
+    // Only one run is named: the model uses that to tell which path this call took.
     expect(output.response).not.toContain("superseded");
   });
 
@@ -1062,7 +1091,8 @@ describe("AmendWorkflow — 只改并发即就地生效", () => {
       input: { run_id: "dwfrun-prev", max_concurrency: null },
     });
 
-    // 端口收的是三态里的 `null` 本身：默认并发那个数只有端口知道，工具不猜第二遍。
+    // The port receives the three-state `null` itself: only the port knows the default concurrency
+    // number, and the tool does not guess it a second time.
     expect(retunes).toEqual([{ runId: "dwfrun-prev", maxConcurrency: null }]);
     const response = (outcome.result.output as CreateWorkflowOutput).response;
     expect(response).toContain("Applied to the running run dwfrun-prev");
@@ -1082,7 +1112,8 @@ describe("AmendWorkflow — 只改并发即就地生效", () => {
       input: { run_id: "dwfrun-prev", max_concurrency: 32 },
     });
 
-    // 默认并发不是上限：工具不钳，端口也不钳，模型读到的就是它要的那个 32。
+    // The default concurrency is not a ceiling: neither the tool nor the port clamps, and what the
+    // model reads is exactly the 32 it asked for.
     expect(retunes[0]?.maxConcurrency).toBe(32);
     const response = (outcome.result.output as CreateWorkflowOutput).response;
     expect(response).toContain("at most 32 subagents run at once");
@@ -1096,7 +1127,7 @@ describe("AmendWorkflow — 只改并发即就地生效", () => {
 
     expect(outcome.result.success).toBe(false);
     expect(outcome.permissionRequested).toHaveLength(0);
-    // 早于 hook 与确认窗：端口一次都没被碰过。
+    // Earlier than hook and confirmation window: the port was never touched.
     expect(retunes).toHaveLength(0);
     expect(amends).toHaveLength(0);
     expect(getScriptCalls).toHaveLength(0);
@@ -1156,7 +1187,8 @@ describe("AmendWorkflow — 只改并发即就地生效", () => {
 
     expect(retunes).toHaveLength(0);
     if ("path" in extra) {
-      // 读不出来的文件是修订自己的失败——证明这次调用确实走了修订。
+      // An unreadable file is the amendment's own failure — proof this call really went down the
+      // amendment path.
       expect(outcome.result.success).toBe(false);
       expect(String(outcome.result.error?.message ?? "")).toContain(
         "workflow_script_file_unreadable:",
@@ -1200,15 +1232,19 @@ describe("AmendWorkflow — 只改并发即就地生效", () => {
     expect((outcome.result.output as CreateWorkflowOutput).status).toBe("backgrounded");
   });
 
-  // 「没有窗」对任何归属都成立：窗是为了把脚本摆到人面前，而这条路一段脚本都不跑。
+  // "No window" holds for any ownership: the window exists to put a script in front of a person,
+  // and this path runs no script at all.
   /**
-   * 拒绝必须与本工具既有的那些（run_not_found / missing_boundaries / script_unchanged）走**同一个
-   * 出口**：`success: false` + 带码的 `error`，没有 output。这条路不带 display 载荷，读侧（工具卡）
-   * 因此只能靠「是不是错误」分辨「调成功了」与「被拒了」——两种结局的入参长得一模一样。
+   * The refusal must go out through the **same exit** as this tool's existing ones
+   * (run_not_found / missing_boundaries / script_unchanged): `success: false` + a coded `error`,
+   * no output. This path carries no display payload, so the read side (the tool card) can only tell
+   * "the call succeeded" from "it was refused" by whether it is an error — the two outcomes' inputs
+   * look identical.
    */
   /**
-   * 回话文本是**唯一**过得了 v4 的事实（这条路没有 display 载荷，协议的 toolOutput 只带 text），
-   * 工具卡拿它当整行画。所以两种上界都逐字钉住：改词等于改 UI。
+   * The reply text is the **only** fact that survives v4 (this path has no display payload; the
+   * protocol's toolOutput carries only text), and the tool card draws the whole line from it. So
+   * both bounds are pinned verbatim: changing a word is changing the UI.
    */
   it.each([
     [
@@ -1247,7 +1283,8 @@ describe("AmendWorkflow — 只改并发即就地生效", () => {
     expect(outcome.result.success).toBe(false);
     expect(outcome.result.output).toBeNull();
     expect(outcome.result.error?.type).toBe(CoreErrorType.ToolExecutionFailed);
-    // 码是稳定判别键（house rule：不拿错误文本做流程判断），取自码表而不是散落的字面量。
+    // The code is the stable discriminator (house rule: never branch on error text), taken from the
+    // code table rather than scattered literals.
     expect(outcome.result.error?.code).toBe(String(AMEND_WORKFLOW_ERROR_CODE.RETUNE_UNCHANGED));
     expect(
       String(outcome.result.error?.message ?? "").startsWith("workflow_retune_unchanged:"),
@@ -1271,14 +1308,16 @@ describe("AmendWorkflow — 只改并发即就地生效", () => {
   });
 });
 
-// 结算竞态（docs/dynamic-workflow/launch.md「When the port says `not_live`」）：同一份入参此刻
-// 描述的是一次修订，能不能做取决于「那次修订本来要不要开窗」。
+// Settlement race (docs/dynamic-workflow/launch.md "When the port says `not_live`"): the same input
+// describes an amendment at this instant, and whether it can proceed depends on whether that
+// amendment would have opened a window in the first place.
 describe("AmendWorkflow — 就地调并发遇上 not_live", () => {
   const STORED = fixture("strand-fanout-two-phases-join.ts");
 
   /**
-   * resolveInput 看到的还是活的（端口随后答 not_live）；handler 再读一次快照时它已是 `settled`
-   * 描述的那个终态。两次 getTask 答不同的事实，正是这条路要覆盖的竞态。
+   * What resolveInput sees is still live (the port answers not_live afterwards); by the time the
+   * handler reads the snapshot again it is the terminal state `settled` describes. The two getTask
+   * calls answering different facts are exactly the race this path covers.
    */
   function racingPort(options: {
     owner: string;
@@ -1302,7 +1341,8 @@ describe("AmendWorkflow — 就地调并发遇上 not_live", () => {
     port.getTask = async (runId: string) => {
       const snapshot = await first(runId);
       reads += 1;
-      // 第一次（resolveInput）仍读作在跑；第二次（handler 的落回路）读到终态。
+      // The first read (resolveInput) still reads as running; the second (the handler's
+      // fall-through) reads the terminal state.
       return reads === 1 ? snapshot : ({ ...snapshot, ...options.settled } as typeof snapshot);
     };
     return base;
@@ -1318,7 +1358,7 @@ describe("AmendWorkflow — 就地调并发遇上 not_live", () => {
     const outcome = await run({ name, port, input: { run_id: "dwfrun-prev", max_concurrency: 2 } });
 
     expect(retunes).toHaveLength(1);
-    // 脚本是**这时候**才读的：retune 路上一次都没读过。
+    // The script is read **at this point**: the retune path never read it once.
     expect(getScriptCalls).toEqual(["dwfrun-prev"]);
     expect(outcome.permissionRequested).toHaveLength(0);
     expect(amends).toHaveLength(1);
@@ -1332,7 +1372,8 @@ describe("AmendWorkflow — 就地调并发遇上 not_live", () => {
     const name = "retune-race-own-null";
     const { port, amends } = racingPort({
       owner: sessionOf(name),
-      // 前驱本来压在 2 上，所以 `null`（回默认）确实是一次改动，不是 `unchanged`。
+      // The predecessor was pinned at 2, so `null` (back to default) really is a change, not
+      // `unchanged`.
       inherited: 2,
       settled: { status: "completed", runStatus: "completed" },
       storedScript: STORED,
@@ -1390,7 +1431,8 @@ describe("AmendWorkflow — 就地调并发遇上 not_live", () => {
     expect(outcome.result.success).toBe(false);
     expect(outcome.permissionRequested).toHaveLength(0);
     expect(amends).toHaveLength(0);
-    // 与既有拒绝同一个出口：错误 + output 为 null（读侧没有 display 可看，只能靠这个分辨结局）。
+    // The same exit as the existing refusals: error + null output (the read side has no display to
+    // look at and can only tell the outcomes apart by this).
     expect(outcome.result.output).toBeNull();
     expect(outcome.result.error?.type).toBe(CoreErrorType.ToolExecutionFailed);
     expect(outcome.result.error?.code).toBe(String(AMEND_WORKFLOW_ERROR_CODE.RUN_SETTLED));
@@ -1422,7 +1464,8 @@ describe("AmendWorkflow — 就地调并发遇上 not_live", () => {
     expect(message).toContain("dwfrun-prev");
   });
 
-  // 用户亲手停下的 run 在修订路上本来要开窗（owner 规则把它排除在外），所以落回路不能替它跳过。
+  // A run the user stopped by hand would have opened a window on the amendment path (the owner rule
+  // excludes it), so the fall-through must not skip that on its behalf.
   it("an own run the user stopped is refused instead of silently amended", async () => {
     const name = "retune-race-own-user-stopped";
     const { port, amends } = racingPort({
@@ -1440,25 +1483,31 @@ describe("AmendWorkflow — 就地调并发遇上 not_live", () => {
   });
 });
 
-// docs/dynamic-workflow/launch.md「What the model is told」：三条 bullet 说的是**同一条**规则（省略即
-// 沿用前驱），脚本在最前——模型若以为脚本必填，就会为了改一个数把几千 token 的脚本再抄一遍。
-// 2026-09-21 起描述只剩路由（docs/dynamic-workflow/launch.md「What the model is told」）：沿用规则的
-// 三态字段、两条来路的先后与就地调并发那一句都搬进了 dynamic-workflows 技能 §16.4，由技能门保证
-// 读过；它们的顺序断言在 bootstrap/tests/dynamic-workflow-skill.test.ts。这里只钉描述必须留下的路由。
+// docs/dynamic-workflow/launch.md "What the model is told": the three bullets say the **same**
+// rule (omit to inherit the predecessor), with the script first — if the model believed the script
+// were required, it would copy a several-thousand-token script again just to change one number.
+// Since 2026-09-21 the description only carries routing (docs/dynamic-workflow/launch.md "What the
+// model is told"): the carry-over rules' three-state fields, the ordering of the two sources, and
+// the in-place-retune sentence moved into the dynamic-workflows skill's §16.4, guaranteed read by
+// the skill gate; their order assertions live in bootstrap/tests/dynamic-workflow-skill.test.ts.
+// This only pins the routing the description must still carry.
 describe("AmendWorkflow — description", () => {
   it("routes: a settings-only revision names neither script field, resume is another tool", () => {
     const description = amendWorkflowToolEntry.metadata.description;
     expect(description).toContain("neither `path` nor `script`");
-    // 停下的 run 不改任何东西就继续：那是 ResumeWorkflowRun 的活，不是一次空修订。
+    // A stopped run continuing unchanged: that is ResumeWorkflowRun's job, not an empty amendment.
     expect(description).toContain("To continue a stopped run unchanged, use ResumeWorkflowRun");
-    // 跑到一半就修，不先停不等结束——门的边界也写在这里：带脚本才需要技能。
+    // Amend mid-run without stopping first or waiting for the end — the gate's boundary is written
+    // here too: only a script needs the skill.
     expect(description).toContain("Do not TaskStop it first");
     expect(description).toContain("a settings-only call is not");
   });
 });
 
-// docs/dynamic-workflow/launch.md「Adjusting the settings in the window」：另一个会话的 run 才开窗，
-// 窗里的调整与 CreateWorkflow 同一条路——回填块、批准后落进入参、结果先说一句。
+// docs/dynamic-workflow/launch.md "Adjusting the settings in the window": only another session's
+// run opens a window, and the adjustments in the window follow the same path as CreateWorkflow —
+// the backfilled block, applied into the input after approval, and one sentence up front in the
+// result.
 describe("AmendWorkflow — settings adjusted in the confirmation window", () => {
   const CATALOG: ModelCatalogPort = {
     listModels: () => [

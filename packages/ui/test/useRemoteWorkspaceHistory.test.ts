@@ -332,7 +332,8 @@ describe("reconnectRemoteWorkspaceHistoryEntry", () => {
   });
 
   it("canonical path 与历史记录一致时不再重复绑定 main context", async () => {
-    // connect 已携带历史记录的 path/identity，descriptor 与 tab 一致，不应再触发一次 attachment 换代。
+    // connect already carries the path/identity from history; the descriptor matches the tab, so no
+    // another attachment generation should be triggered.
     const bindRemoteWorkspaceSessionContext = vi.fn(async () => undefined);
     const sessionEntry = createRemoteWorkspaceSessionEntry();
 
@@ -358,8 +359,9 @@ describe("reconnectRemoteWorkspaceHistoryEntry", () => {
   });
 
   it("canonical path 与历史记录不一致时，先重新绑定 main context 再回填 tab", async () => {
-    // Bugfix 回归：手机桥接用 tab 上的 canonical path/identity 比对 main descriptor，
-    // 重连时 descriptor 只有历史记录里的旧路径，realpath 归一化后不同就必须 bind，否则桥接被拒。
+    // Bugfix regression: the phone bridge compares the tab's canonical path/identity against the main
+    // descriptor. On reconnect the descriptor only has the old path from history; if it differs after
+    // realpath normalization we must bind, otherwise the bridge is rejected.
     const target = { kind: "docker" as const, container: "demo" };
     const sessionEntry = createRemoteWorkspaceSessionEntry({
       workspacePath: "/dev",
@@ -450,8 +452,9 @@ describe("reconnectRemoteWorkspaceHistoryEntry", () => {
   });
 
   it("用户在 bind main context 等待期间移除 tab 时，不回填 tab 并回收 session", async () => {
-    // 回归锁定：保留校验与 upsertWorkspaceTab 之间不能再有 await，
-    // 否则校验通过后用户在 bind 等待 ready ACK 期间移除 workspace，仍会被重新加回并落库 connected。
+    // Regression lock: there must be no await between the retention validation and upsertWorkspaceTab.
+    // Otherwise, after validation passes, a user removing the workspace while bind waits for the ready
+    // ACK would still have it re-added and persisted as connected.
     const target = { kind: "docker" as const, container: "demo" };
     const sessionEntry = createRemoteWorkspaceSessionEntry({
       workspacePath: "/dev",
@@ -1075,9 +1078,11 @@ describe("selectRemoteWorkspaceProjectFromDialog", () => {
   });
 
   it("提交 connected 历史与 addTab 之前，先把 canonical context 绑定到 main 的 logical session", async () => {
-    // Bugfix 回归（3.12.0 手机远控连不上 WSL 项目）：新建连接不带 context，main descriptor 停留在 "/"，
-    // 且 UI 用未解析的 {kind:"wsl"} 算出的 identity 与 Host 用解析后 target 算出的不同。
-    // 选目录后必须把 tab 将要使用的 path/identity 绑定回 main，手机桥接的三元校验才能通过。
+    // Bugfix regression (3.12.0 phone remote control unable to connect to WSL projects): a new connection
+    // carries no context, so the main descriptor stays at "/", and the identity the UI computes from the
+    // unresolved {kind:"wsl"} differs from what the Host computes from the resolved target. After picking
+    // a directory, the path/identity the tab will use must be bound back to main for the phone bridge's
+    // three-way validation to pass.
     const connectionTarget = { kind: "wsl" as const };
     const workspacePath = "/home/dev";
     const workspaceIdentity = buildRemoteWorkspaceIdentity(workspacePath, connectionTarget);
@@ -1094,7 +1099,7 @@ describe("selectRemoteWorkspaceProjectFromDialog", () => {
       connectionTarget,
       getRemoteWorkspaceSession: () => ({
         sessionId: "session-1",
-        // main 回传给 renderer store 的是解析后的 WSL target
+        // What main passes back to the renderer store is the resolved WSL target
         target: { kind: "wsl", distro: "Ubuntu", user: "dev" },
         services: {} as never,
       }),
@@ -1134,7 +1139,8 @@ describe("selectRemoteWorkspaceProjectFromDialog", () => {
   });
 
   it("main 绑定 canonical context 失败时回收 session，不落库也不建 tab", async () => {
-    // descriptor 与 tab 不一致的 session 正是手机桥接被拒的根源，绑定失败必须 fail-closed。
+    // A session whose descriptor mismatches the tab is exactly what gets the phone bridge rejected;
+    // a binding failure must fail closed.
     const target = { kind: "docker" as const, container: "demo" };
     const workspacePath = "/workspace/demo";
     const bindRemoteWorkspaceSessionContext = vi.fn(async () => {
@@ -1307,7 +1313,8 @@ describe("collectSshReconnectGroup", () => {
     expect(
       collectSshReconnectGroup({
         selected: first,
-        // 回归：持久化顺序可能和用户实际点击的 workspace 不同，initiator 仍必须排在首位。
+        // Regression: the persistence order may differ from the workspace the user actually clicked;
+        // the initiator must still come first.
         sessions: [second, first, differentAuth],
         tabs: [
           createWorkspaceTab({
@@ -1561,7 +1568,8 @@ describe("openRemoteWorkspaceFromHistoryEntry", () => {
       ],
     });
 
-    // Bugfix: 这个场景验证“重连只由用户入口触发”，避免把源码实现细节固化为测试契约。
+    // Bugfix: this scenario verifies that "reconnection is only triggered by a user entry point", to
+    // avoid baking source implementation details into the test contract.
     expect(context.reconnectImpl).not.toHaveBeenCalled();
     expect(context.resetLogsForWorkspaceKey).not.toHaveBeenCalled();
 

@@ -1,6 +1,6 @@
-// dwf run 详情页的纯逻辑：Cancel 可用性、结果/失败面板判定、事件日志行摘要。
-// 全部无 jsdom、无组件——这些是详情页里唯一有"规则"的部分，穷举它们不需要渲染一张图。
-// 见 docs/dynamic-workflow/presentation.md「The run pane」「Cancel 语义」「事件日志」。
+// Pure logic of the dwf run detail page: Cancel availability, result/failure panel decisions, event-log line summaries.
+// All without jsdom or components — these are the only "rule-bearing" parts of the detail page, and enumerating them
+// needs no rendered picture. See docs/dynamic-workflow/presentation.md "The run pane", "Cancel semantics", "Event log".
 import { describe, expect, it } from "vitest";
 import type {
   WorkflowRunNode,
@@ -15,11 +15,11 @@ import {
   workflowRunEventLines,
   workflowRunResultView,
 } from "@/app-shell/workflowRunPanel.js";
-// 升级问答的规则住在同族的 workflowRunQuestions.ts（拆出去是为了守住 max-lines 门），
-// 但它与上面那几组同属"详情页的纯规则"，所以钉在同一份用例里。
+// The escalation Q&A rules live in the sibling workflowRunQuestions.ts (split out to respect the max-lines gate),
+// but they belong to the same family of "pure detail-page rules" as the groups above, so they are pinned in the same suite.
 import { workflowRunQuestionWaitedLabel } from "@/app-shell/workflowRunQuestions.js";
 
-/** 测试用 formatMessage：原样回 id，带插值时拼成 `id:v1/v2`，便于断言取到了哪个 key。 */
+/** Test formatMessage: returns the id verbatim; with interpolation it joins as `id:v1/v2`, making it easy to assert which key was picked. */
 const format = (descriptor: { id: string }, values?: Record<string, string>) =>
   values ? `${descriptor.id}:${Object.values(values).join("/")}` : descriptor.id;
 
@@ -55,8 +55,9 @@ describe("workflowRunResultView", () => {
   });
 
   it("completed 且无 resultPreview 时只报完成、绝不编造结果", () => {
-    // resultPreview 本阶段恒缺席（脚本产物只在 RunSettlement.artifact 里，既不在 run-settled
-    // 事件上也不在 journal 里）。产物的去处是会话里那条后台结果轮，详情页只能指路。
+    // resultPreview is always absent at this stage (the script's artifact lives only in RunSettlement.artifact —
+    // neither on the run-settled event nor in the journal). The artifact's destination is the background result turn
+    // in the conversation; the detail page can only point there.
     const view = workflowRunResultView(run({ status: "completed" }));
     expect(view).toEqual({ kind: "completed" });
   });
@@ -86,8 +87,8 @@ describe("workflowRunResultView", () => {
   });
 });
 
-// 待答问题的等待时长（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md）。`now` 由调用方注入而不是读时钟：
-// 等待中的 run 恰恰不发事件，组件因此自己按固定间隔喂新的时刻，而规则留在这里可穷举。
+// Wait duration for pending questions (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md). `now` is injected by the caller instead of reading the clock:
+// a waiting run precisely sends no events, so the component itself feeds fresh instants at a fixed interval, while the rules stay here to be enumerated.
 describe("workflowRunQuestionWaitedLabel", () => {
   const NOW = 1_756_000_000_000;
   const MINUTE = 60_000;
@@ -102,18 +103,18 @@ describe("workflowRunQuestionWaitedLabel", () => {
     expect(at(60 * MINUTE)).toBe("sidePane.time.hoursAgo:1");
     expect(at(23 * 60 * MINUTE)).toBe("sidePane.time.hoursAgo:23");
     expect(at(24 * 60 * MINUTE)).toBe("sidePane.time.daysAgo:1");
-    // 阶梯止于「天」：spec 否决了超时，一个问题按设计可以无限期等下去。
+    // The ladder stops at "days": the spec rejected a timeout, and by design a question may wait indefinitely.
     expect(at(9 * 24 * 60 * MINUTE)).toBe("sidePane.time.daysAgo:9");
   });
 
   it("askedAt 缺席时整段不渲染，而不是编一个「刚刚」出来", () => {
-    // 老 journal 重放出的事件没有这个字段。显示一个假的时刻比不显示更坏。
+    // Events replayed from an old journal lack this field. Showing a fake instant is worse than showing nothing.
     expect(workflowRunQuestionWaitedLabel(undefined, NOW, format)).toBeUndefined();
     expect(workflowRunQuestionWaitedLabel(Number.NaN, NOW, format)).toBeUndefined();
   });
 
   it("时钟偏斜把 askedAt 推到未来时钳到「刚刚」，绝不给出负数时长", () => {
-    // 提问时刻由 CLI 进程铸造；远端会话下它与渲染进程根本不是同一台机器。
+    // The asked instant is minted by the CLI process; in a remote session it is not even on the same machine as the renderer.
     expect(workflowRunQuestionWaitedLabel(NOW + 5 * MINUTE, NOW, format)).toBe(
       "sidePane.time.justNow",
     );
@@ -164,7 +165,11 @@ describe("workflowRunEventLines", () => {
         {
           sequence: 10,
           type: "import-cache-closed",
-          payload: { instance: { siteId: "ask#2", ordinal: 1 }, cause: "mutating-tool", actorName: "fixer" },
+          payload: {
+            instance: { siteId: "ask#2", ordinal: 1 },
+            cause: "mutating-tool",
+            actorName: "fixer",
+          },
         },
         { sequence: 11, type: "run-settled", payload: { status: "completed" } },
       ],
@@ -184,14 +189,14 @@ describe("workflowRunEventLines", () => {
       "chat.toolCall.workflow.run.event.importCacheClosed",
       "chat.toolCall.workflow.run.event.runSettled:chat.toolCall.workflow.run.status.completed",
     ]);
-    // 身份走 detail，label 只承担本地化的那半句。
+    // Identity goes in detail; label carries only the localized half of the sentence.
     expect(lines[1]!.detail).toBe("planner · actor#1@1");
-    // 关门事件点名谁写的：子代理名 + 实例；world.run 关的门只有实例。
+    // Gate-closing events name who closed it: subagent name + instance; a gate closed by world.run carries only the instance.
     expect(lines[9]!.detail).toBe("fixer · ask#2@1");
     expect(lines[2]!.detail).toBe("ask#1@1 · ask");
     expect(lines[3]!.detail).toBe("ask#1@1");
     expect(lines[8]!.detail).toBe("scanning workspace");
-    // 没有任何一行泄漏原始 JSON。
+    // No line leaks raw JSON.
     for (const line of lines) expect(line.detail ?? "").not.toContain("{");
   });
 
@@ -225,8 +230,9 @@ describe("workflowRunEventLines", () => {
   });
 
   /**
-   * 升级问答（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md）。两条都不能落进 unknown 兜底：它们是这个
-   * 特性在审计面上仅有的两条痕迹，显示成「未知事件 escalation-raised」等于没实现。
+   * Escalation Q&A (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md). Neither may fall into the
+   * unknown fallback: they are this feature's only two traces on the audit surface, and showing "unknown event
+   * escalation-raised" equals not having implemented it.
    */
   it("升级两行自成一类：qid 打头（唯一的关联键），actor 名缺席时退回站点实例", () => {
     const [named, anonymous, answered] = workflowRunEventLines(
@@ -261,13 +267,13 @@ describe("workflowRunEventLines", () => {
 
     expect(named!.label).toBe("chat.toolCall.workflow.run.event.escalationRaised");
     expect(named!.detail).toBe("dwfq-dwfrun1-1 · poet · 评分上限 95，门槛 96，这个门是不是坏了？");
-    // 升级不是失败：actor 没出错，它在等一个答案。
+    // Escalation is not failure: the actor did nothing wrong; it is waiting for an answer.
     expect(named!.tone).toBe("default");
-    // 匿名 actor 退回 `site@ordinal`——这一行宁可说 actor#2@3，也不能不说是谁。
+    // An anonymous actor falls back to `site@ordinal` — this line would rather say actor#2@3 than not say who it is.
     expect(anonymous!.detail).toBe("dwfq-dwfrun1-2 · actor#2@3 · 用哪版风格指南？");
 
     expect(answered!.label).toBe("chat.toolCall.workflow.run.event.escalationResolved");
-    // resolved 只有 qid 与答案：它与提问那一行通常隔着几十行，qid 是唯一能把两者接上的东西。
+    // resolved carries only qid and the answer: it usually sits dozens of lines away from the question line; qid is the only thing that can link them.
     expect(answered!.detail).toBe("dwfq-dwfrun1-1 · 门确实坏了，按 95 通过。");
     expect(answered!.tone).toBe("default");
   });
@@ -322,8 +328,9 @@ describe("workflowRunEventLines", () => {
   });
 
   /**
-   * report 有自己的一行，不能落进 unknown 兜底：spec 的 Invariants 明写 report 既进事件日志、
-   * 也进 Results 区（而 `log` 只进事件日志），把它显示成「未知事件 report」是自相矛盾的。
+   * report gets its own line and must not fall into the unknown fallback: the spec's Invariants state explicitly that
+   * report goes both to the event log and to the Results pane (while `log` goes only to the event log); displaying it
+   * as "unknown event report" would be self-contradictory.
    */
   it("report 自成一行：带实例，条目只给短摘要（完整预览归 Results 区）", () => {
     const [text, object, empty] = workflowRunEventLines(
@@ -346,9 +353,9 @@ describe("workflowRunEventLines", () => {
     expect(text!.label).toBe("chat.toolCall.workflow.run.event.report");
     expect(text!.detail).toBe("report#1@1 · 3 stale imports");
     expect(text!.tone).toBe("default");
-    // object 压成单行 JSON（事件日志一行一条，多行 JSON 会把它撑成第二个产物视图）。
+    // Objects collapse to single-line JSON (one event per log line; multi-line JSON would stretch it into a second artifact view).
     expect(object!.detail).toBe('report#2@4 · {"file":"a.ts"}');
-    // item 缺席（有界化削掉 / 脚本报了 undefined）时只剩身份，绝不空白。
+    // A missing item (trimmed by bounding / the script reported undefined) leaves only identity, never a blank.
     expect(empty!.detail).toBe("report#3@1");
   });
 
@@ -369,8 +376,8 @@ describe("workflowRunEventLines", () => {
   });
 
   it("未知种类退化成 type + 截断 JSON，既不崩也不假装认识它", () => {
-    // compaction 是引擎为长上下文压缩预留的种类（v1 从不发出）。将来它一出现，
-    // 事件日志必须仍然显示一条有信息量的行，而不是空白或异常。
+    // compaction is the kind the engine reserved for long-context compression (v1 never emits it). Whenever it
+    // appears in the future, the event log must still show an informative line, not a blank or an exception.
     const [line] = workflowRunEventLines(
       [{ sequence: 1, type: "compaction", payload: { actor: { siteId: "actor#1", ordinal: 1 } } }],
       format,
@@ -422,9 +429,10 @@ function actor(overrides: Partial<WorkflowRunActor> = {}): WorkflowRunActor {
 }
 
 describe("workflowActorStartState", () => {
-  // actor 未启动门（docs/dynamic-workflow/presentation.md「Subagent transcripts」，身份改按槽位：
-  // docs/dynamic-workflow/presentation.md「The pill」）。三值里最要紧的是 unknown 与
-  // notStarted 的分界：拦错一格就把一份仍然可读的 transcript 关死，漏拦一格就回到那个死错误面板。
+  // The actor-not-started gate (docs/dynamic-workflow/presentation.md "Subagent transcripts", identity switched to
+  // slots: docs/dynamic-workflow/presentation.md "The pill"). Of the three values, the most important is the boundary
+  // between unknown and notStarted: blocking one bucket wrong locks away a still-readable transcript; missing one
+  // bucket wrong returns to that dead error panel.
   const node = (overrides: Partial<WorkflowRunNode> = {}): WorkflowRunNode => ({
     siteId: "ask#1",
     ordinal: 1,
@@ -449,8 +457,8 @@ describe("workflowActorStartState", () => {
   });
 
   it("只有 queued 节点 → notStarted：队列里的节点不构成会话已落库的证据", () => {
-    // 持久化顺序的保证挂在「派发前」（workflow-driver 先 await 会话落库再首次派发），
-    // 所以 queued 不能开门——那正是实测里点早了的那 5 秒。
+    // The persistence-order guarantee hangs on "before dispatch" (the workflow-driver awaits session persistence
+    // before the first dispatch), so queued cannot open the gate — exactly the 5 seconds of clicking-too-early observed live.
     const runs = [
       run({ actors: [actor({ sessionId: "s-a" })], nodes: [node(), node({ ordinal: 2 })] }),
     ];
@@ -467,9 +475,9 @@ describe("workflowActorStartState", () => {
       ];
       expect(workflowActorStartState(runs, slot())).toEqual({ state: "started", sessionId: "s-a" });
     }
-    // 缓存命中直接发 node-settled（不经 queued，也不经 ensureSession）：门照样打开，订阅的是
-    // 投影里 actor 的 sessionId——reducer 让它指向持有转录的那条会话
-    // （workflowCachedSettleAttribution.test.ts 走真实 reducer 钉住修订 run 的那一种）。
+    // A cached hit sends node-settled directly (through neither queued nor ensureSession): the gate still opens and
+    // subscribes to the actor's sessionId in the projection — the reducer points it at the session holding the
+    // transcript (workflowCachedSettleAttribution.test.ts pins the revised-run kind against the real reducer).
     const cached = [
       run({
         actors: [actor({ sessionId: "s-a" })],
@@ -480,14 +488,15 @@ describe("workflowActorStartState", () => {
   });
 
   it("actor 不在投影里、tab 带会话 id → unknown：run 被淘汰、冷恢复、投影整体缺席", () => {
-    // tab 刻意没有 GC，比 8-run 淘汰活得久。这一格绝不能是 notStarted：那会把已完结 run
-    // 的唯一持久视图关死，而直接订阅本来是能读到的。订阅目标就是 tab 带的那个 id。
+    // Tabs deliberately have no GC and outlive the 8-run eviction. This bucket must never be notStarted: that would
+    // lock away a finished run's only persistent view, when subscribing directly could have read it. The subscription
+    // target is exactly the id the tab carries.
     const expected = { state: "unknown", sessionId: "s-a" };
     const runs = [run({ actors: [actor({ ordinal: 2, sessionId: "s-other" })] })];
     expect(workflowActorStartState(runs, slot({ actorSessionId: "s-a" }))).toEqual(expected);
     expect(workflowActorStartState([], slot({ actorSessionId: "s-a" }))).toEqual(expected);
     expect(workflowActorStartState(undefined, slot({ actorSessionId: "s-a" }))).toEqual(expected);
-    // 另一条 run 里的同名同序号不算命中：身份含 runId。
+    // The same name and ordinal in another run does not count as a hit: identity includes runId.
     const other = [
       run({
         runId: "dwfrun-2",
@@ -511,7 +520,7 @@ describe("workflowActorStartState", () => {
       state: "started",
       sessionId: "s-live",
     });
-    // sessionId 尚未落到投影上的 actor（schema-optional）：tab 带的兜底。
+    // An actor whose sessionId has not landed in the projection yet (schema-optional): the tab's id is the fallback.
     const bare = [
       run({ actors: [actor({ sessionId: undefined })], nodes: [node({ phase: "dispatched" })] }),
     ];
@@ -539,7 +548,7 @@ describe("workflowActorStartState", () => {
       state: "started",
       sessionId: "s-a",
     });
-    // 同一个 siteId@ordinal，另一条 run：节点只在第一条 run 里派发过。
+    // The same siteId@ordinal in the other run: the node was only ever dispatched in the first run.
     expect(workflowActorStartState(runs, slot({ runId: "dwfrun-2" }))).toEqual({
       state: "notStarted",
       sessionId: "s-b",
@@ -551,9 +560,9 @@ describe("workflowActorStartState", () => {
       run({
         actors: [actor({ sessionId: "s-a" }), actor({ ordinal: 2, sessionId: "s-b" })],
         nodes: [
-          // 同站点、另一个序号：实例是身份的一部分，序号错了就是另一个人。
+          // Same site, different ordinal: the instance is part of identity; a wrong ordinal means a different actor.
           node({ phase: "dispatched", actorOrdinal: 2 }),
-          // world-read 没有 actor 归属，不给任何人开门。
+          // world-read has no actor attribution; it opens the gate for nobody.
           node({
             siteId: "world-read#1",
             phase: "settled",
@@ -568,9 +577,10 @@ describe("workflowActorStartState", () => {
   });
 });
 
-// Resume 可用性（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md；docs/dynamic-workflow/presentation.md
-// 2026-09-09「冷回放」）：一个信源——投影 run 的 `resumable` 状态位，由 CLI 按 resume 门的同一个
-// 谓词算好并经 run-settled 载荷落进状态；UI 绝不自行按 status + failureCode 推导。
+// Resume availability (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md; docs/dynamic-workflow/presentation.md
+// 2026-09-09 "cold replay"): a single source of truth — the projection run's `resumable` status bit, computed by the
+// CLI with the same predicate as the resume gate and landed into state via the run-settled payload; the UI never
+// derives it itself from status + failureCode.
 describe("isWorkflowRunResumable", () => {
   it("状态位在场 → 可恢复，无论 stopped 的原因是什么", () => {
     expect(isWorkflowRunResumable(run({ status: "stopped", resumable: true }))).toBe(true);

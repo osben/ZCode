@@ -604,6 +604,14 @@ export const TID_V4_RETRY = "v4-retry";
 export const TID_V4_FEEDBACK_LIKE = "v4-feedback-like";
 /** Dislike button on a v4 assistant row (dynamic suffix is rowId). */
 export const TID_V4_FEEDBACK_DISLIKE = "v4-feedback-dislike";
+/** Pin toggle button on a v4 assistant/user row (dynamic suffix is rowId). */
+export const TID_V4_PIN = "v4-pin";
+/** Pinned-message chips bar above the v4 timeline. */
+export const TID_V4_PINNED_BAR = "v4-pinned-bar";
+/** One chip in the pinned bar (dynamic suffix is rowId). */
+export const TID_V4_PINNED_CHIP = "v4-pinned-chip";
+/** Unpin button on a pinned bar chip (dynamic suffix is rowId). */
+export const TID_V4_PINNED_CHIP_UNPIN = "v4-pinned-chip-unpin";
 /** Details button for a v4 turn Hook (dynamic suffix is the product turnId). */
 export const TID_V4_HOOK_DETAILS_TRIGGER = "v4-hook-details-trigger";
 /** Details popover for a v4 turn Hook (dynamic suffix is the product turnId). */
@@ -782,3 +790,10 @@ export const TID_START_PLAN_RECOMMENDATION_DIALOG = "start-plan-recommendation-d
 
 /** Diagnostic-log consent toggle for user feedback. */
 export const TID_FEEDBACK_LOGS_OPT_IN = "feedback-logs-opt-in";
+
+/** Output styles settings section root. */
+export const TID_SETTINGS_OUTPUT_STYLES_SECTION = "settings-output-styles-section";
+/** One style row in the output styles list. */
+export const TID_SETTINGS_OUTPUT_STYLES_ROW = "settings-output-styles-row";
+/** Output styles editor save button. */
+export const TID_SETTINGS_OUTPUT_STYLES_SAVE = "settings-output-styles-save";

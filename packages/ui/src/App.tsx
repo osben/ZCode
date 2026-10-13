@@ -853,9 +853,17 @@ export function App({
    * Command Center “New task in worktree” open contract: reuse the shared
    * workspace-open + startDraft path. Worktree results are explicit project-scope
    * creations, so never inherit the current workspace's grouped-draft placement.
+   * Web remote control has no local Host: ask the desktop to open the workspace and
+   * attach through the existing workspace bridge instead of adding a client-local tab.
    */
   const handleCreateTaskInWorkspace = useCallback(
-    (targetWorkspacePath: string, targetWorkspaceIdentity?: string) => {
+    (targetWorkspacePath: string, targetWorkspaceIdentity?: string): void | Promise<void> => {
+      if (webRemoteControlWorkspaceSwitcher?.openWorkspace) {
+        return webRemoteControlWorkspaceSwitcher.openWorkspace({
+          workspacePath: targetWorkspacePath,
+          ...(targetWorkspaceIdentity ? { workspaceIdentity: targetWorkspaceIdentity } : {}),
+        });
+      }
       handleStartDraftInWorkspace(
         targetWorkspacePath,
         targetWorkspaceIdentity,
@@ -863,7 +871,7 @@ export function App({
         "project",
       );
     },
-    [handleStartDraftInWorkspace],
+    [handleStartDraftInWorkspace, webRemoteControlWorkspaceSwitcher],
   );
 
   useWorkspaceShellLifecycle({
@@ -1115,7 +1123,10 @@ export function App({
         supportsTerminal: !isOfficeMode,
         supportsReview: !isOfficeMode,
         allowOpenWorkspace,
-        supportsWorktreeTasks: isDesktop === true,
+        // Worktree tasks need the desktop command-center open contract or the Web remote-control
+        // desktop-open + bridge switch (switcher.openWorkspace); regular Web has neither.
+        supportsWorktreeTasks:
+          isDesktop === true || Boolean(webRemoteControlWorkspaceSwitcher?.openWorkspace),
         canOpenCommunity: canOpenCommunityFromQuickPick,
         isSidebarVisible,
         supportsEmbeddedBrowser,
@@ -1195,6 +1206,7 @@ export function App({
       toggleSidebarShortcutLabel,
       toggleTerminalShortcutLabel,
       themeTarget,
+      webRemoteControlWorkspaceSwitcher,
     ],
   );
   const taskFindDialogProps = useMemo<TaskFindDialogProps>(

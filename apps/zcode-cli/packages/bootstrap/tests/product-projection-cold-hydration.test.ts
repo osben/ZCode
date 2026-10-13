@@ -468,7 +468,8 @@ describe("ProductProjection cold hydration subagent materialization", () => {
 });
 
 describe("ProductProjection cold hydration ask preview", () => {
-  // 冷恢复的弹窗必须仍然带图：display 要经 applyHydrationEvent 存活，且与 live 路径一致。
+  // The cold-recovery dialog must still carry the graph: the display has to survive applyHydrationEvent and match the
+  // live path.
   const display = {
     kind: "create_workflow",
     ok: true,
@@ -486,7 +487,8 @@ describe("ProductProjection cold hydration ask preview", () => {
         },
       ],
       lanes: [{ id: "actor#1", name: "a" }],
-      // 第二层是子代理导向：每阶段一张参与者卡 + 交接边（docs/dynamic-workflow/presentation.md）。
+      // The second layer is subagent-oriented: one participant card per phase + handoff edges
+      // (docs/dynamic-workflow/presentation.md).
       participants: [{ id: "unphased:actor#1", phase: "unphased", lane: "actor#1", steps: ["ask#1"] }],
       handoffs: [],
       sink: ["ask#1"],
@@ -539,8 +541,8 @@ describe("ProductProjection cold hydration ask preview", () => {
 
     const payload = cold.getSnapshot().pendingInteractions[0]?.payload;
     expect(payload).toMatchObject({ kind: "permission", display });
-    // 第 4 轮：CreateWorkflow 的 v4 选项含 Refine；第 7 轮含会话免确认；冷恢复走同一
-    // 合成函数，天然一致。
+    // Round 4: CreateWorkflow's v4 options include Refine; round 7 includes session-level no-confirm; cold recovery
+    // goes through the same synthesis function and is consistent by construction.
     expect(payload?.kind === "permission" && payload.options).toHaveLength(4);
     expect(
       payload?.kind === "permission" && payload.options.map((option) => option.optionId),
@@ -549,13 +551,14 @@ describe("ProductProjection cold hydration ask preview", () => {
   });
 });
 
-// ── 可复用工作流的两道窗在冷恢复上的等价（docs/dynamic-workflow/launch.md）──
-// 刷新一次页面就把 saved run 的脚本弄丢，等于让用户在一个空窗上批准一次执行；
-// 冷恢复与 live 走同一个合成函数，所以这里钉的是"没人给冷路径开第二条分支"。
+// ── Equivalence of the reusable-workflow dialogs on cold recovery (docs/dynamic-workflow/launch.md) ──
+// Losing a saved run's script with a single page refresh amounts to making the user approve an execution on an empty
+// dialog; cold recovery and live go through the same synthesis function, so what is pinned here is "nobody opens a
+// second branch for the cold path".
 describe("ProductProjection cold hydration 可复用工作流的确认窗", () => {
   const script = 'const r = agent("检查员");\nreturn await r.ask<string>("检查一遍");';
 
-  /** executor 的 resolveInput 产出的归一化入参：脚本已解析，来龙去脉在 saved 上。 */
+  /** Normalized arguments produced by the executor's resolveInput: the script is resolved and the provenance lives on `saved`. */
   const savedRunInput = {
     name: "release-check",
     script,
@@ -629,7 +632,8 @@ describe("ProductProjection cold hydration 可复用工作流的确认窗", () =
 
     const payload = cold.getSnapshot().pendingInteractions[0]?.payload;
     expect(payload?.kind).toBe("permission");
-    // 脚本与实参袋都还在：冷恢复后的窗与热态是同一个窗。
+    // Both the script and the argument bag are still there: after cold recovery the dialog is the same dialog as in
+    // the warm state.
     expect(payload?.kind === "permission" && payload.detail).toEqual(savedRunInput);
     expect(
       payload?.kind === "permission" && payload.options.map((option) => option.optionId),
@@ -652,10 +656,14 @@ describe("ProductProjection cold hydration 可复用工作流的确认窗", () =
   });
 });
 
-// ── dwf 运行态的冷恢复（docs/dynamic-workflow/presentation.md 的 Tests：漏一处即静默丢运行态）──
-// 两个必须同时成立的条件，缺任一 run 就会在刷新/重连后消失，而 run 本身仍在飞：
-//   1. cold 批量路径与 live 路径经**同一个** reducer（applyEventInternal），产出同一份状态；
-//   2. cold merge 把这类事件识别为 memory-only 权威（它不在 durable transcript 里）。
+// ── Cold recovery of dwf run state (Tests section of docs/dynamic-workflow/presentation.md: miss one spot and the run
+// state silently disappears) ──
+// Two conditions must hold simultaneously; missing either makes a run vanish after refresh/reconnect while the run
+// itself is still in flight:
+//   1. the cold batch path and the live path go through the **same** reducer (applyEventInternal), producing the same
+//      state;
+//   2. the cold merge recognizes this class of events as memory-only authority (they are not in the durable
+//      transcript).
 describe("ProductProjection cold hydration workflowRuns", () => {
   function runProgress(sequenceNumber: number, eventType: string, payload: unknown): SessionEvent {
     return sessionEvent(sequenceNumber, SessionEventType.DynamicWorkflowRunProgress, {
@@ -696,7 +704,7 @@ describe("ProductProjection cold hydration workflowRuns", () => {
         {
           runId: "dwfrun-cold",
           status: "running",
-          // dispatched = 会话就绪、请求尚未准入 → actor 仍是 waiting（决策 39）。
+          // dispatched = session ready, request not yet admitted → the actor is still waiting (decision 39).
           actors: [{ siteId: "actor#1", ordinal: 1, name: "planner", status: "waiting" }],
           nodes: [{ siteId: "ask#1", ordinal: 1, kind: "ask", phase: "dispatched" }],
           lastEventSequence: 3,
@@ -713,8 +721,9 @@ describe("ProductProjection cold hydration workflowRuns", () => {
       sessionId: "cold-hydration-session",
     });
 
-    // 事件被保留，且**不进 unclassified 诊断**——落到那个分支意味着分类表漏了它，
-    // 虽然事件仍被保留，但每次冷恢复都会刷一条"未知老事实"诊断。
+    // The events are kept, and they must **not** land in the unclassified diagnostics — falling into that branch means
+    // the classification table missed them; the events would still be kept, but every cold recovery would emit an
+    // "unknown legacy fact" diagnostic.
     expect(
       merged.events.filter((event) => event.type === SessionEventType.DynamicWorkflowRunProgress),
     ).toHaveLength(events.length);

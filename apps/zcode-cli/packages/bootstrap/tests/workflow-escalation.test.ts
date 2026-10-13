@@ -1,14 +1,17 @@
 /**
- * 升级问答桥接的 driver 层用例（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md 的 Slice 1）。
+ * Driver-layer cases for the escalation Q&A bridge (Slice 1 of apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md).
  *
- * 被测对象是 driver 与停驻注册表之间的那条线：铸 qid → 停驻 deferred → 双轨发事件 →
- * 经注册表结算 → 工具结果 = 答案。核心工具面（`escalate` / `ResolveWorkflowQuestion`）与
- * 通知生产不在本切片里，所以这里**直接持 escalatePort 调用**——那正是将来 core 的工具
- * handler 会做的事，端口的形状因此被逐字钉住。
+ * What's under test is the line between the driver and the parking registry: mint qid → park the deferred →
+ * emit events on both tracks →
+ * settle via the registry → tool result = answer. The core tool surface (`escalate` /
+ * `ResolveWorkflowQuestion`) and
+ * notification production are not in this slice, so here we **call escalatePort directly** — exactly what the
+ * future core tool handler will do, and the port's shape is thereby pinned verbatim.
  *
- * 装配刻意最小：一个 executeTurn 永不 resolve 的 stub runtime（模拟一次真实的、被升级问答
- * 阻塞住的 turn）+ 内存 journal。不走 runWorkflowScript——引擎核心对升级零感知，把它拉进来
- * 只会让「谁发的这个事件」变得难以断言。
+ * The assembly is deliberately minimal: a stub runtime whose executeTurn never resolves (simulating a real
+ * turn blocked by the escalation question)
+ * + an in-memory journal. No runWorkflowScript — the engine core has zero awareness of escalation, and
+ * pulling it in would only make "who emitted this event" hard to assert.
  */
 
 import { describe, expect, it } from "vitest";
@@ -52,7 +55,7 @@ const NOOP_SINK: WorkflowReportSink = {
 
 const CAPS = { maxConcurrency: 16 };
 
-/** 一次 escalate 调用的请求袋（trace / toolCallId 对本层无语义，只为满足端口契约）。 */
+/** Request bag for one escalate call (trace / toolCallId have no semantics at this layer; they only satisfy the port contract). */
 function escalateRequest(question: string, context?: string): EscalateQuestionRequest {
   const sessionId = createSessionId("escalation-test");
   return {
@@ -69,7 +72,7 @@ interface EscalationHarness {
   journal: InMemoryJournalStore;
   registry: WorkflowEscalationRegistry;
   runId: string;
-  /** 建会话 + 派一个 ask，回该会话的升级端口、会话与 ask 实例（升级要求有在飞 ask）。 */
+  /** Create a session + dispatch one ask; returns that session's escalation port, session, and ask instance (escalation requires an in-flight ask). */
   openAsk(
     ordinal?: number,
     persona?: PersonaSpec,
@@ -96,7 +99,7 @@ function makeHarness(
     runId,
     runtimeFactory: ({ escalatePort }) => {
       ports.push(escalatePort);
-      // turn 永不结束：真实场景里一次停驻的升级正是这样把 turn 挂住的。
+      // The turn never ends: that's exactly how a parked escalation holds a turn in the real scenario.
       return { executeTurn: () => new Promise(() => {}) } as never;
     },
   })(NOOP_SINK);
@@ -109,7 +112,8 @@ function makeHarness(
     runId,
     async openAsk(ordinal = 1, persona: PersonaSpec = {}) {
       const actor: ActorRef = { siteId: "actor#1", ordinal };
-      // persona 原样递进去，照引擎的做法（scheduler 把已规范化的 actor.persona 交给 driver）。
+      // The persona is passed through verbatim, following the engine's practice (the scheduler hands the
+      // already-normalized actor.persona to the driver).
       const session = await driver.createActorSession(actor, persona);
       const instance: InstanceRef = { siteId: "ask#1", ordinal };
       driver.startAsk(session, instance, { instructions: "go", typed: false });
@@ -126,7 +130,8 @@ describe("workflow escalation — 停驻与结算", () => {
     const { port } = await harness.openAsk();
 
     const pending = port.escalate(escalateRequest("评分上限 95 而门槛 96，这个门是不是坏了？"));
-    // 停驻是同步发生的：escalate 一返回 promise，注册表里就该看得见这个问题。
+    // Parking happens synchronously: as soon as escalate returns its promise, the question must be visible in
+    // the registry.
     const parked = harness.registry.pendingFor(harness.runId);
     expect(parked).toHaveLength(1);
     expect(parked[0]).toMatchObject({
@@ -144,7 +149,8 @@ describe("workflow escalation — 停驻与结算", () => {
       answer: "门确实坏了，按 95 通过即可。",
       qid: parked[0]!.qid,
     });
-    // 结算后停驻表就地清空——快照的 pendingQuestions 因此自动收敛。
+    // After settlement the parking table is cleared in place — the snapshot's pendingQuestions thus converges
+    // automatically.
     expect(harness.registry.pendingFor(harness.runId)).toEqual([]);
   });
 
@@ -160,7 +166,8 @@ describe("workflow escalation — 停驻与结算", () => {
     const event = harness.events[0] as { askedAt?: number };
     expect(parked.askedAt).toBeGreaterThanOrEqual(before);
     expect(parked.askedAt).toBeLessThanOrEqual(after);
-    // 同一个瞬间，不是两次相近的取值：实时轨与快照上的「等了多久」因此永不分叉。
+    // The same instant, not two nearby readings: the "how long it waited" on the live track and the snapshot
+    // therefore never diverge.
     expect(event.askedAt).toBe(parked.askedAt);
   });
 
@@ -185,12 +192,12 @@ describe("workflow escalation — 停驻与结算", () => {
     }
     expect(harness.registry.pendingFor(harness.runId)).toHaveLength(3);
 
-    // 第 4 次：不停驻、不发事件、不是错误——一条让模型自行推进的普通工具结果。
+    // The 4th: no parking, no event, not an error — an ordinary tool result letting the model proceed on its own.
     const eventsBefore = harness.events.length;
     const fourth = await port.escalate(escalateRequest("问题 3"));
 
     expect(fourth).toMatchObject({ kind: "refused", reason: "budget_exhausted" });
-    // reason 已断言；消息只验可变部分（上限次数）。
+    // reason already asserted; the message only checks the variable part (the cap).
     expect(fourth.kind === "refused" && fourth.message).toContain("at most 3 escalations");
     expect(harness.registry.pendingFor(harness.runId)).toHaveLength(3);
     expect(harness.events).toHaveLength(eventsBefore);
@@ -206,8 +213,10 @@ describe("workflow escalation — 停驻与结算", () => {
       reason: "budget_exhausted",
     });
 
-    // 同一个会话上派下一个 ask（per-actor FIFO 的常态）：计数归零，遗留停驻项一并撤下——
-    // 新 ask 开跑之后，那些问题已经没有听众了，留在表里只会让快照说谎。
+    // Dispatch the next ask on the same session (the per-actor FIFO norm): the count resets and leftover
+    // parked entries are withdrawn with it —
+    // once the new ask starts running, those questions have no listener left; keeping them in the table would
+    // only make the snapshot lie.
     harness.driver.startAsk(session, { siteId: "ask#2", ordinal: 1 }, {
       instructions: "next",
       typed: false,
@@ -219,7 +228,7 @@ describe("workflow escalation — 停驻与结算", () => {
     ]);
     expect(harness.registry.pendingFor(harness.runId)).toEqual([]);
 
-    // 新的 ask 上预算是满的：又能停驻 3 次。
+    // The budget on the new ask is full: another 3 parkings are available.
     for (let index = 0; index < 3; index++) {
       void port.escalate(escalateRequest(`第二个 ask 的问题 ${index}`)).catch(() => {});
     }
@@ -237,16 +246,17 @@ describe("workflow escalation — actor 名", () => {
 
     void port.escalate(escalateRequest("韵脚要不要押到底？")).catch(() => {});
 
-    // 停驻记录（快照 pendingQuestions 的投影源）。
+    // Parking record (the projection source of the snapshot's pendingQuestions).
     const parked = harness.registry.pendingFor(harness.runId)[0];
     expect(parked).toMatchObject({ actor: "actor#1@1", actorName: "poet" });
-    // 事件轨：结构 ref 与人类名**并存**——前者定位，后者供人读。
+    // Event track: the structural ref and the human name **coexist** — the former locates, the latter is for
+    // humans to read.
     expect(harness.events[0]).toMatchObject({
       type: "escalation-raised",
       actor: { siteId: "actor#1", ordinal: 1 },
       actorName: "poet",
     });
-    // durable 轨同形。
+    // The durable track has the same shape.
     const stored = harness.journal.listEvents(harness.runId, {
       types: "all",
       reportItems: "all",
@@ -296,8 +306,9 @@ describe("workflow escalation — 取消", () => {
 
     harness.driver.cancelAsk(instance);
 
-    // 与 submit deferred 完全同待遇：拒 Cancelled，handler 不再悬挂（这是 spec 里
-    // 「无答案 = 无限期阻塞」的唯一逃生舱）。
+    // Exactly the same treatment as the submit deferred: rejected with Cancelled so the handler no longer
+    // hangs (this is the only escape hatch in the spec for
+    // "no answer = blocked indefinitely").
     await expect(pending).rejects.toMatchObject({ code: "Cancelled" });
     expect(harness.registry.pendingFor(harness.runId)).toEqual([]);
     expect(harness.registry.resolve(qid!, "太晚了")).toMatchObject({
@@ -323,7 +334,8 @@ describe("workflow escalation — 取消", () => {
 
 describe("workflow escalation — qid 唯一性", () => {
   it("两个并发 run 共用一张表时 qid 互不碰撞（片段相同则自动加长）", async () => {
-    // 刻意让两个 runId 的前 8 个字符完全一样：短片段会撞，铸造必须自己走到下一个候选。
+    // Deliberately make the first 8 characters of the two runIds identical: the short fragment would collide,
+    // so minting must walk to the next candidate on its own.
     const registry = createWorkflowEscalationRegistry();
     const left = makeHarness({ registry, runId: "dwfrun-abcdef01-aaaa" });
     const right = makeHarness({ registry, runId: "dwfrun-abcdef01-bbbb" });
@@ -336,7 +348,7 @@ describe("workflow escalation — qid 唯一性", () => {
     const leftQid = registry.pendingFor(left.runId)[0]?.qid;
     const rightQid = registry.pendingFor(right.runId)[0]?.qid;
     expect(leftQid).toBe("dwfq-abcdef01-1");
-    // 短片段已被左边占用 ⇒ 退到完整 runId 片段，仍然人类可辨认。
+    // The short fragment is taken by the left ⇒ fall back to the full runId fragment, still human-recognizable.
     expect(rightQid).toBe("dwfq-abcdef01-bbbb-1");
     expect(leftQid).not.toBe(rightQid);
   });
@@ -362,14 +374,17 @@ describe("workflow escalation — 事件双轨", () => {
     const { port } = await harness.openAsk();
 
     const pending = port.escalate(escalateRequest("这个门是不是坏了？", "上下文若干"));
-    // 停驻记录要在结算**之前**读：结算会把它从表里摘掉，而下面要拿它的 askedAt 与事件比对。
+    // The parking record must be read **before** settlement: settlement removes it from the table, and below
+    // we need its askedAt to compare with the event.
     const parked = harness.registry.pendingFor(harness.runId)[0]!;
     const qid = parked.qid;
     harness.registry.resolve(qid, "坏了，按 95 通过。");
     await pending;
 
-    // askedAt 取自停驻记录：driver 只读一次时钟，所以两条读面上的提问时刻必须逐位相等——
-    // 这条断言就是「不许调两次 Date.now()」的守卫（各调一次会差几毫秒，下面的 toEqual 立刻红）。
+    // askedAt comes from the parking record: the driver reads the clock only once, so the ask instant on both
+    // read surfaces must be bit-equal —
+    // this assertion is the guard against "calling Date.now() twice" (one call each would differ by a few
+    // milliseconds, and the toEqual below would go red immediately).
     const raised = {
       type: "escalation-raised",
       qid,
@@ -380,9 +395,9 @@ describe("workflow escalation — 事件双轨", () => {
     };
     const resolved = { type: "escalation-resolved", qid, answer: "坏了，按 95 通过。" };
 
-    // 实时轨（driver.emit → progress sink）。
+    // Live track (driver.emit → progress sink).
     expect(harness.events).toEqual([raised, resolved]);
-    // durable 轨（dwf_event）。升级**不写 dwf_node 行**：等待不是工作量。
+    // Durable track (dwf_event). Escalation **writes no dwf_node row**: waiting is not work.
     const stored = harness.journal.listEvents(harness.runId, { types: "all", reportItems: "all" });
     expect(stored.map((one) => one.event)).toEqual([raised, resolved]);
     expect(harness.journal.listNodes(harness.runId, { kinds: "all", withResult: true })).toEqual(
@@ -398,7 +413,8 @@ describe("workflow escalation — 事件双轨", () => {
     void port.escalate(escalateRequest(huge)).catch(() => {});
 
     const stored = harness.journal.listEvents(harness.runId, { types: "all", reportItems: "all" });
-    // journal 里是**原始事实**（未裁剪）——界是协议边界上的事，不是存储层的事。
+    // The journal holds the **raw facts** (unclamped) — the cap is a matter of the protocol boundary, not the
+    // storage layer.
     expect((stored[0]!.event as { question: string }).question).toHaveLength(huge.length);
     const projected = toProtocolEvent(stored[0]!.sequence, stored[0]!.event);
     expect(projected.type).toBe("escalation-raised");
@@ -414,12 +430,12 @@ describe("workflow escalation — 注册表的结构化拒绝", () => {
     const harness = makeHarness();
     const { port, instance } = await harness.openAsk();
 
-    // (1) 从未存在的 id。
+    // (1) An id that never existed.
     const unknown = harness.registry.resolve("dwfq-nonesuch-9", "答案");
     expect(unknown).toMatchObject({ ok: false, reason: "unknown_question" });
     expect(unknown.ok === false && unknown.message).toContain("pendingQuestions");
 
-    // (2) 已被回答。
+    // (2) Already answered.
     const answered = port.escalate(escalateRequest("第一个问题"));
     const firstQid = harness.registry.pendingFor(harness.runId)[0]!.qid;
     harness.registry.resolve(firstQid, "答案一");
@@ -427,7 +443,7 @@ describe("workflow escalation — 注册表的结构化拒绝", () => {
     const again = harness.registry.resolve(firstQid, "答案二");
     expect(again).toMatchObject({ ok: false, reason: "already_resolved" });
 
-    // (3) 随 ask 一起被撤下。
+    // (3) Withdrawn together with the ask.
     const withdrawn = port.escalate(escalateRequest("第二个问题"));
     const secondQid = harness.registry.pendingFor(harness.runId)[0]!.qid;
     harness.driver.cancelAsk(instance);
@@ -446,8 +462,8 @@ describe("workflow escalation — 注册表的结构化拒绝", () => {
     const qid = harness.registry.pendingFor(harness.runId)[0]!.qid;
     harness.registry.resolve(qid, "答案");
     await answered;
-    // ask 随后被取消：已退场的 qid 不该被降级成「没人在等」——那会把「答案已送达」
-    // 改写成另一个事实。
+    // The ask is cancelled afterwards: a qid that already exited must not be downgraded to "nobody waiting" —
+    // that would rewrite "the answer was delivered" into a different fact.
     harness.driver.cancelAsk(instance);
 
     expect(harness.registry.resolve(qid, "再来一次")).toMatchObject({
@@ -472,12 +488,14 @@ describe("workflow escalation — 注册表的结构化拒绝", () => {
 });
 
 // ————————————————————————————————————————————————
-// actor 会话的工具面边界（Slice 2）。
+// Tool-surface boundary of actor sessions (Slice 2).
 //
-// 升级问答有一条**身份**不变式：actor 提问，主代理作答。让另一个 actor 顺手回答，等于把
-// 「把判断权交回给创建这条工作流的那一方」悄悄退化成 actor 之间的互相说服——而那恰恰是
-// 本特性存在的理由（一个被挡住的 actor 需要的是能改掉那道门的人，不是另一个同样被挡住的人）。
-// 所以 `ResolveWorkflowQuestion` 进 actor 的禁用名单，`escalate` 绝不进。
+// Escalation Q&A carries one **identity** invariant: the actor asks, the main agent answers. Letting another
+// actor casually answer degrades
+// "handing the judgment back to the party that created this workflow" into actors persuading each other — and
+// that is exactly why this feature exists
+// (a blocked actor needs someone who can change that gate, not another equally blocked person).
+// So `ResolveWorkflowQuestion` goes on the actor disallow list, and `escalate` never does.
 // ————————————————————————————————————————————————
 describe("workflow escalation — actor 会话的工具面", () => {
   it("actor 的工具面减掉 ResolveWorkflowQuestion，但不减 escalate", () => {

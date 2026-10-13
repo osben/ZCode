@@ -1,11 +1,13 @@
 // ============================================================
-// 故障矩阵 · 重试行（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md：B1–B9、B14）
+// Fault matrix · retry rows (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md: B1-B9, B14)
 // ============================================================
-// 每格：一台假 provider 服务器 + 一份脚本形状 + 一次完整的 dwf run（driver 级装配）。
-// 这些行的共同预期是 **completed**：模型侧故障在 workflow 内被重试、被 governor 吸收，
-// 脚本从未看见它。按行的有界计数写在各 describe 里；六条公共不变式由 assertCommonInvariants 断。
+// Each cell: one fake provider server + one script shape + one full dwf run (driver-level assembly).
+// The shared expectation of these rows is **completed**: model-side faults are retried inside the workflow
+// and absorbed by the governor;
+// the script never sees them. Per-row bounded counts are written in each describe; the six common invariants
+// are asserted by assertCommonInvariants.
 //
-// 缺省跑快档；ZCODE_FAULT_MATRIX=full 展开全矩阵（helpers/fault-matrix-cells.ts）。
+// Runs the quick tier by default; ZCODE_FAULT_MATRIX=full expands the full matrix (helpers/fault-matrix-cells.ts).
 
 import { SessionEventType } from "@zcode/contracts";
 import { describe, expect, it } from "vitest";
@@ -45,12 +47,12 @@ import {
 } from "./helpers/fault-matrix-cells.js";
 import { FAULT_MATRIX_SHAPES } from "./helpers/fault-matrix-scripts.js";
 
-/** 并发闸门行的服务器并发上限 C（< 天花板 8，让 AIMD 有东西可收敛）。 */
+/** Server concurrency cap C for the gate row (< the ceiling 8, giving AIMD something to converge on). */
 const GATE_LIMIT = 2;
-/** everyKth 行的 k。 */
+/** k for the everyKth rows. */
 const EVERY_K = 3;
 
-/** 跑一格并做结算后的复查等待；调用方拿到观察面继续断按行的计数。 */
+/** Run one cell and do a post-settle recheck wait; callers get the observation surface to assert per-row counts. */
 async function runCell(
   server: FakeProviderServer,
   cell: CellCoordinate,
@@ -66,7 +68,7 @@ async function runCell(
   return observation;
 }
 
-/** 流水里吃了某种判决的请求数。 */
+/** Number of requests in the stream that received a given verdict. */
 function verdictCount(server: FakeProviderServer, predicate: (verdict: Verdict) => boolean): number {
   return server.requests.filter((entry: RequestLedgerEntry) => predicate(entry.verdict)).length;
 }
@@ -78,13 +80,13 @@ function statusVerdictCount(server: FakeProviderServer, code?: string): number {
   );
 }
 
-/** 每子代理先失败 N 次的 N：按并行度取 2P，保证每个在飞子代理都至少撞一次。 */
+/** N for "fail the first N times per subagent": take 2P by parallelism so every in-flight subagent hits at least once. */
 function failFirstCount(cell: CellCoordinate): number {
   return FAULT_MATRIX_SHAPES[cell.shape].parallelism * 2;
 }
 
 // ————————————————————————————————————————————————————————————————
-// B1 healthy：基线
+// B1 healthy: baseline
 // ————————————————————————————————————————————————————————————————
 
 describe("fault matrix · B1 healthy — 装配基线", () => {
@@ -119,7 +121,7 @@ describe("fault matrix · B1 healthy — 装配基线", () => {
 });
 
 // ————————————————————————————————————————————————————————————————
-// B2 gate(C)：Start Plan 并发上限 3008 在内重试并喂 governor
+// B2 gate(C): Start Plan concurrency cap 3008 retried inside and fed to the governor
 // ————————————————————————————————————————————————————————————————
 
 describe("fault matrix · B2 gate(2) — 3008 在 workflow 内是重试，不是终止", () => {
@@ -152,11 +154,12 @@ describe("fault matrix · B2 gate(2) — 3008 在 workflow 内是重试，不是
         );
 
         if (parallelism > GATE_LIMIT) {
-          // 上限之外一定有人撞墙；撞墙次数 ≤ P × K 是 AIMD 收敛的证据——不收敛的话每一波都会
-          // 撞 (cap − C) 次，很快就超过这个界。
+          // Beyond the cap someone is guaranteed to hit the wall; hits ≤ P × K is evidence of AIMD convergence —
+          // without convergence every wave would hit (cap − C) times and soon exceed this bound.
           expect(rejected).toBeGreaterThan(0);
           expect(rejected).toBeLessThanOrEqual(parallelism * FAULT_CELL_TURNS);
-          // governor 真的收到了信号：至少一次 rate_limited 的 cap 变化，且降到默认并发以下。
+          // The governor really got the signal: at least one rate_limited cap change, dropping below the
+          // default concurrency.
           const throttles = eventsOfType(obs.events, "concurrency-changed").filter(
             (event) => event.reason === "rate_limited",
           );
@@ -168,13 +171,13 @@ describe("fault matrix · B2 gate(2) — 3008 在 workflow 内是重试，不是
           expect(rejected).toBe(0);
         }
 
-        // 每个 3008 都作为可重试失败 + 一条 retry_scheduled{rate_limited} 报出。
+        // Every 3008 is reported as a retryable failure + one retry_scheduled{rate_limited}.
         expect(failed.length).toBe(rejected);
         expect(failed.every((event) => event.retryable === true)).toBe(true);
         expect(failed.every((event) => event.providerErrorCode === "3008")).toBe(true);
         expect(scheduled.length).toBe(rejected);
         expect(scheduled.every((event) => event.reason === "rate_limited")).toBe(true);
-        // 逻辑请求全部成功了一次。
+        // All logical requests succeeded exactly once.
         expect(statusCount(obs.statusEvents, "model_request_completed")).toBe(obs.logicalRequests);
         expect(obs.governor.snapshot(obs.key)?.inFlight).toBe(0);
       } finally {
@@ -186,7 +189,7 @@ describe("fault matrix · B2 gate(2) — 3008 在 workflow 内是重试，不是
 });
 
 // ————————————————————————————————————————————————————————————————
-// B3 / B4 / B14：先失败 N 次
+// B3 / B4 / B14: fail the first N times
 // ————————————————————————————————————————————————————————————————
 
 interface FailFirstRow {
@@ -267,14 +270,14 @@ for (const row of FAIL_FIRST_ROWS) {
 }
 
 // ————————————————————————————————————————————————————————————————
-// B5 / B6 / B7：每第 k 个请求吃一种传输层故障
+// B5 / B6 / B7: every kth request hits one transport-layer fault
 // ————————————————————————————————————————————————————————————————
 
 interface EveryKthRow {
   id: string;
   title: string;
   verdict: Verdict;
-  /** 缺省 everyKth(EVERY_K, verdict)；行可以给自己的程序。 */
+  /** Defaults to everyKth(EVERY_K, verdict); a row can supply its own program. */
   program?: (cell: CellCoordinate) => FaultProgram;
   quick: CellCoordinate[];
   fullOnly: CellCoordinate[];
@@ -292,8 +295,9 @@ const EVERY_KTH_ROWS: EveryKthRow[] = [
     id: "B6",
     title: "挂起 → 流空闲超时 → 在内重试",
     verdict: { kind: "hang" },
-    // 流空闲超时每次重试都加 30 s（runner 的既有规则），所以只让**首次**请求挂起：
-    // 前 P 个到达的请求（每子代理一个）吃 hang，之后放行。
+    // The stream idle timeout adds 30s per retry (the runner's existing rule), so only the **first** request
+    // hangs:
+    // the first P arriving requests (one per subagent) take the hang, then traffic is let through.
     program: (cell) => {
       const parallelism = FAULT_MATRIX_SHAPES[cell.shape].parallelism;
       return (request) => (request.ordinal <= parallelism ? { kind: "hang" } : SERVE);
@@ -312,7 +316,7 @@ const EVERY_KTH_ROWS: EveryKthRow[] = [
 
 for (const row of EVERY_KTH_ROWS) {
   const rowCells = cells(row.quick, row.fullOnly);
-  // 快档里没有格的行整个跳过（it.each 不接受空表）。
+  // Skip whole rows that have no cells in the quick tier (it.each doesn't accept an empty list).
   describe.skipIf(rowCells.length === 0)(`fault matrix · ${row.id} everyKth(${EVERY_K}, ${row.verdict.kind}) — ${row.title}`, () => {
     it.each(rowCells.map((cell) => [cellName(cell), cell] as const))(
       "%s：completed，失败数 = 吃到判决的请求数",
@@ -332,7 +336,7 @@ for (const row of EVERY_KTH_ROWS) {
           );
           expect(server.requests.length).toBe(obs.logicalRequests + faulted);
           if (row.verdict.kind === "hang") {
-            // 挂起的请求都是客户端（流空闲超时）主动断的。
+            // The hung requests were all closed by the client (stream idle timeout).
             const hung = server.requests.filter((entry) => entry.verdict.kind === "hang");
             expect(hung.every((entry) => entry.closedByClient)).toBe(true);
           }
@@ -346,7 +350,7 @@ for (const row of EVERY_KTH_ROWS) {
 }
 
 // ————————————————————————————————————————————————————————————————
-// B8a / B8b：可见输出之后切断 → core 流恢复；恢复耗尽 → driver 重驱
+// B8a / B8b: cut after visible output → core stream recovery; recovery exhausted → driver re-drive
 // ————————————————————————————————————————————————————————————————
 
 describe("fault matrix · B8a everyKth(3, cut:visible) — 可见输出后切断由 core 流恢复接上", () => {
@@ -361,18 +365,18 @@ describe("fault matrix · B8a everyKth(3, cut:visible) — 可见输出后切断
         assertCommonInvariants(obs, { status: "completed", server });
         const cut = verdictCount(server, (verdict) => verdict.kind === "cut");
         expect(cut).toBeGreaterThan(0);
-        // runner 层：这些失败带 streamOutputCommitted，且没有 runner 的 retry_scheduled。
+        // Runner layer: these failures carry streamOutputCommitted, and there is no runner retry_scheduled.
         const committedFailures = obs.statusEvents.filter(
           (event) => event.type === "model_request_failed" && event.streamOutputCommitted === true,
         );
         expect(committedFailures.length).toBe(cut);
         expect(statusCount(obs.statusEvents, "model_retry_scheduled")).toBe(0);
-        // core 层：流恢复真的启动过。
+        // Core layer: stream recovery really started.
         const recoveries = obs.sessionEvents.filter(
           (event) => event.type === SessionEventType.StreamRecoveryStarted,
         );
         expect(recoveries.length).toBeGreaterThan(0);
-        // driver 层：没有瞬态重驱。
+        // Driver layer: no transient re-drives.
         const backoffs = eventsOfType(obs.events, "node-waiting").filter(
           (event) => event.cause === "backoff",
         );
@@ -387,9 +391,9 @@ describe("fault matrix · B8a everyKth(3, cut:visible) — 可见输出后切断
 });
 
 describe("fault matrix · B8b cutVisibleUntil(n) — 流恢复耗尽后 driver 瞬态重驱", () => {
-  /** core 的流恢复上限 10 次：前 1 + 10 个流请求都切断，第 12 个才是重驱之后的续接。 */
+  /** Core's stream recovery cap is 10: the first 1 + 10 stream requests are all cut; the 12th is the continuation after the re-drive. */
   const CUTS = 11;
-  /** 单子代理：让 11 次切断全部落在同一个子代理上，恢复次数才确定耗尽。 */
+  /** Single subagent: keeps all 11 cuts on the same subagent so recovery is deterministically exhausted. */
   it.each(cells([{ shape: "W1" }]).map((cell) => [cellName(cell), cell] as const))(
     "%s：completed，恰好一次 askWaiting{backoff}，续接之后完成",
     async (_name, cell) => {
@@ -416,7 +420,7 @@ describe("fault matrix · B8b cutVisibleUntil(n) — 流恢复耗尽后 driver �
 });
 
 // ————————————————————————————————————————————————————————————————
-// B9：流内业务错误帧
+// B9: in-stream business error frame
 // ————————————————————————————————————————————————————————————————
 
 describe("fault matrix · B9 everyKth(3, stream_error 3008) — 流内业务码走同一策略", () => {

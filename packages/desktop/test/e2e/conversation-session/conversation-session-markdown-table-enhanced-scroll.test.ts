@@ -238,8 +238,8 @@ describe("会话区 Markdown Table Enhanced Scroll E2E", () => {
 
     await ensureExpandedScroll(WIDE_TABLE_MARKER, true);
     await setMarkdownTableVirtualScrollLeft(WIDE_TABLE_MARKER, 0);
-    // 修复原因：当前布局的左借位上限可能小于 80px，单次大 wheel 会在同一帧
-    // 同时消耗借位并滚动内部 viewport；这里用小 delta 只验证第一阶段借位。
+    // Fix rationale: the current layout's left-borrow ceiling may be below 80px, so a single large wheel event
+    // consumes the borrow and scrolls the inner viewport in the same frame; use a small delta here to verify only the first-stage borrow.
     await dispatchMarkdownTableWheel(WIDE_TABLE_MARKER, 8);
     const borrowed = await waitForEnhancedSnapshot(
       WIDE_TABLE_MARKER,
@@ -267,7 +267,7 @@ describe("会话区 Markdown Table Enhanced Scroll E2E", () => {
     this.timeout(60000);
 
     await ensureExpandedScroll(WIDE_TABLE_MARKER, true);
-    // 修复原因：上一条用例可能把系统指针停在表格上，连续运行时初始快照会继承 hover 态。
+    // Fix rationale: the previous case may leave the system pointer over the table; on consecutive runs the initial snapshot would inherit the hover state.
     await movePointerAwayFromMarkdownTableFrame();
     const hidden = await waitForEnhancedSnapshot(
       WIDE_TABLE_MARKER,
@@ -282,9 +282,9 @@ describe("会话区 Markdown Table Enhanced Scroll E2E", () => {
     await hoverMarkdownTableFrame(WIDE_TABLE_MARKER);
     if (!hidden.hoverMediaMatches) {
       const unsupportedHover = await getEnhancedSnapshot(WIDE_TABLE_MARKER);
-      // 修复原因：Windows ChromeDriver 可能能把 DOM 置为 :hover，却把主指针能力
-      // 报告为 hover:none；Tailwind hover variant 此时按媒体查询保持隐藏。该 worker
-      // 验证无 hover 设备的隐藏合同，hover 显示与拖动继续由支持 hover 的 worker 覆盖。
+      // Fix rationale: Windows ChromeDriver may set the DOM to :hover while reporting the primary pointer
+      // capability as hover:none; the Tailwind hover variant then stays hidden per the media query. This worker
+      // verifies the hidden contract on hover-less devices; hover display and dragging remain covered by the hover-capable worker.
       expect(unsupportedHover.frameHovered).toBe(true);
       expect(Number.parseFloat(unsupportedHover.trackOuterOpacity)).toBeLessThan(0.1);
       expect(unsupportedHover.trackOuterPointerEvents).toBe("none");
@@ -329,16 +329,18 @@ describe("会话区 Markdown Table Enhanced Scroll E2E", () => {
   it("长表格才 sticky，虚拟滚动条样式和 resize 重算保持合同", async function () {
     this.timeout(90000);
 
-    // 修复原因：默认 E2E 小窗口会让 6 行宽表也超过 80% 可视高度，无法构成短/长对照；
-    // 先固定足够高的视口，保证该 case 验证的是表格高度阈值而不是测试窗口偶然尺寸。
+    // Fix rationale: the default small E2E window makes even a 6-row wide table exceed 80% of the visible height,
+    // which cannot form a short/long contrast; fix a sufficiently tall viewport first so this case verifies the
+    // table height threshold rather than the test window's accidental size.
     await setElectronWindowSize(1800, 1000);
     await ensureExpandedScroll(WIDE_TABLE_MARKER, true);
     await ensureExpandedScroll(TALL_TABLE_MARKER, true);
     const short = await getEnhancedSnapshot(SHORT_TABLE_MARKER);
     const tall = await getEnhancedSnapshot(TALL_TABLE_MARKER);
 
-    // 修复原因：V4 virtual row 使用 transform，产品通过 relative + translateY 实现吸底；
-    // computed position 不是 sticky 语义来源，先断言显式模式，再用下方滚动几何证明实际吸底。
+    // Fix rationale: V4 virtual rows use transform and the product achieves sticky-bottom via relative + translateY;
+    // computed position is not the source of sticky semantics, so assert the explicit mode first and prove the actual
+    // stickiness with the scroll geometry below.
     expect(short.trackOuterSticky).toBe(false);
     expect(tall.trackOuterSticky).toBe(true);
     expect(tall.trackBackdropFilter === "" || tall.trackBackdropFilter === "none").toBe(true);
@@ -385,12 +387,13 @@ describe("会话区 Markdown Table Enhanced Scroll E2E", () => {
 });
 
 async function prepareMarkdownTableEnhancedReplayConversation() {
-  // 修复原因：增强滚动 case 依赖稳定的短表格、超宽短表格和超宽长表格组合。
-  // 使用 case-local OpenAI-compatible replay provider，避免真实模型输出列宽/行高漂移。
+  // Fix rationale: the enhanced-scroll cases depend on a stable combination of short table, extra-wide short
+  // table, and extra-wide tall table. Use a case-local OpenAI-compatible replay provider to avoid real-model
+  // drift in column widths / row heights.
   await prepareV4ConversationE2E({ skipProvider: true });
   await waitForWorkspaceApp(DEFAULT_WORKSPACE, 30000);
-  // 修复原因：设置页保存完成不代表 active workspace registry 已刷新；若立即发送，
-  // runtime 仍可能使用旧模型。进程退出后 seed App+CLI 配置并重启，消除该竞态。
+  // Fix rationale: saving the settings page does not mean the active workspace registry has refreshed; if we send
+  // immediately, the runtime may still use the old model. Exit the process, seed the App+CLI config, and restart to remove that race.
   const [provider] = await restartWithSeededOpenAIProviders([
     {
       modelId: MODEL_ID,
@@ -414,8 +417,8 @@ async function prepareMarkdownTableEnhancedReplayConversation() {
 
 function forceMarkdownTableLayoutRootWidth(width: number | null) {
   return browser.execute((nextWidth) => {
-    // 修复原因：V4 已移除旧 chat-view test id，继续使用它会让 resize 合同只在旧 UI 生效。
-    // 这里与产品的布局根选择器对齐，同时保留旧 UI fallback。
+    // Fix rationale: V4 removed the old chat-view test id; continuing to use it would make the resize contract
+    // only hold on the old UI. Align with the product's layout-root selector here while keeping the old-UI fallback.
     const root = document.querySelector<HTMLElement>(
       '[data-markdown-table-layout-root="true"], [data-testid="chat-view"]',
     );
@@ -456,8 +459,9 @@ function setFractionalScrollbarBoundary(marker: string, enabled: boolean) {
         return;
       }
 
-      // 修复原因：真实抖动发生在 table 比浮点 frame 宽约 1.26px 的阈值附近；
-      // 固定为 CDP 捕获到的几何值，才能稳定复现整数 CSS 宽度与浮点测量互相翻转的问题。
+      // Fix rationale: the real jitter occurs near the threshold where the table is about 1.26px wider than the
+      // fractional frame width; pinning the CDP-captured geometry is what lets us stably reproduce the problem of
+      // integer CSS width and fractional measurement flipping against each other.
       frame.style.setProperty("width", "490.3125px", "important");
       frame.style.setProperty("min-width", "490.3125px", "important");
       frame.style.setProperty("max-width", "490.3125px", "important");
@@ -567,8 +571,9 @@ async function setElectronWindowSize(width: number, height: number) {
       if (!window) {
         return false;
       }
-      // 修复原因：macOS/CI 会把超过显示器工作区的 BrowserWindow 自动裁剪；继续等待请求值
-      // 会稳定超时。用当前窗口所在显示器的 workArea 计算操作系统实际可接受的目标尺寸。
+      // Fix rationale: macOS/CI auto-clips a BrowserWindow that exceeds the display's work area; continuing to wait
+      // for the requested value would time out reliably. Compute the target size the OS actually accepts from the
+      // workArea of the display the current window sits on.
       const workArea = electron.screen.getDisplayMatching(window.getBounds()).workAreaSize;
       const targetWidth = Math.min(nextWidth, workArea.width);
       const targetHeight = Math.min(nextHeight, workArea.height);
@@ -660,8 +665,9 @@ async function renderEnhancedMarkdownTables() {
   await sendV4Prompt(
     `${CASE_MARKER}: 请只回复三个 Markdown 表格，不要解释，不要放进代码块。第一个短表格包含 ${SHORT_TABLE_MARKER}；第二个超宽短表格包含 ${WIDE_TABLE_MARKER}；第三个超宽长表格包含 ${TALL_TABLE_MARKER} 和 ${TALL_TABLE_MARKER}_ROW_120。`,
   );
-  // 修复原因：冷启动首次提交要等待 Agent 建 session；UI 只在 command resolve 后清空
-  // Lexical。固定 10 秒会在消息已被 Agent 接收、但 RPC 尚未回执时提前 teardown。
+  // Fix rationale: a cold-start first submission has to wait for the Agent to build the session; the UI only
+  // clears Lexical after the command resolves. A fixed 10 seconds would tear down early when the message was
+  // already accepted by the Agent but the RPC receipt had not returned.
   await waitForV4ComposerText("", "增强滚动 prompt 发送后输入框没有清空", 30000);
   await waitForV4UserMessageContaining(CASE_MARKER);
   await waitForV4AssistantMessageContaining(SHORT_TABLE_MARKER);
@@ -696,8 +702,8 @@ async function waitForEnhancedSnapshot(
     });
   }
 
-  // 修复原因：predicate 命中后重新读取可能跨过 hover/transition 的瞬时边界，
-  // 调用方应拿到实际通过判定的同一帧快照，而不是下一帧状态。
+  // Fix rationale: re-reading after the predicate passes may cross a transient hover/transition boundary; the
+  // caller should receive the same frame's snapshot that actually passed the check, not the next frame's state.
   return latest ?? getEnhancedSnapshot(marker);
 }
 
@@ -957,8 +963,9 @@ async function clickMarkdownTableButton(marker: string, labels: string[]) {
       if (!button) {
         return false;
       }
-      // 修复原因：Windows 全量回归中 toolbar 会在滚动/hover 后短暂重排，
-      // 指针坐标点击可能落到旧位置；这里直接触发按钮语义，后续滚动交互仍走真实事件。
+      // Fix rationale: in the Windows full regression the toolbar briefly reflows after scroll/hover, and a
+      // pointer-coordinate click can land on a stale position; trigger the button semantics directly here while
+      // subsequent scroll interactions still go through real events.
       button.click();
       return true;
     },
@@ -1044,8 +1051,8 @@ async function hoverMarkdownTableFrame(marker: string) {
       async () => {
         const frame = await findMarkdownTableFrameElement(marker);
         await frame.scrollIntoView({ block: "center", inline: "nearest" });
-        // 修复原因：Windows ChromeDriver 对 scrollIntoView 后立即使用 viewport 坐标的
-        // pointerMove 可能命中旧布局；元素锚点 moveTo 会基于当前 frame 几何重新定位。
+        // Fix rationale: on Windows ChromeDriver, a pointerMove using viewport coordinates right after
+        // scrollIntoView can hit the old layout; an element-anchored moveTo repositions based on the current frame geometry.
         await frame.moveTo();
         latest = await getEnhancedSnapshot(marker);
         return latest.frameHovered;

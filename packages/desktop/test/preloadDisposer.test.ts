@@ -2,17 +2,17 @@ import { InternalChannels, PlatformChannels } from "@zcode/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * 验证 preload bridge 中 onFocusTab / onNewTab / onOpenBrowserUrl / onNewTask / onOpenWorkspace
- * 返回 disposer，调用 disposer 后 ipcRenderer 监听器被正确移除。
+ * Verifies that onFocusTab / onNewTab / onOpenBrowserUrl / onNewTask / onOpenWorkspace in the preload bridge
+ * return disposers, and that the ipcRenderer listeners are correctly removed after a disposer is called.
  *
- * 因为 preload/index.ts 在模块加载时就调用 contextBridge.exposeInMainWorld，
- * 我们 mock electron 模块，拦截 exposeInMainWorld 的参数来获取暴露的 API。
+ * Because preload/index.ts calls contextBridge.exposeInMainWorld at module load time,
+ * we mock the electron module and intercept exposeInMainWorld's arguments to capture the exposed API.
  */
 
-// 模拟 ipcRenderer 的 on / removeListener
+// Mock ipcRenderer's on / removeListener
 const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
 
-/** installArmsRumBridgeIpcForward 会替换 ipcRenderer.send，断言须用此引用 */
+/** installArmsRumBridgeIpcForward replaces ipcRenderer.send; assertions must use this reference */
 const mockIpcSend = vi.fn();
 const mockIpcRenderer = {
   on: vi.fn((channel: string, handler: (...args: unknown[]) => void) => {
@@ -41,7 +41,7 @@ function stubProcessPlatform(platform: NodeJS.Platform): void {
 
 vi.mock("electron", () => ({
   contextBridge: {
-    // preload 还会暴露插件 UI 沙箱的 zcodePluginSandbox；这里只截获 window.zcode 本身。
+    // The preload also exposes zcodePluginSandbox for the plugin UI sandbox; here we only intercept window.zcode itself.
     exposeInMainWorld: (name: string, api: Record<string, unknown>) => {
       if (name === "zcode") exposedApi = api as Record<string, (...args: unknown[]) => unknown>;
     },
@@ -51,7 +51,7 @@ vi.mock("electron", () => ({
   webFrame: mockWebFrame,
 }));
 
-// 模拟 document.title（updateRendererProcessTitle 需要）
+// Mock document.title (needed by updateRendererProcessTitle)
 vi.stubGlobal("document", { title: "test" });
 vi.stubGlobal("window", {
   addEventListener: vi.fn(),
@@ -75,9 +75,9 @@ beforeEach(() => {
 });
 
 describe("preload IPC disposer", () => {
-  // 每个测试动态 import 以触发模块初始化
+  // Each test dynamically imports to trigger module initialization
   async function loadPreload() {
-    // 清除缓存以重新执行模块
+    // Clear the cache so the module re-executes
     vi.resetModules();
     await import("../src/preload/index.js");
     return exposedApi;
@@ -222,10 +222,12 @@ describe("preload IPC disposer", () => {
       releaseHandler,
     );
 
-    for (const handler of listeners.get(PlatformChannels.BrowserViewScreenshotSurfacePrepare) ?? []) {
+    for (const handler of listeners.get(PlatformChannels.BrowserViewScreenshotSurfacePrepare) ??
+      []) {
       handler({}, payload);
     }
-    for (const handler of listeners.get(PlatformChannels.BrowserViewScreenshotSurfaceRelease) ?? []) {
+    for (const handler of listeners.get(PlatformChannels.BrowserViewScreenshotSurfaceRelease) ??
+      []) {
       handler({}, releasePayload);
     }
     expect(prepare).toHaveBeenCalledTimes(1);
@@ -332,8 +334,8 @@ describe("preload IPC disposer", () => {
     expect(replayBeforeClear).toHaveBeenCalledWith("0.1.25");
     disposeBeforeClear();
 
-    // 修复原因：main 在 staging error 后会广播 idle 清掉 ready；preload 如果继续
-    // 缓存旧 UpdateReady，新订阅的 renderer 仍会展示不可安装的“重启以更新”。
+    // Reason for the fix: after a staging error main broadcasts idle to clear ready; if the preload keeps
+    // caching the old UpdateReady, newly subscribed renderers would still show the un-installable "restart to update".
     for (const handler of stateHandlers) {
       handler({}, { kind: "idle", enabled: true });
     }
@@ -414,16 +416,16 @@ describe("preload IPC disposer", () => {
     const callback = vi.fn();
     const dispose = api.onFocusTab(callback) as () => void;
 
-    // 获取注册的 handler
+    // Get the registered handler
     const channel = mockIpcRenderer.on.mock.calls.find(
       (c: unknown[]) => typeof c[0] === "string" && c[0].includes("focus"),
     );
     expect(channel).toBeDefined();
 
-    // dispose 后，从 listeners set 中移除
+    // After dispose, removed from the listeners set
     dispose();
     const handlersAfterDispose = listeners.get(channel![0] as string);
-    // handler 应该已经被移除
+    // The handler should already be removed
     expect(handlersAfterDispose?.size ?? 0).toBe(0);
   });
 });

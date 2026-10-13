@@ -32,10 +32,9 @@ const virtualizer = vi.hoisted(() => ({
   scrollOffset: null as number | null,
   scrollRect: null as { height: number } | null,
   scrollToIndex: vi.fn(),
-  shouldAdjustScrollPositionOnItemSizeChange: null as null | ((item: {
-    end: number;
-    start: number;
-  }) => boolean),
+  shouldAdjustScrollPositionOnItemSizeChange: null as
+    | null
+    | ((item: { end: number; start: number }) => boolean),
 }));
 
 vi.mock("@tanstack/react-virtual", () => ({
@@ -88,8 +87,9 @@ function createMinimalElement(ownerDocument: Document, tagName = "div"): TestEle
     },
     childNodes: [] as TestElement[],
     dispatchEvent: (event: Event) => {
-      // Bug 回归：ConversationTimeline 会在 commit 后派发标准 scroll 事件同步
-      // virtualizer；最小 DOM 必须实现真实依赖，不能只提供测试专用 dispatchScroll。
+      // Bug regression: ConversationTimeline dispatches a standard scroll event after commit
+      // to sync the virtualizer; the minimal DOM must implement the real dependency and
+      // cannot only provide the test-only dispatchScroll.
       const forwardedEvent = {
         bubbles: event.bubbles,
         cancelBubble: event.cancelBubble,
@@ -218,7 +218,11 @@ function installMinimalDom(): TestElement {
   return createMinimalElement(documentMock, "div");
 }
 
-function findByTestId(node: TestElement, testId: string, attribute = "data-testid"): TestElement | null {
+function findByTestId(
+  node: TestElement,
+  testId: string,
+  attribute = "data-testid",
+): TestElement | null {
   if (node.getAttribute(attribute) === testId) return node;
   for (const child of node.childNodes) {
     if (child.nodeType !== 1) continue;
@@ -323,7 +327,8 @@ function renderTimeline(
         sessionKey,
         scrollMemoryKey,
         rowContext,
-        // composer dock。它上方那条浮层带随浮岛一起删除，圆钮回到自己的居中定位。
+        // Composer dock. The floating band above it is removed together with the floating
+        // island, and the round button returns to its own centered positioning.
         ...(options.withComposerDock
           ? {
               bottomDock: createElement("div", { "data-testid": "test-composer-dock" }),
@@ -398,7 +403,8 @@ describe("ConversationTimeline renderer-local scroll memory", () => {
       const query = vi
         .spyOn(column, "querySelectorAll")
         .mockReturnValue([row] as unknown as NodeListOf<Element>);
-      // 模拟库已测高但 React 尚未提交占位高度；只有重新 render 才能读到新布局。
+      // Simulate the library having measured the height while React has not yet committed
+      // the placeholder height; only a re-render can read the new layout.
       const totalSize = vi.spyOn(virtualizer, "getTotalSize").mockImplementation(() => {
         layout.scrollHeight = measuredHeight;
         return measuredHeight;
@@ -432,7 +438,8 @@ describe("ConversationTimeline renderer-local scroll memory", () => {
         for (const observer of observers) observer.callback([], {} as ResizeObserver);
       });
       expect(timeline.scrollTop).toBe(2100);
-      // 用户在批量测高期间上滚，提交后必须再次检查跟随权。
+      // The user scrolls up during batch height measurement; follow ownership must be
+      // re-checked after the commit.
       virtualizer.resizeItem.mockImplementationOnce(() => dispatchWheel(timeline, -120));
       const beforeInterrupt = timeline.scrollTop;
       act(() => {
@@ -469,17 +476,11 @@ describe("ConversationTimeline renderer-local scroll memory", () => {
     mountedRoot = createRoot(container);
 
     act(() =>
-      renderTimeline(
-        mountedRoot!,
-        "session-1",
-        "workspace::pane:a::session:1",
-        undefined,
-        {
-          canLoadOlder: true,
-          onLoadOlder,
-          rows: [{ ...row, rowId: 100, turnId: "turn-100" }],
-        },
-      ),
+      renderTimeline(mountedRoot!, "session-1", "workspace::pane:a::session:1", undefined, {
+        canLoadOlder: true,
+        onLoadOlder,
+        rows: [{ ...row, rowId: 100, turnId: "turn-100" }],
+      }),
     );
     const timeline = findByTestId(container, TID_V4_TIMELINE)!;
     act(() => {
@@ -513,20 +514,15 @@ describe("ConversationTimeline renderer-local scroll memory", () => {
       },
     ];
     act(() =>
-      renderTimeline(
-        mountedRoot!,
-        "session-1",
-        "workspace::pane:a::session:1",
-        undefined,
-        {
-          canLoadOlder: false,
-          onLoadOlder,
-          rows: [...olderRows, { ...row, rowId: 100, turnId: "turn-100" }],
-        },
-      ),
+      renderTimeline(mountedRoot!, "session-1", "workspace::pane:a::session:1", undefined, {
+        canLoadOlder: false,
+        onLoadOlder,
+        rows: [...olderRows, { ...row, rowId: 100, turnId: "turn-100" }],
+      }),
     );
 
-    // 旧锚点已在 viewport + 8 行 overscan 之外，DOM 查询和旧 totalSize 都无法给出位移。
+    // The old anchor is beyond the viewport + 8 rows of overscan; neither the DOM query nor
+    // the old totalSize can provide a displacement.
     expect(timeline.querySelectorAll('[data-v4-turn-unit="true"]')).toHaveLength(0);
     expect(timeline.scrollTop).toBe(1500);
   });
@@ -705,27 +701,13 @@ describe("ConversationTimeline renderer-local scroll memory", () => {
 
     act(() => scrollToBottomActionRef.current?.());
 
-    expect(
-      readChatSessionScrollMemoryState("workspace::pane:a::session:1"),
-    ).toMatchObject({
+    expect(readChatSessionScrollMemoryState("workspace::pane:a::session:1")).toMatchObject({
       scrollTop: 900,
       wasPinnedToBottom: true,
     });
 
-    act(() =>
-      renderTimeline(
-        mountedRoot!,
-        "session-2",
-        "workspace::pane:a::session:2",
-      ),
-    );
-    act(() =>
-      renderTimeline(
-        mountedRoot!,
-        "session-1",
-        "workspace::pane:a::session:1",
-      ),
-    );
+    act(() => renderTimeline(mountedRoot!, "session-2", "workspace::pane:a::session:2"));
+    act(() => renderTimeline(mountedRoot!, "session-1", "workspace::pane:a::session:1"));
 
     const timeline = findByTestId(container, TID_V4_TIMELINE)!;
     expect(timeline.scrollTop).toBe(900);
@@ -745,13 +727,9 @@ describe("ConversationTimeline renderer-local scroll memory", () => {
     mountedRoot = createRoot(container);
 
     act(() =>
-      renderTimeline(
-        mountedRoot!,
-        "session-1",
-        "workspace::pane:a::session:1",
-        undefined,
-        { rows: [] },
-      ),
+      renderTimeline(mountedRoot!, "session-1", "workspace::pane:a::session:1", undefined, {
+        rows: [],
+      }),
     );
 
     let timeline = findByTestId(container, TID_V4_TIMELINE)!;
@@ -765,13 +743,9 @@ describe("ConversationTimeline renderer-local scroll memory", () => {
 
     layout.scrollHeight = 1200;
     act(() =>
-      renderTimeline(
-        mountedRoot!,
-        "session-1",
-        "workspace::pane:a::session:1",
-        undefined,
-        { rows: [row] },
-      ),
+      renderTimeline(mountedRoot!, "session-1", "workspace::pane:a::session:1", undefined, {
+        rows: [row],
+      }),
     );
 
     timeline = findByTestId(container, TID_V4_TIMELINE)!;
@@ -793,27 +767,17 @@ describe("ConversationTimeline renderer-local scroll memory", () => {
     mountedRoot = createRoot(container);
 
     act(() =>
-      renderTimeline(
-        mountedRoot!,
-        "session-1",
-        "workspace::pane:a::session:1",
-        undefined,
-        { rows: [] },
-      ),
+      renderTimeline(mountedRoot!, "session-1", "workspace::pane:a::session:1", undefined, {
+        rows: [],
+      }),
     );
     act(() =>
-      renderTimeline(
-        mountedRoot!,
-        "session-2",
-        "workspace::pane:a::session:2",
-        undefined,
-        { rows: [] },
-      ),
+      renderTimeline(mountedRoot!, "session-2", "workspace::pane:a::session:2", undefined, {
+        rows: [],
+      }),
     );
 
-    expect(
-      readChatSessionScrollMemoryState("workspace::pane:a::session:1"),
-    ).toMatchObject({
+    expect(readChatSessionScrollMemoryState("workspace::pane:a::session:1")).toMatchObject({
       scrollTop: 240,
       wasPinnedToBottom: false,
     });
@@ -868,8 +832,9 @@ describe("ConversationTimeline renderer-local scroll memory", () => {
     });
 
     expect(timeline.scrollTop).toBe(310);
-    expect(readChatSessionScrollMemoryState("workspace::pane:a::session:1")?.wasPinnedToBottom)
-      .toBe(false);
+    expect(
+      readChatSessionScrollMemoryState("workspace::pane:a::session:1")?.wasPinnedToBottom,
+    ).toBe(false);
     expect(readChatSessionScrollMemoryState("workspace::pane:b::session:1")?.scrollTop).toBe(620);
   });
 
@@ -890,8 +855,9 @@ describe("ConversationTimeline renderer-local scroll memory", () => {
     });
 
     expect(readChatSessionScrollMemoryState("workspace::pane:a::session:1")?.scrollTop).toBe(520);
-    expect(readChatSessionScrollMemoryState("workspace::pane:a::session:1")?.wasPinnedToBottom)
-      .toBe(false);
+    expect(
+      readChatSessionScrollMemoryState("workspace::pane:a::session:1")?.wasPinnedToBottom,
+    ).toBe(false);
   });
 
   it("does not overwrite a saved user position after the next scope collapses the DOM", () => {
@@ -911,8 +877,9 @@ describe("ConversationTimeline renderer-local scroll memory", () => {
     });
 
     expect(readChatSessionScrollMemoryState("workspace::pane:a::session:1")?.scrollTop).toBe(280);
-    expect(readChatSessionScrollMemoryState("workspace::pane:a::session:1")?.wasPinnedToBottom)
-      .toBe(false);
+    expect(
+      readChatSessionScrollMemoryState("workspace::pane:a::session:1")?.wasPinnedToBottom,
+    ).toBe(false);
   });
 
   it("saves the last observed DOM position when the timeline unmounts", () => {
@@ -930,19 +897,25 @@ describe("ConversationTimeline renderer-local scroll memory", () => {
     });
 
     expect(readChatSessionScrollMemoryState("workspace::pane:a::session:1")?.scrollTop).toBe(410);
-    expect(readChatSessionScrollMemoryState("workspace::pane:a::session:1")?.wasPinnedToBottom)
-      .toBe(false);
+    expect(
+      readChatSessionScrollMemoryState("workspace::pane:a::session:1")?.wasPinnedToBottom,
+    ).toBe(false);
   });
 
-  // 浮岛删除后（docs/dynamic-workflow/presentation.md「Other places a run appears」item 1）composer 上方不再有共享的
-  // 浮层栈：`composerOverlay` 槽随它唯一的住户一起消失，回到底部圆钮**回到改动前的独立定位**
-  // （`bottom-full` + `mb-2` 居中）。这条用例钉的就是那次几何回退——栈壳还在的话，圆钮会被一层
-  // `pointer-events-none` 的容器包住，而那层已经没有任何存在理由。
+  // After the floating island removal (docs/dynamic-workflow/presentation.md "Other places
+  // a run appears" item 1) there is no shared floating stack above the composer anymore:
+  // the `composerOverlay` slot disappears along with its only resident, and the
+  // back-to-bottom round button **returns to its own pre-change standalone positioning**
+  // (`bottom-full` + `mb-2` centered). This case pins exactly that geometry fallback — if
+  // the stack shell remained, the round button would be wrapped in a `pointer-events-none`
+  // container that no longer has any reason to exist.
   //
-  // 「按钮还点得动」在这里只能按**类契约**断言，不能靠 fire 一次 click：这个最小 DOM 的
-  // dispatchEvent 不冒泡，而 React 把 click 委托在根容器上，事件到不了；换成 jsdom 也一样
-  // 无效——jsdom 不做 pointer-events 命中测试，`fireEvent.click` 在 `pointer-events: none`
-  // 上照样成功。也就是说只有这条 class 断言会在真的漏掉 `pointer-events-auto` 时变红。
+  // "The button is still clickable" can only be asserted here via the **class contract**,
+  // not by firing a click: this minimal DOM's dispatchEvent does not bubble, and React
+  // delegates click on the root container, so the event never arrives; switching to jsdom
+  // would be just as ineffective — jsdom does no pointer-events hit testing, and
+  // `fireEvent.click` succeeds on `pointer-events: none` all the same. In other words,
+  // only this class assertion turns red when `pointer-events-auto` is genuinely missing.
   it("centers the back-to-bottom button on its own once the overlay stack is gone", () => {
     saveChatSessionScrollMemoryState("workspace::pane:a::session:1", {
       scrollTop: 240,
@@ -966,14 +939,14 @@ describe("ConversationTimeline renderer-local scroll memory", () => {
     );
 
     const button = findByTestId(container, TID_V4_TIMELINE_BOTTOM)!;
-    // 槽位与它的栈壳都不复存在：圆钮自己定位在 dock 的 anchor 上。
+    // Neither the slot nor its stack shell exists anymore: the round button positions itself on the dock's anchor.
     expect(findByTestId(container, "v4-composer-overlay")).toBeNull();
     const buttonClass = button.getAttribute("class") ?? "";
     expect(buttonClass).toContain("absolute bottom-full left-1/2");
     expect(buttonClass).toContain("mb-2");
     expect(buttonClass).toContain("-translate-x-1/2");
     expect(buttonClass).toContain("pointer-events-auto");
-    // dock 仍在（圆钮锚在它上面），只有浮层带走了。
+    // The dock is still there (the round button anchors to it); only the floating band is gone.
     expect(findByTestId(container, "test-composer-dock")).not.toBeNull();
 
     act(() => scrollToBottomActionRef.current?.());

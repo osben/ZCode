@@ -47,6 +47,7 @@ describe("settingsPageConfig", () => {
         id: "agentCapabilities",
         sections: [
           "instructions",
+          "outputStyles",
           "memory",
           "subagents",
           "plugin",
@@ -67,6 +68,7 @@ describe("settingsPageConfig", () => {
       "appearance",
       "modelProvider",
       "instructions",
+      "outputStyles",
       "memory",
       "subagents",
       "plugin",
@@ -90,6 +92,7 @@ describe("settingsPageConfig", () => {
       "appearance",
       "modelProvider",
       "instructions",
+      "outputStyles",
       "memory",
       "subagents",
       "plugin",
@@ -137,6 +140,7 @@ describe("settingsPageConfig", () => {
         ?.sections.map((section) => section.id),
     ).toEqual([
       "instructions",
+      "outputStyles",
       "memory",
       "subagents",
       "plugin",

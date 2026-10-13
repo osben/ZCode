@@ -155,6 +155,8 @@ export const userInputRowSchema = z.object({
   attachments: z.array(attachmentRefSchema).optional(),
   // Messages sent on behalf of plugin UI carry a source; the card shows "from plugin X". May be absent in old transcripts.
   source: conversationInputSourceSchema.optional(),
+  // Display-only pin bookmark (unix ms, CLI clock); presence means pinned. Not injected into agent context.
+  pinnedAt: z.number().optional(),
 });
 export type UserInputRow = z.infer<typeof userInputRowSchema>;
 
@@ -171,6 +173,8 @@ export const assistantTextRowSchema = z.object({
   state: z.enum(["streaming", "complete", "interrupted", "failed"]),
   model: z.string().optional(),
   feedback: z.enum(["like", "dislike"]).optional(),
+  // Display-only pin bookmark (unix ms, CLI clock); presence means pinned. Not injected into agent context.
+  pinnedAt: z.number().optional(),
 });
 export type AssistantTextRow = z.infer<typeof assistantTextRowSchema>;
 

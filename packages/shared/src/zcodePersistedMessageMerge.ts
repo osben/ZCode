@@ -86,6 +86,8 @@ function mergeAssistantPair(
     characterCount,
     interrupted: next.interrupted ?? first.interrupted,
     feedback: next.feedback ?? first.feedback,
+    // A pin can land on any merged segment; carry it like feedback so merging segments cannot drop it.
+    pinnedAt: next.pinnedAt ?? first.pinnedAt,
     mergedMessageIds: mergedMessageIds.length > 0 ? mergedMessageIds : undefined,
     goalIteration: next.goalIteration ?? first.goalIteration,
     attachments: next.attachments ?? first.attachments,

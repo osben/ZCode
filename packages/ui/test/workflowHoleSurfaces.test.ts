@@ -1,7 +1,9 @@
-// 留白在各个面上的画法（docs/dynamic-workflow/presentation.md「Holes on the timeline」）：时间线的留白站
-// （虚线灯、虚线轨道、尾巴残段、补全的头与框）、run 卡的「{n} 处留白待补全」芯片、
-// 确认窗的留白行与「2 个阶段 · 2 处留白」、侧栏迷你轨道的虚线灯与「{name} · 等待补全」、
-// 已接进 run 的补全行摘要。静态渲染（renderToStaticMarkup），交互不在此。
+// How holes are drawn on each surface (docs/dynamic-workflow/presentation.md "Holes on the
+// timeline"): the timeline's hole stations (dashed lamp, dashed rails, tail stub, the fill's head
+// and frame), the run card's "{n} holes awaiting fill" chip, the confirmation dialog's hole rows
+// and "2 phases · 2 holes", the sidebar mini-rail's dashed lamp and "{name} · waiting for fill",
+// and the fill-row summary wired into the run. Static rendering (renderToStaticMarkup); interaction
+// is out of scope here.
 import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -25,33 +27,33 @@ vi.mock("@/lib/workflowRunAckStore.js", () => ({
 }));
 vi.mock("@/v4/workflowRunOpenContext.js", () => ({ useWorkflowRunOpen: () => null }));
 
-// eslint-disable-next-line import/first -- 必须在 mock 之后再引入被测组件。
+// eslint-disable-next-line import/first -- The component under test must be imported after the mocks.
 import { buildWorkflowTimeline } from "@/components/workflow-timeline/timeline-model.js";
-// eslint-disable-next-line import/first -- 同上。
+// eslint-disable-next-line import/first -- Ditto.
 import { WorkflowTimeline } from "@/components/workflow-timeline/WorkflowTimeline.js";
-// eslint-disable-next-line import/first -- 同上。
+// eslint-disable-next-line import/first -- Ditto.
 import { WorkflowRunDigest } from "@/components/workflow-timeline/WorkflowRunDigest.js";
-// eslint-disable-next-line import/first -- 同上。
+// eslint-disable-next-line import/first -- Ditto.
 import { WorkflowTimelineFills } from "@/components/workflow-timeline/WorkflowTimelineFills.js";
-// eslint-disable-next-line import/first -- 同上。
+// eslint-disable-next-line import/first -- Ditto.
 import { HoleWaitingBody } from "@/app-shell/WorkflowRunHoleParts.js";
-// eslint-disable-next-line import/first -- 同上。
+// eslint-disable-next-line import/first -- Ditto.
 import { workflowPhasesDetail } from "@/components/workflow-timeline/timeline-summary.js";
-// eslint-disable-next-line import/first -- 同上。
+// eslint-disable-next-line import/first -- Ditto.
 import { WorkflowPermissionHoles } from "@/WorkflowPermissionHoles.js";
-// eslint-disable-next-line import/first -- 同上。
+// eslint-disable-next-line import/first -- Ditto.
 import { TaskWorkflowRunLines } from "@/components/workflow-run-line/TaskWorkflowRunLines.js";
-// eslint-disable-next-line import/first -- 同上。
+// eslint-disable-next-line import/first -- Ditto.
 import { foldWorkflowRunRail } from "@/lib/workflowRunLine.js";
-// eslint-disable-next-line import/first -- 同上。
+// eslint-disable-next-line import/first -- Ditto.
 import { WorkflowToolSummary } from "@/v4/WorkflowToolSummary.js";
-// eslint-disable-next-line import/first -- 同上。
+// eslint-disable-next-line import/first -- Ditto.
 import { workflowFillCounts } from "@/ToolCallBlocks/renderers/createWorkflowHoleInput.js";
 
-// 留白 id 是名字键 `hole#<8 位十六进制>`（docs/analysis.md「Sites」）；渲染器只认形状。
-const H1 = "hole#a0000001"; // 决定分组
-const H2 = "hole#a0000002"; // 评判
-const H11 = "hole#a0000011"; // 挑选（在 H1 的体里）
+// Hole ids are name-keyed `hole#<8 hex digits>` (docs/analysis.md "Sites"); the renderer only checks shape.
+const H1 = "hole#a0000001"; // grouping decision
+const H2 = "hole#a0000002"; // verdict
+const H11 = "hole#a0000011"; // pick (inside H1's body)
 
 function html(node: ReactNode, locale: "zh-CN" | "en-US" = "zh-CN"): string {
   return renderToStaticMarkup(createElement(ZCodeIntlProvider, { initialLocale: locale }, node));
@@ -98,7 +100,7 @@ const FILLED: WorkflowCausalityGraphData = {
     { id: "p2", phase: `${H1}/phase#1`, lane: `${H1}/actor#1`, steps: [`${H1}/ask#1`] },
   ],
   handoffs: [],
-  // 体以标记开头：H1 自己的阶段留在表里（无成员），时间线把它交给头、不成站。
+  // The body starts with a marker: H1's own phase stays in the table (no members); the timeline hands it to the head and does not make it a station.
   phases: [
     { id: "phase#1", name: "探索" },
     { id: H1, name: "决定分组" },
@@ -131,7 +133,8 @@ describe("时间线上的留白站", () => {
     expect(out).toContain('data-station-hole="open"');
     expect(out).toContain('data-lamp="hole-open"');
     expect(out).toContain("border-dashed");
-    // 类型是编译契约，不上界面：站头只有名字（2026-09-28 实测里等宽类型徽标把站名挤到零宽）。
+    // The type is a compile contract, never UI: the station head carries only the name (in the
+    // live check on 2026-09-28 a monospace type badge squeezed the station name to zero width).
     expect(out).not.toContain("workflow-hole-type");
     expect(out).toContain("决定分组");
     expect(out).toContain("评判");
@@ -156,7 +159,7 @@ describe("时间线上的留白站", () => {
     expect(out).toContain('data-lamp="hole-waiting"');
     expect(out).toContain("wf-lamp-hole-waiting");
     expect(out).toContain("等待补全");
-    // 等待的灯不是 running 灯：没有心跳。
+    // The waiting lamp is not a running lamp: no heartbeat.
     expect(out).not.toContain("wf-lamp-running");
   });
 
@@ -184,13 +187,13 @@ describe("时间线上的留白站", () => {
     expect(out).toContain("决定分组");
     expect(out).not.toContain("Plan");
     expect(out).toContain("由主代理补全");
-    // 区域换成了框（docs/dynamic-workflow/presentation.md「Filled with phases」）：一条 pathLength 为 1 的路径。
+    // The region became a frame (docs/dynamic-workflow/presentation.md "Filled with phases"): one path with pathLength 1.
     expect(out).not.toContain("workflow-timeline-fill-region");
     expect(out).toContain('data-testid="workflow-timeline-fill-frame"');
     expect(out).toContain(`data-fill-frame="${H1}"`);
     expect(out).toContain('pathLength="1"');
     expect(out).not.toContain('data-fill-on="true"');
-    // 头是唯一的点亮入口；站仍带 data-fill（测试与生长用），但不再是悬停的目标。
+    // The head is the only lit surface; the station still carries data-fill (for tests and growth) but is no longer the hover target.
     expect(out).toContain(`data-fill-head="${H1}"`);
     expect(out).toContain(`data-fill="${H1}"`);
   });
@@ -243,7 +246,7 @@ describe("嵌套的补全框", () => {
     expect(outer).toMatch(new RegExp(`data-fill-frame="${H1}"[^>]*data-fill-on="true"`, "u"));
     expect(outer).not.toMatch(new RegExp(`data-fill-frame="${H11}"[^>]*data-fill-on="true"`, "u"));
     expect(outer.match(/data-testid="workflow-timeline-fill-head"/gu)).toHaveLength(2);
-    // 起点不同：两个头各自对准自己的第一盏灯（两行）。
+    // Different origins: the two heads each aim at their own first lamp (two rows).
     expect(outer.match(/data-testid="workflow-timeline-fill-heads"/gu)).toHaveLength(2);
     const rest = html(createElement(WorkflowTimelineFills, { ...props, active: undefined }));
     expect(rest).not.toContain('data-fill-on="true"');
@@ -272,9 +275,9 @@ describe("嵌套的补全框", () => {
     expect(out.indexOf(`data-fill-head="${H1}"`)).toBeLessThan(
       out.indexOf(`data-fill-head="${H11}"`),
     );
-    // 两个头在同一个容器里：内层头不再自己带 left。
+    // Both heads live in the same container: the inner head no longer carries its own left.
     expect(out.match(/data-testid="workflow-timeline-fill-head"/gu)).toHaveLength(2);
-    // 行的左缘 = 第 1 站的 x（192）+ 灯心 17 − 笔的半宽退让 6。
+    // Row left edge = station 1's x (192) + lamp center 17 - the pen's half-width setback 6.
     expect(out).toContain("left:203px");
     expect(out.match(/left:/gu)).toHaveLength(1);
   });
@@ -323,7 +326,7 @@ describe("run 卡与确认窗", () => {
   });
 
   it("细节数「1 个阶段 · 2 处留白」：开着的留白不算阶段", () => {
-    // Fork 的 timeline-summary 走 formatPlural 复数族（card.phases / card.holes）。
+    // The Fork's timeline-summary goes through formatPlural's plural family (card.phases / card.holes).
     const format = {
       formatMessage: (descriptor: { id: string }) => descriptor.id,
       formatPlural: (descriptor: { id: string }, count: number) =>

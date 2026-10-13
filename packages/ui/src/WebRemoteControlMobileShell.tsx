@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { ArrowLeft, LoaderIcon } from "lucide-react";
+import { ArrowLeft, LoaderIcon, Search } from "lucide-react";
 import {
   resolveWebRemoteControlWorkspaceKey,
   type WebRemoteControlMobileNavigationIntent,
@@ -77,6 +77,7 @@ export function WebRemoteControlMobileShell({
   initialWorkspaceList,
   isSidePaneOpen = false,
   onCloseSidePane,
+  onOpenCommandCenter,
   onSelectTask,
   onStartDraftInWorkspace,
   renderChatHeader,
@@ -92,6 +93,8 @@ export function WebRemoteControlMobileShell({
   initialWorkspaceList?: WebRemoteControlWorkspaceListResult;
   isSidePaneOpen?: boolean;
   onCloseSidePane?: () => void;
+  /** Opens the unified Command Center; the phone shell has no sidebar, so the chat header carries the entry. */
+  onOpenCommandCenter?: () => void;
   onSelectTask: (
     targetWorkspacePath: string,
     taskId: string,
@@ -248,6 +251,17 @@ export function WebRemoteControlMobileShell({
             <span className="min-w-0 flex-1 truncate text-ui-base font-medium">
               {intl.formatMessage({ id: "webRemoteControl.mobileShell.chatTitle" })}
             </span>
+            {onOpenCommandCenter ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={intl.formatMessage({ id: "commandCenter.open" })}
+                onClick={onOpenCommandCenter}
+              >
+                <Search className="size-4" />
+              </Button>
+            ) : null}
             <WebRemoteControlThemeMenu />
           </div>
           {renderChatHeader({ onBackHome: navigateHome })}

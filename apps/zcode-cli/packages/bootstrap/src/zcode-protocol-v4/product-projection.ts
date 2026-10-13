@@ -11,6 +11,7 @@ import { PERMISSION_FULL_ACCESS_OPTION_ID } from "@zcode/shared/zcode-protocol-v
 // (TopicFrame/subscribe) is handled in a later slice.
 import type {
   AssistantFeedbackUpdatedPayload,
+  RowPinnedUpdatedPayload,
   HighspeedMetricsUpdatedPayload,
   CompactLifecyclePayload,
   DynamicWorkflowRunProgressPayload,
@@ -347,6 +348,7 @@ export type ConversationRowTargetAction =
   | "fileChanges"
   | "fileRewindPreview"
   | "setAssistantFeedback"
+  | "setRowPinned"
   | "setHighspeedMetrics";
 
 export type ConversationRowTargetResolution =
@@ -873,6 +875,26 @@ export class ProductProjection {
       }
       return { ok: true, action, row, messageId };
     }
+    if (action === "setRowPinned") {
+      const messageId = this.messageIdByRowId.get(row.rowId);
+      // Pins address the human bookmark on the final assistant text segment or the user's own input;
+      // both need the transcript anchor. A streaming/failed assistant row cannot be pinned yet, and
+      // system-generated user rows (background result / mailbox / synthetic / workflow launch) are
+      // outside the v1 boundary (docs/chat-message-pins.md).
+      if (
+        !messageId ||
+        (row.kind !== "assistantText" && row.kind !== "userInput") ||
+        (row.kind === "assistantText" && row.state !== "complete") ||
+        (row.kind === "userInput" && row.origin !== "realUser")
+      ) {
+        return {
+          ok: false,
+          status: "rejected",
+          reasonCode: "guard.actionUnavailable",
+        };
+      }
+      return { ok: true, action, row, messageId };
+    }
     if (action === "setHighspeedMetrics") {
       const messageId = this.messageIdByRowId.get(row.rowId);
       if (row.kind !== "userInput" || !row.highspeed || !messageId) {
@@ -1081,7 +1103,9 @@ export class ProductProjection {
     const reduced =
       event.type === SessionEventType.AssistantFeedbackUpdated
         ? this.onAssistantFeedbackUpdated(event)
-        : event.type === SessionEventType.HighspeedMetricsUpdated
+        : event.type === SessionEventType.RowPinnedUpdated
+          ? this.onRowPinnedUpdated(event)
+          : event.type === SessionEventType.HighspeedMetricsUpdated
           ? this.onHighspeedMetricsUpdated(event)
           : event.type === SessionEventType.TurnExecutionModelFallback
             ? this.onTurnExecutionModelFallback(event)
@@ -2830,6 +2854,23 @@ export class ProductProjection {
     }
     if (row.feedback === payload.feedback) return [];
     return [{ op: "row.upserted", row: { ...row, feedback: payload.feedback } }];
+  }
+
+  private onRowPinnedUpdated(event: SessionEvent): ConversationDelta[] {
+    const payload = event.payload as RowPinnedUpdatedPayload;
+    const row = this.snapshot.rows.window.find(
+      (candidate): candidate is AssistantTextRow | UserInputRow =>
+        (candidate.kind === "assistantText" || candidate.kind === "userInput") &&
+        candidate.entityId === payload.entityId,
+    );
+    if (!row) return [];
+    if (payload.pinnedAt === null) {
+      if (row.pinnedAt === undefined) return [];
+      const { pinnedAt: _removedPinnedAt, ...withoutPinnedAt } = row;
+      return [{ op: "row.upserted", row: withoutPinnedAt }];
+    }
+    if (row.pinnedAt === payload.pinnedAt) return [];
+    return [{ op: "row.upserted", row: { ...row, pinnedAt: payload.pinnedAt } }];
   }
 
   private onHighspeedMetricsUpdated(event: SessionEvent): ConversationDelta[] {

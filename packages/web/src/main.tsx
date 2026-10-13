@@ -102,6 +102,7 @@ import {
   markWebRemoteControlBridgeTaskRead,
   markWebRemoteControlTaskRead,
 } from "./webRemoteControlTaskRead.js";
+import { openWebRemoteControlWorkspace } from "./webRemoteControlWorkspaceOpen.js";
 type RootServices = Parameters<typeof Root>[0]["services"];
 type ServiceMethod = (...args: any[]) => unknown;
 
@@ -543,6 +544,42 @@ async function requestWebRemoteControlWorkspaceBridge(
   return payload;
 }
 
+async function requestWebRemoteControlWorkspaceOpen(
+  proxy: WebRemoteControlProxyOptions,
+  target: { workspacePath: string; workspaceIdentity?: string },
+): Promise<void> {
+  const response = await fetch(
+    `${proxy.relayOrigin.replace(/\/$/, "")}/api/remote-control/windows/${proxy.token}/workspace-open`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-ZCode-Mobile-Connection-Id": proxy.mobileConnectionId,
+      },
+      body: JSON.stringify({
+        workspacePath: target.workspacePath,
+        ...(target.workspaceIdentity ? { workspaceIdentity: target.workspaceIdentity } : {}),
+      }),
+    },
+  );
+  const payload = (await response.json().catch(() => null)) as
+    | { success?: boolean; error?: string }
+    | WebRemoteControlBootstrapErrorResponse
+    | null;
+
+  if (!response.ok || !payload || !("success" in payload) || payload.success !== true) {
+    const parsedFailure = parseWebRemoteControlBootstrapError(payload);
+    if (parsedFailure) {
+      throw parsedFailure;
+    }
+    const errorMessage =
+      payload && "error" in payload && typeof payload.error === "string"
+        ? payload.error
+        : "Failed to open workspace on the desktop";
+    throw new Error(errorMessage);
+  }
+}
+
 async function updateWebRemoteControlMobileViewState(
   proxy: WebRemoteControlProxyOptions,
   workspaceKey: string,
@@ -580,7 +617,7 @@ async function updateWebRemoteControlMobileViewState(
   }
 }
 
-function createWebPlatform(options?: {
+export function createWebPlatform(options?: {
   webRemoteControlProxy?: WebRemoteControlProxyOptions;
   externalWebRemoteControlProxy?: WebRemoteControlPlatformProxy;
 }): IPlatformService {
@@ -734,9 +771,18 @@ function createWebPlatform(options?: {
       const communityUrl = await resolveWebCommunityUrl(locale);
       return typeof communityUrl === "string" && communityUrl.length > 0;
     },
-    openInFileManager: () =>
-      Promise.resolve({ success: false, error: "Not supported in web mode" }),
-    openExternalFile: () => Promise.resolve({ success: false, error: "Not supported in web mode" }),
+    openInFileManager: (path) =>
+      platformProxy
+        ? platformProxy.requestPlatformMethod("openInFileManager", path)
+        : webRemoteControlProxy
+          ? requestWebRemoteControlPlatformMethod(webRemoteControlProxy, "openInFileManager", path)
+          : Promise.resolve({ success: false, error: "Not supported in web mode" }),
+    openExternalFile: (path) =>
+      platformProxy
+        ? platformProxy.requestPlatformMethod("openExternalFile", path)
+        : webRemoteControlProxy
+          ? requestWebRemoteControlPlatformMethod(webRemoteControlProxy, "openExternalFile", path)
+          : Promise.resolve({ success: false, error: "Not supported in web mode" }),
     registerOAuthState: (_payload) => {},
     onOAuthCallback: () => () => {},
     onPaymentCallback: () => () => {},
@@ -815,8 +861,22 @@ function createWebPlatform(options?: {
     acknowledgePostUpdateReleaseNotes: () => Promise.resolve(),
     skipUpdateVersion: () => Promise.resolve(),
     quitAndInstallUpdate: () => Promise.resolve(),
-    getInstalledEditors: () => Promise.resolve([]),
-    openInEditor: () => Promise.resolve({ success: false, error: "Not supported in web mode" }),
+    getInstalledEditors: () =>
+      platformProxy
+        ? platformProxy.requestPlatformMethod("getInstalledEditors")
+        : webRemoteControlProxy
+          ? requestWebRemoteControlPlatformMethod(webRemoteControlProxy, "getInstalledEditors")
+          : Promise.resolve([]),
+    openInEditor: (editorId, path, options) =>
+      platformProxy
+        ? platformProxy.requestPlatformMethod("openInEditor", { editorId, path, options })
+        : webRemoteControlProxy
+          ? requestWebRemoteControlPlatformMethod(webRemoteControlProxy, "openInEditor", {
+              editorId,
+              path,
+              options,
+            })
+          : Promise.resolve({ success: false, error: "Not supported in web mode" }),
     executeDesktopCommand: () => Promise.resolve(),
     setApplicationLocale: (_locale) => Promise.resolve(),
     setTitleBarTheme: () => Promise.resolve(),
@@ -1925,6 +1985,32 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
     }
   };
 
+  const requestWorkspaceOpen = async (target: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+  }): Promise<void> => {
+    const requestId = createWebRemoteControlRequestId("workspace-open");
+    const response = await requestWithRelayRecovery(() =>
+      requestAppPayload(
+        {
+          zcode_type: "workspace-open-request",
+          requestId,
+          workspacePath: target.workspacePath,
+          ...(target.workspaceIdentity ? { workspaceIdentity: target.workspaceIdentity } : {}),
+        },
+        (
+          payload,
+        ): payload is Extract<
+          WebRemoteControlAppPayload,
+          { zcode_type: "workspace-open-response" }
+        > => payload.zcode_type === "workspace-open-response" && payload.requestId === requestId,
+      ),
+    );
+    if (!response.success) {
+      throw new Error(response.error);
+    }
+  };
+
   const openWorkspaceBridge = async (
     workspaceKey: string,
     options?: WebRemoteControlWorkspaceSwitchOptions,
@@ -2076,6 +2162,22 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
                 renderExternalRelayRoot(result.services, result.bridge, initialNavigationIntent);
               },
               reconnectWorkspace,
+              openWorkspace: async (target) => {
+                // Same contract as the HTTP relay: the desktop opens the workspace, this client
+                // waits for the refreshed list and attaches through the workspace bridge.
+                await openWebRemoteControlWorkspace({
+                  target,
+                  deps: {
+                    requestWorkspaceOpen,
+                    listWorkspaces,
+                    switchWorkspace: async (workspaceKey) => {
+                      const result = await openWorkspaceBridge(workspaceKey);
+                      renderExternalRelayRoot(result.services, result.bridge, undefined);
+                    },
+                    delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+                  },
+                });
+              },
               updateMobileViewState,
             }}
             preferDirectoryBrowser
@@ -2305,6 +2407,21 @@ async function bootstrapWebRemoteControlByToken(params: URLSearchParams): Promis
               startDraft: async (workspaceKey, options) => {
                 pendingMobileNavigationIntent = options?.mobileNavigationIntent;
                 await openWorkspaceBridge(workspaceKey, undefined);
+              },
+              openWorkspace: async (target) => {
+                // The worktree flow is the single sanctioned open path: the DESKTOP opens the
+                // workspace (its window Host owns local workspaces); this client only attaches
+                // through the existing workspace bridge afterwards.
+                await openWebRemoteControlWorkspace({
+                  target,
+                  deps: {
+                    requestWorkspaceOpen: (openTarget) =>
+                      requestWebRemoteControlWorkspaceOpen(proxy, openTarget),
+                    listWorkspaces: () => requestWebRemoteControlWorkspaces(proxy),
+                    switchWorkspace: (workspaceKey) => openWorkspaceBridge(workspaceKey),
+                    delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+                  },
+                });
               },
               updateMobileViewState: async (workspaceKey, taskId) => {
                 currentWorkspaceKey = workspaceKey;

@@ -34,9 +34,9 @@ export async function reloadElectronSessionSafely(
   options: E2EElectronProcessExitOptions = {},
 ) {
   const oldElectronPid = await browser.electron.execute(async (electron) => {
-    // Bug 原因：WebDriver 会先关闭窗口再结束旧 Electron；若 DOM Storage 尚未刷盘，
-    // 同一 userData 重启也会得到空 localStorage。先显式刷新，才能让“保留 Profile”
-    // 的冷恢复用例观察到与真实正常退出一致的持久化结果。
+    // Bug cause: WebDriver closes the windows before ending the old Electron; if DOM Storage has not been flushed
+    // yet, a restart with the same userData still gets an empty localStorage. Flush explicitly first so the
+    // "preserve profile" cold-recovery cases observe persistence consistent with a real normal exit.
     await electron.session.defaultSession.flushStorageData();
     const appPid = process.pid;
     let quitRequested = false;
@@ -62,10 +62,11 @@ export async function reloadElectronSessionSafely(
     );
   }
 
-  // Bug 根因：只等待 main PID 会遗漏 renderer/GPU/utility 与派生 host/agent；必须在
-  // deleteSession 前按 runId/HOME 捕获完整进程树，并在新 session 创建前确认同一身份归零。
-  // deleteSession 默认会连 ChromeDriver 一起关闭；显式 shutdownDriver=false 才能保留
-  // driver，并让屏障失败直接阻止后续 reloadSession，而不是被 WDIO 吞错后仍创建新 session。
+  // Bug root cause: waiting only on the main PID misses renderer/GPU/utility and spawned host/agent processes; the
+  // full process tree must be captured by runId/HOME before deleteSession, and the same identity confirmed at zero
+  // before the new session is created. deleteSession by default shuts ChromeDriver down too; only an explicit
+  // shutdownDriver=false keeps the driver, and lets a barrier failure directly block the subsequent reloadSession
+  // instead of being swallowed by WDIO while a new session is still created.
   ensureDeleteSessionExitBarrier(browser);
   const pendingBarrier: PendingElectronExitBarrier = {
     consumed: false,
@@ -96,16 +97,19 @@ export async function reloadElectronSessionSafely(
       throw new Error("Electron reload 旧进程退出屏障失败", { cause: pendingBarrier.error });
     }
 
-    // Bug 根因：运行中的 Host 会异步刷新并写回 provider/config 数据；测试若在旧进程
-    // 存活时 direct seed，同一个隔离 HOME 仍会被旧快照覆盖。只有退出屏障完成后、
-    // 新进程启动前才是无并发 writer 的确定性窗口。
+    // Bug root cause: a running Host flushes asynchronously and writes back provider/config data; if the test direct
+    // seeds while the old process is alive, the same isolated HOME still gets overwritten by the old snapshot. Only
+    // after the exit barrier completes and before the new process starts is there a deterministic window without
+    // concurrent writers.
     await options.afterElectronProcessExit?.();
 
-    // reloadSession 会再次删除已经关闭的旧协议 session，并吞掉 invalid-session 错误；
-    // ChromeDriver 仍存活，因此随后只创建新协议 session，不会越过上面的进程树屏障。
+    // reloadSession deletes the already-closed old protocol session again and swallows the invalid-session error;
+    // ChromeDriver is still alive, so afterwards only a new protocol session is created, never crossing the process
+    // tree barrier above.
     const newSessionId = await browser.reloadSession();
-    // Bug 根因：新 WebDriver session 建立后 Electron service.before 不会自动重跑；
-    // helper 必须等新 main process 的 CDP bridge 重建并通过 probe，才能向调用方返回。
+    // Bug root cause: after the new WebDriver session is established, Electron service.before does not rerun
+    // automatically; the helper must wait for the new main process's CDP bridge to be rebuilt and pass the probe
+    // before returning to the caller.
     await (options.reloadElectronServiceBridge ?? reloadE2EElectronServiceBridge)(browser);
     return newSessionId;
   } finally {
@@ -113,7 +117,7 @@ export async function reloadElectronSessionSafely(
   }
 }
 
-/** 完整重启 Electron，同时显式复用同一 userData，避免空 profile 掩盖恢复行为。 */
+/** Fully restarts Electron while explicitly reusing the same userData, so an empty profile does not mask recovery behavior. */
 export async function reloadElectronSessionPreservingBrowserProfile(
   browser: WebdriverIO.Browser,
 ): Promise<string> {
@@ -166,8 +170,8 @@ function ensureDeleteSessionExitBarrier(browser: WebdriverIO.Browser) {
     if (deleteFailed) throw deleteError;
     return deleteResult;
   };
-  // WebdriverIO 的公开运行时允许覆盖 protocol command，但 9.x 类型只列出 browser command；
-  // 这里收窄 cast 到已验证的 deleteSession 包装，不扩散到其它 command。
+  // WebdriverIO's public runtime allows overriding protocol commands, but the 9.x types only list browser commands;
+  // the cast here is narrowed to the verified deleteSession wrapper and not spread to other commands.
   browser.overwriteCommand("deleteSession" as never, overwriteDeleteSession as never);
   browsersWithDeleteBarrier.add(browser);
 }
@@ -197,8 +201,9 @@ export async function waitForElectronProcessExit(
   let remainingPids = await waitForProcessTreeExit(trackedPids, timeoutMs, waitOptions);
   if (remainingPids.length === 0) return;
 
-  // 修复原因：自然退出超时后不能让 reloadSession 带着旧资源继续建新 session；复用
-  // runner 的 Windows taskkill /T /F 与 POSIX TERM -> KILL 口径，随后再按身份严格复扫。
+  // Reason for the fix: after the natural-exit timeout, reloadSession must not go on building a new session with the
+  // old resources; reuse the runner's Windows taskkill /T /F and POSIX TERM -> KILL approach, then do a strict
+  // identity rescan afterwards.
   await cleanupTimedOutProcessTreePids(remainingPids);
   remainingPids = await waitForProcessTreeExit(trackedPids, forceKillGraceMs, waitOptions);
   if (remainingPids.length === 0) return;
@@ -251,7 +256,8 @@ async function cleanupTimedOutElectronProcessTreePids(
         windowsHide: true,
       });
     } catch {
-      // taskkill 可能因部分 PID 已自然退出而返回非零；最终身份复扫负责报告真实残留。
+      // taskkill may return non-zero because some PIDs exited naturally; the final identity rescan is responsible
+      // for reporting real residue.
     }
     return;
   }
@@ -273,7 +279,8 @@ function signalPosixProcesses(pids: number[], signal: NodeJS.Signals) {
     try {
       process.kill(pid, signal);
     } catch {
-      // 进程可能在信号发送前自然退出；最终身份复扫决定屏障是否成功。
+      // The process may exit naturally before the signal is delivered; the final identity rescan decides whether the
+      // barrier succeeded.
     }
   }
 }
@@ -287,8 +294,8 @@ function collectCurrentE2EProcessTreePids(rootPids: number[] = []) {
   return listE2EProcessTreePids({
     currentPid: process.pid,
     homeDir,
-    // reloadSession 复用仍存活的 ChromeDriver；把它纳入旧 Electron 的退出屏障会让
-    // deleteSession({ shutdownDriver: false }) 与屏障语义相互冲突，最终只能 ECONNREFUSED。
+    // reloadSession reuses the still-alive ChromeDriver; including it in the old Electron's exit barrier makes
+    // deleteSession({ shutdownDriver: false }) and the barrier semantics conflict, ending in ECONNREFUSED.
     includeChromeDriverAncestors: false,
     rootPids,
     runId,

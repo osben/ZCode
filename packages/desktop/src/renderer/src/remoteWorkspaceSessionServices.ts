@@ -55,6 +55,9 @@ export function buildRemoteWorkspaceSessionServices(
     // The global-instructions editor reads and writes ~/.zcode/AGENTS.md on the target host.
     // Without this override, a remote workspace silently edits the same-named file on the desktop machine.
     userInstructionsService: remoteServices.userInstructionsService,
+    // Output styles live in ~/.zcode/output-styles on the target host, next to AGENTS.md;
+    // the same override is required so a remote workspace does not edit desktop-local styles.
+    outputStyleService: remoteServices.outputStyleService,
   };
 }
 

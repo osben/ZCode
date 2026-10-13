@@ -1,21 +1,23 @@
 // @vitest-environment jsdom
 //
-// 分流优先级的 tripwire（team-lead 裁定 (b)）。
+// A tripwire for dispatch precedence (team-lead ruling (b)).
 //
-// 这个文件把 `resolveToolCallIdentity` 桩成「SaveWorkflow / ListSavedWorkflows 属于
-// workflow family」——也就是**将来有人把这两个名字登记进 packages/shared 的
-// tool-identity.ts 之后的世界**。断言的是一条性质而不是一次现状：
-// **按工具名的判定必须赢过按 family 的判定。**
+// This file stubs `resolveToolCallIdentity` so that "SaveWorkflow / ListSavedWorkflows belong to
+// the workflow family" — i.e. the world **after someone registers these two names in
+// packages/shared's tool-identity.ts**. What is asserted is a property, not a snapshot:
+// **the decision by tool name must win over the decision by family.**
 //
-// 为什么这是 tripwire 而不是普通用例：workflow family 的兜底分支在两处都指向
-// CreateWorkflow——`resolveRenderer.ts` 的 `identity.toolName === "submit_result"` 三元，
-// 和 `PermissionDialog.tsx` 的 `blockKind === "workflow"`。一旦登记了名字却没有同时扩展
-// family 分派，SaveWorkflow 会**静默**渲染成「创建工作流」：保存确认窗会长出因果图和
-// Refine 选项（对一次写盘完全是错的语言），聊天区会把一次保存画成一次运行。
+// Why this is a tripwire and not an ordinary case: the workflow family's fallback branch points
+// at CreateWorkflow in two places — the `identity.toolName === "submit_result"` ternary in
+// `resolveRenderer.ts`, and `blockKind === "workflow"` in `PermissionDialog.tsx`. Once the names
+// are registered without extending the family dispatch at the same time, SaveWorkflow renders
+// **silently** as "Create Workflow": the save confirmation dialog grows a causality graph and
+// Refine options (entirely the wrong language for a disk write), and the chat area draws a save
+// as a run.
 //
-// 如果你正是那个在 tool-identity.ts 里加上这两个名字的人：本文件应当仍然全绿。
-// 它红了，说明 family 分派把专用面吞掉了，去看 resolveRenderer.ts 与
-// resolvePermissionBlockKind 里按名字判定的那两段注释。
+// If you are the person adding these two names to tool-identity.ts: this file should still be
+// all green. If it turns red, the family dispatch has swallowed the dedicated surfaces — see the
+// two by-name comments in resolveRenderer.ts and resolvePermissionBlockKind.
 
 import { cleanup, render, screen } from "@testing-library/react";
 import type { ZCodePermissionRequest } from "@zcode/shared";
@@ -23,7 +25,7 @@ import { createElement, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 
-// 只改 family 判定，其余行为保持真实实现。
+// Only the family decision is changed; the rest of the behavior keeps the real implementation.
 vi.mock("@/lib/toolIdentity.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/toolIdentity.js")>();
   return {
@@ -31,7 +33,7 @@ vi.mock("@/lib/toolIdentity.js", async (importOriginal) => {
     resolveToolCallIdentity: (toolCall: { toolName?: string | null; kind?: string | null }) => {
       const name = toolCall.toolName ?? toolCall.kind ?? "";
       if (name === "SaveWorkflow" || name === "ListSavedWorkflows") {
-        // 假想中的登记结果：两个名字都落进 workflow family。
+        // The hypothetical registration result: both names land in the workflow family.
         return { toolName: name, family: "workflow", source: "toolName", isLegacy: false };
       }
       return actual.resolveToolCallIdentity(toolCall);
@@ -56,7 +58,7 @@ vi.mock("@/ControlHintTooltip.js", () => ({
   ControlHintTooltip: ({ children }: { children?: ReactNode }) => children,
 }));
 
-/* eslint-disable import/first -- 必须在 mock 之后再引入被测模块。 */
+/* eslint-disable import/first -- The modules under test must be imported after the mocks. */
 import { PermissionDialog } from "@/PermissionDialog.js";
 import { resolveToolCallRenderer } from "@/ToolCallBlocks/resolveRenderer.js";
 import { CreateWorkflowToolCallBlock } from "@/ToolCallBlocks/renderers/create-workflow.js";
@@ -97,7 +99,7 @@ afterEach(cleanup);
 
 describe("saved-workflow dispatch precedence over tool family", () => {
   it("confirms the premise: identity now reports the workflow family", () => {
-    // 前提断言——桩失效时下面几条会变成假绿，这里先把假想世界钉死。
+    // Premise assertion — if the stub stops working, the cases below become falsely green; pin the hypothetical world down here first.
     expect(resolveToolCallIdentity({ toolName: "SaveWorkflow" }).family).toBe("workflow");
     expect(resolveToolCallIdentity({ toolName: "ListSavedWorkflows" }).family).toBe("workflow");
   });
@@ -188,7 +190,7 @@ describe("saved-workflow dispatch precedence over tool family", () => {
     );
 
     expect(document.querySelector('[data-save-workflow-permission-block="true"]')).toBeTruthy();
-    // 运行确认窗的语言绝不能出现在一次写盘上：没有图，也没有「运行此工作流？」。
+    // The run-confirmation dialog's language must never appear on a disk write: no graph, and no "Run this workflow?".
     expect(document.querySelector('[data-workflow-permission-block="true"]')).toBeNull();
     expect(screen.queryByTestId("workflow-causality-graph")).toBeNull();
     expect(document.body.textContent).not.toContain("Run this workflow?");

@@ -1,5 +1,5 @@
 import { CodingPlanEntryButton } from "@/settings/CodingPlanEntryButton.js";
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CodingPlanBillingDiscountConfig } from "@zcode/shared";
 import { InfoIcon, RocketIcon, XIcon } from "lucide-react";
 import {
@@ -7,8 +7,10 @@ import {
   CodingPlanBillingDiscountInfoDialog,
 } from "@/CodingPlanBillingDiscount.js";
 import { Button } from "@/components/ui/button.js";
+import { Checkbox } from "@/components/ui/checkbox.js";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { codingPlanAutoContinueDelayMs } from "@/lib/codingPlanLimitAutoContinue.js";
 import type {
   SessionQuotaBannerKind,
   SessionQuotaBannerState,
@@ -58,6 +60,9 @@ export function ConversationQuotaBanner({
   onUpgrade,
   onDismiss,
   onShown,
+  autoContinueDefault = true,
+  autoContinueReady = true,
+  onAutoContinue,
 }: {
   state: SessionQuotaBannerState;
   billingDiscountActive?: boolean;
@@ -66,9 +71,19 @@ export function ConversationQuotaBanner({
   onUpgrade?: () => void;
   onDismiss: () => void;
   onShown?: () => void;
+  autoContinueDefault?: boolean;
+  autoContinueReady?: boolean;
+  onAutoContinue?: () => void;
 }) {
   const { intl, locale } = useZCodeIntl();
   const bannerRef = useRef<HTMLDivElement>(null);
+  const [autoContinue, setAutoContinue] = useState(autoContinueReady && autoContinueDefault);
+  const autoContinueInitialized = useRef(autoContinueReady);
+  const hasAutoContinueCallback = typeof onAutoContinue === "function";
+  const onAutoContinueRef = useRef(onAutoContinue);
+  useLayoutEffect(() => {
+    onAutoContinueRef.current = onAutoContinue;
+  }, [onAutoContinue]);
   useEffect(() => {
     if (!onShown || !state.visible || !bannerRef.current) return;
     // Background tasks also compute quota state; consume the bucket's one reminder per period only when it is actually visible.
@@ -87,27 +102,84 @@ export function ConversationQuotaBanner({
       document.removeEventListener("visibilitychange", report);
     };
   }, [onShown, state.visible]);
+  useEffect(() => {
+    if (autoContinueInitialized.current || !autoContinueReady) return;
+    autoContinueInitialized.current = true;
+    setAutoContinue(autoContinueDefault);
+  }, [autoContinueDefault, autoContinueReady]);
+  useEffect(() => {
+    if (
+      !autoContinueReady ||
+      !autoContinue ||
+      !state.visible ||
+      state.providerLimitedResetAt === null ||
+      !hasAutoContinueCallback
+    ) {
+      return;
+    }
+    const delayMs = codingPlanAutoContinueDelayMs(
+      state.providerLimitedResetAt,
+      Date.now(),
+      Math.random(),
+    );
+    const targetAt = Date.now() + delayMs;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = () => {
+      const remainingMs = targetAt - Date.now();
+      if (remainingMs <= 0) {
+        onAutoContinueRef.current?.();
+        return;
+      }
+      timer = setTimeout(schedule, Math.min(remainingMs, 2_147_483_647));
+    };
+    schedule();
+    return () => {
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  }, [
+    autoContinue,
+    autoContinueReady,
+    hasAutoContinueCallback,
+    state.providerLimitedResetAt,
+    state.visible,
+  ]);
   if (!state.visible || !state.kind) return null;
 
-  const message =
-    state.kind === "provider-limited" && state.providerLimitedMessage
-      ? state.providerLimitedMessage
-      : intl.formatMessage(
-          { id: resolveMessageId(state) },
-          {
-            model: state.modelName ?? "",
-            // The MCP notice names a specific server; the server-side text is English, so all UI copy must use i18n.
-            server: state.mcpServerName ?? "",
-            remaining:
-              state.remainingTokens === null
-                ? formatTokenCount(null)
-                : new Intl.NumberFormat(locale, {
-                    notation: "compact",
-                    maximumFractionDigits: 1,
-                  }).format(state.remainingTokens),
-            percent: formatPercent(state.remainingPercent),
-          },
-        );
+  const resetTime =
+    state.kind === "provider-limited" && state.providerLimitedResetAt !== null
+      ? new Intl.DateTimeFormat(locale, {
+          year: "numeric",
+          month: "short",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+          timeZoneName: "short",
+        }).format(state.providerLimitedResetAt)
+      : null;
+  const message = (() => {
+    if (resetTime) {
+      return intl.formatMessage({ id: "chat.quota.providerLimited.resetAt" }, { time: resetTime });
+    }
+    if (state.kind === "provider-limited" && state.providerLimitedMessage) {
+      return state.providerLimitedMessage;
+    }
+    return intl.formatMessage(
+      { id: resolveMessageId(state) },
+      {
+        model: state.modelName ?? "",
+        // The MCP notice names a specific server; the server-side text is English, so all UI copy must use i18n.
+        server: state.mcpServerName ?? "",
+        remaining:
+          state.remainingTokens === null
+            ? formatTokenCount(null)
+            : new Intl.NumberFormat(locale, {
+                notation: "compact",
+                maximumFractionDigits: 1,
+              }).format(state.remainingTokens),
+        percent: formatPercent(state.remainingPercent),
+      },
+    );
+  })();
   const showBillingDiscountBadge = Boolean(onUpgrade) && billingDiscountActive === true;
 
   return (
@@ -149,6 +221,17 @@ export function ConversationQuotaBanner({
               <CodingPlanBillingDiscountInfoDialog config={billingDiscountConfig} />
             ) : null}
           </div>
+        ) : null}
+        {state.providerLimitedResetAt !== null ? (
+          <label className="inline-flex shrink-0 items-center gap-2 text-ui-sm text-foreground">
+            <Checkbox
+              aria-label={intl.formatMessage({ id: "chat.quota.providerLimited.autoContinue" })}
+              checked={autoContinue}
+              disabled={!autoContinueReady}
+              onCheckedChange={(checked) => setAutoContinue(checked === true)}
+            />
+            {intl.formatMessage({ id: "chat.quota.providerLimited.autoContinue" })}
+          </label>
         ) : null}
         {state.dismissible ? (
           <Button

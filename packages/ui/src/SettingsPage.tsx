@@ -81,6 +81,7 @@ import { WorkspaceFileSearchSection } from "@/settings/WorkspaceFileSearchSectio
 import { MemorySettingsSection } from "@/settings/MemorySettingsSection.js";
 import { WorktreesSection } from "@/settings/WorktreesSection.js";
 import { UserInstructionsSettingsSection } from "@/settings/UserInstructionsSettingsSection.js";
+import { OutputStylesSection } from "@/settings/OutputStylesSection.js";
 import type { UserInstructionsHostTarget } from "@/settings/userInstructionsEditorModel.js";
 import { useConfirmDialogStore } from "@/store/confirmDialogStore.js";
 import { CLOSE_ACTIVE_CONTEXT_REQUEST_EVENT } from "@/lib/closeActiveContext.js";
@@ -681,12 +682,20 @@ export function SettingsPage({
   const handleInstructionsDirtyChange = useCallback((dirty: boolean) => {
     instructionsDirtyRef.current = dirty;
   }, []);
+  // Output Styles uses the same pattern: the section owns the editor draft, the page only guards navigation.
+  const outputStylesDirtyRef = useRef(false);
+  const handleOutputStylesDirtyChange = useCallback((dirty: boolean) => {
+    outputStylesDirtyRef.current = dirty;
+  }, []);
   const confirmLeaveInstructionsDraft = useCallback(async (): Promise<boolean> => {
-    if (activeSection !== "instructions" || !instructionsDirtyRef.current) return true;
+    const leavingInstructions = activeSection === "instructions" && instructionsDirtyRef.current;
+    const leavingOutputStyles = activeSection === "outputStyles" && outputStylesDirtyRef.current;
+    if (!leavingInstructions && !leavingOutputStyles) return true;
+    const keyPrefix = leavingInstructions ? "settings.instructions" : "settings.outputStyles";
     return useConfirmDialogStore.getState().requestConfirmation({
-      title: intl.formatMessage({ id: "settings.instructions.discard.title" }),
-      description: intl.formatMessage({ id: "settings.instructions.discard.leave" }),
-      confirmLabel: intl.formatMessage({ id: "settings.instructions.discard.confirm" }),
+      title: intl.formatMessage({ id: `${keyPrefix}.discard.title` }),
+      description: intl.formatMessage({ id: `${keyPrefix}.discard.leave` }),
+      confirmLabel: intl.formatMessage({ id: `${keyPrefix}.discard.confirm` }),
       confirmVariant: "destructive",
     });
   }, [activeSection, intl]);
@@ -698,7 +707,9 @@ export function SettingsPage({
   useEffect(() => {
     if (!isDesktop) return;
     const handleCloseActiveContextRequest = (event: Event) => {
-      if (activeSection !== "instructions" || !instructionsDirtyRef.current) return;
+      const guardInstructions = activeSection === "instructions" && instructionsDirtyRef.current;
+      const guardOutputStyles = activeSection === "outputStyles" && outputStylesDirtyRef.current;
+      if (!guardInstructions && !guardOutputStyles) return;
       // Cmd/Ctrl+W falls back to closing the window in Settings. Intercept it and confirm first when global instructions have an unsaved draft.
       event.preventDefault();
       void confirmLeaveInstructionsDraft().then((confirmed) => {
@@ -804,6 +815,8 @@ export function SettingsPage({
   const nativeSearchEnhancementsEnabled = sharedSettings?.nativeSearchEnhancementsEnabled !== false;
   const askUserQuestionAutoResolutionEnabled =
     sharedSettings?.askUserQuestionAutoResolutionEnabled !== false;
+  const codingPlanLimitAutoContinueDefaultEnabled =
+    sharedSettings?.codingPlanLimitAutoContinueDefaultEnabled !== false;
   const modelIoFullRetentionEnabled = sharedSettings?.modelIoFullRetentionEnabled === true;
   const [dataBaseDir, setDataBaseDir] = useState("");
   const [terminalInheritSystemProfile, setTerminalInheritSystemProfile] = useState(true);
@@ -1045,6 +1058,22 @@ export function SettingsPage({
         action: "toggle_model_io_retention",
         trigger: "switch",
         operation: () => updateSharedSettings({ modelIoFullRetentionEnabled: enabled }),
+        completed: {
+          resultSource: "shared_settings",
+          stateAfter: enabled ? "enabled" : "disabled",
+        },
+      });
+    },
+    [updateSharedSettings],
+  );
+  const handleCodingPlanLimitAutoContinueDefaultEnabledChange = useCallback(
+    async (enabled: boolean) => {
+      await runSettingsActionAsync({
+        featureId: "settings.conversation",
+        action: "toggle_coding_plan_limit_auto_continue_default",
+        trigger: "switch",
+        operation: () =>
+          updateSharedSettings({ codingPlanLimitAutoContinueDefaultEnabled: enabled }),
         completed: {
           resultSource: "shared_settings",
           stateAfter: enabled ? "enabled" : "disabled",
@@ -1872,6 +1901,9 @@ export function SettingsPage({
                             askUserQuestionAutoResolutionEnabled={
                               askUserQuestionAutoResolutionEnabled
                             }
+                            codingPlanLimitAutoContinueDefaultEnabled={
+                              codingPlanLimitAutoContinueDefaultEnabled
+                            }
                             modelIoFullRetentionEnabled={modelIoFullRetentionEnabled}
                             onDataBaseDirChange={handleDataBaseDirChange}
                             onSelectDataBaseDir={selectDirectory}
@@ -1933,6 +1965,9 @@ export function SettingsPage({
                             onZCodeInteractionBehaviorChange={handleZCodeInteractionBehaviorChange}
                             onAskUserQuestionAutoResolutionEnabledChange={
                               handleAskUserQuestionAutoResolutionEnabledChange
+                            }
+                            onCodingPlanLimitAutoContinueDefaultEnabledChange={
+                              handleCodingPlanLimitAutoContinueDefaultEnabledChange
                             }
                             onOpenOnboardingDialog={() =>
                               runUserAction({
@@ -2014,6 +2049,12 @@ export function SettingsPage({
                             isDesktop={Boolean(isDesktop)}
                             activeTarget={userInstructionsActiveTarget}
                             onDirtyChange={handleInstructionsDirtyChange}
+                          />
+                        ) : activeSection === "outputStyles" ? (
+                          <OutputStylesSection
+                            isDesktop={Boolean(isDesktop)}
+                            activeTarget={userInstructionsActiveTarget}
+                            onDirtyChange={handleOutputStylesDirtyChange}
                           />
                         ) : activeSection === "plugin" ? (
                           <PluginsSection

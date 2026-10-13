@@ -38,6 +38,8 @@ export function resolveAppRuntimeConfig(input: {
   persistedMode?: CollaborationMode;
   /** System-prompt section overrides loaded from disk (docs/system-prompt-overrides.md). */
   persistedSystemPromptOverrides?: AgentRuntimeConfig["systemPromptOverrides"];
+  /** Active output style loaded from disk (docs/output-styles-settings.md); explicit session config wins. */
+  persistedOutputStyle?: AgentRuntimeConfig["outputStyle"];
   builtInMcpServers?: Record<string, McpServerConfig>;
   builtInSubagentModelSelectionOverrides?: BuiltInSubagentModelSelectionOverrides;
   pluginHooks?: Partial<Record<HookEventName, HookMatcherConfig[]>>;
@@ -55,6 +57,7 @@ export function resolveAppRuntimeConfig(input: {
     options,
     persistedMode,
     persistedSystemPromptOverrides,
+    persistedOutputStyle,
     builtInMcpServers,
     pluginMcpServers,
     pluginRuntimeFeatures,
@@ -142,6 +145,7 @@ export function resolveAppRuntimeConfig(input: {
     language: options.runtimeConfig?.language,
     systemPromptOverrides:
       options.runtimeConfig?.systemPromptOverrides ?? persistedSystemPromptOverrides,
+    outputStyle: options.runtimeConfig?.outputStyle ?? persistedOutputStyle,
     titleGeneration,
     workingDirectory,
     userInstructions: {

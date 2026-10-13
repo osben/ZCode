@@ -117,6 +117,9 @@ import {
 } from "./appShutdownPolicy.js";
 import { createPrimaryWindowCoordinator } from "./primaryWindowCoordinator.js";
 import { createTempTextAttachment } from "./tempTextAttachment.js";
+import { getInstalledEditors } from "./editors.js";
+import { openInEditor } from "./openInEditor.js";
+import { openPathInDefaultApp, openPathInFileManager } from "./desktopMainIpcHelpers.js";
 import { flushMainE2ECoverage } from "./e2eCoverage.js";
 import { resolveStartupWindowBootstrap, type StartupWindowBootstrap } from "./startupWorkspace.js";
 import {
@@ -129,6 +132,7 @@ import { createNodeWebRemoteControlRelayAuthProvider } from "./webRemoteControlR
 import { createWebRemoteControlRelayAuthStorageProvider } from "./webRemoteControlRelayAuthStorageProvider.js";
 import { createWebRemoteControlFeatureGate } from "./webRemoteControlFeatureGate.js";
 import { reconnectWebRemoteControlWorkspaceInRenderer } from "./webRemoteControlRendererReconnect.js";
+import { openWebRemoteControlWorkspaceInWindow } from "./webRemoteControlWorkspaceOpen.js";
 import { sendWebRemoteControlStatusChangedToWindow } from "./webRemoteControlStatusEvents.js";
 import { executeDesktopCommand } from "./desktopCommandHandlers.js";
 import { clampDesktopZoomLevel, resolveDesktopZoomLevelFromFactor } from "./desktopZoom.js";
@@ -985,8 +989,16 @@ const webRemoteControlManager = createWebRemoteControlManager({
       }
     },
     migrateLegacyCommonMcp: (payload) => migrateLegacyCommonMcp(payload),
+    // Reuse the same desktop implementations as the renderer IPC handlers; the web remote
+    // client proxies these platform methods so "open on desktop" works from the phone.
+    getInstalledEditors: () => getInstalledEditors(),
+    openInEditor: (payload) => openInEditor(payload.editorId, payload.path, payload.options),
+    openInFileManager: (path) => openPathInFileManager(path, logger),
+    openExternalFile: (path) => openPathInDefaultApp(path, logger),
   },
   reconnectWorkspace: reconnectWebRemoteControlWorkspaceInRenderer,
+  openWorkspace: (windowId, target) =>
+    openWebRemoteControlWorkspaceInWindow(windowId, target, logger),
   reportRendererTelemetryEvent: (event) => {
     void appTelemetryCore.reportEvent(event).catch(() => {});
   },

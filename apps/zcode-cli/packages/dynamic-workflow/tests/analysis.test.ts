@@ -890,9 +890,9 @@ describe("facade-siting diagnostics", () => {
   });
 });
 
-// report 站点（execution-engine.md 的 "Progressive results"，docs/analysis.md 的
-// 「Sites」）。三件事在这里钉住：站点身份存在且有自己的
-// per-kind 计数器、facade-siting 规则确实约束它、以及它对两张图**完全没有**影响。
+// The report site ("Progressive results" in execution-engine.md, "Sites" in docs/analysis.md).
+// Three things are pinned here: the site identity exists and has its own
+// per-kind counter, the facade-siting rules do constrain it, and it has **no** effect on either graph.
 describe("report sites", () => {
   const table = (scriptText: string) => collectSites(createWorkflowProgram(scriptText));
 
@@ -901,15 +901,15 @@ describe("report sites", () => {
       `report("one");\nconst out = await agent("a").ask<string>("go");\nreport({ out });\nreturn out;`,
     );
     expect(t.reports.map((site) => site.id)).toEqual(["report#1", "report#2"]);
-    // 实参被捕获（编译侧的可序列化检查读它），但**不进** taint 的 sink 集合。
+    // The argument is captured (the compile-side serializability check reads it), but does **not** enter taint's sink set.
     expect(t.reports.every((site) => site.item !== undefined)).toBe(true);
     expect(t.reports[0]?.loc).toEqual({ column: 1, line: 1 });
   });
 
   it("leaves every other per-kind id counter bit-for-bit unchanged", () => {
-    // 站点 id 稳定性规则真正保护的那条不变式：report 有自己的计数器，所以在 ask 之间插
-    // report 不会挪动任何 ask#N / actor#N / world-read#N。它只消耗全局 `order` 发现序，
-    // 而 order 只是输出的归并键（execution-engine.md 的 "Site-id stability"）。
+    // The invariant the site-id stability rule actually protects: report has its own counter, so inserting
+    // report between asks does not shift any ask#N / actor#N / world-read#N. It only consumes the global `order` discovery sequence,
+    // and order is just the output merge key ("Site-id stability" in execution-engine.md).
     const withoutReports = table(
       `const a = agent("a");\nconst paths = await files.glob("src/**");\nconst x = await a.ask<string>("1");\nconst y = await a.ask<string>("2");\nreturn [x, y, paths.length];`,
     );
@@ -927,7 +927,7 @@ describe("report sites", () => {
   });
 
   it("mints no report site for a script-local function of the same name", () => {
-    // 身份按声明判定，与 registry 的其余部分一致。
+    // Identity is decided by declaration, consistent with the rest of the registry.
     const t = table(
       `const report = (item: unknown): void => { void item; };\nreport({ a: 1 });\nreturn 1;`,
     );
@@ -935,7 +935,7 @@ describe("report sites", () => {
   });
 
   it("draws no node and no edge in either graph", () => {
-    // report 发的是进度而不是次序：没有什么能等它，也就没有什么可以让一条边去表示。
+    // report emits progress, not ordering: nothing can wait on it, so there is nothing for an edge to represent.
     const result = analyzeWorkflowScript(
       `const a = agent("a");\nconst out = await a.ask<string>("go");\nreport({ out });\nreturn out;`,
     );
@@ -948,8 +948,9 @@ describe("report sites", () => {
   });
 
   it("leaves all three serialized graphs byte-identical when reports are added between asks", () => {
-    // 上一条证明 report 不画自己，这一条证明它不**扰动**别人——包括实参没有被当作 sink
-    // （否则 `plan` 流进 report 会多出一条 data 边）。这是那条排除规则最容易悄悄破掉的一半。
+    // The previous case proves report does not draw itself; this one proves it does not **perturb** others — including the argument
+    // not being treated as a sink (otherwise `plan` flowing into report would add an extra data edge). This is the half of the exclusion
+    // rule most likely to break silently.
     const base =
       `interface Plan { steps: string[]; }\nconst p = agent("p");\nconst r = agent("r");\nconst plan = await p.ask<Plan>("draft");\nconst first = await r.ask<string>(plan.steps[0] ?? "x");\nreturn first;`;
     const reported =
@@ -957,7 +958,7 @@ describe("report sites", () => {
     const a = analyzeWorkflowScript(base);
     const b = analyzeWorkflowScript(reported);
     expect(a.ok && b.ok).toBe(true);
-    // 位置行号会因插入的行而变，所以比对的是去掉 @line:col 之后的图结构。
+    // Position line numbers change due to the inserted lines, so compare the graph structure with @line:col stripped.
     const strip = (text: string): string => text.replace(/ @\d+:\d+/g, "");
     expect(strip(serializeGraph(b.graph!))).toBe(strip(serializeGraph(a.graph!)));
     expect(strip(serializeActorGraph(toActorGraph(b.graph!)))).toBe(
@@ -966,8 +967,8 @@ describe("report sites", () => {
   });
 });
 
-// report 落在 facade-siting 规则的**产生站点**那一半（而不是 log 那一半仅受限的半边）：
-// 它有一行按站点建键的 journal，所以身份论证对它完全成立（docs/analysis.md）。
+// report falls on the **producing site** half of the facade-siting rules (not the merely-restricted half where log lives):
+// it has a journal keyed per site, so the identity argument fully applies to it (docs/analysis.md).
 describe("report facade-siting", () => {
   it("rejects const-aliasing report (const r = report)", () => {
     const result = analyzeWorkflowScript(`const r = report;\nr({ a: 1 });\nreturn 1;`);
@@ -987,8 +988,8 @@ describe("report facade-siting", () => {
   });
 
   it("accepts a direct report call (no misuse diagnostic for the sited form)", () => {
-    // 反向防线：report 加入产生站点的清单之后，**普通用法**绝不能被 pass 2 误伤——
-    // 那一趟拒绝的是"产生站点却没被 site 掉"的调用，所以站点表必须收录 report。
+    // Reverse defense: after report joins the producing-site list, **ordinary usage** must never be hit by pass 2 —
+    // that pass rejects calls that "produce a site but were not sited", so the site table must include report.
     const result = analyzeWorkflowScript(
       `const a = agent("a");\nconst out = await a.ask<string>("go");\nreport({ out });\nlog("done");\nreturn out;`,
     );

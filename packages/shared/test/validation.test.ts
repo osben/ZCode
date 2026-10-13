@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { HostResponseTypes } from "../src/channels.js";
+import { coalesceConsecutiveZCodeAssistants } from "../src/zcodePersistedMessageMerge.js";
 import {
   appSettingsSchema,
   appSettingsPatchSchema,
@@ -35,6 +36,34 @@ it("accepts persisted user messages with video attachments", () => {
       ],
     }).success,
   ).toBe(true);
+});
+
+it("keeps the display-only pinnedAt pin on persisted messages (Zod would strip unknown keys)", () => {
+  const parsed = zcodePersistedMessageSchema.parse({
+    role: "assistant",
+    content: "回复",
+    timestamp: 1,
+    feedback: "like",
+    pinnedAt: 1500,
+  });
+  expect(parsed.pinnedAt).toBe(1500);
+  expect(parsed.feedback).toBe("like");
+});
+
+it("coalescing consecutive assistant segments carries a pin from either segment", () => {
+  const earlyPin = coalesceConsecutiveZCodeAssistants([
+    { role: "user", content: "q", timestamp: 0 },
+    { role: "assistant", content: "a", timestamp: 1, pinnedAt: 100 },
+    { role: "assistant", content: "b", timestamp: 2 },
+  ]);
+  expect(earlyPin.find((message) => message.role === "assistant")?.pinnedAt).toBe(100);
+
+  const latePin = coalesceConsecutiveZCodeAssistants([
+    { role: "user", content: "q", timestamp: 0 },
+    { role: "assistant", content: "a", timestamp: 1 },
+    { role: "assistant", content: "b", timestamp: 2, pinnedAt: 200 },
+  ]);
+  expect(latePin.find((message) => message.role === "assistant")?.pinnedAt).toBe(200);
 });
 
 describe("hostResponseMessageSchema", () => {
@@ -503,6 +532,29 @@ describe("hostResponseMessageSchema", () => {
         askUserQuestionAutoResolutionEnabled: "false",
       }).success,
     ).toBe(false);
+  });
+
+  it("recovers an invalid saved Coding Plan auto-continue default and validates boolean patches", () => {
+    const invalidSavedValue = appSettingsSchema.safeParse({
+      codingPlanLimitAutoContinueDefaultEnabled: "false",
+    });
+    const explicitDisabled = appSettingsSchema.parse({
+      codingPlanLimitAutoContinueDefaultEnabled: false,
+    });
+    const validPatch = appSettingsPatchSchema.parse({
+      codingPlanLimitAutoContinueDefaultEnabled: false,
+    });
+    const invalidPatch = appSettingsPatchSchema.safeParse({
+      codingPlanLimitAutoContinueDefaultEnabled: "false",
+    });
+
+    expect(invalidSavedValue.success).toBe(true);
+    if (invalidSavedValue.success) {
+      expect(invalidSavedValue.data.codingPlanLimitAutoContinueDefaultEnabled).toBe(true);
+    }
+    expect(explicitDisabled.codingPlanLimitAutoContinueDefaultEnabled).toBe(false);
+    expect(validPatch.codingPlanLimitAutoContinueDefaultEnabled).toBe(false);
+    expect(invalidPatch.success).toBe(false);
   });
 
   it("首次统一开启消息流 reasoning，迁移后保留用户选择", () => {

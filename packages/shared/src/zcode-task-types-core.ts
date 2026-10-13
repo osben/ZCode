@@ -1107,6 +1107,8 @@ export interface ZCodePersistedMessage {
   interrupted?: boolean;
   /** Local user feedback on the assistant response; for ZCode display/metrics only and not injected into Agent context. */
   feedback?: ZCodeAssistantMessageFeedback;
+  /** Display-only pin bookmark (unix ms, CLI clock); presence means pinned. For ZCode display only and not injected into Agent context. */
+  pinnedAt?: number;
   attachments?: ZCodePromptAttachment[];
   tools?: ZCodePersistedToolCall[];
   thought?: string;

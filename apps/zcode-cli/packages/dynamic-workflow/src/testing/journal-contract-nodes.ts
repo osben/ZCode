@@ -1,8 +1,11 @@
 /**
- * 修复原因：journal-contract.ts 顶到 oxlint max-lines 上限（400 行），把actor 记录与节点记录（ask / world / report 行、缺席键、messageBoundary 回填）的用例拆到本文件；
- * 公开面仍从 journal-contract.ts 导出（`runJournalStoreContract` 按原顺序调用各主题的注册函数）。
+ * Reason for the split: journal-contract.ts hit the oxlint max-lines cap (400 lines), so the actor-record and
+ * node-record cases (ask / world / report rows, absent keys, messageBoundary backfill) moved into this file;
+ * the public surface is still exported from journal-contract.ts (`runJournalStoreContract` calls each topic's
+ * registration function in the original order).
  *
- * 注意：这里只登记 `it(...)`，不另开 describe——套件的分组与用例顺序必须与拆分前逐字相同。
+ * Note: only `it(...)` cases are registered here and no describe is opened — the suite's grouping and case order
+ * must stay verbatim identical to before the split.
  */
 
 import { expect, it } from "vitest";
@@ -18,7 +21,7 @@ export function registerNodeCases(factory: () => JournalStorePort): void {
     expect(store.getActor("r1", "actor#1", 1)?.name).toBe("planner");
     expect(store.getActor("r1", "actor#1", 3)).toBeUndefined();
     expect(store.listActors("r1", { withPersona: true })).toHaveLength(2);
-    // 幂等覆盖：同键再写更新 sessionId。
+    // Idempotent overwrite: writing again with the same key updates sessionId.
     store.putActor({
       runId: "r1",
       siteId: "actor#1",
@@ -31,8 +34,9 @@ export function registerNodeCases(factory: () => JournalStorePort): void {
   });
 
   it("round-trips the frozen persona and the driver-resolved model on an actor", () => {
-    // persona 是冻结身份，resolvedModel 是宿主事实（子代理实际跑在哪个模型上）。两者分列存放：
-    // persona 是引擎在 createActor 时同步写下的，那一刻宿主还没造出会话、也就没有模型可记。
+    // persona is the frozen identity, resolvedModel is a host fact (which model the subagent actually ran on).
+    // The two are stored in separate columns: persona is written synchronously by the engine at createActor time,
+    // and at that moment the host has not created the session yet, so there is no model to record.
     const store = factory();
     store.createRun(baseRun("r1"));
     const record: ActorRecord = {
@@ -49,8 +53,9 @@ export function registerNodeCases(factory: () => JournalStorePort): void {
   });
 
   it("keeps an absent resolvedModel absent (not a null / undefined key)", () => {
-    // 0021 之前的历史行与「宿主还没解析过」的行都走这条路径：缺席必须解成缺席的键，
-    // 否则对整条记录做 toEqual 的调用方（与上一条用例）在升级后全线失败。
+    // Historical rows from before 0021 and rows where "the host has not resolved yet" both take this path: absent
+    // must deserialize as an absent key, otherwise callers doing toEqual on the whole record (as in the previous
+    // case) all fail after the upgrade.
     const store = factory();
     store.createRun(baseRun("r1"));
     store.putActor({ runId: "r1", siteId: "actor#1", ordinal: 1, name: "judge" });
@@ -81,9 +86,10 @@ export function registerNodeCases(factory: () => JournalStorePort): void {
   });
 
   it("round-trips a world-read node's bounded input and keeps it absent elsewhere", () => {
-    // 工作区 transcript 要说 *what ran*（docs/dynamic-workflow/transcript-and-notifications.md）：
-    // `{op, args}` 与 inputHash 同一次准入写下，结算的整条替换必须原样带回；ask 行没有它，
-    // 而且是**缺席的键**（不是 undefined 值），否则 toEqual 与读面的 `"input" in row` 都会说谎。
+    // The workspace transcript has to tell *what ran* (docs/dynamic-workflow/transcript-and-notifications.md):
+    // `{op, args}` is written in the same admission as inputHash, and the settled whole-record replacement must
+    // bring it back verbatim; ask rows do not have it, and it is an **absent key** (not an undefined value),
+    // otherwise both toEqual and the reader-side `"input" in row` would lie.
     const store = factory();
     store.createRun(baseRun("r1"));
     const node: NodeRecord = {
@@ -116,10 +122,11 @@ export function registerNodeCases(factory: () => JournalStorePort): void {
   });
 
   it("stores a report node: one write, already completed, no actor coordinates", () => {
-    // report 节点是「准入 running → 结算」两次写规则唯一的例外（准入与结算之间没有 driver
-    // 调用）。落库形状因此是可断言的：单次 putNode、status 恒 completed、actor 三列缺席、
-    // result 即被报告的 item。两个实现都必须原样回读，否则 Results 面板与完成通知
-    // 会显示存储层的加工品。
+    // The report node is the sole exception to the two-write "admit running → settle" rule (there is no driver call
+    // between admission and settlement). Its stored shape is therefore assertable: a single putNode, status always
+    // completed, the three actor columns absent, and result being the reported item. Both implementations must read
+    // it back verbatim, otherwise the Results panel and the completion notification would show the storage layer's
+    // artifacts.
     const store = factory();
     store.createRun(baseRun("r1"));
     const report: NodeRecord = {
@@ -143,8 +150,9 @@ export function registerNodeCases(factory: () => JournalStorePort): void {
   });
 
   it("keeps a null node result distinguishable from an absent one", () => {
-    // result 的类型是 unknown：`ask<T | null>` 返回的 null 是真结果，不是"还没有结果"。
-    // 落库实现若把 undefined 和 null 一起压成 SQL NULL，这个区别会在 round-trip 里消失。
+    // The result type is unknown: a null returned by `ask<T | null>` is a real result, not "no result yet".
+    // If a storage implementation collapses undefined and null together into SQL NULL, this distinction disappears
+    // in the round-trip.
     const store = factory();
     store.createRun(baseRun("r1"));
     const nulled: NodeRecord = {
@@ -170,14 +178,15 @@ export function registerNodeCases(factory: () => JournalStorePort): void {
     expect(store.getNode("r1", "ask#1", 1)).toEqual(nulled);
     const stored = store.getNode("r1", "ask#2", 1);
     expect(stored).toEqual(absent);
-    // 缺席的可选字段要原样缺席地回来（而不是变成 result: null / result: undefined）。
+    // An absent optional field must come back absent as-is (not become result: null / result: undefined).
     expect(stored !== undefined && "result" in stored).toBe(false);
   });
 
-  // messageBoundary 是 ask 结算后 actor 会话消息 log 的长度（count offset），driver 在
-  // settle 之后补写（docs/execution-engine.md「Amend-resume」）。属于契约：
-  // 它是修订续跑做全保真转录截断时唯一的截断依据，SQLite 若漏写这一列，前驱就成了
-  // 「无 marker 前驱」——整个 amend 被结构化拒绝。
+  // messageBoundary is the length (count offset) of the actor session's message log once the ask settles; the
+  // driver backfills it after settle (docs/execution-engine.md "Amend-resume"). It is part of the contract:
+  // it is the only truncation basis when an amended resume does full-fidelity transcript truncation, and if SQLite
+  // fails to write this column, the predecessor becomes a "predecessor without marker" — the whole amend is
+  // structurally rejected.
   it("round-trips an ask node's messageBoundary and keeps it absent when unrecorded", () => {
     const store = factory();
     store.createRun(baseRun("r1"));
@@ -195,8 +204,8 @@ export function registerNodeCases(factory: () => JournalStorePort): void {
       stats: { tokens: 120, toolCalls: 2, turns: 3 },
       messageBoundary: 9,
     };
-    // 0 是合法边界（复制零条消息），必须与「没记过边界」可分辨——这正是缺席键语义
-    // 在这一列上的实际用处。
+    // 0 is a legal boundary (zero messages copied) and must be distinguishable from "no boundary was ever
+    // recorded" — this is exactly the practical use of absent-key semantics for this column.
     const zero: NodeRecord = {
       ...bounded,
       siteId: "ask#2",
@@ -223,9 +232,10 @@ export function registerNodeCases(factory: () => JournalStorePort): void {
     expect(bare !== undefined && "messageBoundary" in bare).toBe(false);
   });
 
-  // driver 的补写形状：getNode 读回引擎刚落的结算行，原样铺开再补边界列。与 stats 回填
-  // 同族，所以同一条风险——putNode 是整条替换，实现若在 round-trip 里丢掉任何一列
-  // （result / stats / actor 三列 / inputHash），这次补写就会把它抹掉。
+  // The driver's backfill shape: getNode reads back the settled row the engine just wrote, spreads it verbatim,
+  // then adds the boundary column. It is in the same family as the stats backfill and carries the same risk —
+  // putNode is a whole-record replacement, so if the implementation drops any column in the round-trip
+  // (result / stats / the three actor columns / inputHash), this backfill wipes it out.
   it("preserves every other field when backfilling messageBoundary read-modify-write", () => {
     const store = factory();
     store.createRun(baseRun("r1"));

@@ -3556,6 +3556,22 @@ Memory MEM08 埋点补充（2026-09-17）：现有 Desktop Memory 用例同时�
 
 本组不发送模型请求；手机远控、原生 Windows、深浅主题和 reduced-motion 的组合不由这两条桌面 E2E 冒充覆盖。
 
+## CPLAC：Coding Plan 5 小时额度自动继续
+
+产品语义和时区依据：[Coding Plan limit auto-continue](chat/coding-plan-limit-auto-continue.md)。仅 Z.AI/BigModel Individual Coding Plan 的 `1308` 五小时限额消息可启用；计时器归当前 Renderer banner 所有。自动动作复用现有同 session Resume 输入，不重放失败轮次。
+
+| ID       | 前置状态                                       | 动作                            | 断言                                                                              | 决策     |
+| -------- | ---------------------------------------------- | ------------------------------- | --------------------------------------------------------------------------------- | -------- |
+| CPLAC-01 | Coding Plan `1308`，包含可识别的五小时重置时间 | 显示 quota banner               | 按 UTC+08:00 解析，按设备本地时间和时区缩写显示；checkbox 从 General 默认值初始化 | accepted |
+| CPLAC-02 | 同上，checkbox 已勾选                          | 时间推进至 reset + 1–3 分钟     | 同一 session 恰好发送一次现有 Resume 输入                                         | accepted |
+| CPLAC-03 | 同上，checkbox 未勾选                          | 时间推进越过 reset              | 不发送 Resume                                                                     | accepted |
+| CPLAC-04 | 时间无效、非 1308 或 Start Plan                | 显示错误并推进时间              | 不安排 Resume，原错误反馈保持                                                     | accepted |
+| CPLAC-05 | 已安排 Resume                                  | 关闭 banner、session/error 改变 | 旧 timer 不得影响旧 session                                                       | accepted |
+| CPLAC-06 | General 默认关闭，设置仍在加载                 | 显示并等待设置加载              | 加载前不启动 timer；加载后 checkbox 保持关闭                                      | accepted |
+| CPLAC-07 | 已有设置 snapshot 时刷新，或首次读取失败       | 保持 banner 打开                | 刷新不重置 grace period；首次读取失败时 auto-continue 不启用                      | accepted |
+| CPLAC-08 | timer 已启动后 resume callback 更新            | 更新 callback 并推进时间        | grace period 不重置，且只调用最新 callback                                        | accepted |
+| CPLAC-09 | 默认设置保存了无效类型                         | 读取设置并验证 patch            | 读取时回退为启用；patch 拒绝非 boolean                                            | accepted |
+
 分享失败回归 SHARE33（accepted，manual-review/pending）：405 接口异常、响应体读取超时和运行中内容问题分别显示正确原因；错误详情可见 HTTP、双方请求 ID、operationId；重试保留轮次。覆盖 390/1200 宽度、深浅主题、中英文。浏览器组件集成路径为 `packages/ui/test/browser/manual-review/pending/share-failure.test.mjs`；真实 Desktop/SSH 发布链路仍由现有 SHARE18 pending E2E 验证，不将组件测试计为正式 Desktop 通过。
 
 ## CMDPREVIEW. 权限命令完整预览
@@ -3564,3 +3580,19 @@ Memory MEM08 埋点补充（2026-09-17）：现有 Desktop Memory 用例同时�
 | ------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
 | CMDPREVIEW-01 | 桌面/手机、深浅主题下长 Bash 命令等待授权 | 默认三行；link 控件无水平 padding 和边框且对齐正文；展开后可滚动至末尾，$ 同步滚动；收起按钮不滚动；无空输出占位；默认第一项 Shift+Tab 可达展开按钮，Tab 返回选项，展开后反向 Tab 可达滚动视口；查看不触发授权，允许仍可提交 | accepted |
 | CMDPREVIEW-02 | 短命令与已完成空输出                      | 短命令不显示展开入口；实际执行完成的空输出提示仍保留                                                                                                                                                                         | accepted |
+
+## MP. 消息固定（Message Pins，v1）
+
+规格与边界见 [chat-message-pins.md](chat-message-pins.md)：pin 是面向人的书签，display-only，持久化在会话
+transcript，不进入模型上下文（model-visible 状态走 `ui/update-model-context`，本功能不得使用）。可固定
+`assistantText`（仅 `state=complete` 的最终文本段）与用户自己的 `userInput`（`origin=realUser`）；系统生成的
+user 行（backgroundResult / mailbox / synthetic / workflowLaunch）不可固定。chips 条只反映当前已加载行窗口。
+
+| ID   | 前置状态                                                         | 用户/系统事件                                  | 规则命中                       | 期望结果                                                                                                                                     | Review   |
+| ---- | ---------------------------------------------------------------- | ---------------------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| MP01 | `completed(success)`，queue=0                                    | pin assistant 回复 → 点击 chip → chip 取消固定 | setRowPinned（toggle 语义）    | chips 条出现且 `pinnedAt` 降序；点击 chip 通过既有时间线跳转机制定位原消息；chip 或行内工具栏取消固定后 chips 条消失；命令被拒时乐观状态回滚 | accepted |
+| MP02 | 任意非 running 状态                                              | pin 用户自己的输入行                           | setRowPinned（userInput 门禁） | user 行工具栏出现固定按钮，持久化与冷恢复语义同 MP01                                                                                         | accepted |
+| MP03 | 系统生成 user 行（backgroundResult 等）或 streaming assistant 行 | 尝试固定                                       | guard.actionUnavailable        | 命令拒绝，不写 transcript；UI 不渲染固定入口（origin=realUser 且 assistantText complete 才显示）                                             | pruned   |
+
+Out of scope（v1）：TurnNavigator 固定标记、仅固定项分享、固定摘要、数量上限、跨会话导出（follow-up 记录在
+spec）。

@@ -176,8 +176,9 @@ function fixture(
 }
 
 async function pendingRequest(value: ReturnType<typeof fixture>) {
-  // 软门禁的真实生产入口是用户点击 Banner 后调用 requestReview；测试不得再经
-  // 已移除接线的 review() 旁路构造 flow，否则 request 幂等与 supervisor 单例会失去覆盖。
+  // The soft gate's real production entry is requestReview after the user clicks the Banner; the
+  // test must no longer build flows through the removed review() bypass, otherwise request
+  // idempotence and the supervisor singleton would lose coverage.
   const activation = value.admission.activate("startup");
   const current = value.admission.getCurrentSnapshot();
   await value.controller.requestReview({
@@ -462,7 +463,7 @@ describe("WorkspaceHookReviewController", () => {
     expect(value.events.at(-1)?.type).toBe(
       SessionEventType.WorkspaceHookAdmissionUpdated,
     );
-    // 软门禁(D2):settle 后追加 AdmissionUpdated(pendingCount=0),但它必须在 ReviewSettled 之后
+    // Soft gate (D2): AdmissionUpdated (pendingCount=0) is appended after settle, but it must come after ReviewSettled
     expect(value.events.map((event) => event.type)).toEqual(
       expect.arrayContaining([SessionEventType.WorkspaceHookReviewSettled]),
     );
@@ -547,9 +548,10 @@ describe("WorkspaceHookReviewController", () => {
   });
 
   it("respond 对 snapshot 与 request 的 bundle digest 不一致 fail closed", async () => {
-    // Review 防线（spec D5 watcher 前置）：request 绑定当时的 immutable snapshot bundle。
-    // 若 admission snapshot 被替换（当前仅 toggle 经 refreshPendingFlow 合法调用，
-    // 未来热监听 watcher 不能绕过），授权不得落到新 bundle 的声明上。
+    // Review defense line (spec D5 watcher prerequisite): the request binds to the immutable
+    // snapshot bundle at that moment. If the admission snapshot has been replaced (currently only
+    // toggle legitimately calls it via refreshPendingFlow; a future hot-listening watcher must
+    // not bypass it), the authorization must not land on the new bundle's declarations.
     const value = fixture();
     const { request } = await pendingRequest(value);
     value.admission.replaceSnapshot(snapshot({ bundle: "d".repeat(64) }));
@@ -579,11 +581,12 @@ describe("WorkspaceHookReviewController", () => {
   });
 
   it("toggle 的 mutation mismatch 不再被误报为 config write 失败（错误归属）", async () => {
-    // Bug 原因：controller.toggle 的裸 catch 把 mutation port 抛出的
-    // WorkspaceHookMutationError("workspace_hooks_snapshot_mismatch")（如 review 后
-    // bundle 已变、discovery 读败）一律吞成 workspace_hooks_config_write_failed。
-    // 用户看到"配置写入失败"但写路径根本没走到；真实原因（mismatch）被掩盖，
-    // 也断送了 fail-fast 语义（mismatch 应提示刷新而非重试写）。
+    // Bug cause: controller.toggle's bare catch swallowed the WorkspaceHookMutationError
+    // ("workspace_hooks_snapshot_mismatch") thrown by the mutation port (e.g. the bundle changed
+    // after review, or discovery read failed) into workspace_hooks_config_write_failed across the
+    // board. The user saw "config write failed" although the write path was never reached; the
+    // real cause (mismatch) was masked, and the fail-fast semantics were lost too (a mismatch
+    // should prompt a refresh, not a write retry).
     const mismatchError = new Error(
       "Workspace Hook bundle changed after review",
     ) as Error & {
@@ -622,9 +625,10 @@ describe("WorkspaceHookReviewController", () => {
   });
 
   it("policy 在 pending 后收紧时 grant 被显式策略拒绝而非误报存储损坏", async () => {
-    // Bug 原因：respond 的 catch-all 曾把 assertPersistentTrustMutationAllowed 的策略
-    // 拒绝一律报成 workspace_hooks_trust_store_corrupt（"信任存储损坏"），错误归属错误。
-    // 修法与 revoke 路径对齐：grant 前显式检查 policy 并返回精确 reasonCode。
+    // Bug cause: respond's catch-all used to report assertPersistentTrustMutationAllowed's policy
+    // rejections as workspace_hooks_trust_store_corrupt ("trust store corrupt") — wrong error
+    // attribution. The fix aligns with the revoke path: check the policy explicitly before grant
+    // and return the precise reasonCode.
     const policyProvider = new InMemoryWorkspaceHookPolicyProvider();
     const value = fixture({ policyProvider });
     const { request } = await pendingRequest(value);
@@ -676,14 +680,15 @@ describe("WorkspaceHookReviewController", () => {
   });
 
   it("审核已 resolved 后 revoke 重新开启审核（当前会话可再次授权）", async () => {
-    // 回归（2026-08-10 UAT）：授权后面板 resolved 关闭，此时撤销信任，
-    // refreshPendingFlow 因「无 pending flow」直接返回，当前会话再无重新授权入口，
-    // 用户只能新建对话。撤销的语义是 revoked → admission=pending（spec §10.2），
-    // 应当重新征询；且授权仍只能经审核面板完成，不新增直接授予的旁路。
+    // Regression (2026-08-10 UAT): after authorization the panel closed as resolved; revoking
+    // trust then made refreshPendingFlow return immediately because "no pending flow" existed, so
+    // the current session had no re-authorization entry and the user could only start a new
+    // conversation. Revoke's semantics are revoked -> admission=pending (spec §10.2) and it should
+    // re-prompt; authorization still happens only via the review panel, with no new direct-grant bypass.
     const value = fixture();
     const { request } = await pendingRequest(value);
 
-    // 先正常授权，让 flow 进入 resolved（面板关闭）。
+    // Authorize normally first so the flow enters resolved (panel closed).
     await expect(
       value.controller.respond(
         {
@@ -721,7 +726,7 @@ describe("WorkspaceHookReviewController", () => {
       }),
     ).resolves.toMatchObject({ accepted: true });
 
-    // 撤销后必须新发一次 ReviewRequested：这正是"立刻弹面板"的可观测判据。
+    // After revoking, a new ReviewRequested must be emitted: that is exactly the observable criterion for "pop the panel immediately".
     const requested = value.events.filter(
       (event) => event.type === SessionEventType.WorkspaceHookReviewRequested,
     );
@@ -738,16 +743,17 @@ describe("WorkspaceHookReviewController", () => {
   });
 
   it("revoke 新开的 flow 受监管：超时必须发出 ReviewSettled(timed_out)", async () => {
-    // 回归（2026-08-11 UAT）：revoke 触发的新 flow 此前不经 review() 监管，
-    // 无人 await flow.result —— 10 分钟 deadline 到期后它在 registry 内静默
-    // settle 成 timed_out，前端收不到 ReviewSettled、面板继续按 pending 渲染，
-    // 之后每次点击都被 validate 判为 review_superseded，面板永久失效。
+    // Regression (2026-08-11 UAT): flows triggered by revoke previously went unsupervised by
+    // review(), with nobody awaiting flow.result — after the 10-minute deadline expired they
+    // silently settled to timed_out inside the registry, the frontend never received
+    // ReviewSettled, the panel kept rendering as pending, and every later click was judged
+    // review_superseded by validate, leaving the panel permanently broken.
     vi.useFakeTimers();
     try {
       const value = fixture();
       const { request } = await pendingRequest(value);
 
-      // 先授权，让首个 flow resolved（面板关闭），复现用户的真实前序状态。
+      // Authorize first so the first flow resolves (panel closed), reproducing the user's real prior state.
       await value.controller.respond(
         {
           sessionId: request.sessionId,
@@ -785,7 +791,7 @@ describe("WorkspaceHookReviewController", () => {
         .at(-1);
       expect(reopened).toBeDefined();
 
-      // 推进到 deadline 之后：监管者必须把 timed_out 通知出去，面板才能自愈。
+      // Advance past the deadline: the supervisor must notify timed_out so the panel can self-heal.
       await vi.advanceTimersByTimeAsync(11 * 60 * 1000);
 
       const settled = value.events.filter(
@@ -976,11 +982,11 @@ describe("WorkspaceHookReviewController", () => {
   });
 
   it("applyDecision 失败时 telemetry 记录 errorMessage，不再静默丢弃 cause（错误归属）", async () => {
-    // Bug 原因：respond 的裸 catch 把 applyDecision 的全部失败一律报成
-    // trust_store_corrupt，且 trustStoreFailure 不接收 errorMessage，原始 cause
-    // 被彻底丢弃。日志里只剩 reasonCode，无法区分是 store 损坏、coordinator 错误
-    // 还是 resolveWorkspaceHookReviewDigests 对未知 reviewItemId 抛错。
-    // 修法：catch (error) 并把 error.message 透传进 telemetry。
+    // Bug cause: respond's bare catch reported every applyDecision failure as trust_store_corrupt,
+    // and trustStoreFailure accepted no errorMessage, so the original cause was dropped entirely.
+    // The logs kept only the reasonCode and could not distinguish a corrupt store, a coordinator
+    // error, or resolveWorkspaceHookReviewDigests throwing on an unknown reviewItemId.
+    // Fix: catch (error) and pass error.message through into telemetry.
     const value = fixture();
     const { request } = await pendingRequest(value);
     value.store.grant.mockReset();
@@ -1009,7 +1015,7 @@ describe("WorkspaceHookReviewController", () => {
       accepted: false,
       reasonCode: "workspace_hooks_trust_store_corrupt",
     });
-    // telemetry 必须携带 errorMessage，否则排查时无法区分非存储失败。
+    // Telemetry must carry errorMessage, otherwise non-store failures cannot be told apart when investigating.
     const failure = value.telemetry.find(
       (entry) => entry.context?.event === "workspace_hook.trust_store_failure",
     );

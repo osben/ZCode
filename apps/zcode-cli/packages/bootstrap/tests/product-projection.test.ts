@@ -1,5 +1,6 @@
-// ProductProjection 黄金测试首批（M2，docs/v4-refactor/13-golden-test-mapping）。
-// 形态：事件序列进、投影断言出（L1）。测试名携带 catalog 组别，供 coverage matrix 对账。
+// First batch of ProductProjection golden tests (M2, docs/v4-refactor/13-golden-test-mapping).
+// Shape: event sequences in, projection assertions out (L1). Test names carry the catalog group for
+// coverage matrix reconciliation.
 import { describe, expect, it, vi } from "vitest";
 import type {
   EventId,
@@ -27,7 +28,7 @@ import {
 } from "@zcode/shared/zcode-protocol-v4";
 import { ProductProjection } from "../src/zcode-protocol-v4/index.js";
 
-// ── 事件序列构造器 ──
+// ── Event sequence builders ──
 
 class EventLog {
   private seq = 0;
@@ -128,7 +129,7 @@ function inputTextAppends(deltas: readonly ConversationDelta[]): string[] {
   );
 }
 
-// ── A 组：基础 turn 生命周期 ──
+// ── Group A: basic turn lifecycle ──
 
 describe("ProductProjection 黄金测试（L1）", () => {
   it("Highspeed 单 Turn output tokens 由权威投影累计且不受快照观察时机影响", () => {
@@ -314,7 +315,8 @@ describe("ProductProjection 黄金测试（L1）", () => {
   });
 
   it("加速请求其他失败的降级同样写入 fallbackAt，并以 fallbackReason 区分提示文案", () => {
-    // spec §2.2：任何失败都退回；Renderer 按 fallbackReason 选择“卡已到期”或“加速服务不可用”文案。
+    // spec §2.2: every failure falls back; the Renderer picks the "card expired" or "acceleration
+    // service unavailable" copy based on fallbackReason.
     const log = new EventLog();
     log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
     log.push(
@@ -441,7 +443,8 @@ describe("ProductProjection 黄金测试（L1）", () => {
       ),
     ).toMatchObject({ status: "cancelled", inputText: '{"script":"unfinished' });
 
-    // 部分 provider 不发送 text_start；降级事件也必须清空旧 row identity，避免 delta 拼进废弃输出。
+    // Some providers never send text_start; the fallback event must also clear the old row identity
+    // so deltas do not get concatenated onto abandoned output.
     apply(SessionEventType.ModelStreaming, {
       kind: "text_delta",
       delta: "fresh session-model output",
@@ -459,9 +462,11 @@ describe("ProductProjection 黄金测试（L1）", () => {
   });
 
   it("终态指标更新是增量合并，不清除同一 Turn 已产生的 fallbackAt", () => {
-    // CR-02 回归：Highspeed 请求 3402 → TurnExecutionModelFallback 写入 fallbackAt → 普通模型跑完 →
-    // persistHighspeedTiming 发 HighspeedMetricsUpdated。旧实现整体替换 row.highspeed，payload 又不含
-    // live 才有的 fallbackAt，降级 Toast 依赖的字段被清掉。
+    // CR-02 regression: Highspeed request 3402 → TurnExecutionModelFallback writes fallbackAt → the
+    // ordinary model finishes →
+    // persistHighspeedTiming emits HighspeedMetricsUpdated. The old implementation replaced
+    // row.highspeed wholesale, and the payload lacked
+    // the fallbackAt that only live has, wiping the field the fallback Toast depends on.
     const highspeedMeta = {
       schemaVersion: 1,
       cardId: "hsc-expired",
@@ -1044,7 +1049,7 @@ describe("ProductProjection 黄金测试（L1）", () => {
     const { projection } = runAll(log.events);
     const snapshot = projection.getSnapshot();
 
-    // schema 合法性（M1 数据模型被 reducer 锤炼的第一道闸）。
+    // Schema validity (the first gate where the M1 data model gets hammered by the reducer).
     expect(() => conversationSnapshotSchema.parse(snapshot)).not.toThrow();
 
     const kinds = snapshot.rows.window.map((row) => row.kind);
@@ -1173,8 +1178,9 @@ describe("ProductProjection 黄金测试（L1）", () => {
     log.push(SessionEventType.TurnStarted, { turnNumber: 1, input: "hi" }, { turnId: "turn-1" });
     const { projection } = runAll(log.events);
     expect(projection.getSnapshot().inputRouting.mode).toBe("enqueue");
-    // 回归原因：busy 期间 compact 已改为进入 typed FIFO，旧黄金断言仍按直接执行
-    // 门禁判为不可用；这里同时补齐标题承诺的完成态路由收口。
+    // Regression reason: during busy, compact was moved into the typed FIFO, and the old golden
+    // assertion still judged it unavailable by the direct-execution
+    // gate; this also adds the completion-state routing closure the title promises.
     expect(projection.getSnapshot().availability.compact.allowed).toBe(true);
 
     projection.applyEvent(
@@ -1277,7 +1283,8 @@ describe("ProductProjection 黄金测试（L1）", () => {
 
     const rows = runAll(log.events).projection.getSnapshot().rows.window;
     expect(rows).toHaveLength(1);
-    // originMeta 被投影层整体拷贝——manifest 载荷免费搭车，不被逐字段重构剥掉。
+    // originMeta is copied wholesale by the projection layer — the manifest payload rides along for
+    // free and is not stripped by per-field reconstruction.
     expect(rows[0]).toMatchObject({
       kind: "turnHeader",
       origin: "backgroundResult",
@@ -1369,7 +1376,7 @@ describe("ProductProjection 黄金测试（L1）", () => {
     });
   });
 
-  // ── B 组：stop / 迟到终态 ──
+  // ── Group B: stop / late terminal states ──
 
   it("B：cancelled turn —— streaming 行收口为 interrupted，phase=completedInterrupted", () => {
     const log = new EventLog();
@@ -1428,7 +1435,7 @@ describe("ProductProjection 黄金测试（L1）", () => {
     expect({ ...projection.getSnapshot(), seq: before.seq }).toEqual(before);
   });
 
-  // ── O/Q 组：tool call 状态机与权限交互 ──
+  // ── Groups O/Q: tool call state machine and permission interaction ──
 
   it("CUA：PID 工具按事件顺序固化最近一次成功 list_apps 快照", () => {
     const turnId = "turn-cua-app-snapshot";
@@ -1708,7 +1715,8 @@ describe("ProductProjection 黄金测试（L1）", () => {
             },
           ],
           lanes: [{ id: "actor#1", name: "scout", line: 3, column: 11 }],
-          // 第二层是子代理导向：每阶段一张参与者卡 + 交接边（docs/dynamic-workflow/presentation.md）。
+          // The second layer is subagent-oriented: one participant card per phase plus handoff
+          // edges (docs/dynamic-workflow/presentation.md).
           participants: [
             { id: "unphased:actor#1", phase: "unphased", lane: "actor#1", steps: ["ask#1"] },
           ],
@@ -1717,8 +1725,10 @@ describe("ProductProjection 黄金测试（L1）", () => {
         },
       } as const,
     },
-    // 观察类工作流工具的五个 display kind（spec：docs/dynamic-workflow/launch.md「Run introspection tools」
-    // 「工具卡 display」、同文件「The model catalog」）——whitelist 不放行就整块被剥，UI 只能退回文本投影。
+    // The five display kinds of the observability workflow tools (spec: docs/dynamic-workflow/launch.md
+    // "Run introspection tools",
+    // "tool card display", and "The model catalog" in the same file) — if the whitelist does not admit
+    // them the whole block is stripped, and the UI can only fall back to a text projection.
     {
       toolName: "GetWorkflowRun",
       display: {
@@ -1773,8 +1783,9 @@ describe("ProductProjection 黄金测试（L1）", () => {
         runId: "wf_demo",
       } as const,
     },
-    // 模型目录卡（spec：docs/dynamic-workflow/launch.md「The model catalog」）：白名单漏了它，
-    // UI 只能退回那段以 providerId 开头的 `<models>` 文本。
+    // The model catalog card (spec: docs/dynamic-workflow/launch.md "The model catalog"): the
+    // whitelist missed it,
+    // so the UI could only fall back to that `<models>` text beginning with the providerId.
     {
       toolName: "ListModels",
       display: {
@@ -2171,7 +2182,8 @@ describe("ProductProjection 黄金测试（L1）", () => {
     });
 
     const resume = new EventLog();
-    // EventLog seq 从 1 重新计数不影响断言主体（seq 水位单独断言于 A 组）。
+    // EventLog seq restarting from 1 does not affect the assertion body (the seq watermark is
+    // asserted separately in group A).
     resume.push(
       SessionEventType.PermissionResolved,
       { requestId: "req-1", toolCallId: "tc-1", decision: "allow" },
@@ -3165,7 +3177,7 @@ describe("ProductProjection 黄金测试（L1）", () => {
     });
   });
 
-  // ── M 组：turn steer 队列 ──
+  // ── Group M: turn steer queue ──
 
   it("M：steer 入队/注入 —— queue.items 生命周期", () => {
     const turnId = "turn-1";
@@ -3397,7 +3409,7 @@ describe("ProductProjection 黄金测试（L1）", () => {
     ]);
   });
 
-  // ── 错误态 ──
+  // ── Error states ──
 
   it("错误：turn_error → phase=error + lastError + turnHeader failed", () => {
     const turnId = "turn-1";
@@ -4104,7 +4116,8 @@ describe("V4 API 重试状态投影", () => {
   it("tail_discarded 收口未定稿的流式 tool row，已提交的 running 行不动，恢复流用新 id 重开", () => {
     const { log, projection } = runningProjection();
     const turnId = "turn-retry-1";
-    // 已提交并在执行中的工具：它的终态由 executor 发布，recovery 不能替它收口。
+    // A tool already submitted and executing: its terminal state is published by the executor, and
+    // recovery must not close it out on its behalf.
     projection.applyEvent(
       log.push(
         SessionEventType.ToolCallScheduled,
@@ -4125,7 +4138,8 @@ describe("V4 API 重试状态投影", () => {
         { turnId },
       ),
     );
-    // 断流时只写到一半的 CreateWorkflow：tool_input_start 已开行，tool_call 永远不会来。
+    // A CreateWorkflow only half-written when the stream broke: tool_input_start already opened the
+    // row, and tool_call will never come.
     projection.applyEvent(
       log.push(
         SessionEventType.ModelStreaming,
@@ -4180,7 +4194,8 @@ describe("V4 API 重试状态投影", () => {
       { toolCallId: "tool-orphan", status: "cancelled", inputText: '{"script":"const a = agent(' },
     ]);
 
-    // 恢复请求重新写脚本：新 id 开新行，旧行保持已收口，不会并排两张「正在编写工作流」。
+    // The recovery request rewrites the script: the new id opens a new row and the old row stays
+    // closed, so two "workflow being written" cards never sit side by side.
     projection.applyEvent(
       log.push(
         SessionEventType.ModelStreaming,
@@ -4202,7 +4217,7 @@ describe("V4 API 重试状态投影", () => {
   });
 });
 
-// ── 结构性黄金测试（13-golden-test-mapping §v4 新增）──
+// ── Structural golden tests (13-golden-test-mapping §v4 additions) ──
 
 describe("结构性不变量", () => {
   function fullDeltaStream(events: readonly SessionEvent[]): {
@@ -4223,7 +4238,8 @@ describe("结构性不变量", () => {
       const snapshotAtW = snapshots[w + 1]!;
       const tail = deltasPerEvent.slice(w + 1).flat();
       const resumed = applyConversationDeltas(snapshotAtW, tail);
-      // seq 由帧区间记账推进（不在 delta 内），对比时对齐到终值。
+      // seq is advanced by frame-range accounting (not inside the delta); align to the final value
+      // when comparing.
       expect({ ...resumed, seq: final.seq }).toEqual(final);
     }
   });
@@ -4283,7 +4299,8 @@ describe("结构性不变量", () => {
       const next = snapshots[index + 1]!.revision;
       if (structural) {
         expect(next).toBe(prev + 1);
-        // 携带规则：含 revision 递增事件的帧，deltas 必含 state.updated.revision。
+        // Carry rule: a frame containing a revision-incrementing event must include
+        // state.updated.revision in its deltas.
         const carried = deltas.some(
           (delta) => delta.op === "state.updated" && delta.patch.revision === next,
         );
@@ -4293,7 +4310,7 @@ describe("结构性不变量", () => {
       }
     });
 
-    // 纯文本流事件（text_delta）revision 不动。
+    // Pure text stream events (text_delta) leave revision untouched.
     const textDeltaIndex = log.events.findIndex(
       (event) =>
         event.type === SessionEventType.ModelStreaming &&
@@ -4312,11 +4329,15 @@ describe("结构性不变量", () => {
   });
 });
 
-// ── 结构性4：两 profile 终态逐字节一致（05 §delivery-profile 收敛性黄金测试）──
-// 同一事件序列跑 continuous / replayable 两档 flush 管线（filter → coalesce → apply），
-// 断言终态与逐条直投逐字节一致。replayable 只是中间帧少，终态必须相同——
-// 这同时机械验证收口不变量：被 profile 过滤的 row.delta（inputText/output.text/
-// summaryText）必须被后续不可过滤的 row.upserted 蕴含。
+// ── Structural 4: both profiles' terminal states are byte-identical (05 §delivery-profile
+// convergence golden test) ──
+// The same event sequence runs through the continuous / replayable flush pipelines
+// (filter → coalesce → apply);
+// assert the terminal state is byte-identical to per-event direct application. replayable just has
+// fewer intermediate frames; the terminal state must be identical —
+// this also mechanically verifies the closure invariant: row.delta filtered by the profile
+// (inputText/output.text/
+// summaryText) must be implied by a later unfilterable row.upserted.
 
 describe("结构性4：两 profile 终态一致", () => {
   function pipelineFinalState(
@@ -4586,7 +4607,8 @@ describe("结构性4：两 profile 终态一致", () => {
       { toolCallId: parentToolCallId, toolName: "Agent", startedAt: new Date() },
       { turnId },
     );
-    // transcript hydration 只能从文本 tool output 合成出 toolCallId 身份，拿不到 childSessionId。
+    // transcript hydration can only synthesize a toolCallId identity from a textual tool output; it
+    // cannot get the childSessionId.
     log.push(
       SessionEventType.SubagentSpawned,
       {
@@ -4598,7 +4620,8 @@ describe("结构性4：两 profile 终态一致", () => {
       },
       { turnId },
     );
-    // hydration await 窗口内补回的真实 spawned 也必须复用合成行，并建立真实 agentId 映射。
+    // A real spawned recovered within the hydration await window must also reuse the synthesized
+    // row and establish the real agentId mapping.
     log.push(
       SessionEventType.SubagentSpawned,
       {
@@ -4612,7 +4635,8 @@ describe("结构性4：两 profile 终态一致", () => {
       },
       { turnId },
     );
-    // live terminal 事件携带真实 runtime 身份，必须更新上一行而不是追加重复 SubagentRow。
+    // The live terminal event carries the real runtime identity; it must update the previous row
+    // rather than append a duplicate SubagentRow.
     log.push(
       SessionEventType.SubagentStopped,
       {
@@ -4839,7 +4863,8 @@ describe("结构性4：两 profile 终态一致", () => {
     );
     assertProfileConvergence(log.events);
 
-    // 收口语义本体：中断后 tool row 必须离开 inputStreaming（cancelled + 完整 inputText）。
+    // The closure semantics themselves: after interruption the tool row must leave inputStreaming
+    // (cancelled + complete inputText).
     const { projection } = runAll(log.events);
     expect(
       projection.getSnapshot().rows.window.find((row) => row.kind === "toolCall"),
@@ -5004,7 +5029,7 @@ describe("结构性4：两 profile 终态一致", () => {
   });
 });
 
-// ── G 组：compact marker ──
+// ── Group G: compact markers ──
 
 describe("compact marker（10 §4.4.7 / §6.4）", () => {
   it("G：manual compact running→success —— 同一 marker row 状态迁移 + usage 回落", () => {
@@ -5045,7 +5070,7 @@ describe("compact marker（10 §4.4.7 / §6.4）", () => {
     const snapshot = projection.getSnapshot();
     expect(() => conversationSnapshotSchema.parse(snapshot)).not.toThrow();
     const markers = snapshot.rows.window.filter((row) => row.kind === "timelineMarker");
-    // 全生命周期占同一行：终态是 upsert 不是新行。
+    // The whole lifecycle occupies the same row: the terminal state is an upsert, not a new row.
     expect(markers).toHaveLength(1);
     expect(markers[0]).toMatchObject({
       rowId: runningMarker?.rowId,
@@ -5059,7 +5084,7 @@ describe("compact marker（10 §4.4.7 / §6.4）", () => {
         summaryRef: "msg-summary",
       },
     });
-    // compact 成功 → context 水位立即回落（§6.4）。
+    // compact success → the context watermark drops immediately (§6.4).
     expect(snapshot.usage.contextWindow?.usedTokens).toBe(20_000);
   });
 
@@ -5115,7 +5140,7 @@ describe("compact marker（10 §4.4.7 / §6.4）", () => {
   });
 });
 
-// ── goal 状态机（10 §4.2.8）──
+// ── goal state machine (10 §4.2.8) ──
 
 describe("goal 状态机", () => {
   const goalTarget = (status: string, objective = "把测试全修绿") => ({
@@ -5176,8 +5201,9 @@ describe("goal 状态机", () => {
     expect(verifyMarker).toMatchObject({
       marker: { type: "goalVerify", iteration: 1, outcome: "running" },
     });
-    // S10（16-plan，2026-07-08 裁决）：goalSet 是 stateOnly——不进 rows.window
-    //（旧实现产「渲染 null」的隐形行，污染 turn 分组），目标由 goal 面板承载。
+    // S10 (16-plan, adjudicated 2026-07-08): goalSet is stateOnly — it does not enter rows.window
+    //(the old implementation produced an invisible "renders null" row that polluted turn grouping);
+    // the goal is carried by the goal panel.
     expect(
       verifying.rows.window.find(
         (row) => row.kind === "timelineMarker" && row.marker.type === "goalSet",
@@ -5211,7 +5237,7 @@ describe("goal 状态机", () => {
         anchorRowId: verifyMarker?.rowId,
       }),
     ]);
-    // marker 就地终态化（同 rowId）。
+    // The marker is terminalized in place (same rowId).
     expect(
       done.rows.window.find(
         (row) => row.kind === "timelineMarker" && row.marker.type === "goalVerify",
@@ -5483,7 +5509,7 @@ describe("goal 状态机", () => {
     const snapshot = projection.getSnapshot();
     expect(snapshot.goal).toMatchObject({ status: "paused" });
     expect(snapshot.availability.resumeGoal).toEqual({ allowed: true });
-    // 非 paused 时 resumeGoal 被 guard 拒绝。
+    // While not paused, resumeGoal is refused by the guard.
     expect(snapshot.availability.resumeGoal.allowed).toBe(true);
   });
 
@@ -5551,7 +5577,7 @@ describe("goal 状态机", () => {
   });
 });
 
-// ── fork marker 与 modelChange marker ──
+// ── fork marker and modelChange marker ──
 
 describe("fork / modelChange marker", () => {
   it("fork：parent 时间线不显示 forkCreated（S7）；child 首部 forkNotice", () => {
@@ -5565,8 +5591,10 @@ describe("fork / modelChange marker", () => {
     const { projection: parent } = runAll(parentLog.events);
     const parentSnapshot = parent.getSnapshot();
     expect(() => conversationSnapshotSchema.parse(parentSnapshot)).not.toThrow();
-    // S7（16-plan，2026-07-08 裁决）：fork 关系只在 sessions 树体现，父时间线零入侵
-    //（旧实现的 forkCreated 是「渲染 null」的隐形行 + nextRowId-1 近似锚点）。
+    // S7 (16-plan, adjudicated 2026-07-08): the fork relationship appears only in the sessions tree;
+    // the parent timeline is zero-intrusion
+    //(the old implementation's forkCreated was an invisible "renders null" row plus a nextRowId-1
+    // approximate anchor).
     expect(
       parentSnapshot.rows.window.find(
         (row) => row.kind === "timelineMarker" && row.marker.type === "forkCreated",
@@ -5587,8 +5615,10 @@ describe("fork / modelChange marker", () => {
   });
 
   it("modelChange（R-17 时机）：marker 只在下一 turn 开始且与上一轮选型不同时产生", () => {
-    // 场景 1（草稿态 bug 复现，2026-07-07）：turn 前任意切换选择器 → 不产 marker，
-    // 首轮以最终选型启动也不产（「第一次用什么模型」不构成「变化」）。
+    // Scenario 1 (draft-state bug reproduction, 2026-07-07): switching the selector arbitrarily
+    // before a turn → no marker,
+    // and starting the first turn with the final selection also produces none ("which model was
+    // used first" is not a "change").
     const log = new EventLog();
     log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 1000 });
     log.push(SessionEventType.ModelSelected, {
@@ -5620,13 +5650,14 @@ describe("fork / modelChange marker", () => {
         ),
     ).toHaveLength(0);
 
-    // 重复选同一配置：conflation，无 delta。
+    // Selecting the same configuration again: conflation, no delta.
     const repeat = new EventLog().push(SessionEventType.ModelSelected, {
       modelSelection: { providerId: "openai", modelId: "gpt-6" },
     });
     expect(projection.applyEvent(repeat)).toEqual([]);
 
-    // 场景 2：turn-1 用 gpt-6，期间切换 A→B→A（净变化为零）→ turn-2 不产 marker。
+    // Scenario 2: turn-1 uses gpt-6, and A→B→A switches happen in between (net change zero) →
+    // turn-2 produces no marker.
     projection.applyEvent(
       new EventLog().push(SessionEventType.ModelSelected, {
         modelSelection: { providerId: "anthropic", modelId: "claude-4" },
@@ -5652,8 +5683,9 @@ describe("fork / modelChange marker", () => {
         ),
     ).toHaveLength(0);
 
-    // 场景 3：切到不同选型后 turn-3 启动 → marker 落在 turnHeader 之前，
-    // from = 上一轮实际选型（gpt-6），to = 本轮选型（claude-4）。
+    // Scenario 3: after switching to a different selection, turn-3 starts → the marker lands just
+    // before the turnHeader,
+    // from = the previous turn's actual selection (gpt-6), to = this turn's selection (claude-4).
     projection.applyEvent(
       new EventLog().push(SessionEventType.ModelSelected, {
         modelSelection: { providerId: "anthropic", modelId: "claude-4" },
@@ -5680,7 +5712,7 @@ describe("fork / modelChange marker", () => {
         toThought: "",
       },
     });
-    // marker 紧邻 turn-3 的 turnHeader 之前。
+    // The marker sits immediately before turn-3's turnHeader.
     expect(rows[markerIndex + 1]).toMatchObject({
       kind: "turnHeader",
       turnId: "turn-3",
@@ -5905,7 +5937,8 @@ describe("fork / modelChange marker", () => {
     ).toHaveLength(0);
   });
 
-  // ── M4：rowId → messageId 侧表（forkAssistant/editUserQuery 桥接翻译，13 §E 组前置）──
+  // ── M4: rowId → messageId side table (forkAssistant/editUserQuery bridge translation, 13 §E
+  // group prerequisite) ──
   it("E：assistant 行记录 assistantMessageId，getMessageIdForRow 可翻译", () => {
     const log = new EventLog();
     log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
@@ -5931,7 +5964,8 @@ describe("fork / modelChange marker", () => {
       .rows.window.find((row) => row.kind === "assistantText");
     expect(assistantRow).toBeDefined();
     expect(projection.getMessageIdForRow(assistantRow!.rowId)).toBe("msg-assist-1");
-    // 非 assistant 行 / 未知 rowId → null（桥接层据此 reject，不静默兜底 fork 错点）。
+    // Non-assistant rows / unknown rowId → null (the bridge layer rejects on this basis rather than
+    // silently forking the wrong point).
     expect(projection.getMessageIdForRow(9999)).toBeNull();
     const turnHeaderRow = projection
       .getSnapshot()
@@ -5994,7 +6028,7 @@ describe("fork / modelChange marker", () => {
     const userRow = projection.getSnapshot().rows.window.find((row) => row.kind === "userInput");
     expect(userRow).toBeDefined();
     expect(projection.getMessageIdForRow(userRow!.rowId)).toBeNull();
-    // turn rewind 仍能找到 assistant anchor，但 exact user target 不存在。
+    // Turn rewind can still find the assistant anchor, but the exact user target does not exist.
     expect(projection.getTurnRewindAnchor(userRow!.rowId)).toBe("assistant-only-anchor");
     expect(userRow!.actions?.canEdit).not.toBe(true);
     expect(projection.isLatestEditableUserRow(userRow!.rowId)).toBe(false);
@@ -6348,12 +6382,108 @@ describe("fork / modelChange marker", () => {
     }
   });
 
-  // ── M4：queue 单项编辑（同 id 重入 TurnSteerQueued → 原地更新保位）──
+  // ── Message pins (docs/chat-message-pins.md): setRowPinned 门禁——assistantText 必须 complete，
+  //    userInput 必须是用户自己的 realUser 行。──
+  it("setRowPinned 门禁：complete assistant 与 realUser user 行可固定，系统生成行与 streaming 拒绝", () => {
+    const buildProjection = (inputSource?: string) => {
+      const log = new EventLog();
+      log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
+      log.push(
+        SessionEventType.TurnStarted,
+        {
+          turnNumber: 1,
+          input: "固定这条",
+          messageId: "message-user-pin",
+          ...(inputSource ? { inputSource } : {}),
+        },
+        { turnId: "turn-pin" },
+      );
+      return log;
+    };
+
+    // realUser 输入 + complete assistant → 都可固定。
+    const okLog = buildProjection();
+    okLog.push(
+      SessionEventType.ModelStreaming,
+      { kind: "text_start", delta: "", done: false, assistantMessageId: "message-assistant-pin" },
+      { turnId: "turn-pin" },
+    );
+    okLog.push(
+      SessionEventType.ModelComplete,
+      {
+        content: "回复",
+        stopReason: "stop",
+        querySource: "main_turn",
+        contextWindow: 200_000,
+        usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      },
+      { turnId: "turn-pin" },
+    );
+    okLog.push(
+      SessionEventType.TurnComplete,
+      { response: "回复", tokenCount: 2, toolCallCount: 0, duration: 1, resultType: "success" },
+      { turnId: "turn-pin" },
+    );
+    const okProjection = runAll(okLog.events).projection;
+    const okSnapshot = okProjection.getSnapshot();
+    const userRow = okSnapshot.rows.window.find(
+      (row) => row.kind === "userInput" && row.entityId === "message-user-pin",
+    )!;
+    const assistantRow = okSnapshot.rows.window.find(
+      (row) => row.kind === "assistantText" && row.state === "complete",
+    )!;
+    expect(
+      okProjection.resolveRowActionTarget(
+        { rowId: userRow.rowId, entityId: userRow.entityId! },
+        "setRowPinned",
+      ),
+    ).toMatchObject({ ok: true, action: "setRowPinned" });
+    expect(
+      okProjection.resolveRowActionTarget(
+        { rowId: assistantRow.rowId, entityId: assistantRow.entityId! },
+        "setRowPinned",
+      ),
+    ).toMatchObject({ ok: true, action: "setRowPinned" });
+
+    // 系统生成 user 行（background_result）→ 拒绝。
+    const backgroundLog = buildProjection("background_task");
+    const backgroundProjection = runAll(backgroundLog.events).projection;
+    const backgroundRow = backgroundProjection.getSnapshot().rows.window.find(
+      (row) => row.kind === "userInput",
+    )!;
+    expect(
+      backgroundProjection.resolveRowActionTarget(
+        { rowId: backgroundRow.rowId, entityId: backgroundRow.entityId! },
+        "setRowPinned",
+      ),
+    ).toMatchObject({ ok: false, reasonCode: "guard.actionUnavailable" });
+
+    // streaming assistant 行 → 拒绝。
+    const streamingLog = buildProjection();
+    streamingLog.push(
+      SessionEventType.ModelStreaming,
+      { kind: "text_start", delta: "", done: false, assistantMessageId: "message-assistant-stream" },
+      { turnId: "turn-pin" },
+    );
+    const streamingProjection = runAll(streamingLog.events).projection;
+    const streamingRow = streamingProjection.getSnapshot().rows.window.find(
+      (row) => row.kind === "assistantText",
+    )!;
+    expect(
+      streamingProjection.resolveRowActionTarget(
+        { rowId: streamingRow.rowId, entityId: streamingRow.entityId! },
+        "setRowPinned",
+      ),
+    ).toMatchObject({ ok: false, reasonCode: "guard.actionUnavailable" });
+  });
+
+  // ── M4: single queue item edit (same id re-enters TurnSteerQueued → in-place update, position
+  // preserved) ──
   it("A/B：editQueueItem —— 同 queueItemId 重入更新文本且保位", () => {
     const log = new EventLog();
     log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
     log.push(SessionEventType.TurnStarted, { turnNumber: 1, input: "跑" }, { turnId: "t1" });
-    // 入队两条
+    // Enqueue two items
     log.push(
       SessionEventType.TurnSteerQueued,
       {
@@ -6400,7 +6530,7 @@ describe("fork / modelChange marker", () => {
       },
       { turnId: "t1" },
     );
-    // 编辑第一条（同 id 重入）
+    // Edit the first item (same id re-entry)
     log.push(
       SessionEventType.TurnSteerQueued,
       {
@@ -6415,7 +6545,7 @@ describe("fork / modelChange marker", () => {
     );
     const { projection } = runAll(log.events);
     const items = projection.getSnapshot().queue.items;
-    // 仍 2 条，q1 在原位（index 0）且文本已更新。
+    // Still 2 items; q1 keeps its original position (index 0) with updated text.
     expect(items.map((i) => i.queueItemId)).toEqual(["q1", "q2"]);
     expect(items[0]).toMatchObject({
       text: "第一条改",
@@ -6434,7 +6564,7 @@ describe("fork / modelChange marker", () => {
     expect(items[1]!.text).toBe("第二条");
   });
 
-  // ── M4：queue 重排（TurnSteerReordered → 按新序重排 queue rows）──
+  // ── M4: queue reorder (TurnSteerReordered → queue rows reordered by the new order) ──
   it("A/B：reorderQueueItem —— 按 orderedPendingInputIds 重排 queue", () => {
     const log = new EventLog();
     log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
@@ -6457,7 +6587,7 @@ describe("fork / modelChange marker", () => {
         { turnId: "t1" },
       );
     }
-    // 把 q3 移到 q1 之前：新序 q3, q1, q2。
+    // Move q3 before q1: new order q3, q1, q2.
     log.push(
       SessionEventType.TurnSteerReordered,
       { orderedPendingInputIds: ["q3", "q1", "q2"], targetTurnId: "t1" },
@@ -6556,8 +6686,10 @@ describe("fork / modelChange marker", () => {
       state: "promoting",
       targetTurnId: "t1",
     });
-    // startPromptTurn 已把 user message + session_input promotion 同事务提交。
-    // 即使后续 TurnSteerDiscarded(promoted) 丢失，投影也不能留下幽灵 queue item。
+    // startPromptTurn has already committed the user message + session_input promotion in the same
+    // transaction.
+    // Even if a later TurnSteerDiscarded(promoted) is lost, the projection must not leave a ghost
+    // queue item.
     log.push(SessionEventType.SessionInputPromoted, {
       pendingInputId: "q1",
       sourceCommandId: "source-q1",
@@ -6568,7 +6700,7 @@ describe("fork / modelChange marker", () => {
     expect(projection.getSnapshot().queue.items).toEqual([]);
   });
 
-  // ── M4：setAutoDrain（QueueAutoDrainChanged → queue.autoDrain + held 派生）──
+  // ── M4: setAutoDrain (QueueAutoDrainChanged → queue.autoDrain + held derivation) ──
   it("A/B：setAutoDrain(false) → queue.autoDrain=false，held 时 completed+queue>0 走 choice", () => {
     const log = new EventLog();
     log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
@@ -6585,9 +6717,9 @@ describe("fork / modelChange marker", () => {
       },
       { turnId: "t1" },
     );
-    // 关闭 autoDrain（保留队列）
+    // Turn autoDrain off (queue preserved)
     log.push(SessionEventType.QueueAutoDrainChanged, { autoDrain: false });
-    // turn 结束 → completed + queue>0 + autoDrain=false → 输入路由为 choice
+    // Turn ends → completed + queue>0 + autoDrain=false → input routing is choice
     log.push(
       SessionEventType.TurnComplete,
       { response: "", tokenCount: 0, toolCallCount: 0, duration: 0, resultType: "success" },
@@ -6677,13 +6809,13 @@ describe("fork / modelChange marker", () => {
   it("A/B：setAutoDrain 幂等 —— 同值不产 delta", () => {
     const log = new EventLog();
     log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
-    // 初始 autoDrain=true，再置 true 应无变化。
+    // Initial autoDrain=true; setting true again should produce no change.
     log.push(SessionEventType.QueueAutoDrainChanged, { autoDrain: true });
     const { projection } = runAll(log.events);
     expect(projection.getSnapshot().queue.autoDrain).toBe(true);
   });
 
-  // ── M4：setFollowupMode（FollowupModeChanged → running 时 enqueue vs guide）──
+  // ── M4: setFollowupMode (FollowupModeChanged → enqueue vs guide while running) ──
   it("A/B：setFollowupMode(guide) → running 时输入路由为 guide", () => {
     const log = new EventLog();
     log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
@@ -6719,7 +6851,7 @@ describe("fork / modelChange marker", () => {
     expect(snapshot.config.mode).toBe("plan");
     const revisionAfterSwitch = snapshot.revision;
 
-    // 同值再切：无 delta，revision 不前进。
+    // Setting the same value again: no delta, revision does not advance.
     log.push(SessionEventType.SessionModeChanged, {
       mode: "plan",
       previousMode: "plan",
@@ -6737,25 +6869,25 @@ describe("fork / modelChange marker", () => {
     expect(projection.getSnapshot().config.mode).toBe("build");
   });
 
-  // ── M4：renameSession / 自动标题（SessionTitleUpdated → meta.title）──
+  // ── M4: renameSession / auto title (SessionTitleUpdated → meta.title) ──
   it("A/B：SessionTitleUpdated —— generated 更新，custom 覆盖且 custom 后不被 generated 回退", () => {
     const log = new EventLog();
     log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
-    // 初始 default
+    // Initial default
     expect(runAll(log.events).projection.getSnapshot().meta.titleSource).toBe("default");
-    // 自动生成标题
+    // Auto-generated title
     log.push(SessionEventType.SessionTitleUpdated, {
       previousTitle: "",
       source: "generated",
       title: "自动标题",
     });
-    // 用户重命名（custom）
+    // User renames (custom)
     log.push(SessionEventType.SessionTitleUpdated, {
       previousTitle: "自动标题",
       source: "custom",
       title: "我的会话",
     });
-    // custom 后再来一次 generated —— 应被忽略（custom 粘性）
+    // Another generated after custom — it must be ignored (custom stickiness)
     log.push(SessionEventType.SessionTitleUpdated, {
       previousTitle: "我的会话",
       source: "generated",
@@ -6779,7 +6911,7 @@ describe("fork / modelChange marker", () => {
     expect(meta.titleSource).toBe("generated");
   });
 
-  // ── M4：switchModelConfig（ModelSelected → config 更新 + 中途切换 modelChange marker）──
+  // ── M4: switchModelConfig (ModelSelected → config update + mid-run modelChange marker) ──
   it("A/B：ModelSelected 首次 → config 更新，无 marker（首次选型不算切换）", () => {
     const log = new EventLog();
     log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
@@ -6792,7 +6924,7 @@ describe("fork / modelChange marker", () => {
     expect(snapshot.config.provider).toBe("e2e-deepseek");
     expect(snapshot.config.model).toBe("deepseek-v4-flash");
     expect(snapshot.config.thoughtLevels).toEqual(["max", "high", "nothink"]);
-    // 首次选型不产 modelChange marker。
+    // The first selection produces no modelChange marker.
     expect(
       snapshot.rows.window.some(
         (row) => row.kind === "timelineMarker" && row.marker.type === "modelChange",
@@ -6836,8 +6968,9 @@ describe("fork / modelChange marker", () => {
     expect(snapshot.config.model).toBe("deepseek-v4-pro");
     expect(snapshot.config.thought).toBe("max");
     expect(snapshot.config.thoughtLevels).toEqual(["max", "nothink"]);
-    // R-17 时机修复（2026-07-07）：切换动作本身不落 marker——尚未有 turn 使用过
-    // 任何模型（草稿态截图 bug：首条消息上方挂 [modelChange]）。
+    // R-17 timing fix (2026-07-07): the switch action itself does not drop a marker — no turn has
+    // used any model yet
+    // (draft-state screenshot bug: a [modelChange] hanging above the first message).
     expect(
       snapshot.rows.window.some(
         (row) => row.kind === "timelineMarker" && row.marker.type === "modelChange",
@@ -6917,7 +7050,8 @@ describe("fork / modelChange marker", () => {
         supportedThoughtLevels: ["max", "high", "nothink"],
       }),
     );
-    // 旧持久化事件没有 contextWindow，重放时保持既有分母，不能清零。
+    // Old persisted events carry no contextWindow; on replay the existing denominator is kept and
+    // must not be zeroed.
     expect(projection.getSnapshot().usage.contextWindow).toMatchObject({
       usedTokens: 150,
       maxTokens: 200_000,
@@ -6935,7 +7069,8 @@ describe("fork / modelChange marker", () => {
       }),
     );
 
-    // 修复目标：模型切换事件本身就是 runtime 新能力的权威提交点；不等下一轮发送完成。
+    // Fix goal: the model switch event is itself the authoritative commit point of the runtime's
+    // new capability; do not wait for the next send to finish.
     expect(projection.getSnapshot().usage.contextWindow).toMatchObject({
       usedTokens: 150,
       maxTokens: 1_000_000,
@@ -6953,7 +7088,8 @@ describe("fork / modelChange marker", () => {
         { turnId: "turn-2" },
       ),
     );
-    // 后续旧 adapter 未携带 contextWindow 时，也必须回退到刚切换后的新窗口。
+    // When later old adapters do not carry contextWindow, they must also fall back to the new
+    // window right after the switch.
     expect(projection.getSnapshot().usage.contextWindow).toMatchObject({
       usedTokens: 200,
       maxTokens: 1_000_000,
@@ -7105,7 +7241,7 @@ describe("fork / modelChange marker", () => {
     });
   });
 
-  // ── M4：cancelBackgroundWork（BackgroundTask* → backgroundWorks 投影）──
+  // ── M4: cancelBackgroundWork (BackgroundTask* → backgroundWorks projection) ──
   it("A/B：BackgroundTaskStarted → backgroundWorks 出现 running 项，Completed(cancelled) → cancelled", () => {
     const log = new EventLog();
     log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
@@ -7123,7 +7259,7 @@ describe("fork / modelChange marker", () => {
     expect(snapshot.backgroundWorks[0]!.title).toBe("长任务");
     expect(snapshot.backgroundWorks[0]!.status).toBe("running");
 
-    // 取消 → cancelled
+    // Cancel → cancelled
     log.push(SessionEventType.BackgroundTaskCompleted, {
       taskId: "bg-1",
       toolName: "Bash",
@@ -7226,7 +7362,8 @@ describe("fork / modelChange marker", () => {
     });
     explicit.push(SessionEventType.BackgroundTaskStarted, {
       taskId: "explicit-bash",
-      // taskKind 是新事实；即使旧 toolName 数据矛盾也不得反向覆盖。
+      // taskKind is the newer fact; even contradictory legacy toolName data must not overwrite it
+      // in reverse.
       taskKind: "bash",
       toolName: "Agent",
       description: "显式进程",
@@ -7235,7 +7372,7 @@ describe("fork / modelChange marker", () => {
     expect(runAll(explicit.events).projection.getSnapshot().backgroundWorks[0]!.kind).toBe("bash");
   });
 
-  // ── M4：RewindTriggered → row.removed（editUserQuery/retryTurn 的 live 截断）──
+  // ── M4: RewindTriggered → row.removed (live truncation for editUserQuery/retryTurn) ──
   it("D/G：RewindTriggered(targetMessageId) 从目标 turn 首行整段移除", () => {
     const log = new EventLog();
     log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
@@ -7291,8 +7428,9 @@ describe("fork / modelChange marker", () => {
       { response: "", tokenCount: 0, toolCallCount: 0, duration: 0, resultType: "success" },
       { turnId: "t2" },
     );
-    // rewind 到 turn2 的 assistant 消息 → 整个 turn2 被移除。
-    // createdMessageId = applied 语义（unavailable/workspace 回滚不带，投影必须忽略）。
+    // Rewind to turn2's assistant message → the whole turn2 is removed.
+    // createdMessageId = applied semantics (unavailable/workspace rollbacks do not carry it; the
+    // projection must ignore them).
     log.push(SessionEventType.RewindTriggered, {
       targetMessageId: "msg-a2",
       scope: "conversation",
@@ -7304,9 +7442,9 @@ describe("fork / modelChange marker", () => {
       .getSnapshot()
       .rows.window.filter((r) => r.kind === "userInput" || r.kind === "assistantText")
       .map((r) => (r.kind === "userInput" || r.kind === "assistantText" ? r.text : ""));
-    // turn1 保留，turn2 整段被移除。
+    // turn1 remains; turn2 is removed entirely.
     expect(texts).toEqual(["第一问", "第一答"]);
-    // turn2 的 assistant messageId 映射也被清理。
+    // turn2's assistant messageId mapping is cleaned up too.
     expect(projection.getMessageIdForRow(999)).toBeNull();
     expect(projection.resolveEditTargetByEntityId("msg-u2")).toBeNull();
     expect(projection.resolveEditTargetByEntityId("msg-u1")).toMatchObject({
@@ -7389,7 +7527,8 @@ describe("fork / modelChange marker", () => {
     const { projection } = runAll(log.events);
     const userRow = projection.getSnapshot().rows.window.find((r) => r.kind === "userInput");
     expect(userRow).toBeDefined();
-    // user 行自身无 messageId，但同 turn 的 assistant messageId 作 rewind 锚点。
+    // The user row itself has no messageId, but the same turn's assistant messageId serves as the
+    // rewind anchor.
     expect(projection.getMessageIdForRow(userRow!.rowId)).toBeNull();
     expect(projection.getTurnRewindAnchor(userRow!.rowId)).toBe("msg-a1");
   });
@@ -7408,9 +7547,11 @@ describe("fork / modelChange marker", () => {
   });
 
   it("D/E09 回归：unavailable rewind（无 createdMessageId）与 workspace 回滚不得截断 live 行", () => {
-    // Bugfix 回归（2026-07-06 case catalog 战役）：finishUnavailable 也发 RewindTriggered，
-    // 投影曾不加区分地截断 live 行——store/模型上下文却保留旧分支（假截断），
-    // fork child / 刷新 hydration 随后把旧分支复活（E09 失败形态）。
+    // Bugfix regression (2026-07-06 case catalog campaign): finishUnavailable also emits
+    // RewindTriggered,
+    // and the projection used to truncate live rows indiscriminately — the store/model context kept
+    // the old branch (a false truncation),
+    // and the fork child / refresh hydration then resurrected the old branch (the E09 failure mode).
     const log = new EventLog();
     log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
     log.push(SessionEventType.TurnStarted, { turnNumber: 1, input: "问" }, { turnId: "t1" });
@@ -7436,14 +7577,14 @@ describe("fork / modelChange marker", () => {
     );
     const beforeRows = runAll(log.events).projection.getSnapshot().rows.window.length;
     expect(beforeRows).toBeGreaterThan(0);
-    // unavailable conversation rewind（无 createdMessageId）
+    // unavailable conversation rewind (no createdMessageId)
     log.push(SessionEventType.RewindTriggered, {
       targetMessageId: "msg-a1",
       scope: "conversation",
       strategy: "unavailable",
       reason: "target_message_is_not_user_prompt",
     });
-    // workspace 文件回滚（带 createdMessageId 但 scope=workspace）
+    // workspace file rollback (carries createdMessageId but scope=workspace)
     log.push(SessionEventType.RewindTriggered, {
       targetMessageId: "msg-a1",
       scope: "workspace",
@@ -7649,7 +7790,7 @@ describe("fork / modelChange marker", () => {
   });
 });
 
-// ── M5④ 附件渲染：TurnStarted.attachments → userInput row.attachments ──
+// ── M5④ attachment rendering: TurnStarted.attachments → userInput row.attachments ──
 describe("userInput 附件投影（M5④）", () => {
   it("TurnStarted 携带附件元信息 → row.attachments 保真映射且 schema 合法", () => {
     const log = new EventLog();
@@ -7680,7 +7821,8 @@ describe("userInput 附件投影（M5④）", () => {
             bytes: 12345,
             ref: "/tmp/screenshot.png",
           },
-          // 无稳定引用（data URL 内联）：ref 缺省 → 投影生成行内占位。
+          // No stable reference (inlined data URL): ref absent → the projection generates an inline
+          // placeholder.
           { fileName: "notes.md", mime: "text/markdown", bytes: 42 },
         ],
       },
@@ -7721,10 +7863,14 @@ describe("userInput 附件投影（M5④）", () => {
   });
 });
 
-// R-19（10 §4.2.3）：config 种子——投影初值 = runtime 真值，种子不产 delta / 不 bump
-// revision，事件触碰过的字段不接受种子覆盖（"最终值以日志为准"）。
-// Bug 背景（2026-07-07 v4 桌面首测）：初始 config 写死空 provider/model + mode=build，
-// 导致新会话模型选择器显示空、持久化 mode=yolo 时 UI 停在 build 且点 yolo 静默 no-op。
+// R-19 (10 §4.2.3): config seeding — the projection's initial value = the runtime truth; seeds
+// produce no delta / do not bump
+// revision, and fields already touched by events do not accept seed overrides ("the log is the
+// final authority").
+// Bug background (2026-07-07 v4 desktop first test): the initial config hardcoded an empty
+// provider/model + mode=build,
+// so new sessions showed an empty model selector, and when mode=yolo was persisted the UI stayed on
+// build and clicking yolo silently no-op'd.
 describe("config 种子（R-19）", () => {
   const SEED = {
     provider: "prov-a",
@@ -7811,7 +7957,8 @@ describe("config 种子（R-19）", () => {
     for (const event of log.events) projection.applyEvent(event);
     projection.seedConfig(SEED);
     const config = projection.getSnapshot().config;
-    // mode 由日志裁决，模型区来自种子（历史会话恢复：resume 已把上次选型写回 runtime）。
+    // mode is adjudicated by the log; the model section comes from the seed (historical session
+    // recovery: resume already wrote the last selection back to the runtime).
     expect(config.mode).toBe("plan");
     expect(config).toMatchObject({
       provider: "prov-a",
@@ -7827,7 +7974,8 @@ describe("config 种子（R-19）", () => {
     const first = projection.getSnapshot();
     projection.seedConfig(SEED);
     expect(projection.getSnapshot()).toBe(first);
-    // 恢复结果明确留空，不能继续显示历史消息留下的模型。
+    // The recovery result is explicitly empty; the model left by historical messages must not keep
+    // showing.
     projection.seedConfig({ provider: "", model: "", mode: "" });
     expect(projection.getSnapshot().config).toMatchObject({
       provider: "",
@@ -7852,7 +8000,7 @@ describe("config 种子（R-19）", () => {
   });
 });
 
-// ── 16-timeline-authority-plan P2：productTurn 切分 / goalVerify 身份与落位 ──
+// ── 16-timeline-authority-plan P2: productTurn splitting / goalVerify identity and placement ──
 
 describe("P2 productTurn 切分（S1/S3/S5）", () => {
   const drainScenario = (delivery: "queue" | "guide") => {
@@ -7962,16 +8110,18 @@ describe("P2 productTurn 切分（S1/S3/S5）", () => {
     expect(() => conversationSnapshotSchema.parse(snapshot)).not.toThrow();
     const rows = snapshot.rows.window;
 
-    // 两个 turnHeader：首轮 legacy runtime id 与 promoted user messageId（稳定 productTurn）。
+    // Two turnHeaders: the first turn's legacy runtime id and the promoted user messageId (stable
+    // productTurn).
     const headers = rows.filter((row) => row.kind === "turnHeader");
     expect(headers.map((row) => row.turnId)).toEqual(["turn-1", "msg-q2"]);
-    // 第一段 header 在 drain 边界收口：activeMs = drain(7s) - start(2s)。
+    // The first header closes at the drain boundary: activeMs = drain(7s) - start(2s).
     expect(headers[0]).toMatchObject({ state: "completedSuccess", activeMs: 5000 });
-    // 第二段 header 在 TurnComplete 收口：activeMs = complete(11s) - drain(7s)，
-    // 不再是整段 runtime duration（9000）。
+    // The second header closes at TurnComplete: activeMs = complete(11s) - drain(7s),
+    // no longer the whole runtime duration (9000).
     expect(headers[1]).toMatchObject({ state: "completedSuccess", activeMs: 4000 });
 
-    // 两段 assistant 正文都在，各归自己的 productTurn——A1 不再被折进上一轮 history。
+    // Both assistant bodies are present, each in its own productTurn — A1 is no longer folded into
+    // the previous turn's history.
     const assistantRows = rows.filter((row) => row.kind === "assistantText");
     expect(
       assistantRows.map((row) => [row.turnId, row.kind === "assistantText" ? row.text : ""]),
@@ -7980,7 +8130,8 @@ describe("P2 productTurn 切分（S1/S3/S5）", () => {
       ["msg-q2", "回答二"],
     ]);
 
-    // drained user 行归新 productTurn，并原子登记 message/entity/edit target。
+    // The drained user row belongs to the new productTurn and registers message/entity/edit targets
+    // atomically.
     const drainedUser = rows.find((row) => row.kind === "userInput" && row.text === "问题二");
     expect(drainedUser?.turnId).toBe("msg-q2");
     expect(projection.getMessageIdForRow(drainedUser!.rowId)).toBe("msg-q2");
@@ -8033,7 +8184,8 @@ describe("P2 productTurn 切分（S1/S3/S5）", () => {
     const coldUser = runAll(coldLog.events)
       .projection.getSnapshot()
       .rows.window.find((row) => row.kind === "userInput");
-    // 同一 promoted user transcript 在 live drain 与 cold TurnStarted 中使用同一 productTurnId。
+    // The same promoted user transcript uses the same productTurnId in live drain and cold
+    // TurnStarted.
     expect(coldUser?.turnId).toBe(drainedUser?.turnId);
     expect(snapshot.queue.items).toEqual([]);
   });
@@ -8086,7 +8238,7 @@ describe("P2 productTurn 切分（S1/S3/S5）", () => {
         },
       },
     });
-    // 内联位置：在 A1 之后、A2 之前。
+    // Inline position: after A1, before A2.
     const order = rows
       .filter((row) => row.kind === "assistantText" || row.kind === "userInput")
       .map((row) => (row.kind === "assistantText" || row.kind === "userInput" ? row.text : ""));
@@ -8125,8 +8277,10 @@ describe("P2 productTurn 切分（S1/S3/S5）", () => {
     const { projection } = runAll(log.events);
     const rows = projection.getSnapshot().rows.window;
     const drained = rows.find((row) => row.kind === "userInput" && row.text === "老事件文本");
-    // followupMode 默认 queue → 切轮；旧事件虽无 drainedInputs，injectedMessageIds
-    // 仍是 promotion 后的持久 user 身份，因此 product turn 也稳定使用该 messageId。
+    // followupMode defaults to queue → the turn splits; although the legacy event has no
+    // drainedInputs, injectedMessageIds
+    // is still the persisted user identity after promotion, so the product turn stably uses that
+    // messageId too.
     expect(drained?.turnId).toBe("msg-legacy");
     expect(projection.getMessageIdForRow(drained!.rowId)).toBe("msg-legacy");
   });
@@ -8236,7 +8390,8 @@ describe("P2 goalVerify 身份与落位（GV-identity / GV-terminal-only / GV-la
       { turnId: "turn-1" },
     );
     log.push(SessionEventType.TurnStarted, { turnNumber: 2, input: "Q2" }, { turnId: "turn-2" });
-    // 迟到的 verify：事件本身归属 turn-2 期间，但 payload 锚定 turn-1。
+    // The late verify: the event itself belongs to turn-2's window, but the payload anchors to
+    // turn-1.
     log.push(SessionEventType.TargetCompletionVerification, {
       targetId: "target-1",
       status: "started",
@@ -8248,7 +8403,8 @@ describe("P2 goalVerify 身份与落位（GV-identity / GV-terminal-only / GV-la
     const marker = projection
       .getSnapshot()
       .rows.window.find((row) => row.kind === "timelineMarker" && row.marker.type === "goalVerify");
-    // UI 按 turnId 分组：锚回 turn-1 而不是落进 turn-2 或 "turn-unknown"。
+    // The UI groups by turnId: anchor back to turn-1 rather than falling into turn-2 or
+    // "turn-unknown".
     expect(marker?.turnId).toBe("turn-1");
   });
 });
@@ -8628,9 +8784,12 @@ describe("Desktop Hook invocation projection", () => {
   });
 
   it("HK17 does not flush a pending SessionStart summary onto a model-only compact turn", () => {
-    // Bug 根因：Runtime 的 runSessionStartHooks 先于 /compact 输入解析执行，首条输入即
-    // /compact 时 SessionStart Hook 真实执行且携带 compact 的 runtime turnId；投影层
-    // flush 只看「下一条 TurnStarted」，把摘要挂到了 model-only 维护 turn 上。
+    // Bug root cause: the Runtime's runSessionStartHooks runs before /compact input parsing; when
+    // the first input is
+    // /compact the SessionStart Hook really executes carrying compact's runtime turnId, and the
+    // projection layer's
+    // flush only looked at "the next TurnStarted", hanging the summary on the model-only
+    // maintenance turn.
     const log = new EventLog();
     log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
     log.push(
@@ -8661,7 +8820,7 @@ describe("Desktop Hook invocation projection", () => {
       },
       { turnId: "turn-1", timestampMs: 1_700_000_002_010 },
     );
-    // compact 维护 turn：inputVisibility=model-only，无 user bubble。
+    // compact maintenance turn: inputVisibility=model-only, no user bubble.
     log.push(
       SessionEventType.TurnStarted,
       { turnNumber: 1, input: "/compact", inputVisibility: "model-only" },
@@ -8702,10 +8861,11 @@ describe("Desktop Hook invocation projection", () => {
     );
 
     const afterCompact = runAll(log.events).projection.getSnapshot();
-    // compact 维护 turn 不承载 SessionStart 摘要：不得出现挂在 turn-1 的 hook row。
+    // The compact maintenance turn does not host the SessionStart summary: no hook row attached to
+    // turn-1 may appear.
     expect(afterCompact.rows.window.filter((row) => row.kind === "hookInvocation")).toHaveLength(0);
 
-    // 下一条真实 user-visible turn 才是合法收口目标。
+    // The next real user-visible turn is the only legitimate flush target.
     log.push(
       SessionEventType.TurnStarted,
       { turnNumber: 2, input: "next real prompt" },
@@ -8722,8 +8882,9 @@ describe("Desktop Hook invocation projection", () => {
   });
 
   it("HK17 keeps a SessionStart summary pending when a compact turn is the last turn", () => {
-    // 只有 /compact 且无后续输入：摘要保持 pending，不挂 compact marker，也不制造
-    // 可见时间线内容（session-hooks:* synthetic turn 禁止）。
+    // Only /compact with no following input: the summary stays pending, attaches to no compact
+    // marker, and creates no
+    // visible timeline content (session-hooks:* synthetic turns are forbidden).
     const log = new EventLog();
     log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
     log.push(
@@ -8777,12 +8938,16 @@ describe("Desktop Hook invocation projection", () => {
   });
 
   it("HK17 keeps tool Hooks of a model-only real agent turn attached to that turn", () => {
-    // 回归背景（2026-08-28 review）：model-only ≠ 维护 turn。background_task 通知轮
-    // （runtime-command-queue）、subagent_message 轮、goal continuation 轮都是
-    // inputVisibility="model-only" 但会真实跑工具的 agent 轮。HK17 首版把直挂 gate
-    // 无差别地按 currentTurnStartedModelOnly 拦截，导致这些轮的 PreToolUse/PostToolUse
-    // 被 pending 吞掉、错误 flush 到下一个不相关用户轮。维护 turn 排除只属于
-    // SessionStart；工具 Hook 必须按 event.turnId 直挂原轮，与 cold merge 对齐。
+    // Regression background (2026-08-28 review): model-only ≠ maintenance turn. background_task
+    // notification turns
+    // (runtime-command-queue), subagent_message turns, and goal continuation turns are all
+    // inputVisibility="model-only" but genuinely run tools as agent turns. HK17's first version
+    // blocked the direct-attach gate indiscriminately on currentTurnStartedModelOnly, so these
+    // turns' PreToolUse/PostToolUse
+    // were swallowed by pending and wrongly flushed to the next unrelated user turn. The maintenance
+    // turn exclusion belongs only to
+    // SessionStart; tool hooks must attach directly to the original turn by event.turnId, aligned
+    // with cold merge.
     const log = new EventLog();
     log.push(SessionEventType.SessionCreated, { mode: "default" });
     log.push(
@@ -8836,7 +9001,8 @@ describe("Desktop Hook invocation projection", () => {
       .projection.getSnapshot()
       .rows.window.filter((row) => row.kind === "hookInvocation");
     expect(hookRows).toHaveLength(1);
-    // 工具 Hook 留在 model-only 真实 agent 轮，不被 pending 迁移到用户轮。
+    // Tool hooks stay on the model-only real agent turn and are not migrated to a user turn by
+    // pending.
     expect(hookRows[0]).toMatchObject({
       hookEventName: "PreToolUse",
       turnId: "turn-bg",
@@ -8873,10 +9039,12 @@ describe("Desktop Hook invocation projection", () => {
   ])(
     "HK17 keeps a pending SessionStart summary off an abnormally terminated model-only turn ($caseName)",
     ({ terminal }) => {
-      // SG-01：currentTurnId / currentTurnStartedModelOnly 是 reducer 内部侧表，
-      // 异常终态是最容易遗漏的生命周期边界。TurnError 非 controlOnly 路径不清侧表、
-      // TurnComplete(cancelled) 清侧表，两条收口路径必须等价：pending SessionStart
-      // 不泄漏到异常 turn、不直挂死 turn、只归位下一条真实用户 turn。
+      // SG-01: currentTurnId / currentTurnStartedModelOnly are reducer-internal side tables, and
+      // abnormal terminal states are the lifecycle boundary easiest to miss. The TurnError
+      // non-controlOnly path does not clear the side table while
+      // TurnComplete(cancelled) does; both closure paths must be equivalent: pending SessionStart
+      // must not leak into an abnormal turn, not attach to a dead turn, and only land on the next
+      // real user turn.
       const sessionStartLifecycle = (log: EventLog, invocationId: string, at: number) => {
         log.push(
           SessionEventType.HookRunStarted,
@@ -8910,7 +9078,8 @@ describe("Desktop Hook invocation projection", () => {
 
       const log = new EventLog();
       log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
-      // model-only goal continuation 轮（executionKind 缺省为 agent，异常走非 controlOnly）。
+      // A model-only goal continuation turn (executionKind defaults to agent; the abnormal path is
+      // non-controlOnly).
       log.push(
         SessionEventType.TurnStarted,
         { turnNumber: 1, input: "continue goal", inputVisibility: "model-only" },
@@ -8919,7 +9088,8 @@ describe("Desktop Hook invocation projection", () => {
       sessionStartLifecycle(log, "startup-hook", 1_700_000_002_000);
       terminal(log, "turn-mt", 1_700_000_003_000);
 
-      // 异常收口瞬间：pending 保留，不挂异常 turn，也不泄漏成可见 row。
+      // At the moment of abnormal closure: pending is retained, attaches to no abnormal turn, and
+      // leaks no visible row.
       const afterTerminal = runAll(log.events).projection.getSnapshot();
       expect(afterTerminal.rows.window.filter((row) => row.kind === "hookInvocation")).toHaveLength(
         0,
@@ -8928,15 +9098,16 @@ describe("Desktop Hook invocation projection", () => {
         "session-hooks:session-1",
       );
 
-      // 终态后紧接的下一个 SessionStart（resume epoch）同样必须 pending，
-      // 不得直挂已终止的死 turn。
+      // The next SessionStart right after a terminal state (a resume epoch) must likewise stay
+      // pending,
+      // never attaching directly to the terminated dead turn.
       sessionStartLifecycle(log, "resume-hook", 1_700_000_004_000);
       const afterResumeHook = runAll(log.events).projection.getSnapshot();
       expect(
         afterResumeHook.rows.window.filter((row) => row.kind === "hookInvocation"),
       ).toHaveLength(0);
 
-      // 下一条真实用户 turn 收口两条 pending 摘要，且只出现在该轮。
+      // The next real user turn flushes both pending summaries, and they appear only in that turn.
       log.push(
         SessionEventType.TurnStarted,
         { turnNumber: 2, input: "real question" },
@@ -9315,12 +9486,12 @@ describe("软门禁(D2): workspaceHookAdmission snapshot 投影", () => {
   it("WorkspaceHookAdmissionUpdated pendingCount===0 → 置 null(提示条消失)", () => {
     const log = new EventLog();
     log.push(SessionEventType.SessionCreated, { mode: "default" });
-    // 先有 pending
+    // Pending first
     log.push(SessionEventType.WorkspaceHookAdmissionUpdated, {
       pendingCount: 1,
       bundleDigest: "a".repeat(64),
     });
-    // settle 后清零
+    // Cleared after settle
     log.push(SessionEventType.WorkspaceHookAdmissionUpdated, {
       pendingCount: 0,
       bundleDigest: "a".repeat(64),
@@ -9361,7 +9532,7 @@ describe("软门禁(D2): workspaceHookAdmission snapshot 投影", () => {
   });
 });
 
-// ── CreateWorkflow 运行确认（docs/dynamic-workflow/launch.md）──
+// ── CreateWorkflow run confirmation (docs/dynamic-workflow/launch.md) ──
 
 describe("workflow 运行确认的 ask 预览", () => {
   const causalityGraph = {
@@ -9376,7 +9547,8 @@ describe("workflow 运行确认的 ask 预览", () => {
       },
     ],
     lanes: [{ id: "actor#1", name: "a" }],
-    // 第二层是子代理导向：每阶段一张参与者卡 + 交接边（docs/dynamic-workflow/presentation.md）。
+    // The second layer is subagent-oriented: one participant card per phase plus handoff
+    // edges (docs/dynamic-workflow/presentation.md).
     participants: [
       { id: "unphased:actor#1", phase: "unphased", lane: "actor#1", steps: ["ask#1"] },
     ],
@@ -9408,8 +9580,10 @@ describe("workflow 运行确认的 ask 预览", () => {
         riskLevel: "low",
         reason: "createWorkflow.runConfirmation: user must confirm running the analyzed script",
         input: { script: "return 1;" },
-        // CreateWorkflow 自 2026-09-11（第 7 轮）起声明会话作用域的免确认；Bash 用例只借
-        // 这条日志的形状，策略对它无意义（投影不看工具声明，只看事件上的策略）。
+        // Since 2026-09-11 (round 7) CreateWorkflow declares a session-scoped no-confirmation; the
+        // Bash case only borrows
+        // this log's shape — the policy is meaningless for it (the projection ignores tool
+        // declarations and only reads the policy on the event).
         optionsPolicy: "session-always-allow",
         ...(display === undefined ? {} : { display }),
       },
@@ -9439,8 +9613,10 @@ describe("workflow 运行确认的 ask 预览", () => {
       kind: "permission",
       display: { kind: "create_workflow", ok: true, causalityGraph },
     });
-    // 产品裁决：项目级 always allow 被 optionsPolicy 裁掉，第 7 轮换成会话作用域的
-    // 免确认；第 4 轮在 v4 追加 Refine（拒绝并附修改意见），列表 = Run / Session / Deny / Refine。
+    // Product decision: project-level always allow is cut off by optionsPolicy; round 7 replaced it
+    // with a session-scoped
+    // no-confirmation; round 4 added Refine in v4 (deny with feedback), so the list =
+    // Run / Session / Deny / Refine.
     expect(payload?.kind === "permission" && payload.options).toHaveLength(4);
     expect(
       payload?.kind === "permission" && payload.options.map((option) => option.optionId),
@@ -9449,8 +9625,10 @@ describe("workflow 运行确认的 ask 预览", () => {
       payload?.kind === "permission"
         ? payload.options.find((option) => option.optionId === "allowSession")
         : undefined;
-    // wire 上的 kind 是闭集：会话选项映为 allowAlways（GUI 按 name 本地化）；optionId 原样，
-    // broker 靠它精确命中。response 不带 permissionUpdates（strict schema，见 spec 第 7 轮）。
+    // The kind on the wire is a closed set: the session option maps to allowAlways (the GUI
+    // localizes by name); optionId is verbatim,
+    // and the broker uses it to hit precisely. The response carries no permissionUpdates (strict
+    // schema, see spec round 7).
     expect(sessionOption).toMatchObject({
       kind: "allowAlways",
       label: "Always allow in this session",
@@ -9462,8 +9640,10 @@ describe("workflow 运行确认的 ask 预览", () => {
       payload?.kind === "permission"
         ? payload.options.find((option) => option.optionId === "workflowRefine")
         : undefined;
-    // 静态 response 是普通 deny：不认识该选项的消费面（bot 直出、无 freeText 应答）
-    // 退化为拒绝；反馈升级只发生在 interaction-broker 的 freeText 特判。
+    // A static response is a plain deny: consumers that do not recognize the option (bot direct
+    // output, no freeText reply)
+    // degrade to rejection; feedback escalation only happens in interaction-broker's freeText
+    // special case.
     expect(refineOption).toMatchObject({
       kind: "custom",
       label: "Refine",
@@ -9517,7 +9697,8 @@ describe("workflow 运行确认的 ask 预览", () => {
   });
 
   it("协议无法承载的 display kind 不进 ask 载荷", () => {
-    // file_diff 不在 v4 display 联合里；直接透传会让快照 schema 解析失败。
+    // file_diff is not in the v4 display union; passing it through would break snapshot schema
+    // parsing.
     const log = permissionRequestedLog({
       kind: "file_diff",
       filePath: "/workspace/a.ts",
@@ -9532,8 +9713,9 @@ describe("workflow 运行确认的 ask 预览", () => {
   });
 });
 
-// ── dwf 实时运行态：引擎事件 → 会话事件 → workflowRuns 状态键 ──
-// 见 docs/dynamic-workflow/presentation.md「The run state the pane draws」「workflowRuns 形状与界」「终态权威 patch」。
+// ── dwf live run state: engine events → session events → workflowRuns state keys ──
+// See docs/dynamic-workflow/presentation.md "The run state the pane draws", "workflowRuns shape and
+// bounds", and "terminal authoritative patch".
 describe("ProductProjection workflowRuns（dwf 进度投影）", () => {
   const RUN_ID = "dwfrun-1";
 
@@ -9546,7 +9728,7 @@ describe("ProductProjection workflowRuns（dwf 进度投影）", () => {
     return log.push(SessionEventType.DynamicWorkflowRunProgress, {
       runId: RUN_ID,
       toolCallId: "tc-1",
-      // sequence 是 journal sequence（appendEvent 从 0 起单调分配）。
+      // sequence is the journal sequence (appendEvent allocates monotonically from 0).
       sequence: (progressSequence[RUN_ID] = (progressSequence[RUN_ID] ?? -1) + 1),
       eventType,
       payload,
@@ -9643,7 +9825,7 @@ describe("ProductProjection workflowRuns（dwf 进度投影）", () => {
         ordinal: 1,
         name: "planner",
         sessionId: "sess_dwf-1-actor.1",
-        // 尚无节点且 run 未终态 → waiting（"还没派到活"），不是 completed。
+        // No nodes yet and the run not terminal → waiting ("no work dispatched yet"), not completed.
         status: "waiting",
       },
     ]);
@@ -9653,10 +9835,11 @@ describe("ProductProjection workflowRuns（dwf 进度投影）", () => {
       kind: "ask",
       actor: { siteId: "actor#1", ordinal: 1 },
     });
-    // dispatched 只是会话就绪、请求尚未准入（docs/dynamic-workflow/concurrency.md「Protocol state」）：仍是 waiting。
+    // dispatched only means the session is ready and the request not yet admitted
+    // (docs/dynamic-workflow/concurrency.md "Protocol state"): still waiting.
     progress(log, "node-dispatched", { instance: { siteId: "ask#1", ordinal: 1 } });
     expect(runsOf(log)?.runs[0]?.actors[0]?.status).toBe("waiting");
-    // 模型请求真的发出去了 → running。
+    // The model request has actually gone out → running.
     progress(log, "node-executing", { instance: { siteId: "ask#1", ordinal: 1 } });
     expect(runsOf(log)?.runs[0]?.actors[0]?.status).toBe("running");
 
@@ -9665,8 +9848,10 @@ describe("ProductProjection workflowRuns（dwf 进度投影）", () => {
   });
 
   it("用量：spentTokens 直接取 usage-updated 载荷，nodesUsed 按实例首次派发计数", () => {
-    // docs/dynamic-workflow/authoring.md：事件自带已花总量（不再是剩余量 + 派生字段），
-    // 步数由派发事件计数（不再从上限反算——没有上限了）。同一实例重复派发不重复计数。
+    // docs/dynamic-workflow/authoring.md: events carry the total spent (no longer remaining +
+    // derived fields),
+    // and step count comes from dispatch events (no longer back-computed from a cap — there is no
+    // cap). Repeated dispatches of the same instance are not double counted.
     const log = startedLog({ maxConcurrency: 4 });
     progress(log, "usage-updated", { spentTokens: 1_234 });
     progress(log, "node-dispatched", { instance: { siteId: "ask#1", ordinal: 1 } });
@@ -9679,11 +9864,15 @@ describe("ProductProjection workflowRuns（dwf 进度投影）", () => {
   });
 
   /**
-   * 终态事件产**一条** `workflowRun.updated`，把这条 run 的结算事实（status / error）一次落地。
+   * A terminal event produces **one** `workflowRun.updated`, landing this run's settlement facts
+   * (status / error) in a single stroke.
    *
-   * 这里刻意不再断言「终态 patch 是整键替换、丢光中间态也能收口」：改成键级增量之后，丢失的
-   * 中间 op 不再被下一条事件顺带补回来——那份自愈让位给了帧的 seq 连续性判定与 snapshot 重同步
-   * （客户端 fromSeq 对不上就整份重取）。终态事实照旧在这一条 op 里，一条也没少。
+   * This deliberately no longer asserts "the terminal patch is a whole-key replacement that closes
+   * out even if intermediate states are lost": after switching to key-level increments, a lost
+   * intermediate op is no longer incidentally repaired by the next event — that self-healing gave
+   * way to the frame's seq continuity check and snapshot resync
+   * (a client whose fromSeq mismatches refetches the whole thing). The terminal facts still live in
+   * this one op; not a single one was dropped.
    */
   it("run-settled 产一条该 run 的键级增量：结算事实一次落地", () => {
     const log = startedLog();
@@ -9707,7 +9896,8 @@ describe("ProductProjection workflowRuns（dwf 进度投影）", () => {
     };
     expect(op.runId).toBe(RUN_ID);
     expect(op.run).toMatchObject({ status: "errored", error: "报告条数超过上限" });
-    // 节点这一步没动，所以这条增量里一条节点都不带——线上的字节与**改动量**成正比。
+    // The nodes step did not move, so this increment carries no nodes at all — wire bytes scale with
+    // the **change size**.
     expect(op.nodes).toBeUndefined();
     expect(op.revision).toBe(projection.getSnapshot().workflowRuns?.revision);
     const run = projection.getSnapshot().workflowRuns?.runs[0];
@@ -9716,8 +9906,10 @@ describe("ProductProjection workflowRuns（dwf 进度投影）", () => {
   });
 
   it("resume：同 runId 再收 run-started 时清掉上一世的 error（进程内 cancel→resume）", () => {
-    // run-started 分支原样展开旧条目：cancel → resume 不经重启时，run 以 running 重现
-    // 却还挂着上一世的结算错误——一个正在跑的 run 同时展示失败文案。
+    // The run-started branch expands the old entry as-is: on cancel → resume without a process
+    // restart, the run reappears as running
+    // while still carrying the previous life's settlement error — a running run displaying failure
+    // copy at the same time.
     const log = startedLog();
     progress(log, "run-settled", {
       status: "stopped",
@@ -9754,19 +9946,22 @@ describe("ProductProjection workflowRuns（dwf 进度投影）", () => {
     const run = runsOf(log)?.runs[0];
     expect(run?.nodes).toHaveLength(WORKFLOW_RUNS_LIMITS.maxNodes);
     expect(run?.truncated).toBe(true);
-    // `truncated` 只说得出「有东西没进来」；到底少了几步要靠计数器，否则读面上的步数
-    // 会比真实步数小，而且小多少没人说得清。
+    // `truncated` only says "something did not get in"; how many steps are missing needs the
+    // counters, otherwise the read surface's step count
+    // would be smaller than the real one, by an unknowable amount.
     expect(run?.usage.nodesUnlisted).toBe(rejected);
     expect(run?.usage.nodesUnlistedSettled).toBeUndefined();
-    // 读面唯一允许的步数读法 = 表内 + 表外。
+    // The only step count reading the read surface may use = in-table + out-of-table.
     expect(workflowRunStepCounts(run!)).toEqual({
       total: WORKFLOW_RUNS_LIMITS.maxNodes + rejected,
       settled: 0,
     });
-    // 已在表内的实例仍可继续更新相位（超界只拒绝**新**实例）。
+    // Instances already in the table can keep updating their phase (over the limit only **new**
+    // instances are refused).
     progress(log, "node-dispatched", { instance: { siteId: "ask#1", ordinal: 1 } });
     expect(runsOf(log)?.runs[0]?.nodes[0]?.phase).toBe("dispatched");
-    // 表外实例的结算同样要数得出来：它一条节点行都没有，只能落在第二个计数器上。
+    // Out-of-table instances' settlements must also be countable: they have no node rows at all, so
+    // they can only land in the second counter.
     progress(log, "node-settled", {
       instance: { siteId: "ask#1", ordinal: WORKFLOW_RUNS_LIMITS.maxNodes + 1 },
       outcome: "ok",
@@ -9780,18 +9975,19 @@ describe("ProductProjection workflowRuns（dwf 进度投影）", () => {
   });
 
   /**
-   * 一条引擎事件 → **一条**该 run 的键级增量，且只带动过的那条节点。
+   * One engine event → **one** key-level increment for that run, touching only the node it moved.
    *
-   * 这一条是整次改造的验收点：旧编码在这里会重发整张表（此处 16 条节点），线上的字节因此与
-   * 状态大小成正比而不是与改动量成正比——O(N) 字节/事件、O(N²)/run，节点上界与宽 fan-out
-   * 撞界丢实例都是这笔账的下游。
+   * This is the acceptance point of the whole rework: the old encoding would resend the entire table
+   * here (16 nodes in this case), so wire bytes scaled with state size instead of change size —
+   * O(N) bytes/event and O(N²)/run; the node upper bound and wide fan-outs hitting the bound and
+   * dropping instances were all downstream of this accounting.
    */
   it("一条事件只发动过的那条节点，别的 run 一个字节都不带", () => {
     const log = startedLog();
     for (let ordinal = 1; ordinal <= 16; ordinal += 1) {
       progress(log, "node-queued", { instance: { siteId: "ask#1", ordinal }, kind: "ask" });
     }
-    // 第二条 run：它这一步没变化，所以不该出现在增量里。
+    // The second run did not change in this step, so it must not appear in the increment.
     log.push(SessionEventType.DynamicWorkflowRunProgress, {
       runId: "dwfrun-other",
       sequence: 0,
@@ -9816,9 +10012,11 @@ describe("ProductProjection workflowRuns（dwf 进度投影）", () => {
     expect(op.runId).toBe(RUN_ID);
     expect(op.nodes).toEqual([{ siteId: "ask#1", ordinal: 7, kind: "ask", phase: "dispatched" }]);
     expect(op.actors).toBeUndefined();
-    // header 只带真的动过的键（水位与派发计数），不含 nodes/actors 之外的整表。
+    // The header only carries keys that actually moved (watermark and dispatch counts), not the
+    // whole table beyond nodes/actors.
     expect(Object.keys(op.run ?? {}).toSorted()).toEqual(["lastEventSequence", "usage"]);
-    // 增量应用回去之后，权威状态仍是归约本身的产物（契约：逐字节一致）。
+    // After the increment is applied back, the authoritative state is still the product of the
+    // reduction itself (contract: byte-identical).
     const authoritative = projection.getSnapshot().workflowRuns!;
     expect(authoritative.runs.map((run) => run.runId)).toEqual([RUN_ID, "dwfrun-other"]);
     expect(authoritative.runs[0]!.nodes).toHaveLength(16);
@@ -9842,7 +10040,8 @@ describe("ProductProjection workflowRuns（dwf 进度投影）", () => {
       });
     }
     const { deltasPerEvent } = runAll(log.events);
-    // 第 9 条 run 出生的那一条事件同时淘汰了第 1 条：淘汰先发，出生随后。
+    // The event that birthed the 9th run simultaneously evicted the 1st: eviction is emitted first,
+    // birth second.
     const evicting = deltasPerEvent.at(-1)!;
     expect(evicting.map((delta) => delta.op)).toEqual([
       "workflowRun.removed",
@@ -9883,12 +10082,14 @@ describe("ProductProjection workflowRuns（dwf 进度投影）", () => {
     const run = runsOf(log)?.runs[0];
     expect(run?.nodes).toEqual([]);
     expect(run?.actors).toEqual([]);
-    // 但它仍抬升 lastEventSequence——事件日志需要知道有新内容可取。
+    // But it still raises lastEventSequence — the event log needs to know new content is available.
     expect(run?.lastEventSequence).toBe(1);
   });
 
-  // R-10：两个 profile 的终态必须逐字节一致，所以 workflowRuns 的增量一条都不能被 profile 过滤
-  // 掉（`profiles.ts` 只滤 row.delta）。桌面 continuous 与手机 replayable 收到的是同一串 op。
+  // R-10: both profiles' terminal states must be byte-identical, so not a single workflowRuns
+  // increment may be filtered out by a profile
+  // (`profiles.ts` only filters row.delta). Desktop continuous and mobile replayable receive the
+  // same op stream.
   it("键级增量不受 delivery profile 门控（记录在案的偏离）", () => {
     const log = startedLog();
     const dispatched = progress(log, "node-dispatched", {
@@ -9907,14 +10108,15 @@ describe("ProductProjection workflowRuns（dwf 进度投影）", () => {
     progress(log, "node-settled", { instance: { siteId: "ask#1", ordinal: 1 }, outcome: "ok" });
     const { projection } = runAll(log.events);
     const before = projection.getSnapshot().workflowRuns?.revision;
-    // 同一条事件重放（同 sequence、同内容）。
+    // The same event replayed (same sequence, same content).
     const replay = log.events.at(-1)!;
     expect(projection.applyEvent(replay)).toEqual([]);
     expect(projection.getSnapshot().workflowRuns?.revision).toBe(before);
   });
 
-  // ── report 事件 → reports[]（docs/dynamic-workflow/presentation.md「The run pane」）──
-  // 数据面是详情页 Results 区的全部输入；Results 区本身在 packages/ui 的 jsdom 用例里钉。
+  // ── report events → reports[] (docs/dynamic-workflow/presentation.md "The run pane") ──
+  // The data surface is the entire input of the detail page's Results section; the Results section
+  // itself is pinned in packages/ui's jsdom cases.
 
   it("report 事件按顺序追加进 reports[]：string 原样，object 走 pretty JSON", () => {
     const log = startedLog();
@@ -9936,7 +10138,8 @@ describe("ProductProjection workflowRuns（dwf 进度投影）", () => {
         preview: '{\n  "file": "a.ts",\n  "severity": "warn"\n}',
       },
     ]);
-    // 序列化规则与 run 产物回投同源：字符串不加 JSON 引号。
+    // The serialization rule shares its origin with run artifact re-injection: strings get no JSON
+    // quotes.
     expect(snapshot.workflowRuns?.runs[0]?.reports?.[0]?.preview).not.toContain('"');
     expect(conversationSnapshotSchema.safeParse(snapshot).success).toBe(true);
   });
@@ -9948,9 +10151,12 @@ describe("ProductProjection workflowRuns（dwf 进度投影）", () => {
   });
 
   /**
-   * 这一条是 report 与 node 分类的凭证：report 有 site 身份、进 journal、有自己的 RunEvent，
-   * 但它**不是 step**。混进 nodes[] 的代价是可观测的——紧凑卡与任务岛的 `settled/observed`
-   * 步数读的就是 nodes，一个报得勤的工作流会显得步数虚高，状态叠加也会多亮一格。
+   * This one is the credential for the report/node classification: report has site identity, enters
+   * the journal, and has its own RunEvent,
+   * but it is **not a step**. Mixing it into nodes[] has an observable cost — the compact card and
+   * task island's `settled/observed`
+   * step counts read from nodes, so a chatty workflow would show inflated steps and the state stack
+   * would light an extra cell.
    */
   it("report 不进 nodes[]/actors，也不动 nodesUsed；但抬升 lastEventSequence", () => {
     const log = startedLog({ maxConcurrency: 4 });
@@ -9964,7 +10170,7 @@ describe("ProductProjection workflowRuns（dwf 进度投影）", () => {
     expect(run?.actors).toEqual([]);
     expect(run?.usage.nodesUsed).toBe(1);
     expect(run?.reports).toHaveLength(1);
-    // 事件日志要知道有新内容可取，所以水位照常抬升。
+    // The event log needs to know new content is available, so the watermark rises as usual.
     expect(run?.lastEventSequence).toBe(3);
   });
 
@@ -9993,8 +10199,10 @@ describe("ProductProjection workflowRuns（dwf 进度投影）", () => {
   });
 
   /**
-   * 去重键是实例（siteId × ordinal），不是事件 sequence——脚本 replay 时每个 report 调用都会
-   * 重跑。所以一条**新 sequence** 却带已见实例的事件只抬水位，绝不把同一条产物列两次。
+   * The dedup key is the instance (siteId × ordinal), not the event sequence — on script replay
+   * every report call re-runs.
+   * So an event with a **new sequence** but an already-seen instance only raises the watermark and
+   * never lists the same artifact twice.
    */
   it("新 sequence 带已见实例键：水位抬升，条目不重复", () => {
     const log = startedLog();
@@ -10017,10 +10225,12 @@ describe("ProductProjection workflowRuns（dwf 进度投影）", () => {
     const run = runsOf(log)?.runs[0];
     expect(run?.reports).toHaveLength(WORKFLOW_RUNS_LIMITS.maxReports);
     expect(run?.truncated).toBe(true);
-    // 先到的条目不被后来的挤掉（淘汰会让读者以为早期发现丢了；界的语义是拒新）。
+    // Earlier entries are not evicted by later ones (eviction would make readers think early
+    // findings were lost; the bound's semantics is refusing new ones).
     expect(run?.reports?.[0]?.preview).toBe("finding 1");
 
-    // 触界之后其余键照常更新：结算与水位都不受影响。
+    // After hitting the bound the remaining keys keep updating: settlement and watermark are
+    // unaffected.
     progress(log, "run-settled", { status: "completed" });
     const settled = runsOf(log)?.runs[0];
     expect(settled?.status).toBe("completed");
@@ -10029,7 +10239,8 @@ describe("ProductProjection workflowRuns（dwf 进度投影）", () => {
 
   it("单条预览超界即截断（带省略号），仍过 strict schema", () => {
     const log = startedLog();
-    // 载荷有界化已经把单个字符串削到 2048，所以真正会超界的是「键多的对象展开成 pretty JSON」。
+    // Payload bounding has already cut a single string to 2048, so what actually exceeds the bound
+    // is "an object with many keys expanded to pretty JSON".
     const wide: Record<string, string> = {};
     for (let index = 0; index < 64; index += 1) wide[`key${index}`] = "x".repeat(64);
     progress(log, "report", { instance: { siteId: "report#1", ordinal: 1 }, item: wide });
@@ -10050,9 +10261,12 @@ describe("ProductProjection workflowRuns（dwf 进度投影）", () => {
   });
 });
 
-// 中枢直接启动已保存工作流（docs/dynamic-workflow/launch.md）：controlOnly 启动轮的活投影。
-// TurnStarted(workflow_launch) → turnHeader/userInput 双行 origin=workflowLaunch + 同一份元数据，
-// 无助手行；TurnComplete 收口后 header 变 completed（controlOnly 不下发 running/工时）。
+// The hub directly launching a saved workflow (docs/dynamic-workflow/launch.md): the live projection
+// of a controlOnly launch turn.
+// TurnStarted(workflow_launch) → turnHeader/userInput dual rows with origin=workflowLaunch + the same
+// metadata,
+// no assistant rows; after TurnComplete closes the turn the header becomes completed (controlOnly
+// emits no running/work-time).
 describe("workflow-direct-launch 启动轮投影", () => {
   const workflowLaunch = {
     runId: "dwfrun-9",
@@ -10109,13 +10323,16 @@ describe("workflow-direct-launch 启动轮投影", () => {
       workflowLaunch,
     });
 
-    // controlOnly：不残留 running / activeWorks（旧 UI 会把 0ms 误显示成「已工作 1 秒」）。
+    // controlOnly: no lingering running / activeWorks (the old UI would misread 0ms as "worked for
+    // 1 second").
     expect(snapshot.control.activeWorks).toEqual([]);
   });
 
   it("启动轮收口让会话离开 draft：phase 成终态，sessions-index 摘要不再被当 draft 丢弃", () => {
-    // 2026-09-14 实机：只有一条 controlOnly 启动轮的会话活投影恒为 draft，task-index syncer 丢弃 draft
-    // 摘要，侧栏要等重启（store 种子给出终态 phase）才出现。冷热必须同形。
+    // 2026-09-14, on a real machine: a session whose only turn is one controlOnly launch turn had a
+    // live projection stuck at draft, so the task-index syncer dropped the draft
+    // summary and the sidebar only showed it after a restart (the store seed supplying a terminal
+    // phase). Cold and hot must be isomorphic.
     const events = launchEvents();
     const { projection } = runAll(events.slice(0, 2));
     expect(projection.getSnapshot().control.phase).toBe("draft");
@@ -10147,13 +10364,15 @@ describe("workflow-direct-launch 启动轮投影", () => {
       { turnId: "turn-2" },
     );
     const snapshot = runAll(log.events).projection.getSnapshot();
-    // 上一轮的中断终态保留，控制轮的 success 不改写它。
+    // The previous turn's interrupted terminal state is preserved; the control turn's success does
+    // not rewrite it.
     expect(snapshot.control.phase).toBe("completedInterrupted");
   });
 });
 
-// docs/dynamic-workflow/transcript-and-notifications.md：TurnStarted 上的 epilogueStart 原样落到
-// userInput 行；缺席时行上没有这个键（老转录逐字不变）。
+// docs/dynamic-workflow/transcript-and-notifications.md: epilogueStart on TurnStarted lands verbatim
+// on the
+// userInput row; when absent the row has no such key (legacy transcripts byte-identical).
 describe("userInput 行的 epilogueStart（热路径）", () => {
   it("透传 TurnStarted.epilogueStart；缺席不写键", () => {
     const log = new EventLog();

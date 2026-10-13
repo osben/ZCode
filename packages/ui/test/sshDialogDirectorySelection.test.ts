@@ -3,9 +3,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { IServiceAccessor } from "@zcode/services";
 
-// 回归背景（docs/remote-workspace-provider-sync-hang.md）：3.8.1 中 onSelectProject 的
-// Promise 永久 pending 会让向导「选择目录」按钮永远停在加载中。修复保证该 Promise 必定
-// settle 后，这里锁定向导侧的收口契约：rejection 必须复位 selecting 并把错误展示给用户。
+// Regression background (docs/remote-workspace-provider-sync-hang.md): in 3.8.1, onSelectProject's
+// Promise pending forever kept the wizard's "choose directory" button stuck in loading. Now that the
+// fix guarantees the Promise always settles, these tests lock the wizard-side containment contract:
+// a rejection must reset selecting and surface the error to the user.
 const captured = vi.hoisted(() => ({
   kindProps: [] as Array<Record<string, unknown>>,
   settingsProps: [] as Array<Record<string, unknown>>,
@@ -278,7 +279,7 @@ describe("RemoteConnectionDialog 选目录失败收口", () => {
     const createdTextValues: string[] = [];
     const container = installMinimalDom(createdTextValues);
     root = createRoot(container);
-    // session 仍在 store 中：失败后应保留目录步骤供用户重试。
+    // The session is still in the store: after a failure, keep the directory step so the user can retry.
     registerRemoteWorkspaceSession({
       sessionId: "session-1",
       services: {} as IServiceAccessor,
@@ -299,7 +300,8 @@ describe("RemoteConnectionDialog 选目录失败收口", () => {
       await selection.promise.catch(() => undefined);
     });
 
-    // 核心收口：按钮不得停留在「加载中」，错误必须可见，目录步骤保留可重试。
+    // Core containment: the button must not stay in "loading", the error must be visible, and the
+    // directory step must remain retryable.
     expect(latest(captured.directoryProps).selecting).toBe(false);
     expect(createdTextValues).toContain("select failed boom");
   });
@@ -308,7 +310,8 @@ describe("RemoteConnectionDialog 选目录失败收口", () => {
     const createdTextValues: string[] = [];
     const container = installMinimalDom(createdTextValues);
     root = createRoot(container);
-    // 不注册 session-1：模拟同步失败路径里 handleCancelRemoteProject 已回收 session。
+    // Do not register session-1: simulate the sync failure path where handleCancelRemoteProject has
+    // already reclaimed the session.
     const selection = deferred<void>();
     const onSelectProject = vi.fn(() => selection.promise);
 
@@ -327,9 +330,10 @@ describe("RemoteConnectionDialog 选目录失败收口", () => {
       await selection.promise.catch(() => undefined);
     });
 
-    // 失败状态判定（getRemoteConnectionDirectoryFailureState）：session 不在 → 回设置步骤。
-    // 回落后 DirectoryStep 不再渲染，selecting 复位由目录步骤用例覆盖；这里断言
-    // 向导没有卡死：设置步骤重新可交互（非 loading），错误对用户可见。
+    // Failure-state decision (getRemoteConnectionDirectoryFailureState): session missing → back to
+    // the settings step. After the fall-back DirectoryStep no longer renders; the selecting reset is
+    // covered by the directory-step case. Here we assert the wizard is not stuck: the settings step
+    // is interactive again (not loading) and the error is visible to the user.
     expect(captured.settingsProps.length).toBeGreaterThan(settingsRendersBeforeFailure);
     expect(latest(captured.settingsProps).loading).toBe(false);
     expect(createdTextValues).toContain("sync rejected");

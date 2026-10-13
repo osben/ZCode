@@ -29,7 +29,7 @@ const MAC = { platform: "MacIntel", userAgent: "Mozilla/5.0 (Macintosh; Intel Ma
 const WIN = { platform: "Win32", userAgent: "Mozilla/5.0 (Windows NT 10.0)" };
 const LINUX = { platform: "Linux x86_64", userAgent: "Mozilla/5.0 (X11; Linux x86_64)" };
 
-/** 构造键盘事件（只填快捷键关心的字段）。 */
+/** Build a keyboard event (filling only the fields shortcuts care about). */
 function keyEvent(patch: Partial<ShortcutBindingEvent> & { key: string }): ShortcutBindingEvent {
   return {
     code: undefined,
@@ -80,7 +80,7 @@ describe("快捷键通用匹配器：平台隔离与修饰键精确匹配", () =
     const ctrlShiftJ = keyEvent({ key: "j", code: "KeyJ", ctrlKey: true, shiftKey: true });
     expect(matchesShortcutBinding(ctrlShiftJ, "CmdOrCtrl+j", WIN)).toBe(false);
     expect(matchesShortcutBinding(ctrlShiftJ, "CmdOrCtrl+Shift+j", WIN)).toBe(true);
-    // 缺修饰键同样不命中
+    // Missing modifiers also do not match
     const plainJ = keyEvent({ key: "j", code: "KeyJ" });
     expect(matchesShortcutBinding(plainJ, "CmdOrCtrl+j", WIN)).toBe(false);
   });
@@ -96,7 +96,7 @@ describe("快捷键通用匹配器：平台隔离与修饰键精确匹配", () =
     const macCtrlP = keyEvent({ key: "p", code: "KeyP", ctrlKey: true });
     expect(matchesShortcutBinding(macCtrlP, "Ctrl+p", MAC)).toBe(true);
     expect(matchesShortcutBinding(macCtrlP, "CmdOrCtrl+p", MAC)).toBe(false);
-    // Windows/Linux 上 Ctrl 与 CmdOrCtrl 同义（录制在这些平台只产出 CmdOrCtrl）
+    // On Windows/Linux Ctrl is synonymous with CmdOrCtrl (recording only produces CmdOrCtrl on those platforms)
     expect(matchesShortcutBinding(macCtrlP, "CmdOrCtrl+p", WIN)).toBe(true);
   });
 
@@ -109,7 +109,7 @@ describe("快捷键通用匹配器：平台隔离与修饰键精确匹配", () =
       ctrlKey: true,
       shiftKey: true,
     });
-    // Shift+[ 的 event.key 在 US 布局是 "{"，靠 code 兜底命中
+    // Shift+[ has event.key "{" on the US layout; the code field provides the fallback match
     expect(matchesShortcutBinding(winShiftBracket, "CmdOrCtrl+Shift+[", WIN)).toBe(true);
   });
 
@@ -131,7 +131,7 @@ describe("快捷键通用匹配器：平台隔离与修饰键精确匹配", () =
     const altGrQ = keyEvent({ key: "@", code: "KeyQ", ctrlKey: true, altKey: true });
     expect(matchesShortcutBinding(altGrQ, "AltGr+q", WIN)).toBe(true);
     expect(matchesShortcutBinding(altGrQ, "CmdOrCtrl+Alt+q", WIN)).toBe(true);
-    // Windows 现有绑定 Ctrl+Alt+B（toggleSidePane 默认）按物理事实就是 ctrl+alt 同按，必须命中
+    // Windows' existing binding Ctrl+Alt+B (toggleSidePane default) is physically ctrl+alt pressed together and must match
     const ctrlAltB = keyEvent({ key: "b", code: "KeyB", ctrlKey: true, altKey: true });
     expect(matchesShortcutBinding(ctrlAltB, "CmdOrCtrl+Alt+b", WIN)).toBe(true);
   });
@@ -182,13 +182,13 @@ describe("快捷键录制器", () => {
     expect(recordShortcutBinding(shift7, WIN)).toEqual({ kind: "binding", binding: "Shift+7" });
     const macShiftF = keyEvent({ key: "F", code: "KeyF", shiftKey: true });
     expect(recordShortcutBinding(macShiftF, MAC)).toEqual({ kind: "binding", binding: "Shift+f" });
-    // 匹配侧同样命中（用户场景：录制后主界面按 Shift+F 触发命令）
+    // The matching side hits as well (user scenario: after recording, pressing Shift+F in the main UI triggers the command)
     expect(matchesShortcutBinding(shiftF, "Shift+f", WIN)).toBe(true);
   });
 
   it("IME 组合事件在录制态用 event.code 反查物理键（中文输入法下 Shift+字母 可录）", () => {
-    // 焦点落在可编辑元素时，中文 IME 会把 Shift+字母 吞成组合输入，
-    // 事件只剩 isComposing/Process/229 标记 —— 录制是显式意图，仍按 code 录制
+    // When focus is in an editable element, a Chinese IME swallows Shift+letter into composition input,
+    // leaving only the isComposing/Process/229 markers — recording is explicit intent, so record by code
     const imeShiftF = keyEvent({ key: "Process", code: "KeyF", shiftKey: true, keyCode: 229 });
     expect(recordShortcutBinding(imeShiftF, WIN)).toEqual({ kind: "binding", binding: "Shift+f" });
     const composingCtrlJ = keyEvent({ key: "j", code: "KeyJ", ctrlKey: true, isComposing: true });
@@ -196,9 +196,9 @@ describe("快捷键录制器", () => {
       kind: "binding",
       binding: "CmdOrCtrl+j",
     });
-    // 无可反查 code 的 IME 事件保持 pending（继续等待完整组合）
+    // IME events with no code to look up stay pending (keep waiting for the full combo)
     expect(recordShortcutBinding(keyEvent({ key: "Process" }), WIN)).toEqual({ kind: "pending" });
-    // repeat 长按即便有 code 也不录制
+    // A held repeat does not record even when a code is present
     const repeated = keyEvent({
       key: "Process",
       code: "KeyF",
@@ -206,7 +206,7 @@ describe("快捷键录制器", () => {
       repeat: true,
     });
     expect(recordShortcutBinding(repeated, WIN)).toEqual({ kind: "pending" });
-    // 匹配侧对 IME 事件照旧过滤（录制宽松、匹配严格）
+    // The matching side still filters IME events as usual (recording is lenient, matching is strict)
     expect(matchesShortcutBinding(imeShiftF, "Shift+f", WIN)).toBe(false);
   });
 
@@ -221,19 +221,19 @@ describe("快捷键录制器", () => {
   });
 
   it("平台归一会丢主修饰键的组合拒绝录制（CR-01：不得产出裸单键）", () => {
-    // mac 的 Cmd+Ctrl+K：cmdOrCtrl 与 ctrl 归一后双双为 false，旧实现会录出裸 "k"
+    // mac's Cmd+Ctrl+K: after normalization both cmdOrCtrl and ctrl are false; the old implementation would record a bare "k"
     const macCmdCtrlK = keyEvent({ key: "k", code: "KeyK", metaKey: true, ctrlKey: true });
     expect(recordShortcutBinding(macCmdCtrlK, MAC)).toEqual({
       kind: "invalid",
       reason: "unsupported-key",
     });
-    // win/linux 的纯 Meta（Win 键）+K：同为归一丢失
+    // win/linux's pure Meta (Win key) +K: also lost in normalization
     const winMetaK = keyEvent({ key: "k", code: "KeyK", metaKey: true });
     expect(recordShortcutBinding(winMetaK, WIN)).toEqual({
       kind: "invalid",
       reason: "unsupported-key",
     });
-    // meta+ctrl+shift 叠加同样不得滑过守卫
+    // meta+ctrl+shift stacking must not slip past the guard either
     const macCmdCtrlShiftK = keyEvent({
       key: "k",
       code: "KeyK",
@@ -245,7 +245,7 @@ describe("快捷键录制器", () => {
       kind: "invalid",
       reason: "unsupported-key",
     });
-    // mac 纯 Cmd / 纯 Ctrl 与 win AltGr（Ctrl+Alt）不受影响
+    // mac pure Cmd / pure Ctrl and win AltGr (Ctrl+Alt) are unaffected
     expect(recordShortcutBinding(keyEvent({ key: "k", code: "KeyK", metaKey: true }), MAC)).toEqual(
       { kind: "binding", binding: "CmdOrCtrl+k" },
     );
@@ -263,7 +263,7 @@ describe("快捷键录制器", () => {
     expect(isShiftOnlyPrintableBinding("CmdOrCtrl+Shift+f")).toBe(false);
     expect(isShiftOnlyPrintableBinding("Shift+F1")).toBe(false);
     expect(isShiftOnlyPrintableBinding("CmdOrCtrl+f")).toBe(false);
-    // 无 DOM 环境（node 单测）下可编辑目标判定恒为 false
+    // In a DOM-less environment (node unit tests) the editable-target check is always false
     expect(isEditableShortcutEventTarget(null)).toBe(false);
   });
 
@@ -284,8 +284,8 @@ describe("快捷键录制器", () => {
 
   it("录制产物必然是合法规范形式（可直接入 setting.json 与菜单 accelerator）", () => {
     const cases = [
-      // 注：win 平台 meta+alt 组合已被 CR-01 守卫拒绝（平台归一会丢主修饰键），
-      // 这里用 cmdOrCtrl+alt 的规范组合替代
+      // Note: the win-platform meta+alt combo is rejected by the CR-01 guard (platform normalization loses the
+      // primary modifier); the canonical cmdOrCtrl+alt combo is used here instead
       keyEvent({ key: "b", code: "KeyB", ctrlKey: true, altKey: true }),
       keyEvent({ key: "[", code: "BracketLeft", ctrlKey: true, shiftKey: true }),
       keyEvent({ key: "=", code: "Equal", ctrlKey: true }),
@@ -345,12 +345,13 @@ describe("快捷键冲突检测（拒绝 + 标红）", () => {
   });
 
   it("工具条三键已转正为可配置命令（spec §12.6），不再占用保留黑名单", () => {
-    // CR-06 的最终解法从「拉黑」升级为「转正入表」：openModelMenu / cycleSessionMode /
-    // cycleThoughtLevel 是 window 通道命令，用户可改绑/清除，冲突体系自然接管。
+    // CR-06's final solution upgraded from "blacklisting" to "promoting into the command table":
+    // openModelMenu / cycleSessionMode / cycleThoughtLevel are window-channel commands that users can rebind or
+    // clear, so the conflict system takes over naturally.
     expect(RESERVED_BINDINGS.has("CmdOrCtrl+m")).toBe(false);
     expect(RESERVED_BINDINGS.has("CmdOrCtrl+Shift+m")).toBe(false);
     expect(RESERVED_BINDINGS.has("CmdOrCtrl+t")).toBe(false);
-    // 但默认绑定（显式 Ctrl）仍应被冲突检测视为占用——防止其它命令绑到同键
+    // But the default binding (explicit Ctrl) should still be treated as occupied by conflict detection — preventing other commands from binding the same key
     expect(checkShortcutBindingConflict("toggleSidebar", "Ctrl+m")).toEqual({
       kind: "occupied",
       ownerCommandId: "openModelMenu",
@@ -359,8 +360,9 @@ describe("快捷键冲突检测（拒绝 + 标红）", () => {
   });
 
   it("冲突检测物理等价归一（新 CR-01）：录制产物与显式 Ctrl 默认绑定互检", () => {
-    // 场景 A（win/linux 静默遮蔽路径）：录制器在 win 上把 ⌃M 平台归一为 "CmdOrCtrl+m"，
-    // 字符串不等但物理等价于 openModelMenu 默认的 "Ctrl+m" —— 必须报占用而非静默保存
+    // Scenario A (the win/linux silent-shadowing path): on win the recorder platform-normalizes ⌃M into
+    // "CmdOrCtrl+m", a string unequal to but physically equivalent to openModelMenu's default "Ctrl+m" —
+    // it must report occupied rather than silently save
     expect(
       checkShortcutBindingConflict("toggleSidebar", "CmdOrCtrl+m", undefined, {
         platformInfo: WIN,
@@ -370,13 +372,13 @@ describe("快捷键冲突检测（拒绝 + 标红）", () => {
       ownerCommandId: "openModelMenu",
       binding: "CmdOrCtrl+m",
     });
-    // 反向：显式 Ctrl 串也检出（与 openModelMenu 默认绑定字符串一致，两种平台语义下都命中）
+    // Reverse: the explicit Ctrl string is detected too (identical to openModelMenu's default binding string; hits under both platform semantics)
     expect(checkShortcutBindingConflict("toggleSidebar", "Ctrl+m")).toEqual({
       kind: "occupied",
       ownerCommandId: "openModelMenu",
       binding: "Ctrl+m",
     });
-    // AltGr ≡ Ctrl+Alt（win）：toggleSidePane 默认 CmdOrCtrl+Alt+b，等价变体同样占用
+    // AltGr ≡ Ctrl+Alt (win): toggleSidePane's default CmdOrCtrl+Alt+b is occupied by an equivalent variant too
     expect(
       checkShortcutBindingConflict("findInTask", "Ctrl+Alt+b", undefined, { platformInfo: WIN }),
     ).toEqual({
@@ -392,45 +394,47 @@ describe("快捷键冲突检测（拒绝 + 标红）", () => {
         platformInfo: MAC,
       }),
     ).toEqual({ kind: "reserved", binding: "CmdOrCtrl+m" });
-    // minimize 是系统级行为：composer 作用域命令绑 ⌘M 同样死绑定，一并拦截
+    // minimize is a system-level behavior: a composer-scope command bound to ⌘M is equally hard-bound and intercepted as well
     expect(
       checkShortcutBindingConflict("composerSend", "CmdOrCtrl+m", undefined, {
         platformInfo: MAC,
       }),
     ).toEqual({ kind: "reserved", binding: "CmdOrCtrl+m" });
-    // mac 显式 Ctrl+m 是不同物理键，不受 minimize 防线影响（openModelMenu 自身默认可保持）
+    // mac's explicit Ctrl+m is a different physical key and is unaffected by the minimize defense line (openModelMenu's own default can stay)
     expect(
       checkShortcutBindingConflict("openModelMenu", "Ctrl+m", undefined, { platformInfo: MAC }),
     ).toBeNull();
   });
 
   it("抢绑清除物理等价条目（新 CR-01）：CmdOrCtrl+m 抢绑后 openModelMenu 默认 Ctrl+m 一并清空", () => {
-    // 物理等价（CmdOrCtrl ≡ 显式 Ctrl）只在 win/linux 成立，必须显式钉平台：
-    // node ≥21.2 的 navigator.platform 在 macOS 上是 "MacIntel"，缺省 platformInfo 会让本用例
-    // 在 mac 开发机上按 apple 语义跑（⌘M ≠ ⌃M → 不清除）而失败，在 Linux CI 上却通过。
-    // mac 侧 ⌘M 由上一条 reserved 防线覆盖，本用例只负责 win/linux 抢绑清理。
+    // Physical equivalence (CmdOrCtrl ≡ explicit Ctrl) holds only on win/linux, so the platform must be
+    // pinned explicitly: with node ≥21.2, navigator.platform on macOS is "MacIntel", and a missing
+    // platformInfo would run this case under apple semantics on a mac dev machine (⌘M ≠ ⌃M → no clearing) and
+    // fail there while passing on Linux CI.
+    // The mac side of ⌘M is covered by the reserved defense line in the previous case; this case only handles
+    // win/linux steal-clearing.
     const next = buildShortcutOverridesAfterSteal(undefined, "toggleSidebar", "CmdOrCtrl+m", {
       platformInfo: WIN,
     });
     expect(next.toggleSidebar).toEqual(["CmdOrCtrl+m"]);
-    // openModelMenu 默认 "Ctrl+m" 与 CmdOrCtrl+m 在 win/linux 物理等价，被抢后清为未设置
+    // openModelMenu's default "Ctrl+m" is physically equivalent to CmdOrCtrl+m on win/linux and is cleared to unset after the steal
     expect(next.openModelMenu).toEqual([]);
   });
 
   it("Web 端 menu 通道命令默认键按保留处理，不提供抢绑（CR-04）", () => {
-    // 桌面端：menu 命令占用为 occupied，可走二次确认抢绑
+    // Desktop: a menu-command occupation is occupied and can go through the confirm-then-steal flow
     expect(checkShortcutBindingConflict("toggleSidebar", "CmdOrCtrl+n")).toEqual({
       kind: "occupied",
       ownerCommandId: "newTask",
       binding: "CmdOrCtrl+n",
     });
-    // Web 端：menu 通道命令的默认键被根级回退监听固定消费，按保留键拒绝（无抢绑入口）
+    // Web: a menu-channel command's default key is fixedly consumed by the root-level fallback listener and is rejected as reserved (no steal entry point)
     expect(
       checkShortcutBindingConflict("toggleSidebar", "CmdOrCtrl+n", undefined, {
         menuChannelReserved: true,
       }),
     ).toEqual({ kind: "reserved", binding: "CmdOrCtrl+n" });
-    // window 通道命令占用在 Web 端仍是 occupied（可抢绑）
+    // A window-channel command's occupation is still occupied on the Web (stealable)
     expect(
       checkShortcutBindingConflict("findInTask", "CmdOrCtrl+b", undefined, {
         menuChannelReserved: true,
@@ -448,7 +452,7 @@ describe("快捷键冲突检测（拒绝 + 标红）", () => {
       ownerCommandId: "newTask",
       binding: "CmdOrCtrl+n",
     });
-    // 占用者含双默认绑定时任一绑定都算占用
+    // When the owner has dual default bindings, either binding counts as occupied
     expect(checkShortcutBindingConflict("toggleSidebar", "CmdOrCtrl+Shift+p")).toEqual({
       kind: "occupied",
       ownerCommandId: "openCommandCenter",
@@ -474,7 +478,7 @@ describe("快捷键冲突检测（拒绝 + 标红）", () => {
 
   it("Enter 入全局黑名单但 composer 作用域不受限（spec §12.2）", () => {
     expect(RESERVED_BINDINGS.has("Enter")).toBe(true);
-    // global 命令重绑 Enter → reserved；composer 命令重绑 Enter → 不受限
+    // A global command rebinding Enter → reserved; a composer command rebinding Enter → unrestricted
     expect(checkShortcutBindingConflict("toggleSidebar", "Enter")).toMatchObject({
       kind: "reserved",
     });
@@ -483,11 +487,11 @@ describe("快捷键冲突检测（拒绝 + 标红）", () => {
   });
 
   it("冲突检测作用域隔离：composer 与 global 同键互不冲突（spec §12.2）", () => {
-    // CmdOrCtrl+k 是 openCommandCenter（global）默认绑定；composer 命令绑它不算冲突
+    // CmdOrCtrl+k is openCommandCenter's (global) default binding; a composer command binding it is not a conflict
     expect(checkShortcutBindingConflict("composerSend", "CmdOrCtrl+k")).toBeNull();
-    // 反向同样隔离：global 命令绑 composerSend 的默认键 Enter 不算 occupied，而是 reserved
+    // The reverse is isolated too: a global command binding composerSend's default Enter is not occupied but reserved
     expect(checkShortcutBindingConflict("toggleSidebar", "Shift+Enter")).toBeNull();
-    // composer 作用域内部仍互相检测：composerInsertNewline 绑 composerSend 的默认键 → occupied
+    // Within the composer scope conflicts are still detected: composerInsertNewline binding composerSend's default key → occupied
     expect(checkShortcutBindingConflict("composerInsertNewline", "Enter")).toEqual({
       kind: "occupied",
       ownerCommandId: "composerSend",
@@ -507,7 +511,7 @@ describe("按键搜索的物理等价比较 isSamePhysicalBinding", () => {
   });
 
   it("apple：主修饰（⌘）与 Ctrl 是独立物理键，等价关系随平台翻转", () => {
-    // 同一对串在 win 上等价、在 mac 上不等价（⌘M ≠ ⌃M）—— 搜索口径与冲突口径一致
+    // The same pair of strings is equivalent on win and not on mac (⌘M ≠ ⌃M) — the search criterion matches the conflict criterion
     expect(isSamePhysicalBinding("CmdOrCtrl+m", "Ctrl+m", { platformInfo: MAC })).toBe(false);
     expect(isSamePhysicalBinding("CmdOrCtrl+m", "Ctrl+m", { platformInfo: WIN })).toBe(true);
   });
@@ -515,24 +519,24 @@ describe("按键搜索的物理等价比较 isSamePhysicalBinding", () => {
   it("裸命名键（composer 作用域默认）与解析失败串", () => {
     expect(isSamePhysicalBinding("Enter", "Enter")).toBe(true);
     expect(isSamePhysicalBinding("Enter", "Shift+Enter")).toBe(false);
-    // 非法串解析失败 → 恒不等（null 短路语义，与冲突检测一致）
+    // An illegal string fails to parse → always unequal (null short-circuit semantics, consistent with conflict detection)
     expect(isSamePhysicalBinding("not-a-binding", "Enter")).toBe(false);
   });
 });
 
 describe("拆行多绑定构建器（spec §8：一个命令多组键，行级操作）", () => {
-  // openCommandCenter 默认双键：CmdOrCtrl+k / CmdOrCtrl+Shift+p
+  // openCommandCenter's default dual bindings: CmdOrCtrl+k / CmdOrCtrl+Shift+p
   it("追加：默认键 + 已有覆盖全部保留，新键排尾", () => {
     const next = buildShortcutOverridesAfterAppend(undefined, "openCommandCenter", "CmdOrCtrl+g");
     expect(next.openCommandCenter).toEqual(["CmdOrCtrl+k", "CmdOrCtrl+Shift+p", "CmdOrCtrl+g"]);
-    // 覆盖后的命令追加基于生效列表（覆盖整组替换语义）
+    // Appending to an overridden command is based on the effective list (override = whole-group replacement semantics)
     const replaced = buildShortcutOverridesAfterAppend(
       { openCommandCenter: ["Ctrl+y"] },
       "openCommandCenter",
       "CmdOrCtrl+g",
     );
     expect(replaced.openCommandCenter).toEqual(["Ctrl+y", "CmdOrCtrl+g"]);
-    // 未分配（显式 []）追加 = 第一条
+    // Appending to unassigned (explicit []) = the first entry
     const fromEmpty = buildShortcutOverridesAfterAppend(
       { toggleSidebar: [] },
       "toggleSidebar",
@@ -549,7 +553,7 @@ describe("拆行多绑定构建器（spec §8：一个命令多组键，行级�
       "openCommandCenter",
       0,
     );
-    // 删到空 = 未分配（不回退默认），其他命令条目原样保留
+    // Deleting down to empty = unassigned (no fallback to defaults); other commands' entries are preserved as-is
     expect(last.openCommandCenter).toEqual([]);
     expect(last.toggleSidebar).toEqual(["CmdOrCtrl+b"]);
   });
@@ -562,7 +566,7 @@ describe("拆行多绑定构建器（spec §8：一个命令多组键，行级�
       "CmdOrCtrl+g",
     );
     expect(next.openCommandCenter).toEqual(["CmdOrCtrl+k", "CmdOrCtrl+g"]);
-    // 无覆盖时替换第 0 条同样保留其余默认键
+    // Replacing entry 0 with no overrides also preserves the remaining default keys
     const first = buildShortcutOverridesWithBindingAt(undefined, "openCommandCenter", 0, "Ctrl+y");
     expect(first.openCommandCenter).toEqual(["Ctrl+y", "CmdOrCtrl+Shift+p"]);
   });
@@ -570,7 +574,7 @@ describe("拆行多绑定构建器（spec §8：一个命令多组键，行级�
 
 describe("快捷键二次确认抢绑", () => {
   it("抢绑后目标命令绑新键，被抢命令默认绑定被清空为「未设置」", () => {
-    // findInTask 抢 toggleSidebar 的默认 CmdOrCtrl+b
+    // findInTask steals toggleSidebar's default CmdOrCtrl+b
     const next = buildShortcutOverridesAfterSteal(undefined, "findInTask", "CmdOrCtrl+b");
     expect(next.findInTask).toEqual(["CmdOrCtrl+b"]);
     expect(next.toggleSidebar).toEqual([]);
@@ -580,7 +584,7 @@ describe("快捷键二次确认抢绑", () => {
   });
 
   it("被抢命令是多默认绑定时只移除被抢的那条，其余保留", () => {
-    // 抢 openCommandCenter 的第一默认 CmdOrCtrl+k
+    // Steals openCommandCenter's first default CmdOrCtrl+k
     const next = buildShortcutOverridesAfterSteal(undefined, "toggleTerminal", "CmdOrCtrl+k");
     expect(next.toggleTerminal).toEqual(["CmdOrCtrl+k"]);
     expect(next.openCommandCenter).toEqual(["CmdOrCtrl+Shift+p"]);
@@ -590,15 +594,15 @@ describe("快捷键二次确认抢绑", () => {
     const next = buildShortcutOverridesAfterSteal(
       { toggleSidebar: ["CmdOrCtrl+g"] },
       "findInTask",
-      "CmdOrCtrl+j", // toggleTerminal 默认
+      "CmdOrCtrl+j", // toggleTerminal default
     );
-    expect(next.toggleSidebar).toEqual(["CmdOrCtrl+g"]); // 无关覆盖保留
+    expect(next.toggleSidebar).toEqual(["CmdOrCtrl+g"]); // Unrelated override preserved
     expect(next.findInTask).toEqual(["CmdOrCtrl+j"]);
-    expect(next.toggleTerminal).toEqual([]); // 被抢清空
+    expect(next.toggleTerminal).toEqual([]); // Cleared by the steal
   });
 
   it("多绑定命令行级抢绑：replace 只换目标条，其余绑定保留（CR-01）", () => {
-    // replace 第 0 条：CmdOrCtrl+Shift+p 必须保留，不得被整组替换吞掉
+    // replace entry 0: CmdOrCtrl+Shift+p must be preserved and not swallowed by a whole-group replacement
     const replaceFirst = buildShortcutOverridesAfterSteal(
       undefined,
       "toggleTerminal",
@@ -607,7 +611,7 @@ describe("快捷键二次确认抢绑", () => {
     );
     expect(replaceFirst.toggleTerminal).toEqual(["CmdOrCtrl+k"]);
     expect(replaceFirst.openCommandCenter).toEqual(["CmdOrCtrl+Shift+p"]);
-    // replace 第 1 条：openCommandCenter 原有的 CmdOrCtrl+k 作为冲突键被移除，剩第 2 条
+    // replace entry 1: openCommandCenter's existing CmdOrCtrl+k is removed as the conflicting key, leaving the second entry
     const replaceSecond = buildShortcutOverridesAfterSteal(
       undefined,
       "toggleTerminal",
@@ -618,7 +622,7 @@ describe("快捷键二次确认抢绑", () => {
   });
 
   it("多绑定命令行级抢绑：未分配录第一条（append）与缺省旧行为", () => {
-    // bindingIndex null（未分配占位录制）→ 追加语义；toggleTerminal 默认 CmdOrCtrl+j 保留
+    // bindingIndex null (unassigned placeholder recording) → append semantics; toggleTerminal's default CmdOrCtrl+j is preserved
     const appendSteal = buildShortcutOverridesAfterSteal(
       undefined,
       "toggleTerminal",
@@ -627,13 +631,13 @@ describe("快捷键二次确认抢绑", () => {
     );
     expect(appendSteal.toggleTerminal).toEqual(["CmdOrCtrl+j", "CmdOrCtrl+k"]);
     expect(appendSteal.openCommandCenter).toEqual(["CmdOrCtrl+Shift+p"]);
-    // add 模式 → 追加到现有列表尾部
+    // add mode → appended to the end of the existing list
     const addSteal = buildShortcutOverridesAfterSteal(undefined, "toggleTerminal", "CmdOrCtrl+k", {
       mode: "add",
       bindingIndex: null,
     });
     expect(addSteal.openCommandCenter).toEqual(["CmdOrCtrl+Shift+p"]);
-    // 缺省（未传 mode）保持旧整组替换行为，既有调用方不受影响
+    // Omitted (mode not passed) keeps the old whole-group replacement behavior; existing callers are unaffected
     const legacy = buildShortcutOverridesAfterSteal(undefined, "toggleTerminal", "CmdOrCtrl+k");
     expect(legacy.openCommandCenter).toEqual(["CmdOrCtrl+Shift+p"]);
   });
@@ -677,14 +681,14 @@ describe("快捷键展示 label", () => {
       "B",
     ]);
     expect(formatShortcutBindingLabelParts("CmdOrCtrl+Enter", MAC)).toEqual(["⌘", "Enter"]);
-    // token 重拼与 label 串一致：两条展示路径单一事实来源
+    // Re-joined tokens match the label string: a single source of truth for the two display paths
     expect(formatShortcutBindingLabelParts("CmdOrCtrl+k", MAC).join(" ")).toBe(
       formatShortcutBindingLabel("CmdOrCtrl+k", MAC),
     );
     expect(formatShortcutBindingLabelParts("CmdOrCtrl+k", WIN).join("+")).toBe(
       formatShortcutBindingLabel("CmdOrCtrl+k", WIN),
     );
-    // 非法串原样单 token 返回
+    // An illegal string is returned as a single token as-is
     expect(formatShortcutBindingLabelParts("not-a-binding", WIN)).toEqual(["not-a-binding"]);
   });
 });

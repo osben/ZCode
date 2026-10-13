@@ -38,6 +38,8 @@ import type { DockerContainerInfo, SSHConfigAliasOption, WSLDistro } from "./pla
 import type {
   CreateTempTextAttachmentRequest,
   CreateTempTextAttachmentResult,
+  EditorInfo,
+  OpenInEditorOptions,
 } from "./platform.js";
 import type {
   LoadCliMcpFromUserDirectoryRequest,
@@ -372,6 +374,13 @@ export interface WebRemoteControlBootstrapErrorResponse {
   reason: WebRemoteControlFailureReason;
 }
 
+/** Arguments for the proxied openInEditor call; mirrors IPlatformService.openInEditor(editorId, path, options?). */
+export interface WebRemoteControlOpenInEditorArgs {
+  editorId: string;
+  path: string;
+  options?: OpenInEditorOptions;
+}
+
 export interface WebRemoteControlPlatformMethodArgsMap {
   isDockerAvailable: undefined;
   listWSLDistros: undefined;
@@ -381,6 +390,10 @@ export interface WebRemoteControlPlatformMethodArgsMap {
   loadMcpFromUserDirectory: LoadCliMcpFromUserDirectoryRequest | undefined;
   saveMcpToUserDirectory: SaveCliMcpToUserDirectoryRequest;
   migrateLegacyCommonMcp: MigrateLegacyCommonMcpRequest | undefined;
+  getInstalledEditors: undefined;
+  openInEditor: WebRemoteControlOpenInEditorArgs;
+  openInFileManager: string;
+  openExternalFile: string;
 }
 
 export interface WebRemoteControlPlatformMethodResultMap {
@@ -392,6 +405,10 @@ export interface WebRemoteControlPlatformMethodResultMap {
   loadMcpFromUserDirectory: LoadCliMcpFromUserDirectoryResult;
   saveMcpToUserDirectory: { success: boolean; error?: string };
   migrateLegacyCommonMcp: MigrateLegacyCommonMcpResult;
+  getInstalledEditors: EditorInfo[];
+  openInEditor: { success: boolean; error?: string };
+  openInFileManager: { success: boolean; error?: string };
+  openExternalFile: { success: boolean; error?: string };
 }
 
 export type WebRemoteControlPlatformMethod = keyof WebRemoteControlPlatformMethodResultMap;
@@ -532,6 +549,31 @@ export type WebRemoteControlWorkspaceReconnectResponsePayload =
       error: string;
     };
 
+/** Mobile/Web asks the desktop to open (or reuse) a local workspace; success only means Main dispatched the open to the window renderer. */
+export interface WebRemoteControlWorkspaceOpenRequestPayload {
+  zcode_type: "workspace-open-request";
+  requestId: string;
+  workspacePath: string;
+  workspaceIdentity?: string;
+}
+
+export type WebRemoteControlWorkspaceOpenResponsePayload =
+  | {
+      zcode_type: "workspace-open-response";
+      requestId: string;
+      workspacePath: string;
+      workspaceIdentity?: string;
+      success: true;
+    }
+  | {
+      zcode_type: "workspace-open-response";
+      requestId: string;
+      workspacePath: string;
+      workspaceIdentity?: string;
+      success: false;
+      error: string;
+    };
+
 export interface WebRemoteControlMobileViewStatePayload {
   zcode_type: "mobile-view-state-update";
   viewState: WebRemoteControlMobileViewState;
@@ -633,6 +675,8 @@ export type WebRemoteControlAppPayload =
   | WebRemoteControlWorkspaceBridgeErrorPayload
   | WebRemoteControlWorkspaceReconnectRequestPayload
   | WebRemoteControlWorkspaceReconnectResponsePayload
+  | WebRemoteControlWorkspaceOpenRequestPayload
+  | WebRemoteControlWorkspaceOpenResponsePayload
   | WebRemoteControlMobileViewStatePayload
   | WebRemoteControlPlatformRequestPayload
   | WebRemoteControlPlatformResponsePayload
@@ -949,16 +993,43 @@ export interface WebRemoteControlMobileViewStateUpdate {
   deviceInfo?: WebRemoteControlMobileDeviceInfo;
 }
 
+/** Window-control variant of the workspace-open request (relay → desktop); correlation fields match the sibling window-control messages. */
+export interface WebRemoteControlWorkspaceOpenRequest {
+  type: "workspace-open-request";
+  requestId: string;
+  windowControlSessionId: string;
+  workspacePath: string;
+  workspaceIdentity?: string;
+}
+
+export interface WebRemoteControlWorkspaceOpenSuccessResponse {
+  type: "workspace-open-response";
+  requestId: string;
+  windowControlSessionId: string;
+  success: true;
+}
+
+export interface WebRemoteControlWorkspaceOpenErrorResponse {
+  type: "workspace-open-response";
+  requestId: string;
+  windowControlSessionId: string;
+  success: false;
+  error: string;
+}
+
 export type WebRemoteControlWindowControlRequest =
   | WebRemoteControlWindowBootstrapRequest
   | WebRemoteControlWorkspaceBridgeRequest
-  | WebRemoteControlMobileViewStateUpdate;
+  | WebRemoteControlMobileViewStateUpdate
+  | WebRemoteControlWorkspaceOpenRequest;
 
 export type WebRemoteControlWindowControlResponse =
   | WebRemoteControlWindowBootstrapSuccessResponse
   | WebRemoteControlWindowBootstrapErrorResponse
   | WebRemoteControlWorkspaceBridgeSuccessResponse
-  | WebRemoteControlWorkspaceBridgeErrorResponse;
+  | WebRemoteControlWorkspaceBridgeErrorResponse
+  | WebRemoteControlWorkspaceOpenSuccessResponse
+  | WebRemoteControlWorkspaceOpenErrorResponse;
 
 export type RelayDesktopControlEvent =
   | { type: "tunnel-registered"; tunnelId: string }

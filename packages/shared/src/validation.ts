@@ -222,9 +222,19 @@ export const webRemoteControlPlatformMethodSchema = z.enum([
   "listWSLDistros",
   "listDockerContainers",
   "listSSHConfigAliases",
+  // Bug fix: the upstream v3.15.1 bulk import (aac47556) added createTempTextAttachment to
+  // WebRemoteControlPlatformMethodArgsMap but missed this enum. The enum is the runtime
+  // allow-list for relay platform-request / platform-response, so the missing entry made the
+  // desktop transport drop the method outright, breaking temporary text attachments from the
+  // phone over the relay.
+  "createTempTextAttachment",
   "loadMcpFromUserDirectory",
   "saveMcpToUserDirectory",
   "migrateLegacyCommonMcp",
+  "getInstalledEditors",
+  "openInEditor",
+  "openInFileManager",
+  "openExternalFile",
 ]);
 
 const webRemoteControlAppPayloadSchemas = [
@@ -296,6 +306,27 @@ const webRemoteControlAppPayloadSchemas = [
     zcode_type: z.literal("workspace-reconnect-response"),
     requestId: nonEmptyStringSchema,
     workspaceKey: nonEmptyStringSchema,
+    success: z.literal(false),
+    error: z.string(),
+  }),
+  z.object({
+    zcode_type: z.literal("workspace-open-request"),
+    requestId: nonEmptyStringSchema,
+    workspacePath: nonEmptyStringSchema,
+    workspaceIdentity: nonEmptyStringSchema.optional(),
+  }),
+  z.object({
+    zcode_type: z.literal("workspace-open-response"),
+    requestId: nonEmptyStringSchema,
+    workspacePath: nonEmptyStringSchema,
+    workspaceIdentity: nonEmptyStringSchema.optional(),
+    success: z.literal(true),
+  }),
+  z.object({
+    zcode_type: z.literal("workspace-open-response"),
+    requestId: nonEmptyStringSchema,
+    workspacePath: nonEmptyStringSchema,
+    workspaceIdentity: nonEmptyStringSchema.optional(),
     success: z.literal(false),
     error: z.string(),
   }),
@@ -1557,6 +1588,9 @@ export const zcodePersistedMessageSchema = z.object({
   durationMs: z.number().int().nonnegative().optional(),
   interrupted: z.boolean().optional(),
   feedback: z.enum(["like", "dislike"]).optional(),
+  // Display-only pin bookmark (unix ms, CLI clock); must be parsed explicitly or Zod strips it from
+  // the session file like the historical durationMs loss above.
+  pinnedAt: z.number().optional(),
   attachments: z.array(zcodePromptAttachmentSchema).optional(),
   tools: z.array(zcodePersistedToolCallSchema).optional(),
   thought: z.string().optional(),

@@ -1,8 +1,9 @@
 // ============================================================
-// 「编译一次」：一个 ts.Program 同时喂站点表、schema 合成与 lowering
+// "Compile once": one ts.Program simultaneously feeds the site table, schema synthesis, and lowering
 // ============================================================
-// 从 dynamic-workflow-run-submit.ts 拆出（max-lines 门）：submit / amend 用 compileOnce，resume 先用同一个
-// Program 取诊断（boundedResumeDiagnostics）再交给 compileProgram。纯编译，不碰注册表与 journal。
+// Extracted from dynamic-workflow-run-submit.ts (max-lines gate): submit / amend use compileOnce; resume first
+// takes diagnostics from the same Program (boundedResumeDiagnostics) then hands off to compileProgram. Pure
+// compilation — it never touches the registry or the journal.
 
 import { createHash } from "node:crypto";
 import {
@@ -26,21 +27,21 @@ import { compiledHolesOf } from "./dynamic-workflow-run-holes.js";
 import type { CompiledDynamicWorkflowScript } from "./dynamic-workflow-run-launch.js";
 
 /**
- * 编译一次：一个 ts.Program 同时喂站点表、schema 合成与 lowering。
+ * Compile once: one ts.Program simultaneously feeds the site table, schema synthesis, and lowering.
  *
- * 脏脚本在这里硬失败且**不建 run**：handler 只在 `ok` 时才调 submit，所以走到这里的脏脚本
- * 只可能是接线错误。防御性检查读的是同一次编译的程序诊断，不再起第二个 Program
- * （那会破坏「编译一次」）。resume 用同一个函数重编 journal 里的原文——byte-identical 的
- * 脚本必然重新通过同一套检查。
+ * A dirty script hard-fails here and **creates no run**: the handler only calls submit when `ok`, so a dirty script
+ * reaching this point can only be a wiring error. The defensive checks read the diagnostics of that same compiled
+ * program and never spin up a second Program (that would break "compile once"). Resume recompiles the journal's
+ * original text with this same function — a byte-identical script necessarily passes the same checks again.
  */
 export function compileOnce(scriptText: string): CompiledDynamicWorkflowScript {
   return compileProgram(scriptText, createWorkflowProgram(scriptText));
 }
 
-/** resume 拒绝文案里诊断的上限（与中枢直接启动的 compile_failed 同一量级）。 */
+/** Upper bound for diagnostics inside the resume rejection text (same magnitude as the hub-launched compile_failed). */
 const RESUME_DIAGNOSTICS_MAX_CHARS = 2000;
 
-/** compile_failed 的人可读诊断：一行一条 `L:C message`，整体有界。 */
+/** Human-readable compile_failed diagnostics: one `L:C message` per line, bounded overall. */
 export function boundedResumeDiagnostics(runId: string, diagnostics: CompileDiagnostic[]): string {
   const body = [
     `The stored script of run ${runId} no longer compiles against the current workflow facade:`,
@@ -54,15 +55,16 @@ export function boundedResumeDiagnostics(runId: string, diagnostics: CompileDiag
 }
 
 /**
- * compileOnce 的后半段：对**已建好的** Program 做站点表 / schema 合成 / lowering。resume 先用同一个
- * Program 取诊断再交到这里，仍是「编译一次」（Program 缓存自己的诊断，重读不重算）。
+ * The second half of compileOnce: site table / schema synthesis / lowering on the **already built** Program. Resume
+ * first takes diagnostics from the same Program and then hands it here, still "compile once" (the Program caches its
+ * own diagnostics; re-reading does not recompute).
  */
 export function compileProgram(
   scriptText: string,
   workflow: WorkflowProgram,
   /**
-   * 已经收集过的站点表（补全服务在稳定性复核前先收集了一次，同一个 Program 上不必再走一遍）。
-   * 缺席即在这里收集。
+   * The site table already collected (the completion service collected it once before its stability re-check; no
+   * need to walk it again on the same Program). Absent means collect here.
    */
   collected?: SiteTable,
 ): CompiledDynamicWorkflowScript {
@@ -85,9 +87,10 @@ export function compileProgram(
         .join("; ")}`,
     );
   }
-  // world.run 的授权面就是编译期字面量（9003）+ 确认窗展示；driver 不再另持一份命令集复验
-  // （workflow-world-read.ts 文件头第 2 条）。非字面量 cmd 在 handler 的 analyze 阶段已经挡回；
-  // 到这里还出现即接线错误，硬失败不建 run。
+  // world.run's authorization surface is exactly the compile-time literals (9003) + the confirmation window's
+  // display; the driver no longer keeps a separate command set for re-verification (workflow-world-read.ts file
+  // header, item 2). Non-literal cmds are already blocked in the handler's analyze stage;
+  // one appearing here is a wiring error — hard-fail without creating a run.
   const worldRun = collectWorldRunCommands(workflow, table);
   if (worldRun.diagnostics.length > 0) {
     throw new Error(
@@ -95,37 +98,39 @@ export function compileProgram(
     );
   }
 
-  // buildAskSpecs 是 askSpecs 的唯一正确构造：untyped 站点显式记 {typed:false}。
-  // 用 schemas 的键去构造会让 untyped 站点整个缺席，而引擎把缺席当接线错误硬失败。
+  // buildAskSpecs is the only correct way to build askSpecs: untyped sites are explicitly recorded {typed:false}.
+  // Building from schemas' keys would make untyped sites vanish entirely, and the engine hard-fails an absent site as a wiring error.
   const askSpecs = buildAskSpecs(table, schemas);
 
-  // 在**同一个** Program 上做一次解释（analyzeWorkflowScript 在 handler 的 analyze 阶段已对同一份
-  // 文本跑过），仍是「编译一次」；两份产物从同一个 core 上读：submit profile 走站点图投影，
-  // 词法出生阶段表直接读 trace（docs/execution-engine.md「Identity: sites, ordinals, phases」）。
-  // resume 用同一函数对 byte-identical 文本重算，确定性成立。
+  // One interpretation on the **same** Program (analyzeWorkflowScript already ran on this exact text in the
+  // handler's analyze stage), still "compile once"; both artifacts are read from the same core: the submit profile
+  // goes through the site graph projection, while the lexical birth phase table reads the trace directly
+  // (docs/execution-engine.md "Identity: sites, ordinals, phases").
+  // Resume recomputes over byte-identical text with this same function, so determinism holds.
   const core = interpret(workflow, table);
   const lowered = lowerWorkflow(workflow, table);
 
   return {
     askSpecs,
-    // 每个 actor 站点的 submit profile（docs/execution-engine.md「Submit profiles」）。
+    // Each actor site's submit profile (docs/execution-engine.md "Submit profiles").
     actorSubmitProfiles: deriveActorSubmitProfiles(projectSiteGraph(core), askSpecs),
     sitePhases: collectSitePhases(core),
     lowered: lowered.code,
-    // 留白（docs/execution-engine.md「Holes」）：已补全留白的函数体文本是补全交给引擎的 `code`
-    // ——与脚本其余部分同一次 lowering 产出，现补与日后重放执行的是逐字节相同的文本；留白的
-    // 编译期事实表（名字 / 类型 / 行）供快照与进度载荷读；阶段表按控制流投影取（留白按名字
-    // 占位，与 contracts 的 createWorkflowPhaseNames 同一来源），补全后重算的表因此与 launch 时
-    // 的表按同一条规则对齐。
+    // Holes (docs/execution-engine.md "Holes"): a filled hole's body text is the `code` the completion handed to
+    // the engine — produced by the same lowering as the rest of the script, so the text executed when filled now
+    // and replayed later is byte-for-byte identical; the hole's compile-time facts table (name / type / line) feeds
+    // snapshots and progress payloads; the phase table comes from the control-flow projection (holes are
+    // placeholders by name, same source as contracts' createWorkflowPhaseNames), so the recomputed table after a
+    // fill aligns with the launch-time table under the same rule.
     holeBodies: lowered.holeBodies,
     holes: compiledHolesOf(table),
     phases: collectPhaseNames(projectControlFlow(core)),
-    // scriptHash 的所有权在**这里**，不在 harness。harness 同时收 scriptText 与 lowered，
-    // 且刻意不校验两者是否自洽——校验等于把编译再跑一遍，正是「编译一次」要省掉的那次
-    // （harness.ts 把这条写成了调用方的不变式）。所以哈希必须算在作者原文上：
-    // 若让 harness 哈希「它看到的文本」，lowered 路径落库的就是 lowered 函数体的哈希，
-    // 而 resume 比对的是作者原文 —— 比对对象会静默错位。本函数从同一次编译里同时产出
-    // lowered 与 hash，两者按构造自洽。
+    // scriptHash's ownership lives **here**, not in the harness. The harness receives both scriptText and lowered
+    // and deliberately does not check their consistency — checking would mean compiling again, exactly the pass
+    // "compile once" exists to avoid (harness.ts writes this down as a caller invariant). So the hash must be taken
+    // over the author's original text: if the harness hashed "the text it saw", the lowered path would persist the
+    // lowered body's hash while resume compares against the author's original — the comparison would silently
+    // misalign. This function produces lowered and hash from the same compilation, so they are consistent by construction.
     scriptHash: createHash("sha256").update(scriptText, "utf8").digest("hex"),
   };
 }

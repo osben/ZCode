@@ -1,7 +1,7 @@
-// M4 门禁：queue 单项管理 + B09 撤回到 composer。
-// 证据层 L3：running turn 期间 sendText 入队 → QueuePanel → deleteQueueItem 权威移除 →
-// 发起端恢复 text + AttachmentRef[]；重发产生新 queueItemId。非空草稿在 UI admission
-// 边界阻止命令，queue 与草稿都不变。
+// M4 gate: queue single-item management + B09 recall to composer.
+// Evidence level L3: during a running turn, sendText enqueues → QueuePanel → deleteQueueItem authoritatively removes →
+// the initiating side restores text + AttachmentRef[]; resending produces a new queueItemId. A non-empty draft blocks the
+// command at the UI admission boundary, leaving both the queue and the draft unchanged.
 import { clearAppData } from "../helpers/desktop-app.js";
 import { waitForToastContaining } from "../helpers/conversation-session-toast.js";
 import {
@@ -27,8 +27,8 @@ describe("v4 M4/B09 门禁：queue 单项管理与撤回编辑", () => {
   afterEach(async () => {
     const snapshot = await getV4PaneSnapshot();
     if (!snapshot.canStop) return;
-    // 修复原因：controlled stream 会跨 case 存活 45 秒；不主动 stop 会让上一条
-    // active runtime 与下一条 draft 并行，并在结尾 drain 残留 queue，污染模型/fixture。
+    // Reason for the fix: the controlled stream survives across cases for 45 seconds; without an explicit stop, the previous
+    // active runtime runs in parallel with the next draft and drains a leftover queue at the end, polluting models/fixtures.
     await clickV4Stop();
     await waitForV4Pane((next) => !next.canStop, "queue operation case 收尾 stop 没有完成", 30000);
   });
@@ -41,7 +41,7 @@ describe("v4 M4/B09 门禁：queue 单项管理与撤回编辑", () => {
   it("running 中入队一条 → QueuePanel 显示 → 删除 → 队列清空", async () => {
     await prepareV4ConversationE2E();
 
-    // 首轮：可控慢流，保持 running
+    // First round: controllable slow stream, keep it running
     await sendV4Prompt("E2E_V4_QUEUE_SLOW 慢慢回答");
     await waitForV4TimelineContaining("V4_QUEUE_STREAMING", 45000);
     await waitForV4Pane(
@@ -50,14 +50,14 @@ describe("v4 M4/B09 门禁：queue 单项管理与撤回编辑", () => {
       45000,
     );
 
-    // running 中发第二条 → 入队
+    // While running, send a second prompt → it is enqueued
     await sendV4Prompt("E2E_V4_QUEUE_ITEM 排队的问题");
     await waitForV4QueueCount(1, 30000);
     const before = await getV4QueueItems();
     expect(before).toHaveLength(1);
     expect(before[0]!.text).toContain("E2E_V4_QUEUE_ITEM");
 
-    // 删除该队列项 → 队列清空
+    // Delete that queue item → the queue empties
     const clicked = await clickV4QueueItemDelete(before[0]!.queueItemId);
     expect(clicked).toBe(true);
     await waitForV4QueueCount(0, 30000);
@@ -82,8 +82,8 @@ describe("v4 M4/B09 门禁：queue 单项管理与撤回编辑", () => {
     expect(before[0]!.text).toContain("排队原文");
     const queueItemId = before[0]!.queueItemId;
 
-    // 修复原因：ACK 回来前的双击若发出两个 delete，会重复恢复同一份附件草稿。
-    // 同一事件循环连点两次，验证 renderer-local operation lock 在 React 重渲染前也生效。
+    // Reason for the fix: a double click before the ACK returns would send two deletes and restore the same attachment draft twice.
+    // Clicking twice within the same event loop verifies the renderer-local operation lock also works before React re-renders.
     const clicked = await clickV4QueueItemEdit(queueItemId, 2);
     expect(clicked).toBe(true);
     await waitForV4QueueCount(0, 30000);
@@ -94,8 +94,8 @@ describe("v4 M4/B09 门禁：queue 单项管理与撤回编辑", () => {
         return (
           text === "E2E_V4_QUEUE_ITEM 排队原文" &&
           attachments.length === 1 &&
-          // Bug 原因：从 queue 恢复的媒体 ref 不重建本地 object URL，缩略图可能只显示
-          // image fallback icon；用 innerText 验证 filename 会误判已恢复且 ready 的附件。
+          // Bug cause: a media ref restored from the queue does not rebuild the local object URL, so the thumbnail may show
+          // only the image fallback icon; verifying the filename via innerText would falsely judge the restored-and-ready attachment.
           attachments[0]?.uploadStatus === "ready"
         );
       },
@@ -134,8 +134,8 @@ describe("v4 M4/B09 门禁：queue 单项管理与撤回编辑", () => {
         "Send or clear the current draft before editing a queued message.",
         "请先发送或清空当前草稿，再编辑队列消息。",
       ],
-      // Bug 根因：E2E 会继承 workspace locale，旧断言只接受英文，中文环境下把
-      // 已正确出现的冲突提示误报为缺失。行为契约必须同时覆盖两种受支持语言。
+      // Bug root cause: E2E inherits the workspace locale; the old assertion accepted only English, so under a Chinese locale it
+      // reported the correctly shown conflict toast as missing. The behavior contract must cover both supported languages.
       "非空草稿没有出现撤回阻止提示",
     );
     expect(await getV4ComposerText()).toBe("保留现有草稿");
@@ -156,7 +156,7 @@ describe("v4 M4/B09 门禁：queue 单项管理与撤回编辑", () => {
       45000,
     );
 
-    // running 中依次入队两条
+    // While running, enqueue two items in order
     await sendV4Prompt("E2E_V4_QUEUE_ITEM 第一条问题");
     await waitForV4QueueCount(1, 30000);
     await sendV4Prompt("E2E_V4_QUEUE_ITEM 第二条问题");
@@ -168,7 +168,7 @@ describe("v4 M4/B09 门禁：queue 单项管理与撤回编辑", () => {
     expect(before[1]!.text).toContain("第二条问题");
     const secondId = before[1]!.queueItemId;
 
-    // 拖拽只发 reorderQueueItem；顺序更新必须来自 CLI projection 回流。
+    // The drag only sends reorderQueueItem; the order update must come from the CLI projection flowing back.
     await dragV4QueueItemOnto(secondId, before[0]!.queueItemId);
     await browser.waitUntil(
       async () => {

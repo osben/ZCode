@@ -1,11 +1,15 @@
-// ConversationV4Gateway 测试（M3 host 通道层 CLI 侧）。
-// 核心断言面：
-//   1. subscribe 内部 dispatch result 同时返回 ACK 与待入 outbox 的初始帧
-//   2. ingest 后按订阅者 profile.flushWindowMs 定时编码到 host.emitWireFrame（fake timers）
-//   3. v4/command：accepted 后台执行 + settle 固化；duplicate 重放终态；
-//      sessionNotFound 拒绝；未接线命令 → failed fault.command.notImplemented
-//   4. 重订阅替换（R-01）：旧订阅调度状态被清理、不再产帧
-//   5. disposeSession / dispose：定时器与 publisher 全量回收
+// ConversationV4Gateway tests (M3 host channel layer, CLI side).
+// Core assertion surface:
+//   1. subscribe's internal dispatch result returns both the ACK and the initial frame awaiting
+//      the outbox
+//   2. after ingest, frames are encoded to host.emitWireFrame on the subscriber's
+//      profile.flushWindowMs timer (fake timers)
+//   3. v4/command: accepted runs in the background + settle freezes; duplicate replays the
+//      terminal state; sessionNotFound rejects; unwired command → failed
+//      fault.command.notImplemented
+//   4. resubscribe replacement (R-01): the old subscription's scheduling state is cleaned up and
+//      no longer produces frames
+//   5. disposeSession / dispose: timers and the publisher fully reclaimed
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSqliteSessionStore } from "@zcode/adapters/storage";
 import type {
@@ -52,7 +56,7 @@ import type { V4SessionRecordView } from "../src/zcode-protocol-v4/commands/type
 import { loadPersistentCommandFacts } from "../src/zcode-protocol-v4/persistent-command-facts.js";
 import { registerCommittedForkBestEffort } from "../src/zcode-protocol/v4-bridge.js";
 
-// ── 事件构造（与 conversation-topic-publisher.test.ts 同一套）──
+// ── Event construction (same set as conversation-topic-publisher.test.ts) ──
 
 class EventLog {
   private seq = 0;
@@ -96,7 +100,7 @@ function textDelta(log: EventLog, text: string): SessionEvent {
   );
 }
 
-// ── 宿主打桩 ──
+// ── Host stubs ──
 
 interface HostStub {
   frames: ConversationTopicFrame[];
@@ -108,16 +112,16 @@ interface HostStub {
     envelope: CommandEnvelope,
     admission?: { admissionSeq: number; admittedAt: number; queueItemId: string },
   ) => Promise<CommandResult | undefined>;
-  /** hydration 打桩：sessionId → 持久化事件序列。 */
+  /** hydration stub: sessionId → persisted event sequence. */
   persistedEvents: Map<string, SessionEvent[]>;
-  /** 标记哪些 session 的 loadPersistedEvents 走 transcript 合成（synthesized=true）。 */
+  /** Marks which sessions' loadPersistedEvents go through transcript synthesis (synthesized=true). */
   synthesizedSessions: Set<string>;
   loadPersistedEventsImpl?: (sessionId: string) => Promise<{
     events: SessionEvent[];
     synthesized: boolean;
     sourceEventSeq?: number;
   }>;
-  /** R-19 config 种子打桩：sessionId → runtime 真值（缺省 = 钩子返回 null）。 */
+  /** R-19 config seed stub: sessionId → runtime truth (absent = the hook returns null). */
   configSeeds: Map<string, SessionConfigSeed>;
   memorySettings?: Map<string, boolean>;
   fileChangeCalls: Array<{ sessionId: string; targetRowId: number; messageIds: string[] }>;
@@ -296,7 +300,7 @@ describe("订阅与帧调度", () => {
     const result = await gateway.subscribe(subscribeParams());
     expect(result.ack.mode).toBe("snapshot");
     expect(result.initialFrame?.payload.kind).toBe("snapshot");
-    // 初始帧只进入 server 内部 dispatch result，不走 online notification 出口。
+    // The initial frame only enters the server's internal dispatch result; it does not go out the online notification exit.
     expect(host.frames).toHaveLength(0);
   });
 
@@ -817,7 +821,7 @@ describe("订阅与帧调度", () => {
     expect(manualStart).toMatchObject({ automationId: "automation-1", taskTrigger: "manual" });
     expect(manualStart).not.toHaveProperty("scheduledAt");
 
-    // inputId 不是该 automation 的 runId：只保留关联 ID，不猜触发方式，也不切出伪 scheduledAt。
+    // The inputId is not this automation's runId: keep only the correlation ID, do not guess the trigger mode, and do not fabricate a pseudo scheduledAt.
     const mismatchStart = host.telemetryFacts.find(
       (fact) => fact.kind === "turn.started" && fact.sourceCommandId === "cmd-1700000000000",
     );
@@ -1652,12 +1656,12 @@ describe("订阅与帧调度", () => {
         title: "during-recovery",
       }),
     );
-    // timer 已消费，但 control reservation 仍要等 ACK/outbox 全部 admission，不能抢发。
+    // The timer was consumed, but the control reservation must still wait for all of the ACK/outbox admissions; it must not jump the queue.
     vi.advanceTimersByTime(CONTINUOUS_WINDOW);
     expect(host.frames).toEqual([]);
 
     expect(recovery.commit()).toBe(true);
-    // commit 必须重新驱动残留 buffer；这里刻意不再 ingest。
+    // commit must re-drive the residual buffer; ingest is deliberately not called again here.
     vi.advanceTimersByTime(CONTINUOUS_WINDOW);
     expect(host.frames).toHaveLength(1);
     expect(host.frames[0]).toMatchObject({
@@ -1805,16 +1809,16 @@ describe("订阅与帧调度", () => {
     );
     gateway.ingest("session-1", textDelta(log, "上半"));
     gateway.ingest("session-1", textDelta(log, " 下半"));
-    // 窗口未到不产帧。
+    // No frame before the window elapses.
     expect(host.frames).toHaveLength(0);
 
     vi.advanceTimersByTime(CONTINUOUS_WINDOW);
-    // 三个事件合并成一帧，fromSeq 接住 snapshot 帧的 toSeq。
+    // Three events merge into one frame; fromSeq catches the snapshot frame's toSeq.
     expect(host.frames).toHaveLength(1);
     expect(host.frames[0]!.fromSeq).toBe(initial!.toSeq);
     expect(host.frames[0]!.toSeq).toBe(4);
 
-    // 后续 ingest 重新开窗。
+    // A subsequent ingest reopens the window.
     gateway.ingest("session-1", textDelta(log, "尾巴"));
     vi.advanceTimersByTime(CONTINUOUS_WINDOW);
     expect(host.frames).toHaveLength(2);
@@ -1966,7 +1970,7 @@ describe("订阅与帧调度", () => {
     const first = await gateway.subscribe(subscribeParams());
     const second = await gateway.subscribe(subscribeParams());
     expect(second.ack.subscriptionId).not.toBe(first.ack.subscriptionId);
-    // 旧订阅的调度状态已清（flushNow 找不到），新订阅正常。
+    // The old subscription's scheduling state is cleared (flushNow finds nothing); the new subscription works normally.
     expect(gateway.flushNow(first.ack.subscriptionId)).toBeNull();
 
     gateway.ingest("session-1", textDelta(log, "x"));
@@ -2042,15 +2046,15 @@ describe("订阅与帧调度", () => {
     vi.advanceTimersByTime(CONTINUOUS_WINDOW * 4);
     expect(host.frames).toHaveLength(0);
 
-    // 新 publisher 冷启动：seq 从 0 开始（旧事件日志已随 dispose 丢弃）。
+    // The new publisher cold-starts: seq starts at 0 (the old event log was discarded with dispose).
     const again = await gateway.subscribe(subscribeParams());
     expect(again.initialFrame?.toSeq).toBe(0);
   });
 
-  // ── M4 hydration：冷订阅从持久化事件重建投影（fork child / resume / 重启）──
+  // ── M4 hydration: a cold subscription rebuilds the projection from persisted events (fork child / resume / restart) ──
   it("冷订阅无 live projection 的会话 → 重放持久化事件，snapshot 含历史 rows", async () => {
     const host = makeHost();
-    // 构造一段持久化历史：SessionCreated + turn + assistant 文本。
+    // Construct a persisted history: SessionCreated + a turn + assistant text.
     const persistLog = new EventLog("session-cold");
     host.sessions.add("session-cold");
     persistLog.push(SessionEventType.SessionCreated, {
@@ -2080,7 +2084,7 @@ describe("订阅与帧调度", () => {
     host.persistedEvents.set("session-cold", persistLog.events);
 
     const gateway = makeGateway(host);
-    // 从未 ingest 过 session-cold（冷）——subscribe 触发 hydration。
+    // session-cold was never ingested (cold) — subscribe triggers hydration.
     const result = await gateway.subscribe(subscribeParams({ topic: "conversation/session-cold" }));
     expect(result.initialFrame?.payload.kind).toBe("snapshot");
     const snapshot =
@@ -2092,7 +2096,7 @@ describe("订阅与帧调度", () => {
     );
     expect(texts).toContain("历史输入");
     expect(texts).toContain("历史回复");
-    // 冷订阅 seq 已推进到持久化尾部。
+    // The cold subscription's seq has advanced to the persisted tail.
     expect(result.initialFrame?.toSeq).toBe(persistLog.events.length);
   });
 
@@ -2100,7 +2104,7 @@ describe("订阅与帧调度", () => {
     const host = makeHost();
     host.sessions.add("session-fork");
     host.synthesizedSessions.add("session-fork");
-    // 模拟 fork resume 的 ingest 抢先建了个只含 fork 事件的 cold publisher（无 user 轮）。
+    // Simulate fork resume: an ingest got there first and built a cold publisher containing only fork events (no user turn).
     const gateway = makeGateway(host);
     const forkLog = new EventLog("session-fork");
     gateway.ingest("session-fork", {
@@ -2109,7 +2113,7 @@ describe("订阅与帧调度", () => {
         contextWindow: 200_000,
       }),
     });
-    // transcript 合成的历史事件（loadPersistedEvents 返回，synthesized=true）。
+    // History events synthesized from the transcript (returned by loadPersistedEvents, synthesized=true).
     const synthLog = new EventLog("session-fork");
     synthLog.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
     synthLog.push(
@@ -2137,7 +2141,7 @@ describe("订阅与帧调度", () => {
     )
       .filter((r) => r.kind === "userInput" || r.kind === "assistantText")
       .map((r) => (r.kind === "userInput" || r.kind === "assistantText" ? r.text : ""));
-    // cold publisher 被丢弃重建 → transcript 历史进投影。
+    // The cold publisher was discarded and rebuilt → transcript history enters the projection.
     expect(texts).toContain("继承历史");
     expect(texts).toContain("继承回复");
   });
@@ -2196,8 +2200,9 @@ describe("订阅与帧调度", () => {
     };
     const first = await gateway.subscribe(subscribeParams({ connectionId: "conn-1" }));
 
-    // 非 running publisher 拒收正文后必须以 persisted source 重物化；该路径过去
-    // delete/replace publisher，导致 conn-1 的 subscription registry 一并丢失。
+    // After a non-running publisher rejects the body, it must rematerialize with the persisted
+    // source; this path used to delete/replace the publisher, losing conn-1's subscription
+    // registry along with it.
     gateway.ingest(
       "session-1",
       rawLog.push(
@@ -2347,7 +2352,7 @@ describe("订阅与帧调度", () => {
         id: `hydrate-race-${index + 1}` as EventId,
       })),
       synthesized: true,
-      // memory eventStore 在 load 开始时只看到了 SessionCreated；后四条是 await 窗口内 live。
+      // The memory eventStore saw only SessionCreated when load started; the last four arrived live within the await window.
       sourceEventSeq: 1,
     });
 
@@ -2393,8 +2398,9 @@ describe("订阅与帧调度", () => {
       { kind: "text_delta", delta: "live-3", done: false, messageId: "msg-live-assistant" },
       { turnId: "turn-live" },
     );
-    // runtime 先给事件编号，各事件的持久化 await 会让 notify sink 乱序；
-    // N+1 不能推进高水位后把迟到的 queue N 当成 duplicate 丢掉。
+    // The runtime numbers events first, and each event's persistence await can reorder the
+    // notify sink; N+1 must not advance the high watermark and then drop the late-arriving
+    // queue N as a duplicate.
     gateway.ingest("session-race", laterStream);
     vi.advanceTimersByTime(CONTINUOUS_WINDOW);
     expect(host.frames).toHaveLength(frameCountBeforeOutOfOrder);
@@ -2461,7 +2467,7 @@ describe("订阅与帧调度", () => {
     releaseLoad?.({
       events: [created],
       synthesized: true,
-      // 持久读取只覆盖 seq=1；seq=2 已在 hydration 开始前进入 live publisher。
+      // The persisted read covers only seq=1; seq=2 had already entered the live publisher before hydration began.
       sourceEventSeq: 1,
     });
 
@@ -2491,7 +2497,7 @@ describe("订阅与帧调度", () => {
         { turnId: "turn-1" },
       ),
     );
-    // 即使 persistedEvents 有内容，live publisher 已存在 → 不重放。
+    // Even with persistedEvents populated, a live publisher already exists → no replay.
     host.persistedEvents.set("session-1", [sessionCreated(new EventLog())]);
     const result = await gateway.subscribe(subscribeParams());
     const userRows = (
@@ -2499,7 +2505,7 @@ describe("订阅与帧调度", () => {
         ? result.initialFrame.payload.snapshot.rows.window
         : []
     ).filter((row) => row.kind === "userInput");
-    // 只有 live 的一条 userInput，没有被 hydration 重复注入。
+    // Only the live userInput, not re-injected by hydration.
     expect(userRows).toHaveLength(1);
   });
 
@@ -3943,7 +3949,7 @@ describe("v4/command 收口", () => {
     ).resolves.toMatchObject({ status: "accepted" });
     expect(host.inputCancellations).toEqual([]);
 
-    // 修复原因：raw gap 只延迟 projection；它不能反向撤销 Core 已完成的 prompt admission。
+    // Why the fix: a raw gap only delays the projection; it cannot retroactively revoke a prompt admission Core already completed.
     gateway.ingest("session-1", missing);
     const subscribed = await gateway.subscribe(
       subscribeParams({ connectionId: "post-gap-recovery" }),
@@ -4167,7 +4173,7 @@ describe("v4/command 收口", () => {
     });
     const emptyBytes = probe.measureInputAdmissionProjectionBytes(envelope, admission);
     expect(emptyBytes).not.toBeNull();
-    // emoji 验证按 UTF-8 字节而非 JS string.length 计数；其余 ASCII 精确补齐到 16MiB。
+    // Emoji validation counts UTF-8 bytes, not JS string.length; the rest of the ASCII is padded precisely to 16MiB.
     const emoji = "🙂";
     const emojiBytes = Buffer.byteLength(JSON.stringify(emoji), "utf8") - 2;
     const text = `${"a".repeat(
@@ -4238,15 +4244,16 @@ describe("v4/command 收口", () => {
     expect(host.executed).toEqual([]);
   });
 
-  // 2026-07-05 语义修正：handleCommand 等待副作用完成后随响应返回终态 ACK
-  //（spec §6.2/§6.4「accepted 即时带 result」），settle 仍固化结果供 duplicate 重放。
+  // 2026-07-05 semantic correction: handleCommand waits for the side effects to finish and
+  // returns the terminal ACK with the response (spec §6.2/§6.4 "accepted carries result
+  // immediately"); settle still freezes the result for duplicate replay.
   it("同 commandId 并发与 ACK 丢失重试等待同一 final result，只执行一次", async () => {
     const host = makeHost();
     const gateway = makeGateway(host);
     const log = new EventLog();
     gateway.ingest("session-1", sessionCreated(log));
 
-    // 用手动 deferred 卡住副作用，验证在途重试语义（§6.3）。
+    // Use a manual deferred to stall the side effects and verify the in-flight retry semantics (§6.3).
     let releaseExecute!: () => void;
     host.executeImpl = async () => {
       await new Promise<void>((resolveExecute) => {
@@ -4279,7 +4286,7 @@ describe("v4/command 收口", () => {
       result: { type: "forkAssistant", sessionId: "child-same" },
     });
 
-    // settle 固化后重试回 duplicate，副作用仍只执行一次。
+    // After settle freezes, the retry returns duplicate; the side effects still executed only once.
     const replay = await gateway.handleCommand(commandParams());
     expect(replay.status).toBe("duplicate");
     expect(replay.result).toEqual({ type: "forkAssistant", sessionId: "child-same" });
@@ -4378,15 +4385,16 @@ describe("v4/command 收口", () => {
       }),
     );
     expect(ack.status).toBe("accepted");
-    // spec §6.4：createSession 的 accepted ACK 必带 result.sessionId
-    //（曾经只回初始 ACK，客户端拿不到 sessionId —— M3 全链路验收抓出的 bug）。
+    // spec §6.4: createSession's accepted ACK must carry result.sessionId
+    // (it used to return only the initial ACK, leaving the client without a sessionId — a bug
+    // caught by M3's full-chain acceptance).
     expect(ack.result).toEqual({
       type: "createSession",
       sessionId: "session-new",
     });
     expect(host.executed).toHaveLength(1);
 
-    // settle 固化后 duplicate 回放携带执行结果。
+    // After settle freezes, duplicate replay carries the execution result.
     const replay = await gateway.handleCommand(
       commandParams({
         commandId: "cmd-create",
@@ -4420,8 +4428,8 @@ describe("v4/command 收口", () => {
       throw new V4CommandNotImplementedError(envelope.type);
     };
 
-    // compact 是可排队输入命令，不做 CAS；否则 renderer 在 running snapshot 上提交后
-    // 会因并发 stream revision 变化而无意义 stale。
+    // compact is a queueable input command and does no CAS; otherwise a renderer submitting on
+    // a running snapshot would be meaninglessly stale due to a concurrent stream revision change.
     const ack = await gateway.handleCommand(
       commandParams({
         commandId: "cmd-compact",
@@ -4648,8 +4656,8 @@ describe("v4/command 收口", () => {
   });
 });
 
-// R-19（10 §4.2.3）：config 种子接线——ensurePublisher 创建即注入、hydration 收尾补注，
-// 种子不产 delta / 不 bump revision，日志事件值优先。
+// R-19 (10 §4.2.3): config seed wiring — injected at ensurePublisher creation, backfilled at
+// hydration wrap-up; seeds produce no delta / do not bump revision, and log event values win.
 describe("config 种子（R-19 gateway 接线）", () => {
   const SEED: SessionConfigSeed = {
     provider: "prov-a",
@@ -4675,7 +4683,7 @@ describe("config 种子（R-19 gateway 接线）", () => {
       thought: "high",
       mode: "yolo",
     });
-    // 种子是初值不是变化：不产 delta、revision 保持 0（CAS 不变量不受种子影响）。
+    // A seed is an initial value, not a change: no delta, revision stays 0 (the CAS invariant is unaffected by seeds).
     expect(snapshot.revision).toBe(0);
   });
 
@@ -4699,13 +4707,13 @@ describe("config 种子（R-19 gateway 接线）", () => {
       throw new Error("expected snapshot frame");
     }
     const snapshot = result.initialFrame!.payload.snapshot;
-    // 模型区：日志有 ModelSelected → 日志值权威（种子不覆盖）。
+    // Model area: the log has ModelSelected → the log value is authoritative (the seed does not override).
     expect(snapshot.config).toMatchObject({
       provider: "prov-b",
       model: "model-2",
       thought: "low",
     });
-    // mode：日志无 SessionModeChanged → 吃种子（历史会话 resume 恢复的持久化偏好）。
+    // mode: the log has no SessionModeChanged → take the seed (the persisted preference restored by a historical session's resume).
     expect(snapshot.config.mode).toBe("yolo");
   });
 
@@ -4796,10 +4804,10 @@ describe("detached subagent child publisher 生命周期（session-idle-deactiva
     const terminalAt = Date.now();
     expect(gateway.collectMemoryDiagnostics()).toMatchObject({ detachedTerminal: 1 });
 
-    // grace 内不释放。
+    // Not released within the grace period.
     expect(gateway.pruneDetachedChildPublishers(terminalAt + 60_000)).toBe(0);
 
-    // 有订阅者时即使超过 grace 也不释放。
+    // With subscribers, not released even past the grace period.
     const { ack } = await gateway.subscribe(subscribeParams({ topic: "conversation/child-3" }));
     expect(gateway.pruneDetachedChildPublishers(terminalAt + 3 * 60_000)).toBe(0);
     expect(gateway.collectMemoryDiagnostics()).toMatchObject({ publishers: 2 });
@@ -4815,7 +4823,7 @@ describe("detached subagent child publisher 生命周期（session-idle-deactiva
       detachedLive: 0,
       detachedTerminal: 0,
     });
-    // 父 record 后续释放不受影响（child 映射已摘除）。
+    // The parent record's later release is unaffected (the child mapping was already removed).
     gateway.disposeSession("session-1");
     expect(gateway.collectMemoryDiagnostics()).toMatchObject({ publishers: 0 });
   });

@@ -8,32 +8,19 @@ import {
 
 describe("getPlainTextPatchFallbackLines", () => {
   it("falls back for created files whose unknown suffix resolves to plain text", () => {
-    const patch = [
-      "--- /dev/null",
-      "+++ b/test.123",
-      "@@ -0,0 +1,1 @@",
-      "+123",
-    ].join("\n");
+    const patch = ["--- /dev/null", "+++ b/test.123", "@@ -0,0 +1,1 @@", "+123"].join("\n");
 
     expect(getPlainTextPatchFallbackLines(patch)).toEqual(["+123"]);
   });
 
   it("falls back for created structured files so expansion never renders blank", () => {
-    const patch = [
-      "--- /dev/null",
-      "+++ b/demo.json",
-      "@@ -0,0 +1,1 @@",
-      "+{}",
-    ].join("\n");
+    const patch = ["--- /dev/null", "+++ b/demo.json", "@@ -0,0 +1,1 @@", "+{}"].join("\n");
 
     expect(getPlainTextPatchFallbackLines(patch)).toEqual(["+{}"]);
   });
 
   it("falls back for oversized patches to keep UI responsive", () => {
-    const changedLines = Array.from(
-      { length: 1_300 },
-      (_, index) => `+line-${index + 1}`,
-    );
+    const changedLines = Array.from({ length: 1_300 }, (_, index) => `+line-${index + 1}`);
     const patch = [
       "--- a/demo.json",
       "+++ b/demo.json",
@@ -48,9 +35,7 @@ describe("getPlainTextPatchFallbackLines", () => {
       (line) => parseTruncatedMarkerOmittedLineCount(line) !== null,
     );
     expect(truncatedMarkerLine).toBeTruthy();
-    expect(parseTruncatedMarkerOmittedLineCount(truncatedMarkerLine ?? "")).toBe(
-      501,
-    );
+    expect(parseTruncatedMarkerOmittedLineCount(truncatedMarkerLine ?? "")).toBe(501);
     expect(fallback?.at(-1)).toBe("+line-1300");
     expect(fallback?.length).toBe(800);
   });
@@ -114,11 +99,7 @@ describe("getPlainTextPatchFallbackLines", () => {
     ].join("\n");
 
     expect(countPatchFileDiffs(patch)).toBe(0);
-    expect(getPlainTextPatchFallbackLines(patch)).toEqual([
-      "-old",
-      "+new",
-      "*** End Patch",
-    ]);
+    expect(getPlainTextPatchFallbackLines(patch)).toEqual(["-old", "+new", "*** End Patch"]);
   });
 
   it("does not treat hunk text that starts with file headers as new files", () => {
@@ -137,8 +118,8 @@ describe("getPlainTextPatchFallbackLines", () => {
   });
 
   it("falls back when the renderer mistakes a deleted SQL comment for another file", () => {
-    // Bugfix 回归：unified diff 的删除标记 `-` 与 SQL 注释 `--` 拼接后会成为 `--- `。
-    // @pierre/diffs 会把它误认成第二个文件头；自有计数仍为 1 时也不能继续交给 PatchDiff。
+    // Bugfix regression: in a unified diff, the deletion marker `-` concatenated with an SQL comment `--` becomes `--- `.
+    // @pierre/diffs mistakes it for a second file header; even when our own count is still 1, it must not be handed to PatchDiff.
     const patch = [
       "--- a/schema.sql",
       "+++ b/schema.sql",
@@ -156,7 +137,7 @@ describe("getPlainTextPatchFallbackLines", () => {
         "+-- new table comment",
         " SELECT 1;",
       ]);
-      // Bugfix 回归：解析失败是正常降级控制流，不能把解析出的文件或代码内容写进控制台。
+      // Bugfix regression: parse failure is normal degraded control flow; the parsed file or code content must not be written to the console.
       expect(consoleError).not.toHaveBeenCalled();
     } finally {
       consoleError.mockRestore();
@@ -164,12 +145,12 @@ describe("getPlainTextPatchFallbackLines", () => {
   });
 
   it("counts multi-file patches without diff --git headers (ZCT-202606-183BF216)", () => {
-    // Bugfix 复现：模型通过 Edit/Write 工具一次性改多个文件，产出的 unified diff
-    // 没有 `diff --git` 前缀（只有 --- a/ +++ b/），且 hunk 头声明的行数比实际 body 多 1。
-    // 多出的配额会把下一文件的 "--- a/x"（'-' 开头算 deletion）和 "+++ b/x"（'+' 开头
-    // 算 addition）吞进当前 hunk，导致后续文件头被 consumeHunkBody 误消费，3 个文件被计为 1。
-    // 误判为单文件后不降级 → 整个多文件 patch 被送往 @pierre/diffs 的 PatchDiff →
-    // 抛 "Provided patch must contain exactly 1 file diff" → 整页错误边界。
+    // Bugfix reproduction: the model edits multiple files at once via Edit/Write tools, and the resulting unified diff
+    // has no `diff --git` prefix (only --- a/ +++ b/), and the line count declared in the hunk header is 1 more than the actual body.
+    // The extra quota swallows the next file's "--- a/x" (leading '-' counts as a deletion) and "+++ b/x" (leading '+'
+    // counts as an addition) into the current hunk, so later file headers are mistakenly consumed by consumeHunkBody and 3 files are counted as 1.
+    // Misjudged as a single file, no fallback kicks in → the whole multi-file patch is sent to @pierre/diffs' PatchDiff →
+    // it throws "Provided patch must contain exactly 1 file diff" → a whole-page error boundary.
     const patch = [
       "--- a/IProviderAppService.java",
       "+++ b/IProviderAppService.java",
@@ -198,8 +179,8 @@ describe("getPlainTextPatchFallbackLines", () => {
   });
 
   it("does not split a hunk when only a lone --- line appears in the body", () => {
-    // 边界守卫：正文里真实出现以 `--- ` 开头的行（但下一行不是 `+++ `），
-    // 不构成文件头对，必须仍按单文件计数，不能被新的提前结束逻辑误伤。
+    // Boundary guard: the body genuinely contains a line starting with `--- ` (but the next line is not `+++ `),
+    // which does not form a file header pair, so it must still be counted as a single file and must not be hit by the new early-exit logic.
     const patch = [
       "--- a/doc.md",
       "+++ b/doc.md",
@@ -214,7 +195,7 @@ describe("getPlainTextPatchFallbackLines", () => {
   });
 
   it("counts two-file patches without diff --git headers when hunk counts are exact", () => {
-    // 即使 hunk 行数与正文完全吻合（无 off-by-one），相邻文件头也应被正确识别为新文件。
+    // Even when the hunk line counts match the body exactly (no off-by-one), adjacent file headers should still be correctly recognized as a new file.
     const patch = [
       "--- a/first.ts",
       "+++ b/first.ts",
@@ -231,7 +212,7 @@ describe("getPlainTextPatchFallbackLines", () => {
     ].join("\n");
 
     expect(countPatchFileDiffs(patch)).toBe(2);
-    // 同样走轻量高亮 diff，而非 PatchDiff。
+    // Also goes through the lightweight highlighted diff, not PatchDiff.
     expect(getPlainTextPatchFallbackLines(patch)).not.toBeNull();
   });
 
@@ -246,22 +227,11 @@ describe("getPlainTextPatchFallbackLines", () => {
       " line-4",
     ].join("\n");
 
-    expect(getPlainTextPatchPreviewLines(patch)).toEqual([
-      " line-2",
-      "-old",
-      "+new",
-      " line-4",
-    ]);
+    expect(getPlainTextPatchPreviewLines(patch)).toEqual([" line-2", "-old", "+new", " line-4"]);
   });
 
   it("falls back for deleted plain text files and strips patch metadata", () => {
-    const patch = [
-      "--- a/demo.txt",
-      "+++ /dev/null",
-      "@@ -1,1 +0,0 @@",
-      "-hello",
-      "",
-    ].join("\n");
+    const patch = ["--- a/demo.txt", "+++ /dev/null", "@@ -1,1 +0,0 @@", "-hello", ""].join("\n");
 
     expect(getPlainTextPatchFallbackLines(patch)).toEqual(["-hello"]);
   });
@@ -324,10 +294,7 @@ describe("getPlainTextPatchFallbackLines", () => {
       "",
     ].join("\n");
 
-    expect(getPlainTextPatchFallbackLines(patch)).toEqual([
-      "old mode 100644",
-      "new mode 100755",
-    ]);
+    expect(getPlainTextPatchFallbackLines(patch)).toEqual(["old mode 100644", "new mode 100755"]);
   });
 
   it("falls back for package manager lockfiles", () => {

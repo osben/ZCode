@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
-// 单项目工作流组（docs/dynamic-workflow/launch.md「Groups」「目录监听」「删除」「运行发起」）。
-// 迁移自 v1 单项目 section 的用例；卡片与详情页各有自己的用例，这里换桩，只看组的状态流与
-// **本项目**的 target（不变式 8）。useWorkspaceServices 按 workspacePath 返回不同 agent，钉住
-// 组用的是 ITS project 而不是活动 workspace。
+// Single-project workflow group (docs/dynamic-workflow/launch.md "Groups", "Directory watching", "Delete", "Run
+// initiation").
+// Cases migrated from the v1 single-project section; the card and the detail page each have their own cases, so this
+// stubs things out and only watches the group's state flow and the **its-project** target (invariant 8).
+// useWorkspaceServices returns a different agent per workspacePath, pinning that the group uses ITS project rather than
+// the active workspace.
 import { createElement } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -74,8 +76,9 @@ vi.mock("@/hooks/useWorkspaceServices.js", () => ({
 }));
 vi.mock("@/hooks/useConfirmDialog.js", () => ({ useConfirmDialog: () => confirmMock }));
 vi.mock("@/components/ui/toast.js", () => ({ toast: (...args: unknown[]) => toastMock(...args) }));
-// 直接启动器换桩：组只负责按类型开窗 / 直发；launch 的 createSession→startSavedWorkflow 编排
-// 与导航由 useSavedWorkflowLauncher 单测覆盖，这里只断言组以正确 target + request 调它。
+// Direct launcher stubbed: the group only opens the window / sends directly by type; launch's
+// createSession→startSavedWorkflow orchestration and navigation are covered by useSavedWorkflowLauncher unit tests, so
+// this only asserts the group calls it with the right target + request.
 const launchMock = vi.fn(async () => ({
   ok: true as const,
   sessionId: "s-1",
@@ -91,8 +94,9 @@ vi.mock("@/settings/saved-workflows/useSavedWorkflowLauncher.js", () => ({
     clearError: clearErrorMock,
   }),
 }));
-// 「提升为全局」编排换桩：createSession(firstInput) 与导航由 useSavedWorkflowPromote 单测覆盖，
-// 这里只断言组以本项目 target + 名字 / 路径 / locale 调它，失败时 toast。
+// "Promote to global" orchestration stubbed: createSession(firstInput) and navigation are covered by
+// useSavedWorkflowPromote unit tests; this only asserts the group calls it with this project's target + name / path /
+// locale, and toasts on failure.
 const promoteMock = vi.fn(async () => ({ ok: true as const, sessionId: "s-p" }));
 vi.mock("@/settings/saved-workflows/useSavedWorkflowPromote.js", () => ({
   useSavedWorkflowPromote: () => ({ promote: promoteMock, pending: false }),
@@ -271,7 +275,7 @@ describe("SavedWorkflowProjectGroup", () => {
     ];
     mount();
     await screen.findByTestId(testId(TID_WORKFLOWS_LIST, "/beta"));
-    // 用的是 /beta 的 agent，不是 /repo
+    // Uses /beta's agent, not /repo's
     expect(agentBeta.listSavedWorkflows).toHaveBeenCalledWith({ workspacePath: "/beta" });
     expect(agentRepo.listSavedWorkflows).not.toHaveBeenCalled();
     expect(agentBeta.listSavedWorkflowRuns).toHaveBeenCalledWith({
@@ -287,7 +291,8 @@ describe("SavedWorkflowProjectGroup", () => {
 
     fireEvent.click(screen.getByTestId(testId(TID_WORKFLOW_CARD_RUN, "nightly")));
     await waitFor(() => expect(launchMock).toHaveBeenCalledTimes(1));
-    // 无实参项目档：不弹窗，直发；带本项目 target + project scope + 空实参。
+    // Project scope without arguments: no dialog, send directly; carrying this project's target + project scope +
+    // empty arguments.
     expect(launchMock.mock.calls[0]?.[0]).toEqual({ workspacePath: "/beta" });
     expect(launchMock.mock.calls[0]?.[1]).toEqual({ name: "nightly", scope: "project", args: {} });
   });
@@ -408,8 +413,8 @@ describe("SavedWorkflowProjectGroup", () => {
     expect(onCreateViaChat.mock.calls[0]?.[0]).toContain("帮我设计一个工作流");
   });
 
-  // 「提升为全局」（docs/dynamic-workflow/launch.md「Promote to global」）：不搬文件，在本项目开
-  // 新会话发概括提示。
+  // "Promote to global" (docs/dynamic-workflow/launch.md "Promote to global"): no files are moved; a new session in
+  // this project sends the summarizing prompt.
   it("提升为全局：带本项目 target 与名字 / 路径 / locale 调 promote；不调 move、不 toast", async () => {
     agentBeta.listResult.current = {
       workflows: [entry("x")],
@@ -427,7 +432,8 @@ describe("SavedWorkflowProjectGroup", () => {
       locale: "zh-CN",
     });
     expect(toastMock).not.toHaveBeenCalled();
-    // 列表不重拉：源文件没动，全局档由模型另存后靠全局组的目录监听出现。
+    // The list is not refetched: the source file was untouched, and the global entry appears via the global group's
+    // directory watching once the model saves it separately.
     expect(agentBeta.listSavedWorkflows).toHaveBeenCalledTimes(1);
   });
 

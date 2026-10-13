@@ -42,11 +42,15 @@ function createManagerHarness(options?: {
     reason: string,
   ) => void;
   reconnectWorkspace?: (windowId: number, workspaceKey: string) => Promise<void>;
+  openWorkspace?: Parameters<typeof createWebRemoteControlManager>[0]["openWorkspace"];
   onStatusChanged?: Parameters<typeof createWebRemoteControlManager>[0]["onStatusChanged"];
   getEndpointUrls?: Parameters<typeof createWebRemoteControlManager>[0]["getEndpointUrls"];
   reportRemoteUsageEvent?: Parameters<
     typeof createWebRemoteControlManager
   >[0]["reportRemoteUsageEvent"];
+  platformHandlers?: Partial<
+    Parameters<typeof createWebRemoteControlManager>[0]["platformHandlers"]
+  >;
 }) {
   const sentPayloads: WebRemoteControlAppPayload[] = [];
   const logger = {
@@ -134,8 +138,10 @@ function createManagerHarness(options?: {
         importedCount: 0,
         skippedCount: 0,
       }),
+      ...options?.platformHandlers,
     },
     reconnectWorkspace: options?.reconnectWorkspace ?? vi.fn(async () => undefined),
+    openWorkspace: options?.openWorkspace ?? vi.fn(async () => undefined),
     reportRemoteUsageEvent,
     reportRendererTelemetryEvent,
     attachWorkspaceHost: options?.attachWorkspaceHost ?? defaultAttachWorkspaceHost,
@@ -787,6 +793,104 @@ describe("createWebRemoteControlManager external relay", () => {
     );
   });
 
+  it("dispatches open-on-desktop platform requests to the registered handlers", async () => {
+    const getInstalledEditors = vi.fn(async () => [
+      { id: "vscode", name: "VS Code", iconDataUrl: "data:image/png;base64,x" },
+    ]);
+    const openInEditor = vi.fn(async () => ({ success: true }));
+    const openInFileManager = vi.fn(async () => ({ success: true }));
+    const openExternalFile = vi.fn(async () => ({ success: true }));
+    const { deliverPayload, manager, sentPayloads } = createManagerHarness({
+      platformHandlers: { getInstalledEditors, openInEditor, openInFileManager, openExternalFile },
+    });
+
+    await manager.start(1, { workspacePath: "/workspace/demo" });
+    sentPayloads.length = 0;
+
+    deliverPayload({
+      zcode_type: "platform-request",
+      requestId: "open-1",
+      method: "openInFileManager",
+      args: "/workspace/demo",
+    });
+    deliverPayload({
+      zcode_type: "platform-request",
+      requestId: "open-2",
+      method: "openInEditor",
+      args: {
+        editorId: "vscode",
+        path: "/workspace/demo/README.md",
+        options: { pathKind: "file" },
+      },
+    });
+    deliverPayload({
+      zcode_type: "platform-request",
+      requestId: "open-3",
+      method: "getInstalledEditors",
+    });
+    deliverPayload({
+      zcode_type: "platform-request",
+      requestId: "open-4",
+      method: "openExternalFile",
+      args: "/workspace/demo/report.pdf",
+    });
+
+    await vi.waitFor(() => {
+      expect(sentPayloads).toHaveLength(4);
+    });
+    expect(openInFileManager).toHaveBeenCalledWith("/workspace/demo");
+    expect(openInEditor).toHaveBeenCalledWith({
+      editorId: "vscode",
+      path: "/workspace/demo/README.md",
+      options: { pathKind: "file" },
+    });
+    expect(getInstalledEditors).toHaveBeenCalledWith(undefined);
+    expect(openExternalFile).toHaveBeenCalledWith("/workspace/demo/report.pdf");
+    expect(sentPayloads).toContainEqual({
+      zcode_type: "platform-response",
+      requestId: "open-1",
+      method: "openInFileManager",
+      success: true,
+      result: { success: true },
+    });
+    expect(sentPayloads).toContainEqual({
+      zcode_type: "platform-response",
+      requestId: "open-3",
+      method: "getInstalledEditors",
+      success: true,
+      result: [{ id: "vscode", name: "VS Code", iconDataUrl: "data:image/png;base64,x" }],
+    });
+  });
+
+  it("returns platform-response errors when an open-on-desktop handler fails", async () => {
+    const openInFileManager = vi.fn(async () => {
+      throw new Error("path not found");
+    });
+    const { deliverPayload, manager, sentPayloads } = createManagerHarness({
+      platformHandlers: { openInFileManager },
+    });
+
+    await manager.start(1, { workspacePath: "/workspace/demo" });
+    sentPayloads.length = 0;
+
+    deliverPayload({
+      zcode_type: "platform-request",
+      requestId: "open-err",
+      method: "openInFileManager",
+      args: "/workspace/missing",
+    });
+
+    await vi.waitFor(() => {
+      expect(sentPayloads).toContainEqual({
+        zcode_type: "platform-response",
+        requestId: "open-err",
+        method: "openInFileManager",
+        success: false,
+        error: "path not found",
+      });
+    });
+  });
+
   it("pushes workspace list updates after renderer syncs task membership changes", async () => {
     const { manager, sentPayloads } = createManagerHarness();
 
@@ -999,6 +1103,69 @@ describe("createWebRemoteControlManager external relay", () => {
       }),
     );
     expect(reconnectWorkspace).toHaveBeenCalledWith(1, "remote:ssh:host:/workspace/demo");
+  });
+
+  it("dispatches workspace open requests to the desktop window open dependency", async () => {
+    const openWorkspace = vi.fn(async () => undefined);
+    const { deliverPayload, manager, sentPayloads } = createManagerHarness({ openWorkspace });
+
+    await manager.start(1, { workspacePath: "/workspace/demo" });
+
+    deliverPayload({
+      zcode_type: "workspace-open-request",
+      requestId: "open-1",
+      workspacePath: "/workspace/demo-worktrees/feature",
+    });
+
+    await vi.waitFor(() =>
+      expect(sentPayloads).toContainEqual({
+        zcode_type: "workspace-open-response",
+        requestId: "open-1",
+        workspacePath: "/workspace/demo-worktrees/feature",
+        success: true,
+      }),
+    );
+    expect(openWorkspace).toHaveBeenCalledWith(1, {
+      workspacePath: "/workspace/demo-worktrees/feature",
+    });
+  });
+
+  it("reports workspace open failures and keeps other window-control requests working", async () => {
+    const openWorkspace = vi.fn(async () => {
+      throw new Error("Desktop window is not available for Web remote control workspace open.");
+    });
+    const { deliverPayload, manager, sentPayloads } = createManagerHarness({ openWorkspace });
+
+    await manager.start(1, { workspacePath: "/workspace/demo" });
+
+    deliverPayload({
+      zcode_type: "workspace-open-request",
+      requestId: "open-1",
+      workspacePath: "/workspace/demo-worktrees/feature",
+      workspaceIdentity: "remote:ssh:dev:/workspace/demo-worktrees/feature",
+    });
+    await vi.waitFor(() =>
+      expect(sentPayloads).toContainEqual({
+        zcode_type: "workspace-open-response",
+        requestId: "open-1",
+        workspacePath: "/workspace/demo-worktrees/feature",
+        workspaceIdentity: "remote:ssh:dev:/workspace/demo-worktrees/feature",
+        success: false,
+        error: "Desktop window is not available for Web remote control workspace open.",
+      }),
+    );
+
+    // Existing window-control traffic on the same session must stay unaffected.
+    deliverPayload({ zcode_type: "bootstrap-request", requestId: "bootstrap-1" });
+    await vi.waitFor(() =>
+      expect(sentPayloads).toContainEqual(
+        expect.objectContaining({
+          zcode_type: "bootstrap-response",
+          requestId: "bootstrap-1",
+          success: true,
+        }),
+      ),
+    );
   });
 
   it("releases stale attachments when an older bridge open completes after reconnect", async () => {

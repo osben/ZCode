@@ -1,16 +1,17 @@
 // @vitest-environment jsdom
 
-// `workflow-artifact` tab：一个用户面产物的全尺寸查看（docs/dynamic-workflow/authoring.md「How the user sees them」+
-// 「正文渲染器」两行）。
+// The `workflow-artifact` tab: a full-size view of one user-facing artifact (docs/dynamic-workflow/authoring.md,
+// "How the user sees them" plus the "body renderer" rows).
 //
-// ⚠ 术语：这里的 artifact 是脚本经 `artifact.*` 交付给用户的产出，不是引擎内部那个
-// 「脚本顶层返回值」的同名词（spec 的「术语」表是唯一消歧处）。
+// Terminology warning: artifact here means outputs the script delivers to the user via `artifact.*`,
+// not the engine's same-named "top-level return value of the script" (the spec's terminology table is
+// the only disambiguation point).
 //
-// 钉三件事：
-//   1. 正文按 journal 记录上的 `contentType` 分派到既有叶子查看器（零新渲染依赖）；
-//   2. 版本步进器按**已知版本的数组**翻，而不是凭最新版号编造 1..n；
-//   3. 「在工作区显示」与 html 的「在浏览器中打开」的门（desktop-local ∧ sourcePath ∧ 最新版）。
-//   4. 「作为文件打开」：宿主能落副本才出入口，落的是**正在看的那一版**的字节。
+// Pins four things:
+//   1. the body dispatches on the journal record's `contentType` to existing leaf viewers (zero new rendering dependencies);
+//   2. the version stepper steps over the **array of known versions**, not a fabricated 1..n from the latest version number;
+//   3. the gate for "reveal in workspace" and html's "open in browser" (desktop-local AND sourcePath AND latest version).
+//   4. "open as file": the entry appears only when the host can materialize a copy, materializing the bytes of **the version being viewed**.
 import { createElement, type ReactNode } from "react";
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -43,7 +44,7 @@ const workflowRunArtifactRead =
     }) => Promise<V4ConversationWorkflowRunArtifactReadResult>
   >();
 const release = vi.fn();
-// layer 必须是稳定引用：租约 effect 以它为依赖（同 workflowRunSidePane.test.ts 的注记）。
+// The layer must be a stable reference: the lease effect depends on it (same note as workflowRunSidePane.test.ts).
 const layer = { acquire: vi.fn(() => ({ release })) };
 
 vi.mock("@/v4/V4ConversationContext.js", () => ({
@@ -61,8 +62,9 @@ vi.mock("@/v4/useConversationProjection.js", () => ({
   useConversationProjection: () => ({ snapshot }),
 }));
 
-// 三个重量级叶子查看器：真身各自要 pdf.js / docx-preview / xlsx wasm，在 jsdom 里既慢又与
-// 本用例无关。桩把 props 原样挂到 DOM 上，好断言「正文交给了谁、喂的是什么」。
+// Three heavyweight leaf viewers: the real ones each need pdf.js / docx-preview / xlsx wasm, which
+// is slow in jsdom and irrelevant to this case. The stubs hang their props onto the DOM as-is so
+// assertions can check "who got the body and what was fed to them".
 vi.mock("@/previewPanePdfContent.js", () => ({
   PdfPreviewContent: ({ source }: { source: Blob }) =>
     createElement("div", { "data-testid": "pdf-viewer", "data-size": String(source.size) }),
@@ -105,7 +107,7 @@ vi.mock("@/components/ai-elements/code-block.js", () => ({
     createElement("pre", { "data-testid": "code-block", "data-language": language ?? "" }, code),
 }));
 
-// eslint-disable-next-line import/first -- 必须在全部 mock 之后再引入被测组件。
+// eslint-disable-next-line import/first -- The component under test must be imported after all mocks.
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 // eslint-disable-next-line import/first
 import { WorkflowArtifactSidePane } from "@/app-shell/WorkflowArtifactSidePane.js";
@@ -160,7 +162,7 @@ function renderPane(
     locale?: "en-US" | "zh-CN";
     withBrowser?: boolean;
     withReveal?: boolean;
-    /** 缺席即不挂 PlatformProvider（与既有用例一致：没有宿主能力）。 */
+    /** When absent, no PlatformProvider is mounted (consistent with existing cases: no host capabilities). */
     platform?: Partial<IPlatformService>;
   } = {},
 ) {
@@ -196,7 +198,7 @@ beforeEach(() => {
   workflowRunArtifacts.mockResolvedValue({ artifacts: [record()] });
   workflowRunArtifactData.mockResolvedValue({ items: [], hasMore: false });
   workflowRunArtifactRead.mockResolvedValue(textChunk("bytes---", "application/pdf"));
-  // resolveTheme("system") 会问 matchMedia；jsdom 不带它。
+  // resolveTheme("system") consults matchMedia; jsdom does not ship one.
   (window as unknown as { matchMedia: (query: string) => unknown }).matchMedia = () => ({
     matches: false,
     addEventListener: () => {},
@@ -307,7 +309,7 @@ describe("WorkflowArtifactSidePane 正文分派", () => {
     expect(card.textContent).toContain("application/octet-stream");
     expect(card.textContent).toContain("out/x.bin");
     fireEvent.click(view.getByTestId("workflow-artifact-unsupported-reveal"));
-    // 「在工作区显示」拿到的是 workspacePath 拼出来的本机绝对路径。
+    // "Reveal in workspace" receives the local absolute path joined from workspacePath.
     expect(onRevealFileInTree).toHaveBeenCalledWith("/workspace/out/x.bin");
   });
 
@@ -362,7 +364,7 @@ describe("WorkflowArtifactSidePane html 卡", () => {
     await waitFor(() => expect(view.getByTestId("workflow-artifact-html-card")).toBeTruthy());
     fireEvent.click(view.getByTestId("workflow-artifact-open-in-browser"));
     expect(onOpenBrowserUrl).toHaveBeenCalledWith("file:///workspace/out/site.html");
-    // 卡上必须写明打开的是工作区那一份，而不是这一版被钉住的字节。
+    // The card must state that what opens is the workspace original, not this version's pinned bytes.
     expect(view.getByTestId("workflow-artifact-note").textContent).toContain("工作区");
   });
 
@@ -415,7 +417,7 @@ describe("WorkflowArtifactSidePane 版本步进器", () => {
     });
     const view = renderPane();
     await waitFor(() => expect(view.getByTestId("workflow-artifact-version-stepper")).toBeTruthy());
-    // 缺省落点是最新版（chip 从不带版本号）。
+    // The default landing point is the latest version (the chip never carries a version number).
     expect(view.getByTestId("workflow-artifact-version").textContent).toBe("第 3 版 / 共 3 版");
     expect(view.getByTestId("workflow-artifact-version-next").hasAttribute("disabled")).toBe(true);
 
@@ -427,7 +429,7 @@ describe("WorkflowArtifactSidePane 版本步进器", () => {
   });
 
   it("journal 读不到版本历史时不凭最新版号编造 1..n", async () => {
-    // 只有摘要（活投影）在场：步进器必须消失，而不是给出一批取不到字节的版本号。
+    // Only the summary (live projection) is present: the stepper must disappear instead of offering version numbers whose bytes cannot be fetched.
     workflowRunArtifacts.mockRejectedValue(new Error("fault.command.capabilityUnsupported"));
     snapshot = {
       workflowRuns: {
@@ -784,12 +786,12 @@ describe("WorkflowArtifactSidePane 作为文件打开", () => {
       expect(view.getByTestId("workflow-artifact-open-as-file-reveal")).toBeTruthy(),
     );
     const names = view.getAllByRole("menuitem").map((item) => item.textContent);
-    // 位置类动作排在 App 之后：先「在工作区显示」，再「复制绝对路径」。
+    // Location actions come after the apps: "reveal in workspace" first, then "copy absolute path".
     expect(names.slice(-2)).toEqual(["在工作区显示", "复制绝对路径"]);
 
     fireEvent.click(view.getByTestId("workflow-artifact-open-as-file-reveal"));
     expect(onRevealFileInTree).toHaveBeenCalledWith("/workspace/out/book.pdf");
-    // 显示位置不落副本。
+    // Revealing the location does not materialize a copy.
     expect(platform.materializeWorkflowArtifactFile).not.toHaveBeenCalled();
   });
 

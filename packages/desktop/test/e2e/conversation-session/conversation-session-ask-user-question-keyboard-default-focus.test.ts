@@ -28,12 +28,12 @@ describe("AskUserQuestion 默认无焦点键盘导航 E2E", () => {
     await clearAppData();
   });
 
-  // Q15: 弹窗打开无预选 → 鼠标点 Submit → 提交空答案
+  // Q15: dialog opens with no preselection → mouse-click Submit → submits an empty answer
   it("弹窗打开无预聚焦，鼠标点 Submit 提交空答案", async function () {
     this.timeout(180000);
 
-    // Bug 根因：该 case 转正后仍使用 legacy conversation harness，
-    // formal 证据无法确保操作的是当前 V4 pane。
+    // Bug root cause: after this case was promoted it still used the legacy conversation harness,
+    // so formal evidence could not guarantee the operations targeted the current V4 pane.
     await prepareV4ConversationE2E();
 
     const runId = Date.now();
@@ -47,14 +47,14 @@ describe("AskUserQuestion 默认无焦点键盘导航 E2E", () => {
     await waitForV4TimelineContaining(`${MARKER_EMPTY_SUBMIT}_${runId}`);
     await waitForToolCallBlockByToolName("AskUserQuestion", 60000);
 
-    // 确认弹窗出现且无选项高亮
+    // Confirm the dialog appears with no option highlighted
     await waitForElicitationVisible(Q1_SINGLE);
     await expectNoOptionPreSelected();
 
-    // 直接点 Submit
+    // Click Submit directly
     await clickPrimaryAction();
 
-    // 确认提交了空答案
+    // Confirm the empty answer was submitted
     await waitForUpstreamRequest(
       {
         includes: [`${MARKER_EMPTY_SUBMIT}_${runId}`, "toolu_e2e_adf_empty_submit"],
@@ -64,7 +64,7 @@ describe("AskUserQuestion 默认无焦点键盘导航 E2E", () => {
     );
   });
 
-  // Q18: 弹窗打开无预选 → Tab → 第一项聚焦 → Enter → 选中并推进
+  // Q18: dialog opens with no preselection → Tab → first item focused → Enter → selected and advanced
   it("无预聚焦时按 Tab 聚焦第一项，Enter 选中推进", async function () {
     this.timeout(180000);
 
@@ -82,22 +82,22 @@ describe("AskUserQuestion 默认无焦点键盘导航 E2E", () => {
     await waitForV4TimelineContaining(`${MARKER_TAB_ENTER}_${runId}`);
     await waitForToolCallBlockByToolName("AskUserQuestion", 60000);
 
-    // 确认无预选
+    // Confirm nothing is preselected
     await waitForElicitationVisible(Q1_SINGLE);
     await expectNoOptionPreSelected();
 
-    // Tab → 第一项聚焦
+    // Tab → first item focused
     await browser.keys("Tab");
     await expectActiveOption(Q1_OPT_A);
 
-    // Enter → 选中并推进到 Q2
+    // Enter → selected and advanced to Q2
     await browser.keys("Enter");
     await waitForElicitationPage("2 / 2", Q2_MULTI);
 
-    // Q2 也是无预选（切题后普通问答不预聚焦）。
+    // Q2 also has no preselection (after switching questions, ordinary Q&A does not pre-focus).
     await expectNoOptionPreSelected();
 
-    // 初始 ArrowDown 与 Tab 同样从卡片焦点启动，聚焦第一项但不选中。
+    // The initial ArrowDown, like Tab, starts from card focus: it focuses the first item without selecting it.
     await browser.keys("ArrowDown");
     await expectActiveOption(Q2_OPT_A);
     await expectOptionSelected(Q2_OPT_A, false);
@@ -110,7 +110,7 @@ describe("AskUserQuestion 默认无焦点键盘导航 E2E", () => {
     );
   });
 
-  // Q19: 弹窗打开无预选 → 直接 Enter → 跳过当前题推进
+  // Q19: dialog opens with no preselection → Enter directly → skip the current question and advance
   it("无预聚焦时直接按 Enter 跳过当前题推进", async function () {
     this.timeout(180000);
 
@@ -131,21 +131,21 @@ describe("AskUserQuestion 默认无焦点键盘导航 E2E", () => {
     await waitForElicitationVisible(Q1_SINGLE);
     await expectNoOptionPreSelected();
 
-    // 直接 Enter → 跳过 Q1
+    // Enter directly → skip Q1
     await browser.keys("Enter");
     await waitForElicitationPage("2 / 2", Q2_MULTI);
 
-    // Q22：后续题仍处于卡片初始焦点时，Escape 返回上一题。
+    // Q22: while a later question is still at initial card focus, Escape returns to the previous question.
     await expectNoOptionPreSelected();
     await browser.keys("Escape");
     await waitForElicitationPage("1 / 2", Q1_SINGLE);
     await expectNoOptionPreSelected();
 
-    // 再次直接 Enter 跳过 Q1，证明返回没有隐式写入第一项。
+    // Enter directly again to skip Q1, proving the return did not implicitly select the first item.
     await browser.keys("Enter");
     await waitForElicitationPage("2 / 2", Q2_MULTI);
 
-    // Tab → 选中 Q2 第一项 → Enter 提交
+    // Tab → select Q2's first item → Enter to submit
     await browser.keys("Tab");
     await expectActiveOption(Q2_OPT_A);
     await browser.keys("Enter");
@@ -159,7 +159,7 @@ describe("AskUserQuestion 默认无焦点键盘导航 E2E", () => {
     );
   });
 
-  // Q20: 多选题 Space 勾选/取消，Enter 确认
+  // Q20: multi-select Space to check/uncheck, Enter to confirm
   it("多选题 Space 勾选取消，Enter 确认提交", async function () {
     this.timeout(180000);
 
@@ -180,31 +180,31 @@ describe("AskUserQuestion 默认无焦点键盘导航 E2E", () => {
     await waitForElicitationVisible(Q2_MULTI);
     await expectNoOptionSelected();
 
-    // Tab 聚焦第一项
+    // Tab focuses the first item
     await browser.keys("Tab");
     await expectActiveOption(Q2_OPT_A);
 
-    // Space 勾选 Q2_OPT_A
+    // Space checks Q2_OPT_A
     await browser.keys(" ");
     await expectOptionChecked(Q2_OPT_A, true);
 
-    // ArrowDown 移到 Q2_OPT_B
+    // ArrowDown moves to Q2_OPT_B
     await browser.keys("ArrowDown");
-    // Space 勾选 Q2_OPT_B
+    // Space checks Q2_OPT_B
     await browser.keys(" ");
     await expectOptionChecked(Q2_OPT_B, true);
 
-    // ArrowDown 移到 Q2_OPT_C，Space 勾选
+    // ArrowDown moves to Q2_OPT_C, Space checks it
     await browser.keys("ArrowDown");
     await browser.keys(" ");
     await expectOptionChecked(Q2_OPT_C, true);
 
-    // ArrowUp 回到 Q2_OPT_B，Space 取消勾选
+    // ArrowUp back to Q2_OPT_B, Space unchecks it
     await browser.keys("ArrowUp");
     await browser.keys(" ");
     await expectOptionChecked(Q2_OPT_B, false);
 
-    // Enter 确认提交
+    // Enter confirms the submission
     await browser.keys("Enter");
 
     await waitForUpstreamRequest(
@@ -214,7 +214,7 @@ describe("AskUserQuestion 默认无焦点键盘导航 E2E", () => {
     );
   });
 
-  // Q22: 首题卡片初始焦点 → Escape → dismiss，并把 declined 结果回传 Agent
+  // Q22: first question at initial card focus → Escape → dismiss, and the declined result is returned to the Agent
   it("首题无选项聚焦时按 Escape 关闭整组问答", async function () {
     this.timeout(180000);
 
@@ -235,9 +235,10 @@ describe("AskUserQuestion 默认无焦点键盘导航 E2E", () => {
 
     await browser.keys("Escape");
     await waitForElicitationClosed();
-    // 修复原因：负向 1200ms 抓包计数依赖 artifact 写盘时机，单跑可能在请求已经
-    // 发出时仍读取旧文件而假绿。当前产品合同是 dismiss 关闭 UI，并把 declined
-    // tool_result 交给模型收口；用 case-local final fixture 对该请求做正向取证。
+    // Fix rationale: the negative 1200ms packet-capture count depended on artifact flush timing; in isolation the
+    // run could still read the old file after the request had already been sent, producing a false green. The current
+    // product contract is that dismiss closes the UI and hands the declined tool_result to the model to wrap up; use
+    // the case-local final fixture to positively evidence that request.
     await waitForUpstreamRequest(
       {
         includes: [
@@ -447,8 +448,8 @@ function getElicitationKeyboardSnapshot(): Promise<ElicitationKeyboardSnapshot> 
     const body = document.querySelector<HTMLElement>('[data-elicitation-dialog-body="true"]');
     const focused = document.activeElement as HTMLElement | null;
     const card = document.querySelector<HTMLElement>('[data-elicitation-dialog-card="true"]');
-    // 修复原因：roving tabindex 会在卡片聚焦时仍给第一项 tabindex=0；只有
-    // document.activeElement 才能证明选项获得了真实键盘焦点。
+    // Fix rationale: roving tabindex still gives the first item tabindex=0 while the card is focused; only
+    // document.activeElement can prove an option holds real keyboard focus.
     const activeOption = focused?.closest<HTMLElement>('button[role="option"],[role="checkbox"]');
     const pageText =
       normalizeText(body?.innerText)

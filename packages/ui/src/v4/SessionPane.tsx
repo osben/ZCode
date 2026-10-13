@@ -2,6 +2,7 @@ import { resolveSelectionSideInheritedModel } from "@/lib/selectionSideInherited
 import { useStartPlanRecommendation } from "@/hooks/useStartPlanRecommendation.js";
 import type { SessionCreateSource } from "@zcode/shared";
 import { reportSessionCreate } from "@/lib/sessionCreateTelemetry.js";
+import { reportAppTelemetryEvent } from "@/lib/appTelemetry.js";
 import { getLocalTtftObserver } from "@/v4/telemetry/localTtftObserver.js";
 import { BotGroupDeliveryProvider } from "@/v4/BotGroupDeliveryAction.js";
 /* oxlint-disable eslint(max-lines) -- SessionPane is the single-pane vertical command orchestration boundary (subscribe/send/stop/fork/edit/retry/queue/slash), at the same granularity as the old ChatView. HEAD already exceeds the limit (693 counted lines); splitting command groups would break the closure discipline around dispatchCommand/snapshotRef. */
@@ -182,6 +183,8 @@ import { WorkspaceHookPendingBanner } from "@/v4/WorkspaceHookPendingBanner.js";
 import { ConversationStatusPanel } from "@/v4/ConversationStatusPanel.js";
 import { SessionSubscriptionErrorPanel } from "@/v4/SessionSubscriptionErrorPanel.js";
 import { ConversationTimeline } from "@/v4/ConversationTimeline.js";
+import { ConversationPinnedBar, type PinnedConversationRow } from "@/v4/ConversationPinnedBar.js";
+import type { RowPinChangeHandler } from "@/v4/ConversationRowView.js";
 import { ConversationShareImportNotice } from "@/v4/ConversationShareImportNotice.js";
 import { ConversationShareConfirmationDock } from "@/v4/ConversationShareConfirmationDock.js";
 import { ConversationShareSuccessDock } from "@/v4/ConversationShareSuccessDock.js";
@@ -1232,6 +1235,8 @@ export function SessionPane({
   const timelineScrollToQueryRef = useRef<
     ((target: { unitIndex: number; rowId: number }) => void) | null
   >(null);
+  // Pinned-bar jump action: the timeline resolves the row's unit internally.
+  const timelineScrollToRowRef = useRef<((rowId: number) => void) | null>(null);
   const conversationLayoutContainerRef = useRef<HTMLDivElement>(null);
   const hasExternalSummaryPanelVariantControl = Boolean(onSummaryPanelVariantOverrideChange);
   const effectiveSummaryPanelVariantOverride = hasExternalSummaryPanelVariantControl
@@ -3932,6 +3937,64 @@ export function SessionPane({
     [dispatchCommand, sessionId],
   );
 
+  const handleRowPin = useCallback<RowPinChangeHandler>(
+    async (target, pinned) => {
+      const current = snapshotRef.current;
+      if (!sessionId || current === null) return false;
+      const ack = await dispatchCommand(
+        "setRowPinned",
+        { target, pinned },
+        sessionId,
+        current.revision,
+        current.logEpoch,
+      );
+      const accepted = ack.status === "accepted" || ack.status === "duplicate";
+      if (!accepted) {
+        logger.warn(`[v4-pane] 消息固定被拒绝: ${ack.status} ${ack.reasonCode ?? ""}`);
+      }
+      return accepted;
+    },
+    [dispatchCommand, sessionId],
+  );
+
+  // Pinned-bar actions must be stable references: the bar is a memoized leaf in the virtual timeline
+  // column and inline arrows would rerender it on every pane render (reactStableReferences contract).
+  const handlePinnedJump = useCallback((rowId: number) => {
+    timelineScrollToRowRef.current?.(rowId);
+  }, []);
+  const handlePinnedUnpin = useCallback(
+    (row: PinnedConversationRow) => {
+      if (!row.entityId) return;
+      // Same failure semantics as useRowPinToggle: a rejected dispatch is logged (never an unhandled
+      // rejection), and chip-based unpin reports the same message_pin telemetry as the row toolbar.
+      void Promise.resolve(handleRowPin({ rowId: row.rowId, entityId: row.entityId }, false)).then(
+        (accepted) => {
+          if (accepted && platform) {
+            void reportAppTelemetryEvent(
+              platform,
+              {
+                elementName: "message_pin",
+                eventRegion: "chat",
+                eventType: "ck",
+                eventExtraDetail: { pinned: "unpinned" },
+                ...(sessionId ? { talkId: sessionId } : {}),
+                messageId: row.entityId,
+              },
+              "SessionPane",
+            );
+          }
+        },
+        (error: unknown) => {
+          logger.warn("[v4-pane] chip 取消固定提交失败", {
+            error: error instanceof Error ? error.message : String(error),
+            messageId: row.entityId,
+          });
+        },
+      );
+    },
+    [handleRowPin, platform, sessionId],
+  );
+
   const handleDeleteQueueItem = useCallback(
     (queueItemId: string) => {
       const current = snapshotRef.current;
@@ -5250,7 +5313,9 @@ export function SessionPane({
   const composerNode = readOnly ? null : (
     <ConversationComposer
       key="conversation-composer"
-      voiceDictationEnabled={isDesktop}
+      // Web remote control gets the browser-native Web Speech engine (hidden where the API is
+      // missing); desktop keeps the Host whisper engine.
+      voiceDictationEnabled={isDesktop || compactForRemoteControl}
       // Snapshot still provides usage, routing, and runtime state; the toolbar reads mode/model only from the Composer Draft below.
       snapshot={snapshot}
       sessionId={sessionId}
@@ -5386,6 +5451,7 @@ export function SessionPane({
       !quotaBanner.dismissed &&
       (!projectedComposerError || quotaBanner.takesOverError || quotaBanner.state.blocksSubmit) ? (
         <ConversationQuotaBanner
+          key={`${snapshot?.sessionId ?? "session"}:${controlLastErrorKey ?? "quota-banner"}`}
           state={quotaBanner.state}
           onShown={quotaBanner.markShown}
           billingDiscountActive={billingDiscount.active}
@@ -5397,6 +5463,11 @@ export function SessionPane({
               : undefined
           }
           onDismiss={quotaBanner.dismiss}
+          autoContinueDefault={sharedSettings?.codingPlanLimitAutoContinueDefaultEnabled !== false}
+          autoContinueReady={sharedSettings !== null}
+          onAutoContinue={
+            quotaBanner.state.providerLimitedResetAt !== null ? handleResumeError : undefined
+          }
         />
       ) : null}
       {recoverableCommand ? (
@@ -5679,10 +5750,20 @@ export function SessionPane({
                 workspacePath={workspacePath}
                 workspaceIdentity={workspaceIdentity}
               >
+                {/* Display-only pin chips (docs/chat-message-pins.md): newest first, jump via the
+                    timeline row action, unpin reuses the same setRowPinned CAS as the row toolbars. */}
+                {!readOnly && !selectionSideChat && sessionId ? (
+                  <ConversationPinnedBar
+                    rows={timelineSnapshot?.rows.window ?? []}
+                    onJumpToRow={handlePinnedJump}
+                    onUnpin={handlePinnedUnpin}
+                  />
+                ) : null}
                 <ConversationTimeline
                   compactForRemoteControl={compactForRemoteControl}
                   scrollToBottomActionRef={timelineScrollToBottomRef}
                   scrollToQueryActionRef={timelineScrollToQueryRef}
+                  scrollToRowActionRef={timelineScrollToRowRef}
                   selectionPanelLayoutContainerRef={conversationLayoutContainerRef}
                   rows={timelineSnapshot?.rows.window ?? []}
                   pendingGuides={timelineSnapshot ? pendingGuideProjection?.pendingGuides : []}
@@ -5697,6 +5778,9 @@ export function SessionPane({
                     !readOnly && !selectionSideChat && sessionId
                       ? handleAssistantFeedback
                       : undefined
+                  }
+                  onPinChange={
+                    !readOnly && !selectionSideChat && sessionId ? handleRowPin : undefined
                   }
                   onEdit={editActionsEnabled ? handleEdit : undefined}
                   canLoadOlder={timelineSnapshot ? hasOlderRows(timelineSnapshot) : false}

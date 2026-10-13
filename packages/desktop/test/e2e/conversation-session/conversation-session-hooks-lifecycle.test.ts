@@ -59,7 +59,7 @@ import {
 const STOP_STEP = (index: number) => `${HOOKS_CASE_MARKERS.stopCap}_STEP_${index}`;
 async function startNewV4Draft() {
   await startEmptyV4Draft();
-  // Hook 用例不测试默认模型；每份新草稿显式选择，不能依赖旧 Recent 自动回填。
+  // Hook cases do not test the default model; each new draft selects explicitly and must not rely on old Recent auto-backfill.
   await selectUpstreamModel();
   await selectUpstreamThoughtLevel();
 }
@@ -72,10 +72,10 @@ describe("Hooks full-chain E2E", () => {
   before(async function () {
     this.timeout(120000);
     await installHooksLifecycleFixture();
-    // Hooks 详情断言验证中文 aria-label/摘要文案；locale 属于 case fixture，不能
-    // 依赖运行机系统语言，否则同一 Hook 证据会在英文环境下变成 "Hooks"。
+    // Hook detail assertions verify Chinese aria-label/summary text; locale is a case fixture and must not
+    // depend on the runner's system language, otherwise the same Hook evidence would become "Hooks" in an English environment.
     await seedSettings({ locale: "zh-CN", localePreference: "zh-CN" });
-    // 新隔离 profile 的三步引导会覆盖工作区；先完成真实 UI，再进入 Hook 验收。
+    // The new isolated profile's three-step onboarding overwrites the workspace; finish the real UI first, then enter Hook acceptance.
     await skipOccupationOnboardingIfPresent();
     await prepareV4ConversationE2E();
   });
@@ -94,9 +94,9 @@ describe("Hooks full-chain E2E", () => {
     await sendV4Prompt(prompt);
     await waitForEmptyV4Composer("Full-chain Hooks prompt did not clear the composer");
     await waitForV4TimelineContaining(HOOKS_CASE_MARKERS.fullChain);
-    // Bug 根因：Hooks 验收误把 V4 虚拟时间线里的折叠 tool card 当作运行时完成
-    // barrier；card 可能已滑出窗口，但后续 provider request 与 trace 才是本 case
-    // 的权威证据。避免用无关的 UI 可见性阻塞 Hooks 全链断言。
+    // Bug root cause: Hook acceptance mistook a collapsed tool card in the V4 virtual timeline for the runtime completion
+    // barrier; the card may have slid out of the window, but the subsequent provider request and trace are this case's
+    // authoritative evidence. Avoid blocking the Hooks full-chain assertions on irrelevant UI visibility.
     await waitForV4TimelineContaining(HOOKS_FINAL_MARKERS.fullChain);
     await waitForIdle("Full-chain Hooks case did not return to idle");
 
@@ -161,9 +161,9 @@ describe("Hooks full-chain E2E", () => {
     await sendV4Prompt(prompt);
     await waitForEmptyV4Composer("Early-failure Hooks prompt did not clear the composer");
     await waitForV4TimelineContaining(HOOKS_CASE_MARKERS.earlyFailures);
-    // Bug 根因：final marker 同时写在用户 prompt 里，按整条 timeline 查文本会在
-    // provider 请求尚未开始时误判完成。先用 capture 证明主请求已完成，再只在
-    // assistant row 中等待最终回复，避免 shard 负载下提前进入 trace 断言。
+    // Bug root cause: the final marker is also written into the user prompt, so searching the whole timeline for the text
+    // could falsely report completion before the provider request even started. First prove via capture that the main
+    // request completed, then wait for the final reply only in assistant rows, so shard load cannot push trace assertions too early.
     await waitForUpstreamNetworkCapture(HOOKS_CASE_MARKERS.earlyFailures);
     await waitForV4AssistantMessageContaining(HOOKS_FINAL_MARKERS.earlyFailures);
     await waitForIdle("Early-failure Hooks case did not return to idle");
@@ -355,7 +355,7 @@ describe("Hooks full-chain E2E", () => {
       },
     );
 
-    // 截图只作为人工复盘 artifact；通过判定仍依赖上面的稳定 DOM 文本断言。
+    // The screenshot is only a manual-review artifact; pass/fail still relies on the stable DOM text assertions above.
     await mkdir(HOOK_BLOCK_SCREENSHOT_DIR, { recursive: true });
     await browser.saveScreenshot(join(HOOK_BLOCK_SCREENSHOT_DIR, "HK-UP-01-chat-error.png"));
   });
@@ -400,21 +400,21 @@ describe("Hooks full-chain E2E", () => {
   });
 
   it("HK17: keeps the SessionStart summary off a first-action /compact maintenance turn", async function () {
-    // Bug 根因：Runtime 的 runSessionStartHooks 先于 /compact 输入解析执行；首条
-    // 输入即 /compact 时 SessionStart Hook 真实执行且事件携带 compact turnId，投影
-    // 层把摘要挂到了 model-only 维护 turn 上，UI 因此在 compact marker 轮露出
-    // Hook 图标。回归断言三层：compact 轮无图标、摘要归位下一条真实 turn、真实
-    // turn 的详情里能看到 SessionStart。
+    // Bug root cause: the Runtime's runSessionStartHooks executes before /compact input parsing; when the first
+    // input is /compact, the SessionStart Hook really executes and its event carries the compact turnId, the projection
+    // layer attached the summary to the model-only maintenance turn, and the UI therefore showed the Hook icon in the
+    // compact marker round. The regression asserts three layers: no icon in the compact round, the summary attached to
+    // the next real turn, and SessionStart visible in that real turn's details.
     this.timeout(180000);
     await startNewV4Draft();
 
     await sendV4Prompt("/compact");
-    // 新会话历史为空时 manual compact 走 noop（上下文已是最新，无需压缩）；
-    // 维护 turn 语义不变：TurnStarted 仍为 model-only，SessionStart Hook 仍已执行。
+    // With empty history a manual compact is a noop (context is already current, nothing to compress);
+    // maintenance turn semantics unchanged: TurnStarted stays model-only and the SessionStart Hook still executed.
     await waitForCompactMarkerStatuses(["completed", "skipped"], "manual");
     await waitForIdle("Compact-first Hooks case did not return to idle");
 
-    // 维护 turn 不渲染 Hook Anchor：compact marker 所在 turn 内没有任何 Hook 入口。
+    // The maintenance turn renders no Hook Anchor: the turn containing the compact marker has no Hook entry.
     const compactTurnHasHookTrigger = await browser.execute((triggerPrefix: string) => {
       const marker = document.querySelector<HTMLElement>(
         '[data-row-kind="timelineMarker"][data-marker-type="compact"]',
@@ -424,14 +424,14 @@ describe("Hooks full-chain E2E", () => {
     }, TID_V4_HOOK_DETAILS_TRIGGER);
     expect(compactTurnHasHookTrigger).toBe(false);
 
-    // 下一条真实 prompt 才承载 SessionStart 摘要。
+    // Only the next real prompt carries the SessionStart summary.
     const followUpMarker = "E2E_HOOKS_COMPACT_FIRST_FOLLOW_UP_OK";
     await sendV4Prompt(`Reply with exactly ${followUpMarker} and nothing else.`);
     await waitForV4TimelineContaining(followUpMarker);
     await waitForIdle("Follow-up prompt did not return to idle");
 
-    // 虚拟时间线下用 Hook 入口自身做锚：存在的 Hook trigger 必须落在含 marker 文本
-    // 的真实 turn，而不是 compact 维护 turn。
+    // Under the virtual timeline, anchor on the Hook entry itself: any Hook trigger present must land in the real
+    // turn containing the marker text, not the compact maintenance turn.
     const readHookTriggerOwner = () =>
       browser.execute(
         (marker: string, triggerPrefix: string) => {
@@ -464,8 +464,8 @@ describe("Hooks full-chain E2E", () => {
     );
 
     await assertHookTurnDetails(followUpMarker, {
-      // follow-up 是纯文本回复，没有 tool Hook；SessionStart（compact 前后各一次）
-      // 与 UserPromptSubmit、Stop 才是本 turn 的权威摘要内容。
+      // The follow-up is a plain text reply with no tool Hook; SessionStart (once before and once after compact)
+      // plus UserPromptSubmit and Stop are the authoritative summary content for this turn.
       expectedEvents: ["SessionStart", "UserPromptSubmit", "Stop"],
       expectedRowCount: 5,
       expectedCountByEvent: { SessionStart: 2, UserPromptSubmit: 2, Stop: 1 },
@@ -558,7 +558,7 @@ async function assertHookTurnDetails(
   const triggerTestId = await readTriggerTestId();
   if (!triggerTestId) throw new Error("Missing full-chain Hook details trigger");
   const triggerSelector = `[data-testid="${triggerTestId}"]`;
-  // 冲突合并曾同时渲染普通 action bar 与 Hook-only 兜底栏；仅取首个入口会漏掉回归。
+  // Conflict merging once rendered both the ordinary action bar and the Hook-only fallback bar; taking only the first entry would miss the regression.
   expect(await $$(triggerSelector).length).toBe(1);
   const trigger = await $(triggerSelector);
   await trigger.scrollIntoView({ block: "center", inline: "nearest" });
@@ -600,8 +600,8 @@ async function assertHookTurnDetails(
   }
   const listSelector = `${detailsSelector} ul`;
   if (options.skipOverflowAssertions === true) {
-    // 行数不足以溢出（如 HK17 的 5 行摘要）时跳过 HK15 遗留的滚动视觉断言，
-    // 只保留视口边界检查。
+    // When the row count is too small to overflow (e.g. HK17's 5-row summary), skip the HK15 scroll visual assertion
+    // and keep only the viewport bounds check.
     const bounds = await browser.execute((selector) => {
       const content = document.querySelector<HTMLElement>(selector);
       if (!content) throw new Error("Missing Hook details content");
@@ -835,13 +835,13 @@ async function waitForIdle(timeoutMsg: string): Promise<void> {
 async function waitForEmptyV4Composer(timeoutMsg: string): Promise<void> {
   try {
     await browser.waitUntil(async () => (await getV4ComposerText()) === "", {
-      // 该 fixture 的单个 Hook 自身允许 10 秒；不能用同样的总时限判定跨进程 admission 失败。
-      // 仍等待真实清空，不 sleep，也不在超时后替产品清除文本。
+      // A single Hook in this fixture is itself allowed 10 seconds; the same total limit must not be used to judge cross-process admission failure.
+      // Still wait for a real clear — no sleep, and never clear the text on behalf of the product after a timeout.
       timeout: 60000,
       timeoutMsg,
     });
   } catch (error) {
-    // 首发失败不是 Hook 失败；附上产品错误详情，避免只记录“草稿未清空”掩盖前置错误。
+    // A failed first send is not a Hook failure; attach the product error details so the bare "draft not cleared" record does not mask the upstream error.
     const details = await $(sel(TID_CHAT_ERROR_DETAILS_BUTTON));
     if (await details.isExisting()) {
       await details.click();

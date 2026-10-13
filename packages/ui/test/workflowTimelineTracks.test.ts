@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
-// 带与轨道在卡上的画法（docs/dynamic-workflow/presentation.md「Drawing the timeline」的「Bands on the card」）：
-// 主线走最下面一行、分支叠在它上面、站头搬到站台行，分叉与汇合是曲线。没有带的时间线一像素不动。
+// How bands and tracks are drawn on the card (docs/dynamic-workflow/presentation.md, "Drawing the timeline", section "Bands on the card"):
+// the main line takes the bottom row, branches stack above it, station captions move to the platform row, and forks/merges are curves. A timeline without bands does not move a single pixel.
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -18,7 +18,7 @@ import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 
 interface GraphSpec {
   names: readonly string[];
-  /** 站下标 → 与它并行的站下标。 */
+  /** Station index -> indexes of stations running alongside it. */
   alongside?: Record<number, readonly number[]>;
   edges: readonly (readonly [number, number])[];
 }
@@ -56,7 +56,7 @@ function graphOf({ alongside = {}, edges, names }: GraphSpec): WorkflowCausality
   } as WorkflowCausalityGraphData;
 }
 
-/** 测试台架：A ∥ B → C，B 与 A 并行；边 A → B、B → C。 */
+/** Test fixture: A ∥ B → C, B alongside A; edges A → B, B → C. */
 const TESTFIELD: GraphSpec = {
   alongside: { 1: [0] },
   edges: [
@@ -66,7 +66,7 @@ const TESTFIELD: GraphSpec = {
   names: ["A", "B", "C"],
 };
 
-/** 同一条带，前面多一个前驱 P。 */
+/** The same band with one extra predecessor P in front. */
 const WITH_PRED: GraphSpec = {
   alongside: { 2: [1] },
   edges: [
@@ -77,7 +77,7 @@ const WITH_PRED: GraphSpec = {
   names: ["P", "A", "B", "C"],
 };
 
-/** 带 [[A], [B, C]]，前有 P、后有 J；B → C 里再来一条回边 C → B（同一条轨道上的弧）。 */
+/** Band [[A], [B, C]] with P before and J after; B → C plus a back edge C → B (an arc on the same track). */
 const INNER_LOOP: GraphSpec = {
   alongside: { 2: [1], 3: [1] },
   edges: [
@@ -105,7 +105,7 @@ function renderTimeline(model: ReturnType<typeof buildWorkflowTimeline>) {
   );
 }
 
-/** 站 `running` 的 run：前面的站都结算过，最后一站在跑。 */
+/** A run with station `running`: all earlier stations settled, the last one running. */
 function runWith(names: readonly string[], runningIndex: number): WorkflowRunState {
   return {
     runId: "dwfrun-1",
@@ -154,7 +154,7 @@ describe("timelineLayout", () => {
 
   it("with a band: branch rows stack above the main line, then a 24px platform row", () => {
     const model = modelOf(TESTFIELD);
-    // 顶上一层空没有弧 → 6px 呼吸；分支行 24；主线的空 0；主线行 24；站台行 24；再 8px 到药丸。
+    // The top layer of air has no arcs -> 6px of breathing room; branch row 24; the main line's air 0; main row 24; platform row 24; then 8px to the pills.
     expect(timelineLayout(model.arcs, model.bands)).toEqual({
       banded: true,
       capY: 66,
@@ -178,13 +178,13 @@ describe("WorkflowTimeline with bands", () => {
     const view = renderTimeline(model);
     const layout = timelineLayout(model.arcs, model.bands);
 
-    // 灯：A 与 C 在主线行，B 在分支行；x = 站左缘 + 17 − 5，整条轨道右移 12（带从站 0 起）。
+    // Lamps: A and C on the main row, B on the branch row; x = station left edge + 17 − 5, the whole track shifted right by 12 (the band starts at station 0).
     const lamps = [...view.container.querySelectorAll("[data-lamp]")] as HTMLElement[];
     expect(lamps.map((lamp) => lamp.getAttribute("data-lamp-track"))).toEqual(["0", "1", "0"]);
     expect(lamps.map((lamp) => lamp.style.top)).toEqual(["37px", "13px", "37px"]);
     expect(lamps.map((lamp) => lamp.style.left)).toEqual(["24px", "216px", "408px"]);
 
-    // 站头：全部落在站台行上，左缘 = 站左缘 + 12，宽 168 − 12。
+    // Station captions: all on the platform row, left edge = station left edge + 12, width 168 − 12.
     const stations = view.getAllByTestId("workflow-timeline-station") as HTMLElement[];
     expect(stations.map((station) => station.getAttribute("data-station-track"))).toEqual([
       "0",
@@ -196,7 +196,7 @@ describe("WorkflowTimeline with bands", () => {
     expect(stations.map((station) => station.style.width)).toEqual(["156px", "156px", "156px"]);
     expect(stations.map((station) => station.textContent)).toEqual(["A", "B", "C"]);
 
-    // 引线只给分支轨道的站：主线的灯就在自己的名字正上方，不必再连一条。
+    // Leader lines go only to branch-track stations: a main-line lamp sits directly above its own name, so no leader is needed.
     const leaders = view.getAllByTestId("workflow-timeline-leader");
     expect(leaders).toHaveLength(1);
     expect(leaders[0]!.getAttribute("data-leader-station")).toBe("1");
@@ -208,7 +208,7 @@ describe("WorkflowTimeline with bands", () => {
   it("A → C rides the main row through fork and merge; B merges with a curve; A → B is not a rail", () => {
     const view = renderTimeline(modelOf(TESTFIELD));
     const rails = railsOf(view);
-    // 带没有前驱：主线先是一小截尾巴，从 forkX − 4 一直到首站灯前 8px。
+    // The band has no predecessor: the main line starts as a small tail, from forkX − 4 up to 8px before the first station's lamp.
     expect(rails).toContainEqual({
       d: "M0,42 H21",
       from: null,
@@ -216,7 +216,7 @@ describe("WorkflowTimeline with bands", () => {
       kind: "tail",
       to: "0",
     });
-    // 分支轨道从同一个分叉点升起来，两段 8px 的四分之一圆。
+    // The branch track rises from the same fork point via two 8px quarter circles.
     expect(rails).toContainEqual({
       d: "M4,42 Q12,42 12,34 V26 Q12,18 20,18 H213",
       from: null,
@@ -224,7 +224,7 @@ describe("WorkflowTimeline with bands", () => {
       kind: "fork",
       to: "1",
     });
-    // A → C 是主线上一条直线，横穿汇合点（mergeX = colX(2) − 10 = 386）。
+    // A → C is a straight line on the main row, crossing the merge point (mergeX = colX(2) − 10 = 386).
     expect(rails).toContainEqual({
       d: "M37,42 H405",
       from: "0",
@@ -232,7 +232,7 @@ describe("WorkflowTimeline with bands", () => {
       kind: null,
       to: "2",
     });
-    // B → C 是汇合曲线：横到 xm − 8，落回主线。
+    // B → C is the merge curve: run horizontally to xm − 8, then land back on the main row.
     expect(rails).toContainEqual({
       d: "M229,18 H378 Q386,18 386,26 V34 Q386,42 394,42",
       from: "1",
@@ -240,7 +240,7 @@ describe("WorkflowTimeline with bands", () => {
       kind: "merge",
       to: "2",
     });
-    // A → B 被分叉吃掉了（控制经过了两条轨道，分叉已经说过）；双线段不画在卡上。
+    // A → B is swallowed by the fork (it would cross the two tracks, which the fork already covers); twin segments are not drawn on the card.
     expect(rails.some((rail) => rail.from === "0" && rail.to === "1")).toBe(false);
     expect(rails).toHaveLength(4);
   });
@@ -252,12 +252,12 @@ describe("WorkflowTimeline with bands", () => {
     expect(box.style.width).toBe(`${timelineWidth(3, 12)}px`);
     expect(box.style.width).toBe("564px");
     expect(box.style.height).toBe(`${timelineHeight(model)}px`);
-    // 站台行的底 + 8 是药丸的顶；高度 = 药丸顶 + 最高的一列 + 8。
+    // Platform row bottom + 8 is the pills top; height = pills top + tallest column + 8.
     const pills = view.getAllByTestId("workflow-timeline-pills") as HTMLElement[];
     expect(pills.map((column) => column.style.top)).toEqual(["86px", "86px", "86px"]);
     expect(pills.map((column) => column.style.left)).toEqual(["12px", "204px", "396px"]);
     expect(timelineHeight(model)).toBe(86 + 32 + 8);
-    // 收起的运行卡把药丸清空（`WorkflowRunDigest`），轨道与站台行留着：高度正好是药丸的顶 + 8。
+    // A collapsed run card empties the pills (`WorkflowRunDigest`) while keeping the tracks and platform row: the height is exactly the pills top + 8.
     const collapsed = { ...model, stations: model.stations.map((s) => ({ ...s, pills: [] })) };
     expect(timelineHeight(collapsed)).toBe(86 + 8);
   });
@@ -268,7 +268,7 @@ describe("WorkflowTimeline with bands", () => {
     const view = renderTimeline(model);
     expect(timelineLayout(model.arcs, model.bands).inset).toBe(0);
     const rails = railsOf(view);
-    // P → B：分叉曲线，从 colX(1) − 16 = 176 起，墨随这条段自己。
+    // P → B: the fork curve, starting at colX(1) − 16 = 176, with the ink tracking this segment itself.
     expect(rails).toContainEqual({
       d: "M176,42 Q184,42 184,34 V26 Q184,18 192,18 H393",
       from: "0",
@@ -276,7 +276,7 @@ describe("WorkflowTimeline with bands", () => {
       kind: "fork",
       to: "2",
     });
-    // P → A 与 A → C 都是主线上的直线；主线因此穿过分叉点与汇合点。
+    // P → A and A → C are both straight lines on the main row; the main line therefore passes through the fork and merge points.
     expect(rails).toContainEqual({
       d: "M25,42 H201",
       from: "0",
@@ -291,7 +291,7 @@ describe("WorkflowTimeline with bands", () => {
       kind: null,
       to: "3",
     });
-    // 没有尾巴、没有残段：两头都有站。
+    // No tail, no stub: both ends have stations.
     expect(rails.map((rail) => rail.kind)).not.toContain("tail");
     expect(rails.map((rail) => rail.kind)).not.toContain("stub");
   });
@@ -305,8 +305,9 @@ describe("WorkflowTimeline with bands", () => {
       ["0", "2", null],
       ["1", "2", "merge"],
     ]);
-    // 行进的段在同一条路径上叠一条亮着的光（不动）：渐变描边，渐变沿这一段的首尾两点铺，
-    // 在灯那一头（终点）满色。渐变的 id 各不相同，且都在这张 SVG 里。
+    // A marching segment overlays a lit glow on the same path (static): a gradient stroke, laid out
+    // along the segment's start and end points, at full color on the lamp side (the end). Gradient
+    // ids are distinct from one another, and all live in this SVG.
     const lights = view.container.querySelectorAll(
       "[data-testid='workflow-timeline-rail'] path.wf-lit",
     );
@@ -332,7 +333,7 @@ describe("WorkflowTimeline with bands", () => {
   it("a rail piece's start and end are the first and last points of its path", () => {
     const model = modelOf(TESTFIELD, runWith(TESTFIELD.names, 2));
     for (const piece of timelineRailPieces(model, timelineLayout(model.arcs, model.bands))) {
-      // 沿着 M / H / V / Q 走一遍（轨道段只用这四个命令），落点就是终点。
+      // Walk the M / H / V / Q commands once (rail segments use only these four); the landing point is the end.
       const tokens = piece.d
         .replace(/([MHVQ])/g, " $1 ")
         .trim()
@@ -367,8 +368,10 @@ describe("WorkflowTimeline with bands", () => {
     const arc = view.getByTestId("workflow-timeline-arc");
     expect(arc.getAttribute("data-arc-from")).toBe("2");
     expect(arc.getAttribute("data-arc-to")).toBe("0");
-    // 源在带外 → 从 C 的灯那一行（主线，58）起飞，7px 之上；车道在最上面那层空里（ly = 34 − 26 = 8）；
-    // 目标是带 → 落在分叉点 x = 4 上，主线之上 4px——竖段一路穿过分支行，而不是停在它边上。
+    // Source outside the band -> takes off from C's lamp row (the main row, 58), 7px above it; the
+    // lane is in the topmost layer of air (ly = 34 − 26 = 8); the target is a band -> lands on the
+    // fork point x = 4, 4px above the main row — the vertical segment passes straight through the
+    // branch row instead of stopping beside it.
     expect(arc.querySelector("path")!.getAttribute("d")).toBe(
       "M413,51 V16 Q413,8 405,8 H12 Q4,8 4,16 V54",
     );
@@ -377,8 +380,9 @@ describe("WorkflowTimeline with bands", () => {
   });
 
   it("an arc inside one track stays in that track's air, lamp to lamp", () => {
-    // 带 [[1], [2, 3]]：3 → 2 是同一条轨道上的回边，与带级的弧同住最上面那层空（R = 2），
-    // 但它两端都是灯——认错了就会画成整条带的自环。
+    // Band [[1], [2, 3]]: 3 → 2 is a back edge on the same track, sharing the topmost layer of air
+    // with the band-level arc (R = 2), but both of its ends are lamps — misidentifying it would
+    // draw a self-loop for the whole band.
     const model = modelOf(INNER_LOOP);
     expect(model.bands[0]!.tracks.map((track) => track.stations)).toEqual([[1], [2, 3]]);
     expect(model.arcs).toEqual([{ air: 1, from: 3, ink: "faint", lane: 0, to: 2 }]);
@@ -408,7 +412,7 @@ describe("WorkflowTimeline without bands", () => {
     ]);
     expect(view.queryAllByTestId("workflow-timeline-leader")).toHaveLength(0);
     const stations = view.getAllByTestId("workflow-timeline-station") as HTMLElement[];
-    // 站头还排在轨道行里：没有绝对定位，也没有轨道号。
+    // Station captions still sit in the track row: no absolute positioning and no track number.
     expect(stations.map((station) => station.getAttribute("data-station-track"))).toEqual([
       null,
       null,
@@ -423,7 +427,7 @@ describe("WorkflowTimeline without bands", () => {
   });
 });
 
-// ── 边檐：带压扁之后，并行的两站之间是一条双线段 ─────────────────────────────
+// ── Ledge: after the band collapses, the two parallel stations are joined by a twin segment ─────────────────────────────
 const LEDGE_SPEC: GraphSpec = {
   alongside: { 1: [0] },
   edges: [0, 1, 2, 3, 4, 5, 6].map((i) => [i, i + 1] as const),
@@ -480,14 +484,14 @@ describe("WorkflowTimeline ledge with a band", () => {
     const ledge = view.getByTestId("workflow-timeline-ledge-left");
     const lamps = [...ledge.querySelectorAll("[data-testid='workflow-timeline-ledge-lamp']")];
     expect(lamps.map((lamp) => lamp.getAttribute("data-station-index"))).toEqual(["0", "1", "2"]);
-    // A 与 B 之间是双线段；B 与 C 之间是汇合，画成一条普通的补线。
+    // A-B is a twin segment; B-C is a merge, drawn as an ordinary patch line.
     const segments = [...ledge.querySelectorAll("[data-ledge-ink]")];
     expect(segments.map((segment) => segment.getAttribute("data-ledge-twin"))).toEqual([
       "true",
       null,
       null,
     ]);
-    // 遮罩的轨道带一直盖到站台行的底（86 − 8 = 78），否则檐旁的名字会被硬切。
+    // The masked track band extends down to the platform row's bottom (86 − 8 = 78), otherwise the names beside the ledge get hard-cut.
     expect(view.getByTestId("workflow-timeline-scroller").getAttribute("style")).toContain(
       "mask-position: 0 0, 0 78px",
     );

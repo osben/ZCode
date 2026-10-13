@@ -95,6 +95,7 @@ import { readAssistantFeedback } from "@/v4/ConversationRowView.js";
 import type {
   AssistantFeedbackHandler,
   EditWorkspaceRewindAvailability,
+  RowPinChangeHandler,
 } from "@/v4/ConversationRowView.js";
 import {
   isConversationReasoningRowVisible,
@@ -126,6 +127,8 @@ interface ConversationTurnGroupProps {
   onFork?: (target: ConversationRowTarget) => void;
   onRetry?: (target: ConversationRowTarget) => void;
   onFeedbackChange?: AssistantFeedbackHandler;
+  /** Display-only pin bookmark toggle (setRowPinned); threaded like onEdit so user rows can unpin. */
+  onPinChange?: RowPinChangeHandler;
   onEdit?: (
     target: ConversationRowTarget,
     newText: string,
@@ -779,6 +782,7 @@ function ConversationWorkSegmentFlow({
   onFork,
   onRetry,
   onEdit,
+  onPinChange,
   editWorkspaceRewindAvailability,
   assistantCopyText,
   assistantPreviewCards,
@@ -798,6 +802,7 @@ function ConversationWorkSegmentFlow({
   onFork?: (target: ConversationRowTarget) => void;
   onRetry?: (target: ConversationRowTarget) => void;
   onEdit?: ConversationTurnGroupProps["onEdit"];
+  onPinChange?: RowPinChangeHandler;
   editWorkspaceRewindAvailability: EditWorkspaceRewindAvailability;
   assistantCopyText?: string;
   assistantPreviewCards: AssistantPreviewCard[];
@@ -850,6 +855,7 @@ function ConversationWorkSegmentFlow({
               row={item.row}
               context={context}
               onEdit={item.row.actions?.canEdit === true ? onEdit : undefined}
+              onPinChange={onPinChange}
               editWorkspaceRewindAvailability={editWorkspaceRewindAvailability}
             />
           );
@@ -958,6 +964,7 @@ function ConversationTurnFlow({
   onFork,
   onRetry,
   onEdit,
+  onPinChange,
   editWorkspaceRewindAvailability,
   assistantCopyText,
   assistantCodeCommentCards,
@@ -974,6 +981,7 @@ function ConversationTurnFlow({
   onFork?: (target: ConversationRowTarget) => void;
   onRetry?: (target: ConversationRowTarget) => void;
   onEdit?: ConversationTurnGroupProps["onEdit"];
+  onPinChange?: RowPinChangeHandler;
   editWorkspaceRewindAvailability: EditWorkspaceRewindAvailability;
   assistantCopyText?: string;
   assistantCodeCommentCards: AssistantCodeCommentCard[];
@@ -1079,6 +1087,7 @@ function ConversationTurnFlow({
           onFork={onFork}
           onRetry={onRetry}
           onEdit={onEdit}
+          onPinChange={onPinChange}
           editWorkspaceRewindAvailability={editWorkspaceRewindAvailability}
           assistantCopyText={assistantCopyText}
           assistantPreviewCards={assistantPreviewCards}
@@ -1317,6 +1326,7 @@ function ConversationTurnGroupImpl({
   onFork,
   onRetry,
   onFeedbackChange,
+  onPinChange,
   onEdit,
   shareSelection,
 }: ConversationTurnGroupProps) {
@@ -1637,6 +1647,7 @@ function ConversationTurnGroupImpl({
                       row={row}
                       context={context}
                       onEdit={row.actions?.canEdit === true ? onEdit : undefined}
+                      onPinChange={onPinChange}
                       editWorkspaceRewindAvailability={editWorkspaceRewindAvailability}
                     />
                   </div>
@@ -1646,6 +1657,7 @@ function ConversationTurnGroupImpl({
                     row={row}
                     context={context}
                     onEdit={row.actions?.canEdit === true ? onEdit : undefined}
+                    onPinChange={onPinChange}
                     editWorkspaceRewindAvailability={editWorkspaceRewindAvailability}
                   />
                 ),
@@ -1675,6 +1687,7 @@ function ConversationTurnGroupImpl({
               onFork={canForkLatestAssistant ? onFork : undefined}
               onRetry={onRetry}
               onEdit={onEdit}
+              onPinChange={onPinChange}
               editWorkspaceRewindAvailability={editWorkspaceRewindAvailability}
               shareSelectionToggle={shareSelectionToggle}
               shareSelectionRowId={shareSelectionRows[0]?.rowId}
@@ -1737,16 +1750,20 @@ function ConversationTurnGroupImpl({
               createdAt={latestAssistantTextRow.createdAt}
               compactForRemoteControl={context.compactForRemoteControl}
               feedback={readAssistantFeedback(latestAssistantTextRow)}
+              pinnedAt={latestAssistantTextRow.pinnedAt}
               sessionId={context.sessionId}
               onFork={canForkLatestAssistant ? onFork : undefined}
               onRetry={canRetryLatestAssistant ? onRetry : undefined}
               onFeedbackChange={onFeedbackChange}
+              onPinChange={onPinChange}
               hookInvocations={unit.hookInvocations}
               turnId={unit.turnId}
               sourceCommandIds={deliverySourceCommandIds}
               className={cn(
                 "flex items-center gap-1",
-                context.compactForRemoteControl
+                // A pinned turn keeps the toolbar visible so the pin state stays discoverable and
+                // unpin stays reachable without hover (same rule as the inline assistant toolbar).
+                context.compactForRemoteControl || latestAssistantTextRow.pinnedAt !== undefined
                   ? "opacity-100"
                   : "opacity-0 transition-opacity group-hover/assistant-turn:opacity-100 focus-within:opacity-100 has-[[data-bot-group-delivery]]:opacity-100",
               )}
@@ -1805,6 +1822,7 @@ function ConversationTurnGroupImpl({
           apiRetry={apiRetry}
           context={assistantRowContext}
           onEdit={onEdit}
+          onPinChange={onPinChange}
           editWorkspaceRewindAvailability={editWorkspaceRewindAvailability}
           shareSelectionToggle={shareSelectionToggle}
           shareSelectionRowId={shareSelectionRows[0]?.rowId}

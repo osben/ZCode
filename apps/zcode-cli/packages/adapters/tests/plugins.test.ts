@@ -466,7 +466,7 @@ describe("NodePluginAdapter", () => {
     const currentRoot = join(pluginRoot, "0.4.1");
 
     try {
-      // 真实升级现场会保留旧目录，bundled partition 必须继续只认当前发布版本。
+      // In a real upgrade the old directory is kept, so the bundled partition must keep trusting only the currently released version.
       await writePluginManifest(staleRoot, {
         name: "browser-use",
         version: "0.2.1",
@@ -681,8 +681,9 @@ describe("NodePluginAdapter", () => {
 
       const known = ensureDefaultPluginMarketplaces(storageRoot);
 
-      // 默认市场现在有两个：claude-plugins-official（已有记录不被覆盖）+ 唯一 ZCode
-      // 官方市场 zcode-plugins-official（缺失时补种）。
+      // There are now two default marketplaces: claude-plugins-official (existing records not
+      // overwritten) + the sole ZCode official marketplace zcode-plugins-official
+      // (re-seeded when missing).
       expect(known).toHaveLength(2);
       const claude = known.find((record) => record.id === "claude-plugins-official");
       expect(claude).toMatchObject({
@@ -964,7 +965,7 @@ describe("NodePluginAdapter", () => {
           skillCount: fixture.skillCount,
           skillRootCount: 1,
         });
-        // 权威 components 随 list 下发：技能名应齐全且与 skillCount 一致（修复「只有数量没有名称」）。
+        // Authoritative components ship with list: skill names should be complete and match skillCount (fixes "counts without names").
         const skillNames = componentNames(plugin?.components ?? [], "skill");
         expect(skillNames).toHaveLength(fixture.skillCount);
         expect(skillNames).toContain(`${fixture.name}-skill-1`);
@@ -1009,8 +1010,10 @@ describe("NodePluginAdapter", () => {
   });
 
   it("still projects authoritative skill component names for a DISABLED plugin", async () => {
-    // 核心回归：停用插件过去走 emptyComponents() 使 skillCount=0，UI join 也拿不到名称，
-    // 导致详情弹窗整个技能分组消失。现在 components 由插件根目录权威枚举，与启用态无关。
+    // Core regression: disabling a plugin used to go through emptyComponents() making
+    // skillCount=0, and the UI join lost the names, so the detail dialog's whole skill group
+    // disappeared. Now components are enumerated authoritatively from the plugin root
+    // directory, independent of enabled state.
     const dir = await mkdtemp(join(tmpdir(), "zcode-plugin-disabled-components-"));
     const storageRoot = join(dir, "storage");
     const marketplaceRoot = join(dir, "marketplace");
@@ -1045,7 +1048,7 @@ describe("NodePluginAdapter", () => {
         config: {
           dirs: [],
           enabled: true,
-          // 显式停用该插件。
+          // Explicitly disable this plugin.
           enabledPlugins: { "superpowers@claude-plugins-official": false },
           options: {},
         },
@@ -1058,10 +1061,10 @@ describe("NodePluginAdapter", () => {
         (candidate) => candidate.id === "superpowers@claude-plugins-official",
       );
       expect(plugin?.enabled).toBe(false);
-      // 停用：runtime 不注入技能根（skillCount=0、skillRootCount=0）……
+      // Disabled: the runtime injects no skill roots (skillCount=0, skillRootCount=0)…
       expect(plugin?.skillCount).toBe(0);
       expect(outcome.skillRoots).toHaveLength(0);
-      // ……但 components 仍权威枚举出全部 14 个技能名，详情 UI 才能展示。
+      // …but components still authoritatively enumerate all 14 skill names so the detail UI can show them.
       const skillNames = componentNames(plugin?.components ?? [], "skill");
       expect(skillNames).toHaveLength(14);
       expect(skillNames).toContain("superpowers-skill-1");
@@ -1071,15 +1074,17 @@ describe("NodePluginAdapter", () => {
   });
 
   it("describes a bundled official plugin whose marketplace source is 'filesystem'", async () => {
-    // Bugfix 回归：内置 official 插件 seed 时 source 写裸字符串 "filesystem"，describe 过去把它
-    // 当路径解析后抛错，市场详情页对内置插件枚举不出组件。现在按 cachePath 直接定位缓存目录。
+    // Bugfix regression: when seeding a bundled official plugin the source was written as the
+    // bare string "filesystem", which describe used to parse as a path and throw, so the
+    // marketplace detail page could not enumerate a bundled plugin's components. It now
+    // locates the cache directory directly via cachePath.
     const dir = await mkdtemp(join(tmpdir(), "zcode-plugin-filesystem-describe-"));
     const storageRoot = join(dir, "storage");
     const cacheRoot = join(storageRoot, "cache", "zcode-plugins-official", "superpowers", "5.1.0");
     const marketplaceRoot = join(storageRoot, "marketplaces", "zcode-plugins-official");
 
     try {
-      // 在缓存目录里铺一个含 manifest + 2 个技能的内置插件。
+      // Lay out a bundled plugin with a manifest + 2 skills in the cache directory.
       await writePluginManifest(cacheRoot, {
         name: "superpowers",
         version: "5.1.0",
@@ -1095,7 +1100,7 @@ describe("NodePluginAdapter", () => {
           ),
         );
       }
-      // seeded marketplace.json：source 为裸 "filesystem"，并带 cachePath（模拟 bundled-plugins 写入）。
+      // seeded marketplace.json: source is the bare "filesystem" with a cachePath (simulating the bundled-plugins write).
       await mkdir(marketplaceRoot, { recursive: true });
       await writeFile(
         join(marketplaceRoot, "marketplace.json"),
@@ -1165,7 +1170,7 @@ describe("NodePluginAdapter", () => {
         [
           "---",
           "name: airtable-overview",
-          // 用 `>` 折叠块标量覆盖回归：描述应折叠成完整句子，而不是只剩指示符 `>`。
+          // Folded block scalar (`>`) coverage regression: the description should fold into a full sentence, not remain just the `>` indicator.
           "description: >",
           "  Explains the Airtable data model and how",
           "  to query bases from the agent.",
@@ -1526,9 +1531,11 @@ describe("NodePluginAdapter", () => {
     }
   });
 
-  // Bugfix(插件版本 0.0.0)：git/url 源插件（如 superpowers）的 marketplace 条目通常不带 version，
-  // 旧逻辑用 entry.version ?? "0.0.0" 拼缓存路径，导致 Root path 落到 .../<name>/0.0.0，而 UI 展示
-  // 读插件自带 plugin.json 的真实版本（6.0.3），两者割裂。修复后缓存路径段与安装记录均取真实版本。
+  // Bugfix (plugin version 0.0.0): marketplace entries for git/url-source plugins (like
+  // superpowers) usually carry no version; the old logic built the cache path with
+  // entry.version ?? "0.0.0", landing Root path at .../<name>/0.0.0, while the UI display read
+  // the real version from the plugin's own plugin.json (6.0.3) — the two diverged. After the
+  // fix both the cache path segment and the install record take the real version.
   it("uses the cloned plugin.json version for the cache path when the marketplace entry omits version", async () => {
     const dir = await mkdtemp(join(tmpdir(), "zcode-plugin-version-from-manifest-"));
     const storageRoot = join(dir, "storage");
@@ -1538,7 +1545,7 @@ describe("NodePluginAdapter", () => {
     try {
       await mkdir(repoRoot, { recursive: true });
       await execFileAsync("git", ["init"], { cwd: repoRoot });
-      // 真实版本只存在于插件自带 manifest 里，marketplace 条目刻意不写 version。
+      // The real version only exists in the plugin's own manifest; the marketplace entry deliberately omits version.
       await writePluginManifest(
         repoRoot,
         { name: "superpowers", version: "6.0.3" },
@@ -2679,7 +2686,7 @@ describe("NodePluginAdapter", () => {
       const freshRaw = {
         name: "claude-plugins-official",
         plugins: [{ name: "fresh", source: "./fresh" }],
-        // 回归触发点：旧实现会在序列化 active manifest 时触发 deadline，但仍覆盖旧文件。
+        // Regression trigger: the old implementation would trip the deadline while serializing the active manifest, yet still overwrite the old file.
         toJSON: () => {
           vi.advanceTimersByTime(30_000);
           return {
@@ -2866,7 +2873,7 @@ describe("NodePluginAdapter", () => {
         plugins: [{ name: "fresh", source: "./fresh" }],
         toJSON: () => {
           serializationCount += 1;
-          // 第一次序列化 staging manifest，第二次序列化 authority state。
+          // First serialization is the staging manifest, the second serializes the authority state.
           if (serializationCount === 2) {
             vi.advanceTimersByTime(30_000);
           }
@@ -3660,7 +3667,7 @@ describe("NodePluginAdapter", () => {
         storageRoot,
         workingDirectory: dir,
       });
-      // 三方 marketplace 插件 hook 现在默认放行（与内置/官方一致）。
+      // Third-party marketplace plugin hooks are now allowed by default (consistent with built-in/official).
       expect(outcome.hooks.SessionStart).toBeDefined();
       expect(outcome.plugins[0]?.hookDetails).toMatchObject([
         {
@@ -4061,7 +4068,7 @@ describe("NodePluginAdapter", () => {
       const record = install.installed[0];
       expect(record?.id).toBe("hello@uninstall-market");
       const installPath = record?.installPath ?? "";
-      // 模拟运行期产生的 per-plugin data 目录（含 generated-commands）。
+      // Simulate the per-plugin data directory produced at runtime (with generated-commands).
       const dataDir = join(storageRoot, "data", "hello@uninstall-market");
       await mkdir(join(dataDir, "generated-commands"), { recursive: true });
       await writeFile(join(dataDir, "generated-commands", "demo.md"), "# demo");
@@ -4100,8 +4107,10 @@ describe("NodePluginAdapter", () => {
     }
   });
 
-  // Bugfix 回归（差一层目录）：Claude 插件规范里 manifest skills 数组项指向「技能目录本身」
-  // （项内直接是 SKILL.md），此前 ZCode 把每项当作技能根去项下找子目录，扫描恒为空。
+  // Bugfix regression (one directory level off): in the Claude plugin spec, a manifest skills
+  // array entry points at "the skill directory itself" (SKILL.md sits directly inside the
+  // entry); ZCode used to treat each entry as a skill root and look for subdirectories under
+  // it, so the scan was always empty.
   it("discovers skills for plugin manifest skills array entries pointing at skill directories", async () => {
     const dir = await mkdtemp(join(tmpdir(), "zcode-plugin-array-skills-"));
     const pluginRoot = join(dir, "mattpocock");
@@ -4146,8 +4155,9 @@ describe("NodePluginAdapter", () => {
 
       const plugin = outcome.plugins.find((item) => item.id === "mattpocock-skills@inline");
       expect(plugin).toBeDefined();
-      // 每个数组项命中且只命中该技能；skills/ 目录存在还会注册默认根（3 个根），
-      // 但默认根的子目录（engineering/productivity）下无 SKILL.md，不会产生重复计数。
+      // Each array entry hits, and only hits, its skill; the skills/ directory also registers a
+      // default root (3 roots total), but the default root's subdirectories
+      // (engineering/productivity) contain no SKILL.md, so no double counting occurs.
       expect(plugin).toMatchObject({ skillCount: 2, skillRootCount: 3 });
       const skillNames = componentNames(plugin?.components ?? [], "skill").sort();
       expect(skillNames).toEqual(["tdd", "writing"]);
@@ -4157,7 +4167,7 @@ describe("NodePluginAdapter", () => {
         workingDirectory: join(dir, "workspace"),
       });
       expect(skillOutcome.skills).toHaveLength(2);
-      // 插件技能带 pluginName 别名，供会话内以 <plugin>:<skill> 引用。
+      // Plugin skills carry a pluginName alias so sessions can reference them as <plugin>:<skill>.
       expect(skillOutcome.skills.map((skill) => skill.qualifiedName).sort()).toEqual([
         "mattpocock-skills:tdd",
         "mattpocock-skills:writing",
@@ -4167,10 +4177,12 @@ describe("NodePluginAdapter", () => {
     }
   });
 
-  // Bugfix 回归（评审跟进）：数组语义下两个声明项的叶子目录可能同名
-  // （./skills/engineering/tdd 与 ./skills/productivity/tdd），组件清单此前在解析
-  // frontmatter 之前按目录 basename 提前去重，会把第二个技能丢掉，与按路径去重的
-  // 运行时发现结果（skillCount）不一致。必须解析 frontmatter 后按最终 name 去重。
+  // Bugfix regression (review follow-up): under array semantics two declared entries can have
+  // leaf directories with the same name (./skills/engineering/tdd and
+  // ./skills/productivity/tdd). The component manifest previously deduplicated early by
+  // directory basename before parsing frontmatter, dropping the second skill and diverging from
+  // the path-deduplicated runtime discovery result (skillCount). It must deduplicate by the
+  // final name after parsing frontmatter.
   it("keeps same-named leaf skill directories from different declared roots in components", async () => {
     const dir = await mkdtemp(join(tmpdir(), "zcode-plugin-same-leaf-skills-"));
     const pluginRoot = join(dir, "same-leaf");
@@ -4210,7 +4222,7 @@ describe("NodePluginAdapter", () => {
 
       const plugin = outcome.plugins.find((item) => item.id === "same-leaf@inline");
       expect(plugin).toMatchObject({ skillCount: 2 });
-      // 组件清单与 skillCount 口径一致：两个同名叶子目录（frontmatter name 不同）都在。
+      // The component manifest agrees with skillCount: both same-named leaf directories (different frontmatter names) are present.
       expect(componentNames(plugin?.components ?? [], "skill").sort()).toEqual([
         "tdd",
         "tdd-productivity",
@@ -4229,8 +4241,9 @@ describe("NodePluginAdapter", () => {
     }
   });
 
-  // 跨根去重：声明项（根自身即技能）与默认 skills/ 根（一层子目录布局）会命中同一个
-  // SKILL.md，计数必须按文件路径去重，不能翻倍。
+  // Cross-root deduplication: a declared entry (the root itself is the skill) and the default
+  // skills/ root (one-level subdirectory layout) can hit the same SKILL.md; counting must
+  // deduplicate by file path and must not double.
   it("dedupes skill files across overlapping declared and default skill roots", async () => {
     const dir = await mkdtemp(join(tmpdir(), "zcode-plugin-overlap-skills-"));
     const pluginRoot = join(dir, "overlap");
@@ -4261,7 +4274,7 @@ describe("NodePluginAdapter", () => {
         workingDirectory: join(dir, "workspace"),
       });
 
-      // 默认根 <root>/skills 与声明根 ./skills/foo 都指向含同一 SKILL.md 的目录树。
+      // The default root <root>/skills and the declared root ./skills/foo both point at a directory tree containing the same SKILL.md.
       const plugin = outcome.plugins.find((item) => item.id === "overlap@inline");
       expect(plugin).toMatchObject({ skillCount: 1, skillRootCount: 2 });
 
@@ -4275,14 +4288,15 @@ describe("NodePluginAdapter", () => {
     }
   });
 
-  // 信任边界回归（CR-01）：manifest skills 声明是插件提供的不可信输入。
-  // resolveInside（helpers.ts）在词法层面拒绝绝对路径与 ../ 穿越（rel 以 .. 开头
-  // 或含 ..${sep}），越界声明在 resolveComponentRoots 落成 plugin_component_path_invalid
-  // error 诊断；本用例把该边界固定，防止后续重构 scanner 时重新引入路径穿越。
+  // Trust boundary regression (CR-01): manifest skills declarations are plugin-provided
+  // untrusted input. resolveInside (helpers.ts) lexically rejects absolute paths and ../
+  // traversal (rel starting with .. or containing ..${sep}); out-of-bounds declarations land as
+  // plugin_component_path_invalid error diagnostics in resolveComponentRoots. This test pins
+  // that boundary to prevent reintroducing path traversal in a later scanner refactor.
   it("rejects skills paths escaping the plugin root and keeps legitimate skills working", async () => {
     const dir = await mkdtemp(join(tmpdir(), "zcode-plugin-path-escape-"));
     const pluginRoot = join(dir, "plugin");
-    // 插件根外的诱饵技能目录；若防线失效会被扫描进结果。
+    // Decoy skill directory outside the plugin root; it would be scanned into the results if the defense failed.
     const outsideSkill = join(dir, "outside-skill");
     const absoluteOutside = join(dir, "absolute-outside");
 
@@ -4319,8 +4333,9 @@ describe("NodePluginAdapter", () => {
         workingDirectory: join(dir, "workspace"),
       });
 
-      // 越界声明（../ 穿越与绝对路径）被拒：error 诊断逐条可见，且不会误报成
-      // plugin_skill_root_empty（resolveInside 返回 null 时告警逻辑直接跳过）。
+      // Out-of-bounds declarations (../ traversal and absolute paths) are rejected: error
+      // diagnostics are visible one by one, and they are not misreported as
+      // plugin_skill_root_empty (when resolveInside returns null the warning logic skips directly).
       const invalid = outcome.diagnostics.filter(
         (diagnostic) => diagnostic.code === "plugin_component_path_invalid",
       );
@@ -4338,7 +4353,7 @@ describe("NodePluginAdapter", () => {
         ),
       ).toBe(false);
 
-      // 合法声明不受越界项影响：skillCount 只含 legit，越界技能不出现在发现结果。
+      // Legitimate declarations are unaffected by the out-of-bounds entries: skillCount contains only legit; the out-of-bounds skill does not appear in discovery results.
       const plugin = outcome.plugins.find((item) => item.id === "path-escape@inline");
       expect(plugin).toMatchObject({ skillCount: 1 });
 
@@ -4352,11 +4367,13 @@ describe("NodePluginAdapter", () => {
     }
   });
 
-  // 信任边界回归（文件级 symlink）：目录是真实目录但 SKILL.md 本身是指向插件根
-  // 外文件的链接（如 skills/foo/SKILL.md -> ~/.aws/credentials），以及根自身
-  // SKILL.md 是链接的形态。文件级与目录级走同一个 isSymbolicLinkSync（lstat）
-  // 拒绝路径。Windows 普通权限下创建文件 symlink 会 EPERM，此时才跳过——
-  // 开发者模式或管理员 CI 上本用例会真实执行，不整体按平台跳过。
+  // Trust boundary regression (file-level symlink): the directory is real but the SKILL.md
+  // itself is a link to a file outside the plugin root (e.g. skills/foo/SKILL.md ->
+  // ~/.aws/credentials), plus the shape where the root's own SKILL.md is a link. File-level and
+  // directory-level go through the same isSymbolicLinkSync (lstat) rejection path. Creating a
+  // file symlink under ordinary Windows privileges raises EPERM — only then is it skipped; on
+  // developer mode or admin CI this test genuinely runs and is not skipped wholesale by
+  // platform.
   it(
     "rejects file-level SKILL.md symlinks escaping the plugin root",
     async (ctx) => {
@@ -4374,9 +4391,9 @@ describe("NodePluginAdapter", () => {
           ".claude-plugin",
         );
         await writeFile(outsideFile, "---\nname: leaked-secret\ndescription: x\n---\nleaked");
-        // 形态 1：子目录是真实目录，其 SKILL.md 是指向外部的文件链接。
-        // 第一个链接同时作为权限探针：EPERM（Windows 无 symlink 特权）才跳过，
-        // 其余错误如实抛出；finally 保证临时目录清理。
+        // Shape 1: the subdirectory is a real directory whose SKILL.md is a file link pointing outside.
+        // The first link doubles as the privilege probe: skip only on EPERM (Windows without
+        // symlink privileges); rethrow other errors as-is; finally guarantees temp dir cleanup.
         await mkdir(join(pluginRoot, "skills", "foo"), { recursive: true });
         try {
           await symlink(outsideFile, join(pluginRoot, "skills", "foo", "SKILL.md"));
@@ -4385,10 +4402,10 @@ describe("NodePluginAdapter", () => {
           ctx.skip();
           return;
         }
-        // 形态 2：声明根（bundle-root）自身目录真实，SKILL.md 是外部文件链接。
+        // Shape 2: the declared root's (bundle-root) own directory is real, its SKILL.md is an external file link.
         await mkdir(join(pluginRoot, "bundle-root"), { recursive: true });
         await symlink(outsideFile, join(pluginRoot, "bundle-root", "SKILL.md"));
-        // 对照组：真实文件技能正常发现。
+        // Control group: the real file skill is discovered normally.
         await mkdir(join(pluginRoot, "skills", "legit"), { recursive: true });
         await writeFile(
           join(pluginRoot, "skills", "legit", "SKILL.md"),
@@ -4409,7 +4426,7 @@ describe("NodePluginAdapter", () => {
           workingDirectory: join(dir, "workspace"),
         });
 
-        // 只有真实文件技能被计数；两个文件级链接形态都被剔除。
+        // Only the real file skill is counted; both file-level link shapes are excluded.
         const plugin = outcome.plugins.find((item) => item.id === "file-symlink-escape@inline");
         expect(plugin).toMatchObject({ skillCount: 1 });
         expect(componentNames(plugin?.components ?? [], "skill")).toEqual(["legit"]);
@@ -4419,7 +4436,7 @@ describe("NodePluginAdapter", () => {
           workingDirectory: join(dir, "workspace"),
         });
         expect(skillOutcome.skills.map((skill) => skill.name)).toEqual(["legit"]);
-        // 泄密文件内容绝不出现在任何技能路径的加载结果里。
+        // The leaked file's contents never appear in any skill path's load results.
         expect(skillOutcome.skills.some((skill) => skill.path === outsideFile)).toBe(false);
       } finally {
         await rm(dir, { force: true, recursive: true });
@@ -4427,12 +4444,15 @@ describe("NodePluginAdapter", () => {
     },
   );
 
-  // 信任边界回归（目录级 symlink/junction）：plugin-scope 扫描不跟随符号链接——
-  //   skills/evil-link -> ../../outside-skill（子目录是逃逸链接）
-  //   skills/linked-root -> ../../outside-skill（声明根本身是逃逸链接）
-  // 两种形态都被剔除；声明根是链接时扫描为空，落入「没有任何技能」告警。
-  // Windows 用 junction 创建（无需特权；lstat/Dirent 对 junction 同样报告
-  // isSymbolicLink=true），CR-02 的 Windows 形态在本用例获得真实覆盖。
+  // Trust boundary regression (directory-level symlink/junction): plugin-scope scanning does
+  // not follow symbolic links —
+  //   skills/evil-link -> ../../outside-skill (the subdirectory is an escape link)
+  //   skills/linked-root -> ../../outside-skill (the declared root itself is an escape link)
+  // Both shapes are excluded; when the declared root is a link the scan is empty and lands in
+  // the "no skills at all" warning.
+  // Windows creates junctions (no privileges needed; lstat/Dirent report
+  // isSymbolicLink=true for junctions too), so CR-02's Windows shape gets real coverage in
+  // this test.
   it(
     "strips symlink escapes from plugin skills and warns on escaping declared roots",
     async () => {
@@ -4454,12 +4474,12 @@ describe("NodePluginAdapter", () => {
           join(outsideSkill, "SKILL.md"),
           "---\nname: escaped-skill\ndescription: must never load\n---\n# x",
         );
-        // 形态 1：声明根本身是指向插件根外的链接（skills/ 需先存在）。
-        // Windows 传 junction 类型（目录 symlink 需特权，junction 不需要；
-        // POSIX 忽略该参数，行为为普通 symlink）。
+        // Shape 1: the declared root itself is a link pointing outside the plugin root (skills/ must exist first).
+        // Windows passes the junction type (directory symlinks need privileges, junctions do
+        // not; POSIX ignores the argument and behaves like a normal symlink).
         await mkdir(join(pluginRoot, "skills"), { recursive: true });
         await symlinkDir(outsideSkill, join(pluginRoot, "skills", "linked-root"));
-        // 形态 2：默认 skills/ 根下的子目录是指向插件根外的链接。
+        // Shape 2: a subdirectory under the default skills/ root is a link pointing outside the plugin root.
         await symlinkDir(outsideSkill, join(pluginRoot, "skills", "evil-link"));
 
         const outcome = await createNodePluginAdapter({
@@ -4476,13 +4496,13 @@ describe("NodePluginAdapter", () => {
           workingDirectory: join(dir, "workspace"),
         });
 
-        // 逃逸技能不进计数、不进组件清单。
+        // Escaped skills do not enter counts or the component manifest.
         const plugin = outcome.plugins.find((item) => item.id === "symlink-escape@inline");
         expect(plugin).toMatchObject({ skillCount: 0 });
         expect(componentNames(plugin?.components ?? [], "skill")).toEqual([]);
 
-        // 声明根本身是链接 → 扫描为空，落入「没有任何技能」告警（词法路径存在，
-        // 不误报 does not exist）。
+        // The declared root itself is a link → the scan is empty and lands in the "no skills at
+        // all" warning (the lexical path exists, so it is not misreported as does not exist).
         expect(
           outcome.diagnostics.some(
             (diagnostic) =>
@@ -4493,7 +4513,7 @@ describe("NodePluginAdapter", () => {
           ),
         ).toBe(true);
 
-        // 运行时发现同样剔除：逃逸技能不出现在 skill adapter 结果。
+        // Runtime discovery excludes them too: the escaped skill does not appear in skill adapter results.
         const skillOutcome = await createNodeSkillAdapter().discoverSkills({
           roots: outcome.skillRoots,
           workingDirectory: join(dir, "workspace"),
@@ -4505,8 +4525,10 @@ describe("NodePluginAdapter", () => {
     },
   );
 
-  // 去静默：manifest 显式声明的技能路径扫描为 0 个技能时必须发 warning（路径写进 message，
-  // 因为协议 wire schema 不携带 path）；纯默认目录为空不告警；显式声明默认目录名同样算声明。
+  // De-silencing: when a manifest-declared skill path scans to 0 skills a warning must be
+  // emitted (the path is written into the message because the protocol wire schema does not
+  // carry path); a purely-default empty directory does not warn; explicitly declaring the
+  // default directory name still counts as a declaration.
   it("warns when a declared skill path yields no skills", async () => {
     const dir = await mkdtemp(join(tmpdir(), "zcode-plugin-empty-skills-"));
 
@@ -4526,7 +4548,7 @@ describe("NodePluginAdapter", () => {
     }
 
     try {
-      // 场景 1：数组声明项目录存在但无 SKILL.md（分类目录，mattpocock 复现形态）。
+      // Scenario 1: an array-declared entry's directory exists but has no SKILL.md (a category directory, the mattpocock reproduction shape).
       const missingRoot = join(dir, "declared-missing");
       await mkdir(join(missingRoot, "skills", "engineering"), { recursive: true });
       const missingOutcome = await discover(missingRoot, {
@@ -4542,7 +4564,7 @@ describe("NodePluginAdapter", () => {
       });
       expect(missingWarning?.message).toContain("skills/engineering/tdd");
 
-      // 场景 2：显式声明不存在的路径。
+      // Scenario 2: a nonexistent path explicitly declared.
       const absentOutcome = await discover(join(dir, "declared-absent"), {
         name: "declared-absent",
         skills: "./skills/nowhere",
@@ -4555,7 +4577,7 @@ describe("NodePluginAdapter", () => {
         ),
       ).toBe(true);
 
-      // 场景 3：纯默认目录为空（manifest 未声明 skills）不告警，避免空插件误报。
+      // Scenario 3: the purely-default directory is empty (manifest declares no skills) — no warning, avoiding false positives for empty plugins.
       const silentOutcome = await discover(join(dir, "default-only"), {
         name: "default-only",
       });
@@ -4565,8 +4587,9 @@ describe("NodePluginAdapter", () => {
         ),
       ).toBe(true);
 
-      // 场景 4：显式写默认目录名 "skills" 且目录为空——默认项会在 roots 里被去重合并，
-      // 但声明集合独立计算，仍须告警。
+      // Scenario 4: the default directory name "skills" is explicitly written and the directory
+      // is empty — the default entry is deduplicated away in roots, but the declaration set is
+      // computed independently, so it must still warn.
       const explicitOutcome = await discover(join(dir, "explicit-default"), {
         name: "explicit-default",
         skills: "skills",
@@ -4718,7 +4741,7 @@ function crc32(buffer: Buffer): number {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-/** 创建指向目录的链接：Windows 用 junction（无需特权），POSIX 忽略 type 参数。 */
+/** Creates a link to a directory: Windows uses a junction (no privileges needed); POSIX ignores the type argument. */
 async function symlinkDir(target: string, linkPath: string): Promise<void> {
   await symlink(target, linkPath, process.platform === "win32" ? "junction" : undefined);
 }

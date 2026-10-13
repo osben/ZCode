@@ -886,7 +886,7 @@ describe("zai family Team Plan 可见性对称化", () => {
           organizationName: "Zai Org",
           projectId: "zai-project",
           projectName: "Zai Project",
-          // 关键：标记 family=zai，触发 zai codingPlanItem 派生 + zai key 前缀
+          // Key: mark family=zai to trigger zai codingPlanItem derivation + the zai key prefix
           family: "zai",
         },
       ],
@@ -895,10 +895,10 @@ describe("zai family Team Plan 可见性对称化", () => {
 
     const teamItem = items.find((item) => item.type === "teamPlan");
     expect(teamItem).toBeDefined();
-    // 关键：key 前缀必须是 zai-coding-plan，不能误用 bigmodel
+    // Key: the key prefix must be zai-coding-plan; bigmodel must not be used by mistake
     expect(teamItem?.key).toBe(`team:zai:zai-team-pro:zai-org:zai-project`);
     expect(teamItem?.key).not.toContain("bigmodel");
-    // providerName 应继承自 zai codingPlanItem
+    // providerName should be inherited from the zai codingPlanItem
     expect(teamItem?.providerName).toBe("Z.ai");
     expect(teamItem?.teamPlanName).toBe("Zai Org");
     expect(teamItem?.purchaseUrl).toBe(getModelProviderFamilySpec("zai").teamCodingPlanManageUrl);
@@ -938,7 +938,7 @@ describe("zai family Team Plan 可见性对称化", () => {
           organizationName: "Org A",
           projectId: "project-a",
           projectName: "Project A",
-          // 不标记 family
+          // family not marked
         },
       ],
       showPurchasedTeamPlanFallback: false,
@@ -1021,7 +1021,7 @@ describe("zai family Team Plan 可见性对称化", () => {
     });
 
     const teamItems = items.filter((item) => item.type === "teamPlan");
-    // 关键：两个 family 各生成一个，不能因 productId+org+project 相同而互相覆盖
+    // Key: each family generates one item; identical productId+org+project must not overwrite each other
     expect(teamItems).toHaveLength(2);
     const keys = teamItems.map((item) => item.key);
     expect(keys).toContain(`team:bigmodel:shared-product:org-same:proj-same`);
@@ -1029,16 +1029,17 @@ describe("zai family Team Plan 可见性对称化", () => {
   });
 
   it("zai-only 视图（无 bigmodel codingPlan item）仍生成 zai Team Plan 连接项", () => {
-    // 修复原因：appendSubscribedTeamPlanItems 原有 `if (!bigmodelCodingPlanItem) return items`
-    // 前置守卫。当设置页 providerFamilyDomain === "zai" 时，传入的 codingPlanItems 只含 zai family，
-    // 没有 bigmodelCodingPlan，守卫直接短路，zai teamPlan item 永远不生成，
-    // 导致 pickFamilyModeNavigationItem 找不到 saved team item → selectedNavItem=null → Plan Card 永远 loading。
+    // Reason for the fix: appendSubscribedTeamPlanItems originally had an upfront guard
+    // `if (!bigmodelCodingPlanItem) return items`. When the settings page had providerFamilyDomain === "zai",
+    // the incoming codingPlanItems only contained the zai family with no bigmodelCodingPlan, so the guard
+    // short-circuited and the zai teamPlan item was never generated. pickFamilyModeNavigationItem then could
+    // not find the saved team item → selectedNavItem=null → Plan Card stuck loading forever.
     const items = buildVisibleFamilyConnectionItems({
-      // 关键：只有 zai codingPlan item，没有 bigmodel
+      // Key: only a zai codingPlan item, no bigmodel
       items: [createZaiCodingPlanItem("notPurchased")],
       subscribedTeamProducts: [],
       showPurchasedTeamPlanFallback: true,
-      // 模拟已落盘的 zai team plan selectedKey（和 setting.json 里的格式一致）
+      // Simulate a persisted zai team plan selectedKey (same format as in setting.json)
       teamPlanSelections: {
         zai: {
           kind: "team-coding-plan",
@@ -1050,7 +1051,8 @@ describe("zai family Team Plan 可见性对称化", () => {
     });
 
     const teamItem = items.find((item) => item.type === "teamPlan");
-    // 关键：必须生成 zai teamPlan item，不能因为 bigmodelCodingPlanItem 不存在就整体短路
+    // Key: the zai teamPlan item must be generated; the whole thing must not short-circuit just because
+    // bigmodelCodingPlanItem is absent
     expect(teamItem).toBeDefined();
     expect(teamItem?.key).toBe(`team:zai:zai-pro:zai-org-1:zai-proj-1`);
     expect(teamItem?.key).not.toContain("bigmodel");

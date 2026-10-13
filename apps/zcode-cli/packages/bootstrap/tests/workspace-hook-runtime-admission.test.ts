@@ -261,14 +261,14 @@ describe("createZCodeApp workspace Hook admission", () => {
       },
     });
     try {
-      // 软门禁:prompt 触发 activation,pending hooks 直接跳过,turn 照常执行
+      // Soft gate: the prompt triggers activation, pending hooks are skipped directly, and the turn runs as usual
       const prompt = app.submitPrompt("hello");
       await prompt;
 
-      // pending hooks 被跳过,命令未执行
+      // Pending hooks are skipped, no command executed
       expect(commands).toEqual([]);
 
-      // admission updated 事件已发出(pendingCount > 0)
+      // The admission updated event has been emitted (pendingCount > 0)
       const admissionEvent = await waitForEvent(
         eventStore,
         app.sessionId,
@@ -276,7 +276,7 @@ describe("createZCodeApp workspace Hook admission", () => {
       );
       expect(admissionEvent.payload).toMatchObject({ pendingCount: 1 });
 
-      // 用户点击「去审核」→ 开 review flow
+      // The user clicks "去审核" (go review) → opens the review flow
       const admissionSnapshot = admissionEvent.payload as {
         bundleDigest: string;
         workspaceIdentity?: string;
@@ -293,7 +293,7 @@ describe("createZCodeApp workspace Hook admission", () => {
       );
       const request = (requestEvent.payload as { request: any }).request;
 
-      // 持久信任选中项；已错过的 SessionStart 不会在当前任务追补。
+      // Persistently trust the selected items; the missed SessionStart is not caught up within the current task.
       await expect(
         app.respondWorkspaceHookReview({
           sessionId: app.sessionId,
@@ -323,7 +323,7 @@ describe("createZCodeApp workspace Hook admission", () => {
         }),
       );
       expect(commands).toEqual([]);
-      // 软门禁(D2):settle 后 admission updated 重算 pendingCount=0
+      // Soft gate (D2): after settle, admission updated recomputes pendingCount=0
       expect(events).toContainEqual(
         expect.objectContaining({
           type: SessionEventType.WorkspaceHookAdmissionUpdated,
@@ -336,12 +336,12 @@ describe("createZCodeApp workspace Hook admission", () => {
     }
   });
 
-  // Bug 回归（H1 症状 1+2）：两个 SessionStart 声明，一个 configured-disabled
-  // （admission skipLifecycle），一个 pending（admission blocked 但参与生命周期）。
-  // 修复前：clientVisibleHookCount=2，skipLifecycle 的 hook 不发事件 → 投影层
-  // executions.length(1) < hookCount(2) → 行永久 running，UI 计时器走秒不终止。
-  // 修复后：skipLifecycle 的 hook 从参与列表剔除 → hookCount=1，1 条 blocked
-  // execution，state 终态。
+  // Bug regression (H1 symptoms 1+2): two SessionStart declarations, one configured-disabled
+  // (admission skipLifecycle), one pending (admission blocked but participating in the lifecycle).
+  // Before the fix: clientVisibleHookCount=2 and the skipLifecycle hook emitted no event → the projection saw
+  // executions.length(1) < hookCount(2) → the row stayed running forever and the UI timer ticked without ending.
+  // After the fix: the skipLifecycle hook is removed from the participating list → hookCount=1, one blocked
+  // execution, and the state reaches a terminal value.
   it("H1 场景 A:configured-disabled + pending SessionStart → hookCount=1、1 blocked、state 终态", async () => {
     const root = await mkdtemp(join(tmpdir(), "zcode-hook-h1-scenario-a-"));
     roots.push(root);
@@ -396,8 +396,8 @@ describe("createZCodeApp workspace Hook admission", () => {
     try {
       await app.submitPrompt("hello");
 
-      // configured-disabled 的 hook 不执行命令
-      // pending 的 hook 也被 blocked → 无命令执行
+      // The configured-disabled hook runs no command
+      // The pending hook is blocked too → no command executed
       expect(commands).toEqual([]);
 
       const events = await eventStore.getEvents(app.sessionId);
@@ -409,19 +409,19 @@ describe("createZCodeApp workspace Hook admission", () => {
           event.type === SessionEventType.HookRunFailed,
       );
 
-      // 只有 1 条 blocked execution（pending 的 B），configured-disabled 的 A 完全不可见
+      // Only 1 blocked execution (the pending B); the configured-disabled A is entirely invisible
       expect(hookLifecycleEvents).toHaveLength(1);
       expect(hookLifecycleEvents[0]?.type).toBe(SessionEventType.HookRunBlocked);
 
       const payload = hookLifecycleEvents[0]?.payload as Record<string, unknown>;
-      // hookCount 必须是 1，否则投影层会等一个永远不来的 execution（H1 核心断言）
+      // hookCount must be 1, otherwise the projection waits for an execution that never arrives (the core H1 assertion)
       expect(payload.hookCount).toBe(1);
       expect(payload.errorCode).toBe("workspace_hooks_pending_trust");
       expect(payload.descriptor).toMatchObject({
         commandDisplay: "echo session-start-b",
       });
 
-      // 所有事件的 hookInvocationId 一致
+      // All events share the same hookInvocationId
       const invocationIds = new Set(
         hookLifecycleEvents.map(
           (event) => (event.payload as Record<string, unknown>).hookInvocationId,
@@ -434,7 +434,7 @@ describe("createZCodeApp workspace Hook admission", () => {
     }
   });
 
-  // 持久信任只影响之后自然发生的生命周期事件；SessionStart 不做 catch-up。
+  // Persistent trust only affects lifecycle events that occur naturally afterwards; SessionStart does no catch-up.
   it("两个 pending SessionStart 信任后，当前任务后续 turn 不补跑", async () => {
     const root = await mkdtemp(join(tmpdir(), "zcode-hook-h2-scenario-b-"));
     roots.push(root);
@@ -482,7 +482,7 @@ describe("createZCodeApp workspace Hook admission", () => {
       },
     });
     try {
-      // ── 第一 turn:两个 SessionStart 都 pending → 全部 blocked ──
+      // ── First turn: both SessionStart hooks pending → all blocked ──
       await app.submitPrompt("turn-1");
       expect(commands).toEqual([]);
 
@@ -490,13 +490,13 @@ describe("createZCodeApp workspace Hook admission", () => {
       const turn1Blocked = turn1Events.filter(
         (event) => event.type === SessionEventType.HookRunBlocked,
       );
-      // 2 条 blocked execution
+      // 2 blocked executions
       expect(turn1Blocked).toHaveLength(2);
       // hookCount=2
       const turn1Payload = turn1Blocked[0]?.payload as Record<string, unknown>;
       expect(turn1Payload.hookCount).toBe(2);
 
-      // ── 持久信任当前快照中的全部声明 ──
+      // ── Persistently trust every declaration in the current snapshot ──
       const admissionEvent = await waitForEvent(
         eventStore,
         app.sessionId,
@@ -534,11 +534,11 @@ describe("createZCodeApp workspace Hook admission", () => {
         }),
       ).resolves.toMatchObject({ accepted: true });
 
-      // ── 第二 turn：SessionStart 不补跑 ──
+      // ── Second turn: SessionStart does not catch up ──
       await app.submitPrompt("turn-2");
       expect(commands).toEqual([]);
 
-      // ── 第三 turn：仍不补跑 ──
+      // ── Third turn: still no catch-up ──
       await app.submitPrompt("turn-3");
       expect(commands).toEqual([]);
     } finally {

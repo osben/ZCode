@@ -1,9 +1,9 @@
-// VI06 + VI07 门禁：媒体卡片、共享 gallery、本地路径/分片预览、失败重开与 edit 原始索引。
-// 证据层 L3：
-// 1) Composer 与 sent 消息都按原顺序渲染 image/video grid card，video 共享播放角标；
-// 2) 图片与视频进入同一个 gallery，并通过按钮/方向键首尾循环，图片工具与视频 controls 隔离；
-// 3) Desktop sent video 优先播放 artifact/local_ref 路径，非 fast-start MP4 也支持 seek，无可用路径时走 artifact 分片；
-// 4) 不可解码视频保留 gallery 导航/重开，edit 与完整进程重启后仍按持久化原始序号预览。
+// VI06 + VI07 gate: media cards, shared gallery, local path/chunked preview, reopen-after-failure, and edit original indices.
+// Evidence level L3:
+// 1) Both Composer and sent messages render image/video grid cards in the original order, with a shared play badge for video;
+// 2) Images and videos enter the same gallery and wrap around via buttons/arrow keys; image tools and video controls are isolated;
+// 3) Desktop sent video prefers the artifact/local_ref path; non-fast-start MP4s also support seek; without an available path it falls back to artifact chunks;
+// 4) Undecodable videos keep gallery navigation/reopen, and after edit or a full process restart they still preview by the persisted original index.
 import { mkdir, open, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -77,8 +77,8 @@ describe("v4 VI06/VI07：image/video 媒体 gallery 与 edit", () => {
 
   it("混合媒体首发 → sent gallery/reopen → edit 索引/删除", async () => {
     await prepareV4ConversationE2E();
-    // Bug 根因：旧 E2E 只使用 moov 在 mdat 前的 fast-start MP4，无法触发自定义
-    // scheme 对文件尾元数据的读取；改用同一可播 fixture 的尾部 moov 形态覆盖真实回归。
+    // Bug root cause: the old E2E only used a fast-start MP4 with moov before mdat, which could never trigger the custom
+    // scheme's read of the file-tail metadata; switch to the tail-moov shape of the same playable fixture to cover the real regression.
     const sourceVideo = moveMoovBoxBehindMediaData(await readFile(VIDEO_SOURCE_PATH));
     const largeVideoPath = join(CASE_ROOT, LARGE_VIDEO_FILENAME);
     await mkdir(CASE_ROOT, { recursive: true });
@@ -94,8 +94,8 @@ describe("v4 VI06/VI07：image/video 媒体 gallery 与 edit", () => {
       base64: Buffer.from("not playable", "utf8").toString("base64"),
       mimeType: "video/quicktime",
     });
-    // `video/ogg` 可以进入 video 语义，但现有 artifact 派生缓存没有对应扩展名；
-    // 它固定覆盖 local source 不可用时仍走既有分片/Blob 预览，而不是新增测试开关。
+    // `video/ogg` can enter video semantics, but the existing artifact-derived cache has no matching extension;
+    // it deterministically covers the case where the local source is unavailable yet the existing chunk/Blob preview is still used, rather than adding a new test switch.
     await pasteV4ComposerFileAttachment(CHUNK_FALLBACK_VIDEO_FILENAME, {
       base64: Buffer.from("not playable", "utf8").toString("base64"),
       mimeType: "video/ogg",
@@ -129,7 +129,7 @@ describe("v4 VI06/VI07：image/video 媒体 gallery 与 edit", () => {
     await waitForUnsupportedVideo(CHUNK_FALLBACK_VIDEO_FILENAME);
     await closeMediaPreview();
 
-    // 点击中间图片必须从其原始 gallery 位置打开，而不是每次都回到第一项。
+    // Clicking the middle image must open from its original gallery position, not return to the first item every time.
     await openComposerMedia(1);
     await waitForGalleryImage(GALLERY_IMAGE_FILENAME);
     await closeMediaPreview();
@@ -181,7 +181,7 @@ describe("v4 VI06/VI07：image/video 媒体 gallery 与 edit", () => {
     await waitForUnsupportedVideo(UNSUPPORTED_VIDEO_FILENAME);
     await closeMediaPreview();
 
-    // 分片 fallback 项关闭后仍能从原位置重开，并能继续导航到本地路径项。
+    // After the chunk-fallback item is closed, it can be reopened from its original position and navigation can continue to the local path item.
     await openSentMedia(3);
     await waitForUnsupportedVideo(CHUNK_FALLBACK_VIDEO_FILENAME);
     await clickGalleryNavigation("next");
@@ -196,7 +196,7 @@ describe("v4 VI06/VI07：image/video 媒体 gallery 与 edit", () => {
     });
     await waitForEditedMediaCards(rowId, ["image", "video", "video", "video"]);
 
-    // 删除原索引 0 后，大视频展示索引前移，但 preview query 仍必须携带持久化原索引 4。
+    // After deleting original index 0, the large video's displayed index shifts forward, but the preview query must still carry the persisted original index 4.
     await openEditedMedia(rowId, 3);
     await waitForPlayableVideo(LARGE_VIDEO_FILENAME, largeVideoThumbnailSrc);
     await browser.keys(["ArrowRight"]);
@@ -267,7 +267,7 @@ function moveMoovBoxBehindMediaData(source: Buffer): Buffer {
   const mdatBox = findTopLevelMp4Box(source, "mdat");
   if (moovBox.offset > mdatBox.offset) return source;
 
-  // 保留原 moov 占用的字节，避免移动 mdat 后让 chunk offset 失效。
+  // Preserve the bytes occupied by the original moov so chunk offsets do not break after moving mdat.
   const placeholder = Buffer.alloc(moovBox.size);
   placeholder.writeUInt32BE(moovBox.size, 0);
   placeholder.write("free", 4, "ascii");
@@ -580,7 +580,7 @@ async function expectUnauthorizedLocalMediaPathRejected(path: string) {
   const result = await browser.executeAsync((candidatePath, done) => {
     const url = new URL("zcode-media://local/preview");
     url.searchParams.set("path", candidatePath);
-    // 旧协议会被这个 renderer 自报 MIME 绕过；新协议只认 Main 的精确路径授权集合。
+    // The old protocol would be bypassed by this renderer-declared MIME; the new protocol only accepts Main's exact path authorization set.
     url.searchParams.set("mediaType", "video/mp4");
     const video = document.createElement("video");
     const timer = window.setTimeout(() => done("timeout"), 10_000);
