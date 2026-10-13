@@ -41,7 +41,7 @@ async function readOverride(key: string): Promise<string | null> {
     // visible instead of silently degrading the section to its code default. Mirrors the
     // output-style service's read discipline.
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      log.warn("Failed to read system-prompt override file", {
+      log.warn(undefined, "Failed to read system-prompt override file", {
         file: filePath,
         error: error instanceof Error ? error.message : String(error),
       });

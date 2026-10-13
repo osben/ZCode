@@ -16,6 +16,7 @@ import {
   buildDynamicBehaviorSection,
 } from "../src/context/dynamic-sections.js";
 import { buildMemorySection } from "../src/context/sections/memory.js";
+import { resolveMainAgentSystemPromptOverrides } from "../src/runtime/methods/context.js";
 
 /**
  * Pins the shared constants against the builders' rendered defaults: the shared texts are
@@ -84,5 +85,21 @@ describe("system prompt section defaults and overrides", () => {
     expect(indexed?.content).toBe(
       renderMemoryGuidancePrompt(composeMemoryGuidanceDefault("default-index"), "/mem/root"),
     );
+  });
+
+  it("keeps persisted overrides out of workflow and subagent child contexts", () => {
+    // Legacy script-workflow children spread the parent AgentRuntimeConfig (which carries the
+    // persisted overrides) without setting workflowActor; the strip must key on taskType so
+    // the shared fragments stay on code defaults in every child runtime.
+    const overrides = { harness: "# Harness\n- Mine." };
+    for (const taskType of ["workflow_child", "nested_workflow_child", "subagent_child"] as const) {
+      expect(resolveMainAgentSystemPromptOverrides({ taskType, systemPromptOverrides: overrides })).toBeUndefined();
+    }
+    // The main agent (and forks/side chats sharing its persona) keep the overrides.
+    expect(resolveMainAgentSystemPromptOverrides({ systemPromptOverrides: overrides })).toEqual(overrides);
+    expect(
+      resolveMainAgentSystemPromptOverrides({ taskType: "interactive", systemPromptOverrides: overrides }),
+    ).toEqual(overrides);
+    expect(resolveMainAgentSystemPromptOverrides({ taskType: "fork", systemPromptOverrides: undefined })).toBeUndefined();
   });
 });

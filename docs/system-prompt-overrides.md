@@ -61,3 +61,8 @@ the same directory.
 One "System Prompt" section: a card per editable key (default text, "Customized" badge,
 override editor with diff, Restore default), plus a read-only preview of the computed
 sections. Local host only in v1 (remote editing follows the output-styles remote wiring).
+
+Phase-2 baseline note: when an Output Style is active, the effective no-override
+`identity-intro` differs from `DEFAULT_IDENTITY_INTRO_PROMPT` (the runtime renders the style's
+own intro); the UI must show the effective baseline for diff/restore, not just the code
+constant.
