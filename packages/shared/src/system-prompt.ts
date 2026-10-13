@@ -25,14 +25,6 @@ export function isSystemPromptOverrideKey(key: string): key is SystemPromptOverr
   return (SYSTEM_PROMPT_OVERRIDE_KEYS as readonly string[]).includes(key);
 }
 
-/**
- * Filename for an override key. Keys are a fixed whitelist (never user-derived), so no
- * sanitization surface exists; the guard keeps unknown keys out of path joins anyway.
- */
-export function systemPromptOverrideFilename(key: string): string | null {
-  return isSystemPromptOverrideKey(key) ? `${key}.md` : null;
-}
-
 export const DEFAULT_CLI_PREFIX_PROMPT = "You are ZCode, an interactive coding agent";
 
 export const DEFAULT_IDENTITY_INTRO_PROMPT =

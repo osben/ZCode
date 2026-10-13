@@ -1,7 +1,27 @@
 import { describe, expect, it } from "vitest";
+import { createRootTraceContext, createSessionId } from "@zcode/contracts";
+import { DEFAULT_HARNESS_PROMPT } from "@zcode/shared";
 import { createRuntimeSessionModePort } from "../src/runtime/session-mode-port.js";
 import { updateConfig } from "../src/runtime/methods/config.js";
 import type { AgentRuntimeInternal } from "../src/runtime/internal.js";
+import { createTestAgentRuntime } from "./test-agent-runtime.js";
+import { createTestSessionEventStore } from "./test-event-store.js";
+
+function systemMessagesText(messages: readonly { content?: unknown }[]): string {
+  return messages
+    .map((message) => {
+      if (typeof message.content === "string") return message.content;
+      if (Array.isArray(message.content)) {
+        return message.content
+          .map((part) =>
+            typeof part === "string" ? part : String((part as { text?: string }).text ?? ""),
+          )
+          .join("");
+      }
+      return "";
+    })
+    .join("\n");
+}
 
 // 旧 mode=plan 只在兼容入口拆分；新输入的权限与 Plan 可以分别变化。
 describe("updateConfig independent Plan", () => {
@@ -42,5 +62,24 @@ describe("updateConfig independent Plan", () => {
     } as unknown as AgentRuntimeInternal;
     updateConfig.call(runtime, { systemPromptOverrides: { harness: "Mine." } });
     expect(runtime.config.systemPromptOverrides).toEqual({ harness: "Mine." });
+  });
+  it("systemPromptOverrides 补丁实时重应用空闲会话的上下文前缀", async () => {
+    // 行为级回归：初始化过上下文的空闲会话，补丁后重建的前缀必须携带新 override；
+    // 若 updateConfig 的 rebuild 分支被移除，旧 builder 仍会渲染默认 Harness 而在此失败。
+    const sessionId = createSessionId("sysprompt-live-reapply");
+    const traceContext = createRootTraceContext({ sessionId });
+    const runtime = createTestAgentRuntime(sessionId, { workingDirectory: "/fixture" }, {
+      eventStore: createTestSessionEventStore(),
+    });
+
+    await runtime.ensureContextInitialized(traceContext);
+    const beforeText = systemMessagesText(runtime.getContextBuilder().build().systemMessages);
+    expect(beforeText).toContain(DEFAULT_HARNESS_PROMPT);
+
+    runtime.updateConfig({ systemPromptOverrides: { harness: "# Harness\n- Live reapply." } });
+
+    const afterText = systemMessagesText(runtime.getContextBuilder().build().systemMessages);
+    expect(afterText).toContain("# Harness\n- Live reapply.");
+    expect(afterText).not.toContain(DEFAULT_HARNESS_PROMPT);
   });
 });
