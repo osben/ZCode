@@ -43,6 +43,8 @@ export type AccountProviderFamilyAvailabilityResolver = (
 ) => Promise<Partial<Record<string, CodingPlanAvailabilityResult>>>;
 
 export interface AccountProviderConnectionResolverOptions {
+  /** ChatGPT plan (SIWC) entitlement source; absent disables the chatgpt overlay. */
+  loadChatGptPlanEntitlement?: () => Promise<"entitled" | "identity-only" | "signed-out">;
   readonly readSettings: () => Promise<AccountProviderConnectionSettings>;
   readonly loadCodingPlanApiKey: (
     providerId: string,
@@ -159,6 +161,23 @@ export function createAccountProviderConnectionResolver(
     }
 
     const connections: AccountProviderConnectionResult[] = [];
+    if (options.loadChatGptPlanEntitlement) {
+      const chatgptStatus = await options.loadChatGptPlanEntitlement().catch(() => "signed-out");
+      for (const [providerId, config] of configuredProviders.entries()) {
+        if (config.access?.type !== "chatgpt-account") continue;
+        connections.push(
+          chatgptStatus === "entitled"
+            ? { providerId, status: "available", current: true }
+            : {
+                providerId,
+                status: "unavailable",
+                // Protocol enum values: consent lacked the plan scope vs not signed in.
+                unavailableReason:
+                  chatgptStatus === "identity-only" ? "not-entitled" : "not-authenticated",
+              },
+        );
+      }
+    }
     const scopes = new Map<string, string>();
     for (const [providerId, config] of configuredProviders.entries()) {
       const access = config.access;

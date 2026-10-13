@@ -75,6 +75,8 @@ interface OAuthServiceDependencies {
   now?: () => number;
   env?: NodeJS.ProcessEnv;
   onProviderLogout?: (provider: OAuthProviderId, accountIdentity?: string | null) => Promise<void>;
+  /** Fired after a ChatGPT plan (SIWC) login completion or logout so account overlays refresh. */
+  onChatGptPlanSessionChange?: () => Promise<void>;
 }
 
 function readTrimmedString(value: unknown): string | null {
@@ -128,6 +130,7 @@ export class OAuthService implements IOAuthService {
     provider: OAuthProviderId,
     accountIdentity?: string | null,
   ) => Promise<void>;
+  private readonly onChatGptPlanSessionChange?: () => Promise<void>;
   private readonly apiClient?: ApiClient;
   private readonly env: NodeJS.ProcessEnv;
   private readonly siwcAuth: SiwcAuthService;
@@ -147,6 +150,7 @@ export class OAuthService implements IOAuthService {
     this.credentialService = credentialService;
     this.now = dependencies.now ?? Date.now;
     this.onProviderLogout = dependencies.onProviderLogout;
+    this.onChatGptPlanSessionChange = dependencies.onChatGptPlanSessionChange;
     this.apiClient = dependencies.apiClient;
     this.env = dependencies.env ?? process.env;
 
@@ -1120,7 +1124,11 @@ export class OAuthService implements IOAuthService {
   }
 
   async pollChatGptPlanLogin(): Promise<SiwcLoginCompletionResult | null> {
-    return this.siwcAuth.pollLogin();
+    const result = await this.siwcAuth.pollLogin();
+    if (result) {
+      await this.onChatGptPlanSessionChange?.();
+    }
+    return result;
   }
 
   async getChatGptPlanStatus(): Promise<SiwcPlanStatus> {
@@ -1128,7 +1136,11 @@ export class OAuthService implements IOAuthService {
   }
 
   async logoutChatGptPlan(): Promise<{ revoked: boolean; signedOut: boolean }> {
-    return this.siwcAuth.logout();
+    const result = await this.siwcAuth.logout();
+    if (result.signedOut) {
+      await this.onChatGptPlanSessionChange?.();
+    }
+    return result;
   }
 
   private clearPendingState(): void {

@@ -1483,6 +1483,11 @@ export function createLocalServices(options: {
   const accountProviderConfigSource = createAccountProviderConfigSource({
     configSource: providerConfigRuntime.configService,
     readSettings: readAccountProviderSettings,
+    loadChatGptPlanEntitlement: async () => {
+      const status = await siwcAuthService.getStatus();
+      if (!status.signedIn) return "signed-out";
+      return status.planUsageEntitled ? "entitled" : "identity-only";
+    },
     async loadCodingPlanApiKey(providerId, family, accountIdentity, forceRefresh) {
       if (isStartPlanModelProviderId(providerId)) return null;
       return accountProviderCredentialService.loadCodingPlanApiKey({
@@ -2365,6 +2370,11 @@ export function createLocalServices(options: {
   const oauthService = createOAuthService(credentialService, {
     apiClient,
     onProviderLogout: handleOAuthProviderLogout,
+    onChatGptPlanSessionChange: async () => {
+      // ChatGPT plan login/logout changes account entitlements; refresh the account
+      // overlays so the provider appears/disappears in the registry and pickers.
+      await accountProviderConfigSource.refresh("chatgpt-plan-session-changed");
+    },
   });
   const zcodeJwtLogoutLogger = createServiceLogger("zcode-jwt-logout");
   zcodeJwtLogoutHandlerRef.current = (input, headers) => {

@@ -1,4 +1,5 @@
 import {
+  ChatgptAccountAccessConfig,
   ProviderConfig,
   ProviderConfigMap,
   ZhipuAccountAccessConfig,
@@ -77,7 +78,9 @@ export function createAccountProviderConfigResolver(
         ...(connection.status === "unknown" ? previous : {}),
         availability:
           connection.status === "unknown" && previous ? previous.availability : connection.status,
-        entitled: access?.type === "zhipu-account" && access.entitled === true,
+        entitled:
+          (access?.type === "zhipu-account" || access?.type === "chatgpt-account") &&
+          access.entitled === true,
         ...(unavailableReason === undefined ? {} : { unavailableReason }),
         ...(connection.current === undefined ? {} : { current: connection.current }),
         connectionKey: connection.connectionKey,
@@ -96,6 +99,23 @@ export function resolveAccountProviderConfigs(
   const resolved: Array<readonly [ProviderId, ProviderConfig]> = [];
   for (const [providerId, configured] of input.configuredProviders.entries()) {
     const access = configured.access;
+    if (access?.type === "chatgpt-account") {
+      // ChatGPT plan (SIWC): entitlement comes from the host/CLI account source; an absent
+      // connection result keeps the fail-closed (unentitled) overlay.
+      const connection = connectionByProviderId.get(providerId) ?? {
+        providerId,
+        status: "unknown" as const,
+      };
+      resolved.push([
+        providerId,
+        new ProviderConfig({
+          access: new ChatgptAccountAccessConfig({
+            entitled: connection.status === "available" || connection.status === "pending",
+          }),
+        }),
+      ]);
+      continue;
+    }
     if (access?.type !== "zhipu-account") continue;
     const connection = connectionByProviderId.get(providerId) ?? {
       providerId,
