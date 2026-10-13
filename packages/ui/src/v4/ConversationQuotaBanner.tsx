@@ -122,8 +122,20 @@ export function ConversationQuotaBanner({
       Date.now(),
       Math.random(),
     );
-    const timer = setTimeout(() => onAutoContinueRef.current?.(), delayMs);
-    return () => clearTimeout(timer);
+    const targetAt = Date.now() + delayMs;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = () => {
+      const remainingMs = targetAt - Date.now();
+      if (remainingMs <= 0) {
+        onAutoContinueRef.current?.();
+        return;
+      }
+      timer = setTimeout(schedule, Math.min(remainingMs, 2_147_483_647));
+    };
+    schedule();
+    return () => {
+      if (timer !== undefined) clearTimeout(timer);
+    };
   }, [
     autoContinue,
     autoContinueReady,
