@@ -433,7 +433,7 @@ export function resolveBundledGlmBinaryPath(): string | undefined {
 
 // Voice transcription platform package naming must match platformTuple() in transcribe-cpp dist/loader.js
 // (darwin uses metal, linux/win32 use cpu-vulkan; upstream provides no win32-arm64 prebuilt package).
-const TRANSCRIBE_PLATFORM_TUPLES: Record<string, Record<string, string>> = {
+export const TRANSCRIBE_PLATFORM_TUPLES: Record<string, Record<string, string>> = {
   darwin: { arm64: "darwin-arm64-metal", x64: "darwin-x64-cpu" },
   linux: { arm64: "linux-arm64-cpu-vulkan", x64: "linux-x64-cpu-vulkan" },
   win32: { x64: "win32-x64-cpu-vulkan" },
