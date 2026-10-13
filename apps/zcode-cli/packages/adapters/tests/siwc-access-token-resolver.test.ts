@@ -35,6 +35,7 @@ function seedTokens(
     [SIWC_CREDENTIAL_KEYS.refreshToken]: input.refreshToken,
     [SIWC_CREDENTIAL_KEYS.scopes]:
       "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct",
+    [SIWC_CREDENTIAL_KEYS.userInfo]: JSON.stringify({ sub: "user-sub-1", email: "u@example.com" }),
     [SIWC_CREDENTIAL_KEYS.accessExpiresAt]: String(input.expiresAt),
   });
 }
@@ -198,6 +199,91 @@ describe("SIWC access token resolver", () => {
       name: "SiwcReloginRequiredError",
       reason: "not_signed_in",
     });
+  });
+
+  it("refreshes through the DEFAULT token client in production wiring (no injected client)", async () => {
+    // Regression: refreshLocked previously ignored the defaulted client, so the production
+    // construction (credential store only) could never refresh.
+    const store = await createStore();
+    await seedTokens(store, {
+      accessToken: "access-1",
+      expiresAt: NOW_SECONDS - 10,
+      refreshToken: "refresh-1",
+    });
+    const tokenRequests: string[] = [];
+    const fetchFn: typeof fetch = async (input, init) => {
+      tokenRequests.push(String(init?.body ?? ""));
+      return Response.json({
+        access_token: "access-2",
+        refresh_token: "refresh-2",
+        expires_in: 3600,
+      });
+    };
+    const resolver = createSiwcAccessTokenResolver({
+      credentialStore: store,
+      fetchFn,
+      now: () => NOW_SECONDS * 1000,
+    });
+    const resolved = await resolver.resolve({ providerId: "account:chatgpt-plan" });
+    expect(resolved.apiKey).toBe("access-2");
+    expect(tokenRequests).toHaveLength(1);
+    expect(tokenRequests[0]).toContain("grant_type=refresh_token");
+    expect(tokenRequests[0]).toContain("client_id=oaiapp_issued");
+    expect(await store.load(SIWC_CREDENTIAL_KEYS.refreshToken)).toBe("refresh-2");
+  });
+
+  it("keeps the account scope stable across token rotation (account-switch fingerprint only)", async () => {
+    const store = await createStore();
+    await seedTokens(store, {
+      accessToken: "access-1",
+      expiresAt: NOW_SECONDS + 3600,
+      refreshToken: "refresh-1",
+    });
+    const { tokenClient } = createFakeTokenClient([
+      { accessToken: "access-2", refreshToken: "refresh-2", expiresInSeconds: 3600 },
+    ]);
+    const resolver = createSiwcAccessTokenResolver({
+      credentialStore: store,
+      tokenClient,
+      now: () => NOW_SECONDS * 1000,
+    });
+    const before = await resolver.resolve({ providerId: "account:chatgpt-plan" });
+    // Simulate expiry + rotation.
+    await store.save(SIWC_CREDENTIAL_KEYS.accessExpiresAt, String(NOW_SECONDS + 60));
+    const { tokenClient: second } = createFakeTokenClient([
+      { accessToken: "access-3", refreshToken: "refresh-3", expiresInSeconds: 3600 },
+    ]);
+    const resolverAfterRotation = createSiwcAccessTokenResolver({
+      credentialStore: store,
+      tokenClient: second,
+      now: () => NOW_SECONDS * 1000,
+    });
+    const after = await resolverAfterRotation.resolve({ providerId: "account:chatgpt-plan" });
+    expect(after.apiKey).toBe("access-3");
+    expect(after.accountScope).toBe(before.accountScope);
+  });
+
+  it("forceRefresh rotates even a time-valid token (401 retry must not resend it)", async () => {
+    const store = await createStore();
+    await seedTokens(store, {
+      accessToken: "access-rejected",
+      expiresAt: NOW_SECONDS + 3600,
+      refreshToken: "refresh-1",
+    });
+    const { refreshCalls, tokenClient } = createFakeTokenClient([
+      { accessToken: "access-fresh", refreshToken: "refresh-2", expiresInSeconds: 3600 },
+    ]);
+    const resolver = createSiwcAccessTokenResolver({
+      credentialStore: store,
+      tokenClient,
+      now: () => NOW_SECONDS * 1000,
+    });
+    const resolved = await resolver.resolve({
+      providerId: "account:chatgpt-plan",
+      forceRefresh: true,
+    });
+    expect(resolved.apiKey).toBe("access-fresh");
+    expect(refreshCalls).toEqual([{ clientId: "oaiapp_issued", refreshToken: "refresh-1" }]);
   });
 
   it("keeps the current token before earliest_refresh_at", async () => {

@@ -30,11 +30,6 @@ export function isBuiltinModelProviderId(id: string): id is BuiltinModelProvider
   );
 }
 
-/** ChatGPT plan provider backed by the official OpenAI SIWC token-sharing program. */
-export function isChatGptPlanProviderId(id: string): boolean {
-  return id === BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan;
-}
-
 export function isZaiCodingPlanProviderId(id: string): boolean {
   return (
     id === BUILTIN_MODEL_PROVIDER_IDS.zaiIndividualCodingPlan ||

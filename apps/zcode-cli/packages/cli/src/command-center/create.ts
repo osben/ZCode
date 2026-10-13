@@ -1,4 +1,5 @@
 import type { TuiSubmitPrompt } from "@zcode/tui";
+import { redactSiwcAuthorizeUrl } from "@zcode/adapters";
 import {
   formatAvailableCommandNames,
   listCustomCommandsForHelp,
@@ -160,9 +161,10 @@ export function createCommandCenter(deps: CommandCenterDeps): TuiSubmitPrompt {
               await deps.loginChatGpt({
                 abortSignal: options.abortSignal,
                 onAuthorizeUrl: async (data) => {
+                  // The transcript must not carry the id_token_hint JWT / login_hint email.
                   await emitLoginAuthorizeMessage(
                     options,
-                    data.authorizeUrl,
+                    redactSiwcAuthorizeUrl(data.authorizeUrl),
                     "ChatGPT",
                     await deps.getApp(),
                   );

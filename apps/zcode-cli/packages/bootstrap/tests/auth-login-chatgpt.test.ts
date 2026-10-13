@@ -279,6 +279,27 @@ describe("ChatGPT plan login (SIWC)", () => {
     expect(after[SIWC_CREDENTIAL_KEYS.refreshToken]).toBeNull();
   });
 
+  it("rejects with auth_timeout (no uncaught exception) when the browser never returns", async () => {
+    const { credentialStore, dir } = await createWorkspace();
+    const key = createTestKey();
+    const nonceRef = { value: "" };
+    // No browser redirect is ever performed; the tiny timeout must surface as a clean
+    // auth_timeout rejection and close the loopback server.
+    const login = loginChatGptPlan({
+      credentialStore,
+      env: TEST_ENV,
+      noBrowser: true,
+      fetchFn: createFakeAuthFetch(key),
+      tokenClient: createFakeTokenClient({ key, nonceRef }).tokenClient,
+      now: () => NOW_SECONDS * 1000,
+      personalProviderConfigPath: join(dir, "provider_config.json"),
+      onAuthorizeUrl: () => undefined,
+      timeoutMs: 150,
+    });
+    const error = await login.catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ code: "auth_timeout", name: "ZCodeCliLoginError" });
+  });
+
   it("logout is a no-op when never signed in", async () => {
     const { credentialStore } = await createWorkspace();
     const result = await logoutChatGptPlan({

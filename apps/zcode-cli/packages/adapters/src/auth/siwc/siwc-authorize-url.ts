@@ -2,7 +2,6 @@ import {
   SIWC_AGENT_NAME_HINT,
   SIWC_AUTHORIZATION_ENDPOINT,
   SIWC_DYNAMIC_CLIENT_ID,
-  SIWC_PLAN_USAGE_SCOPE,
   SIWC_RESOURCE,
   SIWC_SCOPE,
 } from "./siwc-constants.js";
@@ -68,7 +67,19 @@ export function buildSiwcAuthorizeUrl(input: SiwcAuthorizeUrlInput): string {
   return url.toString();
 }
 
-/** The scope the consent flow must include for plan-backed inference. */
-export function requiredPlanUsageScope(): string {
-  return SIWC_PLAN_USAGE_SCOPE;
+const REDACTED_URL_PARAMS: readonly string[] = ["id_token_hint", "login_hint"];
+
+/**
+ * Mask PII-bearing query params (id_token_hint JWT, login_hint email) before an authorize
+ * URL is displayed in a terminal or transcript. Both hints are optional conveniences: the
+ * URL remains functional, and the plain values never reach logs (spec: storage rules).
+ */
+export function redactSiwcAuthorizeUrl(authorizeUrl: string): string {
+  const url = new URL(authorizeUrl);
+  for (const param of REDACTED_URL_PARAMS) {
+    if (url.searchParams.has(param)) {
+      url.searchParams.set(param, "<redacted>");
+    }
+  }
+  return url.toString();
 }

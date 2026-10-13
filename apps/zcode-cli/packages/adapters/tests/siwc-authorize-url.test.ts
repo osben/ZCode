@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildSiwcAuthorizeUrl } from "../src/auth/siwc/siwc-authorize-url.js";
+import {
+  buildSiwcAuthorizeUrl,
+  redactSiwcAuthorizeUrl,
+} from "../src/auth/siwc/siwc-authorize-url.js";
 import { computeSiwcCodeChallenge } from "../src/auth/siwc/siwc-pkce.js";
 
 const BASE_INPUT = {
@@ -60,5 +63,29 @@ describe("SIWC authorize URL builder", () => {
     expect(() => buildSiwcAuthorizeUrl({ ...BASE_INPUT, idTokenHint: "token" })).toThrow(
       /issued client id/u,
     );
+  });
+});
+
+describe("SIWC authorize URL redaction", () => {
+  it("masks id_token_hint and login_hint while keeping the URL functional", () => {
+    const url = buildSiwcAuthorizeUrl({
+      ...BASE_INPUT,
+      issuedClientId: "oaiapp_issued",
+      idTokenHint: "header.payload.signature",
+      loginHint: "user@example.com",
+    });
+    const redacted = redactSiwcAuthorizeUrl(url);
+    expect(redacted).not.toContain("header.payload.signature");
+    expect(redacted).not.toContain("user@example.com");
+    const parsed = new URL(redacted);
+    expect(parsed.searchParams.get("id_token_hint")).toBe("<redacted>");
+    expect(parsed.searchParams.get("login_hint")).toBe("<redacted>");
+    expect(parsed.searchParams.get("client_id")).toBe("oaiapp_issued");
+    expect(parsed.searchParams.get("scope")).toContain("chatgpt.tokens.use.direct");
+  });
+
+  it("leaves first-registration URLs unchanged", () => {
+    const url = buildSiwcAuthorizeUrl({ ...BASE_INPUT });
+    expect(redactSiwcAuthorizeUrl(url)).toBe(url);
   });
 });

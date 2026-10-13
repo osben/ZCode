@@ -68,14 +68,7 @@ export function createSiwcCompatFetch(
       );
     }
 
-    for (const field of SIWC_FORBIDDEN_REQUEST_FIELDS) {
-      delete body[field];
-    }
-    body.store = false;
-    body.stream = true;
-    // Explicit system-role input items are rejected by the direct route; the AI SDK maps
-    // the system prompt to instructions, so any leftovers are folded in defensively.
-    remapSystemInputItems(body);
+    body = applySiwcRequestShape(body);
 
     const serialized = JSON.stringify(body);
     const compressed = compressRequestBodyIfNeeded(serialized, {
@@ -87,7 +80,7 @@ export function createSiwcCompatFetch(
     if (requestIsRequestInstance(input) && init === undefined) {
       // Rebuild from the Request object, replacing the body and affected headers.
       const headers = new Headers(input.headers);
-      applyBodyHeaders(headers, serialized.length, compressed);
+      applyContentEncodingHeader(headers, compressed);
       return baseFetch(
         new Request(input, {
           body: compressed ? compressed.body : serialized,
@@ -98,10 +91,11 @@ export function createSiwcCompatFetch(
     }
 
     const headers = new Headers(init?.headers);
-    applyBodyHeaders(headers, serialized.length, compressed);
+    applyContentEncodingHeader(headers, compressed);
     const nextInit: RequestInit = {
       ...(init ?? {}),
-      // Copy into a fresh Uint8Array so the body is backed by a plain ArrayBuffer (BodyInit).
+      // The copy only satisfies BodyInit typing for the Uint8Array branch; undici computes
+      // the correct byte length for both string and typed-array bodies itself.
       body: compressed ? new Uint8Array(compressed.body) : serialized,
       headers,
     };
@@ -163,12 +157,14 @@ function readItemText(content: unknown): string | undefined {
   return parts.length > 0 ? parts.join("\n") : undefined;
 }
 
-function applyBodyHeaders(
+/**
+ * Only content-encoding is managed here: undici derives the byte-accurate content-length
+ * from the body itself, and a manually computed one risks UTF-16 vs UTF-8 mismatch.
+ */
+function applyContentEncodingHeader(
   headers: Headers,
-  serializedLength: number,
   compressed: ReturnType<typeof compressRequestBodyIfNeeded>,
 ): void {
-  headers.set("content-length", String(compressed ? compressed.body.byteLength : serializedLength));
   if (compressed) {
     headers.set("content-encoding", compressed.contentEncoding);
   } else {

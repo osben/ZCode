@@ -82,11 +82,26 @@ describe("SIWC request compat fetch (wire shaping)", () => {
     expect((sent.input as { role?: string }[]).some((item) => item.role === "system")).toBe(false);
     expect(String(sent.instructions)).toContain("You are a coding agent.");
     expect(String(sent.instructions)).toContain("extra system line");
-    // Authorization (the SIWC access token) passes through untouched.
+    // Authorization (the SIWC access token) passes through untouched; content-length is left
+    // to the transport so non-ASCII bodies cannot get a UTF-16-based wrong length.
     expect(requests[0]!.headers.authorization).toBe("Bearer siwc-access-token");
-    expect(Number(requests[0]!.headers["content-length"])).toBe(
-      Buffer.byteLength(String(requests[0]!.body), "utf-8"),
-    );
+    expect(requests[0]!.headers["content-length"]).toBeUndefined();
+  });
+
+  it("does not compute content-length for non-ASCII bodies (undici derives bytes)", async () => {
+    const { fetchFn, requests } = createCapturingFetch();
+    const fetchCompat = createSiwcCompatFetch(fetchFn);
+    const body = JSON.stringify({
+      model: "gpt-6.1-sol",
+      instructions: "Ты агент-кодер. 你好。",
+      input: [{ type: "message", role: "user", content: "привет мир" }],
+    });
+    expect(Buffer.byteLength(body, "utf-8")).toBeGreaterThan(body.length);
+    await fetchCompat("https://api.openai.com/v1/responses", { method: "POST", body });
+    expect(requests[0]!.headers["content-length"]).toBeUndefined();
+    const parsed = JSON.parse(String(requests[0]!.body)) as Record<string, unknown>;
+    expect(parsed.instructions).toBe("Ты агент-кодер. 你好。");
+    expect(parsed.store).toBe(false);
   });
 
   it("leaves bodies without system items untouched in their ordering", () => {
@@ -117,9 +132,7 @@ describe("SIWC request compat fetch (wire shaping)", () => {
     const parsed = JSON.parse(decompressed) as Record<string, unknown>;
     expect(parsed.store).toBe(false);
     expect(parsed.stream).toBe(true);
-    expect(Number(captured.headers["content-length"])).toBe(
-      (captured.body as Uint8Array).byteLength,
-    );
+    expect(captured.headers["content-length"]).toBeUndefined();
   });
 
   it("compresses a real >1 MiB body at the default threshold", async () => {

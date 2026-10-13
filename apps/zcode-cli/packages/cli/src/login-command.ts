@@ -1,4 +1,5 @@
 import { formatJson } from "@zcode/core";
+import { redactSiwcAuthorizeUrl } from "@zcode/adapters";
 import type { GlobalOptions, RunContext } from "@zcode/shared-types";
 import { loadBootstrapModule } from "./bootstrap-loader.js";
 import { loadCliDotenv } from "./env.js";
@@ -157,7 +158,7 @@ async function runChatGptPlanLogin(
   ctx: RunContext,
   options: GlobalOptions,
   deps: RunDependencies,
-  env: ReturnType<() => Record<string, string | undefined>>,
+  env: Record<string, string | undefined>,
   noBrowser: boolean,
 ): Promise<number> {
   const bootstrap = await loadBootstrapModule();
@@ -165,7 +166,15 @@ async function runChatGptPlanLogin(
     env,
     noBrowser,
     onAuthorizeUrl: (data) => {
-      writeAuthorizeUrl(ctx, options, data.authorizeUrl, noBrowser, "chatgpt");
+      // Displayed URLs mask id_token_hint/login_hint; the hints are optional conveniences
+      // and their plain values (JWT with sub/email) must not reach terminal output.
+      writeAuthorizeUrl(
+        ctx,
+        options,
+        redactSiwcAuthorizeUrl(data.authorizeUrl),
+        noBrowser,
+        "chatgpt",
+      );
     },
     onBrowserOpen: (browser) => {
       if (!options.json && !browser.opened) {

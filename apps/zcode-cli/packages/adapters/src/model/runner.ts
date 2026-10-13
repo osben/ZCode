@@ -44,6 +44,7 @@ import {
   type AiSdkModelTextRequest,
   type ResolvedAiSdkModel,
 } from "./runner-runtime.js";
+import { isAccountAccess } from "./account-access-mode.js";
 import { createModel, type ModelExecutionRequest } from "./model.js";
 import { refreshOffPeakRequestAuth } from "./off-peak-request-auth.js";
 import { aggregateModelStreamToTextResult } from "./stream-to-text-result.js";
@@ -156,12 +157,11 @@ export class AiSdkModelAdapter {
       optionSpecs: options.modelConfig.optionSpecs,
     });
     const properties = options.modelConfig.properties;
+    const accountAccess = resolveAccountAccess(options.providerConfig.access);
     const resolved = {
       ...boundResolution.resolved,
       properties,
-      ...(resolveAccountAccess(options.providerConfig.access)
-        ? { accountAccess: resolveAccountAccess(options.providerConfig.access) }
-        : {}),
+      ...(accountAccess ? { accountAccess } : {}),
     };
     const optionSpecs = options.modelConfig.optionSpecs;
     const toLegacyRequest = (request: ModelExecutionRequest): AiSdkModelTextRequest => {
@@ -267,9 +267,7 @@ export class AiSdkModelAdapter {
               }),
             ),
             properties,
-            ...(resolveAccountAccess(options.providerConfig.access)
-              ? { accountAccess: resolveAccountAccess(options.providerConfig.access) }
-              : {}),
+            ...(accountAccess ? { accountAccess } : {}),
           })
         : () => ({
             ...boundResolution.resolveRequest({
@@ -279,9 +277,7 @@ export class AiSdkModelAdapter {
               },
             }),
             properties,
-            ...(resolveAccountAccess(options.providerConfig.access)
-              ? { accountAccess: resolveAccountAccess(options.providerConfig.access) }
-              : {}),
+            ...(accountAccess ? { accountAccess } : {}),
           });
     };
     return createModel({
@@ -377,10 +373,6 @@ function requireMaxOutputTokens(options: ModelOptions): number {
     );
   }
   return options.maxOutputTokens;
-}
-
-function isAccountAccess(access: RegistryProviderConfig["access"]): boolean {
-  return access.type === "zhipu-account" || access.type === "chatgpt-account";
 }
 
 /** Both account domains need per-attempt runtime-header refresh; only zhipu carries a wire payload. */

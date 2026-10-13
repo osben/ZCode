@@ -27,6 +27,7 @@ import { createModelRequestSecurityState } from "./request-security-edition/inde
 import type { ModelRequestSecurityState, ModelRequestSecurityPort } from "./request-security.js";
 import { createOpenAIResponsesJsonCompatFetch } from "./openai-responses-json-compat.js";
 import { createModelOptionMapFetch, type RawRequestBodyCapture } from "./model-option-map-fetch.js";
+import { isAccountAccess } from "./account-access-mode.js";
 import { createSiwcCompatFetch } from "./siwc-request-compat.js";
 import { createNetworkProxyFetch } from "../network/proxy-fetch.js";
 import { createProviderEndpointRoutingFetch } from "./provider-endpoint-routing-fetch.js";
@@ -452,11 +453,6 @@ function hasHeader(headers: Record<string, string> | undefined, name: string): b
   }
   const normalizedName = name.toLowerCase();
   return Object.keys(headers).some((key) => key.toLowerCase() === normalizedName);
-}
-
-/** Account-bound providers resolve auth per request; both account domains share this behavior. */
-function isAccountAccess(access: RegistryProviderConfig["access"]): boolean {
-  return access.type === "zhipu-account" || access.type === "chatgpt-account";
 }
 
 function buildProviderOptions(config: RegistryProviderConfig): Record<string, unknown> {

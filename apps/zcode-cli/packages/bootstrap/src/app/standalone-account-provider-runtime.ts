@@ -291,6 +291,9 @@ export function createStandaloneProviderRuntimeHeadersPort(
         const resolved = await siwcResolver.resolve({
           providerId,
           ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+          // After a 401 rejection the retry must not resend the rejected token; a scope
+          // mismatch (real account switch) is still refused below.
+          ...(input.rejectedProjectTokenFingerprint ? { forceRefresh: true } : {}),
         });
         if (input.expectedAccountScope && input.expectedAccountScope !== resolved.accountScope) {
           throw new Error("siwc_account_scope_invalidated");

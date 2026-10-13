@@ -48,26 +48,7 @@ export function serializeRegistryProviderConfig(
   return {
     group: config.group,
     ...(config.logo === undefined ? {} : { logo: config.logo }),
-    access:
-      config.access.type === "zhipu-account"
-        ? {
-            type: config.access.type,
-            accountType: config.access.accountType,
-            mode: config.access.mode,
-            entitled: config.access.entitled,
-          }
-        : config.access.type === "chatgpt-account"
-          ? {
-              type: config.access.type,
-              entitled: config.access.entitled,
-            }
-          : {
-              type: config.access.type,
-              apiKey: config.access.apiKey,
-              ...(config.access.apiKeyManagementUrl === undefined
-                ? {}
-                : { apiKeyManagementUrl: config.access.apiKeyManagementUrl }),
-            },
+    access: serializeRegistryProviderAccess(config),
     api: {
       type: config.api.type,
       baseUrl: config.api.baseUrl,
@@ -78,6 +59,33 @@ export function serializeRegistryProviderConfig(
     ...(config.modelOrder == null ? {} : { modelOrder: [...config.modelOrder] }),
     ...(config.visibility === undefined ? {} : { visibility: config.visibility }),
   };
+}
+
+function serializeRegistryProviderAccess(
+  config: RegistryProviderConfig,
+): RegistryProviderConfigObject["access"] {
+  switch (config.access.type) {
+    case "zhipu-account":
+      return {
+        type: config.access.type,
+        accountType: config.access.accountType,
+        mode: config.access.mode,
+        entitled: config.access.entitled,
+      };
+    case "chatgpt-account":
+      return {
+        type: config.access.type,
+        entitled: config.access.entitled,
+      };
+    default:
+      return {
+        type: config.access.type,
+        apiKey: config.access.apiKey,
+        ...(config.access.apiKeyManagementUrl === undefined
+          ? {}
+          : { apiKeyManagementUrl: config.access.apiKeyManagementUrl }),
+      };
+  }
 }
 
 export type RegistryModelConfig = ModelConfig & z.infer<typeof completeModelConfigDataSchema>;

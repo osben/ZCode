@@ -24,7 +24,7 @@ import {
 } from "@zcode/adapters";
 import type { EnvRecord } from "@zcode/adapters/model";
 import { ZCodeCliLoginError } from "./auth-login-contract.js";
-import { throwIfAborted } from "./auth-login-abort.js";
+import { throwIfAborted, waitWithAbort } from "./auth-login-abort.js";
 import {
   NodeModelSelectionConfigRepository,
   NodePersonalProviderConfigRepository,
@@ -150,7 +150,7 @@ export async function loginChatGptPlan(
         : await (options.openBrowser ?? openUrlInBrowser)(authorizeUrl);
       if (browser) await options.onBrowserOpen?.(browser);
 
-      const callback = await waitForCallback(callbackServer.waitForCallback(), signal);
+      const callback = await waitWithAbort(callbackServer.waitForCallback(), signal);
       const callbackClientId = callback.clientId?.trim() || undefined;
       const clientId = resolveEffectiveClientId(issuedClientId, callbackClientId);
       throwIfAborted(signal);
@@ -267,18 +267,15 @@ export async function logoutChatGptPlan(
       lastError = undefined;
       break;
     } catch (error) {
-      // Already-invalid tokens answer empty 200; 4xx means the token is gone for good.
-      if (error instanceof SiwcRevokeError && (error.httpStatus ?? 0) < 500) {
-        lastError = error;
-        break;
-      }
       lastError = error;
+      // Already-invalid tokens answer empty 200; 4xx means the token is gone for good.
+      if (error instanceof SiwcRevokeError && (error.httpStatus ?? 0) < 500) break;
     }
   }
   // Local tokens are cleared even when revocation could not be confirmed; the client id and
   // account mapping are retained so a future sign-in reuses the registered client.
   await clearSiwcTokenCredentials(credentialStore);
-  if (!revoked && lastError !== undefined && process.env.ZCODE_DEBUG?.trim()) {
+  if (!revoked && lastError !== undefined && env.ZCODE_DEBUG?.trim()) {
     console.warn(
       `ChatGPT plan token revocation could not be confirmed; local tokens were cleared. (${
         lastError instanceof Error ? lastError.message : String(lastError)
@@ -373,23 +370,4 @@ async function verifyIdToken(
       { cause: error },
     );
   }
-}
-
-async function waitForCallback<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  // The loopback server has no external abort handle; racing the signal settles timeouts and
-  // caller aborts (the server itself is closed by the surrounding finally block).
-  return Promise.race([
-    promise,
-    new Promise<never>((_, reject) => {
-      const rejectAborted = () => {
-        throwIfAborted(signal);
-        reject(new Error("aborted"));
-      };
-      if (signal.aborted) {
-        rejectAborted();
-        return;
-      }
-      signal.addEventListener("abort", rejectAborted, { once: true });
-    }),
-  ]);
 }

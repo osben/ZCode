@@ -42,6 +42,11 @@ export class SiwcReloginRequiredError extends Error {
 export interface SiwcAccessTokenResolverInput {
   readonly abortSignal?: AbortSignal;
   readonly providerId: string;
+  /**
+   * Force a refresh even when the stored token is still time-valid; set after the resource
+   * server rejected the current token (401) so the retry cannot resend it.
+   */
+  readonly forceRefresh?: boolean;
 }
 
 export interface SiwcAccessTokenResolution {
@@ -77,6 +82,7 @@ export async function loadSiwcCredentialSnapshot(
     SIWC_CREDENTIAL_KEYS.accessToken,
     SIWC_CREDENTIAL_KEYS.refreshToken,
     SIWC_CREDENTIAL_KEYS.scopes,
+    SIWC_CREDENTIAL_KEYS.userInfo,
   ]);
   const clientId = values[SIWC_CREDENTIAL_KEYS.clientId]?.trim();
   const accessToken = values[SIWC_CREDENTIAL_KEYS.accessToken]?.trim();
@@ -88,19 +94,22 @@ export async function loadSiwcCredentialSnapshot(
     clientId: clientId ?? "",
     refreshToken,
     scopes,
-    // Identity is derived from the client id + tokens without decrypting user info twice.
-    identity: clientId || accessToken,
+    identity: readAccountSubject(values[SIWC_CREDENTIAL_KEYS.userInfo]) ?? clientId ?? "",
   };
 }
 
-/** Account-scope fingerprint (compared for equality to detect account switching), not a secret. */
+/**
+ * Account-scope fingerprint (compared for equality to detect account switching), not a secret.
+ * Hashes only stable account material (issued client id + subject); the access token rotates
+ * hourly and must not change the scope, or routine refreshes would look like account switches.
+ */
 export function createSiwcAccountScope(input: {
-  readonly accessToken: string;
-  readonly identity: string;
+  readonly clientId: string;
   readonly providerId: string;
+  readonly subject: string;
 }): string {
   return createHash("sha256") // codeql[js/insufficient-password-hash]
-    .update(JSON.stringify([input.providerId, "chatgpt", input.identity, input.accessToken]))
+    .update(JSON.stringify([input.providerId, "chatgpt", input.clientId, input.subject]))
     .digest("hex");
 }
 
@@ -129,7 +138,7 @@ export function createSiwcAccessTokenResolver(options: SiwcAccessTokenResolverOp
         { reason: "not_signed_in" },
       );
     }
-    if (isAccessUsable(snapshot, now())) {
+    if (!input.forceRefresh && isAccessUsable(snapshot, now())) {
       return toResolution(snapshot, input.providerId);
     }
     if (!snapshot.clientId || !snapshot.refreshToken) {
@@ -138,13 +147,17 @@ export function createSiwcAccessTokenResolver(options: SiwcAccessTokenResolverOp
         { reason: "not_signed_in" },
       );
     }
-    // Respect earliest_refresh_at: before it, the current token is the best we may use.
-    if (snapshot.earliestRefreshAt != null && now() / 1000 < snapshot.earliestRefreshAt) {
+    // Respect earliest_refresh_at: before it, the current token is the best we may use —
+    // except after a server-side rejection, where resending it is guaranteed to fail again.
+    if (
+      !input.forceRefresh &&
+      snapshot.earliestRefreshAt != null &&
+      now() / 1000 < snapshot.earliestRefreshAt
+    ) {
       if (snapshot.accessToken) return toResolution(snapshot, input.providerId);
     }
-    const refreshed = await refreshUnderLock(options, snapshot, now, input.abortSignal);
-    snapshot = refreshed ?? (await loadSiwcTokenState(options.credentialStore));
-    if (!snapshot || !isAccessUsable(snapshot, now())) {
+    snapshot = await refreshUnderLock(tokenClient, options, snapshot, now, input.abortSignal);
+    if (!isAccessUsable(snapshot, now())) {
       throw new SiwcReloginRequiredError(
         "ChatGPT plan token refresh did not produce a usable access token. Sign in again with `zcode login chatgpt`.",
         { reason: "refresh_failed" },
@@ -170,6 +183,7 @@ interface SiwcTokenState {
   idToken: string | null;
   refreshToken: string | null;
   scopes: string | null;
+  subject: string | null;
   accessExpiresAt: number | null;
   earliestRefreshAt: number | null;
 }
@@ -183,6 +197,7 @@ async function loadSiwcTokenState(
     SIWC_CREDENTIAL_KEYS.idToken,
     SIWC_CREDENTIAL_KEYS.refreshToken,
     SIWC_CREDENTIAL_KEYS.scopes,
+    SIWC_CREDENTIAL_KEYS.userInfo,
     SIWC_CREDENTIAL_KEYS.accessExpiresAt,
     SIWC_CREDENTIAL_KEYS.earliestRefreshAt,
   ];
@@ -196,9 +211,20 @@ async function loadSiwcTokenState(
     idToken: values[SIWC_CREDENTIAL_KEYS.idToken]?.trim() || null,
     refreshToken,
     scopes: values[SIWC_CREDENTIAL_KEYS.scopes] ?? null,
+    subject: readAccountSubject(values[SIWC_CREDENTIAL_KEYS.userInfo]),
     accessExpiresAt: readEpoch(values[SIWC_CREDENTIAL_KEYS.accessExpiresAt]),
     earliestRefreshAt: readEpoch(values[SIWC_CREDENTIAL_KEYS.earliestRefreshAt]),
   };
+}
+
+function readAccountSubject(userInfoRaw: string | null | undefined): string | null {
+  if (!userInfoRaw) return null;
+  try {
+    const parsed = JSON.parse(userInfoRaw) as { sub?: unknown };
+    return typeof parsed.sub === "string" && parsed.sub.trim() ? parsed.sub.trim() : null;
+  } catch {
+    return null;
+  }
 }
 
 function isAccessUsable(state: SiwcTokenState, nowMs: number): boolean {
@@ -212,8 +238,9 @@ function toResolution(state: SiwcTokenState, providerId: string): SiwcAccessToke
   return {
     apiKey: state.accessToken,
     accountScope: createSiwcAccountScope({
-      accessToken: state.accessToken,
-      identity: state.clientId || state.accessToken,
+      clientId: state.clientId ?? "",
+      // Stability fallback for accounts without persisted user info.
+      subject: state.subject ?? state.clientId ?? "",
       providerId,
     }),
   };
@@ -224,19 +251,22 @@ function toResolution(state: SiwcTokenState, providerId: string): SiwcAccessToke
  * file because the store locks the credentials file itself for read-modify-write.
  */
 async function refreshUnderLock(
+  tokenClient: SiwcTokenClient,
   options: SiwcAccessTokenResolverOptions,
   observed: SiwcTokenState,
   now: () => number,
   abortSignal?: AbortSignal,
-): Promise<SiwcTokenState | null> {
+): Promise<SiwcTokenState> {
   const lockPath = join(
     dirname((options.credentialStore as SharedZCodeCredentialStore).filePath),
     "siwc-chatgpt.refresh",
   );
   try {
-    return await withFileLock(lockPath, () => refreshLocked(options, observed, now, abortSignal), {
-      lockMaxWaitMs: SIWC_REFRESH_LOCK_MAX_WAIT_MS,
-    });
+    return await withFileLock(
+      lockPath,
+      () => refreshLocked(tokenClient, options, observed, now, abortSignal),
+      { lockMaxWaitMs: SIWC_REFRESH_LOCK_MAX_WAIT_MS },
+    );
   } catch (error) {
     if (!isZCodeFileLockTimeoutError(error)) throw error;
     // A lock timeout does not mean refresh failed; the winner may have rotated tokens.
@@ -247,6 +277,7 @@ async function refreshUnderLock(
 }
 
 async function refreshLocked(
+  tokenClient: SiwcTokenClient,
   options: SiwcAccessTokenResolverOptions,
   observed: SiwcTokenState,
   now: () => number,
@@ -265,12 +296,11 @@ async function refreshLocked(
     return current;
   }
   try {
-    const response =
-      (await options.tokenClient?.refresh({
-        clientId: current.clientId,
-        refreshToken: current.refreshToken,
-        ...(abortSignal ? { signal: abortSignal } : {}),
-      })) ?? alwaysThrowMissingTokenClient();
+    const response = await tokenClient.refresh({
+      clientId: current.clientId,
+      refreshToken: current.refreshToken,
+      ...(abortSignal ? { signal: abortSignal } : {}),
+    });
     const expiresAt = Math.floor(now() / 1000) + (response.expiresInSeconds ?? 3600);
     const scopeValue = response.scope ?? current.scopes ?? undefined;
     await store.saveMany({
@@ -306,10 +336,6 @@ async function refreshLocked(
     }
     throw error;
   }
-}
-
-function alwaysThrowMissingTokenClient(): never {
-  throw new Error("SIWC token client is required for refresh.");
 }
 
 export function isSiwcTerminalRefreshError(error: unknown): boolean {
