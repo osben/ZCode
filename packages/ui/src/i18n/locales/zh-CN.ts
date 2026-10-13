@@ -7225,6 +7225,7 @@ const zhCN: Record<string, string> = {
   "voiceDictation.models.description.nemotron": "英语语音转写，支持流式与词级时间戳。",
   "voiceDictation.saveFailed": "无法保存语音输入设置。",
   "voiceDictation.composer.start": "语音输入",
+  "voiceDictation.composer.starting": "正在启动语音输入",
   "voiceDictation.composer.loading": "正在加载语音模型",
   "voiceDictation.composer.stop": "结束语音输入",
   "voiceDictation.composer.level": "麦克风输入音量",

@@ -7112,6 +7112,7 @@ const ukUA: Record<string, string> = {
     "Англійське розпізнавання мовлення з потоковим режимом і мітками токенів.",
   "voiceDictation.saveFailed": "Не вдалося зберегти налаштування голосового введення.",
   "voiceDictation.composer.start": "Голосове введення",
+  "voiceDictation.composer.starting": "Запуск голосового введення",
   "voiceDictation.composer.loading": "Завантаження моделі мовлення",
   "voiceDictation.composer.stop": "Зупинити голосове введення",
   "voiceDictation.composer.level": "Рівень сигналу мікрофона",

@@ -24,7 +24,6 @@ import {
   useState,
   type DragEvent,
   type MouseEvent as ReactMouseEvent,
-  type RefObject,
   type ReactNode,
 } from "react";
 import { cn } from "@/components/lib/utils.js";
@@ -167,8 +166,7 @@ import type { CodeViewerSource } from "@/lib/codeViewer.js";
 import { useConversationSelectionReferences } from "@/v4/composer/useConversationSelectionReferences.js";
 import { ConversationBackgroundWorkTrigger } from "@/v4/composer/ConversationBackgroundWorkTrigger.js";
 import { V4ComposerCuaEntry } from "@/v4/composer/V4ComposerCuaEntry.js";
-import { V4ComposerVoiceButton } from "@/v4/composer/V4ComposerVoiceButton.js";
-import { useVoiceDictation } from "@/hooks/useVoiceDictation.js";
+import { V4ComposerDictationControl } from "@/v4/composer/V4ComposerDictationControl.js";
 import {
   V4ComposerModeSwitch,
   V4ComposerModelControls,
@@ -507,36 +505,13 @@ export interface ConversationComposerProps {
   appSlashCommands?: readonly AppSlashCommand[];
   /** Expose the composer's drop routing to the full conversation pane / desktop draft title bar. */
   onDropTargetControllerChange?: (controller: ConversationDropTargetController | null) => void;
-  /** Voice input is available only on the local desktop (transcription runs in the Desktop Host); Web / remote entries show no microphone. */
+  /** Voice input entry: desktop transcribes in the Desktop Host; web remote control transcribes in the browser (Web Speech API, hidden when unsupported). */
   voiceDictationEnabled?: boolean;
 }
 
 function formatAttachmentLineCount(attachment: ChatComposerAttachment, locale: string): string {
   const formatter = new Intl.NumberFormat(locale, { maximumFractionDigits: 0 });
   return formatter.format(typeof attachment.lineCount === "number" ? attachment.lineCount : 0);
-}
-
-function VoiceDictationComposerControl({
-  disabled,
-  onTranscript,
-  scopeRef,
-}: {
-  disabled: boolean;
-  onTranscript: (text: string) => void;
-  scopeRef: RefObject<HTMLElement | null>;
-}) {
-  const voiceDictation = useVoiceDictation({ enabled: true, onTranscript, scopeRef });
-  // V4ComposerVoiceButton is a memo component; an inline arrow function would defeat the memo (see the reactStableReferences tests).
-  const handleToggle = useCallback(() => void voiceDictation.toggle(), [voiceDictation.toggle]);
-  return (
-    <V4ComposerVoiceButton
-      phase={voiceDictation.phase}
-      level={voiceDictation.level}
-      preview={voiceDictation.preview}
-      disabled={disabled}
-      onToggle={handleToggle}
-    />
-  );
 }
 
 function ConversationComposerImpl({
@@ -2380,10 +2355,11 @@ function ConversationComposerImpl({
           openTarget={backgroundWorkOpenTarget}
         />
         {voiceDictationEnabled ? (
-          <VoiceDictationComposerControl
+          <V4ComposerDictationControl
             disabled={disabled}
             onTranscript={insertVoiceTranscript}
             scopeRef={voiceScopeRef}
+            webRemote={isWebRemoteControl}
           />
         ) : null}
       </>

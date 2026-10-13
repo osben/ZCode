@@ -12,6 +12,8 @@ interface V4ComposerVoiceButtonProps {
   phase: VoiceDictationPhase;
   level: number;
   preview: VoiceTranscriptionPreview | null;
+  /** i18n id for the loading phase; desktop loads a model, the web engine only starts the recognizer. */
+  loadingLabelId?: string;
   disabled?: boolean;
   onToggle: () => void;
 }
@@ -21,6 +23,7 @@ function V4ComposerVoiceButtonImpl({
   phase,
   level,
   preview,
+  loadingLabelId,
   disabled,
   onToggle,
 }: V4ComposerVoiceButtonProps) {
@@ -31,7 +34,7 @@ function V4ComposerVoiceButtonImpl({
   const label = intl.formatMessage({
     id:
       phase === "loading"
-        ? "voiceDictation.composer.loading"
+        ? (loadingLabelId ?? "voiceDictation.composer.loading")
         : recording
           ? "voiceDictation.composer.stop"
           : "voiceDictation.composer.start",
@@ -45,7 +48,7 @@ function V4ComposerVoiceButtonImpl({
   const statusAnnouncement = intl.formatMessage({
     id:
       phase === "loading"
-        ? "voiceDictation.composer.loading"
+        ? (loadingLabelId ?? "voiceDictation.composer.loading")
         : recording
           ? "voiceDictation.composer.listening"
           : phase === "transcribing"
