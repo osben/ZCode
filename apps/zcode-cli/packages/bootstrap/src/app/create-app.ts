@@ -274,9 +274,11 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       ? undefined
       : readProjectPermissionMode(localSettingStore, projectID);
     // Session-level overrides win; otherwise fall back to the persisted files on disk.
+    // The loader reads the fixed ~/.zcode/system-prompt location (same rule as the global
+    // AGENTS.md), not the redirected storage root, so it stays in sync with the host service.
     const persistedSystemPromptOverrides = options.runtimeConfig?.systemPromptOverrides
       ? undefined
-      : await loadPersistedSystemPromptOverrides({ storageRoot });
+      : await loadPersistedSystemPromptOverrides({ env: options.env ?? process.env });
     let { configuredMcpServers, runtimeConfig, untrustedProjectMcpServers } =
       resolveAppRuntimeConfig({
         cliStorageRoot,

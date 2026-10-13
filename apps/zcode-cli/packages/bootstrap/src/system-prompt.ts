@@ -9,23 +9,32 @@
 // user-derived filename and no traversal surface.
 
 import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { SYSTEM_PROMPT_OVERRIDE_KEYS, type SystemPromptOverrides } from "@zcode/shared";
 
 const SYSTEM_PROMPT_DIR_NAME = "system-prompt";
 
+// Override files live under $HOME/.zcode regardless of config.storage.dir, following the same
+// rule as the global ~/.zcode/AGENTS.md lookup (adapters/src/context). The host-side
+// systemPromptService cannot see the CLI's resolved storage config, so a fixed home-based
+// location is what keeps the service's writes and this loader's reads on the same directory
+// even when storage is redirected (ZCODE_STORAGE_DIR / storage.dir / beta default).
+function resolveUserHomeDir(env: NodeJS.ProcessEnv): string {
+  const envHome = env.HOME?.trim() || env.USERPROFILE?.trim();
+  return envHome && envHome.length > 0 ? envHome : homedir();
+}
+
 export async function loadPersistedSystemPromptOverrides(input: {
-  storageRoot: string;
+  env: NodeJS.ProcessEnv;
 }): Promise<SystemPromptOverrides> {
   const overrides: Record<string, string> = {};
+  const overridesDir = join(resolveUserHomeDir(input.env), ".zcode", SYSTEM_PROMPT_DIR_NAME);
   await Promise.all(
     SYSTEM_PROMPT_OVERRIDE_KEYS.map(async (key) => {
       try {
-        const raw = await readFile(
-          join(input.storageRoot, SYSTEM_PROMPT_DIR_NAME, `${key}.md`),
-          "utf-8",
-        );
+        const raw = await readFile(join(overridesDir, `${key}.md`), "utf-8");
         const trimmed = raw.trim();
         if (trimmed) {
           overrides[key] = trimmed;

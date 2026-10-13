@@ -50,6 +50,12 @@ or omitted in the UI.
 Keys are a fixed whitelist; filenames derive from that whitelist only (no user-derived
 filename, no sanitization surface).
 
+The location is fixed at `$HOME/.zcode/system-prompt` regardless of `config.storage.dir`
+(`ZCODE_STORAGE_DIR`, project/user `storage.dir`, beta default) — the same rule as the global
+`~/.zcode/AGENTS.md` lookup. The host service cannot see the CLI's resolved storage config, so
+a fixed home-based path is what keeps the service's writes and the bootstrap loader's reads on
+the same directory.
+
 ## Settings UI (phase 2, planned)
 
 One "System Prompt" section: a card per editable key (default text, "Customized" badge,
