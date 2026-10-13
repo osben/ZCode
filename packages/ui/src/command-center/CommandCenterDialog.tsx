@@ -472,8 +472,13 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
   /**
    * Opens (or reuses) the workspace tab and starts a draft task in it — the App-level
    * workspace-open + startDraft contract used by the "New task in worktree" flow.
+   * Web remote control resolves after the desktop open + bridge switch; async
+   * rejections surface through the flow's open-failure toast.
    */
-  onCreateTaskInWorkspace: (targetWorkspacePath: string, targetWorkspaceIdentity?: string) => void;
+  onCreateTaskInWorkspace: (
+    targetWorkspacePath: string,
+    targetWorkspaceIdentity?: string,
+  ) => void | Promise<void>;
   onSearchResultHighlightRequest?: (
     request: Omit<ChatSearchResultHighlightRequest, "requestId">,
   ) => void;
@@ -994,25 +999,29 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
   /** Open a workspace + draft via the App contract; WT-04 keeps the created path recoverable. */
   const openTaskWorkspace = useCallback(
     (targetWorkspacePath: string, targetWorkspaceIdentity?: string) => {
-      try {
-        onCreateTaskInWorkspace(targetWorkspacePath, targetWorkspaceIdentity);
-      } catch (error) {
-        logger.error("[CommandCenter] 打开 worktree workspace 失败", {
-          targetWorkspacePath,
-          error: getErrorMessage(error),
-        });
-        toast(
-          intl.formatMessage(
-            { id: "commandCenter.worktree.openFailed" },
-            { path: targetWorkspacePath },
-          ),
-          {
-            durationMs: 10_000,
-            actionLabel: intl.formatMessage({ id: "commandCenter.worktree.openExisting" }),
-            onAction: () => onCreateTaskInWorkspace(targetWorkspacePath),
-          },
-        );
-      }
+      // Web remote control resolves after the desktop open + bridge switch; catch the async
+      // rejection here so the failure toast (with the retry action) still appears.
+      void (async () => {
+        try {
+          await onCreateTaskInWorkspace(targetWorkspacePath, targetWorkspaceIdentity);
+        } catch (error) {
+          logger.error("[CommandCenter] 打开 worktree workspace 失败", {
+            targetWorkspacePath,
+            error: getErrorMessage(error),
+          });
+          toast(
+            intl.formatMessage(
+              { id: "commandCenter.worktree.openFailed" },
+              { path: targetWorkspacePath },
+            ),
+            {
+              durationMs: 10_000,
+              actionLabel: intl.formatMessage({ id: "commandCenter.worktree.openExisting" }),
+              onAction: () => onCreateTaskInWorkspace(targetWorkspacePath),
+            },
+          );
+        }
+      })();
     },
     [intl, onCreateTaskInWorkspace],
   );

@@ -34,6 +34,12 @@ export interface WebRemoteControlWorkspaceSwitcherApi {
   markTaskRead?(task: WebRemoteControlTaskTarget): Promise<void>;
   updateMobileViewState?(workspaceKey: string, taskId?: string): Promise<void>;
   reconnectWorkspace?(workspaceKey: string): Promise<void>;
+  /**
+   * Ask the desktop to open (or reuse) a local workspace and then attach this client to it through
+   * the workspace bridge. Only the Web remote-control switcher implements it; local workspaces stay
+   * owned by desktop window Hosts. Resolves after the bridge reconnect into the target workspace.
+   */
+  openWorkspace?(target: { workspacePath: string; workspaceIdentity?: string }): Promise<void>;
   startDraft?(
     workspaceKey: string,
     options?: { mobileNavigationIntent?: WebRemoteControlMobileNavigationIntent },
