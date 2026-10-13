@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { createProviderEndpointRoutingPort } from "../src/model/endpoint-routing-edition/index.js";
 
-// fork 的默认装配是直连版本：官方 Coding Plan 端点也必须 routed:false 原样返回，
-// 否则 GLM-5.3 会在平台网关上得到 404（见 provider-endpoint-routing.md 的 fork 章节）。
+// The fork's default assembly is the direct edition: even the official Coding Plan endpoints
+// must come back routed:false, otherwise GLM-5.3 gets a 404 from the platform gateway (see the
+// fork section in provider-endpoint-routing.md).
 describe("fork direct endpoint routing edition", () => {
   it.each([
     "https://api.z.ai/api/anthropic/v1/messages",
