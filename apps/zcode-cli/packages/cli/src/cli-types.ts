@@ -22,7 +22,9 @@ import type {
   InspectZCodeSkillOptions,
   loginZCodeCli,
   loginBigmodelCodingPlan,
+  loginChatGptPlan,
   LoginBigmodelCodingPlanOptions,
+  LoginChatGptPlanOptions,
   LoginZCodeCliOptions,
   listZCodeCustomCommands,
   ListZCodeCustomCommandsOptions,
@@ -83,6 +85,7 @@ export interface RunDependencies extends PluginsCommandOverrides {
   loginBigmodelCodingPlan?: (
     options?: LoginBigmodelCodingPlanOptions,
   ) => ReturnType<typeof loginBigmodelCodingPlan>;
+  loginChatGptPlan?: (options?: LoginChatGptPlanOptions) => ReturnType<typeof loginChatGptPlan>;
   configureCodingPlanApiKey?: (
     options: ConfigureCodingPlanApiKeyOptions,
   ) => ReturnType<typeof configureCodingPlanApiKey>;

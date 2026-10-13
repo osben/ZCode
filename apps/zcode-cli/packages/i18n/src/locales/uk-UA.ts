@@ -127,6 +127,13 @@ export const ukUA: ZCodeCopy = {
           primary: "BigModel Coding Plan",
           secondary: "Відкрити вхід у браузері; авторизацію буде виявлено автоматично.",
         },
+        chatgptOauth: {
+          pendingPrimary: "Очікування авторизації ChatGPT",
+          pendingSecondary:
+            "Завершіть вхід у браузері за допомогою облікового запису ChatGPT Plus/Pro.",
+          primary: "ChatGPT Plan",
+          secondary: "Продовжити з ChatGPT (офіційний обмін токенами OpenAI).",
+        },
         zaiApiKey: {
           inputPrimary: "Введіть API-ключ Z.AI Coding Plan",
           inputSecondary: "Вставте ключ сюди. Під час введення його приховано.",

@@ -28,6 +28,7 @@ import { isWorkflowModeEnabled, WORKFLOW_DISABLED_NOTICE } from "../workflow-mod
 import {
   buildLoginSelection,
   emitLoginAuthorizeMessage,
+  formatChatGptLoginResult,
   formatLoginResult,
   formatProviderSetupResult,
   loginSetupResponse,
@@ -137,6 +138,32 @@ export function createCommandCenter(deps: CommandCenterDeps): TuiSubmitPrompt {
                     options,
                     data.authorize_url,
                     "BigModel",
+                    await deps.getApp(),
+                  );
+                },
+              }),
+            ),
+          };
+        }
+        if (command.args === "chatgpt-plan") {
+          if (!deps.loginChatGpt) {
+            return {
+              mode: deps.getMode?.(),
+              response: "ChatGPT plan login is not available in this client.",
+            };
+          }
+
+          return {
+            loginRequired: false,
+            mode: deps.getMode?.(),
+            response: formatChatGptLoginResult(
+              await deps.loginChatGpt({
+                abortSignal: options.abortSignal,
+                onAuthorizeUrl: async (data) => {
+                  await emitLoginAuthorizeMessage(
+                    options,
+                    data.authorizeUrl,
+                    "ChatGPT",
                     await deps.getApp(),
                   );
                 },

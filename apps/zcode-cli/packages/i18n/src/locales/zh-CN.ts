@@ -117,6 +117,12 @@ Slash Commands:
           primary: "BigModel Coding Plan",
           secondary: "打开浏览器登录，CLI 会自动查询授权结果。",
         },
+        chatgptOauth: {
+          pendingPrimary: "等待 ChatGPT 授权",
+          pendingSecondary: "请在浏览器中使用 ChatGPT Plus/Pro 账号完成登录。",
+          primary: "ChatGPT Plan",
+          secondary: "通过 ChatGPT 登录（OpenAI 官方令牌共享计划）。",
+        },
         zaiApiKey: {
           inputPrimary: "输入 Z.AI Coding Plan API Key",
           inputSecondary: "在这里粘贴 key，输入时会隐藏显示。",

@@ -119,6 +119,12 @@ Slash Commands:
           primary: "BigModel Coding Plan",
           secondary: "Open browser login; authorization is detected automatically.",
         },
+        chatgptOauth: {
+          pendingPrimary: "Waiting for ChatGPT authorization",
+          pendingSecondary: "Complete sign-in in your browser with your ChatGPT Plus/Pro account.",
+          primary: "ChatGPT Plan",
+          secondary: "Continue with ChatGPT (official OpenAI token sharing).",
+        },
         zaiApiKey: {
           inputPrimary: "Enter Z.AI Coding Plan API Key",
           inputSecondary: "Paste the key here. It is hidden while typing.",

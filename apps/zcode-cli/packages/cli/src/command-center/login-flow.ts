@@ -39,6 +39,20 @@ export function buildLoginSelection(locale?: string): TuiSelection {
         secondary: copy.options.bigmodelOauth.secondary,
       },
       {
+        command: "/login chatgpt-plan",
+        id: "chatgpt-plan",
+        keywords: ["chatgpt", "openai", "oauth", "plan", "siwc"],
+        pending: {
+          cancelStatus: copy.pending.cancelStatus,
+          help: copy.pending.help,
+          primary: copy.options.chatgptOauth.pendingPrimary,
+          secondary: copy.options.chatgptOauth.pendingSecondary,
+          status: copy.pending.status,
+        },
+        primary: copy.options.chatgptOauth.primary,
+        secondary: copy.options.chatgptOauth.secondary,
+      },
+      {
         command: "/login zai-coding-plan-api-key",
         id: "zai-coding-plan-api-key",
         input: {
@@ -109,6 +123,25 @@ export function formatProviderSetupResult(result: {
   const provider = result.providerId === "bigmodel" ? "BigModel" : "Z.AI";
   return [
     `Configured ${provider} Coding Plan.`,
+    `Model: ${result.model}`,
+    `Model selection: ${result.configPath}`,
+  ].join("\n");
+}
+
+export function formatChatGptLoginResult(result: {
+  configPath: string;
+  model: string;
+  planUsageEntitled: boolean;
+  user: { sub: string; email?: string; name?: string };
+}): string {
+  const label = result.user.name || result.user.email || result.user.sub;
+  return [
+    `Signed in with the ChatGPT plan as ${label}.`,
+    ...(result.planUsageEntitled
+      ? []
+      : [
+          "Plan usage is NOT enabled: consent lacked the ChatGPT plan scope. Re-run /login chatgpt-plan to grant it.",
+        ]),
     `Model: ${result.model}`,
     `Model selection: ${result.configPath}`,
   ].join("\n");
