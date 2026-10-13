@@ -11,6 +11,7 @@ import type {
   SkillLoadOutcome,
   UserInstructionsOptions,
 } from "@zcode/contracts";
+import type { SystemPromptOverrides } from "@zcode/shared";
 import type { AutoCompactPolicyConfig } from "../compact/index.js";
 import type { AgentProfile } from "../subagent/profile.js";
 
@@ -124,6 +125,11 @@ export interface ContextBuilderConfig {
   workflowActor?: WorkflowActorContext;
   language?: string;
   outputStyle?: OutputStylePromptConfig;
+  /**
+   * User overrides for the editable system-prompt sections (docs/system-prompt-overrides.md).
+   * Each present key replaces that section's code default; absent keys keep the constant.
+   */
+  systemPromptOverrides?: SystemPromptOverrides;
   compact?: AutoCompactPolicyConfig;
   guidanceToolNames?: readonly string[];
 }
