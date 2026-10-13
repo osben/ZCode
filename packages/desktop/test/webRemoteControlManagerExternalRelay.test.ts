@@ -42,6 +42,7 @@ function createManagerHarness(options?: {
     reason: string,
   ) => void;
   reconnectWorkspace?: (windowId: number, workspaceKey: string) => Promise<void>;
+  openWorkspace?: Parameters<typeof createWebRemoteControlManager>[0]["openWorkspace"];
   onStatusChanged?: Parameters<typeof createWebRemoteControlManager>[0]["onStatusChanged"];
   getEndpointUrls?: Parameters<typeof createWebRemoteControlManager>[0]["getEndpointUrls"];
   reportRemoteUsageEvent?: Parameters<
@@ -136,6 +137,7 @@ function createManagerHarness(options?: {
       }),
     },
     reconnectWorkspace: options?.reconnectWorkspace ?? vi.fn(async () => undefined),
+    openWorkspace: options?.openWorkspace ?? vi.fn(async () => undefined),
     reportRemoteUsageEvent,
     reportRendererTelemetryEvent,
     attachWorkspaceHost: options?.attachWorkspaceHost ?? defaultAttachWorkspaceHost,
@@ -999,6 +1001,69 @@ describe("createWebRemoteControlManager external relay", () => {
       }),
     );
     expect(reconnectWorkspace).toHaveBeenCalledWith(1, "remote:ssh:host:/workspace/demo");
+  });
+
+  it("dispatches workspace open requests to the desktop window open dependency", async () => {
+    const openWorkspace = vi.fn(async () => undefined);
+    const { deliverPayload, manager, sentPayloads } = createManagerHarness({ openWorkspace });
+
+    await manager.start(1, { workspacePath: "/workspace/demo" });
+
+    deliverPayload({
+      zcode_type: "workspace-open-request",
+      requestId: "open-1",
+      workspacePath: "/workspace/demo-worktrees/feature",
+    });
+
+    await vi.waitFor(() =>
+      expect(sentPayloads).toContainEqual({
+        zcode_type: "workspace-open-response",
+        requestId: "open-1",
+        workspacePath: "/workspace/demo-worktrees/feature",
+        success: true,
+      }),
+    );
+    expect(openWorkspace).toHaveBeenCalledWith(1, {
+      workspacePath: "/workspace/demo-worktrees/feature",
+    });
+  });
+
+  it("reports workspace open failures and keeps other window-control requests working", async () => {
+    const openWorkspace = vi.fn(async () => {
+      throw new Error("Desktop window is not available for Web remote control workspace open.");
+    });
+    const { deliverPayload, manager, sentPayloads } = createManagerHarness({ openWorkspace });
+
+    await manager.start(1, { workspacePath: "/workspace/demo" });
+
+    deliverPayload({
+      zcode_type: "workspace-open-request",
+      requestId: "open-1",
+      workspacePath: "/workspace/demo-worktrees/feature",
+      workspaceIdentity: "remote:ssh:dev:/workspace/demo-worktrees/feature",
+    });
+    await vi.waitFor(() =>
+      expect(sentPayloads).toContainEqual({
+        zcode_type: "workspace-open-response",
+        requestId: "open-1",
+        workspacePath: "/workspace/demo-worktrees/feature",
+        workspaceIdentity: "remote:ssh:dev:/workspace/demo-worktrees/feature",
+        success: false,
+        error: "Desktop window is not available for Web remote control workspace open.",
+      }),
+    );
+
+    // Existing window-control traffic on the same session must stay unaffected.
+    deliverPayload({ zcode_type: "bootstrap-request", requestId: "bootstrap-1" });
+    await vi.waitFor(() =>
+      expect(sentPayloads).toContainEqual(
+        expect.objectContaining({
+          zcode_type: "bootstrap-response",
+          requestId: "bootstrap-1",
+          success: true,
+        }),
+      ),
+    );
   });
 
   it("releases stale attachments when an older bridge open completes after reconnect", async () => {

@@ -300,6 +300,27 @@ const webRemoteControlAppPayloadSchemas = [
     error: z.string(),
   }),
   z.object({
+    zcode_type: z.literal("workspace-open-request"),
+    requestId: nonEmptyStringSchema,
+    workspacePath: nonEmptyStringSchema,
+    workspaceIdentity: nonEmptyStringSchema.optional(),
+  }),
+  z.object({
+    zcode_type: z.literal("workspace-open-response"),
+    requestId: nonEmptyStringSchema,
+    workspacePath: nonEmptyStringSchema,
+    workspaceIdentity: nonEmptyStringSchema.optional(),
+    success: z.literal(true),
+  }),
+  z.object({
+    zcode_type: z.literal("workspace-open-response"),
+    requestId: nonEmptyStringSchema,
+    workspacePath: nonEmptyStringSchema,
+    workspaceIdentity: nonEmptyStringSchema.optional(),
+    success: z.literal(false),
+    error: z.string(),
+  }),
+  z.object({
     zcode_type: z.literal("mobile-view-state-update"),
     viewState: webRemoteControlMobileViewStateSchema,
     deviceInfo: webRemoteControlMobileDeviceInfoSchema.optional(),
