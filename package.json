@@ -96,7 +96,7 @@
     "concurrently": "^9.1.2",
     "conventional-changelog-conventionalcommits": "^9.3.1",
     "conventional-changelog-writer": "^8.4.0",
-    "dotenv": "^17.4.2",
+    "dotenv": "^18.0.7",
     "husky": "^9.1.7",
     "istanbul-lib-instrument": "6.0.3",
     "knip": "^6.0.6",
