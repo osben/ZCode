@@ -1952,7 +1952,7 @@ describe("autoUpdater ready state sync", () => {
     expect(getAutoUpdaterState()).toMatchObject({ kind: "idle" });
   });
 
-  it("安装交接被采纳后晚到的检查失败不会清掉就绪状态", async () => {
+  it("锁定阶段检查进行中收到的 updater error 事件按检查来源被抑制", async () => {
     mockProcessPlatform("win32");
     vi.useFakeTimers();
     try {
@@ -1972,23 +1972,13 @@ describe("autoUpdater ready state sync", () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledTimes(1);
 
-      loggerInfoMock.mockClear();
-      autoUpdaterMock.checkForUpdates.mockRejectedValueOnce(new Error("network down"));
-      // The ready state is a visible poll target, so the poll timer fires during shutdown and
-      // rejects; upstream 3.15.3 parity requires the late failure to be suppressed instead of
-      // tearing down the ready state mid-exit.
+      // Let the visible-target poll fire and hang: an error event arriving while a check is in
+      // flight is check-originated noise and must be suppressed (its own promise path settles it).
+      // Calls so far: startup check, download-finished recheck, then the hung poll.
+      autoUpdaterMock.checkForUpdates.mockImplementationOnce(() => new Promise(() => {}));
       await vi.advanceTimersByTimeAsync(2 * 60 * 1000);
+      expect(autoUpdaterMock.checkForUpdates).toHaveBeenCalledTimes(3);
 
-      expect(loggerInfoMock).toHaveBeenCalledWith(
-        "[auto-update] ignore late check failure after install admission",
-      );
-      expect(getAutoUpdaterState()).toMatchObject({
-        kind: "update-downloaded",
-        version: "0.1.25",
-      });
-
-      // The updater can report the same failed check through its "error" event before the
-      // check promise rejects; that path (source "error") must be suppressed while locked too.
       loggerInfoMock.mockClear();
       autoUpdaterMock.emit("error", new Error("manifest request failed"));
       await vi.advanceTimersByTimeAsync(0);
@@ -1999,6 +1989,85 @@ describe("autoUpdater ready state sync", () => {
         kind: "update-downloaded",
         version: "0.1.25",
       });
+      expect(appMock.relaunch).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("锁定阶段晚到的 poll 检查失败（promise rejection）被抑制", async () => {
+    mockProcessPlatform("win32");
+    vi.useFakeTimers();
+    try {
+      const { getAutoUpdaterState, initAutoUpdater } = await import("../src/main/autoUpdater.js");
+
+      initAutoUpdater({});
+      await vi.advanceTimersByTimeAsync(0);
+
+      const quitHandler = ipcMainOn.mock.calls.find(
+        ([channel]: [string, unknown]) => channel === PlatformChannels.QuitAndInstallUpdate,
+      )?.[1] as (() => void) | undefined;
+
+      autoUpdaterMock.emit("update-downloaded", { version: "0.1.25" });
+      await vi.advanceTimersByTimeAsync(0);
+      quitHandler?.();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledTimes(1);
+
+      autoUpdaterMock.checkForUpdates.mockRejectedValueOnce(new Error("network down"));
+      loggerInfoMock.mockClear();
+      await vi.advanceTimersByTimeAsync(2 * 60 * 1000);
+
+      expect(loggerInfoMock).toHaveBeenCalledWith(
+        "[auto-update] ignore late check failure after install admission",
+      );
+      expect(getAutoUpdaterState()).toMatchObject({
+        kind: "update-downloaded",
+        version: "0.1.25",
+      });
+      expect(appMock.relaunch).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("quitAndInstall 返回后异步上报的安装器启动失败会触发重启恢复", async () => {
+    mockProcessPlatform("win32");
+    vi.useFakeTimers();
+    try {
+      const { getAutoUpdaterState, initAutoUpdater } = await import("../src/main/autoUpdater.js");
+
+      initAutoUpdater({});
+      await vi.advanceTimersByTimeAsync(0);
+
+      const quitHandler = ipcMainHandle.mock.calls.find(
+        ([channel]: [string, unknown]) => channel === PlatformChannels.QuitAndInstallUpdate,
+      )?.[1] as (() => Promise<void>) | undefined;
+
+      autoUpdaterMock.emit("update-downloaded", { version: "0.1.25" });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(quitHandler).toBeTypeOf("function");
+      await quitHandler!();
+      expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledTimes(1);
+
+      // Model NsisUpdater on Windows: doInstall() returned true synchronously, and the
+      // spawnLog().catch() reports the launch failure asynchronously after quitAndInstall()
+      // has already returned. The handoff attribution window must still route this event to
+      // recovery so the shutdown cannot quit without installing or relaunching.
+      loggerErrorMock.mockClear();
+      autoUpdaterMock.emit("error", new Error("spawn installer failed"));
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(loggerErrorMock).toHaveBeenCalledWith(
+        "[auto-update] quit and install failed:",
+        expect.any(Error),
+      );
+      expect(loggerWarnMock).toHaveBeenCalledWith(
+        "[auto-update] install failed after shutdown started: relaunch app",
+      );
+      expect(appMock.relaunch).toHaveBeenCalledTimes(1);
+      expect(appMock.exit).toHaveBeenCalledWith(0);
+      expect(getAutoUpdaterState()).toMatchObject({ kind: "idle" });
     } finally {
       vi.useRealTimers();
     }

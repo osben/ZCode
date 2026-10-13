@@ -128,10 +128,17 @@ type QuitAndInstallPhase = "idle" | "preparing" | "installing" | "recovering";
 let quitAndInstallPhase: QuitAndInstallPhase = "idle";
 
 // electron-updater 6.8.9's BaseUpdater.install() catches synchronous doInstall() failures, emits
-// the generic "error" event, and returns false — quitAndInstall() does not throw. This flag marks
-// the synchronous handoff window so the error listener can route that event to install recovery
-// instead of the locked-phase late-failure suppression.
+// the generic "error" event, and returns false — quitAndInstall() does not throw. Worse, on
+// Windows NsisUpdater.doInstall() returns immediately and spawnLog() reports launch failures
+// asynchronously after quitAndInstall() has already returned. Error events therefore attribute
+// to the installer handoff both inside the synchronous call and for a bounded window after it.
 let installerHandoffInFlight = false;
+const INSTALLER_HANDOFF_ATTRIBUTION_MS = 30_000;
+let installerHandoffAttributionUntil = 0;
+
+function isInstallerHandoffAttributionActive(): boolean {
+  return installerHandoffInFlight || Date.now() < installerHandoffAttributionUntil;
+}
 
 function isUpdateTargetLocked(): boolean {
   return quitAndInstallPhase !== "idle";
@@ -543,6 +550,9 @@ async function quitAndInstallUpdate(rejectUnavailable = false) {
     throw error;
   } finally {
     installerHandoffInFlight = false;
+    // Keep attributing error events to the handoff past the synchronous return: the Windows
+    // NSIS provider reports launch failures asynchronously after doInstall() returns true.
+    installerHandoffAttributionUntil = Date.now() + INSTALLER_HANDOFF_ATTRIBUTION_MS;
   }
 }
 
@@ -1064,14 +1074,13 @@ function shouldIgnoreCancelledDownloadError(error: unknown): boolean {
 
 function handleAutoUpdateFailure(error: unknown, source: string) {
   // Upstream 3.15.3 parity: once the install handoff is admitted, a late background-check
-  // failure arriving during shutdown must not tear down the ready state or spawn another check;
-  // a failed install handoff is recovered by relaunching instead. The updater reports check
-  // failures both through its "error" event (source "error") and through the rejected check
-  // promise (source "<reason> check failed"), so the locked-phase guard must cover both paths.
+  // failure arriving during shutdown must not tear down the ready state or spawn another check.
+  // Updater "error" events while locked are intercepted by the error listener (handoff
+  // attribution vs check-in-flight classification) before they reach this function.
   if (quitAndInstallPhase === "recovering") {
     return;
   }
-  if (isUpdateTargetLocked() && (source.endsWith("check failed") || source === "error")) {
+  if (isUpdateTargetLocked() && source.endsWith("check failed")) {
     logger.info("[auto-update] ignore late check failure after install admission");
     return;
   }
@@ -1859,12 +1868,18 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
       return;
     }
 
-    if (installerHandoffInFlight) {
-      // electron-updater 6.8.9 reports a synchronous installer handoff failure through this event
-      // instead of throwing from quitAndInstall(). Route it to the recovery path so a committing
-      // shutdown that cannot hand off to the installer relaunches (upstream 3.15.3 behavior).
-      handleAutoUpdateFailure(err, "quit and install failed");
-      recoverFromFailedUpdateInstall();
+    if (isUpdateTargetLocked()) {
+      // While committed to install, updater errors are either installer-launch failures
+      // (synchronously inside quitAndInstall() or asynchronously from the NSIS spawn — recover by
+      // relaunching) or late check noise from a poll that is still in flight (suppress; its own
+      // promise rejection path reports it). Everything else while locked is also treated as a
+      // handoff failure: a committed shutdown must never quit without installing or relaunching.
+      if (isInstallerHandoffAttributionActive() || !checkForUpdatesInFlight) {
+        handleAutoUpdateFailure(err, "quit and install failed");
+        recoverFromFailedUpdateInstall();
+        return;
+      }
+      logger.info("[auto-update] ignore late check failure after install admission");
       return;
     }
 
