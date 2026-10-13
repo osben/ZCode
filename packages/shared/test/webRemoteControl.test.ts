@@ -374,6 +374,85 @@ describe("parseWebRemoteControlAppPayload", () => {
     });
   });
 
+  it("accepts workspace open requests and responses with optional identity", () => {
+    expect(
+      parseWebRemoteControlAppPayload({
+        zcode_type: "workspace-open-request",
+        requestId: "open-1",
+        workspacePath: "/workspace/demo-worktrees/feature",
+      }),
+    ).toMatchObject({
+      zcode_type: "workspace-open-request",
+      requestId: "open-1",
+      workspacePath: "/workspace/demo-worktrees/feature",
+    });
+
+    expect(
+      parseWebRemoteControlAppPayload({
+        zcode_type: "workspace-open-request",
+        requestId: "open-2",
+        workspacePath: "/workspace/demo-worktrees/feature",
+        workspaceIdentity: "remote:ssh:dev:/workspace/demo-worktrees/feature",
+      }),
+    ).toMatchObject({
+      zcode_type: "workspace-open-request",
+      workspaceIdentity: "remote:ssh:dev:/workspace/demo-worktrees/feature",
+    });
+
+    expect(
+      parseWebRemoteControlAppPayload({
+        zcode_type: "workspace-open-response",
+        requestId: "open-1",
+        workspacePath: "/workspace/demo-worktrees/feature",
+        success: true,
+      }),
+    ).toMatchObject({
+      zcode_type: "workspace-open-response",
+      success: true,
+    });
+
+    expect(
+      parseWebRemoteControlAppPayload({
+        zcode_type: "workspace-open-response",
+        requestId: "open-3",
+        workspacePath: "/workspace/demo-worktrees/feature",
+        workspaceIdentity: "remote:ssh:dev:/workspace/demo-worktrees/feature",
+        success: false,
+        error: "Desktop window is not available",
+      }),
+    ).toMatchObject({
+      zcode_type: "workspace-open-response",
+      success: false,
+      error: "Desktop window is not available",
+    });
+  });
+
+  it("rejects workspace open payloads with an empty or missing workspace path", () => {
+    expect(
+      parseWebRemoteControlAppPayload({
+        zcode_type: "workspace-open-request",
+        requestId: "open-1",
+        workspacePath: "",
+      }),
+    ).toBeNull();
+
+    expect(
+      parseWebRemoteControlAppPayload({
+        zcode_type: "workspace-open-request",
+        requestId: "open-1",
+      }),
+    ).toBeNull();
+
+    expect(
+      parseWebRemoteControlAppPayload({
+        zcode_type: "workspace-open-response",
+        requestId: "open-1",
+        workspacePath: "/workspace/demo-worktrees/feature",
+        success: false,
+      }),
+    ).toBeNull();
+  });
+
   it("preserves mobile device info on mobile view state updates", () => {
     expect(
       parseWebRemoteControlAppPayload({

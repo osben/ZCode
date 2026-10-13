@@ -532,6 +532,31 @@ export type WebRemoteControlWorkspaceReconnectResponsePayload =
       error: string;
     };
 
+/** Mobile/Web asks the desktop to open (or reuse) a local workspace; success only means Main dispatched the open to the window renderer. */
+export interface WebRemoteControlWorkspaceOpenRequestPayload {
+  zcode_type: "workspace-open-request";
+  requestId: string;
+  workspacePath: string;
+  workspaceIdentity?: string;
+}
+
+export type WebRemoteControlWorkspaceOpenResponsePayload =
+  | {
+      zcode_type: "workspace-open-response";
+      requestId: string;
+      workspacePath: string;
+      workspaceIdentity?: string;
+      success: true;
+    }
+  | {
+      zcode_type: "workspace-open-response";
+      requestId: string;
+      workspacePath: string;
+      workspaceIdentity?: string;
+      success: false;
+      error: string;
+    };
+
 export interface WebRemoteControlMobileViewStatePayload {
   zcode_type: "mobile-view-state-update";
   viewState: WebRemoteControlMobileViewState;
@@ -633,6 +658,8 @@ export type WebRemoteControlAppPayload =
   | WebRemoteControlWorkspaceBridgeErrorPayload
   | WebRemoteControlWorkspaceReconnectRequestPayload
   | WebRemoteControlWorkspaceReconnectResponsePayload
+  | WebRemoteControlWorkspaceOpenRequestPayload
+  | WebRemoteControlWorkspaceOpenResponsePayload
   | WebRemoteControlMobileViewStatePayload
   | WebRemoteControlPlatformRequestPayload
   | WebRemoteControlPlatformResponsePayload
@@ -949,16 +976,43 @@ export interface WebRemoteControlMobileViewStateUpdate {
   deviceInfo?: WebRemoteControlMobileDeviceInfo;
 }
 
+/** Window-control variant of the workspace-open request (relay → desktop); correlation fields match the sibling window-control messages. */
+export interface WebRemoteControlWorkspaceOpenRequest {
+  type: "workspace-open-request";
+  requestId: string;
+  windowControlSessionId: string;
+  workspacePath: string;
+  workspaceIdentity?: string;
+}
+
+export interface WebRemoteControlWorkspaceOpenSuccessResponse {
+  type: "workspace-open-response";
+  requestId: string;
+  windowControlSessionId: string;
+  success: true;
+}
+
+export interface WebRemoteControlWorkspaceOpenErrorResponse {
+  type: "workspace-open-response";
+  requestId: string;
+  windowControlSessionId: string;
+  success: false;
+  error: string;
+}
+
 export type WebRemoteControlWindowControlRequest =
   | WebRemoteControlWindowBootstrapRequest
   | WebRemoteControlWorkspaceBridgeRequest
-  | WebRemoteControlMobileViewStateUpdate;
+  | WebRemoteControlMobileViewStateUpdate
+  | WebRemoteControlWorkspaceOpenRequest;
 
 export type WebRemoteControlWindowControlResponse =
   | WebRemoteControlWindowBootstrapSuccessResponse
   | WebRemoteControlWindowBootstrapErrorResponse
   | WebRemoteControlWorkspaceBridgeSuccessResponse
-  | WebRemoteControlWorkspaceBridgeErrorResponse;
+  | WebRemoteControlWorkspaceBridgeErrorResponse
+  | WebRemoteControlWorkspaceOpenSuccessResponse
+  | WebRemoteControlWorkspaceOpenErrorResponse;
 
 export type RelayDesktopControlEvent =
   | { type: "tunnel-registered"; tunnelId: string }
