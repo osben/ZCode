@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "caseName": "conversation-session-message-pins",
+  "spec": "./test/e2e/conversation-session/conversation-session-message-pins.test.ts",
+  "fixtures": [
+    {
+      "id": "message-pins-title",
+      "description": "E2E_MESSAGE_PINS 首发的 case-local 标题生成响应。",
+      "metadata": {
+        "kind": "common",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "标题不是本 case 的产品语义；固定 case-local 标题响应，避免 default replay 回退 legacy provider-basic，并用首发 marker 隔离跨 case 匹配。"
+      },
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/chat/completions",
+        "bodyIncludes": ["Generate a concise title", "E2E_MESSAGE_PINS"]
+      },
+      "response": {
+        "statusCode": 200,
+        "statusMessage": "OK",
+        "headers": {
+          "content-type": "text/event-stream; charset=utf-8"
+        },
+        "body": "data: {\"id\":\"message-pins-title\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"GLM-5.2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"{\\\"title\\\":\\\"Message Pins E2E\\\"}\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"message-pins-title\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"GLM-5.2\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+      }
+    },
+    {
+      "id": "message-pins-main-turn",
+      "description": "消息固定 case 首轮：产出一条完整 assistant 回复作为 pin 目标行。",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "pin 目标必须是 state=complete 且落入 transcript 的 assistant 行；用可控快流确保完流稳定。"
+      },
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/chat/completions",
+        "lastUserMessageIncludes": ["E2E_MESSAGE_PINS"],
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
+      },
+      "response": {
+        "statusCode": 200,
+        "statusMessage": "OK",
+        "headers": {
+          "cache-control": "no-cache",
+          "content-type": "text/event-stream; charset=utf-8"
+        },
+        "body": "data: {\"id\":\"message-pins-main\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"GLM-5.2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"E2E_MESSAGE_PINS_REPLY\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"message-pins-main\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"GLM-5.2\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+      }
+    }
+  ]
+}

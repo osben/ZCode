@@ -6382,6 +6382,101 @@ describe("fork / modelChange marker", () => {
     }
   });
 
+  // ── Message pins (docs/chat-message-pins.md): setRowPinned 门禁——assistantText 必须 complete，
+  //    userInput 必须是用户自己的 realUser 行。──
+  it("setRowPinned 门禁：complete assistant 与 realUser user 行可固定，系统生成行与 streaming 拒绝", () => {
+    const buildProjection = (inputSource?: string) => {
+      const log = new EventLog();
+      log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
+      log.push(
+        SessionEventType.TurnStarted,
+        {
+          turnNumber: 1,
+          input: "固定这条",
+          messageId: "message-user-pin",
+          ...(inputSource ? { inputSource } : {}),
+        },
+        { turnId: "turn-pin" },
+      );
+      return log;
+    };
+
+    // realUser 输入 + complete assistant → 都可固定。
+    const okLog = buildProjection();
+    okLog.push(
+      SessionEventType.ModelStreaming,
+      { kind: "text_start", delta: "", done: false, assistantMessageId: "message-assistant-pin" },
+      { turnId: "turn-pin" },
+    );
+    okLog.push(
+      SessionEventType.ModelComplete,
+      {
+        content: "回复",
+        stopReason: "stop",
+        querySource: "main_turn",
+        contextWindow: 200_000,
+        usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      },
+      { turnId: "turn-pin" },
+    );
+    okLog.push(
+      SessionEventType.TurnComplete,
+      { response: "回复", tokenCount: 2, toolCallCount: 0, duration: 1, resultType: "success" },
+      { turnId: "turn-pin" },
+    );
+    const okProjection = runAll(okLog.events).projection;
+    const okSnapshot = okProjection.getSnapshot();
+    const userRow = okSnapshot.rows.window.find(
+      (row) => row.kind === "userInput" && row.entityId === "message-user-pin",
+    )!;
+    const assistantRow = okSnapshot.rows.window.find(
+      (row) => row.kind === "assistantText" && row.state === "complete",
+    )!;
+    expect(
+      okProjection.resolveRowActionTarget(
+        { rowId: userRow.rowId, entityId: userRow.entityId! },
+        "setRowPinned",
+      ),
+    ).toMatchObject({ ok: true, action: "setRowPinned" });
+    expect(
+      okProjection.resolveRowActionTarget(
+        { rowId: assistantRow.rowId, entityId: assistantRow.entityId! },
+        "setRowPinned",
+      ),
+    ).toMatchObject({ ok: true, action: "setRowPinned" });
+
+    // 系统生成 user 行（background_result）→ 拒绝。
+    const backgroundLog = buildProjection("background_task");
+    const backgroundProjection = runAll(backgroundLog.events).projection;
+    const backgroundRow = backgroundProjection.getSnapshot().rows.window.find(
+      (row) => row.kind === "userInput",
+    )!;
+    expect(
+      backgroundProjection.resolveRowActionTarget(
+        { rowId: backgroundRow.rowId, entityId: backgroundRow.entityId! },
+        "setRowPinned",
+      ),
+    ).toMatchObject({ ok: false, reasonCode: "guard.actionUnavailable" });
+
+    // streaming assistant 行 → 拒绝。
+    const streamingLog = buildProjection();
+    streamingLog.push(
+      SessionEventType.ModelStreaming,
+      { kind: "text_start", delta: "", done: false, assistantMessageId: "message-assistant-stream" },
+      { turnId: "turn-pin" },
+    );
+    const streamingProjection = runAll(streamingLog.events).projection;
+    const streamingRow = streamingProjection.getSnapshot().rows.window.find(
+      (row) => row.kind === "assistantText",
+    )!;
+    expect(
+      streamingProjection.resolveRowActionTarget(
+        { rowId: streamingRow.rowId, entityId: streamingRow.entityId! },
+        "setRowPinned",
+      ),
+    ).toMatchObject({ ok: false, reasonCode: "guard.actionUnavailable" });
+  });
+
   // ── M4: single queue item edit (same id re-enters TurnSteerQueued → in-place update, position
   // preserved) ──
   it("A/B：editQueueItem —— 同 queueItemId 重入更新文本且保位", () => {

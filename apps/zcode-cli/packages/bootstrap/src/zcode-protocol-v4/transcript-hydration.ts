@@ -489,6 +489,15 @@ function epilogueStartOfMessage(message: MessageWithParts): number | undefined {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
 }
 
+/**
+ * Display-only pin bookmark persisted on user/assistant message metadata; cold hydration replays it
+ * as a RowPinnedUpdated event after the row-creating event so live and cold projections agree.
+ */
+function pinnedAtOfMessage(message: MessageWithParts): number | undefined {
+  const value = message.info.metadata?.pinnedAt;
+  return typeof value === "number" ? value : undefined;
+}
+
 function contentBlocksToText(value: unknown): string | undefined {
   if (!Array.isArray(value)) return undefined;
   const chunks = value
@@ -1323,6 +1332,14 @@ function synthesizeAssistantParts(
       turnId,
     );
   }
+  const assistantPinnedAt = pinnedAtOfMessage(message);
+  if (assistantPinnedAt !== undefined) {
+    push(
+      SessionEventType.RowPinnedUpdated,
+      { entityId: String(message.info.id), pinnedAt: assistantPinnedAt },
+      turnId,
+    );
+  }
   return { resultType, toolCallCount };
 }
 
@@ -2041,6 +2058,14 @@ export function synthesizeEventsFromMessages(
       turnId,
       turnStartedAtMs,
     );
+    const userPinnedAt = pinnedAtOfMessage(message);
+    if (userPinnedAt !== undefined) {
+      push(
+        SessionEventType.RowPinnedUpdated,
+        { entityId: String(message.info.id), pinnedAt: userPinnedAt },
+        turnId,
+      );
+    }
     index += 1;
 
     const collected = collectTurnOutput({

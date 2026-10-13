@@ -24,6 +24,7 @@ import {
   GitBranchIcon,
   GoalIcon,
   PencilIcon,
+  PinIcon,
   ThumbsDownIcon,
   ThumbsUpIcon,
   TrendingUpDownIcon,
@@ -39,6 +40,7 @@ import {
   TID_V4_FEEDBACK_DISLIKE,
   TID_V4_FEEDBACK_LIKE,
   TID_V4_FORK,
+  TID_V4_PIN,
   TID_V4_ROW,
   TID_V4_ROW_ATTACHMENTS,
   parseAutomationRunId,
@@ -247,6 +249,62 @@ export function readAssistantFeedback(row: AssistantTextRow): AssistantMessageFe
   return feedback === "like" || feedback === "dislike" ? feedback : null;
 }
 
+export type RowPinChangeHandler = (
+  target: ConversationRowTarget,
+  pinned: boolean,
+) => Promise<boolean | void> | boolean | void;
+
+// Pin toggle with optimistic state and rollback, shared by the user and assistant toolbars; mirrors the
+// localFeedback pattern so a rejected command never leaves a stale pinned marker.
+function useRowPinToggle(options: {
+  rowId: number;
+  entityId?: string;
+  pinnedAt?: number;
+  sessionId?: string | null;
+  onPinChange?: RowPinChangeHandler;
+}) {
+  const platform = useOptionalPlatform();
+  const [localPinnedAt, setLocalPinnedAt] = useState<number | null>(options.pinnedAt ?? null);
+  useEffect(() => {
+    setLocalPinnedAt(options.pinnedAt ?? null);
+  }, [options.pinnedAt]);
+  const togglePin = useCallback(() => {
+    const previousPinnedAt = localPinnedAt;
+    const pinned = previousPinnedAt === null;
+    // Optimistic timestamp is display-only; the authoritative pinnedAt (CLI clock) arrives with the row.upserted delta.
+    setLocalPinnedAt(pinned ? Date.now() : null);
+    const { entityId, onPinChange, rowId, sessionId } = options;
+    if (!entityId) return;
+    void Promise.resolve(onPinChange?.({ rowId, entityId }, pinned)).then(
+      (result) => {
+        if (result === false) setLocalPinnedAt(previousPinnedAt);
+      },
+      (error: unknown) => {
+        setLocalPinnedAt(previousPinnedAt);
+        logger.warn("[ConversationRowView] 固定消息持久化失败", {
+          error: error instanceof Error ? error.message : String(error),
+          messageId: entityId,
+        });
+      },
+    );
+    if (platform) {
+      void reportAppTelemetryEvent(
+        platform,
+        {
+          elementName: "message_pin",
+          eventRegion: "chat",
+          eventType: "ck",
+          eventExtraDetail: { pinned: pinned ? "pinned" : "unpinned" },
+          ...(sessionId ? { talkId: sessionId } : {}),
+          messageId: entityId,
+        },
+        "ConversationRowView",
+      );
+    }
+  }, [localPinnedAt, options, platform]);
+  return { pinned: localPinnedAt !== null, togglePin };
+}
+
 export interface EditWorkspaceRewindAvailability {
   enabled: boolean;
   reason: "available" | "noFiles" | "reverted" | "running" | "unavailable";
@@ -260,6 +318,8 @@ export interface ConversationRowViewProps {
   onFork?: (target: ConversationRowTarget) => void;
   /** Assistant-entity feedback CAS; UI updates optimistically and rolls back if the command fails. */
   onFeedbackChange?: AssistantFeedbackHandler;
+  /** Display-only pin bookmark CAS (setRowPinned); optimistic with rollback, same contract as feedback. */
+  onPinChange?: RowPinChangeHandler;
   /** Protocol compatibility: callers may still provide retryTurn capability, but product UI does not render the standard retry entry. */
   onRetry?: (target: ConversationRowTarget) => void;
   /** Edit entry for a user row (editUserQuery command, replacing this turn's text with inline editing). */
@@ -928,16 +988,28 @@ const SingleUserInputRowView = memo(function SingleUserInputRowView({
   row,
   context,
   onEdit,
+  onPinChange,
   editWorkspaceRewindAvailability,
   status,
 }: {
   row: UserInputRow;
   context: ConversationRowRenderContext;
   onEdit?: UserInputEditHandler;
+  onPinChange?: RowPinChangeHandler;
   editWorkspaceRewindAvailability?: EditWorkspaceRewindAvailability;
   status?: string;
 }) {
   const { intl } = useZCodeIntl();
+  const { pinned: rowPinned, togglePin } = useRowPinToggle({
+    rowId: row.rowId,
+    entityId: row.entityId,
+    pinnedAt: row.pinnedAt,
+    sessionId: context.sessionId,
+    onPinChange,
+  });
+  const pinLabel = intl.formatMessage({
+    id: rowPinned ? "chat.message.unpin" : "chat.message.pin",
+  });
   // Collapse engine epilogues: body ends at epilogueStart, with later engine text folded into a disclosure at the bottom of the bubble.
   // Prompt-context parsing also reads only the body; epilogues contain no user references.
   const { body: bodyText, epilogue } = splitUserInputEpilogue(row.text, row.epilogueStart);
@@ -1424,11 +1496,12 @@ const SingleUserInputRowView = memo(function SingleUserInputRowView({
       ) : null}
       {/* Bugfix: Mobile remote control has no hover. The v4 migration omitted the old UserMessage always-
           visible branch, making Copy and Edit hard to discover. Show them directly for remote
-          control; desktop continues to reduce visual noise with hover/focus. */}
+          control; desktop continues to reduce visual noise with hover/focus. A pinned row keeps the
+          toolbar visible so the pin state stays discoverable and unpin stays reachable. */}
       <MessageActions
         className={cn(
           "mt-1",
-          context.compactForRemoteControl
+          context.compactForRemoteControl || rowPinned
             ? "opacity-100"
             : "opacity-0 transition-opacity group-hover/user-row:opacity-100 focus-within:opacity-100",
         )}
@@ -1438,6 +1511,19 @@ const SingleUserInputRowView = memo(function SingleUserInputRowView({
           rowId={row.rowId}
           label={intl.formatMessage({ id: "chat.message.copy" })}
         />
+        {onPinChange && row.entityId && row.origin === "realUser" ? (
+          <MessageAction
+            aria-label={pinLabel}
+            aria-pressed={rowPinned}
+            label={pinLabel}
+            tooltip={pinLabel}
+            data-testid={testId(TID_V4_PIN, String(row.rowId))}
+            className={rowPinned ? "!bg-success/10" : undefined}
+            onClick={togglePin}
+          >
+            <PinIcon className="size-3.5" />
+          </MessageAction>
+        ) : null}
         {onEdit && row.entityId ? (
           <MessageAction
             label={intl.formatMessage({ id: "chat.message.edit" })}
@@ -1483,12 +1569,14 @@ export const ConversationAssistantTextActions = memo(function ConversationAssist
   createdAt,
   compactForRemoteControl = false,
   feedback = null,
+  pinnedAt,
   hookInvocations,
   sessionId,
   turnId,
   sourceCommandIds = EMPTY_SOURCE_COMMAND_IDS,
   onFork,
   onFeedbackChange,
+  onPinChange,
   className,
 }: {
   rowId: number;
@@ -1497,6 +1585,7 @@ export const ConversationAssistantTextActions = memo(function ConversationAssist
   createdAt: number;
   compactForRemoteControl?: boolean;
   feedback?: AssistantMessageFeedback | null;
+  pinnedAt?: number;
   hookInvocations?: readonly HookInvocationRow[];
   sessionId?: string | null;
   turnId?: string;
@@ -1504,10 +1593,21 @@ export const ConversationAssistantTextActions = memo(function ConversationAssist
   onFork?: (target: ConversationRowTarget) => void;
   onRetry?: (target: ConversationRowTarget) => void;
   onFeedbackChange?: AssistantFeedbackHandler;
+  onPinChange?: RowPinChangeHandler;
   className?: string;
 }) {
   const { intl, locale } = useZCodeIntl();
   const platform = useOptionalPlatform();
+  const { pinned: rowPinned, togglePin } = useRowPinToggle({
+    rowId,
+    entityId,
+    pinnedAt,
+    sessionId,
+    onPinChange,
+  });
+  const pinLabel = intl.formatMessage({
+    id: rowPinned ? "chat.message.unpin" : "chat.message.pin",
+  });
   const [localFeedback, setLocalFeedback] = useState<AssistantMessageFeedback | null>(feedback);
   const copyLabel = intl.formatMessage({ id: "chat.message.copy" });
   const likeLabel = intl.formatMessage({
@@ -1636,6 +1736,19 @@ export const ConversationAssistantTextActions = memo(function ConversationAssist
           <TrendingUpDownIcon className="size-3.5" />
         </MessageAction>
       ) : null}
+      {onPinChange && entityId ? (
+        <MessageAction
+          aria-label={pinLabel}
+          aria-pressed={rowPinned}
+          label={pinLabel}
+          tooltip={resolveTooltip(pinLabel)}
+          data-testid={testId(TID_V4_PIN, String(rowId))}
+          className={rowPinned ? "!bg-success/10" : undefined}
+          onClick={togglePin}
+        >
+          <PinIcon className="size-3.5" />
+        </MessageAction>
+      ) : null}
       {turnId && hookInvocations ? (
         <ConversationHookDetailsAction rows={hookInvocations} turnId={turnId} />
       ) : null}
@@ -1658,6 +1771,7 @@ const AssistantTextRowView = memo(function AssistantTextRowView({
   onFork,
   onRetry,
   onFeedbackChange,
+  onPinChange,
   hideActions,
   deferActions,
   copyText,
@@ -1671,6 +1785,7 @@ const AssistantTextRowView = memo(function AssistantTextRowView({
   onFork?: (target: ConversationRowTarget) => void;
   onRetry?: (target: ConversationRowTarget) => void;
   onFeedbackChange?: AssistantFeedbackHandler;
+  onPinChange?: RowPinChangeHandler;
   hideActions?: boolean;
   deferActions?: boolean;
   copyText?: string;
@@ -1759,13 +1874,15 @@ const AssistantTextRowView = memo(function AssistantTextRowView({
           createdAt={row.createdAt}
           compactForRemoteControl={context.compactForRemoteControl}
           feedback={readAssistantFeedback(row)}
+          pinnedAt={row.pinnedAt}
           sessionId={context.sessionId}
           onFork={onFork}
           onRetry={onRetry}
           onFeedbackChange={onFeedbackChange}
+          onPinChange={onPinChange}
           className={cn(
             "mt-1",
-            context.compactForRemoteControl
+            context.compactForRemoteControl || row.pinnedAt !== undefined
               ? "opacity-100"
               : "opacity-0 transition-opacity group-hover/assistant-row:opacity-100 focus-within:opacity-100",
           )}
@@ -2332,6 +2449,7 @@ function ConversationRowViewImpl({
   onFork,
   onRetry,
   onFeedbackChange,
+  onPinChange,
   onEdit,
   editWorkspaceRewindAvailability,
   hideAssistantActions,
@@ -2351,6 +2469,7 @@ function ConversationRowViewImpl({
           row={row}
           context={context}
           onEdit={onEdit}
+          onPinChange={onPinChange}
           editWorkspaceRewindAvailability={editWorkspaceRewindAvailability}
           status={userInputStatus}
         />
@@ -2363,6 +2482,7 @@ function ConversationRowViewImpl({
           onFork={onFork}
           onRetry={onRetry}
           onFeedbackChange={onFeedbackChange}
+          onPinChange={onPinChange}
           hideActions={hideAssistantActions}
           deferActions={deferAssistantActions}
           copyText={assistantCopyText}

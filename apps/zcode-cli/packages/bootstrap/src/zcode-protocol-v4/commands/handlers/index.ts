@@ -11,6 +11,7 @@ import { sessionFlowHandlers } from "./session-flow.js";
 import { sessionMgmtHandlers } from "./session-mgmt.js";
 import { selectionSideSessionHandlers } from "./selection-side-session.js";
 import { assistantFeedbackHandlers } from "./assistant-feedback.js";
+import { rowPinHandlers } from "./row-pin.js";
 import { highspeedMetricsHandlers } from "./highspeed-metrics.js";
 
 export const NATIVE_HANDLERS = {
@@ -24,6 +25,7 @@ export const NATIVE_HANDLERS = {
   ...forkEditRetryHandlers,
   ...fileRewindHandlers,
   ...assistantFeedbackHandlers,
+  ...rowPinHandlers,
   ...highspeedMetricsHandlers,
 } as const;
 

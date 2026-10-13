@@ -187,6 +187,12 @@ export const commandPayloadSchemas = {
     target: conversationRowTargetSchema,
     feedback: z.enum(["like", "dislike"]).nullable(),
   }),
+  // Display-only pin bookmark on the final assistant text segment or a real user input; persisted in the
+  // session transcript, never injected into agent context. Toggle semantics: pinned=false unpins.
+  setRowPinned: z.object({
+    target: conversationRowTargetSchema,
+    pinned: z.boolean(),
+  }),
   setHighspeedMetrics: z.object({
     target: conversationRowTargetSchema,
     regularTps: z.number().positive(),
@@ -312,6 +318,7 @@ export const COMMANDS_REQUIRING_BASE_REVISION: ReadonlySet<CommandType> = new Se
   "editUserQuery",
   "retryTurn",
   "setAssistantFeedback",
+  "setRowPinned",
   "sendQueuedNow",
   "editQueueItem",
   "reorderQueueItem",
@@ -330,6 +337,7 @@ export const ROW_TARGETING_COMMANDS: ReadonlySet<CommandType> = new Set([
   "editUserQuery",
   "retryTurn",
   "setAssistantFeedback",
+  "setRowPinned",
   "setHighspeedMetrics",
 ]);
 
