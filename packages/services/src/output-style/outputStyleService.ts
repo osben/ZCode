@@ -7,9 +7,12 @@ import {
   type OutputStyleConfig,
 } from "@zcode/shared";
 import type { IOutputStyleService } from "./outputStyle.js";
+import { createServiceLogger } from "../logger/serviceLogger.js";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+
+const log = createServiceLogger("output-style");
 
 const DEFAULT_OUTPUT_STYLE = "default";
 const SETTINGS_FILE = "settings.json";
@@ -90,7 +93,11 @@ async function readCustomStyleFiles(dir: string): Promise<OutputStyle[]> {
         filePath,
       });
     } catch (error) {
-      console.error(`Failed to read output style file ${entry.name}:`, error);
+      // A single unreadable style file is recoverable (it is skipped); log and continue.
+      log.warn("Failed to read output style file", {
+        file: entry.name,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
   return styles;
@@ -171,11 +178,17 @@ export function createOutputStyleService(): IOutputStyleService {
     const { config } = params;
     const stylesDir = getUserOutputStylesDir();
 
-    await mkdir(stylesDir, { recursive: true });
-
     // The filename is sanitized (shared helper), so a crafted name cannot traverse out of
     // the styles directory.
     const filename = outputStyleFilenameFromName(config.name);
+    if (filename === "default.md") {
+      // "default" means "no style" to the runtime loader; an override file for it could
+      // never take effect, so refuse the write instead of creating a dead file.
+      throw new Error('A style named "default" would shadow the reserved "no style" id');
+    }
+
+    await mkdir(stylesDir, { recursive: true });
+
     const filePath = join(stylesDir, filename);
 
     const content = `name: ${config.name}

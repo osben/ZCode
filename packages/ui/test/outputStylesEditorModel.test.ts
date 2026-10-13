@@ -58,6 +58,9 @@ describe("outputStyleFilenameFromName", () => {
     // Existing ids keep their casing but still drop separators.
     expect(safeOutputStyleFilenameFromId("custom-MyStyle")).toBe("MyStyle.md");
     expect(safeOutputStyleFilenameFromId("../x")).toBe("..x.md");
+    // A hand-named Foo.md file lists as custom-foo.md; edit/delete must map back to it
+    // (listing already removed one extension, so no further .md is stripped).
+    expect(safeOutputStyleFilenameFromId("custom-foo.md")).toBe("foo.md.md");
   });
 
   it("strips only the custom- prefix for base ids", () => {
@@ -76,9 +79,14 @@ describe("outputStyleFilenameFromName", () => {
 });
 
 describe("isOutputStyleDraftDirty", () => {
-  it("treats a new draft as dirty once it has a name", () => {
+  it("treats a new draft as dirty once any field has content", () => {
     expect(isOutputStyleDraftDirty(emptyOutputStyleDraft(), null)).toBe(false);
     expect(isOutputStyleDraftDirty({ ...emptyOutputStyleDraft(), name: "New" }, null)).toBe(true);
+    // Description or prompt typed before a name must not be silently discarded on navigation.
+    expect(isOutputStyleDraftDirty({ ...emptyOutputStyleDraft(), description: "d" }, null)).toBe(
+      true,
+    );
+    expect(isOutputStyleDraftDirty({ ...emptyOutputStyleDraft(), content: "p" }, null)).toBe(true);
   });
 
   it("detects field changes against the baseline", () => {
@@ -163,6 +171,17 @@ describe("detectOutputStyleNameCollision", () => {
     );
   });
 
+  it("blocks the reserved default slug: the runtime ignores overrides for it", () => {
+    const draft: OutputStyleDraft = { ...emptyOutputStyleDraft(), name: "Default" };
+    expect(detectOutputStyleNameCollision(draft, [])).toBe("reserved-default");
+  });
+
+  it("matches custom collisions case-insensitively for macOS/Windows filesystems", () => {
+    const draft: OutputStyleDraft = { ...emptyOutputStyleDraft(), name: "tone" };
+    const handCreated = customStyle({ id: "custom-Tone", name: "Tone" });
+    expect(detectOutputStyleNameCollision(draft, [handCreated])).toBe("custom-collision");
+  });
+
   it("returns null for unique names", () => {
     const draft: OutputStyleDraft = { ...emptyOutputStyleDraft(), name: "Review Focus" };
     expect(detectOutputStyleNameCollision(draft, [builtinStyle(), customStyle()])).toBeNull();
@@ -216,5 +235,14 @@ describe("diffOutputStylePrompt", () => {
     const lines = diffOutputStylePrompt("", "new\nprompt");
     expect(lines.map((line) => line.type)).toEqual(["add", "add"]);
     expect(diffOutputStylePrompt("old", "").map((line) => line.type)).toEqual(["remove"]);
+  });
+
+  it("short-circuits identical prompts and skips oversized bodies", () => {
+    expect(diffOutputStylePrompt("same", "same")).toEqual([]);
+    // Two ~2100-line bodies exceed the cell cap; the preview degrades to "no diff" instead
+    // of allocating a quadratic table in the renderer.
+    const big = `${Array.from({ length: 2100 }, (_, i) => `line-${i}`).join("\n")}`;
+    const bigChanged = `${big}\nextra`;
+    expect(diffOutputStylePrompt(big, bigChanged)).toEqual([]);
   });
 });

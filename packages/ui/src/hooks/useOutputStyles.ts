@@ -117,7 +117,9 @@ export function useOutputStyles(target: UserInstructionsHostTarget): OutputStyle
       loadedHostKeyRef.current = key;
       setStyles(listResult.styles);
       setStylesDirectory(directoryResult.path);
-      setActiveStyleId(activeResult.styleId);
+      // listStyles treats a missing settings file as "default" active; mirror that so the
+      // fresh-install state shows the Default row checked instead of nothing.
+      setActiveStyleId(activeResult.styleId ?? "default");
       setStatus("ready");
     } catch (error) {
       if (loadVersionRef.current !== version) return;
@@ -234,15 +236,24 @@ export function useOutputStyles(target: UserInstructionsHostTarget): OutputStyle
     if (current === null || !rpcReady) return;
     const { draft, baseline, saving } = current;
     if (!canSaveOutputStyleDraft({ draft, baseline, saving })) return;
+    // Mark saving before the preflight so the editor fields disable and keystrokes typed
+    // during the check cannot be lost by the write capturing the older draft.
+    patchEditor({ saving: true });
     if (baseline !== null && draft.styleId !== null) {
-      // Compare against the disk state at save time, not the snapshot from open.
+      // Compare against the disk state at save time, not the snapshot from open. A missing
+      // entry means the file was deleted externally since the editor opened — also a conflict,
+      // because a plain save would silently recreate it.
       try {
         const listResult = await serviceRef.current.listStyles();
         if (loadedHostKeyRef.current !== hostKey) return;
         const onDisk = listResult.styles.find((style) => style.id === draft.styleId);
-        if (onDisk && isOutputStyleConflict(baseline, draftFromStyle(onDisk))) {
+        if (!onDisk || isOutputStyleConflict(baseline, draftFromStyle(onDisk))) {
           patchEditor({
-            conflict: { current: draftFromStyle(onDisk) },
+            conflict: {
+              current: onDisk
+                ? draftFromStyle(onDisk)
+                : { styleId: draft.styleId, name: "", description: "", content: "" },
+            },
             saving: false,
           });
           return;
@@ -252,11 +263,12 @@ export function useOutputStyles(target: UserInstructionsHostTarget): OutputStyle
           error: errorMessage(error),
         });
         toast(intl.formatMessage({ id: "settings.outputStyles.saveFailed" }));
+        patchEditor({ saving: false });
         return;
       }
     }
     await writeDraft(draft);
-  }, [editor, hostKey, intl, rpcReady, writeDraft]);
+  }, [editor, hostKey, intl, patchEditor, rpcReady, writeDraft]);
 
   const resolveConflict = useCallback(
     async (choice: "reload" | "overwrite" | "keep") => {
@@ -290,8 +302,17 @@ export function useOutputStyles(target: UserInstructionsHostTarget): OutputStyle
         await serviceRef.current.deleteStyle({ id: style.id });
         if (loadedHostKeyRef.current !== key) return;
         if (style.id === activeStyleId) {
-          await serviceRef.current.setActiveStyle({ styleId: "default" });
-          if (loadedHostKeyRef.current !== key) return;
+          // Best-effort reset: if this write fails after a successful delete, a stale active
+          // id remains, which the runtime loader already degrades to "no style". Do not fail
+          // the whole operation or report the deletion as failed over the reset.
+          try {
+            await serviceRef.current.setActiveStyle({ styleId: "default" });
+          } catch (error) {
+            logger.warn("[OutputStyles] Failed to reset active style after delete", {
+              styleId: style.id,
+              error: errorMessage(error),
+            });
+          }
         }
         toast(intl.formatMessage({ id: "settings.outputStyles.deleted" }));
         loadedHostKeyRef.current = null;

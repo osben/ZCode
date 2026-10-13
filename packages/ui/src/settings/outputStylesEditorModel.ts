@@ -8,7 +8,7 @@ export interface OutputStyleDraft {
   content: string;
 }
 
-export type OutputStyleNameCollision = "builtin-override" | "custom-collision";
+export type OutputStyleNameCollision = "builtin-override" | "custom-collision" | "reserved-default";
 
 const CUSTOM_ID_PREFIX = "custom-";
 
@@ -33,8 +33,9 @@ export function isOutputStyleDraftDirty(
   baseline: OutputStyleDraft | null,
 ): boolean {
   if (baseline === null) {
-    // A new style is dirty once it has a usable name; empty content is warned about separately.
-    return draft.name.trim().length > 0;
+    // A new draft is dirty once ANY field has content; the name is only a save gate, so
+    // navigation guards must not silently drop a description or prompt typed before a name.
+    return Boolean(draft.name.trim() || draft.description.trim() || draft.content.trim());
   }
   return (
     draft.name !== baseline.name ||
@@ -56,7 +57,9 @@ export function canSaveOutputStyleDraft(input: {
 /**
  * Detect id collisions the filename derivation would cause for a NEW style: a slug matching a
  * built-in id would silently override that built-in, and matching an existing custom id would
- * overwrite its file. Edits never collide because the service keeps the existing file name.
+ * overwrite its file. The `default` slug is reserved — the runtime treats it as "no style" and
+ * ignores any override for it, so such a save can never take effect. Edits never collide
+ * because the service keeps the existing file name.
  */
 export function detectOutputStyleNameCollision(
   draft: OutputStyleDraft,
@@ -66,8 +69,13 @@ export function detectOutputStyleNameCollision(
   const name = draft.name.trim();
   if (!name) return null;
   const targetId = outputStyleIdFromFilename(outputStyleFilenameFromName(name));
+  if (baseStyleId(targetId) === "default") return "reserved-default";
   for (const style of styles) {
-    const collides = style.isBuiltIn ? style.id === baseStyleId(targetId) : style.id === targetId;
+    // Case-insensitive for custom ids: default macOS/Windows filesystems treat Tone.md and
+    // tone.md as the same file, so a case-only match must still warn.
+    const collides = style.isBuiltIn
+      ? style.id === baseStyleId(targetId)
+      : style.id.toLowerCase() === targetId.toLowerCase();
     if (collides) {
       return style.isBuiltIn ? "builtin-override" : "custom-collision";
     }
@@ -104,13 +112,17 @@ export interface DiffLine {
 
 /**
  * Small LCS line diff for the save preview. Style prompts are short; the O(n*m) table is fine
- * and keeps this dependency-free and testable.
+ * and keeps this dependency-free and testable. Identical inputs short-circuit, and oversized
+ * bodies (a huge hand-created file) skip the preview instead of freezing the renderer.
  */
 export function diffOutputStylePrompt(previous: string, next: string): DiffLine[] {
+  if (previous === next) return [];
   const previousLines = previous.length === 0 ? [] : previous.split("\n");
   const nextLines = next.length === 0 ? [] : next.split("\n");
   const rows = previousLines.length;
   const cols = nextLines.length;
+  const MAX_DIFF_CELLS = 4_000_000;
+  if ((rows + 1) * (cols + 1) > MAX_DIFF_CELLS) return [];
   const table: number[][] = Array.from({ length: rows + 1 }, () =>
     Array.from({ length: cols + 1 }, () => 0),
   );

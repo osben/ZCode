@@ -113,6 +113,23 @@ test("addStyle sanitizes the filename so names cannot escape the styles director
   );
 });
 
+test("addStyle refuses the reserved default slug: the runtime ignores its overrides", async () => {
+  const service = createOutputStyleService();
+  await assert.rejects(
+    service.addStyle({
+      config: { name: "Default", description: "x", content: "Never applies." },
+    }),
+  );
+  // No file was created by the refused write.
+  assert.equal(
+    await readdir(zcodeStylesDir()).then(
+      () => true,
+      () => false,
+    ),
+    false,
+  );
+});
+
 test("updateStyle on a built-in id writes an override file; deleteStyle removes it", async () => {
   const service = createOutputStyleService();
   await service.updateStyle({

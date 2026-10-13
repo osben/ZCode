@@ -53,6 +53,10 @@ export function OutputStylesEditorCard({ view, intl }: { view: OutputStylesView;
     draft.styleId === null && draft.name.trim() && view.stylesDirectory
       ? outputStyleFilePath(view.stylesDirectory, outputStyleFilenameFromName(draft.name))
       : null;
+  // "default" is reserved (the runtime ignores overrides for that id); block the save outright
+  // rather than letting a file appear that can never take effect.
+  const reservedDefault = collision === "reserved-default";
+  const busy = editor.saving;
   return (
     <SettingsGroupCard>
       <div className="space-y-3 px-4 py-3">
@@ -85,12 +89,27 @@ export function OutputStylesEditorCard({ view, intl }: { view: OutputStylesView;
             )}
           </div>
         ) : null}
+        {collision ? (
+          <Alert variant={reservedDefault ? "warning" : "default"}>
+            <AlertDescription>
+              {intl.formatMessage({
+                id:
+                  collision === "builtin-override"
+                    ? "settings.outputStyles.collisionBuiltin"
+                    : collision === "custom-collision"
+                      ? "settings.outputStyles.collisionCustom"
+                      : "settings.outputStyles.collisionReservedDefault",
+              })}
+            </AlertDescription>
+          </Alert>
+        ) : null}
         <label className="block space-y-1.5">
           <span className="text-ui-sm font-medium text-foreground">
             {intl.formatMessage({ id: "settings.outputStyles.nameLabel" })}
           </span>
           <Input
             value={draft.name}
+            disabled={busy}
             onChange={(event) => view.setDraft({ name: event.target.value })}
             data-testid="settings-output-styles-name"
           />
@@ -109,6 +128,7 @@ export function OutputStylesEditorCard({ view, intl }: { view: OutputStylesView;
           </span>
           <Input
             value={draft.description}
+            disabled={busy}
             onChange={(event) => view.setDraft({ description: event.target.value })}
           />
         </label>
@@ -119,22 +139,11 @@ export function OutputStylesEditorCard({ view, intl }: { view: OutputStylesView;
           <SettingsFormTextarea
             rows={10}
             value={draft.content}
+            disabled={busy}
             onChange={(event) => view.setDraft({ content: event.target.value })}
             className="font-mono text-ui-sm"
           />
         </label>
-        {collision ? (
-          <Alert variant="warning">
-            <AlertDescription>
-              {intl.formatMessage({
-                id:
-                  collision === "builtin-override"
-                    ? "settings.outputStyles.collisionBuiltin"
-                    : "settings.outputStyles.collisionCustom",
-              })}
-            </AlertDescription>
-          </Alert>
-        ) : null}
         {emptyPrompt ? (
           <Alert variant="warning">
             <AlertDescription>
@@ -166,7 +175,7 @@ export function OutputStylesEditorCard({ view, intl }: { view: OutputStylesView;
         <SettingsFormActions>
           <Button
             size="sm"
-            disabled={!view.canSaveEditor}
+            disabled={!view.canSaveEditor || reservedDefault}
             onClick={() => void view.saveEditor()}
             data-testid={TID_SETTINGS_OUTPUT_STYLES_SAVE}
           >
@@ -175,6 +184,7 @@ export function OutputStylesEditorCard({ view, intl }: { view: OutputStylesView;
           <Button
             variant="outline"
             size="sm"
+            disabled={busy}
             onClick={() => {
               if (!view.editorDirty) {
                 view.closeEditor();

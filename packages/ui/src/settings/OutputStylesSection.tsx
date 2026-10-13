@@ -168,10 +168,14 @@ function StorageLocationRow({ view, intl }: { view: OutputStylesView; intl: Intl
       <span className="break-all font-mono text-ui-xs text-foreground-subtlest">
         {view.stylesDirectory}
       </span>
-      <Button variant="outline" size="sm" onClick={() => void reveal()}>
-        <FolderOpen className="size-4" />
-        {intl.formatMessage({ id: "settings.outputStyles.reveal" })}
-      </Button>
+      {/* The path belongs to the host being edited; the local file manager can only open
+          local directories, so the action is hidden for remote hosts. */}
+      {!view.isRemote ? (
+        <Button variant="outline" size="sm" onClick={() => void reveal()}>
+          <FolderOpen className="size-4" />
+          {intl.formatMessage({ id: "settings.outputStyles.reveal" })}
+        </Button>
+      ) : null}
     </div>
   );
 }
@@ -290,8 +294,15 @@ function StyleRow({
         ) : null}
       </div>
       <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+        {/* Row mutations are blocked while an editor draft is open so they cannot silently
+            replace or invalidate the unsaved draft. */}
         {style.id !== "default" ? (
-          <Button variant="ghost" size="sm" onClick={() => view.openEditor(style)}>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={view.editor !== null}
+            onClick={() => view.openEditor(style)}
+          >
             {intl.formatMessage({
               id:
                 style.isBuiltIn && !style.isOverridden
@@ -301,7 +312,12 @@ function StyleRow({
           </Button>
         ) : null}
         {style.isBuiltIn && style.isOverridden ? (
-          <Button variant="ghost" size="sm" onClick={() => void view.restoreDefault(style)}>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={view.editor !== null}
+            onClick={() => void view.restoreDefault(style)}
+          >
             {intl.formatMessage({ id: "settings.outputStyles.restoreDefault" })}
           </Button>
         ) : null}
@@ -309,6 +325,7 @@ function StyleRow({
           <Button
             variant="ghost"
             size="sm"
+            disabled={view.editor !== null}
             onClick={() => {
               void useConfirmDialogStore
                 .getState()

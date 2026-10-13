@@ -7353,6 +7353,8 @@ const zhCN: Record<string, string> = {
     "该名称与内置风格相同：保存会创建对应的覆盖文件。如非有意，请重命名。",
   "settings.outputStyles.collisionCustom":
     "该名称与现有自定义风格相同，会覆盖其文件。如非有意，请重命名。",
+  "settings.outputStyles.collisionReservedDefault":
+    "“Default”是保留 id：运行时将其视为“无风格”，并忽略对它的覆盖。请换一个名称。",
   "settings.outputStyles.diffTitle": "变更",
   "settings.outputStyles.save": "保存",
   "settings.outputStyles.saved": "风格已保存。",

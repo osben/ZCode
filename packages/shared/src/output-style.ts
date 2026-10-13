@@ -86,12 +86,14 @@ export function outputStyleFilenameFromName(name: string): string {
 }
 
 /**
- * Filename for an EXISTING style id (listStyles ids, persisted active id). Keeps case — a
- * hand-created file may use any casing — but strips path separators and other unsafe
- * characters so a crafted id cannot point outside the styles directory.
+ * Filename for an EXISTING style id (listStyles ids, persisted active id). Keeps case and
+ * any remaining `.md`-like suffix — listing ids already have the filesystem extension removed,
+ * so a hand-named `Foo.md` file lists as `custom-foo.md` and must map back to `foo.md.md` —
+ * while stripping path separators and other unsafe characters so a crafted id cannot point
+ * outside the styles directory.
  */
 export function safeOutputStyleFilenameFromId(styleId: string): string {
-  const base = styleId.replace(/^custom-/, "").replace(/\.md$/, "");
+  const base = styleId.replace(/^custom-/, "");
   const safe = base.replace(/[^a-zA-Z0-9._-]/g, "");
   return `${safe || "style"}.md`;
 }

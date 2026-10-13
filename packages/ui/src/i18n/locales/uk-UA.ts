@@ -7253,6 +7253,8 @@ const ukUA: Record<string, string> = {
     "Ця назва збігається з вбудованим стилем: збереження створить файл перевизначення для нього. Якщо це не задумано — перейменуйте.",
   "settings.outputStyles.collisionCustom":
     "Ця назва збігається з наявним користувацьким стилем і перезапише його файл. Якщо це не задумано — перейменуйте.",
+  "settings.outputStyles.collisionReservedDefault":
+    "«Default» — зарезервований id: рантайм трактує його як «без стилю» й ігнорує перевизначення. Виберіть іншу назву.",
   "settings.outputStyles.diffTitle": "Зміни",
   "settings.outputStyles.save": "Зберегти",
   "settings.outputStyles.saved": "Стиль збережено.",

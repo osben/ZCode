@@ -7667,6 +7667,8 @@ const enUS: Record<string, string> = {
     "This name matches a built-in style: saving creates an override file for it. Rename if that is not intended.",
   "settings.outputStyles.collisionCustom":
     "This name matches an existing custom style and will overwrite its file. Rename if that is not intended.",
+  "settings.outputStyles.collisionReservedDefault":
+    '"Default" is a reserved id: the runtime treats it as "no style" and ignores overrides for it. Choose a different name.',
   "settings.outputStyles.diffTitle": "Changes",
   "settings.outputStyles.save": "Save",
   "settings.outputStyles.saved": "Style saved.",
