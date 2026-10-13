@@ -132,6 +132,40 @@ describe("theme palette contrast", () => {
     }
   });
 
+  it("derives overlay and selection surfaces from each palette popover and input", () => {
+    // Menus, tooltips, popover headers, and selected cards previously kept the neutral base values
+    // under accent palettes, rendering dropdown content unthemed. Like background-alt, these tokens
+    // are var/color-mix expressions, so validate their form per mode instead of parsing hexes.
+    const derivedTokens = [
+      "--color-menu",
+      "--color-menu-hover",
+      "--color-popover-header",
+      "--color-tooltip",
+      "--color-tooltip-tag",
+      "--color-card-selected",
+      "--color-input-focused",
+    ] as const;
+    for (const { id } of accentPalettes) {
+      for (const selector of [`\\.palette-${id}`, `\\.palette-${id}\\.dark`]) {
+        for (const token of derivedTokens) {
+          assert.ok(readPaletteValue(selector, token), `${id} ${selector} is missing ${token}`);
+        }
+        assert.equal(readPaletteValue(selector, "--color-menu"), "var(--color-popover)");
+        assert.equal(readPaletteValue(selector, "--color-input-focused"), "var(--color-input)");
+      }
+      assert.equal(
+        readPaletteValue(`\\.palette-${id}`, "--color-menu-hover"),
+        "color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950))",
+        `${id} light menu-hover`,
+      );
+      assert.equal(
+        readPaletteValue(`\\.palette-${id}\\.dark`, "--color-menu-hover"),
+        "color-mix(in oklab, var(--color-popover) 92%, var(--color-white))",
+        `${id} dark menu-hover`,
+      );
+    }
+  });
+
   it("defines CSS palette blocks only for accent palettes", () => {
     const blockIds = [...styles.matchAll(/^\.palette-([a-z]+) \{/gm)].map((match) => match[1]);
     assert.deepEqual(
