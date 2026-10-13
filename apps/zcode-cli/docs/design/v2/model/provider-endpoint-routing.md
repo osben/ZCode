@@ -29,7 +29,16 @@ bootstrap process registry（endpoint origin + network policy）
 导出只替换该目录，不改公共源码。动态实现的专属测试显式排除，公共 fetch 与静态实现测试两版都保留。
 公共工厂不向上暴露 snapshot、刷新预算或实现 class。网络客户端和来源标识以依赖传入，静态实现不调用它们。
 
-静态实现保持既有开源网关行为：
+The fork ships a direct edition: the edition returns `routed:false` for every request and never
+rewrites an endpoint. Reason: the platform gateway (the `/api/v1/ultra-zai/anthropic/v1/messages`
+path under the runtime ZCode origin) returns 404 for GLM-5.3 (GLM-5.3-Flash works), while the
+`agent/configs` control plane currently returns no `proxyEndpoint`, so the official closed-source
+assembly connects to the provider directly and GLM-5.3 works there. The upstream static gateway
+table stays in `official-coding-plan-gateway.ts` and its tests, no longer referenced by the
+edition; to restore gateway routing, point the edition back at
+`createStaticProviderEndpointRoutingPort`.
+
+Original behavior of the upstream static gateway (effective only when pointed back):
 
 | 精确匹配的 HTTPS 端点 | 当前 runtime ZCode origin 下的目标路径 |
 | --- | --- |
@@ -232,11 +241,11 @@ provider fetch 组合顺序和所有默认 model adapter 创建路径；WebFetch
 
 | Case | Setup / Action | Assertions |
 | --- | --- | --- |
-| PER-019 | 两个官方端点、默认端口、末尾斜线、query | 静态目标路径正确，query 不变，远端配置调用数为零 |
-| PER-020 | 不同 scheme/host/port/path 和第三方 URL | 静态实现原样返回，不扩大匹配范围 |
-| PER-021 | 静态 port 经公共 wrapper 发送 Request/URL/string | method/body/auth/signal/response 不变，旧 Host 删除 |
-| PER-022 | 同 endpoint/network 重复创建，或改变 network | 工厂共享或隔离符合现有进程 registry 契约 |
-| PER-023 | 替换 edition 后构建并实际发送模型请求 | 默认装配走静态网关，动态源码缺席，公共调用链与测试保留 |
+| PER-019 | Two official endpoints, default ports, trailing slash, query | The fork direct edition always returns `routed:false` unchanged with zero configuration IO; the static resolver's own rewriting assertions stay in its dedicated tests |
+| PER-020 | Different scheme/host/port/path and third-party URLs | The direct edition returns them unchanged and never widens matching |
+| PER-021 | Static port sends Request/URL/string through the shared wrapper | method/body/auth/signal/response unchanged, stale Host removed |
+| PER-022 | Repeated creation for the same endpoint/network, or a changed network | Factory sharing/isolation follows the existing process registry contract |
+| PER-023 | Build and send a real model request after replacing the edition | The default assembly connects directly (`routed:false`); the static gateway source is retained but not referenced by the edition; the shared call chain and tests are preserved |
 
 PER-019—023 与以下动态用例先于实现更新。动态测试继续覆盖缓存、失败、取消和 ID 隔离；
 本次没有 UI 交互变更，以真实 HTTP/模型执行集成与导出树运行验证入口，不新增 conversation 产品状态。
