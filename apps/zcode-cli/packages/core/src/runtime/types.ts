@@ -1,4 +1,4 @@
-import type { RequestVerificationReason } from "@zcode/shared";
+import type { RequestVerificationReason, SystemPromptOverrides } from "@zcode/shared";
 import type { GetAgentDefinitions, LoadAgentDefinitions } from "../subagent/definitions.js";
 import type { RuntimeInputPresentation, TurnExecutionModelFallbackReason } from "@zcode/contracts";
 /* eslint-disable max-lines -- Runtime types centrally define the public core/runtime structures; splitting them requires a separate migration. */
@@ -246,6 +246,8 @@ export interface AgentRuntimeConfig {
   };
   language?: string;
   outputStyle?: OutputStylePromptConfig;
+  /** User overrides for editable system-prompt sections (docs/system-prompt-overrides.md). */
+  systemPromptOverrides?: SystemPromptOverrides;
   agentName?: string; // Default: "zcode-agent"
   workingDirectory?: string; // Required for context builder
   /**

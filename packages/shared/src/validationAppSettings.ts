@@ -474,6 +474,9 @@ const voiceDictationSettingsSchema = z.object({
   idleUnloadMinutes: z
     .union([z.literal(1), z.literal(5), z.literal(10), z.literal(15), z.literal(30)])
     .optional(),
+  feedbackSounds: z.boolean().optional(),
+  feedbackVolume: z.number().int().min(0).max(100).optional(),
+  muteWhileRecording: z.boolean().optional(),
 });
 
 const appSettingsObjectSchema = z.object({

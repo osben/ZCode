@@ -319,6 +319,9 @@ contextBridge.exposeInMainWorld("zcode", {
   /** App-managed worktree storage directory for the "global" location mode. */
   getAppWorktreesDir: (): Promise<string> =>
     ipcRenderer.invoke(PlatformChannels.GetAppWorktreesDir),
+  /** Apply/release the system-wide output mute used while voice dictation records (spec: docs/ui/voice-dictation-feedback-sounds.md). */
+  setDictationSystemMute: (active: boolean): Promise<void> =>
+    ipcRenderer.invoke(PlatformChannels.SetDictationSystemMute, { active }),
   /** Open the system file picker and return the selected file path or null. */
   selectFile: (): Promise<string | null> => ipcRenderer.invoke(PlatformChannels.SelectFile),
   /** Open the system multi-file picker and return selected paths; return an empty array when cancelled. */

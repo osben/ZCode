@@ -24,6 +24,11 @@ export function createDesktopPlatform(options: {
     ...(window.zcode.getAppWorktreesDir
       ? { getAppWorktreesDir: () => window.zcode.getAppWorktreesDir() }
       : {}),
+    ...(window.zcode.setDictationSystemMute
+      ? {
+          setDictationSystemMute: (active: boolean) => window.zcode.setDictationSystemMute!(active),
+        }
+      : {}),
     selectFile: () => window.zcode.selectFile(),
     selectFiles: () => window.zcode.selectFiles?.() ?? Promise.resolve([]),
     createTempTextAttachment: (payload) => window.zcode.createTempTextAttachment(payload),

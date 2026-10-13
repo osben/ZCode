@@ -7186,6 +7186,14 @@ const zhCN: Record<string, string> = {
   "voiceDictation.pushToTalk.title": "按住说话",
   "voiceDictation.pushToTalk.description":
     "按住快捷键录音，松开即转写。关闭后：按一下开始，再按一下结束。",
+  "voiceDictation.feedback.title": "声音提示",
+  "voiceDictation.feedback.description": "录音开始和结束时播放短提示音。",
+  "voiceDictation.feedbackVolume.title": "音量",
+  "voiceDictation.feedbackVolume.description": "听写提示音的音量。点击“试听”可预览两个提示音。",
+  "voiceDictation.feedbackVolume.test": "试听",
+  "voiceDictation.muteWhileRecording.title": "录音时静音系统声音",
+  "voiceDictation.muteWhileRecording.description":
+    "录音期间静音系统声音，结束后恢复之前的静音状态。",
   "voiceDictation.language.title": "语言",
   "voiceDictation.language.description": "说话所用语言。多语言模型支持自动识别。",
   "voiceDictation.language.auto": "自动识别",

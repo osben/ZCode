@@ -248,7 +248,7 @@ async function readUserInstructions(): Promise<UserInstructionsReadResult> {
   }
   if (loaded.kind === "error") {
     if (loaded.code === "READ_FAILED") {
-      log.warn("[user-instructions] read failed", { path, message: loaded.message });
+      log.warn(undefined, "[user-instructions] read failed", { path, message: loaded.message });
     }
     return { kind: "error", path, ...stripUndefined(loaded), code: loaded.code };
   }
@@ -313,7 +313,7 @@ async function writeUserInstructions(
       const currentRevision =
         inspected.kind === "missing" ? null : hashBytes(await readFile(inspected.targetPath));
       if (currentRevision !== params.expectedRevision) {
-        log.info("[user-instructions] write rejected by revision conflict", {
+        log.info(undefined, "[user-instructions] write rejected by revision conflict", {
           path,
           hasCurrentFile: currentRevision !== null,
         });
@@ -326,7 +326,7 @@ async function writeUserInstructions(
         bytes,
         inspected.kind === "missing" ? {} : { mode: inspected.mode },
       );
-      log.info("[user-instructions] saved", {
+      log.info(undefined, "[user-instructions] saved", {
         path,
         created: inspected.kind === "missing",
         viaLink: inspected.kind === "file" && inspected.linkTarget !== undefined,
@@ -335,7 +335,10 @@ async function writeUserInstructions(
       return { kind: "ok", revision: hashBytes(bytes), sizeBytes: bytes.length };
     });
   } catch (error) {
-    log.warn("[user-instructions] write failed", { path, message: getErrorMessage(error) });
+    log.warn(undefined, "[user-instructions] write failed", {
+      path,
+      message: getErrorMessage(error),
+    });
     return { kind: "error", code: "WRITE_FAILED", message: getErrorMessage(error) };
   }
 }

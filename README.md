@@ -23,6 +23,7 @@ This fork extends upstream [zai-org/ZCode](https://github.com/zai-org/ZCode) wit
 - Ukrainian (uk-UA) interface localization.
 - Merged-branch badge and hover cards in the task sidebar.
 - Voice dictation with local transcription model selection.
+- Voice dictation feedback chimes with volume control and optional system-audio mute while recording (Handy-inspired).
 - Fixes for code-scanning findings (ReDoS-prone regexes and others).
 - English translation of AGENTS.md and in-code documentation.
 - CI: PR checks (unit and node:test suites, CodeQL, CodeRabbit, Dependabot) and a fork release workflow with `-fork.N` versions.

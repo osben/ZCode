@@ -624,11 +624,11 @@ describe("official mcp credential resolved log", () => {
     expect(first.ok).toBe(true);
     const resolvedCalls = () =>
       serviceInfo.mock.calls.filter(
-        (call): call is [string, Record<string, unknown>] =>
-          call[0] === "official mcp credentials resolved",
+        (call): call is [unknown, string, Record<string, unknown>] =>
+          call[1] === "official mcp credentials resolved",
       );
     expect(resolvedCalls()).toHaveLength(1);
-    const fields = resolvedCalls()[0]![1]!;
+    const fields = resolvedCalls()[0]![2]!;
     expect(fields).toMatchObject({
       providerFamily: "bigmodel",
       planTargetType: "PERSONAL",
@@ -654,7 +654,7 @@ describe("official mcp credential resolved log", () => {
     const outcome = await resolveOfficialMcpCredentials(deps);
     expect(outcome).toMatchObject({ ok: true });
     expect(
-      serviceInfo.mock.calls.filter((call) => String(call[0]).includes("identity-only")),
+      serviceInfo.mock.calls.filter((call) => String(call[1]).includes("identity-only")),
     ).toHaveLength(0);
   });
 });

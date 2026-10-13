@@ -239,7 +239,7 @@ export class NodeApiClient implements ApiClient {
             this.onZcodeJwtInvalid(requestInput, requestHeadersForObservation);
           }
         } catch (error) {
-          log.warn("zcode jwt invalid response observation failed", { error });
+          log.warn(undefined, "zcode jwt invalid response observation failed", { error });
         }
       }
       return response;

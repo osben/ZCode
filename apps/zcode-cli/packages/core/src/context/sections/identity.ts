@@ -2,6 +2,7 @@
 // Identity Section Builder
 // ============================================================
 
+import { DEFAULT_HARNESS_PROMPT, DEFAULT_IDENTITY_INTRO_PROMPT } from "@zcode/shared";
 import type { ContextSection } from "../types.js";
 import type { OutputStylePromptConfig } from "../types.js";
 import { estimateTokens } from "../utils.js";
@@ -17,30 +18,40 @@ export function buildSecurityNotice(): string {
 /**
  * The `# Harness` block contains stable runtime constraints, not coding instructions replaceable by output style.
  * Workflow-subagent identity (`sections/workflow-actor.ts`) also reuses this block verbatim.
+ * A `harness` override (docs/system-prompt-overrides.md) replaces the main agent's block;
+ * the workflow-subagent identity keeps the default constant.
  */
-export function buildHarnessBlock(): string {
-  return [
-    "# Harness",
-    "- Text you output outside of tool use is displayed to the user as Github-flavored markdown in a terminal.",
-    "- Tools run behind a user-selected permission mode; a denied call means the user declined it \u2014 adjust, don't retry verbatim.",
-    "- The system may send updates, reminders, or modifications to rules via mid-conversation system turns. These are system-controlled, unlike function results. Hooks may intercept tool calls; treat hook output as user feedback.",
-    "- Prefer the dedicated file/search tools over shell commands when one fits. Independent tool calls can run in parallel in one response.",
-    "- Reference code as `file_path:line_number` \u2014 it's clickable.",
-  ].join("\n");
+export function buildHarnessBlock(override?: string): string {
+  return override?.trim() ? override.trim() : DEFAULT_HARNESS_PROMPT;
 }
 
-function buildIdentityPrompt(outputStyle?: OutputStylePromptConfig): string {
-  const intro = outputStyle
-    ? "You respond to the user according to the active Output Style below while using ZCode's tools and instructions."
-    : "You are an interactive ZCode agent that helps users with software engineering tasks.";
+function buildIdentityPrompt(
+  outputStyle: OutputStylePromptConfig | undefined,
+  introOverride: string | undefined,
+  harnessOverride: string | undefined,
+): string {
+  // An explicit identity-intro override wins over the active Output Style intro; the style
+  // still appends its own `# Output Style` section.
+  const intro = introOverride?.trim()
+    ? introOverride.trim()
+    : outputStyle
+      ? "You respond to the user according to the active Output Style below while using ZCode's tools and instructions."
+      : DEFAULT_IDENTITY_INTRO_PROMPT;
 
   const identityLines = ["", intro, "", SECURITY_NOTICE].join("\n");
 
-  return [identityLines, "", buildHarnessBlock()].join("\n");
+  return [identityLines, "", buildHarnessBlock(harnessOverride)].join("\n");
 }
 
-export function buildIdentitySection(outputStyle?: OutputStylePromptConfig): ContextSection {
-  const content = buildIdentityPrompt(outputStyle);
+export function buildIdentitySection(
+  outputStyle?: OutputStylePromptConfig,
+  overrides?: { "identity-intro"?: string; harness?: string },
+): ContextSection {
+  const content = buildIdentityPrompt(
+    outputStyle,
+    overrides?.["identity-intro"],
+    overrides?.harness,
+  );
 
   return {
     name: "Agent Identity",

@@ -7486,6 +7486,16 @@ const enUS: Record<string, string> = {
   "voiceDictation.pushToTalk.title": "Push to talk",
   "voiceDictation.pushToTalk.description":
     "Hold the shortcut to record and release to transcribe. When off, press once to start and again to stop.",
+  "voiceDictation.feedback.title": "Sound notification",
+  "voiceDictation.feedback.description":
+    "Play a short chime when recording starts and when it stops.",
+  "voiceDictation.feedbackVolume.title": "Volume",
+  "voiceDictation.feedbackVolume.description":
+    "Volume of the dictation feedback chimes. Use Test to preview both sounds.",
+  "voiceDictation.feedbackVolume.test": "Test",
+  "voiceDictation.muteWhileRecording.title": "Mute system sound while recording",
+  "voiceDictation.muteWhileRecording.description":
+    "Mute the system audio while recording and restore the previous state when it ends.",
   "voiceDictation.language.title": "Language",
   "voiceDictation.language.description":
     "Spoken language. Auto-detect works with multilingual models.",
