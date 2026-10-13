@@ -7530,6 +7530,7 @@ const enUS: Record<string, string> = {
     "English speech-to-text with streaming and token-level timestamps.",
   "voiceDictation.saveFailed": "Could not save voice dictation settings.",
   "voiceDictation.composer.start": "Voice input",
+  "voiceDictation.composer.starting": "Starting voice input",
   "voiceDictation.composer.loading": "Loading speech model",
   "voiceDictation.composer.stop": "Stop voice input",
   "voiceDictation.composer.level": "Microphone input level",
