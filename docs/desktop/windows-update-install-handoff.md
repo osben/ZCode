@@ -69,6 +69,7 @@ Main 进程不能在调用 `quitAndInstall()` 前按整个安装目录杀进程�
     -> 保留原 .lnk / 固定身份
     -> 若继承的目标失效，则原位修复 .lnk
   ```
+
 - 覆盖更新时，开始菜单和桌面快捷方式先由 electron-builder 的 `KeepShortcuts` 机制保留。
   ZCode 的 `customInstall` 必须读取已有 `.lnk` 的目标：目标已经等于本次 `$appExe` 时原样保留，
   不得再次调用 `CreateShortCut`；目标不同、为空或无法读取时才原位修复为 `$appExe`。修复原因
@@ -97,6 +98,17 @@ Main 进程不能在调用 `quitAndInstall()` 前按整个安装目录杀进程�
 
 ## 失败边界
 
+- Installer handoff admission and recovery (upstream 3.15.3 parity, 2026-10-13): quit-and-install
+  admission tracks an explicit phase (idle/preparing/installing/recovering) instead of an in-flight
+  boolean. With electron-updater 6.8.9, `quitAndInstall()` does not throw: synchronous `doInstall()`
+  failures and asynchronous Windows NSIS launch failures arrive through the generic `error` event
+  (the latter after `quitAndInstall()` has already returned). While the phase is locked, new checks
+  are blocked, the check already in flight at admission is awaited before the handoff, and its
+  error event is suppressed as check-originated noise; any remaining `error` event is treated as an
+  installer handoff failure — main clears the ready state, reports it, and relaunches the app
+  ("install failed after shutdown started: relaunch app") instead of leaving a quitting app that
+  never installs. The resolved release channel is kept while the phase is locked; a failed exit
+  preparation resets the phase so a later install request stays retryable.
 - 下载、签名、SHA 校验和安装包启动失败继续由 `electron-updater` 报错状态承接。
 - host/agent 退出细节写入 main 日志；NSIS 无法关闭进程时不继续覆盖安装目录。
 - Windows 随包 runtime 扫描与强杀采用 fail-open：PowerShell 查询失败、超时、强杀失败或

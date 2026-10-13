@@ -100,6 +100,7 @@ import {
 import { resolveBuiltInNodeReplMcpServers } from "./built-in-node-repl.js";
 import { resolveZCodeCustomCommandPrompt } from "../custom-command-prompt.js";
 import { resolveZCodeBuiltinPromptCommandInvocation } from "../builtin-prompt-command.js";
+import { loadPersistedSystemPromptOverrides } from "../system-prompt.js";
 import { loadPersistedOutputStyle } from "../output-style.js";
 import { BUILTIN_WORKFLOW_COMMAND_NAME } from "../builtin-workflow-command.js";
 import { collectDisabledPaths } from "../skill-command-overrides.js";
@@ -273,6 +274,12 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
     const persistedMode = options.runtimeConfig?.mode
       ? undefined
       : readProjectPermissionMode(localSettingStore, projectID);
+    // Session-level overrides win; otherwise fall back to the persisted files on disk.
+    // The loader reads the fixed ~/.zcode/system-prompt location (same rule as the global
+    // AGENTS.md), not the redirected storage root, so it stays in sync with the host service.
+    const persistedSystemPromptOverrides = options.runtimeConfig?.systemPromptOverrides
+      ? undefined
+      : await loadPersistedSystemPromptOverrides({ env: options.env ?? process.env, logger });
     // Session-level output style wins; otherwise fall back to the persisted active style on disk.
     const persistedOutputStyle = options.runtimeConfig?.outputStyle
       ? undefined
@@ -283,6 +290,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
         configResult,
         options,
         persistedMode,
+        persistedSystemPromptOverrides,
         persistedOutputStyle,
         pluginHooks: pluginOutcome.hooks,
         pluginMcpServers: pluginOutcome.mcpServers,

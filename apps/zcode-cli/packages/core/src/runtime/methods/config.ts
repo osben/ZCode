@@ -48,7 +48,10 @@ export async function setExecutionState(
 
 export function updateConfig(
   this: AgentRuntimeInternal,
-  patch: Pick<AgentRuntimeConfig, "mode" | "planEnabled" | "language" | "outputStyle">,
+  patch: Pick<
+    AgentRuntimeConfig,
+    "mode" | "planEnabled" | "language" | "outputStyle" | "systemPromptOverrides"
+  >,
 ): void {
   if (patch.mode !== undefined || patch.planEnabled !== undefined) {
     const previous = resolveExecutionState(this.config);
@@ -65,6 +68,12 @@ export function updateConfig(
   }
   if ("outputStyle" in patch) {
     this.config.outputStyle = patch.outputStyle;
+    if (!this.activeTurn) {
+      rebuildContextPrefix(this);
+    }
+  }
+  if ("systemPromptOverrides" in patch) {
+    this.config.systemPromptOverrides = patch.systemPromptOverrides;
     if (!this.activeTurn) {
       rebuildContextPrefix(this);
     }

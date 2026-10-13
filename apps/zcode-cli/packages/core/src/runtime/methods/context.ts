@@ -14,6 +14,7 @@ import type {
   ContextBuilder,
   ContextBuilderConfig,
 } from "../deps.js";
+import type { AgentRuntimeConfig } from "../types.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { ensureMemoryDirectoryExists } from "../../memory/directory.js";
 import { formatProjectMemoryIndexContent } from "../../memory/index-content.js";
@@ -106,6 +107,22 @@ export async function getSkillCatalog(
   };
 }
 
+/**
+ * Main-agent-only boundary for system-prompt overrides: workflow and subagent child runtimes
+ * (legacy script-workflow children spread the parent AgentRuntimeConfig without setting
+ * workflowActor, so the builder's workflow-actor gate never sees them) must keep the code
+ * defaults for the shared prompt fragments regardless of what the parent carries.
+ */
+export function resolveMainAgentSystemPromptOverrides(
+  config: Pick<AgentRuntimeConfig, "taskType" | "systemPromptOverrides">,
+): AgentRuntimeConfig["systemPromptOverrides"] {
+  const taskType = config.taskType;
+  if (taskType === "workflow_child" || taskType === "nested_workflow_child" || taskType === "subagent_child") {
+    return undefined;
+  }
+  return config.systemPromptOverrides;
+}
+
 export function createContextBuilderFromSnapshot(
   this: AgentRuntimeInternal,
   snapshot: ContextSourceSnapshot,
@@ -151,6 +168,7 @@ export function createContextBuilderFromSnapshot(
     workflowActor: this.config.workflowActor,
     language: this.config.language,
     outputStyle: this.config.outputStyle,
+    systemPromptOverrides: resolveMainAgentSystemPromptOverrides(this.config),
     compact: this.config.compact,
     guidanceToolNames: this.getTools(options.model).map((tool) => tool.name),
   };

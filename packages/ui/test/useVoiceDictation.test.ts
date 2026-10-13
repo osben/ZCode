@@ -10,13 +10,19 @@ const mocks = vi.hoisted(() => ({
     isRecording: boolean;
     stop: () => Float32Array;
   } | null,
+  settings: null as { voiceDictation?: Record<string, unknown> } | null,
+  feedbackSound: null as ReturnType<typeof vi.fn> | null,
+  platform: { setDictationSystemMute: null as ReturnType<typeof vi.fn> | null },
 }));
 
 vi.mock("@/hooks/useServices.js", () => ({
   useServices: () => ({ voiceDictationService: mocks.service }),
 }));
 vi.mock("@/hooks/useSettingService.js", () => ({
-  useSettings: () => ({ settings: { voiceDictation: { modelId: "model-one", language: "en" } } }),
+  useSettings: () => ({ settings: mocks.settings }),
+}));
+vi.mock("@/hooks/usePlatform.js", () => ({
+  useOptionalPlatform: () => (mocks.platform.setDictationSystemMute ? mocks.platform : null),
 }));
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({ intl: { formatMessage: ({ id }: { id: string }) => id } }),
@@ -31,6 +37,9 @@ vi.mock("@/shortcuts/bindings.js", () => ({
 vi.mock("@/lib/voiceDictationShortcut.js", () => ({ isVoiceShortcutReleased: () => false }));
 vi.mock("@/components/ui/toast.js", () => ({ toast: vi.fn() }));
 vi.mock("@/logger.js", () => ({ logger: { warn: vi.fn() } }));
+vi.mock("@/lib/voiceDictationFeedbackSound.js", () => ({
+  playVoiceDictationFeedbackSound: (...args: [string, number]) => mocks.feedbackSound!(...args),
+}));
 vi.mock("@/lib/voiceDictationRecorder.js", () => ({
   VoiceDictationRecorder: class {
     options: { onChunk?: (samples: Float32Array) => void; collectSamples?: boolean } | null = null;
@@ -64,6 +73,9 @@ beforeEach(() => {
   mocks.recorder = null;
   // module-mock 的 vi.fn 跨用例共享；restoreAllMocks 不清空调用历史，先清空再断言。
   vi.mocked(toast).mockClear();
+  mocks.settings = { voiceDictation: { modelId: "model-one", language: "en" } };
+  mocks.feedbackSound = vi.fn().mockResolvedValue(undefined);
+  mocks.platform.setDictationSystemMute = vi.fn().mockResolvedValue(undefined);
   mocks.service = {
     setIdleUnloadMinutes: vi.fn().mockResolvedValue(undefined),
     beginStream: vi.fn().mockResolvedValue("stream-1"),
@@ -256,5 +268,88 @@ describe("useVoiceDictation streaming", () => {
 
     expect(mocks.service?.cancelStream).toHaveBeenCalledWith("stream-1");
     expect(onTranscript).not.toHaveBeenCalled();
+  });
+
+  it("plays chimes around the system mute in spec order when enabled", async () => {
+    // Spec ordering: start chime → mute applies → … → mute released → stop chime.
+    mocks.settings!.voiceDictation = {
+      modelId: "model-one",
+      language: "en",
+      feedbackSounds: true,
+      feedbackVolume: 40,
+      muteWhileRecording: true,
+    };
+    const onTranscript = vi.fn();
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    const hook = renderHook(() =>
+      useVoiceDictation({ enabled: true, onTranscript, scopeRef: { current: null } }),
+    );
+
+    await act(async () => hook.result.current.start());
+    await waitFor(() => expect(mocks.platform.setDictationSystemMute).toHaveBeenCalledWith(true));
+
+    now.mockReturnValue(1500);
+    await act(async () => hook.result.current.stop());
+    await waitFor(() => expect(mocks.feedbackSound).toHaveBeenCalledTimes(2));
+
+    const mute = mocks.platform.setDictationSystemMute!;
+    const chime = mocks.feedbackSound!;
+    expect(chime.mock.calls).toEqual([
+      ["start", 40],
+      ["stop", 40],
+    ]);
+    expect(mute.mock.calls).toEqual([[true], [false]]);
+    expect(chime.mock.invocationCallOrder[0]).toBeLessThan(mute.mock.invocationCallOrder[0]);
+    expect(mute.mock.invocationCallOrder[0]).toBeLessThan(mute.mock.invocationCallOrder[1]);
+    expect(mute.mock.invocationCallOrder[1]).toBeLessThan(chime.mock.invocationCallOrder[1]);
+  });
+
+  it("stays silent for sounds and the mute when the settings are off", async () => {
+    const onTranscript = vi.fn();
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    const hook = renderHook(() =>
+      useVoiceDictation({ enabled: true, onTranscript, scopeRef: { current: null } }),
+    );
+
+    await act(async () => hook.result.current.start());
+    now.mockReturnValue(1500);
+    await act(async () => hook.result.current.stop());
+
+    expect(mocks.feedbackSound).not.toHaveBeenCalled();
+    expect(mocks.platform.setDictationSystemMute).not.toHaveBeenCalled();
+    expect(onTranscript).toHaveBeenCalledWith("Hello there");
+  });
+
+  it("does not apply a pending mute after the recording already ended", async () => {
+    mocks.settings!.voiceDictation = {
+      modelId: "model-one",
+      language: "en",
+      feedbackSounds: true,
+      feedbackVolume: 40,
+      muteWhileRecording: true,
+    };
+    // The start chime is still playing when the user releases: the queued mute apply must be
+    // dropped instead of muting a recording that no longer exists (stuck output mute).
+    let resolveChime!: () => void;
+    mocks.feedbackSound!.mockImplementation(
+      () => new Promise<void>((resolve) => (resolveChime = resolve)),
+    );
+    const onTranscript = vi.fn();
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    const hook = renderHook(() =>
+      useVoiceDictation({ enabled: true, onTranscript, scopeRef: { current: null } }),
+    );
+
+    await act(async () => hook.result.current.start());
+    now.mockReturnValue(1500);
+    await act(async () => hook.result.current.stop());
+    await act(async () => {
+      resolveChime();
+    });
+    // Let the chained (dropped) apply and any follow-up settle.
+    await act(async () => {});
+
+    expect(mocks.platform.setDictationSystemMute).not.toHaveBeenCalled();
+    expect(hook.result.current.phase).toBe("idle");
   });
 });

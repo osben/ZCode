@@ -94,7 +94,7 @@ async function readCustomStyleFiles(dir: string): Promise<OutputStyle[]> {
       });
     } catch (error) {
       // A single unreadable style file is recoverable (it is skipped); log and continue.
-      log.warn("Failed to read output style file", {
+      log.warn(undefined, "Failed to read output style file", {
         file: entry.name,
         error: error instanceof Error ? error.message : String(error),
       });

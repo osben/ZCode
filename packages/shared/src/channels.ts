@@ -166,6 +166,8 @@ export const ServiceChannels = {
   UserInstructions: "user-instructions",
   /** OutputStyle management service */
   OutputStyle: "output-style",
+  /** System-prompt section override service (~/.zcode/system-prompt/) */
+  SystemPrompt: "system-prompt",
   /** First-launch settings synchronization service */
   SettingsSync: "settings-sync",
   /** Remote chat-control service for Bots */
@@ -201,6 +203,8 @@ export const PlatformChannels = {
   SelectDirectory: "zcode:select-directory",
   /** App-managed worktree storage directory for the "global" location mode */
   GetAppWorktreesDir: "zcode:get-app-worktrees-dir",
+  /** Renderer → Main: apply/release the system-wide output mute used while voice dictation records */
+  SetDictationSystemMute: "zcode:set-dictation-system-mute",
   /** Open the system file picker */
   SelectFile: "zcode:select-file",
   /** Open the system multi-file picker */
@@ -765,6 +769,10 @@ export interface PlatformChannelMap {
   [PlatformChannels.GetAppWorktreesDir]: {
     request: void;
     response: string;
+  };
+  [PlatformChannels.SetDictationSystemMute]: {
+    request: { active: boolean };
+    response: void;
   };
   [PlatformChannels.SelectFile]: {
     request: void;

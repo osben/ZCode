@@ -20,6 +20,7 @@ import {
   type UpdateStatePayload,
 } from "@zcode/shared";
 import { logger } from "./logger.js";
+import { restoreDictationSystemMuteForShutdown } from "./desktopDictationSystemAudio.js";
 import { ManifestUpdateProvider, getElectronReleasePlatform } from "./manifestUpdateProvider.js";
 
 export const CHECK_FOR_UPDATE_MENU_ID = "check-for-update";
@@ -120,7 +121,36 @@ interface InitAutoUpdaterOptions {
   resolveEndpointOrigin?: () => string | Promise<string>;
 }
 
-let quitAndInstallInFlight = false;
+// Upstream 3.15.3 parity: a single in-flight boolean could not distinguish "preparing to quit"
+// from "installer handed off", so a failed quitAndInstall() handoff after shutdown started left
+// the app dead or stuck. Track the admission phase explicitly and recover by relaunching.
+type QuitAndInstallPhase = "idle" | "preparing" | "installing" | "recovering";
+
+let quitAndInstallPhase: QuitAndInstallPhase = "idle";
+
+// electron-updater 6.8.9's BaseUpdater.install() catches synchronous doInstall() failures and
+// NsisUpdater reports Windows launch failures asynchronously after quitAndInstall() returns —
+// through the generic "error" event, not by throwing. Error-event classification while the
+// install admission phase is locked therefore relies on check serialization below instead of
+// timing windows: new checks are blocked once admission starts, the check already in flight at
+// admission is awaited before the handoff, and any remaining "error" event is treated as an
+// installer handoff failure.
+let settlingCheckForUpdates: Promise<void> | null = null;
+
+function isUpdateTargetLocked(): boolean {
+  return quitAndInstallPhase !== "idle";
+}
+
+function recoverFromFailedUpdateInstall(): void {
+  if (quitAndInstallPhase === "recovering") {
+    return;
+  }
+  quitAndInstallPhase = "recovering";
+  logger.warn("[auto-update] install failed after shutdown started: relaunch app");
+  app.relaunch();
+  app.exit(0);
+}
+
 let devAutoUpdateVersionOverride: string | null = null;
 let recheckAfterDownload: ((reason: string) => void) | null = null;
 let pendingFailedDownloadRecheck = false;
@@ -462,11 +492,11 @@ async function quitAndInstallUpdate(rejectUnavailable = false) {
     return;
   }
 
-  if (quitAndInstallInFlight) {
+  if (isUpdateTargetLocked()) {
     logger.info("[auto-update] quitAndInstall already in flight");
     return;
   }
-  quitAndInstallInFlight = true;
+  quitAndInstallPhase = "preparing";
   logger.info("[auto-update] user requested quit and install");
   // On macOS, quitAndInstall() does not trigger app.before-quit before closing windows.
   // If window close is allowed only through before-quit, the existing "traffic-light close = hide window" behavior blocks exit:
@@ -481,7 +511,7 @@ async function quitAndInstallUpdate(rejectUnavailable = false) {
   } catch (error) {
     // Exit preparation before installation is required to release host/agent and resources/glm file locks.
     // If it fails but the installer still starts, Windows may overwrite the install directory while resources are in use and leave a partial update.
-    quitAndInstallInFlight = false;
+    quitAndInstallPhase = "idle";
     handleAutoUpdateFailure(error, "prepare quit and install failed");
     if (rejectUnavailable) {
       throw error;
@@ -489,23 +519,45 @@ async function quitAndInstallUpdate(rejectUnavailable = false) {
     return;
   }
 
-  try {
-    if (shouldRelaunchForDevAutoUpdateInstall()) {
-      // Development mode verifies the server manifest, download progress, and installation-entry UI flow only.
-      // An unpackaged app has no release-package context for an installer to take over. Restart the current dev app instead,
-      // so clicking "Restart to update" does not leave it unresponsive after exit preparation.
-      logger.info("[auto-update] dev update install fallback: relaunch app");
-      app.relaunch();
-      app.exit(0);
-      return;
-    }
+  if (shouldRelaunchForDevAutoUpdateInstall()) {
+    // Development mode verifies the server manifest, download progress, and installation-entry UI flow only.
+    // An unpackaged app has no release-package context for an installer to take over. Restart the current dev app instead,
+    // so clicking "Restart to update" does not leave it unresponsive after exit preparation.
+    logger.info("[auto-update] dev update install fallback: relaunch app");
+    // quitAndInstall/relaunch bypass exitPreparedApp (and on macOS before-quit entirely), so the
+    // dictation mute must be released here or installing during a recording stays muted.
+    await restoreDictationSystemMuteForShutdown();
+    app.relaunch();
+    app.exit(0);
+    return;
+  }
 
-    // In 3.3.0, the custom Windows PowerShell delayed launcher in detached/hidden mode could create powershell.exe without
-    // reliably starting the installer, so users saw the app close while the version stayed unchanged.
-    // Restore electron-updater's native install entry point; launcher process creation alone does not mean the update was handed off.
+  // Serialize with a check that is already in flight: its error event must not be mistaken for
+  // an installer handoff failure after the phase locks, and the handoff must not race the
+  // check's own state updates. electron-updater checks settle via their own request timeouts.
+  if (settlingCheckForUpdates) {
+    logger.info("[auto-update] wait for in-flight check before install handoff");
+    await settlingCheckForUpdates;
+  }
+
+  // In 3.3.0, the custom Windows PowerShell delayed launcher in detached/hidden mode could create powershell.exe without
+  // reliably starting the installer, so users saw the app close while the version stayed unchanged.
+  // Restore electron-updater's native install entry point; launcher process creation alone does not mean the update was handed off.
+  // The phase stays "installing" after the handoff: late check failures during shutdown must be
+  // suppressed until the process exits (upstream 3.15.3 behavior).
+  quitAndInstallPhase = "installing";
+  try {
+    // quitAndInstall/relaunch bypass exitPreparedApp (and on macOS before-quit entirely), so the
+    // dictation mute must be released here or installing during a recording stays muted.
+    await restoreDictationSystemMuteForShutdown();
     autoUpdater.quitAndInstall();
-  } finally {
-    quitAndInstallInFlight = false;
+  } catch (error) {
+    // Defensive path: some electron-updater versions or future refactors may still throw from
+    // quitAndInstall(). Report it, then relaunch so the user is not left with a quitting app
+    // that never installs (upstream 3.15.3 recovery behavior).
+    handleAutoUpdateFailure(error, "quit and install failed");
+    recoverFromFailedUpdateInstall();
+    throw error;
   }
 }
 
@@ -794,6 +846,13 @@ function applyManifestUpdateProvider(options: InitAutoUpdaterOptions): void {
     resolveEndpointOrigin:
       options.resolveEndpointOrigin ?? (() => resolveRuntimeZCodeEndpointOrigin(process.env)),
     resolveReleaseChannel: async () => {
+      // Upstream 3.15.3 parity: keep the channel the staged package was downloaded with;
+      // refreshing mid-install could resolve against a different channel than the staged
+      // update. Read readyUpdateChannel directly because the per-poll settings sync can
+      // already have overwritten availableUpdateChannel before this resolver runs.
+      if (isUpdateTargetLocked() && readyUpdateChannel) {
+        return readyUpdateChannel;
+      }
       availableUpdateChannel = await resolveUpdateReleaseChannel(options.settingService);
       return availableUpdateChannel;
     },
@@ -1019,6 +1078,17 @@ function shouldIgnoreCancelledDownloadError(error: unknown): boolean {
 }
 
 function handleAutoUpdateFailure(error: unknown, source: string) {
+  // Upstream 3.15.3 parity: once the install handoff is admitted, a late background-check
+  // failure arriving during shutdown must not tear down the ready state or spawn another check.
+  // Updater "error" events while locked are intercepted by the error listener (handoff
+  // attribution vs check-in-flight classification) before they reach this function.
+  if (quitAndInstallPhase === "recovering") {
+    return;
+  }
+  if (isUpdateTargetLocked() && source.endsWith("check failed")) {
+    logger.info("[auto-update] ignore late check failure after install admission");
+    return;
+  }
   const message = error instanceof Error ? error.message : String(error);
   const failedDownload =
     menuState.kind === "download-progress"
@@ -1532,6 +1602,7 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
     autoUpdatePollTimer = null;
   }
   checkForUpdatesInFlight = false;
+  settlingCheckForUpdates = null;
   activeAutoUpdateCheckId = null;
   activeAutoUpdateCheckChannel = null;
   settlingAutoUpdateCheckId = null;
@@ -1557,6 +1628,14 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
   applyManifestUpdateProvider(options);
 
   const triggerCheckForUpdates = (reason: string) => {
+    // Upstream 3.15.3 parity: once the installer handoff is admitted, no new checks may start —
+    // otherwise a late check could emit error events that are indistinguishable from installer
+    // handoff failures while the phase is locked.
+    if (isUpdateTargetLocked()) {
+      logger.info(`[auto-update] skip ${reason}: install admission locked`);
+      return;
+    }
+
     if (checkForUpdatesInFlight) {
       logger.info(`[auto-update] skip ${reason}: check already in flight`);
       return;
@@ -1576,7 +1655,7 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
         })()
       : autoUpdater.checkForUpdates();
 
-    checkForUpdatesPromise
+    const checkSettled = checkForUpdatesPromise
       .catch((err) => {
         // A forced-upgrade dialog may reuse the startup background check. If checkForUpdates rejects directly with no
         // subsequent error event, logging alone leaves the dialog stuck in checking. Reuse failure convergence to restore
@@ -1584,9 +1663,15 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
         handleAutoUpdateFailure(err, `${reason} check failed`);
       })
       .finally(() => {
+        if (settlingCheckForUpdates === checkSettled) settlingCheckForUpdates = null;
         finishAutoUpdateCheck(reason, checkId);
         ensureAutoUpdatePollInterval();
-      });
+      })
+      .then(
+        () => {},
+        () => {},
+      );
+    settlingCheckForUpdates = checkSettled;
   };
   recheckAfterDownload = (recheckReason: string) => {
     // A download-failure recheck must wait for the current check to settle. Completion and cancellation results are already covered by that check, so do not queue them again.
@@ -1803,6 +1888,21 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
       return;
     }
 
+    if (isUpdateTargetLocked()) {
+      // While committed to install, updater errors are either from the check that was still in
+      // flight at admission (check-originated noise; its own promise rejection converges state)
+      // or from the installer handoff, including async NSIS launch failures after
+      // quitAndInstall() returned (recover by relaunching). New checks are blocked once
+      // admission starts, so this split stays exact.
+      if (checkForUpdatesInFlight) {
+        logger.info("[auto-update] ignore late check failure after install admission");
+        return;
+      }
+      handleAutoUpdateFailure(err, "quit and install failed");
+      recoverFromFailedUpdateInstall();
+      return;
+    }
+
     void settleAutoUpdateCheckResult("error", () => {
       handleAutoUpdateFailure(err, "error");
     });
@@ -1834,7 +1934,7 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
   triggerCheckForUpdates("startup");
   ensureAutoUpdatePollInterval();
   app.on("before-quit", (event) => {
-    if (process.platform === "win32" || quitAndInstallInFlight || !isReadyUpdateCurrentTarget()) {
+    if (process.platform === "win32" || isUpdateTargetLocked() || !isReadyUpdateCurrentTarget()) {
       return;
     }
     event.preventDefault();

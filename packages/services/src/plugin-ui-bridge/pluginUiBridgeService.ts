@@ -120,7 +120,7 @@ export function createPluginUiBridgeService(
     }
     const bound = { ...params, instance };
     const startedAt = Date.now();
-    log.info("prepareSandbox start", {
+    log.info(undefined, "prepareSandbox start", {
       sessionId: params.sessionId,
       pluginId: params.pluginId,
       scopeId: params.scopeId,
@@ -130,7 +130,7 @@ export function createPluginUiBridgeService(
     try {
       result = await dependencies.readMcpResource({ ...bound, uri: params.resourceUri });
     } catch (error) {
-      log.warn("prepareSandbox readResource failed", {
+      log.warn(undefined, "prepareSandbox readResource failed", {
         scopeId: params.scopeId,
         resourceUri: params.resourceUri,
         error: error instanceof Error ? error.message : String(error),
@@ -148,7 +148,7 @@ export function createPluginUiBridgeService(
         picked.meta ?? (await readListLevelResourceMeta(dependencies.listMcpResourcesForUi, bound));
       const csp = meta?.csp ?? params.csp;
       const prefersBorder = meta?.prefersBorder ?? params.prefersBorder;
-      log.info("prepareSandbox resource ready", {
+      log.info(undefined, "prepareSandbox resource ready", {
         scopeId: params.scopeId,
         htmlBytes: Buffer.byteLength(html, "utf8"),
         hasResourceMeta: meta !== null,
@@ -174,7 +174,7 @@ export function createPluginUiBridgeService(
         ...(meta?.minFrameHeight !== undefined ? { minFrameHeight: meta.minFrameHeight } : {}),
         ...(meta?.showInline !== undefined ? { showInline: meta.showInline } : {}),
       });
-      log.info("prepareSandbox registered", {
+      log.info(undefined, "prepareSandbox registered", {
         scopeId: params.scopeId,
         sandboxId: handle.sandboxId,
         initId: handle.initId,
@@ -182,7 +182,7 @@ export function createPluginUiBridgeService(
       });
       return handle;
     } catch (error) {
-      log.warn("prepareSandbox register failed", {
+      log.warn(undefined, "prepareSandbox register failed", {
         scopeId: params.scopeId,
         error: error instanceof Error ? error.message : String(error),
       });

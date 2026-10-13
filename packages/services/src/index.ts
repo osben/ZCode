@@ -247,6 +247,9 @@ export type {
 
 // OutputStyle service — IOutputStyleService is both a type (interface) and value (descriptor).
 export { IOutputStyleService } from "./output-style/outputStyle.js";
+// System-prompt section overrides — same dual type/value shape.
+export { ISystemPromptService } from "./system-prompt/systemPrompt.js";
+export type { SystemPromptSection } from "./system-prompt/systemPrompt.js";
 export type { SessionRealtimePort } from "./session/sessionRealtimePort.js";
 
 // FileWatcher service — IFileWatcherService is both a type (interface) and value (descriptor)

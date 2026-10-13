@@ -4,6 +4,7 @@ import type { VoiceTranscriptionPreview } from "@zcode/services";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useServices } from "@/hooks/useServices.js";
 import { useSettings } from "@/hooks/useSettingService.js";
+import { useVoiceDictationRecordingAudio } from "@/hooks/useVoiceDictationRecordingAudio.js";
 import { logger } from "@/logger.js";
 import { useEffectiveShortcutBindings } from "@/shortcuts/useShortcutBindings.js";
 import { isShortcutRecordingActive, matchesShortcutBinding } from "@/shortcuts/bindings.js";
@@ -52,6 +53,8 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
   const language = voice?.language ?? "auto";
   const pushToTalk = voice?.pushToTalk !== false;
   const idleUnloadMinutes = voice?.idleUnloadMinutes ?? 5;
+  const muteWhileRecording = voice?.muteWhileRecording === true;
+  const recordingAudio = useVoiceDictationRecordingAudio();
 
   const [phase, setPhase] = useState<VoiceDictationPhase>("idle");
   const [level, setLevel] = useState(0);
@@ -94,6 +97,8 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
       streamIdRef.current = null;
       streamBacklogRef.current = [];
       recorder.cancel();
+      // Recording aborted: release the mute silently (cancellation paths stay quiet per spec).
+      void recordingAudio.releaseSystemMute();
       setLevel(0);
       setPreview(null);
       updatePhase("idle");
@@ -103,7 +108,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
       toast(intl.formatMessage({ id: "voiceDictation.transcribeFailed" }));
       cancelServiceStream(streamId);
     },
-    [cancelServiceStream, intl, recorder, updatePhase],
+    [cancelServiceStream, intl, recorder, recordingAudio, updatePhase],
   );
 
   const flushStreamBacklog = useCallback(
@@ -218,6 +223,18 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
         }
         startedAtRef.current = Date.now();
         updatePhase("recording");
+        // Handy ordering: the readiness chime plays first and the system mute applies only after
+        // it finishes, so the cue stays audible; a release that already happened (quick tap,
+        // blur) must not mute a recording that no longer exists.
+        const chime = recordingAudio.playStartChime();
+        if (muteWhileRecording) {
+          void chime.then(() => {
+            if (generation !== startGenerationRef.current || phaseRef.current !== "recording") {
+              return;
+            }
+            recordingAudio.applySystemMute();
+          });
+        }
       } catch (error) {
         recorder.cancel();
         streamIdRef.current = null;
@@ -244,7 +261,9 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     language,
     microphoneDeviceId,
     modelId,
+    muteWhileRecording,
     recorder,
+    recordingAudio,
     updatePhase,
     voiceDictationService,
   ]);
@@ -259,6 +278,8 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     const durationMs = Date.now() - startedAtRef.current;
     const samples = recorder.stop();
     setLevel(0);
+    // Release the system mute before the stop chime so the chime is not swallowed by the mute.
+    recordingAudio.handleRecordingStopped();
     const streamId = streamIdRef.current;
     if (
       durationMs < VOICE_MIN_RECORDING_MS ||
@@ -306,7 +327,16 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
       setPreview(null);
       updatePhase("idle");
     }
-  }, [cancelServiceStream, intl, language, modelId, recorder, updatePhase, voiceDictationService]);
+  }, [
+    cancelServiceStream,
+    intl,
+    language,
+    modelId,
+    recorder,
+    recordingAudio,
+    updatePhase,
+    voiceDictationService,
+  ]);
 
   const toggle = useCallback(async (): Promise<void> => {
     if (recorder.isRecording) {
@@ -350,6 +380,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
       if (phaseRef.current === "loading" || recorder.isRecording) {
         startGenerationRef.current += 1;
         recorder.cancel();
+        void recordingAudio.releaseSystemMute();
         setLevel(0);
         setPreview(null);
         updatePhase("idle");
@@ -380,6 +411,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     enabled,
     pushToTalk,
     recorder,
+    recordingAudio,
     scopeRef,
     start,
     stop,
@@ -392,6 +424,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     () => () => {
       startGenerationRef.current += 1;
       recorder.cancel();
+      void recordingAudio.releaseSystemMute();
       const streamId = streamIdRef.current;
       streamIdRef.current = null;
       streamBacklogRef.current = [];
@@ -405,7 +438,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
           });
       }
     },
-    [recorder, voiceDictationService],
+    [recorder, recordingAudio, voiceDictationService],
   );
 
   return { phase, level, preview, start, stop, toggle };

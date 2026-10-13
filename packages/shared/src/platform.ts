@@ -670,6 +670,13 @@ export interface IPlatformService {
    */
   getAppWorktreesDir?(): Promise<string>;
 
+  /**
+   * Apply (active=true) or release (active=false) a system-wide audio output mute used while voice
+   * dictation records. Implemented on Desktop only; the main process snapshots the previous mute
+   * state and restores it on release, quit, or renderer loss. Web/mobile leave it undefined.
+   */
+  setDictationSystemMute?(active: boolean): Promise<void>;
+
   /** Open the system file picker and return the selected file path or null. */
   selectFile(): Promise<string | null>;
 

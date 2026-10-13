@@ -1358,6 +1358,9 @@ export function createHomeOnlyWebRemoteControlServices(): RootServices {
       listStyles: async () => ({ styles: [] }),
       getUserStylesDirectory: async () => ({ path: "" }),
     }),
+    // Web remote-control home has no local system-prompt overrides; the desktop host owns them.
+    systemPromptService:
+      createUnsupportedHomeOnlyService<RootServices["systemPromptService"]>("systemPromptService"),
     // Global instructions belong to the target host; when the Web remote-control home has no bridge, report unavailable explicitly and do not provide a local substitute.
     userInstructionsService:
       createUnsupportedHomeOnlyService<RootServices["userInstructionsService"]>(

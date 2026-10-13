@@ -24,6 +24,7 @@ import { app, BrowserWindow, dialog, session, shell } from "electron";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { showAboutDialog } from "./about.js";
+import { restoreDictationSystemMuteForShutdown } from "./desktopDictationSystemAudio.js";
 import { checkForUpdateMenuClick } from "./autoUpdater.js";
 import { resolveCuaOsSupport } from "./cuaOsSupport.js";
 import { syncWindowControlsOverlayForZoomLevel } from "./desktopWindowButtonPosition.js";
@@ -128,6 +129,9 @@ async function clearAllDataAndRelaunch(options: {
     options.logger.error("[clear-all-data] failed to clear session data:", error);
   }
 
+  // Clear All exits outside exitPreparedApp, so the dictation system mute must be released here
+  // or a restart during a recording would leave the OS muted into the relaunched app.
+  await restoreDictationSystemMuteForShutdown();
   app.relaunch();
   app.exit(0);
 }
