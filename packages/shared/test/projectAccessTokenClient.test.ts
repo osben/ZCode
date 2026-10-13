@@ -93,6 +93,28 @@ describe("ProjectAccessTokenClient", () => {
       });
   });
 
+  it("non-zai family: raw login token on every management and issuance endpoint", async () => {
+    const f = fixture();
+    const client = new ProjectAccessTokenClient({ request: f.request });
+    await client.resolve(input);
+    const customer = f.requests.find((r) => r.url.endsWith("/getCustomerInfo"))!;
+    expect(customer.init.headers).toMatchObject({ Authorization: "login" });
+    for (const r of f.requests.filter((r) => r.url.endsWith("/api_keys")))
+      expect(r.init.headers).toMatchObject({ Authorization: "login" });
+  });
+
+  it("zai family: getCustomerInfo gets the raw token; Bearer stays on api_keys and access_tokens", async () => {
+    const f = fixture();
+    const client = new ProjectAccessTokenClient({ request: f.request });
+    await client.resolve({ ...input, family: "zai" as const });
+    const customer = f.requests.find((r) => r.url.endsWith("/getCustomerInfo"))!;
+    expect(customer.init.headers).toMatchObject({ Authorization: "login" });
+    for (const r of f.requests.filter((r) => r.url.endsWith("/api_keys")))
+      expect(r.init.headers).toMatchObject({ Authorization: "Bearer login" });
+    const issue = f.requests.find((r) => r.url.endsWith("/access_tokens"))!;
+    expect(issue.init.headers).toMatchObject({ Authorization: "Bearer login" });
+  });
+
   it("退出使在途元数据失效，不继续签发或返回凭据", async () => {
     let release!: (value: unknown) => void;
     const request = vi.fn(
