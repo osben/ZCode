@@ -822,10 +822,12 @@ function applyManifestUpdateProvider(options: InitAutoUpdaterOptions): void {
     resolveEndpointOrigin:
       options.resolveEndpointOrigin ?? (() => resolveRuntimeZCodeEndpointOrigin(process.env)),
     resolveReleaseChannel: async () => {
-      // Upstream 3.15.3 parity: keep the channel the admitted update was resolved with;
-      // refreshing it mid-install could mismatch the staged package.
-      if (isUpdateTargetLocked() && availableUpdateChannel) {
-        return availableUpdateChannel;
+      // Upstream 3.15.3 parity: keep the channel the staged package was downloaded with;
+      // refreshing mid-install could resolve against a different channel than the staged
+      // update. Read readyUpdateChannel directly because the per-poll settings sync can
+      // already have overwritten availableUpdateChannel before this resolver runs.
+      if (isUpdateTargetLocked() && readyUpdateChannel) {
+        return readyUpdateChannel;
       }
       availableUpdateChannel = await resolveUpdateReleaseChannel(options.settingService);
       return availableUpdateChannel;
@@ -1054,11 +1056,13 @@ function shouldIgnoreCancelledDownloadError(error: unknown): boolean {
 function handleAutoUpdateFailure(error: unknown, source: string) {
   // Upstream 3.15.3 parity: once the install handoff is admitted, a late background-check
   // failure arriving during shutdown must not tear down the ready state or spawn another check;
-  // a failed install handoff is recovered by relaunching instead.
+  // a failed install handoff is recovered by relaunching instead. The updater reports check
+  // failures both through its "error" event (source "error") and through the rejected check
+  // promise (source "<reason> check failed"), so the locked-phase guard must cover both paths.
   if (quitAndInstallPhase === "recovering") {
     return;
   }
-  if (isUpdateTargetLocked() && source.endsWith("check failed")) {
+  if (isUpdateTargetLocked() && (source.endsWith("check failed") || source === "error")) {
     logger.info("[auto-update] ignore late check failure after install admission");
     return;
   }

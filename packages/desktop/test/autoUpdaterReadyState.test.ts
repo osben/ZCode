@@ -1982,6 +1982,19 @@ describe("autoUpdater ready state sync", () => {
         kind: "update-downloaded",
         version: "0.1.25",
       });
+
+      // The updater can report the same failed check through its "error" event before the
+      // check promise rejects; that path (source "error") must be suppressed while locked too.
+      loggerInfoMock.mockClear();
+      autoUpdaterMock.emit("error", new Error("manifest request failed"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(loggerInfoMock).toHaveBeenCalledWith(
+        "[auto-update] ignore late check failure after install admission",
+      );
+      expect(getAutoUpdaterState()).toMatchObject({
+        kind: "update-downloaded",
+        version: "0.1.25",
+      });
     } finally {
       vi.useRealTimers();
     }
