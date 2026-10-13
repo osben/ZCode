@@ -2830,6 +2830,12 @@ PA158 合并最新 staging 后 Linux Electron 复跑 1/1 通过，run `desktop-e
 | CMDPREVIEW-01 | partial | `packages/ui/test/browser/manual-review/pending/permission-full-access.test.mjs`：390/1200 × 深浅主题长命令回归 4/4，原审批交互 4/4；实际 DOM 对齐、三行、4px 滚动条及 $ 滚动断言通过；CR-01 补充从默认选项出发的真实 Tab/Shift+Tab 导航，移除按钮程序化 focus | Electron 和手机 relay 整链路、人工准入 |
 | CMDPREVIEW-02 | partial | 同一 browser 用例包含短命令；`packages/ui/test/executePermissionPreview.test.ts` 2/2 验证权限预览与已完成空输出区别                                                                                                                                            | Electron 完成态整链路                  |
 
+## CPLAC. Coding Plan 5 小时额度自动继续
+
+| Case        | 状态    | 证据                                                                                                                                                                                                                                                                                                                                               | 未覆盖                                                                                                        |
+| ----------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| CPLAC-01–09 | partial | `docs/chat/coding-plan-limit-auto-continue.md`; `packages/ui/test/codingPlanLimitAutoContinue.test.ts` covers parsing, delay bounds, timer, callback updates, checkbox interaction, settings initialization, reset changes, and unmount cleanup; `packages/shared/test/validation.test.ts` covers tolerant saved-value and strict patch validation | Focused unit tests pass; controlled-clock Desktop E2E and live settings-refresh integration remain unverified |
+
 ## Bot Worker 正式用例（2026-09-23）
 
 用户确认转正的 `conversation-session-bot-channel-worker.test.ts`、`conversation-session-bot-topic-worker.test.ts`、`conversation-session-bot-continuous-worker.test.ts` 位于 `packages/desktop/test/e2e/conversation-session/`，覆盖真实 CLI 的群回复工具、话题续接/资源和持续订阅。详细验收与证据见 [Bot 覆盖矩阵](bots-e2e-coverage-matrix.md#2026-09-23-用户确认转正)。未进行 Docker/CI 准入。

@@ -2380,6 +2380,9 @@ const ukUA: Record<string, string> = {
   "settings.askUserQuestionAutoResolution": "Автоматично продовжувати після запитань",
   "settings.askUserQuestionAutoResolutionDescription":
     "Якщо ввімкнено, після запитання агента робота автоматично продовжиться, якщо ви не відповісте протягом 5 хвилин. Якщо вимкнено, поточні й наступні запитання чекатимуть на вашу відповідь.",
+  "settings.codingPlanLimitAutoContinueDefault": "Продовжувати після скидання ліміту Coding Plan",
+  "settings.codingPlanLimitAutoContinueDefaultDescription":
+    "Визначає стан прапорця автоматичного продовження задачі після скидання п'ятигодинного ліміту Coding Plan.",
   "settings.modelIoFullRetention": "Зберігати повний ввід/вивід моделі",
   "settings.modelIoFullRetentionDescription":
     "Зберігати повні запити до моделі та її відповіді без стиснення, обмежень розміру чи автоматичного видалення.",
@@ -6019,6 +6022,8 @@ const ukUA: Record<string, string> = {
     "Немає квоти для ZCode MCP «{server}». Увійдіть або оформіть Coding Plan, щоб користуватися ним.",
   "chat.quota.providerLimited":
     "Досягнуто ліміту квоти або плану поточного облікового запису. Оновіть або змініть план, щоб продовжити.",
+  "chat.quota.providerLimited.resetAt": "П'ятигодинний ліміт буде скинуто о {time}.",
+  "chat.quota.providerLimited.autoContinue": "Продовжувати автоматично",
   "chat.quota.action.upgrade": "Оновити",
   "chat.quota.action.renew": "Поновити",
   "chat.quota.action.switchModel": "Змінити модель",

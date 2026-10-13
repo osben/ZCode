@@ -5451,6 +5451,7 @@ export function SessionPane({
       !quotaBanner.dismissed &&
       (!projectedComposerError || quotaBanner.takesOverError || quotaBanner.state.blocksSubmit) ? (
         <ConversationQuotaBanner
+          key={`${snapshot?.sessionId ?? "session"}:${controlLastErrorKey ?? "quota-banner"}`}
           state={quotaBanner.state}
           onShown={quotaBanner.markShown}
           billingDiscountActive={billingDiscount.active}
@@ -5462,6 +5463,11 @@ export function SessionPane({
               : undefined
           }
           onDismiss={quotaBanner.dismiss}
+          autoContinueDefault={sharedSettings?.codingPlanLimitAutoContinueDefaultEnabled !== false}
+          autoContinueReady={sharedSettings !== null}
+          onAutoContinue={
+            quotaBanner.state.providerLimitedResetAt !== null ? handleResumeError : undefined
+          }
         />
       ) : null}
       {recoverableCommand ? (

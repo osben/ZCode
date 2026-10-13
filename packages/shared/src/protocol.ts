@@ -348,6 +348,8 @@ export interface AppSettings {
   zcodeInteractionBehavior?: ZCodeInteractionBehavior;
   /** Whether to continue automatically when an Agent question receives no answer for five minutes; defaults to enabled for compatibility with older config. */
   askUserQuestionAutoResolutionEnabled?: boolean;
+  /** Initial checkbox state for continuing a Coding Plan task after its five-hour usage reset. */
+  codingPlanLimitAutoContinueDefaultEnabled?: boolean;
   /** Whether to preserve Model I/O in full; when enabled, do not rotate, reset limits, compress, or truncate, while still redacting authentication data. */
   modelIoFullRetentionEnabled?: boolean;
   /**

@@ -543,6 +543,12 @@ nodes:
         file: "packages/ui/src/settings/model-provider-section/providerFamilyConnectionVisibility.ts"
       - symbol: "useCodingPlanEntitlements"
         file: "packages/ui/src/settings/model-provider-section/useCodingPlanEntitlements.ts"
+      - symbol: "ConversationQuotaBanner"
+        file: "packages/ui/src/v4/ConversationQuotaBanner.tsx"
+      - symbol: "GeneralSectionContent"
+        file: "packages/ui/src/settingsPageHelpers.tsx"
+      - symbol: "buildSessionQuotaBannerState"
+        file: "packages/ui/src/v4/sessionQuotaBannerState.ts"
       - symbol: "buildVisibleFamilyConnectionItems"
         file: "packages/ui/src/settings/model-provider-section/providerFamilyConnectionVisibility.ts"
       - symbol: "resolveLatestModelProviderFamilyConnectionSelection"
@@ -5092,7 +5098,25 @@ nodes:
       - file: "packages/ui/test/V4ComposerVoiceButton.test.ts"
       - file: "packages/ui/test/settingsPageConfig.test.ts"
 
+  - id: "surface.chat-coding-plan-limit-auto-continue"
+    kind: "ui-surface"
+    label: "Coding Plan 5-hour limit quota banner and auto-continue"
+    docs:
+      - "docs/chat/coding-plan-limit-auto-continue.md"
+    codeSeeds:
+      - symbol: "ConversationQuotaBanner"
+        file: "packages/ui/src/v4/ConversationQuotaBanner.tsx"
+      - symbol: "useV4SessionQuotaBanner"
+        file: "packages/ui/src/v4/useV4SessionQuotaBanner.ts"
+      - symbol: "handleResumeError"
+        file: "packages/ui/src/v4/SessionPane.tsx"
+
 edges:
+  - from: "capability.plan-entitlements"
+    to: "surface.chat-coding-plan-limit-auto-continue"
+    type: "renders-in"
+    rank: "must-inspect"
+    condition: "Only Coding Plan business code 1308 with a parseable five-hour reset time can auto-continue; Start Plan and other provider errors remain unchanged."
   - from: "capability.voice-dictation"
     to: "surface.voice-dictation-settings"
     type: "renders-in"

@@ -519,6 +519,7 @@ const appSettingsObjectSchema = z.object({
   toolGroupingChangesEnabled: z.boolean().default(false),
   zcodeInteractionBehavior: zcodeInteractionBehaviorSchema.default("queue"),
   askUserQuestionAutoResolutionEnabled: z.boolean().default(true),
+  codingPlanLimitAutoContinueDefaultEnabled: z.boolean().default(true).catch(true),
   modelIoFullRetentionEnabled: z.boolean().default(false),
   dynamicWorkflowMode: dynamicWorkflowModeSettingSchema,
   enabledBuiltinAgentCliProviders: enabledBuiltinAgentCliProvidersSchema.default([
@@ -606,6 +607,7 @@ export const appSettingsPatchSchema = z.object({
   toolGroupingChangesEnabled: z.boolean().optional(),
   zcodeInteractionBehavior: zcodeInteractionBehaviorSchema.optional(),
   askUserQuestionAutoResolutionEnabled: z.boolean().optional(),
+  codingPlanLimitAutoContinueDefaultEnabled: z.boolean().optional(),
   modelIoFullRetentionEnabled: z.boolean().optional(),
   // The empty string is the "clear the selection and return to follow" sentinel: RPC swallows undefined, and normalizeSettingsPatch normalizes it to a deletion.
   dynamicWorkflowMode: z.union([z.enum(DYNAMIC_WORKFLOW_MODES), z.literal("")]).optional(),

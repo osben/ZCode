@@ -2696,6 +2696,9 @@ const enUS: Record<string, string> = {
   "settings.askUserQuestionAutoResolution": "Automatically continue questions",
   "settings.askUserQuestionAutoResolutionDescription":
     "When enabled, Agent questions automatically continue after 5 minutes without an answer. When disabled, current and future questions wait for your response.",
+  "settings.codingPlanLimitAutoContinueDefault": "Continue after Coding Plan limit reset",
+  "settings.codingPlanLimitAutoContinueDefaultDescription":
+    "Sets the default for automatically continuing a Coding Plan task after its 5-hour usage limit resets.",
   "settings.dynamicWorkflow": "Dynamic workflows",
   "settings.dynamicWorkflowDescription":
     "Let the model orchestrate many subagents working in parallel, so it can take on complex tasks and deliver polished results.",
@@ -6394,6 +6397,8 @@ const enUS: Record<string, string> = {
     'No ZCode MCP "{server}" quota. Sign in or get a Coding Plan to use it.',
   "chat.quota.providerLimited":
     "The current account quota or plan limit has been reached. Upgrade or adjust the plan to continue.",
+  "chat.quota.providerLimited.resetAt": "The 5-hour usage limit resets at {time}.",
+  "chat.quota.providerLimited.autoContinue": "Continue automatically",
   "chat.quota.action.upgrade": "Upgrade",
   "chat.quota.action.renew": "Renew",
   "chat.quota.action.switchModel": "Switch model",
