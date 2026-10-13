@@ -120,8 +120,8 @@
   "packageManager": "pnpm@10.33.2",
   "pnpm": {
     "overrides": {
-      "react": "19.2.7",
-      "react-dom": "19.2.7",
+      "react": "19.3.0",
+      "react-dom": "19.3.0",
       "koffi": "2.15.6",
       "builder-util-runtime": "9.7.0"
     },
