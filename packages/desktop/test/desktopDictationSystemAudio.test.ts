@@ -200,8 +200,14 @@ describe("desktop dictation system audio mute", () => {
     await handler({ sender }, { active: false });
 
     // The starred Sources entry (99) must never be muted or read; wpctl falls back to pactl.
-    expect(execAsync.mock.calls.filter(([file, args]) => file === "wpctl" && args[0] !== "status")).toEqual([]);
-    expect(execAsync.mock.calls.filter(([file, args]) => file === "pactl" && args[0] === "set-sink-mute")).toEqual([
+    expect(
+      execAsync.mock.calls.filter(([file, args]) => file === "wpctl" && args[0] !== "status"),
+    ).toEqual([]);
+    expect(
+      execAsync.mock.calls.filter(
+        ([file, args]) => file === "pactl" && args[0] === "set-sink-mute",
+      ),
+    ).toEqual([
       ["pactl", ["set-sink-mute", "alsa_output.test", "1"]],
       ["pactl", ["set-sink-mute", "alsa_output.test", "0"]],
     ]);
