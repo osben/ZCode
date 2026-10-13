@@ -53,7 +53,15 @@ export function playVoiceDictationFeedbackSound(
       resolve();
     };
     audio.addEventListener("ended", finish);
-    audio.addEventListener("error", finish);
+    // Load/decode failures (corrupt asset, missing file) surface as the error event; log them so
+    // silent chime loss stays diagnosable, then settle like any other playback end.
+    audio.addEventListener("error", () => {
+      logger.warn("voice dictation feedback sound media error", {
+        kind,
+        mediaErrorCode: audio.error?.code ?? null,
+      });
+      finish();
+    });
     void audio.play().catch((error: unknown) => {
       logger.warn("voice dictation feedback sound failed", {
         kind,

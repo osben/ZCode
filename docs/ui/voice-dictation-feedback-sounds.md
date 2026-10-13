@@ -44,10 +44,11 @@ renderer (useVoiceDictation)          main (desktopDictationSystemAudio)      OS
 Guarantees:
 
 - Snapshot/restore: if the output was already muted before recording, the main process does not mute again (`didMute = false`) and does not unmute on release.
-- Ownership is registered before the OS commands run, so a renderer lost or a quit arriving while the commands are still in flight cannot orphan the mute.
-- Restore paths in main: explicit release call, the **accepted shutdown path** (`exitPreparedApp` right before `app.exit`, plus the updater handoff right before `quitAndInstall`/dev relaunch, which bypasses the prepared funnel; `before-quit` is deliberately not used because this app cancels it for quit confirmation and async shutdown preparation — a canceled quit keeps the session), and the applying webContents being destroyed / render-process gone.
+- Ownership is registered before the OS commands run, so a renderer lost or a quit arriving while the commands are still in flight cannot orphan the mute; the apply task re-checks the shutdown gate before (and after) the state read, so a mute never starts once restoration begins.
+- Restore paths in main: explicit release call, the **accepted shutdown path** (`exitPreparedApp` right before `app.exit`, the updater handoff right before `quitAndInstall`/dev relaunch, and the Clear-All-Data restart, all of which await the restore; `before-quit` is deliberately not used because this app cancels it for quit confirmation and async shutdown preparation — a canceled quit keeps the session), and the applying webContents being destroyed / render-process gone.
 - A failed async restore keeps the session alive so the next recording's release, a re-apply, or the shutdown restore retries the unmute; a failed sync (quit) restore has no retry left because the process exits.
-- Residual risk: exits that bypass both the prepared funnel and the updater handoff (hard kills, crash) mid-recording leave the system muted; no persisted state to recover from.
+- Residual risk: exits that bypass all restore call sites (hard kills, crashes) mid-recording leave the system muted; no persisted state to recover from.
+- The bundled Handy chime WAVs are MIT-licensed third-party assets; their pinned license notice lives in `third-party/copied-components.json` and `THIRD-PARTY-NOTICES.md`.
 - Per-OS implementation: macOS `osascript` (read + set); Linux `wpctl` → `pactl` → `amixer` fallback with explicit mute/unmute verbs; Windows v1 is a logged no-op (no state-preserving mechanism without a new native dependency).
 - If the platform capability or the spawn fails, muting is skipped with a warn log; recording and chimes continue unaffected.
 

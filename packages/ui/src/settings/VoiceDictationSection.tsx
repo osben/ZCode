@@ -84,8 +84,14 @@ function DesktopVoiceDictationSection() {
   // patchVoice is held for minutes by delayed callbacks such as download completion; merging must be
   // based on the latest settings, otherwise a microphone / language / push-to-talk change made during a
   // download would be rolled back by the stale snapshot captured at click time.
+  // useSettings publishes a refreshed snapshot only after a write lands, while renders happen
+  // continuously (model/device polling). The optimistic overlay keeps the merged object visible to
+  // later edits across those renders, so a pending write cannot be erased by the next
+  // whole-object patch; it clears once the last in-flight write settles.
   const voiceRef = useRef(voice);
-  voiceRef.current = voice;
+  const optimisticVoiceRef = useRef<VoiceDictationSettings | null>(null);
+  const pendingVoiceWritesRef = useRef(0);
+  voiceRef.current = optimisticVoiceRef.current ?? voice;
   const modelId = voice.modelId ?? null;
   const microphoneDeviceId = voice.microphoneDeviceId ?? null;
   const language = voice.language ?? DEFAULT_LANGUAGE;
@@ -160,21 +166,31 @@ function DesktopVoiceDictationSection() {
       // The merge must land in the ref synchronously: voiceRef is only refreshed during render, so two
       // rapid edits would share the same stale snapshot before the first update() completes, and the
       // later whole-object write of voiceDictation would silently roll back the earlier edit.
-      const previous = voiceRef.current;
+      const previous = optimisticVoiceRef.current ?? voiceRef.current;
       const merged = { ...previous, ...patch };
+      optimisticVoiceRef.current = merged;
       voiceRef.current = merged;
+      pendingVoiceWritesRef.current += 1;
       try {
         await update({ voiceDictation: merged });
         if (patch.idleUnloadMinutes !== undefined) {
           await voiceDictationService?.setIdleUnloadMinutes(patch.idleUnloadMinutes);
         }
       } catch (error) {
-        // Roll the ref back on save failure so subsequent edits do not accumulate on an unpersisted value.
-        voiceRef.current = previous;
+        // A failed write is not rolled back here: any newer pending write re-persists the whole
+        // merged object (healing this failure), and once no writes remain the overlay clears and
+        // renders fall back to the persisted snapshot. The toast keeps the failure visible.
         logger.warn("voice dictation settings update failed", {
           error: error instanceof Error ? error.message : String(error),
         });
         toast(intl.formatMessage({ id: "voiceDictation.saveFailed" }));
+      } finally {
+        pendingVoiceWritesRef.current -= 1;
+        // Only clear the overlay when the last write settled; the next render then refreshes the
+        // ref from the published settings snapshot.
+        if (pendingVoiceWritesRef.current === 0) {
+          optimisticVoiceRef.current = null;
+        }
       }
     },
     [intl, update, voiceDictationService],

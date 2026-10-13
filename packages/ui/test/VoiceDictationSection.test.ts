@@ -403,8 +403,7 @@ describe("VoiceDictationSection feedback sounds", () => {
       (patch: { voiceDictation?: Record<string, unknown> }) =>
         new Promise<void>((resolve) => {
           resolveSave = () => {
-            // Model ordered writes: skip a stale late apply when a newer write already landed.
-            if (patch.voiceDictation && h.settings.voiceDictation.feedbackVolume !== 50) {
+            if (patch.voiceDictation) {
               h.settings.voiceDictation = { ...h.settings.voiceDictation, ...patch.voiceDictation };
             }
             resolve();
@@ -426,7 +425,10 @@ describe("VoiceDictationSection feedback sounds", () => {
     expect(vi.mocked(playVoiceDictationFeedbackSound).mock.calls[0]).toEqual(["start", 51]);
 
     resolveSave();
-    await waitFor(() => expect(screen.getByText("51%")).toBeTruthy());
+    // Flush the overlay-clearing callback before asserting: the committed override must survive
+    // the save settling only because the settings snapshot now holds 51.
+    await act(async () => {});
+    expect(screen.getByText("51%")).toBeTruthy();
   });
 
   it("issues a compensating write when reverting to the saved volume while a write is pending", async () => {
@@ -464,5 +466,46 @@ describe("VoiceDictationSection feedback sounds", () => {
     resolveSave();
     await act(async () => {});
     expect(screen.getByText("50%")).toBeTruthy();
+  });
+
+  it("keeps a pending write in the optimistic overlay across re-renders", async () => {
+    h.settings.voiceDictation = { modelId: "model-one" };
+    let resolveSave!: () => void;
+    h.updateSettings.mockImplementationOnce(
+      (patch: { voiceDictation?: Record<string, unknown> }) =>
+        new Promise<void>((resolve) => {
+          resolveSave = () => {
+            if (patch.voiceDictation) {
+              h.settings.voiceDictation = { ...h.settings.voiceDictation, ...patch.voiceDictation };
+            }
+            resolve();
+          };
+        }),
+    );
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+    await screen.findByText("voiceDictation.models.selected");
+
+    // Edit A with the write held pending, then a state-changing re-render (download start) lands
+    // while it is in flight — in production this is the model/device polling re-render that would
+    // roll the merge ref back to the stale published snapshot.
+    fireEvent.click(screen.getByRole("switch", { name: "voiceDictation.pushToTalk.title" }));
+    await waitFor(() => expect(h.updateSettings).toHaveBeenCalledTimes(1));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Model Two: voiceDictation.models.download" }),
+    );
+
+    // Edit B must merge over the optimistic overlay, not the stale snapshot, or it would erase A.
+    fireEvent.click(
+      screen.getByRole("combobox", { name: "voiceDictation.models.unloadDelay.title" }),
+    );
+    const option = (await screen.findAllByRole("option"))[2];
+    fireEvent.click(option!);
+    await waitFor(() => expect(h.updateSettings).toHaveBeenCalledTimes(2));
+    expect(h.updateSettings).toHaveBeenLastCalledWith({
+      voiceDictation: { modelId: "model-one", pushToTalk: false, idleUnloadMinutes: 10 },
+    });
+
+    resolveSave();
+    await act(async () => {});
   });
 });

@@ -242,7 +242,9 @@ export function registerDesktopDictationSystemAudioIpc(options: {
       // The enqueue promise is returned so the renderer's invoke resolves only after the OS-level
       // change completed; the stop chime depends on that ordering to stay audible.
       return enqueue(async () => {
-        if (sender.isDestroyed()) return;
+        // The gate is re-checked here too: shutdown may begin between the IPC entry and this task
+        // running on the chain, and a mute started that late would outlive the drain.
+        if (shuttingDown || sender.isDestroyed()) return;
         const current = session;
         if (current) {
           // Split panes share one webContents; count each recording separately.
@@ -285,7 +287,12 @@ export function registerDesktopDictationSystemAudioIpc(options: {
         session = created;
         try {
           const alreadyMuted = await backend.readMuted();
-          if (!alreadyMuted) {
+          // A slow read (up to 2s) can straddle the shutdown drain: starting the mute now would
+          // finish after the app exited and leave the output muted.
+          if (shuttingDown) {
+            created.state = "failed";
+            logger.info("[dictation-audio] shutdown began during the state read; mute skipped");
+          } else if (!alreadyMuted) {
             await backend.setMuted(true);
             created.state = "muted";
             logger.info("[dictation-audio] output muted for dictation");
@@ -337,16 +344,19 @@ export function registerDesktopDictationSystemAudioIpc(options: {
       }
       if (session === current) session = null;
     });
+    let drainTimer: ReturnType<typeof setTimeout> | undefined;
     return Promise.race([
       drain,
       new Promise<void>((resolve) => {
-        setTimeout(() => {
+        drainTimer = setTimeout(() => {
           logger.warn(
             "[dictation-audio] shutdown drain timed out; skipping the restore instead of racing the in-flight OS command",
           );
           resolve();
         }, options.drainTimeoutMs ?? DRAIN_TIMEOUT_MS);
       }),
-    ]).then(() => undefined);
+    ])
+      .finally(() => clearTimeout(drainTimer))
+      .then(() => undefined);
   };
 }

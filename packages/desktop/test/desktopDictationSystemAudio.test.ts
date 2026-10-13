@@ -98,7 +98,7 @@ describe("desktop dictation system audio mute", () => {
             releaseUnmute = resolve;
           });
         }
-        return args === MACOS_READ ? "false\n" : "";
+        return args[1] === MACOS_READ[1] ? "false\n" : "";
       },
     );
     const { handler } = register({ platform: "darwin", execAsync });
@@ -195,31 +195,29 @@ describe("desktop dictation system audio mute", () => {
   });
 
   it("drains an in-flight mute before restoring on the accepted shutdown path", async () => {
-    let resolveRead!: (value: string) => void;
-    const execAsync = vi.fn<(file: string, args: string[]) => Promise<string>>(
-      (file, args) =>
-        new Promise((resolve) => {
-          if (file === "osascript" && args[1] === MACOS_READ[1]) {
-            resolveRead = () => resolve("false\n");
-          } else {
-            resolve("");
-          }
-        }),
-    );
+    // Shutdown lands after the read settled but while setMuted(true) is still in flight.
+    let resolveSet!: (value: string) => void;
+    const execAsync = vi.fn<(file: string, args: string[]) => Promise<string>>((file, args) => {
+      if (file === "osascript" && args[1] === MACOS_MUTE[1]) {
+        return new Promise((resolve) => {
+          resolveSet = () => resolve("");
+        });
+      }
+      return Promise.resolve(args[1] === MACOS_READ[1] ? "false\n" : "");
+    });
     const execSync = vi.fn<(file: string, args: string[]) => string>(() => "");
     const { handler } = register({ platform: "darwin", execAsync, execSync, drainTimeoutMs: 500 });
     const sender = createSender();
 
-    // The mute command is still in flight when shutdown arrives.
     const applying = handler({ sender }, { active: true });
-    await vi.waitFor(() => expect(resolveRead).toBeDefined());
+    await vi.waitFor(() => expect(resolveSet).toBeDefined());
     const restoring = restoreDictationSystemMuteForShutdown();
     await act(async () => {});
     expect(execSync).not.toHaveBeenCalled();
 
-    resolveRead("false\n");
+    resolveSet("");
     await applying;
-    // The drain waits for the read+set to settle, then unmutes synchronously.
+    // The drain waits for the set to settle (state becomes "muted"), then unmutes synchronously.
     await restoring;
     expect(execSync).toHaveBeenCalledWith("osascript", MACOS_UNMUTE);
   });
@@ -252,9 +250,17 @@ describe("desktop dictation system audio mute", () => {
   });
 
   it("skips the restore instead of racing after the drain timeout", async () => {
-    const execAsync = vi.fn<(file: string, args: string[]) => Promise<string>>(
-      () => new Promise(() => {}),
-    );
+    // Shutdown lands while setMuted(true) hangs forever; the bounded drain gives up instead of
+    // racing the in-flight command, and the session stays alive for a later retry.
+    let resolveSet!: (value: string) => void;
+    const execAsync = vi.fn<(file: string, args: string[]) => Promise<string>>((file, args) => {
+      if (file === "osascript" && args[1] === MACOS_MUTE[1]) {
+        return new Promise((resolve) => {
+          resolveSet = () => resolve("");
+        });
+      }
+      return Promise.resolve(args[1] === MACOS_READ[1] ? "false\n" : "");
+    });
     const execSync = vi.fn<(file: string, args: string[]) => string>(() => "");
     const { logger, handler } = register({
       platform: "darwin",
@@ -265,13 +271,14 @@ describe("desktop dictation system audio mute", () => {
     const sender = createSender();
 
     const applying = handler({ sender }, { active: true });
+    await vi.waitFor(() => expect(resolveSet).toBeDefined());
     await restoreDictationSystemMuteForShutdown();
     expect(execSync).not.toHaveBeenCalled();
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("shutdown drain timed out"));
 
     // Let the dangling apply settle before the test ends.
-    await act(async () => {});
-    void applying;
+    resolveSet("");
+    await applying;
   });
 
   it("blocks new mute applies once shutdown began", async () => {
@@ -308,7 +315,7 @@ describe("desktop dictation system audio mute", () => {
             throw new Error("osascript busy");
           }
         }
-        return args === MACOS_READ ? "false\n" : "";
+        return args[1] === MACOS_READ[1] ? "false\n" : "";
       },
     );
     const execSync = vi.fn<(file: string, args: string[]) => string>(() => "");
@@ -324,6 +331,64 @@ describe("desktop dictation system audio mute", () => {
     // The failed restore kept the session: the shutdown drain retries the unmute.
     await restoreDictationSystemMuteForShutdown();
     expect(execSync).toHaveBeenCalledWith("osascript", MACOS_UNMUTE);
+  });
+
+  it("skips starting the mute when shutdown begins during the state read", async () => {
+    let resolveRead!: (value: string) => void;
+    const execAsync = vi.fn<(file: string, args: string[]) => Promise<string>>(
+      (file, args) =>
+        new Promise((resolve) => {
+          if (file === "osascript" && args[1] === MACOS_READ[1]) {
+            resolveRead = () => resolve("false\n");
+          } else {
+            resolve("");
+          }
+        }),
+    );
+    const execSync = vi.fn<(file: string, args: string[]) => string>(() => "");
+    const { handler } = register({ platform: "darwin", execAsync, execSync, drainTimeoutMs: 200 });
+    const sender = createSender();
+
+    const applying = handler({ sender }, { active: true });
+    await vi.waitFor(() => expect(resolveRead).toBeDefined());
+    const restoring = restoreDictationSystemMuteForShutdown();
+    resolveRead("false\n");
+    await applying;
+    await restoring;
+
+    // Only the read ran: the post-read gate suppressed the mute, and the drain found nothing to
+    // restore, so neither setMuted(true) nor the sync unmute reached the OS.
+    expect(execAsync).toHaveBeenCalledTimes(1);
+    expect(execSync).not.toHaveBeenCalled();
+  });
+
+  it("skips an apply that was enqueued before shutdown but only starts after it", async () => {
+    let resolveRead!: (value: string) => void;
+    const execAsync = vi.fn<(file: string, args: string[]) => Promise<string>>(
+      (file, args) =>
+        new Promise((resolve) => {
+          if (file === "osascript" && args[1] === MACOS_READ[1]) {
+            resolveRead = () => resolve("false\n");
+          } else {
+            resolve("");
+          }
+        }),
+    );
+    const execSync = vi.fn<(file: string, args: string[]) => string>(() => "");
+    const { handler } = register({ platform: "darwin", execAsync, execSync, drainTimeoutMs: 200 });
+    const senderA = createSender();
+    const senderB = createSender();
+
+    // A holds the chain with a pending read; B is enqueued behind it; shutdown then begins.
+    const applyingA = handler({ sender: senderA }, { active: true });
+    const applyingB = handler({ sender: senderB }, { active: true });
+    await vi.waitFor(() => expect(resolveRead).toBeDefined());
+    const restoring = restoreDictationSystemMuteForShutdown();
+    resolveRead("false\n");
+    await Promise.all([applyingA, applyingB, restoring]);
+
+    expect(execAsync).toHaveBeenCalledTimes(1);
+    expect(execSync).not.toHaveBeenCalled();
   });
 
   it("releases when the owning renderer is destroyed", async () => {
