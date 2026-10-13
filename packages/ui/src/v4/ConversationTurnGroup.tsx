@@ -1761,7 +1761,9 @@ function ConversationTurnGroupImpl({
               sourceCommandIds={deliverySourceCommandIds}
               className={cn(
                 "flex items-center gap-1",
-                context.compactForRemoteControl
+                // A pinned turn keeps the toolbar visible so the pin state stays discoverable and
+                // unpin stays reachable without hover (same rule as the inline assistant toolbar).
+                context.compactForRemoteControl || latestAssistantTextRow.pinnedAt !== undefined
                   ? "opacity-100"
                   : "opacity-0 transition-opacity group-hover/assistant-turn:opacity-100 focus-within:opacity-100 has-[[data-bot-group-delivery]]:opacity-100",
               )}

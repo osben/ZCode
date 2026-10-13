@@ -6,8 +6,9 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PlatformProvider } from "@/hooks/usePlatform.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
 import { ConversationPinnedBar, selectPinnedRows } from "@/v4/ConversationPinnedBar.js";
-import { ConversationAssistantTextActions } from "@/v4/ConversationRowView.js";
+import { ConversationAssistantTextActions, ConversationRowView } from "@/v4/ConversationRowView.js";
 
 const actionCapture = vi.hoisted(() => ({
   props: [] as Array<Record<string, unknown>>,
@@ -210,6 +211,42 @@ describe("V4 message pins", () => {
       ),
     );
     expect(container.querySelector("[data-v4-pinned-bar]")).toBeNull();
+  });
+
+  it("系统生成 user 行（非 realUser）不渲染 pin 入口；realUser 行渲染", () => {
+    const rowContext = {
+      codePreviewSettings: DEFAULT_CODE_PREVIEW_SETTINGS,
+      messageStreamShowReasoning: true,
+      sessionId: "session-1",
+      theme: "system",
+      workspacePath: "/workspace",
+    } as const;
+    const renderUserRow = (origin: "realUser" | "backgroundResult") =>
+      render(
+        providers(
+          createElement(ConversationRowView, {
+            row: {
+              rowId: 42,
+              entityId: "user-entity-42",
+              turnId: "t-1",
+              createdAt: 900,
+              createdAtSeq: 1,
+              kind: "userInput",
+              origin,
+              text: "question",
+            },
+            context: rowContext,
+            onPinChange: () => true,
+          }),
+        ),
+      );
+
+    renderUserRow("backgroundResult");
+    expect(actionCapture.props.some((props) => props["data-testid"] === "v4-pin-42")).toBe(false);
+    cleanup();
+
+    renderUserRow("realUser");
+    expect(actionCapture.props.some((props) => props["data-testid"] === "v4-pin-42")).toBe(true);
   });
 
   it("selectPinnedRows 只挑 assistant/user 行并按 pinnedAt 降序", () => {

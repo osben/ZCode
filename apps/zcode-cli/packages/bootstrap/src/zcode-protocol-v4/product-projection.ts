@@ -877,12 +877,15 @@ export class ProductProjection {
     }
     if (action === "setRowPinned") {
       const messageId = this.messageIdByRowId.get(row.rowId);
-      // Pins address the human bookmark on the final assistant text segment or a real user input; both
-      // need the transcript anchor. A streaming/failed assistant row cannot be pinned yet.
+      // Pins address the human bookmark on the final assistant text segment or the user's own input;
+      // both need the transcript anchor. A streaming/failed assistant row cannot be pinned yet, and
+      // system-generated user rows (background result / mailbox / synthetic / workflow launch) are
+      // outside the v1 boundary (docs/chat-message-pins.md).
       if (
         !messageId ||
         (row.kind !== "assistantText" && row.kind !== "userInput") ||
-        (row.kind === "assistantText" && row.state !== "complete")
+        (row.kind === "assistantText" && row.state !== "complete") ||
+        (row.kind === "userInput" && row.origin !== "realUser")
       ) {
         return {
           ok: false,

@@ -1511,7 +1511,7 @@ const SingleUserInputRowView = memo(function SingleUserInputRowView({
           rowId={row.rowId}
           label={intl.formatMessage({ id: "chat.message.copy" })}
         />
-        {onPinChange && row.entityId ? (
+        {onPinChange && row.entityId && row.origin === "realUser" ? (
           <MessageAction
             aria-label={pinLabel}
             aria-pressed={rowPinned}

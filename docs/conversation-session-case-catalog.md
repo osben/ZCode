@@ -3564,3 +3564,19 @@ Memory MEM08 埋点补充（2026-09-17）：现有 Desktop Memory 用例同时�
 | ------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
 | CMDPREVIEW-01 | 桌面/手机、深浅主题下长 Bash 命令等待授权 | 默认三行；link 控件无水平 padding 和边框且对齐正文；展开后可滚动至末尾，$ 同步滚动；收起按钮不滚动；无空输出占位；默认第一项 Shift+Tab 可达展开按钮，Tab 返回选项，展开后反向 Tab 可达滚动视口；查看不触发授权，允许仍可提交 | accepted |
 | CMDPREVIEW-02 | 短命令与已完成空输出                      | 短命令不显示展开入口；实际执行完成的空输出提示仍保留                                                                                                                                                                         | accepted |
+
+## MP. 消息固定（Message Pins，v1）
+
+规格与边界见 [chat-message-pins.md](chat-message-pins.md)：pin 是面向人的书签，display-only，持久化在会话
+transcript，不进入模型上下文（model-visible 状态走 `ui/update-model-context`，本功能不得使用）。可固定
+`assistantText`（仅 `state=complete` 的最终文本段）与用户自己的 `userInput`（`origin=realUser`）；系统生成的
+user 行（backgroundResult / mailbox / synthetic / workflowLaunch）不可固定。chips 条只反映当前已加载行窗口。
+
+| ID   | 前置状态                                                         | 用户/系统事件                                  | 规则命中                       | 期望结果                                                                                                                                     | Review   |
+| ---- | ---------------------------------------------------------------- | ---------------------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| MP01 | `completed(success)`，queue=0                                    | pin assistant 回复 → 点击 chip → chip 取消固定 | setRowPinned（toggle 语义）    | chips 条出现且 `pinnedAt` 降序；点击 chip 通过既有时间线跳转机制定位原消息；chip 或行内工具栏取消固定后 chips 条消失；命令被拒时乐观状态回滚 | accepted |
+| MP02 | 任意非 running 状态                                              | pin 用户自己的输入行                           | setRowPinned（userInput 门禁） | user 行工具栏出现固定按钮，持久化与冷恢复语义同 MP01                                                                                         | accepted |
+| MP03 | 系统生成 user 行（backgroundResult 等）或 streaming assistant 行 | 尝试固定                                       | guard.actionUnavailable        | 命令拒绝，不写 transcript；UI 不渲染固定入口（origin=realUser 且 assistantText complete 才显示）                                             | pruned   |
+
+Out of scope（v1）：TurnNavigator 固定标记、仅固定项分享、固定摘要、数量上限、跨会话导出（follow-up 记录在
+spec）。

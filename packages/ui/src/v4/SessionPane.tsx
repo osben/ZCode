@@ -2,6 +2,7 @@ import { resolveSelectionSideInheritedModel } from "@/lib/selectionSideInherited
 import { useStartPlanRecommendation } from "@/hooks/useStartPlanRecommendation.js";
 import type { SessionCreateSource } from "@zcode/shared";
 import { reportSessionCreate } from "@/lib/sessionCreateTelemetry.js";
+import { reportAppTelemetryEvent } from "@/lib/appTelemetry.js";
 import { getLocalTtftObserver } from "@/v4/telemetry/localTtftObserver.js";
 import { BotGroupDeliveryProvider } from "@/v4/BotGroupDeliveryAction.js";
 /* oxlint-disable eslint(max-lines) -- SessionPane is the single-pane vertical command orchestration boundary (subscribe/send/stop/fork/edit/retry/queue/slash), at the same granularity as the old ChatView. HEAD already exceeds the limit (693 counted lines); splitting command groups would break the closure discipline around dispatchCommand/snapshotRef. */
@@ -3963,11 +3964,35 @@ export function SessionPane({
   }, []);
   const handlePinnedUnpin = useCallback(
     (row: PinnedConversationRow) => {
-      if (row.entityId) {
-        void handleRowPin({ rowId: row.rowId, entityId: row.entityId }, false);
-      }
+      if (!row.entityId) return;
+      // Same failure semantics as useRowPinToggle: a rejected dispatch is logged (never an unhandled
+      // rejection), and chip-based unpin reports the same message_pin telemetry as the row toolbar.
+      void Promise.resolve(handleRowPin({ rowId: row.rowId, entityId: row.entityId }, false)).then(
+        (accepted) => {
+          if (accepted && platform) {
+            void reportAppTelemetryEvent(
+              platform,
+              {
+                elementName: "message_pin",
+                eventRegion: "chat",
+                eventType: "ck",
+                eventExtraDetail: { pinned: "unpinned" },
+                ...(sessionId ? { talkId: sessionId } : {}),
+                messageId: row.entityId,
+              },
+              "SessionPane",
+            );
+          }
+        },
+        (error: unknown) => {
+          logger.warn("[v4-pane] chip 取消固定提交失败", {
+            error: error instanceof Error ? error.message : String(error),
+            messageId: row.entityId,
+          });
+        },
+      );
     },
-    [handleRowPin],
+    [handleRowPin, platform, sessionId],
   );
 
   const handleDeleteQueueItem = useCallback(

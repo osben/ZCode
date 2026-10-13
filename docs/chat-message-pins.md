@@ -13,7 +13,8 @@ transcript 中，但**不进入模型上下文**（model-visible 状态另有 `u
 
 1. 可固定两类行：
    - `assistantText` 行（回合最终文本段，与 Copy/Fork 同一锚点），仅 `state === "complete"`；
-   - `userInput` 行（存在 transcript 锚点 messageId 的真实输入行）。
+   - `userInput` 行（用户自己的输入：`origin === "realUser"`，且存在 transcript 锚点 messageId；
+     backgroundResult / mailbox / synthetic / workflowLaunch 等系统生成行不可固定）。
 2. 数据模型（全部 additive、optional）：
    - wire 行 schema：`assistantTextRowSchema` / `userInputRowSchema` 增加 `pinnedAt?: number`
      （unix ms，CLI 时钟）。字段存在即视为已固定；timestamp 用于“新固定在前”排序。

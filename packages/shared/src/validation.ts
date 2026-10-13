@@ -1578,6 +1578,9 @@ export const zcodePersistedMessageSchema = z.object({
   durationMs: z.number().int().nonnegative().optional(),
   interrupted: z.boolean().optional(),
   feedback: z.enum(["like", "dislike"]).optional(),
+  // Display-only pin bookmark (unix ms, CLI clock); must be parsed explicitly or Zod strips it from
+  // the session file like the historical durationMs loss above.
+  pinnedAt: z.number().optional(),
   attachments: z.array(zcodePromptAttachmentSchema).optional(),
   tools: z.array(zcodePersistedToolCallSchema).optional(),
   thought: z.string().optional(),

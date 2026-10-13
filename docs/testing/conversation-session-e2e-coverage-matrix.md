@@ -2833,3 +2833,11 @@ PA158 合并最新 staging 后 Linux Electron 复跑 1/1 通过，run `desktop-e
 ## Bot Worker 正式用例（2026-09-23）
 
 用户确认转正的 `conversation-session-bot-channel-worker.test.ts`、`conversation-session-bot-topic-worker.test.ts`、`conversation-session-bot-continuous-worker.test.ts` 位于 `packages/desktop/test/e2e/conversation-session/`，覆盖真实 CLI 的群回复工具、话题续接/资源和持续订阅。详细验收与证据见 [Bot 覆盖矩阵](bots-e2e-coverage-matrix.md#2026-09-23-用户确认转正)。未进行 Docker/CI 准入。
+
+## MP. 消息固定覆盖（2026-10-13）
+
+| Case | 状态    | 证据                                                                                                                                                                                                                                                                                                   | 未覆盖                                              |
+| ---- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------- |
+| MP01 | partial | [`conversation-session-message-pins.test.ts`](../../packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-message-pins.test.ts) pending + case-local upstream fixture；`e2e:fixture:check` 通过；本地 wdio 受环境阻塞（同批 CI-green 控制用例同样失败，见 PR #52） | Docker/CI 准入与人工 review（promotion 流程）       |
+| MP02 | partial | 单测覆盖：executor（v4-native-row-pin）、persistence（row-pin-persistence）、冷恢复（transcript-hydration）、UI（v4ConversationPins：toggle/回滚/chips 排序与跳过）                                                                                                                                    | user 行 pin 的桌面整链路 E2E（待 promotion 后并入） |
+| MP03 | covered | product-projection guard（userInput origin=realUser、assistantText complete）+ UI origin 门禁单测                                                                                                                                                                                                      | —                                                   |
