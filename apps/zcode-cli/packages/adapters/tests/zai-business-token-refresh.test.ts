@@ -2,10 +2,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHttpClientError, type HttpClientPort } from "@zcode/contracts";
 import { createCodingPlanApiKeyResolver } from "../src/auth/coding-plan-api-key.js";
 
-function fixture(options: { jwtTtl?: number; expiresIn?: number; failures?: number[] } = {}) {
+function fixture(
+  options: { jwtTtl?: number; expiresIn?: number; failures?: number[]; customerInfoFailures?: number[] } = {},
+) {
   let logins = 0;
   let issues = 0;
   const failures = [...(options.failures ?? [])];
+  const customerInfoFailures = [...(options.customerInfoFailures ?? [])];
   const request = vi.fn(async (req: { url: string }) => {
     let body: unknown;
     let status = 200;
@@ -21,8 +24,9 @@ function fixture(options: { jwtTtl?: number; expiresIn?: number; failures?: numb
         },
       };
     } else if (req.url.endsWith("/getCustomerInfo")) {
+      status = customerInfoFailures.shift() ?? 200;
       body = {
-        code: 200,
+        code: status,
         data: {
           organizations: [
             {
@@ -87,6 +91,23 @@ describe("Z.ai 业务登录 Token 刷新", () => {
     expect(f.logins()).toBe(2);
     await expect(f.resolve()).resolves.toBe("pat-3");
     expect(f.logins()).toBe(3);
+  });
+  it("metadata getCustomerInfo 401 re-exchanges the business JWT (raw-token header form)", async () => {
+    const f = fixture({ customerInfoFailures: [401] });
+    await expect(f.resolve()).resolves.toBe("pat-1");
+    expect(f.logins()).toBe(2);
+    const customerAuth = f.request.mock.calls
+      .map(([{ url, headers }]) => {
+        if (!url.endsWith("/getCustomerInfo")) return undefined;
+        const record = (headers ?? {}) as Record<string, string>;
+        return record.Authorization ?? record.authorization;
+      })
+      .filter((value): value is string => value !== undefined);
+    // 3.15.2 header parity: the metadata call carries the raw business token, no Bearer prefix.
+    expect(customerAuth.length).toBeGreaterThanOrEqual(2);
+    expect(customerAuth[0]).not.toMatch(/^Bearer /);
+    expect(customerAuth[0]!.split(".")).toHaveLength(3);
+    expect(customerAuth[1]).not.toBe(customerAuth[0]);
   });
   it.each([403, 500])("%s 不触发重新交换", async (status) => {
     const f = fixture({ failures: [status] });

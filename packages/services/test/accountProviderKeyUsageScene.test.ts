@@ -86,9 +86,11 @@ function assertRequests(
 ) {
   for (const request of requests) {
     const authorization = new Headers(request.init?.headers).get("authorization");
+    // Upstream 3.15.2 parity: getCustomerInfo takes the raw login token for every family;
+    // the zai Bearer prefix applies only to personal api_keys calls and access_tokens issuance.
     const expected =
       request.url.endsWith("/access_tokens") ||
-      (family === "zai" && (!team || request.url.endsWith("/getCustomerInfo")))
+      (family === "zai" && !team && request.url.endsWith("/api_keys"))
         ? "Bearer login-token"
         : "login-token";
     expect(authorization, request.url).toBe(expected);

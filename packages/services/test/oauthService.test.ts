@@ -239,10 +239,12 @@ describe("oauthService", () => {
         return createZaiBusinessLoginResponse("zai-business-token");
       }
       if (url.includes("/api/biz/")) {
+        // 3.15.2 parity: getCustomerInfo and team api_keys carry the raw business token;
+        // personal api_keys and access_tokens issuance keep the Bearer prefix.
         expect(new Headers(init?.headers).get("authorization")).toBe(
-          team && url.includes("/api_keys") && !url.endsWith("/access_tokens")
-            ? "zai-business-token"
-            : "Bearer zai-business-token",
+          url.endsWith("/access_tokens") || (!team && url.includes("/api_keys"))
+            ? "Bearer zai-business-token"
+            : "zai-business-token",
         );
         const data = url.endsWith("/getCustomerInfo")
           ? {

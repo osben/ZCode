@@ -18,7 +18,7 @@
 ## 专用 Key 管理兼容契约
 
 - 个人仍按名称复用 zcode-api-key；同名条目缺少 ID 时失败，不重复创建。团队只复用名称 zcode-team-api-key、keyType=2 且 ID 非空的条目，创建响应也必须满足这三个条件，否则禁止继续换证。无关坏条目不影响有效条目。
-- 管理接口保留旧 Authorization：个人 BigModel 用原始登录 JWT，Z.AI 用 Bearer；团队 customerInfo 同个人，团队列表/创建两 family 均用原始登录 JWT，并保留组织项目头。只有 access_tokens 统一使用 Bearer。
+- Management Authorization (updated 2026-10-13 for upstream 3.15.2 parity): getCustomerInfo carries the raw login JWT for both families; personal api_keys list/create use Bearer for Z.AI and the raw login JWT for BigModel; team list/create use the raw login JWT for both families and keep the org/project headers. Only access_tokens uniformly uses Bearer. The CLI business-JWT 401 recovery recognizes the rejected token in both the raw and Bearer-prefixed forms.
 - 桌面个人选择非团队项目（projectType 去空白后不为 2），跳过无组织 ID 的候选；Standalone 保留默认机构/默认项目优先、否则首项的规则，不新增项目类型过滤。团队成员归属比较继续去除 ID 两端空白。
 - 项目选择策略由调用端明确传给公共换证客户端，参与内存与持久化 ID 作用域，防止桌面和 CLI 共用记录时覆盖彼此的选择。既有 Token owner、刷新和退出失效时序不变。
 - 验收覆盖错误团队创建响应、无关坏条目、个人同名坏 ID、两 family 管理/签发请求头、混合项目选择和跨策略 ID 隔离。
@@ -120,8 +120,8 @@ Standalone 的 PAT、Key ID 定位与 Z.AI 业务 JWT 单飞请求由 resolver/c
 | ID  | 方法 / 路径                                                  | 复测要点                                                               | 改后鉴权                                | 实际结果                                                   |
 | --- | ------------------------------------------------------------ | ---------------------------------------------------------------------- | --------------------------------------- | ---------------------------------------------------------- |
 | K01 | GET /api/biz/customer/getCustomerInfo                        | 首次定位个人/团队组织项目；有持久化 ID 时跳过                          | 登录 JWT                                | 公共/服务/CLI 单测；桌面 E2E通过                           |
-| K02 | GET …/projects/{project}/api_keys                            | 仅复用专用名称的 ID；不增加 usageScene 过滤                            | 登录 JWT                                | 两 family、个人/团队、已有/缺失组合通过                    |
-| K03 | POST …/projects/{project}/api_keys                           | 缺失时创建；usageScene=1；团队另传 keyType=2                           | 登录 JWT                                | 单测 + BigModel/Z.AI 桌面 E2E通过                          |
+| K02 | GET …/projects/{project}/api_keys                            | 仅复用专用名称的 ID；不增加 usageScene 过滤                            | Login JWT (personal Z.AI: Bearer)       | 两 family、个人/团队、已有/缺失组合通过                    |
+| K03 | POST …/projects/{project}/api_keys                           | 缺失时创建；usageScene=1；团队另传 keyType=2                           | Login JWT (personal Z.AI: Bearer)       | 单测 + BigModel/Z.AI 桌面 E2E通过                          |
 | T01 | POST …/api_keys/{apiKeyId}/access_tokens                     | 返回短期 Token；默认启用；显式关闭/异常失败                            | Bearer 登录 JWT                         | 单测 + 两 family 桌面 E2E通过                              |
 | T02 | 本地 ID 记录 / Token 缓存                                    | ID 可跨重启；按账号/环境/项目隔离；Token 不落盘；404 清 ID、403 不创建 | 仅 ID 持久化                            | 重启复用/隔离/失效专项通过                                 |
 | T03 | GET …/api_keys/copy/{id}                                     | 第一方 OAuth 路径不再调用                                              | 无请求                                  | 静态引用清理 + 单测/E2E Copy=0                             |

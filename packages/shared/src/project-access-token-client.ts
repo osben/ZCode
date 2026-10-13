@@ -229,9 +229,10 @@ export class ProjectAccessTokenClient {
     loginToken: string,
     request: (url: string, init: RequestInit) => Promise<unknown>,
   ): Promise<KeyLocation> {
-    // Management endpoints keep the legacy auth format; the issuance side's Bearer convention must not spread to every endpoint.
+    // Management endpoints (getCustomerInfo) always take the raw login token; the zai Bearer
+    // convention applies only to the api_keys issuance endpoints below.
     const headers = {
-      Authorization: input.family === "zai" ? `Bearer ${loginToken}` : loginToken,
+      Authorization: loginToken,
       "Content-Type": "application/json",
     };
     const customer = customerSchema.safeParse(
@@ -286,7 +287,10 @@ export class ProjectAccessTokenClient {
           "bigmodel-organization": location.organizationId,
           "bigmodel-project": location.projectId,
         }
-      : headers;
+      : {
+          ...headers,
+          Authorization: input.family === "zai" ? `Bearer ${loginToken}` : loginToken,
+        };
     const list = z
       .array(z.unknown())
       .safeParse(readData(await request(url, { method: "GET", headers: keyHeaders })));
