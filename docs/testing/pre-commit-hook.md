@@ -13,7 +13,8 @@ git commit
 
 ## Behavior
 
-- **Scope**: staged files matching `**/*.{js,mjs,cjs,jsx,ts,tsx,mts,cts,json}`.
+- **Scope**: staged files matching
+  `**/*.{js,mjs,cjs,jsx,ts,tsx,mts,cts,json,md,mdx}`.
   Only the staged content matters: lint-staged hides unstaged changes while
   tasks run and re-stages formatter fixes, so partial commits keep their
   unstaged part untouched.
@@ -45,11 +46,11 @@ percent signs intact.
 
 ## Relationship to the other gates
 
-| Gate | Scope | Runs |
-| --- | --- | --- |
-| pre-commit | staged files, seconds | oxfmt (write) + oxlint |
-| pre-push | pushed diff | `pnpm run verify:pre-push` (lint, architecture, affected unit tests, node tests) |
-| CI | PR diff | typecheck, lint, format check, architecture, unit tests |
+| Gate       | Scope                 | Runs                                                                             |
+| ---------- | --------------------- | -------------------------------------------------------------------------------- |
+| pre-commit | staged files, seconds | oxfmt (write) + oxlint                                                           |
+| pre-push   | pushed diff           | `pnpm run verify:pre-push` (lint, architecture, affected unit tests, node tests) |
+| CI         | PR diff               | typecheck, lint, format check, architecture, unit tests                          |
 
 Pre-commit does not replace pre-push or CI; it catches formatting and lint
 errors before the commit is even created. Typechecking and tests stay out of

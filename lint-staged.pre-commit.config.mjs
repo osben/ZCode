@@ -13,7 +13,22 @@
 // scripts/run-pre-commit-checks.mjs then runs oxfmt (write mode) and oxlint
 // over the appended paths in a fixed order.
 
-const FORMATTED_EXTENSIONS = ["js", "mjs", "cjs", "jsx", "ts", "tsx", "mts", "cts", "json"];
+// oxfmt also enforces formatting for Markdown (the CI format-check step
+// covers .md/.mdx), so those extensions are formatted here too; oxlint
+// simply finds nothing lintable in them.
+const FORMATTED_EXTENSIONS = [
+  "js",
+  "mjs",
+  "cjs",
+  "jsx",
+  "ts",
+  "tsx",
+  "mts",
+  "cts",
+  "json",
+  "md",
+  "mdx",
+];
 
 const STAGED_FILES_GLOB = `**/*.{${FORMATTED_EXTENSIONS.join(",")}}`;
 
