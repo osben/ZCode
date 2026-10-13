@@ -13,6 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select.js";
 import { Switch } from "@/components/ui/switch.js";
+import { Slider } from "@/components/ui/slider.js";
 import { toast } from "@/components/ui/toast.js";
 import { useServices } from "@/hooks/useServices.js";
 import { useVoiceDictationRuntimeState } from "@/hooks/useVoiceDictationRuntimeState.js";
@@ -21,6 +22,7 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
 import { useShortcutCommandLabel } from "@/shortcuts/useShortcutBindings.js";
 import { listAudioInputDevices, VoiceDictationRecorder } from "@/lib/voiceDictationRecorder.js";
+import { playVoiceDictationFeedbackSound } from "@/lib/voiceDictationFeedbackSound.js";
 import { SettingsBadge, SettingsGroupCard, SettingsRow } from "@/settings/SettingsPageParts.js";
 import { VoiceModelRow } from "@/settings/VoiceDictationModelRow.js";
 
@@ -29,6 +31,7 @@ const MIC_TEST_DURATION_MS = 3000;
 const MIC_SILENT_PEAK = 0.01;
 const MODEL_REFRESH_INTERVAL_MS = 500;
 const DEFAULT_LANGUAGE = "auto";
+const DEFAULT_FEEDBACK_VOLUME = 70;
 const LANGUAGE_CODES = [
   "en",
   "zh",
@@ -81,13 +84,39 @@ function DesktopVoiceDictationSection() {
   // patchVoice is held for minutes by delayed callbacks such as download completion; merging must be
   // based on the latest settings, otherwise a microphone / language / push-to-talk change made during a
   // download would be rolled back by the stale snapshot captured at click time.
+  // useSettings publishes a refreshed snapshot only after a write lands, while renders happen
+  // continuously (model/device polling). The optimistic overlay keeps the merged object visible to
+  // later edits across those renders, so a pending write cannot be erased by the next
+  // whole-object patch; it clears once the last in-flight write settles.
   const voiceRef = useRef(voice);
-  voiceRef.current = voice;
+  const optimisticVoiceRef = useRef<VoiceDictationSettings | null>(null);
+  const pendingVoiceWritesRef = useRef(0);
+  /** True once useSettings published the first non-null snapshot; edits must not merge before that. */
+  const settingsLoadedRef = useRef(false);
+  if (settings != null) {
+    settingsLoadedRef.current = true;
+  }
+  // The optimistic overlay survives renders until the published snapshot actually reflects it:
+  // useSettingService deduplicates overlapping refreshes, so the snapshot published after a write
+  // can still be pre-write; clearing early would let a later whole-object patch persist stale data.
+  const optimisticVoice = optimisticVoiceRef.current;
+  if (optimisticVoice) {
+    const published = Object.entries(optimisticVoice).every(
+      ([key, value]) => voice[key as keyof VoiceDictationSettings] === value,
+    );
+    if (published) {
+      optimisticVoiceRef.current = null;
+    }
+  }
+  voiceRef.current = optimisticVoiceRef.current ?? voice;
   const modelId = voice.modelId ?? null;
   const microphoneDeviceId = voice.microphoneDeviceId ?? null;
   const language = voice.language ?? DEFAULT_LANGUAGE;
   const pushToTalk = voice.pushToTalk !== false;
   const idleUnloadMinutes = voice.idleUnloadMinutes ?? 5;
+  const feedbackSounds = voice.feedbackSounds === true;
+  const savedFeedbackVolume = voice.feedbackVolume ?? DEFAULT_FEEDBACK_VOLUME;
+  const muteWhileRecording = voice.muteWhileRecording === true;
 
   const [models, setModels] = useState<VoiceModelListItem[]>([]);
   const [startingDownloadIds, setStartingDownloadIds] = useState<Set<string>>(() => new Set());
@@ -98,6 +127,13 @@ function DesktopVoiceDictationSection() {
   const [micLevel, setMicLevel] = useState(0);
   const [micPeak, setMicPeak] = useState<number | null>(null);
   const micRecorderRef = useRef<VoiceDictationRecorder | null>(null);
+  // Volume while dragging: persisted only on commit (pointer release), so a drag does not write
+  // setting.json on every step. The committed value stays on display until the settings write
+  // settles, so the slider, percent label, and Test button never flash back to the stale value.
+  const [volumeDraft, setVolumeDraft] = useState<number | null>(null);
+  const [committedVolume, setCommittedVolume] = useState<number | null>(null);
+  const [feedbackTestPlaying, setFeedbackTestPlaying] = useState(false);
+  const effectiveFeedbackVolume = volumeDraft ?? committedVolume ?? savedFeedbackVolume;
 
   const refreshModels = useCallback(async () => {
     if (!voiceDictationService) return;
@@ -144,24 +180,43 @@ function DesktopVoiceDictationSection() {
 
   const patchVoice = useCallback(
     async (patch: Partial<VoiceDictationSettings>) => {
+      // useSettings publishes settings === null until the initial load resolves; merging against
+      // the empty fallback would persist a voiceDictation object containing only the clicked
+      // field and erase every stored preference. Edits wait for the first real snapshot.
+      if (!settingsLoadedRef.current) {
+        logger.warn("voice dictation settings edit ignored: initial settings not loaded yet");
+        toast(intl.formatMessage({ id: "voiceDictation.saveFailed" }));
+        return;
+      }
       // The merge must land in the ref synchronously: voiceRef is only refreshed during render, so two
       // rapid edits would share the same stale snapshot before the first update() completes, and the
       // later whole-object write of voiceDictation would silently roll back the earlier edit.
-      const previous = voiceRef.current;
+      const previous = optimisticVoiceRef.current ?? voiceRef.current;
       const merged = { ...previous, ...patch };
+      optimisticVoiceRef.current = merged;
       voiceRef.current = merged;
+      pendingVoiceWritesRef.current += 1;
       try {
         await update({ voiceDictation: merged });
         if (patch.idleUnloadMinutes !== undefined) {
           await voiceDictationService?.setIdleUnloadMinutes(patch.idleUnloadMinutes);
         }
       } catch (error) {
-        // Roll the ref back on save failure so subsequent edits do not accumulate on an unpersisted value.
-        voiceRef.current = previous;
+        // A failed write is not rolled back here: any newer pending write re-persists the whole
+        // merged object (healing this failure), and once no writes remain the overlay clears and
+        // renders fall back to the persisted snapshot. The toast keeps the failure visible.
         logger.warn("voice dictation settings update failed", {
           error: error instanceof Error ? error.message : String(error),
         });
         toast(intl.formatMessage({ id: "voiceDictation.saveFailed" }));
+        // The published snapshot will never match a write that failed: drop the overlay when this
+        // is the last in-flight write so later edits re-read the persisted state.
+        if (pendingVoiceWritesRef.current === 1) {
+          optimisticVoiceRef.current = null;
+        }
+        return;
+      } finally {
+        pendingVoiceWritesRef.current -= 1;
       }
     },
     [intl, update, voiceDictationService],
@@ -223,6 +278,21 @@ function DesktopVoiceDictationSection() {
       micRecorderRef.current = null;
       setMicLevel(0);
       setMicTesting(false);
+    }
+  };
+
+  const handleTestFeedbackSounds = async () => {
+    if (feedbackTestPlaying) return;
+    setFeedbackTestPlaying(true);
+    try {
+      // The test ignores the enable toggle (Handy's play_test_sound): the volume must be
+      // adjustable before turning the sounds on. It plays the freshest value: the drag draft or
+      // the just-committed one, not the previous saved snapshot.
+      const volume = volumeDraft ?? committedVolume ?? savedFeedbackVolume;
+      await playVoiceDictationFeedbackSound("start", volume);
+      await playVoiceDictationFeedbackSound("stop", volume);
+    } finally {
+      setFeedbackTestPlaying(false);
     }
   };
 
@@ -418,6 +488,73 @@ function DesktopVoiceDictationSection() {
                 aria-label={intl.formatMessage({ id: "voiceDictation.pushToTalk.title" })}
                 checked={pushToTalk}
                 onCheckedChange={(checked) => void patchVoice({ pushToTalk: checked })}
+              />
+            }
+          />
+          <SettingsRow
+            label={intl.formatMessage({ id: "voiceDictation.feedback.title" })}
+            description={intl.formatMessage({ id: "voiceDictation.feedback.description" })}
+            control={
+              <Switch
+                aria-label={intl.formatMessage({ id: "voiceDictation.feedback.title" })}
+                checked={feedbackSounds}
+                onCheckedChange={(checked) => void patchVoice({ feedbackSounds: checked })}
+              />
+            }
+          />
+          <SettingsRow
+            label={intl.formatMessage({ id: "voiceDictation.feedbackVolume.title" })}
+            description={intl.formatMessage({ id: "voiceDictation.feedbackVolume.description" })}
+            controlLayout="wide"
+            control={
+              <div className="flex w-full items-center gap-3">
+                <Slider
+                  aria-label={intl.formatMessage({ id: "voiceDictation.feedbackVolume.title" })}
+                  className="w-40"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={[effectiveFeedbackVolume]}
+                  onValueChange={(values) => setVolumeDraft(values[0] ?? savedFeedbackVolume)}
+                  onValueCommit={(values) => {
+                    const committed = values[0];
+                    setVolumeDraft(null);
+                    // Compare against the value currently being persisted, not the stale saved
+                    // snapshot: reverting to the saved number while a write is pending must still
+                    // issue the compensating write, or the pending write would win.
+                    const baseline = committedVolume ?? savedFeedbackVolume;
+                    if (committed === undefined || committed === baseline) return;
+                    setCommittedVolume(committed);
+                    void patchVoice({ feedbackVolume: committed }).then(() => {
+                      // Saved (or failed and toasted): defer to the settings value again.
+                      setCommittedVolume((current) => (current === committed ? null : current));
+                    });
+                  }}
+                />
+                <span className="w-10 shrink-0 text-right text-ui-base text-foreground-subtle">
+                  {Math.round(effectiveFeedbackVolume)}%
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={feedbackTestPlaying}
+                  onClick={() => void handleTestFeedbackSounds()}
+                >
+                  {intl.formatMessage({ id: "voiceDictation.feedbackVolume.test" })}
+                </Button>
+              </div>
+            }
+          />
+          <SettingsRow
+            label={intl.formatMessage({ id: "voiceDictation.muteWhileRecording.title" })}
+            description={intl.formatMessage({
+              id: "voiceDictation.muteWhileRecording.description",
+            })}
+            control={
+              <Switch
+                aria-label={intl.formatMessage({ id: "voiceDictation.muteWhileRecording.title" })}
+                checked={muteWhileRecording}
+                onCheckedChange={(checked) => void patchVoice({ muteWhileRecording: checked })}
               />
             }
           />

@@ -300,5 +300,17 @@
     "provenance": "Bundled font name table identifies Hack 3.003 and retains Source Foundry, Bitstream Vera, and DejaVu license statements. The upstream v3.003 license is retained verbatim, including the DejaVu public-domain statement.",
     "importRevision": null,
     "sha256": "1f61bb7c790c59b4b0ecdf304628b94e42ae4c8020094a8c3da73381ab212623"
+  },
+  {
+    "id": "handy-feedback-chimes",
+    "referenceRevision": "14ae9c6b42d729371c443c8617ad02c89c4c8061",
+    "source": "https://raw.githubusercontent.com/cjpais/Handy/14ae9c6b42d729371c443c8617ad02c89c4c8061/LICENSE",
+    "file": "third-party/upstream/3564e8ec14055ed54f896e8660a62627ea4fc3a1b64f72b798593df00e1f4edc.txt",
+    "sha256": "3564e8ec14055ed54f896e8660a62627ea4fc3a1b64f72b798593df00e1f4edc",
+    "importRevision": "14ae9c6b42d729371c443c8617ad02c89c4c8061",
+    "provenance": "Copied from the Handy repository resources directory at the pinned revision on 2026-10-12.",
+    "roots": ["packages/ui/src/assets/notification-sounds"],
+    "scope": "Handy 'marimba' feedback chime WAV files only (voice-dictation-start.wav, voice-dictation-stop.wav), copied unmodified; other files in the same directory are ZCode's own assets.",
+    "license": "MIT"
   }
 ]

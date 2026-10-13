@@ -1,0 +1,70 @@
+# Voice Dictation Feedback Sounds & Recording Mute
+
+Optional audio feedback for voice dictation, modeled after the Handy app (MIT, https://github.com/cjpais/Handy). Two independent settings plus a volume control; all default off/neutral so existing users see no behavior change.
+
+## Settings
+
+All fields live in `voiceDictation` app settings (`VoiceDictationSettings` in `packages/shared/src/protocol.ts`):
+
+| Field                | Type      | Effective default | Meaning                                                                                                  |
+| -------------------- | --------- | ----------------- | -------------------------------------------------------------------------------------------------------- |
+| `feedbackSounds`     | `boolean` | `false`           | Play a short chime when recording starts and when it stops.                                              |
+| `feedbackVolume`     | `number`  | `70`              | Chime volume, integer percent 0–100.                                                                     |
+| `muteWhileRecording` | `boolean` | `false`           | Mute the OS audio output for the whole duration of a recording; restore the previous state when it ends. |
+
+Read tolerance: `voiceDictation` is parsed with `.catch(undefined)` as a whole, so unknown/bad values from a newer version only drop the field (same policy as the existing dictation preferences). The write-side patch schema stays strict.
+
+## Sound events
+
+Only two sounds exist (Handy parity): **start** (`voice-dictation-start.wav`) and **stop** (`voice-dictation-stop.wav`, Handy "marimba" set, MIT license).
+
+- The start chime plays when the recorder is actually live (phase `idle/loading → recording`).
+- The stop chime is a **capture-end cue**: it plays when the user stops a live recording normally (explicit stop, including the quick-tap discard), even if the transcription that follows later fails — the failure itself surfaces only as a toast (Handy behaves the same: its stop sound is not a transcription-success sound).
+- Cancellation and failure paths that end the recording abnormally stay **silent**: window-blur cancel, stream failure mid-recording, hook unmount.
+- Transcription completion inserts text silently — there is no third sound.
+- Chime playback lives in the renderer (`packages/ui/src/lib/voiceDictationFeedbackSound.ts`), volume applied per play; playback failure is logged and never breaks the dictation flow.
+
+## Mute-while-recording ownership and lifecycle
+
+The **Desktop main process owns the mute**: it survives renderer and Host failures, and can restore on quit. The renderer requests it through `IPlatformService.setDictationSystemMute(active)` (optional, desktop-only capability; web/mobile leave it undefined).
+
+```
+renderer (useVoiceDictation)          main (desktopDictationSystemAudio)      OS
+  | phase → recording                         |                                |
+  | play start chime ──(await ended)──►       |                                |
+  | setDictationSystemMute(true) ──IPC──►  snapshot output-muted state          |
+  |                                       didMute guard (skip if already muted)│
+  |                                       osascript/wpctl/pactl/amixer ──►  output muted
+  | ... recording ...                        |                                |
+  | phase → idle (real stop)                  |                                |
+  | setDictationSystemMute(false) ──IPC──► restore snapshot (only if didMute)  |
+  | play stop chime                           |                             output restored
+```
+
+Guarantees:
+
+- Snapshot/restore: if the output was already muted before recording, the main process does not mute again (`didMute = false`) and does not unmute on release.
+- Ownership is registered before the OS commands run, so a renderer lost or a quit arriving while the commands are still in flight cannot orphan the mute; the apply task re-checks the shutdown gate before (and after) the state read, so a mute never starts once restoration begins.
+- Restore paths in main: explicit release call, the **accepted shutdown path** (`exitPreparedApp` right before `app.exit`, the updater handoff right before `quitAndInstall`/dev relaunch, and the Clear-All-Data restart, all of which await the restore; `before-quit` is deliberately not used because this app cancels it for quit confirmation and async shutdown preparation — a canceled quit keeps the session), and the applying webContents being destroyed / render-process gone.
+- A failed async restore keeps the session alive so the next recording's release, a re-apply, or the shutdown restore retries the unmute; a failed sync (quit) restore has no retry left because the process exits.
+- Residual risk: exits that bypass all restore call sites (hard kills, crashes) mid-recording leave the system muted; no persisted state to recover from.
+- The bundled Handy chime WAVs are MIT-licensed third-party assets; their pinned license notice lives in `third-party/copied-components.json` and `THIRD-PARTY-NOTICES.md`.
+- Per-OS implementation: macOS `osascript` (read + set); Linux `wpctl` → `pactl` → `amixer` fallback with explicit mute/unmute verbs; Windows v1 is a logged no-op (no state-preserving mechanism without a new native dependency).
+- If the platform capability or the spawn fails, muting is skipped with a warn log; recording and chimes continue unaffected.
+
+## Settings UI
+
+Three rows in the voice input settings section (desktop only), below the push-to-talk row:
+
+1. **Sound notification** toggle (`feedbackSounds`).
+2. **Volume** slider 0–100% with a percent label and a **Test** button that plays start+stop back-to-back at the current volume, ignoring the enable toggle (so the slider is adjustable before turning sounds on).
+3. **Mute system sound while recording** toggle (`muteWhileRecording`).
+
+## Acceptance scenarios
+
+1. Sounds off (default): recording behaves exactly as before; no audio, no IPC.
+2. Sounds on, volume 0: chimes "play" silently; no errors.
+3. Sounds on: start chime audible right when the mic indicator activates; stop chime on release; nothing on transcription errors.
+4. Mute on + macOS: play music, start dictating — the system output stays muted for the whole recording, and when it ends the previous mute state is restored (the music is audible again at its pre-recording volume).
+5. Quit the app mid-recording (Cmd+Q): system audio is restored.
+6. Web/remote: the section already renders as unavailable; new fields are inert.

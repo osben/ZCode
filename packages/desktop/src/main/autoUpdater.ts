@@ -20,6 +20,7 @@ import {
   type UpdateStatePayload,
 } from "@zcode/shared";
 import { logger } from "./logger.js";
+import { restoreDictationSystemMuteForShutdown } from "./desktopDictationSystemAudio.js";
 import { ManifestUpdateProvider, getElectronReleasePlatform } from "./manifestUpdateProvider.js";
 
 export const CHECK_FOR_UPDATE_MENU_ID = "check-for-update";
@@ -495,6 +496,9 @@ async function quitAndInstallUpdate(rejectUnavailable = false) {
       // An unpackaged app has no release-package context for an installer to take over. Restart the current dev app instead,
       // so clicking "Restart to update" does not leave it unresponsive after exit preparation.
       logger.info("[auto-update] dev update install fallback: relaunch app");
+      // quitAndInstall/relaunch bypass exitPreparedApp (and on macOS before-quit entirely), so the
+      // dictation mute must be released here or installing during a recording stays muted.
+      await restoreDictationSystemMuteForShutdown();
       app.relaunch();
       app.exit(0);
       return;
@@ -503,6 +507,7 @@ async function quitAndInstallUpdate(rejectUnavailable = false) {
     // In 3.3.0, the custom Windows PowerShell delayed launcher in detached/hidden mode could create powershell.exe without
     // reliably starting the installer, so users saw the app close while the version stayed unchanged.
     // Restore electron-updater's native install entry point; launcher process creation alone does not mean the update was handed off.
+    await restoreDictationSystemMuteForShutdown();
     autoUpdater.quitAndInstall();
   } finally {
     quitAndInstallInFlight = false;
