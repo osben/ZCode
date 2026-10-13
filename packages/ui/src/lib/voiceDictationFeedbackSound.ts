@@ -11,6 +11,8 @@ const FEEDBACK_SOUND_URLS: Record<VoiceDictationFeedbackKind, string> = {
 };
 
 const feedbackAudios: Partial<Record<VoiceDictationFeedbackKind, HTMLAudioElement>> = {};
+/** Settles the in-flight play of a kind before the shared element is reset for the next one. */
+const pendingFinishByKind: Partial<Record<VoiceDictationFeedbackKind, () => void>> = {};
 
 function getFeedbackAudio(kind: VoiceDictationFeedbackKind): HTMLAudioElement | null {
   if (typeof Audio === "undefined") {
@@ -39,6 +41,10 @@ export function playVoiceDictationFeedbackSound(
   if (!audio) {
     return Promise.resolve();
   }
+  // Two plays can overlap on the shared element (split panes, settings preview during a
+  // recording). Pausing the first playback without settling its promise would hang that caller —
+  // e.g. the recording whose system mute is queued behind the chime — so settle it before
+  // resetting the shared element for the new play.
   // Reset before replaying: a reused element parked at the end would otherwise stay silent.
   audio.pause();
   audio.currentTime = 0;

@@ -154,6 +154,7 @@ describe("desktop dictation system audio mute", () => {
     const execAsync = vi.fn<(file: string, args: string[]) => Promise<string>>();
     execAsync.mockImplementation(async (file: string, args: string[]) => {
       if (file === "wpctl") throw new Error("spawn wpctl ENOENT");
+      if (file === "pactl" && args[0] === "get-default-sink") return "alsa_output.test\n";
       if (file === "pactl" && args[0] === "get-sink-mute") return "Mute: no\n";
       return "";
     });
@@ -163,12 +164,38 @@ describe("desktop dictation system audio mute", () => {
     await handler({ sender }, { active: true });
     await handler({ sender }, { active: false });
 
-    // The first pactl call is the tool probe; the second is the actual state read.
+    // The resolved concrete sink is addressed for read, mute, and restore alike.
     expect(execAsync.mock.calls.filter(([file]) => file === "pactl")).toEqual([
-      ["pactl", ["get-sink-mute", "@DEFAULT_SINK@"]],
-      ["pactl", ["get-sink-mute", "@DEFAULT_SINK@"]],
-      ["pactl", ["set-sink-mute", "@DEFAULT_SINK@", "1"]],
-      ["pactl", ["set-sink-mute", "@DEFAULT_SINK@", "0"]],
+      ["pactl", ["get-default-sink"]],
+      ["pactl", ["get-sink-mute", "alsa_output.test"]],
+      ["pactl", ["set-sink-mute", "alsa_output.test", "1"]],
+      ["pactl", ["set-sink-mute", "alsa_output.test", "0"]],
+    ]);
+  });
+
+  it("restores the originally muted linux sink after the default output changes", async () => {
+    const execAsync = vi.fn<(file: string, args: string[]) => Promise<string>>();
+    let defaultSinkCall = 0;
+    execAsync.mockImplementation(async (file: string, args: string[]) => {
+      if (file === "wpctl") throw new Error("spawn wpctl ENOENT");
+      if (file === "pactl" && args[0] === "get-default-sink") {
+        defaultSinkCall += 1;
+        return defaultSinkCall === 1 ? "alsa_output.first\n" : "alsa_output.second\n";
+      }
+      if (file === "pactl" && args[0] === "get-sink-mute") return "Mute: no\n";
+      return "";
+    });
+    const { handler } = register({ platform: "linux", execAsync });
+    const sender = createSender();
+
+    await handler({ sender }, { active: true });
+    // The default output changes mid-recording (for example Bluetooth disconnects)…
+    await handler({ sender }, { active: false });
+
+    // …and the restore still addresses the sink that was muted, not the new default.
+    expect(execAsync.mock.calls.filter(([file, args]) => file === "pactl" && args[0] === "set-sink-mute")).toEqual([
+      ["pactl", ["set-sink-mute", "alsa_output.first", "1"]],
+      ["pactl", ["set-sink-mute", "alsa_output.first", "0"]],
     ]);
   });
 

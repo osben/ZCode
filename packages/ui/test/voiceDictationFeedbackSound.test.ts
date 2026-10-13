@@ -11,6 +11,7 @@ const h = vi.hoisted(() => {
     currentTime = 0;
     paused = true;
     playError: Error | null = null;
+    private playTimer: ReturnType<typeof setTimeout> | undefined;
     private listeners = new Map<string, Set<() => void>>();
 
     constructor(src: string) {
@@ -30,14 +31,21 @@ const h = vi.hoisted(() => {
 
     pause() {
       this.paused = true;
+      // A paused element never reaches "ended": cancel the pending playback completion.
+      if (this.playTimer) {
+        clearTimeout(this.playTimer);
+        this.playTimer = undefined;
+      }
     }
 
     play(): Promise<void> {
+      console.log("FAKE PLAY", this.src.slice(-20));
       this.paused = false;
       if (this.playError) return Promise.reject(this.playError);
       // Simulate playback completing on a later tick so "ended" fires after play() resolves.
       return new Promise((resolve) => {
         setTimeout(() => {
+          console.log("FAKE TIMER ENDED");
           this.emit("ended");
           resolve();
         }, 0);
@@ -137,6 +145,18 @@ describe("voice dictation feedback sound", () => {
     // Play completes on a later tick; fire the element error first.
     element.emit("error");
     await expect(pending).resolves.toBeUndefined();
+  });
+
+  it("settles an in-flight play when the shared element is replayed", async () => {
+    const { playVoiceDictationFeedbackSound } = await loadModule();
+    const first = playVoiceDictationFeedbackSound("start", 70);
+    const element = FakeAudio.instances[0] as FakeAudioInstance;
+    await vi.waitFor(() => expect(element.paused).toBe(false));
+    // Second play on the shared element pauses the first mid-sound; the first caller must still
+    // settle (its system-mute request is queued behind the chime) instead of hanging forever.
+    const second = playVoiceDictationFeedbackSound("start", 70);
+    await second;
+    await expect(first).resolves.toBeUndefined();
   });
 
   it("resolves immediately when Audio is unavailable", async () => {

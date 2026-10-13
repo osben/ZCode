@@ -72,29 +72,50 @@ function parseLinuxMuted(tool: LinuxTool, stdout: string): boolean {
   return /\[off\]/i.test(stdout);
 }
 
-function linuxReadArgs(tool: LinuxTool): string[] {
-  if (tool === "wpctl") return ["get-volume", "@DEFAULT_AUDIO_SINK@"];
-  if (tool === "pactl") return ["get-sink-mute", "@DEFAULT_SINK@"];
-  return ["get", "Master"];
+function linuxReadArgs(tool: LinuxTool, target: string): string[] {
+  if (tool === "wpctl") return ["get-volume", target];
+  if (tool === "pactl") return ["get-sink-mute", target];
+  return ["get", target];
 }
 
-function linuxSetArgs(tool: LinuxTool, muted: boolean): string[] {
-  if (tool === "wpctl") return ["set-mute", "@DEFAULT_AUDIO_SINK@", muted ? "1" : "0"];
-  if (tool === "pactl") return ["set-sink-mute", "@DEFAULT_SINK@", muted ? "1" : "0"];
-  return ["set", "Master", muted ? "mute" : "unmute"];
+function linuxSetArgs(tool: LinuxTool, target: string, muted: boolean): string[] {
+  if (tool === "wpctl") return ["set-mute", target, muted ? "1" : "0"];
+  if (tool === "pactl") return ["set-sink-mute", target, muted ? "1" : "0"];
+  return ["set", target, muted ? "mute" : "unmute"];
+}
+
+/** Resolves the concrete default-sink identifier so mute and restore address the same sink. */
+async function resolveWpctlDefaultSink(exec: { async: ExecAsync }): Promise<string> {
+  const status = await exec.async("wpctl", ["status"]);
+  const sinksIndex = status.indexOf("Sinks:");
+  if (sinksIndex === -1) throw new Error("wpctl status has no Sinks section");
+  const defaultEntry = status.slice(sinksIndex).match(/^\s*\*\s*(\d+)\./m);
+  if (!defaultEntry) throw new Error("wpctl status has no default sink");
+  return defaultEntry[1];
 }
 
 function createLinuxBackend(exec: { async: ExecAsync; sync: ExecSync }): SystemAudioBackend {
-  // Pick the first tool that answers and cache it; a missing tool falls through to the next one,
-  // and a failed probe of every tool surfaces as an error so muting is skipped safely.
-  let tool: LinuxTool | null = null;
-  const resolveTool = async (): Promise<LinuxTool> => {
-    if (tool) return tool;
-    for (const candidate of LINUX_TOOLS) {
+  // The concrete sink is resolved once and retained: the default output can change during a
+  // recording (for example Bluetooth disconnects), and restoring via the default handle would
+  // then unmute the wrong sink while the originally muted one stays muted.
+  let resolved: { tool: LinuxTool; target: string } | null = null;
+  const resolveTarget = async (): Promise<{ tool: LinuxTool; target: string }> => {
+    if (resolved) return resolved;
+    for (const tool of LINUX_TOOLS) {
       try {
-        parseLinuxMuted(candidate, await exec.async(candidate, linuxReadArgs(candidate)));
-        tool = candidate;
-        return tool;
+        if (tool === "wpctl") {
+          const target = await resolveWpctlDefaultSink(exec);
+          resolved = { tool, target };
+          return resolved;
+        }
+        if (tool === "pactl") {
+          const target =
+            (await exec.async("pactl", ["get-default-sink"])).trim() || "@DEFAULT_SINK@";
+          resolved = { tool, target };
+          return resolved;
+        }
+        resolved = { tool, target: "Master" };
+        return resolved;
       } catch {
         // Tool absent or unusable — try the next one.
       }
@@ -103,19 +124,24 @@ function createLinuxBackend(exec: { async: ExecAsync; sync: ExecSync }): SystemA
   };
   return {
     async readMuted() {
-      const resolved = await resolveTool();
-      return parseLinuxMuted(resolved, await exec.async(resolved, linuxReadArgs(resolved)));
+      const { tool, target } = await resolveTarget();
+      return parseLinuxMuted(tool, await exec.async(tool, linuxReadArgs(tool, target)));
     },
     async setMuted(muted) {
-      const resolved = await resolveTool();
-      await exec.async(resolved, linuxSetArgs(resolved, muted));
+      const { tool, target } = await resolveTarget();
+      await exec.async(tool, linuxSetArgs(tool, target, muted));
     },
     readMutedSync() {
-      // The async path always resolves the tool before any sync use; without it there is no safe guess.
-      return tool ? parseLinuxMuted(tool, exec.sync(tool, linuxReadArgs(tool))) : false;
+      // The async path always resolves the target before any sync use; without it there is no safe guess.
+      return resolved
+        ? parseLinuxMuted(
+            resolved.tool,
+            exec.sync(resolved.tool, linuxReadArgs(resolved.tool, resolved.target)),
+          )
+        : false;
     },
     setMutedSync(muted) {
-      if (tool) exec.sync(tool, linuxSetArgs(tool, muted));
+      if (resolved) exec.sync(resolved.tool, linuxSetArgs(resolved.tool, resolved.target, muted));
     },
   };
 }

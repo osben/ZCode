@@ -96,6 +96,18 @@ function DesktopVoiceDictationSection() {
   if (settings != null) {
     settingsLoadedRef.current = true;
   }
+  // The optimistic overlay survives renders until the published snapshot actually reflects it:
+  // useSettingService deduplicates overlapping refreshes, so the snapshot published after a write
+  // can still be pre-write; clearing early would let a later whole-object patch persist stale data.
+  const optimisticVoice = optimisticVoiceRef.current;
+  if (optimisticVoice) {
+    const published = Object.entries(optimisticVoice).every(
+      ([key, value]) => voice[key as keyof VoiceDictationSettings] === value,
+    );
+    if (published) {
+      optimisticVoiceRef.current = null;
+    }
+  }
   voiceRef.current = optimisticVoiceRef.current ?? voice;
   const modelId = voice.modelId ?? null;
   const microphoneDeviceId = voice.microphoneDeviceId ?? null;
@@ -197,13 +209,14 @@ function DesktopVoiceDictationSection() {
           error: error instanceof Error ? error.message : String(error),
         });
         toast(intl.formatMessage({ id: "voiceDictation.saveFailed" }));
-      } finally {
-        pendingVoiceWritesRef.current -= 1;
-        // Only clear the overlay when the last write settled; the next render then refreshes the
-        // ref from the published settings snapshot.
-        if (pendingVoiceWritesRef.current === 0) {
+        // The published snapshot will never match a write that failed: drop the overlay when this
+        // is the last in-flight write so later edits re-read the persisted state.
+        if (pendingVoiceWritesRef.current === 1) {
           optimisticVoiceRef.current = null;
         }
+        return;
+      } finally {
+        pendingVoiceWritesRef.current -= 1;
       }
     },
     [intl, update, voiceDictationService],
@@ -492,6 +505,7 @@ function DesktopVoiceDictationSection() {
           <SettingsRow
             label={intl.formatMessage({ id: "voiceDictation.feedbackVolume.title" })}
             description={intl.formatMessage({ id: "voiceDictation.feedbackVolume.description" })}
+            controlLayout="wide"
             control={
               <div className="flex w-full items-center gap-3">
                 <Slider
