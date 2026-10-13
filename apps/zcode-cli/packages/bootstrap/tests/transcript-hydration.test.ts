@@ -252,6 +252,47 @@ describe("transcript→event 合成", () => {
     ).not.toHaveProperty("feedback");
   });
 
+  it("assistant/user 消息固定从 transcript metadata 恢复为权威 row 字段；旧格式不含 pinnedAt 照常恢复", () => {
+    const user = userMessage("u-pin", "问题", 1000);
+    user.info.metadata = { pinnedAt: 1500 };
+    const assistant = assistantMessage("a-pin", "u-pin", "回复", 1001);
+    assistant.info.metadata = { pinnedAt: 1600 };
+    const legacyUser = userMessage("u-legacy", "旧格式问题", 2000);
+    const legacyAssistant = assistantMessage("a-legacy", "u-legacy", "旧格式回复", 2001);
+
+    const { events, projection } = reduce([user, assistant, legacyUser, legacyAssistant]);
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: SessionEventType.RowPinnedUpdated,
+        payload: { entityId: "u-pin", pinnedAt: 1500 },
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: SessionEventType.RowPinnedUpdated,
+        payload: { entityId: "a-pin", pinnedAt: 1600 },
+      }),
+    );
+    const window = projection.getSnapshot().rows.window;
+    expect(window.find((row) => row.kind === "userInput" && row.entityId === "u-pin")).toMatchObject(
+      { pinnedAt: 1500 },
+    );
+    expect(
+      window.find((row) => row.kind === "assistantText" && row.entityId === "a-pin"),
+    ).toMatchObject({ pinnedAt: 1600 });
+    // 旧 transcript（无 pinnedAt）不产生事件，行照常恢复且不带该字段。
+    expect(events.filter((event) => event.type === SessionEventType.RowPinnedUpdated)).toHaveLength(
+      2,
+    );
+    expect(
+      window.find((row) => row.kind === "userInput" && row.entityId === "u-legacy"),
+    ).not.toHaveProperty("pinnedAt");
+    expect(
+      window.find((row) => row.kind === "assistantText" && row.entityId === "a-legacy"),
+    ).not.toHaveProperty("pinnedAt");
+  });
+
   it("首订阅晚于完成时仍从真实持久化语义恢复 assistant 正文", () => {
     const persistedAssistant = assistantMessage("a1", "u1", "快速首轮回复", 1001);
     const messages = [

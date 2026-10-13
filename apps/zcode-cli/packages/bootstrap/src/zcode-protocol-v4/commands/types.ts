@@ -213,6 +213,15 @@ export interface V4CommandCoreHost {
       feedback: "like" | "dislike" | null;
     },
   ): Promise<void>;
+  /** Persist a display-only pin as transcript metadata first, then publish the projection event for the same entity. */
+  setRowPinned?(
+    sessionId: string,
+    input: {
+      entityId: string;
+      messageId: string;
+      pinned: boolean;
+    },
+  ): Promise<void>;
   /** Highspeed completion metrics update user transcript metadata first, then publish the projection event for the same entity. */
   setHighspeedMetrics?(
     sessionId: string,

@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   COMMANDS_REQUIRING_BASE_REVISION,
+  ROW_TARGETING_COMMANDS,
   SAVED_WORKFLOW_START_REJECTED_FAULT_PREFIX,
   V4_WIRE_PROTOCOL_VERSION,
   WORKFLOW_RUN_SETTINGS_REJECTED_FAULT_PREFIX,
+  assistantTextRowSchema,
   commandAckSchema,
   commandPayloadSchemas,
   commandResultSchema,
@@ -11,6 +13,7 @@ import {
   parseCommandEnvelope,
   savedWorkflowStartRejectionReasonSchema,
   modelSelectionSchema,
+  userInputRowSchema,
   workflowRunSettingsRejectionReasonSchema,
 } from "../src/zcode-protocol-v4/index.js";
 
@@ -659,6 +662,7 @@ describe("zcode-protocol-v4 command", () => {
         "retryTurn",
         "sendQueuedNow",
         "setAssistantFeedback",
+        "setRowPinned",
         "setAutoDrain",
         "setFollowupMode",
         "switchCollaborationMode",
@@ -671,6 +675,75 @@ describe("zcode-protocol-v4 command", () => {
     expect(COMMANDS_REQUIRING_BASE_REVISION.has("resolveInteraction")).toBe(false);
     // Completion-state metrics are an idempotent background write for the same user message and must not be dropped by Renderer revision drift.
     expect(COMMANDS_REQUIRING_BASE_REVISION.has("setHighspeedMetrics")).toBe(false);
+    // Row-targeting commands resolve their target through the projection guard.
+    expect(ROW_TARGETING_COMMANDS.has("setRowPinned")).toBe(true);
+  });
+
+  // Message pins (docs/chat-message-pins.md): display-only bookmark, additive wire surface.
+  it("parses setRowPinned and rejects non-boolean pinned", () => {
+    const ok = parseCommandEnvelope({
+      commandId: "cmd-row-pin",
+      clientId: "desktop-1",
+      sessionId: "s-1",
+      baseRevision: 8,
+      baseLogEpoch: "epoch-1",
+      type: "setRowPinned",
+      payload: {
+        target: { rowId: 9, entityId: "assistant-1" },
+        pinned: true,
+      },
+      issuedAt: 1000,
+    });
+    expect(ok.ok).toBe(true);
+
+    const bad = parseCommandEnvelope({
+      commandId: "cmd-row-pin-bad",
+      clientId: "desktop-1",
+      sessionId: "s-1",
+      baseRevision: 8,
+      baseLogEpoch: "epoch-1",
+      type: "setRowPinned",
+      payload: {
+        target: { rowId: 9, entityId: "assistant-1" },
+        pinned: "yes",
+      },
+      issuedAt: 1000,
+    });
+    expect(bad.ok).toBe(false);
+  });
+
+  it("keeps pinnedAt additive on assistant/user rows (old snapshots without it still parse)", () => {
+    const assistantBase = {
+      rowId: 1,
+      turnId: "t-1",
+      entityId: "a-1",
+      createdAt: 1000,
+      createdAtSeq: 1,
+      kind: "assistantText",
+      text: "回复",
+      state: "complete",
+    } as const;
+    // Old CLI snapshot: no pinnedAt → parses, field absent.
+    const legacy = assistantTextRowSchema.parse(assistantBase);
+    expect("pinnedAt" in legacy).toBe(false);
+    // New CLI snapshot: pinnedAt present → parses and round-trips.
+    expect(assistantTextRowSchema.parse({ ...assistantBase, pinnedAt: 1500 })).toMatchObject({
+      pinnedAt: 1500,
+    });
+    const userBase = {
+      rowId: 2,
+      turnId: "t-1",
+      entityId: "u-1",
+      createdAt: 900,
+      createdAtSeq: 1,
+      kind: "userInput",
+      text: "问题",
+      origin: "realUser",
+    } as const;
+    expect("pinnedAt" in userInputRowSchema.parse(userBase)).toBe(false);
+    expect(userInputRowSchema.parse({ ...userBase, pinnedAt: 1400 })).toMatchObject({
+      pinnedAt: 1400,
+    });
   });
 
   it("parses persisted Highspeed completion metrics", () => {

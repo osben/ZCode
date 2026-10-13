@@ -182,6 +182,8 @@ import { WorkspaceHookPendingBanner } from "@/v4/WorkspaceHookPendingBanner.js";
 import { ConversationStatusPanel } from "@/v4/ConversationStatusPanel.js";
 import { SessionSubscriptionErrorPanel } from "@/v4/SessionSubscriptionErrorPanel.js";
 import { ConversationTimeline } from "@/v4/ConversationTimeline.js";
+import { ConversationPinnedBar, type PinnedConversationRow } from "@/v4/ConversationPinnedBar.js";
+import type { RowPinChangeHandler } from "@/v4/ConversationRowView.js";
 import { ConversationShareImportNotice } from "@/v4/ConversationShareImportNotice.js";
 import { ConversationShareConfirmationDock } from "@/v4/ConversationShareConfirmationDock.js";
 import { ConversationShareSuccessDock } from "@/v4/ConversationShareSuccessDock.js";
@@ -1232,6 +1234,8 @@ export function SessionPane({
   const timelineScrollToQueryRef = useRef<
     ((target: { unitIndex: number; rowId: number }) => void) | null
   >(null);
+  // Pinned-bar jump action: the timeline resolves the row's unit internally.
+  const timelineScrollToRowRef = useRef<((rowId: number) => void) | null>(null);
   const conversationLayoutContainerRef = useRef<HTMLDivElement>(null);
   const hasExternalSummaryPanelVariantControl = Boolean(onSummaryPanelVariantOverrideChange);
   const effectiveSummaryPanelVariantOverride = hasExternalSummaryPanelVariantControl
@@ -3932,6 +3936,40 @@ export function SessionPane({
     [dispatchCommand, sessionId],
   );
 
+  const handleRowPin = useCallback<RowPinChangeHandler>(
+    async (target, pinned) => {
+      const current = snapshotRef.current;
+      if (!sessionId || current === null) return false;
+      const ack = await dispatchCommand(
+        "setRowPinned",
+        { target, pinned },
+        sessionId,
+        current.revision,
+        current.logEpoch,
+      );
+      const accepted = ack.status === "accepted" || ack.status === "duplicate";
+      if (!accepted) {
+        logger.warn(`[v4-pane] 消息固定被拒绝: ${ack.status} ${ack.reasonCode ?? ""}`);
+      }
+      return accepted;
+    },
+    [dispatchCommand, sessionId],
+  );
+
+  // Pinned-bar actions must be stable references: the bar is a memoized leaf in the virtual timeline
+  // column and inline arrows would rerender it on every pane render (reactStableReferences contract).
+  const handlePinnedJump = useCallback((rowId: number) => {
+    timelineScrollToRowRef.current?.(rowId);
+  }, []);
+  const handlePinnedUnpin = useCallback(
+    (row: PinnedConversationRow) => {
+      if (row.entityId) {
+        void handleRowPin({ rowId: row.rowId, entityId: row.entityId }, false);
+      }
+    },
+    [handleRowPin],
+  );
+
   const handleDeleteQueueItem = useCallback(
     (queueItemId: string) => {
       const current = snapshotRef.current;
@@ -5681,10 +5719,20 @@ export function SessionPane({
                 workspacePath={workspacePath}
                 workspaceIdentity={workspaceIdentity}
               >
+                {/* Display-only pin chips (docs/chat-message-pins.md): newest first, jump via the
+                    timeline row action, unpin reuses the same setRowPinned CAS as the row toolbars. */}
+                {!readOnly && !selectionSideChat && sessionId ? (
+                  <ConversationPinnedBar
+                    rows={timelineSnapshot?.rows.window ?? []}
+                    onJumpToRow={handlePinnedJump}
+                    onUnpin={handlePinnedUnpin}
+                  />
+                ) : null}
                 <ConversationTimeline
                   compactForRemoteControl={compactForRemoteControl}
                   scrollToBottomActionRef={timelineScrollToBottomRef}
                   scrollToQueryActionRef={timelineScrollToQueryRef}
+                  scrollToRowActionRef={timelineScrollToRowRef}
                   selectionPanelLayoutContainerRef={conversationLayoutContainerRef}
                   rows={timelineSnapshot?.rows.window ?? []}
                   pendingGuides={timelineSnapshot ? pendingGuideProjection?.pendingGuides : []}
@@ -5699,6 +5747,9 @@ export function SessionPane({
                     !readOnly && !selectionSideChat && sessionId
                       ? handleAssistantFeedback
                       : undefined
+                  }
+                  onPinChange={
+                    !readOnly && !selectionSideChat && sessionId ? handleRowPin : undefined
                   }
                   onEdit={editActionsEnabled ? handleEdit : undefined}
                   canLoadOlder={timelineSnapshot ? hasOlderRows(timelineSnapshot) : false}

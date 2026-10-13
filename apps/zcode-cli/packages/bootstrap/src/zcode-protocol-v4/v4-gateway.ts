@@ -164,6 +164,7 @@ function rowTargetActionForCommand(
     case "retryTurn":
     case "applyFileRewind":
     case "setAssistantFeedback":
+    case "setRowPinned":
     case "setHighspeedMetrics":
       return type;
     default:

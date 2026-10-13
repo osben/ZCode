@@ -11,6 +11,7 @@ import { ConversationRowView } from "@/v4/ConversationRowView.js";
 import type {
   AssistantFeedbackHandler,
   EditWorkspaceRewindAvailability,
+  RowPinChangeHandler,
 } from "@/v4/ConversationRowView.js";
 import type { ConversationRowRenderContext } from "@/v4/conversationRowContext.js";
 import type { ConversationTurnRenderUnit } from "@/v4/conversationTurnRenderUnits.js";
@@ -22,6 +23,7 @@ interface ConversationTurnRowProps {
   onFork?: (target: ConversationRowTarget) => void;
   onRetry?: (target: ConversationRowTarget) => void;
   onFeedbackChange?: AssistantFeedbackHandler;
+  onPinChange?: RowPinChangeHandler;
   onEdit?: (
     target: ConversationRowTarget,
     newText: string,
@@ -46,6 +48,7 @@ export function ConversationTurnRow({
   onFork,
   onRetry,
   onFeedbackChange,
+  onPinChange,
   onEdit,
   editWorkspaceRewindAvailability,
   hideAssistantActions,
@@ -65,6 +68,7 @@ export function ConversationTurnRow({
       onFork={onFork}
       onRetry={onRetry}
       onFeedbackChange={onFeedbackChange}
+      onPinChange={onPinChange}
       onEdit={onEdit}
       editWorkspaceRewindAvailability={editWorkspaceRewindAvailability}
       hideAssistantActions={hideAssistantActions}

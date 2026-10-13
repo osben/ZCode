@@ -112,6 +112,7 @@ export const SessionEventType = {
   UserMessage: "user_message",
   AssistantMessage: "assistant_message",
   AssistantFeedbackUpdated: "assistant_feedback_updated",
+  RowPinnedUpdated: "row_pinned_updated",
   HighspeedMetricsUpdated: "highspeed_metrics_updated",
   // (2026-09-12): the former ToolWidgetStateUpdated / SessionPluginUiStateUpdated events were removed.
   // Plugin UI widgetState now falls back to renderer memory and no longer travels through the CLI event stream.
@@ -667,6 +668,12 @@ export interface AssistantMessagePayload {
 export interface AssistantFeedbackUpdatedPayload {
   entityId: string;
   feedback: "like" | "dislike" | null;
+}
+
+/** Display-only pin bookmark (unix ms, CLI clock); null unpins. Not injected into agent context. */
+export interface RowPinnedUpdatedPayload {
+  entityId: string;
+  pinnedAt: number | null;
 }
 
 export interface HighspeedMetricsUpdatedPayload {
