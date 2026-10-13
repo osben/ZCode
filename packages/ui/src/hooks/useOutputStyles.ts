@@ -314,19 +314,23 @@ export function useOutputStyles(target: UserInstructionsHostTarget): OutputStyle
       const key = hostKey;
       const wasActive = style.id === activeStyleId;
       try {
-        // No service-level transaction exists, so compensate manually. Reset the active id
-        // first (a failed reset then aborts with file and id untouched), and if the delete
+        // No service-level transaction exists, so compensate manually. Every step goes through
+        // the service captured before the first await: a host switch mid-operation must not
+        // redirect the reset, delete, or rollback to another host's storage. Reset the active
+        // id first (a failed reset then aborts with file and id untouched), and if the delete
         // itself fails after a successful reset, restore the previous active id — a reported
-        // failure must not silently deactivate a style that still exists.
+        // failure must not silently deactivate a style that still exists. The rollback runs
+        // regardless of the current view; host-key checks stay UI-only.
+        const service = serviceRef.current;
         if (wasActive) {
-          await serviceRef.current.setActiveStyle({ styleId: "default" });
+          await service.setActiveStyle({ styleId: "default" });
         }
         try {
-          await serviceRef.current.deleteStyle({ id: style.id });
+          await service.deleteStyle({ id: style.id });
         } catch (deleteError) {
-          if (wasActive && loadedHostKeyRef.current === key) {
+          if (wasActive) {
             try {
-              await serviceRef.current.setActiveStyle({ styleId: style.id });
+              await service.setActiveStyle({ styleId: style.id });
             } catch (rollbackError) {
               // Both writes failed; the style exists but is deactivated. Log only — the
               // outer handler still reports the deletion failure.
