@@ -10,10 +10,11 @@
 //
 // Which files each tool actually processes is the tool's own decision:
 // oxfmt honors .prettierignore (apps/zcode-cli/ ships its own newer oxfmt)
-// and oxlint honors .oxlintrc.json ignorePatterns plus file extensions. When
-// every passed file gets filtered out on one side, that tool reports a
-// zero-targets error ("Expected at least one target file" / "No files found
-// to lint") — that specific outcome is a pass, not a failure.
+// and oxlint honors .oxlintrc.json ignorePatterns plus file extensions. Both
+// tools run with --no-error-on-unmatched-pattern so that a fully filtered
+// file set (for example a CLI-only commit) is not an error. Exit codes stay
+// authoritative: any other failure blocks the commit, regardless of its
+// diagnostic text.
 //
 // Tools are launched as `process.execPath <package bin .js>`: npm/pnpm expose
 // package bins through .cmd shims on Windows, which spawnSync cannot execute
@@ -24,15 +25,6 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-
-const NO_TARGET_FILES_HINTS = [
-  "Expected at least one target file", // oxfmt: every passed file is excluded
-  "No files found to lint", // oxlint: every passed file is excluded or not lintable
-];
-
-export function hasNoTargetFiles(output) {
-  return NO_TARGET_FILES_HINTS.some((hint) => output.includes(hint));
-}
 
 export function resolveToolBin(packageName) {
   const require = createRequire(import.meta.url);
@@ -50,19 +42,17 @@ export function resolveToolBin(packageName) {
 }
 
 function runTool(packageName, args) {
-  const result = spawnSync(process.execPath, [resolveToolBin(packageName), ...args], {
-    stdio: ["inherit", "pipe", "pipe"],
-    encoding: "utf8",
-  });
+  const result = spawnSync(
+    process.execPath,
+    [resolveToolBin(packageName), "--no-error-on-unmatched-pattern", ...args],
+    { stdio: ["inherit", "pipe", "pipe"], encoding: "utf8" },
+  );
   if (result.error) {
     console.error(`pre-commit: failed to run ${packageName}: ${result.error.message}`);
     process.exit(1);
   }
   const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
   if (result.status !== 0) {
-    if (hasNoTargetFiles(output)) {
-      return;
-    }
     if (output.trim().length > 0) {
       console.error(output.trimEnd());
     }
