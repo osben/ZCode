@@ -41,10 +41,19 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .v8-cache
-          key: node-compile-v1-${{ runner.os }}-${{ hashFiles('.nvmrc') }}-${{ hashFiles('pnpm-lock.yaml') }}
+          # Commit-specific keys keep every run saveable: a shared lock-based key is
+          # immutable once saved, so entries for changed sources would never persist
+          # between lockfile bumps, and the two parallel jobs would race on one key.
+          # github.sha is identical for both parallel jobs of one run, so a per-commit key
+          # alone still leaves them racing to save one immutable entry — and the checks
+          # job finishes ~4x earlier, systematically winning and dropping the richer
+          # unit-tests snapshot. Discriminate by github.job so both lineages persist.
+          key: node-compile-v1-${{ runner.os }}-${{ hashFiles('.nvmrc') }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.job }}-${{ github.sha }}
           # Dep bumps change only part of node_modules; stale entries are ignored by
           # content hashing, so restoring an older cache is still a net win.
           restore-keys: |
+            node-compile-v1-${{ runner.os }}-${{ hashFiles('.nvmrc') }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.job }}-
+            node-compile-v1-${{ runner.os }}-${{ hashFiles('.nvmrc') }}-${{ hashFiles('pnpm-lock.yaml') }}-
             node-compile-v1-${{ runner.os }}-${{ hashFiles('.nvmrc') }}-
             node-compile-v1-${{ runner.os }}-
 
@@ -94,8 +103,17 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .v8-cache
-          key: node-compile-v1-${{ runner.os }}-${{ hashFiles('.nvmrc') }}-${{ hashFiles('pnpm-lock.yaml') }}
+          # Commit-specific keys keep every run saveable: a shared lock-based key is
+          # immutable once saved, so entries for changed sources would never persist
+          # between lockfile bumps, and the two parallel jobs would race on one key.
+          # github.sha is identical for both parallel jobs of one run, so a per-commit key
+          # alone still leaves them racing to save one immutable entry — and the checks
+          # job finishes ~4x earlier, systematically winning and dropping the richer
+          # unit-tests snapshot. Discriminate by github.job so both lineages persist.
+          key: node-compile-v1-${{ runner.os }}-${{ hashFiles('.nvmrc') }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.job }}-${{ github.sha }}
           restore-keys: |
+            node-compile-v1-${{ runner.os }}-${{ hashFiles('.nvmrc') }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.job }}-
+            node-compile-v1-${{ runner.os }}-${{ hashFiles('.nvmrc') }}-${{ hashFiles('pnpm-lock.yaml') }}-
             node-compile-v1-${{ runner.os }}-${{ hashFiles('.nvmrc') }}-
             node-compile-v1-${{ runner.os }}-
 
