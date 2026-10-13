@@ -24,11 +24,12 @@ describe("desktop native package policy", () => {
     expect(patterns).not.toContain("!node_modules/node-pty/prebuilds/darwin-arm64/**");
   });
 
-  it("应只保留目标平台的 transcribe-cpp 原生包与 koffi 二进制", () => {
+  it("keeps only the target platform transcribe-cpp native packages and koffi binaries", () => {
     const patterns = createDesktopNativePackagePrunePatterns("darwin-arm64");
 
-    // Bugfix: @transcribe-cpp 平台包名单个可达 60MB，koffi 单包携带全部平台二进制，
-    // 都必须按目标平台裁剪（包名前缀 <os>-<arch>-，koffi 目录名用下划线）。
+    // Bugfix: a single @transcribe-cpp platform package can reach 60MB, and koffi ships all platform
+    // binaries in one package; both must be pruned to the target platform (package name prefix
+    // <os>-<arch>-, koffi binary directory names use underscores).
     expect(patterns).toContain("!node_modules/@transcribe-cpp/darwin-x64-*/**");
     expect(patterns).toContain("!node_modules/@transcribe-cpp/linux-x64-*/**");
     expect(patterns).toContain("!node_modules/@transcribe-cpp/win32-x64-*/**");
@@ -74,7 +75,7 @@ describe("desktop native package policy", () => {
     ]);
   });
 
-  it("应拒绝非目标平台的 transcribe-cpp 原生包与 koffi 二进制", () => {
+  it("rejects non-target platform transcribe-cpp native packages and koffi binaries", () => {
     const entries = parseAsarListWithPackState(
       [
         "unpack : /node_modules/@transcribe-cpp/win32-x64-cpu-vulkan/transcribe.dll",
@@ -85,14 +86,14 @@ describe("desktop native package policy", () => {
     );
 
     expect(findDesktopNativePackageViolations(entries, "darwin-arm64")).toEqual([
-      expect.stringContaining("transcribe-cpp 包含非目标平台原生包"),
-      expect.stringContaining("transcribe-cpp 包含非目标平台原生包"),
-      expect.stringContaining("koffi 包含非目标平台二进制"),
+      expect.stringContaining("transcribe-cpp contains non-target platform native package"),
+      expect.stringContaining("transcribe-cpp contains non-target platform native package"),
+      expect.stringContaining("koffi contains non-target platform binaries"),
       expect.stringContaining("packed payload"),
     ]);
   });
 
-  it("依赖闭包按目标平台过滤 @transcribe-cpp 平台包", () => {
+  it("filters @transcribe-cpp platform packages by target platform in the dependency closure", () => {
     expect(isTargetTranscribePlatformPackage("transcribe-cpp", "darwin-arm64")).toBe(true);
     expect(isTargetTranscribePlatformPackage("koffi", "darwin-arm64")).toBe(true);
     expect(
@@ -103,7 +104,7 @@ describe("desktop native package policy", () => {
     ).toBe(false);
   });
 
-  it("注入 staging 目录会移除非目标平台的 transcribe-cpp 平台包与 koffi 二进制", () => {
+  it("removes non-target platform transcribe-cpp packages and koffi binaries from the injection staging dir", () => {
     const stagingNodeModulesDir = mkdtempSync(join(tmpdir(), "zcode-native-policy-"));
     try {
       const transcribeTargetDir = join(

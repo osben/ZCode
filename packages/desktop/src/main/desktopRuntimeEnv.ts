@@ -431,18 +431,19 @@ export function resolveBundledGlmBinaryPath(): string | undefined {
   return resolveBundledZCodeAgentBinaryPath();
 }
 
-// 语音转写平台包命名必须与 transcribe-cpp dist/loader.js 的 platformTuple() 一致
-// （darwin 用 metal，linux/win32 用 cpu-vulkan；上游未提供 win32-arm64 预编译包）。
+// Voice transcription platform package naming must match platformTuple() in transcribe-cpp dist/loader.js
+// (darwin uses metal, linux/win32 use cpu-vulkan; upstream provides no win32-arm64 prebuilt package).
 const TRANSCRIBE_PLATFORM_TUPLES: Record<string, Record<string, string>> = {
   darwin: { arm64: "darwin-arm64-metal", x64: "darwin-x64-cpu" },
   linux: { arm64: "linux-arm64-cpu-vulkan", x64: "linux-x64-cpu-vulkan" },
   win32: { x64: "win32-x64-cpu-vulkan" },
 };
 
-// 根因：transcribe-cpp 通过 koffi 以 dlopen 加载平台包内的 libtranscribe 动态库，dlopen 读不了
-// app.asar 虚拟路径（实测 koffi.load 对 asar 内路径报 errno=20），即使 asarUnpack 也不会被 Electron
-// 自动重定向。打包时原生文件解包在 app.asar.unpacked 下，这里解析真实路径，由 main 经
-// TRANSCRIBE_LIBRARY（transcribe-cpp loader 的最高优先级覆盖项）注入 Host。
+// Root cause: transcribe-cpp dlopens the libtranscribe dynamic library inside the platform package via
+// koffi, and dlopen cannot read asar virtual paths (koffi.load on an in-asar path fails with errno=20 in
+// testing); even asarUnpack is not transparently redirected by Electron. In packaged builds the native
+// files are unpacked under app.asar.unpacked, so resolve the real path here and inject it into the Host
+// via TRANSCRIBE_LIBRARY (the highest-priority override in the transcribe-cpp loader).
 export function resolveBundledTranscribeLibraryPath(
   options: {
     platform?: NodeJS.Platform | string;
@@ -561,8 +562,9 @@ export function buildHostProcessEnv(hostProcessLocalEnv: Record<string, string>)
     hostProcessLocalEnv,
     larkCliBinaryPath,
   );
-  // Bugfix: 打包产物内 transcribe-cpp 的原生库在 app.asar.unpacked 下，koffi dlopen 读不了 asar
-  // 虚拟路径，必须显式指定；未打包（本地开发）时保持 loader 默认解析，.env 的显式覆盖仍然生效。
+  // Bugfix: in packaged builds the transcribe-cpp native library lives under app.asar.unpacked, which koffi
+  // dlopen cannot reach through the asar virtual path, so it must be set explicitly; when unpackaged (local
+  // dev) keep the loader's default resolution — an explicit .env override still wins.
   const resolvedTranscribeLibraryPath = resolveHostProcessBinaryEnv(
     "TRANSCRIBE_LIBRARY",
     hostProcessLocalEnv,
