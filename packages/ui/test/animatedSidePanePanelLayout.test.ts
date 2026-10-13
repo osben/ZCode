@@ -149,6 +149,7 @@ describe("AnimatedSidePanePanel layout", () => {
     expect(
       resolveOpenTabLauncherItemIds({
         developerToolsEnabled: false,
+        hasActiveTask: false,
         hasReviewTab: false,
         supportsEmbeddedBrowser: false,
       }),
@@ -157,6 +158,7 @@ describe("AnimatedSidePanePanel layout", () => {
     expect(
       resolveOpenTabLauncherItemIds({
         developerToolsEnabled: false,
+        hasActiveTask: false,
         hasReviewTab: false,
         supportsEmbeddedBrowser: true,
       }),
@@ -168,6 +170,7 @@ describe("AnimatedSidePanePanel layout", () => {
       resolveOpenTabLauncherItemIds({
         canOpenSelectionSideConversation: true,
         developerToolsEnabled: false,
+        hasActiveTask: false,
         hasReviewTab: false,
       }),
     ).toEqual(["selection-side-conversation", "review", "terminal", "browser"]);
@@ -175,9 +178,35 @@ describe("AnimatedSidePanePanel layout", () => {
       resolveOpenTabLauncherItemIds({
         canOpenSelectionSideConversation: false,
         developerToolsEnabled: false,
+        hasActiveTask: false,
         hasReviewTab: false,
       }),
     ).toEqual(["review", "terminal", "browser"]);
+  });
+
+  it("offers the model trajectory launcher only with an active task", () => {
+    expect(
+      resolveOpenTabLauncherItemIds({
+        developerToolsEnabled: false,
+        hasActiveTask: true,
+        hasReviewTab: false,
+      }),
+    ).toEqual(["review", "terminal", "browser", "model-trajectory"]);
+    expect(
+      resolveOpenTabLauncherItemIds({
+        developerToolsEnabled: false,
+        hasActiveTask: false,
+        hasReviewTab: false,
+      }),
+    ).toEqual(["review", "terminal", "browser"]);
+    expect(
+      resolveOpenTabLauncherItemIds({
+        developerToolsEnabled: true,
+        hasActiveTask: true,
+        hasReviewTab: true,
+        supportsEmbeddedBrowser: false,
+      }),
+    ).toEqual(["terminal", "model-trajectory", "developer-tools"]);
   });
 
   it("hides the side conversation entry without an active task and on mobile", () => {

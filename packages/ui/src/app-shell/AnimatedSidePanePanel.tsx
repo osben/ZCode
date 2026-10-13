@@ -95,6 +95,7 @@ import { getVisibleSidePaneTabs } from "@/lib/workspaceSidePane.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import {
   BugIcon,
+  ChartLineIcon,
   FileDiffIcon,
   GlobeIcon,
   MessageSquareTextIcon,
@@ -323,6 +324,7 @@ export function AnimatedSidePanePanel({
   onOpenDeveloperTools,
   onOpenTerminalTab,
   onOpenReviewTab,
+  onOpenModelTrajectory,
   onOpenSelectionSideConversation,
   onOpenPlanDetail,
   onRevealGitFileInTree,
@@ -393,6 +395,8 @@ export function AnimatedSidePanePanel({
   onOpenDeveloperTools: () => void;
   onOpenTerminalTab: () => void;
   onOpenReviewTab: () => void;
+  /** Opens the model trajectory tab for the active task; launcher entry is hidden without one. */
+  onOpenModelTrajectory: () => void;
   onOpenSelectionSideConversation: () => void;
   onOpenPlanDetail: (request: OpenScopedPlanDetailSideTabRequest) => void;
   onRevealGitFileInTree?: (path: string) => void;
@@ -766,6 +770,17 @@ export function AnimatedSidePanePanel({
             <span>{intl.formatMessage({ id: "browser.title" })}</span>
           </DropdownMenuItem>
         ) : null}
+        {activeTaskId ? (
+          <DropdownMenuItem
+            data-side-pane-add-item="model-trajectory"
+            onSelect={() => {
+              onOpenModelTrajectory();
+            }}
+          >
+            <ChartLineIcon className="size-4" />
+            <span>{intl.formatMessage({ id: "modelTrajectory.title" })}</span>
+          </DropdownMenuItem>
+        ) : null}
         {developerToolsEnabled ? (
           <DropdownMenuItem
             data-side-pane-add-item="developer-tools"
@@ -816,6 +831,12 @@ export function AnimatedSidePanePanel({
       icon: GlobeIcon,
       onOpen: onOpenBrowserTab,
     },
+    "model-trajectory": {
+      id: "model-trajectory",
+      label: intl.formatMessage({ id: "modelTrajectory.title" }),
+      icon: ChartLineIcon,
+      onOpen: onOpenModelTrajectory,
+    },
     "developer-tools": {
       id: "developer-tools",
       label: intl.formatMessage({ id: "developerTools.title" }),
@@ -826,6 +847,7 @@ export function AnimatedSidePanePanel({
   const openTabLauncherItems: OpenTabLauncherItem[] = resolveOpenTabLauncherItemIds({
     canOpenSelectionSideConversation,
     developerToolsEnabled,
+    hasActiveTask: activeTaskId !== null,
     hasReviewTab,
     supportsEmbeddedBrowser,
   })

@@ -34,6 +34,7 @@
 | TRJ07 | 唯一命中位于折叠正文且在虚拟窗口外                                                               | 搜索并导航到命中                                           | 目标记录滚入视口、对应行自动展开，命中高亮并居中定位                                                                                                                                                         | virtual/search spec        |
 | TRJ08 | 窄侧栏与完整 tool name/id                                                                        | 缩窄 Desktop renderer                                      | 页面无水平滚动；tool name 完整；可见操作列右边线误差不超过 2px                                                                                                                                               | narrow-layout spec         |
 | TRJ09 | 创建超过 32 MiB 的稀疏 model-io，尾部追加完整 recent record                                      | 刷新调用轨迹                                               | Host 只读取有界尾部、丢弃起点残行、保留 recent record，并显示 truncated 提示                                                                                                                                 | bounded-tail spec          |
+| TRJ10 | TRJ01 setup with the trajectory tab open                                                         | Close the tab, reopen from the `+` launcher                | The launcher offers the trajectory entry bound to the active task after the tab is closed; reopening remounts the timeline for the same task without the task context menu                                   | interaction spec           |
 
 ## 覆盖责任
 
