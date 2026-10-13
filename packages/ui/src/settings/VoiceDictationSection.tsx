@@ -105,9 +105,12 @@ function DesktopVoiceDictationSection() {
   const [micPeak, setMicPeak] = useState<number | null>(null);
   const micRecorderRef = useRef<VoiceDictationRecorder | null>(null);
   // Volume while dragging: persisted only on commit (pointer release), so a drag does not write
-  // setting.json on every step.
+  // setting.json on every step. The committed value stays on display until the settings write
+  // settles, so the slider, percent label, and Test button never flash back to the stale value.
   const [volumeDraft, setVolumeDraft] = useState<number | null>(null);
+  const [committedVolume, setCommittedVolume] = useState<number | null>(null);
   const [feedbackTestPlaying, setFeedbackTestPlaying] = useState(false);
+  const effectiveFeedbackVolume = volumeDraft ?? committedVolume ?? savedFeedbackVolume;
 
   const refreshModels = useCallback(async () => {
     if (!voiceDictationService) return;
@@ -241,9 +244,11 @@ function DesktopVoiceDictationSection() {
     setFeedbackTestPlaying(true);
     try {
       // The test ignores the enable toggle (Handy's play_test_sound): the volume must be
-      // adjustable before turning the sounds on.
-      await playVoiceDictationFeedbackSound("start", savedFeedbackVolume);
-      await playVoiceDictationFeedbackSound("stop", savedFeedbackVolume);
+      // adjustable before turning the sounds on. It plays the freshest value: the drag draft or
+      // the just-committed one, not the previous saved snapshot.
+      const volume = volumeDraft ?? committedVolume ?? savedFeedbackVolume;
+      await playVoiceDictationFeedbackSound("start", volume);
+      await playVoiceDictationFeedbackSound("stop", volume);
     } finally {
       setFeedbackTestPlaying(false);
     }
@@ -466,18 +471,21 @@ function DesktopVoiceDictationSection() {
                   min={0}
                   max={100}
                   step={1}
-                  value={[volumeDraft ?? savedFeedbackVolume]}
+                  value={[effectiveFeedbackVolume]}
                   onValueChange={(values) => setVolumeDraft(values[0] ?? savedFeedbackVolume)}
                   onValueCommit={(values) => {
                     const committed = values[0];
                     setVolumeDraft(null);
-                    if (committed !== undefined && committed !== savedFeedbackVolume) {
-                      void patchVoice({ feedbackVolume: committed });
-                    }
+                    if (committed === undefined || committed === savedFeedbackVolume) return;
+                    setCommittedVolume(committed);
+                    void patchVoice({ feedbackVolume: committed }).then(() => {
+                      // Saved (or failed and toasted): defer to the settings value again.
+                      setCommittedVolume((current) => (current === committed ? null : current));
+                    });
                   }}
                 />
                 <span className="w-10 shrink-0 text-right text-ui-base text-foreground-subtle">
-                  {Math.round(volumeDraft ?? savedFeedbackVolume)}%
+                  {Math.round(effectiveFeedbackVolume)}%
                 </span>
                 <Button
                   variant="outline"

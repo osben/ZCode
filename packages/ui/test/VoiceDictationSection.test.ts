@@ -387,4 +387,31 @@ describe("VoiceDictationSection feedback sounds", () => {
       });
     });
   });
+
+  it("keeps the committed volume for display and Test while the save is pending", async () => {
+    h.settings.voiceDictation = { modelId: "model-one", feedbackVolume: 50 };
+    let resolveSave!: () => void;
+    h.updateSettings.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+
+    const slider = await screen.findByRole("slider", {
+      name: "voiceDictation.feedbackVolume.title",
+    });
+    slider.focus();
+    fireEvent.keyDown(slider, { key: "ArrowRight" });
+    // Settings have not refreshed yet: the committed value must not flash back to 50%.
+    expect(screen.getByText("51%")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "voiceDictation.feedbackVolume.test" }));
+    await waitFor(() => expect(playVoiceDictationFeedbackSound).toHaveBeenCalled());
+    expect(vi.mocked(playVoiceDictationFeedbackSound).mock.calls[0]).toEqual(["start", 51]);
+
+    resolveSave();
+    await waitFor(() => expect(screen.getByText("51%")).toBeTruthy());
+  });
 });

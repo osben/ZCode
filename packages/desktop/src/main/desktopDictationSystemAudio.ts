@@ -5,10 +5,11 @@ import { PlatformChannels } from "@zcode/shared";
 /**
  * System-wide output mute used by voice dictation "mute while recording" (spec:
  * docs/ui/voice-dictation-feedback-sounds.md). The main process owns the mute so it survives
- * renderer/Host failures: the previous mute state is snapshotted when the first recording mutes
- * the output and restored when the last one releases, on quit, or when the owning renderer dies.
- * Handy-parity per-OS backends: macOS osascript, Linux wpctl→pactl→amixer; Windows stays a logged
- * no-op because preserving mute state there needs a native dependency we do not ship.
+ * renderer/Host failures: ownership is registered before the OS commands run, the previous mute
+ * state is snapshotted, and the output is restored when the last owner releases, on quit, or when
+ * the owning renderer dies. Handy-parity per-OS backends: macOS osascript, Linux
+ * wpctl→pactl→amixer; Windows stays a logged no-op because preserving mute state there needs a
+ * native dependency we do not ship.
  */
 
 const COMMAND_TIMEOUT_MS = 2_000;
@@ -127,12 +128,20 @@ function createSystemAudioBackend(
   return null;
 }
 
+/**
+ * Mute lifecycle: `muting` covers the in-flight OS commands (ownership is already registered, so a
+ * lost owner or a quit during this window still restores), `muted` means the output was muted by
+ * this session, `failed` means no mute happened and there is nothing to restore.
+ */
+type MuteSessionState = "muting" | "muted" | "failed";
+
 interface MuteSession {
-  /** Whether this session actually muted the output (false when it was already muted before). */
-  didMute: boolean;
-  owners: Map<number, { webContents: WebContents; lost: () => void }>;
-  /** Detaches one owner; releases the mute when the last owner disappears. */
-  onOwnerLost: (webContentsId: number) => void;
+  state: MuteSessionState;
+  /**
+   * Per-renderer acquisition counts: split panes share one webContents, so every recording in the
+   * same renderer must be counted individually or the first stop would unmute the others.
+   */
+  owners: Map<number, { count: number; sender: WebContents; lost: () => void }>;
 }
 
 export interface DictationSystemAudioLogger {
@@ -154,10 +163,11 @@ export function registerDesktopDictationSystemAudioIpc(options: {
   const platform = options.platform ?? process.platform;
   const backend = createSystemAudioBackend(platform, exec);
   let session: MuteSession | null = null;
-  // Serialize read/set pairs so a rapid stop/start cannot interleave snapshot and restore.
-  let chain: Promise<void> = Promise.resolve();
+  // Serialize read/set pairs so a rapid stop/start cannot interleave snapshot and restore, and so
+  // a release only resolves after the OS-level restore finished.
+  let chain: Promise<unknown> = Promise.resolve();
 
-  const enqueue = (task: () => Promise<void>) => {
+  const enqueue = <T>(task: () => Promise<T>): Promise<T> => {
     const next = chain.then(task, task);
     chain = next.catch(() => undefined);
     return next;
@@ -165,28 +175,30 @@ export function registerDesktopDictationSystemAudioIpc(options: {
 
   const describe = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-  const detachOwnerListeners = (current: MuteSession) => {
-    for (const { webContents, lost } of current.owners.values()) {
-      webContents.removeListener("destroyed", lost);
-      webContents.removeListener("render-process-gone", lost);
-    }
+  const detachOwner = (owner: { sender: WebContents; lost: () => void }) => {
+    owner.sender.removeListener("destroyed", owner.lost);
+    owner.sender.removeListener("render-process-gone", owner.lost);
   };
 
-  const restore = (sync: boolean) => {
-    const current = session;
-    if (!current) return;
-    session = null;
-    detachOwnerListeners(current);
-    if (!current.didMute || !backend) return;
+  /**
+   * Drop the session and undo its mute. Returns the unmute promise so callers inside the chain can
+   * await it; the sync variant (quit) cannot return one because an async spawn would not outlive
+   * the quit.
+   */
+  const releaseSession = (current: MuteSession, sync: boolean): Promise<void> | undefined => {
+    if (session === current) session = null;
+    for (const owner of current.owners.values()) detachOwner(owner);
+    current.owners.clear();
+    if (!backend || (current.state !== "muted" && current.state !== "muting")) return undefined;
     if (sync) {
       try {
         backend.setMutedSync(false);
       } catch (error) {
         logger.warn(`[dictation-audio] failed to restore output mute state: ${describe(error)}`);
       }
-      return;
+      return undefined;
     }
-    void backend.setMuted(false).catch((error: unknown) => {
+    return backend.setMuted(false).catch((error: unknown) => {
       logger.warn(`[dictation-audio] failed to restore output mute state: ${describe(error)}`);
     });
   };
@@ -201,59 +213,89 @@ export function registerDesktopDictationSystemAudioIpc(options: {
     if (!payload || typeof payload.active !== "boolean") return;
     if (!backend) return;
     const sender = event.sender;
-    // The enqueue promise is returned so the renderer's invoke resolves only after the OS-level
-    // change completed; the stop chime depends on that ordering to stay audible.
     if (payload.active) {
+      // The enqueue promise is returned so the renderer's invoke resolves only after the OS-level
+      // change completed; the stop chime depends on that ordering to stay audible.
       return enqueue(async () => {
-        if (!session) {
-          let alreadyMuted: boolean;
-          try {
-            alreadyMuted = await backend.readMuted();
-          } catch (error) {
-            logger.warn(
-              `[dictation-audio] failed to read output mute state, skipping mute: ${describe(error)}`,
-            );
-            return;
-          }
-          if (!alreadyMuted) {
-            try {
-              await backend.setMuted(true);
-            } catch (error) {
-              logger.warn(`[dictation-audio] failed to mute output, skipping: ${describe(error)}`);
-              return;
-            }
-          }
-          const created: MuteSession = {
-            didMute: !alreadyMuted,
-            owners: new Map(),
-            onOwnerLost: (webContentsId) => {
-              created.owners.delete(webContentsId);
-              if (created.owners.size === 0 && session === created) restore(false);
-            },
-          };
-          session = created;
-          logger.info(
-            `[dictation-audio] output ${created.didMute ? "muted" : "kept muted (already muted)"} for dictation`,
-          );
-        }
+        if (sender.isDestroyed()) return;
         const current = session;
-        if (!current.owners.has(sender.id)) {
-          const lost = () => current.onOwnerLost(sender.id);
-          current.owners.set(sender.id, { webContents: sender, lost });
-          sender.once("destroyed", lost);
-          sender.once("render-process-gone", lost);
+        if (current) {
+          // Split panes share one webContents; count each recording separately.
+          const owner = current.owners.get(sender.id);
+          if (owner) {
+            owner.count += 1;
+          } else {
+            const lost = () => {
+              if (!current.owners.delete(sender.id)) return;
+              if (current.owners.size === 0 && session === current) {
+                void enqueue(async () => {
+                  if (session === current && current.owners.size === 0) {
+                    await releaseSession(current, false);
+                  }
+                });
+              }
+            };
+            current.owners.set(sender.id, { count: 1, sender, lost });
+            sender.once("destroyed", lost);
+            sender.once("render-process-gone", lost);
+          }
+          return;
+        }
+        // Register ownership before touching the OS: if the sender dies or the app quits during
+        // the (up to 2s) commands, the owner-loss/quit paths can still restore the output.
+        const created: MuteSession = { state: "muting", owners: new Map() };
+        const lost = () => {
+          if (!created.owners.delete(sender.id)) return;
+          if (created.owners.size === 0 && session === created) {
+            void enqueue(async () => {
+              if (session === created && created.owners.size === 0) {
+                await releaseSession(created, false);
+              }
+            });
+          }
+        };
+        created.owners.set(sender.id, { count: 1, sender, lost });
+        sender.once("destroyed", lost);
+        sender.once("render-process-gone", lost);
+        session = created;
+        try {
+          const alreadyMuted = await backend.readMuted();
+          if (!alreadyMuted) {
+            await backend.setMuted(true);
+            created.state = "muted";
+            logger.info("[dictation-audio] output muted for dictation");
+          } else {
+            created.state = "failed";
+            logger.info("[dictation-audio] output kept muted (already muted) for dictation");
+          }
+        } catch (error) {
+          created.state = "failed";
+          logger.warn(`[dictation-audio] failed to mute output, skipping: ${describe(error)}`);
+        }
+        // The owner may have disappeared while the commands were in flight.
+        if (created.owners.size === 0) {
+          await releaseSession(created, false);
         }
       });
     }
     return enqueue(async () => {
-      if (!session) return;
-      session.owners.delete(sender.id);
-      if (session.owners.size === 0) restore(false);
+      const current = session;
+      if (!current) return;
+      const owner = current.owners.get(sender.id);
+      if (!owner) return;
+      owner.count -= 1;
+      if (owner.count > 0) return;
+      current.owners.delete(sender.id);
+      detachOwner(owner);
+      if (current.owners.size === 0) await releaseSession(current, false);
     });
   });
 
   // Quitting mid-recording must not leave the system muted; the sync restore is used because an
-  // async spawn would not outlive the quit. A hard kill of the whole app still leaks the mute
-  // (documented residual risk in the spec).
-  app.on("before-quit", () => restore(true));
+  // async spawn would not outlive the quit. When the mute command is still in flight, the sync
+  // unmute races it — launch order favors the unmute, but a hard kill of the whole app
+  // mid-recording still leaks the mute (documented residual risk in the spec).
+  app.on("before-quit", () => {
+    if (session) releaseSession(session, true);
+  });
 }

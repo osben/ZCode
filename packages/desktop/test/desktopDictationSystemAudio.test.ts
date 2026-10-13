@@ -19,10 +19,14 @@ const MACOS_UNMUTE = ["-e", "set volume output muted false"];
 
 /** Minimal WebContents double: records the per-owner listeners so tests can emit them. */
 let nextSenderId = 1;
-function createSender(): WebContents & { emit(event: string): void } {
+function createSender(options: { destroyed?: boolean } = {}): WebContents & {
+  emit(event: string): void;
+  isDestroyed(): boolean;
+} {
   const listeners = new Map<string, Set<() => void>>();
   const sender = {
     id: nextSenderId++,
+    destroyed: options.destroyed === true,
     once(event: string, handler: () => void) {
       const set = listeners.get(event) ?? new Set<() => void>();
       set.add(handler);
@@ -36,8 +40,11 @@ function createSender(): WebContents & { emit(event: string): void } {
     emit(event: string) {
       for (const handler of listeners.get(event) ?? []) handler();
     },
+    isDestroyed() {
+      return sender.destroyed;
+    },
   };
-  return sender as WebContents & { emit(event: string): void };
+  return sender as WebContents & { emit(event: string): void; isDestroyed(): boolean };
 }
 
 function register(options: {
@@ -78,6 +85,35 @@ describe("desktop dictation system audio mute", () => {
     ]);
   });
 
+  it("resolves release only after the OS unmute completed", async () => {
+    let releaseUnmute!: () => void;
+    const execAsync = vi.fn<(file: string, args: string[]) => Promise<string>>(
+      async (file, args) => {
+        if (file === "osascript" && args[1] === MACOS_UNMUTE[1]) {
+          await new Promise<void>((resolve) => {
+            releaseUnmute = resolve;
+          });
+        }
+        return args === MACOS_READ ? "false\n" : "";
+      },
+    );
+    const { handler } = register({ platform: "darwin", execAsync });
+    const sender = createSender();
+
+    await handler({ sender }, { active: true });
+    const releasing = handler({ sender }, { active: false });
+    let released = false;
+    void releasing.then(() => {
+      released = true;
+    });
+    await Promise.resolve();
+    expect(released).toBe(false);
+
+    releaseUnmute();
+    await releasing;
+    expect(execAsync).toHaveBeenCalledWith("osascript", MACOS_UNMUTE);
+  });
+
   it("keeps an already muted output muted without unmuting it on release", async () => {
     const execAsync = vi
       .fn<(file: string, args: string[]) => Promise<string>>()
@@ -106,7 +142,7 @@ describe("desktop dictation system audio mute", () => {
 
     expect(execAsync).toHaveBeenCalledTimes(1);
     expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("failed to read output mute state"),
+      expect.stringContaining("failed to mute output, skipping"),
     );
   });
 
@@ -141,6 +177,17 @@ describe("desktop dictation system audio mute", () => {
 
     expect(execAsync).not.toHaveBeenCalled();
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("win32"));
+  });
+
+  it("ignores an apply from an already destroyed sender", async () => {
+    const execAsync = vi.fn<(file: string, args: string[]) => Promise<string>>();
+    const { handler } = register({ platform: "darwin", execAsync });
+
+    await expect(
+      handler({ sender: createSender({ destroyed: true }) }, { active: true }),
+    ).resolves.toBeUndefined();
+
+    expect(execAsync).not.toHaveBeenCalled();
   });
 
   it("restores the output synchronously on before-quit", async () => {
@@ -179,11 +226,55 @@ describe("desktop dictation system audio mute", () => {
     });
   });
 
+  it("restores automatically when the owner disappears while the mute is still in flight", async () => {
+    let resolveRead!: (value: string) => void;
+    const execAsync = vi.fn<(file: string, args: string[]) => Promise<string>>(
+      (file, args) =>
+        new Promise((resolve) => {
+          if (file === "osascript" && args[1] === MACOS_READ[1]) {
+            resolveRead = () => resolve("false\n");
+          } else {
+            resolve("");
+          }
+        }),
+    );
+    const { handler } = register({ platform: "darwin", execAsync });
+    const sender = createSender();
+
+    const applying = handler({ sender }, { active: true });
+    await vi.waitFor(() => expect(resolveRead).toBeDefined());
+    sender.emit("destroyed");
+    resolveRead("false\n");
+    await applying;
+
+    await vi.waitFor(() => {
+      expect(execAsync).toHaveBeenCalledWith("osascript", MACOS_UNMUTE);
+    });
+  });
+
+  it("counts acquisitions per renderer so split panes keep the mute for each other", async () => {
+    const execAsync = vi
+      .fn<(file: string, args: string[]) => Promise<string>>()
+      .mockResolvedValue("false\n");
+    const { handler } = register({ platform: "darwin", execAsync });
+    const sender = createSender();
+
+    // Two recordings in the same renderer (same webContents): one apply each.
+    await handler({ sender }, { active: true });
+    await handler({ sender }, { active: true });
+    await handler({ sender }, { active: false });
+    expect(execAsync).not.toHaveBeenCalledWith("osascript", MACOS_UNMUTE);
+
+    await handler({ sender }, { active: false });
+    await vi.waitFor(() => {
+      expect(execAsync).toHaveBeenCalledWith("osascript", MACOS_UNMUTE);
+    });
+  });
+
   it("keeps the mute while another recording window still owns it", async () => {
     const execAsync = vi
       .fn<(file: string, args: string[]) => Promise<string>>()
-      .mockResolvedValueOnce("false\n")
-      .mockResolvedValue("true\n");
+      .mockResolvedValue("false\n");
     const { handler } = register({ platform: "darwin", execAsync });
     const senderA = createSender();
     const senderB = createSender();
