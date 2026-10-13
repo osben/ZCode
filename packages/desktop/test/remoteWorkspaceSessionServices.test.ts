@@ -33,6 +33,8 @@ function makeServices(id: string): IServiceAccessor {
     broadcastService: { id, service: "broadcast" },
     modelSelectionService: { id, service: "model-selection" },
     providerSettingsService: { id, service: "provider-settings" },
+    userInstructionsService: { id, service: "user-instructions" },
+    outputStyleService: { id, service: "output-style" },
   } as unknown as IServiceAccessor;
 }
 
@@ -69,6 +71,11 @@ describe("buildRemoteWorkspaceSessionServices", () => {
     // hooksService 曾被 ...baseServices 展开静默回落到本机 host，远程机器上的
     // workspace hooks（含待审项）永远加载不出来。hooks 读写与 trust 授权必须打到远端。
     expect(merged.hooksService).toBe(remoteServices.hooksService);
+    // Same fall-through class for host-scope user files (~/.zcode/AGENTS.md, ~/.zcode/output-styles):
+    // a local instance would silently edit the desktop machine's files while the remote CLI reads
+    // the remote host's copies, so both services must route to the remote accessor.
+    expect(merged.userInstructionsService).toBe(remoteServices.userInstructionsService);
+    expect(merged.outputStyleService).toBe(remoteServices.outputStyleService);
 
     expect(merged.clientScenesService).toBe(baseServices.clientScenesService);
     expect(merged.settingService).toBe(baseServices.settingService);
