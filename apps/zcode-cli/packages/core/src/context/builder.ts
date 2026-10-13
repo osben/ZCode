@@ -97,7 +97,7 @@ export class ContextBuilder {
       );
     }
     const isWorkflowActor = workflowActor !== undefined;
-    const promptOverrides = this.config.systemPromptOverrides;
+    const promptOverrides = isWorkflowActor ? undefined : this.config.systemPromptOverrides;
 
     // 1. CLI / product prefix. Keep this as the short leading identity block.
     // "You are ZCode, an interactive coding agent" is the wrong identity for a subagent that speaks only to a script
