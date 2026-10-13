@@ -45,10 +45,6 @@ export function playVoiceDictationFeedbackSound(
   // recording). Pausing the first playback without settling its promise would hang that caller —
   // e.g. the recording whose system mute is queued behind the chime — so settle it before
   // resetting the shared element for the new play.
-  // Two plays can overlap on the shared element (split panes, settings preview during a
-  // recording). Pausing the first playback without settling its promise would hang that caller —
-  // e.g. the recording whose system mute is queued behind the chime — so settle it before
-  // resetting the shared element for the new play.
   pendingFinishByKind[kind]?.();
   // Reset before replaying: a reused element parked at the end would otherwise stay silent.
   audio.pause();

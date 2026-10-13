@@ -89,7 +89,12 @@ async function resolveWpctlDefaultSink(exec: { async: ExecAsync }): Promise<stri
   const status = await exec.async("wpctl", ["status"]);
   const sinksIndex = status.indexOf("Sinks:");
   if (sinksIndex === -1) throw new Error("wpctl status has no Sinks section");
-  const defaultEntry = status.slice(sinksIndex).match(/^\W*\*\s*(\d+)\./m);
+  // Bound the search to the Sinks block: without a starred sink, a starred Sources entry would
+  // otherwise match and the backend would end up muting the microphone.
+  const afterHeading = status.slice(sinksIndex + "Sinks:".length);
+  const nextSection = afterHeading.search(/^\S/m);
+  const sinksBlock = nextSection === -1 ? afterHeading : afterHeading.slice(0, nextSection);
+  const defaultEntry = sinksBlock.match(/^\W*\*\s*(\d+)\./m);
   if (!defaultEntry) throw new Error("wpctl status has no default sink");
   return defaultEntry[1];
 }
