@@ -3655,6 +3655,26 @@ const zhCN: Record<string, string> = {
   "settings.modelProvider.slot.opus": "Opus（复杂任务）",
   "settings.modelProvider.slot.reasoning": "Reasoning（推理任务）",
   "settings.modelProvider.mappingNotSet": "未设置",
+  "settings.modelProvider.chatgpt.badge.subscription": "订阅",
+  "settings.modelProvider.chatgpt.description":
+    "通过你的 ChatGPT Plus/Pro 订阅运行 OpenAI 模型（OpenAI 官方令牌共享计划）。用量计入套餐 5 小时窗口。",
+  "settings.modelProvider.chatgpt.notSignedIn": "使用 ChatGPT 账号登录后即可使用套餐模型。",
+  "settings.modelProvider.chatgpt.continueWithChatgpt": "通过 ChatGPT 继续",
+  "settings.modelProvider.chatgpt.waiting": "等待 ChatGPT 授权…",
+  "settings.modelProvider.chatgpt.timeout": "ChatGPT 授权超时，请重试。",
+  "settings.modelProvider.chatgpt.loginFailed": "ChatGPT 套餐登录失败。",
+  "settings.modelProvider.chatgpt.signedInAs": "已登录：{name}",
+  "settings.modelProvider.chatgpt.entitled":
+    "正在使用 ChatGPT 套餐：符合条件的请求走套餐额度，用量在 ChatGPT 设置中管理。",
+  "settings.modelProvider.chatgpt.notEntitled":
+    "已登录，但未开启套餐用量（授权缺少 ChatGPT 套餐权限）。请重新登录以授权。",
+  "settings.modelProvider.chatgpt.signOut": "退出登录",
+  "settings.modelProvider.chatgpt.manageUsage": "管理用量",
+  "settings.modelProvider.chatgpt.firstRun.title": "你正在使用 ChatGPT 套餐",
+  "settings.modelProvider.chatgpt.firstRun.body":
+    "本应用中符合条件的 AI 请求将使用你的 ChatGPT 套餐。用量在所有使用该套餐的应用间共享，并在 ChatGPT 设置中管理。",
+  "settings.modelProvider.chatgpt.firstRun.gotIt": "知道了",
+  "settings.modelProvider.chatgpt.pickerBadge": "订阅",
   "settings.modelProvider.presetTitle": "智谱",
   "settings.modelProvider.presetDescription":
     "内置 Z.ai 与 BigModel 供应商，支持通过 OAuth 辅助完成配置。",

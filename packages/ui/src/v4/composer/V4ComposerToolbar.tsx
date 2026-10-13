@@ -804,6 +804,9 @@ function V4ComposerModelControlsImpl({
       apiKeyBadgeLabel: intl.formatMessage({
         id: "settings.modelProvider.connectionMode.apiKeyBadge",
       }),
+      chatgptPlanBadgeLabel: intl.formatMessage({
+        id: "settings.modelProvider.chatgpt.pickerBadge",
+      }),
       codingPlanLabel: intl.formatMessage({
         id: "settings.modelProvider.connectionMode.codingPlan",
       }),

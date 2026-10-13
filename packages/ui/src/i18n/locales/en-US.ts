@@ -3893,6 +3893,27 @@ const enUS: Record<string, string> = {
   "settings.modelProvider.slot.opus": "Opus (complex tasks)",
   "settings.modelProvider.slot.reasoning": "Reasoning (reasoning tasks)",
   "settings.modelProvider.mappingNotSet": "Not set",
+  "settings.modelProvider.chatgpt.badge.subscription": "Subscription",
+  "settings.modelProvider.chatgpt.description":
+    "Run agents on OpenAI models through your ChatGPT Plus/Pro plan (official OpenAI token sharing). Usage counts against the plan's 5-hour window.",
+  "settings.modelProvider.chatgpt.notSignedIn":
+    "Sign in with your ChatGPT account to use plan-backed models.",
+  "settings.modelProvider.chatgpt.continueWithChatgpt": "Continue with ChatGPT",
+  "settings.modelProvider.chatgpt.waiting": "Waiting for ChatGPT authorization…",
+  "settings.modelProvider.chatgpt.timeout": "ChatGPT authorization timed out. Please try again.",
+  "settings.modelProvider.chatgpt.loginFailed": "ChatGPT plan sign-in failed.",
+  "settings.modelProvider.chatgpt.signedInAs": "Signed in as {name}",
+  "settings.modelProvider.chatgpt.entitled":
+    "Using ChatGPT plan: eligible AI requests run on your plan. Usage is managed in ChatGPT settings.",
+  "settings.modelProvider.chatgpt.notEntitled":
+    "Signed in, but plan usage is not enabled (consent lacked the ChatGPT plan scope). Sign in again to grant it.",
+  "settings.modelProvider.chatgpt.signOut": "Sign out",
+  "settings.modelProvider.chatgpt.manageUsage": "Manage usage",
+  "settings.modelProvider.chatgpt.firstRun.title": "You're using your ChatGPT plan",
+  "settings.modelProvider.chatgpt.firstRun.body":
+    "Eligible AI requests in this app use your ChatGPT plan. Usage is shared across all apps on the plan and managed in ChatGPT settings.",
+  "settings.modelProvider.chatgpt.firstRun.gotIt": "Got it",
+  "settings.modelProvider.chatgpt.pickerBadge": "Subscription",
   "settings.modelProvider.presetTitle": "Providers",
   "settings.usage.sectionTitle": "Usage stats",
   "settings.usage.sectionDescription": "Built from local app session history.",

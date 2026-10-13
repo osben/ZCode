@@ -5,6 +5,7 @@ import {
   type ZCodeProviderAccountAccess,
   type ZCodeProvider,
 } from "@zcode/shared";
+import type { ProviderConfigObject } from "@zcode/provider";
 import type { ModelSelectionView } from "@zcode/services";
 import type { ModelSelectGroup } from "@/ModelConfigSelect.js";
 import { decodeCustomModelValue, encodeCustomModelValue } from "@/lib/zcodeCustomModelValue.js";
@@ -13,6 +14,7 @@ import { shouldShowModelVisionBadge } from "@/lib/modelVisionBadge.js";
 export interface ModelProviderGroupLabelOptions {
   apiKeyLabel?: string;
   apiKeyBadgeLabel?: string;
+  chatgptPlanBadgeLabel?: string;
   codingPlanLabel?: string;
   codingPlanBadgeLabel?: string;
   startPlanLabel?: string;
@@ -44,12 +46,23 @@ export function buildRegistryModelSelectGroups(
     const accountPresentation = accountAccess.success
       ? getRegistryAccountProviderGroupPresentation(provider.providerId, accountAccess.data, labels)
       : null;
+    // Visual distinction inside the picker: the ChatGPT plan is subscription-backed while the
+    // api.openai.com API-key provider uses a personal key — both share the OpenAI models.
+    const accessTypeBadge = getAccessTypeGroupBadge(
+      provider.config.access,
+      provider.config.api?.baseUrl,
+      labels,
+    );
 
     return [
       {
         key: `registry-provider:${provider.providerId}`,
         label: accountPresentation?.label || provider.providerName?.trim() || provider.providerId,
-        ...(accountPresentation?.labelBadge ? { labelBadge: accountPresentation.labelBadge } : {}),
+        ...(accountPresentation?.labelBadge
+          ? { labelBadge: accountPresentation.labelBadge }
+          : accessTypeBadge
+            ? { labelBadge: accessTypeBadge }
+            : {}),
         ...(accountPresentation ? { directItems: true } : {}),
         items: provider.models.map(({ modelId, config }) => ({
           key: `registry-provider:${provider.providerId}:${modelId}`,
@@ -66,6 +79,30 @@ export function buildRegistryModelSelectGroups(
       },
     ];
   });
+}
+
+function getAccessTypeGroupBadge(
+  access: ProviderConfigObject["access"],
+  baseUrl: string | null | undefined,
+  labels: ModelProviderGroupLabelOptions,
+): string | undefined {
+  if (access?.type === "chatgpt-account") {
+    return labels.chatgptPlanBadgeLabel ?? "Subscription";
+  }
+  if (access?.type === "api-key" && isApiOpenAiBaseUrl(baseUrl)) {
+    return labels.apiKeyBadgeLabel ?? "API";
+  }
+  return undefined;
+}
+
+function isApiOpenAiBaseUrl(baseUrl: string | null | undefined): boolean {
+  if (!baseUrl) return false;
+  try {
+    const hostname = new URL(baseUrl).hostname.toLowerCase();
+    return hostname === "api.openai.com" || hostname.endsWith(".api.openai.com");
+  } catch {
+    return false;
+  }
 }
 
 function getRegistryAccountProviderGroupPresentation(

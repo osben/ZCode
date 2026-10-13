@@ -51,6 +51,8 @@ import {
   ProviderFamilyPlanModeSwitch,
 } from "./ProviderFamilyModeHeader.js";
 import { resolveStartPlanEntitlementSummary } from "./StartPlanCard.js";
+import { ChatGptPlanDetail } from "./ChatGptPlanDetail.js";
+import { isChatGptPlanSubscriptionProviderId } from "@/lib/chatgptPlanProvider.js";
 import { useCodingPlanProducts } from "./useCodingPlanProducts.js";
 import { useEnterpriseCodingPlanProducts } from "./useEnterpriseCodingPlanProducts.js";
 import { useUsageEntitlement } from "@/hooks/useUsageEntitlement.js";
@@ -394,6 +396,15 @@ export function ModelProviderSectionDetail({
 
   if (!selectedNavItem) {
     return <ModelProviderLoadingCard loadingLabel={loadingLabel} />;
+  }
+
+  // The ChatGPT plan (SIWC) has its own identity domain and detail page; it does not ride
+  // the zai/bigmodel preset machinery (connection modes, plan cards, entitlements).
+  if (
+    selectedNavItem.type === "preset" &&
+    isChatGptPlanSubscriptionProviderId(selectedNavItem.presetId)
+  ) {
+    return <ChatGptPlanDetail />;
   }
 
   if (selectedNavItem.type === "preset") {

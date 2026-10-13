@@ -14,6 +14,7 @@ import {
   resolveProviderFamilyDomainFromOAuthProvider,
   type OAuthProviderId,
 } from "@zcode/shared";
+import { isChatGptPlanSubscriptionProviderId } from "@/lib/chatgptPlanProvider.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import {
   CODING_PLAN_PROVIDER_SPECS,
@@ -181,6 +182,21 @@ export function useModelProviderNavigation({
         id: "preset",
         title: intl.formatMessage({ id: "settings.modelProvider.presetTitle" }),
         items: [
+          // ChatGPT plan is an independent identity domain: always listed, never filtered
+          // by the zai/bigmodel active-provider family scope.
+          ...modelProviders
+            .filter((provider) => isChatGptPlanSubscriptionProviderId(provider.providerId))
+            .map((provider) => ({
+              key: createPresetProviderNodeKey(BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan),
+              type: "preset" as const,
+              presetId: BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan,
+              label: "ChatGPT Plan",
+              logo: provider.config.logo,
+              provider,
+              displayName: "ChatGPT Plan",
+              statusProvider: provider,
+              statusActive: provider.executable === true,
+            })),
           ...presetProviders.map(({ id, displayName, provider }) => {
             const statusProvider = resolvePresetFamilyStatusProvider({
               presetId: id,
