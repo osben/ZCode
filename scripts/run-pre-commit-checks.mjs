@@ -1,45 +1,92 @@
 #!/usr/bin/env node
-// Pre-commit checks over the staged file paths passed as argv (embedded by
-// lint-staged.pre-commit.config.mjs). Runs the tools in a fixed order so they
-// never race on the same file:
+// Pre-commit checks over the staged file paths passed as argv (appended to
+// string tasks by lint-staged.pre-commit.config.mjs). Runs the tools in a
+// fixed order so they never race on the same file:
 //   1. oxfmt rewrites files in place (its default mode); lint-staged then
 //      re-stages the fixed content, so the commit contains formatted code.
-//   2. oxlint checks the code files (JSON is not lintable — oxlint exits 1
-//      with "No files found" on a JSON-only list) and blocks the commit on
-//      error-severity findings, mirroring the `pnpm lint` step of pre-push.
+//   2. oxlint checks whatever it considers lintable among the same files and
+//      blocks the commit on error-severity findings, mirroring the `pnpm
+//      lint` step of the pre-push hook.
+//
+// Which files each tool actually processes is the tool's own decision:
+// oxfmt honors .prettierignore (apps/zcode-cli/ ships its own newer oxfmt)
+// and oxlint honors .oxlintrc.json ignorePatterns plus file extensions. When
+// every passed file gets filtered out on one side, that tool reports a
+// zero-targets error ("Expected at least one target file" / "No files found
+// to lint") — that specific outcome is a pass, not a failure.
+//
+// Tools are launched as `process.execPath <package bin .js>`: npm/pnpm expose
+// package bins through .cmd shims on Windows, which spawnSync cannot execute
+// without a shell, and both oxlint and oxfmt ship JavaScript bin launchers.
 
 import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const LINTED_SUFFIXES = new Set([".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".mts", ".cts"]);
+const NO_TARGET_FILES_HINTS = [
+  "Expected at least one target file", // oxfmt: every passed file is excluded
+  "No files found to lint", // oxlint: every passed file is excluded or not lintable
+];
 
-function normalizePath(file) {
-  return file.replaceAll("\\", "/");
+export function hasNoTargetFiles(output) {
+  return NO_TARGET_FILES_HINTS.some((hint) => output.includes(hint));
 }
 
-function suffixOf(file) {
-  const dot = file.lastIndexOf(".");
-  return dot === -1 ? "" : file.slice(dot);
+export function resolveToolBin(packageName) {
+  const require = createRequire(import.meta.url);
+  const packageJsonPath = require.resolve(`${packageName}/package.json`);
+  const binField = JSON.parse(readFileSync(packageJsonPath, "utf8")).bin;
+  const binRelativePath = typeof binField === "string" ? binField : binField[packageName];
+  if (!binRelativePath) {
+    throw new Error(`pre-commit: package ${packageName} declares no bin`);
+  }
+  const binPath = join(dirname(packageJsonPath), binRelativePath);
+  if (!existsSync(binPath)) {
+    throw new Error(`pre-commit: bin not found for ${packageName}: ${binPath}`);
+  }
+  return binPath;
 }
 
-function runTool(command, args) {
-  const result = spawnSync(command, args, { stdio: "inherit" });
+function runTool(packageName, args) {
+  const result = spawnSync(process.execPath, [resolveToolBin(packageName), ...args], {
+    stdio: ["inherit", "pipe", "pipe"],
+    encoding: "utf8",
+  });
   if (result.error) {
-    console.error(`pre-commit: failed to run ${command}: ${result.error.message}`);
+    console.error(`pre-commit: failed to run ${packageName}: ${result.error.message}`);
     process.exit(1);
   }
+  const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
   if (result.status !== 0) {
+    if (hasNoTargetFiles(output)) {
+      return;
+    }
+    if (output.trim().length > 0) {
+      console.error(output.trimEnd());
+    }
     process.exit(result.status ?? 1);
+  }
+  if (output.trim().length > 0) {
+    // Non-blocking tool output (e.g. oxlint warnings) stays visible.
+    console.log(output.trimEnd());
   }
 }
 
-const files = process.argv.slice(2).map(normalizePath);
-if (files.length === 0) {
-  process.exit(0);
+function main() {
+  const files = process.argv.slice(2).map((file) => file.replaceAll("\\", "/"));
+  if (files.length === 0) {
+    return;
+  }
+
+  runTool("oxfmt", files);
+  runTool("oxlint", files);
 }
 
-runTool("oxfmt", files);
-
-const lintedFiles = files.filter((file) => LINTED_SUFFIXES.has(suffixOf(file)));
-if (lintedFiles.length > 0) {
-  runTool("oxlint", lintedFiles);
+const invokedDirectly =
+  typeof process.argv[1] === "string" &&
+  realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+if (invokedDirectly) {
+  main();
 }

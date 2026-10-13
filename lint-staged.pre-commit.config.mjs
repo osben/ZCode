@@ -4,25 +4,19 @@
 // push time — and a formatter in write mode would rewrite working-tree files
 // mid-push. This file is only consumed by .husky/pre-commit.
 
-// Function tasks in lint-staged do NOT get the staged files appended to their
-// argv (see getSpawnedTasks.js: "Function tasks are meant to generate the file
-// list themselves"), so the file list must be embedded into the command string.
-// lint-staged spawns without a shell (argv-parsed via string-argv), which keeps
-// the quoting below safe from cmd.exe metacharacter expansion on Windows.
+// The task is a plain string on purpose: lint-staged appends the matched
+// staged files to string tasks directly as spawn argv — no shell, no
+// string-argv parsing — which keeps filenames containing quotes, spaces or
+// percent signs intact. (Function tasks get no appended files and would have
+// to embed the list into a command string; that route corrupted paths with
+// apostrophes because string-argv does not understand POSIX quote escapes.)
+// scripts/run-pre-commit-checks.mjs then runs oxfmt (write mode) and oxlint
+// over the appended paths in a fixed order.
 
 const FORMATTED_EXTENSIONS = ["js", "mjs", "cjs", "jsx", "ts", "tsx", "mts", "cts", "json"];
-
-function shellQuote(value) {
-  if (process.platform === "win32") {
-    return `"${value.replaceAll('"', '\\"')}"`;
-  }
-
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
 
 const STAGED_FILES_GLOB = `**/*.{${FORMATTED_EXTENSIONS.join(",")}}`;
 
 export default {
-  [STAGED_FILES_GLOB]: (files) =>
-    `node scripts/run-pre-commit-checks.mjs ${files.map(shellQuote).join(" ")}`,
+  [STAGED_FILES_GLOB]: "node scripts/run-pre-commit-checks.mjs",
 };
