@@ -27,7 +27,7 @@ export const ukUA: ZCodeCopy = {
   app-server Запустити stdio-сервер застосунку ZCode Protocol
   commands   Показати користувацькі слеш-команди (\`commands list\`)
   doctor     Перевірити середовище виконання та припущення пакування
-  login [zai|bigmodel]  Увійти через авторизацію в браузері
+  login [zai|bigmodel|chatgpt]  Увійти через авторизацію в браузері
   logout     Видалити спільні облікові дані входу Z.AI
   plugins    Керувати плагінами й маркетплейсами (\`plugins list|install|uninstall|enable|disable|update|validate|marketplace ...\`; псевдонім: plugin)
   skills     Показати локальні навички (\`skills list\`)
