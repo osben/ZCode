@@ -231,9 +231,9 @@ ${config.content}`;
   }
 
   async function getUserStylesDirectory(): Promise<{ path: string }> {
-    const stylesDir = getUserOutputStylesDir();
-    await mkdir(stylesDir, { recursive: true });
-    return { path: stylesDir };
+    // Pure path computation: reading the location must not create the directory on disk
+    // (writes mkdir on their own, and merely opening Settings should stay side-effect free).
+    return { path: getUserOutputStylesDir() };
   }
 
   return {

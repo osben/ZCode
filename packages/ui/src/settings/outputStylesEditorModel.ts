@@ -25,6 +25,14 @@ export function baseStyleId(styleId: string): string {
   return styleId.startsWith(CUSTOM_ID_PREFIX) ? styleId.slice(CUSTOM_ID_PREFIX.length) : styleId;
 }
 
+/**
+ * Display-only path join for the editor's future-file hints. The directory comes from the
+ * target host, so honor either separator style it ends with; this is not used for file IO.
+ */
+export function outputStyleFilePath(directory: string, filename: string): string {
+  return /[\\/]$/.test(directory) ? `${directory}${filename}` : `${directory}/${filename}`;
+}
+
 export function isOutputStyleDraftDirty(
   draft: OutputStyleDraft,
   baseline: OutputStyleDraft | null,

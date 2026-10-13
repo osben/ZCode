@@ -96,6 +96,21 @@ falls back to the file name.
   styles, since edits keep the existing file name and cannot overwrite anything.
 - Locales: en-US, zh-CN, uk-UA (catalog parity test).
 
+### Fresh-install transparency
+
+On a fresh install no `output-styles/` directory and no files exist; built-ins render from the
+code constants. The UI makes the file materialization explicit:
+
+- The section header shows the storage directory path with a "show in file manager" action.
+  Reading the path never creates the directory (`getUserStylesDirectory` is a pure lookup);
+  the first style write materializes it.
+- Customizing a built-in with no override file shows a banner in the editor: saving creates
+  the override file at `<path>`; "Restore default" deletes it again. The editor prefills the
+  constant text, so the constant literally becomes the file body.
+- Creating a custom style shows the future file path live, derived from the name.
+- The `default` style is not editable: the runtime loader ignores an override for id
+  `default` (it means "no style"), so the row offers no edit action.
+
 ## Non-editable prompt surface
 
 Output styles only replace the agent's tone intro and append an `# Output Style` section.

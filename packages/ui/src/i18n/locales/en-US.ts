@@ -7685,6 +7685,12 @@ const enUS: Record<string, string> = {
   "settings.outputStyles.effectHint":
     'New sessions pick up the active style. Editing a built-in style saves an override file; "Restore default" deletes it.',
   "chat.highspeed.label": "Highspeed",
+  "settings.outputStyles.storageLocation": "Style files are stored in:",
+  "settings.outputStyles.reveal": "Show in file manager",
+  "settings.outputStyles.editor.overrideHint":
+    'This style\'s default text is built into the app. Saving creates an override file at {path}; "Restore default" deletes it again.',
+  "settings.outputStyles.editor.fileLocation": "File: {path}",
+  "settings.outputStyles.editor.saveAs": "Will be saved as: {path}",
   "chat.highspeed.expiresAt": "Highspeed card expires at {time}",
   "chat.highspeed.modelLocked": "Model is locked while Highspeed is active",
   "chat.highspeed.originalModel": "Original model: {model}",

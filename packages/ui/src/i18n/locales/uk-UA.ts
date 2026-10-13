@@ -7272,6 +7272,12 @@ const ukUA: Record<string, string> = {
     'Нові сесії використовують активний стиль. Редагування вбудованого стилю зберігає файл перевизначення; "Відновити стандартний" видаляє його.',
   // ── Ключі, додані синхронізацією з upstream v3.15.1 ──
   "rewards.title": "Нагороди",
+  "settings.outputStyles.storageLocation": "Файли стилів зберігаються в:",
+  "settings.outputStyles.reveal": "Показати у файловому менеджері",
+  "settings.outputStyles.editor.overrideHint":
+    "Стандартний текст цього стилю вбудовано в застосунок. Збереження створить файл перевизначення за шляхом {path}; «Відновити стандартний» знову видалить його.",
+  "settings.outputStyles.editor.fileLocation": "Файл: {path}",
+  "settings.outputStyles.editor.saveAs": "Буде збережено як: {path}",
   "rewards.menuTitle": "Запросити друга",
   "rewards.menuBadge": "Нагороди",
   "rewards.loadFailed": "Не вдалося завантажити цю сторінку. Спробуйте ще раз.",

@@ -7368,6 +7368,12 @@ const zhCN: Record<string, string> = {
   "settings.outputStyles.conflict.overwrite": "覆盖",
   "settings.outputStyles.effectHint":
     "新会话会使用当前启用的风格。编辑内置风格会保存覆盖文件；“恢复默认”会删除该文件。",
+  "settings.outputStyles.storageLocation": "风格文件保存位置：",
+  "settings.outputStyles.reveal": "在文件管理器中显示",
+  "settings.outputStyles.editor.overrideHint":
+    "该样式的默认文本内置于应用中。保存将创建覆盖文件：{path}；“恢复默认”会再次删除该文件。",
+  "settings.outputStyles.editor.fileLocation": "文件：{path}",
+  "settings.outputStyles.editor.saveAs": "将保存为：{path}",
   "chat.highspeed.label": "加速中",
   "chat.highspeed.expiresAt": "加速卡有效至 {time}",
   "chat.highspeed.modelLocked": "加速期间模型已锁定",

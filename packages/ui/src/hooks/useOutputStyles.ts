@@ -37,6 +37,8 @@ export interface OutputStylesView {
   isRemote: boolean;
   status: OutputStylesStatus;
   styles: readonly OutputStyle[];
+  /** Storage directory on the target host (pure lookup; does not create it). */
+  stylesDirectory: string | null;
   activeStyleId: string | null;
   activatingStyleId: string | null;
   editor: OutputStylesEditorState | null;
@@ -84,6 +86,7 @@ export function useOutputStyles(target: UserInstructionsHostTarget): OutputStyle
 
   const [status, setStatus] = useState<OutputStylesStatus>("loading");
   const [styles, setStyles] = useState<readonly OutputStyle[]>([]);
+  const [stylesDirectory, setStylesDirectory] = useState<string | null>(null);
   const [activeStyleId, setActiveStyleId] = useState<string | null>(null);
   const [activatingStyleId, setActivatingStyleId] = useState<string | null>(null);
   const [editor, setEditor] = useState<OutputStylesEditorState | null>(null);
@@ -94,6 +97,7 @@ export function useOutputStyles(target: UserInstructionsHostTarget): OutputStyle
     loadVersionRef.current += 1;
     loadedHostKeyRef.current = null;
     setStyles([]);
+    setStylesDirectory(null);
     setActiveStyleId(null);
     setEditor(null);
     setStatus("loading");
@@ -104,18 +108,21 @@ export function useOutputStyles(target: UserInstructionsHostTarget): OutputStyle
     loadVersionRef.current = version;
     setStatus("loading");
     try {
-      const [listResult, activeResult] = await Promise.all([
+      const [listResult, activeResult, directoryResult] = await Promise.all([
         serviceRef.current.listStyles(),
         serviceRef.current.getActiveStyle(),
+        serviceRef.current.getUserStylesDirectory(),
       ]);
       if (loadVersionRef.current !== version) return;
       loadedHostKeyRef.current = key;
       setStyles(listResult.styles);
+      setStylesDirectory(directoryResult.path);
       setActiveStyleId(activeResult.styleId);
       setStatus("ready");
     } catch (error) {
       if (loadVersionRef.current !== version) return;
       setStyles([]);
+      setStylesDirectory(null);
       setActiveStyleId(null);
       const unsupported = isUnknownChannelError(error);
       setStatus(unsupported ? "unsupported" : "failed");
@@ -339,6 +346,7 @@ export function useOutputStyles(target: UserInstructionsHostTarget): OutputStyle
     isRemote,
     status: effectiveStatus,
     styles,
+    stylesDirectory,
     activeStyleId,
     activatingStyleId,
     editor,

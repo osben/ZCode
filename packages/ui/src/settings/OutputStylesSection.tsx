@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Check, Monitor, Plus, RotateCcw, Server, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Check, FolderOpen, Monitor, Plus, RotateCcw, Server, Trash2 } from "lucide-react";
 import {
   TID_SETTINGS_INSTRUCTIONS_RETRY,
   TID_SETTINGS_OUTPUT_STYLES_ROW,
@@ -7,6 +7,8 @@ import {
 } from "@zcode/shared";
 import { Alert, AlertDescription } from "@/components/ui/alert.js";
 import { Button } from "@/components/ui/button.js";
+import { toast } from "@/components/ui/toast.js";
+import { usePlatform } from "@/hooks/usePlatform.js";
 import { useOutputStyles, type OutputStylesView } from "@/hooks/useOutputStyles.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { formatRemoteWorkspaceHeaderHostLabel } from "@/lib/remoteWorkspaceHistory.js";
@@ -135,11 +137,41 @@ function DesktopOutputStylesSection({
           </AlertDescription>
         </Alert>
       ) : null}
+      <StorageLocationRow view={view} intl={intl} />
       <StylesList view={view} intl={intl} />
       <p className="text-ui-sm leading-5 text-foreground-subtle">
         {intl.formatMessage({ id: "settings.outputStyles.effectHint" })}
       </p>
       <OutputStylesConflictDialog view={view} intl={intl} />
+    </div>
+  );
+}
+
+/**
+ * Where style files live on the target host. Reading the path never creates the directory;
+ * it is materialized by the first style write, so a fresh install stays clean until then.
+ */
+function StorageLocationRow({ view, intl }: { view: OutputStylesView; intl: Intl }) {
+  const platform = usePlatform();
+  const reveal = useCallback(async () => {
+    const directory = view.stylesDirectory;
+    if (!directory) return;
+    const result = await platform.openInFileManager(directory);
+    if (!result.success) {
+      toast(intl.formatMessage({ id: "appHeader.openInFileManagerFailed" }));
+    }
+  }, [intl, platform, view.stylesDirectory]);
+  if (view.status !== "ready" || !view.stylesDirectory) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-ui-sm text-foreground-subtle">
+      <span>{intl.formatMessage({ id: "settings.outputStyles.storageLocation" })}</span>
+      <span className="break-all font-mono text-ui-xs text-foreground-subtlest">
+        {view.stylesDirectory}
+      </span>
+      <Button variant="outline" size="sm" onClick={() => void reveal()}>
+        <FolderOpen className="size-4" />
+        {intl.formatMessage({ id: "settings.outputStyles.reveal" })}
+      </Button>
     </div>
   );
 }
@@ -258,14 +290,16 @@ function StyleRow({
         ) : null}
       </div>
       <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
-        <Button variant="ghost" size="sm" onClick={() => view.openEditor(style)}>
-          {intl.formatMessage({
-            id:
-              style.isBuiltIn && !style.isOverridden
-                ? "settings.outputStyles.customize"
-                : "settings.outputStyles.edit",
-          })}
-        </Button>
+        {style.id !== "default" ? (
+          <Button variant="ghost" size="sm" onClick={() => view.openEditor(style)}>
+            {intl.formatMessage({
+              id:
+                style.isBuiltIn && !style.isOverridden
+                  ? "settings.outputStyles.customize"
+                  : "settings.outputStyles.edit",
+            })}
+          </Button>
+        ) : null}
         {style.isBuiltIn && style.isOverridden ? (
           <Button variant="ghost" size="sm" onClick={() => void view.restoreDefault(style)}>
             {intl.formatMessage({ id: "settings.outputStyles.restoreDefault" })}

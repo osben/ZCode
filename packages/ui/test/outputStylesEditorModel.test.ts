@@ -11,6 +11,7 @@ import {
   isEmptyOutputStylePrompt,
   isOutputStyleConflict,
   isOutputStyleDraftDirty,
+  outputStyleFilePath,
   outputStyleFilenameFromName,
   outputStyleIdFromFilename,
   type OutputStyleDraft,
@@ -50,6 +51,15 @@ describe("outputStyleFilenameFromName", () => {
   it("strips only the custom- prefix for base ids", () => {
     expect(baseStyleId("custom-tone")).toBe("tone");
     expect(baseStyleId("explanatory")).toBe("explanatory");
+  });
+
+  it("joins host directories with either separator style for display", () => {
+    expect(outputStyleFilePath("/home/u/.zcode/output-styles", "tone.md")).toBe(
+      "/home/u/.zcode/output-styles/tone.md",
+    );
+    expect(outputStyleFilePath("C:\\Users\\u\\.zcode\\output-styles\\", "tone.md")).toBe(
+      "C:\\Users\\u\\.zcode\\output-styles\\tone.md",
+    );
   });
 });
 

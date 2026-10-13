@@ -17,10 +17,13 @@ import { SettingsGroupCard } from "@/settings/SettingsPageParts.js";
 import { SettingsFormActions } from "@/settings/SettingsFormActions.js";
 import { SettingsFormTextarea } from "@/settings/SettingsFormTextarea.js";
 import {
+  baseStyleId,
   detectOutputStyleNameCollision,
   diffOutputStylePrompt,
   hasDiffChanges,
   isEmptyOutputStylePrompt,
+  outputStyleFilePath,
+  outputStyleFilenameFromName,
 } from "@/settings/outputStylesEditorModel.js";
 import { useConfirmDialogStore } from "@/store/confirmDialogStore.js";
 import { cn } from "@/components/lib/utils.js";
@@ -36,6 +39,21 @@ export function OutputStylesEditorCard({ view, intl }: { view: OutputStylesView;
   const emptyPrompt = isEmptyOutputStylePrompt(draft);
   const diffLines = diffOutputStylePrompt(baseline?.content ?? "", draft.content);
   const showDiff = view.editorDirty && hasDiffChanges(diffLines);
+  const style =
+    draft.styleId !== null ? view.styles.find((entry) => entry.id === draft.styleId) : undefined;
+  // Editing a built-in that has no override file yet: saving is what materializes the file,
+  // so state that (and where) up front instead of creating it silently.
+  const customizingBuiltin = Boolean(
+    style?.isBuiltIn && !style.isOverridden && style.id !== "default" && view.stylesDirectory,
+  );
+  const overridePath =
+    customizingBuiltin && draft.styleId !== null && view.stylesDirectory
+      ? outputStyleFilePath(view.stylesDirectory, `${baseStyleId(draft.styleId)}.md`)
+      : null;
+  const newStylePath =
+    draft.styleId === null && draft.name.trim() && view.stylesDirectory
+      ? outputStyleFilePath(view.stylesDirectory, outputStyleFilenameFromName(draft.name))
+      : null;
   return (
     <SettingsGroupCard>
       <div className="space-y-3 px-4 py-3">
@@ -50,6 +68,24 @@ export function OutputStylesEditorCard({ view, intl }: { view: OutputStylesView;
             draft.styleId === null ? {} : { name: baseline?.name ?? draft.name },
           )}
         </div>
+        {overridePath ? (
+          <Alert variant="default">
+            <AlertDescription>
+              {intl.formatMessage(
+                { id: "settings.outputStyles.editor.overrideHint" },
+                { path: overridePath },
+              )}
+            </AlertDescription>
+          </Alert>
+        ) : null}
+        {style?.filePath ? (
+          <div className="break-all font-mono text-ui-xs text-foreground-subtlest">
+            {intl.formatMessage(
+              { id: "settings.outputStyles.editor.fileLocation" },
+              { path: style.filePath },
+            )}
+          </div>
+        ) : null}
         <label className="block space-y-1.5">
           <span className="text-ui-sm font-medium text-foreground">
             {intl.formatMessage({ id: "settings.outputStyles.nameLabel" })}
@@ -59,6 +95,14 @@ export function OutputStylesEditorCard({ view, intl }: { view: OutputStylesView;
             onChange={(event) => view.setDraft({ name: event.target.value })}
             data-testid="settings-output-styles-name"
           />
+          {newStylePath ? (
+            <span className="break-all font-mono text-ui-xs text-foreground-subtlest">
+              {intl.formatMessage(
+                { id: "settings.outputStyles.editor.saveAs" },
+                { path: newStylePath },
+              )}
+            </span>
+          ) : null}
         </label>
         <label className="block space-y-1.5">
           <span className="text-ui-sm font-medium text-foreground">

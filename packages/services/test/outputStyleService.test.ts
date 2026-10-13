@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { afterEach, beforeEach } from "node:test";
@@ -46,6 +46,21 @@ test("built-in styles expose the shared constant prompt text", async () => {
   assert.equal(byId.get("default")?.content, "");
   assert.ok(byId.get("explanatory")?.content.length! > 0);
   assert.ok(byId.get("learning")?.content.length! > 0);
+});
+
+test("getUserStylesDirectory returns the path without creating the directory", async () => {
+  const service = createOutputStyleService();
+  const { path } = await service.getUserStylesDirectory();
+  assert.equal(path, zcodeStylesDir());
+  // Reading the storage location must stay side-effect free: a fresh install should not
+  // grow an empty output-styles directory just from opening Settings.
+  assert.equal(
+    await stat(zcodeStylesDir()).then(
+      () => true,
+      () => false,
+    ),
+    false,
+  );
 });
 
 test("setActiveStyle writes the zcode settings file and reads it back", async () => {
