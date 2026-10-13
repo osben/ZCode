@@ -4,6 +4,9 @@ import type {
   OAuthProviderId,
   OAuthProviderMeta,
   OAuthStartResponse,
+  SiwcLoginCompletionResult,
+  SiwcLoginStart,
+  SiwcPlanStatus,
   UserInfo,
 } from "@zcode/shared";
 import { ServiceChannels } from "@zcode/shared";
@@ -70,6 +73,21 @@ export interface IOAuthService {
    * @param provider - Optional; cancels the current pending flow when omitted.
    */
   cancelPending(provider?: OAuthProviderId): Promise<void>;
+
+  /**
+   * ChatGPT plan (official OpenAI SIWC): start the loopback+PKCE login. Independent of the
+   * zai/bigmodel flow; the UI opens authorizeUrl externally and polls pollChatGptPlanLogin.
+   */
+  startChatGptPlanLogin(): Promise<SiwcLoginStart>;
+
+  /** ChatGPT plan login poll; null while the browser redirect has not arrived yet. */
+  pollChatGptPlanLogin(): Promise<SiwcLoginCompletionResult | null>;
+
+  /** Current ChatGPT plan connection status (signed-in state and plan-usage consent). */
+  getChatGptPlanStatus(): Promise<SiwcPlanStatus>;
+
+  /** Revoke the ChatGPT plan refresh token and clear local tokens (retains the client id). */
+  logoutChatGptPlan(): Promise<{ revoked: boolean; signedOut: boolean }>;
 }
 
 export const IOAuthService = createServiceDescriptor<IOAuthService>(ServiceChannels.OAuth);

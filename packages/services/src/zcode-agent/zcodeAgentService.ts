@@ -4,6 +4,7 @@ import {
   requestVerificationInteractionAvailable,
 } from "@zcode/shared";
 import { zcodeMcpUiSamplingResultSchema } from "@zcode/shared";
+import { BUILTIN_MODEL_PROVIDER_IDS } from "@zcode/shared";
 import { MCP_APPS_SAMPLING_TRANSPORT_TIMEOUT_MS } from "@zcode/shared/mcp-apps";
 import {
   channelReplyRequestSchema,
@@ -18,7 +19,7 @@ import {
 } from "@zcode/shared";
 /* oxlint-disable eslint(max-lines) -- ZCode Protocol transport, notification wiring, and app-facing session methods must share the same client/emitter context. */
 import { ensureIndependentPlanSupport } from "./independentPlanSupport.js";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { createTopicResourceBridge } from "./topicResourceBridge.js";
 import { uploadTopicResourceToClient } from "./topicResourceUpload.js";
 import {
@@ -956,6 +957,14 @@ interface CreateZCodeAgentServiceOptions extends Omit<
   mcpStatusIdleTimeoutMs?: number;
   accountProviderConfigSource?: ProviderSource<AccountProviderConfigSnapshot>;
   accountRequestAuthService?: IAccountRequestAuthService;
+  /** ChatGPT plan (SIWC) request-auth resolver owned by the host (local credentials only). */
+  chatGptPlanRequestAuth?: {
+    resolve(input: {
+      expectedAccountScope?: string;
+      forceRefresh: boolean;
+      providerId: string;
+    }): Promise<{ accountScope?: string; apiKey: string }>;
+  };
   /** Desktop Host asks Main to register the exact local video path authorized for the Agent. */
   authorizeLocalMediaPreviewPath?: (path: string) => Promise<string>;
   modelSelectionReadinessSource?: ModelSelectionReadinessSource;
@@ -1326,6 +1335,7 @@ export function createZCodeAgentService(
   const accountConfigReceivedRevisionByClient = new WeakMap<ZCodeProtocolClient, string>();
   const sessionTraceIdBySessionKey = new Map<string, TraceId>();
   const accountRequestAuthService = options?.accountRequestAuthService;
+  const chatGptPlanRequestAuth = options?.chatGptPlanRequestAuth;
   const accountProviderConfigSource = options?.accountProviderConfigSource;
   const modelSelectionReadinessSource = options?.modelSelectionReadinessSource;
   const sessionRuntimePreferencesAuthority = options?.sessionRuntimePreferencesAuthority ?? "local";
@@ -1386,6 +1396,15 @@ export function createZCodeAgentService(
   async function resolveAccountRequestAuth(
     request: ZCodeProviderRuntimeHeadersRequestParams,
   ): Promise<AccountRequestAuthMaterial | undefined> {
+    // ChatGPT plan (SIWC) carries no zhipu-shaped accountAccess on the wire; the host
+    // resolves it by provider id, mirroring the CLI standalone resolver semantics.
+    if (chatGptPlanRequestAuth && request.providerId === BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan) {
+      return chatGptPlanRequestAuth.resolve({
+        expectedAccountScope: request.expectedAccountScope,
+        forceRefresh: request.rejectedProjectTokenFingerprint !== undefined,
+        providerId: request.providerId,
+      });
+    }
     if (!request.accountAccess || !accountRequestAuthService) {
       return undefined;
     }

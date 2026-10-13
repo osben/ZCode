@@ -34,7 +34,7 @@ gray-zone reuse of Codex CLI credentials: nothing in this feature touches
 - Cross-process refresh single-flight (rotation-safe, 45 s file lock) exists for
   MCP OAuth: `apps/zcode-cli/packages/adapters/src/mcp/oauth-refresh.ts`.
 - Model transport for OpenAI Responses already works: `api.type
-  "openai-responses"` routes through the Vercel AI SDK `@ai-sdk/openai`
+"openai-responses"` routes through the Vercel AI SDK `@ai-sdk/openai`
   (`apps/zcode-cli/packages/adapters/src/model/model-execution.ts`, POST
   `{baseUrl}/responses`, SSE). The builtin catalog ships an `openai` template at
   `https://api.openai.com/v1` (`config/provider/zcode-builtin.json`,
@@ -95,7 +95,7 @@ gray-zone reuse of Codex CLI credentials: nothing in this feature touches
   - PKCE `code_challenge_method=S256` with base64url(SHA-256(verifier))
     without padding; fresh verifier, `state`, and `nonce` per attempt,
   - `scope=openid profile email offline_access resource.invoke
-    chatgpt.tokens.use.direct`,
+chatgpt.tokens.use.direct`,
   - `resource=https://api.openai.com/v1`,
   - `ext_agent_host_id`: stable per host, generated once and persisted (not a
     secret), reused across sign-ins,
@@ -232,21 +232,21 @@ Direct-admission errors may return `{"detail":"..."}` without a standard error
 object — treat as diagnostic text; preserve HTTP status, body shape, code, and
 request id.
 
-| Condition | Code | Recovery |
-| --- | --- | --- |
-| Signed identity not accepted | HTTP 401 | Check selected account + granted scopes |
-| Policy/region blocked | HTTP 403 | Surface restriction; do not retry |
-| Direct routing unavailable | HTTP 503 | Preserve credentials; bounded-backoff retry |
-| Plan unavailable for user/workspace/policy | `subscription_sharing_user_not_eligible` (403) | Explain; never retry or loop through OAuth |
-| Plan usage limit hit | `subscription_sharing_usage_limit_exceeded` (429) | Pause plan requests; show "Manage usage" → `https://chatgpt.com/settings/usage`; do NOT infer reset time or assume the plan is empty |
-| Usage check failed | `subscription_sharing_usage_unavailable` (503) | Preserve credentials; bounded-backoff retry |
-| Unsupported field/tool/model | `subscription_sharing_unsupported_capability` (400) | Inspect `error.param`, remove it; never retry the same body |
-| Wrong method/endpoint | `subscription_sharing_route_not_supported` (403) | Fix the request path/method |
-| Subscriber context invalid | `subscription_sharing_invalid_user` (401) | Preserve request id; diagnose credential failure; full re-sign-in after confirmed revocation or terminal refresh error |
-| Scope not authorized | `chatpass_v2_scope_not_authorized` / `chatpass_v2_invalid_authorization_context` (403) | Check client/grant config; do not retry, do not switch billing |
-| User info unavailable | `subscription_sharing_user_unavailable` (503) | Preserve credentials; bounded-backoff retry |
-| Refresh token unusable | `invalid_grant`, `invalid_refresh_token`, `token_expired`, `refresh_token_expired`, `refresh_token_invalidated`, `refresh_token_reused` (on refresh) | Clear tokens; full OAuth re-run with saved client id |
-| Client misconfigured | `invalid_client` | Config bug — fix code, not user action |
+| Condition                                  | Code                                                                                                                                                 | Recovery                                                                                                                             |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Signed identity not accepted               | HTTP 401                                                                                                                                             | Check selected account + granted scopes                                                                                              |
+| Policy/region blocked                      | HTTP 403                                                                                                                                             | Surface restriction; do not retry                                                                                                    |
+| Direct routing unavailable                 | HTTP 503                                                                                                                                             | Preserve credentials; bounded-backoff retry                                                                                          |
+| Plan unavailable for user/workspace/policy | `subscription_sharing_user_not_eligible` (403)                                                                                                       | Explain; never retry or loop through OAuth                                                                                           |
+| Plan usage limit hit                       | `subscription_sharing_usage_limit_exceeded` (429)                                                                                                    | Pause plan requests; show "Manage usage" → `https://chatgpt.com/settings/usage`; do NOT infer reset time or assume the plan is empty |
+| Usage check failed                         | `subscription_sharing_usage_unavailable` (503)                                                                                                       | Preserve credentials; bounded-backoff retry                                                                                          |
+| Unsupported field/tool/model               | `subscription_sharing_unsupported_capability` (400)                                                                                                  | Inspect `error.param`, remove it; never retry the same body                                                                          |
+| Wrong method/endpoint                      | `subscription_sharing_route_not_supported` (403)                                                                                                     | Fix the request path/method                                                                                                          |
+| Subscriber context invalid                 | `subscription_sharing_invalid_user` (401)                                                                                                            | Preserve request id; diagnose credential failure; full re-sign-in after confirmed revocation or terminal refresh error               |
+| Scope not authorized                       | `chatpass_v2_scope_not_authorized` / `chatpass_v2_invalid_authorization_context` (403)                                                               | Check client/grant config; do not retry, do not switch billing                                                                       |
+| User info unavailable                      | `subscription_sharing_user_unavailable` (503)                                                                                                        | Preserve credentials; bounded-backoff retry                                                                                          |
+| Refresh token unusable                     | `invalid_grant`, `invalid_refresh_token`, `token_expired`, `refresh_token_expired`, `refresh_token_invalidated`, `refresh_token_reused` (on refresh) | Clear tokens; full OAuth re-run with saved client id                                                                                 |
+| Client misconfigured                       | `invalid_client`                                                                                                                                     | Config bug — fix code, not user action                                                                                               |
 
 - OpenAI does NOT proactively notify about user-initiated disconnects; detect
   on next request/refresh, stop using the token set, ask the user to sign in
@@ -292,12 +292,28 @@ request id.
 - Provider icon: reuse the OpenAI entries in
   `packages/ui/src/assets/provider-icons/model-provider-logo-sources.json`.
 
+### Host-side (Desktop) decisions (Phase 2)
+
+- Login/logout/status ride `IOAuthService` (`startChatGptPlanLogin` / `pollChatGptPlanLogin`
+  / `getChatGptPlanStatus` / `logoutChatGptPlan`) implemented by a dedicated
+  `SiwcAuthService` in `packages/services/src/oauth/siwc/`; the loopback listener runs in the
+  host process (the `zcode://` deep link is unusable for SIWC). The zai/bigmodel flow,
+  `oauth:active_provider`, and `zcodejwttoken` are never touched.
+- Hosted-agent request auth: the host answers `interaction/requestProviderRuntimeHeaders`
+  for `account:chatgpt-plan` via the same resolver semantics (stable clientId+subject scope,
+  force-refresh after a rejected token, the SAME `siwc-chatgpt.refresh` cross-process lock
+  file as the CLI so Desktop and CLI refreshes serialize).
+- `PROVIDER_PROVISIONING_OAUTH_CREDENTIAL_KEYS` (providerProvisioningSource.ts) exports
+  credentials into provisioning envelopes for other environments. ChatGPT plan keys are
+  deliberately NOT added: provisioning other (remote) environments with plan tokens is out
+  of scope and forbidden by the storage rules; the local desktop host resolves auth itself.
+
 ### Phasing / scope
 
 - Phase 1 (this spec's product code): CLI adapters SIWC client
   (`apps/zcode-cli/packages/adapters/src/auth/siwc/`), orchestration
   (`apps/zcode-cli/packages/bootstrap/src/auth-login-chatgpt.ts`), `zcode login
-  chatgpt`, token resolver, compat fetch, provider family + builtin catalog,
+chatgpt`, token resolver, compat fetch, provider family + builtin catalog,
   error mapping. Desktop picks up the same shared credentials later (same
   file, same keys).
 - Phase 2: Desktop UI (settings button, branding above, hosted-runtime token

@@ -5,6 +5,7 @@ import {
   formatLogPrefix,
   type ApiClient,
   BIGMODEL_PROVIDER_ID,
+  CHATGPT_OAUTH_PROVIDER_ID,
   ZAI_PROVIDER_ID,
   type OAuthCallbackResult,
   type OAuthCachedSessionRestoreResult,
@@ -13,6 +14,9 @@ import {
   type OAuthStartResponse,
   type OAuthTokenSet,
   type OAuthUserProfile,
+  type SiwcLoginCompletionResult,
+  type SiwcLoginStart,
+  type SiwcPlanStatus,
   type UserInfo,
   resolveJwtExpiration,
 } from "@zcode/shared";
@@ -29,6 +33,7 @@ import {
 import { createOAuthProviderAdapters, type OAuthProviderAdapter } from "./providers/index.js";
 import { OAuthCredentialRepo } from "./repo/oauthCredentialRepo.js";
 import { createOAuthRuntimeConfig } from "./runtimeConfig.js";
+import { SiwcAuthService } from "./siwc/siwcAuthService.js";
 import {
   buildDesktopOAuthRedirectUriFromEnv,
   buildZCodeApiUrlFromEnv,
@@ -125,6 +130,7 @@ export class OAuthService implements IOAuthService {
   ) => Promise<void>;
   private readonly apiClient?: ApiClient;
   private readonly env: NodeJS.ProcessEnv;
+  private readonly siwcAuth: SiwcAuthService;
   private pendingState: PendingState | null = null;
   private oauthFlowStartGeneration = 0;
   private oauthFlowStartProvider: OAuthProviderId | null = null;
@@ -160,6 +166,12 @@ export class OAuthService implements IOAuthService {
         // The repo can clear only the OAuth namespace; derived Start/Coding Plan provider keys must be cleared at the service layer.
         await this.notifyProvidersLogout(providers);
       },
+    });
+    // ChatGPT plan (SIWC) is an independent identity domain: it never touches the zai/bigmodel
+    // pending-state machine, `oauth:active_provider`, or `zcodejwttoken`.
+    this.siwcAuth = new SiwcAuthService(credentialService, {
+      env: this.env,
+      ...(dependencies.now ? { now: dependencies.now } : {}),
     });
   }
 
@@ -1086,6 +1098,10 @@ export class OAuthService implements IOAuthService {
   }
 
   async cancelPending(provider?: OAuthProviderId): Promise<void> {
+    if (provider === CHATGPT_OAUTH_PROVIDER_ID || provider === undefined) {
+      await this.siwcAuth.cancelLogin();
+      if (provider === CHATGPT_OAUTH_PROVIDER_ID) return;
+    }
     if (!this.pendingState) {
       if (provider && this.oauthFlowStartProvider && this.oauthFlowStartProvider !== provider)
         return;
@@ -1097,6 +1113,22 @@ export class OAuthService implements IOAuthService {
     this.oauthFlowStartGeneration += 1;
     this.oauthFlowStartProvider = null;
     this.clearPendingState();
+  }
+
+  async startChatGptPlanLogin(): Promise<SiwcLoginStart> {
+    return this.siwcAuth.startLogin();
+  }
+
+  async pollChatGptPlanLogin(): Promise<SiwcLoginCompletionResult | null> {
+    return this.siwcAuth.pollLogin();
+  }
+
+  async getChatGptPlanStatus(): Promise<SiwcPlanStatus> {
+    return this.siwcAuth.getStatus();
+  }
+
+  async logoutChatGptPlan(): Promise<{ revoked: boolean; signedOut: boolean }> {
+    return this.siwcAuth.logout();
   }
 
   private clearPendingState(): void {
