@@ -49,19 +49,21 @@ export function playVoiceDictationFeedbackSound(
       if (settled) return;
       settled = true;
       audio.removeEventListener("ended", finish);
-      audio.removeEventListener("error", finish);
+      audio.removeEventListener("error", handleMediaError);
       resolve();
     };
-    audio.addEventListener("ended", finish);
     // Load/decode failures (corrupt asset, missing file) surface as the error event; log them so
-    // silent chime loss stays diagnosable, then settle like any other playback end.
-    audio.addEventListener("error", () => {
+    // silent chime loss stays diagnosable, then settle like any other playback end. The handler is
+    // named so the cleanup removes exactly it — the element is cached and reused across plays.
+    const handleMediaError = () => {
       logger.warn("voice dictation feedback sound media error", {
         kind,
         mediaErrorCode: audio.error?.code ?? null,
       });
       finish();
-    });
+    };
+    audio.addEventListener("ended", finish);
+    audio.addEventListener("error", handleMediaError);
     void audio.play().catch((error: unknown) => {
       logger.warn("voice dictation feedback sound failed", {
         kind,

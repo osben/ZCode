@@ -91,6 +91,11 @@ function DesktopVoiceDictationSection() {
   const voiceRef = useRef(voice);
   const optimisticVoiceRef = useRef<VoiceDictationSettings | null>(null);
   const pendingVoiceWritesRef = useRef(0);
+  /** True once useSettings published the first non-null snapshot; edits must not merge before that. */
+  const settingsLoadedRef = useRef(false);
+  if (settings != null) {
+    settingsLoadedRef.current = true;
+  }
   voiceRef.current = optimisticVoiceRef.current ?? voice;
   const modelId = voice.modelId ?? null;
   const microphoneDeviceId = voice.microphoneDeviceId ?? null;
@@ -163,6 +168,14 @@ function DesktopVoiceDictationSection() {
 
   const patchVoice = useCallback(
     async (patch: Partial<VoiceDictationSettings>) => {
+      // useSettings publishes settings === null until the initial load resolves; merging against
+      // the empty fallback would persist a voiceDictation object containing only the clicked
+      // field and erase every stored preference. Edits wait for the first real snapshot.
+      if (!settingsLoadedRef.current) {
+        logger.warn("voice dictation settings edit ignored: initial settings not loaded yet");
+        toast(intl.formatMessage({ id: "voiceDictation.saveFailed" }));
+        return;
+      }
       // The merge must land in the ref synchronously: voiceRef is only refreshed during render, so two
       // rapid edits would share the same stale snapshot before the first update() completes, and the
       // later whole-object write of voiceDictation would silently roll back the earlier edit.
