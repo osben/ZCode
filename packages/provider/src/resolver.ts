@@ -4,6 +4,7 @@ import type { completeModelConfigDataSchema } from "@zcode/shared/model-config";
 import type {
   completeApiKeyAccessDataSchema,
   completeZhipuAccountAccessDataSchema,
+  completeChatgptAccountAccessDataSchema,
   completeProviderConfigDataSchema,
 } from "./config/provider-data-schema.js";
 import type { ConfigValidationIssue } from "./config-overlay.js";
@@ -12,6 +13,7 @@ import {
   ModelConfig,
   ModelConfigRules,
   type ZhipuAccountAccessConfig,
+  type ChatgptAccountAccessConfig,
   type ModelId,
   type ProviderConfig,
   type ProviderConfigRule,
@@ -25,9 +27,13 @@ import type { AccountProviderStates } from "./account-provider-state.js";
 export type RegistryZhipuAccountAccessConfig = ZhipuAccountAccessConfig &
   z.infer<typeof completeZhipuAccountAccessDataSchema>;
 
+export type RegistryChatgptAccountAccessConfig = ChatgptAccountAccessConfig &
+  z.infer<typeof completeChatgptAccountAccessDataSchema>;
+
 export type RegistryProviderAccessConfig =
   | (ApiKeyAccessConfig & z.infer<typeof completeApiKeyAccessDataSchema>)
-  | RegistryZhipuAccountAccessConfig;
+  | RegistryZhipuAccountAccessConfig
+  | RegistryChatgptAccountAccessConfig;
 
 export type RegistryProviderConfig = ProviderConfig &
   z.infer<typeof completeProviderConfigDataSchema> & {
@@ -43,20 +49,25 @@ export function serializeRegistryProviderConfig(
     group: config.group,
     ...(config.logo === undefined ? {} : { logo: config.logo }),
     access:
-      config.access.type !== "zhipu-account"
+      config.access.type === "zhipu-account"
         ? {
-            type: config.access.type,
-            apiKey: config.access.apiKey,
-            ...(config.access.apiKeyManagementUrl === undefined
-              ? {}
-              : { apiKeyManagementUrl: config.access.apiKeyManagementUrl }),
-          }
-        : {
             type: config.access.type,
             accountType: config.access.accountType,
             mode: config.access.mode,
             entitled: config.access.entitled,
-          },
+          }
+        : config.access.type === "chatgpt-account"
+          ? {
+              type: config.access.type,
+              entitled: config.access.entitled,
+            }
+          : {
+              type: config.access.type,
+              apiKey: config.access.apiKey,
+              ...(config.access.apiKeyManagementUrl === undefined
+                ? {}
+                : { apiKeyManagementUrl: config.access.apiKeyManagementUrl }),
+            },
     api: {
       type: config.api.type,
       baseUrl: config.api.baseUrl,
@@ -218,7 +229,10 @@ export class ProviderConfigResolver {
       const rule = effectiveProviders.getRule(providerId)!;
       const { config, providerName } = rule;
       // Accounts no longer support global disable; an old overlay must not permanently disable an account with no toggle, while other eligibility checks still apply.
-      const enabled = config.access?.type === "zhipu-account" || (rule.enabled ?? true);
+      const enabled =
+        config.access?.type === "zhipu-account" ||
+        config.access?.type === "chatgpt-account" ||
+        (rule.enabled ?? true);
       const providerPath = ["providers", providerId];
       const registryProviderResult = createRegistryProviderConfig(config, providerPath);
       const providerIssues: ConfigValidationIssue[] = registryProviderResult.ok
@@ -247,7 +261,8 @@ export class ProviderConfigResolver {
         config.modelOrder ?? [],
       );
       const accessEntitled =
-        config.access?.type !== "zhipu-account" || config.access.entitled === true;
+        (config.access?.type !== "zhipu-account" && config.access?.type !== "chatgpt-account") ||
+        config.access.entitled === true;
       // Account entitlement and the current connection are separate facts. Keep non-current accounts visible in Settings, but do not publish their models to the regular Registry.
       // Off-Peak does not define current and keeps its independent scheduling, visibility, and authentication rules.
       const accountCurrent = input.accountStates?.[providerId]?.current !== false;

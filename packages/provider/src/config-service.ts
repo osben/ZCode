@@ -155,10 +155,18 @@ export class ProviderConfigService implements ProviderSource<ProviderConfigSnaps
       const currentPersonal = current.providers.get(providerId);
       const currentEffectiveProviders = zcodeBuiltin.providers.overlay(current.providers);
       // Account-wide disable has been revoked; reject new operations at the public write boundary so invalid state cannot be written after hiding the UI.
-      if (builtin?.access?.type === "zhipu-account" && metadata?.enabled === false) {
+      if (
+        (builtin?.access?.type === "zhipu-account" ||
+          builtin?.access?.type === "chatgpt-account") &&
+        metadata?.enabled === false
+      ) {
         throw new Error(`Account Provider 不允许禁用: ${providerId}`);
       }
-      if (builtin?.access?.type === "zhipu-account" && config.access !== undefined) {
+      if (
+        (builtin?.access?.type === "zhipu-account" ||
+          builtin?.access?.type === "chatgpt-account") &&
+        config.access !== undefined
+      ) {
         // The generic save entry point parsed only ProviderConfig and previously bypassed the Personal Source Schema,
         // allowing access for a fixed Account Provider to be written to disk and rejected only on the next read.
         throw new Error(

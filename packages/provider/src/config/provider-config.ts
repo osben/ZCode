@@ -4,6 +4,7 @@ import type { z } from "zod";
 import {
   completeApiKeyAccessDataSchema,
   completeZhipuAccountAccessDataSchema,
+  completeChatgptAccountAccessDataSchema,
   completeProviderApiDataSchema,
   completeProviderConfigDataSchema,
   type providerApiTypeDataSchema,
@@ -13,6 +14,7 @@ import {
   type providerLogoDataSchema,
   type apiKeyAccessDataSchema,
   type zhipuAccountAccessDataSchema,
+  type chatgptAccountAccessDataSchema,
   type providerAccessDataSchema,
   type providerApiDataSchema,
   type providerConfigDataSchema,
@@ -111,7 +113,45 @@ export class ZhipuAccountAccessConfig extends ConfigOverlay<ZhipuAccountAccessCo
   }
 }
 
-export type ProviderAccessConfig = ApiKeyAccessConfig | ZhipuAccountAccessConfig;
+export type ChatgptAccountAccessConfigInput = Omit<ChatgptAccountAccessConfigObject, "type">;
+
+export type ChatgptAccountAccessConfigObject = Readonly<
+  z.infer<typeof chatgptAccountAccessDataSchema>
+>;
+
+/** ChatGPT plan account access (official OpenAI SIWC); independent of the zhipu account domain. */
+export class ChatgptAccountAccessConfig extends ConfigOverlay<ChatgptAccountAccessConfig> {
+  readonly type = "chatgpt-account" as const;
+  readonly entitled?: ChatgptAccountAccessConfigInput["entitled"];
+
+  constructor(input: ChatgptAccountAccessConfigInput = {}) {
+    super();
+    this.entitled = input.entitled;
+    Object.freeze(this);
+  }
+
+  overlay(next: ChatgptAccountAccessConfig): ChatgptAccountAccessConfig {
+    return new ChatgptAccountAccessConfig({
+      entitled: this.overlayValue(this.entitled, next.entitled),
+    });
+  }
+
+  validateComplete(path: readonly string[] = []): readonly ConfigValidationIssue[] {
+    return validateConfigSchema(completeChatgptAccountAccessDataSchema, this.toJSON(), path);
+  }
+
+  toJSON(): ChatgptAccountAccessConfigObject {
+    return {
+      type: this.type,
+      ...objectWithoutUndefined({ entitled: this.entitled }),
+    };
+  }
+}
+
+export type ProviderAccessConfig =
+  | ApiKeyAccessConfig
+  | ZhipuAccountAccessConfig
+  | ChatgptAccountAccessConfig;
 
 export type ProviderAccessConfigObject = Readonly<z.infer<typeof providerAccessDataSchema>>;
 

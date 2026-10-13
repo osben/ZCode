@@ -10,6 +10,8 @@ export const providerGroupDataSchema = z.enum([
   "standard-personal",
   "zai-family",
   "bigmodel-family",
+  // ChatGPT plan (official OpenAI SIWC); an account family independent of zai/bigmodel.
+  "chatgpt-family",
 ]);
 export const zhipuAccountModeDataSchema = z.enum([
   "start-plan",
@@ -55,13 +57,31 @@ export const zhipuAccountAccessDataSchema = z
     type: completeZhipuAccountAccessDataSchema.shape.type,
   })
   .strict();
+/**
+ * ChatGPT plan account (official OpenAI SIWC token sharing). Deliberately separate from
+ * zhipu-account so it never triggers zcode gateway routing or zhipu-specific handling.
+ */
+export const completeChatgptAccountAccessDataSchema = z
+  .object({
+    type: z.literal("chatgpt-account"),
+    entitled: z.boolean(),
+  })
+  .strict();
+export const chatgptAccountAccessDataSchema = z
+  .object({
+    ...sparseShape(completeChatgptAccountAccessDataSchema.shape),
+    type: completeChatgptAccountAccessDataSchema.shape.type,
+  })
+  .strict();
 export const providerAccessDataSchema = z.discriminatedUnion("type", [
   apiKeyAccessDataSchema,
   zhipuAccountAccessDataSchema,
+  chatgptAccountAccessDataSchema,
 ]);
 export const completeProviderAccessDataSchema = z.discriminatedUnion("type", [
   completeApiKeyAccessDataSchema,
   completeZhipuAccountAccessDataSchema,
+  completeChatgptAccountAccessDataSchema,
 ]);
 
 export const completeProviderApiDataSchema = z
