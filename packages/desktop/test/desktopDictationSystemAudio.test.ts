@@ -193,7 +193,11 @@ describe("desktop dictation system audio mute", () => {
     await handler({ sender }, { active: false });
 
     // …and the restore still addresses the sink that was muted, not the new default.
-    expect(execAsync.mock.calls.filter(([file, args]) => file === "pactl" && args[0] === "set-sink-mute")).toEqual([
+    expect(
+      execAsync.mock.calls.filter(
+        ([file, args]) => file === "pactl" && args[0] === "set-sink-mute",
+      ),
+    ).toEqual([
       ["pactl", ["set-sink-mute", "alsa_output.first", "1"]],
       ["pactl", ["set-sink-mute", "alsa_output.first", "0"]],
     ]);
