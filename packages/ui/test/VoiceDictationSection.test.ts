@@ -30,11 +30,19 @@ const h = vi.hoisted(() => {
     sha256: "test",
   };
   const secondDescriptor = { ...descriptor, id: "model-two", name: "Model Two" };
-  const updateSettings = vi.fn(async () => {});
+  const settings = { voiceDictation: { modelId: "model-one" } as Record<string, unknown> };
+  // Propagate the patch like the real settings service does: renders that land between two edits
+  // must read the merged snapshot, or the component's synchronous merge ref gets rolled back by a
+  // stale render (CI hit exactly that race between an async listModels re-render and two clicks).
+  const updateSettings = vi.fn(async (patch: { voiceDictation?: Record<string, unknown> }) => {
+    if (patch.voiceDictation) {
+      settings.voiceDictation = { ...settings.voiceDictation, ...patch.voiceDictation };
+    }
+  });
   return {
     state,
     updateSettings,
-    settings: { voiceDictation: { modelId: "model-one" } as Record<string, unknown> },
+    settings,
     voiceDictationService: {
       listModels: vi.fn(async () => {
         if (state.downloadRequested) {
@@ -391,11 +399,15 @@ describe("VoiceDictationSection feedback sounds", () => {
   it("keeps the committed volume for display and Test while the save is pending", async () => {
     h.settings.voiceDictation = { modelId: "model-one", feedbackVolume: 50 };
     let resolveSave!: () => void;
-    h.updateSettings.mockImplementationOnce(
-      () =>
-        new Promise<void>((resolve) => {
-          resolveSave = resolve;
-        }),
+    h.updateSettings.mockImplementationOnce((patch: { voiceDictation?: Record<string, unknown> }) =>
+      new Promise<void>((resolve) => {
+        resolveSave = () => {
+          if (patch.voiceDictation) {
+            h.settings.voiceDictation = { ...h.settings.voiceDictation, ...patch.voiceDictation };
+          }
+          resolve();
+        };
+      }),
     );
     render(createElement(VoiceDictationSection, { isDesktop: true }));
 
