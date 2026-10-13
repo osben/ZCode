@@ -2,6 +2,7 @@
 // Memory Section Builder
 // ============================================================
 
+import { renderMemoryGuidancePrompt } from "@zcode/shared";
 import type { ContextSection } from "../types.js";
 import { estimateTokens } from "../utils.js";
 import type { ProjectMemoryRetrievalBranch } from "../../memory/project-memory-retrieval-branch.js";
@@ -9,10 +10,15 @@ import type { ProjectMemoryRetrievalBranch } from "../../memory/project-memory-r
 export function buildMemorySection(
   memoryRoot: string | undefined,
   retrievalBranch: ProjectMemoryRetrievalBranch,
+  override?: string,
 ): ContextSection | null {
   if (!memoryRoot) return null;
 
-  const content = buildMemoryContent(memoryRoot, retrievalBranch);
+  const content = override?.trim()
+    ? // A `memory-guidance` override owns the whole body; `{{memoryRoot}}` placeholders are
+      // substituted so the dynamic root path survives the override.
+      renderMemoryGuidancePrompt(override.trim(), memoryRoot)
+    : buildMemoryContent(memoryRoot, retrievalBranch);
 
   return {
     name: "Memory",

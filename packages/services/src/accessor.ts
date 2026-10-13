@@ -42,6 +42,7 @@ import type { IHooksService } from "./hooks/hooks.js";
 import type { IMemoryService } from "./memory/memory.js";
 import type { IUserInstructionsService } from "./user-instructions/userInstructions.js";
 import type { IOutputStyleService } from "./output-style/outputStyle.js";
+import type { ISystemPromptService } from "./system-prompt/systemPrompt.js";
 import type { ISettingsSyncService } from "./settings-sync/settingsSync.js";
 import type { IFeedbackService } from "./feedback/feedback.js";
 import type { IPromptAttachmentTransferService } from "./prompt-attachment-transfer/promptAttachmentTransfer.js";
@@ -109,6 +110,7 @@ export interface IServiceAccessor {
   readonly memoryService: IMemoryService;
   readonly userInstructionsService: IUserInstructionsService;
   readonly outputStyleService: IOutputStyleService;
+  readonly systemPromptService: ISystemPromptService;
   readonly settingsSyncService: ISettingsSyncService;
   readonly feedbackService: IFeedbackService;
   readonly promptAttachmentTransferService: IPromptAttachmentTransferService;

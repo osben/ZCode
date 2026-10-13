@@ -97,12 +97,13 @@ export class ContextBuilder {
       );
     }
     const isWorkflowActor = workflowActor !== undefined;
+    const promptOverrides = this.config.systemPromptOverrides;
 
     // 1. CLI / product prefix. Keep this as the short leading identity block.
     // "You are ZCode, an interactive coding agent" is the wrong identity for a subagent that speaks only to a script
     // and may not even have file-reading tools, and it would appear before the correct identity section.
     if (!isWorkflowActor) {
-      sections.push(buildCliPrefixSection());
+      sections.push(buildCliPrefixSection(promptOverrides?.["cli-prefix"]));
     }
 
     // 2. Stable agent behavior or custom prompt body
@@ -119,7 +120,12 @@ export class ContextBuilder {
     } else if (workflowActor !== undefined) {
       sections.push(buildWorkflowActorIdentitySection(workflowActor));
     } else {
-      sections.push(buildIdentitySection(activeOutputStyle));
+      sections.push(
+        buildIdentitySection(activeOutputStyle, {
+          "identity-intro": promptOverrides?.["identity-intro"],
+          harness: promptOverrides?.harness,
+        }),
+      );
     }
 
     // 3. Dynamic system context
@@ -134,7 +140,7 @@ export class ContextBuilder {
 
       // behaviour part right after stable sp...
       if (!isWorkflowActor) {
-        sections.push(buildDynamicBehaviorSection());
+        sections.push(buildDynamicBehaviorSection(promptOverrides?.communication));
       }
 
       // Session-specific guidance
@@ -153,6 +159,7 @@ export class ContextBuilder {
         const memorySection = buildMemorySection(
           this.config.memoryRoot,
           ACTIVE_PROJECT_MEMORY_RETRIEVAL_BRANCH,
+          promptOverrides?.["memory-guidance"],
         );
         if (memorySection) {
           sections.push(memorySection);
@@ -167,7 +174,7 @@ export class ContextBuilder {
       }
 
       // Context Management
-      sections.push(buildContextManagementSection());
+      sections.push(buildContextManagementSection(promptOverrides?.["context-management"]));
 
       const gitSystemContextSection = buildGitSystemContextSection(this.config.envInfo);
       if (gitSystemContextSection) {

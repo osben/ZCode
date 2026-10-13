@@ -100,6 +100,7 @@ import {
 import { resolveBuiltInNodeReplMcpServers } from "./built-in-node-repl.js";
 import { resolveZCodeCustomCommandPrompt } from "../custom-command-prompt.js";
 import { resolveZCodeBuiltinPromptCommandInvocation } from "../builtin-prompt-command.js";
+import { loadPersistedSystemPromptOverrides } from "../system-prompt.js";
 import { BUILTIN_WORKFLOW_COMMAND_NAME } from "../builtin-workflow-command.js";
 import { collectDisabledPaths } from "../skill-command-overrides.js";
 import {
@@ -272,12 +273,17 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
     const persistedMode = options.runtimeConfig?.mode
       ? undefined
       : readProjectPermissionMode(localSettingStore, projectID);
+    // Session-level overrides win; otherwise fall back to the persisted files on disk.
+    const persistedSystemPromptOverrides = options.runtimeConfig?.systemPromptOverrides
+      ? undefined
+      : await loadPersistedSystemPromptOverrides({ storageRoot });
     let { configuredMcpServers, runtimeConfig, untrustedProjectMcpServers } =
       resolveAppRuntimeConfig({
         cliStorageRoot,
         configResult,
         options,
         persistedMode,
+        persistedSystemPromptOverrides,
         pluginHooks: pluginOutcome.hooks,
         pluginMcpServers: pluginOutcome.mcpServers,
         builtInMcpServers,

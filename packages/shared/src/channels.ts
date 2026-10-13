@@ -166,6 +166,8 @@ export const ServiceChannels = {
   UserInstructions: "user-instructions",
   /** OutputStyle management service */
   OutputStyle: "output-style",
+  /** System-prompt section override service (~/.zcode/system-prompt/) */
+  SystemPrompt: "system-prompt",
   /** First-launch settings synchronization service */
   SettingsSync: "settings-sync",
   /** Remote chat-control service for Bots */

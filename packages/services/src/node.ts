@@ -247,6 +247,7 @@ export { createHooksService } from "./hooks/hooksService.js";
 export { createMemoryService } from "./memory/memoryService.js";
 export { createUserInstructionsService } from "./user-instructions/userInstructionsService.js";
 export { createOutputStyleService } from "./output-style/outputStyleService.js";
+export { createSystemPromptService } from "./system-prompt/systemPromptService.js";
 export { createSettingsSyncService } from "./settings-sync/settingsSyncService.js";
 export { createFeedbackDiagnosticArchive } from "./feedback/feedbackLogArchive.js";
 export { createFeedbackService } from "./feedback/feedbackService.js";
@@ -356,6 +357,7 @@ import { IHooksService } from "./hooks/hooks.js";
 import { IMemoryService } from "./memory/memory.js";
 import { IUserInstructionsService } from "./user-instructions/userInstructions.js";
 import { IOutputStyleService } from "./output-style/outputStyle.js";
+import { ISystemPromptService } from "./system-prompt/systemPrompt.js";
 import { ISettingsSyncService } from "./settings-sync/settingsSync.js";
 import { IFeedbackService } from "./feedback/feedback.js";
 import { IPromptAttachmentTransferService } from "./prompt-attachment-transfer/promptAttachmentTransfer.js";
@@ -458,6 +460,7 @@ import { createHooksService } from "./hooks/hooksService.js";
 import { createMemoryService } from "./memory/memoryService.js";
 import { createUserInstructionsService } from "./user-instructions/userInstructionsService.js";
 import { createOutputStyleService } from "./output-style/outputStyleService.js";
+import { createSystemPromptService } from "./system-prompt/systemPromptService.js";
 import { createSettingsSyncService } from "./settings-sync/settingsSyncService.js";
 import {
   createFeedbackService,
@@ -2715,6 +2718,7 @@ export function createLocalServices(options: {
     // Each host process (Desktop local Host or remote server) reads and writes its own ~/.zcode/AGENTS.md.
     .register(IUserInstructionsService, createUserInstructionsService())
     .register(IOutputStyleService, createOutputStyleService())
+    .register(ISystemPromptService, createSystemPromptService())
     .register(ISettingsSyncService, createSettingsSyncService({ settingService }))
     .register(
       IFeedbackService,

@@ -36,6 +36,8 @@ export function resolveAppRuntimeConfig(input: {
   configResult: ConfigResult;
   options: ZCodeAppOptions;
   persistedMode?: CollaborationMode;
+  /** System-prompt section overrides loaded from disk (docs/system-prompt-overrides.md). */
+  persistedSystemPromptOverrides?: AgentRuntimeConfig["systemPromptOverrides"];
   builtInMcpServers?: Record<string, McpServerConfig>;
   builtInSubagentModelSelectionOverrides?: BuiltInSubagentModelSelectionOverrides;
   pluginHooks?: Partial<Record<HookEventName, HookMatcherConfig[]>>;
@@ -52,6 +54,7 @@ export function resolveAppRuntimeConfig(input: {
     configResult,
     options,
     persistedMode,
+    persistedSystemPromptOverrides,
     builtInMcpServers,
     pluginMcpServers,
     pluginRuntimeFeatures,
@@ -137,6 +140,8 @@ export function resolveAppRuntimeConfig(input: {
       }),
     runtimeFeatures: pluginRuntimeFeatures,
     language: options.runtimeConfig?.language,
+    systemPromptOverrides:
+      options.runtimeConfig?.systemPromptOverrides ?? persistedSystemPromptOverrides,
     titleGeneration,
     workingDirectory,
     userInstructions: {
