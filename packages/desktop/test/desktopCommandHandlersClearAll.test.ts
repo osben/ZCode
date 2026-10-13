@@ -64,7 +64,9 @@ describe("Clear All Data restart", () => {
     expect(h.restore).toHaveBeenCalledTimes(1);
     expect(h.relaunch).toHaveBeenCalledTimes(1);
     expect(h.exit).toHaveBeenCalledWith(0);
-    expect(h.restore.mock.invocationCallOrder[0]).toBeLessThan(h.relaunch.mock.invocationCallOrder[0]);
+    expect(h.restore.mock.invocationCallOrder[0]).toBeLessThan(
+      h.relaunch.mock.invocationCallOrder[0],
+    );
     expect(h.restore.mock.invocationCallOrder[0]).toBeLessThan(h.exit.mock.invocationCallOrder[0]);
   });
 
