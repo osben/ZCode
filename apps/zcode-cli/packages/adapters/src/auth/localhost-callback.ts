@@ -31,6 +31,12 @@ function createCallbackDeniedError(
 export interface LocalhostOAuthCallback {
   code: string;
   url: string;
+  /**
+   * Issued client id when the authorization server registers a dynamic client on first
+   * sign-in (SIWC). Absent on re-auth callbacks and for providers without dynamic
+   * registration; the full `url` remains available for other extra params.
+   */
+  clientId?: string;
 }
 
 export interface LocalhostOAuthCallbackServer {
@@ -77,10 +83,7 @@ export async function createLocalhostOAuthCallbackServer(input: {
         if (!settled) {
           settled = true;
           rejectCallback(
-            createCallbackDeniedError(
-              oauthError,
-              requestUrl.searchParams.get("error_description"),
-            ),
+            createCallbackDeniedError(oauthError, requestUrl.searchParams.get("error_description")),
           );
         }
         return;
@@ -102,9 +105,13 @@ export async function createLocalhostOAuthCallbackServer(input: {
       writeText(response, 200, SUCCESS_TEXT);
       if (!settled) {
         settled = true;
+        // Extra params (SIWC returns the issued client_id and iss) are tolerated and only the
+        // client_id is surfaced explicitly; everything else stays available via `url`.
+        const clientId = requestUrl.searchParams.get("client_id") ?? "";
         resolveCallback({
           code,
           url: requestUrl.toString(),
+          ...(clientId ? { clientId } : {}),
         });
       }
     } catch (error) {
