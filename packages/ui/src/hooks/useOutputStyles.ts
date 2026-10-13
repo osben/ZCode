@@ -312,14 +312,32 @@ export function useOutputStyles(target: UserInstructionsHostTarget): OutputStyle
     async (style: OutputStyle) => {
       if (!rpcReady) return;
       const key = hostKey;
+      const wasActive = style.id === activeStyleId;
       try {
-        // Reset the active id BEFORE deleting the file: if the reset fails, the outer error
-        // path stops the operation with the file and the id still coherent. Deleting first
-        // could leave settings pointing at a removed style.
-        if (style.id === activeStyleId) {
+        // No service-level transaction exists, so compensate manually. Reset the active id
+        // first (a failed reset then aborts with file and id untouched), and if the delete
+        // itself fails after a successful reset, restore the previous active id — a reported
+        // failure must not silently deactivate a style that still exists.
+        if (wasActive) {
           await serviceRef.current.setActiveStyle({ styleId: "default" });
         }
-        await serviceRef.current.deleteStyle({ id: style.id });
+        try {
+          await serviceRef.current.deleteStyle({ id: style.id });
+        } catch (deleteError) {
+          if (wasActive && loadedHostKeyRef.current === key) {
+            try {
+              await serviceRef.current.setActiveStyle({ styleId: style.id });
+            } catch (rollbackError) {
+              // Both writes failed; the style exists but is deactivated. Log only — the
+              // outer handler still reports the deletion failure.
+              logger.warn("[OutputStyles] Failed to restore active style after failed delete", {
+                styleId: style.id,
+                error: errorMessage(rollbackError),
+              });
+            }
+          }
+          throw deleteError;
+        }
         if (loadedHostKeyRef.current !== key) return;
         toast(intl.formatMessage({ id: "settings.outputStyles.deleted" }));
         loadedHostKeyRef.current = null;
