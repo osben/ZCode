@@ -3,7 +3,7 @@ FROM node:26.11.1-bookworm-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends chromium ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-RUN corepack enable && corepack prepare pnpm@10.33.2 --activate
+RUN npm install --global pnpm@10.33.2
 
 WORKDIR /workspace
 COPY --chown=node:node . .

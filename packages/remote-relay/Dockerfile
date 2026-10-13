@@ -1,6 +1,6 @@
 FROM node:26.11.1-bookworm-slim AS build
 WORKDIR /workspace
-RUN corepack enable && corepack prepare pnpm@10.33.2 --activate
+RUN npm install --global pnpm@10.33.2
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json LICENSE ./
 COPY patches ./patches
 COPY packages/remote-relay ./packages/remote-relay
