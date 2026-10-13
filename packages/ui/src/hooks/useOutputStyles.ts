@@ -313,21 +313,14 @@ export function useOutputStyles(target: UserInstructionsHostTarget): OutputStyle
       if (!rpcReady) return;
       const key = hostKey;
       try {
+        // Reset the active id BEFORE deleting the file: if the reset fails, the outer error
+        // path stops the operation with the file and the id still coherent. Deleting first
+        // could leave settings pointing at a removed style.
+        if (style.id === activeStyleId) {
+          await serviceRef.current.setActiveStyle({ styleId: "default" });
+        }
         await serviceRef.current.deleteStyle({ id: style.id });
         if (loadedHostKeyRef.current !== key) return;
-        if (style.id === activeStyleId) {
-          // Best-effort reset: if this write fails after a successful delete, a stale active
-          // id remains, which the runtime loader already degrades to "no style". Do not fail
-          // the whole operation or report the deletion as failed over the reset.
-          try {
-            await serviceRef.current.setActiveStyle({ styleId: "default" });
-          } catch (error) {
-            logger.warn("[OutputStyles] Failed to reset active style after delete", {
-              styleId: style.id,
-              error: errorMessage(error),
-            });
-          }
-        }
         toast(intl.formatMessage({ id: "settings.outputStyles.deleted" }));
         loadedHostKeyRef.current = null;
         await load(key);

@@ -276,7 +276,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
     // Session-level output style wins; otherwise fall back to the persisted active style on disk.
     const persistedOutputStyle = options.runtimeConfig?.outputStyle
       ? undefined
-      : await loadPersistedOutputStyle({ storageRoot });
+      : await loadPersistedOutputStyle({ storageRoot, logger });
     let { configuredMcpServers, runtimeConfig, untrustedProjectMcpServers } =
       resolveAppRuntimeConfig({
         cliStorageRoot,

@@ -16,6 +16,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { AgentRuntimeConfig } from "@zcode/core";
+import type { Logger } from "@zcode/contracts";
 import {
   BUILT_IN_OUTPUT_STYLES,
   parseOutputStyleFile,
@@ -41,10 +42,12 @@ async function readActiveStyleId(settingsPath: string): Promise<string | undefin
 
 /**
  * Resolve the persisted output style for a new session. `storageRoot` is the CLI user
- * storage root (`~/.zcode`).
+ * storage root (`~/.zcode`). `logger` receives non-ENOENT read warnings; the style
+ * resolution itself always degrades to the built-in constant instead of failing startup.
  */
 export async function loadPersistedOutputStyle(input: {
   storageRoot: string;
+  logger?: Logger;
 }): Promise<AgentRuntimeConfig["outputStyle"]> {
   const storageRoot = input.storageRoot;
   const styleId = await readActiveStyleId(join(storageRoot, SETTINGS_FILE));
@@ -56,8 +59,15 @@ export async function loadPersistedOutputStyle(input: {
   let fileContent: string | null = null;
   try {
     fileContent = await readFile(join(storageRoot, OUTPUT_STYLES_DIR_NAME, filename), "utf-8");
-  } catch {
-    // No file for this id; fall through to the built-in constant.
+  } catch (error) {
+    // ENOENT is the normal "override file absent" case; anything else (permissions, IO)
+    // is worth a warning while still degrading to the built-in constant.
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      input.logger?.warn("[OutputStyle] Failed to read style override file", {
+        file: filename,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
   if (fileContent !== null) {
     const parsed = parseOutputStyleFile(fileContent, filename);
