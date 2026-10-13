@@ -1,6 +1,7 @@
 import type { RequestVerificationReason } from "@zcode/shared";
 import { projectAccessTokenFingerprint, isRequestSecurityFailure } from "@zcode/shared";
 import type { Logger, ModelRequestAuth } from "@zcode/contracts";
+import { zhipuAccountMode } from "./account-access-mode.js";
 import { RequestVerificationRetry } from "./request-security-edition/recovery.js";
 import { inspectProviderFailure } from "./failure-classifier.js";
 import {
@@ -65,34 +66,47 @@ export class AccountRequestRetry {
     if (!this.canRecoverProjectToken(error, blocked)) return false;
     this.#used = true;
     this.#pending = true;
-    this.logger?.warn("Model PAT rejected; refreshing once before retry", {
-      event: "model.project_token.refresh_retry",
-      providerId: String(this.model.providerId),
-      modelId: String(this.model.modelId),
-      traceId: this.request.traceContext?.traceId,
-      statusCode: 401,
-    });
+    this.logger?.warn(
+      this.model.accountAccess?.type === "chatgpt-account"
+        ? "ChatGPT plan token rejected; refreshing once before retry"
+        : "Model PAT rejected; refreshing once before retry",
+      {
+        event:
+          this.model.accountAccess?.type === "chatgpt-account"
+            ? "model.siwc_token.refresh_retry"
+            : "model.project_token.refresh_retry",
+        providerId: String(this.model.providerId),
+        modelId: String(this.model.modelId),
+        traceId: this.request.traceContext?.traceId,
+        statusCode: 401,
+      },
+    );
     return true;
   }
 
   canRecoverProjectToken(error: unknown, blocked = false): boolean {
-    const mode = this.model.accountAccess?.mode;
+    const mode = zhipuAccountMode(this.model.accountAccess);
+    const isChatgptPlan = this.model.accountAccess?.type === "chatgpt-account";
     if (
       blocked ||
       this.#used ||
       this.request.abortSignal?.aborted ||
       !this.request.refreshRuntimeHeadersBeforeAttempt ||
-      !["individual-coding-plan", "team-coding-plan", "off-peak"].includes(mode ?? "") ||
       !this.#auth?.accountScope ||
       !this.#token(this.#auth) ||
       !isProjectTokenRejection(error)
     )
       return false;
-    return true;
+    if (isChatgptPlan) {
+      // SIWC: a 401 (signed identity not accepted / subscription_sharing_invalid_user) gets one
+      // token refresh + retry; a terminal refresh failure is surfaced by the resolver instead.
+      return true;
+    }
+    return ["individual-coding-plan", "team-coding-plan", "off-peak"].includes(mode ?? "");
   }
 
   #token(auth: ModelRequestAuth): string | undefined {
-    return this.model.accountAccess?.mode === "off-peak"
+    return zhipuAccountMode(this.model.accountAccess) === "off-peak"
       ? Object.entries(auth.headers ?? {}).find(
           ([key]) => key.toLowerCase() === "x-coding-plan-api-key",
         )?.[1]

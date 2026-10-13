@@ -13,9 +13,17 @@ export type AiSdkGenerateTextOptions = Parameters<typeof aiGenerateText>[0];
 export type AiSdkGenerateTextResult = Awaited<ReturnType<typeof aiGenerateText>>;
 export type AiSdkStreamTextOptions = Parameters<typeof aiStreamText>[0];
 export type AiSdkStreamTextResult = ReturnType<typeof aiStreamText>;
+
+/** Adapter-internal marker for ChatGPT plan (SIWC) account models; carries no wire payload. */
+export interface ChatgptPlanAccountAccess {
+  readonly type: "chatgpt-account";
+}
+
+export type AiSdkAccountAccess = ZCodeProviderAccountAccess | ChatgptPlanAccountAccess;
+
 export type ResolvedAiSdkModel = AiSdkResolvedModel & {
   properties: ModelProperties;
-  accountAccess?: ZCodeProviderAccountAccess;
+  accountAccess?: AiSdkAccountAccess;
 };
 
 export interface AiSdkModelRuntime {

@@ -20,7 +20,10 @@ function fixture(
   const request = {
     refreshRuntimeHeadersBeforeAttempt: refresh,
   } as unknown as AiSdkModelTextRequest;
-  const retry = new AccountRequestRetry(request, { accountAccess: { mode } } as ResolvedAiSdkModel);
+  const retry = new AccountRequestRetry(
+    request,
+    { accountAccess: { type: "zhipu-account", mode } } as unknown as ResolvedAiSdkModel,
+  );
   const run = () =>
     retry.prepareRequest(request).refreshRuntimeHeadersBeforeAttempt!({
       attempt: 1,

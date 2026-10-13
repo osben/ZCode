@@ -88,6 +88,7 @@ import {
   readModelFailureErrorPhase,
 } from "./runner-telemetry.js";
 import { repairReasoningHistoryAfterSignatureRejection } from "./reasoning-history-normalization.js";
+import { zhipuAccountMode } from "./account-access-mode.js";
 
 type StreamFailurePhase = "request_setup" | "response_body";
 
@@ -527,7 +528,7 @@ export async function* runStreamText(input: {
               source: diagnostics.lastErrorChunk ?? diagnostics.lastFinishChunk,
             }) ??
             createRequestVerificationEmptyStreamError({
-              accountMode: resolved.accountAccess?.mode,
+              accountMode: zhipuAccountMode(resolved.accountAccess),
               headers: resolved.headers,
               providerId: String(statusContext.providerId),
               providerKind: resolved.providerKind,
@@ -707,7 +708,7 @@ export async function* runStreamText(input: {
       // Off-Peak special case (idle-plan provider only): queued 429 responses are exempt from the
       // unlimited probe budget; marking 3102 as failed triggers continuation.
       const offPeak = resolveOffPeakFailureDecision({
-        offPeak: resolved.accountAccess?.mode === "off-peak",
+        offPeak: zhipuAccountMode(resolved.accountAccess) === "off-peak",
         failure: classified,
         error: unwrapRetryError(error),
       });
@@ -1270,7 +1271,7 @@ async function handleStreamErrorEvent(
   const classified = classifyModelFailure(error, input.input.request.abortSignal);
   // Off-Peak special case: queued 429 is also exempt from retry budget when the first SSE chunk is an error (no visible output yet).
   const offPeak = resolveOffPeakFailureDecision({
-    offPeak: input.input.resolved.accountAccess?.mode === "off-peak",
+    offPeak: zhipuAccountMode(input.input.resolved.accountAccess) === "off-peak",
     failure: classified,
     error: unwrapRetryError(error),
   });

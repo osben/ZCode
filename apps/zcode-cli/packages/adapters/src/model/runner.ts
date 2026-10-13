@@ -39,12 +39,14 @@ import { runStreamText } from "./runner-stream.js";
 import { normalizeReasoningHistory } from "./reasoning-history-normalization.js";
 import {
   defaultRuntime,
+  type AiSdkAccountAccess,
   type AiSdkModelRuntime,
   type AiSdkModelTextRequest,
   type ResolvedAiSdkModel,
 } from "./runner-runtime.js";
 import { createModel, type ModelExecutionRequest } from "./model.js";
 import { refreshOffPeakRequestAuth } from "./off-peak-request-auth.js";
+import { aggregateModelStreamToTextResult } from "./stream-to-text-result.js";
 
 export type { AiSdkModelRetryOptions } from "./retry-policy.js";
 export type {
@@ -157,8 +159,8 @@ export class AiSdkModelAdapter {
     const resolved = {
       ...boundResolution.resolved,
       properties,
-      ...(options.providerConfig.access.type === "zhipu-account"
-        ? { accountAccess: options.providerConfig.access }
+      ...(resolveAccountAccess(options.providerConfig.access)
+        ? { accountAccess: resolveAccountAccess(options.providerConfig.access) }
         : {}),
     };
     const optionSpecs = options.modelConfig.optionSpecs;
@@ -204,7 +206,7 @@ export class AiSdkModelAdapter {
                 : requestAuth;
             return { headersApplied: true, requestAuth: refreshedAuth };
           }
-        : options.providerConfig.access.type === "zhipu-account"
+        : isAccountAccess(options.providerConfig.access)
           ? (contextRefreshRuntimeHeadersBeforeAttempt ??
             (async () => {
               throw new ModelProtocolError(
@@ -265,8 +267,8 @@ export class AiSdkModelAdapter {
               }),
             ),
             properties,
-            ...(options.providerConfig.access.type === "zhipu-account"
-              ? { accountAccess: options.providerConfig.access }
+            ...(resolveAccountAccess(options.providerConfig.access)
+              ? { accountAccess: resolveAccountAccess(options.providerConfig.access) }
               : {}),
           })
         : () => ({
@@ -277,8 +279,8 @@ export class AiSdkModelAdapter {
               },
             }),
             properties,
-            ...(options.providerConfig.access.type === "zhipu-account"
-              ? { accountAccess: options.providerConfig.access }
+            ...(resolveAccountAccess(options.providerConfig.access)
+              ? { accountAccess: resolveAccountAccess(options.providerConfig.access) }
               : {}),
           });
     };
@@ -295,6 +297,17 @@ export class AiSdkModelAdapter {
       executor: {
         generateText: (request) => {
           const legacyRequest = toLegacyRequest(request);
+          if (options.providerConfig.access.type === "chatgpt-account") {
+            // The SIWC direct route rejects non-streaming requests (stream:true is required on
+            // every inference call), so route generateText through the streaming path and aggregate.
+            return aggregateModelStreamToTextResult(
+              this.streamTextWithResolved(
+                legacyRequest,
+                resolved,
+                resolveForRequest(legacyRequest, request.options),
+              ),
+            );
+          }
           return this.generateTextWithResolved(
             legacyRequest,
             resolved,
@@ -364,6 +377,19 @@ function requireMaxOutputTokens(options: ModelOptions): number {
     );
   }
   return options.maxOutputTokens;
+}
+
+function isAccountAccess(access: RegistryProviderConfig["access"]): boolean {
+  return access.type === "zhipu-account" || access.type === "chatgpt-account";
+}
+
+/** Both account domains need per-attempt runtime-header refresh; only zhipu carries a wire payload. */
+function resolveAccountAccess(
+  access: RegistryProviderConfig["access"],
+): AiSdkAccountAccess | undefined {
+  if (access.type === "zhipu-account") return access;
+  if (access.type === "chatgpt-account") return { type: "chatgpt-account" };
+  return undefined;
 }
 
 function hasRequestAuth(
