@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const appMock = {
   isPackaged: false,
@@ -1015,5 +1015,145 @@ describe("desktopRuntimeEnv runtime identity", () => {
     expect(runtimeUserDataPath).toBeUndefined();
     expect(runtimeSessionDataPath).toBeUndefined();
     expect(appMock.getPath).not.toHaveBeenCalledWith("appData");
+  });
+});
+
+describe("desktopRuntimeEnv voice transcription library path", () => {
+  let transcribeSandboxRoot: string;
+
+  beforeEach(() => {
+    delete process.env["TRANSCRIBE_LIBRARY"];
+    transcribeSandboxRoot = mkdtempSync(join(tmpdir(), "zcode-transcribe-env-"));
+    createdDirs.push(transcribeSandboxRoot);
+  });
+
+  // This describe runs after the first describe, whose afterAll cleanup does not cover the directories
+  // created here; resourcesPath must also be restored when leaving this group so file-level state is not
+  // leaked to later files running in the same worker.
+  afterAll(() => {
+    if (originalResourcesPathDescriptor) {
+      Object.defineProperty(process, "resourcesPath", originalResourcesPathDescriptor);
+    } else {
+      Reflect.deleteProperty(process, "resourcesPath");
+    }
+    for (const dir of createdDirs.splice(0).reverse()) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves the library path under app.asar.unpacked for the target platform when packaged", async () => {
+    const bundledLibraryDir = join(
+      transcribeSandboxRoot,
+      "app.asar.unpacked",
+      "node_modules",
+      "@transcribe-cpp",
+      "darwin-arm64-metal",
+    );
+    mkdirSync(bundledLibraryDir, { recursive: true });
+    writeFileSync(join(bundledLibraryDir, "libtranscribe.dylib"), "");
+
+    const { resolveBundledTranscribeLibraryPath } =
+      await import("../src/main/desktopRuntimeEnv.js");
+
+    // Bugfix: koffi dlopen cannot read asar virtual paths; when packaged, the real path under
+    // app.asar.unpacked must be resolved.
+    expect(
+      resolveBundledTranscribeLibraryPath({
+        platform: "darwin",
+        arch: "arm64",
+        isPackaged: true,
+        resourcesPath: transcribeSandboxRoot,
+      }),
+    ).toBe(join(bundledLibraryDir, "libtranscribe.dylib"));
+    // Linux resolves the .so inside its cpu-vulkan package; keeps the filename mapping covered on
+    // runners of any OS.
+    const linuxLibraryDir = join(
+      transcribeSandboxRoot,
+      "app.asar.unpacked",
+      "node_modules",
+      "@transcribe-cpp",
+      "linux-x64-cpu-vulkan",
+    );
+    mkdirSync(linuxLibraryDir, { recursive: true });
+    writeFileSync(join(linuxLibraryDir, "libtranscribe.so"), "");
+    expect(
+      resolveBundledTranscribeLibraryPath({
+        platform: "linux",
+        arch: "x64",
+        isPackaged: true,
+        resourcesPath: transcribeSandboxRoot,
+      }),
+    ).toBe(join(linuxLibraryDir, "libtranscribe.so"));
+    // Upstream provides no win32-arm64 prebuilt package; unknown platform combinations return undefined.
+    expect(
+      resolveBundledTranscribeLibraryPath({
+        platform: "win32",
+        arch: "arm64",
+        isPackaged: true,
+        resourcesPath: transcribeSandboxRoot,
+      }),
+    ).toBeUndefined();
+    // Not injected when unpackaged (local dev); keep the transcribe-cpp loader's default resolution.
+    expect(
+      resolveBundledTranscribeLibraryPath({
+        platform: "darwin",
+        arch: "arm64",
+        isPackaged: false,
+        resourcesPath: transcribeSandboxRoot,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("injects TRANSCRIBE_LIBRARY into the host process when packaged, overriding external values", async () => {
+    // buildHostProcessEnv resolves for the real process platform/arch; fabricate the platform
+    // package matching the CURRENT runner (CI is linux, dev is usually darwin) so the assertion
+    // holds on every OS instead of only where darwin-arm64 happens to be the host.
+    const { buildHostProcessEnv, TRANSCRIBE_PLATFORM_TUPLES } =
+      await import("../src/main/desktopRuntimeEnv.js");
+    const platformTuple = TRANSCRIBE_PLATFORM_TUPLES[process.platform]?.[process.arch];
+    const libraryFileName =
+      process.platform === "darwin"
+        ? "libtranscribe.dylib"
+        : process.platform === "win32"
+          ? "transcribe.dll"
+          : "libtranscribe.so";
+
+    appMock.isPackaged = true;
+    Object.defineProperty(process, "resourcesPath", {
+      value: transcribeSandboxRoot,
+      configurable: true,
+    });
+
+    if (platformTuple) {
+      const bundledLibraryPath = join(
+        transcribeSandboxRoot,
+        "app.asar.unpacked",
+        "node_modules",
+        "@transcribe-cpp",
+        platformTuple,
+        libraryFileName,
+      );
+      mkdirSync(dirname(bundledLibraryPath), { recursive: true });
+      writeFileSync(bundledLibraryPath, "");
+      const env = buildHostProcessEnv({ TRANSCRIBE_LIBRARY: "/tmp/stale-user-dylib" });
+      expect(env.TRANSCRIBE_LIBRARY).toBe(bundledLibraryPath);
+      return;
+    }
+    // No prebuilt package for this platform combination (e.g. win32-arm64): nothing to inject,
+    // the ambient value passes through unchanged.
+    const env = buildHostProcessEnv({ TRANSCRIBE_LIBRARY: "/tmp/stale-user-dylib" });
+    expect(env.TRANSCRIBE_LIBRARY).toBe("/tmp/stale-user-dylib");
+  });
+
+  it("does not inject TRANSCRIBE_LIBRARY when unpackaged; explicit overrides still pass through", async () => {
+    const explicitLibraryPath = join(transcribeSandboxRoot, "custom-libtranscribe.dylib");
+    writeFileSync(explicitLibraryPath, "");
+    appMock.isPackaged = false;
+
+    const { buildHostProcessEnv } = await import("../src/main/desktopRuntimeEnv.js");
+
+    const env = buildHostProcessEnv({ TRANSCRIBE_LIBRARY: explicitLibraryPath });
+
+    expect(env.TRANSCRIBE_LIBRARY).toBe(explicitLibraryPath);
   });
 });

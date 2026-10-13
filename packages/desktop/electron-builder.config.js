@@ -35,7 +35,9 @@ import {
 import {
   findDesktopNativePackageViolations,
   createDesktopNativePackagePrunePatterns,
+  isTargetTranscribePlatformPackage,
   parseAsarListWithPackState,
+  removeNonTargetPlatformNativePackages,
 } from "./scripts/desktop-native-package-policy.mjs";
 import { replaceAppAsarFromStaging } from "./scripts/app-asar-repack.mjs";
 import {
@@ -147,6 +149,16 @@ const REQUIRED_ASAR_RUNTIME_MODULES = [
   // triggered a production startup error: Cannot find module 'ms' (Require stack: debug/src/common.js),
   // which broke the auto-update path. Inject the leaf package explicitly so debug resolves it reliably from app.asar.
   "ms",
+  // Bugfix: the Host bundle for voice transcription loads transcribe-cpp via a runtime require("transcribe-cpp")
+  // (tsup external), but transcribe-cpp was previously declared only in services, and once the services code is
+  // bundled into out/, electron-builder's files rules exclude node_modules/@zcode/** — leaving the installer
+  // without any transcribe-cpp / koffi / @transcribe-cpp platform packages, so clicking Use after downloading a
+  // model failed with "Voice transcription failed" (confirmed on fork.5: packages missing from asar).
+  // The desktop package now depends on transcribe-cpp directly and injects the closure (koffi unified to 2.15.6
+  // via the pnpm override; platform packages are optionalDependencies) into the verification list; non-target
+  // platform directories are removed by the post-injection pruning and the files rules.
+  "transcribe-cpp",
+  "koffi",
 ];
 // pacman dependencies must use package names from the official Arch repositories. electron-builder's historical defaults include
 // removed packages such as libappindicator-gtk3/http-parser and omit libraries Electron actually needs; explicitly
@@ -322,7 +334,7 @@ function resolveMissingRuntimeModules(appAsarPath) {
   const runtimeModules = collectRuntimeModuleClosureEntries(
     REQUIRED_ASAR_RUNTIME_MODULES,
     runtimeModuleLookupRoots,
-  );
+  ).filter((entry) => isTargetTranscribePlatformPackage(entry.moduleName, targetPlatform.key));
   const resolvableRuntimeModules = runtimeModules.filter((entry) => {
     if (!entry.sourceModulePath) {
       // Depending on the platform and install layout, some runtime dependencies may be pruned or absent from this packaging workspace.
@@ -406,6 +418,18 @@ async function injectHoistedRuntimeModulesIntoAsar(context) {
         cpSync(sourceModulePath, targetModulePath, { recursive: true });
       }
     });
+
+    // Bugfix: injection copies each source package directory wholesale, which bypasses the files pruning
+    // and pulls every @transcribe-cpp platform package and all koffi platform binaries into app.asar
+    // (non-target platforms can exceed 160MB combined). Prune to the target platform boundary before
+    // repacking, using the same rules as createDesktopNativePackagePrunePatterns /
+    // findDesktopNativePackageViolations.
+    runTimedSync("afterPack:pruneNonTargetNativePackages", () =>
+      removeNonTargetPlatformNativePackages({
+        nodeModulesDir: stagingNodeModulesDir,
+        targetPlatformKey: targetPlatform.key,
+      }),
+    );
 
     await runTimedAsync("afterPack:asar-pack", () =>
       replaceAppAsarFromStaging({
@@ -613,6 +637,14 @@ export default {
     // node-pty target prebuilds also contain helper executables such as spawn-helper / winpty-agent.exe,
     // so the entire target directory must be unpacked; files rules already prune other platform directories.
     `node_modules/node-pty/prebuilds/${targetPlatform.key}/**`,
+    // Bugfix: voice transcription dlopens dynamic libraries such as libtranscribe.dylib from the platform
+    // package via koffi; dlopen cannot read asar virtual paths, so native files must be unpacked to
+    // app.asar.unpacked (the main process then points TRANSCRIBE_LIBRARY at the real path).
+    // @transcribe-cpp platform package names carry a suffix (e.g. darwin-arm64-metal) and are matched by
+    // target platform prefix; koffi binary directory names use underscores (e.g. darwin_arm64). The files
+    // rules already prune the other platform directories.
+    `node_modules/@transcribe-cpp/${targetPlatform.key}-*/**`,
+    `node_modules/koffi/build/koffi/${targetPlatform.os}_${targetPlatform.arch}/**`,
   ],
   beforePack: async (context) => {
     runTimedSync("beforePack:restoreTargetNodePtyPrebuild", () =>

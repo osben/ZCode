@@ -431,6 +431,57 @@ export function resolveBundledGlmBinaryPath(): string | undefined {
   return resolveBundledZCodeAgentBinaryPath();
 }
 
+// Voice transcription platform package naming must match platformTuple() in transcribe-cpp dist/loader.js
+// (darwin uses metal, linux/win32 use cpu-vulkan; upstream provides no win32-arm64 prebuilt package).
+export const TRANSCRIBE_PLATFORM_TUPLES: Record<string, Record<string, string>> = {
+  darwin: { arm64: "darwin-arm64-metal", x64: "darwin-x64-cpu" },
+  linux: { arm64: "linux-arm64-cpu-vulkan", x64: "linux-x64-cpu-vulkan" },
+  win32: { x64: "win32-x64-cpu-vulkan" },
+};
+
+// Root cause: transcribe-cpp dlopens the libtranscribe dynamic library inside the platform package via
+// koffi, and dlopen cannot read asar virtual paths (koffi.load on an in-asar path fails with errno=20 in
+// testing); even asarUnpack is not transparently redirected by Electron. In packaged builds the native
+// files are unpacked under app.asar.unpacked, so resolve the real path here and inject it into the Host
+// via TRANSCRIBE_LIBRARY (the highest-priority override in the transcribe-cpp loader).
+export function resolveBundledTranscribeLibraryPath(
+  options: {
+    platform?: NodeJS.Platform | string;
+    arch?: string;
+    isPackaged?: boolean;
+    resourcesPath?: string;
+  } = {},
+): string | undefined {
+  const platform = options.platform ?? process.platform;
+  const arch = options.arch ?? process.arch;
+  const isPackaged = options.isPackaged ?? isElectronAppPackaged();
+  const resourcesPath = options.resourcesPath ?? process.resourcesPath;
+  if (!isPackaged || !resourcesPath?.trim()) {
+    return undefined;
+  }
+
+  const platformTuple = TRANSCRIBE_PLATFORM_TUPLES[platform]?.[arch];
+  if (!platformTuple) {
+    return undefined;
+  }
+
+  const libraryFileName =
+    platform === "darwin"
+      ? "libtranscribe.dylib"
+      : platform === "win32"
+        ? "transcribe.dll"
+        : "libtranscribe.so";
+  const candidate = join(
+    resourcesPath,
+    "app.asar.unpacked",
+    "node_modules",
+    "@transcribe-cpp",
+    platformTuple,
+    libraryFileName,
+  );
+  return existsSync(candidate) ? candidate : undefined;
+}
+
 function resolveHostProcessBinaryEnv(
   envVar: string,
   hostProcessLocalEnv: Record<string, string>,
@@ -510,6 +561,14 @@ export function buildHostProcessEnv(hostProcessLocalEnv: Record<string, string>)
     "ZCODE_LARK_CLI_BINARY",
     hostProcessLocalEnv,
     larkCliBinaryPath,
+  );
+  // Bugfix: in packaged builds the transcribe-cpp native library lives under app.asar.unpacked, which koffi
+  // dlopen cannot reach through the asar virtual path, so it must be set explicitly; when unpackaged (local
+  // dev) keep the loader's default resolution — an explicit .env override still wins.
+  const resolvedTranscribeLibraryPath = resolveHostProcessBinaryEnv(
+    "TRANSCRIBE_LIBRARY",
+    hostProcessLocalEnv,
+    resolveBundledTranscribeLibraryPath(),
   );
   const dataBaseDir = getDataBaseDir();
   const rawInheritedEnv = {
@@ -607,5 +666,6 @@ export function buildHostProcessEnv(hostProcessLocalEnv: Record<string, string>)
       : {}),
     ...(resolvedGlmBinaryPath ? { GLM_BINARY_PATH: resolvedGlmBinaryPath } : {}),
     ...(resolvedLarkCliBinaryPath ? { ZCODE_LARK_CLI_BINARY: resolvedLarkCliBinaryPath } : {}),
+    ...(resolvedTranscribeLibraryPath ? { TRANSCRIBE_LIBRARY: resolvedTranscribeLibraryPath } : {}),
   };
 }
