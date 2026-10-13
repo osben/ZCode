@@ -10,8 +10,7 @@ function resolvePnpmCliPath(env) {
   const npmExecPath = env.npm_execpath;
   if (
     npmExecPath &&
-    (npmExecPath.toLowerCase().includes("\\pnpm\\") ||
-      npmExecPath.toLowerCase().includes("/pnpm/"))
+    (npmExecPath.toLowerCase().includes("\\pnpm\\") || npmExecPath.toLowerCase().includes("/pnpm/"))
   ) {
     return npmExecPath;
   }
@@ -69,6 +68,9 @@ function createCleanGitEnv() {
   for (const name of collectGitLocalEnvNames()) {
     delete env[name];
   }
+
+  // Node 26's experimental Web Storage global shadows jsdom's localStorage in Vitest.
+  env.NODE_OPTIONS = [env.NODE_OPTIONS, "--no-experimental-webstorage"].filter(Boolean).join(" ");
 
   return env;
 }
@@ -141,9 +143,7 @@ const result = spawnPnpm(vitestArgs, {
 });
 
 if (result.error) {
-  console.error(
-    `[lint-staged vitest] failed to spawn pnpm: ${result.error.message}`,
-  );
+  console.error(`[lint-staged vitest] failed to spawn pnpm: ${result.error.message}`);
 }
 
 process.exitCode = result.status ?? 1;
