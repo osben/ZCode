@@ -1,6 +1,7 @@
 import {
   SYSTEM_PROMPT_DEFAULTS,
   SYSTEM_PROMPT_OVERRIDE_KEYS,
+  composeMemoryGuidanceDefault,
   isSystemPromptOverrideKey,
 } from "@zcode/shared";
 import type { ISystemPromptService, SystemPromptSection } from "./systemPrompt.js";
@@ -60,7 +61,13 @@ export function createSystemPromptService(): ISystemPromptService {
         const overrideContent = await readOverride(key);
         return {
           key,
-          defaultContent: SYSTEM_PROMPT_DEFAULTS[key],
+          // The memory-guidance default must match what the runtime renders for the active
+          // retrieval branch (default-index inserts the MEMORY.md index pointer paragraph),
+          // or the Settings default/diff preview would disagree with the restored prompt.
+          defaultContent:
+            key === "memory-guidance"
+              ? composeMemoryGuidanceDefault("default-index")
+              : SYSTEM_PROMPT_DEFAULTS[key],
           overrideContent,
           filePath: join(getOverridesDir(), `${key}.md`),
           isOverridden: overrideContent !== null,

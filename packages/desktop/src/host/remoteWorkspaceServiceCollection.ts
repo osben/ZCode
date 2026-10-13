@@ -37,6 +37,7 @@ import {
   IMemoryService,
   IUserInstructionsService,
   IOutputStyleService,
+  ISystemPromptService,
   ISettingsSyncService,
   IPromptAttachmentTransferService,
   type IServiceAccessor,
@@ -441,6 +442,9 @@ export function createRemoteWorkspaceServiceCollection(params: {
     // Output styles follow the same rule: a local instance would edit the desktop's ~/.zcode
     // while the remote CLI reads the remote host's files.
     .register(IOutputStyleService, params.connectionServices.outputStyleService)
+    // System-prompt overrides follow the same rule: the remote CLI reads ~/.zcode/system-prompt
+    // on the remote host, so a local instance must not serve these reads/writes.
+    .register(ISystemPromptService, params.connectionServices.systemPromptService)
     .register(
       ISettingsSyncService,
       createSettingsSyncService({ settingService: localSettingService }),
@@ -501,6 +505,7 @@ export function createServerRemoteWorkspaceServiceCollection(params: {
     .register(IHooksService, params.connectionServices.hooksService)
     .register(IMemoryService, params.connectionServices.memoryService)
     .register(IOutputStyleService, params.connectionServices.outputStyleService)
+    .register(ISystemPromptService, params.connectionServices.systemPromptService)
     .register(ISettingsSyncService, params.connectionServices.settingsSyncService)
     .register(
       IPromptAttachmentTransferService,

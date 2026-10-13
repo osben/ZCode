@@ -33,7 +33,7 @@ sections themselves.
 | `harness`            | the `# Harness` block                                                                  | Applies to the main agent; the workflow-actor identity keeps the constant (subagent contract)                                                          |
 | `communication`      | the whole `# Communicating with the user` section incl. code-style and risk paragraphs |                                                                                                                                                        |
 | `context-management` | the whole `# Context management` section incl. autonomy appendix                       |                                                                                                                                                        |
-| `memory-guidance`    | the `# Memory` guidance body                                                           | Supports one placeholder, `{{memoryRoot}}`, substituted with the session memory root; override replaces the whole body incl. the retrieval-branch line |
+| `memory-guidance`    | the `# Memory` guidance body                                                           | Supports one placeholder, `{{memoryRoot}}`, substituted with the session memory root; override replaces the whole body incl. the retrieval-branch line. The default the service reports is the active-branch rendering (`composeMemoryGuidanceDefault("default-index")`), which includes the `MEMORY.md` index pointer paragraph — byte-identical to what the runtime renders |
 
 **Not editable:** the authorized-security notice (product safety constant), `# ZCode Desktop
 Context`, `# Session-specific guidance`, `# Environment`, `gitStatus` (runtime-computed), and

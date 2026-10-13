@@ -58,6 +58,9 @@ export function buildRemoteWorkspaceSessionServices(
     // Output styles live in ~/.zcode/output-styles on the target host, next to AGENTS.md;
     // the same override is required so a remote workspace does not edit desktop-local styles.
     outputStyleService: remoteServices.outputStyleService,
+    // System-prompt overrides live in ~/.zcode/system-prompt on the target host; without this
+    // override a remote workspace would silently edit the desktop machine's override files.
+    systemPromptService: remoteServices.systemPromptService,
   };
 }
 

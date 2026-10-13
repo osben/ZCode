@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  composeMemoryGuidanceDefault,
   DEFAULT_CLI_PREFIX_PROMPT,
   DEFAULT_COMMUNICATION_PROMPT,
   DEFAULT_CONTEXT_MANAGEMENT_PROMPT,
@@ -73,5 +74,15 @@ describe("system prompt section defaults and overrides", () => {
     const indexed = buildMemorySection("/mem/root", "default-index");
     expect(indexed?.content).toContain("add a one-line pointer in `MEMORY.md`");
     expect(indexed?.content).toContain("You have a persistent file-based memory at `/mem/root/`.");
+  });
+
+  it("renders the active-branch memory default byte-identically from the shared composer", () => {
+    // The service reports composeMemoryGuidanceDefault("default-index") as the memory-guidance
+    // default; this pins the runtime's rendered default to that exact value so the Settings
+    // default/diff preview cannot drift from the restored prompt.
+    const indexed = buildMemorySection("/mem/root", "default-index");
+    expect(indexed?.content).toBe(
+      renderMemoryGuidancePrompt(composeMemoryGuidanceDefault("default-index"), "/mem/root"),
+    );
   });
 });

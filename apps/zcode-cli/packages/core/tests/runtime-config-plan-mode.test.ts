@@ -33,4 +33,14 @@ describe("updateConfig independent Plan", () => {
     updateConfig.call(runtime, { mode: "edit" });
     expect(runtime.config).toMatchObject({ mode: "edit", planEnabled: false });
   });
+  it("systemPromptOverrides 补丁写入运行时配置", () => {
+    // 空闲会话（无 activeTurn）触发一次上下文前缀重建；contextBuilder 未初始化时该路径
+    // 只借用消息历史，这里用最小 stub 验证补丁写入配置。
+    const runtime = {
+      config: {},
+      messageHistory: { borrowReadOnlyRuntimeEntries: () => [] },
+    } as unknown as AgentRuntimeInternal;
+    updateConfig.call(runtime, { systemPromptOverrides: { harness: "Mine." } });
+    expect(runtime.config.systemPromptOverrides).toEqual({ harness: "Mine." });
+  });
 });

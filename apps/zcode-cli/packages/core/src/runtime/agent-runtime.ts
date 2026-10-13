@@ -380,7 +380,10 @@ export interface AgentRuntime {
   beginShutdown(): void;
   closeBrowserSession(): Promise<void>;
   updateConfig(
-    patch: Pick<AgentRuntimeConfig, "mode" | "planEnabled" | "language" | "outputStyle">,
+    patch: Pick<
+      AgentRuntimeConfig,
+      "mode" | "planEnabled" | "language" | "outputStyle" | "systemPromptOverrides"
+    >,
   ): void;
   initializeSessionShellEnvironmentIfNeeded(
     selection: ExecutionShellSelection | (() => ExecutionShellSelection),

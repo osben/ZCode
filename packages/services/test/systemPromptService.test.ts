@@ -3,7 +3,7 @@ import { mkdtemp, readdir, rm, stat, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { afterEach, beforeEach } from "node:test";
-import { SYSTEM_PROMPT_DEFAULTS } from "@zcode/shared";
+import { composeMemoryGuidanceDefault, SYSTEM_PROMPT_DEFAULTS } from "@zcode/shared";
 import { createSystemPromptService } from "../src/system-prompt/systemPromptService.js";
 
 let tempHome = "";
@@ -36,14 +36,27 @@ test("listSections returns defaults with no overrides on a fresh install", async
 
   assert.equal(sections.length, 6);
   for (const section of sections) {
-    assert.equal(
-      section.defaultContent,
-      SYSTEM_PROMPT_DEFAULTS[section.key as keyof typeof SYSTEM_PROMPT_DEFAULTS],
-    );
+    const expectedDefault =
+      section.key === "memory-guidance"
+        ? composeMemoryGuidanceDefault("default-index")
+        : SYSTEM_PROMPT_DEFAULTS[section.key as keyof typeof SYSTEM_PROMPT_DEFAULTS];
+    assert.equal(section.defaultContent, expectedDefault);
     assert.equal(section.overrideContent, null);
     assert.equal(section.isOverridden, false);
     assert.equal(section.filePath, join(overridesDir(), `${section.key}.md`));
   }
+});
+
+test("memory-guidance default matches the active runtime branch, including the MEMORY.md pointer", async () => {
+  // The active retrieval branch (default-index) renders one extra paragraph — the MEMORY.md
+  // index pointer. The service must report that complete default, or a Settings diff/restore
+  // preview would disagree with the prompt the runtime produces after deleting an override.
+  const service = createSystemPromptService();
+  const { sections } = await service.listSections();
+  const memory = sections.find((section) => section.key === "memory-guidance");
+  assert.ok(memory);
+  assert.equal(memory.defaultContent, composeMemoryGuidanceDefault("default-index"));
+  assert.match(memory.defaultContent, /add a one-line pointer in `MEMORY\.md`/);
 });
 
 test("getOverridesDirectory is a pure lookup and never creates the directory", async () => {
