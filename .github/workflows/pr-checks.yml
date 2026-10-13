@@ -113,7 +113,7 @@ jobs:
         # storage-preparation 协议用例经 bootstrap 源码引用 @zcode/adapters/storage 的 dist 导出，
         # 其类型链依赖 contracts 与 dynamic-workflow，需按拓扑顺序先构建。
         run: >
-          pnpm --filter @zcode/contracts --filter @zcode/dynamic-workflow --filter @zcode/adapters build
+          pnpm --filter @zcode/contracts --filter @zcode/dynamic-workflow --filter @zcode/adapters --filter @zcode/e2e-report build
 
       - name: Tests
         run: pnpm test
