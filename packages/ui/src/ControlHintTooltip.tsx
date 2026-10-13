@@ -37,7 +37,7 @@ type TriggerChildProps = {
 };
 
 const shortcutKbdBaseClassName =
-  "rounded-md h-4 inline-flex items-center bg-tooltip-tag px-1.5 text-ui-xs font-medium text-tooltip-tag-foreground";
+  "rounded-md h-4 inline-flex items-center border border-b-2 border-border bg-tooltip-tag px-1.5 text-ui-xs font-medium text-tooltip-tag-foreground";
 
 function setRef<T>(ref: Ref<T> | undefined, value: T | null) {
   if (!ref) {

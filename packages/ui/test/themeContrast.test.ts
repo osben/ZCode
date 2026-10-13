@@ -135,34 +135,51 @@ describe("theme palette contrast", () => {
   it("derives overlay and selection surfaces from each palette popover and input", () => {
     // Menus, tooltips, popover headers, and selected cards previously kept the neutral base values
     // under accent palettes, rendering dropdown content unthemed. Like background-alt, these tokens
-    // are var/color-mix expressions, so validate their form per mode instead of parsing hexes.
-    const derivedTokens = [
-      "--color-menu",
-      "--color-menu-hover",
-      "--color-popover-header",
-      "--color-tooltip",
-      "--color-tooltip-tag",
-      "--color-card-selected",
-      "--color-input-focused",
+    // are var/color-mix expressions, so pin the exact expression for every token and mode: a
+    // neutralized, mistyped, or omitted derivation must fail here instead of shipping.
+    const derivedByMode = [
+      {
+        mode: "light",
+        selector: (id: string) => `\\.palette-${id}`,
+        expected: {
+          "--color-menu": "var(--color-popover)",
+          "--color-menu-hover":
+            "color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950))",
+          "--color-popover-header":
+            "color-mix(in oklab, var(--color-popover) 94%, var(--color-neutral-950))",
+          "--color-tooltip":
+            "color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950))",
+          "--color-tooltip-tag":
+            "color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950))",
+          "--color-card-selected":
+            "color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950))",
+          "--color-input-focused": "var(--color-input)",
+        },
+      },
+      {
+        mode: "dark",
+        selector: (id: string) => `\\.palette-${id}\\.dark`,
+        expected: {
+          "--color-menu": "var(--color-popover)",
+          "--color-menu-hover": "color-mix(in oklab, var(--color-popover) 92%, var(--color-white))",
+          "--color-popover-header":
+            "color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950))",
+          "--color-tooltip":
+            "color-mix(in oklab, var(--color-popover) 85%, var(--color-neutral-950))",
+          "--color-tooltip-tag":
+            "color-mix(in oklab, var(--color-popover) 94%, var(--color-white))",
+          "--color-card-selected":
+            "color-mix(in oklab, var(--color-popover) 92%, var(--color-white))",
+          "--color-input-focused": "var(--color-input)",
+        },
+      },
     ] as const;
     for (const { id } of accentPalettes) {
-      for (const selector of [`\\.palette-${id}`, `\\.palette-${id}\\.dark`]) {
-        for (const token of derivedTokens) {
-          assert.ok(readPaletteValue(selector, token), `${id} ${selector} is missing ${token}`);
+      for (const { mode, selector, expected } of derivedByMode) {
+        for (const [token, expression] of Object.entries(expected)) {
+          assert.equal(readPaletteValue(selector(id), token), expression, `${id} ${mode} ${token}`);
         }
-        assert.equal(readPaletteValue(selector, "--color-menu"), "var(--color-popover)");
-        assert.equal(readPaletteValue(selector, "--color-input-focused"), "var(--color-input)");
       }
-      assert.equal(
-        readPaletteValue(`\\.palette-${id}`, "--color-menu-hover"),
-        "color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950))",
-        `${id} light menu-hover`,
-      );
-      assert.equal(
-        readPaletteValue(`\\.palette-${id}\\.dark`, "--color-menu-hover"),
-        "color-mix(in oklab, var(--color-popover) 92%, var(--color-white))",
-        `${id} dark menu-hover`,
-      );
     }
   });
 

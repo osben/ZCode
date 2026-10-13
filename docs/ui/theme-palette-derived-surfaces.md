@@ -43,9 +43,12 @@ Token ownership per theme layer:
 | `--color-card-selected`  | `color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950))` | `color-mix(in oklab, var(--color-popover) 92%, var(--color-white))`       |
 | `--color-input-focused`  | `var(--color-input)`                                                      | `var(--color-input)`                                                      |
 
-Because `var()` and `color-mix()` resolve on the element, each palette block only repeats its
-core hex values; every overlay follows automatically, and a future palette cannot forget the
-menu/tooltip tokens.
+The derivation expressions reference the palette's own core tokens, so they resolve against the
+palette's `--color-popover`/`--color-input` values. Unlike the token-specific derivations inside
+a single block, this is not automatic: every palette block repeats all seven declarations, and
+completeness is enforced by `packages/ui/test/themeContrast.test.ts`, which pins the exact
+expression per token and mode — a palette that omits a derived token fails CI instead of
+silently rendering neutral overlays.
 
 `--color-border` and `--color-popover-border` intentionally stay neutral in accent palettes
 for now; retinting borders is a separate decision.
