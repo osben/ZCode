@@ -61,6 +61,7 @@ export function ConversationQuotaBanner({
   onDismiss,
   onShown,
   autoContinueDefault = true,
+  autoContinueReady = true,
   onAutoContinue,
 }: {
   state: SessionQuotaBannerState;
@@ -71,11 +72,13 @@ export function ConversationQuotaBanner({
   onDismiss: () => void;
   onShown?: () => void;
   autoContinueDefault?: boolean;
+  autoContinueReady?: boolean;
   onAutoContinue?: () => void;
 }) {
   const { intl, locale } = useZCodeIntl();
   const bannerRef = useRef<HTMLDivElement>(null);
-  const [autoContinue, setAutoContinue] = useState(autoContinueDefault);
+  const [autoContinue, setAutoContinue] = useState(autoContinueReady && autoContinueDefault);
+  const autoContinueInitialized = useRef(autoContinueReady);
   useEffect(() => {
     if (!onShown || !state.visible || !bannerRef.current) return;
     // Background tasks also compute quota state; consume the bucket's one reminder per period only when it is actually visible.
@@ -95,7 +98,20 @@ export function ConversationQuotaBanner({
     };
   }, [onShown, state.visible]);
   useEffect(() => {
-    if (!autoContinue || state.providerLimitedResetAt === null || !onAutoContinue) return;
+    if (autoContinueInitialized.current || !autoContinueReady) return;
+    autoContinueInitialized.current = true;
+    setAutoContinue(autoContinueDefault);
+  }, [autoContinueDefault, autoContinueReady]);
+  useEffect(() => {
+    if (
+      !autoContinueReady ||
+      !autoContinue ||
+      !state.visible ||
+      state.providerLimitedResetAt === null ||
+      !onAutoContinue
+    ) {
+      return;
+    }
     const delayMs = codingPlanAutoContinueDelayMs(
       state.providerLimitedResetAt,
       Date.now(),
@@ -103,7 +119,13 @@ export function ConversationQuotaBanner({
     );
     const timer = setTimeout(onAutoContinue, delayMs);
     return () => clearTimeout(timer);
-  }, [autoContinue, onAutoContinue, state.providerLimitedResetAt]);
+  }, [
+    autoContinue,
+    autoContinueReady,
+    onAutoContinue,
+    state.providerLimitedResetAt,
+    state.visible,
+  ]);
   if (!state.visible || !state.kind) return null;
 
   const resetTime =
@@ -188,6 +210,7 @@ export function ConversationQuotaBanner({
             <Checkbox
               aria-label={intl.formatMessage({ id: "chat.quota.providerLimited.autoContinue" })}
               checked={autoContinue}
+              disabled={!autoContinueReady}
               onCheckedChange={(checked) => setAutoContinue(checked === true)}
             />
             {intl.formatMessage({ id: "chat.quota.providerLimited.autoContinue" })}

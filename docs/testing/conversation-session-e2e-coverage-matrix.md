@@ -2832,9 +2832,9 @@ PA158 合并最新 staging 后 Linux Electron 复跑 1/1 通过，run `desktop-e
 
 ## CPLAC. Coding Plan 5 小时额度自动继续
 
-| Case        | 状态    | 证据                                                                                | 未覆盖                                                                         |
-| ----------- | ------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| CPLAC-01–05 | planned | `docs/chat/coding-plan-limit-auto-continue.md`; UI timer and setting implementation | Focused component tests and controlled-clock Desktop E2E are not yet added/run |
+| Case        | 状态    | 证据                                                                                                                                                                                                                  | 未覆盖                                                                                                      |
+| ----------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| CPLAC-01–06 | partial | `docs/chat/coding-plan-limit-auto-continue.md`; `packages/ui/test/codingPlanLimitAutoContinue.test.ts` covers parsing, delay bounds, timer, cancellation, settings initialization, reset changes, and unmount cleanup | Focused unit test passes; controlled-clock Desktop E2E and live settings-load integration remain unverified |
 
 ## Bot Worker 正式用例（2026-09-23）
 

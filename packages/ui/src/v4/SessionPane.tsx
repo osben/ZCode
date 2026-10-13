@@ -1845,7 +1845,7 @@ export function SessionPane({
       workspacePath,
     ],
   );
-  const { settings: sharedSettings } = useSettings();
+  const { settings: sharedSettings, loading: sharedSettingsLoading } = useSettings();
   const readPlanIdentitySnapshot = usePlanIdentitySnapshot(
     sharedSettings?.providerFamilyDomain,
     sharedSettings?.providerFamilyDomain
@@ -5401,6 +5401,7 @@ export function SessionPane({
           }
           onDismiss={quotaBanner.dismiss}
           autoContinueDefault={sharedSettings?.codingPlanLimitAutoContinueDefaultEnabled !== false}
+          autoContinueReady={!sharedSettingsLoading}
           onAutoContinue={
             quotaBanner.state.providerLimitedResetAt !== null ? handleResumeError : undefined
           }
