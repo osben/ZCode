@@ -431,6 +431,56 @@ export function resolveBundledGlmBinaryPath(): string | undefined {
   return resolveBundledZCodeAgentBinaryPath();
 }
 
+// 语音转写平台包命名必须与 transcribe-cpp dist/loader.js 的 platformTuple() 一致
+// （darwin 用 metal，linux/win32 用 cpu-vulkan；上游未提供 win32-arm64 预编译包）。
+const TRANSCRIBE_PLATFORM_TUPLES: Record<string, Record<string, string>> = {
+  darwin: { arm64: "darwin-arm64-metal", x64: "darwin-x64-cpu" },
+  linux: { arm64: "linux-arm64-cpu-vulkan", x64: "linux-x64-cpu-vulkan" },
+  win32: { x64: "win32-x64-cpu-vulkan" },
+};
+
+// 根因：transcribe-cpp 通过 koffi 以 dlopen 加载平台包内的 libtranscribe 动态库，dlopen 读不了
+// app.asar 虚拟路径（实测 koffi.load 对 asar 内路径报 errno=20），即使 asarUnpack 也不会被 Electron
+// 自动重定向。打包时原生文件解包在 app.asar.unpacked 下，这里解析真实路径，由 main 经
+// TRANSCRIBE_LIBRARY（transcribe-cpp loader 的最高优先级覆盖项）注入 Host。
+export function resolveBundledTranscribeLibraryPath(
+  options: {
+    platform?: NodeJS.Platform | string;
+    arch?: string;
+    isPackaged?: boolean;
+    resourcesPath?: string;
+  } = {},
+): string | undefined {
+  const platform = options.platform ?? process.platform;
+  const arch = options.arch ?? process.arch;
+  const isPackaged = options.isPackaged ?? isElectronAppPackaged();
+  const resourcesPath = options.resourcesPath ?? process.resourcesPath;
+  if (!isPackaged || !resourcesPath?.trim()) {
+    return undefined;
+  }
+
+  const platformTuple = TRANSCRIBE_PLATFORM_TUPLES[platform]?.[arch];
+  if (!platformTuple) {
+    return undefined;
+  }
+
+  const libraryFileName =
+    platform === "darwin"
+      ? "libtranscribe.dylib"
+      : platform === "win32"
+        ? "transcribe.dll"
+        : "libtranscribe.so";
+  const candidate = join(
+    resourcesPath,
+    "app.asar.unpacked",
+    "node_modules",
+    "@transcribe-cpp",
+    platformTuple,
+    libraryFileName,
+  );
+  return existsSync(candidate) ? candidate : undefined;
+}
+
 function resolveHostProcessBinaryEnv(
   envVar: string,
   hostProcessLocalEnv: Record<string, string>,
@@ -510,6 +560,13 @@ export function buildHostProcessEnv(hostProcessLocalEnv: Record<string, string>)
     "ZCODE_LARK_CLI_BINARY",
     hostProcessLocalEnv,
     larkCliBinaryPath,
+  );
+  // Bugfix: 打包产物内 transcribe-cpp 的原生库在 app.asar.unpacked 下，koffi dlopen 读不了 asar
+  // 虚拟路径，必须显式指定；未打包（本地开发）时保持 loader 默认解析，.env 的显式覆盖仍然生效。
+  const resolvedTranscribeLibraryPath = resolveHostProcessBinaryEnv(
+    "TRANSCRIBE_LIBRARY",
+    hostProcessLocalEnv,
+    resolveBundledTranscribeLibraryPath(),
   );
   const dataBaseDir = getDataBaseDir();
   const rawInheritedEnv = {
@@ -607,5 +664,6 @@ export function buildHostProcessEnv(hostProcessLocalEnv: Record<string, string>)
       : {}),
     ...(resolvedGlmBinaryPath ? { GLM_BINARY_PATH: resolvedGlmBinaryPath } : {}),
     ...(resolvedLarkCliBinaryPath ? { ZCODE_LARK_CLI_BINARY: resolvedLarkCliBinaryPath } : {}),
+    ...(resolvedTranscribeLibraryPath ? { TRANSCRIBE_LIBRARY: resolvedTranscribeLibraryPath } : {}),
   };
 }

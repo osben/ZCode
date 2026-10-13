@@ -905,6 +905,9 @@ importers:
       ssh2:
         specifier: ^1.16.0
         version: 1.17.0
+      transcribe-cpp:
+        specifier: 0.3.1
+        version: 0.3.1
       undici:
         specifier: ^6.23.0
         version: 6.24.1

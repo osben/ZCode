@@ -1017,3 +1017,105 @@ describe("desktopRuntimeEnv runtime identity", () => {
     expect(appMock.getPath).not.toHaveBeenCalledWith("appData");
   });
 });
+
+describe("desktopRuntimeEnv 语音转写动态库路径", () => {
+  let transcribeSandboxRoot: string;
+
+  beforeEach(() => {
+    delete process.env["TRANSCRIBE_LIBRARY"];
+    transcribeSandboxRoot = mkdtempSync(join(tmpdir(), "zcode-transcribe-env-"));
+    createdDirs.push(transcribeSandboxRoot);
+  });
+
+  // 该 describe 在首个 describe 之后运行，其 afterAll 清理不会覆盖这里创建的目录；
+  // resourcesPath 也要在退出本组用例时还原，避免污染同 worker 中后续文件级状态。
+  afterAll(() => {
+    if (originalResourcesPathDescriptor) {
+      Object.defineProperty(process, "resourcesPath", originalResourcesPathDescriptor);
+    } else {
+      Reflect.deleteProperty(process, "resourcesPath");
+    }
+    for (const dir of createdDirs.splice(0).reverse()) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("打包态按目标平台解析 app.asar.unpacked 内的动态库路径", async () => {
+    const bundledLibraryDir = join(
+      transcribeSandboxRoot,
+      "app.asar.unpacked",
+      "node_modules",
+      "@transcribe-cpp",
+      "darwin-arm64-metal",
+    );
+    mkdirSync(bundledLibraryDir, { recursive: true });
+    writeFileSync(join(bundledLibraryDir, "libtranscribe.dylib"), "");
+
+    const { resolveBundledTranscribeLibraryPath } =
+      await import("../src/main/desktopRuntimeEnv.js");
+
+    // Bugfix: koffi dlopen 无法读取 asar 虚拟路径，打包态必须解析 app.asar.unpacked 下的真实路径。
+    expect(
+      resolveBundledTranscribeLibraryPath({
+        platform: "darwin",
+        arch: "arm64",
+        isPackaged: true,
+        resourcesPath: transcribeSandboxRoot,
+      }),
+    ).toBe(join(bundledLibraryDir, "libtranscribe.dylib"));
+    // 上游未提供 win32-arm64 预编译包，未知平台组合返回 undefined。
+    expect(
+      resolveBundledTranscribeLibraryPath({
+        platform: "win32",
+        arch: "arm64",
+        isPackaged: true,
+        resourcesPath: transcribeSandboxRoot,
+      }),
+    ).toBeUndefined();
+    // 未打包（本地开发）时不注入，保持 transcribe-cpp loader 的默认解析。
+    expect(
+      resolveBundledTranscribeLibraryPath({
+        platform: "darwin",
+        arch: "arm64",
+        isPackaged: false,
+        resourcesPath: transcribeSandboxRoot,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("打包态 host 进程注入 TRANSCRIBE_LIBRARY 且优先于外部覆盖", async () => {
+    const bundledLibraryDir = join(
+      transcribeSandboxRoot,
+      "app.asar.unpacked",
+      "node_modules",
+      "@transcribe-cpp",
+      "darwin-arm64-metal",
+    );
+    const bundledLibraryPath = join(bundledLibraryDir, "libtranscribe.dylib");
+    mkdirSync(bundledLibraryDir, { recursive: true });
+    writeFileSync(bundledLibraryPath, "");
+
+    appMock.isPackaged = true;
+    Object.defineProperty(process, "resourcesPath", {
+      value: transcribeSandboxRoot,
+      configurable: true,
+    });
+    const { buildHostProcessEnv } = await import("../src/main/desktopRuntimeEnv.js");
+
+    const env = buildHostProcessEnv({ TRANSCRIBE_LIBRARY: "/tmp/stale-user-dylib" });
+
+    expect(env.TRANSCRIBE_LIBRARY).toBe(bundledLibraryPath);
+  });
+
+  it("未打包态不注入 TRANSCRIBE_LIBRARY，显式覆盖仍然透传", async () => {
+    const explicitLibraryPath = join(transcribeSandboxRoot, "custom-libtranscribe.dylib");
+    writeFileSync(explicitLibraryPath, "");
+    appMock.isPackaged = false;
+
+    const { buildHostProcessEnv } = await import("../src/main/desktopRuntimeEnv.js");
+
+    const env = buildHostProcessEnv({ TRANSCRIBE_LIBRARY: explicitLibraryPath });
+
+    expect(env.TRANSCRIBE_LIBRARY).toBe(explicitLibraryPath);
+  });
+});

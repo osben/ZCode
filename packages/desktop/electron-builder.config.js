@@ -35,7 +35,9 @@ import {
 import {
   findDesktopNativePackageViolations,
   createDesktopNativePackagePrunePatterns,
+  isTargetTranscribePlatformPackage,
   parseAsarListWithPackState,
+  removeNonTargetPlatformNativePackages,
 } from "./scripts/desktop-native-package-policy.mjs";
 import { replaceAppAsarFromStaging } from "./scripts/app-asar-repack.mjs";
 import {
@@ -147,6 +149,14 @@ const REQUIRED_ASAR_RUNTIME_MODULES = [
   // triggered a production startup error: Cannot find module 'ms' (Require stack: debug/src/common.js),
   // which broke the auto-update path. Inject the leaf package explicitly so debug resolves it reliably from app.asar.
   "ms",
+  // Bugfix: 语音转写的 Host 产物以运行时 require("transcribe-cpp") 加载（tsup external），但 transcribe-cpp
+  // 此前只声明在 services，而 services 代码整体打进 out/ 后 electron-builder 的 files 规则又排除了
+  // node_modules/@zcode/**，导致安装包内完全没有 transcribe-cpp / koffi / @transcribe-cpp 平台包，
+  // 下载模型点 Use 即报 "Voice transcription failed"（fork.5 实测 asar 缺包）。
+  // 现在桌面包直接依赖 transcribe-cpp，并把闭包（koffi 经 pnpm override 统一为 2.15.6，平台包为
+  // optionalDependencies）注入校验清单；非目标平台目录由注入后的裁剪与 files 规则移除。
+  "transcribe-cpp",
+  "koffi",
 ];
 // pacman dependencies must use package names from the official Arch repositories. electron-builder's historical defaults include
 // removed packages such as libappindicator-gtk3/http-parser and omit libraries Electron actually needs; explicitly
@@ -322,7 +332,7 @@ function resolveMissingRuntimeModules(appAsarPath) {
   const runtimeModules = collectRuntimeModuleClosureEntries(
     REQUIRED_ASAR_RUNTIME_MODULES,
     runtimeModuleLookupRoots,
-  );
+  ).filter((entry) => isTargetTranscribePlatformPackage(entry.moduleName, targetPlatform.key));
   const resolvableRuntimeModules = runtimeModules.filter((entry) => {
     if (!entry.sourceModulePath) {
       // Depending on the platform and install layout, some runtime dependencies may be pruned or absent from this packaging workspace.
@@ -406,6 +416,16 @@ async function injectHoistedRuntimeModulesIntoAsar(context) {
         cpSync(sourceModulePath, targetModulePath, { recursive: true });
       }
     });
+
+    // Bugfix: 注入按源包整目录复制，会绕过 files 裁剪把 @transcribe-cpp 全部平台包与 koffi
+    // 全平台二进制带进 app.asar（非目标平台合计可超 160MB）。重打包前按目标平台边界裁剪，
+    // 与 createDesktopNativePackagePrunePatterns / findDesktopNativePackageViolations 保持同一规则。
+    runTimedSync("afterPack:pruneNonTargetNativePackages", () =>
+      removeNonTargetPlatformNativePackages({
+        nodeModulesDir: stagingNodeModulesDir,
+        targetPlatformKey: targetPlatform.key,
+      }),
+    );
 
     await runTimedAsync("afterPack:asar-pack", () =>
       replaceAppAsarFromStaging({
@@ -613,6 +633,12 @@ export default {
     // node-pty target prebuilds also contain helper executables such as spawn-helper / winpty-agent.exe,
     // so the entire target directory must be unpacked; files rules already prune other platform directories.
     `node_modules/node-pty/prebuilds/${targetPlatform.key}/**`,
+    // Bugfix: 语音转写通过 koffi dlopen 平台包内的 libtranscribe.dylib 等动态库，dlopen 无法读取
+    // asar 虚拟路径，原生文件必须解包到 app.asar.unpacked（主进程再用 TRANSCRIBE_LIBRARY 指向真实路径）。
+    // @transcribe-cpp 平台包名带后缀（如 darwin-arm64-metal），按目标平台前缀匹配；
+    // koffi 二进制目录名用下划线（如 darwin_arm64）。files 规则已裁剪其余平台目录。
+    `node_modules/@transcribe-cpp/${targetPlatform.key}-*/**`,
+    `node_modules/koffi/build/koffi/${targetPlatform.os}_${targetPlatform.arch}/**`,
   ],
   beforePack: async (context) => {
     runTimedSync("beforePack:restoreTargetNodePtyPrebuild", () =>
