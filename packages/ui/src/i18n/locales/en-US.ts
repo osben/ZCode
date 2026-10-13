@@ -7681,7 +7681,7 @@ const enUS: Record<string, string> = {
   "settings.outputStyles.discard.confirm": "Discard",
   "settings.outputStyles.conflict.title": "Style changed on disk",
   "settings.outputStyles.conflict.description":
-    "This style was modified outside the editor since you opened it. Reload the saved version (your draft text is kept and re-diffed) or overwrite it.",
+    "This style was changed or removed outside the editor since you opened it. Reload accepts the current disk state (the editor closes when the style was removed); Overwrite writes your version.",
   "settings.outputStyles.conflict.reload": "Reload saved",
   "settings.outputStyles.conflict.overwrite": "Overwrite",
   "settings.outputStyles.effectHint":

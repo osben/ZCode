@@ -7365,7 +7365,7 @@ const zhCN: Record<string, string> = {
   "settings.outputStyles.discard.confirm": "放弃",
   "settings.outputStyles.conflict.title": "风格已在磁盘上被修改",
   "settings.outputStyles.conflict.description":
-    "该风格在打开编辑器后被外部修改。可以重新加载已保存版本（草稿文本会保留并重新对比），或直接覆盖。",
+    "该风格在打开编辑器后被外部修改或移除。“重新加载”接受磁盘上的当前状态（风格已被移除时编辑器会关闭）；“覆盖”写入你的版本。",
   "settings.outputStyles.conflict.reload": "重新加载",
   "settings.outputStyles.conflict.overwrite": "覆盖",
   "settings.outputStyles.effectHint":

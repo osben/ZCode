@@ -7267,7 +7267,7 @@ const ukUA: Record<string, string> = {
   "settings.outputStyles.discard.confirm": "Відкинути",
   "settings.outputStyles.conflict.title": "Стиль змінено на диску",
   "settings.outputStyles.conflict.description":
-    "Цей стиль було змінено поза редактором після відкриття. Перезавантажте збережену версію (текст чернетки збережеться й порівняється заново) або перезапишіть її.",
+    "Цей стиль було змінено або вилучено поза редактором після відкриття. «Перезавантажити» приймає поточний стан на диску (якщо стиль вилучено — редактор закриється); «Перезаписати» записує вашу версію.",
   "settings.outputStyles.conflict.reload": "Перезавантажити",
   "settings.outputStyles.conflict.overwrite": "Перезаписати",
   "settings.outputStyles.effectHint":

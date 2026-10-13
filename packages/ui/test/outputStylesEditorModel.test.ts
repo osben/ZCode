@@ -58,8 +58,9 @@ describe("outputStyleFilenameFromName", () => {
     // Existing ids keep their casing but still drop separators.
     expect(safeOutputStyleFilenameFromId("custom-MyStyle")).toBe("MyStyle.md");
     expect(safeOutputStyleFilenameFromId("../x")).toBe("..x.md");
-    // A hand-named foo.md.md file lists as custom-foo.md; edit/delete must map back to it
-    // (listing already removed one extension, so no further .md is stripped).
+    // Listing strips exactly one trailing extension: Foo.md lists as custom-Foo (trivial
+    // round-trip), and only a double-extension foo.md.md file yields an id ending in .md,
+    // which must map back to foo.md.md rather than the wrong file foo.md.
     expect(safeOutputStyleFilenameFromId("custom-foo.md")).toBe("foo.md.md");
   });
 

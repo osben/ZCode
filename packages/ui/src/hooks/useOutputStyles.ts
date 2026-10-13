@@ -29,7 +29,12 @@ export interface OutputStylesEditorState {
   /** Snapshot the editor opened against; null while creating a new style. */
   baseline: OutputStyleDraft | null;
   saving: boolean;
-  conflict: { current: OutputStyleDraft } | null;
+  /**
+   * Save-time disk conflict. `deleted` marks that the style file no longer exists on disk
+   * (an empty-draft baseline would loop the conflict forever, so Reload resolves it by
+   * closing the editor and refreshing the list instead).
+   */
+  conflict: { current: OutputStyleDraft; deleted: boolean } | null;
 }
 
 export interface OutputStylesView {
@@ -253,6 +258,7 @@ export function useOutputStyles(target: UserInstructionsHostTarget): OutputStyle
               current: onDisk
                 ? draftFromStyle(onDisk)
                 : { styleId: draft.styleId, name: "", description: "", content: "" },
+              deleted: !onDisk,
             },
             saving: false,
           });
@@ -279,6 +285,14 @@ export function useOutputStyles(target: UserInstructionsHostTarget): OutputStyle
         return;
       }
       if (choice === "reload") {
+        if (current.conflict.deleted) {
+          // The file is gone on disk; there is no saved version to rebase onto. Close the
+          // editor and refresh so the row disappears — re-saving the draft would just loop
+          // the conflict against the missing file.
+          setEditor(null);
+          reload();
+          return;
+        }
         // Take the disk version as the new baseline but keep the user's draft text so nothing
         // is lost; saving again then diffs against the fresh baseline.
         setEditor({
@@ -291,7 +305,7 @@ export function useOutputStyles(target: UserInstructionsHostTarget): OutputStyle
       setEditor({ ...current, conflict: null });
       await writeDraft(current.draft);
     },
-    [editor, writeDraft],
+    [editor, reload, writeDraft],
   );
 
   const deleteStyle = useCallback(
