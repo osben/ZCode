@@ -86,7 +86,7 @@ Use stdio for the normal local workflow. HTTP is only useful if you later wrap t
 - macOS.
 - Full Xcode selected by `xcode-select`.
 - An installed iOS Simulator runtime.
-- Node.js 24.
+- Node.js 26.x
 - Optional: `idb` and `idb-companion` for tap/swipe/type/accessibility UI automation.
 
 Run `ios_preflight` inside a model session to get precise missing setup checks.

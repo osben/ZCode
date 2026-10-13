@@ -69,7 +69,7 @@ The shared package exports `@zcode/shared/web-remote-relay`. Relay must not impo
 
 | Concern          | Decision                                                                            |
 | ---------------- | ----------------------------------------------------------------------------------- |
-| Runtime          | Node 24, pinned through the repository toolchain; TypeScript/ESM                    |
+| Runtime          | Node 26, pinned through the repository toolchain; TypeScript/ESM                    |
 | Socket transport | `ws`, following the version already used by this repository                         |
 | HTTP             | `node:http`; no new HTTP framework                                                  |
 | Validation       | Shared transport schemas using the existing `zod` version                           |

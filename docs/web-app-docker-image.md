@@ -32,7 +32,7 @@ zcode.cjs app-server
 
 ## 镜像内容
 
-- 基础镜像通过 `NODE_BASE_IMAGE` build arg 指定，默认 `node:24-bookworm-slim`。
+- 基础镜像通过 `NODE_BASE_IMAGE` build arg 指定，默认 `node:26.11.1-bookworm-slim`。
 - builder 阶段执行：
   - `pnpm install --frozen-lockfile`
   - `packages/desktop/scripts/prepare-agent-node-bundle.mjs`
@@ -60,7 +60,7 @@ pnpm docker:run:web-app
 可覆盖变量：
 
 ```bash
-IMAGE=zcode-web-app:dev NODE_BASE_IMAGE=node:24-bookworm-slim pnpm docker:build:web-app
+IMAGE=zcode-web-app:dev NODE_BASE_IMAGE=node:26.11.1-bookworm-slim pnpm docker:build:web-app
 PORT=3030 DATA_VOLUME=zcode-web-data WORKSPACE_DIR="$PWD" pnpm docker:run:web-app
 ```
 

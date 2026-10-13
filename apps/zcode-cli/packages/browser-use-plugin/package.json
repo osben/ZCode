@@ -24,7 +24,7 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "2.3.1",
-    "@types/node": "^24.0.0",
+    "@types/node": "^26.0.0",
     "@zcode/adapters": "workspace:*",
     "@zcode/bootstrap": "workspace:*",
     "esbuild": "^0.25.0",

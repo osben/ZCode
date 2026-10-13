@@ -1,4 +1,4 @@
-FROM node:24.14.0-bookworm-slim AS build
+FROM node:26.11.1-bookworm-slim AS build
 WORKDIR /workspace
 RUN corepack enable && corepack prepare pnpm@10.33.2 --activate
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json LICENSE ./
@@ -10,7 +10,7 @@ RUN pnpm install --frozen-lockfile --filter @zcode/remote-relay... --ignore-scri
 RUN pnpm --filter @zcode/remote-relay build
 RUN mkdir -p /out/node_modules && cp -Lr packages/remote-relay/node_modules/ws /out/node_modules/ws
 
-FROM node:24.14.0-bookworm-slim
+FROM node:26.11.1-bookworm-slim
 WORKDIR /app
 COPY --from=build /workspace/packages/remote-relay/dist ./dist
 COPY --from=build /out/node_modules ./node_modules

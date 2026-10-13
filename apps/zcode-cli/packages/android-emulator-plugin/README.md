@@ -101,7 +101,7 @@ this package as a long-running daemon shared by multiple clients.
   Virtual Device.
 - For physical-device workflows: a ready USB device with USB debugging enabled
   can be used by serial without an AVD.
-- Node.js 24.
+- Node.js 26.x
 - Optional: Gradle on `PATH` so generated projects can create a Gradle wrapper when one is missing.
 
 Use `android_preflight` for diagnostics. When setup is missing, the `android-dev` skill follows `skills/android-dev/INSTALL_ENVIRONMENT.md` for fixed macOS shell or Windows PowerShell setup procedures before returning to MCP tools.

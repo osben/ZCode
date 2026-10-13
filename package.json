@@ -7,7 +7,7 @@
   "scripts": {
     "dev:relay": "pnpm --filter @zcode/remote-relay dev",
     "build:relay": "pnpm --filter @zcode/remote-relay build",
-    "test:relay": "vitest run packages/remote-relay packages/shared/src/web-remote-relay",
+    "test:relay": "node scripts/run-vitest.mjs run packages/remote-relay packages/shared/src/web-remote-relay",
     "dev:web": "concurrently -k -n server,web -c blue,green \"pnpm --filter @zcode/server dev\" \"pnpm --filter @zcode/web dev\"",
     "dev:docs": "pnpm --filter @zcode/dev-docs dev",
     "dev:desktop": "pnpm run dev:desktop:prod",
@@ -36,8 +36,8 @@
     "test:e2e:container": "bash scripts/test-desktop-e2e-container.sh",
     "test:e2e:container:conversation": "bash scripts/test-desktop-e2e-container.sh conversation-session-verified",
     "test:e2e:container:plugins": "bash scripts/test-desktop-e2e-container.sh plugins-verified",
-    "test:coverage": "vitest run --coverage --exclude \"packages/desktop/test/e2e/**/*.test.ts\"",
-    "test:unit": "vitest run --exclude \"packages/desktop/test/e2e/**/*.test.ts\"",
+    "test:coverage": "node scripts/run-vitest.mjs run --coverage --exclude \"packages/desktop/test/e2e/**/*.test.ts\"",
+    "test:unit": "node scripts/run-vitest.mjs run --exclude \"packages/desktop/test/e2e/**/*.test.ts\"",
     "test:unit:affected": "node scripts/run-affected-unit-tests.mjs",
     "test:docker:web-app-gateway": "node scripts/test-web-app-gateway-reset.mjs",
     "verify:pre-push": "pnpm run lint && pnpm run architecture:check -- --changed && pnpm run test:unit:affected && pnpm run test:node",
@@ -91,7 +91,7 @@
     "@jridgewell/trace-mapping": "0.3.31",
     "@release-it/conventional-changelog": "^10.0.6",
     "@tanstack/react-virtual": "^3.14.17",
-    "@types/node": "^25.5.0",
+    "@types/node": "^26.0.0",
     "@vitest/coverage-v8": "^4.1.1",
     "concurrently": "^9.1.2",
     "conventional-changelog-conventionalcommits": "^9.3.1",
@@ -115,7 +115,7 @@
     "@tanstack/react-virtual": "^3.14.17"
   },
   "engines": {
-    "node": ">=24.0.0"
+    "node": ">=26.0.0 <27.0.0"
   },
   "packageManager": "pnpm@10.33.2",
   "pnpm": {

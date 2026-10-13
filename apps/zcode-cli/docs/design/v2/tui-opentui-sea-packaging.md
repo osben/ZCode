@@ -18,14 +18,13 @@ The OpenTUI dependency baseline is the local Node-compatible fork published unde
 the `@mbears/opentui-core` and `@mbears/opentui-react` package names. Local development can
 wire these packages through `file:` dependencies or pnpm overrides that point at
 `../opentui-node/packages/*/dist`; release packaging should consume the same
-package names from the intended source. It keeps ZCode on the existing Node.js
-24.14.x production baseline by using the OpenTUI Node FFI path backed by
-`koffi`, `unsafe-pointer`, and the platform `libopentui` native package. Later
-OpenTUI work that depends on Node's experimental `node:ffi` is not a runtime
-baseline for this migration.
+package names from the intended source. It keeps ZCode on the Node.js
+26.x production baseline by using the OpenTUI Node FFI path backed by
+`koffi`, `unsafe-pointer`, and the platform `libopentui` native package. Node's
+experimental `node:ffi` remains out of scope until the OpenTUI runtime explicitly adopts it.
 
-The CLI SEA entry remains CommonJS. zcode currently targets Node.js 24.14.0, and
-that version executes the injected SEA main script as CommonJS. OpenTUI and
+The CLI SEA entry remains CommonJS. ZCode currently targets Node.js 26.x, and
+that runtime executes the injected SEA main script as CommonJS. OpenTUI and
 `@zcode/tui` remain ESM packages, so the CJS entry must load them with dynamic
 `import()`.
 
@@ -71,9 +70,8 @@ a workspace package to `dependencies` means its built package surface is part of
 the SEA runtime. Type-only or build-only workspace packages belong in
 `devDependencies` so they do not inflate the extracted runtime.
 
-The package bundle must be validated with the repository's Node 24 runtime.
-OpenTUI branches that require Node 26 or `node:ffi` are out of scope unless
-they regain a Node 24-compatible FFI backend.
+The package bundle must be validated with the repository's Node 26 runtime.
+OpenTUI branches that require Node 26 or `node:ffi` still need a compatible FFI backend and explicit runtime validation before adoption.
 
 ## Cache
 

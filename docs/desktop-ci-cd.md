@@ -52,13 +52,13 @@ Linux 桌面构建与 `notify:feishu:linux:*` 已启用；正式 tag 的 macOS�
 | `build:preview`                              | 手动、optional | 启动同一 MR commit 的 Preview child pipeline；不继承 parent 默认变量，只显式传递 Preview 控制变量，固定 `ZCODE_ENV=test`，不阻塞 production 验收包 DAG |
 | `test:e2e:conversation-session:auto`         | 手动、optional | 在共享 `macos + e2e` Runner 上单 job 执行正式 conversation/plugin/workspace-file-tree replay 集合                                                      |
 | `test:e2e:conversation-session:auto:windows` | 手动、optional | 生成四个 WDIO 原生 shard，调度到 `windows-e2e + e2e` Runner 池                                                                                         |
-| `test:e2e:conversation-session:auto:mac`     | 手动、optional | 只生成一个 job，并调度到专用标签的 darwin/arm64 Runner                                                                            |
+| `test:e2e:conversation-session:auto:mac`     | 手动、optional | 只生成一个 job，并调度到专用标签的 darwin/arm64 Runner                                                                                                 |
 
 ## 发布链路修改前后对比
 
 | 环节                  | 修改前                                                                                      | 修改后                                                                                                        |
 | --------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| update metadata       | 构建与日志注入发生在同一阶段，修改日志可能要求重新打包                                      | 构建只产出基础 `latest.yml`，infra 在共享目录编辑日志，approve 后由 validate 校验，不生成独立 locale 文件    |
+| update metadata       | 构建与日志注入发生在同一阶段，修改日志可能要求重新打包                                      | 构建只产出基础 `latest.yml`，infra 在共享目录编辑日志，approve 后由 validate 校验，不生成独立 locale 文件     |
 | `upload`              | 上传版本化产物时会一并覆盖 stable feed，客户端可能在后端 release API 前看到新 `latest*.yml` | 只上传版本化产物和 remote components，只产出 `release-meta-*.json` 与版本化预热 URL，不覆盖 stable feed       |
 | `release:preload:cdn` | upload 后预热版本化产物，后续发布 job 需要等待它完成                                        | 独立 `preload` stage；approve 放行并 upload 成功后自动预热版本化平台/架构产物，必须成功后才允许 publish       |
 | `release:publish:*`   | 非手动或可能跟随前置阶段自动进入；stable feed 覆盖职责不明确                                | 灰度和全量阶段都只调用后端 release API，stable / preview 可见性由服务端 manifest 控制，不再上传 stable feed   |
@@ -190,7 +190,7 @@ sockets are minted as random `broker-<hex>.sock` files; do not hard-code
 - `build:linux:x64` / `build:linux:arm64` 分别要求同时带有 `linux` + `linux-x64`、`linux` +
   `linux-arm64` tag 的 native runner（常见为 Docker）；镜像里需要能跑 Electron 打包依赖与
   native-search verifier。共享 deps 已有归档时只下载预编译产物，不要求 Cargo；缺少自产归档且
-  允许补产时，还必须实际运行 Node 24、glibc 2.28、GCC 12 与 G++ 12，并提供 binutils、`make`、`curl` 和 `tar`。Linux 两个
+  允许补产时，还必须实际运行 Node 26.11.1、glibc 2.28、GCC 12 与 G++ 12，并提供 binutils、`make`、`curl` 和 `tar`。Linux 两个
   架构的 `rg` 都是 Microsoft musl 静态产物，其余 sidecar 由对应架构 producer 构建，不额外固定
   镜像名称，但最终 ELF 的最高 GLIBC symbol version 不得超过 2.28。`x64` 在这里指 `x86_64` / `amd64`。rpm target 由 fpm 调用
   系统 `rpmbuild` 产出（fpm 预编译二进制不自带），rpm 默认 xz 压缩还依赖系统 `xz`；job 兜底
