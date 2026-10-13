@@ -120,7 +120,27 @@ interface InitAutoUpdaterOptions {
   resolveEndpointOrigin?: () => string | Promise<string>;
 }
 
-let quitAndInstallInFlight = false;
+// Upstream 3.15.3 parity: a single in-flight boolean could not distinguish "preparing to quit"
+// from "installer handed off", so a failed quitAndInstall() handoff after shutdown started left
+// the app dead or stuck. Track the admission phase explicitly and recover by relaunching.
+type QuitAndInstallPhase = "idle" | "preparing" | "installing" | "recovering";
+
+let quitAndInstallPhase: QuitAndInstallPhase = "idle";
+
+function isUpdateTargetLocked(): boolean {
+  return quitAndInstallPhase !== "idle";
+}
+
+function recoverFromFailedUpdateInstall(): void {
+  if (quitAndInstallPhase === "recovering") {
+    return;
+  }
+  quitAndInstallPhase = "recovering";
+  logger.warn("[auto-update] install failed after shutdown started: relaunch app");
+  app.relaunch();
+  app.exit(0);
+}
+
 let devAutoUpdateVersionOverride: string | null = null;
 let recheckAfterDownload: ((reason: string) => void) | null = null;
 let pendingFailedDownloadRecheck = false;
@@ -462,11 +482,11 @@ async function quitAndInstallUpdate(rejectUnavailable = false) {
     return;
   }
 
-  if (quitAndInstallInFlight) {
+  if (isUpdateTargetLocked()) {
     logger.info("[auto-update] quitAndInstall already in flight");
     return;
   }
-  quitAndInstallInFlight = true;
+  quitAndInstallPhase = "preparing";
   logger.info("[auto-update] user requested quit and install");
   // On macOS, quitAndInstall() does not trigger app.before-quit before closing windows.
   // If window close is allowed only through before-quit, the existing "traffic-light close = hide window" behavior blocks exit:
@@ -481,7 +501,7 @@ async function quitAndInstallUpdate(rejectUnavailable = false) {
   } catch (error) {
     // Exit preparation before installation is required to release host/agent and resources/glm file locks.
     // If it fails but the installer still starts, Windows may overwrite the install directory while resources are in use and leave a partial update.
-    quitAndInstallInFlight = false;
+    quitAndInstallPhase = "idle";
     handleAutoUpdateFailure(error, "prepare quit and install failed");
     if (rejectUnavailable) {
       throw error;
@@ -489,23 +509,31 @@ async function quitAndInstallUpdate(rejectUnavailable = false) {
     return;
   }
 
-  try {
-    if (shouldRelaunchForDevAutoUpdateInstall()) {
-      // Development mode verifies the server manifest, download progress, and installation-entry UI flow only.
-      // An unpackaged app has no release-package context for an installer to take over. Restart the current dev app instead,
-      // so clicking "Restart to update" does not leave it unresponsive after exit preparation.
-      logger.info("[auto-update] dev update install fallback: relaunch app");
-      app.relaunch();
-      app.exit(0);
-      return;
-    }
+  if (shouldRelaunchForDevAutoUpdateInstall()) {
+    // Development mode verifies the server manifest, download progress, and installation-entry UI flow only.
+    // An unpackaged app has no release-package context for an installer to take over. Restart the current dev app instead,
+    // so clicking "Restart to update" does not leave it unresponsive after exit preparation.
+    logger.info("[auto-update] dev update install fallback: relaunch app");
+    app.relaunch();
+    app.exit(0);
+    return;
+  }
 
-    // In 3.3.0, the custom Windows PowerShell delayed launcher in detached/hidden mode could create powershell.exe without
-    // reliably starting the installer, so users saw the app close while the version stayed unchanged.
-    // Restore electron-updater's native install entry point; launcher process creation alone does not mean the update was handed off.
+  // In 3.3.0, the custom Windows PowerShell delayed launcher in detached/hidden mode could create powershell.exe without
+  // reliably starting the installer, so users saw the app close while the version stayed unchanged.
+  // Restore electron-updater's native install entry point; launcher process creation alone does not mean the update was handed off.
+  // The phase stays "installing" after the handoff: late check failures during shutdown must be
+  // suppressed until the process exits (upstream 3.15.3 behavior).
+  quitAndInstallPhase = "installing";
+  try {
     autoUpdater.quitAndInstall();
-  } finally {
-    quitAndInstallInFlight = false;
+  } catch (error) {
+    // A throw here means the installer handoff failed while the app was already committed to
+    // shutting down. Report it, then relaunch so the user is not left with a quitting app that
+    // never installs (upstream 3.15.3 recovery behavior).
+    handleAutoUpdateFailure(error, "quit and install failed");
+    recoverFromFailedUpdateInstall();
+    throw error;
   }
 }
 
@@ -794,6 +822,11 @@ function applyManifestUpdateProvider(options: InitAutoUpdaterOptions): void {
     resolveEndpointOrigin:
       options.resolveEndpointOrigin ?? (() => resolveRuntimeZCodeEndpointOrigin(process.env)),
     resolveReleaseChannel: async () => {
+      // Upstream 3.15.3 parity: keep the channel the admitted update was resolved with;
+      // refreshing it mid-install could mismatch the staged package.
+      if (isUpdateTargetLocked() && availableUpdateChannel) {
+        return availableUpdateChannel;
+      }
       availableUpdateChannel = await resolveUpdateReleaseChannel(options.settingService);
       return availableUpdateChannel;
     },
@@ -1019,6 +1052,16 @@ function shouldIgnoreCancelledDownloadError(error: unknown): boolean {
 }
 
 function handleAutoUpdateFailure(error: unknown, source: string) {
+  // Upstream 3.15.3 parity: once the install handoff is admitted, a late background-check
+  // failure arriving during shutdown must not tear down the ready state or spawn another check;
+  // a failed install handoff is recovered by relaunching instead.
+  if (quitAndInstallPhase === "recovering") {
+    return;
+  }
+  if (isUpdateTargetLocked() && source.endsWith("check failed")) {
+    logger.info("[auto-update] ignore late check failure after install admission");
+    return;
+  }
   const message = error instanceof Error ? error.message : String(error);
   const failedDownload =
     menuState.kind === "download-progress"
@@ -1834,7 +1877,7 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
   triggerCheckForUpdates("startup");
   ensureAutoUpdatePollInterval();
   app.on("before-quit", (event) => {
-    if (process.platform === "win32" || quitAndInstallInFlight || !isReadyUpdateCurrentTarget()) {
+    if (process.platform === "win32" || isUpdateTargetLocked() || !isReadyUpdateCurrentTarget()) {
       return;
     }
     event.preventDefault();

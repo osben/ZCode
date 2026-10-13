@@ -1914,6 +1914,111 @@ describe("autoUpdater ready state sync", () => {
     expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledTimes(1);
   });
 
+  it("安装器交接失败时会清理就绪状态并重启应用恢复", async () => {
+    mockProcessPlatform("win32");
+    const installError = new Error("installer handoff failed");
+    autoUpdaterMock.quitAndInstall.mockImplementationOnce(() => {
+      throw installError;
+    });
+    const { getAutoUpdaterState, initAutoUpdater } = await import("../src/main/autoUpdater.js");
+
+    initAutoUpdater({});
+
+    const quitHandler = ipcMainHandle.mock.calls.find(
+      ([channel]: [string, unknown]) => channel === PlatformChannels.QuitAndInstallUpdate,
+    )?.[1] as (() => Promise<void>) | undefined;
+
+    autoUpdaterMock.emit("update-downloaded", { version: "0.1.25" });
+    await Promise.resolve();
+    expect(quitHandler).toBeTypeOf("function");
+    await expect(quitHandler!()).rejects.toBe(installError);
+
+    // Upstream 3.15.3 parity: when the installer handoff throws after shutdown started, the old
+    // in-flight boolean left the app quitting without installing. The ready state is cleared, the
+    // failure is reported, and the app relaunches so the user is not left with a dead updater.
+    expect(loggerErrorMock).toHaveBeenCalledWith(
+      "[auto-update] quit and install failed:",
+      installError,
+    );
+    expect(loggerWarnMock).toHaveBeenCalledWith(
+      "[auto-update] install failed after shutdown started: relaunch app",
+    );
+    expect(appMock.relaunch).toHaveBeenCalledTimes(1);
+    expect(appMock.exit).toHaveBeenCalledWith(0);
+    expect(getAutoUpdaterState()).toMatchObject({ kind: "idle" });
+  });
+
+  it("安装交接被采纳后晚到的检查失败不会清掉就绪状态", async () => {
+    mockProcessPlatform("win32");
+    vi.useFakeTimers();
+    try {
+      const { getAutoUpdaterState, initAutoUpdater } = await import("../src/main/autoUpdater.js");
+
+      initAutoUpdater({});
+      await vi.advanceTimersByTimeAsync(0);
+
+      const quitHandler = ipcMainOn.mock.calls.find(
+        ([channel]: [string, unknown]) => channel === PlatformChannels.QuitAndInstallUpdate,
+      )?.[1] as (() => void) | undefined;
+
+      autoUpdaterMock.emit("update-downloaded", { version: "0.1.25" });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(quitHandler).toBeTypeOf("function");
+      quitHandler?.();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledTimes(1);
+
+      loggerInfoMock.mockClear();
+      autoUpdaterMock.checkForUpdates.mockRejectedValueOnce(new Error("network down"));
+      // The ready state is a visible poll target, so the poll timer fires during shutdown and
+      // rejects; upstream 3.15.3 parity requires the late failure to be suppressed instead of
+      // tearing down the ready state mid-exit.
+      await vi.advanceTimersByTimeAsync(2 * 60 * 1000);
+
+      expect(loggerInfoMock).toHaveBeenCalledWith(
+        "[auto-update] ignore late check failure after install admission",
+      );
+      expect(getAutoUpdaterState()).toMatchObject({
+        kind: "update-downloaded",
+        version: "0.1.25",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("退出准备失败后安装请求不会被状态机卡死，可再次尝试", async () => {
+    mockProcessPlatform("win32");
+    const prepareError = new Error("host process still locked resources");
+    const onBeforeQuitAndInstall = vi
+      .fn()
+      .mockRejectedValueOnce(prepareError)
+      .mockResolvedValueOnce(undefined);
+    const { initAutoUpdater } = await import("../src/main/autoUpdater.js");
+
+    initAutoUpdater({ onBeforeQuitAndInstall });
+
+    const quitHandler = ipcMainHandle.mock.calls.find(
+      ([channel]: [string, unknown]) => channel === PlatformChannels.QuitAndInstallUpdate,
+    )?.[1] as (() => Promise<void>) | undefined;
+
+    autoUpdaterMock.emit("update-downloaded", { version: "0.1.25" });
+    await Promise.resolve();
+    await expect(quitHandler!()).rejects.toBe(prepareError);
+    expect(autoUpdaterMock.quitAndInstall).not.toHaveBeenCalled();
+
+    // The prepare failure also clears the ready state, so re-stage by emitting update-downloaded
+    // again; the second request must reach quit preparation instead of being wedged by the
+    // admission phase ("quitAndInstall already in flight").
+    autoUpdaterMock.emit("update-downloaded", { version: "0.1.25" });
+    await Promise.resolve();
+    await quitHandler!();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onBeforeQuitAndInstall).toHaveBeenCalledTimes(2);
+    expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledTimes(1);
+  });
+
   it("更新已下载后点击菜单会直接重启安装", async () => {
     mockProcessPlatform("darwin");
     const onBeforeQuitAndInstall = vi.fn();
