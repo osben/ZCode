@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { OutputStyle } from "@zcode/shared";
+import {
+  outputStyleFilenameFromName,
+  safeOutputStyleFilenameFromId,
+  type OutputStyle,
+} from "@zcode/shared";
 import {
   baseStyleId,
   canSaveOutputStyleDraft,
@@ -12,7 +16,6 @@ import {
   isOutputStyleConflict,
   isOutputStyleDraftDirty,
   outputStyleFilePath,
-  outputStyleFilenameFromName,
   outputStyleIdFromFilename,
   type OutputStyleDraft,
 } from "../src/settings/outputStylesEditorModel.js";
@@ -46,6 +49,15 @@ describe("outputStyleFilenameFromName", () => {
     expect(outputStyleFilenameFromName("Concise Reviews")).toBe("concise-reviews.md");
     expect(outputStyleFilenameFromName("  Tone  v2 ")).toBe("tone-v2.md");
     expect(outputStyleIdFromFilename("tone-v2.md")).toBe("custom-tone-v2");
+  });
+
+  it("sanitizes names so they cannot traverse out of the styles directory", () => {
+    expect(outputStyleFilenameFromName("a/b\\c")).toBe("abc.md");
+    expect(outputStyleFilenameFromName("../../.ssh/evil")).toBe(".....sshevil.md");
+    expect(outputStyleFilenameFromName("!!!")).toBe("style.md");
+    // Existing ids keep their casing but still drop separators.
+    expect(safeOutputStyleFilenameFromId("custom-MyStyle")).toBe("MyStyle.md");
+    expect(safeOutputStyleFilenameFromId("../x")).toBe("..x.md");
   });
 
   it("strips only the custom- prefix for base ids", () => {

@@ -71,6 +71,32 @@ export function builtInOutputStylePrompt(id: string): string | undefined {
 }
 
 /**
+ * Filename for a NEW style derived from its display name: lowercase slug, whitespace to
+ * dashes, and everything outside [a-z0-9._-] stripped. Stripping path separators makes
+ * directory traversal through the name impossible; a name that sanitizes to nothing falls
+ * back to "style".
+ */
+export function outputStyleFilenameFromName(name: string): string {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9._-]/g, "");
+  return `${slug || "style"}.md`;
+}
+
+/**
+ * Filename for an EXISTING style id (listStyles ids, persisted active id). Keeps case — a
+ * hand-created file may use any casing — but strips path separators and other unsafe
+ * characters so a crafted id cannot point outside the styles directory.
+ */
+export function safeOutputStyleFilenameFromId(styleId: string): string {
+  const base = styleId.replace(/^custom-/, "").replace(/\.md$/, "");
+  const safe = base.replace(/[^a-zA-Z0-9._-]/g, "");
+  return `${safe || "style"}.md`;
+}
+
+/**
  * Parse a markdown output-style file: leading `name:` / `description:` header lines followed
  * by the prompt body. Shared by the settings service (listing) and the CLI bootstrap loader
  * (effective prompt) so both agree on the format.

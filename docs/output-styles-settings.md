@@ -34,17 +34,21 @@ Result: a user cannot change the agent's response style at all.
    `explanatory` built-in; deleting the file restores the constant. Custom styles are simply
    ids that have no built-in constant.
 4. **Scalars may live in settings.** The only scalar is the active style id, stored in
-   `~/.zcode/settings.json` under `outputStyle` (same key Claude Code uses).
+   `~/.zcode/settings.json` under `outputStyle`.
+5. **Filenames are sanitized.** `~/.zcode` is the only storage location. New-style filenames
+   derive from the display name via a slug (`outputStyleFilenameFromName` in
+   `packages/shared/src/output-style.ts`); id-derived filenames go through
+   `safeOutputStyleFilenameFromId`. Both strip path separators, so a crafted name or id
+   cannot point outside the styles directory.
 
 ## Storage layout
 
-| Path                                                  | Owner                             | Content                      |
-| ----------------------------------------------------- | --------------------------------- | ---------------------------- |
-| `~/.zcode/settings.json`                              | service (write), bootstrap (read) | `{ "outputStyle": "<id>" }`  |
-| `~/.zcode/output-styles/<id>.md`                      | service (write), bootstrap (read) | markdown style (see format)  |
-| `~/.claude/settings.json`, `~/.claude/output-styles/` | read-only legacy fallback         | pre-fork data still resolves |
+| Path                             | Owner                             | Content                     |
+| -------------------------------- | --------------------------------- | --------------------------- |
+| `~/.zcode/settings.json`         | service (write), bootstrap (read) | `{ "outputStyle": "<id>" }` |
+| `~/.zcode/output-styles/<id>.md` | service (write), bootstrap (read) | markdown style (see format) |
 
-Read precedence is `~/.zcode` first, `~/.claude` second. Writes go to `~/.zcode` only.
+There is no legacy `~/.claude` fallback: reads and writes use `~/.zcode` only.
 
 ### Style file format
 
@@ -62,9 +66,10 @@ falls back to the file name.
 ## Runtime wiring
 
 - `bootstrap/src/output-style.ts` exposes `loadPersistedOutputStyle({ storageRoot })`:
-  resolve the active id from settings (zcode → claude), then the prompt from an override
-  file (zcode → claude) or the built-in constant. Returns `undefined` for absent, `default`,
-  or empty-prompt styles — `undefined` keeps the stock system prompt byte-identical.
+  resolve the active id from settings, then the prompt from an override file or the built-in
+  constant (the id is sanitized before any path join). Returns `undefined` for absent,
+  `default`, or empty-prompt styles — `undefined` keeps the stock system prompt
+  byte-identical.
 - `resolveAppRuntimeConfig` takes `persistedOutputStyle` (same pattern as `persistedMode`)
   and applies `options.runtimeConfig?.outputStyle ?? persistedOutputStyle`. Explicit
   per-session config always wins over disk.
@@ -89,7 +94,8 @@ falls back to the file name.
 - `listStyles` folds a file named after a built-in id into that built-in's entry
   (`isOverridden: true`, effective content, file path) instead of listing a duplicate custom
   row; `content` is always the parsed prompt body, never the raw file.
-- Deleting the active custom style resets the active id to `default`.
+- Deleting the active custom style resets the active id to `default`. Deletion and style
+  changes affect new sessions only; an existing session keeps the style it started with.
 - Empty custom prompts are warned about in the UI and resolve to "no style" at runtime.
 - Names that slug-collide with a built-in id (would create an override) or another custom
   style (would overwrite its file) show an explicit warning before saving — only for new

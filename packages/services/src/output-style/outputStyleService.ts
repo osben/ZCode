@@ -1,6 +1,8 @@
 import {
   BUILT_IN_OUTPUT_STYLES,
+  outputStyleFilenameFromName,
   parseOutputStyleFile,
+  safeOutputStyleFilenameFromId,
   type OutputStyle,
   type OutputStyleConfig,
 } from "@zcode/shared";
@@ -28,23 +30,14 @@ function resolveUserHomeDir(): string {
   return envHome && envHome.length > 0 ? envHome : homedir();
 }
 
-/** Primary styles directory: ~/.zcode/output-styles. */
+/** Styles directory: ~/.zcode/output-styles (the only location; no legacy fallback). */
 function getUserOutputStylesDir(): string {
   return join(resolveUserHomeDir(), ".zcode", "output-styles");
 }
 
-/** Legacy pre-fork directory: still read so old setups keep resolving, never written. */
-function getLegacyClaudeOutputStylesDir(): string {
-  return join(resolveUserHomeDir(), ".claude", "output-styles");
-}
-
-/** Primary settings path: ~/.zcode/settings.json (also stores the active style id). */
+/** Settings path: ~/.zcode/settings.json (also stores the active style id). */
 function getUserSettingsPath(): string {
   return join(resolveUserHomeDir(), ".zcode", SETTINGS_FILE);
-}
-
-function getLegacyClaudeSettingsPath(): string {
-  return join(resolveUserHomeDir(), ".claude", SETTINGS_FILE);
 }
 
 interface SettingsFileShape {
@@ -60,7 +53,7 @@ async function readJsonFile<T>(filePath: string): Promise<T | null> {
     const content = await readFile(filePath, "utf-8");
     return JSON.parse(content) as T;
   } catch {
-    // Missing or unreadable settings fall back to the next source.
+    // Missing or unreadable settings mean no active style.
     return null;
   }
 }
@@ -108,10 +101,8 @@ async function readCustomStyleFiles(dir: string): Promise<OutputStyle[]> {
  */
 export function createOutputStyleService(): IOutputStyleService {
   async function getActiveStyle(): Promise<{ styleId: string | null }> {
-    const primary = await readJsonFile<SettingsFileShape>(getUserSettingsPath());
-    if (primary?.outputStyle) return { styleId: primary.outputStyle };
-    const legacy = await readJsonFile<SettingsFileShape>(getLegacyClaudeSettingsPath());
-    return { styleId: legacy?.outputStyle ?? null };
+    const settings = await readJsonFile<SettingsFileShape>(getUserSettingsPath());
+    return { styleId: settings?.outputStyle ?? null };
   }
 
   async function setActiveStyle(params: { styleId: string }): Promise<void> {
@@ -132,13 +123,7 @@ export function createOutputStyleService(): IOutputStyleService {
     const { styleId } = await getActiveStyle();
     const activeStyleId = styleId ?? DEFAULT_OUTPUT_STYLE;
 
-    // Same filename in both directories: the ~/.zcode file overrides the legacy one.
-    const [primaryStyles, legacyStyles] = await Promise.all([
-      readCustomStyleFiles(getUserOutputStylesDir()),
-      readCustomStyleFiles(getLegacyClaudeOutputStylesDir()),
-    ]);
-    const primaryIds = new Set(primaryStyles.map((style) => style.id));
-    const customStyles = [...primaryStyles, ...legacyStyles.filter((s) => !primaryIds.has(s.id))];
+    const customStyles = await readCustomStyleFiles(getUserOutputStylesDir());
 
     // A file named after a built-in id overrides that built-in's constant (the runtime loader
     // resolves files the same way). Fold it into the built-in entry instead of listing a
@@ -188,7 +173,9 @@ export function createOutputStyleService(): IOutputStyleService {
 
     await mkdir(stylesDir, { recursive: true });
 
-    const filename = `${config.name.toLowerCase().replace(/\s+/g, "-")}.md`;
+    // The filename is sanitized (shared helper), so a crafted name cannot traverse out of
+    // the styles directory.
+    const filename = outputStyleFilenameFromName(config.name);
     const filePath = join(stylesDir, filename);
 
     const content = `name: ${config.name}
@@ -202,11 +189,10 @@ ${config.content}`;
   async function updateStyle(params: { id: string; config: OutputStyleConfig }): Promise<void> {
     const { id, config } = params;
 
-    // Strip the 'custom-' prefix to get the filename. Updating a built-in id writes an
-    // override file next to the constants; deleting that file restores the built-in text.
-    const baseId = id.startsWith("custom-") ? id.slice(7) : id;
+    // Updating a built-in id writes an override file next to the constants; deleting that
+    // file restores the built-in text.
+    const filename = safeOutputStyleFilenameFromId(id);
     const stylesDir = getUserOutputStylesDir();
-    const filename = `${baseId}.md`;
     const filePath = join(stylesDir, filename);
 
     const content = `name: ${config.name}
@@ -221,10 +207,8 @@ ${config.content}`;
   async function deleteStyle(params: { id: string }): Promise<void> {
     const { id } = params;
 
-    // Strip the 'custom-' prefix to get the filename
-    const baseId = id.startsWith("custom-") ? id.slice(7) : id;
+    const filename = safeOutputStyleFilenameFromId(id);
     const stylesDir = getUserOutputStylesDir();
-    const filename = `${baseId}.md`;
     const filePath = join(stylesDir, filename);
 
     await rm(filePath, { force: true });

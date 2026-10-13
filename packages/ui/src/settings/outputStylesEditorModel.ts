@@ -1,4 +1,4 @@
-import type { OutputStyle } from "@zcode/shared";
+import { outputStyleFilenameFromName, type OutputStyle } from "@zcode/shared";
 
 /** Draft of the style editor; `styleId: null` means a new custom style is being created. */
 export interface OutputStyleDraft {
@@ -11,11 +11,6 @@ export interface OutputStyleDraft {
 export type OutputStyleNameCollision = "builtin-override" | "custom-collision";
 
 const CUSTOM_ID_PREFIX = "custom-";
-
-/** Mirror of the service's filename derivation; used to predict id collisions before saving. */
-export function outputStyleFilenameFromName(name: string): string {
-  return `${name.trim().toLowerCase().replace(/\s+/g, "-")}.md`;
-}
 
 export function outputStyleIdFromFilename(filename: string): string {
   return `${CUSTOM_ID_PREFIX}${filename.replace(/\.md$/, "")}`;

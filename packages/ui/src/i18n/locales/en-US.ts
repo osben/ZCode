@@ -7654,7 +7654,7 @@ const enUS: Record<string, string> = {
   "settings.outputStyles.deleteFailed": "Failed to delete the style.",
   "settings.outputStyles.deleteConfirm.title": "Delete this style?",
   "settings.outputStyles.deleteConfirm.description":
-    '"{name}" will be removed from disk. Sessions using it fall back to the default style.',
+    '"{name}" will be removed from disk. Existing sessions keep their current style. New sessions will no longer use this style.',
   "settings.outputStyles.deleteConfirm.confirm": "Delete",
   "settings.outputStyles.editor.newTitle": "New output style",
   "settings.outputStyles.editor.editTitle": "Edit style: {name}",

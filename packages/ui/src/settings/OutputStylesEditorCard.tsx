@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/alert-dialog.js";
 import { Button } from "@/components/ui/button.js";
 import { Input } from "@/components/ui/input.js";
-import { TID_SETTINGS_OUTPUT_STYLES_SAVE } from "@zcode/shared";
+import { outputStyleFilenameFromName, TID_SETTINGS_OUTPUT_STYLES_SAVE } from "@zcode/shared";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import type { OutputStylesView } from "@/hooks/useOutputStyles.js";
 import { SettingsGroupCard } from "@/settings/SettingsPageParts.js";
@@ -23,7 +23,6 @@ import {
   hasDiffChanges,
   isEmptyOutputStylePrompt,
   outputStyleFilePath,
-  outputStyleFilenameFromName,
 } from "@/settings/outputStylesEditorModel.js";
 import { useConfirmDialogStore } from "@/store/confirmDialogStore.js";
 import { cn } from "@/components/lib/utils.js";

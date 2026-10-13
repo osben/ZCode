@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { afterEach, beforeEach } from "node:test";
@@ -29,13 +29,9 @@ function zcodeStylesDir(): string {
   return join(tempHome, ".zcode", "output-styles");
 }
 
-function claudeStylesDir(): string {
-  return join(tempHome, ".claude", "output-styles");
-}
-
-async function writeStyleFile(dir: string, filename: string, content: string): Promise<void> {
-  await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, filename), content, "utf-8");
+async function writeStyleFile(filename: string, content: string): Promise<void> {
+  await mkdir(zcodeStylesDir(), { recursive: true });
+  await writeFile(join(zcodeStylesDir(), filename), content, "utf-8");
 }
 
 test("built-in styles expose the shared constant prompt text", async () => {
@@ -74,29 +70,16 @@ test("setActiveStyle writes the zcode settings file and reads it back", async ()
   assert.equal(styles.find((style) => style.id === "explanatory")?.enabled, true);
 });
 
-test("getActiveStyle falls back to the legacy claude settings file", async () => {
-  await mkdir(join(tempHome, ".claude"), { recursive: true });
-  await writeFile(
-    join(tempHome, ".claude", "settings.json"),
-    JSON.stringify({ outputStyle: "learning" }),
-    "utf-8",
-  );
-
+test("getActiveStyle returns null without a settings file", async () => {
   const service = createOutputStyleService();
   const active = await service.getActiveStyle();
-  assert.equal(active.styleId, "learning");
+  assert.equal(active.styleId, null);
 });
 
-test("listStyles merges custom styles from zcode and legacy claude directories", async () => {
+test("listStyles lists custom styles with parsed prompt bodies", async () => {
   await writeStyleFile(
-    zcodeStylesDir(),
     "concise.md",
     "name: Concise Reviews\ndescription: Short review responses\n\nBe brief.",
-  );
-  await writeStyleFile(
-    claudeStylesDir(),
-    "legacy-tone.md",
-    "name: Legacy Tone\ndescription: Old setup\n\nUse the old tone.",
   );
 
   const service = createOutputStyleService();
@@ -108,22 +91,26 @@ test("listStyles merges custom styles from zcode and legacy claude directories",
   assert.equal(concise.description, "Short review responses");
   assert.equal(concise.content, "Be brief.");
   assert.equal(concise.filePath, join(zcodeStylesDir(), "concise.md"));
-
-  const legacy = styles.find((style) => style.id === "custom-legacy-tone");
-  assert.ok(legacy);
-  assert.equal(legacy.name, "Legacy Tone");
 });
 
-test("a zcode file wins over a legacy file with the same name", async () => {
-  await writeStyleFile(zcodeStylesDir(), "tone.md", "name: New Tone\n\nNew prompt.");
-  await writeStyleFile(claudeStylesDir(), "tone.md", "name: Old Tone\n\nOld prompt.");
-
+test("addStyle sanitizes the filename so names cannot escape the styles directory", async () => {
   const service = createOutputStyleService();
-  const { styles } = await service.listStyles();
+  await service.addStyle({
+    config: { name: "../../.ssh/evil", description: "x", content: "P." },
+  });
+  await service.addStyle({
+    config: { name: "a/b\\c", description: "x", content: "Q." },
+  });
 
-  const toneStyles = styles.filter((style) => style.id === "custom-tone");
-  assert.equal(toneStyles.length, 1);
-  assert.equal(toneStyles[0]?.name, "New Tone");
+  const files = await readdir(zcodeStylesDir());
+  assert.ok(files.includes(".....sshevil.md"));
+  assert.ok(files.includes("abc.md"));
+  // Only files inside the styles directory exist; nothing leaked to tempHome itself.
+  const homeEntries = await readdir(tempHome);
+  assert.deepEqual(
+    homeEntries.filter((entry) => entry.startsWith(".") && entry !== ".zcode"),
+    [],
+  );
 });
 
 test("updateStyle on a built-in id writes an override file; deleteStyle removes it", async () => {
@@ -148,4 +135,18 @@ test("updateStyle on a built-in id writes an override file; deleteStyle removes 
   assert.ok(restored);
   assert.notEqual(restored.isOverridden, true);
   assert.ok(restored.content.length > 0);
+});
+
+test("deleteStyle with a crafted id stays inside the styles directory", async () => {
+  const service = createOutputStyleService();
+  // Must not throw ENOENT-related surprises nor touch anything outside; rm targets the
+  // sanitized path inside the (nonexistent) styles directory with force: true.
+  await service.deleteStyle({ id: "../../outside" });
+  assert.equal(
+    await stat(join(tempHome, "outside.md")).then(
+      () => true,
+      () => false,
+    ),
+    false,
+  );
 });

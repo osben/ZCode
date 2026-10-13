@@ -7341,7 +7341,7 @@ const zhCN: Record<string, string> = {
   "settings.outputStyles.deleteFailed": "删除风格失败。",
   "settings.outputStyles.deleteConfirm.title": "删除该风格？",
   "settings.outputStyles.deleteConfirm.description":
-    "“{name}”将从磁盘移除。正在使用它的会话会回退到默认风格。",
+    "“{name}”将从磁盘移除。现有会话会保留当前风格。新会话将不再使用该风格。",
   "settings.outputStyles.deleteConfirm.confirm": "删除",
   "settings.outputStyles.editor.newTitle": "新建输出风格",
   "settings.outputStyles.editor.editTitle": "编辑风格：{name}",

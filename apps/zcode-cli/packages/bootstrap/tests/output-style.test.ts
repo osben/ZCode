@@ -30,19 +30,14 @@ function storageRoot(): string {
   return join(tempHome, ".zcode");
 }
 
-async function writeJson(path: string, value: unknown): Promise<void> {
-  await mkdir(join(path, ".."), { recursive: true });
-  await writeFile(path, JSON.stringify(value), "utf-8");
+async function writeSettings(value: unknown): Promise<void> {
+  await mkdir(storageRoot(), { recursive: true });
+  await writeFile(join(storageRoot(), "settings.json"), JSON.stringify(value), "utf-8");
 }
 
-async function writeStyle(
-  dir: "zcode" | "claude",
-  filename: string,
-  content: string,
-): Promise<void> {
-  const base = dir === "zcode" ? join(tempHome, ".zcode") : join(tempHome, ".claude");
-  await mkdir(join(base, "output-styles"), { recursive: true });
-  await writeFile(join(base, "output-styles", filename), content, "utf-8");
+async function writeStyle(filename: string, content: string): Promise<void> {
+  await mkdir(join(storageRoot(), "output-styles"), { recursive: true });
+  await writeFile(join(storageRoot(), "output-styles", filename), content, "utf-8");
 }
 
 describe("loadPersistedOutputStyle", () => {
@@ -51,12 +46,12 @@ describe("loadPersistedOutputStyle", () => {
   });
 
   it("returns undefined for the default style id", async () => {
-    await writeJson(join(storageRoot(), "settings.json"), { outputStyle: "default" });
+    await writeSettings({ outputStyle: "default" });
     await expect(loadPersistedOutputStyle({ storageRoot: storageRoot() })).resolves.toBeUndefined();
   });
 
   it("resolves a built-in id to the shared constant prompt", async () => {
-    await writeJson(join(storageRoot(), "settings.json"), { outputStyle: "explanatory" });
+    await writeSettings({ outputStyle: "explanatory" });
     const style = await loadPersistedOutputStyle({ storageRoot: storageRoot() });
     expect(style).toEqual({
       name: "Explanatory",
@@ -65,29 +60,28 @@ describe("loadPersistedOutputStyle", () => {
   });
 
   it("resolves a custom style file and strips the header block", async () => {
-    await writeJson(join(storageRoot(), "settings.json"), { outputStyle: "custom-concise" });
-    await writeStyle("zcode", "concise.md", "name: Concise\ndescription: Short\n\nBe brief.");
+    await writeSettings({ outputStyle: "custom-concise" });
+    await writeStyle("concise.md", "name: Concise\ndescription: Short\n\nBe brief.");
     const style = await loadPersistedOutputStyle({ storageRoot: storageRoot() });
     expect(style).toEqual({ name: "Concise", prompt: "Be brief." });
   });
 
   it("prefers an override file over the built-in constant", async () => {
-    await writeJson(join(storageRoot(), "settings.json"), { outputStyle: "explanatory" });
-    await writeStyle("zcode", "explanatory.md", "name: Explanatory\n\nMy custom variant.");
+    await writeSettings({ outputStyle: "explanatory" });
+    await writeStyle("explanatory.md", "name: Explanatory\n\nMy custom variant.");
     const style = await loadPersistedOutputStyle({ storageRoot: storageRoot() });
     expect(style).toEqual({ name: "Explanatory", prompt: "My custom variant." });
   });
 
-  it("falls back to legacy claude settings and files", async () => {
-    await writeJson(join(tempHome, ".claude", "settings.json"), { outputStyle: "custom-legacy" });
-    await writeStyle("claude", "legacy.md", "name: Legacy\n\nLegacy prompt.");
-    const style = await loadPersistedOutputStyle({ storageRoot: storageRoot() });
-    expect(style).toEqual({ name: "Legacy", prompt: "Legacy prompt." });
+  it("returns undefined when the resolved prompt is empty", async () => {
+    await writeSettings({ outputStyle: "custom-empty" });
+    await writeStyle("empty.md", "name: Empty\ndescription: nothing\n");
+    await expect(loadPersistedOutputStyle({ storageRoot: storageRoot() })).resolves.toBeUndefined();
   });
 
-  it("returns undefined when the resolved prompt is empty", async () => {
-    await writeJson(join(storageRoot(), "settings.json"), { outputStyle: "custom-empty" });
-    await writeStyle("zcode", "empty.md", "name: Empty\ndescription: nothing\n");
+  it("sanitizes a crafted active id so it cannot read outside the styles directory", async () => {
+    await writeSettings({ outputStyle: "../../etc/passwd" });
+    // The sanitized filename does not exist, and no built-in matches, so nothing resolves.
     await expect(loadPersistedOutputStyle({ storageRoot: storageRoot() })).resolves.toBeUndefined();
   });
 });

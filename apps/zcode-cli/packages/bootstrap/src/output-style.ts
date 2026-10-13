@@ -6,72 +6,59 @@
 // The active output style lives on disk so the settings UI and the agent runtime share one
 // source of truth without a protocol field:
 //   - active id:   <storageRoot>/settings.json { "outputStyle": "<id>" }
-//                  (~/.claude/settings.json is a read-only legacy fallback)
 //   - prompt text: <storageRoot>/output-styles/<id>.md
-//                  (~/.claude/output-styles/ is a read-only legacy fallback)
 //   - a file with a built-in id overrides the shared constant for that id
 //
 // Absent id, "default", or an empty resolved prompt returns undefined, which keeps the
 // stock system prompt byte-identical.
 
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
 
 import type { AgentRuntimeConfig } from "@zcode/core";
-import { BUILT_IN_OUTPUT_STYLES, parseOutputStyleFile } from "@zcode/shared";
+import {
+  BUILT_IN_OUTPUT_STYLES,
+  parseOutputStyleFile,
+  safeOutputStyleFilenameFromId,
+} from "@zcode/shared";
 
-const LEGACY_CLAUDE_DIR = ".claude";
 const OUTPUT_STYLES_DIR_NAME = "output-styles";
 const SETTINGS_FILE = "settings.json";
-const CUSTOM_ID_PREFIX = "custom-";
 const DEFAULT_STYLE_ID = "default";
 
-async function readActiveStyleId(settingsPaths: readonly string[]): Promise<string | undefined> {
-  for (const settingsPath of settingsPaths) {
-    try {
-      const raw = await readFile(settingsPath, "utf-8");
-      const parsed = JSON.parse(raw) as { outputStyle?: unknown };
-      if (typeof parsed.outputStyle === "string" && parsed.outputStyle.trim()) {
-        return parsed.outputStyle.trim();
-      }
-    } catch {
-      // Missing or invalid settings fall through to the next source.
+async function readActiveStyleId(settingsPath: string): Promise<string | undefined> {
+  try {
+    const raw = await readFile(settingsPath, "utf-8");
+    const parsed = JSON.parse(raw) as { outputStyle?: unknown };
+    if (typeof parsed.outputStyle === "string" && parsed.outputStyle.trim()) {
+      return parsed.outputStyle.trim();
     }
+  } catch {
+    // Missing or invalid settings mean no active style.
   }
   return undefined;
 }
 
-async function readStyleFile(stylePaths: readonly string[]): Promise<string | null> {
-  for (const stylePath of stylePaths) {
-    try {
-      return await readFile(stylePath, "utf-8");
-    } catch {
-      // Missing file falls through to the next source.
-    }
-  }
-  return null;
-}
-
 /**
  * Resolve the persisted output style for a new session. `storageRoot` is the CLI user
- * storage root (`~/.zcode`); legacy paths are derived from the same home directory.
+ * storage root (`~/.zcode`).
  */
 export async function loadPersistedOutputStyle(input: {
   storageRoot: string;
 }): Promise<AgentRuntimeConfig["outputStyle"]> {
   const storageRoot = input.storageRoot;
-  const styleId = await readActiveStyleId([
-    join(storageRoot, SETTINGS_FILE),
-    join(homedir(), LEGACY_CLAUDE_DIR, SETTINGS_FILE),
-  ]);
+  const styleId = await readActiveStyleId(join(storageRoot, SETTINGS_FILE));
   if (!styleId || styleId === DEFAULT_STYLE_ID) return undefined;
 
-  const filename = `${styleId.startsWith(CUSTOM_ID_PREFIX) ? styleId.slice(CUSTOM_ID_PREFIX.length) : styleId}.md`;
-  const fileContent = await readStyleFile([
-    join(storageRoot, OUTPUT_STYLES_DIR_NAME, filename),
-    join(homedir(), LEGACY_CLAUDE_DIR, OUTPUT_STYLES_DIR_NAME, filename),
-  ]);
+  // The id goes through the shared sanitizer, so a crafted settings entry cannot point the
+  // read outside the styles directory.
+  const filename = safeOutputStyleFilenameFromId(styleId);
+  let fileContent: string | null = null;
+  try {
+    fileContent = await readFile(join(storageRoot, OUTPUT_STYLES_DIR_NAME, filename), "utf-8");
+  } catch {
+    // No file for this id; fall through to the built-in constant.
+  }
   if (fileContent !== null) {
     const parsed = parseOutputStyleFile(fileContent, filename);
     if (!parsed.prompt) return undefined;

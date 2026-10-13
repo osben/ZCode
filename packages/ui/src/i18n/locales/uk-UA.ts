@@ -7240,7 +7240,7 @@ const ukUA: Record<string, string> = {
   "settings.outputStyles.deleteFailed": "Не вдалося видалити стиль.",
   "settings.outputStyles.deleteConfirm.title": "Видалити цей стиль?",
   "settings.outputStyles.deleteConfirm.description":
-    '"{name}" буде вилучено з диска. Сесії, які його використовують, повернуться до стандартного стилю.',
+    '"{name}" буде вилучено з диска. Поточні сесії збережуть свій стиль. Нові сесії більше не використовуватимуть цей стиль.',
   "settings.outputStyles.deleteConfirm.confirm": "Видалити",
   "settings.outputStyles.editor.newTitle": "Новий стиль відповідей",
   "settings.outputStyles.editor.editTitle": "Редагування стилю: {name}",
