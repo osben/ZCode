@@ -86,11 +86,10 @@ export function outputStyleFilenameFromName(name: string): string {
 }
 
 /**
- * Filename for an EXISTING style id (listStyles ids, persisted active id). Keeps case and
- * any remaining `.md`-like suffix — listing ids already have the filesystem extension removed,
- * so a hand-named `Foo.md` file lists as `custom-foo.md` and must map back to `foo.md.md` —
- * while stripping path separators and other unsafe characters so a crafted id cannot point
- * outside the styles directory.
+ * any remaining `.md`-like suffix — listing ids already have only the final filesystem
+ * extension removed, so a hand-named `foo.md.md` file lists as `custom-foo.md` and must
+ * map back to `foo.md.md` — while stripping path separators and other unsafe characters so a
+ * crafted id cannot point outside the styles directory.
  */
 export function safeOutputStyleFilenameFromId(styleId: string): string {
   const base = styleId.replace(/^custom-/, "");
