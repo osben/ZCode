@@ -93,7 +93,7 @@ describe("ProjectAccessTokenClient", () => {
       });
   });
 
-  it("non-zai family: raw login token on every management and issuance endpoint", async () => {
+  it("non-zai family: raw login token on getCustomerInfo and api_keys", async () => {
     const f = fixture();
     const client = new ProjectAccessTokenClient({ request: f.request });
     await client.resolve(input);

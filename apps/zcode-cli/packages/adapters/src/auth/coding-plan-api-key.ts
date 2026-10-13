@@ -90,9 +90,14 @@ export function createCodingPlanApiKeyResolver(
       });
     if (response.status === 401 && new URL(url).pathname.startsWith("/api/biz/")) {
       const run = execution.getStore();
+      // Upstream 3.15.2 header parity: getCustomerInfo (and team api_keys) send the raw business
+      // token without the Bearer prefix, so a metadata 401 presents it in that form. The
+      // invalidate guard keeps stale-late 401s safe via token object identity.
+      const authorization = new Headers(init.headers).get("Authorization");
       if (
         run?.business &&
-        new Headers(init.headers).get("Authorization") === `Bearer ${run.business.token}`
+        (authorization === run.business.token ||
+          authorization === `Bearer ${run.business.token}`)
       )
         businessTokens.invalidate(run.business);
     }
