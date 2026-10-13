@@ -39,13 +39,11 @@ const h = vi.hoisted(() => {
     }
 
     play(): Promise<void> {
-      console.log("FAKE PLAY", this.src.slice(-20));
       this.paused = false;
       if (this.playError) return Promise.reject(this.playError);
       // Simulate playback completing on a later tick so "ended" fires after play() resolves.
       return new Promise((resolve) => {
-        setTimeout(() => {
-          console.log("FAKE TIMER ENDED");
+        this.playTimer = setTimeout(() => {
           this.emit("ended");
           resolve();
         }, 0);

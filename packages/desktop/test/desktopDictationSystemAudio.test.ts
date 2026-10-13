@@ -173,6 +173,85 @@ describe("desktop dictation system audio mute", () => {
     ]);
   });
 
+  it("does not mute a starred source when wpctl reports no default sink", async () => {
+    // A mic-only status shape: no starred Sinks entry, but a starred Sources entry further down.
+    const wpctlStatus = [
+      "PipeWire WireAudio Control",
+      "",
+      "Sinks:",
+      "│  48. alsa_output.pci-0000_00_1f.3.analog-stereo [vol: 0.65]",
+      "",
+      "Sources:",
+      "│ * 99. alsa_input.pci-0000_00_1f.3.analog-stereo [vol: 1.00]",
+    ].join("\n");
+    const execAsync = vi.fn<(file: string, args: string[]) => Promise<string>>();
+    execAsync.mockImplementation(async (file: string, args: string[]) => {
+      if (file === "wpctl") {
+        return args[0] === "status" ? wpctlStatus : Promise.reject(new Error("unsupported"));
+      }
+      if (file === "pactl" && args[0] === "get-default-sink") return "alsa_output.test\n";
+      if (file === "pactl" && args[0] === "get-sink-mute") return "Mute: no\n";
+      return "";
+    });
+    const { handler } = register({ platform: "linux", execAsync });
+    const sender = createSender();
+
+    await handler({ sender }, { active: true });
+    await handler({ sender }, { active: false });
+
+    // The starred Sources entry (99) must never be muted or read; wpctl falls back to pactl.
+    expect(
+      execAsync.mock.calls.filter(([file, args]) => file === "wpctl" && args[0] !== "status"),
+    ).toEqual([]);
+    expect(
+      execAsync.mock.calls.filter(
+        ([file, args]) => file === "pactl" && args[0] === "set-sink-mute",
+      ),
+    ).toEqual([
+      ["pactl", ["set-sink-mute", "alsa_output.test", "1"]],
+      ["pactl", ["set-sink-mute", "alsa_output.test", "0"]],
+    ]);
+  });
+
+  it("resolves the starred sink from a real box-drawing wpctl status layout", async () => {
+    const wpctlStatus = [
+      "PipeWire WireAudio Control",
+      "",
+      "Sinks:",
+      "│  48. alsa_output.pci-0000_00_1f.3.analog-stereo [vol: 0.65]",
+      "│ *  57. alsa_output.usb-0c0b_0c0b-00.analog-stereo [vol: 0.80]",
+      "└─ Filters:",
+      "",
+      "Sources:",
+      "│ *  61. alsa_input.pci-0000_00_1f.3.analog-stereo [vol: 1.00]",
+    ].join("\n");
+    const execAsync = vi.fn<(file: string, args: string[]) => Promise<string>>();
+    execAsync.mockImplementation(async (file: string, args: string[]) => {
+      if (file === "wpctl") {
+        if (args[0] === "status") return wpctlStatus;
+        if (args[0] === "get-volume") return "Volume: 0.80";
+        return "";
+      }
+      return "";
+    });
+    const { handler } = register({ platform: "linux", execAsync });
+    const sender = createSender();
+
+    await handler({ sender }, { active: true });
+    await handler({ sender }, { active: false });
+
+    // The starred tree-prefixed sink 57 is resolved and addressed; the starred source 61 and the
+    // Filters section after the Sinks block never leak into the match.
+    expect(
+      execAsync.mock.calls.filter(([file, args]) => file === "wpctl" && args[0] !== "status"),
+    ).toEqual([
+      ["wpctl", ["get-volume", "57"]],
+      ["wpctl", ["set-mute", "57", "1"]],
+      ["wpctl", ["set-mute", "57", "0"]],
+    ]);
+    expect(execAsync.mock.calls.some(([file]) => file === "pactl")).toBe(false);
+  });
+
   it("restores the originally muted linux sink after the default output changes", async () => {
     const execAsync = vi.fn<(file: string, args: string[]) => Promise<string>>();
     let defaultSinkCall = 0;

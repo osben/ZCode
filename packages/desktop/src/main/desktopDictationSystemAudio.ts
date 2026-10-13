@@ -89,7 +89,14 @@ async function resolveWpctlDefaultSink(exec: { async: ExecAsync }): Promise<stri
   const status = await exec.async("wpctl", ["status"]);
   const sinksIndex = status.indexOf("Sinks:");
   if (sinksIndex === -1) throw new Error("wpctl status has no Sinks section");
-  const defaultEntry = status.slice(sinksIndex).match(/^\s*\*\s*(\d+)\./m);
+  // Bound the search to the Sinks block: without a starred sink, a starred Sources entry would
+  // otherwise match and the backend would end up muting the microphone. Section headers ("Sources:",
+  // "Filters:", "Clients:") start at column 0 with a letter, while sink lines are indented behind
+  // the box-drawing tree column, so a leading letter marks the next section.
+  const afterHeading = status.slice(sinksIndex + "Sinks:".length);
+  const nextSection = afterHeading.search(/^[A-Za-z]/m);
+  const sinksBlock = nextSection === -1 ? afterHeading : afterHeading.slice(0, nextSection);
+  const defaultEntry = sinksBlock.match(/^\W*\*\s*(\d+)\./m);
   if (!defaultEntry) throw new Error("wpctl status has no default sink");
   return defaultEntry[1];
 }
