@@ -476,7 +476,11 @@ function DesktopVoiceDictationSection() {
                   onValueCommit={(values) => {
                     const committed = values[0];
                     setVolumeDraft(null);
-                    if (committed === undefined || committed === savedFeedbackVolume) return;
+                    // Compare against the value currently being persisted, not the stale saved
+                    // snapshot: reverting to the saved number while a write is pending must still
+                    // issue the compensating write, or the pending write would win.
+                    const baseline = committedVolume ?? savedFeedbackVolume;
+                    if (committed === undefined || committed === baseline) return;
                     setCommittedVolume(committed);
                     void patchVoice({ feedbackVolume: committed }).then(() => {
                       // Saved (or failed and toasted): defer to the settings value again.

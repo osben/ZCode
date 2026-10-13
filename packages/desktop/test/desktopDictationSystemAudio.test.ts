@@ -1,17 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
 import type { WebContents } from "electron";
 
-const { appOn, ipcHandle } = vi.hoisted(() => ({
-  appOn: vi.fn(),
+const { ipcHandle } = vi.hoisted(() => ({
   ipcHandle: vi.fn(),
 }));
 
 vi.mock("electron", () => ({
-  app: { on: appOn },
   ipcMain: { handle: ipcHandle },
 }));
 
-import { registerDesktopDictationSystemAudioIpc } from "../src/main/desktopDictationSystemAudio.js";
+import {
+  registerDesktopDictationSystemAudioIpc,
+  restoreDictationSystemMuteForShutdown,
+} from "../src/main/desktopDictationSystemAudio.js";
 
 const MACOS_READ = ["-e", "output muted of (get volume settings)"];
 const MACOS_MUTE = ["-e", "set volume output muted true"];
@@ -190,7 +191,7 @@ describe("desktop dictation system audio mute", () => {
     expect(execAsync).not.toHaveBeenCalled();
   });
 
-  it("restores the output synchronously on before-quit", async () => {
+  it("restores the output synchronously on the accepted shutdown path", async () => {
     const execAsync = vi
       .fn<(file: string, args: string[]) => Promise<string>>()
       .mockResolvedValue("false\n");
@@ -200,15 +201,19 @@ describe("desktop dictation system audio mute", () => {
 
     await handler({ sender }, { active: true });
 
-    // Take the handler from this registration: earlier tests registered their own closures.
-    const quitHandlers = appOn.mock.calls
-      .filter(([event]) => event === "before-quit")
-      .map(([, handler]) => handler) as Array<() => void>;
-    const quitHandler = quitHandlers.at(-1)!;
-    expect(quitHandler).toBeTypeOf("function");
-    quitHandler();
+    // index.ts's exitPreparedApp calls this right before app.exit; a canceled before-quit must
+    // not reach it, so the restore lives on the accepted shutdown path only.
+    restoreDictationSystemMuteForShutdown();
 
     expect(execSync).toHaveBeenCalledWith("osascript", MACOS_UNMUTE);
+  });
+
+  it("ignores shutdown restores when no mute session is active", () => {
+    const execSync = vi.fn<(file: string, args: string[]) => string>(() => "");
+    register({ platform: "darwin", execSync });
+
+    expect(() => restoreDictationSystemMuteForShutdown()).not.toThrow();
+    expect(execSync).not.toHaveBeenCalled();
   });
 
   it("releases when the owning renderer is destroyed", async () => {

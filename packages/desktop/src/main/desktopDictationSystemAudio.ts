@@ -1,5 +1,5 @@
 import { execFile, execFileSync } from "node:child_process";
-import { app, ipcMain, type WebContents } from "electron";
+import { ipcMain, type WebContents } from "electron";
 import { PlatformChannels } from "@zcode/shared";
 
 /**
@@ -149,6 +149,19 @@ export interface DictationSystemAudioLogger {
   warn: (...args: unknown[]) => void;
 }
 
+/**
+ * Sync restore for the accepted shutdown path (`exitPreparedApp` right before `app.exit`). Must
+ * not hang off `before-quit`: this app cancels that event for quit confirmation and async
+ * shutdown preparation, and a canceled quit must keep the recording's mute session alive. Paths
+ * that exit without going through the prepared funnel (auto-updater install quits, hard kills)
+ * bypass the restore — documented residual risk in the spec.
+ */
+let restoreForShutdown: (() => void) | null = null;
+
+export function restoreDictationSystemMuteForShutdown(): void {
+  restoreForShutdown?.();
+}
+
 export function registerDesktopDictationSystemAudioIpc(options: {
   logger: DictationSystemAudioLogger;
   platform?: NodeJS.Platform;
@@ -291,11 +304,14 @@ export function registerDesktopDictationSystemAudioIpc(options: {
     });
   });
 
-  // Quitting mid-recording must not leave the system muted; the sync restore is used because an
-  // async spawn would not outlive the quit. When the mute command is still in flight, the sync
-  // unmute races it — launch order favors the unmute, but a hard kill of the whole app
-  // mid-recording still leaks the mute (documented residual risk in the spec).
-  app.on("before-quit", () => {
+  // Quitting mid-recording must not leave the system muted: index.ts's exitPreparedApp calls
+  // restoreDictationSystemMuteForShutdown() right before app.exit, because before-quit is
+  // cancelable in this app (quit confirmation, async shutdown preparation). The sync restore is
+  // used because an async spawn would not outlive the quit. When the mute command is still in
+  // flight, the sync unmute races it — launch order favors the unmute, but exits that bypass the
+  // prepared funnel (updater install quits, hard kills) still leak the mute (documented residual
+  // risk in the spec).
+  restoreForShutdown = () => {
     if (session) releaseSession(session, true);
-  });
+  };
 }

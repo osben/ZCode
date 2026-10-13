@@ -402,7 +402,8 @@ describe("VoiceDictationSection feedback sounds", () => {
     h.updateSettings.mockImplementationOnce((patch: { voiceDictation?: Record<string, unknown> }) =>
       new Promise<void>((resolve) => {
         resolveSave = () => {
-          if (patch.voiceDictation) {
+          // Model ordered writes: skip a stale late apply when a newer write already landed.
+          if (patch.voiceDictation && h.settings.voiceDictation.feedbackVolume !== 50) {
             h.settings.voiceDictation = { ...h.settings.voiceDictation, ...patch.voiceDictation };
           }
           resolve();
@@ -425,5 +426,41 @@ describe("VoiceDictationSection feedback sounds", () => {
 
     resolveSave();
     await waitFor(() => expect(screen.getByText("51%")).toBeTruthy());
+  });
+
+  it("issues a compensating write when reverting to the saved volume while a write is pending", async () => {
+    h.settings.voiceDictation = { modelId: "model-one", feedbackVolume: 50 };
+    let resolveSave!: () => void;
+    h.updateSettings.mockImplementationOnce((patch: { voiceDictation?: Record<string, unknown> }) =>
+      new Promise<void>((resolve) => {
+        resolveSave = () => {
+          if (patch.voiceDictation && h.settings.voiceDictation.feedbackVolume !== 50) {
+            h.settings.voiceDictation = { ...h.settings.voiceDictation, ...patch.voiceDictation };
+          }
+          resolve();
+        };
+      }),
+    );
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+
+    const slider = await screen.findByRole("slider", {
+      name: "voiceDictation.feedbackVolume.title",
+    });
+    // Commit 51 (write held pending), then drag back to the saved 50 and commit again.
+    slider.focus();
+    fireEvent.keyDown(slider, { key: "ArrowRight" });
+    await waitFor(() => expect(h.updateSettings).toHaveBeenCalledTimes(1));
+    fireEvent.keyDown(slider, { key: "ArrowLeft" });
+
+    // Without the compensating write the pending 51 would win and the revert would be lost.
+    await waitFor(() => expect(h.updateSettings).toHaveBeenCalledTimes(2));
+    expect(h.updateSettings).toHaveBeenLastCalledWith({
+      voiceDictation: { modelId: "model-one", feedbackVolume: 50 },
+    });
+    expect(screen.getByText("50%")).toBeTruthy();
+
+    resolveSave();
+    await act(async () => {});
+    expect(screen.getByText("50%")).toBeTruthy();
   });
 });

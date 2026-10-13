@@ -44,8 +44,9 @@ renderer (useVoiceDictation)          main (desktopDictationSystemAudio)      OS
 Guarantees:
 
 - Snapshot/restore: if the output was already muted before recording, the main process does not mute again (`didMute = false`) and does not unmute on release.
-- Restore paths in main: explicit release call, `before-quit`, and the applying webContents being destroyed / render-process gone.
-- Residual risk (same as Handy): a hard kill of the whole app mid-recording leaves the system muted; no persisted state to recover from.
+- Ownership is registered before the OS commands run, so a renderer lost or a quit arriving while the commands are still in flight cannot orphan the mute.
+- Restore paths in main: explicit release call, the **accepted shutdown path** (`exitPreparedApp` right before `app.exit`; `before-quit` is deliberately not used because this app cancels it for quit confirmation and async shutdown preparation — a canceled quit keeps the session), and the applying webContents being destroyed / render-process gone.
+- Residual risk (same as Handy): exits that bypass the prepared funnel (updater install quits, hard kills) mid-recording leave the system muted; no persisted state to recover from.
 - Per-OS implementation: macOS `osascript` (read + set); Linux `wpctl` → `pactl` → `amixer` fallback with explicit mute/unmute verbs; Windows v1 is a logged no-op (no state-preserving mechanism without a new native dependency).
 - If the platform capability or the spawn fails, muting is skipped with a warn log; recording and chimes continue unaffected.
 
