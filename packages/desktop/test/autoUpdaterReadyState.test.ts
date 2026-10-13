@@ -1952,7 +1952,7 @@ describe("autoUpdater ready state sync", () => {
     expect(getAutoUpdaterState()).toMatchObject({ kind: "idle" });
   });
 
-  it("锁定阶段检查进行中收到的 updater error 事件按检查来源被抑制", async () => {
+  it("安装准入等待在途检查、抑制其错误并阻止新的检查", async () => {
     mockProcessPlatform("win32");
     vi.useFakeTimers();
     try {
@@ -1961,63 +1961,49 @@ describe("autoUpdater ready state sync", () => {
       initAutoUpdater({});
       await vi.advanceTimersByTimeAsync(0);
 
-      const quitHandler = ipcMainOn.mock.calls.find(
+      // Arm a hung check for the download-finished recheck that fires right after
+      // update-downloaded, so a check is in flight when the install is requested.
+      let rejectCheck!: (err: Error) => void;
+      autoUpdaterMock.checkForUpdates.mockImplementationOnce(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            rejectCheck = reject;
+          }),
+      );
+
+      const quitHandler = ipcMainHandle.mock.calls.find(
         ([channel]: [string, unknown]) => channel === PlatformChannels.QuitAndInstallUpdate,
-      )?.[1] as (() => void) | undefined;
+      )?.[1] as (() => Promise<void>) | undefined;
 
       autoUpdaterMock.emit("update-downloaded", { version: "0.1.25" });
       await vi.advanceTimersByTimeAsync(0);
       expect(quitHandler).toBeTypeOf("function");
-      quitHandler?.();
+
+      const quitPromise = quitHandler!();
       await vi.advanceTimersByTimeAsync(0);
-      expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledTimes(1);
+      // The handoff waits for the in-flight check before quitting.
+      expect(autoUpdaterMock.quitAndInstall).not.toHaveBeenCalled();
 
-      // Let the visible-target poll fire and hang: an error event arriving while a check is in
-      // flight is check-originated noise and must be suppressed (its own promise path settles it).
-      // Calls so far: startup check, download-finished recheck, then the hung poll.
-      autoUpdaterMock.checkForUpdates.mockImplementationOnce(() => new Promise(() => {}));
+      // While the phase is locked, polls must not start new checks.
+      const callsBefore = autoUpdaterMock.checkForUpdates.mock.calls.length;
       await vi.advanceTimersByTimeAsync(2 * 60 * 1000);
-      expect(autoUpdaterMock.checkForUpdates).toHaveBeenCalledTimes(3);
+      expect(autoUpdaterMock.checkForUpdates).toHaveBeenCalledTimes(callsBefore);
 
+      // The in-flight check's error event is check-originated noise: suppressed, no relaunch.
       loggerInfoMock.mockClear();
       autoUpdaterMock.emit("error", new Error("manifest request failed"));
       await vi.advanceTimersByTimeAsync(0);
       expect(loggerInfoMock).toHaveBeenCalledWith(
         "[auto-update] ignore late check failure after install admission",
       );
-      expect(getAutoUpdaterState()).toMatchObject({
-        kind: "update-downloaded",
-        version: "0.1.25",
-      });
       expect(appMock.relaunch).not.toHaveBeenCalled();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
 
-  it("锁定阶段晚到的 poll 检查失败（promise rejection）被抑制", async () => {
-    mockProcessPlatform("win32");
-    vi.useFakeTimers();
-    try {
-      const { getAutoUpdaterState, initAutoUpdater } = await import("../src/main/autoUpdater.js");
-
-      initAutoUpdater({});
-      await vi.advanceTimersByTimeAsync(0);
-
-      const quitHandler = ipcMainOn.mock.calls.find(
-        ([channel]: [string, unknown]) => channel === PlatformChannels.QuitAndInstallUpdate,
-      )?.[1] as (() => void) | undefined;
-
-      autoUpdaterMock.emit("update-downloaded", { version: "0.1.25" });
-      await vi.advanceTimersByTimeAsync(0);
-      quitHandler?.();
+      // Settling the check releases the handoff.
+      rejectCheck(new Error("network down"));
+      await quitPromise;
       await vi.advanceTimersByTimeAsync(0);
       expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledTimes(1);
-
-      autoUpdaterMock.checkForUpdates.mockRejectedValueOnce(new Error("network down"));
-      loggerInfoMock.mockClear();
-      await vi.advanceTimersByTimeAsync(2 * 60 * 1000);
-
+      // The rejection itself is also check-originated ("download-finished check failed").
       expect(loggerInfoMock).toHaveBeenCalledWith(
         "[auto-update] ignore late check failure after install admission",
       );
@@ -2025,7 +2011,6 @@ describe("autoUpdater ready state sync", () => {
         kind: "update-downloaded",
         version: "0.1.25",
       });
-      expect(appMock.relaunch).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
@@ -2124,8 +2109,9 @@ describe("autoUpdater ready state sync", () => {
     win.webContents.send.mockClear();
 
     checkForUpdateMenuClick(win as never);
-    await Promise.resolve();
-    await Promise.resolve();
+    // The install handoff now waits for the in-flight startup check to settle before quitting,
+    // so flush a macrotask to let the whole settle chain run before asserting.
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     // Bugfix: when the menu copy says "restart to update", clicking must really install just like the update
     // button; the old logic only sent a ready toast to the renderer, so the user saw "restart" without any

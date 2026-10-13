@@ -100,12 +100,15 @@ Main 进程不能在调用 `quitAndInstall()` 前按整个安装目录杀进程�
 
 - Installer handoff admission and recovery (upstream 3.15.3 parity, 2026-10-13): quit-and-install
   admission tracks an explicit phase (idle/preparing/installing/recovering) instead of an in-flight
-  boolean. If `electron-updater.quitAndInstall()` throws after the handoff was admitted, main clears
-  the ready state, reports the failure, and relaunches the app ("install failed after shutdown
-  started: relaunch app") instead of leaving a quitting app that never installs. While the phase is
-  locked, late background-check failures are suppressed ("ignore late check failure after install
-  admission") and the release channel is not re-resolved; a failed exit preparation resets the phase
-  so a later install request stays retryable.
+  boolean. With electron-updater 6.8.9, `quitAndInstall()` does not throw: synchronous `doInstall()`
+  failures and asynchronous Windows NSIS launch failures arrive through the generic `error` event
+  (the latter after `quitAndInstall()` has already returned). While the phase is locked, new checks
+  are blocked, the check already in flight at admission is awaited before the handoff, and its
+  error event is suppressed as check-originated noise; any remaining `error` event is treated as an
+  installer handoff failure — main clears the ready state, reports it, and relaunches the app
+  ("install failed after shutdown started: relaunch app") instead of leaving a quitting app that
+  never installs. The resolved release channel is kept while the phase is locked; a failed exit
+  preparation resets the phase so a later install request stays retryable.
 - 下载、签名、SHA 校验和安装包启动失败继续由 `electron-updater` 报错状态承接。
 - host/agent 退出细节写入 main 日志；NSIS 无法关闭进程时不继续覆盖安装目录。
 - Windows 随包 runtime 扫描与强杀采用 fail-open：PowerShell 查询失败、超时、强杀失败或

@@ -128,18 +128,14 @@ type QuitAndInstallPhase = "idle" | "preparing" | "installing" | "recovering";
 
 let quitAndInstallPhase: QuitAndInstallPhase = "idle";
 
-// electron-updater 6.8.9's BaseUpdater.install() catches synchronous doInstall() failures, emits
-// the generic "error" event, and returns false — quitAndInstall() does not throw. Worse, on
-// Windows NsisUpdater.doInstall() returns immediately and spawnLog() reports launch failures
-// asynchronously after quitAndInstall() has already returned. Error events therefore attribute
-// to the installer handoff both inside the synchronous call and for a bounded window after it.
-let installerHandoffInFlight = false;
-const INSTALLER_HANDOFF_ATTRIBUTION_MS = 30_000;
-let installerHandoffAttributionUntil = 0;
-
-function isInstallerHandoffAttributionActive(): boolean {
-  return installerHandoffInFlight || Date.now() < installerHandoffAttributionUntil;
-}
+// electron-updater 6.8.9's BaseUpdater.install() catches synchronous doInstall() failures and
+// NsisUpdater reports Windows launch failures asynchronously after quitAndInstall() returns —
+// through the generic "error" event, not by throwing. Error-event classification while the
+// install admission phase is locked therefore relies on check serialization below instead of
+// timing windows: new checks are blocked once admission starts, the check already in flight at
+// admission is awaited before the handoff, and any remaining "error" event is treated as an
+// installer handoff failure.
+let settlingCheckForUpdates: Promise<void> | null = null;
 
 function isUpdateTargetLocked(): boolean {
   return quitAndInstallPhase !== "idle";
@@ -536,13 +532,20 @@ async function quitAndInstallUpdate(rejectUnavailable = false) {
     return;
   }
 
+  // Serialize with a check that is already in flight: its error event must not be mistaken for
+  // an installer handoff failure after the phase locks, and the handoff must not race the
+  // check's own state updates. electron-updater checks settle via their own request timeouts.
+  if (settlingCheckForUpdates) {
+    logger.info("[auto-update] wait for in-flight check before install handoff");
+    await settlingCheckForUpdates;
+  }
+
   // In 3.3.0, the custom Windows PowerShell delayed launcher in detached/hidden mode could create powershell.exe without
   // reliably starting the installer, so users saw the app close while the version stayed unchanged.
   // Restore electron-updater's native install entry point; launcher process creation alone does not mean the update was handed off.
   // The phase stays "installing" after the handoff: late check failures during shutdown must be
   // suppressed until the process exits (upstream 3.15.3 behavior).
   quitAndInstallPhase = "installing";
-  installerHandoffInFlight = true;
   try {
     // quitAndInstall/relaunch bypass exitPreparedApp (and on macOS before-quit entirely), so the
     // dictation mute must be released here or installing during a recording stays muted.
@@ -555,11 +558,6 @@ async function quitAndInstallUpdate(rejectUnavailable = false) {
     handleAutoUpdateFailure(error, "quit and install failed");
     recoverFromFailedUpdateInstall();
     throw error;
-  } finally {
-    installerHandoffInFlight = false;
-    // Keep attributing error events to the handoff past the synchronous return: the Windows
-    // NSIS provider reports launch failures asynchronously after doInstall() returns true.
-    installerHandoffAttributionUntil = Date.now() + INSTALLER_HANDOFF_ATTRIBUTION_MS;
   }
 }
 
@@ -1604,6 +1602,7 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
     autoUpdatePollTimer = null;
   }
   checkForUpdatesInFlight = false;
+  settlingCheckForUpdates = null;
   activeAutoUpdateCheckId = null;
   activeAutoUpdateCheckChannel = null;
   settlingAutoUpdateCheckId = null;
@@ -1629,6 +1628,14 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
   applyManifestUpdateProvider(options);
 
   const triggerCheckForUpdates = (reason: string) => {
+    // Upstream 3.15.3 parity: once the installer handoff is admitted, no new checks may start —
+    // otherwise a late check could emit error events that are indistinguishable from installer
+    // handoff failures while the phase is locked.
+    if (isUpdateTargetLocked()) {
+      logger.info(`[auto-update] skip ${reason}: install admission locked`);
+      return;
+    }
+
     if (checkForUpdatesInFlight) {
       logger.info(`[auto-update] skip ${reason}: check already in flight`);
       return;
@@ -1648,7 +1655,7 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
         })()
       : autoUpdater.checkForUpdates();
 
-    checkForUpdatesPromise
+    const checkSettled = checkForUpdatesPromise
       .catch((err) => {
         // A forced-upgrade dialog may reuse the startup background check. If checkForUpdates rejects directly with no
         // subsequent error event, logging alone leaves the dialog stuck in checking. Reuse failure convergence to restore
@@ -1656,9 +1663,15 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
         handleAutoUpdateFailure(err, `${reason} check failed`);
       })
       .finally(() => {
+        if (settlingCheckForUpdates === checkSettled) settlingCheckForUpdates = null;
         finishAutoUpdateCheck(reason, checkId);
         ensureAutoUpdatePollInterval();
-      });
+      })
+      .then(
+        () => {},
+        () => {},
+      );
+    settlingCheckForUpdates = checkSettled;
   };
   recheckAfterDownload = (recheckReason: string) => {
     // A download-failure recheck must wait for the current check to settle. Completion and cancellation results are already covered by that check, so do not queue them again.
@@ -1876,17 +1889,17 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
     }
 
     if (isUpdateTargetLocked()) {
-      // While committed to install, updater errors are either installer-launch failures
-      // (synchronously inside quitAndInstall() or asynchronously from the NSIS spawn — recover by
-      // relaunching) or late check noise from a poll that is still in flight (suppress; its own
-      // promise rejection path reports it). Everything else while locked is also treated as a
-      // handoff failure: a committed shutdown must never quit without installing or relaunching.
-      if (isInstallerHandoffAttributionActive() || !checkForUpdatesInFlight) {
-        handleAutoUpdateFailure(err, "quit and install failed");
-        recoverFromFailedUpdateInstall();
+      // While committed to install, updater errors are either from the check that was still in
+      // flight at admission (check-originated noise; its own promise rejection converges state)
+      // or from the installer handoff, including async NSIS launch failures after
+      // quitAndInstall() returned (recover by relaunching). New checks are blocked once
+      // admission starts, so this split stays exact.
+      if (checkForUpdatesInFlight) {
+        logger.info("[auto-update] ignore late check failure after install admission");
         return;
       }
-      logger.info("[auto-update] ignore late check failure after install admission");
+      handleAutoUpdateFailure(err, "quit and install failed");
+      recoverFromFailedUpdateInstall();
       return;
     }
 
