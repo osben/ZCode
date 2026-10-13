@@ -19,6 +19,7 @@ import {
   Keyboard,
   FileSearch,
   ScrollText,
+  MessageSquareText,
   GitBranchPlus,
   Mic,
 } from "lucide-react";
@@ -80,6 +81,14 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     id: "instructions",
     icon: ScrollText,
     titleId: "settings.instructions.title",
+    groupId: "agentCapabilities",
+  },
+  // Output Styles shape the agent's response tone; they sit right after Instructions because
+  // both edit user-scoped prompt material on the host of the active workspace.
+  {
+    id: "outputStyles",
+    icon: MessageSquareText,
+    titleId: "settings.outputStyles.title",
     groupId: "agentCapabilities",
   },
   {

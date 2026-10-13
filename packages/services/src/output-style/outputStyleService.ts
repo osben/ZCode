@@ -1,56 +1,54 @@
-import type { OutputStyle, OutputStyleConfig } from "@zcode/shared";
+import {
+  BUILT_IN_OUTPUT_STYLES,
+  parseOutputStyleFile,
+  type OutputStyle,
+  type OutputStyleConfig,
+} from "@zcode/shared";
 import type { IOutputStyleService } from "./outputStyle.js";
-import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 const DEFAULT_OUTPUT_STYLE = "default";
 const SETTINGS_FILE = "settings.json";
 
-const BUILT_IN_STYLES: OutputStyle[] = [
-  {
-    id: "default",
-    name: "Default",
-    description: "Completes coding tasks efficiently and provides concise responses",
-    content: "",
-    isBuiltIn: true,
-    enabled: true,
-  },
-  {
-    id: "explanatory",
-    name: "Explanatory",
-    description: "Explains implementation choices and codebase patterns",
-    content: "",
-    isBuiltIn: true,
-    enabled: false,
-  },
-  {
-    id: "learning",
-    name: "Learning",
-    description: "Pauses and asks you to write small pieces of code for hands-on practice",
-    content: "",
-    isBuiltIn: true,
-    enabled: false,
-  },
-];
+const BUILT_IN_STYLES: OutputStyle[] = BUILT_IN_OUTPUT_STYLES.map((style) => ({
+  id: style.id,
+  name: style.name,
+  description: style.description,
+  // The effective text for a built-in with no override file is the shared constant; an
+  // override file with the same id replaces it (see listStyles).
+  content: style.prompt,
+  isBuiltIn: true,
+  enabled: style.id === DEFAULT_OUTPUT_STYLE,
+}));
 
 function resolveUserHomeDir(): string {
   const envHome = process.env.HOME?.trim() || process.env.USERPROFILE?.trim();
   return envHome && envHome.length > 0 ? envHome : homedir();
 }
 
+/** Primary styles directory: ~/.zcode/output-styles. */
 function getUserOutputStylesDir(): string {
+  return join(resolveUserHomeDir(), ".zcode", "output-styles");
+}
+
+/** Legacy pre-fork directory: still read so old setups keep resolving, never written. */
+function getLegacyClaudeOutputStylesDir(): string {
   return join(resolveUserHomeDir(), ".claude", "output-styles");
 }
 
-function getUserClaudeSettingsPath(): string {
+/** Primary settings path: ~/.zcode/settings.json (also stores the active style id). */
+function getUserSettingsPath(): string {
+  return join(resolveUserHomeDir(), ".zcode", SETTINGS_FILE);
+}
+
+function getLegacyClaudeSettingsPath(): string {
   return join(resolveUserHomeDir(), ".claude", SETTINGS_FILE);
 }
 
-interface ClaudeSettingsConfig {
+interface SettingsFileShape {
   outputStyle?: string;
-  hooks?: unknown;
   [key: string]: unknown;
 }
 
@@ -59,13 +57,10 @@ interface ClaudeSettingsConfig {
  */
 async function readJsonFile<T>(filePath: string): Promise<T | null> {
   try {
-    if (!existsSync(filePath)) {
-      return null;
-    }
     const content = await readFile(filePath, "utf-8");
     return JSON.parse(content) as T;
-  } catch (error) {
-    console.error(`Failed to read JSON file ${filePath}:`, error);
+  } catch {
+    // Missing or unreadable settings fall back to the next source.
     return null;
   }
 }
@@ -74,37 +69,38 @@ async function readJsonFile<T>(filePath: string): Promise<T | null> {
  * Write JSON file safely
  */
 async function writeJsonFile<T>(filePath: string, data: T): Promise<void> {
-  try {
-    await writeFile(filePath, JSON.stringify(data, null, 2), "utf-8");
-  } catch (error) {
-    console.error(`Failed to write JSON file ${filePath}:`, error);
-    throw error;
-  }
+  await writeFile(filePath, JSON.stringify(data, null, 2), "utf-8");
 }
 
-/**
- * Parse a markdown-format output style file
- */
-function parseMarkdownStyle(
-  content: string,
-  filename?: string,
-): { name: string; description: string } {
-  const nameMatch = content.match(/^name:\s*(.+)$/m);
-  const descMatch = content.match(/^description:\s*(.+)$/m);
-
-  let name = nameMatch?.[1]?.trim() ?? "";
-
-  if (!name && filename) {
-    name = filename.replace(/\.md$/, "");
+async function readCustomStyleFiles(dir: string): Promise<OutputStyle[]> {
+  const styles: OutputStyle[] = [];
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => null);
+  if (!entries) {
+    // The directory does not exist or is unreadable; treat as no custom styles.
+    return styles;
   }
 
-  if (!name) {
-    name = "Custom Style";
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+    const filePath = join(dir, entry.name);
+    try {
+      const raw = await readFile(filePath, "utf-8");
+      const { name, description, prompt } = parseOutputStyleFile(raw, entry.name);
+      styles.push({
+        id: `custom-${entry.name.replace(/\.md$/, "")}`,
+        name,
+        description,
+        // Expose the parsed prompt body, not the raw file, so consumers always see the effective text.
+        content: prompt,
+        isBuiltIn: false,
+        enabled: false,
+        filePath,
+      });
+    } catch (error) {
+      console.error(`Failed to read output style file ${entry.name}:`, error);
+    }
   }
-
-  const description = descMatch?.[1]?.trim() ?? "";
-
-  return { name, description };
+  return styles;
 }
 
 /**
@@ -112,81 +108,75 @@ function parseMarkdownStyle(
  */
 export function createOutputStyleService(): IOutputStyleService {
   async function getActiveStyle(): Promise<{ styleId: string | null }> {
-    const settingsPath = getUserClaudeSettingsPath();
-    const settings = await readJsonFile<ClaudeSettingsConfig>(settingsPath);
-    return { styleId: settings?.outputStyle ?? null };
+    const primary = await readJsonFile<SettingsFileShape>(getUserSettingsPath());
+    if (primary?.outputStyle) return { styleId: primary.outputStyle };
+    const legacy = await readJsonFile<SettingsFileShape>(getLegacyClaudeSettingsPath());
+    return { styleId: legacy?.outputStyle ?? null };
   }
 
   async function setActiveStyle(params: { styleId: string }): Promise<void> {
     const { styleId } = params;
-    const settingsPath = getUserClaudeSettingsPath();
-    const claudeDir = join(resolveUserHomeDir(), ".claude");
+    const settingsPath = getUserSettingsPath();
+    const settingsDir = join(resolveUserHomeDir(), ".zcode");
 
-    // Ensure directory exists
-    if (!existsSync(claudeDir)) {
-      await mkdir(claudeDir, { recursive: true });
-    }
+    await mkdir(settingsDir, { recursive: true });
 
-    // Read existing settings.json
-    const existingSettings = (await readJsonFile<ClaudeSettingsConfig>(settingsPath)) || {};
-
-    // Update outputStyle
-    const newSettings: ClaudeSettingsConfig = {
+    const existingSettings = (await readJsonFile<SettingsFileShape>(settingsPath)) || {};
+    await writeJsonFile(settingsPath, {
       ...existingSettings,
       outputStyle: styleId,
-    };
-
-    await writeJsonFile(settingsPath, newSettings);
+    });
   }
 
   async function listStyles(): Promise<{ styles: OutputStyle[] }> {
-    const stylesDir = getUserOutputStylesDir();
-    const customStyles: OutputStyle[] = [];
-
-    // Get active style from settings.local.json, default to "default"
     const { styleId } = await getActiveStyle();
-    const activeStyleId = styleId ?? "default";
+    const activeStyleId = styleId ?? DEFAULT_OUTPUT_STYLE;
 
-    try {
-      await access(stylesDir);
-      const entries = await readdir(stylesDir, { withFileTypes: true });
+    // Same filename in both directories: the ~/.zcode file overrides the legacy one.
+    const [primaryStyles, legacyStyles] = await Promise.all([
+      readCustomStyleFiles(getUserOutputStylesDir()),
+      readCustomStyleFiles(getLegacyClaudeOutputStylesDir()),
+    ]);
+    const primaryIds = new Set(primaryStyles.map((style) => style.id));
+    const customStyles = [...primaryStyles, ...legacyStyles.filter((s) => !primaryIds.has(s.id))];
 
-      for (const entry of entries) {
-        if (entry.isFile() && entry.name.endsWith(".md")) {
-          try {
-            const filePath = join(stylesDir, entry.name);
-            const content = await readFile(filePath, "utf-8");
-            const { name, description } = parseMarkdownStyle(content, entry.name);
-            const styleId = `custom-${entry.name.replace(".md", "")}`;
-
-            customStyles.push({
-              id: styleId,
-              name,
-              description,
-              content,
-              isBuiltIn: false,
-              enabled: styleId === activeStyleId,
-              filePath,
-            });
-          } catch (error) {
-            console.error(`Failed to read output style file ${entry.name}:`, error);
-          }
-        }
+    // A file named after a built-in id overrides that built-in's constant (the runtime loader
+    // resolves files the same way). Fold it into the built-in entry instead of listing a
+    // duplicate custom row, so the list shows one card with the effective text.
+    const builtInIds = new Set(BUILT_IN_OUTPUT_STYLES.map((style) => style.id));
+    const overrides = new Map<string, OutputStyle>();
+    const plainCustomStyles: OutputStyle[] = [];
+    for (const style of customStyles) {
+      const baseId = style.id.replace(/^custom-/, "");
+      if (builtInIds.has(baseId)) {
+        if (!overrides.has(baseId)) overrides.set(baseId, style);
+      } else {
+        plainCustomStyles.push(style);
       }
-    } catch {
-      // The directory does not exist or is unreadable; return the built-in styles.
     }
+    plainCustomStyles.sort((a, b) => a.name.localeCompare(b.name));
 
-    // Sort by name
-    customStyles.sort((a, b) => a.name.localeCompare(b.name));
-
-    // Merge built-in and custom styles, marking the active state
     const allStyles: OutputStyle[] = [
-      ...BUILT_IN_STYLES.map((style) => ({
+      ...BUILT_IN_STYLES.map((style) => {
+        const override = overrides.get(style.id);
+        return {
+          ...style,
+          ...(override
+            ? {
+                name: override.name,
+                description: override.description,
+                content: override.content,
+                filePath: override.filePath,
+                isOverridden: true,
+              }
+            : {}),
+          enabled: style.id === activeStyleId,
+        };
+      }),
+      ...plainCustomStyles.map((style) => ({
         ...style,
         enabled: style.id === activeStyleId,
       })),
-      ...customStyles,
     ];
 
     return { styles: allStyles };
@@ -196,14 +186,7 @@ export function createOutputStyleService(): IOutputStyleService {
     const { config } = params;
     const stylesDir = getUserOutputStylesDir();
 
-    try {
-      await mkdir(stylesDir, { recursive: true });
-    } catch (error) {
-      const err = error as NodeJS.ErrnoException;
-      if (err.code !== "EEXIST") {
-        throw error;
-      }
-    }
+    await mkdir(stylesDir, { recursive: true });
 
     const filename = `${config.name.toLowerCase().replace(/\s+/g, "-")}.md`;
     const filePath = join(stylesDir, filename);
@@ -219,7 +202,8 @@ ${config.content}`;
   async function updateStyle(params: { id: string; config: OutputStyleConfig }): Promise<void> {
     const { id, config } = params;
 
-    // Strip the 'custom-' prefix to get the filename
+    // Strip the 'custom-' prefix to get the filename. Updating a built-in id writes an
+    // override file next to the constants; deleting that file restores the built-in text.
     const baseId = id.startsWith("custom-") ? id.slice(7) : id;
     const stylesDir = getUserOutputStylesDir();
     const filename = `${baseId}.md`;
@@ -230,6 +214,7 @@ description: ${config.description}
 
 ${config.content}`;
 
+    await mkdir(stylesDir, { recursive: true });
     await writeFile(filePath, content, "utf-8");
   }
 
@@ -247,13 +232,7 @@ ${config.content}`;
 
   async function getUserStylesDirectory(): Promise<{ path: string }> {
     const stylesDir = getUserOutputStylesDir();
-
-    try {
-      await mkdir(stylesDir, { recursive: true });
-    } catch {
-      // The directory already exists
-    }
-
+    await mkdir(stylesDir, { recursive: true });
     return { path: stylesDir };
   }
 
