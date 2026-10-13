@@ -47,6 +47,9 @@ function createManagerHarness(options?: {
   reportRemoteUsageEvent?: Parameters<
     typeof createWebRemoteControlManager
   >[0]["reportRemoteUsageEvent"];
+  platformHandlers?: Partial<
+    Parameters<typeof createWebRemoteControlManager>[0]["platformHandlers"]
+  >;
 }) {
   const sentPayloads: WebRemoteControlAppPayload[] = [];
   const logger = {
@@ -134,6 +137,7 @@ function createManagerHarness(options?: {
         importedCount: 0,
         skippedCount: 0,
       }),
+      ...options?.platformHandlers,
     },
     reconnectWorkspace: options?.reconnectWorkspace ?? vi.fn(async () => undefined),
     reportRemoteUsageEvent,
@@ -785,6 +789,104 @@ describe("createWebRemoteControlManager external relay", () => {
         }),
       ),
     );
+  });
+
+  it("dispatches open-on-desktop platform requests to the registered handlers", async () => {
+    const getInstalledEditors = vi.fn(async () => [
+      { id: "vscode", name: "VS Code", iconDataUrl: "data:image/png;base64,x" },
+    ]);
+    const openInEditor = vi.fn(async () => ({ success: true }));
+    const openInFileManager = vi.fn(async () => ({ success: true }));
+    const openExternalFile = vi.fn(async () => ({ success: true }));
+    const { deliverPayload, manager, sentPayloads } = createManagerHarness({
+      platformHandlers: { getInstalledEditors, openInEditor, openInFileManager, openExternalFile },
+    });
+
+    await manager.start(1, { workspacePath: "/workspace/demo" });
+    sentPayloads.length = 0;
+
+    deliverPayload({
+      zcode_type: "platform-request",
+      requestId: "open-1",
+      method: "openInFileManager",
+      args: "/workspace/demo",
+    });
+    deliverPayload({
+      zcode_type: "platform-request",
+      requestId: "open-2",
+      method: "openInEditor",
+      args: {
+        editorId: "vscode",
+        path: "/workspace/demo/README.md",
+        options: { pathKind: "file" },
+      },
+    });
+    deliverPayload({
+      zcode_type: "platform-request",
+      requestId: "open-3",
+      method: "getInstalledEditors",
+    });
+    deliverPayload({
+      zcode_type: "platform-request",
+      requestId: "open-4",
+      method: "openExternalFile",
+      args: "/workspace/demo/report.pdf",
+    });
+
+    await vi.waitFor(() => {
+      expect(sentPayloads).toHaveLength(4);
+    });
+    expect(openInFileManager).toHaveBeenCalledWith("/workspace/demo");
+    expect(openInEditor).toHaveBeenCalledWith({
+      editorId: "vscode",
+      path: "/workspace/demo/README.md",
+      options: { pathKind: "file" },
+    });
+    expect(getInstalledEditors).toHaveBeenCalledWith(undefined);
+    expect(openExternalFile).toHaveBeenCalledWith("/workspace/demo/report.pdf");
+    expect(sentPayloads).toContainEqual({
+      zcode_type: "platform-response",
+      requestId: "open-1",
+      method: "openInFileManager",
+      success: true,
+      result: { success: true },
+    });
+    expect(sentPayloads).toContainEqual({
+      zcode_type: "platform-response",
+      requestId: "open-3",
+      method: "getInstalledEditors",
+      success: true,
+      result: [{ id: "vscode", name: "VS Code", iconDataUrl: "data:image/png;base64,x" }],
+    });
+  });
+
+  it("returns platform-response errors when an open-on-desktop handler fails", async () => {
+    const openInFileManager = vi.fn(async () => {
+      throw new Error("path not found");
+    });
+    const { deliverPayload, manager, sentPayloads } = createManagerHarness({
+      platformHandlers: { openInFileManager },
+    });
+
+    await manager.start(1, { workspacePath: "/workspace/demo" });
+    sentPayloads.length = 0;
+
+    deliverPayload({
+      zcode_type: "platform-request",
+      requestId: "open-err",
+      method: "openInFileManager",
+      args: "/workspace/missing",
+    });
+
+    await vi.waitFor(() => {
+      expect(sentPayloads).toContainEqual({
+        zcode_type: "platform-response",
+        requestId: "open-err",
+        method: "openInFileManager",
+        success: false,
+        error: "path not found",
+      });
+    });
   });
 
   it("pushes workspace list updates after renderer syncs task membership changes", async () => {

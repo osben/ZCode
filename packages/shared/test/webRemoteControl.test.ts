@@ -637,6 +637,68 @@ describe("parseWebRemoteControlAppPayload", () => {
       }),
     ).toBeNull();
   });
+
+  it("accepts open-on-desktop platform requests and responses", () => {
+    expect(
+      parseWebRemoteControlAppPayload({
+        zcode_type: "platform-request",
+        requestId: "open-1",
+        method: "openInEditor",
+        args: {
+          editorId: "vscode",
+          path: "/workspace/app/src/index.ts",
+          options: { pathKind: "file" },
+        },
+      }),
+    ).toMatchObject({ zcode_type: "platform-request", method: "openInEditor" });
+
+    expect(
+      parseWebRemoteControlAppPayload({
+        zcode_type: "platform-request",
+        requestId: "open-2",
+        method: "openInFileManager",
+        args: "/workspace/app",
+      }),
+    ).not.toBeNull();
+
+    expect(
+      parseWebRemoteControlAppPayload({
+        zcode_type: "platform-request",
+        requestId: "open-3",
+        method: "openExternalFile",
+        args: "/workspace/app/report.pdf",
+      }),
+    ).not.toBeNull();
+
+    expect(
+      parseWebRemoteControlAppPayload({
+        zcode_type: "platform-request",
+        requestId: "open-4",
+        method: "getInstalledEditors",
+      }),
+    ).not.toBeNull();
+
+    expect(
+      parseWebRemoteControlAppPayload({
+        zcode_type: "platform-response",
+        requestId: "open-1",
+        method: "openInEditor",
+        success: true,
+        result: { success: true },
+      }),
+    ).toMatchObject({ method: "openInEditor", success: true, result: { success: true } });
+  });
+
+  it("rejects platform requests whose method is not in the proxied allow-list", () => {
+    expect(
+      parseWebRemoteControlAppPayload({
+        zcode_type: "platform-request",
+        requestId: "open-5",
+        method: "executeDesktopCommand",
+        args: "quit",
+      }),
+    ).toBeNull();
+  });
 });
 
 describe("hostIncomingMessageSchema", () => {
