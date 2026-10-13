@@ -10,10 +10,12 @@ import {
   resolveWebRemoteControlInitialWorkspaceSelection,
   resolveWebRemoteControlRoutePathFromBaseUrl,
   resolveWebRemoteControlWorkspaceKey,
+  type WebRemoteControlPlatformMethod,
 } from "../src/web-remote-control.js";
 import {
   hostIncomingMessageSchema,
   parseWebRemoteControlAppPayload,
+  webRemoteControlPlatformMethodSchema,
   webRemoteControlTaskTargetSchema,
   webRemoteControlWorkspaceTargetSchema,
 } from "../src/validation.js";
@@ -715,6 +717,98 @@ describe("parseWebRemoteControlAppPayload", () => {
         dataBase64: "AQID",
       }),
     ).toBeNull();
+  });
+
+  it("accepts open-on-desktop platform requests and responses", () => {
+    expect(
+      parseWebRemoteControlAppPayload({
+        zcode_type: "platform-request",
+        requestId: "open-1",
+        method: "openInEditor",
+        args: {
+          editorId: "vscode",
+          path: "/workspace/app/src/index.ts",
+          options: { pathKind: "file" },
+        },
+      }),
+    ).toMatchObject({ zcode_type: "platform-request", method: "openInEditor" });
+
+    expect(
+      parseWebRemoteControlAppPayload({
+        zcode_type: "platform-request",
+        requestId: "open-2",
+        method: "openInFileManager",
+        args: "/workspace/app",
+      }),
+    ).not.toBeNull();
+
+    expect(
+      parseWebRemoteControlAppPayload({
+        zcode_type: "platform-request",
+        requestId: "open-3",
+        method: "openExternalFile",
+        args: "/workspace/app/report.pdf",
+      }),
+    ).not.toBeNull();
+
+    expect(
+      parseWebRemoteControlAppPayload({
+        zcode_type: "platform-request",
+        requestId: "open-4",
+        method: "getInstalledEditors",
+      }),
+    ).not.toBeNull();
+
+    expect(
+      parseWebRemoteControlAppPayload({
+        zcode_type: "platform-response",
+        requestId: "open-1",
+        method: "openInEditor",
+        success: true,
+        result: { success: true },
+      }),
+    ).toMatchObject({ method: "openInEditor", success: true, result: { success: true } });
+  });
+
+  it("rejects platform requests whose method is not in the proxied allow-list", () => {
+    expect(
+      parseWebRemoteControlAppPayload({
+        zcode_type: "platform-request",
+        requestId: "open-5",
+        method: "executeDesktopCommand",
+        args: "quit",
+      }),
+    ).toBeNull();
+  });
+});
+
+// Parity fixture for the relay platform-method allow-list. `Record<..., true>` forces every
+// WebRemoteControlPlatformMethod (keyof WebRemoteControlPlatformMethodResultMap) to appear here,
+// `satisfies` rejects stray entries, and the runtime test below then requires the zod enum to
+// accept exactly this set — a method added to the typed map without the enum (as happened to
+// createTempTextAttachment in aac47556) fails here instead of being dropped by the transports.
+const allWebRemoteControlPlatformMethods = {
+  isDockerAvailable: true,
+  listWSLDistros: true,
+  listDockerContainers: true,
+  listSSHConfigAliases: true,
+  createTempTextAttachment: true,
+  loadMcpFromUserDirectory: true,
+  saveMcpToUserDirectory: true,
+  migrateLegacyCommonMcp: true,
+  getInstalledEditors: true,
+  openInEditor: true,
+  openInFileManager: true,
+  openExternalFile: true,
+} satisfies Record<WebRemoteControlPlatformMethod, true>;
+
+describe("webRemoteControlPlatformMethodSchema", () => {
+  it("stays in parity with WebRemoteControlPlatformMethodResultMap", () => {
+    const mapKeys = Object.keys(allWebRemoteControlPlatformMethods);
+    expect([...webRemoteControlPlatformMethodSchema.options].sort()).toEqual([...mapKeys].sort());
+    for (const method of mapKeys) {
+      expect(webRemoteControlPlatformMethodSchema.safeParse(method).success).toBe(true);
+    }
   });
 });
 

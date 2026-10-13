@@ -222,9 +222,19 @@ export const webRemoteControlPlatformMethodSchema = z.enum([
   "listWSLDistros",
   "listDockerContainers",
   "listSSHConfigAliases",
+  // Bug fix: the upstream v3.15.1 bulk import (aac47556) added createTempTextAttachment to
+  // WebRemoteControlPlatformMethodArgsMap but missed this enum. The enum is the runtime
+  // allow-list for relay platform-request / platform-response, so the missing entry made the
+  // desktop transport drop the method outright, breaking temporary text attachments from the
+  // phone over the relay.
+  "createTempTextAttachment",
   "loadMcpFromUserDirectory",
   "saveMcpToUserDirectory",
   "migrateLegacyCommonMcp",
+  "getInstalledEditors",
+  "openInEditor",
+  "openInFileManager",
+  "openExternalFile",
 ]);
 
 const webRemoteControlAppPayloadSchemas = [
