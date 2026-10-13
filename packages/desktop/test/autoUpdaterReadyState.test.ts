@@ -1917,8 +1917,12 @@ describe("autoUpdater ready state sync", () => {
   it("安装器交接失败时会清理就绪状态并重启应用恢复", async () => {
     mockProcessPlatform("win32");
     const installError = new Error("installer handoff failed");
+    // Model electron-updater 6.8.9: BaseUpdater.install() catches the synchronous doInstall()
+    // failure, emits the generic "error" event, and returns false — quitAndInstall() does not
+    // throw. The handoff failure reaches main only through the error event.
     autoUpdaterMock.quitAndInstall.mockImplementationOnce(() => {
-      throw installError;
+      autoUpdaterMock.emit("error", installError);
+      return false;
     });
     const { getAutoUpdaterState, initAutoUpdater } = await import("../src/main/autoUpdater.js");
 
@@ -1931,9 +1935,9 @@ describe("autoUpdater ready state sync", () => {
     autoUpdaterMock.emit("update-downloaded", { version: "0.1.25" });
     await Promise.resolve();
     expect(quitHandler).toBeTypeOf("function");
-    await expect(quitHandler!()).rejects.toBe(installError);
+    await quitHandler!();
 
-    // Upstream 3.15.3 parity: when the installer handoff throws after shutdown started, the old
+    // Upstream 3.15.3 parity: when the installer handoff fails after shutdown started, the old
     // in-flight boolean left the app quitting without installing. The ready state is cleared, the
     // failure is reported, and the app relaunches so the user is not left with a dead updater.
     expect(loggerErrorMock).toHaveBeenCalledWith(

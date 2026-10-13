@@ -127,6 +127,12 @@ type QuitAndInstallPhase = "idle" | "preparing" | "installing" | "recovering";
 
 let quitAndInstallPhase: QuitAndInstallPhase = "idle";
 
+// electron-updater 6.8.9's BaseUpdater.install() catches synchronous doInstall() failures, emits
+// the generic "error" event, and returns false — quitAndInstall() does not throw. This flag marks
+// the synchronous handoff window so the error listener can route that event to install recovery
+// instead of the locked-phase late-failure suppression.
+let installerHandoffInFlight = false;
+
 function isUpdateTargetLocked(): boolean {
   return quitAndInstallPhase !== "idle";
 }
@@ -525,15 +531,18 @@ async function quitAndInstallUpdate(rejectUnavailable = false) {
   // The phase stays "installing" after the handoff: late check failures during shutdown must be
   // suppressed until the process exits (upstream 3.15.3 behavior).
   quitAndInstallPhase = "installing";
+  installerHandoffInFlight = true;
   try {
     autoUpdater.quitAndInstall();
   } catch (error) {
-    // A throw here means the installer handoff failed while the app was already committed to
-    // shutting down. Report it, then relaunch so the user is not left with a quitting app that
-    // never installs (upstream 3.15.3 recovery behavior).
+    // Defensive path: some electron-updater versions or future refactors may still throw from
+    // quitAndInstall(). Report it, then relaunch so the user is not left with a quitting app
+    // that never installs (upstream 3.15.3 recovery behavior).
     handleAutoUpdateFailure(error, "quit and install failed");
     recoverFromFailedUpdateInstall();
     throw error;
+  } finally {
+    installerHandoffInFlight = false;
   }
 }
 
@@ -1847,6 +1856,15 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
       // electron-updater may asynchronously emit error("cancelled") after a download is cancelled.
       // User cancellation already restored retryable update-available state; a late cancellation event must not clear the entry.
       logger.info("[auto-update] ignore delayed error from cancelled download");
+      return;
+    }
+
+    if (installerHandoffInFlight) {
+      // electron-updater 6.8.9 reports a synchronous installer handoff failure through this event
+      // instead of throwing from quitAndInstall(). Route it to the recovery path so a committing
+      // shutdown that cannot hand off to the installer relaunches (upstream 3.15.3 behavior).
+      handleAutoUpdateFailure(err, "quit and install failed");
+      recoverFromFailedUpdateInstall();
       return;
     }
 
