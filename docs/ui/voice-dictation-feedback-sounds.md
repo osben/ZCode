@@ -19,8 +19,8 @@ Read tolerance: `voiceDictation` is parsed with `.catch(undefined)` as a whole, 
 Only two sounds exist (Handy parity): **start** (`voice-dictation-start.wav`) and **stop** (`voice-dictation-stop.wav`, Handy "marimba" set, MIT license).
 
 - The start chime plays when the recorder is actually live (phase `idle/loading → recording`).
-- The stop chime plays when the user stops a live recording normally (explicit stop, including the quick-tap discard).
-- Cancellation and failure paths stay **silent**: window-blur cancel, stream/transcription errors, hook unmount. Errors surface via the existing toast.
+- The stop chime is a **capture-end cue**: it plays when the user stops a live recording normally (explicit stop, including the quick-tap discard), even if the transcription that follows later fails — the failure itself surfaces only as a toast (Handy behaves the same: its stop sound is not a transcription-success sound).
+- Cancellation and failure paths that end the recording abnormally stay **silent**: window-blur cancel, stream failure mid-recording, hook unmount.
 - Transcription completion inserts text silently — there is no third sound.
 - Chime playback lives in the renderer (`packages/ui/src/lib/voiceDictationFeedbackSound.ts`), volume applied per play; playback failure is logged and never breaks the dictation flow.
 
@@ -45,8 +45,9 @@ Guarantees:
 
 - Snapshot/restore: if the output was already muted before recording, the main process does not mute again (`didMute = false`) and does not unmute on release.
 - Ownership is registered before the OS commands run, so a renderer lost or a quit arriving while the commands are still in flight cannot orphan the mute.
-- Restore paths in main: explicit release call, the **accepted shutdown path** (`exitPreparedApp` right before `app.exit`; `before-quit` is deliberately not used because this app cancels it for quit confirmation and async shutdown preparation — a canceled quit keeps the session), and the applying webContents being destroyed / render-process gone.
-- Residual risk (same as Handy): exits that bypass the prepared funnel (updater install quits, hard kills) mid-recording leave the system muted; no persisted state to recover from.
+- Restore paths in main: explicit release call, the **accepted shutdown path** (`exitPreparedApp` right before `app.exit`, plus the updater handoff right before `quitAndInstall`/dev relaunch, which bypasses the prepared funnel; `before-quit` is deliberately not used because this app cancels it for quit confirmation and async shutdown preparation — a canceled quit keeps the session), and the applying webContents being destroyed / render-process gone.
+- A failed async restore keeps the session alive so the next recording's release, a re-apply, or the shutdown restore retries the unmute; a failed sync (quit) restore has no retry left because the process exits.
+- Residual risk: exits that bypass both the prepared funnel and the updater handoff (hard kills, crash) mid-recording leave the system muted; no persisted state to recover from.
 - Per-OS implementation: macOS `osascript` (read + set); Linux `wpctl` → `pactl` → `amixer` fallback with explicit mute/unmute verbs; Windows v1 is a logged no-op (no state-preserving mechanism without a new native dependency).
 - If the platform capability or the spawn fails, muting is skipped with a warn log; recording and chimes continue unaffected.
 

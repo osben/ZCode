@@ -196,24 +196,37 @@ export function registerDesktopDictationSystemAudioIpc(options: {
   /**
    * Drop the session and undo its mute. Returns the unmute promise so callers inside the chain can
    * await it; the sync variant (quit) cannot return one because an async spawn would not outlive
-   * the quit.
+   * the quit. A failed async restore keeps the session alive (state stays "muted") so the next
+   * recording's release or the shutdown restore retries the unmute instead of leaving the output
+   * muted with nothing left to retry.
    */
   const releaseSession = (current: MuteSession, sync: boolean): Promise<void> | undefined => {
-    if (session === current) session = null;
     for (const owner of current.owners.values()) detachOwner(owner);
     current.owners.clear();
-    if (!backend || (current.state !== "muted" && current.state !== "muting")) return undefined;
+    // Nothing was muted (already-muted input or a failed mute): forget the session outright.
+    if (!backend || (current.state !== "muted" && current.state !== "muting")) {
+      if (session === current) session = null;
+      return undefined;
+    }
     if (sync) {
       try {
         backend.setMutedSync(false);
       } catch (error) {
         logger.warn(`[dictation-audio] failed to restore output mute state: ${describe(error)}`);
       }
+      // The process is exiting either way; a failed sync restore has no retry left.
+      if (session === current) session = null;
       return undefined;
     }
-    return backend.setMuted(false).catch((error: unknown) => {
-      logger.warn(`[dictation-audio] failed to restore output mute state: ${describe(error)}`);
-    });
+    return backend.setMuted(false)
+      .then(() => {
+        if (session === current) session = null;
+      })
+      .catch((error: unknown) => {
+        logger.warn(
+          `[dictation-audio] failed to restore output mute state, will retry on the next release or quit: ${describe(error)}`,
+        );
+      });
   };
 
   if (!backend) {

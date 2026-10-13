@@ -208,6 +208,34 @@ describe("desktop dictation system audio mute", () => {
     expect(execSync).toHaveBeenCalledWith("osascript", MACOS_UNMUTE);
   });
 
+  it("retries the unmute on shutdown when the async restore failed once", async () => {
+    let failUnmute = true;
+    const execAsync = vi.fn<(file: string, args: string[]) => Promise<string>>(
+      async (file, args) => {
+        if (file === "osascript" && args[1] === MACOS_UNMUTE[1]) {
+          if (failUnmute) {
+            failUnmute = false;
+            throw new Error("osascript busy");
+          }
+        }
+        return args === MACOS_READ ? "false\n" : "";
+      },
+    );
+    const execSync = vi.fn<(file: string, args: string[]) => string>(() => "");
+    const { logger, handler } = register({ platform: "darwin", execAsync, execSync });
+    const sender = createSender();
+
+    await handler({ sender }, { active: true });
+    await handler({ sender }, { active: false });
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("will retry on the next release or quit"),
+    );
+
+    // The failed restore kept the session: the shutdown restore retries the unmute.
+    restoreDictationSystemMuteForShutdown();
+    expect(execSync).toHaveBeenCalledWith("osascript", MACOS_UNMUTE);
+  });
+
   it("ignores shutdown restores when no mute session is active", () => {
     const execSync = vi.fn<(file: string, args: string[]) => string>(() => "");
     register({ platform: "darwin", execSync });
