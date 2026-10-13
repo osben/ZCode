@@ -62,6 +62,6 @@ Three rows in the voice input settings section (desktop only), below the push-to
 1. Sounds off (default): recording behaves exactly as before; no audio, no IPC.
 2. Sounds on, volume 0: chimes "play" silently; no errors.
 3. Sounds on: start chime audible right when the mic indicator activates; stop chime on release; nothing on transcription errors.
-4. Mute on + macOS: system audio mutes during recording, previous mute state restored afterwards; recording music for the whole session, then unmuted exactly as before.
+4. Mute on + macOS: system audio is muted for the entire recording, then restored to its previous mute state.
 5. Quit the app mid-recording (Cmd+Q): system audio is restored.
 6. Web/remote: the section already renders as unavailable; new fields are inert.
