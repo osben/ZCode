@@ -107,7 +107,7 @@ vi.mock("@/hooks/useVoiceDictationRuntimeState.js", () => ({
   }),
 }));
 vi.mock("@/shortcuts/useShortcutBindings.js", () => ({
-  useShortcutCommandLabel: () => "Cmd+Shift+D",
+  useShortcutCommandLabelParts: () => ["Cmd", "Shift", "D"],
 }));
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
