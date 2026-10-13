@@ -279,7 +279,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
     // AGENTS.md), not the redirected storage root, so it stays in sync with the host service.
     const persistedSystemPromptOverrides = options.runtimeConfig?.systemPromptOverrides
       ? undefined
-      : await loadPersistedSystemPromptOverrides({ env: options.env ?? process.env });
+      : await loadPersistedSystemPromptOverrides({ env: options.env ?? process.env, logger });
     // Session-level output style wins; otherwise fall back to the persisted active style on disk.
     const persistedOutputStyle = options.runtimeConfig?.outputStyle
       ? undefined

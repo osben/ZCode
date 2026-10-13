@@ -4,9 +4,13 @@ import {
   isSystemPromptOverrideKey,
 } from "@zcode/shared";
 import type { ISystemPromptService, SystemPromptSection } from "./systemPrompt.js";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { createServiceLogger } from "../logger/serviceLogger.js";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+
+const log = createServiceLogger("system-prompt");
 
 function resolveUserHomeDir(): string {
   const envHome = process.env.HOME?.trim() || process.env.USERPROFILE?.trim();
@@ -31,7 +35,16 @@ async function readOverride(key: string): Promise<string | null> {
     const trimmed = raw.trim();
     // Whitespace-only files are ignored, matching the CLI loader's semantics.
     return trimmed ? trimmed : null;
-  } catch {
+  } catch (error) {
+    // ENOENT is the normal "no override" case; other read failures (permissions, IO) stay
+    // visible instead of silently degrading the section to its code default. Mirrors the
+    // output-style service's read discipline.
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      log.warn("Failed to read system-prompt override file", {
+        file: filePath,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
     return null;
   }
 }
@@ -63,7 +76,17 @@ export function createSystemPromptService(): ISystemPromptService {
       throw new Error(`Unknown system-prompt override key: ${params.key}`);
     }
     await mkdir(getOverridesDir(), { recursive: true });
-    await writeFile(filePath, params.content, "utf-8");
+    // Rename within the overrides directory is atomic, so a concurrent runtime reader (new
+    // CLI session) never observes a truncated file; a direct writeFile would expose the
+    // partial override mid-write.
+    const tempPath = join(getOverridesDir(), `.${params.key}.md.${randomUUID()}.tmp`);
+    try {
+      await writeFile(tempPath, params.content, "utf-8");
+      await rename(tempPath, filePath);
+    } catch (error) {
+      await rm(tempPath, { force: true });
+      throw error;
+    }
   }
 
   async function deleteOverride(params: { key: string }): Promise<void> {

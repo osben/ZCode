@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, stat, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, readdir, rm, stat, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { afterEach, beforeEach } from "node:test";
@@ -94,4 +94,29 @@ test("writeOverride and deleteOverride reject keys outside the whitelist", async
   await assert.rejects(() => service.writeOverride({ key: "../../evil", content: "x" }));
   await assert.rejects(() => service.writeOverride({ key: "environment", content: "x" }));
   await assert.rejects(() => service.deleteOverride({ key: "no-such-key" }));
+});
+
+test("writeOverride commits atomically: no temp files remain and content is complete", async () => {
+  const service = createSystemPromptService();
+  await service.writeOverride({ key: "harness", content: "# Harness\n- Atomic." });
+
+  const entries = await readdir(overridesDir());
+  assert.deepEqual(entries, ["harness.md"]);
+  const { sections } = await service.listSections();
+  assert.equal(
+    sections.find((section) => section.key === "harness")?.overrideContent,
+    "# Harness\n- Atomic.",
+  );
+});
+
+test("an unreadable override file degrades to the default without failing the listing", async () => {
+  // A directory named like the override file makes readFile fail with EISDIR, a non-ENOENT
+  // error that must surface in logs but still leave the section listed with its default.
+  await mkdir(join(overridesDir(), "harness.md"), { recursive: true });
+
+  const service = createSystemPromptService();
+  const { sections } = await service.listSections();
+  const harness = sections.find((section) => section.key === "harness");
+  assert.ok(harness);
+  assert.equal(harness.isOverridden, false);
 });

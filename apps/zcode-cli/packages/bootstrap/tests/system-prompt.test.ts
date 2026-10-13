@@ -2,8 +2,20 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { Logger } from "@zcode/contracts";
 import { SYSTEM_PROMPT_OVERRIDE_KEYS } from "@zcode/shared";
 import { loadPersistedSystemPromptOverrides } from "../src/system-prompt.js";
+
+function warningCollector(warnings: string[]): Logger {
+  const noop = (): void => {};
+  return {
+    debug: noop,
+    info: noop,
+    warn: (message) => warnings.push(message),
+    error: noop,
+    child: () => warningCollector(warnings),
+  };
+}
 
 let tempHome = "";
 
@@ -81,5 +93,18 @@ describe("loadPersistedSystemPromptOverrides", () => {
     } finally {
       await rm(redirectedRoot, { recursive: true, force: true });
     }
+  });
+
+  it("skips unreadable override files without failing startup", async () => {
+    // A directory named like the override file makes readFile fail with EISDIR; the loader
+    // degrades that key to the code default and still resolves.
+    await mkdir(join(tempHome, ".zcode", "system-prompt", "harness.md"), { recursive: true });
+    const warnings: string[] = [];
+    const overrides = await loadPersistedSystemPromptOverrides({
+      env: loaderEnv(),
+      logger: warningCollector(warnings),
+    });
+    expect(overrides).toEqual({});
+    expect(warnings.length).toBe(1);
   });
 });
