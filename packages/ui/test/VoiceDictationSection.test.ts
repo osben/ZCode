@@ -399,16 +399,17 @@ describe("VoiceDictationSection feedback sounds", () => {
   it("keeps the committed volume for display and Test while the save is pending", async () => {
     h.settings.voiceDictation = { modelId: "model-one", feedbackVolume: 50 };
     let resolveSave!: () => void;
-    h.updateSettings.mockImplementationOnce((patch: { voiceDictation?: Record<string, unknown> }) =>
-      new Promise<void>((resolve) => {
-        resolveSave = () => {
-          // Model ordered writes: skip a stale late apply when a newer write already landed.
-          if (patch.voiceDictation && h.settings.voiceDictation.feedbackVolume !== 50) {
-            h.settings.voiceDictation = { ...h.settings.voiceDictation, ...patch.voiceDictation };
-          }
-          resolve();
-        };
-      }),
+    h.updateSettings.mockImplementationOnce(
+      (patch: { voiceDictation?: Record<string, unknown> }) =>
+        new Promise<void>((resolve) => {
+          resolveSave = () => {
+            // Model ordered writes: skip a stale late apply when a newer write already landed.
+            if (patch.voiceDictation && h.settings.voiceDictation.feedbackVolume !== 50) {
+              h.settings.voiceDictation = { ...h.settings.voiceDictation, ...patch.voiceDictation };
+            }
+            resolve();
+          };
+        }),
     );
     render(createElement(VoiceDictationSection, { isDesktop: true }));
 
@@ -431,15 +432,16 @@ describe("VoiceDictationSection feedback sounds", () => {
   it("issues a compensating write when reverting to the saved volume while a write is pending", async () => {
     h.settings.voiceDictation = { modelId: "model-one", feedbackVolume: 50 };
     let resolveSave!: () => void;
-    h.updateSettings.mockImplementationOnce((patch: { voiceDictation?: Record<string, unknown> }) =>
-      new Promise<void>((resolve) => {
-        resolveSave = () => {
-          if (patch.voiceDictation && h.settings.voiceDictation.feedbackVolume !== 50) {
-            h.settings.voiceDictation = { ...h.settings.voiceDictation, ...patch.voiceDictation };
-          }
-          resolve();
-        };
-      }),
+    h.updateSettings.mockImplementationOnce(
+      (patch: { voiceDictation?: Record<string, unknown> }) =>
+        new Promise<void>((resolve) => {
+          resolveSave = () => {
+            if (patch.voiceDictation && h.settings.voiceDictation.feedbackVolume !== 50) {
+              h.settings.voiceDictation = { ...h.settings.voiceDictation, ...patch.voiceDictation };
+            }
+            resolve();
+          };
+        }),
     );
     render(createElement(VoiceDictationSection, { isDesktop: true }));
 

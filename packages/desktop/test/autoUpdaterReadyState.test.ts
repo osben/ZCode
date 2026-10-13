@@ -2251,8 +2251,12 @@ describe("autoUpdater ready state sync", () => {
     await Promise.resolve();
 
     expect(onStateChange).toHaveBeenCalledWith({ kind: "checking" });
-    expect(onStateChange).toHaveBeenCalledWith({ kind: "installing" });
-    expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledOnce();
+    // The install handoff awaits the dictation mute drain before quitAndInstall, so flush a few
+    // microtask ticks instead of assuming a synchronous call.
+    await vi.waitFor(() => {
+      expect(onStateChange).toHaveBeenCalledWith({ kind: "installing" });
+      expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledOnce();
+    });
     expect(autoUpdaterMock.checkForUpdates).not.toHaveBeenCalled();
   });
 

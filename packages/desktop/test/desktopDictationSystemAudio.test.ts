@@ -267,9 +267,7 @@ describe("desktop dictation system audio mute", () => {
     const applying = handler({ sender }, { active: true });
     await restoreDictationSystemMuteForShutdown();
     expect(execSync).not.toHaveBeenCalled();
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("shutdown drain timed out"),
-    );
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("shutdown drain timed out"));
 
     // Let the dangling apply settle before the test ends.
     await act(async () => {});

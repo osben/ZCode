@@ -215,7 +215,8 @@ export function registerDesktopDictationSystemAudioIpc(options: {
       if (session === current) session = null;
       return undefined;
     }
-    return backend.setMuted(false)
+    return backend
+      .setMuted(false)
       .then(() => {
         if (session === current) session = null;
       })
