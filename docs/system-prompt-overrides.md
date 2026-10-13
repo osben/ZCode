@@ -26,23 +26,25 @@ sections themselves.
 
 ## Editable keys and boundaries
 
-| Key | Replaces | Notes |
-| --- | --- | --- |
-| `cli-prefix` | `You are ZCode, an interactive coding agent` | |
-| `identity-intro` | identity opening sentence | Beats an active Output Style intro; the Output Style still appends its `# Output Style` section |
-| `harness` | the `# Harness` block | Applies to the main agent; the workflow-actor identity keeps the constant (subagent contract) |
-| `communication` | the whole `# Communicating with the user` section incl. code-style and risk paragraphs | |
-| `context-management` | the whole `# Context management` section incl. autonomy appendix | |
-| `memory-guidance` | the `# Memory` guidance body | Supports one placeholder, `{{memoryRoot}}`, substituted with the session memory root; override replaces the whole body incl. the retrieval-branch line |
+| Key                  | Replaces                                                                               | Notes                                                                                                                                                  |
+| -------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `cli-prefix`         | `You are ZCode, an interactive coding agent`                                           |                                                                                                                                                        |
+| `identity-intro`     | identity opening sentence                                                              | Beats an active Output Style intro; the Output Style still appends its `# Output Style` section                                                        |
+| `harness`            | the `# Harness` block                                                                  | Applies to the main agent; the workflow-actor identity keeps the constant (subagent contract)                                                          |
+| `communication`      | the whole `# Communicating with the user` section incl. code-style and risk paragraphs |                                                                                                                                                        |
+| `context-management` | the whole `# Context management` section incl. autonomy appendix                       |                                                                                                                                                        |
+| `memory-guidance`    | the `# Memory` guidance body                                                           | Supports one placeholder, `{{memoryRoot}}`, substituted with the session memory root; override replaces the whole body incl. the retrieval-branch line |
 
 **Not editable:** the authorized-security notice (product safety constant), `# ZCode Desktop
 Context`, `# Session-specific guidance`, `# Environment`, `gitStatus` (runtime-computed), and
-all subagent/workflow prompt fragments. These are shown read-only or omitted in the UI.
+all subagent/workflow prompt fragments — including the subagent context builder's CLI prefix
+and the workflow-actor `# Harness`, which keep the code defaults. These are shown read-only
+or omitted in the UI.
 
 ## Storage
 
-| Path | Owner | Content |
-| --- | --- | --- |
+| Path                              | Owner                             | Content             |
+| --------------------------------- | --------------------------------- | ------------------- |
 | `~/.zcode/system-prompt/<key>.md` | service (write), bootstrap (read) | plain override body |
 
 Keys are a fixed whitelist; filenames derive from that whitelist only (no user-derived

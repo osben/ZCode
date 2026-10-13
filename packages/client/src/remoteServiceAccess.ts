@@ -46,6 +46,7 @@ import {
   IMemoryService,
   IUserInstructionsService,
   IOutputStyleService,
+  ISystemPromptService,
   ISettingsSyncService,
   IFeedbackService,
   IPromptAttachmentTransferService,
@@ -109,6 +110,7 @@ export class RemoteServiceAccess implements IServiceAccessor {
   readonly memoryService: IMemoryService;
   readonly userInstructionsService: IUserInstructionsService;
   readonly outputStyleService: IOutputStyleService;
+  readonly systemPromptService: ISystemPromptService;
   readonly settingsSyncService: ISettingsSyncService;
   readonly feedbackService: IFeedbackService;
   readonly promptAttachmentTransferService: IPromptAttachmentTransferService;
@@ -259,6 +261,9 @@ export class RemoteServiceAccess implements IServiceAccessor {
     );
     this.outputStyleService = ProxyChannel.toService<IOutputStyleService>(
       channelClient.getChannel(IOutputStyleService.channelName),
+    );
+    this.systemPromptService = ProxyChannel.toService<ISystemPromptService>(
+      channelClient.getChannel(ISystemPromptService.channelName),
     );
     this.settingsSyncService = ProxyChannel.toService<ISettingsSyncService>(
       channelClient.getChannel(ISettingsSyncService.channelName),
