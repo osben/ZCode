@@ -258,7 +258,7 @@ function isSameIdentitySnapshot(
 }
 
 function identityOnlyOutcome(identity: OfficialMcpIdentitySnapshot): OfficialMcpCredentialOutcome {
-  log.debug("official mcp identity-only credentials resolved", {
+  log.debug(undefined, "official mcp identity-only credentials resolved", {
     providerFamily: identity.activeProvider,
     reason: "official_auth_plan_required",
   });
@@ -318,7 +318,7 @@ export async function resolveOfficialMcpCredentials(
       // Classify as unavailable rather than plan_required: the login state is incomplete (sign in again),
       // not “no plan.” Both provider adapters require this token at sign-in, so the normal path does not hit this;
       // it mainly occurs with legacy login states from migration.
-      log.warn("official mcp maas jwt missing", {
+      log.warn(undefined, "official mcp maas jwt missing", {
         providerFamily: selected.plan.providerFamily,
         reason: "official_auth_unavailable",
       });
@@ -367,7 +367,7 @@ export async function resolveOfficialMcpCredentials(
     });
     if (logKey !== lastCredentialResolvedLogKey) {
       lastCredentialResolvedLogKey = logKey;
-      log.info("official mcp credentials resolved", {
+      log.info(undefined, "official mcp credentials resolved", {
         maasJwtExpiresInSeconds,
         providerFamily: selected.plan.providerFamily,
         planTargetType: selected.plan.planScope?.targetType ?? null,
