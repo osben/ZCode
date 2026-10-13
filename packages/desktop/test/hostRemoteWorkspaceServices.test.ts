@@ -403,7 +403,8 @@ describe("remote workspace host service wiring", () => {
         expect(url).not.toContain("/api/auth/z/login");
         let data: unknown;
         if (url.endsWith("/getCustomerInfo")) {
-          expect(authorization).toBe(family === "zai" ? "Bearer business-jwt" : "business-jwt");
+          // 3.15.2 parity: the metadata endpoint carries the raw business token for every family.
+          expect(authorization).toBe("business-jwt");
           data = {
             organizations: [{ organizationId: "org", projects: [{ projectId: "project" }] }],
           };
