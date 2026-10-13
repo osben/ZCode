@@ -10,8 +10,8 @@ describe("user action trace catalog", () => {
     expect(Object.keys(CORE_USER_ACTION_FEATURES)).toHaveLength(24);
     expect(Object.keys(SETTINGS_USER_ACTION_FEATURES)).toHaveLength(15);
     expect(USER_ACTION_CATALOG.filter((entry) => entry.group === "core")).toHaveLength(94);
-    // Fork 增补了 change_palette 与 toggle_terminal_webgl 两个设置动作。
-    expect(USER_ACTION_CATALOG.filter((entry) => entry.group === "settings")).toHaveLength(46);
+    // The fork adds change_palette, toggle_terminal_webgl, and Coding Plan auto-continue actions.
+    expect(USER_ACTION_CATALOG.filter((entry) => entry.group === "settings")).toHaveLength(47);
   });
 
   it("feature/action 组合唯一且不使用动态标识", () => {

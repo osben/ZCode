@@ -2543,6 +2543,9 @@ const zhCN: Record<string, string> = {
   "settings.askUserQuestionAutoResolution": "提问自动继续",
   "settings.askUserQuestionAutoResolutionDescription":
     "开启后，Agent 提问 5 分钟未回答会自动继续；关闭后，当前和后续提问会一直等待你的回答。",
+  "settings.codingPlanLimitAutoContinueDefault": "Coding Plan 限额重置后自动继续",
+  "settings.codingPlanLimitAutoContinueDefaultDescription":
+    "设置达到 Coding Plan 五小时用量限额后，重置时自动继续任务的默认勾选状态。",
   "settings.dynamicWorkflow": "动态工作流",
   "settings.dynamicWorkflowDescription":
     "让模型用脚本编排大量子代理并行工作，处理复杂任务、交付专业结果。",
@@ -6152,6 +6155,8 @@ const zhCN: Record<string, string> = {
   "chat.quota.mcp.codingPlanRequired":
     "当前无 ZCode MCP「{server}」额度，请登录或开通 Coding Plan 使用。",
   "chat.quota.providerLimited": "当前账户额度或套餐已达到使用限制。请升级或调整套餐后继续。",
+  "chat.quota.providerLimited.resetAt": "五小时用量限额将在 {time} 重置。",
+  "chat.quota.providerLimited.autoContinue": "重置后自动继续",
   "chat.quota.action.upgrade": "升级",
   "chat.quota.action.renew": "续期",
   "chat.quota.action.switchModel": "切换模型",

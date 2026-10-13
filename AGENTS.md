@@ -40,7 +40,7 @@ Test entry points are defined by the target package's current `package.json` and
 - For code changes, use `.agents/skills/architecture-governance/SKILL.md`: run the architecture check first, then read the controlled context of the target module.
 - Avoid duplicated state and multiple write paths. Define a single owner, interface, dependency direction, event order, and idempotency boundary; do not use timeouts to mask synchronization problems.
 - When there are behavior changes, add the corresponding tests first; interaction changes require E2E scenarios. Check that tests are consistent with the implementation, and actually run the available verification. If not run or the environment is limited, state so truthfully.
-- When fixing a bug, use Chinese comments to explain the cause and the basis for the fix. When a design flaw is found, align with the user first instead of continually adding fallback branches.
+- When fixing a bug, use English comments only, and add them only when they explain the cause or prevention constraints. When a design flaw is found, align with the user first instead of continually adding fallback branches.
 - For solutions involving state, timing, remote, or asynchronous synchronization, use a diagram to show owners and event order.
 - You must run `pnpm typecheck` and `pnpm lint` and report the real results; do not report pre-existing failures as passing.
 - Use asynchronous file and network IO; cross-package imports use public entry points and follow existing path aliases.

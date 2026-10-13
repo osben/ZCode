@@ -85,6 +85,7 @@ export function GeneralSectionContent({
   toolGroupingChangesEnabled,
   zcodeInteractionBehavior,
   askUserQuestionAutoResolutionEnabled = true,
+  codingPlanLimitAutoContinueDefaultEnabled = true,
   modelIoFullRetentionEnabled = false,
   onDataBaseDirChange,
   onSelectDataBaseDir,
@@ -110,6 +111,7 @@ export function GeneralSectionContent({
   onToolGroupingChangesEnabledChange,
   onZCodeInteractionBehaviorChange,
   onAskUserQuestionAutoResolutionEnabledChange = async () => {},
+  onCodingPlanLimitAutoContinueDefaultEnabledChange = async () => {},
   onModelIoFullRetentionEnabledChange = async () => {},
   onOpenOnboardingDialog,
 }: {
@@ -161,6 +163,7 @@ export function GeneralSectionContent({
   toolGroupingChangesEnabled: boolean;
   zcodeInteractionBehavior: ZCodeInteractionBehavior;
   askUserQuestionAutoResolutionEnabled?: boolean;
+  codingPlanLimitAutoContinueDefaultEnabled?: boolean;
   modelIoFullRetentionEnabled?: boolean;
   onDataBaseDirChange: (dir: string) => Promise<void>;
   onSelectDataBaseDir: () => Promise<string | null>;
@@ -186,6 +189,7 @@ export function GeneralSectionContent({
   onToolGroupingChangesEnabledChange: (enabled: boolean) => Promise<void>;
   onZCodeInteractionBehaviorChange: (behavior: ZCodeInteractionBehavior) => Promise<void>;
   onAskUserQuestionAutoResolutionEnabledChange?: (enabled: boolean) => Promise<void>;
+  onCodingPlanLimitAutoContinueDefaultEnabledChange?: (enabled: boolean) => Promise<void>;
   onModelIoFullRetentionEnabledChange?: (enabled: boolean) => Promise<void>;
   onOpenOnboardingDialog: () => void;
 }) {
@@ -764,6 +768,23 @@ export function GeneralSectionContent({
         />
         {/* docs/dynamic-workflow/launch.md "The user's choice": the entire row is not rendered when the server does not provide it. */}
         {hasServices ? <DynamicWorkflowModeSetting /> : null}
+        <SettingsRow
+          label={intl.formatMessage({ id: "settings.codingPlanLimitAutoContinueDefault" })}
+          description={intl.formatMessage({
+            id: "settings.codingPlanLimitAutoContinueDefaultDescription",
+          })}
+          control={
+            <Switch
+              aria-label={intl.formatMessage({
+                id: "settings.codingPlanLimitAutoContinueDefault",
+              })}
+              checked={codingPlanLimitAutoContinueDefaultEnabled}
+              onCheckedChange={(checked) => {
+                void onCodingPlanLimitAutoContinueDefaultEnabledChange(checked);
+              }}
+            />
+          }
+        />
         <SettingsRow
           label={intl.formatMessage({ id: "settings.modelIoFullRetention" })}
           description={intl.formatMessage({
