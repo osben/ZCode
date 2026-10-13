@@ -119,5 +119,5 @@ export const SYSTEM_PROMPT_DEFAULTS: Record<SystemPromptOverrideKey, string> = {
 
 /** Substitute the `{{memoryRoot}}` placeholder in a memory-guidance body. */
 export function renderMemoryGuidancePrompt(prompt: string, memoryRoot: string): string {
-  return prompt.replaceAll("{{memoryRoot}}", memoryRoot);
+  return prompt.replaceAll("{{memoryRoot}}", () => memoryRoot);
 }
