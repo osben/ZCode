@@ -580,7 +580,7 @@ async function updateWebRemoteControlMobileViewState(
   }
 }
 
-function createWebPlatform(options?: {
+export function createWebPlatform(options?: {
   webRemoteControlProxy?: WebRemoteControlProxyOptions;
   externalWebRemoteControlProxy?: WebRemoteControlPlatformProxy;
 }): IPlatformService {
@@ -734,9 +734,18 @@ function createWebPlatform(options?: {
       const communityUrl = await resolveWebCommunityUrl(locale);
       return typeof communityUrl === "string" && communityUrl.length > 0;
     },
-    openInFileManager: () =>
-      Promise.resolve({ success: false, error: "Not supported in web mode" }),
-    openExternalFile: () => Promise.resolve({ success: false, error: "Not supported in web mode" }),
+    openInFileManager: (path) =>
+      platformProxy
+        ? platformProxy.requestPlatformMethod("openInFileManager", path)
+        : webRemoteControlProxy
+          ? requestWebRemoteControlPlatformMethod(webRemoteControlProxy, "openInFileManager", path)
+          : Promise.resolve({ success: false, error: "Not supported in web mode" }),
+    openExternalFile: (path) =>
+      platformProxy
+        ? platformProxy.requestPlatformMethod("openExternalFile", path)
+        : webRemoteControlProxy
+          ? requestWebRemoteControlPlatformMethod(webRemoteControlProxy, "openExternalFile", path)
+          : Promise.resolve({ success: false, error: "Not supported in web mode" }),
     registerOAuthState: (_payload) => {},
     onOAuthCallback: () => () => {},
     onPaymentCallback: () => () => {},
@@ -815,8 +824,22 @@ function createWebPlatform(options?: {
     acknowledgePostUpdateReleaseNotes: () => Promise.resolve(),
     skipUpdateVersion: () => Promise.resolve(),
     quitAndInstallUpdate: () => Promise.resolve(),
-    getInstalledEditors: () => Promise.resolve([]),
-    openInEditor: () => Promise.resolve({ success: false, error: "Not supported in web mode" }),
+    getInstalledEditors: () =>
+      platformProxy
+        ? platformProxy.requestPlatformMethod("getInstalledEditors")
+        : webRemoteControlProxy
+          ? requestWebRemoteControlPlatformMethod(webRemoteControlProxy, "getInstalledEditors")
+          : Promise.resolve([]),
+    openInEditor: (editorId, path, options) =>
+      platformProxy
+        ? platformProxy.requestPlatformMethod("openInEditor", { editorId, path, options })
+        : webRemoteControlProxy
+          ? requestWebRemoteControlPlatformMethod(webRemoteControlProxy, "openInEditor", {
+              editorId,
+              path,
+              options,
+            })
+          : Promise.resolve({ success: false, error: "Not supported in web mode" }),
     executeDesktopCommand: () => Promise.resolve(),
     setApplicationLocale: (_locale) => Promise.resolve(),
     setTitleBarTheme: () => Promise.resolve(),
