@@ -29,7 +29,13 @@ bootstrap process registry（endpoint origin + network policy）
 导出只替换该目录，不改公共源码。动态实现的专属测试显式排除，公共 fetch 与静态实现测试两版都保留。
 公共工厂不向上暴露 snapshot、刷新预算或实现 class。网络客户端和来源标识以依赖传入，静态实现不调用它们。
 
-静态实现保持既有开源网关行为：
+fork 装配为直连版本：edition 对一切请求返回 `routed:false`，不做任何端点改写。原因：平台网关
+（runtime ZCode origin 下的 `/api/v1/ultra-zai/anthropic/v1/messages`）对 GLM-5.3 返回 404
+（GLM-5.3-Flash 正常），而控制面 `agent/configs` 当前不返回 `proxyEndpoint`，官方闭源装配因此
+直连 provider 且 GLM-5.3 可用。上游静态网关表保留在 `official-coding-plan-gateway.ts` 及其测试中，
+不再被 edition 引用；恢复网关行为时把 edition 指回 `createStaticProviderEndpointRoutingPort` 即可。
+
+上游静态网关的原始行为（仅在指回时生效）：
 
 | 精确匹配的 HTTPS 端点 | 当前 runtime ZCode origin 下的目标路径 |
 | --- | --- |
@@ -232,11 +238,11 @@ provider fetch 组合顺序和所有默认 model adapter 创建路径；WebFetch
 
 | Case | Setup / Action | Assertions |
 | --- | --- | --- |
-| PER-019 | 两个官方端点、默认端口、末尾斜线、query | 静态目标路径正确，query 不变，远端配置调用数为零 |
-| PER-020 | 不同 scheme/host/port/path 和第三方 URL | 静态实现原样返回，不扩大匹配范围 |
+| PER-019 | 两个官方端点、默认端口、末尾斜线、query | fork 直连 edition 一律 `routed:false` 原样返回，远端配置调用数为零；静态 resolver 自身的改写断言保留在其专属测试 |
+| PER-020 | 不同 scheme/host/port/path 和第三方 URL | 直连 edition 原样返回，不扩大匹配范围 |
 | PER-021 | 静态 port 经公共 wrapper 发送 Request/URL/string | method/body/auth/signal/response 不变，旧 Host 删除 |
 | PER-022 | 同 endpoint/network 重复创建，或改变 network | 工厂共享或隔离符合现有进程 registry 契约 |
-| PER-023 | 替换 edition 后构建并实际发送模型请求 | 默认装配走静态网关，动态源码缺席，公共调用链与测试保留 |
+| PER-023 | 替换 edition 后构建并实际发送模型请求 | 默认装配直连（`routed:false`），静态网关源码保留但未被 edition 引用，公共调用链与测试保留 |
 
 PER-019—023 与以下动态用例先于实现更新。动态测试继续覆盖缓存、失败、取消和 ID 隔离；
 本次没有 UI 交互变更，以真实 HTTP/模型执行集成与导出树运行验证入口，不新增 conversation 产品状态。
