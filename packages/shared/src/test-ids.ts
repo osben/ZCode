@@ -790,3 +790,10 @@ export const TID_START_PLAN_RECOMMENDATION_DIALOG = "start-plan-recommendation-d
 
 /** Diagnostic-log consent toggle for user feedback. */
 export const TID_FEEDBACK_LOGS_OPT_IN = "feedback-logs-opt-in";
+
+/** Output styles settings section root. */
+export const TID_SETTINGS_OUTPUT_STYLES_SECTION = "settings-output-styles-section";
+/** One style row in the output styles list. */
+export const TID_SETTINGS_OUTPUT_STYLES_ROW = "settings-output-styles-row";
+/** Output styles editor save button. */
+export const TID_SETTINGS_OUTPUT_STYLES_SAVE = "settings-output-styles-save";

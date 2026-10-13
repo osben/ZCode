@@ -7224,8 +7224,73 @@ const ukUA: Record<string, string> = {
     "~/.zcode/AGENTS.md було змінено після відкриття. Перезавантажте, щоб відхилити чернетку, або перезапишіть файл своєю чернеткою.",
   "settings.instructions.conflict.reload": "Перезавантажити",
   "settings.instructions.conflict.overwrite": "Перезаписати",
+  "settings.outputStyles.title": "Стилі відповідей",
+  "settings.outputStyles.description":
+    "Виберіть, як агент формує свої відповіді. Вбудовані стандартні значення зберігаються в коді програми; редагування зберігаються як файли перевизначення, які завжди можна відкотити.",
+  "settings.outputStyles.desktopOnly":
+    "Стилями відповідей можна керувати в застосунку для комп'ютера.",
+  "settings.outputStyles.host.local": "Цей пристрій",
+  "settings.outputStyles.pinnedHostNotice":
+    "Незбережену чернетку стилю все ще прив'язано до: {host}. Збережіть або відкиньте її перед переключенням хоста.",
+  "settings.outputStyles.waitingRemote": "Очікування віддаленого з'єднання…",
+  "settings.outputStyles.unsupportedHost": "Цей хост не підтримує керування стилями відповідей.",
+  "settings.outputStyles.loadFailed": "Не вдалося завантажити стилі відповідей.",
+  "settings.outputStyles.retry": "Повторити",
+  "settings.outputStyles.activateLabel": "Активувати стиль {name}",
+  "settings.outputStyles.activateFailed": "Не вдалося активувати стиль.",
+  "settings.outputStyles.newStyle": "Новий стиль",
+  "settings.outputStyles.builtinTag": "Вбудований",
+  "settings.outputStyles.overriddenTag": "Змінений",
+  "settings.outputStyles.edit": "Редагувати",
+  "settings.outputStyles.customize": "Налаштувати",
+  "settings.outputStyles.restoreDefault": "Відновити стандартний",
+  "settings.outputStyles.restored": "Вбудований стиль відновлено до стандартного тексту.",
+  "settings.outputStyles.restoreFailed": "Не вдалося відновити стандартний текст.",
+  "settings.outputStyles.delete": "Видалити",
+  "settings.outputStyles.deleted": "Стиль видалено.",
+  "settings.outputStyles.deleteFailed": "Не вдалося видалити стиль.",
+  "settings.outputStyles.deleteConfirm.title": "Видалити цей стиль?",
+  "settings.outputStyles.deleteConfirm.description":
+    '"{name}" буде вилучено з диска. Поточні сесії збережуть свій стиль. Нові сесії більше не використовуватимуть цей стиль.',
+  "settings.outputStyles.deleteConfirm.confirm": "Видалити",
+  "settings.outputStyles.editor.newTitle": "Новий стиль відповідей",
+  "settings.outputStyles.editor.editTitle": "Редагування стилю: {name}",
+  "settings.outputStyles.nameLabel": "Назва",
+  "settings.outputStyles.descriptionLabel": "Опис",
+  "settings.outputStyles.promptLabel": "Промпт",
+  "settings.outputStyles.promptEmptyHint":
+    "Порожній промпт вимикає стиль: агент зберігає стандартну поведінку.",
+  "settings.outputStyles.collisionBuiltin":
+    "Ця назва збігається з вбудованим стилем: збереження створить файл перевизначення для нього. Якщо це не задумано — перейменуйте.",
+  "settings.outputStyles.collisionCustom":
+    "Ця назва збігається з наявним користувацьким стилем і перезапише його файл. Якщо це не задумано — перейменуйте.",
+  "settings.outputStyles.collisionReservedDefault":
+    "«Default» — зарезервований id: рантайм трактує його як «без стилю» й ігнорує перевизначення. Виберіть іншу назву.",
+  "settings.outputStyles.diffTitle": "Зміни",
+  "settings.outputStyles.save": "Зберегти",
+  "settings.outputStyles.saved": "Стиль збережено.",
+  "settings.outputStyles.saveFailed": "Не вдалося зберегти стиль.",
+  "settings.outputStyles.discard.title": "Відкинути зміни?",
+  "settings.outputStyles.discard.hostChanged":
+    "Активний робочий простір переключив хост, а чернетка стилю не збережена. Відкинути чернетку й переключитися?",
+  "settings.outputStyles.discard.leave":
+    "Чернетка стилю має незбережені зміни. Відкинути їх і вийти?",
+  "settings.outputStyles.discard.confirm": "Відкинути",
+  "settings.outputStyles.conflict.title": "Стиль змінено на диску",
+  "settings.outputStyles.conflict.description":
+    "Цей стиль було змінено або вилучено поза редактором після відкриття. «Перезавантажити» приймає поточний стан на диску (якщо стиль вилучено — редактор закриється); «Перезаписати» записує вашу версію.",
+  "settings.outputStyles.conflict.reload": "Перезавантажити",
+  "settings.outputStyles.conflict.overwrite": "Перезаписати",
+  "settings.outputStyles.effectHint":
+    'Нові сесії використовують активний стиль. Редагування вбудованого стилю зберігає файл перевизначення; "Відновити стандартний" видаляє його.',
   // ── Ключі, додані синхронізацією з upstream v3.15.1 ──
   "rewards.title": "Нагороди",
+  "settings.outputStyles.storageLocation": "Файли стилів зберігаються в:",
+  "settings.outputStyles.reveal": "Показати у файловому менеджері",
+  "settings.outputStyles.editor.overrideHint":
+    "Стандартний текст цього стилю вбудовано в застосунок. Збереження створить файл перевизначення за шляхом {path}; «Відновити стандартний» знову видалить його.",
+  "settings.outputStyles.editor.fileLocation": "Файл: {path}",
+  "settings.outputStyles.editor.saveAs": "Буде збережено як: {path}",
   "rewards.menuTitle": "Запросити друга",
   "rewards.menuBadge": "Нагороди",
   "rewards.loadFailed": "Не вдалося завантажити цю сторінку. Спробуйте ще раз.",

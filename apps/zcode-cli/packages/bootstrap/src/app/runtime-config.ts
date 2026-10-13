@@ -36,6 +36,8 @@ export function resolveAppRuntimeConfig(input: {
   configResult: ConfigResult;
   options: ZCodeAppOptions;
   persistedMode?: CollaborationMode;
+  /** Active output style loaded from disk (docs/output-styles-settings.md); explicit session config wins. */
+  persistedOutputStyle?: AgentRuntimeConfig["outputStyle"];
   builtInMcpServers?: Record<string, McpServerConfig>;
   builtInSubagentModelSelectionOverrides?: BuiltInSubagentModelSelectionOverrides;
   pluginHooks?: Partial<Record<HookEventName, HookMatcherConfig[]>>;
@@ -52,6 +54,7 @@ export function resolveAppRuntimeConfig(input: {
     configResult,
     options,
     persistedMode,
+    persistedOutputStyle,
     builtInMcpServers,
     pluginMcpServers,
     pluginRuntimeFeatures,
@@ -137,6 +140,7 @@ export function resolveAppRuntimeConfig(input: {
       }),
     runtimeFeatures: pluginRuntimeFeatures,
     language: options.runtimeConfig?.language,
+    outputStyle: options.runtimeConfig?.outputStyle ?? persistedOutputStyle,
     titleGeneration,
     workingDirectory,
     userInstructions: {

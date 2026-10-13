@@ -100,6 +100,7 @@ import {
 import { resolveBuiltInNodeReplMcpServers } from "./built-in-node-repl.js";
 import { resolveZCodeCustomCommandPrompt } from "../custom-command-prompt.js";
 import { resolveZCodeBuiltinPromptCommandInvocation } from "../builtin-prompt-command.js";
+import { loadPersistedOutputStyle } from "../output-style.js";
 import { BUILTIN_WORKFLOW_COMMAND_NAME } from "../builtin-workflow-command.js";
 import { collectDisabledPaths } from "../skill-command-overrides.js";
 import {
@@ -272,12 +273,17 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
     const persistedMode = options.runtimeConfig?.mode
       ? undefined
       : readProjectPermissionMode(localSettingStore, projectID);
+    // Session-level output style wins; otherwise fall back to the persisted active style on disk.
+    const persistedOutputStyle = options.runtimeConfig?.outputStyle
+      ? undefined
+      : await loadPersistedOutputStyle({ storageRoot, logger });
     let { configuredMcpServers, runtimeConfig, untrustedProjectMcpServers } =
       resolveAppRuntimeConfig({
         cliStorageRoot,
         configResult,
         options,
         persistedMode,
+        persistedOutputStyle,
         pluginHooks: pluginOutcome.hooks,
         pluginMcpServers: pluginOutcome.mcpServers,
         builtInMcpServers,

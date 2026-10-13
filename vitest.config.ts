@@ -52,6 +52,8 @@ const forkIsolatedTests = [
 const forkNodeTestFiles = [
   "packages/services/test/botMessagesLocale.test.ts",
   "packages/services/test/branchMergeStatusService.test.ts",
+  // node:test cases run via test:node; excluded here so Vitest does not collect them.
+  "packages/services/test/outputStyleService.test.ts",
   "packages/services/test/userInstructionsService.test.ts",
   // 该文件使用 node:test；随 test:node 运行，避免被 Vitest 二次收集。
   "packages/services/test/zcodeUpstreamBaseVersion.test.ts",
