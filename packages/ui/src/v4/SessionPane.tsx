@@ -5401,7 +5401,7 @@ export function SessionPane({
           }
           onDismiss={quotaBanner.dismiss}
           autoContinueDefault={sharedSettings?.codingPlanLimitAutoContinueDefaultEnabled !== false}
-          autoContinueReady={!sharedSettingsLoading}
+          autoContinueReady={sharedSettings !== null}
           onAutoContinue={
             quotaBanner.state.providerLimitedResetAt !== null ? handleResumeError : undefined
           }

@@ -150,10 +150,16 @@ describe("ConversationQuotaBanner auto-continue timer", () => {
     vi.setSystemTime(Date.parse("2026-10-13T02:16:26Z"));
     vi.spyOn(Math, "random").mockReturnValue(0);
     const onAutoContinue = vi.fn();
-    const view = renderQuotaBanner({ autoContinueReady: false, onAutoContinue });
+    const view = renderQuotaBanner({
+      autoContinueDefault: true,
+      autoContinueReady: false,
+      onAutoContinue,
+    });
     const checkbox = screen.getByRole("checkbox");
     expect(checkbox.hasAttribute("disabled")).toBe(true);
     expect(checkbox.getAttribute("data-state")).not.toBe("checked");
+    act(() => vi.advanceTimersByTime(5 * 60_000));
+    expect(onAutoContinue).not.toHaveBeenCalled();
 
     view.rerender(
       createElement(

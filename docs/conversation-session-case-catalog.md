@@ -3568,6 +3568,7 @@ Memory MEM08 埋点补充（2026-09-17）：现有 Desktop Memory 用例同时�
 | CPLAC-04 | 时间无效、非 1308 或 Start Plan                | 显示错误并推进时间              | 不安排 Resume，原错误反馈保持                                                     | accepted |
 | CPLAC-05 | 已安排 Resume                                  | 关闭 banner、session/error 改变 | 旧 timer 不得影响旧 session                                                       | accepted |
 | CPLAC-06 | General 默认关闭，设置仍在加载                 | 显示并等待设置加载              | 加载前不启动 timer；加载后 checkbox 保持关闭                                      | accepted |
+| CPLAC-07 | 已有设置 snapshot 时刷新，或首次读取失败       | 保持 banner 打开                | 刷新不重置 grace period；首次读取失败时 auto-continue 不启用                      | accepted |
 
 分享失败回归 SHARE33（accepted，manual-review/pending）：405 接口异常、响应体读取超时和运行中内容问题分别显示正确原因；错误详情可见 HTTP、双方请求 ID、operationId；重试保留轮次。覆盖 390/1200 宽度、深浅主题、中英文。浏览器组件集成路径为 `packages/ui/test/browser/manual-review/pending/share-failure.test.mjs`；真实 Desktop/SSH 发布链路仍由现有 SHARE18 pending E2E 验证，不将组件测试计为正式 Desktop 通过。
 
