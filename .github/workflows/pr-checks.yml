@@ -11,14 +11,23 @@ concurrency:
   group: pr-checks-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
+env:
+  # Persistent V8 compile cache (Node >= 22.1). The unit suite is import-bound (module
+  # load dominates wall time), and a local A/B with the same worker count measured
+  # ~-30% wall. Safe across node_modules updates: cache entries are keyed per source.
+  NODE_COMPILE_CACHE: .v8-cache
+
 jobs:
   checks:
+    # Name kept identical to the pre-split job so existing branch-protection required
+    # checks keep matching; add the new "Unit tests" job to protection as well.
     name: Typecheck, lint, architecture
     runs-on: ubuntu-26.04
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
         with:
+          # The format-check step diffs against the PR base SHA and needs history.
           fetch-depth: 0
 
       - uses: pnpm/action-setup@v4
@@ -28,30 +37,25 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
 
+      - name: Restore V8 compile cache
+        uses: actions/cache@v4
+        with:
+          path: .v8-cache
+          key: node-compile-v1-${{ runner.os }}-${{ hashFiles('.nvmrc') }}-${{ hashFiles('pnpm-lock.yaml') }}
+          # Dep bumps change only part of node_modules; stale entries are ignored by
+          # content hashing, so restoring an older cache is still a net win.
+          restore-keys: |
+            node-compile-v1-${{ runner.os }}-${{ hashFiles('.nvmrc') }}-
+            node-compile-v1-${{ runner.os }}-
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      # pnpm skips dependency postinstalls when a warm store cache is restored, which leaves
-      # node_modules/electron without its binary ("Electron failed to install correctly" in
-      # desktop tests). Re-run electron's installer only when path.txt is missing.
-      - name: Ensure Electron binary
-        run: |
-          test -f node_modules/electron/path.txt || (cd node_modules/electron && node install.js)
 
       - name: Typecheck
         run: pnpm typecheck
 
       - name: Lint
         run: pnpm lint
-
-      - name: Build workspace packages needed by unit tests
-        # storage-preparation 协议用例经 bootstrap 源码引用 @zcode/adapters/storage 的 dist 导出，
-        # 其类型链依赖 contracts 与 dynamic-workflow，需按拓扑顺序先构建。
-        run: >
-          pnpm --filter @zcode/contracts --filter @zcode/dynamic-workflow --filter @zcode/adapters build
-
-      - name: Tests
-        run: pnpm test
 
       # Full check: `--changed` diffs against HEAD, which is the merge commit in PR CI, so it would miss the PR's changes.
       - name: Architecture check
@@ -68,3 +72,48 @@ jobs:
         run: |
           git diff --name-only --diff-filter=ACMR -z "$BASE_SHA...HEAD" \
             | xargs -0 -r pnpm exec oxfmt --check --no-error-on-unmatched-pattern
+
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      # Tests do not diff against history; a shallow clone is enough.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Restore V8 compile cache
+        uses: actions/cache@v4
+        with:
+          path: .v8-cache
+          key: node-compile-v1-${{ runner.os }}-${{ hashFiles('.nvmrc') }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            node-compile-v1-${{ runner.os }}-${{ hashFiles('.nvmrc') }}-
+            node-compile-v1-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # pnpm skips dependency postinstalls when a warm store cache is restored, which leaves
+      # node_modules/electron without its binary ("Electron failed to install correctly" in
+      # desktop tests). Re-run electron's installer only when path.txt is missing.
+      - name: Ensure Electron binary
+        run: |
+          test -f node_modules/electron/path.txt || (cd node_modules/electron && node install.js)
+
+      - name: Build workspace packages needed by unit tests
+        # storage-preparation 协议用例经 bootstrap 源码引用 @zcode/adapters/storage 的 dist 导出，
+        # 其类型链依赖 contracts 与 dynamic-workflow，需按拓扑顺序先构建。
+        run: >
+          pnpm --filter @zcode/contracts --filter @zcode/dynamic-workflow --filter @zcode/adapters --filter @zcode/e2e-report build
+
+      - name: Tests
+        run: pnpm test
