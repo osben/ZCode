@@ -260,6 +260,12 @@ export interface VoiceDictationSettings {
   pushToTalk?: boolean;
   /** Minutes an idle model waits in memory before being unloaded automatically. */
   idleUnloadMinutes?: VoiceModelIdleUnloadMinutes;
+  /** Play a short chime when recording starts and when it stops; absent means off. */
+  feedbackSounds?: boolean;
+  /** Feedback chime volume, integer percent 0–100; absent means 70. */
+  feedbackVolume?: number;
+  /** Mute the OS audio output while recording and restore it when recording ends; absent means off. Desktop only. */
+  muteWhileRecording?: boolean;
 }
 
 export type VoiceModelIdleUnloadMinutes = 1 | 5 | 10 | 15 | 30;

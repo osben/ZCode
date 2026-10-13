@@ -2508,6 +2508,8 @@ The original import revisions of copied components are not recorded in the curre
 
 - ai-elements (Apache-2.0): packages/ui/src/components/ai-elements, .agents/skills/ai-elements. License reference: https://raw.githubusercontent.com/vercel/ai-elements/6a9d5b1822ffb10bba4bd97175f01edd7d8651cd/LICENSE. Original import revision: not recorded.
 
+- Handy feedback chimes (MIT): packages/ui/src/assets/notification-sounds (voice-dictation-start.wav, voice-dictation-stop.wav only). License reference: https://raw.githubusercontent.com/cjpais/Handy/14ae9c6b42d729371c443c8617ad02c89c4c8061/LICENSE. Import revision: 14ae9c6b42d729371c443c8617ad02c89c4c8061.
+
 - Fig autocomplete registry (MIT): apps/zcode-cli/packages/core/src/tool/handlers/generated/bash-command-registry.ts. License reference: https://raw.githubusercontent.com/withfig/autocomplete/aef52acff84c45edde61ae610cc2c964802b9a38/LICENSE. Original import revision: not recorded.
 
 - Material Icon Theme (MIT): packages/desktop/src/renderer/public/material-icons, packages/web/public/material-icons. License reference: https://raw.githubusercontent.com/material-extensions/vscode-material-icon-theme/cb1dfb6d9cb73b15681a93939983d75dbba7bf5b/LICENSE. Original import revision: not recorded.

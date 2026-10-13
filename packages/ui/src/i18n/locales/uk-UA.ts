@@ -7066,6 +7066,15 @@ const ukUA: Record<string, string> = {
   "voiceDictation.pushToTalk.title": "Утримуйте, щоб говорити",
   "voiceDictation.pushToTalk.description":
     "Утримуйте сполучення клавіш для запису й відпустіть, щоб розпізнати мовлення. Якщо вимкнути цей режим, натисніть один раз, щоб почати запис, і ще раз, щоб зупинити.",
+  "voiceDictation.feedback.title": "Звукове сповіщення",
+  "voiceDictation.feedback.description": "Програвати короткий звук на початку та в кінці запису.",
+  "voiceDictation.feedbackVolume.title": "Гучність",
+  "voiceDictation.feedbackVolume.description":
+    "Гучність звукових сповіщень диктовки. Натисніть «Перевірити», щоб прослухати обидва звуки.",
+  "voiceDictation.feedbackVolume.test": "Перевірити",
+  "voiceDictation.muteWhileRecording.title": "Вимкнути звук під час запису",
+  "voiceDictation.muteWhileRecording.description":
+    "Вимкнути системний звук на час запису та відновити попередній стан після нього.",
   "voiceDictation.language.title": "Мова",
   "voiceDictation.language.description":
     "Мова мовлення. Багатомовні моделі підтримують автоматичне визначення.",

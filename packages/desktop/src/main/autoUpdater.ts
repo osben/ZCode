@@ -20,6 +20,7 @@ import {
   type UpdateStatePayload,
 } from "@zcode/shared";
 import { logger } from "./logger.js";
+import { restoreDictationSystemMuteForShutdown } from "./desktopDictationSystemAudio.js";
 import { ManifestUpdateProvider, getElectronReleasePlatform } from "./manifestUpdateProvider.js";
 
 export const CHECK_FOR_UPDATE_MENU_ID = "check-for-update";
@@ -527,6 +528,9 @@ async function quitAndInstallUpdate(rejectUnavailable = false) {
     // An unpackaged app has no release-package context for an installer to take over. Restart the current dev app instead,
     // so clicking "Restart to update" does not leave it unresponsive after exit preparation.
     logger.info("[auto-update] dev update install fallback: relaunch app");
+    // quitAndInstall/relaunch bypass exitPreparedApp (and on macOS before-quit entirely), so the
+    // dictation mute must be released here or installing during a recording stays muted.
+    await restoreDictationSystemMuteForShutdown();
     app.relaunch();
     app.exit(0);
     return;
@@ -540,6 +544,9 @@ async function quitAndInstallUpdate(rejectUnavailable = false) {
   quitAndInstallPhase = "installing";
   installerHandoffInFlight = true;
   try {
+    // quitAndInstall/relaunch bypass exitPreparedApp (and on macOS before-quit entirely), so the
+    // dictation mute must be released here or installing during a recording stays muted.
+    await restoreDictationSystemMuteForShutdown();
     autoUpdater.quitAndInstall();
   } catch (error) {
     // Defensive path: some electron-updater versions or future refactors may still throw from

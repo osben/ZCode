@@ -53,6 +53,12 @@ vi.mock("../src/main/editors.js", () => ({
   getInstalledEditors: vi.fn(() => []),
 }));
 
+// The dictation system-audio backend spawns per-OS tools in its own dedicated test suite; this
+// file only verifies that registerPlatformIpcHandlers wires the platform IPC surface.
+vi.mock("../src/main/desktopDictationSystemAudio.js", () => ({
+  registerDesktopDictationSystemAudioIpc: vi.fn(),
+}));
+
 vi.mock("../src/main/exportLogs.js", () => ({
   exportLogs: vi.fn(),
 }));

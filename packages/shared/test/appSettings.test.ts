@@ -227,6 +227,40 @@ describe("app settings", () => {
     ).toEqual({ modelId: "parakeet" });
   });
 
+  it("accepts the feedback sound preferences and rejects out-of-range volume", () => {
+    const settings = appSettingsSchema.parse({
+      locale: "en-US",
+      recentProjects: [],
+      voiceDictation: {
+        modelId: "parakeet",
+        feedbackSounds: true,
+        feedbackVolume: 54,
+        muteWhileRecording: true,
+      },
+    });
+    expect(settings.voiceDictation).toEqual({
+      modelId: "parakeet",
+      feedbackSounds: true,
+      feedbackVolume: 54,
+      muteWhileRecording: true,
+    });
+
+    // Absent fields keep the effective defaults handled by the consumers (off / 70).
+    expect(
+      appSettingsSchema.parse({ locale: "en-US", recentProjects: [] }).voiceDictation,
+    ).toBeUndefined();
+
+    expect(
+      appSettingsPatchSchema.safeParse({ voiceDictation: { feedbackVolume: 101 } }).success,
+    ).toBe(false);
+    expect(
+      appSettingsPatchSchema.safeParse({ voiceDictation: { feedbackVolume: -1 } }).success,
+    ).toBe(false);
+    expect(
+      appSettingsPatchSchema.safeParse({ voiceDictation: { feedbackVolume: 70.5 } }).success,
+    ).toBe(false);
+  });
+
   it("preserves localized pending post-update release notes", () => {
     const payload = {
       version: "3.1.4",

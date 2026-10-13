@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "inputHashEncoding": "UTF-8 with CRLF normalized to LF; notice and source snapshot hashes remain byte-exact",
   "scope": "Production dependency union across current workspace projects, copied source/assets and native tools; not a per-installer SBOM or a certification of all licensing obligations.",
-  "noticesSha256": "27bd15c1c14353cbc0973d2f0e28d7adcb12c15829b682b75e0f8603fcce4dd4",
+  "noticesSha256": "ca48c0233ff537aafa2978ffe3b09d134077b5eb528a1eb0f929dda6c3214f2a",
   "inputs": {
     ".agents/skills/agent-browser/references/authentication.md": "e2c3b0f4a1dc1368dee821f03c000d818a48421d09f3872525dddffe73f2112b",
     ".agents/skills/agent-browser/references/commands.md": "17522fc56d742663f47231ff06c4811abc87e12c7f78e11f94d253ddd540a909",
@@ -2887,7 +2887,7 @@
     "scripts/license-texts/Apache-2.0.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
     "scripts/native-search-tools-config.mjs": "06e9d2b066a22f4bb731fb7356d786b52cf08e20dd6faf91e1a82b167d7462e8",
     "scripts/remote-native-search-tools-config.mjs": "2ddb7054e219ea487596cbdcb83d5c7eac9f239cfe169cfac22e3759d95d7c35",
-    "third-party/copied-components.json": "c39849cf13ab9660754fcda693b45f6c5f9f91d196789620dba54941a23d3443",
+    "third-party/copied-components.json": "c06f4c9105bcacb868bc1b2010e822242f71abcac20dd76f01e3c2b881ebd811",
     "third-party/embedded-components.json": "9586ccca15897f56d4ca1d703dffe9e02880fedd766c1dff93f7ac1f52ea891a",
     "third-party/native-search/licenses/00373c9bf56a894b2ed67586596bc1e8b0630cabbaf1ab46c75fc754b6bcd1ce.txt": "00373c9bf56a894b2ed67586596bc1e8b0630cabbaf1ab46c75fc754b6bcd1ce",
     "third-party/native-search/licenses/01c266bced4a434da0051174d6bee16a4c82cf634e2679b6155d40d75012390f.txt": "01c266bced4a434da0051174d6bee16a4c82cf634e2679b6155d40d75012390f",
@@ -3085,7 +3085,10 @@
     "third-party/upstream/f18c12b8e7daf98d572518b7db133b2dc66a713921dac4825410dd656e0c1a1a.txt": "f18c12b8e7daf98d572518b7db133b2dc66a713921dac4825410dd656e0c1a1a",
     "third-party/upstream/f29b60ea39a2132e3baa98927c2d473b349a54143da44a0c6762b243e6459452.txt": "f29b60ea39a2132e3baa98927c2d473b349a54143da44a0c6762b243e6459452",
     "third-party/upstream/f9bc4423732350eb0b3f7ed7e91d530298476f8fec0c6c427a1c04ade22655af.txt": "f9bc4423732350eb0b3f7ed7e91d530298476f8fec0c6c427a1c04ade22655af",
-    "third-party/upstream/fc7d762e0ebf8720d0a03cf00058aaa3a198347e9651be2f50a25e3b3ec13985.txt": "fc7d762e0ebf8720d0a03cf00058aaa3a198347e9651be2f50a25e3b3ec13985"
+    "third-party/upstream/fc7d762e0ebf8720d0a03cf00058aaa3a198347e9651be2f50a25e3b3ec13985.txt": "fc7d762e0ebf8720d0a03cf00058aaa3a198347e9651be2f50a25e3b3ec13985",
+    "third-party/upstream/3564e8ec14055ed54f896e8660a62627ea4fc3a1b64f72b798593df00e1f4edc.txt": "3564e8ec14055ed54f896e8660a62627ea4fc3a1b64f72b798593df00e1f4edc",
+    "packages/ui/src/assets/notification-sounds/voice-dictation-start.wav": "2cd9d65fd85baa535a1c59f3de7ad8fe50677af7e190a8c0f4c9bef203c6132f",
+    "packages/ui/src/assets/notification-sounds/voice-dictation-stop.wav": "52671441b85f2395959a2d0dc3306e09a673db28288390752dc00261520e070e"
   },
   "packages": [
     {
@@ -31600,6 +31603,30 @@
         {
           "file": "docs/knip/docs/src/fonts/hack-regular-subset.woff2",
           "sha256": "4b288c48e41aed70b7007b9db4932427712b0a51283e88e5e145e0d3ac63e96f"
+        }
+      ]
+    },
+    {
+      "id": "handy-feedback-chimes",
+      "referenceRevision": "14ae9c6b42d729371c443c8617ad02c89c4c8061",
+      "source": "https://raw.githubusercontent.com/cjpais/Handy/14ae9c6b42d729371c443c8617ad02c89c4c8061/LICENSE",
+      "file": "third-party/upstream/3564e8ec14055ed54f896e8660a62627ea4fc3a1b64f72b798593df00e1f4edc.txt",
+      "sha256": "3564e8ec14055ed54f896e8660a62627ea4fc3a1b64f72b798593df00e1f4edc",
+      "importRevision": "14ae9c6b42d729371c443c8617ad02c89c4c8061",
+      "provenance": "Copied from the Handy repository resources directory at the pinned revision on 2026-10-12.",
+      "roots": [
+        "packages/ui/src/assets/notification-sounds"
+      ],
+      "scope": "Handy 'marimba' feedback chime WAV files only (voice-dictation-start.wav, voice-dictation-stop.wav), copied unmodified; other files in the same directory are ZCode's own assets.",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "packages/ui/src/assets/notification-sounds/voice-dictation-start.wav",
+          "sha256": "2cd9d65fd85baa535a1c59f3de7ad8fe50677af7e190a8c0f4c9bef203c6132f"
+        },
+        {
+          "file": "packages/ui/src/assets/notification-sounds/voice-dictation-stop.wav",
+          "sha256": "52671441b85f2395959a2d0dc3306e09a673db28288390752dc00261520e070e"
         }
       ]
     }

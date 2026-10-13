@@ -30,10 +30,19 @@ const h = vi.hoisted(() => {
     sha256: "test",
   };
   const secondDescriptor = { ...descriptor, id: "model-two", name: "Model Two" };
-  const updateSettings = vi.fn(async () => {});
+  const settings = { voiceDictation: { modelId: "model-one" } as Record<string, unknown> };
+  // Propagate the patch like the real settings service does: renders that land between two edits
+  // must read the merged snapshot, or the component's synchronous merge ref gets rolled back by a
+  // stale render (CI hit exactly that race between an async listModels re-render and two clicks).
+  const updateSettings = vi.fn(async (patch: { voiceDictation?: Record<string, unknown> }) => {
+    if (patch.voiceDictation) {
+      settings.voiceDictation = { ...settings.voiceDictation, ...patch.voiceDictation };
+    }
+  });
   return {
     state,
     updateSettings,
+    settings,
     voiceDictationService: {
       listModels: vi.fn(async () => {
         if (state.downloadRequested) {
@@ -88,7 +97,7 @@ vi.mock("@/hooks/useServices.js", () => ({
 }));
 vi.mock("@/hooks/useSettingService.js", () => ({
   useSettings: () => ({
-    settings: { voiceDictation: { modelId: "model-one" } },
+    settings: h.settings,
     update: h.updateSettings,
   }),
 }));
@@ -108,6 +117,9 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
 }));
 vi.mock("@/components/ui/toast.js", () => ({ toast: vi.fn() }));
 vi.mock("@/logger.js", () => ({ logger: { warn: vi.fn() } }));
+vi.mock("@/lib/voiceDictationFeedbackSound.js", () => ({
+  playVoiceDictationFeedbackSound: vi.fn(async () => {}),
+}));
 const recorderMocks = vi.hoisted(() => ({
   instances: [] as {
     isRecording: boolean;
@@ -151,13 +163,23 @@ vi.mock("@/lib/voiceDictationRecorder.js", () => ({
 }));
 
 import { toast } from "@/components/ui/toast.js";
+import { playVoiceDictationFeedbackSound } from "@/lib/voiceDictationFeedbackSound.js";
 import { VoiceDictationSection } from "@/settings/VoiceDictationSection.js";
+
+// Radix Slider (volume row) reads element sizes through ResizeObserver, which jsdom lacks.
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+(globalThis as { ResizeObserver?: unknown }).ResizeObserver = ResizeObserverStub;
 
 beforeEach(() => {
   h.state.downloadRequested = false;
   h.state.downloadPolls = 0;
   h.state.downloadStatus = "not_downloaded";
   h.state.resolveDownload = undefined;
+  h.settings.voiceDictation = { modelId: "model-one" };
   recorderMocks.instances.length = 0;
   vi.clearAllMocks();
 });
@@ -305,5 +327,185 @@ describe("VoiceDictationSection mic test", () => {
     expect(recorder?.cancelCount).toBe(2);
     expect(recorder?.stopCount).toBe(0);
     expect(recorder?.isRecording).toBe(false);
+  });
+});
+
+describe("VoiceDictationSection feedback sounds", () => {
+  it("persists the sound and mute toggles and shows the saved volume", async () => {
+    h.settings.voiceDictation = { modelId: "model-one", feedbackVolume: 54 };
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+
+    const slider = await screen.findByRole("slider", {
+      name: "voiceDictation.feedbackVolume.title",
+    });
+    expect(slider.getAttribute("aria-valuenow")).toBe("54");
+    expect(screen.getByText("54%")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("switch", { name: "voiceDictation.feedback.title" }));
+    await waitFor(() =>
+      expect(h.updateSettings).toHaveBeenCalledWith({
+        voiceDictation: { modelId: "model-one", feedbackVolume: 54, feedbackSounds: true },
+      }),
+    );
+
+    fireEvent.click(
+      screen.getByRole("switch", { name: "voiceDictation.muteWhileRecording.title" }),
+    );
+    // patchVoice merges with the latest snapshot, so the earlier feedbackSounds edit survives.
+    await waitFor(() =>
+      expect(h.updateSettings).toHaveBeenLastCalledWith({
+        voiceDictation: {
+          modelId: "model-one",
+          feedbackVolume: 54,
+          feedbackSounds: true,
+          muteWhileRecording: true,
+        },
+      }),
+    );
+  });
+
+  it("previews both chimes at the saved volume from the test button", async () => {
+    h.settings.voiceDictation = { modelId: "model-one", feedbackVolume: 30 };
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "voiceDictation.feedbackVolume.test" }),
+    );
+
+    await waitFor(() => expect(playVoiceDictationFeedbackSound).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(playVoiceDictationFeedbackSound).mock.calls).toEqual([
+      ["start", 30],
+      ["stop", 30],
+    ]);
+  });
+
+  it("persists the volume on commit after a keyboard change", async () => {
+    h.settings.voiceDictation = { modelId: "model-one", feedbackVolume: 50 };
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+
+    const slider = await screen.findByRole("slider", {
+      name: "voiceDictation.feedbackVolume.title",
+    });
+    slider.focus();
+    fireEvent.keyDown(slider, { key: "ArrowRight" });
+
+    await waitFor(() => {
+      expect(h.updateSettings).toHaveBeenCalledWith({
+        voiceDictation: { modelId: "model-one", feedbackVolume: 51 },
+      });
+    });
+  });
+
+  it("keeps the committed volume for display and Test while the save is pending", async () => {
+    h.settings.voiceDictation = { modelId: "model-one", feedbackVolume: 50 };
+    let resolveSave!: () => void;
+    h.updateSettings.mockImplementationOnce(
+      (patch: { voiceDictation?: Record<string, unknown> }) =>
+        new Promise<void>((resolve) => {
+          resolveSave = () => {
+            if (patch.voiceDictation) {
+              h.settings.voiceDictation = { ...h.settings.voiceDictation, ...patch.voiceDictation };
+            }
+            resolve();
+          };
+        }),
+    );
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+
+    const slider = await screen.findByRole("slider", {
+      name: "voiceDictation.feedbackVolume.title",
+    });
+    slider.focus();
+    fireEvent.keyDown(slider, { key: "ArrowRight" });
+    // Settings have not refreshed yet: the committed value must not flash back to 50%.
+    expect(screen.getByText("51%")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "voiceDictation.feedbackVolume.test" }));
+    await waitFor(() => expect(playVoiceDictationFeedbackSound).toHaveBeenCalled());
+    expect(vi.mocked(playVoiceDictationFeedbackSound).mock.calls[0]).toEqual(["start", 51]);
+
+    resolveSave();
+    // Flush the overlay-clearing callback before asserting: the committed override must survive
+    // the save settling only because the settings snapshot now holds 51.
+    await act(async () => {});
+    expect(screen.getByText("51%")).toBeTruthy();
+  });
+
+  it("issues a compensating write when reverting to the saved volume while a write is pending", async () => {
+    h.settings.voiceDictation = { modelId: "model-one", feedbackVolume: 50 };
+    let resolveSave!: () => void;
+    h.updateSettings.mockImplementationOnce(
+      (patch: { voiceDictation?: Record<string, unknown> }) =>
+        new Promise<void>((resolve) => {
+          resolveSave = () => {
+            if (patch.voiceDictation && h.settings.voiceDictation.feedbackVolume !== 50) {
+              h.settings.voiceDictation = { ...h.settings.voiceDictation, ...patch.voiceDictation };
+            }
+            resolve();
+          };
+        }),
+    );
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+
+    const slider = await screen.findByRole("slider", {
+      name: "voiceDictation.feedbackVolume.title",
+    });
+    // Commit 51 (write held pending), then drag back to the saved 50 and commit again.
+    slider.focus();
+    fireEvent.keyDown(slider, { key: "ArrowRight" });
+    await waitFor(() => expect(h.updateSettings).toHaveBeenCalledTimes(1));
+    fireEvent.keyDown(slider, { key: "ArrowLeft" });
+
+    // Without the compensating write the pending 51 would win and the revert would be lost.
+    await waitFor(() => expect(h.updateSettings).toHaveBeenCalledTimes(2));
+    expect(h.updateSettings).toHaveBeenLastCalledWith({
+      voiceDictation: { modelId: "model-one", feedbackVolume: 50 },
+    });
+    expect(screen.getByText("50%")).toBeTruthy();
+
+    resolveSave();
+    await act(async () => {});
+    expect(screen.getByText("50%")).toBeTruthy();
+  });
+
+  it("keeps a pending write in the optimistic overlay across re-renders", async () => {
+    h.settings.voiceDictation = { modelId: "model-one" };
+    let resolveSave!: () => void;
+    h.updateSettings.mockImplementationOnce(
+      (patch: { voiceDictation?: Record<string, unknown> }) =>
+        new Promise<void>((resolve) => {
+          resolveSave = () => {
+            if (patch.voiceDictation) {
+              h.settings.voiceDictation = { ...h.settings.voiceDictation, ...patch.voiceDictation };
+            }
+            resolve();
+          };
+        }),
+    );
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+    await screen.findByText("voiceDictation.models.selected");
+
+    // Edit A with the write held pending, then a state-changing re-render (download start) lands
+    // while it is in flight — in production this is the model/device polling re-render that would
+    // roll the merge ref back to the stale published snapshot.
+    fireEvent.click(screen.getByRole("switch", { name: "voiceDictation.pushToTalk.title" }));
+    await waitFor(() => expect(h.updateSettings).toHaveBeenCalledTimes(1));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Model Two: voiceDictation.models.download" }),
+    );
+
+    // Edit B must merge over the optimistic overlay, not the stale snapshot, or it would erase A.
+    fireEvent.click(
+      screen.getByRole("combobox", { name: "voiceDictation.models.unloadDelay.title" }),
+    );
+    const option = (await screen.findAllByRole("option"))[2];
+    fireEvent.click(option!);
+    await waitFor(() => expect(h.updateSettings).toHaveBeenCalledTimes(2));
+    expect(h.updateSettings).toHaveBeenLastCalledWith({
+      voiceDictation: { modelId: "model-one", pushToTalk: false, idleUnloadMinutes: 10 },
+    });
+
+    resolveSave();
+    await act(async () => {});
   });
 });
