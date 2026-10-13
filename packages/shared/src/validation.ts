@@ -225,6 +225,10 @@ export const webRemoteControlPlatformMethodSchema = z.enum([
   "loadMcpFromUserDirectory",
   "saveMcpToUserDirectory",
   "migrateLegacyCommonMcp",
+  "getInstalledEditors",
+  "openInEditor",
+  "openInFileManager",
+  "openExternalFile",
 ]);
 
 const webRemoteControlAppPayloadSchemas = [

@@ -38,6 +38,8 @@ import type { DockerContainerInfo, SSHConfigAliasOption, WSLDistro } from "./pla
 import type {
   CreateTempTextAttachmentRequest,
   CreateTempTextAttachmentResult,
+  EditorInfo,
+  OpenInEditorOptions,
 } from "./platform.js";
 import type {
   LoadCliMcpFromUserDirectoryRequest,
@@ -372,6 +374,13 @@ export interface WebRemoteControlBootstrapErrorResponse {
   reason: WebRemoteControlFailureReason;
 }
 
+/** Arguments for the proxied openInEditor call; mirrors IPlatformService.openInEditor(editorId, path, options?). */
+export interface WebRemoteControlOpenInEditorArgs {
+  editorId: string;
+  path: string;
+  options?: OpenInEditorOptions;
+}
+
 export interface WebRemoteControlPlatformMethodArgsMap {
   isDockerAvailable: undefined;
   listWSLDistros: undefined;
@@ -381,6 +390,10 @@ export interface WebRemoteControlPlatformMethodArgsMap {
   loadMcpFromUserDirectory: LoadCliMcpFromUserDirectoryRequest | undefined;
   saveMcpToUserDirectory: SaveCliMcpToUserDirectoryRequest;
   migrateLegacyCommonMcp: MigrateLegacyCommonMcpRequest | undefined;
+  getInstalledEditors: undefined;
+  openInEditor: WebRemoteControlOpenInEditorArgs;
+  openInFileManager: string;
+  openExternalFile: string;
 }
 
 export interface WebRemoteControlPlatformMethodResultMap {
@@ -392,6 +405,10 @@ export interface WebRemoteControlPlatformMethodResultMap {
   loadMcpFromUserDirectory: LoadCliMcpFromUserDirectoryResult;
   saveMcpToUserDirectory: { success: boolean; error?: string };
   migrateLegacyCommonMcp: MigrateLegacyCommonMcpResult;
+  getInstalledEditors: EditorInfo[];
+  openInEditor: { success: boolean; error?: string };
+  openInFileManager: { success: boolean; error?: string };
+  openExternalFile: { success: boolean; error?: string };
 }
 
 export type WebRemoteControlPlatformMethod = keyof WebRemoteControlPlatformMethodResultMap;
