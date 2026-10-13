@@ -34,6 +34,7 @@ const h = vi.hoisted(() => {
   return {
     state,
     updateSettings,
+    settings: { voiceDictation: { modelId: "model-one" } as Record<string, unknown> },
     voiceDictationService: {
       listModels: vi.fn(async () => {
         if (state.downloadRequested) {
@@ -88,7 +89,7 @@ vi.mock("@/hooks/useServices.js", () => ({
 }));
 vi.mock("@/hooks/useSettingService.js", () => ({
   useSettings: () => ({
-    settings: { voiceDictation: { modelId: "model-one" } },
+    settings: h.settings,
     update: h.updateSettings,
   }),
 }));
@@ -108,6 +109,9 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
 }));
 vi.mock("@/components/ui/toast.js", () => ({ toast: vi.fn() }));
 vi.mock("@/logger.js", () => ({ logger: { warn: vi.fn() } }));
+vi.mock("@/lib/voiceDictationFeedbackSound.js", () => ({
+  playVoiceDictationFeedbackSound: vi.fn(async () => {}),
+}));
 const recorderMocks = vi.hoisted(() => ({
   instances: [] as {
     isRecording: boolean;
@@ -151,13 +155,23 @@ vi.mock("@/lib/voiceDictationRecorder.js", () => ({
 }));
 
 import { toast } from "@/components/ui/toast.js";
+import { playVoiceDictationFeedbackSound } from "@/lib/voiceDictationFeedbackSound.js";
 import { VoiceDictationSection } from "@/settings/VoiceDictationSection.js";
+
+// Radix Slider (volume row) reads element sizes through ResizeObserver, which jsdom lacks.
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+(globalThis as { ResizeObserver?: unknown }).ResizeObserver = ResizeObserverStub;
 
 beforeEach(() => {
   h.state.downloadRequested = false;
   h.state.downloadPolls = 0;
   h.state.downloadStatus = "not_downloaded";
   h.state.resolveDownload = undefined;
+  h.settings.voiceDictation = { modelId: "model-one" };
   recorderMocks.instances.length = 0;
   vi.clearAllMocks();
 });
@@ -305,5 +319,72 @@ describe("VoiceDictationSection mic test", () => {
     expect(recorder?.cancelCount).toBe(2);
     expect(recorder?.stopCount).toBe(0);
     expect(recorder?.isRecording).toBe(false);
+  });
+});
+
+describe("VoiceDictationSection feedback sounds", () => {
+  it("persists the sound and mute toggles and shows the saved volume", async () => {
+    h.settings.voiceDictation = { modelId: "model-one", feedbackVolume: 54 };
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+
+    const slider = await screen.findByRole("slider", {
+      name: "voiceDictation.feedbackVolume.title",
+    });
+    expect(slider.getAttribute("aria-valuenow")).toBe("54");
+    expect(screen.getByText("54%")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("switch", { name: "voiceDictation.feedback.title" }));
+    await waitFor(() =>
+      expect(h.updateSettings).toHaveBeenCalledWith({
+        voiceDictation: { modelId: "model-one", feedbackVolume: 54, feedbackSounds: true },
+      }),
+    );
+
+    fireEvent.click(
+      screen.getByRole("switch", { name: "voiceDictation.muteWhileRecording.title" }),
+    );
+    // patchVoice merges with the latest snapshot, so the earlier feedbackSounds edit survives.
+    await waitFor(() =>
+      expect(h.updateSettings).toHaveBeenLastCalledWith({
+        voiceDictation: {
+          modelId: "model-one",
+          feedbackVolume: 54,
+          feedbackSounds: true,
+          muteWhileRecording: true,
+        },
+      }),
+    );
+  });
+
+  it("previews both chimes at the saved volume from the test button", async () => {
+    h.settings.voiceDictation = { modelId: "model-one", feedbackVolume: 30 };
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "voiceDictation.feedbackVolume.test" }),
+    );
+
+    await waitFor(() => expect(playVoiceDictationFeedbackSound).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(playVoiceDictationFeedbackSound).mock.calls).toEqual([
+      ["start", 30],
+      ["stop", 30],
+    ]);
+  });
+
+  it("persists the volume on commit after a keyboard change", async () => {
+    h.settings.voiceDictation = { modelId: "model-one", feedbackVolume: 50 };
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+
+    const slider = await screen.findByRole("slider", {
+      name: "voiceDictation.feedbackVolume.title",
+    });
+    slider.focus();
+    fireEvent.keyDown(slider, { key: "ArrowRight" });
+
+    await waitFor(() => {
+      expect(h.updateSettings).toHaveBeenCalledWith({
+        voiceDictation: { modelId: "model-one", feedbackVolume: 51 },
+      });
+    });
   });
 });

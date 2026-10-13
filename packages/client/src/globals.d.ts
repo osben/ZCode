@@ -127,6 +127,8 @@ declare global {
       selectDirectory(): Promise<string | null>;
       /** App-managed worktree storage directory for the "global" location mode. */
       getAppWorktreesDir(): Promise<string>;
+      /** Apply/release the system-wide output mute used while voice dictation records; implemented only by the current preload bridge. */
+      setDictationSystemMute?(active: boolean): Promise<void>;
       /** Open the system file picker and return the selected file path, or null. */
       selectFile(): Promise<string | null>;
       /** Open the system multi-file picker and return the selected paths, or an empty array if canceled. */
