@@ -1,56 +1,56 @@
-# Web 远程控制「在桌面打开」
+# Web Remote Control "Open on Desktop"
 
-## 目标与范围
+## Goal and Scope
 
-Web 远程客户端（手机浏览器经外部 relay 接入桌面）复用共享 UI，但 `IPlatformService.openInEditor` / `openInFileManager` / `openExternalFile` 在 Web 平台目前固定返回 `Not supported in web mode`，`getInstalledEditors` 固定返回空数组。本特性把这四个方法接入既有的 Web 远程控制平台代理（`WebRemoteControlPlatformMethod` 类型化代理），由桌面执行，桌面本地行为不变。纯增量改动，不新增消息类型、不新增协议通道。
+The web remote client (phone browser attached to the desktop through the external relay) reuses the shared UI, but `IPlatformService.openInEditor` / `openInFileManager` / `openExternalFile` currently return a fixed `Not supported in web mode` on the Web platform, and `getInstalledEditors` returns an empty array. This feature routes these four methods through the existing web remote-control platform proxy (the typed `WebRemoteControlPlatformMethod` proxy) so the desktop executes them; desktop-local behavior is unchanged. Purely additive: no new message types and no new protocol channels.
 
 ```mermaid
 sequenceDiagram
-    participant Web as Web 远程客户端(浏览器)
-    participant Relay as 外部 relay
-    participant Main as 桌面 Main(webRemoteControlManager)
-    participant OS as 桌面 OS
+    participant Web as Web remote client (browser)
+    participant Relay as External relay
+    participant Main as Desktop Main (webRemoteControlManager)
+    participant OS as Desktop OS
     Web->>Relay: HTTP POST /api/remote-control/platform/:token {method, args}
     Relay->>Main: WS platform-request {requestId, method, args}
-    Main->>Main: parseWebRemoteControlAppPayload 校验 method 枚举
-    Main->>Main: platformHandlers[method](args) 复用既有桌面实现
-    Main->>OS: shell.openPath / 编辑器启动 / 默认应用打开
+    Main->>Main: parseWebRemoteControlAppPayload validates the method enum
+    Main->>Main: platformHandlers[method](args) reuses existing desktop implementations
+    Main->>OS: shell.openPath / editor launch / open with default app
     Main-->>Relay: platform-response {requestId, success, result}
-    Relay-->>Web: HTTP 响应 {result} / {error}
+    Relay-->>Web: HTTP response {result} / {error}
 ```
 
-## 行为契约
+## Behavior Contract
 
-- 方法契约沿用 `WebRemoteControlPlatformMethodArgsMap` / `ResultMap`：
-  - `getInstalledEditors`：无参数，返回桌面已安装编辑器 `EditorInfo[]`；
-  - `openInEditor`：参数 `{ editorId, path, options? }`，与 `IPlatformService.openInEditor(editorId, path, options?)` 一一对应，返回 `{ success, error? }`；
-  - `openInFileManager`：参数为路径字符串，返回 `{ success, error? }`；
-  - `openExternalFile`：参数为路径字符串，返回 `{ success, error? }`。
-- 路径是桌面文件系统路径；桌面 Main 复用 `getInstalledEditors`（`editors.ts`）、`openInEditor`（`openInEditor.ts`）、`openPathInFileManager` / `openPathInDefaultApp`（`desktopMainIpcHelpers.ts`），即渲染进程 IPC 同一份实现，不复制逻辑。
-- 运行时校验：四个方法名加入 `webRemoteControlPlatformMethodSchema` 枚举（`validation.ts`），桌面与 Web 两侧 transport 对 `platform-request` / `platform-response` 的既有校验继续生效；`args` 保持与相邻方法一致的 `z.unknown()`，由桌面 handler 消费。
-- Web 平台实现沿用现有三段式分支：`externalWebRemoteControlProxy` 优先，其次 `webRemoteControlProxy` 走 relay HTTP，两者都没有时保持既有降级（`Not supported in web mode` / 空编辑器列表）。普通 Web（非远程控制）行为不变。
-- 信任边界沿用平台代理既有模型：请求来自已完成配对的 window control session，与 `saveMcpToUserDirectory` 等既有写操作同级；不放宽配对、鉴权或转发校验。
-- 共享 UI 无需改动：文件树、消息文件链接、预览面板等入口通过 `IPlatformService` 调用，代理生效后自然可用；不修改 `isWebRemoteControl` 相关的门控。
+- The method contract follows `WebRemoteControlPlatformMethodArgsMap` / `ResultMap`:
+  - `getInstalledEditors`: no arguments, returns the desktop's installed editors as `EditorInfo[]`;
+  - `openInEditor`: arguments `{ editorId, path, options? }`, mirroring `IPlatformService.openInEditor(editorId, path, options?)`, returns `{ success, error? }`;
+  - `openInFileManager`: argument is a path string, returns `{ success, error? }`;
+  - `openExternalFile`: argument is a path string, returns `{ success, error? }`.
+- Paths are desktop filesystem paths; desktop Main reuses `getInstalledEditors` (`editors.ts`), `openInEditor` (`openInEditor.ts`), and `openPathInFileManager` / `openPathInDefaultApp` (`desktopMainIpcHelpers.ts`) — the same implementations the renderer IPC handlers use; no duplicated logic.
+- Runtime validation: the four method names are added to the `webRemoteControlPlatformMethodSchema` enum (`validation.ts`); the existing transport validation of `platform-request` / `platform-response` on both the desktop and Web sides keeps applying; `args` stay `z.unknown()` consistent with the neighboring methods and are consumed by the desktop handler.
+- The Web platform implementation keeps the existing three-way branch: `externalWebRemoteControlProxy` first, then `webRemoteControlProxy` over relay HTTP, and the existing fallback (`Not supported in web mode` / empty editor list) when neither is present. Regular Web (non-remote-control) behavior is unchanged.
+- The trust boundary follows the platform proxy's existing model: requests come from an already-paired window control session, at the same level of trust as existing write operations such as `saveMcpToUserDirectory`; pairing, authentication, and forwarding validation are not relaxed.
+- No shared-UI changes are needed: file tree, message file links, and preview panels call through `IPlatformService`, so they become usable once the proxy is active; `isWebRemoteControl`-related gating is untouched.
 
-## 状态与事件顺序（owner）
+## State and Event Order (owner)
 
-- 请求-响应按 `requestId` 关联，owner 为桌面 `webRemoteControlManager.respondToPlatformRequest`；每次调用独立，无跨请求状态，天然幂等。
-- relay 与 Main 只做转发与调度，不缓存方法结果；`EditorInfo` 每次调用现查桌面，不在 Web 侧缓存。
-- 失败语义：桌面 handler 抛错或返回 `{ success: false }` 时原样回传；relay HTTP 非 200 时 Web 侧抛错并由既有 UI toast/日志路径处理。
+- Request-response correlation is by `requestId`; the owner is the desktop's `webRemoteControlManager.respondToPlatformRequest`. Each call is independent with no cross-request state — naturally idempotent.
+- The relay and Main only forward and schedule; method results are not cached. `EditorInfo` is re-queried from the desktop on every call and is not cached on the Web side.
+- Failure semantics: a desktop handler throw or `{ success: false }` result is passed back as-is; a non-200 relay HTTP response throws on the Web side and is handled by the existing UI toast/log paths.
 
-## 验收场景
+## Acceptance Scenarios
 
-1. Web 远程控制打开本地工作区，消息中的文件链接「在编辑器中打开」能看到桌面编辑器列表，选择后桌面启动对应编辑器打开该文件。
-2. 文件树/预览「在文件管理器中显示」：桌面文件管理器 reveal 对应文件或目录；目录被删除时返回 `{ success: false }` 并 toast 失败。
-3. 普通浏览器访问 Web Server（无代理）：行为与现状一致（`Not supported in web mode`），不发起 relay 请求。
-4. 未知方法名经 zod 枚举校验被拒绝，桌面丢弃并记录 warn，不进入 handler。
-5. 桌面本地（Electron 渲染进程）上述入口行为与改动前完全一致。
+1. With web remote control attached to a local workspace, the "open in editor" action on a file link in a message shows the desktop's editor list; picking one launches that editor on the desktop with the file.
+2. File tree / preview "reveal in file manager": the desktop file manager reveals the file or directory; when the directory no longer exists, `{ success: false }` is returned and the failure is toasted.
+3. A regular browser visiting the Web Server (no proxy): behavior identical to today (`Not supported in web mode`); no relay request is made.
+4. An unknown method name is rejected by the zod enum validation; the desktop drops it and logs a warn without entering any handler.
+5. Desktop-local (Electron renderer) entries above behave exactly as before the change.
 
-## 验证
+## Verification
 
-- 单元测试：
-  - shared：方法枚举接受四个新方法名，`platform-request`/`platform-response` payload 校验通过；
-  - desktop：`platformHandlers` 新方法分发到既有桌面实现（mock）；
-  - web：`createWebPlatform` 分支——有 `webRemoteControlProxy` 时走 relay 请求，无代理时保持降级返回。
-- `pnpm typecheck`、`pnpm lint`、`npx oxfmt --check <changed>`、`pnpm architecture:check --changed`。
-- 真实 relay 端到端（手机配对后实际打开）无法在 worktree 内验证，列入 PR「Not verified」并附手动步骤。
+- Unit tests:
+  - shared: the method enum accepts the four new names; `platform-request`/`platform-response` payloads validate;
+  - desktop: the new `platformHandlers` dispatch to the existing desktop implementations (mocked);
+  - web: `createWebPlatform` branches — with `webRemoteControlProxy` present the relay request is used, without a proxy the fallback returns stay.
+- `pnpm typecheck`, `pnpm lint`, `npx oxfmt --check <changed>`, `pnpm architecture:check --changed`.
+- A real relay end-to-end pass (actually opening from a paired phone) cannot be verified inside a worktree; it is listed in the PR "Not verified" section with manual steps.

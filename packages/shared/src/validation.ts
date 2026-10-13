@@ -222,10 +222,11 @@ export const webRemoteControlPlatformMethodSchema = z.enum([
   "listWSLDistros",
   "listDockerContainers",
   "listSSHConfigAliases",
-  // Bug fix：createTempTextAttachment 在上游批量导入 v3.15.1（aac47556）时已加入
-  // WebRemoteControlPlatformMethodArgsMap，但本枚举被遗漏。该枚举是 relay platform-request /
-  // platform-response 的运行时白名单，缺失会导致桌面 transport 直接丢弃该方法的请求，
-  // 手机端经 relay 的临时文本附件因此不可用。
+  // Bug fix: the upstream v3.15.1 bulk import (aac47556) added createTempTextAttachment to
+  // WebRemoteControlPlatformMethodArgsMap but missed this enum. The enum is the runtime
+  // allow-list for relay platform-request / platform-response, so the missing entry made the
+  // desktop transport drop the method outright, breaking temporary text attachments from the
+  // phone over the relay.
   "createTempTextAttachment",
   "loadMcpFromUserDirectory",
   "saveMcpToUserDirectory",
