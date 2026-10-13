@@ -45,6 +45,11 @@ export function playVoiceDictationFeedbackSound(
   // recording). Pausing the first playback without settling its promise would hang that caller —
   // e.g. the recording whose system mute is queued behind the chime — so settle it before
   // resetting the shared element for the new play.
+  // Two plays can overlap on the shared element (split panes, settings preview during a
+  // recording). Pausing the first playback without settling its promise would hang that caller —
+  // e.g. the recording whose system mute is queued behind the chime — so settle it before
+  // resetting the shared element for the new play.
+  pendingFinishByKind[kind]?.();
   // Reset before replaying: a reused element parked at the end would otherwise stay silent.
   audio.pause();
   audio.currentTime = 0;
@@ -56,6 +61,7 @@ export function playVoiceDictationFeedbackSound(
       settled = true;
       audio.removeEventListener("ended", finish);
       audio.removeEventListener("error", handleMediaError);
+      delete pendingFinishByKind[kind];
       resolve();
     };
     // Load/decode failures (corrupt asset, missing file) surface as the error event; log them so
@@ -68,6 +74,7 @@ export function playVoiceDictationFeedbackSound(
       });
       finish();
     };
+    pendingFinishByKind[kind] = finish;
     audio.addEventListener("ended", finish);
     audio.addEventListener("error", handleMediaError);
     void audio.play().catch((error: unknown) => {

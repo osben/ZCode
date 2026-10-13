@@ -89,7 +89,7 @@ async function resolveWpctlDefaultSink(exec: { async: ExecAsync }): Promise<stri
   const status = await exec.async("wpctl", ["status"]);
   const sinksIndex = status.indexOf("Sinks:");
   if (sinksIndex === -1) throw new Error("wpctl status has no Sinks section");
-  const defaultEntry = status.slice(sinksIndex).match(/^\s*\*\s*(\d+)\./m);
+  const defaultEntry = status.slice(sinksIndex).match(/^\W*\*\s*(\d+)\./m);
   if (!defaultEntry) throw new Error("wpctl status has no default sink");
   return defaultEntry[1];
 }
