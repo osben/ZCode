@@ -1845,7 +1845,7 @@ export function SessionPane({
       workspacePath,
     ],
   );
-  const { settings: sharedSettings, loading: sharedSettingsLoading } = useSettings();
+  const { settings: sharedSettings } = useSettings();
   const readPlanIdentitySnapshot = usePlanIdentitySnapshot(
     sharedSettings?.providerFamilyDomain,
     sharedSettings?.providerFamilyDomain

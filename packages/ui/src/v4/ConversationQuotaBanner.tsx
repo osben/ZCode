@@ -1,5 +1,5 @@
 import { CodingPlanEntryButton } from "@/settings/CodingPlanEntryButton.js";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CodingPlanBillingDiscountConfig } from "@zcode/shared";
 import { InfoIcon, RocketIcon, XIcon } from "lucide-react";
 import {
@@ -79,6 +79,11 @@ export function ConversationQuotaBanner({
   const bannerRef = useRef<HTMLDivElement>(null);
   const [autoContinue, setAutoContinue] = useState(autoContinueReady && autoContinueDefault);
   const autoContinueInitialized = useRef(autoContinueReady);
+  const hasAutoContinueCallback = typeof onAutoContinue === "function";
+  const onAutoContinueRef = useRef(onAutoContinue);
+  useLayoutEffect(() => {
+    onAutoContinueRef.current = onAutoContinue;
+  }, [onAutoContinue]);
   useEffect(() => {
     if (!onShown || !state.visible || !bannerRef.current) return;
     // Background tasks also compute quota state; consume the bucket's one reminder per period only when it is actually visible.
@@ -108,7 +113,7 @@ export function ConversationQuotaBanner({
       !autoContinue ||
       !state.visible ||
       state.providerLimitedResetAt === null ||
-      !onAutoContinue
+      !hasAutoContinueCallback
     ) {
       return;
     }
@@ -117,12 +122,12 @@ export function ConversationQuotaBanner({
       Date.now(),
       Math.random(),
     );
-    const timer = setTimeout(onAutoContinue, delayMs);
+    const timer = setTimeout(() => onAutoContinueRef.current?.(), delayMs);
     return () => clearTimeout(timer);
   }, [
     autoContinue,
     autoContinueReady,
-    onAutoContinue,
+    hasAutoContinueCallback,
     state.providerLimitedResetAt,
     state.visible,
   ]);
@@ -206,7 +211,7 @@ export function ConversationQuotaBanner({
           </div>
         ) : null}
         {state.providerLimitedResetAt !== null ? (
-          <div className="inline-flex shrink-0 items-center gap-2 text-ui-sm text-foreground">
+          <label className="inline-flex shrink-0 items-center gap-2 text-ui-sm text-foreground">
             <Checkbox
               aria-label={intl.formatMessage({ id: "chat.quota.providerLimited.autoContinue" })}
               checked={autoContinue}
@@ -214,7 +219,7 @@ export function ConversationQuotaBanner({
               onCheckedChange={(checked) => setAutoContinue(checked === true)}
             />
             {intl.formatMessage({ id: "chat.quota.providerLimited.autoContinue" })}
-          </div>
+          </label>
         ) : null}
         {state.dismissible ? (
           <Button

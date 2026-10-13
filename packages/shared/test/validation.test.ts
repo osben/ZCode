@@ -505,6 +505,29 @@ describe("hostResponseMessageSchema", () => {
     ).toBe(false);
   });
 
+  it("recovers an invalid saved Coding Plan auto-continue default and validates boolean patches", () => {
+    const invalidSavedValue = appSettingsSchema.safeParse({
+      codingPlanLimitAutoContinueDefaultEnabled: "false",
+    });
+    const explicitDisabled = appSettingsSchema.parse({
+      codingPlanLimitAutoContinueDefaultEnabled: false,
+    });
+    const validPatch = appSettingsPatchSchema.parse({
+      codingPlanLimitAutoContinueDefaultEnabled: false,
+    });
+    const invalidPatch = appSettingsPatchSchema.safeParse({
+      codingPlanLimitAutoContinueDefaultEnabled: "false",
+    });
+
+    expect(invalidSavedValue.success).toBe(true);
+    if (invalidSavedValue.success) {
+      expect(invalidSavedValue.data.codingPlanLimitAutoContinueDefaultEnabled).toBe(true);
+    }
+    expect(explicitDisabled.codingPlanLimitAutoContinueDefaultEnabled).toBe(false);
+    expect(validPatch.codingPlanLimitAutoContinueDefaultEnabled).toBe(false);
+    expect(invalidPatch.success).toBe(false);
+  });
+
   it("首次统一开启消息流 reasoning，迁移后保留用户选择", () => {
     const defaults = appSettingsSchema.parse({});
     const migratedMissing = appSettingsSchema.parse({

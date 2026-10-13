@@ -4,9 +4,9 @@
 
 When a Z.AI or BigModel Coding Plan conversation ends with provider business code `1308` and the message `Usage limit reached for 5 hour. Your limit will reset at YYYY-MM-DD HH:mm:ss`, the quota banner can automatically resume the same session after the reset. This does not apply to Start Plan or unrelated provider errors.
 
-The banner checkbox is checked by default. Settings / General has a global default switch; changing it affects newly shown limit banners, while the current banner keeps its own checkbox state. The banner may render before an initial settings snapshot exists, but its checkbox is disabled and its timer is not armed until a snapshot is available. A settings refresh keeps the existing snapshot ready; an initial read failure keeps auto-continue disabled. The checkbox initializes once from the persisted default. Unchecking the banner cancels its pending auto-continue.
+The banner checkbox is checked by default. Settings / General has a global default switch; changing it affects newly shown limit banners, while the current banner keeps its own checkbox state. The banner may render before an initial settings snapshot exists, but its checkbox is disabled and its timer is not armed until a snapshot is available. A settings refresh keeps the existing snapshot ready; an initial read failure keeps auto-continue disabled. Invalid saved values for this non-critical preference fall back to enabled without invalidating the rest of settings; settings patches still require a boolean. The checkbox initializes once from the persisted default, and its visible caption activates it. Unchecking the banner cancels its pending auto-continue.
 
-Auto-continue waits until the parsed reset time, then adds a random delay from 1 to 3 minutes and sends the existing `Continue from where you left off` input through the current session command path. It does not replay the failed turn or alter retry policy. If the timestamp is missing or malformed, show the existing provider message and do not schedule a continuation.
+Auto-continue waits until the parsed reset time, then adds a random delay from 1 to 3 minutes and sends the existing `Continue from where you left off` input through the current session command path. Updating the active resume callback does not restart the grace period; when the timer fires, it uses the latest callback. It does not replay the failed turn or alter retry policy. If the timestamp is missing or malformed, show the existing provider message and do not schedule a continuation.
 
 ## Time interpretation
 
@@ -37,6 +37,8 @@ The checkbox draft belongs to the visible quota banner. The global default belon
 | CPLAC-05 | Pending timer, then dismiss/change error or session                  | Advance clock                             | Stale timer does not resume the old session                                                        |
 | CPLAC-06 | Saved default is disabled and settings are still loading             | Mount banner, then resolve settings       | Timer stays unarmed while loading; checkbox initializes unchecked after load                       |
 | CPLAC-07 | Settings snapshot exists and a refresh starts, or initial read fails | Keep banner mounted                       | Refresh does not reset the grace period; initial failure does not enable auto-continue             |
+| CPLAC-08 | Resume callback changes while the timer is armed                     | Replace callback, then advance clock      | Grace period is preserved and only the latest callback runs                                        |
+| CPLAC-09 | Saved default has an invalid type                                    | Read settings and validate a patch        | Read falls back to enabled; patch rejects non-boolean values                                       |
 
 ## Implementation boundaries
 

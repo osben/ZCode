@@ -145,6 +145,15 @@ describe("ConversationQuotaBanner auto-continue timer", () => {
     expect(onAutoContinue).not.toHaveBeenCalled();
   });
 
+  it("toggles auto-continue when clicking its caption", () => {
+    const onAutoContinue = vi.fn();
+    renderQuotaBanner({ onAutoContinue });
+
+    fireEvent.click(screen.getByText("Continue automatically"));
+
+    expect(screen.getByRole("checkbox").getAttribute("data-state")).not.toBe("checked");
+  });
+
   it("waits for persisted settings and initializes from the saved disabled default", () => {
     vi.useFakeTimers();
     vi.setSystemTime(Date.parse("2026-10-13T02:16:26Z"));
@@ -217,5 +226,23 @@ describe("ConversationQuotaBanner auto-continue timer", () => {
     expect(onAutoContinue).not.toHaveBeenCalled();
     act(() => vi.advanceTimersByTime(120_000));
     expect(onAutoContinue).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves the grace period and invokes the latest callback when it changes", () => {
+    const resetAt = Date.parse("2026-10-13T02:16:31Z");
+    vi.useFakeTimers();
+    vi.setSystemTime(resetAt - 5_000);
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const originalCallback = vi.fn();
+    const latestCallback = vi.fn();
+    const view = renderQuotaBanner({ onAutoContinue: originalCallback });
+
+    act(() => vi.advanceTimersByTime(64_000));
+    expect(originalCallback).not.toHaveBeenCalled();
+    view.rerender(quotaBannerElement({ onAutoContinue: latestCallback }));
+    act(() => vi.advanceTimersByTime(1_000));
+
+    expect(originalCallback).not.toHaveBeenCalled();
+    expect(latestCallback).toHaveBeenCalledTimes(1);
   });
 });
