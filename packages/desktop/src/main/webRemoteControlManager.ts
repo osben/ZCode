@@ -36,6 +36,8 @@ import {
   type WebRemoteControlWindowBootstrapResult,
   type WebRemoteControlWorkspaceBridgeOpenPayload,
   type WebRemoteControlWorkspaceListResult,
+  type WebRemoteControlWorkspaceOpenRequestPayload,
+  type WebRemoteControlWorkspaceOpenResponsePayload,
   type WebRemoteControlWorkspaceTarget,
   type RemoteUsageRemoteKind,
   type TelemetryEventPayload,
@@ -158,6 +160,15 @@ interface WebRemoteControlManagerDependencies {
     ) => Promise<WebRemoteControlPlatformMethodResultMap[K]>;
   };
   reconnectWorkspace: (windowId: number, workspaceKey: string) => Promise<void>;
+  /**
+   * Open (or reuse) a local workspace in the desktop window renderer. Reuses the deep-link
+   * workspace-open routing; resolves once Main dispatched the open, rejects when the path is
+   * invalid or the window is gone. The renderer keeps ownership of tab/dedup semantics.
+   */
+  openWorkspace: (
+    windowId: number,
+    target: { workspacePath: string; workspaceIdentity?: string },
+  ) => Promise<void>;
   reportRemoteUsageEvent?: (windowId: number, event: TelemetryEventPayload) => void;
   reportRendererTelemetryEvent?: (event: RendererTelemetryEventPayload) => void;
   onStatusChanged?: (windowId: number, status: WebRemoteControlStatus) => void;
@@ -1110,6 +1121,41 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
     }
   }
 
+  async function respondToWorkspaceOpenRequest(
+    runtime: WindowControlRuntime,
+    request: WebRemoteControlWorkspaceOpenRequestPayload,
+  ): Promise<void> {
+    let response: WebRemoteControlWorkspaceOpenResponsePayload;
+    try {
+      await dependencies.openWorkspace(runtime.windowId, {
+        workspacePath: request.workspacePath,
+        ...(request.workspaceIdentity ? { workspaceIdentity: request.workspaceIdentity } : {}),
+      });
+      response = {
+        zcode_type: "workspace-open-response",
+        requestId: request.requestId,
+        workspacePath: request.workspacePath,
+        ...(request.workspaceIdentity ? { workspaceIdentity: request.workspaceIdentity } : {}),
+        success: true,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      dependencies.logger.warn(
+        `[web-remote-control] workspace open failed window=${runtime.windowId} session=${runtime.deviceSid} workspacePath=${request.workspacePath} error=${message}`,
+      );
+      response = {
+        zcode_type: "workspace-open-response",
+        requestId: request.requestId,
+        workspacePath: request.workspacePath,
+        ...(request.workspaceIdentity ? { workspaceIdentity: request.workspaceIdentity } : {}),
+        success: false,
+        error: message,
+      };
+    }
+
+    sendAppPayload(runtime, response);
+  }
+
   function applyMobileViewStateUpdate(
     runtime: WindowControlRuntime,
     viewState: WebRemoteControlMobileViewState,
@@ -1187,6 +1233,9 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
         break;
       case "workspace-reconnect-request":
         void respondToWorkspaceReconnectRequest(runtime, payload);
+        break;
+      case "workspace-open-request":
+        void respondToWorkspaceOpenRequest(runtime, payload);
         break;
       case "rpc-frame":
       case "rpc-frame-ack":
