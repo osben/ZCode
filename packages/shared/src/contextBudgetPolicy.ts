@@ -107,7 +107,10 @@ export function resolveContextBudgetTone({
    * `undefined` (field absent, e.g. legacy sessions) falls back to the default-policy estimate.
    */
   autoCompactThresholdTokens?: number | null;
-  /** Authoritative runtime microcompact trigger, null when microcompact is disabled. */
+  /**
+   * Authoritative runtime microcompact trigger, null when disabled. An absent legacy field is
+   * unknown and does not establish that opt-in microcompact is enabled.
+   */
   microcompactThresholdTokens?: number | null;
 }): ZCodeContextBudgetTone {
   const used = toPositiveInt(usedTokens);
@@ -124,8 +127,7 @@ export function resolveContextBudgetTone({
     return "critical";
   }
   const warningThreshold =
-    microcompactThresholdTokens === null ||
-    (microcompactThresholdTokens === undefined && criticalThreshold === null)
+    microcompactThresholdTokens === null || microcompactThresholdTokens === undefined
       ? null
       : typeof microcompactThresholdTokens === "number"
         ? Math.max(0, Math.floor(microcompactThresholdTokens))

@@ -84,8 +84,38 @@ describe("resolveContextBudgetTone", () => {
   });
 
   it("warns from the microcompact threshold up to the auto-compact threshold", () => {
-    expect(resolveContextBudgetTone({ ...window, usedTokens: 149_400 })).toBe("warning");
-    expect(resolveContextBudgetTone({ ...window, usedTokens: 165_999 })).toBe("warning");
+    expect(
+      resolveContextBudgetTone({
+        ...window,
+        usedTokens: 149_400,
+        autoCompactThresholdTokens: 166_000,
+        microcompactThresholdTokens: 149_400,
+      }),
+    ).toBe("warning");
+    expect(
+      resolveContextBudgetTone({
+        ...window,
+        usedTokens: 165_999,
+        autoCompactThresholdTokens: 166_000,
+        microcompactThresholdTokens: 149_400,
+      }),
+    ).toBe("warning");
+  });
+
+  it("does not infer opt-in microcompact from legacy snapshots with an absent threshold", () => {
+    expect(resolveContextBudgetTone({ ...window, usedTokens: 150_000 })).toBe("normal");
+    // The legacy auto threshold estimate still applies independently.
+    expect(resolveContextBudgetTone({ ...window, usedTokens: 166_000 })).toBe("critical");
+  });
+
+  it("treats a zero microcompact threshold as an immediate boundary", () => {
+    expect(
+      resolveContextBudgetTone({
+        ...window,
+        usedTokens: 1,
+        microcompactThresholdTokens: 0,
+      }),
+    ).toBe("warning");
   });
 
   it("turns critical at the auto-compact threshold", () => {

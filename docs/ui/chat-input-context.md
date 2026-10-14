@@ -77,14 +77,15 @@ Threshold math (defaults, mirroring the runtime policy):
   token count at which the next model step triggers a full summary compaction.
 - `microcompactThreshold = max(0, min(floor(autoCompactThreshold × 0.9), autoCompactThreshold − 2K))` — the token count at which old tool results start being cleared, matching `buildDefaultMicrocompactThreshold` in the runtime.
 - The runtime resolves `autoCompactThreshold` from the selected model, context-budget strategy, model output limit, and effective compact configuration. Main-turn completion events carry it into `usage.contextWindow.autoCompactThresholdTokens`; `null` means auto-compact is disabled.
-- Main-turn completion events also carry `usage.contextWindow.microcompactThresholdTokens`. It is the configured `microcompact.thresholdTokens`, or the default formula above when microcompact is enabled without an override; `null` means microcompact is disabled or unsupported. The UI uses these authoritative thresholds when present and falls back to the default estimate only for legacy events where each field is absent.
+- Main-turn completion events also carry `usage.contextWindow.microcompactThresholdTokens`. It is the configured `microcompact.thresholdTokens`, or the default formula above when microcompact is enabled without an override; `null` means microcompact is disabled or unsupported. The UI uses this authoritative threshold when present. If the field is absent in a legacy event, the UI treats microcompact as unknown and does not show a microcompact warning because legacy data cannot establish that the opt-in policy is enabled.
+- Legacy events without an authoritative auto-compact threshold still use the default auto-compact estimate. This fallback does not infer microcompact state.
 - V4 usage snapshots preserve threshold field absence from legacy events and recovery seeds. Explicit `null` remains authoritative and means the corresponding compaction policy is disabled or unsupported.
 - On model selection, numeric thresholds are invalidated because they belong to the previous model; explicit `null` values are retained so a disabled/unsupported policy is not mistaken for a legacy unknown threshold before the next main-turn completion.
 
 UI tone mapping (`resolveContextBudgetTone`):
 
 - `critical`: `usedTokens ≥ autoCompactThreshold` — the auto-compact threshold has been reached.
-- `warning`: `usedTokens ≥ microcompactThreshold` — the microcompact threshold has been reached.
+- `warning`: `microcompactThresholdTokens` is a number and `usedTokens ≥ microcompactThresholdTokens` — the microcompact threshold has been reached. An absent or null threshold does not produce a microcompact warning. A configured zero threshold is an immediate token-pressure boundary in the runtime.
   These tones report token-budget state only; runtime may still skip either operation based on
   available history, compact candidates, or safety guards.
 - `normal`: below the microcompact threshold, or invalid input (`usedTokens ≤ 0`/non-finite).
@@ -109,7 +110,7 @@ Acceptance scenarios:
 
 1. 200K window, no max output, auto-compact enabled, and microcompact explicitly enabled without a threshold override: auto is 166 000 and micro is 149 400; used 149 399 renders normal, 149 400 warning, and 166 000 critical. The panel row shows `≈166K (83%)` in en-US.
 2. Microcompact disabled or auto-compact disabled: its corresponding threshold is `null`, and the UI does not warn for that policy.
-3. A configured microcompact threshold is displayed as the warning boundary; the UI does not substitute its default.
+3. A configured microcompact threshold is displayed as the warning boundary; the UI does not substitute its default. Legacy events with an absent microcompact threshold do not show a microcompact warning. A configured zero threshold is immediate in the runtime.
 4. Quota-reset reminder visible with `usedTokens ≥ autoCompactThreshold`: trigger keeps the
    quota tone (success/urgent) and does not apply the budget tone.
 5. Invalid usage (`used = 0` or non-finite): no trigger recolor, tone attribute reads `normal`.
