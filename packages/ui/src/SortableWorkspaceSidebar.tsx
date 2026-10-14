@@ -28,6 +28,8 @@ export const SortableWorkspaceSidebarItem = memo(function SortableWorkspaceSideb
   mobileActiveTaskKey,
   isWebRemoteControl = false,
   workspaceKey,
+  isPinned = false,
+  onToggleWorkspacePinned,
   onShowMoreWorkspaceTasks,
   reconnectingRemoteWorkspaceKeys,
   remoteWorkspaceErrorByWorkspaceKey,
@@ -55,6 +57,8 @@ export const SortableWorkspaceSidebarItem = memo(function SortableWorkspaceSideb
   mobileActiveTaskKey?: string | null;
   isWebRemoteControl?: boolean;
   workspaceKey: string;
+  isPinned?: boolean;
+  onToggleWorkspacePinned?: (workspaceKey: string, pinned: boolean) => void;
   onShowMoreWorkspaceTasks: (workspaceKey: string) => void;
   reconnectingRemoteWorkspaceKeys: string[];
   remoteWorkspaceErrorByWorkspaceKey: Record<string, string>;
@@ -106,6 +110,12 @@ export const SortableWorkspaceSidebarItem = memo(function SortableWorkspaceSideb
   const handleShowMoreTasks = useCallback(() => {
     onShowMoreWorkspaceTasks(workspaceKey);
   }, [onShowMoreWorkspaceTasks, workspaceKey]);
+  const handleTogglePinned = useCallback(
+    (pinned: boolean) => {
+      onToggleWorkspacePinned?.(workspaceKey, pinned);
+    },
+    [onToggleWorkspacePinned, workspaceKey],
+  );
 
   return (
     <WorkspaceSidebarItem
@@ -124,6 +134,8 @@ export const SortableWorkspaceSidebarItem = memo(function SortableWorkspaceSideb
       taskListLiveWorkflowCount={taskListLiveWorkflowCount}
       mobileActiveTaskKey={mobileActiveTaskKey}
       isWebRemoteControl={isWebRemoteControl}
+      isPinned={isPinned}
+      onToggleWorkspacePinned={onToggleWorkspacePinned ? handleTogglePinned : undefined}
       onShowMoreTasks={handleShowMoreTasks}
       reconnectingRemoteWorkspaceKeys={reconnectingRemoteWorkspaceKeys}
       remoteWorkspaceErrorByWorkspaceKey={remoteWorkspaceErrorByWorkspaceKey}

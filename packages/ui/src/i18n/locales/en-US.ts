@@ -1919,6 +1919,18 @@ const enUS: Record<string, string> = {
   "workspaceSidebar.searchTasksPlaceholder": "Search tasks...",
   "workspaceSidebar.searchArchivedTasksPlaceholder": "Search archived tasks...",
   "workspaceSidebar.closeTaskSearch": "Close task search",
+  "workspaceSidebar.pinProject": "Pin project",
+  "workspaceSidebar.unpinProject": "Unpin project",
+  "workspaceSidebar.pinFailed": "Could not update pinned state",
+  "workspaceSidebar.customize": "Customize…",
+  "workspaceSidebar.customizeTitle": "Customize project",
+  "workspaceSidebar.customizeDescription":
+    "Choose how “{name}” appears in the sidebar. This only changes the label and color.",
+  "workspaceSidebar.customizeDisplayNameLabel": "Display name",
+  "workspaceSidebar.customizeDisplayNameHint": "Leave blank to use the folder name.",
+  "workspaceSidebar.customizeColorLabel": "Color",
+  "workspaceSidebar.customizeColorNone": "No color",
+  "workspaceSidebar.customizeReset": "Reset to default",
   "workspaceSidebar.remove": "Remove",
   "workspaceSidebar.removeRunningWorkspace.title": "Remove a running project?",
   "workspaceSidebar.removeRunningWorkspace.description":

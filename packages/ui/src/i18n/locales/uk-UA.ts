@@ -1730,6 +1730,18 @@ const ukUA: Record<string, string> = {
   "workspaceSidebar.searchTasksPlaceholder": "Пошук завдань...",
   "workspaceSidebar.searchArchivedTasksPlaceholder": "Пошук в архівних завданнях...",
   "workspaceSidebar.closeTaskSearch": "Закрити пошук завдань",
+  "workspaceSidebar.pinProject": "Закріпити проєкт",
+  "workspaceSidebar.unpinProject": "Відкріпити проєкт",
+  "workspaceSidebar.pinFailed": "Не вдалося змінити стан закріплення",
+  "workspaceSidebar.customize": "Налаштувати…",
+  "workspaceSidebar.customizeTitle": "Налаштувати проєкт",
+  "workspaceSidebar.customizeDescription":
+    "Виберіть, як «{name}» виглядає на бічній панелі. Змінюються лише назва та колір.",
+  "workspaceSidebar.customizeDisplayNameLabel": "Показувана назва",
+  "workspaceSidebar.customizeDisplayNameHint": "Залиште порожнім, щоб використовувати назву теки.",
+  "workspaceSidebar.customizeColorLabel": "Колір",
+  "workspaceSidebar.customizeColorNone": "Без кольору",
+  "workspaceSidebar.customizeReset": "Скинути до стандартних",
   "workspaceSidebar.remove": "Вилучити",
   "workspaceSidebar.removeRunningWorkspace.title": "Вилучити активний проєкт?",
   "workspaceSidebar.removeRunningWorkspace.description":

@@ -281,6 +281,8 @@ export {
 export { AutomationService, InvalidCronExprError } from "./session/automationService.js";
 // Off-peak tasks share the database with automations but use separate tables, types, and constants.
 export { OffPeakTaskRepo, OFF_PEAK_CLAIM_STALE_MS } from "./session/offPeakTaskRepo.js";
+// Fork-owned sidebar project pins live in the fork_workspace_pins table of tasks-index.sqlite.
+export { ForkWorkspacePinRepo } from "./session/forkWorkspacePinRepo.js";
 // The host domain reuses the existing task diff summary to populate files_changed at terminal state.
 export { buildTaskChangeSummary } from "./session/taskChangeSummary.js";
 export { OffPeakTaskService } from "./session/offPeakTaskService.js";
@@ -496,6 +498,7 @@ import {
 import { createHighspeedMockTransport } from "./highspeed/highspeedMockTransport.js";
 import { OffPeakTaskService } from "./session/offPeakTaskService.js";
 import { OffPeakTaskRepo } from "./session/offPeakTaskRepo.js";
+import { ForkWorkspacePinRepo } from "./session/forkWorkspacePinRepo.js";
 import { createOffPeakServerClient } from "./session/offPeakServerClient.js";
 import {
   buildOffPeakRequestAuth,
@@ -2354,9 +2357,12 @@ export function createLocalServices(options: {
     commitMessageGenerator: gitCommitMessageGenerator,
   });
   // The ZCode task service adapter provides the task wrapper; the ZCode agent server owns core session state.
+  // The fork repository owns its tasks-index.sqlite connection for sidebar project pins.
+  const forkWorkspacePinRepo = new ForkWorkspacePinRepo();
   const zcodeTaskService = createZCodeTaskServiceAdapter({
     zcodeAgentService,
     taskIndexRepo,
+    forkWorkspacePinRepo,
     taskIndexSyncer: zcodeTaskIndexSyncer,
     settingService,
     cuaProductMcpServerResolver,
@@ -2831,6 +2837,7 @@ export function createLocalServices(options: {
   // See the sharedSqliteRepos declaration comment: register every tasks-index sqlite handle so the
   // dispose chain closes them all.
   sqliteReposToClose.push(taskIndexRepo);
+  sqliteReposToClose.push(forkWorkspacePinRepo);
   sharedSqliteRepos.set(services, sqliteReposToClose);
   return services;
 }

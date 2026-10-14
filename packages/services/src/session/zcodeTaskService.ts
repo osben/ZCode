@@ -771,6 +771,12 @@ export interface IZCodeTaskService {
     pinned: boolean;
   }): Promise<ZCodeTaskMeta>;
 
+  /** List sidebar-pinned workspace keys (fork shell state in tasks-index.sqlite). */
+  listPinnedWorkspaceKeys(): Promise<string[]>;
+
+  /** Pin or unpin a sidebar project row by workspace key. */
+  setWorkspacePinned(params: { workspaceKey: string; pinned: boolean }): Promise<void>;
+
   /** Update a task's unread state. */
   setTaskUnread(params: {
     taskId: string;
