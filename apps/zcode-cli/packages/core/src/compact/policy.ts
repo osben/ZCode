@@ -4,6 +4,9 @@ import {
   DEFAULT_COMPACT_CONTEXT_WINDOW,
   DEFAULT_ZCODE_MODEL_CONTEXT_BUDGET_STRATEGY as DEFAULT_BUDGET_STRATEGY,
   PREFLIGHT_AUTOCOMPACT_OUTPUT_RESERVE_TOKENS,
+  getAutoCompactOutputReserveTokens as getSharedAutoCompactOutputReserveTokens,
+  getAutoCompactThresholdTokens as getSharedAutoCompactThresholdTokens,
+  getEffectiveContextWindowSize as getSharedEffectiveContextWindowSize,
 } from "@zcode/shared";
 import type { CompactModelMessage } from "./manual.js";
 import { estimateMessageTokens, hasEnoughMessagesToCompact } from "./manual.js";
@@ -74,25 +77,22 @@ export interface AutoCompactDecision {
 
 export function getEffectiveContextWindowSize(config: AutoCompactPolicyConfig = {}): number {
   const contextWindow = positiveInt(config.contextWindow) ?? DEFAULT_COMPACT_CONTEXT_WINDOW;
-  // The provider's context window is shared by input and output; auto-compaction can only free input space,
-  // so subtract the current model's allowed output tokens from the threshold denominator instead of using the full contextWindow.
-  const reserve = Math.min(getAutoCompactOutputReserveTokens(config), contextWindow);
-  return Math.max(0, contextWindow - reserve);
+  return getSharedEffectiveContextWindowSize({
+    contextWindow,
+    maxOutputTokens: config.maxOutputTokens,
+  });
 }
 
 export function getAutoCompactOutputReserveTokens(config: AutoCompactPolicyConfig = {}): number {
-  const maxOutputTokens = positiveInt(config.maxOutputTokens);
-  // The old legacy branch reserved a full model-output window, causing early compaction and requiring remote selection; now reserve at most 21K consistently.
-  return Math.min(
-    maxOutputTokens ?? DEFAULT_AUTOCOMPACT_OUTPUT_RESERVE_TOKENS,
-    PREFLIGHT_AUTOCOMPACT_OUTPUT_RESERVE_TOKENS,
-  );
+  return getSharedAutoCompactOutputReserveTokens(config.maxOutputTokens);
 }
 
 export function getAutoCompactThreshold(config: AutoCompactPolicyConfig = {}): number {
-  const effectiveContextWindow = getEffectiveContextWindowSize(config);
-  const buffer = positiveInt(config.bufferTokens) ?? AUTOCOMPACT_BUFFER_TOKENS;
-  return Math.max(0, effectiveContextWindow - buffer);
+  return getSharedAutoCompactThresholdTokens({
+    contextWindow: positiveInt(config.contextWindow) ?? DEFAULT_COMPACT_CONTEXT_WINDOW,
+    maxOutputTokens: config.maxOutputTokens,
+    bufferTokens: config.bufferTokens,
+  });
 }
 
 export function shouldAutoCompact(input: {

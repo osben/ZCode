@@ -93,6 +93,7 @@ describe("auto compact policy", () => {
       modelContextBudgetStrategy: "preflight-v1" as const,
     };
 
+    expect(getAutoCompactThreshold(config)).toBe(1_000);
     expect(shouldAutoCompact({ config, messages })).toMatchObject({
       estimatedTokenCount: 1_335,
       reason: "above_threshold",

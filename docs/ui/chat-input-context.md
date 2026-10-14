@@ -63,12 +63,13 @@ AI Elements `Context` compound component.
 
 ## Context budget tone (ZCO-19, additive)
 
-The context meter must warn at the same token counts the runtime actually compacts at, not at
-arbitrary fixed percentages. The compaction threshold math therefore lives in one place,
-`packages/shared/src/contextBudgetPolicy.ts`, and the CLI compact policy
-(`apps/zcode-cli/packages/core/src/compact/policy.ts`, `microcompact.ts`) consumes the same
-constants from `@zcode/shared`; the UI reuses them via the shared helpers. Shared constants are
-the single source of truth; the core modules re-export them so existing import paths keep working.
+The context meter must report the runtime's compaction thresholds, not arbitrary fixed percentages;
+reaching a threshold does not guarantee that a compaction action will run. The threshold math lives
+in one place, `packages/shared/src/contextBudgetPolicy.ts`, including the output-reserve cap and
+configurable buffer. The CLI compact policy (`apps/zcode-cli/packages/core/src/compact/policy.ts`)
+delegates its existing threshold helpers to shared; `microcompact.ts` and the UI consume the same
+shared constants/helpers. Shared constants and calculations are the single source of truth; core
+keeps its existing export names as wrappers.
 
 Threshold math (defaults, mirroring the runtime policy):
 

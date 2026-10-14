@@ -46,6 +46,21 @@ describe("context budget policy thresholds", () => {
     );
   });
 
+  it("uses runtime buffer overrides and accepts a zero output reserve", () => {
+    // 200_000 - 21_000 - 1_000 = 178_000
+    expect(
+      getAutoCompactThresholdTokens({
+        contextWindow: 200_000,
+        maxOutputTokens: 32_000,
+        bufferTokens: 1_000,
+      }),
+    ).toBe(178_000);
+    // An explicit zero output limit reserves no output tokens.
+    expect(getAutoCompactThresholdTokens({ contextWindow: 200_000, maxOutputTokens: 0 })).toBe(
+      187_000,
+    );
+  });
+
   it("clamps to zero when the window cannot fit the output reserve and buffer", () => {
     expect(getAutoCompactThresholdTokens({ contextWindow: 30_000 })).toBe(0);
     expect(getMicrocompactThresholdTokens({ contextWindow: 30_000 })).toBe(0);

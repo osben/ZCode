@@ -20,6 +20,7 @@ export type ZCodeContextBudgetTone = "normal" | "warning" | "critical";
 export interface ZCodeContextBudgetWindowInput {
   contextWindow: number;
   maxOutputTokens?: number;
+  bufferTokens?: number;
 }
 
 function toPositiveInt(value: number | undefined): number | undefined {
@@ -29,10 +30,32 @@ function toPositiveInt(value: number | undefined): number | undefined {
   return Math.floor(value);
 }
 
+function toNonNegativeInt(value: number | undefined): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return undefined;
+  }
+  return Math.floor(value);
+}
+
 export function getAutoCompactOutputReserveTokens(maxOutputTokens?: number): number {
   return Math.min(
-    toPositiveInt(maxOutputTokens) ?? DEFAULT_AUTOCOMPACT_OUTPUT_RESERVE_TOKENS,
+    toNonNegativeInt(maxOutputTokens) ?? DEFAULT_AUTOCOMPACT_OUTPUT_RESERVE_TOKENS,
     PREFLIGHT_AUTOCOMPACT_OUTPUT_RESERVE_TOKENS,
+  );
+}
+
+/** Effective input-side budget after reserving room for the next model output. */
+export function getEffectiveContextWindowSize({
+  contextWindow,
+  maxOutputTokens,
+}: ZCodeContextBudgetWindowInput): number {
+  const windowTokens = toPositiveInt(contextWindow);
+  if (windowTokens === undefined) {
+    return 0;
+  }
+  return Math.max(
+    0,
+    windowTokens - Math.min(getAutoCompactOutputReserveTokens(maxOutputTokens), windowTokens),
   );
 }
 
@@ -44,16 +67,10 @@ export function getAutoCompactOutputReserveTokens(maxOutputTokens?: number): num
 export function getAutoCompactThresholdTokens({
   contextWindow,
   maxOutputTokens,
+  bufferTokens,
 }: ZCodeContextBudgetWindowInput): number {
-  const windowTokens = toPositiveInt(contextWindow);
-  if (windowTokens === undefined) {
-    return 0;
-  }
-  const effectiveWindow = Math.max(
-    0,
-    windowTokens - Math.min(getAutoCompactOutputReserveTokens(maxOutputTokens), windowTokens),
-  );
-  return Math.max(0, effectiveWindow - AUTOCOMPACT_BUFFER_TOKENS);
+  const buffer = toNonNegativeInt(bufferTokens) ?? AUTOCOMPACT_BUFFER_TOKENS;
+  return Math.max(0, getEffectiveContextWindowSize({ contextWindow, maxOutputTokens }) - buffer);
 }
 
 /**
