@@ -812,6 +812,13 @@ html[data-document-hidden] *::after {
   --color-card: #f4f8ff;
   --color-popover: #f4f8ff;
   --color-input: #f4f8ff;
+  --color-menu: var(--color-popover);
+  --color-menu-hover: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-popover-header: color-mix(in oklab, var(--color-popover) 94%, var(--color-neutral-950));
+  --color-tooltip: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-tooltip-tag: color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950));
+  --color-card-selected: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-input-focused: var(--color-input);
 }
 
 .palette-ocean.dark {
@@ -828,6 +835,13 @@ html[data-document-hidden] *::after {
   --color-card: #2c3037;
   --color-popover: #2c3037;
   --color-input: #2c3037;
+  --color-menu: var(--color-popover);
+  --color-menu-hover: color-mix(in oklab, var(--color-popover) 92%, var(--color-white));
+  --color-popover-header: color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950));
+  --color-tooltip: color-mix(in oklab, var(--color-popover) 85%, var(--color-neutral-950));
+  --color-tooltip-tag: color-mix(in oklab, var(--color-popover) 94%, var(--color-white));
+  --color-card-selected: color-mix(in oklab, var(--color-popover) 92%, var(--color-white));
+  --color-input-focused: var(--color-input);
 }
 
 .palette-forest {
@@ -845,6 +859,13 @@ html[data-document-hidden] *::after {
   --color-card: #f4f9f5;
   --color-popover: #f4f9f5;
   --color-input: #f4f9f5;
+  --color-menu: var(--color-popover);
+  --color-menu-hover: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-popover-header: color-mix(in oklab, var(--color-popover) 94%, var(--color-neutral-950));
+  --color-tooltip: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-tooltip-tag: color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950));
+  --color-card-selected: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-input-focused: var(--color-input);
 }
 
 .palette-forest.dark {
@@ -861,6 +882,13 @@ html[data-document-hidden] *::after {
   --color-card: #2c342e;
   --color-popover: #2c342e;
   --color-input: #2c342e;
+  --color-menu: var(--color-popover);
+  --color-menu-hover: color-mix(in oklab, var(--color-popover) 92%, var(--color-white));
+  --color-popover-header: color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950));
+  --color-tooltip: color-mix(in oklab, var(--color-popover) 85%, var(--color-neutral-950));
+  --color-tooltip-tag: color-mix(in oklab, var(--color-popover) 94%, var(--color-white));
+  --color-card-selected: color-mix(in oklab, var(--color-popover) 92%, var(--color-white));
+  --color-input-focused: var(--color-input);
 }
 
 .palette-ember {
@@ -878,6 +906,13 @@ html[data-document-hidden] *::after {
   --color-card: #fdf6f3;
   --color-popover: #fdf6f3;
   --color-input: #fdf6f3;
+  --color-menu: var(--color-popover);
+  --color-menu-hover: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-popover-header: color-mix(in oklab, var(--color-popover) 94%, var(--color-neutral-950));
+  --color-tooltip: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-tooltip-tag: color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950));
+  --color-card-selected: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-input-focused: var(--color-input);
 }
 
 .palette-ember.dark {
@@ -894,6 +929,13 @@ html[data-document-hidden] *::after {
   --color-card: #372f2a;
   --color-popover: #372f2a;
   --color-input: #372f2a;
+  --color-menu: var(--color-popover);
+  --color-menu-hover: color-mix(in oklab, var(--color-popover) 92%, var(--color-white));
+  --color-popover-header: color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950));
+  --color-tooltip: color-mix(in oklab, var(--color-popover) 85%, var(--color-neutral-950));
+  --color-tooltip-tag: color-mix(in oklab, var(--color-popover) 94%, var(--color-white));
+  --color-card-selected: color-mix(in oklab, var(--color-popover) 92%, var(--color-white));
+  --color-input-focused: var(--color-input);
 }
 
 .palette-violet {
@@ -911,6 +953,13 @@ html[data-document-hidden] *::after {
   --color-card: #f7f6ff;
   --color-popover: #f7f6ff;
   --color-input: #f7f6ff;
+  --color-menu: var(--color-popover);
+  --color-menu-hover: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-popover-header: color-mix(in oklab, var(--color-popover) 94%, var(--color-neutral-950));
+  --color-tooltip: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-tooltip-tag: color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950));
+  --color-card-selected: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-input-focused: var(--color-input);
 }
 
 .palette-violet.dark {
@@ -927,6 +976,13 @@ html[data-document-hidden] *::after {
   --color-card: #302f37;
   --color-popover: #302f37;
   --color-input: #302f37;
+  --color-menu: var(--color-popover);
+  --color-menu-hover: color-mix(in oklab, var(--color-popover) 92%, var(--color-white));
+  --color-popover-header: color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950));
+  --color-tooltip: color-mix(in oklab, var(--color-popover) 85%, var(--color-neutral-950));
+  --color-tooltip-tag: color-mix(in oklab, var(--color-popover) 94%, var(--color-white));
+  --color-card-selected: color-mix(in oklab, var(--color-popover) 92%, var(--color-white));
+  --color-input-focused: var(--color-input);
 }
 
 .palette-slate {
@@ -944,6 +1000,13 @@ html[data-document-hidden] *::after {
   --color-card: #f5f6f7;
   --color-popover: #f5f6f7;
   --color-input: #f5f6f7;
+  --color-menu: var(--color-popover);
+  --color-menu-hover: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-popover-header: color-mix(in oklab, var(--color-popover) 94%, var(--color-neutral-950));
+  --color-tooltip: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-tooltip-tag: color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950));
+  --color-card-selected: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-input-focused: var(--color-input);
 }
 
 .palette-slate.dark {
@@ -960,6 +1023,13 @@ html[data-document-hidden] *::after {
   --color-card: #2f3031;
   --color-popover: #2f3031;
   --color-input: #2f3031;
+  --color-menu: var(--color-popover);
+  --color-menu-hover: color-mix(in oklab, var(--color-popover) 92%, var(--color-white));
+  --color-popover-header: color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950));
+  --color-tooltip: color-mix(in oklab, var(--color-popover) 85%, var(--color-neutral-950));
+  --color-tooltip-tag: color-mix(in oklab, var(--color-popover) 94%, var(--color-white));
+  --color-card-selected: color-mix(in oklab, var(--color-popover) 92%, var(--color-white));
+  --color-input-focused: var(--color-input);
 }
 
 .palette-rose {
@@ -977,6 +1047,13 @@ html[data-document-hidden] *::after {
   --color-card: #fef5f6;
   --color-popover: #fef5f6;
   --color-input: #fef5f6;
+  --color-menu: var(--color-popover);
+  --color-menu-hover: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-popover-header: color-mix(in oklab, var(--color-popover) 94%, var(--color-neutral-950));
+  --color-tooltip: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-tooltip-tag: color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950));
+  --color-card-selected: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-input-focused: var(--color-input);
 }
 
 .palette-rose.dark {
@@ -993,6 +1070,13 @@ html[data-document-hidden] *::after {
   --color-card: #372d31;
   --color-popover: #372d31;
   --color-input: #372d31;
+  --color-menu: var(--color-popover);
+  --color-menu-hover: color-mix(in oklab, var(--color-popover) 92%, var(--color-white));
+  --color-popover-header: color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950));
+  --color-tooltip: color-mix(in oklab, var(--color-popover) 85%, var(--color-neutral-950));
+  --color-tooltip-tag: color-mix(in oklab, var(--color-popover) 94%, var(--color-white));
+  --color-card-selected: color-mix(in oklab, var(--color-popover) 92%, var(--color-white));
+  --color-input-focused: var(--color-input);
 }
 
 .palette-sand {
@@ -1010,6 +1094,13 @@ html[data-document-hidden] *::after {
   --color-card: #fbf7f3;
   --color-popover: #fbf7f3;
   --color-input: #fbf7f3;
+  --color-menu: var(--color-popover);
+  --color-menu-hover: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-popover-header: color-mix(in oklab, var(--color-popover) 94%, var(--color-neutral-950));
+  --color-tooltip: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-tooltip-tag: color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950));
+  --color-card-selected: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-input-focused: var(--color-input);
 }
 
 .palette-sand.dark {
@@ -1026,6 +1117,13 @@ html[data-document-hidden] *::after {
   --color-card: #36332a;
   --color-popover: #36332a;
   --color-input: #36332a;
+  --color-menu: var(--color-popover);
+  --color-menu-hover: color-mix(in oklab, var(--color-popover) 92%, var(--color-white));
+  --color-popover-header: color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950));
+  --color-tooltip: color-mix(in oklab, var(--color-popover) 85%, var(--color-neutral-950));
+  --color-tooltip-tag: color-mix(in oklab, var(--color-popover) 94%, var(--color-white));
+  --color-card-selected: color-mix(in oklab, var(--color-popover) 92%, var(--color-white));
+  --color-input-focused: var(--color-input);
 }
 
 .palette-mint {
@@ -1043,6 +1141,13 @@ html[data-document-hidden] *::after {
   --color-card: #f4f8f7;
   --color-popover: #f4f8f7;
   --color-input: #f4f8f7;
+  --color-menu: var(--color-popover);
+  --color-menu-hover: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-popover-header: color-mix(in oklab, var(--color-popover) 94%, var(--color-neutral-950));
+  --color-tooltip: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-tooltip-tag: color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950));
+  --color-card-selected: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-input-focused: var(--color-input);
 }
 
 .palette-mint.dark {
@@ -1059,6 +1164,13 @@ html[data-document-hidden] *::after {
   --color-card: #2b3432;
   --color-popover: #2b3432;
   --color-input: #2b3432;
+  --color-menu: var(--color-popover);
+  --color-menu-hover: color-mix(in oklab, var(--color-popover) 92%, var(--color-white));
+  --color-popover-header: color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950));
+  --color-tooltip: color-mix(in oklab, var(--color-popover) 85%, var(--color-neutral-950));
+  --color-tooltip-tag: color-mix(in oklab, var(--color-popover) 94%, var(--color-white));
+  --color-card-selected: color-mix(in oklab, var(--color-popover) 92%, var(--color-white));
+  --color-input-focused: var(--color-input);
 }
 
 /*

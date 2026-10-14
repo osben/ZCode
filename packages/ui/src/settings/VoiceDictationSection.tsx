@@ -20,7 +20,7 @@ import { useVoiceDictationRuntimeState } from "@/hooks/useVoiceDictationRuntimeS
 import { useSettings } from "@/hooks/useSettingService.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
-import { useShortcutCommandLabel } from "@/shortcuts/useShortcutBindings.js";
+import { useShortcutCommandLabelParts } from "@/shortcuts/useShortcutBindings.js";
 import { listAudioInputDevices, VoiceDictationRecorder } from "@/lib/voiceDictationRecorder.js";
 import { playVoiceDictationFeedbackSound } from "@/lib/voiceDictationFeedbackSound.js";
 import { SettingsBadge, SettingsGroupCard, SettingsRow } from "@/settings/SettingsPageParts.js";
@@ -79,7 +79,7 @@ function DesktopVoiceDictationSection() {
   const { voiceDictationService } = useServices();
   const { runtimeState } = useVoiceDictationRuntimeState();
   const { settings, update } = useSettings();
-  const shortcutLabel = useShortcutCommandLabel("voiceDictation");
+  const shortcutParts = useShortcutCommandLabelParts("voiceDictation");
   const voice: VoiceDictationSettings = settings?.voiceDictation ?? {};
   // patchVoice is held for minutes by delayed callbacks such as download completion; merging must be
   // based on the latest settings, otherwise a microphone / language / push-to-talk change made during a
@@ -469,9 +469,11 @@ function DesktopVoiceDictationSection() {
             label={intl.formatMessage({ id: "voiceDictation.shortcut.title" })}
             description={intl.formatMessage({ id: "voiceDictation.shortcut.description" })}
             control={
-              shortcutLabel ? (
+              shortcutParts.length > 0 ? (
                 <KbdGroup>
-                  <Kbd>{shortcutLabel}</Kbd>
+                  {shortcutParts.map((part, partIndex) => (
+                    <Kbd key={`${part}-${partIndex}`}>{part}</Kbd>
+                  ))}
                 </KbdGroup>
               ) : (
                 <span className="text-ui-base text-foreground-subtle">
