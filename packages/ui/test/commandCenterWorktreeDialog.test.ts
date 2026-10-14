@@ -75,12 +75,14 @@ vi.mock("@/hooks/useServices.js", () => ({
 
 const createWorktree = vi.fn();
 const listWorktrees = vi.fn();
+const resolveWorktreePathIdentities = vi.fn(async ({ paths }: { paths: string[] }) => paths);
 const getLocalBranches = vi.fn();
 const getWorkspaceRepositoryInfo = vi.fn();
 // References must stay stable: the setup page's data-fetch effect depends on gitService; a fresh object per render would cause an infinite refetch/re-render loop.
 const stableGitService = {
   createWorktree,
   listWorktrees,
+  resolveWorktreePathIdentities,
   getLocalBranches,
   getWorkspaceRepositoryInfo,
 };
