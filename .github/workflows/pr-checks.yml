@@ -120,12 +120,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # pnpm skips dependency postinstalls when a warm store cache is restored, which leaves
-      # node_modules/electron without its binary ("Electron failed to install correctly" in
-      # desktop tests). Re-run electron's installer only when path.txt is missing.
+      # pnpm skips dependency postinstalls when a warm store cache is restored. Check the
+      # executable itself because path.txt can remain even when the Electron binary is missing.
       - name: Ensure Electron binary
         run: |
-          test -f node_modules/electron/path.txt || (cd node_modules/electron && node install.js)
+          if ! node -e 'const fs = require("node:fs"); fs.accessSync(require("electron"), fs.constants.X_OK)' 2>/dev/null; then
+            (cd node_modules/electron && node install.js)
+          fi
+          node -e 'const fs = require("node:fs"); fs.accessSync(require("electron"), fs.constants.X_OK)'
 
       - name: Build workspace packages needed by unit tests
         # storage-preparation 协议用例经 bootstrap 源码引用 @zcode/adapters/storage 的 dist 导出，
