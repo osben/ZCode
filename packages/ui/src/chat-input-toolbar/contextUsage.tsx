@@ -901,6 +901,12 @@ export function ChatContextUsage({
       : intl.formatMessage({
           id: "settings.modelProvider.startPlan.balance.title",
         }));
+  const triggerAccessibleLabel =
+    contextTone === "warning"
+      ? `${triggerLabel}. ${intl.formatMessage({ id: "chat.contextUsage.tone.warning" })}`
+      : contextTone === "critical"
+        ? `${triggerLabel}. ${intl.formatMessage({ id: "chat.contextUsage.tone.critical" })}`
+        : triggerLabel;
   const contextUsedTokens = renderableTaskUsage?.used ?? 0;
   const contextMaxTokens = renderableTaskUsage?.size ?? 1;
 
@@ -939,7 +945,7 @@ export function ChatContextUsage({
         {/* Bugfix: The span hosts ControlHintTooltip’s asChild anchor while the inner ContextTrigger remains the HoverCard trigger, avoiding two Radix overlays attaching refs to the same DOM node. Manual-redemption processing is shown by the “Reset” button inside the popover, not as a spinner on the trigger. */}
         <span className="inline-flex shrink-0">
           <ContextTrigger
-            aria-label={triggerLabel}
+            aria-label={triggerAccessibleLabel}
             className={cn(
               "text-foreground-subtle",
               resolveContextTriggerToneClassName(contextTone, opportunityTriggerTone),

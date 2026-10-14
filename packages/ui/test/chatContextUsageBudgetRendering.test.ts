@@ -31,12 +31,15 @@ vi.mock("@/chat-input-toolbar/contextQuotaResetOpportunityReminder.js", async (i
 import { ChatContextUsage } from "@/chat-input-toolbar/contextUsage.js";
 import { ZCodeIntlProvider, useZCodeIntl } from "@/i18n/IntlProvider.js";
 
-function renderContextUsage(taskUsage: {
-  used: number;
-  size: number;
-  autoCompactThresholdTokens: number | null;
-  microcompactThresholdTokens: number | null;
-}): string {
+function renderContextUsage(
+  taskUsage: {
+    used: number;
+    size: number;
+    autoCompactThresholdTokens: number | null;
+    microcompactThresholdTokens: number | null;
+  },
+  locale: "en-US" | "uk-UA" | "zh-CN" = "en-US",
+): string {
   function ContextUsageHarness() {
     const { intl, locale } = useZCodeIntl();
     return createElement(ChatContextUsage, {
@@ -48,11 +51,7 @@ function renderContextUsage(taskUsage: {
   }
 
   return renderToStaticMarkup(
-    createElement(
-      ZCodeIntlProvider,
-      { initialLocale: "en-US" },
-      createElement(ContextUsageHarness),
-    ),
+    createElement(ZCodeIntlProvider, { initialLocale: locale }, createElement(ContextUsageHarness)),
   );
 }
 
@@ -68,6 +67,7 @@ describe("ChatContextUsage runtime compaction budget rendering", () => {
     expect(markup).toContain('data-usage-tone="warning"');
     expect(markup).toContain("text-warning");
     expect(markup).toContain("≈166K (83%)");
+    expect(markup).toContain("Warning: microcompact is clearing older tool results.");
   });
 
   it("renders critical at auto-compact and stays normal when auto-compact is disabled", () => {
@@ -80,6 +80,7 @@ describe("ChatContextUsage runtime compaction budget rendering", () => {
     expect(criticalMarkup).toContain('data-usage-tone="critical"');
     expect(criticalMarkup).toContain("text-destructive");
     expect(criticalMarkup).toContain("≈166K (83%)");
+    expect(criticalMarkup).toContain("Critical: auto-compact will start on the next model step.");
 
     const disabledMarkup = renderContextUsage({
       used: 180_000,
@@ -91,6 +92,31 @@ describe("ChatContextUsage runtime compaction budget rendering", () => {
     expect(disabledMarkup).not.toContain("text-warning");
     expect(disabledMarkup).not.toContain("text-destructive");
     expect(disabledMarkup).not.toContain("≈166K");
+  });
+
+  it("localizes the accessible budget status", () => {
+    expect(
+      renderContextUsage(
+        {
+          used: 149_400,
+          size: 200_000,
+          autoCompactThresholdTokens: 166_000,
+          microcompactThresholdTokens: 149_400,
+        },
+        "uk-UA",
+      ),
+    ).toContain("Попередження: мікрокомпактування очищає старі результати інструментів.");
+    expect(
+      renderContextUsage(
+        {
+          used: 166_000,
+          size: 200_000,
+          autoCompactThresholdTokens: 166_000,
+          microcompactThresholdTokens: 149_400,
+        },
+        "zh-CN",
+      ),
+    ).toContain("严重：下一轮模型调用将触发自动压缩。");
   });
 
   it("keeps a quota opportunity tone ahead of the steady context tone", () => {
@@ -107,5 +133,6 @@ describe("ChatContextUsage runtime compaction budget rendering", () => {
     expect(trigger).toContain('data-usage-tone="warning"');
     expect(trigger).toContain("text-success");
     expect(trigger).not.toContain("text-warning");
+    expect(trigger).toContain("Warning: microcompact is clearing older tool results.");
   });
 });

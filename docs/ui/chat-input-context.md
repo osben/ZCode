@@ -77,6 +77,7 @@ Threshold math (defaults, mirroring the runtime policy):
 - `microcompactThreshold = max(0, min(floor(autoCompactThreshold × 0.9), autoCompactThreshold − 2K))` — the token count at which old tool results start being cleared, matching `buildDefaultMicrocompactThreshold` in the runtime.
 - The runtime resolves `autoCompactThreshold` from the selected model, context-budget strategy, model output limit, and effective compact configuration. Main-turn completion events carry it into `usage.contextWindow.autoCompactThresholdTokens`; `null` means auto-compact is disabled.
 - Main-turn completion events also carry `usage.contextWindow.microcompactThresholdTokens`. It is the configured `microcompact.thresholdTokens`, or the default formula above when microcompact is enabled without an override; `null` means microcompact is disabled or unsupported. The UI uses these authoritative thresholds when present and falls back to the default estimate only for legacy events where each field is absent.
+- V4 usage snapshots preserve threshold field absence from legacy events and recovery seeds. Explicit `null` remains authoritative and means the corresponding compaction policy is disabled or unsupported.
 
 UI tone mapping (`resolveContextBudgetTone`):
 
@@ -95,6 +96,8 @@ Rendering rules:
   row.
 - The trigger carries `data-usage-tone={tone}`; the hidden `TID_V4_MODEL_CONFIG` anchor adds the
   same attribute for E2E assertions.
+- The trigger's accessible name appends a localized warning or critical status whenever the
+  context budget tone is active. Quota-reset tones retain their visual priority.
 - Legacy events without authoritative thresholds use the 21K preflight reserve estimate; current
   main-turn events use the runtime thresholds directly.
 

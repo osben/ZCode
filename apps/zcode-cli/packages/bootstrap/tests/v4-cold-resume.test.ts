@@ -236,7 +236,6 @@ describe("v4 冷恢复（gateway 单元）", () => {
             contextWindow: {
               usedTokens: 29908,
               maxTokens: 1_000_000,
-              autoCompactThresholdTokens: null,
             },
           },
         };
@@ -269,6 +268,12 @@ describe("v4 冷恢复（gateway 单元）", () => {
         usedTokens: 730,
         maxTokens: 500_000,
       });
+      expect(result.initialFrame.payload.snapshot.usage.contextWindow).not.toHaveProperty(
+        "autoCompactThresholdTokens",
+      );
+      expect(result.initialFrame.payload.snapshot.usage.contextWindow).not.toHaveProperty(
+        "microcompactThresholdTokens",
+      );
       expect(getSessionUsageSeed).not.toHaveBeenCalled();
     } finally {
       release.resolve();

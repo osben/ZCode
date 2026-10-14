@@ -267,6 +267,17 @@ interface ContextWindowProjectionState {
   usedTokens: number;
 }
 
+function withoutContextBudgetThresholds(
+  contextWindow: NonNullable<SessionUsageState["contextWindow"]>,
+): Omit<NonNullable<SessionUsageState["contextWindow"]>, "autoCompactThresholdTokens" | "microcompactThresholdTokens"> {
+  const {
+    autoCompactThresholdTokens: _autoCompactThresholdTokens,
+    microcompactThresholdTokens: _microcompactThresholdTokens,
+    ...remaining
+  } = contextWindow;
+  return remaining;
+}
+
 export interface SessionSubagentsSeed {
   revision: number;
   childSessionIds: string[];
@@ -4955,18 +4966,14 @@ export class ProductProjection {
                       ? null
                       : previousContextWindow
                         ? {
-                            ...previousContextWindow,
+                            ...withoutContextBudgetThresholds(previousContextWindow),
                             ...(contextWindow !== undefined ? { maxTokens: contextWindow } : {}),
-                            autoCompactThresholdTokens: null,
-                            microcompactThresholdTokens: null,
                           }
                         : contextWindow === undefined
                           ? null
                           : {
                               usedTokens: this.contextWindowState.usedTokens,
                               maxTokens: contextWindow,
-                              autoCompactThresholdTokens: null,
-                              microcompactThresholdTokens: null,
                             },
                 },
               }
@@ -5045,6 +5052,7 @@ export class ProductProjection {
     this.contextWindowState.usedTokens = usedTokens;
     const maxTokens = payload.contextWindow ?? this.contextWindowState.maxTokens;
     const cumulative = this.snapshot.usage.cumulative;
+    const previousContextWindow = this.snapshot.usage.contextWindow;
     deltas.push({
       op: "state.updated",
       patch: {
@@ -5058,14 +5066,22 @@ export class ProductProjection {
               : {
                   usedTokens,
                   maxTokens,
-                  autoCompactThresholdTokens:
-                    payload.autoCompactThresholdTokens !== undefined
-                      ? payload.autoCompactThresholdTokens
-                      : (this.snapshot.usage.contextWindow?.autoCompactThresholdTokens ?? null),
-                  microcompactThresholdTokens:
-                    payload.microcompactThresholdTokens !== undefined
-                      ? payload.microcompactThresholdTokens
-                      : (this.snapshot.usage.contextWindow?.microcompactThresholdTokens ?? null),
+                  ...(payload.autoCompactThresholdTokens !== undefined
+                    ? { autoCompactThresholdTokens: payload.autoCompactThresholdTokens }
+                    : previousContextWindow?.autoCompactThresholdTokens !== undefined
+                      ? {
+                          autoCompactThresholdTokens:
+                            previousContextWindow.autoCompactThresholdTokens,
+                        }
+                      : {}),
+                  ...(payload.microcompactThresholdTokens !== undefined
+                    ? { microcompactThresholdTokens: payload.microcompactThresholdTokens }
+                    : previousContextWindow?.microcompactThresholdTokens !== undefined
+                      ? {
+                          microcompactThresholdTokens:
+                            previousContextWindow.microcompactThresholdTokens,
+                        }
+                      : {}),
                   ...(payload.cacheHit ? { cache: payload.cacheHit } : {}),
                   ...(payload.contextUsageBreakdown && payload.contextUsageBreakdown.length > 0
                     ? { breakdown: payload.contextUsageBreakdown }
@@ -5214,10 +5230,18 @@ export class ProductProjection {
                 : {
                     usedTokens: tokensAfter,
                     maxTokens,
-                    autoCompactThresholdTokens:
-                      this.snapshot.usage.contextWindow?.autoCompactThresholdTokens ?? null,
-                    microcompactThresholdTokens:
-                      this.snapshot.usage.contextWindow?.microcompactThresholdTokens ?? null,
+                    ...(this.snapshot.usage.contextWindow?.autoCompactThresholdTokens !== undefined
+                      ? {
+                          autoCompactThresholdTokens:
+                            this.snapshot.usage.contextWindow.autoCompactThresholdTokens,
+                        }
+                      : {}),
+                    ...(this.snapshot.usage.contextWindow?.microcompactThresholdTokens !== undefined
+                      ? {
+                          microcompactThresholdTokens:
+                            this.snapshot.usage.contextWindow.microcompactThresholdTokens,
+                        }
+                      : {}),
                   },
           },
         },

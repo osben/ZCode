@@ -1077,12 +1077,12 @@ describe("ProductProjection 黄金测试（L1）", () => {
     expect(snapshot.control.sessionEnded).toBe(true);
     expect(snapshot.control.canStop).toBe(false);
     expect(snapshot.inputRouting.mode).toBe("startNow");
-    expect(snapshot.usage.contextWindow).toEqual({
+    expect(snapshot.usage.contextWindow).toMatchObject({
       usedTokens: 150,
       maxTokens: 200_000,
-      autoCompactThresholdTokens: null,
-      microcompactThresholdTokens: null,
     });
+    expect(snapshot.usage.contextWindow).not.toHaveProperty("autoCompactThresholdTokens");
+    expect(snapshot.usage.contextWindow).not.toHaveProperty("microcompactThresholdTokens");
     expect(snapshot.usage.cumulative.inputTokens).toBe(120);
     expect(snapshot.seq).toBe(log.events.length);
   });
@@ -7076,12 +7076,13 @@ describe("fork / modelChange marker", () => {
 
     // Fix goal: the model switch event is itself the authoritative commit point of the runtime's
     // new capability; do not wait for the next send to finish.
-    expect(projection.getSnapshot().usage.contextWindow).toMatchObject({
+    const switchedContextWindow = projection.getSnapshot().usage.contextWindow;
+    expect(switchedContextWindow).toMatchObject({
       usedTokens: 150,
       maxTokens: 1_000_000,
-      autoCompactThresholdTokens: null,
-      microcompactThresholdTokens: null,
     });
+    expect(switchedContextWindow).not.toHaveProperty("autoCompactThresholdTokens");
+    expect(switchedContextWindow).not.toHaveProperty("microcompactThresholdTokens");
 
     projection.applyEvent(
       log.push(
@@ -7097,9 +7098,28 @@ describe("fork / modelChange marker", () => {
     );
     // When later old adapters do not carry contextWindow, they must also fall back to the new
     // window right after the switch.
-    expect(projection.getSnapshot().usage.contextWindow).toMatchObject({
+    const legacyCompleteContextWindow = projection.getSnapshot().usage.contextWindow;
+    expect(legacyCompleteContextWindow).toMatchObject({
       usedTokens: 200,
       maxTokens: 1_000_000,
+    });
+    expect(legacyCompleteContextWindow).not.toHaveProperty("autoCompactThresholdTokens");
+    expect(legacyCompleteContextWindow).not.toHaveProperty("microcompactThresholdTokens");
+
+    projection.applyEvent(
+      log.push(SessionEventType.ModelComplete, {
+        content: "disabled",
+        stopReason: "end_turn",
+        querySource: "main_turn",
+        contextWindow: 1_000_000,
+        autoCompactThresholdTokens: null,
+        microcompactThresholdTokens: null,
+        usage: { inputTokens: 160, outputTokens: 40 },
+      }),
+    );
+    expect(projection.getSnapshot().usage.contextWindow).toMatchObject({
+      autoCompactThresholdTokens: null,
+      microcompactThresholdTokens: null,
     });
   });
 

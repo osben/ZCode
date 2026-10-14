@@ -4887,6 +4887,10 @@ const ukUA: Record<string, string> = {
   "chat.reasoning.durationFewSeconds": "кілька секунд",
   "chat.reasoning.durationSeconds": "{seconds} с",
   "chat.contextUsage": "Використано контексту: {used} з {total}",
+  "chat.contextUsage.tone.warning":
+    "Попередження: мікрокомпактування очищає старі результати інструментів.",
+  "chat.contextUsage.tone.critical":
+    "Критично: автокомпакція почнеться на наступному кроці моделі.",
   "chat.contextUsage.title": "Контекстне вікно",
   "chat.contextUsageDescription":
     "Текст промпту, виклики інструментів і відповіді спільно використовують це контекстне вікно.",

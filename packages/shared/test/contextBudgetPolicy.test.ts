@@ -4,6 +4,32 @@ import {
   getMicrocompactThresholdTokens,
   resolveContextBudgetTone,
 } from "../src/contextBudgetPolicy.js";
+import { sessionUsageStateSchema } from "../src/zcode-protocol-v4/snapshot.js";
+
+describe("V4 session usage threshold compatibility", () => {
+  it("preserves absent legacy thresholds separately from explicit disabled thresholds", () => {
+    const legacy = sessionUsageStateSchema.parse({
+      contextWindow: { usedTokens: 1_000, maxTokens: 200_000 },
+      cumulative: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+    });
+    expect(legacy.contextWindow).not.toHaveProperty("autoCompactThresholdTokens");
+    expect(legacy.contextWindow).not.toHaveProperty("microcompactThresholdTokens");
+
+    const disabled = sessionUsageStateSchema.parse({
+      contextWindow: {
+        usedTokens: 1_000,
+        maxTokens: 200_000,
+        autoCompactThresholdTokens: null,
+        microcompactThresholdTokens: null,
+      },
+      cumulative: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+    });
+    expect(disabled.contextWindow).toMatchObject({
+      autoCompactThresholdTokens: null,
+      microcompactThresholdTokens: null,
+    });
+  });
+});
 
 describe("context budget policy thresholds", () => {
   it("matches the runtime compaction math for a 200K window without max output", () => {

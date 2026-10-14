@@ -136,7 +136,6 @@ function sessionUsageSeedFromRuntimeContextUsage(
     contextWindow: {
       usedTokens: contextUsage.used,
       maxTokens: contextWindowOverride ?? null,
-      autoCompactThresholdTokens: null,
       ...(contextUsage.cache ? { cache: contextUsage.cache } : {}),
       ...(contextUsage.breakdown ? { breakdown: contextUsage.breakdown } : {}),
     },
