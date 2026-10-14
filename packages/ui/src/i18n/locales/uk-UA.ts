@@ -573,6 +573,9 @@ const ukUA: Record<string, string> = {
   "commandCenter.worktree.existingWorktrees": "Наявні worktree",
   "commandCenter.worktree.existingWorktrees.empty": "У цьому репозиторії немає інших worktree.",
   "commandCenter.worktree.existingWorktrees.openBadge": "відкрито",
+  "commandCenter.worktree.protection.checking": "Перевіряємо, які worktree використовуються…",
+  "commandCenter.worktree.protection.unavailable":
+    "Не вдалося перевірити активні worktree; видалення вимкнено.",
   "commandCenter.worktree.remove": "Видалити worktree",
   "commandCenter.worktree.remove.confirmDirty": "Є зміни — усе одно видалити?",
   "commandCenter.worktree.prune": "Очистити застарілі",

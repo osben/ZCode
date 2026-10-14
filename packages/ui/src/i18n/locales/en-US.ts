@@ -678,6 +678,9 @@ const enUS: Record<string, string> = {
   "commandCenter.worktree.existingWorktrees": "Existing worktrees",
   "commandCenter.worktree.existingWorktrees.empty": "No other worktrees in this repository.",
   "commandCenter.worktree.existingWorktrees.openBadge": "open",
+  "commandCenter.worktree.protection.checking": "Checking which worktrees are in use…",
+  "commandCenter.worktree.protection.unavailable":
+    "Could not verify active worktrees; removal is disabled.",
   "commandCenter.worktree.remove": "Remove worktree",
   "commandCenter.worktree.remove.confirmDirty": "Has changes — remove anyway?",
   "commandCenter.worktree.prune": "Prune stale",
@@ -7041,9 +7044,9 @@ const enUS: Record<string, string> = {
   "forms.validation.fileExists": "File {fileName} already exists",
   // ---- Scheduled tasks / Automations ----
   "taskList.cronTaskLabel": "Scheduled task",
+  "taskList.offPeakTaskLabel": "Idle-time task",
   "taskList.worktreeTaskLabel": "Worktree session · {branch}",
   "taskList.worktreeTaskLabelNoBranch": "Worktree session",
-  "taskList.offPeakTaskLabel": "Idle-time task",
   "taskList.workflowRun.ariaLabel": "Workflow run {name}: {status}",
   "taskList.workflowRun.moreRuns": "+{count} more",
   "taskList.workflowRun.moreStations": "+{count}",

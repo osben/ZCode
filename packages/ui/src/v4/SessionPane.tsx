@@ -3591,6 +3591,16 @@ export function SessionPane({
           throw new Error("createSession 缺少 sessionId");
         }
         const newSessionId = createResult.sessionId;
+        const sessionAttachments = executionWorktree
+          ? readyAttachments.length > 0
+            ? await options?.reuploadAttachmentsForSession?.(newSessionId)
+            : []
+          : readyAttachments;
+        if (executionWorktree && readyAttachments.length > 0 && !sessionAttachments) {
+          throw new Error(
+            "Execution-worktree attachments could not be transferred to the new session",
+          );
+        }
         const highspeed = await prepareHighspeedSendContext(
           newSessionId,
           prepareHighspeedTurn,
@@ -3602,7 +3612,7 @@ export function SessionPane({
             text: effectiveText,
             ...submission,
             ...(options?.requestedDelivery ? { requestedDelivery: options.requestedDelivery } : {}),
-            ...(readyAttachments.length > 0 ? { attachments: readyAttachments } : {}),
+            ...(sessionAttachments?.length ? { attachments: sessionAttachments } : {}),
             ...(sharedContextRefs?.length ? { context_refs: sharedContextRefs } : {}),
             ...(options?.source ? { source: options.source } : {}),
             ...highspeed.override,

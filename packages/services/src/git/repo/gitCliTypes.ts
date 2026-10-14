@@ -86,6 +86,7 @@ export interface GitCliRepo {
   getIgnoredPaths(workspacePath: string, paths: string[]): Promise<string[]>;
   listLocalBranches(workspacePath: string): Promise<GitLocalBranchListResult>;
   listWorktrees(workspacePath: string): Promise<GitWorktreeListResult>;
+  resolveWorktreePathIdentities(paths: string[]): Promise<string[]>;
   createWorktree(
     workspacePath: string,
     branchName: string,

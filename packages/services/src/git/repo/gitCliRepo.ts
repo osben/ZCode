@@ -437,7 +437,27 @@ function toComparableWorktreePath(path: string): string {
   while (end > 0 && normalized[end - 1] === "/") {
     end -= 1;
   }
-  return end > 0 ? normalized.slice(0, end) : "/";
+  const comparable = end > 0 ? normalized.slice(0, end) : "/";
+  return process.platform === "win32" ? comparable.toLocaleLowerCase("en-US") : comparable;
+}
+
+async function resolveComparableWorktreePath(path: string): Promise<string> {
+  if (!isAbsolute(path)) {
+    throw new Error("Worktree path identity requires an absolute path");
+  }
+  const absolutePath = resolve(path);
+  try {
+    return toComparableWorktreePath(await realpath(absolutePath));
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error.code === "ENOENT" || error.code === "ENOTDIR")
+    ) {
+      return toComparableWorktreePath(absolutePath);
+    }
+    throw error;
+  }
 }
 
 function parseBranchRefRecords(stdout: string, currentBranchName: string | null): GitLocalBranch[] {
@@ -1150,6 +1170,10 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
           isCurrent: toComparableWorktreePath(entry.path) === currentWorktreePath,
         })),
       };
+    },
+
+    async resolveWorktreePathIdentities(paths: string[]): Promise<string[]> {
+      return await Promise.all(paths.map(resolveComparableWorktreePath));
     },
 
     async createWorktree(

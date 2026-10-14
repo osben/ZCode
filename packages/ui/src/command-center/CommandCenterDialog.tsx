@@ -101,6 +101,7 @@ import {
   type WorktreeTaskDestination,
   type WorktreeTaskProject,
 } from "@/command-center/worktreeTaskFlow.js";
+import { isWorktreeProtected } from "@/command-center/worktreeProtection.js";
 import { generateWorktreeBranchName } from "@/command-center/worktreeNameGenerator.js";
 import { executeWorktreeCreation } from "@/command-center/worktreeCreation.js";
 
@@ -730,6 +731,115 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
     expanded: true,
     collapsedLimit: 0,
   });
+  const localOpenWorktreePaths = useMemo(
+    () =>
+      effectiveWorkspaceTabs
+        .filter((tab) => !tab.remoteSessionId && !tab.remoteTarget)
+        .map((tab) => tab.workspacePath),
+    [effectiveWorkspaceTabs],
+  );
+  const activeSessionWorktreePaths = useMemo(
+    () =>
+      worktreeProtectionTaskList.items.flatMap((task) =>
+        task.executionWorktree?.path ? [task.executionWorktree.path] : [],
+      ),
+    [worktreeProtectionTaskList.items],
+  );
+  const activeSessionWorktreeBranches = useMemo(
+    () =>
+      new Set(
+        worktreeProtectionTaskList.items.flatMap((task) =>
+          task.executionWorktree?.branchName ? [task.executionWorktree.branchName] : [],
+        ),
+      ),
+    [worktreeProtectionTaskList.items],
+  );
+  const listedWorktreePaths = useMemo(
+    () => worktreeListResult?.worktrees.map((entry) => entry.path) ?? [],
+    [worktreeListResult],
+  );
+  const worktreeProtectionPaths = useMemo(
+    () => [
+      ...new Set([
+        ...localOpenWorktreePaths,
+        ...activeSessionWorktreePaths,
+        ...listedWorktreePaths,
+      ]),
+    ],
+    [activeSessionWorktreePaths, listedWorktreePaths, localOpenWorktreePaths],
+  );
+  const worktreeProtectionPathKey = JSON.stringify(worktreeProtectionPaths);
+  const [resolvedWorktreePathIdentities, setResolvedWorktreePathIdentities] = useState<{
+    inputKey: string;
+    identities: string[] | null;
+  } | null>(null);
+  useEffect(() => {
+    if (!open || !worktreeSetupPageActive) return;
+    let current = true;
+    if (worktreeProtectionPaths.length === 0) {
+      setResolvedWorktreePathIdentities({ inputKey: worktreeProtectionPathKey, identities: [] });
+      return () => {
+        current = false;
+      };
+    }
+    const paths = JSON.parse(worktreeProtectionPathKey) as string[];
+    void baseServices.gitService
+      .resolveWorktreePathIdentities({ paths })
+      .then((identities) => {
+        if (current)
+          setResolvedWorktreePathIdentities({ inputKey: worktreeProtectionPathKey, identities });
+      })
+      .catch((error: unknown) => {
+        logger.warn("[CommandCenter] worktree protection path resolution failed", error);
+        if (current)
+          setResolvedWorktreePathIdentities({
+            inputKey: worktreeProtectionPathKey,
+            identities: null,
+          });
+      });
+    return () => {
+      current = false;
+    };
+  }, [baseServices.gitService, open, worktreeProtectionPathKey, worktreeSetupPageActive]);
+  const canonicalWorktreePathByPath = useMemo(() => {
+    const identities = resolvedWorktreePathIdentities?.identities;
+    if (
+      resolvedWorktreePathIdentities?.inputKey !== worktreeProtectionPathKey ||
+      !identities ||
+      identities.length !== worktreeProtectionPaths.length
+    ) {
+      return null;
+    }
+    return new Map(worktreeProtectionPaths.map((path, index) => [path, identities[index]]));
+  }, [resolvedWorktreePathIdentities, worktreeProtectionPathKey, worktreeProtectionPaths]);
+  const worktreeProtectionResolutionPending =
+    resolvedWorktreePathIdentities?.inputKey !== worktreeProtectionPathKey;
+  const worktreeProtectionResolutionFailed =
+    !worktreeProtectionResolutionPending && canonicalWorktreePathByPath === null;
+  const canonicalOpenWorktreePaths = useMemo(
+    () =>
+      new Set(
+        canonicalWorktreePathByPath
+          ? localOpenWorktreePaths.flatMap((path) => {
+              const identity = canonicalWorktreePathByPath.get(path);
+              return identity ? [identity] : [];
+            })
+          : [],
+      ),
+    [canonicalWorktreePathByPath, localOpenWorktreePaths],
+  );
+  const canonicalActiveSessionWorktreePaths = useMemo(
+    () =>
+      new Set(
+        canonicalWorktreePathByPath
+          ? activeSessionWorktreePaths.flatMap((path) => {
+              const identity = canonicalWorktreePathByPath.get(path);
+              return identity ? [identity] : [];
+            })
+          : [],
+      ),
+    [activeSessionWorktreePaths, canonicalWorktreePathByPath],
+  );
   const workspaceLabelByKey = useMemo(
     () =>
       new Map(
@@ -1994,20 +2104,6 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
               </Button>
             </div>
             {(() => {
-              const openWorktreePaths = new Set(
-                effectiveWorkspaceTabs
-                  .filter(
-                    (tab) =>
-                      !("remoteSessionId" in tab && tab.remoteSessionId) &&
-                      !("remoteTarget" in tab && tab.remoteTarget),
-                  )
-                  .map((tab) => tab.workspacePath),
-              );
-              const activeSessionWorktreePaths = new Set(
-                worktreeProtectionTaskList.items.flatMap((task) =>
-                  task.executionWorktree?.path ? [task.executionWorktree.path] : [],
-                ),
-              );
               const removableEntries =
                 worktreeListResult?.worktrees.filter((entry) => !entry.isMain) ?? [];
               if (removableEntries.length === 0) {
@@ -2021,10 +2117,15 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
                 <div className="flex flex-col">
                   {removableEntries.map((entry) => {
                     const label = entry.branchName ?? entry.path;
-                    const isProtected =
-                      entry.isCurrent ||
-                      openWorktreePaths.has(entry.path) ||
-                      activeSessionWorktreePaths.has(entry.path);
+                    const worktreePathIdentity = canonicalWorktreePathByPath?.get(entry.path);
+                    const isProtected = isWorktreeProtected({
+                      entry,
+                      canonicalIdentity: worktreePathIdentity ?? null,
+                      identitiesResolved: canonicalWorktreePathByPath !== null,
+                      openPathIdentities: canonicalOpenWorktreePaths,
+                      activePathIdentities: canonicalActiveSessionWorktreePaths,
+                      activeBranchNames: activeSessionWorktreeBranches,
+                    });
                     const busyHere = worktreeRemoveBusyPath === entry.path;
                     const forceConfirmHere = worktreeForceConfirmPath === entry.path;
                     return (
@@ -2041,7 +2142,11 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
                         {isProtected ? (
                           <span className="shrink-0 text-ui-sm text-foreground-subtlest">
                             {intl.formatMessage({
-                              id: "commandCenter.worktree.existingWorktrees.openBadge",
+                              id: worktreeProtectionResolutionPending
+                                ? "commandCenter.worktree.protection.checking"
+                                : worktreeProtectionResolutionFailed
+                                  ? "commandCenter.worktree.protection.unavailable"
+                                  : "commandCenter.worktree.existingWorktrees.openBadge",
                             })}
                           </span>
                         ) : forceConfirmHere ? (

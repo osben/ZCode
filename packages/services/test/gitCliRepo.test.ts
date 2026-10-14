@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -579,6 +580,29 @@ describe("gitCliRepo", () => {
 });
 
 describeIfGit("gitCliRepo worktree operations", () => {
+  it(
+    "resolves worktree path identities across symlink and trailing-separator aliases",
+    async () => {
+      const { container, repoPath } = createWorktreeTestRepo();
+      const aliasPath = join(container, "repo-alias");
+      symlinkSync(repoPath, aliasPath, process.platform === "win32" ? "junction" : "dir");
+      const repo = createGitCliRepo();
+
+      const identities = await repo.resolveWorktreePathIdentities([
+        repoPath,
+        aliasPath,
+        `${repoPath}${process.platform === "win32" ? "\\" : "/"}`,
+      ]);
+
+      expect(identities[1]).toBe(identities[0]);
+      expect(identities[2]).toBe(identities[0]);
+      await expect(repo.resolveWorktreePathIdentities(["relative/path"])).rejects.toThrow(
+        "Worktree path identity requires an absolute path",
+      );
+    },
+    GIT_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
   it(
     "lists the main worktree only for a plain repository",
     async () => {

@@ -199,6 +199,8 @@ export interface ConversationComposerSendOptions {
   expectedHeldQueueItemIds?: readonly string[];
   /** Attachment command surface: serialized attachments sent with v4 sendText/createSession after the host converts them to AttachmentRef. */
   attachments?: AttachmentRef[];
+  /** Re-upload frozen draft attachments after a new execution-worktree session is created. */
+  reuploadAttachmentsForSession?: (sessionId: string) => Promise<AttachmentRef[]>;
   /** Number of context attachments carried in the prompt text; prevents local commands such as /goal from consuming them accidentally. */
   contextAttachmentCount?: number;
   conversationQuotes?: import("@zcode/shared").ConversationSelectionText[];
@@ -1517,6 +1519,12 @@ function ConversationComposerImpl({
           ...(heldQueueDisposition ? { heldQueueDisposition } : {}),
           ...(expectedHeldQueueItemIds ? { expectedHeldQueueItemIds } : {}),
           ...(readyAttachmentRefs.length > 0 ? { attachments: readyAttachmentRefs } : {}),
+          ...(executionWorktree && submittedAttachmentIds.length > 0
+            ? {
+                reuploadAttachmentsForSession: (targetSessionId: string) =>
+                  attachmentsApi.reuploadForSession(targetSessionId, submittedAttachmentIds),
+              }
+            : {}),
           ...(contextAttachmentCount > 0 ? { contextAttachmentCount } : {}),
           ...(submittedShareContext
             ? {

@@ -97,6 +97,11 @@ export interface GitRepositoryRequest {
   workspacePath: string;
 }
 
+export interface GitWorktreePathIdentityRequest {
+  /** Local absolute paths to compare with paths returned by listWorktrees. */
+  paths: string[];
+}
+
 export type GitBranchMergeState = "merged" | "not_merged" | "unknown";
 
 /**

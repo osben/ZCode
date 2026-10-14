@@ -461,6 +461,24 @@ function GroupedTaskRowComponent({
                   className="size-3.5 shrink-0"
                 />
               ) : null}
+              {!hasPendingInteraction && task.executionWorktree ? (
+                <span
+                  data-worktree-task-icon="true"
+                  title={
+                    task.executionWorktree.branchName
+                      ? intl.formatMessage(
+                          { id: "taskList.worktreeTaskLabel" },
+                          { branch: task.executionWorktree.branchName },
+                        )
+                      : intl.formatMessage({ id: "taskList.worktreeTaskLabelNoBranch" })
+                  }
+                >
+                  <GitBranch
+                    aria-label={intl.formatMessage({ id: "taskList.worktreeTaskLabelNoBranch" })}
+                    className="size-3.5 shrink-0"
+                  />
+                </span>
+              ) : null}
               {!hasPendingInteraction ? <span className="mr-1">{taskTimeLabel}</span> : null}
             </span>
           ) : null}
