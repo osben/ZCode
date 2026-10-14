@@ -60,6 +60,11 @@ jobs:
       # Keep the "ZCode Preview" identity so releases upgrade existing fork installs in place and
       # stay side-by-side with a regular ZCode.app; identity is independent of backend environment.
       ZCODE_PREVIEW_IDENTITY: "1"
+      # Auto-update stays compile-time off in fork releases (scripts/build-time-config.mjs reads
+      # ZCODE_AUTO_UPDATE): enabled, the updater would query the upstream release manifest and
+      # offer official Z.ai builds over the fork. Preview flavor already blocks the updater at
+      # runtime; this pins the build-time flag explicitly so nothing can re-enable it accidentally.
+      ZCODE_AUTO_UPDATE: "0"
       # Self-hosted remote-control defaults baked into the release (public deployment inputs, not
       # secrets). Empty when the repository variables are absent: the build then keeps the upstream
       # external-relay behavior. Both must be set together — one-sided or malformed values fail the
@@ -116,6 +121,8 @@ jobs:
       # Same rationale as build-macos-arm64: explicit production backend environment.
       ZCODE_ENV: production
       ZCODE_PREVIEW_IDENTITY: "1"
+      # Same auto-update kill switch as build-macos-arm64; see the comment there.
+      ZCODE_AUTO_UPDATE: "0"
       # Same self-hosted remote-control defaults as build-macos-arm64; see the comment there.
       ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL: ${{ vars.ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL }}
       ZCODE_WEB_REMOTE_CONTROL_URL: ${{ vars.ZCODE_WEB_REMOTE_CONTROL_URL }}
