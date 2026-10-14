@@ -6,6 +6,10 @@ import {
   type ModelMessageContent,
   type ToolCallId,
 } from "@zcode/contracts";
+import {
+  DEFAULT_MICROCOMPACT_THRESHOLD_BUFFER_TOKENS,
+  DEFAULT_MICROCOMPACT_THRESHOLD_RATIO,
+} from "@zcode/shared";
 import type { CompactModelMessage } from "./manual.js";
 import { estimateMessageTokens } from "./manual.js";
 
@@ -16,8 +20,12 @@ export const MICROCOMPACT_CLEARED_TOOL_RESULT_MESSAGE =
 export const DEFAULT_MICROCOMPACT_KEEP_RECENT_TOOL_RESULTS = 5;
 export const DEFAULT_MICROCOMPACT_IDLE_THRESHOLD_MINUTES = 60;
 export const DEFAULT_MICROCOMPACT_MIN_TOKEN_SAVINGS = 256;
-export const DEFAULT_MICROCOMPACT_THRESHOLD_RATIO = 0.9;
-export const DEFAULT_MICROCOMPACT_THRESHOLD_BUFFER_TOKENS = 2_000;
+// The microcompact threshold constants live in @zcode/shared (consumed there by the composer
+// context meter); re-exported here so existing core import paths keep working.
+export {
+  DEFAULT_MICROCOMPACT_THRESHOLD_BUFFER_TOKENS,
+  DEFAULT_MICROCOMPACT_THRESHOLD_RATIO,
+};
 export const DEFAULT_MICROCOMPACT_COMPACTABLE_TOOLS = [
   "Read",
   "Bash",

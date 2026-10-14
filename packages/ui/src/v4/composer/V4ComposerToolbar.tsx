@@ -22,6 +22,7 @@ import {
   BUILTIN_MODEL_PROVIDER_IDS,
   getModelProviderFamilySpec,
   resolveModelProviderFamilySpecByProviderId,
+  resolveContextBudgetTone,
   TID_V4_MODEL_CONFIG,
   TID_V4_COMPOSER_INPUT,
   ZCODE_AGENT_PROVIDER,
@@ -31,8 +32,8 @@ import {
   type UsageEntitlementSnapshot,
   type ZCodeAccountAccess,
   type ZCodeProviderAccountAccess,
-  type ZCodeConfigOption,
   type ZCodeProvider,
+  type ZCodeConfigOption,
 } from "@zcode/shared";
 import type {
   SessionConfigState,
@@ -1032,6 +1033,9 @@ function V4ComposerModelControlsImpl({
       ...(contextWindow.breakdown ? { breakdown: contextWindow.breakdown } : {}),
     };
   }, [usage?.contextWindow]);
+  const usageTone = taskUsage
+    ? resolveContextBudgetTone({ contextWindow: taskUsage.size, usedTokens: taskUsage.used })
+    : "normal";
   // Toolbar shortcuts are now command-table commands: tooltip shortcut labels read from the active bindings,
   // so button hints update immediately after rebinding (do not hard-code their text).
   const modelShortcutLabel = useShortcutCommandLabel("openModelMenu");
@@ -1089,6 +1093,7 @@ function V4ComposerModelControlsImpl({
         data-plan-enabled={draftConfig?.planEnabled ?? false}
         data-usage-used={usage?.contextWindow?.usedTokens ?? ""}
         data-usage-max={usage?.contextWindow?.maxTokens ?? ""}
+        data-usage-tone={usageTone}
         className="hidden"
       />
       {/* A Highspeed card locks the model the moment it activates; do not wait for the motion handoff to finish before hiding, or the usage ring briefly flashes. */}

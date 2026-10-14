@@ -5204,6 +5204,7 @@ const enUS: Record<string, string> = {
   "chat.contextUsageDescription":
     "Prompt text, tool calls, and responses all share this context window.",
   "chat.contextUsage.cacheHitRate": "Average cache hit rate",
+  "chat.contextUsage.autoCompact": "Auto-compact",
   "chat.contextUsage.breakdown": "Context sources",
   "chat.contextUsage.breakdown.messages": "Messages",
   "chat.contextUsage.breakdown.systemPrompt": "System prompt",

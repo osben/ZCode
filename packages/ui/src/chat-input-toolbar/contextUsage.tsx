@@ -11,6 +11,9 @@ import {
 import {
   TID_CHAT_CONTEXT_USAGE_TRIGGER,
   type CodingPlanResetType,
+  getAutoCompactThresholdTokens,
+  resolveContextBudgetTone,
+  type ZCodeContextBudgetTone,
   type ZCodeContextUsageBreakdownItem,
   type ZCodeProvider,
 } from "@zcode/shared";
@@ -62,6 +65,7 @@ import {
   resolveContextQuotaResetOpportunityTriggerTone,
   resolveContextTriggerTooltipKind,
   shouldDismissContextQuotaResetOpportunityReminder,
+  type ContextQuotaResetOpportunityTriggerTone,
 } from "@/chat-input-toolbar/contextQuotaResetOpportunityReminder.js";
 
 type ContextUsageBreakdownSource = ZCodeContextUsageBreakdownItem["source"];
@@ -225,6 +229,26 @@ export function getRenderableTaskUsage<T extends { used: number; size: number }>
 
 export function getContextCompressionCommand(_provider: ZCodeProvider): string {
   return "/compact";
+}
+
+/**
+ * Steady context-budget tone for the round trigger. A quota-reset opportunity tone is transient
+ * and keeps priority; never render both on the same trigger.
+ */
+export function resolveContextTriggerToneClassName(
+  contextTone: ZCodeContextBudgetTone,
+  quotaTriggerTone: ContextQuotaResetOpportunityTriggerTone | null,
+): string | null {
+  if (quotaTriggerTone !== null) {
+    return null;
+  }
+  if (contextTone === "warning") {
+    return "text-warning";
+  }
+  if (contextTone === "critical") {
+    return "text-destructive";
+  }
+  return null;
 }
 
 // Currently effective used_at for automatic/operational completion (startedAt is empty); manual completion does not participate in trigger interactions.
@@ -826,6 +850,24 @@ export function ChatContextUsage({
     [locale],
   );
 
+  // Tone mirrors the runtime compaction policy (see packages/shared/src/contextBudgetPolicy.ts):
+  // warning = microcompact is clearing old tool results, critical = the next model step compacts.
+  const contextTone = renderableTaskUsage
+    ? resolveContextBudgetTone({
+        contextWindow: renderableTaskUsage.size,
+        usedTokens: renderableTaskUsage.used,
+      })
+    : "normal";
+  const autoCompactThresholdTokens = renderableTaskUsage
+    ? getAutoCompactThresholdTokens({ contextWindow: renderableTaskUsage.size })
+    : 0;
+  const autoCompactLabel =
+    renderableTaskUsage && autoCompactThresholdTokens > 0
+      ? `${formatContextUsageTokenCount(autoCompactThresholdTokens, locale)} (${percentageFormatter.format(
+          autoCompactThresholdTokens / renderableTaskUsage.size,
+        )})`
+      : null;
+
   if (
     (!renderableTaskUsage || !contextUsageLabel) &&
     !hasCodingPlanUsageRemaining &&
@@ -893,10 +935,12 @@ export function ChatContextUsage({
             aria-label={triggerLabel}
             className={cn(
               "text-foreground-subtle",
+              resolveContextTriggerToneClassName(contextTone, opportunityTriggerTone),
               opportunityTriggerTone === "available" && "text-success",
               opportunityTriggerTone === "urgent" && "bg-warning/10 text-warning",
             )}
             data-chat-toolbar-popover-trigger="true"
+            data-usage-tone={contextTone}
             data-testid={TID_CHAT_CONTEXT_USAGE_TRIGGER}
             onPointerDown={(event) => {
               // Radix HoverCard prevents the following click during touchstart, so the panel cannot open on mobile.
@@ -940,6 +984,14 @@ export function ChatContextUsage({
                 segments={progressSegments}
                 value={usagePercent * PERCENT_MAX}
               />
+              {autoCompactLabel ? (
+                <div className="flex items-center justify-between gap-3 text-ui-sm">
+                  <span className="text-foreground-subtle">
+                    {intl.formatMessage({ id: "chat.contextUsage.autoCompact" })}
+                  </span>
+                  <span className="font-mono text-ui-sm text-foreground">{autoCompactLabel}</span>
+                </div>
+              ) : null}
             </div>
           ) : null}
           {renderableTaskUsage && (breakdownSegments.length > 0 || cacheHitRateLabel) ? (

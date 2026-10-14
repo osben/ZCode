@@ -4891,6 +4891,7 @@ const ukUA: Record<string, string> = {
   "chat.contextUsageDescription":
     "Текст промпту, виклики інструментів і відповіді спільно використовують це контекстне вікно.",
   "chat.contextUsage.cacheHitRate": "Середня частка влучань у кеш",
+  "chat.contextUsage.autoCompact": "Автокомпакція",
   "chat.contextUsage.breakdown": "Джерела контексту",
   "chat.contextUsage.breakdown.messages": "Повідомлення",
   "chat.contextUsage.breakdown.systemPrompt": "Системний промпт",
