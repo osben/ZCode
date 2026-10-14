@@ -4888,6 +4888,8 @@ export class ProductProjection {
       (contextWindow === null
         ? previousContextWindow !== null
         : previousContextWindow === null || previousContextWindow.maxTokens !== contextWindow);
+    const modelIdentityChanged = prev.provider !== provider || prev.model !== model;
+    const contextBudgetChanged = contextWindowChanged || modelIdentityChanged;
     // Once a log event touches model selection, a seed cannot overwrite it (even a same-value return
     // counts as a touch).
     // Exception: ModelSelected synthesized during cold recovery (HYDRATION_TRACE_ID) only rebuilds
@@ -4926,7 +4928,7 @@ export class ProductProjection {
             to: { provider, model },
           }
         : undefined;
-    if (!configChanged && !contextWindowChanged && modelTransition === undefined) {
+    if (!configChanged && !contextBudgetChanged && modelTransition === undefined) {
       return [];
     }
     return [
@@ -4941,7 +4943,7 @@ export class ProductProjection {
           // switch. Preserve the event ID and source/destination identities; the client still shows
           // the toast only at the live online-delivery boundary.
           ...(modelTransition ? { modelTransition } : {}),
-          ...(contextWindowChanged
+          ...(contextBudgetChanged
             ? {
                 usage: {
                   ...this.snapshot.usage,
@@ -4952,12 +4954,20 @@ export class ProductProjection {
                     contextWindow === null
                       ? null
                       : previousContextWindow
-                        ? { ...previousContextWindow, maxTokens: contextWindow }
-                        : {
-                            usedTokens: this.contextWindowState.usedTokens,
-                            maxTokens: contextWindow,
+                        ? {
+                            ...previousContextWindow,
+                            ...(contextWindow !== undefined ? { maxTokens: contextWindow } : {}),
                             autoCompactThresholdTokens: null,
-                          },
+                            microcompactThresholdTokens: null,
+                          }
+                        : contextWindow === undefined
+                          ? null
+                          : {
+                              usedTokens: this.contextWindowState.usedTokens,
+                              maxTokens: contextWindow,
+                              autoCompactThresholdTokens: null,
+                              microcompactThresholdTokens: null,
+                            },
                 },
               }
             : {}),
@@ -5049,7 +5059,13 @@ export class ProductProjection {
                   usedTokens,
                   maxTokens,
                   autoCompactThresholdTokens:
-                    this.snapshot.usage.contextWindow?.autoCompactThresholdTokens ?? null,
+                    payload.autoCompactThresholdTokens !== undefined
+                      ? payload.autoCompactThresholdTokens
+                      : (this.snapshot.usage.contextWindow?.autoCompactThresholdTokens ?? null),
+                  microcompactThresholdTokens:
+                    payload.microcompactThresholdTokens !== undefined
+                      ? payload.microcompactThresholdTokens
+                      : (this.snapshot.usage.contextWindow?.microcompactThresholdTokens ?? null),
                   ...(payload.cacheHit ? { cache: payload.cacheHit } : {}),
                   ...(payload.contextUsageBreakdown && payload.contextUsageBreakdown.length > 0
                     ? { breakdown: payload.contextUsageBreakdown }
@@ -5200,6 +5216,8 @@ export class ProductProjection {
                     maxTokens,
                     autoCompactThresholdTokens:
                       this.snapshot.usage.contextWindow?.autoCompactThresholdTokens ?? null,
+                    microcompactThresholdTokens:
+                      this.snapshot.usage.contextWindow?.microcompactThresholdTokens ?? null,
                   },
           },
         },

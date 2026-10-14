@@ -9,6 +9,7 @@ import {
 import {
   DEFAULT_MICROCOMPACT_THRESHOLD_BUFFER_TOKENS,
   DEFAULT_MICROCOMPACT_THRESHOLD_RATIO,
+  getMicrocompactThresholdFromAutoTokens,
 } from "@zcode/shared";
 import type { CompactModelMessage } from "./manual.js";
 import { estimateMessageTokens } from "./manual.js";
@@ -85,9 +86,7 @@ interface ToolResultCandidate {
 }
 
 export function buildDefaultMicrocompactThreshold(autoCompactThreshold: number): number {
-  const ratioThreshold = Math.floor(autoCompactThreshold * DEFAULT_MICROCOMPACT_THRESHOLD_RATIO);
-  const bufferThreshold = autoCompactThreshold - DEFAULT_MICROCOMPACT_THRESHOLD_BUFFER_TOKENS;
-  return Math.max(0, Math.min(ratioThreshold, bufferThreshold));
+  return getMicrocompactThresholdFromAutoTokens(autoCompactThreshold);
 }
 
 export function maybeLocalMicrocompactMessages<T extends LocalMicrocompactMessage>(input: {

@@ -193,6 +193,7 @@ export const sessionUsageStateSchema = z.object({
       usedTokens: z.number(),
       maxTokens: z.number(),
       autoCompactThresholdTokens: z.number().nullable(),
+      microcompactThresholdTokens: z.number().nullable().optional(),
       cache: zcodeSessionContextCacheUsageSchema.optional(),
       breakdown: zcodeContextUsageBreakdownSchema.optional(),
     })

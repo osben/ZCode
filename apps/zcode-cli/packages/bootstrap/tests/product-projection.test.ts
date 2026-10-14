@@ -1081,6 +1081,7 @@ describe("ProductProjection 黄金测试（L1）", () => {
       usedTokens: 150,
       maxTokens: 200_000,
       autoCompactThresholdTokens: null,
+      microcompactThresholdTokens: null,
     });
     expect(snapshot.usage.cumulative.inputTokens).toBe(120);
     expect(snapshot.seq).toBe(log.events.length);
@@ -7030,6 +7031,8 @@ describe("fork / modelChange marker", () => {
         stopReason: "end_turn",
         querySource: "main_turn",
         contextWindow: 200_000,
+        autoCompactThresholdTokens: 166_000,
+        microcompactThresholdTokens: 149_400,
         usage: { inputTokens: 120, outputTokens: 30 },
       },
       { turnId: "turn-1" },
@@ -7038,6 +7041,8 @@ describe("fork / modelChange marker", () => {
     expect(projection.getSnapshot().usage.contextWindow).toMatchObject({
       usedTokens: 150,
       maxTokens: 200_000,
+      autoCompactThresholdTokens: 166_000,
+      microcompactThresholdTokens: 149_400,
     });
 
     projection.applyEvent(
@@ -7074,6 +7079,8 @@ describe("fork / modelChange marker", () => {
     expect(projection.getSnapshot().usage.contextWindow).toMatchObject({
       usedTokens: 150,
       maxTokens: 1_000_000,
+      autoCompactThresholdTokens: null,
+      microcompactThresholdTokens: null,
     });
 
     projection.applyEvent(

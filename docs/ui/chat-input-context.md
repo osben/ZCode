@@ -74,8 +74,9 @@ Threshold math (defaults, mirroring the runtime policy):
 
 - `autoCompactThreshold = max(0, contextWindow − min(maxOutputTokens ?? 32K, 21K) − 13K)` — the
   token count at which the next model step triggers a full summary compaction.
-- `microcompactThreshold = max(0, floor(autoCompactThreshold × 0.9) − 2K)` — the token count at
-  which old tool results start being cleared.
+- `microcompactThreshold = max(0, min(floor(autoCompactThreshold × 0.9), autoCompactThreshold − 2K))` — the token count at which old tool results start being cleared, matching `buildDefaultMicrocompactThreshold` in the runtime.
+- The runtime resolves `autoCompactThreshold` from the selected model, context-budget strategy, model output limit, and effective compact configuration. Main-turn completion events carry it into `usage.contextWindow.autoCompactThresholdTokens`; `null` means auto-compact is disabled.
+- Main-turn completion events also carry `usage.contextWindow.microcompactThresholdTokens`. It is the configured `microcompact.thresholdTokens`, or the default formula above when microcompact is enabled without an override; `null` means microcompact is disabled or unsupported. The UI uses these authoritative thresholds when present and falls back to the default estimate only for legacy events where each field is absent.
 
 UI tone mapping (`resolveContextBudgetTone`):
 
@@ -94,13 +95,14 @@ Rendering rules:
   row.
 - The trigger carries `data-usage-tone={tone}`; the hidden `TID_V4_MODEL_CONFIG` anchor adds the
   same attribute for E2E assertions.
-- Assumption: the UI does not know the model's `maxOutputTokens`, so the reserve falls back to
-  the 21K preflight cap — identical to the runtime whenever the model's max output is ≥ 21K.
+- Legacy events without authoritative thresholds use the 21K preflight reserve estimate; current
+  main-turn events use the runtime thresholds directly.
 
 Acceptance scenarios:
 
-1. 200K window, no max output: thresholds are micro 147 400 / auto 166 000; used 147 399 renders
-   normal, 147 400 warning, 166 000 critical; the panel row shows `≈166K (83%)` in en-US.
-2. Quota-reset reminder visible with `usedTokens ≥ autoCompactThreshold`: trigger keeps the
+1. 200K window, no max output, auto-compact enabled, and microcompact explicitly enabled without a threshold override: auto is 166 000 and micro is 149 400; used 149 399 renders normal, 149 400 warning, and 166 000 critical. The panel row shows `≈166K (83%)` in en-US.
+2. Microcompact disabled or auto-compact disabled: its corresponding threshold is `null`, and the UI does not warn for that policy.
+3. A configured microcompact threshold is displayed as the warning boundary; the UI does not substitute its default.
+4. Quota-reset reminder visible with `usedTokens ≥ autoCompactThreshold`: trigger keeps the
    quota tone (success/urgent) and does not apply the budget tone.
-3. Invalid usage (`used = 0` or non-finite): no trigger recolor, tone attribute reads `normal`.
+5. Invalid usage (`used = 0` or non-finite): no trigger recolor, tone attribute reads `normal`.

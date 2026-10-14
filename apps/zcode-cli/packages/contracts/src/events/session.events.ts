@@ -852,6 +852,14 @@ export interface ModelCompletePayload {
   content: string;
   contextUsageBreakdown?: ContextUsageBreakdownItem[];
   contextWindow?: number;
+  /**
+   * Effective auto-compact threshold in tokens for the executing model and compact config,
+   * resolved by the runtime with the same math as `shouldAutoCompact`; `null` means auto-compact
+   * is disabled. Emitted on main-turn completions only; absent in older events.
+   */
+  autoCompactThresholdTokens?: number | null;
+  /** Effective microcompact threshold; null means disabled, absent is a legacy event. */
+  microcompactThresholdTokens?: number | null;
   fileChanges?: TurnFileChangeSummary;
   querySource?: string;
   stopReason: string;

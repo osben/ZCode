@@ -282,6 +282,8 @@ export function ChatContextUsage({
     size: number;
     cache?: { hitRate: number | null };
     breakdown?: ZCodeContextUsageBreakdownItem[];
+    autoCompactThresholdTokens?: number | null;
+    microcompactThresholdTokens?: number | null;
   } | null;
   selectedProvider: ZCodeProvider;
   intl: ReturnType<typeof useZCodeIntl>["intl"];
@@ -854,16 +856,21 @@ export function ChatContextUsage({
   // warning = microcompact is clearing old tool results, critical = the next model step compacts.
   const contextTone = renderableTaskUsage
     ? resolveContextBudgetTone({
+        autoCompactThresholdTokens: renderableTaskUsage.autoCompactThresholdTokens,
         contextWindow: renderableTaskUsage.size,
+        microcompactThresholdTokens: renderableTaskUsage.microcompactThresholdTokens,
         usedTokens: renderableTaskUsage.used,
       })
     : "normal";
   const autoCompactThresholdTokens = renderableTaskUsage
-    ? getAutoCompactThresholdTokens({ contextWindow: renderableTaskUsage.size })
+    ? renderableTaskUsage.autoCompactThresholdTokens === null
+      ? 0
+      : (renderableTaskUsage.autoCompactThresholdTokens ??
+        getAutoCompactThresholdTokens({ contextWindow: renderableTaskUsage.size }))
     : 0;
   const autoCompactLabel =
     renderableTaskUsage && autoCompactThresholdTokens > 0
-      ? `${formatContextUsageTokenCount(autoCompactThresholdTokens, locale)} (${percentageFormatter.format(
+      ? `≈${formatContextUsageTokenCount(autoCompactThresholdTokens, locale)} (${percentageFormatter.format(
           autoCompactThresholdTokens / renderableTaskUsage.size,
         )})`
       : null;

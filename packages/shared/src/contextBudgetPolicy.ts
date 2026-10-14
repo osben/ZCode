@@ -56,28 +56,64 @@ export function getAutoCompactThresholdTokens({
   return Math.max(0, effectiveWindow - AUTOCOMPACT_BUFFER_TOKENS);
 }
 
-/** Token count at which old tool results start being cleared (microcompact onset). */
-export function getMicrocompactThresholdTokens(input: ZCodeContextBudgetWindowInput): number {
+/**
+ * Token count at which old tool results start being cleared (microcompact onset), derived from an
+ * effective auto-compact threshold. Mirrors the runtime's
+ * `buildDefaultMicrocompactThreshold`: `min(floor(auto × 0.9), auto − 2K)`, clamped at 0.
+ */
+export function getMicrocompactThresholdFromAutoTokens(autoCompactThreshold: number): number {
   return Math.max(
     0,
-    Math.floor(getAutoCompactThresholdTokens(input) * DEFAULT_MICROCOMPACT_THRESHOLD_RATIO) -
-      DEFAULT_MICROCOMPACT_THRESHOLD_BUFFER_TOKENS,
+    Math.min(
+      Math.floor(autoCompactThreshold * DEFAULT_MICROCOMPACT_THRESHOLD_RATIO),
+      autoCompactThreshold - DEFAULT_MICROCOMPACT_THRESHOLD_BUFFER_TOKENS,
+    ),
   );
 }
 
+/** Token count at which old tool results start being cleared (microcompact onset). */
+export function getMicrocompactThresholdTokens(input: ZCodeContextBudgetWindowInput): number {
+  return getMicrocompactThresholdFromAutoTokens(getAutoCompactThresholdTokens(input));
+}
+
 export function resolveContextBudgetTone({
+  autoCompactThresholdTokens,
+  microcompactThresholdTokens,
   contextWindow,
   maxOutputTokens,
   usedTokens,
-}: ZCodeContextBudgetWindowInput & { usedTokens: number }): ZCodeContextBudgetTone {
+}: ZCodeContextBudgetWindowInput & {
+  usedTokens: number;
+  /**
+   * Authoritative auto-compact threshold projected by the runtime (v4 snapshot
+   * `usage.contextWindow.autoCompactThresholdTokens`). `null` means auto-compact is disabled.
+   * `undefined` (field absent, e.g. legacy sessions) falls back to the default-policy estimate.
+   */
+  autoCompactThresholdTokens?: number | null;
+  /** Authoritative runtime microcompact trigger, null when microcompact is disabled. */
+  microcompactThresholdTokens?: number | null;
+}): ZCodeContextBudgetTone {
   const used = toPositiveInt(usedTokens);
   if (used === undefined) {
     return "normal";
   }
-  if (used >= getAutoCompactThresholdTokens({ contextWindow, maxOutputTokens })) {
+  const criticalThreshold =
+    autoCompactThresholdTokens === null
+      ? null
+      : typeof autoCompactThresholdTokens === "number"
+        ? Math.max(0, Math.floor(autoCompactThresholdTokens))
+        : getAutoCompactThresholdTokens({ contextWindow, maxOutputTokens });
+  if (criticalThreshold !== null && used >= criticalThreshold) {
     return "critical";
   }
-  if (used >= getMicrocompactThresholdTokens({ contextWindow, maxOutputTokens })) {
+  const warningThreshold =
+    microcompactThresholdTokens === null ||
+    (microcompactThresholdTokens === undefined && criticalThreshold === null)
+      ? null
+      : typeof microcompactThresholdTokens === "number"
+        ? Math.max(0, Math.floor(microcompactThresholdTokens))
+        : getMicrocompactThresholdFromAutoTokens(criticalThreshold ?? 0);
+  if (warningThreshold !== null && used >= warningThreshold) {
     return "warning";
   }
   return "normal";
