@@ -123,7 +123,8 @@
       "react": "19.3.0",
       "react-dom": "19.3.0",
       "koffi": "2.15.6",
-      "builder-util-runtime": "9.7.0"
+      "builder-util-runtime": "9.7.0",
+      "extract-zip>yauzl": "3.4.0"
     },
     "patchedDependencies": {
       "vitest@4.1.7": "patches/vitest@4.1.7.patch",
