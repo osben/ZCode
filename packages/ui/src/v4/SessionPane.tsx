@@ -3285,6 +3285,10 @@ export function SessionPane({
       };
       // Frozen before entering the barrier; do not reread Composer or Session while waiting for configuration/attachments.
       let submission = options?.submission ?? null;
+      // Worktree-intent first send: the prewarm session was created in the parent workspace cwd,
+      // so it can never serve a worktree send — skip promotion and create the session with
+      // executionWorktree through the fallback path instead.
+      const executionWorktree = options?.executionWorktree;
       const heldQueueDisposition = options?.heldQueueDisposition;
       const expectedHeldQueueItemIds = options?.expectedHeldQueueItemIds;
       const readyAttachments = options?.attachments ?? [];
@@ -3424,7 +3428,7 @@ export function SessionPane({
           return;
         }
         const prewarm = prewarmBindingRef.current;
-        if (prewarm?.beginPromotion()) {
+        if (!executionWorktree && prewarm?.beginPromotion()) {
           try {
             const consumed = await dispatchSlashCommand(
               draftSlashCommand,
@@ -3462,7 +3466,11 @@ export function SessionPane({
         );
         const createAck = await dispatchSubmissionCommand(
           "createSession",
-          { workspaceId: workspaceKey, ...draftConfigPayload },
+          {
+            workspaceId: workspaceKey,
+            ...draftConfigPayload,
+            ...(executionWorktree ? { executionWorktree } : {}),
+          },
           null,
         );
         if (createAck.status !== "accepted") {
@@ -3489,7 +3497,7 @@ export function SessionPane({
         // Draft attachments were pre-uploaded in Composer and bound to the prewarm session.
         // Submit only ready refs here; do not start uploads from the send click.
         const prewarm = prewarmBindingRef.current;
-        if (prewarm?.beginPromotion()) {
+        if (!executionWorktree && prewarm?.beginPromotion()) {
           try {
             const highspeed = await prepareHighspeedSendContext(
               prewarm.sessionId,
@@ -3568,7 +3576,11 @@ export function SessionPane({
         // performs no upload and cannot let a non-ready attachment bypass Composer's gate.
         const createAck = await dispatchSubmissionCommand(
           "createSession",
-          { workspaceId: workspaceKey, ...draftConfigPayload },
+          {
+            workspaceId: workspaceKey,
+            ...draftConfigPayload,
+            ...(executionWorktree ? { executionWorktree } : {}),
+          },
           null,
         );
         if (createAck.status !== "accepted") {

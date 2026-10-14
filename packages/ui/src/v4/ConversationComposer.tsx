@@ -143,7 +143,11 @@ import {
 import { isAppleKeyboardPlatform } from "@/lib/keyboardShortcuts.js";
 import { usePrimaryFollowupModifier } from "@/v4/composer/usePrimaryFollowupModifier.js";
 import { consumeV4ComposerDraftWorkspaceTransferRequest } from "@/v4/composer/composerDraftWorkspaceTransfer.js";
-import { useComposerDraftWorktreeIntentSlot } from "@/v4/composer/composerDraftWorktreeIntent.js";
+import {
+  useComposerDraftWorktreeIntentSlot,
+  type ComposerDraftWorktreeInterceptResult,
+  type ComposerExecutionWorktree,
+} from "@/v4/composer/composerDraftWorktreeIntent.js";
 import { useComposerAttachments } from "@/v4/composer/useComposerAttachments.js";
 import type { ConversationDropTargetController } from "@/v4/composer/conversationDropTarget.js";
 import { CodeCommentAttachmentChip } from "@/v4/composer/CodeCommentAttachmentChip.js";
@@ -205,6 +209,11 @@ export interface ConversationComposerSendOptions {
   sharedContextRefs?: Array<{ kind: "shared_context_import"; context_id: string }>;
   /** Sent on behalf of plugin UI: persisted with sendText, and the user-message card shows “From plugin X.” */
   source?: import("@zcode/shared/zcode-protocol-v4").ConversationInputSource;
+  /**
+   * Worktree-intent first send: the agent executes in this linked worktree while the new session
+   * stays listed under the current workspace. undefined for ordinary sends.
+   */
+  executionWorktree?: ComposerExecutionWorktree;
 }
 
 export type ConversationComposerSendResult = "sent" | "blocked" | "confirmationRequired";
@@ -1294,10 +1303,12 @@ function ConversationComposerImpl({
       }
       // Empty-state “New worktree” interception (review 6c): before the draft's first send
       // creates any runtime session, hand the send to the registered intent so it can create
-      // the worktree and redirect the draft there first. Handled sends never claim the draft —
-      // the text stays in the editor and follows the workspace switch via the existing
-      // draft-transfer machinery; errors surface inline in the worktree form.
+      // the worktree. A cancel result keeps the draft in the editor with the error surfaced
+      // inline in the worktree form; a proceed result sends normally in the current workspace
+      // with executionWorktree attached, so the session runs in the worktree but stays listed
+      // under this project (no workspace switch, no draft transfer).
       const worktreeIntent = worktreeIntentSlot?.current;
+      let executionWorktree: ComposerExecutionWorktree | undefined;
       if (
         draftMode &&
         sessionId === null &&
@@ -1306,21 +1317,21 @@ function ConversationComposerImpl({
       ) {
         pendingRef.current = true;
         setPending(true);
-        let handledByWorktreeIntent = true;
+        let interceptResult: ComposerDraftWorktreeInterceptResult = { action: "cancel" };
         try {
-          handledByWorktreeIntent = await worktreeIntent.interceptFirstSend();
+          interceptResult = await worktreeIntent.interceptFirstSend();
         } catch (error) {
           logger.warn(
-            `[v4-composer] worktree 发送拦截失败: ${error instanceof Error ? error.message : String(error)}`,
+            `[v4-composer] worktree send interception failed: ${error instanceof Error ? error.message : String(error)}`,
           );
-          handledByWorktreeIntent = true;
         } finally {
           pendingRef.current = false;
           setPending(false);
         }
-        if (handledByWorktreeIntent) {
+        if (interceptResult.action === "cancel") {
           return;
         }
+        executionWorktree = interceptResult.executionWorktree;
       }
       const sendAction = startUserAction({
         featureId: "conversation.composer.message",
@@ -1486,6 +1497,7 @@ function ConversationComposerImpl({
         }
         const sendResult = await onSendText(promptText, {
           submission,
+          ...(executionWorktree ? { executionWorktree } : {}),
           ...(currentConversationSelections.length
             ? {
                 conversationQuotes: currentConversationSelections.map(

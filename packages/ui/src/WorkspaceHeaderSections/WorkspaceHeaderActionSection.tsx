@@ -15,6 +15,7 @@ export function WorkspaceHeaderActionSection({
   user,
   readOnlyReason,
   workspaceAbsPath,
+  executionWorktreePath,
   workspaceIdentity,
   remoteTarget,
   isWebRemoteControl = false,
@@ -42,7 +43,7 @@ export function WorkspaceHeaderActionSection({
       {variant === "task" ? (
         <WorkspaceEditorButtonGroup
           disabledReason={readOnlyReason}
-          workspaceAbsPath={workspaceAbsPath}
+          workspaceAbsPath={executionWorktreePath ?? workspaceAbsPath}
           workspaceIdentity={workspaceIdentity}
           remoteTarget={remoteTarget}
           onSelectedEditorChange={onSelectedEditorChange}

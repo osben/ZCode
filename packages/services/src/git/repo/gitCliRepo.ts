@@ -1,5 +1,5 @@
 /* eslint-disable max-lines */
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
 import type {
@@ -19,6 +19,8 @@ import type {
   GitWorktreeCreateResult,
   GitWorktreeListResult,
   GitWorktreeMutationIssue,
+  GitWorktreePruneResult,
+  GitWorktreeRemoveResult,
   GitPushResult,
 } from "@zcode/shared";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
@@ -35,6 +37,7 @@ import {
 } from "../config.js";
 import {
   createGitCommandProvider,
+  type GitCommandExecutionResult,
   type GitCommandProvider,
 } from "../providers/gitCommandProvider.js";
 import {
@@ -375,6 +378,53 @@ function toWorktreeMutationFailure(issues: GitWorktreeMutationIssue[]): GitWorkt
     branchName: null,
     issues,
   };
+}
+
+function toGitUnavailableWorktreeIssue(): GitWorktreeMutationIssue {
+  return {
+    code: "git-unavailable",
+    message: "Git binary is not available in the current environment.",
+  };
+}
+
+function toNotARepositoryWorktreeIssue(): GitWorktreeMutationIssue {
+  return {
+    code: "not-a-repository",
+    message: "Workspace is not inside a Git repository.",
+  };
+}
+
+function parseWorktreeRemoveIssues(result: GitCommandExecutionResult): GitWorktreeMutationIssue[] {
+  const detail = result.stderr.trim() || result.stdout.trim() || null;
+  const normalizedDetail = detail?.toLowerCase() ?? "";
+
+  // Decide by Git's actual stderr wording, same principle as parseGitWorktreeIssues.
+  if (normalizedDetail.includes("contains modified or untracked files")) {
+    return [
+      {
+        code: "worktree-dirty",
+        message: "Worktree contains modified or untracked files.",
+        detail,
+      },
+    ];
+  }
+  if (normalizedDetail.includes("is locked")) {
+    return [
+      {
+        code: "worktree-locked",
+        message: "Worktree is locked.",
+        detail,
+      },
+    ];
+  }
+  return parseGitWorktreeIssues(result);
+}
+
+function countNonEmptyLines(output: string): number {
+  return output
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .filter((line) => line.trim().length > 0).length;
 }
 
 function toComparableWorktreePath(path: string): string {
@@ -1190,6 +1240,112 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
         branchName: normalizedBranchName,
         issues: [],
       };
+    },
+
+    async removeWorktree(
+      workspacePath: string,
+      targetPath: string,
+      force?: boolean,
+    ): Promise<GitWorktreeRemoveResult> {
+      const resolution = await this.resolveRepository(workspacePath);
+      if (!resolution.isGitAvailable) {
+        return { ok: false, issues: [toGitUnavailableWorktreeIssue()] };
+      }
+      if (!resolution.isRepository) {
+        return { ok: false, issues: [toNotARepositoryWorktreeIssue()] };
+      }
+
+      const normalizedTargetPath = targetPath.trim();
+      if (normalizedTargetPath.length === 0 || !isAbsolute(normalizedTargetPath)) {
+        return {
+          ok: false,
+          issues: [
+            {
+              code: "target-path-invalid",
+              message: "Target path must be a non-empty absolute path.",
+            },
+          ],
+        };
+      }
+
+      // The service guards Git semantics only (linked non-main worktree); whether the entry is
+      // the current workspace or has open tabs is a UI-layer concern and stays there.
+      // Porcelain lists realpath'd entries (e.g. /var -> /private/var on macOS), so compare
+      // against the resolved target; fall back to the raw path when it does not exist yet.
+      const worktrees = await this.listWorktrees(workspacePath);
+      let comparableTargetPath = toComparableWorktreePath(resolve(normalizedTargetPath));
+      try {
+        comparableTargetPath = toComparableWorktreePath(await realpath(normalizedTargetPath));
+      } catch {
+        // Path already gone or unreadable: the resolved guess above is the best comparator.
+      }
+      const target = worktrees.worktrees.find(
+        (entry) => toComparableWorktreePath(entry.path) === comparableTargetPath,
+      );
+      if (!target || target.isMain) {
+        return {
+          ok: false,
+          issues: [
+            {
+              code: "worktree-not-found",
+              message: "The path is not a removable linked worktree of this repository.",
+            },
+          ],
+        };
+      }
+
+      const result = await commandProvider.run({
+        cwd: resolution.repoRoot,
+        // `--` ends option parsing before the external target path.
+        args: force
+          ? ["worktree", "remove", "--force", "--", normalizedTargetPath]
+          : ["worktree", "remove", "--", normalizedTargetPath],
+        timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+        maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
+      });
+      if (result.timedOut || result.outputTruncated) {
+        ensureGitCommandSucceeded("git worktree remove", result);
+      }
+
+      if (result.exitCode !== 0) {
+        return { ok: false, issues: parseWorktreeRemoveIssues(result) };
+      }
+
+      return { ok: true, issues: [] };
+    },
+
+    async pruneWorktrees(workspacePath: string): Promise<GitWorktreePruneResult> {
+      const resolution = await this.resolveRepository(workspacePath);
+      if (!resolution.isGitAvailable) {
+        return { ok: false, prunedCount: 0, issues: [toGitUnavailableWorktreeIssue()] };
+      }
+      if (!resolution.isRepository) {
+        return { ok: false, prunedCount: 0, issues: [toNotARepositoryWorktreeIssue()] };
+      }
+
+      const result = await commandProvider.run({
+        cwd: resolution.repoRoot,
+        // --expire now makes the outcome deterministic (nothing stays back "not yet expired");
+        // --verbose prints one line per removed stale record, used only for the count.
+        args: ["worktree", "prune", "--verbose", "--expire", "now"],
+        timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+        maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
+      });
+      if (result.timedOut || result.outputTruncated) {
+        ensureGitCommandSucceeded("git worktree prune", result);
+      }
+
+      if (result.exitCode !== 0) {
+        return { ok: false, prunedCount: 0, issues: parseGitWorktreeIssues(result) };
+      }
+
+      // git worktree prune --verbose reports removed records on stderr (verified against the
+      // git CLI); older builds may print to stdout, so fall back when stderr has no lines.
+      const prunedCount =
+        countNonEmptyLines(result.stderr) > 0
+          ? countNonEmptyLines(result.stderr)
+          : countNonEmptyLines(result.stdout);
+      return { ok: true, prunedCount, issues: [] };
     },
 
     async getCommitGraph(

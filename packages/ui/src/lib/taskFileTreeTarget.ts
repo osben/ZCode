@@ -8,6 +8,11 @@ export interface TaskFileTreeTarget {
   workspaceName: string;
   workspaceIdentity?: string;
   workspaceRemoteSessionId?: string;
+  /**
+   * Active session's execution worktree (agent cwd): the tree keeps listing the workspace
+   * checkout, while "open in file manager / copy path" must lead to the worktree.
+   */
+  executionWorktreePath?: string;
 }
 
 export function resolveTaskFileTreeTarget(
@@ -46,6 +51,7 @@ export function resolveTaskFileTreeTarget(
     ...(matchingTab?.remoteSessionId
       ? { workspaceRemoteSessionId: matchingTab.remoteSessionId }
       : {}),
+    ...(task.executionWorktree?.path ? { executionWorktreePath: task.executionWorktree.path } : {}),
   };
 }
 

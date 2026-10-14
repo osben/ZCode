@@ -25,6 +25,7 @@ import {
 } from "./workspace-hook-review.js";
 import {
   zcodeBrowserAmbientContextSchema,
+  zcodeExecutionWorktreeSchema,
   zcodeProtocolMcpServerSchema,
 } from "../zcode-protocol/index.js";
 import { highspeedMessageMetaSchema } from "../highspeed.js";
@@ -64,6 +65,10 @@ export const commandPayloadSchemas = {
       })
       .optional(),
     config: createSessionRequestedConfigSchema.optional(),
+    // Execution worktree: the agent runs in this linked worktree directory while the session stays
+    // listed under workspaceId. Additive: older CLI z.object schemas silently drop this key
+    // (fail-closed) and the session then executes in the parent workspace as before.
+    executionWorktree: zcodeExecutionWorktreeSchema.optional(),
     // MCP is runtime startup configuration; include it in the record during create, not as a later write after first send.
     mcpServers: z.array(zcodeProtocolMcpServerSchema).optional(),
     // Off-Peak tool-surface flag, equivalent to legacy session/create — V4 createSession is Desktop's

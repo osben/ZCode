@@ -1284,6 +1284,7 @@ export function createConversationV4Gateway(
     createSessionRecord: async ({
       workspaceId,
       mcpServers,
+      executionWorktree,
       offPeakToolEnabled,
       dynamicWorkflowEnabled,
       dynamicWorkflowMode,
@@ -1305,6 +1306,9 @@ export function createConversationV4Gateway(
         // A group task was already triggered by the first real request: persist the isolation
         // grant first, then open tasks and configuration. Ordinary Desktop drafts stay deferred.
         persistence: "deferred",
+        // Execution worktree: the record executes in the linked worktree while session identity
+        // and listing stay under the parent workspace above.
+        ...(executionWorktree ? { executionWorktree } : {}),
         // MCP is runtime-creation configuration. v4 createSession must pass it through just like
         // legacy session/create, or sessions created here will never start these tools.
         mcpServers,
@@ -1623,6 +1627,16 @@ export function createConversationV4Gateway(
         hasBackgroundWork: false,
         lastActivityAt: session.time?.updated ?? 0,
         createdAt: session.time?.created ?? 0,
+        // Execution-worktree sessions keep listing under the parent workspace; the badge and
+        // "open in IDE/folder" consumers need the worktree facts on the cold-seeded row too.
+        ...(session.executionDirectory
+          ? {
+              executionWorktree: {
+                path: session.executionDirectory,
+                ...(session.executionBranch ? { branchName: session.executionBranch } : {}),
+              },
+            }
+          : {}),
       }));
     } catch (error) {
       context.logger?.warn("sessions-index stored summaries failed", {
@@ -1761,10 +1775,12 @@ export function createConversationV4Gateway(
     getSessionIndexMeta: (sessionId) => {
       const record = context.sessions.get(sessionId);
       if (!record) return null;
+      const executionWorktree = record.app.runtime.getExecutionWorktree();
       return {
         createdAt: record.createdAt,
         lastActivityAt: record.updatedAt,
         ...(record.parentSessionId ? { parentSessionId: String(record.parentSessionId) } : {}),
+        ...(executionWorktree ? { executionWorktree } : {}),
       };
     },
     listWorkspaceSessionIds: (workspaceId) =>

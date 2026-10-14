@@ -455,6 +455,36 @@ describe("zcode-protocol-v4 command", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("parses createSession executionWorktree (session runs in a worktree, listed under workspaceId)", () => {
+    const result = parseCommandEnvelope({
+      commandId: "cmd-create-worktree",
+      clientId: "client-1",
+      sessionId: null,
+      type: "createSession",
+      payload: {
+        workspaceId: "ws-1",
+        executionWorktree: {
+          path: "/repo/../worktrees/zcode-sleepy-capybara",
+          branchName: "zcode/sleepy-capybara",
+        },
+      },
+      issuedAt: 1000,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(
+        (
+          result.envelope.payload as {
+            executionWorktree?: { path: string; branchName: string };
+          }
+        ).executionWorktree,
+      ).toEqual({
+        path: "/repo/../worktrees/zcode-sleepy-capybara",
+        branchName: "zcode/sleepy-capybara",
+      });
+    }
+  });
+
   it("parses an atomic Submission in createSession.firstInput", () => {
     const result = parseCommandEnvelope({
       commandId: "cmd-create-submission",

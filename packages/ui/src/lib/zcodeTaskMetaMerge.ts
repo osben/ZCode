@@ -42,6 +42,8 @@ export function mergeTaskWithOptimisticMeta(
     changeSummary: preferredTask.changeSummary ?? fallbackTask.changeSummary,
     model: preferredTask.model ?? fallbackTask.model,
     provider: preferredTask.provider ?? fallbackTask.provider,
+    // Worktree sessions may carry the fact in one candidate (sessions-index join) only; do not swallow it.
+    executionWorktree: preferredTask.executionWorktree ?? fallbackTask.executionWorktree,
     title: resolveMergedTaskTitle(preferredTask, fallbackTask),
     titleOverridden:
       preferredTask.titleOverridden === true || fallbackTask.titleOverridden === true

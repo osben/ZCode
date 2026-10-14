@@ -173,6 +173,7 @@ interface SidebarFileTreeTarget {
   workspaceRemoteSessionId?: string;
   revealPath?: string;
   temporaryExternalDirectory?: boolean;
+  executionWorktreePath?: string;
 }
 
 // Streaming task events frequently refresh the sidebar parent; when there are no task groups, passing a new []
@@ -1947,6 +1948,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
               workspaceRemoteSessionId={fileTreeTarget.workspaceRemoteSessionId}
               revealPath={fileTreeTarget.revealPath}
               temporaryExternalDirectory={fileTreeTarget.temporaryExternalDirectory}
+              executionWorktreePath={fileTreeTarget.executionWorktreePath}
               canOpenLocalFileManager={isDesktop}
               activePreviewPath={activePreviewPath}
               onClose={() => setIsFileTreeOpen(false)}

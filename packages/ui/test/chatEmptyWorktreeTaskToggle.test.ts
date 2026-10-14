@@ -1,13 +1,17 @@
 // @vitest-environment jsdom
 //
-// Empty-state “New worktree” checkbox（评审建议 6c）测试：
-// - gating：仅 Desktop 本地、非 remote/conversation 的 main-tree / linked-worktree 项目显示 checkbox；
-// - 意图开关：勾选展开迷你表单并注册首发拦截，取消勾选注销；
-// - 发送拦截：校验（空名/非法名/已存在/Custom 位置无效/global 存储不可用）阻止发送并内联报错；
-//   createWorktree 成功 → 草稿迁移请求 + App 打开契约；失败 → 不切换、错误内联；
-//   target-path-exists → 提供打开现有 worktree，而不是再建目录（WT-04）；
-// - global 存储（Stage F）：目标路径在 ~/.zcode/worktrees 下、预览用 ~ 前缀。
-// 测试替身与 commandCenterWorktreeDialog.test.ts 保持同构（gitService 引用必须稳定）。
+// Empty-state "New worktree" checkbox tests (2026-10-13: checkbox-only, no mini-form):
+// - gating: only Desktop local, non-remote/conversation main-tree / linked-worktree projects
+//   render the checkbox;
+// - intent switch: checking registers the first-send interception, unchecking unregisters it;
+// - send interception: gates (branches loading / custom location invalid / global storage
+//   unavailable) block the send with an inline error; createWorktree success → draft transfer
+//   request + App open contract; failure → no switch, inline error;
+//   target-path-exists → offers opening the existing worktree instead of a second directory
+//   (WT-04);
+// - the branch name is fully automatic (generated adjective-noun + effective prefix), asserted
+//   with a deterministic Math.random stub ("sleepy-capybara").
+// Test doubles stay isomorphic with commandCenterWorktreeDialog.test.ts (stable gitService ref).
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createElement } from "react";
@@ -18,7 +22,10 @@ import {
   canOfferChatEmptyWorktreeTask,
   isWorktreeCapableRepository,
 } from "@/ChatEmptyState.js";
-import { ComposerDraftWorktreeIntentContext } from "@/v4/composer/composerDraftWorktreeIntent.js";
+import {
+  type ComposerDraftWorktreeInterceptResult,
+  ComposerDraftWorktreeIntentContext,
+} from "@/v4/composer/composerDraftWorktreeIntent.js";
 import type { ComposerDraftWorktreeIntentSlot } from "@/v4/composer/composerDraftWorktreeIntent.js";
 import {
   clearV4ComposerDraftWorkspaceTransferRequest,
@@ -37,7 +44,7 @@ const createWorktree = vi.fn();
 const listWorktrees = vi.fn();
 const getLocalBranches = vi.fn();
 const getWorkspaceRepositoryInfo = vi.fn();
-// 引用必须稳定：多个 effect 依赖 gitService，每次渲染返回新对象会造成无限重取循环。
+// References must stay stable: several effects depend on gitService; a fresh object per render would cause an infinite refetch loop.
 const stableGitService = {
   createWorktree,
   listWorktrees,
@@ -63,7 +70,7 @@ vi.mock("@/hooks/useSettingService.js", () => ({
   }),
 }));
 
-// Stage F：platform.getAppWorktreesDir（global 存储目录）按用例切换；默认无平台（非 desktop）。
+// Stage F: platform.getAppWorktreesDir (global storage directory) toggled per test case; no platform by default (non-desktop).
 vi.mock("@/hooks/usePlatform.js", () => ({
   useOptionalPlatform: () =>
     mocks.platformAvailable ? { getAppWorktreesDir: mocks.getAppWorktreesDir } : null,
@@ -93,6 +100,14 @@ function stubBranches() {
     branches: [
       { name: "main", isCurrent: true, upstreamName: null, commitHash: "a", commitTimestampMs: 1 },
       { name: "dev", isCurrent: false, upstreamName: null, commitHash: "b", commitTimestampMs: 1 },
+      // Composed default-prefix name used by the existing-branch tests (2026-10-13).
+      {
+        name: "zcode/main",
+        isCurrent: false,
+        upstreamName: null,
+        commitHash: "d",
+        commitTimestampMs: 1,
+      },
     ],
   });
 }
@@ -124,9 +139,8 @@ async function openWorktreeForm(utils: ReturnType<typeof renderToggle>) {
   });
   fireEvent.click(screen.getByRole("checkbox"));
   await waitFor(() => {
-    expect(screen.getByLabelText("commandCenter.worktree.branchName")).toBeTruthy();
+    expect(utils.intentSlot.current?.workspaceKey).toBe(WORKSPACE_PATH);
   });
-  expect(utils.intentSlot.current?.workspaceKey).toBe(WORKSPACE_PATH);
 }
 
 afterEach(() => {
@@ -211,7 +225,7 @@ describe("ChatEmptyWorktreeTaskToggle gating", () => {
     await waitFor(() => {
       expect(getWorkspaceRepositoryInfo).toHaveBeenCalledWith({ workspacePath: WORKSPACE_PATH });
     });
-    // 探测完成后 checkbox 不出现；无报错 UI。
+    // After the probe the checkbox does not render; no error UI.
     await act(async () => {
       await Promise.resolve();
     });
@@ -244,118 +258,87 @@ describe("ChatEmptyWorktreeTaskToggle intent + interception", () => {
   beforeEach(() => {
     stubRepository();
     stubBranches();
+    // Deterministic generated name: adjective[0] ("sleepy") + first animal ("capybara").
+    vi.spyOn(Math, "random").mockReturnValue(0);
   });
 
-  it("toggles the form and the registered send intent", async () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("registers the send intent on check and unregisters it on uncheck (no mini-form)", async () => {
     const utils = renderToggle();
     await openWorktreeForm(utils);
-
-    // 取消勾选：表单隐藏、意图注销。
-    fireEvent.click(screen.getByRole("checkbox"));
+    // The mini-form is hidden (2026-10-13 review): only the checkbox row exists.
     expect(screen.queryByLabelText("commandCenter.worktree.branchName")).toBeNull();
+
+    fireEvent.click(screen.getByRole("checkbox"));
     expect(utils.intentSlot.current).toBeNull();
   });
 
-  it("blocks the first send with an inline error when the branch name is empty", async () => {
+  it("blocks the first send while the branch list is still loading", async () => {
+    getLocalBranches.mockReturnValue(new Promise(() => {}));
     const utils = renderToggle();
     await openWorktreeForm(utils);
     const intent = utils.intentSlot.current!;
-    expect(intent.workspaceKey).toBe(WORKSPACE_PATH);
 
-    let handled: boolean | undefined;
+    let result: ComposerDraftWorktreeInterceptResult | undefined;
     await act(async () => {
-      handled = await intent.interceptFirstSend();
+      result = await intent.interceptFirstSend();
     });
-    expect(handled).toBe(true);
+    expect(result?.action).toBe("cancel");
     expect(createWorktree).not.toHaveBeenCalled();
     expect(utils.onOpenWorktreeDraft).not.toHaveBeenCalled();
-    expect(screen.getByText("chat.empty.worktree.branchNameRequired")).toBeTruthy();
+    expect(screen.getByText("commandCenter.worktree.baseBranch.loading")).toBeTruthy();
   });
 
-  it.each([
-    ["bad name", "commandCenter.worktree.branchName.invalid"],
-    ["main", "commandCenter.worktree.branchName.exists"],
-  ])("blocks the first send for invalid branch name %s", async (name, expectedErrorId) => {
-    const utils = renderToggle();
-    await openWorktreeForm(utils);
-    fireEvent.change(screen.getByLabelText("commandCenter.worktree.branchName"), {
-      target: { value: name },
-    });
-    // 分支列表异步加载：等待其进入组件状态后再拦截（与真实用户的输入节奏一致）。
-    await waitFor(() => expect(getLocalBranches).toHaveBeenCalledTimes(1));
-    await act(async () => {});
-    const intent = utils.intentSlot.current!;
-
-    let handled: boolean | undefined;
-    await act(async () => {
-      handled = await intent.interceptFirstSend();
-    });
-    expect(handled).toBe(true);
-    expect(createWorktree).not.toHaveBeenCalled();
-    expect(screen.getByText(expectedErrorId)).toBeTruthy();
-  });
-
-  it("blocks the first send when the custom worktree location is invalid (WTS-01)", async () => {
-    mocks.settings = { worktreeLocationMode: "custom" };
-    const utils = renderToggle();
-    await openWorktreeForm(utils);
-    fireEvent.change(screen.getByLabelText("commandCenter.worktree.branchName"), {
-      target: { value: "task-9" },
-    });
-    const intent = utils.intentSlot.current!;
-
-    let handled: boolean | undefined;
-    await act(async () => {
-      handled = await intent.interceptFirstSend();
-    });
-    expect(handled).toBe(true);
-    expect(createWorktree).not.toHaveBeenCalled();
-    expect(screen.getByText("commandCenter.worktree.error.custom-location-invalid")).toBeTruthy();
-  });
-
-  it("creates the worktree, redirects the draft with the transfer request, and unregisters the intent", async () => {
+  it("creates a fully automatic worktree and redirects the draft on the first send", async () => {
     mocks.settings = { worktreeBranchPrefix: "osben-" };
     createWorktree.mockResolvedValue({
       ok: true,
-      worktreePath: "/dev/alpha-worktrees/osben-task-9",
-      branchName: "osben-task-9",
+      worktreePath: "/dev/alpha-worktrees/osben-sleepy-capybara",
+      branchName: "osben-sleepy-capybara",
       issues: [],
     } satisfies GitWorktreeCreateResult);
     const utils = renderToggle();
     await openWorktreeForm(utils);
-    fireEvent.change(screen.getByLabelText("commandCenter.worktree.branchName"), {
-      target: { value: "task-9" },
-    });
-    // 分支列表异步加载：等待其进入组件状态后再拦截（与真实用户的输入节奏一致）。
     await waitFor(() => expect(getLocalBranches).toHaveBeenCalledTimes(1));
     await act(async () => {});
     const intent = utils.intentSlot.current!;
 
-    let handled: boolean | undefined;
+    let result: ComposerDraftWorktreeInterceptResult | undefined;
     await act(async () => {
-      handled = await intent.interceptFirstSend();
+      result = await intent.interceptFirstSend();
     });
-    expect(handled).toBe(true);
-    // 请求形状与 palette 相同：合成 prefix 后的分支名、默认 base、sibling 目标目录。
+    // Proceed result: the composer continues the normal first send in THIS workspace and
+    // attaches executionWorktree, so the session runs in the worktree but stays listed here.
+    expect(result).toEqual({
+      action: "proceed",
+      executionWorktree: {
+        path: "/dev/alpha-worktrees/osben-sleepy-capybara",
+        branchName: "osben-sleepy-capybara",
+      },
+    });
+    // Generated <adjective>-<noun> + effective prefix, current branch as base, sibling target.
     expect(createWorktree).toHaveBeenCalledWith({
       workspacePath: WORKSPACE_PATH,
-      branchName: "osben-task-9",
+      branchName: "osben-sleepy-capybara",
       baseBranch: "main",
-      targetPath: "/dev/alpha-worktrees/osben-task-9",
+      targetPath: "/dev/alpha-worktrees/osben-sleepy-capybara",
     });
-    expect(utils.onOpenWorktreeDraft).toHaveBeenCalledWith("/dev/alpha-worktrees/osben-task-9");
-    // 文本保留契约：迁移请求按 source/target 精确匹配（composer continuity 消费）。
+    // No workspace switch, no draft transfer: the session lives in the current project.
+    expect(utils.onOpenWorktreeDraft).not.toHaveBeenCalled();
     expect(
       consumeV4ComposerDraftWorkspaceTransferRequest({
         sourceWorkspacePath: WORKSPACE_PATH,
-        targetWorkspacePath: "/dev/alpha-worktrees/osben-task-9",
+        targetWorkspacePath: "/dev/alpha-worktrees/osben-sleepy-capybara",
       }),
-    ).toBe(true);
-    // 重定向后意图注销，恢复普通发送。
+    ).toBe(false);
+    // Intent unregistered: the composer continues with a normal first send.
     expect(utils.intentSlot.current).toBeNull();
   });
 
-  it("shows the inline issue and keeps the draft when creation is rejected", async () => {
+  it("shows the inline issue and keeps the intent registered when creation is rejected", async () => {
     createWorktree.mockResolvedValue({
       ok: false,
       worktreePath: null,
@@ -364,19 +347,18 @@ describe("ChatEmptyWorktreeTaskToggle intent + interception", () => {
     } satisfies GitWorktreeCreateResult);
     const utils = renderToggle();
     await openWorktreeForm(utils);
-    fireEvent.change(screen.getByLabelText("commandCenter.worktree.branchName"), {
-      target: { value: "task-9" },
-    });
+    await waitFor(() => expect(getLocalBranches).toHaveBeenCalledTimes(1));
+    await act(async () => {});
     const intent = utils.intentSlot.current!;
 
-    let handled: boolean | undefined;
+    let result: ComposerDraftWorktreeInterceptResult | undefined;
     await act(async () => {
-      handled = await intent.interceptFirstSend();
+      result = await intent.interceptFirstSend();
     });
-    expect(handled).toBe(true);
+    expect(result?.action).toBe("cancel");
     expect(screen.getByText("commandCenter.worktree.error.git-unavailable")).toBeTruthy();
     expect(utils.onOpenWorktreeDraft).not.toHaveBeenCalled();
-    // 不切换 workspace：意图保持注册，composer 保留文本由发送被拦截保证。
+    // No workspace switch: the intent stays registered; the composer keeps the text because the send was intercepted.
     expect(utils.intentSlot.current).not.toBeNull();
   });
 
@@ -392,9 +374,10 @@ describe("ChatEmptyWorktreeTaskToggle intent + interception", () => {
       isRepository: true,
       worktrees: [
         {
-          path: "/dev/alpha-worktrees/task-9",
+          path: "/dev/alpha-worktrees/zcode-sleepy-capybara",
           headCommitHash: "c",
-          branchName: "task-9",
+          // Recovery matches by the COMPOSED branch name (deterministic generated name).
+          branchName: "zcode/sleepy-capybara",
           isMain: false,
           isBare: false,
           isDetached: false,
@@ -404,39 +387,57 @@ describe("ChatEmptyWorktreeTaskToggle intent + interception", () => {
     });
     const utils = renderToggle();
     await openWorktreeForm(utils);
-    fireEvent.change(screen.getByLabelText("commandCenter.worktree.branchName"), {
-      target: { value: "task-9" },
-    });
+    await waitFor(() => expect(getLocalBranches).toHaveBeenCalledTimes(1));
+    await act(async () => {});
     const intent = utils.intentSlot.current!;
 
-    let handled: boolean | undefined;
+    let result: ComposerDraftWorktreeInterceptResult | undefined;
     await act(async () => {
-      handled = await intent.interceptFirstSend();
+      result = await intent.interceptFirstSend();
     });
-    expect(handled).toBe(true);
+    expect(result?.action).toBe("cancel");
     expect(
       screen.getByText("commandCenter.worktree.error.target-path-exists.existing"),
     ).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "commandCenter.worktree.openExisting" }));
-    expect(utils.onOpenWorktreeDraft).toHaveBeenCalledWith("/dev/alpha-worktrees/task-9");
+    expect(utils.onOpenWorktreeDraft).toHaveBeenCalledWith(
+      "/dev/alpha-worktrees/zcode-sleepy-capybara",
+    );
     expect(createWorktree).toHaveBeenCalledTimes(1);
-    // 恢复入口同样带迁移请求：用户的草稿文本跟到现有 worktree。
+    // The recovery entry also issues the transfer request: the user's draft text follows to the existing worktree.
     expect(
       consumeV4ComposerDraftWorkspaceTransferRequest({
         sourceWorkspacePath: WORKSPACE_PATH,
-        targetWorkspacePath: "/dev/alpha-worktrees/task-9",
+        targetWorkspacePath: "/dev/alpha-worktrees/zcode-sleepy-capybara",
       }),
     ).toBe(true);
   });
 
-  it("creates under the app worktrees dir (global mode) and previews it with the ~ prefix", async () => {
+  it("blocks the first send when the custom worktree location is invalid (WTS-01)", async () => {
+    mocks.settings = { worktreeLocationMode: "custom" };
+    const utils = renderToggle();
+    await openWorktreeForm(utils);
+    await waitFor(() => expect(getLocalBranches).toHaveBeenCalledTimes(1));
+    await act(async () => {});
+    const intent = utils.intentSlot.current!;
+
+    let result: ComposerDraftWorktreeInterceptResult | undefined;
+    await act(async () => {
+      result = await intent.interceptFirstSend();
+    });
+    expect(result?.action).toBe("cancel");
+    expect(createWorktree).not.toHaveBeenCalled();
+    expect(screen.getByText("commandCenter.worktree.error.custom-location-invalid")).toBeTruthy();
+  });
+
+  it("creates under the app worktrees dir in global mode", async () => {
     mocks.settings = { worktreeLocationMode: "global" };
     mocks.platformAvailable = true;
     createWorktree.mockResolvedValue({
       ok: true,
-      worktreePath: "/Users/dev/.zcode/worktrees/alpha/task-9",
-      branchName: "task-9",
+      worktreePath: "/Users/dev/.zcode/worktrees/alpha/zcode-sleepy-capybara",
+      branchName: "zcode/sleepy-capybara",
       issues: [],
     } satisfies GitWorktreeCreateResult);
     const utils = renderToggle();
@@ -444,46 +445,44 @@ describe("ChatEmptyWorktreeTaskToggle intent + interception", () => {
     await waitFor(() => {
       expect(mocks.getAppWorktreesDir).toHaveBeenCalledTimes(1);
     });
-    fireEvent.change(screen.getByLabelText("commandCenter.worktree.branchName"), {
-      target: { value: "task-9" },
-    });
-    // 预览用 ~ 前缀显示。
-    await waitFor(() => {
-      expect(screen.getByText("~/.zcode/worktrees/alpha/task-9")).toBeTruthy();
-    });
+    await waitFor(() => expect(getLocalBranches).toHaveBeenCalledTimes(1));
+    await act(async () => {});
     const intent = utils.intentSlot.current!;
 
-    let handled: boolean | undefined;
+    let result: ComposerDraftWorktreeInterceptResult | undefined;
     await act(async () => {
-      handled = await intent.interceptFirstSend();
+      result = await intent.interceptFirstSend();
     });
-    expect(handled).toBe(true);
-    // 创建请求始终用绝对路径（global 目录 + 仓库名 + 分支段）。
+    expect(result).toEqual({
+      action: "proceed",
+      executionWorktree: {
+        path: "/Users/dev/.zcode/worktrees/alpha/zcode-sleepy-capybara",
+        branchName: "zcode/sleepy-capybara",
+      },
+    });
+    // The create request always uses the absolute path (global dir + repo + composed segment).
     expect(createWorktree).toHaveBeenCalledWith({
       workspacePath: WORKSPACE_PATH,
-      branchName: "task-9",
+      branchName: "zcode/sleepy-capybara",
       baseBranch: "main",
-      targetPath: "/Users/dev/.zcode/worktrees/alpha/task-9",
+      targetPath: "/Users/dev/.zcode/worktrees/alpha/zcode-sleepy-capybara",
     });
-    expect(utils.onOpenWorktreeDraft).toHaveBeenCalledWith(
-      "/Users/dev/.zcode/worktrees/alpha/task-9",
-    );
+    expect(utils.onOpenWorktreeDraft).not.toHaveBeenCalled();
   });
 
   it("blocks the first send when global storage is unavailable (non-desktop, Stage F)", async () => {
     mocks.settings = { worktreeLocationMode: "global" };
     const utils = renderToggle();
     await openWorktreeForm(utils);
-    fireEvent.change(screen.getByLabelText("commandCenter.worktree.branchName"), {
-      target: { value: "task-9" },
-    });
+    await waitFor(() => expect(getLocalBranches).toHaveBeenCalledTimes(1));
+    await act(async () => {});
     const intent = utils.intentSlot.current!;
 
-    let handled: boolean | undefined;
+    let result: ComposerDraftWorktreeInterceptResult | undefined;
     await act(async () => {
-      handled = await intent.interceptFirstSend();
+      result = await intent.interceptFirstSend();
     });
-    expect(handled).toBe(true);
+    expect(result?.action).toBe("cancel");
     expect(mocks.getAppWorktreesDir).not.toHaveBeenCalled();
     expect(createWorktree).not.toHaveBeenCalled();
     expect(utils.onOpenWorktreeDraft).not.toHaveBeenCalled();

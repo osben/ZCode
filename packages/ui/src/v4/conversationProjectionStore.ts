@@ -284,6 +284,12 @@ export class ConversationProjectionStore {
       > & { directoryRevision: number })
     | null = null;
   private closed = false;
+  /**
+   * Terminal flag: a subscribe failed with fault.subscribe.sessionNotFound (deleted draft prewarm /
+   * removed session). Re-subscription can never succeed, and a keep-warm store would otherwise
+   * re-subscribe on every workspace runtime-restart broadcast and error again.
+   */
+  private sessionGone = false;
 
   constructor(
     readonly topic: string,
@@ -291,6 +297,8 @@ export class ConversationProjectionStore {
     // Row-structure sharing pool (docs/performance/conversation-row-structural-sharing.md).
     // SessionDataLayer injects a pool shared across stores; when constructed independently, sharing is scoped to this store.
     private readonly rowPool: ConversationRowPool = new ConversationRowPool(),
+    /** Called once when the session is known gone; SessionDataLayer drops the keep-warm entry. */
+    private readonly onSessionGone?: () => void,
   ) {
     liveProjectionStores.add(this);
     this.offAssemblyFault = transport.onAssemblyFault((fault) => {
@@ -363,7 +371,7 @@ export class ConversationProjectionStore {
       rendererPrepareStartedAt?: number;
     } = {},
   ): Promise<void> {
-    if (this.closed) return;
+    if (this.closed || this.sessionGone) return;
     const generation = ++this.generation;
     this.discardRecovery();
     const snapshot = options.forceSnapshot ? null : this.state.snapshot;
@@ -451,6 +459,27 @@ export class ConversationProjectionStore {
         await this.connect({ forceSnapshot: true, initialOverflowRetry: true });
         return;
       }
+      if (message.includes("fault.subscribe.sessionNotFound")) {
+        // The session is gone for good: re-subscription can never succeed. Stop every reconnect path
+        // (manual retry, runtime-restart/available broadcasts) and let the data layer drop the entry.
+        this.clearRuntimeRecycleRetry();
+        this.discardRecovery();
+        this.awaitingInitial = null;
+        this.sessionGone = true;
+        logger.lifecycle.warn("v4 conversation store session gone", {
+          durationMs: roundedDuration(subscribeStartedAt, monotonicNow()),
+          errorMessage: message,
+          event: "v4.conversation.store.connect.session_gone",
+          generation,
+          module: "ui.v4.conversation_projection_store",
+          status: "failed",
+          topic: this.topic,
+        });
+        logger.warn(`[v4-store] subscribe ${this.topic} 失败: 会话已删除，停止重连`);
+        this.setState({ status: "error", lastError: message });
+        this.onSessionGone?.();
+        return;
+      }
       if (this.scheduleRuntimeRecycleRetry(error, generation)) {
         logger.lifecycle.warn("v4 conversation store connect retry scheduled", {
           durationMs: roundedDuration(subscribeStartedAt, monotonicNow()),
@@ -501,7 +530,7 @@ export class ConversationProjectionStore {
    * Returning true means this method took over; callers should not set error.
    */
   private scheduleRuntimeRecycleReconnect(generation: number): boolean {
-    if (this.closed) return false;
+    if (this.closed || this.sessionGone) return false;
     const delayMs = RUNTIME_RECYCLE_RETRY_DELAYS_MS[this.runtimeRecycleRetryAttempt];
     if (delayMs === undefined) return false;
     this.runtimeRecycleRetryAttempt += 1;
@@ -518,7 +547,7 @@ export class ConversationProjectionStore {
 
   /** At workspace-dispose: the old runtime is dead and the new one does not exist yet, so resubscription is not possible. */
   private handleRuntimeUnavailable(): void {
-    if (this.closed) return;
+    if (this.closed || this.sessionGone) return;
     this.clearRuntimeRecycleRetry();
     this.discardRecovery();
     this.awaitingInitial = null;
@@ -536,7 +565,7 @@ export class ConversationProjectionStore {
 
   /** New runtime is ready: same as onRuntimeRestart, resubscribing from the original watermark. */
   private handleRuntimeAvailable(): void {
-    if (this.closed) return;
+    if (this.closed || this.sessionGone) return;
     this.clearRuntimeRecycleRetry();
     this.runtimeRecycleRetryAttempt = 0;
     if (this.connectInFlight > 0) {
@@ -551,6 +580,7 @@ export class ConversationProjectionStore {
 
   /** Manual retry after a subscription failure (target of the pane-level Reconnect button). */
   retry(): Promise<void> {
+    if (this.sessionGone) return Promise.resolve();
     this.clearRuntimeRecycleRetry();
     this.runtimeRecycleRetryAttempt = 0;
     return this.connect();
@@ -971,7 +1001,7 @@ export class ConversationProjectionStore {
   }
 
   private handleRuntimeRestart(reason?: "runtimeRestart" | "transportReplaced"): void {
-    if (this.closed) return;
+    if (this.closed || this.sessionGone) return;
     // The transport has already invalidated the old ownership/assembler. Do not unsubscribe the old transport/runtime subId;
     // subscribe fresh and keep the old snapshot until the new snapshot replaces it atomically.
     this.generation += 1;

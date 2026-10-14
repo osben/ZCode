@@ -33,6 +33,21 @@ describe("resolveTaskFileTreeTarget", () => {
     });
   });
 
+  it("carries the session execution worktree as the open target", () => {
+    expect(
+      resolveTaskFileTreeTarget(
+        task({
+          executionWorktree: {
+            path: "/work/worktrees/zcode-sleepy-capybara",
+            branchName: "zcode/sleepy-capybara",
+          },
+        }),
+        tab(),
+      ).executionWorktreePath,
+    ).toBe("/work/worktrees/zcode-sleepy-capybara");
+    expect("executionWorktreePath" in resolveTaskFileTreeTarget(task(), tab())).toBe(false);
+  });
+
   it("keeps remote identity and session together", () => {
     expect(
       resolveTaskFileTreeTarget(
@@ -97,13 +112,13 @@ describe("resolveTaskFileTreeTarget", () => {
     });
   });
 
-  it.each([
-    [[]],
-    [[tab({ workspacePath: "/other/repo", label: "Other repository" })]],
-  ])("falls back to the task path when no local tab matches", (tabs) => {
-    expect(resolveTaskFileTreeTargetFromTabs(task(), tabs)).toEqual({
-      workspacePath: "/work/repo",
-      workspaceName: "repo",
-    });
-  });
+  it.each([[[]], [[tab({ workspacePath: "/other/repo", label: "Other repository" })]]])(
+    "falls back to the task path when no local tab matches",
+    (tabs) => {
+      expect(resolveTaskFileTreeTargetFromTabs(task(), tabs)).toEqual({
+        workspacePath: "/work/repo",
+        workspaceName: "repo",
+      });
+    },
+  );
 });

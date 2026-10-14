@@ -597,11 +597,15 @@ async function persistSession(
     // session.path/directory, removing a trailing slash from the local workspacePath. Cold recovery then looked up the
     // provider registry under a different identity using the exact workspaceKey. Persistence must preserve the protocol input path.
     const persistedWorkspacePath = this.config.workspacePath ?? directory;
+    // Execution-worktree sessions run in a linked worktree but belong to the parent workspace:
+    // directory/path/projectID keep the workspace representation so listing filters stay correct,
+    // and the worktree is restored on resume through the dedicated columns.
+    const executionWorktreePath = this.config.executionWorktree?.path;
     const title = titleFromInput(input);
     const workspaceIdentity = this.config.memory?.workspaceIdentity?.trim();
     await this.sessionStore.createSession({
       id: this.sessionId,
-      projectID: projectIdFromDirectory(directory),
+      projectID: projectIdFromDirectory(persistedWorkspacePath),
       // Memory workspaceIdentity is an opaque isolation key supplied by the upstream. Only brand its type here;
       // do not call an ID generator that rewrites the string, or the recovered Memory root will drift.
       workspaceID: this.config.workspaceIdentity ?? (workspaceIdentity as WorkspaceId | undefined),
@@ -611,6 +615,8 @@ async function persistSession(
       slug: slugify(this.sessionId),
       directory: persistedWorkspacePath,
       path: persistedWorkspacePath,
+      executionDirectory: executionWorktreePath,
+      executionBranch: this.config.executionWorktree?.branchName,
       title,
       titleSource: "first_input",
       version: this.appVersion,

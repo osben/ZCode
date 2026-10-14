@@ -247,6 +247,8 @@ export interface V4GatewayHost {
     createdAt: number;
     lastActivityAt: number;
     parentSessionId?: string;
+    /** Execution worktree facts from the runtime; present only for worktree sessions. */
+    executionWorktree?: { path: string; branchName?: string };
   } | null;
   /**
    * Config seed: current runtime truth for the session (model selection/reasoning depth/collaboration mode).
@@ -1188,12 +1190,14 @@ export class ConversationV4Gateway {
     createdAt: number;
     lastActivityAt: number;
     parentSessionId?: string;
+    executionWorktree?: { path: string; branchName?: string };
   } {
     const meta = this.host.getSessionIndexMeta?.(sessionId);
     return {
       createdAt: meta?.createdAt ?? 0,
       lastActivityAt: meta?.lastActivityAt ?? this.now(),
       ...(meta?.parentSessionId ? { parentSessionId: meta.parentSessionId } : {}),
+      ...(meta?.executionWorktree ? { executionWorktree: meta.executionWorktree } : {}),
     };
   }
 

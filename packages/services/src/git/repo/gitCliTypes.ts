@@ -11,6 +11,8 @@ import type {
   GitRepositorySummary,
   GitWorktreeCreateResult,
   GitWorktreeListResult,
+  GitWorktreePruneResult,
+  GitWorktreeRemoveResult,
   GitWorkspaceRepositoryInfo,
 } from "@zcode/shared";
 
@@ -90,6 +92,12 @@ export interface GitCliRepo {
     targetPath: string,
     baseBranch?: string,
   ): Promise<GitWorktreeCreateResult>;
+  removeWorktree(
+    workspacePath: string,
+    targetPath: string,
+    force?: boolean,
+  ): Promise<GitWorktreeRemoveResult>;
+  pruneWorktrees(workspacePath: string): Promise<GitWorktreePruneResult>;
   switchBranch(workspacePath: string, targetBranchName: string): Promise<GitBranchMutationResult>;
   createBranchAndSwitch(
     workspacePath: string,

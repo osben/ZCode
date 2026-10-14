@@ -122,7 +122,15 @@ export async function resumeFromStore(
     traceContext,
   });
 
-  this.workingDirectory = session.directory;
+  // Execution-worktree sessions persist their execution cwd separately from the workspace
+  // directory (listing identity); restore the worktree first so the resumed turn runs there.
+  this.workingDirectory = session.executionDirectory ?? session.directory;
+  if (session.executionDirectory) {
+    this.config.executionWorktree = {
+      path: session.executionDirectory,
+      ...(session.executionBranch ? { branchName: session.executionBranch } : {}),
+    };
+  }
   this.config.taskType = session.taskType;
   if (this.config.memory) {
     // The Memory root must use the workspace identity persisted with the session, not the workspace from process startup.

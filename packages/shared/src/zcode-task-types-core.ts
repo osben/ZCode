@@ -354,6 +354,12 @@ export interface ZCodeTaskMeta {
   repairState?: ZCodeTaskRepairState;
   /** Task-level file-change summary for list/title display only; fileChanges remains the source of truth for rollback. */
   changeSummary?: ZCodeTaskChangeSummary;
+  /**
+   * Execution worktree facts (session runs in a linked worktree while listed under this project's
+   * workspace). Drives the sidebar worktree badge and the header/file-tree open-in-IDE target.
+   * Mirrors the sessions-index sessionSummary field; absent for ordinary sessions.
+   */
+  executionWorktree?: { path: string; branchName?: string };
   /** zcode-cli /goal session target; null means it was explicitly cleared. */
   target?: ZCodeTaskGoal | null;
 }

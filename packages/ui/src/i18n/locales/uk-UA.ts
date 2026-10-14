@@ -567,6 +567,16 @@ const ukUA: Record<string, string> = {
   "commandCenter.worktree.starting": "Запуск…",
   "commandCenter.worktree.openExisting": "Відкрити worktree",
   "commandCenter.worktree.openFailed": "Worktree створено, але не вдалося відкрити: {path}",
+  "commandCenter.worktree.regenerateName": "Згенерувати іншу назву гілки",
+  "commandCenter.worktree.existingBranchHint":
+    "Ця гілка вже існує; новий worktree переключиться на неї.",
+  "commandCenter.worktree.existingWorktrees": "Наявні worktree",
+  "commandCenter.worktree.existingWorktrees.empty": "У цьому репозиторії немає інших worktree.",
+  "commandCenter.worktree.existingWorktrees.openBadge": "відкрито",
+  "commandCenter.worktree.remove": "Видалити worktree",
+  "commandCenter.worktree.remove.confirmDirty": "Є зміни — усе одно видалити?",
+  "commandCenter.worktree.prune": "Очистити застарілі",
+  "commandCenter.worktree.prune.done": "Видалено {count} застарілих записів worktree.",
   "commandCenter.worktree.error.invalid-branch-name": "«{branchName}» — некоректна назва гілки.",
   "commandCenter.worktree.error.branch-already-exists": "Гілка «{branchName}» вже існує.",
   "commandCenter.worktree.error.target-branch-not-found":
@@ -583,6 +593,10 @@ const ukUA: Record<string, string> = {
     "Власне розташування worktree в налаштуваннях має бути абсолютним шляхом.",
   "commandCenter.worktree.error.global-location-unavailable":
     "Глобальне сховище worktree недоступне на цій платформі. Виберіть інше розташування в налаштуваннях.",
+  "commandCenter.worktree.error.worktree-not-found":
+    "Цей шлях не є worktree цього репозиторію, який можна видалити.",
+  "commandCenter.worktree.error.worktree-dirty": "Worktree має змінені або невідстежувані файли.",
+  "commandCenter.worktree.error.worktree-locked": "Worktree заблоковано в Git.",
   "commandCenter.worktree.error.unknown": "Не вдалося створити worktree.",
   "commandCenter.worktree.error.requestFailed": "Помилка запиту Git: {error}",
   "confirmDialog.taskDeleteTitle": "Видалити це завдання?",
@@ -2248,9 +2262,8 @@ const ukUA: Record<string, string> = {
   "settings.worktrees.location.example": "Приклад шляху worktree",
   "settings.worktrees.branchPrefix": "Префікс гілок за замовчуванням",
   "settings.worktrees.branchPrefix.description":
-    "Додається на початок назв нових гілок worktree, якщо назва ще не починається з нього. Діє лише для нових worktree.",
-  "settings.worktrees.branchPrefix.placeholder": "напр. dev/",
-  "settings.worktrees.branchPrefix.example": "Приклад назви гілки: {name}",
+    "Додається на початок назв нових гілок worktree, якщо назва ще не починається з нього. Типовий — zcode/. Діє лише для нових worktree.",
+  "settings.worktrees.branchPrefix.example": "Перегляд: {name}",
   "settings.worktrees.branchPrefix.reset": "Відновити типове",
   "settings.worktrees.projects": "Перевизначення для проєктів",
   "settings.worktrees.projects.description":
@@ -4750,8 +4763,6 @@ const ukUA: Record<string, string> = {
   "chat.empty.cliMenu": "Вибрати CLI",
   "chat.empty.home": "Домашня папка",
   "chat.empty.worktree.newWorktree": "Новий worktree",
-  "chat.empty.worktree.branchNameRequired": "Введіть назву гілки перед надсиланням.",
-  "chat.empty.worktree.baseBranch": "База: {branch}",
   "chat.empty.worktree.creating": "Створення worktree…",
   "chat.empty.createWorkspace.title": "Створити робочий простір",
   "chat.empty.createWorkspace.placeholder": "Назва робочого простору",
@@ -6597,6 +6608,8 @@ const ukUA: Record<string, string> = {
   "forms.validation.agentSystemPromptHint": "Визначте поведінку й можливості субагента",
   "forms.validation.fileExists": "Файл {fileName} уже існує",
   "taskList.cronTaskLabel": "Завдання за розкладом",
+  "taskList.worktreeTaskLabel": "Worktree-сесія · {branch}",
+  "taskList.worktreeTaskLabelNoBranch": "Worktree-сесія",
   "taskList.offPeakTaskLabel": "Завдання в непіковий час",
   "taskList.workflowRun.ariaLabel": "Запуск робочого процесу {name}: {status}",
   "taskList.workflowRun.moreRuns": "Ще +{count}",

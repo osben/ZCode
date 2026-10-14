@@ -1,14 +1,14 @@
 // @vitest-environment jsdom
 //
-// Command Center “New task in worktree” 流程测试（project 页 → setup 页 → Start）：
-// - project 页：打开的本地 tab + recentProjects（去重、排除 remote/conversation），选择后推入 setup 页；
-// - setup 页：destination / 分支名输入 / base-branch 列表 / Start 逻辑；
-// - Start（checkout）：关闭面板并走 App 打开+draft 契约，不触发 Git；
-// - Start（worktree）：createWorktree 成功后打开创建的目录；
-// - target-path-exists 且该分支已有 worktree：内联展示恢复入口，打开现有目录而不是再建（WT-04）；
-// - global 存储（Stage F）：平台提供 getAppWorktreesDir 时目标路径在 ~/.zcode/worktrees 下、
-//   预览用 ~ 前缀；无平台方法时按无效位置阻塞 Start 并内联报错。
-// Command 组件按 commandCenterPageStackDialog.test.ts 的先例 mock（cmdk Input 保持真实）。
+// Command Center "New task in worktree" flow tests (project page → setup page → Start):
+// - project page: open local tabs + recentProjects (dedup, remote/conversation excluded); picking one pushes the setup page;
+// - setup page: destination / branch name input / base-branch list / Start logic;
+// - Start (checkout): closes the palette and follows the App open+draft contract without touching Git;
+// - Start (worktree): opens the created directory after createWorktree succeeds;
+// - target-path-exists with an existing worktree for the branch: inline recovery entry opens the existing directory instead of creating one (WT-04);
+// - global storage (Stage F): with platform.getAppWorktreesDir the target path lives under ~/.zcode/worktrees and the
+//   preview uses the ~ prefix; without the platform method Start is blocked as an invalid location with an inline error.
+// The Command component is mocked following commandCenterPageStackDialog.test.ts (cmdk Input stays real).
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
@@ -76,7 +76,7 @@ const createWorktree = vi.fn();
 const listWorktrees = vi.fn();
 const getLocalBranches = vi.fn();
 const getWorkspaceRepositoryInfo = vi.fn();
-// 引用必须稳定：setup 页的 data-fetch effect 依赖 gitService，每次渲染返回新对象会造成无限重取/重渲染循环。
+// References must stay stable: the setup page's data-fetch effect depends on gitService; a fresh object per render would cause an infinite refetch/re-render loop.
 const stableGitService = {
   createWorktree,
   listWorktrees,
@@ -85,12 +85,12 @@ const stableGitService = {
 };
 
 vi.mock("@/hooks/useWorkspaceServices.js", () => ({
-  // worktree flow 面向本地项目路径，必须走 base（本地 Host）服务而不是当前活动 workspace 的服务。
+  // The worktree flow targets local project paths and must use base (local Host) services, not the active workspace's services.
   useBaseWorkspaceServices: () => ({ gitService: stableGitService }),
 }));
 
-// Stage D：useSettings 快照按用例切换（prefix / override / 自定义位置）。
-// Stage F：platform.getAppWorktreesDir（global 存储目录）按用例切换；默认无平台（非 desktop）。
+// Stage D: the useSettings snapshot is toggled per test case (prefix / override / custom location).
+// Stage F: platform.getAppWorktreesDir (global storage directory) toggled per test case; no platform by default (non-desktop).
 const mocks = vi.hoisted(() => ({
   settings: { recentProjects: ["/dev/recent-project"] } as Record<string, unknown>,
   platformAvailable: false,
@@ -189,7 +189,7 @@ function getRow(container: HTMLElement, value: string) {
 }
 
 function openSetupPage(container: HTMLElement) {
-  // 命令选择推入 project 页，再选择 alpha 项目推入 setup 页。
+  // The command selection pushes the project page, then picking alpha pushes the setup page.
   fireEvent.click(getRow(container, "quickPick.command.newTaskWorktree"));
   fireEvent.click(getRow(container, "alpha /dev/alpha"));
   expect(screen.getByPlaceholderText("commandCenter.placeholder.newTaskSetup")).toBeTruthy();
@@ -207,7 +207,7 @@ describe("CommandCenterDialog worktree flow", () => {
     const { container } = renderWorktreeDialog();
     fireEvent.click(getRow(container, "quickPick.command.newTaskWorktree"));
 
-    // 打开的 alpha 一起列出；remote tab 不出现；recentProjects 中已打开的不重复。
+    // The open alpha tab is listed too; remote tabs do not appear; already-open recentProjects entries are not duplicated.
     expect(getRow(container, "alpha /dev/alpha")).toBeTruthy();
     expect(getRow(container, "recent-project /dev/recent-project")).toBeTruthy();
     expect(container.querySelector('[data-item-value*="/remote/beta"]')).toBeNull();
@@ -215,13 +215,13 @@ describe("CommandCenterDialog worktree flow", () => {
     fireEvent.click(getRow(container, "alpha /dev/alpha"));
     expect(screen.getByPlaceholderText("commandCenter.placeholder.newTaskSetup")).toBeTruthy();
 
-    // 返回 project 页（CC-01）：上下文由 page-stack 保留。
+    // Back to the project page (CC-01): context is preserved by the page stack.
     fireEvent.click(screen.getByLabelText("quickPick.command.goBack"));
     expect(screen.getByPlaceholderText("commandCenter.placeholder.newTaskProject")).toBeTruthy();
     expect(getRow(container, "alpha /dev/alpha")).toBeTruthy();
   });
 
-  it("loads branches, defaults the base branch to HEAD, and requires a branch name", async () => {
+  it("loads branches, prefills a generated branch name, and still requires one to start", async () => {
     stubRepositoryData();
     const { container } = renderWorktreeDialog();
     openSetupPage(container);
@@ -229,15 +229,31 @@ describe("CommandCenterDialog worktree flow", () => {
     await waitFor(() => {
       expect(getRow(container, "base main")).toBeTruthy();
     });
-    // 默认 base branch 是当前分支（CheckIcon 存在于 main 行内）。
+    // The default base branch is the current branch (CheckIcon sits inside the main row).
     expect(getRow(container, "base main").querySelectorAll("svg")).toHaveLength(1);
 
-    const startButton = screen.getByRole("button", { name: "commandCenter.worktree.start" });
-    expect(startButton).toHaveProperty("disabled", true);
-
-    fireEvent.change(screen.getByLabelText("commandCenter.worktree.branchName"), {
-      target: { value: "task-9" },
+    // 2026-10-13 spec: the field arrives pre-filled with a generated name, so Start is
+    // enabled right away; clearing the field re-enables the emptiness gate.
+    const branchNameInput = screen.getByLabelText(
+      "commandCenter.worktree.branchName",
+    ) as HTMLInputElement;
+    await waitFor(() => {
+      expect(branchNameInput.value).toMatch(/^[a-z]+-[a-z]+$/);
     });
+    expect(screen.getByRole("button", { name: "commandCenter.worktree.start" })).toHaveProperty(
+      "disabled",
+      false,
+    );
+
+    fireEvent.change(branchNameInput, { target: { value: "" } });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "commandCenter.worktree.start" })).toHaveProperty(
+        "disabled",
+        true,
+      );
+    });
+
+    fireEvent.change(branchNameInput, { target: { value: "task-9" } });
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "commandCenter.worktree.start" })).toHaveProperty(
         "disabled",
@@ -266,8 +282,8 @@ describe("CommandCenterDialog worktree flow", () => {
     stubRepositoryData();
     createWorktree.mockResolvedValue({
       ok: true,
-      worktreePath: "/dev/alpha-worktrees/task-9",
-      branchName: "task-9",
+      worktreePath: "/dev/alpha-worktrees/zcode-task-9",
+      branchName: "zcode/task-9",
       issues: [],
     } satisfies GitWorktreeCreateResult);
     const { container, onOpenChange, onCreateTaskInWorkspace } = renderWorktreeDialog();
@@ -279,7 +295,7 @@ describe("CommandCenterDialog worktree flow", () => {
     fireEvent.change(screen.getByLabelText("commandCenter.worktree.branchName"), {
       target: { value: "task-9" },
     });
-    // 分支行渲染与 loading=false 可能分两次提交；点击前等待 Start 真正可用。
+    // Branch rows and loading=false may land in two commits; wait until Start is actually enabled before clicking.
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "commandCenter.worktree.start" })).toHaveProperty(
         "disabled",
@@ -288,17 +304,21 @@ describe("CommandCenterDialog worktree flow", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "commandCenter.worktree.start" }));
 
+    // The default zcode/ prefix composes into the branch name and target path (2026-10-13).
     await waitFor(() => {
       expect(createWorktree).toHaveBeenCalledWith({
         workspacePath: "/dev/alpha",
-        branchName: "task-9",
+        branchName: "zcode/task-9",
         baseBranch: "main",
-        targetPath: "/dev/alpha-worktrees/task-9",
+        targetPath: "/dev/alpha-worktrees/zcode-task-9",
       });
     });
     expect(onOpenChange).toHaveBeenCalledWith(false);
-    // 新 worktree 是新的 workspace：不传 identity（显式 undefined）。
-    expect(onCreateTaskInWorkspace).toHaveBeenCalledWith("/dev/alpha-worktrees/task-9", undefined);
+    // A new worktree is a new workspace: no identity is passed (explicit undefined).
+    expect(onCreateTaskInWorkspace).toHaveBeenCalledWith(
+      "/dev/alpha-worktrees/zcode-task-9",
+      undefined,
+    );
   });
 
   it("keeps the newer Start busy when an older request finishes after reopening the palette", async () => {
@@ -388,9 +408,9 @@ describe("CommandCenterDialog worktree flow", () => {
       isRepository: true,
       worktrees: [
         {
-          path: "/dev/alpha-worktrees/task-9",
+          path: "/dev/alpha-worktrees/zcode-task-9",
           headCommitHash: "c",
-          branchName: "task-9",
+          branchName: "zcode/task-9",
           isMain: false,
           isBare: false,
           isDetached: false,
@@ -407,14 +427,14 @@ describe("CommandCenterDialog worktree flow", () => {
     fireEvent.change(screen.getByLabelText("commandCenter.worktree.branchName"), {
       target: { value: "task-9" },
     });
-    // 分支行渲染与 loading=false 可能分两次提交；点击前等待 Start 真正可用。
+    // Branch rows and loading=false may land in two commits; wait until Start is actually enabled before clicking.
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "commandCenter.worktree.start" })).toHaveProperty(
         "disabled",
         false,
       );
     });
-    // act 包裹点击，冲刷 createWorktree → listWorktrees 恢复查询的整条异步链。
+    // Wrap the click in act to flush the whole createWorktree → listWorktrees recovery chain.
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "commandCenter.worktree.start" }));
     });
@@ -426,8 +446,11 @@ describe("CommandCenterDialog worktree flow", () => {
     fireEvent.click(screen.getByRole("button", { name: "commandCenter.worktree.openExisting" }));
 
     expect(onOpenChange).toHaveBeenCalledWith(false);
-    expect(onCreateTaskInWorkspace).toHaveBeenCalledWith("/dev/alpha-worktrees/task-9", undefined);
-    // 恢复路径不触发第二次 createWorktree（WT-04）。
+    expect(onCreateTaskInWorkspace).toHaveBeenCalledWith(
+      "/dev/alpha-worktrees/zcode-task-9",
+      undefined,
+    );
+    // The recovery path does not fire a second createWorktree (WT-04).
     expect(createWorktree).toHaveBeenCalledTimes(1);
   });
 });
@@ -527,7 +550,7 @@ describe("CommandCenterDialog worktree flow with worktree settings (Stage D)", (
     await waitFor(() => {
       expect(getRow(container, "base dev")).toBeTruthy();
     });
-    // 默认基准分支来自 override：dev 行带选中标记，main 行没有。
+    // The default base branch comes from the override: the dev row is checked, the main row is not.
     expect(getRow(container, "base dev").querySelectorAll("svg")).toHaveLength(1);
     expect(getRow(container, "base main").querySelectorAll("svg")).toHaveLength(0);
   });
@@ -541,8 +564,8 @@ describe("CommandCenterDialog worktree flow with worktree settings (Stage D)", (
     };
     createWorktree.mockResolvedValue({
       ok: true,
-      worktreePath: "/wt-root/alpha-task-9",
-      branchName: "task-9",
+      worktreePath: "/wt-root/alpha-zcode-task-9",
+      branchName: "zcode/task-9",
       issues: [],
     } satisfies GitWorktreeCreateResult);
     const { container } = renderWorktreeDialog();
@@ -555,13 +578,16 @@ describe("CommandCenterDialog worktree flow with worktree settings (Stage D)", (
       target: { value: "task-9" },
     });
     await waitFor(() => {
-      expect(screen.getByText("/wt-root/alpha-task-9")).toBeTruthy();
+      expect(screen.getByText("/wt-root/alpha-zcode-task-9")).toBeTruthy();
     });
     fireEvent.click(screen.getByRole("button", { name: "commandCenter.worktree.start" }));
 
     await waitFor(() => {
       expect(createWorktree).toHaveBeenCalledWith(
-        expect.objectContaining({ branchName: "task-9", targetPath: "/wt-root/alpha-task-9" }),
+        expect.objectContaining({
+          branchName: "zcode/task-9",
+          targetPath: "/wt-root/alpha-zcode-task-9",
+        }),
       );
     });
   });
@@ -571,7 +597,7 @@ describe("CommandCenterDialog worktree flow with worktree settings (Stage D)", (
     mocks.settings = {
       recentProjects: [],
       worktreeLocationMode: "custom",
-      // 相对路径：computeWorktreeTargetPath 返回 null，target path 位置显示就地错误。
+      // Relative path: computeWorktreeTargetPath returns null and the target path spot shows the inline error.
       worktreeCustomLocationPath: "wt/relative",
     };
     const { container, onOpenChange, onCreateTaskInWorkspace } = renderWorktreeDialog();
@@ -608,8 +634,8 @@ describe("CommandCenterDialog worktree flow with the global storage mode (Stage 
     };
     createWorktree.mockResolvedValue({
       ok: true,
-      worktreePath: "/Users/dev/.zcode/worktrees/alpha/task-9",
-      branchName: "task-9",
+      worktreePath: "/Users/dev/.zcode/worktrees/alpha/zcode-task-9",
+      branchName: "zcode/task-9",
       issues: [],
     } satisfies GitWorktreeCreateResult);
     const { container, onOpenChange, onCreateTaskInWorkspace } = renderWorktreeDialog();
@@ -624,9 +650,9 @@ describe("CommandCenterDialog worktree flow with the global storage mode (Stage 
     fireEvent.change(screen.getByLabelText("commandCenter.worktree.branchName"), {
       target: { value: "task-9" },
     });
-    // 预览用 ~ 前缀显示；title 悬浮仍是绝对路径。
+    // The preview shows the ~ prefix; the title tooltip still shows the absolute path.
     await waitFor(() => {
-      expect(screen.getByText("~/.zcode/worktrees/alpha/task-9")).toBeTruthy();
+      expect(screen.getByText("~/.zcode/worktrees/alpha/zcode-task-9")).toBeTruthy();
     });
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "commandCenter.worktree.start" })).toHaveProperty(
@@ -636,18 +662,18 @@ describe("CommandCenterDialog worktree flow with the global storage mode (Stage 
     });
     fireEvent.click(screen.getByRole("button", { name: "commandCenter.worktree.start" }));
 
-    // 创建请求始终用绝对路径。
+    // The create request always uses the absolute path (composed name flattened to a segment).
     await waitFor(() => {
       expect(createWorktree).toHaveBeenCalledWith({
         workspacePath: "/dev/alpha",
-        branchName: "task-9",
+        branchName: "zcode/task-9",
         baseBranch: "main",
-        targetPath: "/Users/dev/.zcode/worktrees/alpha/task-9",
+        targetPath: "/Users/dev/.zcode/worktrees/alpha/zcode-task-9",
       });
     });
     expect(onOpenChange).toHaveBeenCalledWith(false);
     expect(onCreateTaskInWorkspace).toHaveBeenCalledWith(
-      "/Users/dev/.zcode/worktrees/alpha/task-9",
+      "/Users/dev/.zcode/worktrees/alpha/zcode-task-9",
       undefined,
     );
   });

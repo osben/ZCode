@@ -274,6 +274,14 @@ export function createGitService(options?: {
       );
     },
 
+    async removeWorktree(params) {
+      return await repo.removeWorktree(params.workspacePath, params.targetPath, params.force);
+    },
+
+    async pruneWorktrees(params) {
+      return await repo.pruneWorktrees(params.workspacePath);
+    },
+
     async getChanges(params) {
       const status = await repo.getStatus(params.workspacePath);
 

@@ -16,6 +16,8 @@ export interface SessionSummaryDeriveExtra {
   createdAt: number;
   lastActivityAt: number;
   parentSessionId?: string;
+  /** Execution worktree facts from the runtime; drives the sidebar badge and open-in-IDE target. */
+  executionWorktree?: { path: string; branchName?: string };
 }
 
 const MAX_PREVIEW_CHARS = 120;
@@ -96,6 +98,7 @@ export function deriveSessionSummary(
     ...(snapshot.goal ? { goalStatus: snapshot.goal.status } : {}),
     lastActivityAt: extra.lastActivityAt,
     ...(lastAssistantPreview ? { lastAssistantPreview } : {}),
+    ...(extra.executionWorktree ? { executionWorktree: extra.executionWorktree } : {}),
     createdAt: extra.createdAt,
   };
 }
@@ -120,6 +123,10 @@ function summariesEqual(a: SessionSummary, b: SessionSummary): boolean {
     a.goalStatus === b.goalStatus &&
     a.lastActivityAt === b.lastActivityAt &&
     a.lastAssistantPreview === b.lastAssistantPreview &&
+    // Field comparison instead of JSON.stringify: this equality check runs on every session event
+    // fan-out, and the value is at most two scalar fields.
+    a.executionWorktree?.path === b.executionWorktree?.path &&
+    a.executionWorktree?.branchName === b.executionWorktree?.branchName &&
     a.createdAt === b.createdAt
   );
 }

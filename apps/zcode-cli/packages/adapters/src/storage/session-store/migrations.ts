@@ -927,6 +927,20 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
     id: "0022_backfilled_session_reasoning",
     sql: BACKFILLED_SESSION_REASONING_MIGRATION_SQL,
   },
+  {
+    appVersion: "0.16.9",
+    id: "0023_session_execution_worktree",
+    // Execution worktree facts for sessions whose agent runs in a linked worktree while the row's
+    // directory/path keep the parent workspace (listing filters stay correct); nullable because
+    // every ordinary session has no execution worktree.
+    sql: `
+      alter table session
+        add column execution_directory text;
+
+      alter table session
+        add column execution_branch text;
+    `,
+  },
 ];
 import { OFFICIAL_GLM_SELECTION_MIGRATION_SQL } from "./migrations/0021-official-glm-selection.js";
 import { BACKFILLED_SESSION_REASONING_MIGRATION_SQL } from "./migrations/0022-backfilled-session-reasoning.js";

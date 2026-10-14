@@ -8,6 +8,8 @@ export interface SessionRow {
   slug: string;
   directory: string;
   path: string | null;
+  execution_directory: string | null;
+  execution_branch: string | null;
   title: string;
   title_source: string | null;
   title_message_id: string | null;

@@ -1,13 +1,15 @@
-# Git Worktree 列表与创建底层能力设计
+# Git Worktree list/create/remove primitives design
 
-更新日期：2026-10-11
+Updated: 2026-10-13
 
 ## 文档定位
 
-本文是对 [Git 架构设计](./architecture.md) 与 [Git 底层服务实现总结](./service-foundation.md) 的增量设计，聚焦两个新底层操作：
+This document extends [Git architecture](./architecture.md) and the [Git service foundation summary](./service-foundation.md) with four low-level operations:
 
 - `listWorktrees`：列出当前仓库的全部 worktree（主工作树 + 关联工作树）
 - `createWorktree`：在指定目录基于基准分支创建新分支的关联 worktree
+- `removeWorktree`: removes one linked worktree of the repository (added 2026-10-13)
+- `pruneWorktrees`: prunes stale administrative records pointing at removed directories (added 2026-10-13)
 
 上层产品背景见 `docs/superpowers/specs/2026-10-11-command-center-worktrees-themes-design.md`。本文只定义 Git 底层契约，不展开 Command Center / composer UI 细节。
 
@@ -16,7 +18,8 @@
 - Worktree 操作属于常规 Git 业务能力，沿用 `UI -> IGitService (RPC) -> GitService -> GitCliRepo -> Git CLI` 链路；UI 永远不直接调用 Git CLI 或 Repo。
 - 命令执行位置跟随 workspace 所在的 Host（本地 / 远端 / Web 一致）；浏览器路径不视为本地路径。
 - 输入输出中的路径均为绝对路径；`workspacePath` 是定位仓库的入口，worktree 目录本身可以成为新的 workspace 并走现有打开/去重流程。
-- 本阶段不包含：删除 worktree、删除分支、sparse checkout、reusable worktree 池、远程路径模板策略。target path 的计算（Worktree location 设置）属于上层设置，服务层只接收最终绝对路径。
+- Excluded from this stage: branch deletion, sparse checkout, reusable worktree pools, remote path-template policy. Target path computation (Worktree location settings) belongs to the layer above; the service receives only the final absolute path.
+- `removeWorktree` makes no product-level "is this the current workspace / does it have open tabs" decision — that guard belongs to the UI layer; the service enforces Git semantics only (main worktree refusal, dirty check, locked check).
 
 ## listWorktrees
 
@@ -123,7 +126,91 @@ interface GitWorktreeCreateResult {
 - 创建成功前不得创建任何目录或分支（Git 单命令完成目录+分支创建，无部分成功状态）。
 - 命令失败时 stderr 经分类器映射；超时 / 输出超限走 `ensureGitCommandSucceeded` 抛错，不吞并为 `unknown`。
 
+## removeWorktree
+
+### Input
+
+```ts
+interface GitRemoveWorktreeRequest extends GitRepositoryRequest {
+  /** Absolute directory of the worktree to remove; must be a linked worktree of this repository (never the main worktree). */
+  targetPath: string;
+  /** true skips the dirty and locked checks (git worktree remove --force). */
+  force?: boolean;
+}
+```
+
+### Command
+
+```
+git worktree remove -- <targetPath>          # force unset/false
+git worktree remove --force -- <targetPath>  # force true
+```
+
+Executed in the `repoRoot` produced by `resolveRepository`. `--` ends option parsing.
+
+### Output
+
+```ts
+interface GitWorktreeRemoveResult {
+  ok: boolean;
+  issues: GitWorktreeMutationIssue[];
+}
+```
+
+Failures do not throw (except infrastructure errors); they return structured issues.
+
+### Error classification (new literals)
+
+| code                 | Trigger                                                                                                                                                                       |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `worktree-not-found` | No linked entry with `entry.path === targetPath` in the pre-checked `listWorktrees` (porcelain); also covers the main worktree (identified by `isMain`, refused the same way) |
+| `worktree-dirty`     | stderr contains `contains modified or untracked files` (dirty refusal without force)                                                                                          |
+| `worktree-locked`    | stderr contains `is locked` (locked/prunable reasons were ignored before, but remove is still refused by Git)                                                                 |
+| everything else      | Reuses the existing `GitWorktreeMutationIssueCode` (`git-unavailable` / `not-a-repository` / `target-path-invalid` / `unknown`)                                               |
+
+### Invariants
+
+- Validation order: repository available → targetPath non-empty absolute → porcelain probe confirms a linked non-main worktree of this repository → run the command.
+- Removal completes through the single `git worktree remove` command (administrative records and directory together); no manual `rm -rf`, no partial cleanup on Git failure.
+- The branch itself is not deleted; `removeWorktree` affects only the working directory and the worktree administrative records.
+
+## pruneWorktrees
+
+### Input
+
+```ts
+interface GitRepositoryRequest {
+  workspacePath: string;
+}
+```
+
+### Command
+
+```
+git worktree prune --verbose --expire now
+```
+
+Executed in `repoRoot`. `--expire now` keeps the outcome deterministic (nothing stays back "not yet expired"); `--verbose` prints one line per pruned record, used only for the count.
+
+### Output
+
+```ts
+interface GitWorktreePruneResult {
+  ok: boolean;
+  /** Number of stale administrative records reported by `git worktree prune --verbose`; parse failure counts as 0. */
+  prunedCount: number;
+  issues: GitWorktreeMutationIssue[];
+}
+```
+
+### Invariants
+
+- Prune removes only stale records whose directory no longer exists; it never touches existing worktree directories or branches.
+- Output lines are counted only; the raw stderr wording is not surfaced to the layer above.
+
 ## 测试要求
 
 - `listWorktrees`：仅主工作树 → 单条目；经真实 `createWorktree` 创建关联 worktree 后 → 两条目且路径/分支正确；detached worktree 的 `branchName=null`；包含空格、非 ASCII 字符及换行的 worktree 路径原样保留；非仓库路径 → 空结果。
 - `createWorktree`：成功创建目录与分支且 HEAD 指向新分支、起点为 baseBranch；分支被其它 worktree 占用 → `branch-in-other-worktree`；targetPath 已存在 → `target-path-exists`；非法分支名 → `invalid-branch-name`。
+- `removeWorktree`: after creating a linked worktree and removing it → directory and record gone, `listWorktrees` back to a single entry; main worktree path → `worktree-not-found`; path outside the repository → `worktree-not-found`; uncommitted changes without force → `worktree-dirty`, with force → success; non-repository → `not-a-repository`.
+- `pruneWorktrees`: after deleting a created worktree directory by hand, prune → `prunedCount >= 1` and `listWorktrees` no longer lists it; clean repository → `prunedCount = 0`, `ok = true`.

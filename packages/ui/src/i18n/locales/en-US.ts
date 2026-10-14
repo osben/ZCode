@@ -672,6 +672,16 @@ const enUS: Record<string, string> = {
   "commandCenter.worktree.starting": "Starting…",
   "commandCenter.worktree.openExisting": "Open worktree",
   "commandCenter.worktree.openFailed": "Worktree created but could not be opened: {path}",
+  "commandCenter.worktree.regenerateName": "Generate another branch name",
+  "commandCenter.worktree.existingBranchHint":
+    "This branch already exists; the new worktree will check it out.",
+  "commandCenter.worktree.existingWorktrees": "Existing worktrees",
+  "commandCenter.worktree.existingWorktrees.empty": "No other worktrees in this repository.",
+  "commandCenter.worktree.existingWorktrees.openBadge": "open",
+  "commandCenter.worktree.remove": "Remove worktree",
+  "commandCenter.worktree.remove.confirmDirty": "Has changes — remove anyway?",
+  "commandCenter.worktree.prune": "Prune stale",
+  "commandCenter.worktree.prune.done": "Pruned {count} stale worktree records.",
   "commandCenter.worktree.error.invalid-branch-name": "“{branchName}” is not a valid branch name.",
   "commandCenter.worktree.error.branch-already-exists": "Branch “{branchName}” already exists.",
   "commandCenter.worktree.error.target-branch-not-found":
@@ -688,6 +698,10 @@ const enUS: Record<string, string> = {
     "The custom worktree location in Settings must be an absolute path.",
   "commandCenter.worktree.error.global-location-unavailable":
     "Global worktree storage is unavailable on this platform. Pick another location in Settings.",
+  "commandCenter.worktree.error.worktree-not-found":
+    "That path is not a removable worktree of this repository.",
+  "commandCenter.worktree.error.worktree-dirty": "The worktree has modified or untracked files.",
+  "commandCenter.worktree.error.worktree-locked": "The worktree is locked by Git.",
   "commandCenter.worktree.error.unknown": "Could not create the worktree.",
   "commandCenter.worktree.error.requestFailed": "Git request failed: {error}",
   "confirmDialog.taskDeleteTitle": "Delete this task?",
@@ -2566,9 +2580,8 @@ const enUS: Record<string, string> = {
   "settings.worktrees.chooseFolder": "Choose folder",
   "settings.worktrees.branchPrefix": "Default branch prefix",
   "settings.worktrees.branchPrefix.description":
-    "Prefixed to new worktree branch names that do not already start with it. Applies to new worktrees only.",
-  "settings.worktrees.branchPrefix.placeholder": "e.g. dev/",
-  "settings.worktrees.branchPrefix.example": "Example branch name: {name}",
+    "Prefixed to new worktree branch names that do not already start with it. Defaults to zcode/. Applies to new worktrees only.",
+  "settings.worktrees.branchPrefix.example": "Preview: {name}",
   "settings.worktrees.branchPrefix.reset": "Reset to default",
   "settings.worktrees.projects": "Project overrides",
   "settings.worktrees.projects.description":
@@ -5060,8 +5073,6 @@ const enUS: Record<string, string> = {
   "chat.empty.cliMenu": "Choose CLI",
   "chat.empty.home": "Home",
   "chat.empty.worktree.newWorktree": "New worktree",
-  "chat.empty.worktree.branchNameRequired": "Enter a branch name before sending.",
-  "chat.empty.worktree.baseBranch": "Base: {branch}",
   "chat.empty.worktree.creating": "Creating worktree…",
   "chat.empty.createWorkspace.title": "Create workspace",
   "chat.empty.createWorkspace.placeholder": "Workspace name",
@@ -7030,6 +7041,8 @@ const enUS: Record<string, string> = {
   "forms.validation.fileExists": "File {fileName} already exists",
   // ---- Scheduled tasks / Automations ----
   "taskList.cronTaskLabel": "Scheduled task",
+  "taskList.worktreeTaskLabel": "Worktree session · {branch}",
+  "taskList.worktreeTaskLabelNoBranch": "Worktree session",
   "taskList.offPeakTaskLabel": "Idle-time task",
   "taskList.workflowRun.ariaLabel": "Workflow run {name}: {status}",
   "taskList.workflowRun.moreRuns": "+{count} more",

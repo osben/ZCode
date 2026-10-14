@@ -26,8 +26,11 @@ import type {
   GitRepositoryRequest,
   GitRepositorySummary,
   GitWorkspaceRepositoryInfo,
+  GitRemoveWorktreeRequest,
   GitWorktreeCreateResult,
   GitWorktreeListResult,
+  GitWorktreePruneResult,
+  GitWorktreeRemoveResult,
   GitFileChange,
   GitSwitchBranchRequest,
 } from "@zcode/shared";
@@ -43,6 +46,8 @@ export interface IGitService {
   createBranchAndSwitch(params: GitCreateBranchRequest): Promise<GitBranchMutationResult>;
   listWorktrees(params: GitRepositoryRequest): Promise<GitWorktreeListResult>;
   createWorktree(params: GitCreateWorktreeRequest): Promise<GitWorktreeCreateResult>;
+  removeWorktree(params: GitRemoveWorktreeRequest): Promise<GitWorktreeRemoveResult>;
+  pruneWorktrees(params: GitRepositoryRequest): Promise<GitWorktreePruneResult>;
   getChanges(params: GitChangesRequest): Promise<GitFileChange[]>;
   getIgnoredPaths(params: GitIgnoredPathsRequest): Promise<string[]>;
   getDiff(params: GitDiffQuery): Promise<GitDiffResult>;

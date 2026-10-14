@@ -1,5 +1,6 @@
 // sessions-index topic: live data source for the list; conflated latest state that never overflows.
 import { z } from "zod";
+import { zcodeExecutionWorktreeSchema } from "../zcode-protocol/index.js";
 import { timestampSchema } from "./core.js";
 import { sessionWorkflowActivitySchema } from "./sessions-index-workflow-activity.js";
 import {
@@ -51,6 +52,10 @@ export const sessionSummarySchema = z.object({
   lastActivityAt: timestampSchema,
   // ≤120 characters.
   lastAssistantPreview: z.string().optional(),
+  // Execution worktree (session runs in a linked worktree while listed under workspaceId): drives the
+  // sidebar worktree badge and the header/file-tree "open in IDE/folder" target. optional preserves
+  // compatibility with old sessions-index frames and stored summaries.
+  executionWorktree: zcodeExecutionWorktreeSchema.optional(),
   createdAt: timestampSchema,
 });
 export type SessionSummary = z.infer<typeof sessionSummarySchema>;

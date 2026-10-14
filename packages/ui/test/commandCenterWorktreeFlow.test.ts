@@ -4,6 +4,8 @@ import {
   buildWorktreeTaskProjects,
   composeBranchName,
   computeWorktreeTargetPath,
+  DEFAULT_WORKTREE_BRANCH_PREFIX,
+  deriveWorktreeFormValues,
   findWorktreeForBranch,
   getWorkspaceIdentityKey,
   isValidCustomWorktreeLocationPath,
@@ -40,10 +42,10 @@ describe("buildWorktreeTaskProjects", () => {
     const projects = buildWorktreeTaskProjects({
       tabs: [
         localTab({ workspacePath: "/dev/alpha", label: "alpha" }),
-        // 同一 workspace 的重复标签（相同 identity key）只保留一行。
+        // Duplicate tabs of the same workspace (same identity key) collapse into one row.
         localTab({ workspacePath: "/dev/alpha", label: "alpha-2" }),
         localTab({ workspacePath: "/dev/beta", label: "beta" }),
-        // 带 identity 的 tab 也会通过路径过滤掉对应的 recent 记录。
+        // Tabs with an identity also filter out the matching recent entry by path.
         localTab({ workspacePath: "/dev/gamma", workspaceIdentity: "gamma-id" }),
       ],
       recentProjects: ["/dev/alpha", "/dev/gamma", "  ", "/dev/beta", "/dev/delta"],
@@ -85,7 +87,7 @@ describe("sanitizeWorktreePathSegment / computeWorktreeTargetPath", () => {
     expect(computeWorktreeTargetPath("/Users/dev/zcode", "feature/login")).toBe(
       "/Users/dev/zcode-worktrees/feature-login",
     );
-    // 不传 location 时默认 sibling，Stage C 行为不变（仅目录约定 Stage F 更名）。
+    // Without a location the default is sibling; Stage C behavior unchanged (only the directory convention was renamed in Stage F).
     expect(computeWorktreeTargetPath("/Users/dev/zcode", "feature/login", null)).toBe(
       "/Users/dev/zcode-worktrees/feature-login",
     );
@@ -127,7 +129,7 @@ describe("sanitizeWorktreePathSegment / computeWorktreeTargetPath", () => {
         appWorktreesDir: "/Users/dev/.zcode/worktrees",
       }),
     ).toBe("/Users/dev/.zcode/worktrees/zcode/feature-login");
-    // 空分支段 → 仓库目录本身（预览用）。
+    // Empty branch segment → the repository directory itself (for previews).
     expect(
       computeWorktreeTargetPath("/Users/dev/zcode", "", {
         mode: "global",
@@ -135,7 +137,7 @@ describe("sanitizeWorktreePathSegment / computeWorktreeTargetPath", () => {
         appWorktreesDir: "/Users/dev/.zcode/worktrees",
       }),
     ).toBe("/Users/dev/.zcode/worktrees/zcode");
-    // Windows 分隔符跟随 app 目录。
+    // Windows separators follow the app directory.
     expect(
       computeWorktreeTargetPath("C:\\dev\\zcode", "task-1", {
         mode: "global",
@@ -222,7 +224,7 @@ describe("tildifyAppWorktreesPath", () => {
         "/Users/dev/.zcode/worktrees",
       ),
     ).toBe("~/.zcode/worktrees/zcode/task-1");
-    // 目录本身的路径同样替换（尾部斜杠被规范化）。
+    // The directory path itself is replaced too (trailing slashes normalized).
     expect(
       tildifyAppWorktreesPath("/Users/dev/.zcode/worktrees", "/Users/dev/.zcode/worktrees/"),
     ).toBe("~/.zcode/worktrees");
@@ -232,7 +234,7 @@ describe("tildifyAppWorktreesPath", () => {
     expect(
       tildifyAppWorktreesPath("/Users/dev/zcode-worktrees/task-1", "/Users/dev/.zcode/worktrees"),
     ).toBe("/Users/dev/zcode-worktrees/task-1");
-    // 相似前缀但不以目录分隔符结尾的路径不受影响。
+    // Paths with a similar prefix that do not end in a directory separator are unaffected.
     expect(
       tildifyAppWorktreesPath("/Users/dev/.zcode/worktrees-other/x", "/Users/dev/.zcode/worktrees"),
     ).toBe("/Users/dev/.zcode/worktrees-other/x");
@@ -245,7 +247,7 @@ describe("resolveWorktreeLocation", () => {
       mode: "sibling",
       customPath: null,
       appWorktreesDir: null,
-      prefix: "",
+      prefix: DEFAULT_WORKTREE_BRANCH_PREFIX,
       baseBranchDefault: null,
       hasProjectOverride: false,
     });
@@ -255,7 +257,7 @@ describe("resolveWorktreeLocation", () => {
     expect(
       resolveWorktreeLocation({ worktreeLocationMode: "global" }, null, "/dev/alpha", " /wt/dir "),
     ).toMatchObject({ mode: "global", appWorktreesDir: "/wt/dir" });
-    // 目录缺失（非 desktop / 未加载）时保持 null，global 模式按无效位置处理。
+    // Missing directory (non-desktop / not loaded) stays null; global mode behaves as an invalid location.
     expect(
       resolveWorktreeLocation({ worktreeLocationMode: "global" }, null, "/dev/alpha"),
     ).toMatchObject({ appWorktreesDir: null });
@@ -271,7 +273,7 @@ describe("resolveWorktreeLocation", () => {
       baseBranchDefault: null,
       hasProjectOverride: true,
     });
-    // override 只覆盖 prefix，baseBranchDefault 单独缺省。
+    // The override only overrides the prefix; baseBranchDefault defaults separately.
     expect(
       resolveWorktreeLocation(
         settings,
@@ -279,7 +281,7 @@ describe("resolveWorktreeLocation", () => {
         "/dev/alpha",
       ),
     ).toMatchObject({ prefix: "global/", baseBranchDefault: "dev" });
-    // 其它项目不受影响。
+    // Other projects are unaffected.
     expect(
       resolveWorktreeLocation(settings, { "/dev/alpha": { branchPrefix: "alpha/" } }, "/dev/beta"),
     ).toMatchObject({ prefix: "global/", baseBranchDefault: null, hasProjectOverride: false });
@@ -292,7 +294,7 @@ describe("resolveWorktreeLocation", () => {
       { "/dev/alpha": { branchPrefix: "alpha/" } },
       "/dev/alpha",
     );
-    // “Reset to global” 删除条目后与从未配置完全一致。
+    // After "Reset to global" deletes the entry it is identical to never having been configured.
     const afterReset = resolveWorktreeLocation(settings, {}, "/dev/alpha");
     expect(afterReset).toEqual(resolveWorktreeLocation(settings, undefined, "/dev/alpha"));
     expect(afterReset.prefix).toBe("global/");
@@ -390,7 +392,7 @@ describe("resolveDefaultBaseBranch", () => {
       branches: [{ name: "main" }, { name: "dev" }],
     };
     expect(resolveDefaultBaseBranch(branchesResult, "dev")).toBe("dev");
-    // 不在列表中的 override 分支不能作为默认值。
+    // An override branch that is not in the list cannot become the default.
     expect(resolveDefaultBaseBranch(branchesResult, "missing")).toBe("main");
     expect(resolveDefaultBaseBranch(branchesResult, "  ")).toBe("main");
   });
@@ -444,5 +446,46 @@ describe("page id constants", () => {
     expect(NEW_TASK_WORKTREE_COMMAND_ID).toBe("new-task-worktree");
     expect(NEW_TASK_PROJECT_PAGE_ID).toBe("new-task-project");
     expect(NEW_TASK_SETUP_PAGE_ID).toBe("new-task-setup");
+  });
+});
+
+describe("deriveWorktreeFormValues existing-branch contract (2026-10-13)", () => {
+  const branchesResult = {
+    headRefType: "branch" as const,
+    currentBranchName: "main",
+    branches: [{ name: "main" }, { name: "dev" }],
+  };
+
+  function derive(branchName: string) {
+    return deriveWorktreeFormValues({
+      projectPath: "/dev/project",
+      branchName,
+      branchesResult,
+      // Prefix-independent contract check: the default zcode/ prefix is covered by the
+      // resolveWorktreeLocation default test above.
+      effectiveLocation: {
+        ...resolveWorktreeLocation(null, null, "/dev/project"),
+        prefix: "",
+      },
+      isWorktreeDestination: true,
+    });
+  }
+
+  it("reports an existing branch as an offer instead of a blocking issue", () => {
+    const derived = derive("dev");
+    expect(derived.existingBranchName).toBe("dev");
+    expect(derived.branchNameIssue).toBeNull();
+  });
+
+  it("keeps format problems blocking and does not report them as existing", () => {
+    const derived = derive("bad..name");
+    expect(derived.existingBranchName).toBeNull();
+    expect(derived.branchNameIssue).toBe("invalid-branch-name");
+  });
+
+  it("reports nothing for a fresh free branch name", () => {
+    const derived = derive("fresh-task");
+    expect(derived.existingBranchName).toBeNull();
+    expect(derived.branchNameIssue).toBeNull();
   });
 });

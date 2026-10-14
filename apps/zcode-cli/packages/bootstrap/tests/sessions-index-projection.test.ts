@@ -112,6 +112,43 @@ describe("SessionsIndexProjection 黄金测试（L1）", () => {
     expect(summary.lastActivityAt).toBe(2000);
   });
 
+  it("execution worktree facts flow from the derive extra into the summary and drive deltas", () => {
+    const events = buildEvents("s-wt", (push) => {
+      push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
+    });
+    const snapshot = projectionFor("s-wt", events).getSnapshot();
+    const extra = {
+      workspaceId: "ws-1",
+      createdAt: 1000,
+      lastActivityAt: 2000,
+      executionWorktree: {
+        path: "/repo/../worktrees/zcode-sleepy-capybara",
+        branchName: "zcode/sleepy-capybara",
+      },
+    };
+    const summary = deriveSessionSummary(snapshot, extra);
+    expect(summary.executionWorktree).toEqual({
+      path: "/repo/../worktrees/zcode-sleepy-capybara",
+      branchName: "zcode/sleepy-capybara",
+    });
+
+    // Same facts again → no delta; a worktree appearing on a plain session → one upsert delta.
+    const projection = new SessionsIndexProjection("ws-1", "epoch-1");
+    const plainExtra = { workspaceId: "ws-1", createdAt: 1000, lastActivityAt: 2000 };
+    expect(projection.upsertFromConversation(snapshot, plainExtra)).toHaveLength(1);
+    expect(projection.upsertFromConversation(snapshot, plainExtra)).toHaveLength(0);
+    const deltas = projection.upsertFromConversation(snapshot, extra);
+    expect(deltas).toHaveLength(1);
+    expect(deltas[0]).toMatchObject({
+      op: "session.upserted",
+      session: { sessionId: "s-wt", executionWorktree: { branchName: "zcode/sleepy-capybara" } },
+    });
+
+    // The derived summary satisfies the wire schema (optional field round-trips).
+    const parsed = sessionsIndexSnapshotSchema.safeParse(projection.getSnapshot());
+    expect(parsed.success).toBe(true);
+  });
+
   it("hasBackgroundWork：有 running 后台任务时为 true", () => {
     const events = buildEvents("s2", (push) => {
       push(SessionEventType.SessionCreated, {
