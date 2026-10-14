@@ -16,6 +16,7 @@ import {
 } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
+import { homedir } from "node:os";
 import { join, win32 as pathWin32 } from "node:path";
 import { app, nativeImage } from "electron";
 import type { EditorInfo } from "@zcode/shared";
@@ -60,6 +61,28 @@ interface ParsedIcnsPngCandidate {
   image: Buffer;
 }
 
+// JetBrains Toolbox installs app bundles under the user's home instead of /Applications:
+// Toolbox 3.x defaults to ~/Applications, and the install location can be customized to a
+// "JetBrains Toolbox" subfolder. Without these candidates the IDEs exist but never appear.
+function createMacToolboxAppEditorDef(
+  id: string,
+  name: string,
+  appBundleName: string,
+  command: string,
+): EditorDef {
+  const userApplicationsRoot = join(homedir(), "Applications");
+  return {
+    id,
+    name,
+    appPath: `/Applications/${appBundleName}`,
+    appPathCandidates: [
+      join(userApplicationsRoot, appBundleName),
+      join(userApplicationsRoot, "JetBrains Toolbox", appBundleName),
+    ],
+    command,
+  };
+}
+
 const MAC_EDITOR_DEFS: EditorDef[] = [
   // Code editors.
   {
@@ -90,26 +113,19 @@ const MAC_EDITOR_DEFS: EditorDef[] = [
   { id: "codebuddy", name: "CodeBuddy", appPath: "/Applications/CodeBuddy.app", command: null },
   { id: "qoder", name: "Qoder", appPath: "/Applications/Qoder.app", command: null },
   // JetBrains products.
-  {
-    id: "idea",
-    name: "IntelliJ IDEA",
-    appPath: "/Applications/IntelliJ IDEA.app",
-    command: "idea",
-  },
-  {
-    id: "idea-ce",
-    name: "IntelliJ IDEA CE",
-    appPath: "/Applications/IntelliJ IDEA CE.app",
-    command: "idea",
-  },
-  { id: "webstorm", name: "WebStorm", appPath: "/Applications/WebStorm.app", command: "webstorm" },
-  { id: "pycharm", name: "PyCharm", appPath: "/Applications/PyCharm.app", command: "pycharm" },
-  { id: "goland", name: "GoLand", appPath: "/Applications/GoLand.app", command: "goland" },
-  { id: "phpstorm", name: "PhpStorm", appPath: "/Applications/PhpStorm.app", command: "phpstorm" },
-  { id: "rider", name: "Rider", appPath: "/Applications/Rider.app", command: "rider" },
-  { id: "clion", name: "CLion", appPath: "/Applications/CLion.app", command: "clion" },
-  { id: "rubymine", name: "RubyMine", appPath: "/Applications/RubyMine.app", command: "rubymine" },
-  { id: "datagrip", name: "DataGrip", appPath: "/Applications/DataGrip.app", command: "datagrip" },
+  createMacToolboxAppEditorDef("idea", "IntelliJ IDEA", "IntelliJ IDEA.app", "idea"),
+  createMacToolboxAppEditorDef("idea-ce", "IntelliJ IDEA CE", "IntelliJ IDEA CE.app", "idea"),
+  createMacToolboxAppEditorDef("webstorm", "WebStorm", "WebStorm.app", "webstorm"),
+  createMacToolboxAppEditorDef("pycharm", "PyCharm", "PyCharm.app", "pycharm"),
+  createMacToolboxAppEditorDef("goland", "GoLand", "GoLand.app", "goland"),
+  createMacToolboxAppEditorDef("phpstorm", "PhpStorm", "PhpStorm.app", "phpstorm"),
+  createMacToolboxAppEditorDef("rider", "Rider", "Rider.app", "rider"),
+  createMacToolboxAppEditorDef("clion", "CLion", "CLion.app", "clion"),
+  createMacToolboxAppEditorDef("rubymine", "RubyMine", "RubyMine.app", "rubymine"),
+  createMacToolboxAppEditorDef("datagrip", "DataGrip", "DataGrip.app", "datagrip"),
+  // Android Studio is JetBrains-based and Toolbox-managed; the `studio` CLI is only present when
+  // shell scripts are enabled, so `open -a` with the resolved bundle is the reliable path.
+  createMacToolboxAppEditorDef("android-studio", "Android Studio", "Android Studio.app", "studio"),
   // Terminals (the current macOS Terminal app is under /System/Applications).
   {
     id: "terminal",
@@ -184,6 +200,7 @@ function findWindowsJetBrainsExecutableCandidates(
   const roots = uniquePaths([
     ...getWindowsProgramFilesRoots().map((root) => pathWin32.join(root, "JetBrains")),
     pathWin32.join(getWindowsLocalProgramsRoot(), "JetBrains"),
+    getWindowsLocalProgramsRoot(),
   ]);
   const candidates: string[] = [];
 
@@ -203,6 +220,55 @@ function findWindowsJetBrainsExecutableCandidates(
       }
     } catch {
       // JetBrains products are optional; missing roots are expected.
+    }
+  }
+
+  return candidates;
+}
+
+function getWindowsJetBrainsToolboxAppsRoots(): string[] {
+  const systemDrive = process.env.SystemDrive || "C:";
+  return uniquePaths([
+    pathWin32.join(
+      process.env.LOCALAPPDATA || `${systemDrive}\\Users\\Default\\AppData\\Local`,
+      "JetBrains",
+      "Toolbox",
+      "apps",
+    ),
+  ]);
+}
+
+// Toolbox keeps each product under apps/<app-code>/ch-<channel>/<version> instead of the
+// standalone-installer layout scanned above, so the versioned levels must be walked explicitly.
+// Each app-code directory is optional: one installed edition must not mask its siblings.
+function findWindowsJetBrainsToolboxExecutableCandidates(
+  toolboxAppCodes: string[],
+  executableName: string,
+): string[] {
+  const candidates: string[] = [];
+
+  for (const root of getWindowsJetBrainsToolboxAppsRoots()) {
+    for (const appCode of toolboxAppCodes) {
+      try {
+        const appDirEntries = readdirSync(pathWin32.join(root, appCode), { withFileTypes: true });
+        for (const channelEntry of appDirEntries) {
+          if (!channelEntry.isDirectory() || !/^ch-\d+$/i.test(channelEntry.name)) {
+            continue;
+          }
+          const channelDir = pathWin32.join(root, appCode, channelEntry.name);
+          // Version directories are numeric build numbers (99.x, 243.x): a lexical sort would
+          // place "99.5.1" above "243.21565.193" and resolve the older build first.
+          const versionEntries = readdirSync(channelDir, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory())
+            .map((entry) => entry.name)
+            .sort((left, right) => right.localeCompare(left, undefined, { numeric: true }));
+          for (const versionEntry of versionEntries) {
+            candidates.push(pathWin32.join(channelDir, versionEntry, "bin", executableName));
+          }
+        }
+      } catch {
+        // Toolbox products are optional; missing app-code directories are expected.
+      }
     }
   }
 
@@ -267,7 +333,7 @@ const WINDOWS_EDITOR_DEFS: EditorDef[] = [
   // The Workspace "Open in Editor" menu previously exposed only IDEs to the UI, leaving Windows
   // users without a basic "Open in Explorer" entry and forcing them to use another menu.
   // Include the system file manager in the editor list to align the macOS Finder and Windows Explorer experiences.
-  { id: "explorer", name: "资源管理器", appPath: WINDOWS_EXPLORER_PATH, command: null },
+  { id: "explorer", name: "File Explorer", appPath: WINDOWS_EXPLORER_PATH, command: null },
 ];
 
 const WINDOWS_ADDITIONAL_EDITOR_DEFS: EditorDef[] = [
@@ -311,18 +377,42 @@ const WINDOWS_ADDITIONAL_EDITOR_DEFS: EditorDef[] = [
   ]),
   createWindowsEditorDef("idea", "IntelliJ IDEA", [
     ...findWindowsJetBrainsExecutableCandidates("IntelliJ IDEA", "idea64.exe"),
+    ...findWindowsJetBrainsToolboxExecutableCandidates(["IDEA-U", "IDEA-C"], "idea64.exe"),
   ]),
   createWindowsEditorDef("webstorm", "WebStorm", [
     ...findWindowsJetBrainsExecutableCandidates("WebStorm", "webstorm64.exe"),
+    ...findWindowsJetBrainsToolboxExecutableCandidates(["WebStorm"], "webstorm64.exe"),
   ]),
   createWindowsEditorDef("pycharm", "PyCharm", [
     ...findWindowsJetBrainsExecutableCandidates("PyCharm", "pycharm64.exe"),
+    ...findWindowsJetBrainsToolboxExecutableCandidates(["PyCharm-P", "PyCharm-C"], "pycharm64.exe"),
   ]),
   createWindowsEditorDef("goland", "GoLand", [
     ...findWindowsJetBrainsExecutableCandidates("GoLand", "goland64.exe"),
+    ...findWindowsJetBrainsToolboxExecutableCandidates(["GoLand"], "goland64.exe"),
   ]),
   createWindowsEditorDef("clion", "CLion", [
     ...findWindowsJetBrainsExecutableCandidates("CLion", "clion64.exe"),
+    ...findWindowsJetBrainsToolboxExecutableCandidates(["CLion"], "clion64.exe"),
+  ]),
+  createWindowsEditorDef("phpstorm", "PhpStorm", [
+    ...findWindowsJetBrainsExecutableCandidates("PhpStorm", "phpstorm64.exe"),
+    ...findWindowsJetBrainsToolboxExecutableCandidates(["PhpStorm"], "phpstorm64.exe"),
+  ]),
+  createWindowsEditorDef("rider", "Rider", [
+    ...findWindowsJetBrainsExecutableCandidates("Rider", "rider64.exe"),
+    ...findWindowsJetBrainsToolboxExecutableCandidates(["Rider"], "rider64.exe"),
+  ]),
+  createWindowsEditorDef("rubymine", "RubyMine", [
+    ...findWindowsJetBrainsExecutableCandidates("RubyMine", "rubymine64.exe"),
+    ...findWindowsJetBrainsToolboxExecutableCandidates(["RubyMine"], "rubymine64.exe"),
+  ]),
+  createWindowsEditorDef("datagrip", "DataGrip", [
+    ...findWindowsJetBrainsExecutableCandidates("DataGrip", "datagrip64.exe"),
+    ...findWindowsJetBrainsToolboxExecutableCandidates(["DataGrip"], "datagrip64.exe"),
+  ]),
+  createWindowsEditorDef("android-studio", "Android Studio", [
+    ...windowsProgramFilesCandidates("Android", "Android Studio", "bin", "studio64.exe"),
   ]),
 ];
 
