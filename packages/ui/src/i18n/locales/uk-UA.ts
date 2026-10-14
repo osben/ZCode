@@ -2303,11 +2303,20 @@ const ukUA: Record<string, string> = {
   "settings.memory.viewer.expand": "Розгорнути записи пам'яті",
   "settings.memory.viewer.fileLoading": "Завантаження файлу…",
   "settings.memory.viewer.fileDeleted": "Цей файл пам'яті видалено. Оновіть список файлів.",
-  "settings.memory.viewer.fileTooLarge":
-    "Цей файл пам'яті перевищує ліміт попереднього перегляду в 5 MiB.",
+  "settings.memory.viewer.fileTooLarge": "Цей файл пам'яті завеликий для попереднього перегляду.",
   "settings.memory.viewer.fileChanged":
     "Цей файл пам'яті змінився під час читання. Відкрийте його знову або оновіть список файлів.",
   "settings.memory.viewer.noSelection": "Виберіть файл пам'яті для попереднього перегляду.",
+  "settings.memory.viewer.indexSection": "Індекс",
+  "settings.memory.viewer.indexLinesAriaLabel": "{used} із {limit} рядків індексу",
+  "settings.memory.viewer.openFolder": "Відкрити папку пам'яті",
+  "settings.memory.viewer.togglePreview": "Показати або приховати вміст пам'яті",
+  "settings.memory.viewer.group.today": "Сьогодні",
+  "settings.memory.viewer.group.yesterday": "Вчора",
+  "settings.memory.viewer.type.user": "Користувач",
+  "settings.memory.viewer.type.feedback": "Відгук",
+  "settings.memory.viewer.type.project": "Проєкт",
+  "settings.memory.viewer.type.reference": "Довідка",
   "settings.httpProxy": "HTTP-проксі",
   "settings.httpProxyDescription":
     "Спрямовувати вихідний трафік моделей, MCP, командних інструментів і рендерера застосунку через цей проксі; системні змінні середовища не зчитуються. Якщо залишити порожнім, цей трафік іде напряму, а вбудований браузер використовує системні налаштування проксі. Щоб зміни набули чинності, перезапустіть застосунок.",

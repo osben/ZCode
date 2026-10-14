@@ -8,6 +8,12 @@ import { lstat, mkdir, readFile, readdir, realpath, writeFile } from "node:fs/pr
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative, sep } from "node:path";
 import { readProjectMemoryFileFromStableHandle } from "#src/memory/projectMemoryStableRead.js";
+import {
+  type ProjectMemoryFrontmatterMeta,
+  parseProjectMemoryFrontmatter,
+  readProjectMemoryFrontmatterHead,
+  stripProjectMemoryFrontmatter,
+} from "#src/memory/projectMemoryFrontmatter.js";
 import { getZCodeDataRootDir } from "#src/paths.js";
 
 const PROJECT_MEMORY_INDEX_FILE_NAME = "MEMORY.md";
@@ -54,6 +60,20 @@ async function isPlainDirectory(path: string): Promise<boolean> {
       return false;
     }
     throw error;
+  }
+}
+
+// The index budget chip compares against the CLI injection line limit (MEMORY_INDEX_LINE_LIMIT in
+// apps/zcode-cli/packages/core/src/memory/index-content.ts), so the count must cover the whole
+// index file; the frontmatter head-scan bound only guards per-file metadata extraction.
+async function readProjectMemoryIndexLineCount(filePath: string): Promise<number | undefined> {
+  try {
+    const content = await readFile(filePath, "utf-8");
+    const trimmed = stripProjectMemoryFrontmatter(content).trim();
+    return trimmed ? trimmed.split("\n").length : 0;
+  } catch {
+    // Concurrent deletion or a read failure only loses the budget chip; the catalog must not fail.
+    return undefined;
   }
 }
 
@@ -272,12 +292,25 @@ export function createMemoryService(): IMemoryService {
         if (!fileMetadata.isFile() || fileMetadata.isSymbolicLink()) {
           continue;
         }
+        const isIndex = memoryEntry.name === PROJECT_MEMORY_INDEX_FILE_NAME;
+        let frontmatterMeta: ProjectMemoryFrontmatterMeta = {};
+        try {
+          frontmatterMeta = parseProjectMemoryFrontmatter(
+            await readProjectMemoryFrontmatterHead(filePath),
+          );
+        } catch {
+          // Missing or unreadable frontmatter renders the file without meta; never fail the catalog.
+        }
+        const lineCount = isIndex ? await readProjectMemoryIndexLineCount(filePath) : undefined;
         files.push({
           name: memoryEntry.name,
           path: filePath,
-          kind: memoryEntry.name === PROJECT_MEMORY_INDEX_FILE_NAME ? "index" : "item",
+          kind: isIndex ? "index" : "item",
           size: fileMetadata.size,
           updatedAt: fileMetadata.mtimeMs,
+          ...(frontmatterMeta.description ? { description: frontmatterMeta.description } : {}),
+          ...(frontmatterMeta.type ? { type: frontmatterMeta.type } : {}),
+          ...(lineCount === undefined ? {} : { lineCount }),
         });
       }
 
@@ -333,6 +366,31 @@ export function createMemoryService(): IMemoryService {
     });
   }
 
+  async function getProjectMemoryDirectory(params: {
+    workspaceId: string;
+  }): Promise<{ path: string }> {
+    if (!isValidPathSegment(params.workspaceId)) {
+      throw new Error("Invalid Project Memory path");
+    }
+
+    const projectsRoot = await requireProjectMemoriesRoot();
+    const workspaceRoot = join(projectsRoot, params.workspaceId);
+    const memoryRoot = join(workspaceRoot, PROJECT_MEMORY_DIRECTORY_NAME);
+    // Bugfix: on a case-insensitive filesystem, a requested name could match a disk directory with different casing and bypass the catalog allowlist.
+    const projectEntries = await readdir(projectsRoot, { withFileTypes: true });
+    const projectEntry = projectEntries.find((entry) => entry.name === params.workspaceId);
+    if (!projectEntry) {
+      await lstat(workspaceRoot);
+      throw new Error(
+        `Project Memory workspace name does not match exactly: ${params.workspaceId}`,
+      );
+    }
+    await requirePlainDirectory(workspaceRoot);
+    await requirePlainDirectory(memoryRoot);
+    await assertContainedProjectMemoryPath(projectsRoot, memoryRoot);
+    return { path: memoryRoot };
+  }
+
   return {
     loadMemory,
     saveMemory,
@@ -340,5 +398,6 @@ export function createMemoryService(): IMemoryService {
     getUserMemoryDirectory,
     listProjectMemories,
     readProjectMemoryFile,
+    getProjectMemoryDirectory,
   };
 }

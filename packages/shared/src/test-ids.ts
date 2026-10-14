@@ -444,6 +444,12 @@ export const TID_SETTINGS_MEMORY_FILE_UPDATED_AT = "settings-memory-file-updated
 export const TID_SETTINGS_MEMORY_FILE_EDITOR_ACTIONS = "settings-memory-file-editor-actions";
 /** Raw Markdown preview for Memory. */
 export const TID_SETTINGS_MEMORY_PREVIEW = "settings-memory-preview";
+/** Memory index budget chip showing "used/limit" index lines. */
+export const TID_SETTINGS_MEMORY_INDEX_LINES = "settings-memory-index-lines";
+/** Memory file frontmatter type badge (dynamic suffix is the filename). */
+export const TID_SETTINGS_MEMORY_FILE_TYPE = "settings-memory-file-type";
+/** Open-folder dropdown listing local workspaces with a Project Memory directory. */
+export const TID_SETTINGS_MEMORY_OPEN_FOLDER = "settings-memory-open-folder";
 /** AskUserQuestion auto-continue switch in General Settings. */
 export const TID_SETTINGS_ASK_USER_QUESTION_AUTO_RESOLUTION_SWITCH =
   "settings-ask-user-question-auto-resolution-switch";

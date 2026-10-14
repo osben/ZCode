@@ -387,3 +387,146 @@ describe("memoryService Project Memory catalog", () => {
     });
   });
 });
+
+describe("memoryService Project Memory frontmatter meta", () => {
+  it("returns frontmatter description and type for fact files without lineCount", async () => {
+    const workspaceId = "meta-project-8888888888888888";
+    await writeMemoryFile(
+      workspaceId,
+      "prefers-tests.md",
+      [
+        "---",
+        'name: "prefers-tests"',
+        'description: "Always run the test suite before pushing"',
+        "metadata:",
+        "  node_type: memory",
+        "  type: feedback",
+        "  originSessionId: sess_1234",
+        "---",
+        "",
+        "One durable fact.",
+      ].join("\n"),
+    );
+
+    const workspaces = await createMemoryService().listProjectMemories();
+
+    expect(workspaces[0]?.files[0]).toMatchObject({
+      name: "prefers-tests.md",
+      kind: "item",
+      description: "Always run the test suite before pushing",
+      type: "feedback",
+    });
+    expect(workspaces[0]?.files[0]?.lineCount).toBeUndefined();
+  });
+
+  it("degrades broken or missing frontmatter to no meta without failing the catalog", async () => {
+    const workspaceId = "broken-meta-project-8888888888888888";
+    await writeMemoryFile(
+      workspaceId,
+      "broken.md",
+      ["---", 'description: "unclosed quote', "---", "body"].join("\n"),
+    );
+    await writeMemoryFile(workspaceId, "plain.md", "no frontmatter at all");
+
+    const workspaces = await createMemoryService().listProjectMemories();
+
+    const files = workspaces[0]?.files ?? [];
+    expect(files.map((file) => file.name)).toEqual(["broken.md", "plain.md"]);
+    for (const file of files) {
+      expect(file.description).toBeUndefined();
+      expect(file.type).toBeUndefined();
+    }
+  });
+
+  it("ignores unknown keys and unknown metadata types but keeps valid YAML values", async () => {
+    const workspaceId = "unknown-meta-project-8888888888888888";
+    await writeMemoryFile(
+      workspaceId,
+      "typed.md",
+      [
+        "---",
+        "futureKey: value",
+        "description: folded description",
+        "metadata:",
+        "  type: future-type",
+        "---",
+        "body",
+      ].join("\n"),
+    );
+
+    const files = (await createMemoryService().listProjectMemories())[0]?.files ?? [];
+
+    expect(files[0]?.name).toBe("typed.md");
+    expect(files[0]?.description).toBe("folded description");
+    expect(files[0]?.type).toBeUndefined();
+  });
+
+  it("counts index lines across the whole file beyond the frontmatter scan bound", async () => {
+    const workspaceId = "index-lines-project-8888888888888888";
+    const body = Array.from({ length: 80 }, (_, index) => `- entry ${index} ${"x".repeat(40)}`);
+    await writeMemoryFile(
+      workspaceId,
+      "MEMORY.md",
+      ["---", "description: index", "---", ""].concat(body).join("\n"),
+    );
+
+    const files = (await createMemoryService().listProjectMemories())[0]?.files ?? [];
+
+    expect(files[0]?.kind).toBe("index");
+    // The content exceeds both the 2 KiB byte bound and the 30-line bound of the frontmatter scan.
+    expect(files[0]?.lineCount).toBe(80);
+    expect(files[0]?.description).toBe("index");
+  });
+
+  it("returns lineCount 0 for an index file without content", async () => {
+    const workspaceId = "empty-index-project-8888888888888888";
+    await writeMemoryFile(workspaceId, "MEMORY.md", "");
+
+    const files = (await createMemoryService().listProjectMemories())[0]?.files ?? [];
+
+    expect(files[0]?.lineCount).toBe(0);
+  });
+
+  it("resolves the workspace memory directory for the folder-open action", async () => {
+    const workspaceId = "folder-project-9999999999999999";
+    await writeMemoryFile(workspaceId, "MEMORY.md", "index");
+
+    const { path } = await createMemoryService().getProjectMemoryDirectory({ workspaceId });
+
+    expect(path).toBe(join(workspaceMemoryRoot(workspaceId)));
+  });
+
+  it("parses frontmatter from files saved with a BOM", async () => {
+    const workspaceId = "bom-meta-project-9999999999999999";
+    await writeMemoryFile(
+      workspaceId,
+      "bom.md",
+      [
+        "\ufeff---",
+        'description: "saved in a BOM-writing editor"',
+        "metadata:",
+        "  type: project",
+        "---",
+        "body",
+      ].join("\n"),
+    );
+
+    const files = (await createMemoryService().listProjectMemories())[0]?.files ?? [];
+
+    expect(files[0]?.description).toBe("saved in a BOM-writing editor");
+    expect(files[0]?.type).toBe("project");
+  });
+
+  it("rejects folder resolution for casing aliases and missing workspaces", async () => {
+    const workspaceId = "folder-project-9999999999999999";
+    await writeMemoryFile(workspaceId, "MEMORY.md", "index");
+
+    const service = createMemoryService();
+    await expect(
+      service.getProjectMemoryDirectory({ workspaceId: workspaceId.toUpperCase() }),
+    ).rejects.toThrow();
+    await expect(
+      service.getProjectMemoryDirectory({ workspaceId: "missing-9999999999999999" }),
+    ).rejects.toThrow();
+  });
+});

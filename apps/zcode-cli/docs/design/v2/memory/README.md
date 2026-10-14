@@ -204,7 +204,9 @@ Web Remote / Mobile -> Memory 开关 + 本地桌面端查看提示
   文件 symlink。只接受精确 `MEMORY.md` 和严格小写 `.md` 事实文件，空 workspace 不展示。
 - project 目录 basename 是 opaque workspace id；展示名称只从已有 slug 派生并附 hash 后缀，
   不新增 workspace inventory、映射数据库或 metadata 文件。
-- catalog 只返回文件名、类型、大小和修改时间；正文仅在用户选中文件后按需读取，并保持原始
+- catalog 只返回文件名、类型、大小和修改时间，并附加可选的 frontmatter 元信息（description、
+  metadata.type）与索引行数 lineCount（仅 `MEMORY.md`，按去 frontmatter 后的行数统计，用于
+  viewer 的注入预算提示）；正文仅在用户选中文件后按需读取，并保持原始
   Markdown 和 frontmatter 不变。单文件预览上限为 5 MiB（5 × 1024 × 1024 bytes）；超过上限
   时拒绝读取并在正文区域展示本地化的预览上限提示，不截断、不返回部分内容。
 - 正文读取必须通过单次调用内的只读稳定句柄完成，并在打开后复检路径 containment 与文件身份；
@@ -234,6 +236,11 @@ Web Remote / Mobile -> Memory 开关 + 本地桌面端查看提示
   `stat -> temporary external WorkspaceFileTree` 链路打开该 Memory 目录。Renderer 不自行拼接 data
   root，目录解析不创建目录、不读取正文、不启动 Runtime；Web Remote / Mobile 和无 Workspace Shell
   的独立 Settings 不展示该入口。
+- viewer 另提供「打开记忆文件夹」操作（2026-10-14 产品决策，supersede 本节早期"仅文件树"的
+  限定与 §11 的打开目录 non-goal）：按钮以下拉列表列出本地 profile catalog 中的全部项目；选中后
+  host 按 opaque workspace id 复用 catalog 的 containment / case-exact 校验返回本地 memory 目录
+  路径，Renderer 经 `IPlatformService.openInFileManager` 打开该目录。Renderer 不自行拼接 data
+  root；目录不存在或校验失败时记录 warn 不重试；Web Remote / Mobile 不展示该操作。
 - viewer 只支持显式刷新，不增加
   watcher、polling、cache service、retry 或 fallback。刷新时仅在当前项目和文件仍存在时保留层级；
   文件仍存在则重新读取正文，项目或文件消失时回退到最近的有效父层级，不自动选择替代项。
@@ -896,8 +903,8 @@ E2E 覆盖，不再复制一条只能间接推断取消结果的 WDIO case。
 - CLI/Desktop/mobile `/dream`、`/memory` 命令或 Agent Memory 正文/后台状态协议。
 - 公开 `--no-memory` flag、完整关闭 Main Memory/Recall/custom-agent Memory，或远端重新开启
   headless Extraction 的 rollout gate。
-- Settings viewer 中的编辑、删除、搜索、导出、打开目录、远端 Host 聚合、custom-agent Memory
-  或外部 `storage.dir` 发现。
+- Settings viewer 中的编辑、删除、搜索、导出、远端 Host 聚合、custom-agent Memory
+  或外部 `storage.dir` 发现（打开目录已于 2026-10-14 按 §3.3 的「打开记忆文件夹」操作交付）。
 - 自动 Dream trigger、`memory.autoDream` 配置或临时替代入口。
 - `/memory list/show/status/doctor/open` 等替代命令。
 - 关键词 Recall fallback、selector timeout 或通用 retry。
