@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Loader2Icon } from "lucide-react";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { usePlatform } from "@/hooks/usePlatform.js";
 import { useServices } from "@/hooks/useServices.js";
@@ -26,6 +27,7 @@ export function ChatGptPlanDetail() {
   const { oauthService } = useServices();
   const [status, setStatus] = useState<SiwcPlanStatus | null>(null);
   const [loginPending, setLoginPending] = useState(false);
+  const [signOutPending, setSignOutPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showFirstRunModal, setShowFirstRunModal] = useState(false);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -119,12 +121,15 @@ export function ChatGptPlanDetail() {
 
   const signOut = useCallback(async () => {
     setError(null);
+    setSignOutPending(true);
     try {
       await oauthService.logoutChatGptPlan();
       const next = await oauthService.getChatGptPlanStatus();
       if (!disposedRef.current) setStatus(next);
     } catch (caught) {
       if (!disposedRef.current) setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSignOutPending(false);
     }
   }, [oauthService]);
 
@@ -171,7 +176,13 @@ export function ChatGptPlanDetail() {
               </p>
             )}
             <div className="flex flex-wrap items-center gap-2">
-              <Button type="button" variant="outline" onClick={() => void signOut()}>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={signOutPending}
+                onClick={() => void signOut()}
+              >
+                {signOutPending ? <Loader2Icon className="size-3.5 animate-spin" /> : null}
                 {intl.formatMessage({ id: "settings.modelProvider.chatgpt.signOut" })}
               </Button>
               <Button
