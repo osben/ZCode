@@ -1034,6 +1034,9 @@ function V4ComposerModelControlsImpl({
       ...(contextWindow.autoCompactThresholdTokens !== undefined
         ? { autoCompactThresholdTokens: contextWindow.autoCompactThresholdTokens }
         : {}),
+      ...(contextWindow.autoCompactThresholdAuthoritative === true
+        ? { autoCompactThresholdAuthoritative: true }
+        : {}),
       ...(contextWindow.microcompactThresholdTokens !== undefined
         ? { microcompactThresholdTokens: contextWindow.microcompactThresholdTokens }
         : {}),
@@ -1041,7 +1044,10 @@ function V4ComposerModelControlsImpl({
   }, [usage?.contextWindow]);
   const usageTone = taskUsage
     ? resolveContextBudgetTone({
-        autoCompactThresholdTokens: taskUsage.autoCompactThresholdTokens,
+        autoCompactThresholdTokens:
+          taskUsage.autoCompactThresholdAuthoritative === true
+            ? taskUsage.autoCompactThresholdTokens
+            : undefined,
         contextWindow: taskUsage.size,
         microcompactThresholdTokens: taskUsage.microcompactThresholdTokens,
         usedTokens: taskUsage.used,

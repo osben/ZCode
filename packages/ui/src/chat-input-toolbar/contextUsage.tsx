@@ -283,6 +283,7 @@ export function ChatContextUsage({
     cache?: { hitRate: number | null };
     breakdown?: ZCodeContextUsageBreakdownItem[];
     autoCompactThresholdTokens?: number | null;
+    autoCompactThresholdAuthoritative?: boolean;
     microcompactThresholdTokens?: number | null;
   } | null;
   selectedProvider: ZCodeProvider;
@@ -856,17 +857,22 @@ export function ChatContextUsage({
   // warning and critical report reached thresholds; runtime may still skip the compaction action.
   const contextTone = renderableTaskUsage
     ? resolveContextBudgetTone({
-        autoCompactThresholdTokens: renderableTaskUsage.autoCompactThresholdTokens,
+        autoCompactThresholdTokens:
+          renderableTaskUsage.autoCompactThresholdAuthoritative === true
+            ? renderableTaskUsage.autoCompactThresholdTokens
+            : undefined,
         contextWindow: renderableTaskUsage.size,
         microcompactThresholdTokens: renderableTaskUsage.microcompactThresholdTokens,
         usedTokens: renderableTaskUsage.used,
       })
     : "normal";
-  const autoCompactThresholdTokens =
-    !renderableTaskUsage || renderableTaskUsage.autoCompactThresholdTokens === null
-      ? null
-      : (renderableTaskUsage.autoCompactThresholdTokens ??
-        getAutoCompactThresholdTokens({ contextWindow: renderableTaskUsage.size }));
+  const autoCompactThresholdTokens = !renderableTaskUsage
+    ? null
+    : renderableTaskUsage.autoCompactThresholdAuthoritative === true
+      ? typeof renderableTaskUsage.autoCompactThresholdTokens === "number"
+        ? renderableTaskUsage.autoCompactThresholdTokens
+        : null
+      : getAutoCompactThresholdTokens({ contextWindow: renderableTaskUsage.size });
   const autoCompactLabel =
     renderableTaskUsage && autoCompactThresholdTokens !== null
       ? `≈${formatContextUsageTokenCount(autoCompactThresholdTokens, locale)} (${percentageFormatter.format(

@@ -36,6 +36,7 @@ function renderContextUsage(
     used: number;
     size: number;
     autoCompactThresholdTokens?: number | null;
+    autoCompactThresholdAuthoritative?: boolean;
     microcompactThresholdTokens?: number | null;
   },
   locale: "en-US" | "uk-UA" | "zh-CN" = "en-US",
@@ -61,6 +62,7 @@ describe("ChatContextUsage runtime compaction budget rendering", () => {
       used: 149_400,
       size: 200_000,
       autoCompactThresholdTokens: 166_000,
+      autoCompactThresholdAuthoritative: true,
       microcompactThresholdTokens: 149_400,
     });
 
@@ -75,6 +77,7 @@ describe("ChatContextUsage runtime compaction budget rendering", () => {
       used: 166_000,
       size: 200_000,
       autoCompactThresholdTokens: 166_000,
+      autoCompactThresholdAuthoritative: true,
       microcompactThresholdTokens: 149_400,
     });
     expect(criticalMarkup).toContain('data-usage-tone="critical"');
@@ -86,6 +89,7 @@ describe("ChatContextUsage runtime compaction budget rendering", () => {
       used: 180_000,
       size: 200_000,
       autoCompactThresholdTokens: null,
+      autoCompactThresholdAuthoritative: true,
       microcompactThresholdTokens: null,
     });
     expect(disabledMarkup).toContain('data-usage-tone="normal"');
@@ -99,6 +103,7 @@ describe("ChatContextUsage runtime compaction budget rendering", () => {
       used: 1,
       size: 200_000,
       autoCompactThresholdTokens: 0,
+      autoCompactThresholdAuthoritative: true,
       microcompactThresholdTokens: null,
     });
 
@@ -116,6 +121,18 @@ describe("ChatContextUsage runtime compaction budget rendering", () => {
     expect(markup).not.toContain("threshold reached");
   });
 
+  it("estimates legacy auto thresholds when an old client snapshot has a null placeholder", () => {
+    const markup = renderContextUsage({
+      used: 150_000,
+      size: 200_000,
+      autoCompactThresholdTokens: null,
+    });
+
+    expect(markup).toContain('data-usage-tone="normal"');
+    expect(markup).toContain("≈166K (83%)");
+    expect(markup).not.toContain("microcompact threshold reached");
+  });
+
   it("localizes the accessible budget status", () => {
     expect(
       renderContextUsage(
@@ -123,6 +140,7 @@ describe("ChatContextUsage runtime compaction budget rendering", () => {
           used: 149_400,
           size: 200_000,
           autoCompactThresholdTokens: 166_000,
+          autoCompactThresholdAuthoritative: true,
           microcompactThresholdTokens: 149_400,
         },
         "uk-UA",
@@ -134,6 +152,7 @@ describe("ChatContextUsage runtime compaction budget rendering", () => {
           used: 166_000,
           size: 200_000,
           autoCompactThresholdTokens: 166_000,
+          autoCompactThresholdAuthoritative: true,
           microcompactThresholdTokens: 149_400,
         },
         "zh-CN",
@@ -147,6 +166,7 @@ describe("ChatContextUsage runtime compaction budget rendering", () => {
       used: 149_400,
       size: 200_000,
       autoCompactThresholdTokens: 166_000,
+      autoCompactThresholdAuthoritative: true,
       microcompactThresholdTokens: 149_400,
     });
     quotaTone.value = null;

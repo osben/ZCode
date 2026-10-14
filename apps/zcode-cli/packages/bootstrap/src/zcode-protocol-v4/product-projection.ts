@@ -272,12 +272,18 @@ function invalidateResolvedContextBudgetThresholds(
 ): NonNullable<SessionUsageState["contextWindow"]> {
   const {
     autoCompactThresholdTokens,
+    autoCompactThresholdAuthoritative,
     microcompactThresholdTokens,
     ...remaining
   } = contextWindow;
   return {
     ...remaining,
-    ...(autoCompactThresholdTokens === null ? { autoCompactThresholdTokens: null } : {}),
+    // Keep the required legacy field populated for old V4 clients. Numeric thresholds are stale
+    // after a model switch; only an authoritative disabled null survives with its authority bit.
+    autoCompactThresholdTokens: null,
+    ...(autoCompactThresholdTokens === null && autoCompactThresholdAuthoritative === true
+      ? { autoCompactThresholdAuthoritative: true }
+      : {}),
     ...(microcompactThresholdTokens === null ? { microcompactThresholdTokens: null } : {}),
   };
 }
@@ -4978,6 +4984,7 @@ export class ProductProjection {
                           : {
                               usedTokens: this.contextWindowState.usedTokens,
                               maxTokens: contextWindow,
+                              autoCompactThresholdTokens: null,
                             },
                 },
               }
@@ -5070,14 +5077,14 @@ export class ProductProjection {
               : {
                   usedTokens,
                   maxTokens,
-                  ...(payload.autoCompactThresholdTokens !== undefined
-                    ? { autoCompactThresholdTokens: payload.autoCompactThresholdTokens }
-                    : previousContextWindow?.autoCompactThresholdTokens !== undefined
-                      ? {
-                          autoCompactThresholdTokens:
-                            previousContextWindow.autoCompactThresholdTokens,
-                        }
-                      : {}),
+                  autoCompactThresholdTokens:
+                    payload.autoCompactThresholdTokens !== undefined
+                      ? payload.autoCompactThresholdTokens
+                      : (previousContextWindow?.autoCompactThresholdTokens ?? null),
+                  ...(payload.autoCompactThresholdTokens !== undefined ||
+                  previousContextWindow?.autoCompactThresholdAuthoritative === true
+                    ? { autoCompactThresholdAuthoritative: true }
+                    : {}),
                   ...(payload.microcompactThresholdTokens !== undefined
                     ? { microcompactThresholdTokens: payload.microcompactThresholdTokens }
                     : previousContextWindow?.microcompactThresholdTokens !== undefined
@@ -5239,6 +5246,10 @@ export class ProductProjection {
                           autoCompactThresholdTokens:
                             this.snapshot.usage.contextWindow.autoCompactThresholdTokens,
                         }
+                      : { autoCompactThresholdTokens: null }),
+                    ...(this.snapshot.usage.contextWindow?.autoCompactThresholdAuthoritative ===
+                    true
+                      ? { autoCompactThresholdAuthoritative: true }
                       : {}),
                     ...(this.snapshot.usage.contextWindow?.microcompactThresholdTokens !== undefined
                       ? {

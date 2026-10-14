@@ -1081,7 +1081,8 @@ describe("ProductProjection 黄金测试（L1）", () => {
       usedTokens: 150,
       maxTokens: 200_000,
     });
-    expect(snapshot.usage.contextWindow).not.toHaveProperty("autoCompactThresholdTokens");
+    expect(snapshot.usage.contextWindow?.autoCompactThresholdTokens).toBeNull();
+    expect(snapshot.usage.contextWindow).not.toHaveProperty("autoCompactThresholdAuthoritative");
     expect(snapshot.usage.contextWindow).not.toHaveProperty("microcompactThresholdTokens");
     expect(snapshot.usage.cumulative.inputTokens).toBe(120);
     expect(snapshot.seq).toBe(log.events.length);
@@ -7042,6 +7043,7 @@ describe("fork / modelChange marker", () => {
       usedTokens: 150,
       maxTokens: 200_000,
       autoCompactThresholdTokens: 166_000,
+      autoCompactThresholdAuthoritative: true,
       microcompactThresholdTokens: 149_400,
     });
 
@@ -7081,7 +7083,8 @@ describe("fork / modelChange marker", () => {
       usedTokens: 150,
       maxTokens: 1_000_000,
     });
-    expect(switchedContextWindow).not.toHaveProperty("autoCompactThresholdTokens");
+    expect(switchedContextWindow?.autoCompactThresholdTokens).toBeNull();
+    expect(switchedContextWindow).not.toHaveProperty("autoCompactThresholdAuthoritative");
     expect(switchedContextWindow).not.toHaveProperty("microcompactThresholdTokens");
 
     projection.applyEvent(
@@ -7103,7 +7106,8 @@ describe("fork / modelChange marker", () => {
       usedTokens: 200,
       maxTokens: 1_000_000,
     });
-    expect(legacyCompleteContextWindow).not.toHaveProperty("autoCompactThresholdTokens");
+    expect(legacyCompleteContextWindow?.autoCompactThresholdTokens).toBeNull();
+    expect(legacyCompleteContextWindow).not.toHaveProperty("autoCompactThresholdAuthoritative");
     expect(legacyCompleteContextWindow).not.toHaveProperty("microcompactThresholdTokens");
 
     projection.applyEvent(
@@ -7120,6 +7124,7 @@ describe("fork / modelChange marker", () => {
     expect(projection.getSnapshot().usage.contextWindow).toMatchObject({
       usedTokens: 900_000,
       autoCompactThresholdTokens: null,
+      autoCompactThresholdAuthoritative: true,
       microcompactThresholdTokens: null,
     });
 
@@ -7132,6 +7137,7 @@ describe("fork / modelChange marker", () => {
     expect(projection.getSnapshot().usage.contextWindow).toMatchObject({
       usedTokens: 900_000,
       autoCompactThresholdTokens: null,
+      autoCompactThresholdAuthoritative: true,
       microcompactThresholdTokens: null,
     });
   });

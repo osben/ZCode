@@ -192,7 +192,10 @@ export const sessionUsageStateSchema = z.object({
     .object({
       usedTokens: z.number(),
       maxTokens: z.number(),
-      autoCompactThresholdTokens: z.number().nullable().optional(),
+      // Required for mixed-version V4 clients. Older hosts use null as an unknown placeholder;
+      // the additive authority flag disambiguates it from a current disabled policy.
+      autoCompactThresholdTokens: z.number().nullable(),
+      autoCompactThresholdAuthoritative: z.boolean().optional(),
       microcompactThresholdTokens: z.number().nullable().optional(),
       cache: zcodeSessionContextCacheUsageSchema.optional(),
       breakdown: zcodeContextUsageBreakdownSchema.optional(),
