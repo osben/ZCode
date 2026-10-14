@@ -1,7 +1,9 @@
 import { appendFile, mkdir, open, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { TID_SIDE_PANE_TOGGLE } from "@zcode/shared";
 import {
   clearAppData,
+  clickTestIdByDom,
   getE2EAppDataPaths,
   setCurrentElectronRendererContentSize,
 } from "../helpers/desktop-app.js";
@@ -56,6 +58,23 @@ describe("模型调用轨迹查看器 E2E", () => {
     await seedTrajectory(taskId, actualTrajectoryFile.filePath);
     await seedUnreadableTrajectoryCandidate(actualTrajectoryFile.filePath);
     await openTrajectoryThroughTaskMenu(taskId);
+    await waitForTrajectory();
+
+    // TRJ10: the trajectory tab must stay reachable after being closed. The "+" launcher offers it
+    // again for the active task, both while other tabs keep the pane open and after the pane fell
+    // back to the collapsed empty state.
+    await closeTrajectoryTab(taskId);
+    await browser.waitUntil(
+      () => browser.execute(() => !document.querySelector('[data-trajectory-timeline=""]')),
+      { timeout: 10_000, timeoutMsg: "closed trajectory tab did not unmount the timeline" },
+    );
+    if (await $("[data-side-pane-add-tab-trigger]").isExisting()) {
+      await $("[data-side-pane-add-tab-trigger]").click();
+      await $('[data-side-pane-add-item="model-trajectory"]').click();
+    } else {
+      await clickTestIdByDom(TID_SIDE_PANE_TOGGLE);
+      await $('[data-side-pane-open-tab-item="model-trajectory"]').click();
+    }
     await waitForTrajectory();
 
     const initial = await trajectorySnapshot();
@@ -453,6 +472,22 @@ async function openTrajectoryThroughTaskMenu(taskId: string) {
         return Boolean(item);
       }),
     { timeout: 15_000, timeoutMsg: "task context menu 没有调用轨迹入口" },
+  );
+}
+
+async function closeTrajectoryTab(taskId: string) {
+  await browser.waitUntil(
+    () =>
+      browser.execute((currentTaskId) => {
+        const tab = document.querySelector<HTMLElement>(
+          `[data-side-pane-tab-id="model-trajectory:${currentTaskId}"]`,
+        );
+        const closeButton = tab?.querySelector<HTMLButtonElement>("button[aria-label]");
+        if (!closeButton) return false;
+        closeButton.click();
+        return true;
+      }, taskId),
+    { timeout: 10_000, timeoutMsg: `trajectory tab for task ${taskId} has no close button` },
   );
 }
 
