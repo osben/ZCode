@@ -120,14 +120,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # pnpm skips dependency postinstalls when a warm store cache is restored. Check the
-      # executable itself because path.txt can remain even when the Electron binary is missing.
+      # pnpm can skip dependency postinstalls when a warm store cache is restored. Re-run
+      # Electron's installer (it skips a valid installation) and assert the binary exists.
       - name: Ensure Electron binary
         run: |
-          electron_binary="$(node -e 'const fs = require("node:fs"); const path = require("node:path"); const dir = path.dirname(require.resolve("electron")); const name = fs.readFileSync(path.join(dir, "path.txt"), "utf8").trim(); process.stdout.write(path.join(dir, "dist", name))' 2>/dev/null || true)"
-          if [ -z "$electron_binary" ] || [ ! -x "$electron_binary" ]; then
-            (cd node_modules/electron && env -u ELECTRON_SKIP_BINARY_DOWNLOAD node install.js)
-          fi
+          electron_package_dir="$(node -p 'require("node:path").dirname(require.resolve("electron"))')"
+          env -u ELECTRON_SKIP_BINARY_DOWNLOAD node "$electron_package_dir/install.js"
           electron_binary="$(node -e 'const fs = require("node:fs"); const path = require("node:path"); const dir = path.dirname(require.resolve("electron")); const name = fs.readFileSync(path.join(dir, "path.txt"), "utf8").trim(); process.stdout.write(path.join(dir, "dist", name))')"
           test -x "$electron_binary"
 
