@@ -18,7 +18,10 @@ interface ModelSelectionCompletionView {
       readonly modelId: string;
       readonly config: {
         readonly optionSpecs: {
-          readonly reasoningLevel: { readonly values: readonly string[] };
+          readonly reasoningLevel: {
+            readonly values: readonly string[];
+            readonly default?: string;
+          };
         };
       };
     }[];
@@ -62,7 +65,10 @@ export function completeNewModelSelection(
   const model = registry.providers
     .find((provider) => provider.providerId === selection.providerId)
     ?.models.find((candidate) => candidate.modelId === selection.modelId);
-  const reasoningLevel = model?.config.optionSpecs.reasoningLevel.values.at(-1);
+  const reasoningSpec = model?.config.optionSpecs.reasoningLevel;
+  // An explicit catalog default wins for fresh selections; otherwise the highest value is the
+  // historical upstream behavior.
+  const reasoningLevel = reasoningSpec?.default ?? reasoningSpec?.values?.at(-1);
   if (!reasoningLevel) return undefined;
   return {
     providerId: selection.providerId,
