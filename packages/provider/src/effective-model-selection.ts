@@ -7,7 +7,11 @@ import {
   type ProviderRegistryView,
 } from "./registry.js";
 
-export type ModelSelectionProviderKind = "ordinary" | "account-plan" | "account-offpeak";
+export type ModelSelectionProviderKind =
+  | "ordinary"
+  | "account-plan"
+  | "chatgpt-plan"
+  | "account-offpeak";
 export type ModelSelectionProviderClassifier = (providerId: string) => ModelSelectionProviderKind;
 
 /**
@@ -26,9 +30,11 @@ export function resolveEffectiveModelSelection(input: {
     return Object.freeze({ effectiveSelection: null, selectionIssue: "selection-missing" });
   const kind = input.classifyProvider(original.providerId);
   let providerId = original.providerId;
-  if (kind === "account-plan") {
+  if (kind === "account-plan" || kind === "chatgpt-plan") {
+    // Classify identity independently of Registry: a previous plan disappears from executable
+    // candidates after a connection switch, but must retain its account domain.
     const current = Object.entries(input.accountStates ?? {}).filter(
-      ([id, state]) => state.current === true && input.classifyProvider(id) === "account-plan",
+      ([id, state]) => state.current === true && input.classifyProvider(id) === kind,
     );
     if (current.length !== 1) {
       return Object.freeze({
