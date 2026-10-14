@@ -75,6 +75,8 @@ Threshold math (defaults, mirroring the runtime policy):
 
 - `autoCompactThreshold = max(0, contextWindow − min(maxOutputTokens ?? 32K, 21K) − 13K)` — the
   token count at which the next model step triggers a full summary compaction.
+- An explicitly configured `bufferTokens: 0` is valid and removes the configurable safety buffer;
+  an omitted or invalid buffer uses the 13K default.
 - `microcompactThreshold = max(0, min(floor(autoCompactThreshold × 0.9), autoCompactThreshold − 2K))` — the token count at which old tool results start being cleared, matching `buildDefaultMicrocompactThreshold` in the runtime.
 - The runtime resolves `autoCompactThreshold` from the selected model, context-budget strategy, model output limit, and effective compact configuration. Main-turn completion events carry it into `usage.contextWindow.autoCompactThresholdTokens` and mark it authoritative. The required field remains `null` when unknown for old-client compatibility; the additive authority flag distinguishes that placeholder from an authoritative `null` (disabled).
 - Main-turn completion events also carry `usage.contextWindow.microcompactThresholdTokens`. It is the configured `microcompact.thresholdTokens`, or the default formula above when microcompact is enabled without an override; `null` means microcompact is disabled or unsupported. The UI uses this authoritative threshold when present. If the field is absent in a legacy event, the UI treats microcompact as unknown and does not show a microcompact warning because legacy data cannot establish that the opt-in policy is enabled.

@@ -66,7 +66,7 @@ describe("context budget policy thresholds", () => {
     );
   });
 
-  it("uses runtime buffer overrides and accepts a zero output reserve", () => {
+  it("uses runtime buffer overrides, including zero, and accepts a zero output reserve", () => {
     // 200_000 - 21_000 - 1_000 = 178_000
     expect(
       getAutoCompactThresholdTokens({
@@ -75,6 +75,15 @@ describe("context budget policy thresholds", () => {
         bufferTokens: 1_000,
       }),
     ).toBe(178_000);
+    // An explicit zero buffer removes only the configurable safety buffer, matching core's prior
+    // positiveInt normalization, which also accepts zero.
+    expect(
+      getAutoCompactThresholdTokens({
+        contextWindow: 200_000,
+        maxOutputTokens: 32_000,
+        bufferTokens: 0,
+      }),
+    ).toBe(179_000);
     // An explicit zero output limit reserves no output tokens.
     expect(getAutoCompactThresholdTokens({ contextWindow: 200_000, maxOutputTokens: 0 })).toBe(
       187_000,
