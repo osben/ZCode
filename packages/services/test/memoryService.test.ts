@@ -180,6 +180,53 @@ describe("memoryService Project Memory catalog", () => {
     });
   });
 
+  it.each(["file", "workspace", "memory"] as const)(
+    "catalog open 后 %s 路径被替换为外部 symlink 时不读取或返回外部数据",
+    async (swapTarget) => {
+      const workspaceId = `catalog-swap-${swapTarget}-3333333333333333`;
+      const workspaceRoot = join(projectsRoot(), workspaceId);
+      const memoryRoot = workspaceMemoryRoot(workspaceId);
+      const filePath = join(memoryRoot, "MEMORY.md");
+      const externalWorkspace = join(tempDir, `external-${swapTarget}`);
+      const externalMemoryRoot = join(externalWorkspace, "memory");
+      const externalFile = join(tempDir, "outside.md");
+      await writeMemoryFile(workspaceId, "MEMORY.md", "inside index");
+      await mkdir(externalMemoryRoot, { recursive: true });
+      await writeFile(externalFile, "outside file", "utf-8");
+      await writeFile(
+        join(externalMemoryRoot, "MEMORY.md"),
+        "---\ndescription: outside secret\n---\n# Outside index",
+        "utf-8",
+      );
+
+      fsMocks.open.mockImplementationOnce(async (path, flags, mode) => {
+        if (swapTarget === "file") {
+          await actualFs.rename(filePath, `${filePath}.original`);
+          await actualFs.symlink(externalFile, filePath);
+        } else if (swapTarget === "workspace") {
+          await actualFs.rename(workspaceRoot, `${workspaceRoot}.original`);
+          await actualFs.symlink(
+            externalWorkspace,
+            workspaceRoot,
+            process.platform === "win32" ? "junction" : "dir",
+          );
+        } else {
+          await actualFs.rename(memoryRoot, `${memoryRoot}.original`);
+          await actualFs.symlink(
+            externalMemoryRoot,
+            memoryRoot,
+            process.platform === "win32" ? "junction" : "dir",
+          );
+        }
+        return actualFs.open(path, flags, mode);
+      });
+
+      const workspaces = await createMemoryService().listProjectMemories();
+
+      expect(workspaces).toEqual([]);
+    },
+  );
+
   it.each(["workspace", "memory"] as const)(
     "打开文件时 %s 目录被替换为外部链接后拒绝返回正文",
     async (swapTarget) => {
@@ -493,6 +540,7 @@ describe("memoryService Project Memory frontmatter meta", () => {
     ["top-level HTML comment indented by one space", " <!-- internal note -->\n", 0],
     ["top-level HTML comment indented by two spaces", "  <!-- internal note -->\n", 0],
     ["top-level HTML comment indented by three spaces", "   <!-- internal note -->\n", 0],
+    ["unterminated top-level HTML comment", "<!-- internal note\n# Index\n", 2],
     ["content after a top-level HTML comment", "<!-- internal note -->\n# Index\n", 1],
     ["content after an indented top-level HTML comment", "   <!-- internal note -->\n# Index\n", 1],
     ["HTML comments inside code fences", "```md\n<!-- literal -->\n```", 3],

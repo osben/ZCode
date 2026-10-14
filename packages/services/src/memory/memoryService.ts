@@ -1,4 +1,5 @@
 import type { Memory, MemoryConfig } from "@zcode/shared";
+import { PROJECT_MEMORY_FILE_CHANGED_ERROR_CODE } from "./memory.js";
 import {
   type IMemoryService,
   type ProjectMemoryFileSummary,
@@ -7,81 +8,33 @@ import {
 import { lstat, mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative, sep } from "node:path";
-import { readProjectMemoryFileFromStableHandle } from "#src/memory/projectMemoryStableRead.js";
+import {
+  readProjectMemoryFileFromStableHandle,
+  readProjectMemoryFileWithStableHandle,
+} from "#src/memory/projectMemoryStableRead.js";
 import {
   type ProjectMemoryFrontmatterMeta,
   parseProjectMemoryFrontmatter,
   readProjectMemoryFrontmatterHead,
 } from "#src/memory/projectMemoryFrontmatter.js";
 import { getZCodeDataRootDir } from "#src/paths.js";
+import { readProjectMemoryIndexLineCount } from "#src/memory/projectMemoryIndexContent.js";
 
 const PROJECT_MEMORY_INDEX_FILE_NAME = "MEMORY.md";
 const PROJECT_MEMORY_DIRECTORY_NAME = "memory";
 const PROJECT_KEY_SUFFIX_PATTERN = /^(.*)-[a-f0-9]{16}$/i;
-const PROJECT_MEMORY_INDEX_FRONTMATTER_PATTERN = /^---\s*\n[\s\S]*?---\s*\n?/;
-const PROJECT_MEMORY_INDEX_HTML_COMMENT_PATTERN = /<!--[\s\S]*?-->/gu;
-
-function stripProjectMemoryIndexHtmlComments(content: string): string {
-  const lines = content.match(/[^\n]*\n|[^\n]+$/gu) ?? [];
-  let fence: { marker: "`" | "~"; length: number } | undefined;
-  let inComment = false;
-  let result = "";
-
-  for (const line of lines) {
-    const lineContent = line.replace(/\r?\n$/u, "");
-    const lineEnding = line.slice(lineContent.length);
-    if (fence) {
-      const closingFence = new RegExp(
-        `^ {0,3}${fence.marker === "`" ? "`" : "~"}{${fence.length},}\\s*$`,
-        "u",
-      );
-      if (closingFence.test(lineContent)) {
-        fence = undefined;
-      }
-      result += line;
-      continue;
-    }
-
-    const openingFence = /^ {0,3}(`{3,}|~{3,})/u.exec(lineContent)?.[1];
-    if (openingFence) {
-      fence = { marker: openingFence[0] as "`" | "~", length: openingFence.length };
-      result += line;
-      continue;
-    }
-
-    if (inComment) {
-      const commentEnd = lineContent.indexOf("-->");
-      if (commentEnd === -1) {
-        continue;
-      }
-      inComment = false;
-      result +=
-        lineContent.slice(commentEnd + 3).replace(PROJECT_MEMORY_INDEX_HTML_COMMENT_PATTERN, "") +
-        lineEnding;
-      continue;
-    }
-
-    const commentPrefix = /^ {0,3}<!--/u.exec(lineContent)?.[0];
-    if (commentPrefix) {
-      const commentEnd = lineContent.indexOf("-->", commentPrefix.length);
-      if (commentEnd === -1) {
-        inComment = true;
-        continue;
-      }
-      result +=
-        lineContent.slice(commentEnd + 3).replace(PROJECT_MEMORY_INDEX_HTML_COMMENT_PATTERN, "") +
-        lineEnding;
-      continue;
-    }
-
-    result += line;
-  }
-
-  return result;
-}
 
 function isNotFoundError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+
+function isProjectMemoryFileChangedError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === PROJECT_MEMORY_FILE_CHANGED_ERROR_CODE
+  );
 }
 
 function getProjectMemoriesRoot(): string {
@@ -126,21 +79,6 @@ async function isPlainDirectory(path: string): Promise<boolean> {
 // The index budget chip compares against the CLI injection line limit (MEMORY_INDEX_LINE_LIMIT in
 // apps/zcode-cli/packages/core/src/memory/index-content.ts), so the count must cover the whole
 // index file; the frontmatter head-scan bound only guards per-file metadata extraction.
-async function readProjectMemoryIndexLineCount(filePath: string): Promise<number | undefined> {
-  try {
-    const content = await readFile(filePath, "utf-8");
-    // Keep this normalization aligned with formatProjectMemoryIndexContent in the CLI: remove
-    // leading frontmatter and top-level HTML comments before trimming and counting injected lines.
-    const trimmed = stripProjectMemoryIndexHtmlComments(
-      content.replace(PROJECT_MEMORY_INDEX_FRONTMATTER_PATTERN, ""),
-    ).trim();
-    return trimmed ? trimmed.split("\n").length : 0;
-  } catch {
-    // Concurrent deletion or a read failure only loses the budget chip; the catalog must not fail.
-    return undefined;
-  }
-}
-
 async function requirePlainDirectory(path: string): Promise<void> {
   const metadata = await lstat(path);
   if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
@@ -343,39 +281,65 @@ export function createMemoryService(): IMemoryService {
         }
 
         const filePath = join(memoryRoot, memoryEntry.name);
-        let fileMetadata;
+        const isIndex = memoryEntry.name === PROJECT_MEMORY_INDEX_FILE_NAME;
+        let frontmatterMeta: ProjectMemoryFrontmatterMeta = {};
+        let lineCount: number | undefined;
         try {
-          fileMetadata = await lstat(filePath);
+          const snapshot = await readProjectMemoryFileWithStableHandle({
+            fileName: memoryEntry.name,
+            filePath,
+            validatePath: async () => {
+              await requireProjectMemoriesRoot();
+              await requirePlainDirectory(workspaceRoot);
+              await requirePlainDirectory(memoryRoot);
+              await requireExactProjectMemoryFile(memoryRoot, memoryEntry.name);
+              await assertContainedProjectMemoryPath(projectsRoot, filePath);
+            },
+            readContent: async (handle) => {
+              let frontmatterHead: string | undefined;
+              try {
+                frontmatterHead = await readProjectMemoryFrontmatterHead(handle);
+              } catch {
+                // An unreadable frontmatter head degrades to a catalog row without YAML metadata.
+              }
+              let indexContent: string | undefined;
+              if (isIndex) {
+                try {
+                  indexContent = await handle.readFile({ encoding: "utf-8" });
+                } catch {
+                  // An unreadable index body omits only its optional line-count chip.
+                }
+              }
+              return { frontmatterHead, indexContent };
+            },
+          });
+          if (snapshot.content.frontmatterHead !== undefined) {
+            try {
+              frontmatterMeta = parseProjectMemoryFrontmatter(snapshot.content.frontmatterHead);
+            } catch {
+              // Missing or malformed YAML renders the file without meta.
+            }
+          }
+          if (snapshot.content.indexContent !== undefined) {
+            lineCount = readProjectMemoryIndexLineCount(snapshot.content.indexContent);
+          }
+          files.push({
+            name: memoryEntry.name,
+            path: filePath,
+            kind: isIndex ? "index" : "item",
+            size: snapshot.size,
+            updatedAt: snapshot.updatedAt,
+            ...(frontmatterMeta.description ? { description: frontmatterMeta.description } : {}),
+            ...(frontmatterMeta.type ? { type: frontmatterMeta.type } : {}),
+            ...(lineCount === undefined ? {} : { lineCount }),
+          });
         } catch (error) {
-          // The actual file may be deleted concurrently after readdir; it is no longer part of this read-only snapshot.
-          if (isNotFoundError(error)) {
+          // A file removed or replaced during enumeration is omitted rather than exposing stale or external metadata.
+          if (isNotFoundError(error) || isProjectMemoryFileChangedError(error)) {
             continue;
           }
           throw error;
         }
-        if (!fileMetadata.isFile() || fileMetadata.isSymbolicLink()) {
-          continue;
-        }
-        const isIndex = memoryEntry.name === PROJECT_MEMORY_INDEX_FILE_NAME;
-        let frontmatterMeta: ProjectMemoryFrontmatterMeta = {};
-        try {
-          frontmatterMeta = parseProjectMemoryFrontmatter(
-            await readProjectMemoryFrontmatterHead(filePath),
-          );
-        } catch {
-          // Missing or unreadable frontmatter renders the file without meta; never fail the catalog.
-        }
-        const lineCount = isIndex ? await readProjectMemoryIndexLineCount(filePath) : undefined;
-        files.push({
-          name: memoryEntry.name,
-          path: filePath,
-          kind: isIndex ? "index" : "item",
-          size: fileMetadata.size,
-          updatedAt: fileMetadata.mtimeMs,
-          ...(frontmatterMeta.description ? { description: frontmatterMeta.description } : {}),
-          ...(frontmatterMeta.type ? { type: frontmatterMeta.type } : {}),
-          ...(lineCount === undefined ? {} : { lineCount }),
-        });
       }
 
       if (files.length === 0) {

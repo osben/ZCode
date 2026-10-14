@@ -12,19 +12,62 @@ export async function readProjectMemoryFileFromStableHandle(params: {
   filePath: string;
   validatePath: () => Promise<void>;
 }): Promise<{ content: string; updatedAt: number }> {
+  const snapshot = await readProjectMemoryFileWithStableHandle({
+    ...params,
+    readContent: async (handle, openedStat) => {
+      if (openedStat.size > BigInt(PROJECT_MEMORY_PREVIEW_MAX_BYTES)) {
+        throwPreviewLimitError(params.fileName);
+      }
+
+      const content = await readBoundedFile(handle, PROJECT_MEMORY_PREVIEW_MAX_BYTES + 1);
+      if (content.length > PROJECT_MEMORY_PREVIEW_MAX_BYTES) {
+        throwPreviewLimitError(params.fileName);
+      }
+      return content.toString("utf-8");
+    },
+  });
+  return { content: snapshot.content, updatedAt: snapshot.updatedAt };
+}
+
+export async function readProjectMemoryFileWithStableHandle<T>(params: {
+  fileName: string;
+  filePath: string;
+  validatePath: () => Promise<void>;
+  readContent: (handle: FileHandle, openedStat: BigIntStats) => Promise<T>;
+}): Promise<{ content: T; size: number; updatedAt: number }> {
   const preOpenStat = await lstat(params.filePath, { bigint: true });
   if (!preOpenStat.isFile() || preOpenStat.isSymbolicLink()) {
-    throw new Error(`Project Memory file is not a regular file: ${params.filePath}`);
+    throwFileChangedError(params.fileName);
   }
 
   const noFollowFlag = typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0;
   // Calling readFile(path) after checking the path would resolve it again and could follow a concurrently replaced symlink to an external file.
   // The read-only handle takes no lock and claims no ownership; Memory can continue atomic renames, while content is always read from the validated handle.
-  const handle = await open(params.filePath, constants.O_RDONLY | noFollowFlag);
+  let handle: FileHandle;
+  try {
+    handle = await open(params.filePath, constants.O_RDONLY | noFollowFlag);
+  } catch (error) {
+    if (getErrorCode(error) === "ELOOP") {
+      throwFileChangedError(params.fileName);
+    }
+    throw error;
+  }
   try {
     const openedStat = await handle.stat({ bigint: true });
-    await params.validatePath();
-    const postOpenStat = await lstat(params.filePath, { bigint: true });
+    try {
+      await params.validatePath();
+    } catch {
+      throwFileChangedError(params.fileName);
+    }
+    let postOpenStat: BigIntStats;
+    try {
+      postOpenStat = await lstat(params.filePath, { bigint: true });
+    } catch (error) {
+      if (getErrorCode(error) === "ENOENT") {
+        throwFileChangedError(params.fileName);
+      }
+      throw error;
+    }
     if (
       !openedStat.isFile() ||
       !postOpenStat.isFile() ||
@@ -35,29 +78,29 @@ export async function readProjectMemoryFileFromStableHandle(params: {
       throwFileChangedError(params.fileName);
     }
 
-    if (openedStat.size > BigInt(PROJECT_MEMORY_PREVIEW_MAX_BYTES)) {
-      throwPreviewLimitError(params.fileName);
-    }
-
-    const content = await readBoundedFile(handle, PROJECT_MEMORY_PREVIEW_MAX_BYTES + 1);
+    const content = await params.readContent(handle, openedStat);
     const finalStat = await handle.stat({ bigint: true });
     // If atomic rename fails, the write falls back to overwriting the same inode in place, so checking only file identity cannot detect content changes.
     if (!isSameFileSnapshot(openedStat, finalStat)) {
       throwFileChangedError(params.fileName);
     }
-    if (
-      content.length > PROJECT_MEMORY_PREVIEW_MAX_BYTES ||
-      finalStat.size > BigInt(PROJECT_MEMORY_PREVIEW_MAX_BYTES)
-    ) {
-      throwPreviewLimitError(params.fileName);
-    }
     return {
-      content: content.toString("utf-8"),
+      content,
+      size: Number(finalStat.size),
       updatedAt: Number(finalStat.mtimeNs) / 1_000_000,
     };
   } finally {
     await handle.close();
   }
+}
+
+function getErrorCode(error: unknown): string | undefined {
+  return typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof error.code === "string"
+    ? error.code
+    : undefined;
 }
 
 function isSameFileSnapshot(left: BigIntStats, right: BigIntStats): boolean {

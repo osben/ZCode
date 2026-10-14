@@ -52,7 +52,8 @@ rewritten.
 4. **Index budget chip**: `MEMORY.md` shows the number of lines in the exact content the CLI injects,
    against the `200`-line limit. Count after the CLI's frontmatter removal, top-level HTML-comment
    removal (including comments indented by up to three spaces), and trim; empty injected content
-   is `0` lines. This is a real system limit — the
+   is `0` lines. Remove only comments with a closing `-->`; malformed unterminated comment tokens
+   remain in the injected content and count. This is a real system limit — the
    injection-time truncation bound — not a UI invention, and it is deterministic (unlike tokens).
    When the file exceeds the bound the agent silently sees a truncated index, so proximity to 200
    is decision-relevant information.
@@ -100,6 +101,10 @@ rewritten.
 
 - Renderer never builds data-root paths; catalog and file reads stay behind the local Host Memory
   service.
+- Catalog file metadata and parsed contents come from a no-follow stable handle after revalidating
+  the projects root, workspace, memory directory, exact filename, and path containment. If the
+  opened file no longer matches the current path or changes while read, omit that file from the
+  catalog snapshot.
 - `ProjectMemoryFileSummary` changes are additive optional fields; consumers must tolerate absence.
 - Catalog contract in v4 §3.3 ("catalog returns name, kind, size, mtime") is amended to "…plus
   optional frontmatter meta and index line count" in the same change that ships slice 1.
@@ -108,6 +113,27 @@ rewritten.
   `expand_preview`); no new telemetry systems.
 - Retry: closing and reopening a preview in an error state retries the file read. Ready previews
   remain cached until the catalog or selected workspace changes.
+- Catalog read order: enumerate path → open without following a file symlink → revalidate directory
+  chain and containment → read frontmatter/index from the handle → verify the handle is unchanged →
+  publish summary.
+- Catalog read sequence:
+
+  ```mermaid
+  sequenceDiagram
+    participant S as Memory service
+    participant F as Filesystem
+    S->>F: lstat candidate, then open O_NOFOLLOW
+    S->>F: fstat handle and revalidate path containment
+    S->>F: lstat path and compare file snapshots
+    alt snapshots match
+      S->>F: read content through the handle
+      S->>F: fstat handle again
+      F-->>S: publish summary only if unchanged
+    else path or file changed
+      F-->>S: omit catalog entry
+    end
+  ```
+
 - Tests: services unit tests for frontmatter scan (tolerant parser, bounded read, lineCount);
   viewer component tests for grouping/chip/preview states; E2E for the expand-preview interaction
   (CI is the e2e gate locally).

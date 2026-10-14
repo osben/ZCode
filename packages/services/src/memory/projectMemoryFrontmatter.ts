@@ -1,4 +1,4 @@
-import { open } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import { isMap, parseDocument } from "yaml";
 import { PROJECT_MEMORY_ITEM_TYPES, type ProjectMemoryItemType } from "./memory.js";
 
@@ -52,20 +52,15 @@ export function parseProjectMemoryFrontmatter(content: string): ProjectMemoryFro
   return meta;
 }
 
-/** Read the leading lines of a Memory file for frontmatter extraction. */
-export async function readProjectMemoryFrontmatterHead(filePath: string): Promise<string> {
-  const handle = await open(filePath, "r");
-  try {
-    const buffer = Buffer.alloc(FRONTMATTER_SCAN_MAX_BYTES);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    return buffer
-      .toString("utf-8", 0, bytesRead)
-      .split(/\r?\n/)
-      .slice(0, FRONTMATTER_SCAN_MAX_LINES)
-      .join("\n");
-  } finally {
-    await handle.close();
-  }
+/** Read the leading lines from an already validated Memory file handle. */
+export async function readProjectMemoryFrontmatterHead(handle: FileHandle): Promise<string> {
+  const buffer = Buffer.alloc(FRONTMATTER_SCAN_MAX_BYTES);
+  const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+  return buffer
+    .toString("utf-8", 0, bytesRead)
+    .split(/\r?\n/)
+    .slice(0, FRONTMATTER_SCAN_MAX_LINES)
+    .join("\n");
 }
 
 /** Strip the leading frontmatter block so line counting mirrors the CLI injection pipeline. */
