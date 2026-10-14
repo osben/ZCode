@@ -6297,6 +6297,13 @@ export function createBotsService(
   }
 
   async function handleRemoteLink(message: BotInboundMessage): Promise<BotOutboundMessage[]> {
+    const locale = await readMessageLocale();
+    if (message.actor.chatType !== "private") {
+      // The link is a bearer credential; group replies are visible to every member, and
+      // cross-chat private delivery is not uniformly supported by providers, so groups are
+      // rejected outright in V1 instead of leaking the URL into the group transcript.
+      return [createOutbound(message.actor, msg(locale, "remoteLinkPrivateOnly"))];
+    }
     const auth = await withAuthorizedContext(message, "remote");
     if (!auth.ok) return auth.reply;
     const mintWebRemoteLink = deps.remoteWorkspaceService?.mintWebRemoteLink;

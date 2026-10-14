@@ -1957,4 +1957,40 @@ describe("findLinkForWorkspace", () => {
       harness.manager.findLinkForWorkspace({ workspacePath: "/workspace/demo" }),
     ).resolves.toBeNull();
   });
+
+  it("does not reuse a runtime whose remote session was cleared by failRemoteSession", async () => {
+    const harness = createManagerHarness();
+    await harness.manager.start(1, {
+      workspacePath: "/workspace/demo",
+      workspaceIdentity: "remote:ssh:host:/workspace/demo",
+      remoteSessionId: "remote-session-1",
+    });
+
+    harness.manager.failRemoteSession("remote-session-1", "remote-closed", {
+      reason: "workspace-closed",
+      message: "closed",
+    });
+
+    await expect(
+      harness.manager.findLinkForWorkspace({
+        workspacePath: "/workspace/demo",
+        workspaceIdentity: "remote:ssh:host:/workspace/demo",
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it("does not reuse a disconnected remote workspace from the synced list", async () => {
+    const harness = createManagerHarness();
+    await harness.manager.start(1, { workspacePath: "/workspace/demo" });
+    harness.manager.syncAvailableWorkspaces(1, [
+      { ...remoteWorkspace, remoteSessionId: undefined, connectionState: "disconnected" },
+    ]);
+
+    await expect(
+      harness.manager.findLinkForWorkspace({
+        workspacePath: remoteWorkspace.workspacePath,
+        workspaceIdentity: remoteWorkspace.workspaceIdentity,
+      }),
+    ).resolves.toBeNull();
+  });
 });

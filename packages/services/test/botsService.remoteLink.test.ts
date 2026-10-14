@@ -139,6 +139,22 @@ describe("botsService /remote link command", () => {
     service.disposeAll();
   });
 
+  it("rejects the command in group chats before minting", async () => {
+    const mintWebRemoteLink = vi.fn(async () => ({ ok: true, url: "https://relay.example/x" }));
+    const service = createRemoteLinkService(mintWebRemoteLink);
+
+    const replies = await service.handleInboundMessage({
+      botId: "webhook-1",
+      text: "/remote",
+      actor: { ...actor, chatType: "group", chatId: "group-1" },
+    });
+
+    // The link is a bearer credential and group replies are visible to every member.
+    expect(replies[0]?.text).toContain("仅支持在私聊");
+    expect(mintWebRemoteLink).not.toHaveBeenCalled();
+    service.disposeAll();
+  });
+
   it("replies unavailable when the host does not support link minting", async () => {
     const repo = f.createMemoryRepo(f.baseConfig);
     const service = f.createBotsService({

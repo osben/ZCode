@@ -39,10 +39,12 @@ Linear: ZCO-7. Baseline verified in code 2026-10-14.
 
 ## Authorization model
 
-- `/remote` goes through `withAuthorizedContext(message, "remote")`: bot enabled, private chat (or
-  enabled group), user bound, workspace allowlist — identical to `/status` et al.
-- In groups the command is owner-only (`isGroupOwnerCommand`: not in the `help|status|message|
-answer` exemption list).
+- `/remote` is **private-chat only**. In a group the reply would be visible to every member, and
+  the link is a bearer credential — so group requests are rejected outright with a localized
+  message before any authorization or minting (cross-chat private delivery to the owner is not
+  uniformly supported by providers; a private-delivery design is deferred with V2).
+- In private chats the command goes through `withAuthorizedContext(message, "remote")`: bot
+  enabled, user bound, workspace allowlist — identical to `/status` et al.
 - New policy key `remote?: boolean` on `BotAllowedCommands`, default `true`, additive in
   `normalizeBotCommandPolicy` and `DEFAULT_BOT_COMMANDS`; old configs omit the key and get the
   default. UI toggle list in `BotsDialog` gains the same key.
@@ -85,10 +87,19 @@ Single owner: desktop main owns runtime lifecycle and URL minting; the bot only 
 relays. Idempotency: repeated `/remote` reuses the live runtime and re-mints (same `sid`/`hash`,
 fresh `t`).
 
+Concurrency: the find-or-start operation is deduplicated per workspace key by an in-flight map in
+the main handler — two simultaneous `/remote` requests (or a retry racing the first call) share one
+promise instead of racing into two `manager.start` calls on the same window, where the second start
+would stop and replace the transport the first just established.
+
 Window selection rules (main-side handler):
 
-1. **Reuse** — any live runtime whose window's synced workspace list (or the runtime's own start
-   context) covers the requested `workspaceKey` → re-mint URL from that runtime.
+1. **Reuse** — any live runtime whose window's synced workspace list covers the requested
+   `workspaceKey` with a **bridgeable** target (`isBridgeableRemoteTarget`: a remote entry must
+   carry `workspaceIdentity` + live `remoteSessionId`). Disconnected remote tabs kept in the list
+   for display, and runtimes whose `remoteSessionId` was cleared by `failRemoteSession`, do NOT
+   count — those fall through to rule 3 so the session is reconnected first. Re-mints the URL from
+   that runtime without restarting it.
 2. **Start, local workspace** — the window holding the workspace open (`windowWorkspaceMap`) →
    `webRemoteControlManager.start(windowId, context)`. The window's renderer then syncs its
    workspace list to the new runtime (existing status-driven effect).
@@ -130,9 +141,14 @@ localized bot errors; the bridge request carries a 90 s timeout (relay QR-ready 
 3. Remote (SSH) workspace bound and connected → `/remote` replies with a URL whose runtime bridges
    the remote session.
 4. Workspace not open on the desktop → localized error, nothing started.
-5. Unbound chat, or `remote: false` in policy, or non-owner in a group → existing localized
-   denial replies; no runtime started.
+5. Group chat → localized private-chat-only reply before any authorization or minting; no runtime
+   started. Unbound private chat, or `remote: false` in policy → existing localized denial replies;
+   no runtime started.
 6. Feature disabled or relay unreachable → localized failure reply; no partial runtime left
    behind.
 7. Old `bot-config.v3.json` without `remote` key → command allowed (default), config round-trips
    without dropping other keys.
+8. Two `/remote` requests racing for the same workspace → one start, both replies carry the same
+   URL; no runtime is stopped and replaced mid-flight.
+9. Runtime alive but its remote session was cleared (remote workspace dropped) → reuse is skipped,
+   the handler reconnects the session and returns a working URL instead of a dead one.

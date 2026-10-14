@@ -37,6 +37,7 @@ const messages = {
     helpRemote: "**/远程** — 获取 Web 远程控制链接",
     helpReply: "**/回复** — 切换回复详细程度",
     remoteLinkReady: "Web 远程控制链接（有效期与桌面端远程控制会话一致，请勿转发给他人）：\n{url}",
+    remoteLinkPrivateOnly: "仅支持在私聊中获取 Web 远程控制链接。",
     remoteLinkUnavailable: "当前运行环境不支持生成 Web 远程控制链接。",
     remoteLinkWorkspaceNotOpen: "该工作区未在桌面端打开，请先在桌面端打开后再获取链接。",
     remoteLinkFeatureDisabled: "此构建已禁用 Web 远程控制。",
@@ -172,6 +173,7 @@ const messages = {
     helpReply: "**/reply** — Switch reply detail",
     remoteLinkReady:
       "Web remote control link (valid while the desktop remote-control session lasts; do not forward it to others):\n{url}",
+    remoteLinkPrivateOnly: "Web remote control links can only be requested in a private chat.",
     remoteLinkUnavailable: "Web remote control links are not available in this environment.",
     remoteLinkWorkspaceNotOpen:
       "This workspace is not open on the desktop. Open it there first, then request the link again.",
@@ -317,6 +319,8 @@ const messages = {
     helpReply: "**/reply** — змінити детальність відповідей",
     remoteLinkReady:
       "Посилання веб-віддаленого керування (діє, доки активний сеанс віддаленого керування на комп'ютері; не перешлійте його іншим):\n{url}",
+    remoteLinkPrivateOnly:
+      "Посилання веб-віддаленого керування можна запитувати лише в особистому чаті.",
     remoteLinkUnavailable: "Посилання веб-віддаленого керування недоступні в цьому середовищі.",
     remoteLinkWorkspaceNotOpen:
       "Цей робочий простір не відкрито на комп'ютері. Спершу відкрийте його там, потім запросіть посилання ще раз.",

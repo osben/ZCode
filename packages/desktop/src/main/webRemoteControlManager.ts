@@ -1686,11 +1686,16 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
         if (runtime.status === "error") {
           continue;
         }
-        const servesWorkspace =
-          resolveWebRemoteControlWorkspaceKey(runtime) === workspaceKey ||
-          getAvailableWorkspaces(runtime).some(
-            (workspace) => resolveWebRemoteControlWorkspaceKey(workspace) === workspaceKey,
-          );
+        // Only bridgeable targets count as "serving": the synced list deliberately keeps
+        // disconnected remote tabs for display, and failRemoteSession can clear a runtime's
+        // remoteSessionId while leaving the runtime alive. Reusing either would hand the Bot a
+        // URL whose workspace bridge open is rejected; those cases must fall through to the
+        // reconnect-and-start path instead.
+        const servesWorkspace = getAvailableWorkspaces(runtime).some(
+          (workspace) =>
+            resolveWebRemoteControlWorkspaceKey(workspace) === workspaceKey &&
+            isBridgeableRemoteTarget(workspace),
+        );
         if (!servesWorkspace || runtime.deviceSid === "pending" || !runtime.passHash) {
           continue;
         }
