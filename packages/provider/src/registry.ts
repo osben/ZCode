@@ -130,7 +130,9 @@ export function validateModelSelectionOptions(
   // Depend only on the Option facts published to the Renderer; avoid duplicating level validation or constructing domain classes in the UI.
   model: {
     readonly config: {
-      readonly optionSpecs: { readonly reasoningLevel: { readonly values: readonly string[] } };
+      readonly optionSpecs: {
+        readonly reasoningLevel: { readonly values: readonly string[]; readonly default?: string };
+      };
     };
   },
   selection: ModelSelection,
