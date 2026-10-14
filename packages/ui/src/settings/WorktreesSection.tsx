@@ -205,6 +205,9 @@ export function WorktreesSection({
 
   const commitBranchPrefix = useCallback(() => {
     const trimmed = branchPrefixDraft.trim();
+    if (trimmed.length === 0) {
+      setBranchPrefixDraft(DEFAULT_WORKTREE_BRANCH_PREFIX);
+    }
     // Empty string deletes the field via normalizeSettingsPatch; the display (and the flow)
     // then resolve to DEFAULT_WORKTREE_BRANCH_PREFIX.
     if (trimmed !== branchPrefix) {

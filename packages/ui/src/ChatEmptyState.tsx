@@ -584,6 +584,10 @@ export function ChatEmptyWorktreeTaskToggle({
   // repository" (the checkbox stays hidden).
   const [repoEligibleByPath, setRepoEligibleByPath] = useState<Record<string, boolean>>({});
   const [checked, setChecked] = useState(false);
+  const [createdWorktree, setCreatedWorktree] = useState<{
+    path: string;
+    branchName: string;
+  } | null>(null);
   const [branchesResult, setBranchesResult] = useState<GitLocalBranchListResult | null>(null);
   const [busy, setBusy] = useState(false);
   /** Errors produced only at send time (empty branch name etc.); cleared while typing. Live validation issues render under the input itself. */
@@ -632,6 +636,7 @@ export function ChatEmptyWorktreeTaskToggle({
     }
     // Reset on workspace change or uncheck; the branch list loads lazily on check.
     setChecked(false);
+    setCreatedWorktree(null);
     setBranchesResult(null);
     setSubmitError(null);
     setRecoveryPath(null);
@@ -752,6 +757,9 @@ export function ChatEmptyWorktreeTaskToggle({
       if (busy) {
         return { action: "cancel" };
       }
+      if (createdWorktree) {
+        return { action: "proceed", executionWorktree: createdWorktree };
+      }
       // Branches still loading or their load failed: without the list baseBranch would be
       // undefined and the per-project default-base-branch override silently ignored — block
       // the send.
@@ -808,13 +816,14 @@ export function ChatEmptyWorktreeTaskToggle({
             branchName: composedBranchNameValue,
             targetPath: outcome.worktreePath,
           });
-          setChecked(false);
+          const executionWorktree = {
+            path: outcome.worktreePath,
+            branchName: composedBranchNameValue,
+          };
+          setCreatedWorktree(executionWorktree);
           return {
             action: "proceed",
-            executionWorktree: {
-              path: outcome.worktreePath,
-              branchName: composedBranchNameValue,
-            },
+            executionWorktree,
           };
         }
         if (outcome.kind === "existing-worktree") {
@@ -844,6 +853,7 @@ export function ChatEmptyWorktreeTaskToggle({
       baseServices.gitService,
       branchesResult,
       busy,
+      createdWorktree,
       customLocationInvalid,
       generateComposedBranchName,
       globalLocationUnavailable,
@@ -855,7 +865,7 @@ export function ChatEmptyWorktreeTaskToggle({
     ]);
 
   useEffect(() => {
-    if (!intentSlot || !checked || !repoEligible) {
+    if (!intentSlot || (!checked && !createdWorktree) || !repoEligible) {
       return;
     }
     // Register the first-send interception while checked; unregister on uncheck / unmount
@@ -864,6 +874,10 @@ export function ChatEmptyWorktreeTaskToggle({
     const intent = {
       workspaceKey: resolveWorkspaceKey({ workspacePath, workspaceIdentity }),
       interceptFirstSend,
+      onSendAccepted: () => {
+        setCreatedWorktree(null);
+        setChecked(false);
+      },
     };
     intentSlot.current = intent;
     return () => {
@@ -871,7 +885,15 @@ export function ChatEmptyWorktreeTaskToggle({
         intentSlot.current = null;
       }
     };
-  }, [checked, intentSlot, interceptFirstSend, repoEligible, workspaceIdentity, workspacePath]);
+  }, [
+    checked,
+    createdWorktree,
+    intentSlot,
+    interceptFirstSend,
+    repoEligible,
+    workspaceIdentity,
+    workspacePath,
+  ]);
 
   if (!repoEligible) {
     return null;
@@ -889,7 +911,11 @@ export function ChatEmptyWorktreeTaskToggle({
           checked={checked}
           disabled={busy}
           onCheckedChange={(value) => {
-            setChecked(value === true);
+            const enabled = value === true;
+            setChecked(enabled);
+            if (!enabled) {
+              setCreatedWorktree(null);
+            }
             setSubmitError(null);
             setRecoveryPath(null);
           }}

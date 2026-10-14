@@ -719,6 +719,17 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
         ? COMMAND_CENTER_TASK_RESULT_LIMIT + (activeTaskId ? 1 : 0)
         : COMMAND_CENTER_CONTEXT_SECTION_LIMIT + (activeTaskId ? 1 : 0),
   });
+  const worktreeProtectionTaskList = useGlobalTaskList({
+    kind: "active",
+    workspaceTabs:
+      open && worktreeSetupPageActive
+        ? effectiveWorkspaceTabs.filter((tab) => !tab.remoteSessionId && !tab.remoteTarget)
+        : EMPTY_COMMAND_CENTER_WORKSPACE_TABS,
+    sortBy: "updated",
+    searchQuery: "",
+    expanded: true,
+    collapsedLimit: 0,
+  });
   const workspaceLabelByKey = useMemo(
     () =>
       new Map(
@@ -821,13 +832,29 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
     setWorktreeListResult(null);
     setWorktreePruneMessage(null);
     setWorktreeForceConfirmPath(null);
+    void baseServices.gitService.listWorktrees({ workspacePath: setupWorkspacePath }).then(
+      (worktreesResult) => {
+        if (!cancelled) {
+          setWorktreeListResult(
+            worktreesResult?.isRepository && worktreesResult.isGitAvailable
+              ? worktreesResult
+              : null,
+          );
+        }
+      },
+      (error: unknown) => {
+        logger.debug("[CommandCenter] optional worktree list failed", {
+          workspacePath: setupWorkspacePath,
+          error: getErrorMessage(error),
+        });
+      },
+    );
     Promise.all([
       baseServices.gitService.getWorkspaceRepositoryInfo({ workspacePath: setupWorkspacePath }),
       baseServices.gitService.getLocalBranches({ workspacePath: setupWorkspacePath }),
-      baseServices.gitService.listWorktrees({ workspacePath: setupWorkspacePath }),
     ])
       .then(
-        ([repoInfo, branchesResult, worktreesResult]) => {
+        ([repoInfo, branchesResult]) => {
           if (cancelled) {
             return;
           }
@@ -835,11 +862,6 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
           // ?? null: test doubles may resolve undefined; treated the same as "not loaded yet".
           setWorktreeRepoInfo(repoInfo ?? null);
           setWorktreeBranchesResult(branchesResult ?? null);
-          setWorktreeListResult(
-            worktreesResult && worktreesResult.isRepository && worktreesResult.isGitAvailable
-              ? worktreesResult
-              : null,
-          );
         },
         (error: unknown) => {
           if (!cancelled) {
@@ -1101,8 +1123,10 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
 
       setWorktreeIssueMessage(null);
       setWorktreeRecoveryPath(null);
-      // A new project restarts the prefill budget (2026-10-13).
-      worktreeBranchNameTouchedRef.current = false;
+      if (!sameProject) {
+        // A new project restarts the prefill budget (2026-10-13).
+        worktreeBranchNameTouchedRef.current = false;
+      }
       setWorktreeProject(project);
       const transition = pushCommandCenterPage(
         pageStack,
@@ -1168,15 +1192,13 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
       branchName,
       worktreeEffectiveLocation,
     );
-    if (!branchName || !targetPath || worktreeBranchNameIssue || worktreeCustomLocationInvalid) {
-      return;
-    }
-
-    // Existing branch already checked out in a worktree (2026-10-13 spec): open it instead of
-    // letting the create request fail with branch-in-other-worktree.
-    if (worktreeExistingBranchWorktreePath) {
-      closeDialog();
-      openTaskWorkspace(worktreeExistingBranchWorktreePath);
+    if (
+      !branchName ||
+      !targetPath ||
+      worktreeBranchNameIssue ||
+      worktreeCustomLocationInvalid ||
+      worktreeExistingBranchWorktreePath
+    ) {
       return;
     }
 
@@ -1373,6 +1395,7 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
       worktreeBranchesResult !== null &&
       trimmedWorktreeBranchName.length > 0 &&
       worktreeBranchNameIssue === null &&
+      !worktreeExistingBranchWorktreePath &&
       !worktreeCustomLocationInvalid &&
       !worktreeGlobalLocationUnavailable
     );
@@ -1384,6 +1407,7 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
     worktreeDataError,
     worktreeDataLoading,
     worktreeDestination,
+    worktreeExistingBranchWorktreePath,
     worktreeGlobalLocationUnavailable,
     worktreeRepoUnavailable,
     worktreeSetupPageActive,
@@ -1977,6 +2001,11 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
                   )
                   .map((tab) => tab.workspacePath),
               );
+              const activeSessionWorktreePaths = new Set(
+                worktreeProtectionTaskList.items.flatMap((task) =>
+                  task.executionWorktree?.path ? [task.executionWorktree.path] : [],
+                ),
+              );
               const removableEntries =
                 worktreeListResult?.worktrees.filter((entry) => !entry.isMain) ?? [];
               if (removableEntries.length === 0) {
@@ -1990,7 +2019,10 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
                 <div className="flex flex-col">
                   {removableEntries.map((entry) => {
                     const label = entry.branchName ?? entry.path;
-                    const isProtected = entry.isCurrent || openWorktreePaths.has(entry.path);
+                    const isProtected =
+                      entry.isCurrent ||
+                      openWorktreePaths.has(entry.path) ||
+                      activeSessionWorktreePaths.has(entry.path);
                     const busyHere = worktreeRemoveBusyPath === entry.path;
                     const forceConfirmHere = worktreeForceConfirmPath === entry.path;
                     return (
@@ -2015,7 +2047,9 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
                             type="button"
                             variant="destructive"
                             size="sm"
-                            disabled={busyHere || worktreeStartBusy}
+                            disabled={
+                              busyHere || worktreeStartBusy || worktreeProtectionTaskList.loading
+                            }
                             onClick={() => void removeWorktreeEntry(entry.path, true)}
                           >
                             {intl.formatMessage({
@@ -2027,7 +2061,9 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
                             type="button"
                             variant="ghost"
                             size="icon-sm"
-                            disabled={busyHere || worktreeStartBusy}
+                            disabled={
+                              busyHere || worktreeStartBusy || worktreeProtectionTaskList.loading
+                            }
                             aria-label={intl.formatMessage({
                               id: "commandCenter.worktree.remove",
                             })}

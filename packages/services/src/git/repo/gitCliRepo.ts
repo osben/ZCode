@@ -144,7 +144,11 @@ function normalizeWatchPath(path: string): string {
     return trimmed;
   }
 
-  return trimmed.replace(/[\\/]+$/, "");
+  let end = trimmed.length;
+  while (end > 0 && (trimmed[end - 1] === "/" || trimmed[end - 1] === "\\")) {
+    end -= 1;
+  }
+  return trimmed.slice(0, end);
 }
 
 function addAutoRefreshWatchPath(
@@ -408,7 +412,7 @@ function parseWorktreeRemoveIssues(result: GitCommandExecutionResult): GitWorktr
       },
     ];
   }
-  if (normalizedDetail.includes("is locked")) {
+  if (normalizedDetail.includes("locked working tree") || normalizedDetail.includes("is locked")) {
     return [
       {
         code: "worktree-locked",
@@ -428,8 +432,12 @@ function countNonEmptyLines(output: string): number {
 }
 
 function toComparableWorktreePath(path: string): string {
-  const normalized = normalizeGitPath(path).replace(/\/+$/, "");
-  return normalized.length > 0 ? normalized : "/";
+  const normalized = normalizeGitPath(path);
+  let end = normalized.length;
+  while (end > 0 && normalized[end - 1] === "/") {
+    end -= 1;
+  }
+  return end > 0 ? normalized.slice(0, end) : "/";
 }
 
 function parseBranchRefRecords(stdout: string, currentBranchName: string | null): GitLocalBranch[] {
@@ -1298,7 +1306,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
         cwd: resolution.repoRoot,
         // `--` ends option parsing before the external target path.
         args: force
-          ? ["worktree", "remove", "--force", "--", normalizedTargetPath]
+          ? ["worktree", "remove", "-f", "-f", "--", normalizedTargetPath]
           : ["worktree", "remove", "--", normalizedTargetPath],
         timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
         maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,

@@ -37,6 +37,8 @@ export interface ComposerDraftWorktreeIntent {
    * continues the normal send, attaching executionWorktree to it (session stays in this project).
    */
   interceptFirstSend: () => Promise<ComposerDraftWorktreeInterceptResult>;
+  /** Clear a retained worktree intent after the first send is accepted. */
+  onSendAccepted: () => void;
 }
 
 /** 稳定的可变槽位：provider 创建一次，写入方（checkbox）与读取方（composer）共享。 */

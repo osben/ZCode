@@ -1563,6 +1563,9 @@ function ConversationComposerImpl({
           sendAction.noop();
           return;
         }
+        if (executionWorktree) {
+          worktreeIntent?.onSendAccepted();
+        }
         setHeldQueueConfirmation(null);
         // Transfer staged content to the task only after a successful send; on failure, keep it as a retryable draft.
         await attachmentsApi.adoptSentAttachments(submittedAttachmentIds);

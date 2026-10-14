@@ -12,7 +12,9 @@ export function resolveEnabledProjectMemoryRoot(
   return resolveProjectMemoryRoot({
     cliStorageRoot: memory.cliStorageRoot,
     workspaceIdentity: memory.workspaceIdentity,
-    workspacePath,
+    // Execution worktrees change the command cwd, but project memory stays scoped to the
+    // persisted workspace identity/path shared by sibling sessions.
+    workspacePath: config.workspacePath ?? workspacePath,
   });
 }
 

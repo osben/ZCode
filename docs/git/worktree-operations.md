@@ -134,7 +134,7 @@ interface GitWorktreeCreateResult {
 interface GitRemoveWorktreeRequest extends GitRepositoryRequest {
   /** Absolute directory of the worktree to remove; must be a linked worktree of this repository (never the main worktree). */
   targetPath: string;
-  /** true skips the dirty and locked checks (git worktree remove --force). */
+  /** true skips the dirty and locked checks (git worktree remove -f -f). */
   force?: boolean;
 }
 ```
@@ -143,7 +143,7 @@ interface GitRemoveWorktreeRequest extends GitRepositoryRequest {
 
 ```
 git worktree remove -- <targetPath>          # force unset/false
-git worktree remove --force -- <targetPath>  # force true
+git worktree remove -f -f -- <targetPath>    # force true
 ```
 
 Executed in the `repoRoot` produced by `resolveRepository`. `--` ends option parsing.
