@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "revision": 33,
+  "revision": 35,
   "config": {
     "providerConfigRules": {
       "templateRules": [
@@ -335,7 +335,10 @@
               "baseUrl": "https://api.openai.com/v1"
             },
             "builtinModelIds": [
+              "gpt-6.1-sol",
               "gpt-6-astra",
+              "gpt-6-sol",
+              "gpt-6-luna",
               "gpt-5.6-sol",
               "gpt-5.6-terra",
               "gpt-5.6-luna",
@@ -1491,7 +1494,7 @@
           }
         },
         {
-          "modelMatch": ".*gpt-6-astra(?:[.\\-:/\\[].*)?",
+          "modelMatch": ".*gpt-6(?:\\.\\d+)?-(?:astra|sol|luna)(?:[.\\-:/\\[].*)?",
           "config": {
             "properties": {
               "contextWindow": 1050000,
@@ -3212,7 +3215,7 @@
           }
         },
         {
-          "modelMatch": ".*gpt-6-astra(?:[.\\-:/\\[].*)?",
+          "modelMatch": ".*gpt-6(?:\\.\\d+)?-(?:astra|sol|luna)(?:[.\\-:/\\[].*)?",
           "apiTypeMatch": "openai-responses",
           "config": {
             "optionSpecs": {
@@ -4282,7 +4285,7 @@
           }
         },
         {
-          "modelMatch": ".*gpt-6-astra(?:[.\\-:/\\[].*)?",
+          "modelMatch": ".*gpt-6(?:\\.\\d+)?-(?:astra|sol|luna)(?:[.\\-:/\\[].*)?",
           "apiTypeMatch": "anthropic-messages",
           "baseUrlMatch": "https://openrouter\\.ai/api(?:/v1)?/?",
           "config": {
