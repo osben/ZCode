@@ -61,7 +61,7 @@ interface FontFamilyPickerProps {
 }
 
 /**
- * Font family row control (specs/fonts.md, modeled on the Copilot.app font picker).
+ * Font family row control, modeled on the Copilot.app font picker.
  * With the Local Font Access API a searchable combobox lists the Default option, the bundled
  * families, and the families installed in the OS; environments without the API (or after a
  * permission denial) fall back to a free-text input. Empty value = bundled default.

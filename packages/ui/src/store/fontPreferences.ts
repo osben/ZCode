@@ -1,4 +1,4 @@
-/** User font-family overrides as a store slice (specs/fonts.md). Extracted from store/index.ts to keep the main store module small. */
+/** User font-family overrides as a store slice. Extracted from store/index.ts to keep the main store module small. */
 import type { BroadcastMessage } from "@zcode/services";
 import { writeSafeLocalStorage } from "@/lib/browserEnvironment.js";
 import {

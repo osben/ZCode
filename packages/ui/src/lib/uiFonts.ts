@@ -1,7 +1,7 @@
 import { readSafeLocalStorage } from "@/lib/browserEnvironment.js";
 
 /**
- * User-customizable font families (specs/fonts.md).
+ * User-customizable font families.
  *
  * The default stacks live in the @theme block of styles.css. A custom font is applied as a
  * runtime override of --font-sans / --font-mono on documentElement (same mechanism as
@@ -12,7 +12,7 @@ import { readSafeLocalStorage } from "@/lib/browserEnvironment.js";
 export const UI_FONT_FAMILY_STORAGE_KEY = "zcode-ui-font-family";
 export const MONO_FONT_FAMILY_STORAGE_KEY = "zcode-mono-font-family";
 
-/** Families shipped in the bundle (specs/fonts.md); offered first in the font picker. */
+/** Families shipped in the bundle; offered first in the font picker. */
 export const BUNDLED_FONT_FAMILIES = ["Inter Variable", "JetBrains Mono Variable"] as const;
 
 export const MAX_CUSTOM_FONT_FAMILY_LENGTH = 100;

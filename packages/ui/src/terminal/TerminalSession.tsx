@@ -159,7 +159,7 @@ export function TerminalSession({
   const terminalWebglEnabled = useZCodeStoreWithDefault(selectTerminalWebglEnabled, false);
   const terminalWebglEnabledRef = useRef(terminalWebglEnabled);
   terminalWebglEnabledRef.current = terminalWebglEnabled;
-  // Custom mono font (specs/fonts.md): null = bundled default. terminalProfileFontRef keeps the
+  // Custom mono font: null = bundled default. terminalProfileFontRef keeps the
   // font resolved by terminalService.create so a later custom-font change can reapply over it.
   const monoFontFamily = useZCodeStoreWithDefault(selectMonoFontFamily, null);
   const monoFontFamilyRef = useRef(monoFontFamily);
@@ -341,7 +341,7 @@ export function TerminalSession({
   }, [sessionId]);
 
   // Reapply the mono font family when the Appearance setting changes while the session is mounted
-  // (specs/fonts.md). Detached side-pane sessions pick the new font up on remount.
+  // Detached side-pane sessions pick the new font up on remount.
   useEffect(() => {
     const term = termRef.current;
     if (!term) {
