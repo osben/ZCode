@@ -399,6 +399,7 @@ import { resolveAccountTeamPlanRuntimeMaterial } from "./model-provider/accountP
 import { createAccountProviderCredentialStore } from "./model-provider/accountProviderCredentialStore.js";
 import { createAccountProviderCredentialService } from "./model-provider/accountProviderCredentialService.js";
 import { createAccountProviderRequestAuthService } from "./model-provider/accountProviderRequestAuthService.js";
+import { SiwcAuthService } from "./oauth/siwc/siwcAuthService.js";
 import {
   createAccountProviderConfigSource,
   createCodingPlanFamilyAvailabilityResolver,
@@ -1379,6 +1380,25 @@ export function createLocalServices(options: {
     const oauthProviderId = family === "zai" ? ZAI_PROVIDER_ID : BIGMODEL_PROVIDER_ID;
     return (await oauthCredentialRepo.loadUserProfile(oauthProviderId))?.id ?? null;
   };
+  // ChatGPT plan (SIWC) host-side request auth: local credentials only; the stable scope
+  // fingerprint matches the CLI resolver (issued client id + account subject).
+  const siwcAuthService = new SiwcAuthService(credentialService);
+  const chatGptPlanRequestAuth = {
+    async resolve(input: {
+      expectedAccountScope?: string;
+      forceRefresh: boolean;
+      providerId: string;
+    }): Promise<{ accountScope?: string; apiKey: string }> {
+      const apiKey = await siwcAuthService.resolveAccessToken({
+        forceRefresh: input.forceRefresh,
+      });
+      const accountScope = await siwcAuthService.resolveAccountScope();
+      if (input.expectedAccountScope !== undefined && input.expectedAccountScope !== accountScope) {
+        throw new Error("siwc_account_scope_invalidated");
+      }
+      return { apiKey, ...(accountScope ? { accountScope } : {}) };
+    },
+  };
   const accountRequestAuthService = createAccountRequestAuthService(
     createAccountProviderRequestAuthService({
       resolveCurrentAccountAccess: (access) =>
@@ -1463,6 +1483,11 @@ export function createLocalServices(options: {
   const accountProviderConfigSource = createAccountProviderConfigSource({
     configSource: providerConfigRuntime.configService,
     readSettings: readAccountProviderSettings,
+    loadChatGptPlanEntitlement: async () => {
+      const status = await siwcAuthService.getStatus();
+      if (!status.signedIn) return "signed-out";
+      return status.planUsageEntitled ? "entitled" : "identity-only";
+    },
     async loadCodingPlanApiKey(providerId, family, accountIdentity, forceRefresh) {
       if (isStartPlanModelProviderId(providerId)) return null;
       return accountProviderCredentialService.loadCodingPlanApiKey({
@@ -1607,7 +1632,6 @@ export function createLocalServices(options: {
   const subagentsService = createSubagentsService({
     isDesktopRuntime: true,
   });
-  const commandsService = createCommandsService({ isDesktopRuntime: true });
   const hooksService = createHooksService({
     grantWorkspaceHookTrust: (params) => zcodeAgentService.grantWorkspaceHookTrust(params),
   });
@@ -2058,6 +2082,7 @@ export function createLocalServices(options: {
       ? { accountProviderConfigSource: agentAccountProviderConfigSource }
       : {}),
     accountRequestAuthService,
+    chatGptPlanRequestAuth,
     ...(modelSelectionReadinessSource ? { modelSelectionReadinessSource } : {}),
     authorizeLocalMediaPreviewPath: options?.authorizeLocalMediaPreviewPath,
     ...offPeakToolWiring,
@@ -2344,6 +2369,11 @@ export function createLocalServices(options: {
   const oauthService = createOAuthService(credentialService, {
     apiClient,
     onProviderLogout: handleOAuthProviderLogout,
+    onChatGptPlanSessionChange: async () => {
+      // ChatGPT plan login/logout changes account entitlements; refresh the account
+      // overlays so the provider appears/disappears in the registry and pickers.
+      await accountProviderConfigSource.refresh("chatgpt-plan-session-changed");
+    },
   });
   const zcodeJwtLogoutLogger = createServiceLogger("zcode-jwt-logout");
   zcodeJwtLogoutHandlerRef.current = (input, headers) => {

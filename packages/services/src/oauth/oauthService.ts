@@ -5,6 +5,7 @@ import {
   formatLogPrefix,
   type ApiClient,
   BIGMODEL_PROVIDER_ID,
+  CHATGPT_OAUTH_PROVIDER_ID,
   ZAI_PROVIDER_ID,
   type OAuthCallbackResult,
   type OAuthCachedSessionRestoreResult,
@@ -13,6 +14,9 @@ import {
   type OAuthStartResponse,
   type OAuthTokenSet,
   type OAuthUserProfile,
+  type SiwcLoginCompletionResult,
+  type SiwcLoginStart,
+  type SiwcPlanStatus,
   type UserInfo,
   resolveJwtExpiration,
 } from "@zcode/shared";
@@ -29,6 +33,7 @@ import {
 import { createOAuthProviderAdapters, type OAuthProviderAdapter } from "./providers/index.js";
 import { OAuthCredentialRepo } from "./repo/oauthCredentialRepo.js";
 import { createOAuthRuntimeConfig } from "./runtimeConfig.js";
+import { SiwcAuthService } from "./siwc/siwcAuthService.js";
 import {
   buildDesktopOAuthRedirectUriFromEnv,
   buildZCodeApiUrlFromEnv,
@@ -70,6 +75,8 @@ interface OAuthServiceDependencies {
   now?: () => number;
   env?: NodeJS.ProcessEnv;
   onProviderLogout?: (provider: OAuthProviderId, accountIdentity?: string | null) => Promise<void>;
+  /** Fired after a ChatGPT plan (SIWC) login completion or logout so account overlays refresh. */
+  onChatGptPlanSessionChange?: () => Promise<void>;
 }
 
 function readTrimmedString(value: unknown): string | null {
@@ -123,8 +130,10 @@ export class OAuthService implements IOAuthService {
     provider: OAuthProviderId,
     accountIdentity?: string | null,
   ) => Promise<void>;
+  private readonly onChatGptPlanSessionChange?: () => Promise<void>;
   private readonly apiClient?: ApiClient;
   private readonly env: NodeJS.ProcessEnv;
+  private readonly siwcAuth: SiwcAuthService;
   private pendingState: PendingState | null = null;
   private oauthFlowStartGeneration = 0;
   private oauthFlowStartProvider: OAuthProviderId | null = null;
@@ -141,6 +150,7 @@ export class OAuthService implements IOAuthService {
     this.credentialService = credentialService;
     this.now = dependencies.now ?? Date.now;
     this.onProviderLogout = dependencies.onProviderLogout;
+    this.onChatGptPlanSessionChange = dependencies.onChatGptPlanSessionChange;
     this.apiClient = dependencies.apiClient;
     this.env = dependencies.env ?? process.env;
 
@@ -160,6 +170,12 @@ export class OAuthService implements IOAuthService {
         // The repo can clear only the OAuth namespace; derived Start/Coding Plan provider keys must be cleared at the service layer.
         await this.notifyProvidersLogout(providers);
       },
+    });
+    // ChatGPT plan (SIWC) is an independent identity domain: it never touches the zai/bigmodel
+    // pending-state machine, `oauth:active_provider`, or `zcodejwttoken`.
+    this.siwcAuth = new SiwcAuthService(credentialService, {
+      env: this.env,
+      ...(dependencies.now ? { now: dependencies.now } : {}),
     });
   }
 
@@ -1086,6 +1102,10 @@ export class OAuthService implements IOAuthService {
   }
 
   async cancelPending(provider?: OAuthProviderId): Promise<void> {
+    if (provider === CHATGPT_OAUTH_PROVIDER_ID || provider === undefined) {
+      await this.siwcAuth.cancelLogin();
+      if (provider === CHATGPT_OAUTH_PROVIDER_ID) return;
+    }
     if (!this.pendingState) {
       if (provider && this.oauthFlowStartProvider && this.oauthFlowStartProvider !== provider)
         return;
@@ -1097,6 +1117,30 @@ export class OAuthService implements IOAuthService {
     this.oauthFlowStartGeneration += 1;
     this.oauthFlowStartProvider = null;
     this.clearPendingState();
+  }
+
+  async startChatGptPlanLogin(): Promise<SiwcLoginStart> {
+    return this.siwcAuth.startLogin();
+  }
+
+  async pollChatGptPlanLogin(): Promise<SiwcLoginCompletionResult | null> {
+    const result = await this.siwcAuth.pollLogin();
+    if (result) {
+      await this.onChatGptPlanSessionChange?.();
+    }
+    return result;
+  }
+
+  async getChatGptPlanStatus(): Promise<SiwcPlanStatus> {
+    return this.siwcAuth.getStatus();
+  }
+
+  async logoutChatGptPlan(): Promise<{ revoked: boolean; signedOut: boolean }> {
+    const result = await this.siwcAuth.logout();
+    if (result.signedOut) {
+      await this.onChatGptPlanSessionChange?.();
+    }
+    return result;
   }
 
   private clearPendingState(): void {

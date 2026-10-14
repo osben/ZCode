@@ -1,4 +1,5 @@
 import type { TuiSubmitPrompt } from "@zcode/tui";
+import { redactSiwcAuthorizeUrl } from "@zcode/adapters";
 import {
   formatAvailableCommandNames,
   listCustomCommandsForHelp,
@@ -28,6 +29,7 @@ import { isWorkflowModeEnabled, WORKFLOW_DISABLED_NOTICE } from "../workflow-mod
 import {
   buildLoginSelection,
   emitLoginAuthorizeMessage,
+  formatChatGptLoginResult,
   formatLoginResult,
   formatProviderSetupResult,
   loginSetupResponse,
@@ -144,6 +146,33 @@ export function createCommandCenter(deps: CommandCenterDeps): TuiSubmitPrompt {
             ),
           };
         }
+        if (command.args === "chatgpt-plan") {
+          if (!deps.loginChatGpt) {
+            return {
+              mode: deps.getMode?.(),
+              response: "ChatGPT plan login is not available in this client.",
+            };
+          }
+
+          return {
+            loginRequired: false,
+            mode: deps.getMode?.(),
+            response: formatChatGptLoginResult(
+              await deps.loginChatGpt({
+                abortSignal: options.abortSignal,
+                onAuthorizeUrl: async (data) => {
+                  // The transcript must not carry the id_token_hint JWT / login_hint email.
+                  await emitLoginAuthorizeMessage(
+                    options,
+                    redactSiwcAuthorizeUrl(data.authorizeUrl),
+                    "ChatGPT",
+                    await deps.getApp(),
+                  );
+                },
+              }),
+            ),
+          };
+        }
 
         const apiKeyCommand = parseApiKeyLoginArgs(command.args);
         if (apiKeyCommand) {
@@ -175,7 +204,7 @@ export function createCommandCenter(deps: CommandCenterDeps): TuiSubmitPrompt {
         return {
           mode: deps.getMode?.(),
           response:
-            "Usage: /login [zai-coding-plan|bigmodel-coding-plan|zai-coding-plan-api-key <api-key>|bigmodel-coding-plan-api-key <api-key>]",
+            "Usage: /login [zai-coding-plan|bigmodel-coding-plan|chatgpt-plan|zai-coding-plan-api-key <api-key>|bigmodel-coding-plan-api-key <api-key>]",
         };
       }
 

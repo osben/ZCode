@@ -57,6 +57,7 @@ import { retryAllowedByFailurePolicy } from "./workflow-model-failure-policy.js"
 import { modelFailureStatusFields, providerRequestIdFromHeaders } from "./runner-telemetry.js";
 import { repairReasoningHistoryAfterSignatureRejection } from "./reasoning-history-normalization.js";
 import { admitAttempt, type AttemptAdmission } from "./request-admission.js";
+import { zhipuAccountMode } from "./account-access-mode.js";
 import {
   retryAttemptLoopContinues,
   retryBudgetAllows,
@@ -350,7 +351,7 @@ export async function runGenerateText(input: {
       // from the budget, while 3102 (compatible with legacy 3001) fails with a stable marker that
       // triggers continuation on the desktop side.
       const offPeak = resolveOffPeakFailureDecision({
-        offPeak: resolved.accountAccess?.mode === "off-peak",
+        offPeak: zhipuAccountMode(resolved.accountAccess) === "off-peak",
         failure: classified,
         error: unwrapRetryError(error),
       });

@@ -4,13 +4,11 @@ import type { RunDependencies } from "./cli-types.js";
 import type {
   CommandCenterApiKeyOptions,
   CommandCenterBigmodelLoginOptions,
+  CommandCenterChatGptLoginOptions,
   CommandCenterLoginOptions,
 } from "./command-center/types.js";
 
-export async function loginForTui(
-  deps: RunDependencies,
-  options?: CommandCenterLoginOptions,
-) {
+export async function loginForTui(deps: RunDependencies, options?: CommandCenterLoginOptions) {
   const env = deps.env ?? process.env;
   const workingDirectory = (deps.cwd ?? process.cwd)();
   const dotenvResult = (deps.loadDotenv ?? loadCliDotenv)({
@@ -51,6 +49,31 @@ export async function loginBigmodelForTui(
 
   const login =
     deps.loginBigmodelCodingPlan ?? (await loadBootstrapModule()).loginBigmodelCodingPlan;
+  return await login({
+    abortSignal: options?.abortSignal,
+    env,
+    onAuthorizeUrl: options?.onAuthorizeUrl,
+  });
+}
+
+export async function loginChatGptForTui(
+  deps: RunDependencies,
+  options?: CommandCenterChatGptLoginOptions,
+) {
+  const env = deps.env ?? process.env;
+  const workingDirectory = (deps.cwd ?? process.cwd)();
+  const dotenvResult = (deps.loadDotenv ?? loadCliDotenv)({
+    cwd: workingDirectory,
+    env,
+  });
+
+  if (dotenvResult.error) {
+    throw new Error(`Failed to load environment file: ${dotenvResult.path}`, {
+      cause: dotenvResult.error,
+    });
+  }
+
+  const login = deps.loginChatGptPlan ?? (await loadBootstrapModule()).loginChatGptPlan;
   return await login({
     abortSignal: options?.abortSignal,
     env,

@@ -105,7 +105,7 @@ export class VoiceModelStore {
     for (const handyDir of this.handyModelDirs) {
       const handyPath = join(handyDir, descriptor.fileName);
       try {
-        const info = await stat(handyPath);
+        const info = await stat(handyPath, { throwIfNoEntry: true });
         if (!info.isFile() || info.size !== descriptor.sizeBytes) continue;
 
         const cacheKey = `${handyPath}:${info.size}:${info.mtimeMs}:${info.ctimeMs}:${info.ino}`;
@@ -116,7 +116,7 @@ export class VoiceModelStore {
         }
         try {
           const verified = (await digest) === descriptor.sha256;
-          const latestInfo = await stat(handyPath);
+          const latestInfo = await stat(handyPath, { throwIfNoEntry: true });
           if (verified && sameFileVersion(info, latestInfo)) {
             return {
               status: "ready",
@@ -334,8 +334,8 @@ function isNotFound(error: unknown): boolean {
 }
 
 function sameFileVersion(
-  first: Awaited<ReturnType<typeof stat>>,
-  second: Awaited<ReturnType<typeof stat>>,
+  first: NonNullable<Awaited<ReturnType<typeof stat>>>,
+  second: NonNullable<Awaited<ReturnType<typeof stat>>>,
 ): boolean {
   return (
     second.isFile() &&

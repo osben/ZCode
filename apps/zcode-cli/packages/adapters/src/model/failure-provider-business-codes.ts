@@ -327,6 +327,77 @@ for (const code of ["engine_overloaded_error", "overloaded_error"]) {
   PROVIDER_BUSINESS_CODE_MAPPINGS.set(code, RETRYABLE_OVERLOAD_MAPPING);
 }
 
+// OpenAI SIWC (Sign in with ChatGPT token sharing) subscription_sharing_* / chatpass_v2_* codes.
+// These never fall back to another billing path: eligibility/scope failures terminate, transient
+// 503-class failures keep credentials and retry with bounded backoff, and the usage-limit code
+// surfaces the manage-usage action instead of inferring a reset time.
+PROVIDER_BUSINESS_CODE_MAPPINGS.set("subscription_sharing_user_not_eligible", {
+  code: ModelErrorCode.ModelRequestFailed,
+  message:
+    "Your ChatGPT plan is not available for this app or workspace. Sign in with an eligible ChatGPT Plus/Pro account to continue.",
+  reason: ModelFailureReasonValue.InvalidRequest,
+  retryReason: ModelRetryReasonValue.NetworkError,
+  retryable: false,
+});
+PROVIDER_BUSINESS_CODE_MAPPINGS.set("subscription_sharing_usage_limit_exceeded", {
+  code: ModelErrorCode.ModelRateLimited,
+  message:
+    "ChatGPT plan usage limit reached. Manage your usage at https://chatgpt.com/settings/usage (5-hour window, shared across all apps using the plan).",
+  reason: ModelFailureReasonValue.RateLimited,
+  retryReason: ModelRetryReasonValue.RateLimited,
+  retryable: false,
+});
+PROVIDER_BUSINESS_CODE_MAPPINGS.set("subscription_sharing_unsupported_capability", {
+  code: ModelErrorCode.InvalidModelRequest,
+  message:
+    "The ChatGPT plan direct route rejected a request field or tool. Remove the unsupported capability and retry.",
+  reason: ModelFailureReasonValue.InvalidRequest,
+  retryReason: ModelRetryReasonValue.NetworkError,
+  retryable: false,
+});
+PROVIDER_BUSINESS_CODE_MAPPINGS.set("subscription_sharing_route_not_supported", {
+  code: ModelErrorCode.InvalidModelRequest,
+  message: "The ChatGPT plan direct route does not support this endpoint or method.",
+  reason: ModelFailureReasonValue.InvalidRequest,
+  retryReason: ModelRetryReasonValue.NetworkError,
+  retryable: false,
+});
+PROVIDER_BUSINESS_CODE_MAPPINGS.set("subscription_sharing_invalid_user", {
+  // The runner's auth-retry hook still gets one refresh+retry chance for 401s before this
+  // terminal classification is returned to the caller.
+  code: ModelErrorCode.ProviderNotConfigured,
+  message:
+    "The ChatGPT plan no longer accepts this account. Sign in again with zcode login chatgpt.",
+  reason: ModelFailureReasonValue.AuthFailed,
+  retryReason: ModelRetryReasonValue.AuthRefresh,
+  retryable: false,
+});
+for (const code of [
+  "chatpass_v2_scope_not_authorized",
+  "chatpass_v2_invalid_authorization_context",
+]) {
+  PROVIDER_BUSINESS_CODE_MAPPINGS.set(code, {
+    code: ModelErrorCode.ProviderNotConfigured,
+    message:
+      "The ChatGPT plan grant does not include the required scope. Re-run zcode login chatgpt to consent to plan usage.",
+    reason: ModelFailureReasonValue.AuthFailed,
+    retryReason: ModelRetryReasonValue.AuthRefresh,
+    retryable: false,
+  });
+}
+for (const code of [
+  "subscription_sharing_usage_unavailable",
+  "subscription_sharing_user_unavailable",
+]) {
+  PROVIDER_BUSINESS_CODE_MAPPINGS.set(code, {
+    code: ModelErrorCode.ModelRequestFailed,
+    message: "The ChatGPT plan service is temporarily unavailable. Retrying with backoff.",
+    reason: ModelFailureReasonValue.ServerError,
+    retryReason: ModelRetryReasonValue.ServerError,
+    retryable: true,
+  });
+}
+
 export function getProviderBusinessCodeMapping(
   providerCode: string,
 ): ProviderBusinessCodeMapping | undefined {

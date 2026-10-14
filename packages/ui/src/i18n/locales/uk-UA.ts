@@ -3582,6 +3582,27 @@ const ukUA: Record<string, string> = {
   "settings.modelProvider.newProviderName": "Новий провайдер",
   "settings.modelProvider.modelsPlaceholder": "Одна назва моделі на рядок",
   "settings.modelProvider.modelsCount": "Моделей: {count}",
+  "settings.modelProvider.chatgpt.badge.subscription": "Підписка",
+  "settings.modelProvider.chatgpt.description":
+    "Запуск агентів на моделях OpenAI через підписку ChatGPT Plus/Pro (офіційний обмін токенами OpenAI). Використання зараховується у 5-годинне вікно плану.",
+  "settings.modelProvider.chatgpt.notSignedIn":
+    "Увійдіть за допомогою облікового запису ChatGPT, щоб використовувати моделі плану.",
+  "settings.modelProvider.chatgpt.continueWithChatgpt": "Продовжити з ChatGPT",
+  "settings.modelProvider.chatgpt.waiting": "Очікування авторизації ChatGPT…",
+  "settings.modelProvider.chatgpt.timeout": "Час авторизації ChatGPT вичерпано. Спробуйте ще раз.",
+  "settings.modelProvider.chatgpt.loginFailed": "Не вдалося увійти в план ChatGPT.",
+  "settings.modelProvider.chatgpt.signedInAs": "Ви увійшли як {name}",
+  "settings.modelProvider.chatgpt.entitled":
+    "Використовується план ChatGPT: відповідні запити працюють у межах плану. Використання керується в налаштуваннях ChatGPT.",
+  "settings.modelProvider.chatgpt.notEntitled":
+    "Ви увійшли, але використання плану не увімкнено (згода не містить права плану ChatGPT). Увійдіть знову, щоб надати його.",
+  "settings.modelProvider.chatgpt.signOut": "Вийти",
+  "settings.modelProvider.chatgpt.manageUsage": "Керувати використанням",
+  "settings.modelProvider.chatgpt.firstRun.title": "Ви використовуєте свій план ChatGPT",
+  "settings.modelProvider.chatgpt.firstRun.body":
+    "Відповідні AI-запити в цьому застосунку використовують ваш план ChatGPT. Використання спільне для всіх застосунків плану та керується в налаштуваннях ChatGPT.",
+  "settings.modelProvider.chatgpt.firstRun.gotIt": "Зрозуміло",
+  "settings.modelProvider.chatgpt.pickerBadge": "Підписка",
   "settings.modelProvider.presetTitle": "Провайдери",
   "settings.usage.sectionTitle": "Статистика використання",
   "settings.usage.sectionDescription": "На основі локальної історії сеансів застосунку.",

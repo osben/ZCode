@@ -1,4 +1,5 @@
 import { formatJson } from "@zcode/core";
+import { redactSiwcAuthorizeUrl } from "@zcode/adapters";
 import type { GlobalOptions, RunContext } from "@zcode/shared-types";
 import { loadBootstrapModule } from "./bootstrap-loader.js";
 import { loadCliDotenv } from "./env.js";
@@ -13,8 +14,11 @@ export async function runLoginCommand(
 ): Promise<number> {
   try {
     const providerId = args[0] ?? "zai";
-    if (args.length > 1 || (providerId !== "zai" && providerId !== "bigmodel")) {
-      throw new Error("Usage: zcode login [zai|bigmodel] [--no-browser]");
+    if (
+      args.length > 1 ||
+      (providerId !== "zai" && providerId !== "bigmodel" && providerId !== "chatgpt")
+    ) {
+      throw new Error("Usage: zcode login [zai|bigmodel|chatgpt] [--no-browser]");
     }
     const env = deps.env ?? process.env;
     const workingDirectory = (deps.cwd ?? process.cwd)();
@@ -27,6 +31,10 @@ export async function runLoginCommand(
       throw new Error(`Failed to load environment file: ${dotenvResult.path}`, {
         cause: dotenvResult.error,
       });
+    }
+
+    if (providerId === "chatgpt") {
+      return await runChatGptPlanLogin(ctx, options, deps, env, noBrowser);
     }
 
     const login = deps.loginZCodeCli ?? (await loadBootstrapModule()).loginZCodeCli;
@@ -105,12 +113,30 @@ export async function runLogoutCommand(
     const logout = deps.logoutZCodeCli ?? (await loadBootstrapModule()).logoutZCodeCli;
     const result = await logout({ env });
 
+    // ChatGPT plan is an independent identity domain: revoke its refresh token and clear its
+    // credentials in the same logout command, without touching zai/bigmodel state.
+    let chatgpt: Awaited<ReturnType<NonNullable<RunDependencies["logoutChatGptPlan"]>>> | undefined;
+    let chatgptLogoutFailed = false;
+    try {
+      const logoutChatGptPlan =
+        deps.logoutChatGptPlan ?? (await loadBootstrapModule()).logoutChatGptPlan;
+      chatgpt = await logoutChatGptPlan({ env });
+    } catch {
+      chatgptLogoutFailed = true;
+      ctx.stderr.write("Warning: ChatGPT plan logout failed; Coding Plan logout succeeded.\n");
+    }
+
     if (options.json) {
       ctx.stdout.write(
         formatJson({
           status: "logged_out",
           provider: "zai",
           credentialsPath: result.credentialsPath,
+          chatgptPlan: {
+            signedOut: chatgpt?.signedOut ?? false,
+            revoked: chatgpt?.revoked ?? false,
+            ...(chatgptLogoutFailed ? { error: "logout_failed" } : {}),
+          },
         }),
       );
       return 0;
@@ -119,6 +145,13 @@ export async function runLogoutCommand(
     ctx.stdout.write(
       `Logged out from Coding Plan accounts. Credentials: ${result.credentialsPath}\n`,
     );
+    if (chatgpt?.signedOut) {
+      ctx.stdout.write(
+        chatgpt.revoked
+          ? "Logged out from the ChatGPT plan (token revoked).\n"
+          : "Logged out from the ChatGPT plan; the revocation endpoint could not be confirmed, local tokens were cleared.\n",
+      );
+    }
     return 0;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -130,12 +163,78 @@ export async function runLogoutCommand(
   }
 }
 
+async function runChatGptPlanLogin(
+  ctx: RunContext,
+  options: GlobalOptions,
+  deps: RunDependencies,
+  env: Record<string, string | undefined>,
+  noBrowser: boolean,
+): Promise<number> {
+  const loginChatGptPlan = deps.loginChatGptPlan ?? (await loadBootstrapModule()).loginChatGptPlan;
+  const result = await loginChatGptPlan({
+    env,
+    noBrowser,
+    onAuthorizeUrl: (data) => {
+      // Displayed URLs mask id_token_hint/login_hint; the hints are optional conveniences
+      // and their plain values (JWT with sub/email) must not reach terminal output.
+      writeAuthorizeUrl(
+        ctx,
+        options,
+        redactSiwcAuthorizeUrl(data.authorizeUrl),
+        noBrowser,
+        "chatgpt",
+      );
+    },
+    onBrowserOpen: (browser) => {
+      if (!options.json && !browser.opened) {
+        ctx.stdout.write(`Browser open failed: ${browser.reason ?? "unknown error"}\n`);
+      }
+    },
+  });
+
+  if (options.json) {
+    ctx.stdout.write(
+      formatJson({
+        status: "ready",
+        provider: result.providerId,
+        planUsageEntitled: result.planUsageEntitled,
+        user: {
+          sub: result.user.sub,
+          ...(result.user.email ? { email: result.user.email } : {}),
+          ...(result.user.name ? { name: result.user.name } : {}),
+          ...(result.user.picture ? { picture: result.user.picture } : {}),
+        },
+        model: result.model,
+        credentialsPath: result.credentialsPath,
+        configPath: result.configPath,
+        browserOpened: result.browser?.opened ?? false,
+      }),
+    );
+    return 0;
+  }
+
+  ctx.stdout.write(
+    [
+      `Login successful as ${result.user.name || result.user.email || result.user.sub}.`,
+      ...(result.planUsageEntitled
+        ? []
+        : [
+            "Plan usage is NOT enabled: consent lacked the ChatGPT plan scope. Re-run login to grant it.",
+          ]),
+      `Model: ${result.model}`,
+      `Credentials: ${result.credentialsPath}`,
+      `Model selection: ${result.configPath}`,
+    ].join("\n") + "\n",
+  );
+  return 0;
+}
+
 function writeAuthorizeUrl(
   ctx: RunContext,
   options: GlobalOptions,
   authorizeUrl: string,
   noBrowser: boolean,
-  providerId: "zai" | "bigmodel",
+  providerId: "zai" | "bigmodel" | "chatgpt",
 ): void {
   const target = options.json ? ctx.stderr : ctx.stdout;
   if (noBrowser) {
@@ -143,8 +242,10 @@ function writeAuthorizeUrl(
     return;
   }
 
+  const providerLabel =
+    providerId === "bigmodel" ? "BigModel" : providerId === "chatgpt" ? "ChatGPT" : "Z.AI";
   target.write(
-    `Opening browser for ${providerId === "bigmodel" ? "BigModel" : "Z.AI"} authorization.\nFallback URL:\n${authorizeUrl}\n`,
+    `Opening browser for ${providerLabel} authorization.\nFallback URL:\n${authorizeUrl}\n`,
   );
 }
 

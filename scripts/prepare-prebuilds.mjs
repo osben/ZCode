@@ -321,7 +321,7 @@ async function download(url, destinationPath) {
   }
 
   // The original response.pipe(file) + finish listener could neither resolve nor reject after a network interruption,
-  // eventually triggering Node 24's unsettled top-level await. Use pipeline so failures are observable and can exit nonzero.
+  // eventually triggering an unsettled top-level await. Use pipeline so failures are observable and can exit nonzero.
   await pipeline(
     Readable.fromWeb(response.body),
     createWriteStream(destinationPath, { flags: "w" }),
@@ -460,7 +460,7 @@ function buildServerBundle() {
       return;
     }
 
-    // On Windows CI (Node 24), spawnSync("pnpm.cmd") directly throws EINVAL before starting the child process.
+    // On Windows CI, spawnSync("pnpm.cmd") directly throws EINVAL before starting the child process.
     // Use the cross-platform launcher so .cmd runs through shell/cmd.exe and remote resource preparation does not stop early.
     runCommand(pnpmCommand, ["run", "build:remote"], {
       cwd: join(rootDir, "packages/server"),

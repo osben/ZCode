@@ -1,5 +1,15 @@
 # Model Provider Presets
 
+> **Supersession note (2026-10, English by fork convention):** the removal of
+> official codex/claude/gemini OAuth presets below remains in effect EXCEPT for
+> chatgpt. OpenAI now runs an official "Sign in with ChatGPT" (SIWC)
+> token-sharing program for open-source agents, which provides a legitimate
+> plan-backed provider. The `account:chatgpt-plan` preset is intentionally
+> added under that program. See `specs/chatgpt-plan-signin.md` and the program
+> docs (https://developers.openai.com/siwc, in particular
+> https://developers.openai.com/siwc/token-sharing-open-source). This does not
+> reinstate codex/claude/gemini OAuth presets.
+
 ## 当前边界
 
 - 自动刷新的预置供应商只包含当前 Z.ai 与 BigModel 的 API Key、Coding Plan 和 Start Plan 入口。

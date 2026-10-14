@@ -14,10 +14,10 @@
 
 ## 2. 准备与启动
 
-在仓库根目录使用 Node 24：
+在仓库根目录使用 Node 26：
 
 ```bash
-nvm use 24
+nvm use 26
 pnpm --dir apps/zcode-cli/packages/cli build:desktop-agent
 node scripts/create-workspace-hook-trust-uat-fixture.mjs
 ```

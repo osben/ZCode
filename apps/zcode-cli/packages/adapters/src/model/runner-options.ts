@@ -11,6 +11,7 @@ import type {
 } from "./runner-runtime.js";
 import { createModelRequestAttributionHeaders, type ModelStatusContext } from "./runner-status.js";
 import { withoutModelQuerySourceHeader } from "./model-request-headers.js";
+import { zhipuAccountMode } from "./account-access-mode.js";
 
 type ExperimentalIncludeWithResponseBody = {
   requestBody?: boolean;
@@ -20,7 +21,8 @@ type ExperimentalIncludeWithResponseBody = {
 /** zcode-plan business codes often appear only in the finish chunk's response.body, so the streaming path must enable it explicitly. */
 export function shouldIncludeStreamResponseBody(resolved: ResolvedAiSdkModel): boolean {
   return (
-    resolved.providerKind === "openai-compatible" && resolved.accountAccess?.mode === "start-plan"
+    resolved.providerKind === "openai-compatible" &&
+    zhipuAccountMode(resolved.accountAccess) === "start-plan"
   );
 }
 

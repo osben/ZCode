@@ -52,9 +52,13 @@ function readCredentialErrorMessage(error: unknown): string {
   return "";
 }
 
+/** ChatGPT plan (official OpenAI SIWC) OAuth provider ID; an independent identity domain. */
+export const CHATGPT_OAUTH_PROVIDER_ID = "chatgpt" as const;
+
 /** OAuth provider identifier. */
 export type OAuthProviderId =
   | typeof BIGMODEL_PROVIDER_ID
+  | typeof CHATGPT_OAUTH_PROVIDER_ID
   | typeof ZAI_PROVIDER_ID
   | (string & { readonly __oauthProviderBrand?: never });
 
@@ -201,3 +205,29 @@ export interface OAuthUserProfile {
 
 /** Logout scope. */
 export type OAuthLogoutScope = "active" | "all";
+
+/** ChatGPT plan (SIWC) user summary for UI display. */
+export interface SiwcPlanUserSummary {
+  displayName: string;
+  email: string | null;
+  subject: string;
+}
+
+/** ChatGPT plan (SIWC) connection status. */
+export interface SiwcPlanStatus {
+  planUsageEntitled: boolean;
+  signedIn: boolean;
+  user: SiwcPlanUserSummary | null;
+}
+
+/** ChatGPT plan (SIWC) login start result; displayAuthorizeUrl masks id_token_hint/login_hint. */
+export interface SiwcLoginStart {
+  authorizeUrl: string;
+  displayAuthorizeUrl: string;
+  state: string;
+}
+
+/** ChatGPT plan (SIWC) login poll result; null while the browser has not returned. */
+export interface SiwcLoginCompletionResult extends SiwcPlanStatus {
+  newUser: boolean;
+}

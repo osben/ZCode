@@ -37,9 +37,9 @@ export function assertLinuxNativeSearchBuildEnvironment({
   gccVersion,
   cxxVersion,
 }) {
-  if (readVersionMajor(nodeVersion) !== 24) {
+  if (readVersionMajor(nodeVersion) !== 26) {
     throw new Error(
-      `Linux native search producer requires Node 24; received ${nodeVersion || "<missing>"}`,
+      `Linux native search producer requires Node 26.x; received ${nodeVersion || "<missing>"}`,
     );
   }
   if (String(glibcVersion).trim() !== LINUX_NATIVE_SEARCH_GLIBC_BASELINE) {

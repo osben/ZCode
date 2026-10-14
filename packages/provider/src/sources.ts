@@ -1,4 +1,5 @@
 import {
+  ChatgptAccountAccessConfig,
   ProviderConfig,
   ProviderConfigMap,
   ProviderTemplateMap,
@@ -36,18 +37,29 @@ export function createFailClosedAccountProviderConfigSnapshot(
   config: ProviderConfigSnapshot,
 ): AccountProviderConfigSnapshot {
   const unentitledProviders = new ProviderConfigMap(
-    config.zcodeBuiltinProviders.entries().flatMap(([providerId, provider]) =>
-      provider.access?.type === "zhipu-account"
-        ? ([
-            [
-              providerId,
-              new ProviderConfig({
-                access: new ZhipuAccountAccessConfig({ entitled: false }),
-              }),
-            ],
-          ] as const)
-        : [],
-    ),
+    config.zcodeBuiltinProviders.entries().flatMap(([providerId, provider]) => {
+      if (provider.access?.type === "zhipu-account") {
+        return [
+          [
+            providerId,
+            new ProviderConfig({
+              access: new ZhipuAccountAccessConfig({ entitled: false }),
+            }),
+          ],
+        ] as const;
+      }
+      if (provider.access?.type === "chatgpt-account") {
+        return [
+          [
+            providerId,
+            new ProviderConfig({
+              access: new ChatgptAccountAccessConfig({ entitled: false }),
+            }),
+          ],
+        ] as const;
+      }
+      return [];
+    }),
   );
   return createAccountProviderConfigSnapshot(config.zcodeBuiltinRevision, unentitledProviders);
 }

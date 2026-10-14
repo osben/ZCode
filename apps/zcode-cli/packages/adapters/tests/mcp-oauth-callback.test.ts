@@ -82,4 +82,29 @@ describe("localhost OAuth callback server", () => {
       message: expect.stringContaining("missing an authorization code"),
     });
   });
+
+  it("captures the issued client_id on SIWC first-registration callbacks and tolerates extra params", async () => {
+    const server = await createServer();
+
+    const accepted = await fetch(
+      `${server.callbackUrl}?state=${CORRECT_STATE}&code=siwc-code&client_id=oaiapp_issued&iss=https%3A%2F%2Fauth.openai.com`,
+    );
+    expect(accepted.status).toBe(200);
+
+    const callback = await server.waitForCallback();
+    expect(callback.code).toBe("siwc-code");
+    expect(callback.clientId).toBe("oaiapp_issued");
+    expect(callback.url).toContain("iss=https%3A%2F%2Fauth.openai.com");
+  });
+
+  it("omits clientId when the callback does not carry one", async () => {
+    const server = await createServer();
+
+    const accepted = await fetch(`${server.callbackUrl}?state=${CORRECT_STATE}&code=plain-code`);
+    expect(accepted.status).toBe(200);
+
+    const callback = await server.waitForCallback();
+    expect(callback.code).toBe("plain-code");
+    expect(callback.clientId).toBeUndefined();
+  });
 });

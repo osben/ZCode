@@ -20,13 +20,15 @@ import {
   type ModelRequestAuth,
   type ProviderEndpointRoutingPort,
 } from "@zcode/contracts";
-import type { RegistryProviderConfig } from "@zcode/provider";
+import { isApiKeyAccess, type RegistryProviderConfig } from "@zcode/provider";
 import { withOpenRouterAttributionHeaders } from "@zcode/shared";
 import { createAnthropicCompatFetch } from "./anthropic-stream-compat.js";
 import { createModelRequestSecurityState } from "./request-security-edition/index.js";
 import type { ModelRequestSecurityState, ModelRequestSecurityPort } from "./request-security.js";
 import { createOpenAIResponsesJsonCompatFetch } from "./openai-responses-json-compat.js";
 import { createModelOptionMapFetch, type RawRequestBodyCapture } from "./model-option-map-fetch.js";
+import { isAccountAccess } from "./account-access-mode.js";
+import { createSiwcCompatFetch } from "./siwc-request-compat.js";
 import { createNetworkProxyFetch } from "../network/proxy-fetch.js";
 import { createProviderEndpointRoutingFetch } from "./provider-endpoint-routing-fetch.js";
 import { normalizeModelTlsFailure } from "./failure-tls.js";
@@ -306,15 +308,19 @@ export class AiSdkModelExecution {
       providerId,
       providerKind: providerConfig.kind,
     });
+    // SIWC shaping must run BELOW the option map (i.e. be invoked after it) so it strips what
+    // the catalog rules injected (e.g. max_output_tokens, rejected by the direct route).
+    const shapedFetch =
+      providerConfig.access.type === "chatgpt-account" ? createSiwcCompatFetch(fetch) : fetch;
     const optionFetch =
       optionMaps && optionValues
         ? createModelOptionMapFetch({
             capture: rawRequestBodyCapture,
-            fetch,
+            fetch: shapedFetch,
             maps: optionMaps,
             values: optionValues,
           })
-        : fetch;
+        : shapedFetch;
 
     switch (providerConfig.kind) {
       case "openai": {
@@ -389,12 +395,12 @@ function toAiSdkProviderConfig(
   config: RegistryProviderConfig,
 ): AiSdkProviderConfig {
   const common = {
-    ...(config.access.type !== "zhipu-account" && config.access.apiKey
+    ...(isApiKeyAccess(config.access) && config.access.apiKey
       ? { apiKey: config.access.apiKey }
       : {}),
     baseURL: config.api.baseUrl,
     ...(config.api.headers ? { headers: { ...config.api.headers } } : {}),
-    providerOptions: { apiFormat: config.api.type },
+    providerOptions: buildProviderOptions(config),
     access: config.access,
   };
   switch (config.api.type) {
@@ -415,10 +421,9 @@ function applyModelRequestAuth(
   if (!requestAuth) return providerConfig;
   const staticHeaders = withoutRequestVerificationHeaders(providerConfig.headers);
   // Clear static auth headers before adding dynamic account identity headers so the SDK cannot prefer stale credentials.
-  const headers =
-    providerConfig.access.type === "zhipu-account"
-      ? withoutModelAuthHeaders(staticHeaders)
-      : staticHeaders;
+  const headers = isAccountAccess(providerConfig.access)
+    ? withoutModelAuthHeaders(staticHeaders)
+    : staticHeaders;
   return {
     ...providerConfig,
     ...(requestAuth.apiKey ? { apiKey: requestAuth.apiKey } : {}),
@@ -448,6 +453,19 @@ function hasHeader(headers: Record<string, string> | undefined, name: string): b
   }
   const normalizedName = name.toLowerCase();
   return Object.keys(headers).some((key) => key.toLowerCase() === normalizedName);
+}
+
+function buildProviderOptions(config: RegistryProviderConfig): Record<string, unknown> {
+  if (config.access.type !== "chatgpt-account") {
+    return { apiFormat: config.api.type };
+  }
+  // SIWC requires store:false on every request; the AI SDK then also requests
+  // include: ["reasoning.encrypted_content"] for reasoning models and skips
+  // reasoning replay without encrypted content, matching stateless replay.
+  return {
+    apiFormat: config.api.type,
+    openai: { store: false },
+  };
 }
 
 function normalizeAnthropicBaseURL(baseURL: string | undefined): string | undefined {

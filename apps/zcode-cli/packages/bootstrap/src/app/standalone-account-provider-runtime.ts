@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import {
   createCodingPlanApiKeyResolver,
+  createSiwcAccessTokenResolver,
+  isSiwcPlanEntitled,
   SHARED_ZCODE_CREDENTIAL_KEYS,
   type SharedZCodeCredentialStore,
 } from "@zcode/adapters/auth";
@@ -8,6 +10,7 @@ import { createNodeHttpClientAdapter } from "@zcode/adapters/http";
 import { createConfig } from "@zcode/adapters/config";
 import type { ProviderRuntimeHeadersPort } from "@zcode/core";
 import {
+  ChatgptAccountAccessConfig,
   createAccountProviderConfigSnapshot,
   ProviderConfig,
   ProviderConfigMap,
@@ -19,7 +22,10 @@ import {
   NodeZCodeBuiltinProviderConfigSource,
   ZCODE_BUILTIN_PROVIDER_CONFIG_FILE_ENV,
 } from "@zcode/provider-node";
-import type { ProviderFamilyDomain } from "@zcode/shared";
+import { BUILTIN_MODEL_PROVIDER_IDS, type ProviderFamilyDomain } from "@zcode/shared";
+
+/** Builtin provider id of the ChatGPT plan (SIWC) account provider. */
+export const CHATGPT_PLAN_PROVIDER_ID = BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan;
 
 export interface StandaloneCodingPlanProvider {
   readonly family: ProviderFamilyDomain;
@@ -33,12 +39,29 @@ export async function readStandaloneCodingPlanProviders(
   return (await readStandaloneCodingPlanCatalog(env)).providers;
 }
 
+/** Catalog entry of the ChatGPT plan provider (model ids come from the builtin catalog). */
+export interface StandaloneChatGptPlanProvider {
+  readonly modelId: string;
+  readonly providerId: string;
+}
+
+export async function resolveStandaloneChatGptPlanProvider(
+  env: Readonly<Record<string, string | undefined>>,
+): Promise<StandaloneChatGptPlanProvider> {
+  const matches = (await readStandaloneCodingPlanCatalog(env)).chatgptPlan;
+  if (!matches) {
+    throw new Error("ZCode Built-in Config must declare the account:chatgpt-plan provider");
+  }
+  return matches;
+}
+
 async function readStandaloneCodingPlanCatalog(
   env: Readonly<Record<string, string | undefined>>,
   config?: Pick<ProviderConfigLayerSnapshot, "revision" | "providers">,
 ): Promise<{
   readonly zcodeBuiltinRevision: string;
   readonly providers: readonly StandaloneCodingPlanProvider[];
+  readonly chatgptPlan?: StandaloneChatGptPlanProvider;
 }> {
   if (config)
     return {
@@ -53,6 +76,7 @@ async function readStandaloneCodingPlanCatalog(
           ? [{ family: access.accountType, modelId, providerId }]
           : [];
       }),
+      chatgptPlan: readChatGptPlanProvider(config.providers),
     };
   const filePath = env[ZCODE_BUILTIN_PROVIDER_CONFIG_FILE_ENV]?.trim();
   if (!filePath) {
@@ -68,6 +92,15 @@ async function readStandaloneCodingPlanCatalog(
   } finally {
     source.dispose();
   }
+}
+
+function readChatGptPlanProvider(
+  providers: Pick<ProviderConfigLayerSnapshot, "providers">["providers"],
+): StandaloneChatGptPlanProvider | undefined {
+  const provider = providers.get(CHATGPT_PLAN_PROVIDER_ID);
+  const modelId = provider?.builtinModelIds?.find((candidate) => candidate.trim())?.trim();
+  if (!provider || provider.access?.type !== "chatgpt-account" || !modelId) return undefined;
+  return { modelId, providerId: CHATGPT_PLAN_PROVIDER_ID };
 }
 
 export async function resolveStandaloneCodingPlanProvider(
@@ -155,7 +188,7 @@ export async function readStandaloneAccountProviderConfigSnapshot(
   const candidateByProviderId = new Map(
     candidates.map((candidate) => [candidate.providerId, candidate]),
   );
-  const providers = new ProviderConfigMap(
+  let providers = new ProviderConfigMap(
     configuredProviders.map(({ family, providerId }) => {
       const candidate = candidateByProviderId.get(providerId);
       const source = sources[standaloneAccountAuthSourceCredentialKey(providerId)];
@@ -181,6 +214,18 @@ export async function readStandaloneAccountProviderConfigSnapshot(
       ] as const;
     }),
   );
+  if (catalog.chatgptPlan) {
+    // Consent gating: the provider is entitled only with stored tokens AND the plan-usage
+    // scope; an identity-only sign-in stays visible-but-inert (entitled=false hides it from
+    // the regular registry until consent is granted).
+    const chatgptEntitled = await isSiwcPlanEntitled(credentialStore);
+    providers = providers.set(
+      catalog.chatgptPlan.providerId,
+      new ProviderConfig({
+        access: new ChatgptAccountAccessConfig({ entitled: chatgptEntitled }),
+      }),
+    );
+  }
   return createAccountProviderConfigSnapshot(catalog.zcodeBuiltinRevision, providers);
 }
 
@@ -196,7 +241,10 @@ export async function hasStandaloneCodingPlanAccess(
 }
 
 export function createStandaloneProviderRuntimeHeadersPort(
-  credentialStore: Pick<SharedZCodeCredentialStore, "load" | "loadMany" | "save" | "delete">,
+  credentialStore: Pick<
+    SharedZCodeCredentialStore,
+    "filePath" | "load" | "loadMany" | "save" | "delete" | "saveMany" | "deleteIfValues"
+  >,
   env: Readonly<Record<string, string | undefined>>,
   injectedResolver?: ReturnType<typeof createCodingPlanApiKeyResolver>,
 ): ProviderRuntimeHeadersPort & {
@@ -218,6 +266,9 @@ export function createStandaloneProviderRuntimeHeadersPort(
       observe: (event) => console.warn("[project-access-token]", event),
     });
   const authSnapshots = new Map<string, string>();
+  // ChatGPT plan (SIWC): request-time access-token lifecycle with rotation-safe single-flight
+  // refresh and terminal-failure clearing, independent of the zhipu project-token resolver.
+  const siwcResolver = createSiwcAccessTokenResolver({ credentialStore });
   return {
     clearProjectTokens() {
       authSnapshots.clear();
@@ -236,6 +287,25 @@ export function createStandaloneProviderRuntimeHeadersPort(
     async refreshBeforeModelRequest(input) {
       input.abortSignal?.throwIfAborted();
       const providerId = input.providerId.trim();
+      if (providerId === CHATGPT_PLAN_PROVIDER_ID) {
+        const resolved = await siwcResolver.resolve({
+          providerId,
+          ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+          // After a 401 rejection the retry must not resend the rejected token; a scope
+          // mismatch (real account switch) is still refused below.
+          ...(input.rejectedProjectTokenFingerprint ? { forceRefresh: true } : {}),
+        });
+        if (input.expectedAccountScope && input.expectedAccountScope !== resolved.accountScope) {
+          throw new Error("siwc_account_scope_invalidated");
+        }
+        return {
+          headersApplied: true,
+          requestAuth: {
+            apiKey: resolved.apiKey,
+            accountScope: resolved.accountScope,
+          },
+        };
+      }
       const access = input.accountAccess;
       if (!access || access.mode !== "individual-coding-plan") {
         throw new Error(`Standalone Account Provider 请求身份无效: ${providerId}`);
@@ -263,9 +333,12 @@ export function createStandaloneProviderRuntimeHeadersPort(
         }
         // Fork note: this is the account scope fingerprint (compared for equality with expectedAccountScope to detect
         // account switching), not password storage — it needs a fast deterministic digest rather than a KDF; oauth is only an input and is not leaked.
-        accountScope = createHash("sha256").update( // codeql[js/insufficient-password-hash]
-          JSON.stringify([providerId, family, currentIdentity, oauth]),
-        ).digest("hex");
+        accountScope = createHash("sha256")
+          .update(
+            // codeql[js/insufficient-password-hash]
+            JSON.stringify([providerId, family, currentIdentity, oauth]),
+          )
+          .digest("hex");
         if (
           (input.expectedAccountScope && input.expectedAccountScope !== accountScope) ||
           (input.rejectedProjectTokenFingerprint && !input.expectedAccountScope)

@@ -53,6 +53,7 @@ const DEFAULT_GREP_HEAD_LIMIT = 250;
 const DEFAULT_RIPGREP_TIMEOUT_MS = 30_000;
 const VCS_DIRECTORIES_TO_EXCLUDE = new Set([".git", ".svn", ".hg", ".bzr", ".jj", ".sl"]);
 
+type NodeStat = NonNullable<Awaited<ReturnType<typeof stat>>>;
 type RipgrepWorker = Pick<Worker, "once" | "terminate">;
 
 interface RipgrepWorkerData {
@@ -523,7 +524,7 @@ async function searchTextWithRipgrep(
     });
   }
 
-  let rootInfo: Awaited<ReturnType<typeof stat>>;
+  let rootInfo: NodeStat;
   try {
     throwIfAborted(signal);
     rootInfo = await stat(path);
@@ -756,7 +757,7 @@ async function atomicWrite(path: string, content: Buffer): Promise<void> {
   }
 }
 
-function nodeKind(info: Awaited<ReturnType<typeof stat>>): FileSystemNodeKind {
+function nodeKind(info: NodeStat): FileSystemNodeKind {
   if (info.isFile()) return "file";
   if (info.isDirectory()) return "directory";
   if (info.isSymbolicLink()) return "symlink";
@@ -925,7 +926,7 @@ class RipgrepTimeoutFailure extends Error {
 
 function createRipgrepSearchPlan(
   path: string,
-  rootInfo: Awaited<ReturnType<typeof stat>>,
+  rootInfo: NodeStat,
   request: FileSystemSearchTextRequest,
   mode: FileSystemTextSearchOutputMode,
 ): RipgrepSearchPlan {
@@ -1400,7 +1401,7 @@ function compileSearchRegex(pattern: string, request: FileSystemSearchTextReques
 
 async function collectTextSearchCandidates(
   path: string,
-  rootInfo: Awaited<ReturnType<typeof stat>>,
+  rootInfo: NodeStat,
   request: FileSystemSearchTextRequest,
   signal?: AbortSignal,
 ): Promise<FileSearchCandidate[]> {
@@ -1408,7 +1409,7 @@ async function collectTextSearchCandidates(
   const globMatcher = request.glob ? createGlobMatcher(request.glob) : undefined;
   const root = rootInfo.isDirectory() ? path : dirname(path);
 
-  const addIfCandidate = async (filePath: string, info: Awaited<ReturnType<typeof stat>>) => {
+  const addIfCandidate = async (filePath: string, info: NodeStat) => {
     if (!info.isFile()) return;
     const relativePath = toPosixRelative(root, filePath);
     if (globMatcher && !globMatcher(relativePath, basename(filePath))) return;
@@ -1713,7 +1714,7 @@ function lineNumberForIndex(content: string, index: number): number {
 async function walkFiles(
   current: string,
   signal: AbortSignal | undefined,
-  visitor: (path: string, info: Awaited<ReturnType<typeof stat>>) => Promise<void> | void,
+  visitor: (path: string, info: NodeStat) => Promise<void> | void,
 ): Promise<void> {
   throwIfAborted(signal);
   const entries = await readdir(current, { withFileTypes: true });

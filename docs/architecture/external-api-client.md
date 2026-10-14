@@ -29,11 +29,11 @@
 
 Node/Desktop host 默认实现放在 `packages/services/src/providers/api/`：
 
-- `nodeApiClient.ts`：内部调用 Node 24 全局 `fetch`
+- `nodeApiClient.ts`：内部调用 Node 全局 `fetch`
 - `apiJson.ts`：统一处理 JSON 读取、非 2xx 错误与解析失败
 - `apiEndpoints.ts`：集中管理外部 API endpoint 常量
 
-当前 Node 24 的全局 `fetch` 底层就是 `undici`，因此：
+Node 的全局 `fetch` 底层使用 `undici`，因此：
 
 - 我们享受 `undici` 的运行时能力
 - 业务层不直接 import `undici`

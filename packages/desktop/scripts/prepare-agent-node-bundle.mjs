@@ -7,7 +7,7 @@
 // Reasons for this approach:
 // - The agent has no native NAPI addons (ripgrep uses WASM and the rest is pure JavaScript), so it can
 //   run directly on Electron's Node runtime.
-// - Electron 41 bundles Node 24.x, matching zcode-cli's target runtime.
+// - Electron 41 bundles Node 24.x; zcode-cli targets Node 26, and its bundle targets Node 22 for both Electron and SSH runtimes.
 // - The per-platform package shrinks from about 180 MB to 16 MB, and the same JavaScript works across
 //   platforms.
 // - The app-server command path does not load @zcode/tui, so the TUI does not need to be packaged here.

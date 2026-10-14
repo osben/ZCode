@@ -59,7 +59,7 @@ target 参数使用 release 命名里的平台名；Windows 输入使用 `win-x6
 
 ## Target Runtime Assets
 
-SEA 可以在一个 host 上下载并注入其它 target 的官方 Node.js binary。`bfs`、`ugrep` 必须先由对应目标平台的 producer 构建、验证并发布到统一依赖源；macOS x64/arm64、Linux x64/arm64 与 Windows x64/arm64 的 `rg` 全部使用固定 SHA-256 的 Microsoft `ripgrep-prebuilt v14.1.1-1` 原始归档，并从同一内网依赖源的 `native-search-tools/ripgrep-v14.1.1-1` 镜像目录下载。所选 macOS 归档的 deployment target 不得高于既有 macOS 12.0 下限；Linux `rg` 必须使用不引入 glibc 依赖的 musl 归档，`bfs` / `ugrep` producer 固定 Node 24、glibc 2.28、GCC 12 与 G++ 12，并通过最终 ELF 的 GLIBC 2.28 ceiling、版本、feature、架构和动态依赖校验；Windows 两个架构必须拒绝动态 CRT、PCRE2 与构建契约要求静态链接的压缩库依赖。SEA 构建按 target 复用同一份 native-search release plan 和下载器，将两类预编译产物校验并准备到 `packages/desktop/bundled-tools/<platform>-<arch>/`。SEA 不在 foreign target 构建期间交叉编译、切换来源或降级省略工具。
+SEA 可以在一个 host 上下载并注入其它 target 的官方 Node.js binary。`bfs`、`ugrep` 必须先由对应目标平台的 producer 构建、验证并发布到统一依赖源；macOS x64/arm64、Linux x64/arm64 与 Windows x64/arm64 的 `rg` 全部使用固定 SHA-256 的 Microsoft `ripgrep-prebuilt v14.1.1-1` 原始归档，并从同一内网依赖源的 `native-search-tools/ripgrep-v14.1.1-1` 镜像目录下载。所选 macOS 归档的 deployment target 不得高于既有 macOS 12.0 下限；Linux `rg` 必须使用不引入 glibc 依赖的 musl 归档，`bfs` / `ugrep` producer 固定 Node 26.11.1、glibc 2.28、GCC 12 与 G++ 12，并通过最终 ELF 的 GLIBC 2.28 ceiling、版本、feature、架构和动态依赖校验；Windows 两个架构必须拒绝动态 CRT、PCRE2 与构建契约要求静态链接的压缩库依赖。SEA 构建按 target 复用同一份 native-search release plan 和下载器，将两类预编译产物校验并准备到 `packages/desktop/bundled-tools/<platform>-<arch>/`。SEA 不在 foreign target 构建期间交叉编译、切换来源或降级省略工具。
 
 公开 `build:sea` 的既有契约始终是 all-target，不能因为某个平台的 native search 尚未接入而降级成 host-only。构建会为每个 target 自动准备并收集对应的 runtime assets；预编译归档缺失、下载失败或目标格式与架构校验失败时，必须在生成该 target SEA 前终止，不能产出 provider-visible embedded search 已启用、执行层却缺少包内工具的正式二进制。
 
@@ -77,9 +77,9 @@ SEA 可以在一个 host 上下载并注入其它 target 的官方 Node.js binar
 
 缓存位置是 `packages/cli/dist/sea-node-cache/v<version>/...`。缓存是构建产物，不参与源码提交。
 
-## Node 24 SEA 基线
+## Node 26 SEA 基线
 
-ZCode 以 Node.js `24.14.0` 作为本仓库开发、构建和发布基线。Node 26 的原生 `node --build-sea` 路径在生产老设备上兼容性不足，本轮回退到 Node 24 LTS 兼容路径；仓库 `engines.node` 要求 `>=24.14.0 <25`，SEA 发布产物必须嵌入同版本 Node 24 运行时。
+ZCode 以 Node.js `26.11.1` 作为本仓库开发、构建和发布基线。CLI 的 SEA blob 由当前 Node 26 runtime 生成，发布产物也必须嵌入同版本 Node 26 runtime。兼容旧版操作系统不再要求 SEA 保持 Node 24；开发机、CI、Docker 和 SEA 发布必须使用同一 26.x 基线。
 
 SEA 构建路径是 `node --experimental-sea-config <config>` 生成 preparation blob，然后把该 blob 用 `postject` 注入目标平台官方 Node.js 二进制。脚本必须继续从官方 Node release 下载同版本目标二进制，或接受用户用 `--node-binary <target>=<path>` 显式提供的二进制。
 

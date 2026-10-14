@@ -11,6 +11,7 @@ export const BUILTIN_MODEL_PROVIDER_IDS = {
   bigmodelIndividualCodingPlan: "account:bigmodel-individual-coding-plan",
   bigmodelTeamCodingPlan: "account:bigmodel-team-coding-plan",
   bigmodelStartPlan: "account:bigmodel-start-plan",
+  chatgptPlan: "account:chatgpt-plan",
 } as const;
 
 export type BuiltinOAuthProviderId = keyof typeof BUILTIN_MODEL_PROVIDER_IDS;
@@ -24,7 +25,8 @@ export function isBuiltinModelProviderId(id: string): id is BuiltinModelProvider
     id === BUILTIN_MODEL_PROVIDER_IDS.zaiStartPlan ||
     id === BUILTIN_MODEL_PROVIDER_IDS.bigmodelIndividualCodingPlan ||
     id === BUILTIN_MODEL_PROVIDER_IDS.bigmodelTeamCodingPlan ||
-    id === BUILTIN_MODEL_PROVIDER_IDS.bigmodelStartPlan
+    id === BUILTIN_MODEL_PROVIDER_IDS.bigmodelStartPlan ||
+    id === BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan
   );
 }
 

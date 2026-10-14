@@ -18,6 +18,14 @@ export type {
   ZCodeModelOption,
 } from "./app/types.js";
 export * from "./auth-login.js";
+export { loginChatGptPlan, logoutChatGptPlan } from "./auth-login-chatgpt.js";
+export type {
+  ChatGptPlanUser,
+  LoginChatGptPlanOptions,
+  LoginChatGptPlanResult,
+  LogoutChatGptPlanOptions,
+  LogoutChatGptPlanResult,
+} from "./auth-login-chatgpt.js";
 export {
   inspectZCodeCustomCommand,
   listZCodeCustomCommands,

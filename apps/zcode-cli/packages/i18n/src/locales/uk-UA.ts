@@ -27,7 +27,7 @@ export const ukUA: ZCodeCopy = {
   app-server Запустити stdio-сервер застосунку ZCode Protocol
   commands   Показати користувацькі слеш-команди (\`commands list\`)
   doctor     Перевірити середовище виконання та припущення пакування
-  login [zai|bigmodel]  Увійти через авторизацію в браузері
+  login [zai|bigmodel|chatgpt]  Увійти через авторизацію в браузері
   logout     Видалити спільні облікові дані входу Z.AI
   plugins    Керувати плагінами й маркетплейсами (\`plugins list|install|uninstall|enable|disable|update|validate|marketplace ...\`; псевдонім: plugin)
   skills     Показати локальні навички (\`skills list\`)
@@ -126,6 +126,13 @@ export const ukUA: ZCodeCopy = {
           pendingSecondary: "Завершіть вхід у браузері. Авторизацію буде виявлено автоматично.",
           primary: "BigModel Coding Plan",
           secondary: "Відкрити вхід у браузері; авторизацію буде виявлено автоматично.",
+        },
+        chatgptOauth: {
+          pendingPrimary: "Очікування авторизації ChatGPT",
+          pendingSecondary:
+            "Завершіть вхід у браузері за допомогою облікового запису ChatGPT Plus/Pro.",
+          primary: "ChatGPT Plan",
+          secondary: "Продовжити з ChatGPT (офіційний обмін токенами OpenAI).",
         },
         zaiApiKey: {
           inputPrimary: "Введіть API-ключ Z.AI Coding Plan",

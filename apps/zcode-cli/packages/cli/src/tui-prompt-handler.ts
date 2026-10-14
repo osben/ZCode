@@ -22,6 +22,7 @@ import { DEFAULT_CLI_CLEANUP_TIMEOUT_MS, runCliCleanupWithTimeout } from "./shut
 import {
   configureApiKeyForTui,
   loginBigmodelForTui,
+  loginChatGptForTui,
   loginForTui,
   logoutForTui,
 } from "./tui-auth.js";
@@ -275,6 +276,7 @@ export function createTuiSubmitPrompt(
     configureApiKey: (options) => configureApiKeyForTui(deps, options),
     login: (options) => loginForTui(deps, options),
     loginBigmodel: (options) => loginBigmodelForTui(deps, options),
+    loginChatGpt: (options) => loginChatGptForTui(deps, options),
     loadCustomCommand: (name) => loadCustomCommandForTui(deps, name),
     newApp,
     recordInputHistory: async (input, kind) => {
