@@ -34,5 +34,6 @@ resolveFileDisplayDescriptor("/Users/dev/Projects/element-web/apps/web/src/Avata
 
 - `.doc`、`.docx` 统一映射到 `word.svg`，`.xlsx` 映射到 `table.svg`，`.pptx` 映射到 `powerpoint.svg`。
 - Office 扩展名与素材文件名不是一一对应关系，必须通过 `EXTENSION_ICON_ALIASES` 维护映射，不能直接使用扩展名拼接资源路径。
+- Extensions without a matching asset must also be aliased: `.text` maps to `document.svg` because the icon set ships no `text.svg`, and the raw-extension fallback would otherwise request a missing asset (observed as a 404 in the packaged app).
 - Desktop 与 Web 必须各自在 `public/material-icons` 中携带相同的图标文件，保证本地 `file://`、普通 Web 和手机 `/remote` 均可通过现有 `BASE_URL` 规则加载。
 - 图标只表达文件类型，不改变 Office 文件的预览、编辑或远程工作区能力边界。

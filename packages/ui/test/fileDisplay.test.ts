@@ -17,6 +17,7 @@ describe("resolveFileDisplayDescriptor", () => {
   it.each([
     { extension: "doc", iconName: "word" },
     { extension: "docx", iconName: "word" },
+    { extension: "text", iconName: "document" },
     { extension: "xlsx", iconName: "table" },
     { extension: "pptx", iconName: "powerpoint" },
     { extension: "mp4", iconName: "video" },
