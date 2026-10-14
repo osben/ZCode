@@ -17,7 +17,11 @@ COPY packages/provider ./packages/provider
 COPY packages/provider-node ./packages/provider-node
 COPY packages/zcode-cua ./packages/zcode-cua
 COPY packages/model-option-map ./packages/model-option-map
-RUN pnpm install --frozen-lockfile --filter @zcode/web... --ignore-scripts
+# Intermittent pnpm race: hoisted node-linker + patchedDependencies can fail
+# linking with ERR_PNPM_ENOENT while renaming _tmp_* dirs (pnpm/pnpm#12880).
+# One retry recovers; the store is already populated so the retry is fast.
+RUN pnpm install --frozen-lockfile --filter @zcode/web... --ignore-scripts || \
+    pnpm install --frozen-lockfile --filter @zcode/web... --ignore-scripts
 # Deployment inputs, not secrets: the relay address is public and baked into the browser bundle.
 ARG ZCODE_ENV=production
 ARG VITE_ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL
