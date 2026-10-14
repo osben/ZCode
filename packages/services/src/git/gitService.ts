@@ -1,5 +1,3 @@
-/* eslint-disable max-lines -- IGitService delegation and merge-status caching share the same service owner. */
-import { resolve } from "node:path";
 import type {
   GitBranchComparison,
   GitBranchMergeStatus,
@@ -7,7 +5,8 @@ import type {
   GitChangeSectionId,
 } from "@zcode/shared";
 import { createServiceLogger, type ServiceLogger } from "#src/logger/serviceLogger.js";
-import { isPathInWorkspaceScope, normalizeGitPath, toWorkspaceRelativeGitPath } from "./config.js";
+import { toWorkspaceRelativeGitPath } from "./config.js";
+import { matchesWorkspaceScope, toAbsolutePath } from "./gitServicePathHelpers.js";
 import { filterCommitMessageFilesByCurrentSession } from "./commitMessageFileScope.js";
 import type { IGitService } from "./git.js";
 import type { GitCommitMessageGenerator } from "./gitCommitMessageGenerator.js";
@@ -19,20 +18,6 @@ import {
   type GitStatusEntry,
   type GitStatusSnapshot,
 } from "./repo/gitCliRepo.js";
-
-function toAbsolutePath(repoRoot: string, repoRelativePath: string): string {
-  return resolve(repoRoot, ...normalizeGitPath(repoRelativePath).split("/"));
-}
-
-function matchesWorkspaceScope(
-  workspaceInRepoPath: string,
-  entry: { path: string; originalPath: string | null },
-): boolean {
-  return (
-    isPathInWorkspaceScope(entry.path, workspaceInRepoPath) ||
-    (entry.originalPath ? isPathInWorkspaceScope(entry.originalPath, workspaceInRepoPath) : false)
-  );
-}
 
 function buildFileChange(
   snapshot: GitStatusSnapshot,
