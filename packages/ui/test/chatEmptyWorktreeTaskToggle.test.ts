@@ -292,7 +292,7 @@ describe("ChatEmptyWorktreeTaskToggle intent + interception", () => {
     expect(screen.getByText("commandCenter.worktree.baseBranch.loading")).toBeTruthy();
   });
 
-  it("creates a fully automatic worktree and redirects the draft on the first send", async () => {
+  it("retains the created worktree for retries until the first send is accepted", async () => {
     mocks.settings = { worktreeBranchPrefix: "osben-" };
     createWorktree.mockResolvedValue({
       ok: true,
@@ -334,7 +334,17 @@ describe("ChatEmptyWorktreeTaskToggle intent + interception", () => {
         targetWorkspacePath: "/dev/alpha-worktrees/osben-sleepy-capybara",
       }),
     ).toBe(false);
-    // Intent unregistered: the composer continues with a normal first send.
+    const retainedIntent = utils.intentSlot.current!;
+    let retryResult: ComposerDraftWorktreeInterceptResult | undefined;
+    await act(async () => {
+      retryResult = await retainedIntent.interceptFirstSend();
+    });
+    expect(retryResult).toEqual(result);
+    expect(createWorktree).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      retainedIntent.onSendAccepted();
+    });
     expect(utils.intentSlot.current).toBeNull();
   });
 
