@@ -853,7 +853,7 @@ export function ChatContextUsage({
   );
 
   // Tone mirrors the runtime compaction policy (see packages/shared/src/contextBudgetPolicy.ts):
-  // warning = microcompact is clearing old tool results, critical = the next model step compacts.
+  // warning and critical report reached thresholds; runtime may still skip the compaction action.
   const contextTone = renderableTaskUsage
     ? resolveContextBudgetTone({
         autoCompactThresholdTokens: renderableTaskUsage.autoCompactThresholdTokens,

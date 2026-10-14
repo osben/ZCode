@@ -267,15 +267,19 @@ interface ContextWindowProjectionState {
   usedTokens: number;
 }
 
-function withoutContextBudgetThresholds(
+function invalidateResolvedContextBudgetThresholds(
   contextWindow: NonNullable<SessionUsageState["contextWindow"]>,
-): Omit<NonNullable<SessionUsageState["contextWindow"]>, "autoCompactThresholdTokens" | "microcompactThresholdTokens"> {
+): NonNullable<SessionUsageState["contextWindow"]> {
   const {
-    autoCompactThresholdTokens: _autoCompactThresholdTokens,
-    microcompactThresholdTokens: _microcompactThresholdTokens,
+    autoCompactThresholdTokens,
+    microcompactThresholdTokens,
     ...remaining
   } = contextWindow;
-  return remaining;
+  return {
+    ...remaining,
+    ...(autoCompactThresholdTokens === null ? { autoCompactThresholdTokens: null } : {}),
+    ...(microcompactThresholdTokens === null ? { microcompactThresholdTokens: null } : {}),
+  };
 }
 
 export interface SessionSubagentsSeed {
@@ -4966,7 +4970,7 @@ export class ProductProjection {
                       ? null
                       : previousContextWindow
                         ? {
-                            ...withoutContextBudgetThresholds(previousContextWindow),
+                            ...invalidateResolvedContextBudgetThresholds(previousContextWindow),
                             ...(contextWindow !== undefined ? { maxTokens: contextWindow } : {}),
                           }
                         : contextWindow === undefined

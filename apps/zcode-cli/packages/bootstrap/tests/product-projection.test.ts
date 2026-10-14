@@ -7114,10 +7114,23 @@ describe("fork / modelChange marker", () => {
         contextWindow: 1_000_000,
         autoCompactThresholdTokens: null,
         microcompactThresholdTokens: null,
-        usage: { inputTokens: 160, outputTokens: 40 },
+        usage: { inputTokens: 900_000, outputTokens: 0 },
       }),
     );
     expect(projection.getSnapshot().usage.contextWindow).toMatchObject({
+      usedTokens: 900_000,
+      autoCompactThresholdTokens: null,
+      microcompactThresholdTokens: null,
+    });
+
+    projection.applyEvent(
+      log.push(SessionEventType.ModelSelected, {
+        modelSelection: { providerId: "custom", modelId: "disabled-policy-model" },
+        contextWindow: 1_000_000,
+      }),
+    );
+    expect(projection.getSnapshot().usage.contextWindow).toMatchObject({
+      usedTokens: 900_000,
       autoCompactThresholdTokens: null,
       microcompactThresholdTokens: null,
     });

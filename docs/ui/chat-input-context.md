@@ -78,6 +78,7 @@ Threshold math (defaults, mirroring the runtime policy):
 - The runtime resolves `autoCompactThreshold` from the selected model, context-budget strategy, model output limit, and effective compact configuration. Main-turn completion events carry it into `usage.contextWindow.autoCompactThresholdTokens`; `null` means auto-compact is disabled.
 - Main-turn completion events also carry `usage.contextWindow.microcompactThresholdTokens`. It is the configured `microcompact.thresholdTokens`, or the default formula above when microcompact is enabled without an override; `null` means microcompact is disabled or unsupported. The UI uses these authoritative thresholds when present and falls back to the default estimate only for legacy events where each field is absent.
 - V4 usage snapshots preserve threshold field absence from legacy events and recovery seeds. Explicit `null` remains authoritative and means the corresponding compaction policy is disabled or unsupported.
+- On model selection, numeric thresholds are invalidated because they belong to the previous model; explicit `null` values are retained so a disabled/unsupported policy is not mistaken for a legacy unknown threshold before the next main-turn completion.
 
 UI tone mapping (`resolveContextBudgetTone`):
 
@@ -111,3 +112,5 @@ Acceptance scenarios:
 4. Quota-reset reminder visible with `usedTokens ≥ autoCompactThreshold`: trigger keeps the
    quota tone (success/urgent) and does not apply the budget tone.
 5. Invalid usage (`used = 0` or non-finite): no trigger recolor, tone attribute reads `normal`.
+6. A high-usage session with explicit `null` thresholds keeps both policies disabled immediately
+   after a model switch; only a later authoritative main-turn completion can replace those states.
