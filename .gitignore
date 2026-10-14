@@ -76,4 +76,4 @@ __pycache__/
 .zcode-runtime
 
 # Local ZCode agent session data (plans).
-.zcode/
+/.zcode/
