@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/dropdown-menu.js";
 import { usePlatform } from "@/hooks/usePlatform.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { runUserActionAsync } from "@/lib/userActionTelemetry.js";
 import { logger } from "@/logger.js";
 import { FolderOpen } from "lucide-react";
 import { PluginScopeMenu } from "@/settings/PluginScopeMenu.js";
@@ -78,6 +79,8 @@ export function MemorySettingsViewer({
   const [now, setNow] = useState(() => Date.now());
   const [openFileNames, setOpenFileNames] = useState<readonly string[]>([]);
   const [previews, setPreviews] = useState<Map<string, MemoryPreviewRecord>>(new Map());
+  const openFileNamesRef = useRef(openFileNames);
+  const previewsRef = useRef(previews);
   const previewRequestIdRef = useRef(0);
 
   useEffect(() => {
@@ -85,12 +88,22 @@ export function MemorySettingsViewer({
     return () => window.clearInterval(interval);
   }, []);
 
+  useLayoutEffect(() => {
+    openFileNamesRef.current = openFileNames;
+  }, [openFileNames]);
+
+  useLayoutEffect(() => {
+    previewsRef.current = previews;
+  }, [previews]);
+
   // A catalog refresh or a workspace switch invalidates in-flight and cached previews and closes
   // the accordion so a stale file name never renders another workspace's content. The scope id is
   // part of the deps because switching scopes keeps catalogState at "ready"; useLayoutEffect so
   // the stale preview is never painted.
   useLayoutEffect(() => {
     previewRequestIdRef.current += 1;
+    openFileNamesRef.current = [];
+    previewsRef.current = new Map();
     setPreviews(new Map());
     setOpenFileNames([]);
   }, [catalogState, selectedWorkspace?.id]);
@@ -143,7 +156,7 @@ export function MemorySettingsViewer({
       // The request id lives in the loading entry itself: with multiple rows open, file B's
       // request must not invalidate file A's in-flight callbacks (scoped per file, not global).
       setPreviews((previous) => new Map(previous).set(fileName, { status: "loading", requestId }));
-      memoryService
+      return memoryService
         .readProjectMemoryFile({ workspaceId, fileName })
         .then((result) => {
           setPreviews((previous) => {
@@ -169,51 +182,83 @@ export function MemorySettingsViewer({
               message: error instanceof Error ? error.message : String(error),
             });
           });
+          throw error;
         });
     },
     [memoryService],
   );
 
-  const handleAccordionValueChange = (
-    files: ProjectMemoryWorkspaceSummary["files"],
-    value: string[],
-  ) => {
-    const fileNames = new Set(files.map((file) => file.name));
-    setOpenFileNames((previous) => [...previous.filter((name) => !fileNames.has(name)), ...value]);
-    if (!selectedWorkspace) {
-      return;
-    }
-    const openedNames = new Set(value);
-    for (const file of files) {
-      if (openedNames.has(file.name) && !previews.has(file.name)) {
-        loadPreview(selectedWorkspace.id, file.name);
+  const recordPreviewExpansion = useCallback(
+    (workspaceId: string, fileName: string) => {
+      void runUserActionAsync({
+        input: { featureId: "settings.memory", action: "expand_preview", trigger: "button" },
+        operation: () => loadPreview(workspaceId, fileName),
+        completed: { resultSource: "local_commit" },
+        failureStage: "preview_read",
+      }).catch((error: unknown) => {
+        // The failed preview is already represented in the row; log the rejected telemetry operation.
+        logger.warn("[MemorySettingsViewer] Failed to load memory preview:", error);
+      });
+    },
+    [loadPreview],
+  );
+
+  const handleAccordionValueChange = useCallback(
+    (files: ProjectMemoryWorkspaceSummary["files"], value: string[]) => {
+      const previousNames = openFileNamesRef.current;
+      const fileNames = new Set(files.map((file) => file.name));
+      const nextNames = [...previousNames.filter((name) => !fileNames.has(name)), ...value];
+      openFileNamesRef.current = nextNames;
+      setOpenFileNames(nextNames);
+      if (!selectedWorkspace) {
+        return;
       }
-    }
-  };
+      for (const file of files) {
+        if (!value.includes(file.name) || previousNames.includes(file.name)) {
+          continue;
+        }
+        const preview = previewsRef.current.get(file.name);
+        if (!preview || preview.status === "error") {
+          recordPreviewExpansion(selectedWorkspace.id, file.name);
+        }
+      }
+    },
+    [recordPreviewExpansion, selectedWorkspace?.id],
+  );
 
   const toggleFile = useCallback(
     (fileName: string) => {
-      const isOpen = openFileNames.includes(fileName);
-      setOpenFileNames((previous) =>
-        isOpen ? previous.filter((name) => name !== fileName) : [...previous, fileName],
-      );
-      if (!isOpen && selectedWorkspace && !previews.has(fileName)) {
-        loadPreview(selectedWorkspace.id, fileName);
+      const previousNames = openFileNamesRef.current;
+      const isOpen = previousNames.includes(fileName);
+      const nextNames = isOpen
+        ? previousNames.filter((name) => name !== fileName)
+        : [...previousNames, fileName];
+      openFileNamesRef.current = nextNames;
+      setOpenFileNames(nextNames);
+      const preview = previewsRef.current.get(fileName);
+      if (!isOpen && selectedWorkspace && (!preview || preview.status === "error")) {
+        recordPreviewExpansion(selectedWorkspace.id, fileName);
       }
     },
-    [loadPreview, openFileNames, previews, selectedWorkspace],
+    [recordPreviewExpansion, selectedWorkspace?.id],
   );
 
   const handleOpenFolder = async (workspaceId: string) => {
-    try {
-      const { path } = await memoryService.getProjectMemoryDirectory({ workspaceId });
-      const result = await platform.openInFileManager(path);
-      if (!result.success) {
-        logger.warn("[MemorySettingsViewer] Failed to open memory folder:", result.error);
-      }
-    } catch (error) {
-      logger.warn("[MemorySettingsViewer] Failed to resolve memory folder:", error);
-    }
+    await runUserActionAsync({
+      input: { featureId: "settings.memory", action: "open_folder", trigger: "menu" },
+      operation: async () => {
+        const { path } = await memoryService.getProjectMemoryDirectory({ workspaceId });
+        const result = await platform.openInFileManager(path);
+        if (!result.success) {
+          throw new Error(result.error);
+        }
+        return result;
+      },
+      completed: { resultSource: "platform_result" },
+      failureStage: "open_memory_folder",
+    }).catch((error: unknown) => {
+      logger.warn("[MemorySettingsViewer] Failed to open memory folder:", error);
+    });
   };
 
   if (catalogError) {

@@ -44,11 +44,14 @@ rewritten.
    (`packages/ui/src/components/ui/accordion.tsx` — one bordered container, dividers,
    open-item tint, chevron, height animation). Any row, including the index, expands to an inline
    preview rendered by the existing Markdown renderer; content is loaded lazily via the already
-   implemented `readProjectMemoryFile` (slice 2 is wiring, not new service work). Preview meta shows
-   `originSessionId` + size; the type badge is not duplicated. No "5 MiB limit" captions in the UI;
+   implemented `readProjectMemoryFile` (slice 2 is wiring, not new service work). The preview body
+   contains only the rendered file content; it has no session-id metadata, and the type badge is not
+   duplicated. No "5 MiB limit" captions in the UI;
    the existing service cap and error codes remain the enforcement layer, with localized error
    states reusing `fileTooLarge` / `fileChanged` / `fileDeleted` / `noSelection` keys.
-4. **Index budget chip**: `MEMORY.md` shows `used/200 lines`. This is a real system limit — the
+4. **Index budget chip**: `MEMORY.md` shows the number of lines in the exact content the CLI injects,
+   against the `200`-line limit. Count after the CLI's frontmatter removal, top-level HTML-comment
+   removal, and trim; empty injected content is `0` lines. This is a real system limit — the
    injection-time truncation bound — not a UI invention, and it is deterministic (unlike tokens).
    When the file exceeds the bound the agent silently sees a truncated index, so proximity to 200
    is decision-relevant information.
@@ -102,6 +105,8 @@ rewritten.
 - i18n: en-US + uk-UA parity for every new key; reuse dead keys before adding new ones.
 - Telemetry: extend the existing `settings.memory` `runUserAction` feature ids (`open_folder`,
   `expand_preview`); no new telemetry systems.
+- Retry: closing and reopening a preview in an error state retries the file read. Ready previews
+  remain cached until the catalog or selected workspace changes.
 - Tests: services unit tests for frontmatter scan (tolerant parser, bounded read, lineCount);
   viewer component tests for grouping/chip/preview states; E2E for the expand-preview interaction
   (CI is the e2e gate locally).

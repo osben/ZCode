@@ -12,13 +12,72 @@ import {
   type ProjectMemoryFrontmatterMeta,
   parseProjectMemoryFrontmatter,
   readProjectMemoryFrontmatterHead,
-  stripProjectMemoryFrontmatter,
 } from "#src/memory/projectMemoryFrontmatter.js";
 import { getZCodeDataRootDir } from "#src/paths.js";
 
 const PROJECT_MEMORY_INDEX_FILE_NAME = "MEMORY.md";
 const PROJECT_MEMORY_DIRECTORY_NAME = "memory";
 const PROJECT_KEY_SUFFIX_PATTERN = /^(.*)-[a-f0-9]{16}$/i;
+const PROJECT_MEMORY_INDEX_FRONTMATTER_PATTERN = /^---\s*\n[\s\S]*?---\s*\n?/;
+const PROJECT_MEMORY_INDEX_HTML_COMMENT_PATTERN = /<!--[\s\S]*?-->/gu;
+
+function stripProjectMemoryIndexHtmlComments(content: string): string {
+  const lines = content.match(/[^\n]*\n|[^\n]+$/gu) ?? [];
+  let fence: { marker: "`" | "~"; length: number } | undefined;
+  let inComment = false;
+  let result = "";
+
+  for (const line of lines) {
+    const lineContent = line.replace(/\r?\n$/u, "");
+    const lineEnding = line.slice(lineContent.length);
+    if (fence) {
+      const closingFence = new RegExp(
+        `^ {0,3}${fence.marker === "`" ? "`" : "~"}{${fence.length},}\\s*$`,
+        "u",
+      );
+      if (closingFence.test(lineContent)) {
+        fence = undefined;
+      }
+      result += line;
+      continue;
+    }
+
+    const openingFence = /^ {0,3}(`{3,}|~{3,})/u.exec(lineContent)?.[1];
+    if (openingFence) {
+      fence = { marker: openingFence[0] as "`" | "~", length: openingFence.length };
+      result += line;
+      continue;
+    }
+
+    if (inComment) {
+      const commentEnd = lineContent.indexOf("-->");
+      if (commentEnd === -1) {
+        continue;
+      }
+      inComment = false;
+      result +=
+        lineContent.slice(commentEnd + 3).replace(PROJECT_MEMORY_INDEX_HTML_COMMENT_PATTERN, "") +
+        lineEnding;
+      continue;
+    }
+
+    if (lineContent.startsWith("<!--")) {
+      const commentEnd = lineContent.indexOf("-->");
+      if (commentEnd === -1) {
+        inComment = true;
+        continue;
+      }
+      result +=
+        lineContent.slice(commentEnd + 3).replace(PROJECT_MEMORY_INDEX_HTML_COMMENT_PATTERN, "") +
+        lineEnding;
+      continue;
+    }
+
+    result += line;
+  }
+
+  return result;
+}
 
 function isNotFoundError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
@@ -69,7 +128,11 @@ async function isPlainDirectory(path: string): Promise<boolean> {
 async function readProjectMemoryIndexLineCount(filePath: string): Promise<number | undefined> {
   try {
     const content = await readFile(filePath, "utf-8");
-    const trimmed = stripProjectMemoryFrontmatter(content).trim();
+    // Keep this normalization aligned with formatProjectMemoryIndexContent in the CLI: remove
+    // leading frontmatter and top-level HTML comments before trimming and counting injected lines.
+    const trimmed = stripProjectMemoryIndexHtmlComments(
+      content.replace(PROJECT_MEMORY_INDEX_FRONTMATTER_PATTERN, ""),
+    ).trim();
     return trimmed ? trimmed.split("\n").length : 0;
   } catch {
     // Concurrent deletion or a read failure only loses the budget chip; the catalog must not fail.

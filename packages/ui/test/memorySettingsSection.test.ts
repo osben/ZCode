@@ -55,6 +55,15 @@ const platformMock = vi.hoisted(() => ({
   openInFileManager: vi.fn(async () => ({ success: true })),
 }));
 
+const userActionTelemetryMock = vi.hoisted(() => ({
+  runUserActionAsync: vi.fn(async (options: { operation: () => Promise<unknown> }) =>
+    options.operation(),
+  ),
+  runUserAction: vi.fn((options: { operation: () => unknown }) => options.operation()),
+}));
+
+vi.mock("@/lib/userActionTelemetry.js", () => userActionTelemetryMock);
+
 vi.mock("@/hooks/usePlatform.js", () => ({
   usePlatform: () => platformMock,
 }));
@@ -423,6 +432,14 @@ describe("MemorySettingsSection", () => {
       workspaceId: "z-code-1111111111111111",
       fileName: "fact-a.md",
     });
+    expect(userActionTelemetryMock.runUserActionAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          featureId: "settings.memory",
+          action: "expand_preview",
+        }),
+      }),
+    );
   });
 
   it("clicking the editor control does not toggle the preview", async () => {
@@ -454,6 +471,26 @@ describe("MemorySettingsSection", () => {
     expect(await screen.findByText("settings.memory.viewer.fileTooLarge")).toBeTruthy();
   });
 
+  it("retries a failed preview when its accordion row is reopened", async () => {
+    const memoryService = createService();
+    vi.mocked(memoryService.readProjectMemoryFile)
+      .mockRejectedValueOnce(
+        Object.assign(new Error("changed"), { code: "PROJECT_MEMORY_FILE_CHANGED" }),
+      )
+      .mockResolvedValueOnce({ content: "reloaded preview", updatedAt: 2 });
+    renderSection(memoryService);
+    await screen.findByTestId(TID_SETTINGS_MEMORY_SCOPE_TRIGGER);
+
+    const row = screen.getByTestId(testId(TID_SETTINGS_MEMORY_FILE_NAME, "fact-a.md"));
+    fireEvent.click(row);
+    expect(await screen.findByText("settings.memory.viewer.fileChanged")).toBeTruthy();
+    fireEvent.click(row);
+    fireEvent.click(row);
+
+    expect(await screen.findByText("reloaded preview")).toBeTruthy();
+    expect(memoryService.readProjectMemoryFile).toHaveBeenCalledTimes(2);
+  });
+
   it("opens the selected workspace memory folder through the platform", async () => {
     const memoryService = createService();
     renderSection(memoryService);
@@ -468,6 +505,11 @@ describe("MemorySettingsSection", () => {
       }),
     );
     expect(platformMock.openInFileManager).toHaveBeenCalledWith("/memory/z-code-1111111111111111");
+    expect(userActionTelemetryMock.runUserActionAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({ featureId: "settings.memory", action: "open_folder" }),
+      }),
+    );
   });
 
   it("keeps per-file preview requests scoped when multiple rows open", async () => {
@@ -525,6 +567,14 @@ describe("MemorySettingsSection", () => {
       expect(memoryService.readProjectMemoryFile).toHaveBeenCalledWith({
         workspaceId: "z-code-1111111111111111",
         fileName: "MEMORY.md",
+      }),
+    );
+    expect(userActionTelemetryMock.runUserActionAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          featureId: "settings.memory",
+          action: "expand_preview",
+        }),
       }),
     );
   });

@@ -487,6 +487,20 @@ describe("memoryService Project Memory frontmatter meta", () => {
     expect(files[0]?.lineCount).toBe(0);
   });
 
+  it.each([
+    ["empty frontmatter", "---\n---\n", 0],
+    ["top-level HTML comment only", "<!-- internal note -->\n", 0],
+    ["content after a top-level HTML comment", "<!-- internal note -->\n# Index\n", 1],
+    ["HTML comments inside code fences", "```md\n<!-- literal -->\n```", 3],
+  ])("counts the CLI-injected index lines for %s", async (_label, content, expected) => {
+    const workspaceId = "normalized-index-project-8888888888888888";
+    await writeMemoryFile(workspaceId, "MEMORY.md", content);
+
+    const files = (await createMemoryService().listProjectMemories())[0]?.files ?? [];
+
+    expect(files[0]?.lineCount).toBe(expected);
+  });
+
   it("resolves the workspace memory directory for the folder-open action", async () => {
     const workspaceId = "folder-project-9999999999999999";
     await writeMemoryFile(workspaceId, "MEMORY.md", "index");
