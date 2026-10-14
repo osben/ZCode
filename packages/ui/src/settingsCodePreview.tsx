@@ -18,6 +18,7 @@ import {
   ThemePreviewCard,
   ThemeSelect,
 } from "@/settings/SettingsPageParts.js";
+import { FontFamilyPicker } from "@/settings/FontFamilyPicker.js";
 import { getCodePreviewTheme } from "@/lib/codePreviewPreferences.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import type { CodePreviewSettings } from "@/store/index.js";
@@ -88,6 +89,10 @@ export function AppearanceSectionContent({
   setPalette,
   uiFontSizePx,
   setUiFontSizePx,
+  uiFontFamily,
+  setUiFontFamily,
+  monoFontFamily,
+  setMonoFontFamily,
 }: {
   codePreviewSettings: CodePreviewSettings;
   setCodePreviewSettings: (settings: Partial<CodePreviewSettings>) => void;
@@ -97,6 +102,10 @@ export function AppearanceSectionContent({
   setPalette: (palette: ThemePalette) => void;
   uiFontSizePx: number;
   setUiFontSizePx: (fontSizePx: number) => void;
+  uiFontFamily: string | null;
+  setUiFontFamily: (value: string | null) => void;
+  monoFontFamily: string | null;
+  setMonoFontFamily: (value: string | null) => void;
 }) {
   const { intl } = useZCodeIntl();
   const activePreviewMode = resolveTheme(theme);
@@ -177,6 +186,21 @@ export function AppearanceSectionContent({
                   value={uiFontSizePx}
                   onChange={setUiFontSizePx}
                   ariaLabel={intl.formatMessage({ id: "settings.uiFontSize" })}
+                />
+              }
+            />
+            <SettingsRow
+              label={intl.formatMessage({ id: "settings.uiFont" })}
+              description={intl.formatMessage({
+                id: "settings.uiFontDescription",
+              })}
+              control={
+                <FontFamilyPicker
+                  key={uiFontFamily ?? ""}
+                  value={uiFontFamily}
+                  mono={false}
+                  ariaLabel={intl.formatMessage({ id: "settings.uiFont" })}
+                  onChange={setUiFontFamily}
                 />
               }
             />
@@ -263,6 +287,21 @@ export function AppearanceSectionContent({
                     value={codePreviewSettings.fontSizePx}
                     onChange={(fontSizePx) => setCodePreviewSettings({ fontSizePx })}
                     ariaLabel={intl.formatMessage({ id: "settings.fontSize" })}
+                  />
+                }
+              />
+              <SettingsRow
+                label={intl.formatMessage({ id: "settings.monoFont" })}
+                description={intl.formatMessage({
+                  id: "settings.monoFontDescription",
+                })}
+                control={
+                  <FontFamilyPicker
+                    key={monoFontFamily ?? ""}
+                    value={monoFontFamily}
+                    mono
+                    ariaLabel={intl.formatMessage({ id: "settings.monoFont" })}
+                    onChange={setMonoFontFamily}
                   />
                 }
               />
