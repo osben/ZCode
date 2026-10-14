@@ -281,6 +281,7 @@ const helpMessageByCommand = {
   model: "helpModel",
   mode: "helpMode",
   thoughtLevel: "helpThoughtLevel",
+  remote: "helpRemote",
   reply: "helpReply",
 } as const satisfies Record<(typeof BOT_MENU_COMMAND_ORDER)[number], BotMessageId>;
 
@@ -341,9 +342,21 @@ interface BotRemoteWorkspaceReconnectResult {
   message?: string;
 }
 
+interface BotRemoteWorkspaceWebRemoteLinkResult {
+  ok: boolean;
+  url?: string;
+  sessionId?: string;
+  reason?: "workspace-not-open" | "feature-disabled";
+  error?: string;
+}
+
 interface BotRemoteWorkspaceService {
   isConnected(target: BotRemoteWorkspaceTarget): Promise<boolean>;
   ensureConnected(target: BotRemoteWorkspaceTarget): Promise<BotRemoteWorkspaceReconnectResult>;
+  mintWebRemoteLink?(target: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+  }): Promise<BotRemoteWorkspaceWebRemoteLinkResult>;
   getZCodeTaskService?(target: BotRemoteWorkspaceTarget): Promise<IZCodeTaskService | null>;
   getModelSelectionService?(
     target: BotRemoteWorkspaceTarget,
@@ -371,6 +384,7 @@ type BotAuthorizedCommand =
   | "model"
   | "mode"
   | "thoughtLevel"
+  | "remote"
   | "task"
   | "reply"
   | "stop"
@@ -6282,6 +6296,38 @@ export function createBotsService(
     }
   }
 
+  async function handleRemoteLink(message: BotInboundMessage): Promise<BotOutboundMessage[]> {
+    const auth = await withAuthorizedContext(message, "remote");
+    if (!auth.ok) return auth.reply;
+    const mintWebRemoteLink = deps.remoteWorkspaceService?.mintWebRemoteLink;
+    if (!mintWebRemoteLink) {
+      return [createOutbound(message.actor, msg(auth.locale, "remoteLinkUnavailable"))];
+    }
+    const result = await mintWebRemoteLink({
+      workspacePath: auth.context.workspacePath,
+      ...(auth.context.workspaceIdentity
+        ? { workspaceIdentity: auth.context.workspaceIdentity }
+        : {}),
+    });
+    if (result.ok && result.url) {
+      return [
+        createOutbound(message.actor, msg(auth.locale, "remoteLinkReady", { url: result.url })),
+      ];
+    }
+    if (result.reason === "workspace-not-open") {
+      return [createOutbound(message.actor, msg(auth.locale, "remoteLinkWorkspaceNotOpen"))];
+    }
+    if (result.reason === "feature-disabled") {
+      return [createOutbound(message.actor, msg(auth.locale, "remoteLinkFeatureDisabled"))];
+    }
+    return [
+      createOutbound(
+        message.actor,
+        msg(auth.locale, "remoteLinkFailed", { message: result.error ?? "unknown" }),
+      ),
+    ];
+  }
+
   async function withAuthorizedContext(
     message: BotInboundMessage,
     requestedCommand: BotAuthorizedCommand,
@@ -8907,6 +8953,8 @@ export function createBotsService(
             return handleStatus(message);
           case "reconnect":
             return handleReconnect(message);
+          case "remote":
+            return handleRemoteLink(message);
           case "new": {
             const auth = await withAuthorizedContext(message, "new");
             if (!auth.ok) return auth.reply;

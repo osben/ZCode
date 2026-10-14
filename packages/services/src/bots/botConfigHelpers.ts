@@ -98,6 +98,7 @@ export function isUserCommandAllowed(
     | "model"
     | "mode"
     | "thoughtLevel"
+    | "remote"
     | "task"
     | "reply"
     | "stop"

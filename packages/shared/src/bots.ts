@@ -92,6 +92,7 @@ export interface BotAllowedCommands {
   thoughtLevel: boolean;
   sandboxMode?: boolean;
   approvalPolicy?: boolean;
+  remote?: boolean;
   reply: boolean;
 }
 
@@ -522,6 +523,7 @@ export type BotCommand =
   | { type: "mode.set"; value: string }
   | { type: "thoughtLevel.list" }
   | { type: "thoughtLevel.set"; value: string }
+  | { type: "remote" }
   | { type: "task.list" }
   | { type: "task.set"; value: string }
   | { type: "reply.list" }
@@ -696,6 +698,7 @@ export const botAllowedCommandsSchema = z
     thoughtLevel: z.boolean(),
     sandboxMode: z.boolean().optional(),
     approvalPolicy: z.boolean().optional(),
+    remote: z.boolean().optional(),
     // For compatibility with legacy bot-config.json; the /cli command was removed, so new configs no longer write this field.
     cli: z.boolean().optional(),
     reply: z.boolean(),
@@ -899,6 +902,7 @@ export const DEFAULT_BOT_COMMANDS: BotAllowedCommands = {
   model: true,
   mode: true,
   thoughtLevel: true,
+  remote: true,
   reply: true,
 };
 

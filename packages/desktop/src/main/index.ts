@@ -715,6 +715,8 @@ const UPDATE_STATUS_WINDOW_READY_HEIGHT = UPDATE_STATUS_WINDOW_PROGRESS_HEIGHT -
 const UPDATE_STATUS_WINDOW_TRAFFIC_LIGHT_POSITION = { x: 10, y: 10 } as const;
 const mainSettingService = createSettingService();
 const webRemoteControlCredentialService = createCredentialService();
+// Shared by the web-remote manager and the Bot /remote link handler so both apply the same gate decision.
+const webRemoteControlFeatureGate = createWebRemoteControlFeatureGate();
 const appLaunchGate = createAppLaunchGate();
 const appLaunchCoordinator = createAppLaunchCoordinator(appLaunchGate);
 const appTelemetryCredentialService = createCredentialService();
@@ -969,7 +971,7 @@ const webRemoteControlManager = createWebRemoteControlManager({
       });
     },
   },
-  featureGate: createWebRemoteControlFeatureGate(),
+  featureGate: webRemoteControlFeatureGate,
   logger,
   relayMessageLogger: webRemoteControlRelayLogger,
   platformHandlers: {
@@ -2012,6 +2014,55 @@ function createWindowInstance(startupBootstrap: StartupWindowBootstrap = {}) {
                 requestId,
               );
               return { ok: true, port };
+            } catch (error) {
+              return {
+                ok: false,
+                error: error instanceof Error ? error.message : String(error),
+              };
+            }
+          },
+          // Bot /remote: mint a web-remote control link for the bound workspace. Reuse a live
+          // runtime when possible; otherwise start one on a window that can serve the workspace.
+          handleBotRemoteWorkspaceWebRemoteLinkRequest: async ({
+            win,
+            requestId,
+            workspacePath,
+            workspaceIdentity,
+            target,
+          }) => {
+            try {
+              if (!webRemoteControlFeatureGate.isEnabled()) {
+                return { ok: false, reason: "feature-disabled" as const };
+              }
+              const existing = await webRemoteControlManager.findLinkForWorkspace({
+                workspacePath,
+                ...(workspaceIdentity ? { workspaceIdentity } : {}),
+              });
+              if (existing) {
+                return { ok: true, url: existing.url, sessionId: existing.sessionId };
+              }
+              if (target && workspaceIdentity) {
+                // Remote workspace: attach the session to the bot's host window (idempotent when
+                // already connected), then start the runtime on that same window.
+                const sessionId = await remoteSessionManager.reconnectBotRemoteWorkspaceSession(
+                  win,
+                  { target, workspacePath, workspaceIdentity, requestId },
+                );
+                const started = await webRemoteControlManager.start(win.id, {
+                  workspacePath,
+                  workspaceIdentity,
+                  remoteSessionId: sessionId,
+                });
+                return { ok: true, url: started.qrUrl, sessionId: started.sessionId };
+              }
+              for (const [windowId, windowPaths] of windowWorkspaceMap) {
+                if (!windowPaths.has(workspacePath)) {
+                  continue;
+                }
+                const started = await webRemoteControlManager.start(windowId, { workspacePath });
+                return { ok: true, url: started.qrUrl, sessionId: started.sessionId };
+              }
+              return { ok: false, reason: "workspace-not-open" as const };
             } catch (error) {
               return {
                 ok: false,

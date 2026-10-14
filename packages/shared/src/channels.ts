@@ -631,6 +631,8 @@ export const HostMessageTypes = {
   BotRemoteWorkspaceConnectionStatusResult: "bot-remote-workspace-connection-status-result",
   /** main → host: Bot remote-workspace runtime RPC port */
   BotRemoteWorkspaceRuntimePort: "bot-remote-workspace-runtime-port",
+  /** main → host: result of a Bot web-remote control link request */
+  BotRemoteWorkspaceWebRemoteLinkResult: "bot-remote-workspace-web-remote-link-result",
   /** main → host: deliver a session message to a target session managed by this host */
   SessionMessageDeliver: "session-message-deliver",
   /** main → host: write the session-message delivery result back to the source session */
@@ -726,6 +728,8 @@ export const HostResponseTypes = {
   BotRemoteWorkspaceConnectionStatusRequest: "bot-remote-workspace-connection-status-request",
   /** host → main: a Bot requests the remote-workspace runtime RPC port */
   BotRemoteWorkspaceRuntimePortRequest: "bot-remote-workspace-runtime-port-request",
+  /** host → main: a Bot requests a web-remote control link for the bound workspace */
+  BotRemoteWorkspaceWebRemoteLinkRequest: "bot-remote-workspace-web-remote-link-request",
   /** host → main: an Agent requests sending a message to another session */
   SessionMessageSendRequested: "session-message-send-requested",
   /** host → main: declare that a ZCode Agent session currently belongs to this host */

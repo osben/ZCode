@@ -81,6 +81,9 @@ export function parseBotCommand(text: string): BotCommand {
     case "think":
     case "思考":
       return rest ? { type: "thoughtLevel.set", value: rest } : { type: "thoughtLevel.list" };
+    case "remote":
+    case "远程":
+      return rest ? { type: "unknown", name, raw: text } : { type: "remote" };
     case "task":
       return rest ? { type: "task.set", value: rest } : { type: "task.list" };
     case "reply":
