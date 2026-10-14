@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { IntlInstance } from "@/i18n/IntlProvider.js";
-import { formatMemoryUpdatedAt } from "@/settings/memoryUpdatedAt.js";
+import { formatMemoryDayGroupLabel, formatMemoryUpdatedAt } from "@/settings/memoryUpdatedAt.js";
 
 const messages: Record<string, string> = {
   "settings.memory.viewer.updated.justNow": "刚刚",
@@ -12,6 +12,8 @@ const messages: Record<string, string> = {
   "settings.memory.viewer.updated.date": "{date} {time}",
   "settings.memory.viewer.updated.dateMonthDay": "{month} 月 {day} 日",
   "settings.memory.viewer.updated.dateYearMonthDay": "{year} 年 {month} 月 {day} 日",
+  "settings.memory.viewer.group.today": "今天",
+  "settings.memory.viewer.group.yesterday": "昨天",
 };
 
 const formatMessage: IntlInstance["formatMessage"] = ({ id }, values) => {
@@ -48,5 +50,30 @@ describe("formatMemoryUpdatedAt", () => {
 
   it("未来时间按刚刚处理", () => {
     expect(format(new Date(2026, 7, 7, 22, 40))).toBe("刚刚");
+  });
+});
+
+describe("formatMemoryDayGroupLabel", () => {
+  function label(value: Date, locale: "zh-CN" | "en-US" = "zh-CN"): string {
+    return formatMemoryDayGroupLabel({
+      formatMessage,
+      locale,
+      now,
+      updatedAt: value.getTime(),
+    });
+  }
+
+  it.each([
+    [new Date(2026, 7, 7, 22, 32), "今天"],
+    [new Date(2026, 7, 7, 0, 0), "今天"],
+    [new Date(2026, 7, 6, 23, 59), "昨天"],
+    [new Date(2026, 7, 3, 9, 5), "8 月 3 日"],
+    [new Date(2025, 11, 18, 9, 5), "2025 年 12 月 18 日"],
+  ])("groups memory files by local day %s", (updatedAt, expected) => {
+    expect(label(updatedAt)).toBe(expected);
+  });
+
+  it("formats group date labels without time", () => {
+    expect(label(new Date(2026, 7, 3, 9, 5))).not.toContain("09:05");
   });
 });

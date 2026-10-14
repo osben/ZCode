@@ -1,4 +1,5 @@
 import type { Memory, MemoryConfig } from "@zcode/shared";
+import { PROJECT_MEMORY_FILE_CHANGED_ERROR_CODE } from "./memory.js";
 import {
   type IMemoryService,
   type ProjectMemoryFileSummary,
@@ -7,8 +8,17 @@ import {
 import { lstat, mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative, sep } from "node:path";
-import { readProjectMemoryFileFromStableHandle } from "#src/memory/projectMemoryStableRead.js";
+import {
+  readProjectMemoryFileFromStableHandle,
+  readProjectMemoryFileWithStableHandle,
+} from "#src/memory/projectMemoryStableRead.js";
+import {
+  type ProjectMemoryFrontmatterMeta,
+  parseProjectMemoryFrontmatter,
+  readProjectMemoryFrontmatterHead,
+} from "#src/memory/projectMemoryFrontmatter.js";
 import { getZCodeDataRootDir } from "#src/paths.js";
+import { readProjectMemoryIndexLineCount } from "#src/memory/projectMemoryIndexContent.js";
 
 const PROJECT_MEMORY_INDEX_FILE_NAME = "MEMORY.md";
 const PROJECT_MEMORY_DIRECTORY_NAME = "memory";
@@ -16,6 +26,15 @@ const PROJECT_KEY_SUFFIX_PATTERN = /^(.*)-[a-f0-9]{16}$/i;
 
 function isNotFoundError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+
+function isProjectMemoryFileChangedError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === PROJECT_MEMORY_FILE_CHANGED_ERROR_CODE
+  );
 }
 
 function getProjectMemoriesRoot(): string {
@@ -57,6 +76,9 @@ async function isPlainDirectory(path: string): Promise<boolean> {
   }
 }
 
+// The index budget chip compares against the CLI injection line limit (MEMORY_INDEX_LINE_LIMIT in
+// apps/zcode-cli/packages/core/src/memory/index-content.ts), so the count must cover the whole
+// index file; the frontmatter head-scan bound only guards per-file metadata extraction.
 async function requirePlainDirectory(path: string): Promise<void> {
   const metadata = await lstat(path);
   if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
@@ -259,26 +281,65 @@ export function createMemoryService(): IMemoryService {
         }
 
         const filePath = join(memoryRoot, memoryEntry.name);
-        let fileMetadata;
+        const isIndex = memoryEntry.name === PROJECT_MEMORY_INDEX_FILE_NAME;
+        let frontmatterMeta: ProjectMemoryFrontmatterMeta = {};
+        let lineCount: number | undefined;
         try {
-          fileMetadata = await lstat(filePath);
+          const snapshot = await readProjectMemoryFileWithStableHandle({
+            fileName: memoryEntry.name,
+            filePath,
+            validatePath: async () => {
+              await requireProjectMemoriesRoot();
+              await requirePlainDirectory(workspaceRoot);
+              await requirePlainDirectory(memoryRoot);
+              await requireExactProjectMemoryFile(memoryRoot, memoryEntry.name);
+              await assertContainedProjectMemoryPath(projectsRoot, filePath);
+            },
+            readContent: async (handle) => {
+              let frontmatterHead: string | undefined;
+              try {
+                frontmatterHead = await readProjectMemoryFrontmatterHead(handle);
+              } catch {
+                // An unreadable frontmatter head degrades to a catalog row without YAML metadata.
+              }
+              let indexContent: string | undefined;
+              if (isIndex) {
+                try {
+                  indexContent = await handle.readFile({ encoding: "utf-8" });
+                } catch {
+                  // An unreadable index body omits only its optional line-count chip.
+                }
+              }
+              return { frontmatterHead, indexContent };
+            },
+          });
+          if (snapshot.content.frontmatterHead !== undefined) {
+            try {
+              frontmatterMeta = parseProjectMemoryFrontmatter(snapshot.content.frontmatterHead);
+            } catch {
+              // Missing or malformed YAML renders the file without meta.
+            }
+          }
+          if (snapshot.content.indexContent !== undefined) {
+            lineCount = readProjectMemoryIndexLineCount(snapshot.content.indexContent);
+          }
+          files.push({
+            name: memoryEntry.name,
+            path: filePath,
+            kind: isIndex ? "index" : "item",
+            size: snapshot.size,
+            updatedAt: snapshot.updatedAt,
+            ...(frontmatterMeta.description ? { description: frontmatterMeta.description } : {}),
+            ...(frontmatterMeta.type ? { type: frontmatterMeta.type } : {}),
+            ...(lineCount === undefined ? {} : { lineCount }),
+          });
         } catch (error) {
-          // The actual file may be deleted concurrently after readdir; it is no longer part of this read-only snapshot.
-          if (isNotFoundError(error)) {
+          // A file removed or replaced during enumeration is omitted rather than exposing stale or external metadata.
+          if (isNotFoundError(error) || isProjectMemoryFileChangedError(error)) {
             continue;
           }
           throw error;
         }
-        if (!fileMetadata.isFile() || fileMetadata.isSymbolicLink()) {
-          continue;
-        }
-        files.push({
-          name: memoryEntry.name,
-          path: filePath,
-          kind: memoryEntry.name === PROJECT_MEMORY_INDEX_FILE_NAME ? "index" : "item",
-          size: fileMetadata.size,
-          updatedAt: fileMetadata.mtimeMs,
-        });
       }
 
       if (files.length === 0) {
@@ -333,6 +394,31 @@ export function createMemoryService(): IMemoryService {
     });
   }
 
+  async function getProjectMemoryDirectory(params: {
+    workspaceId: string;
+  }): Promise<{ path: string }> {
+    if (!isValidPathSegment(params.workspaceId)) {
+      throw new Error("Invalid Project Memory path");
+    }
+
+    const projectsRoot = await requireProjectMemoriesRoot();
+    const workspaceRoot = join(projectsRoot, params.workspaceId);
+    const memoryRoot = join(workspaceRoot, PROJECT_MEMORY_DIRECTORY_NAME);
+    // Bugfix: on a case-insensitive filesystem, a requested name could match a disk directory with different casing and bypass the catalog allowlist.
+    const projectEntries = await readdir(projectsRoot, { withFileTypes: true });
+    const projectEntry = projectEntries.find((entry) => entry.name === params.workspaceId);
+    if (!projectEntry) {
+      await lstat(workspaceRoot);
+      throw new Error(
+        `Project Memory workspace name does not match exactly: ${params.workspaceId}`,
+      );
+    }
+    await requirePlainDirectory(workspaceRoot);
+    await requirePlainDirectory(memoryRoot);
+    await assertContainedProjectMemoryPath(projectsRoot, memoryRoot);
+    return { path: memoryRoot };
+  }
+
   return {
     loadMemory,
     saveMemory,
@@ -340,5 +426,6 @@ export function createMemoryService(): IMemoryService {
     getUserMemoryDirectory,
     listProjectMemories,
     readProjectMemoryFile,
+    getProjectMemoryDirectory,
   };
 }

@@ -11,7 +11,18 @@ describe("user action trace catalog", () => {
     expect(Object.keys(SETTINGS_USER_ACTION_FEATURES)).toHaveLength(15);
     expect(USER_ACTION_CATALOG.filter((entry) => entry.group === "core")).toHaveLength(94);
     // The fork adds change_palette, toggle_terminal_webgl, and Coding Plan auto-continue actions.
-    expect(USER_ACTION_CATALOG.filter((entry) => entry.group === "settings")).toHaveLength(47);
+    expect(USER_ACTION_CATALOG.filter((entry) => entry.group === "settings")).toHaveLength(49);
+    expect(
+      USER_ACTION_CATALOG.filter((entry) => entry.featureId === "settings.memory").map(
+        (entry) => entry.action,
+      ),
+    ).toEqual([
+      "toggle_memory",
+      "refresh_memory",
+      "change_memory_scope",
+      "open_folder",
+      "expand_preview",
+    ]);
   });
 
   it("feature/action 组合唯一且不使用动态标识", () => {

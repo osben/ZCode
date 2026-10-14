@@ -3,13 +3,18 @@ import { createElement, type ReactNode } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { IMemoryService } from "@zcode/services";
+import { PROJECT_MEMORY_PREVIEW_LIMIT_EXCEEDED_ERROR_CODE } from "@zcode/services";
 import {
   TID_SETTINGS_MEMORY_COUNT,
   TID_SETTINGS_MEMORY_FILE,
+  TID_SETTINGS_MEMORY_OPEN_FOLDER,
   TID_SETTINGS_MEMORY_FILE_EDITOR_ACTIONS,
   TID_SETTINGS_MEMORY_FILE_ICON,
   TID_SETTINGS_MEMORY_FILE_NAME,
+  TID_SETTINGS_MEMORY_FILE_TYPE,
   TID_SETTINGS_MEMORY_FILE_UPDATED_AT,
+  TID_SETTINGS_MEMORY_INDEX_LINES,
+  TID_SETTINGS_MEMORY_PREVIEW,
   TID_SETTINGS_MEMORY_SCOPE_ICON,
   TID_SETTINGS_MEMORY_SCOPE_TRIGGER,
   TID_SETTINGS_MEMORY_SEARCH_CLEAR,
@@ -44,6 +49,41 @@ vi.mock("@/WorkspaceEditorButtonGroup.js", () => ({
       "data-testid": `memory-editor-${workspaceAbsPath}`,
       type: "button",
     }),
+}));
+
+const platformMock = vi.hoisted(() => ({
+  openInFileManager: vi.fn(async () => ({ success: true })),
+}));
+
+const userActionTelemetryMock = vi.hoisted(() => ({
+  runUserActionAsync: vi.fn(async (options: { operation: () => Promise<unknown> }) =>
+    options.operation(),
+  ),
+  runUserAction: vi.fn((options: { operation: () => unknown }) => options.operation()),
+}));
+
+vi.mock("@/lib/userActionTelemetry.js", () => userActionTelemetryMock);
+
+vi.mock("@/hooks/usePlatform.js", () => ({
+  usePlatform: () => platformMock,
+}));
+
+vi.mock("@/components/ui/dropdown-menu.js", () => ({
+  DropdownMenu: ({ children }: { children: ReactNode }) => createElement("div", null, children),
+  DropdownMenuTrigger: ({ children }: { children: ReactNode }) => children,
+  DropdownMenuContent: ({ children }: { children: ReactNode }) =>
+    createElement("div", { role: "menu" }, children),
+  DropdownMenuItem: ({ children, onSelect }: { children: ReactNode; onSelect?: () => void }) =>
+    createElement(
+      "button",
+      { role: "menuitem", type: "button", onClick: () => onSelect?.() },
+      children,
+    ),
+}));
+
+vi.mock("@/previewPaneMarkdownContent.js", () => ({
+  MarkdownPreviewContent: ({ content }: { content: string }) =>
+    createElement("div", { "data-testid": "markdown-preview-stub" }, content),
 }));
 
 vi.mock("@/settings/PluginScopeMenu.js", () => ({
@@ -91,7 +131,10 @@ vi.mock("@/settings/PluginScopeMenu.js", () => ({
 
 import { MemorySettingsSection } from "@/settings/MemorySettingsSection.js";
 
-type MemoryCatalogService = Pick<IMemoryService, "listProjectMemories">;
+type MemoryCatalogService = Pick<
+  IMemoryService,
+  "listProjectMemories" | "readProjectMemoryFile" | "getProjectMemoryDirectory"
+>;
 
 const workspaces = [
   {
@@ -134,6 +177,13 @@ const workspaces = [
 function createService(): MemoryCatalogService {
   return {
     listProjectMemories: vi.fn(async () => workspaces),
+    readProjectMemoryFile: vi.fn(async (_params: { workspaceId: string; fileName: string }) => ({
+      content: "preview body",
+      updatedAt: 1,
+    })),
+    getProjectMemoryDirectory: vi.fn(async ({ workspaceId }: { workspaceId: string }) => ({
+      path: `/memory/${workspaceId}`,
+    })),
   };
 }
 
@@ -280,5 +330,252 @@ describe("MemorySettingsSection", () => {
     );
     expect(screen.getByText("settings.memory.viewer.localOnly")).toBeTruthy();
     expect(memoryService.listProjectMemories).not.toHaveBeenCalled();
+  });
+
+  it("renders the index section with a budget chip, meta rows, and a Today group", async () => {
+    const now = Date.now();
+    const memoryService = createService();
+    vi.mocked(memoryService.listProjectMemories).mockResolvedValueOnce([
+      {
+        id: "z-code-1111111111111111",
+        label: "z-code",
+        updatedAt: now,
+        files: [
+          {
+            name: "MEMORY.md",
+            path: "/memory/z-code/MEMORY.md",
+            kind: "index",
+            size: 4096,
+            updatedAt: now,
+            lineCount: 12,
+          },
+          {
+            name: "fact-a.md",
+            path: "/memory/z-code/fact-a.md",
+            kind: "item",
+            size: 2048,
+            updatedAt: now,
+            description: "Prefers pnpm workspaces",
+            type: "feedback",
+          },
+        ],
+      },
+    ]);
+    renderSection(memoryService);
+    await screen.findByTestId(TID_SETTINGS_MEMORY_SCOPE_TRIGGER);
+
+    expect(
+      screen.getByRole("heading", { name: "settings.memory.viewer.indexSection" }),
+    ).toBeTruthy();
+    expect(screen.getByTestId(TID_SETTINGS_MEMORY_INDEX_LINES).textContent).toBe("12/200");
+    expect(
+      screen.getByRole("heading", { name: "settings.memory.viewer.group.today" }),
+    ).toBeTruthy();
+    expect(screen.getByText("Prefers pnpm workspaces")).toBeTruthy();
+    expect(screen.getByTestId(testId(TID_SETTINGS_MEMORY_FILE_TYPE, "fact-a.md")).textContent).toBe(
+      "settings.memory.viewer.type.feedback",
+    );
+  });
+
+  it("matches the description text when searching", async () => {
+    const now = Date.now();
+    const memoryService = createService();
+    vi.mocked(memoryService.listProjectMemories).mockResolvedValueOnce([
+      {
+        id: "z-code-1111111111111111",
+        label: "z-code",
+        updatedAt: now,
+        files: [
+          {
+            name: "unrelated.md",
+            path: "/memory/z-code/unrelated.md",
+            kind: "item",
+            size: 10,
+            updatedAt: now,
+          },
+          {
+            name: "fact-a.md",
+            path: "/memory/z-code/fact-a.md",
+            kind: "item",
+            size: 10,
+            updatedAt: now,
+            description: "Prefers pnpm workspaces",
+            type: "feedback",
+          },
+        ],
+      },
+    ]);
+    renderSection(memoryService);
+    const search = await screen.findByTestId(TID_SETTINGS_MEMORY_SEARCH_INPUT);
+
+    fireEvent.change(search, { target: { value: "pnpm workspaces" } });
+    expect(screen.getByTestId(testId(TID_SETTINGS_MEMORY_FILE, "fact-a.md"))).toBeTruthy();
+    expect(screen.queryByTestId(testId(TID_SETTINGS_MEMORY_FILE, "unrelated.md"))).toBeNull();
+  });
+
+  it("lazily loads the preview when a row expands", async () => {
+    let resolveRead: ((value: { content: string; updatedAt: number }) => void) | undefined;
+    const memoryService = createService();
+    vi.mocked(memoryService.readProjectMemoryFile).mockImplementationOnce(
+      () => new Promise((resolve) => (resolveRead = resolve)),
+    );
+    renderSection(memoryService);
+    await screen.findByTestId(TID_SETTINGS_MEMORY_SCOPE_TRIGGER);
+
+    fireEvent.click(screen.getByTestId(testId(TID_SETTINGS_MEMORY_FILE_NAME, "fact-a.md")));
+    expect(await screen.findByText("settings.memory.viewer.fileLoading")).toBeTruthy();
+    resolveRead?.({ content: "# Fact body", updatedAt: 1 });
+
+    expect(await screen.findByText("# Fact body")).toBeTruthy();
+    expect(screen.getByTestId(testId(TID_SETTINGS_MEMORY_PREVIEW, "fact-a.md"))).toBeTruthy();
+    expect(memoryService.readProjectMemoryFile).toHaveBeenCalledWith({
+      workspaceId: "z-code-1111111111111111",
+      fileName: "fact-a.md",
+    });
+    expect(userActionTelemetryMock.runUserActionAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          featureId: "settings.memory",
+          action: "expand_preview",
+        }),
+      }),
+    );
+  });
+
+  it("clicking the editor control does not toggle the preview", async () => {
+    const memoryService = createService();
+    renderSection(memoryService);
+    await screen.findByTestId(TID_SETTINGS_MEMORY_SCOPE_TRIGGER);
+
+    fireEvent.click(screen.getByTestId("memory-editor-/memory/z-code/fact-a.md"));
+
+    expect(memoryService.readProjectMemoryFile).not.toHaveBeenCalled();
+    expect(screen.queryByText("settings.memory.viewer.fileLoading")).toBeNull();
+    expect(screen.queryByTestId("markdown-preview-stub")).toBeNull();
+  });
+
+  it("maps preview read failures to localized states", async () => {
+    const memoryService = createService();
+    vi.mocked(memoryService.readProjectMemoryFile).mockRejectedValueOnce(
+      Object.assign(new Error("gone"), { code: "ENOENT" }),
+    );
+    renderSection(memoryService);
+    await screen.findByTestId(TID_SETTINGS_MEMORY_SCOPE_TRIGGER);
+    fireEvent.click(screen.getByTestId(testId(TID_SETTINGS_MEMORY_FILE_NAME, "fact-a.md")));
+    expect(await screen.findByText("settings.memory.viewer.fileDeleted")).toBeTruthy();
+
+    vi.mocked(memoryService.readProjectMemoryFile).mockRejectedValueOnce(
+      Object.assign(new Error("big"), { code: PROJECT_MEMORY_PREVIEW_LIMIT_EXCEEDED_ERROR_CODE }),
+    );
+    fireEvent.click(screen.getByTestId(testId(TID_SETTINGS_MEMORY_FILE_NAME, "MEMORY.md")));
+    expect(await screen.findByText("settings.memory.viewer.fileTooLarge")).toBeTruthy();
+  });
+
+  it("retries a failed preview when its accordion row is reopened", async () => {
+    const memoryService = createService();
+    vi.mocked(memoryService.readProjectMemoryFile)
+      .mockRejectedValueOnce(
+        Object.assign(new Error("changed"), { code: "PROJECT_MEMORY_FILE_CHANGED" }),
+      )
+      .mockResolvedValueOnce({ content: "reloaded preview", updatedAt: 2 });
+    renderSection(memoryService);
+    await screen.findByTestId(TID_SETTINGS_MEMORY_SCOPE_TRIGGER);
+
+    const row = screen.getByTestId(testId(TID_SETTINGS_MEMORY_FILE_NAME, "fact-a.md"));
+    fireEvent.click(row);
+    expect(await screen.findByText("settings.memory.viewer.fileChanged")).toBeTruthy();
+    fireEvent.click(row);
+    fireEvent.click(row);
+
+    expect(await screen.findByText("reloaded preview")).toBeTruthy();
+    expect(memoryService.readProjectMemoryFile).toHaveBeenCalledTimes(2);
+  });
+
+  it("opens the selected workspace memory folder through the platform", async () => {
+    const memoryService = createService();
+    renderSection(memoryService);
+    await screen.findByTestId(TID_SETTINGS_MEMORY_SCOPE_TRIGGER);
+
+    fireEvent.click(screen.getByTestId(TID_SETTINGS_MEMORY_OPEN_FOLDER));
+    fireEvent.click(screen.getByRole("menuitem", { name: "z-code" }));
+
+    await waitFor(() =>
+      expect(memoryService.getProjectMemoryDirectory).toHaveBeenCalledWith({
+        workspaceId: "z-code-1111111111111111",
+      }),
+    );
+    expect(platformMock.openInFileManager).toHaveBeenCalledWith("/memory/z-code-1111111111111111");
+    expect(userActionTelemetryMock.runUserActionAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({ featureId: "settings.memory", action: "open_folder" }),
+      }),
+    );
+  });
+
+  it("keeps per-file preview requests scoped when multiple rows open", async () => {
+    const memoryService = createService();
+    const deferred = new Map<string, (value: { content: string; updatedAt: number }) => void>();
+    vi.mocked(memoryService.readProjectMemoryFile).mockImplementation(
+      ({ fileName }: { workspaceId: string; fileName: string }) =>
+        new Promise((resolve) => {
+          deferred.set(fileName, resolve);
+        }),
+    );
+    renderSection(memoryService);
+    await screen.findByTestId(TID_SETTINGS_MEMORY_SCOPE_TRIGGER);
+
+    fireEvent.click(screen.getByTestId(testId(TID_SETTINGS_MEMORY_FILE_NAME, "fact-a.md")));
+    fireEvent.click(screen.getByTestId(testId(TID_SETTINGS_MEMORY_FILE_NAME, "MEMORY.md")));
+    expect(screen.getAllByText("settings.memory.viewer.fileLoading")).toHaveLength(2);
+
+    deferred.get("MEMORY.md")?.({ content: "# Index body", updatedAt: 1 });
+    expect(await screen.findByText("# Index body")).toBeTruthy();
+
+    deferred.get("fact-a.md")?.({ content: "# Fact body", updatedAt: 1 });
+    expect(await screen.findByText("# Fact body")).toBeTruthy();
+  });
+
+  it("clears previews and closes rows when the workspace scope changes", async () => {
+    const memoryService = createService();
+    renderSection(memoryService);
+    await screen.findByTestId(TID_SETTINGS_MEMORY_SCOPE_TRIGGER);
+
+    fireEvent.click(screen.getByTestId(testId(TID_SETTINGS_MEMORY_FILE_NAME, "MEMORY.md")));
+    expect(await screen.findByText("preview body")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /second/ }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /z-code/ }));
+
+    expect(screen.queryByText("preview body")).toBeNull();
+    // Re-expanding must issue a fresh read instead of reusing the stale entry.
+    fireEvent.click(screen.getByTestId(testId(TID_SETTINGS_MEMORY_FILE_NAME, "MEMORY.md")));
+    expect(await screen.findByText("preview body")).toBeTruthy();
+    expect(memoryService.readProjectMemoryFile).toHaveBeenCalledTimes(2);
+  });
+
+  it("expands the row from the chevron toggle outside the trigger", async () => {
+    const memoryService = createService();
+    renderSection(memoryService);
+    await screen.findByTestId(TID_SETTINGS_MEMORY_SCOPE_TRIGGER);
+
+    const toggles = screen.getAllByRole("button", {
+      name: "settings.memory.viewer.togglePreview",
+    });
+    fireEvent.click(toggles[0]!);
+
+    await waitFor(() =>
+      expect(memoryService.readProjectMemoryFile).toHaveBeenCalledWith({
+        workspaceId: "z-code-1111111111111111",
+        fileName: "MEMORY.md",
+      }),
+    );
+    expect(userActionTelemetryMock.runUserActionAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          featureId: "settings.memory",
+          action: "expand_preview",
+        }),
+      }),
+    );
   });
 });

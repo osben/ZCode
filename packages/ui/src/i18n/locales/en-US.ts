@@ -2634,10 +2634,20 @@ const enUS: Record<string, string> = {
   "settings.memory.viewer.fileLoading": "Loading file…",
   "settings.memory.viewer.fileDeleted":
     "This memory file has been deleted. Refresh the file list to update it.",
-  "settings.memory.viewer.fileTooLarge": "This memory file exceeds the 5 MiB preview limit.",
+  "settings.memory.viewer.fileTooLarge": "This memory file is too large to preview.",
   "settings.memory.viewer.fileChanged":
     "This memory file was updated while being read. Reopen it or refresh the file list.",
   "settings.memory.viewer.noSelection": "Select a memory file to preview it.",
+  "settings.memory.viewer.indexSection": "Index",
+  "settings.memory.viewer.indexLinesAriaLabel": "{used} of {limit} index lines",
+  "settings.memory.viewer.openFolder": "Open memory folder",
+  "settings.memory.viewer.togglePreview": "Show or hide memory content",
+  "settings.memory.viewer.group.today": "Today",
+  "settings.memory.viewer.group.yesterday": "Yesterday",
+  "settings.memory.viewer.type.user": "User",
+  "settings.memory.viewer.type.feedback": "Feedback",
+  "settings.memory.viewer.type.project": "Project",
+  "settings.memory.viewer.type.reference": "Reference",
   "settings.httpProxy": "HTTP Proxy",
   "settings.httpProxyDescription":
     "Route model, MCP, command-tool, and app renderer egress traffic through this proxy; system environment variables are not read. Leave blank and that traffic connects directly, while the embedded browser follows your system proxy settings. Restart the app to take effect.",
