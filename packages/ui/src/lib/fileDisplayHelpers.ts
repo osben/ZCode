@@ -113,6 +113,9 @@ const EXTENSION_ICON_ALIASES: Record<string, string> = {
   sh: "console",
   snap: "snapcraft",
   svg: "svg",
+  // The icon set has no text.svg; without this alias resolveIconName falls back
+  // to the raw extension and the renderer requests a missing asset.
+  text: "document",
   toml: "toml",
   ts: "typescript",
   tsx: "react_ts",
