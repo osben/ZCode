@@ -97,6 +97,7 @@ This behavior applies to Desktop voice dictation. Web continues to show the exis
 
 ### UX
 
+- When Desktop voice dictation is enabled, keep its control in the primary composer toolbar beside the compression control, rather than in the secondary action row. Use the toolbar's regular icon-button size. The tooltip exposes the localized start/stop label and shortcut as separate hints, while the button keeps the localized action as its accessible name.
 - During recording, show a compact microphone-level meter in the composer voice control. Reuse the recorder's existing per-buffer peak level; do not draw or retain a waveform of the raw audio.
 - Keep the microphone stop button anchored in the toolbar while recording. Show the level meter and any live transcript in a floating panel to its left; the panel overlays earlier toolbar actions and must not change their layout positions.
 - Keep recording, transcribing, and idle visually distinct. The level meter is active only while recording and returns to zero on stop or cancel.
@@ -142,16 +143,17 @@ sequenceDiagram
 
 ### Acceptance scenarios for implementation
 
-| Case       | Action                                                  | Expected result                                                                                                             |
-| ---------- | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| VD-LIVE-01 | Start recording and speak                               | Composer level meter responds to microphone input; no raw waveform is stored or shown.                                      |
-| VD-LIVE-02 | Use a runtime-verified streaming model                  | Preview updates during recording; committed and tentative text are visually distinct and cannot be submitted as draft text. |
-| VD-LIVE-03 | Stop a streaming recording                              | Stream finalizes; preview becomes one final insertion with no duplicate text.                                               |
-| VD-LIVE-04 | Cancel, blur, unmount, or fail during streaming         | Capture stops, preview disappears, existing draft remains intact, and the model stream lease is released.                   |
-| VD-LIVE-05 | Use an unsupported or unverified model                  | Existing one-shot transcription behavior remains available; no streaming UI is advertised.                                  |
-| VD-LIVE-06 | Edit the composer while a preview is visible            | User edits are preserved; final dictation text is inserted once according to the existing append behavior.                  |
-| VD-LIVE-07 | Start a second transcription while one stream is active | The service serializes or rejects it explicitly; no concurrent model use or silent audio loss occurs.                       |
-| VD-LIVE-08 | Start recording while composer toolbar is visible       | Stop button stays in its original position; level/preview panel opens to its left without shifting toolbar actions.         |
+| Case       | Action                                                  | Expected result                                                                                                                                                                                   |
+| ---------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| VD-LIVE-01 | Start recording and speak                               | Composer level meter responds to microphone input; no raw waveform is stored or shown.                                                                                                            |
+| VD-LIVE-02 | Use a runtime-verified streaming model                  | Preview updates during recording; committed and tentative text are visually distinct and cannot be submitted as draft text.                                                                       |
+| VD-LIVE-03 | Stop a streaming recording                              | Stream finalizes; preview becomes one final insertion with no duplicate text.                                                                                                                     |
+| VD-LIVE-04 | Cancel, blur, unmount, or fail during streaming         | Capture stops, preview disappears, existing draft remains intact, and the model stream lease is released.                                                                                         |
+| VD-LIVE-05 | Use an unsupported or unverified model                  | Existing one-shot transcription behavior remains available; no streaming UI is advertised.                                                                                                        |
+| VD-LIVE-06 | Edit the composer while a preview is visible            | User edits are preserved; final dictation text is inserted once according to the existing append behavior.                                                                                        |
+| VD-LIVE-07 | Start a second transcription while one stream is active | The service serializes or rejects it explicitly; no concurrent model use or silent audio loss occurs.                                                                                             |
+| VD-LIVE-08 | Start recording while composer toolbar is visible       | Stop button stays in its original position; level/preview panel opens to its left without shifting toolbar actions.                                                                               |
+| VD-LIVE-09 | Desktop composer has voice dictation enabled            | Voice control is in the primary toolbar beside compression, uses the regular toolbar icon size, and exposes separate action/shortcut tooltip hints while retaining its localized accessible name. |
 
 ### E2E validation handoff
 
