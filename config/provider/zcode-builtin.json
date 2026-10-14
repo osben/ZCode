@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "revision": 35,
+  "revision": 36,
   "config": {
     "providerConfigRules": {
       "templateRules": [
@@ -335,10 +335,7 @@
               "baseUrl": "https://api.openai.com/v1"
             },
             "builtinModelIds": [
-              "gpt-6.1-sol",
               "gpt-6-astra",
-              "gpt-6-sol",
-              "gpt-6-luna",
               "gpt-5.6-sol",
               "gpt-5.6-terra",
               "gpt-5.6-luna",
@@ -1462,7 +1459,8 @@
             },
             "optionSpecs": {
               "reasoningLevel": {
-                "values": ["none", "low", "medium", "high", "xhigh", "max"]
+                "values": ["none", "low", "medium", "high", "xhigh", "max"],
+                "default": "high"
               },
               "maxOutputTokens": {
                 "max": 128000
@@ -1508,7 +1506,8 @@
             },
             "optionSpecs": {
               "reasoningLevel": {
-                "values": ["low", "medium", "high", "xhigh", "max"]
+                "values": ["low", "medium", "high", "xhigh", "max"],
+                "default": "high"
               },
               "maxOutputTokens": {
                 "max": 128000
