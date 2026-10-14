@@ -976,6 +976,7 @@ function createColdFakeApp(
       // auto-drain; same argument as above: the fake must explicitly declare no foreground work instead of
       // letting the property's absence become a TypeError.
       getActiveForegroundExecutionId: () => undefined,
+      getExecutionWorktree: () => options?.runtimeConfig?.executionWorktree ?? null,
       getSessionModelSelection: () => {
         const separator = model.indexOf("/");
         return {
@@ -1136,6 +1137,7 @@ describe("v4 冷恢复（集成：真 sqlite + server + binder）", () => {
     dbPath: string,
     workspaceIdentity?: WorkspaceId,
     taskType: "interactive" | "fork" | "subagent_child" = "interactive",
+    executionWorktree?: { path: string; branchName?: string },
   ): Promise<void> {
     const store = createSqliteSessionStore({ dbPath });
     try {
@@ -1148,6 +1150,12 @@ describe("v4 冷恢复（集成：真 sqlite + server + binder）", () => {
         slug: "cold-resume-session",
         directory: WORKSPACE_PATH,
         path: WORKSPACE_PATH,
+        ...(executionWorktree
+          ? {
+              executionDirectory: executionWorktree.path,
+              executionBranch: executionWorktree.branchName,
+            }
+          : {}),
         title: "Cold resume session",
         version: "test-version",
         time: { created: 1, updated: 4 },
@@ -1300,6 +1308,32 @@ describe("v4 冷恢复（集成：真 sqlite + server + binder）", () => {
       },
     };
   }
+
+  it("creates a cold-resumed app with the persisted execution worktree", async () => {
+    const dbPath = join(tempRoot, "sessions.db");
+    const executionWorktree = {
+      path: join(tempRoot, "worktree-checkout"),
+      branchName: "zcode/sleepy-capybara",
+    };
+    await seedPersistedSession(dbPath, undefined, "interactive", executionWorktree);
+    const createdAppOptions: ZCodeAppOptions[] = [];
+    const { server, store } = bootRestartedServer(dbPath, [], undefined, createdAppOptions);
+    try {
+      await requestResult(server, {
+        id: "cold-resume-worktree",
+        method: V4_METHODS.conversationSubscribe,
+        params: {
+          topic: conversationTopic(SESSION_ID),
+          connectionId: "conn-cold-resume-worktree",
+          clientMode: "desktop-continuous",
+        },
+      });
+
+      expect(createdAppOptions[0]?.runtimeConfig?.executionWorktree).toEqual(executionWorktree);
+    } finally {
+      store.close();
+    }
+  });
 
   it.each(["desktop-continuous", "web-remote-replayable"] as const)(
     "Todo123: %s 缺档位旧选择仍按 Registry 展示 1M，执行选择不被补齐",

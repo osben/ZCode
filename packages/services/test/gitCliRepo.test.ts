@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -416,6 +417,37 @@ describe("gitCliRepo", () => {
     ]);
   });
 
+  it("normalizes long Git paths with trailing separators", async () => {
+    const separators = "/".repeat(100_000);
+    const run = vi.fn(
+      async (options: GitCommandExecutionOptions): Promise<GitCommandExecutionResult> => {
+        if (options.args[0] === "rev-parse") {
+          return createCommandResult(options, {
+            stdout: `/repo\n\n/repo/.git${separators}\n/repo/.git${separators}\n`,
+          });
+        }
+        if (options.args.join(" ") === "worktree list --porcelain -z") {
+          return createCommandResult(options, {
+            stdout: `worktree /repo${separators}\0HEAD ${"a".repeat(40)}\0branch refs/heads/main\0\0`,
+          });
+        }
+        throw new Error(`Unexpected git command in test: ${options.args.join(" ")}`);
+      },
+    );
+    const repo = createGitCliRepo({
+      commandProvider: {
+        resolveGitBinary: vi.fn().mockResolvedValue("git"),
+        run,
+      },
+    });
+
+    const resolved = await repo.resolveRepository("/repo");
+    const worktrees = await repo.listWorktrees("/repo");
+
+    expect(resolved.autoRefreshWatchPaths).toEqual([{ path: "/repo/.git", recursive: true }]);
+    expect(worktrees.worktrees[0]?.isCurrent).toBe(true);
+  });
+
   it("treats spawn git ENOENT during repository resolution as not-repository", async () => {
     const workspacePath = "/missing/worktree-path";
     const run = vi.fn(
@@ -548,6 +580,29 @@ describe("gitCliRepo", () => {
 });
 
 describeIfGit("gitCliRepo worktree operations", () => {
+  it(
+    "resolves worktree path identities across symlink and trailing-separator aliases",
+    async () => {
+      const { container, repoPath } = createWorktreeTestRepo();
+      const aliasPath = join(container, "repo-alias");
+      symlinkSync(repoPath, aliasPath, process.platform === "win32" ? "junction" : "dir");
+      const repo = createGitCliRepo();
+
+      const identities = await repo.resolveWorktreePathIdentities([
+        repoPath,
+        aliasPath,
+        `${repoPath}${process.platform === "win32" ? "\\" : "/"}`,
+      ]);
+
+      expect(identities[1]).toBe(identities[0]);
+      expect(identities[2]).toBe(identities[0]);
+      await expect(repo.resolveWorktreePathIdentities(["relative/path"])).rejects.toThrow(
+        "Worktree path identity requires an absolute path",
+      );
+    },
+    GIT_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
   it(
     "lists the main worktree only for a plain repository",
     async () => {
@@ -762,6 +817,113 @@ describeIfGit("gitCliRepo worktree operations", () => {
       const blocked = await repo.createWorktree(container, "feature", join(container, "wt"));
       expect(blocked.ok).toBe(false);
       expect(blocked.issues).toEqual([expect.objectContaining({ code: "not-a-repository" })]);
+
+      const removeBlocked = await repo.removeWorktree(container, join(container, "wt"));
+      expect(removeBlocked.ok).toBe(false);
+      expect(removeBlocked.issues).toEqual([expect.objectContaining({ code: "not-a-repository" })]);
+
+      const pruneBlocked = await repo.pruneWorktrees(container);
+      expect(pruneBlocked.ok).toBe(false);
+      expect(pruneBlocked.prunedCount).toBe(0);
+      expect(pruneBlocked.issues).toEqual([expect.objectContaining({ code: "not-a-repository" })]);
+    },
+    GIT_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "removes a clean linked worktree and rejects main/foreign paths",
+    async () => {
+      const { container, repoPath } = createWorktreeTestRepo();
+      const repo = createGitCliRepo();
+      const linkedPath = join(container, "linked");
+      expect((await repo.createWorktree(repoPath, "feature", linkedPath, "release")).ok).toBe(true);
+
+      // The main worktree path is refused even though it is a valid worktree of the repo.
+      const mainRemove = await repo.removeWorktree(repoPath, repoPath);
+      expect(mainRemove.ok).toBe(false);
+      expect(mainRemove.issues[0]?.code).toBe("worktree-not-found");
+
+      // A path outside the repository's worktrees is refused as well.
+      const foreignRemove = await repo.removeWorktree(repoPath, join(container, "foreign"));
+      expect(foreignRemove.ok).toBe(false);
+      expect(foreignRemove.issues[0]?.code).toBe("worktree-not-found");
+
+      const removed = await repo.removeWorktree(repoPath, linkedPath);
+      expect(removed).toEqual({ ok: true, issues: [] });
+      expect(existsSync(linkedPath)).toBe(false);
+
+      const list = await repo.listWorktrees(repoPath);
+      expect(list.worktrees).toHaveLength(1);
+      expect(list.worktrees[0]?.isMain).toBe(true);
+    },
+    GIT_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "reports worktree-dirty without force and removes with force",
+    async () => {
+      const { container, repoPath } = createWorktreeTestRepo();
+      const repo = createGitCliRepo();
+      const linkedPath = join(container, "dirty");
+      expect((await repo.createWorktree(repoPath, "feature", linkedPath, "release")).ok).toBe(true);
+      writeFileSync(join(linkedPath, "scratch.txt"), "uncommitted\n");
+
+      const dirtyRemove = await repo.removeWorktree(repoPath, linkedPath);
+      expect(dirtyRemove.ok).toBe(false);
+      expect(dirtyRemove.issues[0]?.code).toBe("worktree-dirty");
+      expect(existsSync(linkedPath)).toBe(true);
+
+      const forcedRemove = await repo.removeWorktree(repoPath, linkedPath, true);
+      expect(forcedRemove.ok).toBe(true);
+      expect(existsSync(linkedPath)).toBe(false);
+    },
+    GIT_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "classifies locked worktrees and removes them with two force flags",
+    async () => {
+      const { container, repoPath } = createWorktreeTestRepo();
+      const repo = createGitCliRepo();
+      const linkedPath = join(container, "locked");
+      expect((await repo.createWorktree(repoPath, "feature", linkedPath, "release")).ok).toBe(true);
+      runGit(repoPath, ["worktree", "lock", "--reason", "test lock", linkedPath]);
+
+      const lockedRemove = await repo.removeWorktree(repoPath, linkedPath);
+      expect(lockedRemove.ok).toBe(false);
+      expect(lockedRemove.issues[0]?.code).toBe("worktree-locked");
+
+      const forcedRemove = await repo.removeWorktree(repoPath, linkedPath, true);
+      expect(forcedRemove).toEqual({ ok: true, issues: [] });
+      expect(existsSync(linkedPath)).toBe(false);
+    },
+    GIT_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "prunes stale records after the worktree directory is deleted by hand",
+    async () => {
+      const { container, repoPath } = createWorktreeTestRepo();
+      const repo = createGitCliRepo();
+      const linkedPath = join(container, "linked");
+      expect((await repo.createWorktree(repoPath, "feature", linkedPath, "release")).ok).toBe(true);
+      rmSync(linkedPath, { recursive: true, force: true });
+
+      // Before the prune the stale record is still listed…
+      const staleList = await repo.listWorktrees(repoPath);
+      expect(staleList.worktrees.find((entry) => entry.branchName === "feature")).toBeDefined();
+
+      const pruned = await repo.pruneWorktrees(repoPath);
+      expect(pruned.ok).toBe(true);
+      expect(pruned.prunedCount).toBeGreaterThanOrEqual(1);
+
+      // …and gone after it.
+      const cleanList = await repo.listWorktrees(repoPath);
+      expect(cleanList.worktrees).toHaveLength(1);
+
+      // A clean repository reports zero pruned records.
+      const idle = await repo.pruneWorktrees(repoPath);
+      expect(idle).toEqual({ ok: true, prunedCount: 0, issues: [] });
     },
     GIT_INTEGRATION_TEST_TIMEOUT_MS,
   );

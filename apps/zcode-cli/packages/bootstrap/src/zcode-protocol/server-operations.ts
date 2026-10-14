@@ -149,6 +149,7 @@ type ZCodeSessionRecordParams = (
       model?: ZCodeSessionCreateParams["model"];
       parentSessionId?: ZCodeSessionCreateParams["parentSessionId"];
       thoughtLevel?: ZCodeSessionCreateParams["thoughtLevel"];
+      executionWorktree?: ZCodeSessionCreateParams["executionWorktree"];
       // Automation sessions disable title regeneration at creation, and create/resume share the
       // record initializer; the resume compatibility branch must declare this policy field too.
       titleGenerationEnabled?: ZCodeSessionCreateParams["titleGenerationEnabled"];
@@ -1508,6 +1509,14 @@ export async function activateSessionForResume(
     {
       ...params,
       mode,
+      ...(session.executionDirectory
+        ? {
+            executionWorktree: {
+              path: session.executionDirectory,
+              ...(session.executionBranch ? { branchName: session.executionBranch } : {}),
+            },
+          }
+        : {}),
       // Restore the model only through the app's one-way migration/current entry; do not first create
       // a selection from a message or caller hint.
       model: undefined,
@@ -3483,6 +3492,11 @@ async function createRecord(
       // do not overwrite the original user-query title.
       titleGeneration: params.titleGenerationEnabled === false ? { enabled: false } : {},
       workingDirectory: workspace.workspacePath,
+      // Execution worktree: createZCodeApp derives the execution cwd from it while workspacePath
+      // above keeps the session identity/persistence anchored to the parent workspace.
+      ...("executionWorktree" in params && params.executionWorktree
+        ? { executionWorktree: params.executionWorktree }
+        : {}),
       // Keep identity isolation separate from execution paths: core writes only identity to
       // session.workspace_id, while workingDirectory remains the actual path on the remote machine.
       // Local workspaces keep it undefined.

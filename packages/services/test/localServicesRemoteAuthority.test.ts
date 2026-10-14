@@ -109,17 +109,19 @@ describe("createLocalServices remote authority", () => {
     process.env.HOME = home;
     writeLegacyZapiConfig(home);
 
-    const [{ createLocalServices, disposeServiceResources }, { IModelSelectionService }] =
+    const [{ createLocalServices, disposeServiceResourcesAndWait }, { IModelSelectionService }] =
       await Promise.all([import("../src/node.js"), import("../src/index.js")]);
     const services = createLocalServices({
       zcodeBuiltinProviderConfigFilePath: writeZCodeBuiltinProviderConfig(home),
       serviceAuthorityMode: "desktop-attached-remote",
     });
 
-    const providers = (await services.get(IModelSelectionService).getView()).providers;
-
-    expect(providers.some((provider) => provider.id === RETIRED_ZAPI_PROVIDER_ID)).toBe(false);
-    disposeServiceResources(services);
+    try {
+      const providers = (await services.get(IModelSelectionService).getView()).providers;
+      expect(providers.some((provider) => provider.id === RETIRED_ZAPI_PROVIDER_ID)).toBe(false);
+    } finally {
+      await disposeServiceResourcesAndWait(services);
+    }
   });
 
   it("desktop-attached Remote Host 不恢复旧 Model Preset 刷新", async () => {
@@ -134,7 +136,7 @@ describe("createLocalServices remote authority", () => {
     );
     vi.spyOn(globalThis, "fetch").mockImplementation(fetchImpl);
 
-    const { createLocalServices, disposeServiceResources } = await import("../src/node.js");
+    const { createLocalServices, disposeServiceResourcesAndWait } = await import("../src/node.js");
     const services = createLocalServices({
       zcodeBuiltinProviderConfigFilePath: writeZCodeBuiltinProviderConfig(home),
       serviceAuthorityMode: "desktop-attached-remote",
@@ -147,7 +149,7 @@ describe("createLocalServices remote authority", () => {
       expect(requestedUrls.some((url) => url.includes("/releases/latest"))).toBe(false);
       expect(requestedUrls.every((url) => url.includes("/client/configs"))).toBe(true);
     } finally {
-      disposeServiceResources(services);
+      await disposeServiceResourcesAndWait(services);
     }
   });
 
@@ -164,7 +166,7 @@ describe("createLocalServices remote authority", () => {
     );
     vi.spyOn(globalThis, "fetch").mockImplementation(fetchImpl);
 
-    const { createLocalServices, disposeServiceResources } = await import("../src/node.js");
+    const { createLocalServices, disposeServiceResourcesAndWait } = await import("../src/node.js");
     const services = createLocalServices({ zcodeBuiltinProviderConfigFilePath });
 
     try {
@@ -173,7 +175,7 @@ describe("createLocalServices remote authority", () => {
       const requestedUrls = fetchImpl.mock.calls.map(([input]) => String(input));
       expect(requestedUrls.some((url) => url.includes("/releases/latest"))).toBe(false);
     } finally {
-      disposeServiceResources(services);
+      await disposeServiceResourcesAndWait(services);
     }
   });
 
@@ -182,7 +184,7 @@ describe("createLocalServices remote authority", () => {
     process.env.HOME = home;
     const zcodeBuiltinProviderConfigFilePath = writeZCodeBuiltinProviderConfig(home);
     const commandResolver = vi.fn(() => null);
-    const [{ createLocalServices, disposeServiceResources }, { IZCodeAgentService }] =
+    const [{ createLocalServices, disposeServiceResourcesAndWait }, { IZCodeAgentService }] =
       await Promise.all([import("../src/node.js"), import("../src/index.js")]);
     const services = createLocalServices({
       zcodeBuiltinProviderConfigFilePath,
@@ -196,14 +198,14 @@ describe("createLocalServices remote authority", () => {
       ).resolves.toMatchObject({ available: false });
       expect(commandResolver).not.toHaveBeenCalled();
     } finally {
-      disposeServiceResources(services);
+      await disposeServiceResourcesAndWait(services);
     }
   });
 
   it("只在 desktop-attached-remote Environment 暴露 Provisioning target", async () => {
     const home = makeTempHome();
     process.env.HOME = home;
-    const { createLocalServices, disposeServiceResources } = await import("../src/node.js");
+    const { createLocalServices, disposeServiceResourcesAndWait } = await import("../src/node.js");
     const { IProviderProvisioningTargetService } = await import("../src/index.js");
     const remoteServices = createLocalServices({
       zcodeBuiltinProviderConfigFilePath: writeZCodeBuiltinProviderConfig(home),
@@ -218,8 +220,8 @@ describe("createLocalServices remote authority", () => {
       expect(remoteServices.getOptional(IProviderProvisioningTargetService)).toBeDefined();
       expect(localServices.getOptional(IProviderProvisioningTargetService)).toBeUndefined();
     } finally {
-      disposeServiceResources(remoteServices);
-      disposeServiceResources(localServices);
+      await disposeServiceResourcesAndWait(remoteServices);
+      await disposeServiceResourcesAndWait(localServices);
     }
   });
 
@@ -228,7 +230,7 @@ describe("createLocalServices remote authority", () => {
     process.env.HOME = home;
     mkdirSync(join(home, ".zcode", "v2"), { recursive: true });
     const onProviderProvisioningSourceChanged = vi.fn();
-    const [{ createLocalServices, disposeServiceResources }, serviceDescriptors] =
+    const [{ createLocalServices, disposeServiceResourcesAndWait }, serviceDescriptors] =
       await Promise.all([import("../src/node.js"), import("../src/index.js")]);
     const services = createLocalServices({
       zcodeBuiltinProviderConfigFilePath: writeZCodeBuiltinProviderConfig(home),
@@ -258,7 +260,7 @@ describe("createLocalServices remote authority", () => {
         ["credential"],
       ]);
     } finally {
-      disposeServiceResources(services);
+      await disposeServiceResourcesAndWait(services);
     }
   });
 
@@ -290,7 +292,7 @@ describe("createLocalServices remote authority", () => {
     });
     const {
       createLocalServices,
-      disposeServiceResources,
+      disposeServiceResourcesAndWait,
       getAccountRequestAuthService,
       getOffPeakRequestAuthBuilder,
     } = await import("../src/node.js");
@@ -362,7 +364,7 @@ describe("createLocalServices remote authority", () => {
       );
       expect(fetchToken.mock.calls.some(([url]) => String(url).includes("/copy/"))).toBe(false);
     } finally {
-      disposeServiceResources(services);
+      await disposeServiceResourcesAndWait(services);
     }
   });
 
@@ -380,7 +382,7 @@ describe("createLocalServices remote authority", () => {
       dispose: vi.fn(),
       disposeAndWait: vi.fn(async () => {}),
     };
-    const [{ createLocalServices, disposeServiceResources }, { IClientScenesService }] =
+    const [{ createLocalServices, disposeServiceResourcesAndWait }, { IClientScenesService }] =
       await Promise.all([import("../src/node.js"), import("../src/index.js")]);
     const services = createLocalServices({
       hostApiNetworkTransport: transport,
@@ -394,16 +396,16 @@ describe("createLocalServices remote authority", () => {
       });
       expect(transport.fetch).toHaveBeenCalledOnce();
     } finally {
-      disposeServiceResources(services);
+      await disposeServiceResourcesAndWait(services);
     }
 
-    expect(transport.dispose).toHaveBeenCalledOnce();
+    expect(transport.disposeAndWait).toHaveBeenCalledOnce();
   });
 
   it("exposes plugin sync through the local RPC server", async () => {
     const home = makeTempHome();
     process.env.HOME = home;
-    const [{ createLocalServices, disposeServiceResources }, { IPluginSyncService }] =
+    const [{ createLocalServices, disposeServiceResourcesAndWait }, { IPluginSyncService }] =
       await Promise.all([import("../src/node.js"), import("../src/index.js")]);
     const services = createLocalServices({
       zcodeBuiltinProviderConfigFilePath: writeZCodeBuiltinProviderConfig(home),
@@ -424,7 +426,7 @@ describe("createLocalServices remote authority", () => {
     } finally {
       client.dispose();
       server.dispose();
-      disposeServiceResources(services);
+      await disposeServiceResourcesAndWait(services);
     }
   });
 });

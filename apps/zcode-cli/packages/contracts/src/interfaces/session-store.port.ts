@@ -156,6 +156,13 @@ export interface SessionInfo {
   slug: string;
   directory: string;
   path?: string;
+  /**
+   * Execution worktree facts (see docs/superpowers/specs/2026-10-11-command-center-worktrees-themes-design.md,
+   * "execution worktree" section). directory/path keep the parent workspace so listing filters stay
+   * correct; cold resume restores workingDirectory from executionDirectory first.
+   */
+  executionDirectory?: string;
+  executionBranch?: string;
   title: string;
   titleSource?: SessionTitleSource;
   titleMessageID?: MessageId;
@@ -186,6 +193,8 @@ export interface CreateSessionInput {
   slug: string;
   directory: string;
   path?: string;
+  executionDirectory?: string;
+  executionBranch?: string;
   title: string;
   titleSource?: SessionTitleSource;
   titleMessageID?: MessageId;

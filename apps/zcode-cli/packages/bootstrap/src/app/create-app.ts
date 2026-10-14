@@ -169,7 +169,13 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
   const appVersion = options.version ?? "0.0.0";
   const sessionId = options.sessionId ?? createSessionId();
   const traceContext = options.traceContext ?? createRootTraceContext({ sessionId });
-  const workingDirectory = resolve(options.runtimeConfig?.workingDirectory ?? process.cwd());
+  // Execution worktree wins over workingDirectory: the agent executes in the linked worktree while
+  // workspacePath (and the persisted session identity) keep pointing at the parent workspace.
+  const workingDirectory = resolve(
+    options.runtimeConfig?.executionWorktree?.path ??
+      options.runtimeConfig?.workingDirectory ??
+      process.cwd(),
+  );
   const configResult = resolveEffectiveConfigResult(
     createConfig({
       env: options.env,
@@ -270,7 +276,12 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
     const sessionStore =
       options.sessionStore ?? (await openStartupSessionStore(configResult, startupTimer));
     const localSettingStore = asLocalSettingStore(sessionStore);
-    const projectID = projectIdFromDirectory(workingDirectory);
+    // Project-scoped persisted settings (collaboration mode) belong to the session's workspace, not
+    // the execution worktree: worktree sessions must read and write the same mode as sibling
+    // sessions of the parent project. Plain CLI runs have no workspacePath and keep using the cwd.
+    const projectID = projectIdFromDirectory(
+      resolve(options.runtimeConfig?.workspacePath ?? workingDirectory),
+    );
     const persistedMode = options.runtimeConfig?.mode
       ? undefined
       : readProjectPermissionMode(localSettingStore, projectID);

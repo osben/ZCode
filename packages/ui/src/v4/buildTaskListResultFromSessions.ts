@@ -66,6 +66,8 @@ function mergeTaskIndexRowWithSession(
     forkedFromTaskId: sessionTask.forkedFromTaskId ?? taskIndexTask.forkedFromTaskId,
     // Pending interaction belongs to the current session projection; if its summary has arrived with an empty field, clear the old persisted value.
     pendingInteraction: sessionTask.pendingInteraction,
+    // The worktree fact is session-projection-owned: the persistent task index has no column for it.
+    executionWorktree: sessionTask.executionWorktree,
   };
   return activity ? attachTaskListRowActivity(merged, activity) : merged;
 }

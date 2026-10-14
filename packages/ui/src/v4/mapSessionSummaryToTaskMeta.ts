@@ -81,6 +81,7 @@ export function mapSessionSummaryToTaskMeta(
             },
           }
         : {}),
+      ...(summary.executionWorktree ? { executionWorktree: summary.executionWorktree } : {}),
       ...(previous?.unreadAt ? { unreadAt: previous.unreadAt } : {}),
     },
     {

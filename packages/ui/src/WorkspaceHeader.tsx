@@ -215,6 +215,7 @@ export function WorkspaceHeader({
           user={user}
           readOnlyReason={readOnlyReason}
           workspaceAbsPath={workspaceAbsPath}
+          executionWorktreePath={resolvedActiveTaskMeta?.executionWorktree?.path}
           workspaceIdentity={workspaceIdentity}
           remoteSessionId={remoteSessionId}
           remoteTarget={remoteTarget}

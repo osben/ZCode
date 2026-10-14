@@ -1908,10 +1908,25 @@ export type ZCodeSessionSubagentsResult = z.infer<typeof zcodeSessionSubagentsRe
 /** Zod representation in the protocol of the server feature-key domain (packages/shared/src/dynamic-workflow-feature.ts). */
 export const zcodeDynamicWorkflowModeSchema = z.enum(DYNAMIC_WORKFLOW_MODES);
 
+/**
+ * Execution worktree for sessions whose agent runs in a linked git worktree while the session
+ * stays listed under the parent workspace. `path` is the absolute worktree directory used as the
+ * session execution cwd; `branchName` is the checked-out branch, persisted for display only.
+ */
+export const zcodeExecutionWorktreeSchema = z
+  .object({
+    path: nonEmptyString,
+    // Optional: cold sessions-index seeds read the persisted row where the branch may be absent.
+    branchName: nonEmptyString.optional(),
+  })
+  .strict();
+export type ZCodeExecutionWorktree = z.infer<typeof zcodeExecutionWorktreeSchema>;
+
 export const zcodeSessionCreateParamsSchema = z
   .object({
     sessionId: nonEmptyString.optional(),
     workspace: zcodeWorkspaceRefSchema,
+    executionWorktree: zcodeExecutionWorktreeSchema.optional(),
     parentSessionId: nonEmptyString.optional(),
     mode: zcodeSessionModeSchema.optional(),
     model: modelSelectionSchema.optional(),

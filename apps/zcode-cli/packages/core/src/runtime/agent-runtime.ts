@@ -399,6 +399,7 @@ export interface AgentRuntime {
   getSessionModelSelection(): ModelSelection | undefined;
   setSessionModelSelection(selection: ModelSelection | undefined): void;
   getProjectId(): ProjectId;
+  getExecutionWorktree(): { path: string; branchName?: string } | undefined;
   ensureSessionPersistedForExternalActivity(
     input: string,
     options?: { traceContext?: TraceContext },

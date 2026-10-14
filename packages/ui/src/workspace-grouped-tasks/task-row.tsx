@@ -4,7 +4,7 @@ import type { KeyboardEvent, MouseEvent } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import type { UniqueIdentifier } from "@dnd-kit/core";
 import { isCronTask, isOffPeakTask, type ZCodeTaskMeta } from "@zcode/shared";
-import { ArrowUpToLine, Clock, ListTree, LoaderIcon, Moon, X } from "lucide-react";
+import { ArrowUpToLine, Clock, GitBranch, ListTree, LoaderIcon, Moon, X } from "lucide-react";
 import { cn } from "@/components/lib/utils.js";
 import { Badge } from "@/components/ui/badge.js";
 import { BranchMergedBadge } from "@/components/BranchMergedBadge.js";
@@ -241,6 +241,26 @@ function GroupedTaskRowComponent({
                 className="size-3.5 shrink-0"
               />
             ) : null}
+            {!hasPendingInteraction && task.executionWorktree ? (
+              // Worktree-session marker: the agent runs in a linked worktree while the task stays
+              // in this project; the tooltip names the branch and directory.
+              <span
+                data-worktree-task-icon="true"
+                title={
+                  task.executionWorktree.branchName
+                    ? intl.formatMessage(
+                        { id: "taskList.worktreeTaskLabel" },
+                        { branch: task.executionWorktree.branchName },
+                      )
+                    : intl.formatMessage({ id: "taskList.worktreeTaskLabelNoBranch" })
+                }
+              >
+                <GitBranch
+                  aria-label={intl.formatMessage({ id: "taskList.worktreeTaskLabelNoBranch" })}
+                  className="size-3.5 shrink-0"
+                />
+              </span>
+            ) : null}
             {!hasPendingInteraction ? <span className="mr-1">{taskTimeLabel}</span> : null}
           </span>
         </span>
@@ -440,6 +460,24 @@ function GroupedTaskRowComponent({
                   aria-label={intl.formatMessage({ id: "taskList.offPeakTaskLabel" })}
                   className="size-3.5 shrink-0"
                 />
+              ) : null}
+              {!hasPendingInteraction && task.executionWorktree ? (
+                <span
+                  data-worktree-task-icon="true"
+                  title={
+                    task.executionWorktree.branchName
+                      ? intl.formatMessage(
+                          { id: "taskList.worktreeTaskLabel" },
+                          { branch: task.executionWorktree.branchName },
+                        )
+                      : intl.formatMessage({ id: "taskList.worktreeTaskLabelNoBranch" })
+                  }
+                >
+                  <GitBranch
+                    aria-label={intl.formatMessage({ id: "taskList.worktreeTaskLabelNoBranch" })}
+                    className="size-3.5 shrink-0"
+                  />
+                </span>
               ) : null}
               {!hasPendingInteraction ? <span className="mr-1">{taskTimeLabel}</span> : null}
             </span>

@@ -30,11 +30,12 @@ export function createSession(
       `
       insert into session (
         id, project_id, workspace_id, parent_id, trace_id, task_type, slug, directory, path,
+        execution_directory, execution_branch,
         title, title_source, title_message_id, version,
         share_url, summary_additions, summary_deletions, summary_files, summary_diffs,
         revert, permission, time_created, time_updated, time_title_updated,
         time_compacting, time_archived
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, null, null, null, null, ?, ?, ?, ?, null, null)
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, null, null, null, null, ?, ?, ?, ?, null, null)
       on conflict(id) do update set
         project_id = excluded.project_id,
         workspace_id = excluded.workspace_id,
@@ -44,6 +45,8 @@ export function createSession(
         slug = excluded.slug,
         directory = excluded.directory,
         path = excluded.path,
+        execution_directory = coalesce(session.execution_directory, excluded.execution_directory),
+        execution_branch = coalesce(session.execution_branch, excluded.execution_branch),
         title = excluded.title,
         title_source = excluded.title_source,
         title_message_id = excluded.title_message_id,
@@ -64,6 +67,8 @@ export function createSession(
       input.slug,
       input.directory,
       input.path ?? null,
+      input.executionDirectory ?? null,
+      input.executionBranch ?? null,
       input.title,
       input.titleSource ?? "first_input",
       input.titleMessageID ?? null,

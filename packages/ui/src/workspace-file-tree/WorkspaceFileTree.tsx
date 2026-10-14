@@ -92,6 +92,7 @@ export function WorkspaceFileTree({
   workspaceRemoteSessionId,
   revealPath,
   temporaryExternalDirectory = false,
+  executionWorktreePath,
   canOpenLocalFileManager = false,
   activePreviewPath,
   onClose,
@@ -418,22 +419,25 @@ export function WorkspaceFileTree({
     if (!canOpenInFileManager) {
       return;
     }
+    // A worktree session's meaningful directory is the linked worktree, not the workspace checkout.
+    const openTargetPath = executionWorktreePath ?? workspacePath;
     const result = wslFileManagerEditor
-      ? await platform.openInEditor(wslFileManagerEditor.id, workspacePath, {
+      ? await platform.openInEditor(wslFileManagerEditor.id, openTargetPath, {
           pathKind: "directory",
           remoteTarget,
           workspaceIdentity,
         })
-      : await platform.openInFileManager(workspacePath);
+      : await platform.openInFileManager(openTargetPath);
     if (!result.success) {
-      logger.warn("[WorkspaceFileTree] 打开 workspace 路径失败", {
-        path: workspacePath,
+      logger.warn("[WorkspaceFileTree] open workspace path failed", {
+        path: openTargetPath,
         error: result.error ?? "unknown-error",
       });
       toast(intl.formatMessage({ id: "appHeader.openInFileManagerFailed" }));
     }
   }, [
     canOpenInFileManager,
+    executionWorktreePath,
     intl,
     platform,
     remoteTarget,
@@ -443,25 +447,27 @@ export function WorkspaceFileTree({
   ]);
 
   const handleCopyPath = useCallback(async () => {
+    // Mirror the open action: the copied root is the worktree for worktree sessions.
+    const copyTargetPath = executionWorktreePath ?? workspacePath;
     if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
-      logger.warn("[WorkspaceFileTree] 复制 workspace 路径失败", {
-        path: workspacePath,
+      logger.warn("[WorkspaceFileTree] copy workspace path failed", {
+        path: copyTargetPath,
         error: "clipboard-unavailable",
       });
       return;
     }
     try {
-      await navigator.clipboard.writeText(workspacePath);
-      logger.info("[WorkspaceFileTree] workspace 路径已复制", {
-        path: workspacePath,
+      await navigator.clipboard.writeText(copyTargetPath);
+      logger.info("[WorkspaceFileTree] workspace path copied", {
+        path: copyTargetPath,
       });
     } catch (error) {
-      logger.warn("[WorkspaceFileTree] 复制 workspace 路径失败", {
-        path: workspacePath,
+      logger.warn("[WorkspaceFileTree] copy workspace path failed", {
+        path: copyTargetPath,
         error: error instanceof Error ? error.message : String(error),
       });
     }
-  }, [workspacePath]);
+  }, [executionWorktreePath, workspacePath]);
 
   const handleToggleDirectory = useCallback(
     (row: WorkspaceFileTreeRow) => {

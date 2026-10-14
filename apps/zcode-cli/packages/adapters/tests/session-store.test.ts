@@ -343,6 +343,55 @@ describe("SQLite session store", () => {
     }
   });
 
+  it("persists execution worktree facts beside the parent workspace identity", async () => {
+    const store = createSqliteSessionStore({ dbPath: ":memory:" });
+    const sessionID = createSessionId("worktree-execution");
+    try {
+      await store.createSession({
+        id: sessionID,
+        projectID: createProjectId("worktree-execution"),
+        slug: "worktree-execution",
+        directory: "/home/dev/project",
+        path: "/home/dev/project",
+        executionDirectory: "/home/dev/worktrees/zcode-sleepy-capybara",
+        executionBranch: "zcode/sleepy-capybara",
+        title: "worktree session",
+        version: "0.1.0",
+        time: { created: 1, updated: 2 },
+      });
+
+      // Listing by the parent directory still matches: the worktree lives in dedicated columns.
+      await expect(
+        store.listSessions({ directory: "/home/dev/project" }),
+      ).resolves.toHaveLength(1);
+      await expect(store.getSession(sessionID)).resolves.toMatchObject({
+        directory: "/home/dev/project",
+        path: "/home/dev/project",
+        executionDirectory: "/home/dev/worktrees/zcode-sleepy-capybara",
+        executionBranch: "zcode/sleepy-capybara",
+      });
+
+      // Ordinary sessions keep the columns unset.
+      const plainID = createSessionId("plain-execution");
+      await store.createSession({
+        id: plainID,
+        projectID: createProjectId("worktree-execution"),
+        slug: "plain-execution",
+        directory: "/home/dev/project",
+        path: "/home/dev/project",
+        title: "plain session",
+        version: "0.1.0",
+        time: { created: 3, updated: 4 },
+      });
+      await expect(store.getSession(plainID)).resolves.toMatchObject({
+        executionDirectory: undefined,
+        executionBranch: undefined,
+      });
+    } finally {
+      store.close();
+    }
+  });
+
   it("keeps session activity time monotonic when path repair uses an older snapshot", async () => {
     const store = createSqliteSessionStore({ dbPath: ":memory:" });
     const sessionID = createSessionId("remote-path-repair-race");
@@ -385,7 +434,7 @@ describe("SQLite session store", () => {
   it("keeps the existing in-memory session store path working", () => {
     const store = createSqliteSessionStore({ dbPath: ":memory:" });
     try {
-      expect(store.debugMigrationIds()).toHaveLength(22);
+      expect(store.debugMigrationIds()).toHaveLength(23);
     } finally {
       store.close();
     }
@@ -511,6 +560,7 @@ describe("SQLite session store", () => {
       "0020_provider_model_selection",
         "0021_official_glm_selection",
         "0022_backfilled_session_reasoning",
+        "0023_session_execution_worktree",
     ];
 
     try {
@@ -547,12 +597,19 @@ describe("SQLite session store", () => {
         "0.16.5",
         "0.16.5",
         "0.16.5",
+        "0.16.9",
       ]);
       const modelUsageColumns = db.prepare("pragma table_info(model_usage)").all() as Array<{
         name: string;
       }>;
       expect(modelUsageColumns.map((column) => column.name)).toContain("variant");
       expect(modelUsageColumns.map((column) => column.name)).not.toContain("reasoning_level");
+      const sessionColumns = db.prepare("pragma table_info(session)").all() as Array<{
+        name: string;
+      }>;
+      expect(sessionColumns.map((column) => column.name)).toEqual(
+        expect.arrayContaining(["execution_directory", "execution_branch"]),
+      );
       db.close();
 
       const secondStore = createSqliteSessionStore({ dbPath });
@@ -588,7 +645,7 @@ describe("SQLite session store", () => {
         ]),
       );
       expect(attempts.flat().filter((result) => !result.ok)).toEqual([]);
-      expect(attempts.flat().every((result) => result.migrationIds?.length === 22)).toBe(true);
+      expect(attempts.flat().every((result) => result.migrationIds?.length === 23)).toBe(true);
     },
     CONCURRENT_STARTUP_TEST_TIMEOUT_MS,
   );
@@ -811,6 +868,7 @@ describe("SQLite session store", () => {
         "0020_provider_model_selection",
         "0021_official_glm_selection",
         "0022_backfilled_session_reasoning",
+        "0023_session_execution_worktree",
       ]);
       store.close();
     } finally {

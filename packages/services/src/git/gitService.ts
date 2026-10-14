@@ -265,6 +265,10 @@ export function createGitService(options?: {
       return await repo.listWorktrees(params.workspacePath);
     },
 
+    async resolveWorktreePathIdentities(params) {
+      return await repo.resolveWorktreePathIdentities(params.paths);
+    },
+
     async createWorktree(params) {
       return await repo.createWorktree(
         params.workspacePath,
@@ -272,6 +276,14 @@ export function createGitService(options?: {
         params.targetPath,
         params.baseBranch,
       );
+    },
+
+    async removeWorktree(params) {
+      return await repo.removeWorktree(params.workspacePath, params.targetPath, params.force);
+    },
+
+    async pruneWorktrees(params) {
+      return await repo.pruneWorktrees(params.workspacePath);
     },
 
     async getChanges(params) {

@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 //
-// Worktrees 设置分区（Stage D，spec «Настройки Worktree»；Stage F 全局存储）：
-// - 位置 Select：切到 Custom 才显示路径输入；相对路径就地报错且不落盘（WTS-01）；
-//   Global storage 选项仅在平台实现 getAppWorktreesDir（desktop）时出现；
-//   预置模式示例行为固定短格式，custom 仍计算真实路径（Stage F 评审要求）；
-// - 默认分支前缀：blur 提交、示例用 composeBranchName、Reset 清空；
-// - 项目覆盖：仅展开的行懒加载本地分支（WTS-02 / “不逐行打 Git”），blur 提交 override，
-//   Reset to global 删除条目；未知基准分支显示温和告警。
-// harness 持有 settings 状态：update patch 立即回灌，模拟真实 snapshot 刷新后的重渲染。
+// Worktrees settings section (Stage D, spec «Настройки Worktree»; Stage F global storage):
+// - location Select: the path input appears only for Custom; relative paths error inline and are not persisted (WTS-01);
+//   the Global storage option appears only when the platform implements getAppWorktreesDir (desktop);
+//   preset modes show a fixed short example while custom computes the real path (Stage F review requirement);
+// - default branch prefix: commits on blur, the example uses composeBranchName, Reset clears;
+// - project overrides: only the expanded row lazily loads local branches (WTS-02 / "no Git per row"), blur commits the override,
+//   Reset to global deletes the entry; unknown base branches show a soft warning.
+// The harness owns settings state: update patches feed back immediately, simulating the re-render after a real snapshot refresh.
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createElement, useState } from "react";
@@ -19,7 +19,7 @@ const mocks = vi.hoisted(() => ({
   onSelectDirectory: vi.fn(),
   getLocalBranches: vi.fn(),
   selectOnValueChange: undefined as ((value: string) => void) | undefined,
-  // Stage F：platform.getAppWorktreesDir 是否可用（desktop-only）按用例切换。
+  // Stage F: whether platform.getAppWorktreesDir is available (desktop-only) toggles per test case.
   platformAvailable: false,
   getAppWorktreesDir: vi.fn(async () => "/Users/dev/.zcode/worktrees"),
 }));
@@ -143,7 +143,7 @@ describe("WorktreesSection location", () => {
     expect(container.querySelector('[data-option="global"]')).toBeTruthy();
     expect(container.querySelectorAll("[data-option]")).toHaveLength(4);
 
-    // 预置模式示例行为固定短格式（Stage F 评审字符串），不依赖真实项目路径。
+    // Preset modes show a fixed short example (Stage F review string) independent of real project paths.
     expect(
       screen.getByText("settings.worktrees.location.example: example-repo-worktrees/my-branch"),
     ).toBeTruthy();
@@ -172,9 +172,10 @@ describe("WorktreesSection location", () => {
       worktreeLocationMode: "custom",
       worktreeCustomLocationPath: "/wt-root",
     });
-    // custom 仍计算真实路径：LOCAL_TABS 的 /dev/alpha + 示例分支名 task-name。
+    // Custom still computes the real path: LOCAL_TABS /dev/alpha + preview branch name
+    // (default zcode/ prefix + the generated sleepy-capybara).
     expect(
-      screen.getByText("settings.worktrees.location.example: /wt-root/alpha-task-name"),
+      screen.getByText("settings.worktrees.location.example: /wt-root/alpha-zcode-sleepy-capybara"),
     ).toBeTruthy();
   });
 
@@ -216,25 +217,38 @@ describe("WorktreesSection location", () => {
 });
 
 describe("WorktreesSection branch prefix", () => {
-  it("commits on blur with a live composed example and clears via reset", () => {
+  it("commits on blur with a live composed example and resets to the zcode/ default", () => {
     const { update } = renderSection({ worktreeBranchPrefix: "dev/" });
     const input = screen.getByLabelText("settings.worktrees.branchPrefix");
     expect(
-      screen.getByText("settings.worktrees.branchPrefix.example:name=dev/task-name"),
+      screen.getByText("settings.worktrees.branchPrefix.example:name=dev/sleepy-capybara"),
     ).toBeTruthy();
 
     fireEvent.change(input, { target: { value: "feat/" } });
-    // 输入过程不落盘，只有 blur 提交。
+    // Typing does not persist; only blur commits.
     expect(update).not.toHaveBeenCalled();
     fireEvent.blur(input);
     expect(update).toHaveBeenCalledWith({ worktreeBranchPrefix: "feat/" });
     expect(
-      screen.getByText("settings.worktrees.branchPrefix.example:name=feat/task-name"),
+      screen.getByText("settings.worktrees.branchPrefix.example:name=feat/sleepy-capybara"),
     ).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "settings.worktrees.branchPrefix.reset" }));
     expect(update).toHaveBeenCalledWith({ worktreeBranchPrefix: "" });
-    expect(screen.getByText("settings.worktrees.branchPrefix.example:name=task-name")).toBeTruthy();
+    // Reset deletes the saved field; the display resolves to the zcode/ flow default
+    // (preview = prefix + fixed generated name sleepy-capybara).
+    expect(
+      screen.getByText("settings.worktrees.branchPrefix.example:name=zcode/sleepy-capybara"),
+    ).toBeTruthy();
+  });
+
+  it("shows the zcode/ default when nothing is saved and keeps reset inert", () => {
+    const { update } = renderSection();
+    expect(screen.getByLabelText("settings.worktrees.branchPrefix")).toHaveProperty(
+      "value",
+      "zcode/",
+    );
+    expect(update).not.toHaveBeenCalled();
   });
 });
 
@@ -274,12 +288,12 @@ describe("WorktreesSection project overrides", () => {
       "settings.worktrees.projects.defaultBaseBranch",
     );
 
-    // 清空基准分支并 blur：两个字段都空 → 删除 override 条目（= Reset 语义）。
+    // Clear both fields and blur: both empty → delete the override entry (= Reset semantics).
     fireEvent.change(baseBranchInput, { target: { value: "" } });
     fireEvent.blur(baseBranchInput);
     expect(update).toHaveBeenCalledWith({ worktreeProjectOverrides: {} });
 
-    // 重新输入并提交：写入单字段 override。
+    // Re-enter and commit: a single-field override is written.
     fireEvent.change(baseBranchInput, { target: { value: "dev" } });
     fireEvent.blur(baseBranchInput);
     expect(update).toHaveBeenLastCalledWith({

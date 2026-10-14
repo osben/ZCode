@@ -42,6 +42,25 @@ describe("mapSessionSummaryToTaskMeta", () => {
     });
   });
 
+  it("executionWorktree passes through when present and stays absent otherwise", () => {
+    const withWorktree = mapSessionSummaryToTaskMeta(
+      summary({
+        executionWorktree: {
+          path: "/repo/../worktrees/zcode-sleepy-capybara",
+          branchName: "zcode/sleepy-capybara",
+        },
+      }),
+      { workspacePath: "/ws" },
+    );
+    expect(withWorktree.executionWorktree).toEqual({
+      path: "/repo/../worktrees/zcode-sleepy-capybara",
+      branchName: "zcode/sleepy-capybara",
+    });
+    expect(
+      "executionWorktree" in mapSessionSummaryToTaskMeta(summary(), { workspacePath: "/ws" }),
+    ).toBe(false);
+  });
+
   it("workflowActivity 原样搬进 sidecar（侧栏运行行的数据），缺席时不建键", () => {
     const workflowActivity: SessionSummary["workflowActivity"] = {
       runs: [

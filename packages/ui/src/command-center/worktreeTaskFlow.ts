@@ -3,10 +3,10 @@
  * (project page → setup page → Start; see
  * docs/superpowers/specs/2026-10-11-command-center-worktrees-themes-design.md).
  *
- * 保持为纯函数模块：项目列表合并、目标目录计算、分支名校验与错误码映射、
- * 表单派生值（deriveWorktreeFormValues）都不依赖 React 或服务，可被 setup 页面、
- * empty-state 勾选（评审建议 6c）与后续阶段复用；调用 gitService 的创建编排
- * 在 worktreeCreation.ts。
+ * Pure-function module on purpose: project list merging, target directory computation, branch name validation
+ * with issue-code mapping, and form derived values (deriveWorktreeFormValues) depend on neither React nor
+ * services, so the palette setup page, the empty-state checkbox (review 6c), and later stages can reuse them;
+ * the gitService-backed creation orchestration lives in worktreeCreation.ts.
  */
 import type {
   GitWorktreeEntry,
@@ -24,6 +24,13 @@ import {
 export const NEW_TASK_WORKTREE_COMMAND_ID = "new-task-worktree";
 export const NEW_TASK_PROJECT_PAGE_ID = "new-task-project";
 export const NEW_TASK_SETUP_PAGE_ID = "new-task-setup";
+
+/**
+ * Effective branch prefix when neither the project override nor the global setting is set
+ * (user decision 2026-10-13). An explicitly saved empty string also resolves to this default;
+ * there is currently no "no prefix" configuration.
+ */
+export const DEFAULT_WORKTREE_BRANCH_PREFIX = "zcode/";
 
 /** Destination of a new task: a fresh worktree or the project's existing checkout. */
 export type WorktreeTaskDestination = "worktree" | "checkout";
@@ -105,8 +112,8 @@ export function buildWorktreeTaskProjects({
       continue;
     }
 
-    // recentProjects 只有路径：除 identity 规则外还要按路径判重，
-    // 否则带 identity 的已打开 tab 会与 recent 记录重复出现。
+    // recentProjects carries paths only: besides the identity rule, deduplicate by path,
+    // otherwise an open tab with an identity would duplicate its recent entry.
     if (openPaths.has(trimmedPath) || openByKey.has(trimmedPath)) {
       continue;
     }
@@ -172,7 +179,7 @@ export function computeWorktreeTargetPath(
   }
 
   if (mode === "global") {
-    // Stage F：全局存储目录由平台提供（desktop-only）；缺失时与无效 custom 位置同语义（null → 阻塞 Start）。
+    // Stage F: the global storage directory comes from the platform (desktop-only); when missing it behaves like an invalid custom location (null → Start blocked).
     const appWorktreesDir = location?.appWorktreesDir?.trim() ?? "";
     if (!appWorktreesDir) {
       return null;
@@ -281,7 +288,7 @@ export function resolveWorktreeLocation(
     mode,
     customPath: mode === "custom" && customPath ? customPath : null,
     appWorktreesDir: effectiveAppWorktreesDir || null,
-    prefix: overridePrefix || globalPrefix,
+    prefix: overridePrefix || globalPrefix || DEFAULT_WORKTREE_BRANCH_PREFIX,
     baseBranchDefault: overrideBaseBranch || null,
     hasProjectOverride: Boolean(overridePrefix || overrideBaseBranch),
   };
@@ -306,10 +313,10 @@ export function composeBranchName(
 
 export type WorktreeBranchNameIssueCode = "invalid-branch-name" | "branch-already-exists";
 
-// git check-ref-format 基础规则的客户端子集；权威校验仍在服务端（GitWorktreeMutationIssue）。
+// Client-side subset of the git check-ref-format basics; the server stays authoritative (GitWorktreeMutationIssue).
 const BRANCH_NAME_FORBIDDEN_CHARS_RE = /[\s~^:?*[\]\\]/;
 
-// 用码位判断而不是控制字符正则（no-control-regex）：ASCII C0 + DEL 都不允许出现在 refname。
+// Check by code points instead of a control-character regex (no-control-regex): ASCII C0 and DEL are both banned in refnames.
 function hasAsciiControlCharacter(value: string): boolean {
   for (const char of value) {
     const code = char.charCodeAt(0);
@@ -417,7 +424,10 @@ export function deriveWorktreeFormValues({
   effectiveBaseBranch: string;
   trimmedBranchName: string;
   composedBranchName: string;
+  /** Format problems only ("invalid-branch-name") — existence is not a blocker anymore. */
   branchNameIssue: WorktreeBranchNameIssueCode | null;
+  /** Composed name matches an existing local branch; the UI offers open/create-with-checkout (2026-10-13). */
+  existingBranchName: string | null;
   customLocationInvalid: boolean;
   globalLocationUnavailable: boolean;
   targetPathPreview: string | null;
@@ -433,15 +443,20 @@ export function deriveWorktreeFormValues({
   const trimmedBranchName = branchName.trim();
   const composedBranchName = composeBranchName(effectiveLocation?.prefix, trimmedBranchName);
   const branchNameSet = new Set(branchesResult?.branches.map((branch) => branch.name) ?? []);
-  const branchNameIssue =
+  const rawIssue =
     isWorktreeDestination && trimmedBranchName.length > 0
       ? validateNewWorktreeBranchName(composedBranchName, branchNameSet)
       : null;
+  // An existing branch is an offer, not a blocker: a free branch can be checked out into the
+  // new worktree, an occupied one is classified by the server (`branch-in-other-worktree`).
+  const existingBranchName =
+    isWorktreeDestination && rawIssue === "branch-already-exists" ? composedBranchName : null;
+  const branchNameIssue = rawIssue === "branch-already-exists" ? null : rawIssue;
   const customLocationInvalid =
     isWorktreeDestination &&
     effectiveLocation?.mode === "custom" &&
     !isValidCustomWorktreeLocationPath(effectiveLocation?.customPath);
-  // Stage F：global 模式但平台目录不可用（非 desktop / IPC 失败）与无效 custom 位置同语义。
+  // Stage F: global mode with an unavailable platform directory (non-desktop / IPC failure) behaves like an invalid custom location.
   const globalLocationUnavailable =
     isWorktreeDestination &&
     effectiveLocation?.mode === "global" &&
@@ -459,6 +474,7 @@ export function deriveWorktreeFormValues({
     trimmedBranchName,
     composedBranchName,
     branchNameIssue,
+    existingBranchName,
     customLocationInvalid,
     globalLocationUnavailable,
     targetPathPreview,
@@ -476,6 +492,9 @@ const WORKTREE_ISSUE_MESSAGE_CODE_SET = new Set<GitWorktreeMutationIssueCode>([
   "target-path-exists",
   "not-a-repository",
   "git-unavailable",
+  "worktree-not-found",
+  "worktree-dirty",
+  "worktree-locked",
 ]);
 
 /** i18n message ids for GitWorktreeMutationIssueCode; unmapped codes fall back to `.unknown`. */

@@ -1705,6 +1705,56 @@ describe("SessionDataLayer", () => {
     expect(b.store.getState().status).toBe("live");
   });
 
+  it("session-gone subscribe is terminal: runtime restart cannot re-subscribe and keep-warm drops the entry", async () => {
+    // Worktree first-send sequence: the draft pane holds a prewarm session, the send switches to a
+    // new session, the CLI deletes the unpromoted prewarm, and the new session's runtime start then
+    // broadcasts a restart while the prewarm store is in keep-warm.
+    const lease = layer.acquire("s1");
+    await flushMicrotasks();
+    expect(lease.store.getState().status).toBe("live");
+    lease.release();
+
+    transport.subscribeImpl = () => {
+      throw new Error(
+        "Session is not active and not persisted: s1 (fault.subscribe.sessionNotFound)",
+      );
+    };
+    // The runtime-restart broadcast arrives while the deleted session's store is in keep-warm.
+    transport.restart();
+    await flushMicrotasks();
+    // Terminal: the entry is dropped and the store closed immediately instead of staying in keep-warm.
+    expect(layer.size).toBe(0);
+    expect(lease.store.getState().status).toBe("closed");
+
+    // The failing restart itself attempted one subscribe (subscribeCalls = initial + terminal attempt);
+    // further restart broadcasts (the new session's runtime, later turns) stay silent.
+    expect(transport.subscribeCalls).toHaveLength(2);
+    transport.restart();
+    await flushMicrotasks();
+    expect(transport.subscribeCalls).toHaveLength(2);
+  });
+
+  it("session-gone with a live pane reference keeps the store but stops reconnects", async () => {
+    const lease = layer.acquire("s1");
+    await flushMicrotasks();
+    transport.subscribeImpl = () => {
+      throw new Error(
+        "Session is not active and not persisted: s1 (fault.subscribe.sessionNotFound)",
+      );
+    };
+    lease.store.retry();
+    await flushMicrotasks();
+    expect(lease.store.getState().status).toBe("error");
+    transport.restart();
+    await flushMicrotasks();
+    // The pane still holds the store, so the entry stays; but no further subscribe is attempted.
+    expect(layer.size).toBe(1);
+    expect(transport.subscribeCalls).toHaveLength(2);
+    transport.restart();
+    await flushMicrotasks();
+    expect(transport.subscribeCalls).toHaveLength(2);
+  });
+
   it("dispose 清场：取消 keep-warm、关闭全部 store", async () => {
     const a = layer.acquire("s1");
     layer.acquire("s2");

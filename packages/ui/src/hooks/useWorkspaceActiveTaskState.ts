@@ -58,6 +58,7 @@ function areResolvedTaskMetasEqual(left: ZCodeTaskMeta | null, right: ZCodeTaskM
     areTaskMetaJsonFieldsEqual(left.lastError, right.lastError) &&
     areTaskMetaJsonFieldsEqual(left.repairState, right.repairState) &&
     areTaskMetaJsonFieldsEqual(left.changeSummary, right.changeSummary) &&
+    areTaskMetaJsonFieldsEqual(left.executionWorktree, right.executionWorktree) &&
     areTaskMetaJsonFieldsEqual(left.target, right.target)
   );
 }

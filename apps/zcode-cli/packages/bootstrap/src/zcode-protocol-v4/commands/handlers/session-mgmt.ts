@@ -52,6 +52,7 @@ async function createSession(
     workspaceId: payload.workspaceId,
     ...(payload.permissionScope ? { permissionScope: payload.permissionScope } : {}),
     mcpServers: payload.mcpServers,
+    ...(payload.executionWorktree ? { executionWorktree: payload.executionWorktree } : {}),
     offPeakToolEnabled: payload.offPeakToolEnabled,
     dynamicWorkflowEnabled: payload.dynamicWorkflowEnabled,
     dynamicWorkflowMode: payload.dynamicWorkflowMode,

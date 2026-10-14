@@ -59,6 +59,8 @@ export function decodeSessionRow(row: SessionRow): SessionInfo {
     slug: row.slug,
     directory: row.directory,
     path: row.path ?? undefined,
+    executionDirectory: row.execution_directory ?? undefined,
+    executionBranch: row.execution_branch ?? undefined,
     title: row.title,
     titleSource: decodeSessionTitleSource(row.title_source),
     titleMessageID: row.title_message_id ? (row.title_message_id as MessageId) : undefined,

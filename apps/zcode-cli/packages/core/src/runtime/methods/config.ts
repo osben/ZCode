@@ -118,6 +118,20 @@ export function getProjectId(this: AgentRuntimeInternal): ProjectId {
   return projectIdFromDirectory(this.workspaceRoot);
 }
 
+export function getExecutionWorktree(
+  this: AgentRuntimeInternal,
+): { path: string; branchName?: string } | undefined {
+  // The config value is the single source; resume restores it from the persisted session columns.
+  return this.config.executionWorktree
+    ? {
+        path: this.config.executionWorktree.path,
+        ...(this.config.executionWorktree.branchName
+          ? { branchName: this.config.executionWorktree.branchName }
+          : {}),
+      }
+    : undefined;
+}
+
 export function setWorkingDirectory(this: AgentRuntimeInternal, cwd: string): void {
   // Persisting Bash cwd should affect only the current runtime session, not workspace identity.
   this.workingDirectory = cwd;

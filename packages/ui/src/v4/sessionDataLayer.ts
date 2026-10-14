@@ -89,7 +89,24 @@ export class SessionDataLayer {
         entry.keepWarmTimer = null;
       }
     } else {
-      const store = new ConversationProjectionStore(topic, this.transport, this.rowPool);
+      const store = new ConversationProjectionStore(
+        topic,
+        this.transport,
+        this.rowPool,
+        // The session was deleted (e.g. an unpromoted draft prewarm reclaimed on first send): drop the
+        // keep-warm entry so runtime-restart broadcasts cannot make it re-subscribe to the dead session.
+        // A pane still holding the store keeps its last state; only unreferenced entries are removed.
+        () => {
+          const goneEntry = this.entries.get(topic);
+          if (!goneEntry || goneEntry.refCount > 0 || this.disposed) return;
+          if (goneEntry.keepWarmTimer !== null) {
+            clearTimeout(goneEntry.keepWarmTimer);
+            goneEntry.keepWarmTimer = null;
+          }
+          this.entries.delete(topic);
+          void goneEntry.store.close();
+        },
+      );
       entry = { store, refCount: 1, keepWarmTimer: null };
       this.entries.set(topic, entry);
       openKind = "cold";

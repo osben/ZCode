@@ -255,6 +255,13 @@ export interface AgentRuntimeConfig {
    * local identity restoration. File and command execution still use only normalized workingDirectory.
    */
   workspacePath?: string;
+  /**
+   * Linked git worktree the agent executes in while the session stays listed under the parent
+   * workspace (docs/superpowers/specs/2026-10-11-command-center-worktrees-themes-design.md).
+   * Persisted as session.execution_directory/execution_branch; cold resume restores
+   * workingDirectory from it. Session listing identity still uses workspacePath.
+   */
+  executionWorktree?: { path: string; branchName?: string };
   /** Used only for persistence isolation; file and command execution still use workingDirectory. */
   workspaceIdentity?: WorkspaceId;
   envInfo?: EnvInfo; // Optional, will be auto-detected if not provided

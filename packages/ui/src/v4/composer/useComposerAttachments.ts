@@ -42,7 +42,11 @@ import {
   type ComposerAttachmentUploadItem,
   type ComposerAttachmentUploadStatus,
 } from "@/store/composerAttachmentUploadStore.js";
-import { uploadComposerAttachment, type AttachmentPutFn } from "@/v4/composer/attachmentUpload.js";
+import {
+  uploadComposerAttachment,
+  uploadComposerAttachments,
+  type AttachmentPutFn,
+} from "@/v4/composer/attachmentUpload.js";
 
 export const COMPOSER_ATTACHMENT_UPLOAD_CONCURRENCY = 2;
 export const COMPOSER_ATTACHMENT_AUTO_RETRY_DELAY_MS = 500;
@@ -98,6 +102,11 @@ export interface ComposerAttachmentsApi {
   restoreSessionOwnedAttachments: (attachments: readonly AttachmentRef[]) => boolean;
   /** Return only ready refs; return null as a second submit gate if any attachment is not ready. */
   prepareForSend: () => Promise<AttachmentRef[] | null>;
+  /** Re-upload frozen draft content into a newly created session and return refs owned by that session. */
+  reuploadForSession: (
+    sessionId: string,
+    attachmentIds: readonly string[],
+  ) => Promise<AttachmentRef[]>;
   /** Transfer remote staged content only after sendText is accepted; the draft retains ownership if sending fails. */
   adoptSentAttachments: (attachmentIds: readonly string[]) => Promise<void>;
   setAttachmentError: (message: string | null) => void;
@@ -1044,6 +1053,26 @@ export function useComposerAttachments(
     return current.flatMap((item) => (item.attachmentRef ? [item.attachmentRef] : []));
   }, [scopeKey]);
 
+  const reuploadForSession = useCallback(
+    async (sessionId: string, attachmentIds: readonly string[]): Promise<AttachmentRef[]> => {
+      const target = targetsRef.current.get(scopeKey);
+      if (!target) throw new Error("Attachment target is unavailable");
+      const current = readComposerAttachmentScope(scopeKey);
+      const serializedAttachments = [];
+      for (const id of attachmentIds) {
+        const item = current.find((candidate) => candidate.id === id);
+        if (!item) throw new Error("Frozen composer attachment is unavailable");
+        serializedAttachments.push(await serializeChatComposerAttachment(item));
+      }
+      return await uploadComposerAttachments(
+        target.attachmentPut,
+        sessionId,
+        serializedAttachments,
+      );
+    },
+    [scopeKey],
+  );
+
   const adoptSentAttachments = useCallback(
     async (attachmentIds: readonly string[]): Promise<void> => {
       const ids = new Set(attachmentIds);
@@ -1090,6 +1119,7 @@ export function useComposerAttachments(
       clearAttachments,
       restoreSessionOwnedAttachments,
       prepareForSend,
+      reuploadForSession,
       adoptSentAttachments,
       setAttachmentError,
     }),
@@ -1110,6 +1140,7 @@ export function useComposerAttachments(
       isDraggingOverComposer,
       openAttachmentPicker,
       prepareForSend,
+      reuploadForSession,
       removeAttachment,
       retryAttachment,
     ],

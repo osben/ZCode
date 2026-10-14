@@ -289,6 +289,11 @@ export interface V4CommandCoreHost {
     workspaceId: string;
     permissionScope?: "session";
     mcpServers?: CommandPayloadMap["createSession"]["mcpServers"];
+    /**
+     * Execution worktree for "start in a new worktree without leaving this project": the record
+     * runs with this directory as execution cwd while staying listed under workspaceId.
+     */
+    executionWorktree?: CommandPayloadMap["createSession"]["executionWorktree"];
     /** Host-determined Off-Peak tool-surface gate; tools are not registered by default. */
     offPeakToolEnabled?: boolean;
     /**

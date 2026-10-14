@@ -4,8 +4,8 @@
  * same request shape, same issue→message mapping, and the same target-path-exists recovery
  * that lists worktrees and offers the existing directory for the branch instead of a second one.
  *
- * 与 worktreeTaskFlow 的纯函数不同：本模块调用 gitService 并记录日志；gitService 与
- * 文案格式化均通过参数注入，两个入口（palette、empty-state）共享同一语义。
+ * Unlike the pure functions in worktreeTaskFlow, this module calls gitService and logs; both
+ * gitService and message formatting are injected so the two entry points (palette, empty-state) share one semantics.
  */
 import type { GitWorktreeCreateResult, GitWorktreeListResult } from "@zcode/shared";
 import { getErrorMessage } from "@/lib/errorMessage.js";
@@ -29,14 +29,14 @@ export interface WorktreeCreationGitService {
 /** Result of one worktree-creation attempt, shared by the palette Start and the empty-state send interception. */
 export type WorktreeCreationOutcome =
   | { kind: "created"; worktreePath: string }
-  /** target-path-exists 且该分支已有 worktree（WT-04）：直接打开现有目录，不再建第二个目录。 */
+  /** target-path-exists with an existing worktree for the branch (WT-04): open the existing directory instead of creating a second one. */
   | { kind: "existing-worktree"; worktreePath: string; message: string }
   | {
       kind: "failed";
       message: string;
-      /** 服务端拒绝的 issue code 列表（仅日志用）；请求抛错时为空。 */
+      /** Issue codes the server rejected with (logging only); empty when the request threw. */
       issueCodes: readonly string[];
-      /** 请求抛错的错误文本（仅日志用）；服务端拒绝时为 null。 */
+      /** Error text from a thrown request (logging only); null when the server rejected. */
       errorDetail: string | null;
     };
 
@@ -85,7 +85,7 @@ export async function executeWorktreeCreation({
 
   const issue = result.issues[0];
   if (issue?.code === "target-path-exists") {
-    // WT-04：目标目录已存在时先查现有 worktree —— 若该分支已有 worktree，直接提供打开而不是再建目录。
+    // WT-04: when the target directory already exists, look up existing worktrees first — if the branch has one, offer opening it instead of creating a second directory.
     try {
       const list = await gitService.listWorktrees({ workspacePath });
       const existing = findWorktreeForBranch(list.worktrees, branchName);
@@ -100,7 +100,7 @@ export async function executeWorktreeCreation({
         };
       }
     } catch (error) {
-      logger.warn("[WorktreeTask] target-path-exists 恢复查询 worktree 列表失败", {
+      logger.warn("[WorktreeTask] target-path-exists worktree list lookup failed", {
         workspacePath,
         branchName,
         error: getErrorMessage(error),

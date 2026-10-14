@@ -97,6 +97,11 @@ export interface GitRepositoryRequest {
   workspacePath: string;
 }
 
+export interface GitWorktreePathIdentityRequest {
+  /** Local absolute paths to compare with paths returned by listWorktrees. */
+  paths: string[];
+}
+
 export type GitBranchMergeState = "merged" | "not_merged" | "unknown";
 
 /**
@@ -191,6 +196,9 @@ export type GitWorktreeMutationIssueCode =
   | "target-path-exists"
   | "not-a-repository"
   | "git-unavailable"
+  | "worktree-not-found"
+  | "worktree-dirty"
+  | "worktree-locked"
   | "unknown";
 
 export interface GitWorktreeMutationIssue {
@@ -213,6 +221,25 @@ export interface GitWorktreeCreateResult {
   /** The created worktree path on success; null on failure. */
   worktreePath: string | null;
   branchName: string | null;
+  issues: GitWorktreeMutationIssue[];
+}
+
+export interface GitRemoveWorktreeRequest extends GitRepositoryRequest {
+  /** Absolute path of the linked worktree directory to remove; must not be the main worktree. */
+  targetPath: string;
+  /** true skips the dirty and locked checks (git worktree remove --force). */
+  force?: boolean;
+}
+
+export interface GitWorktreeRemoveResult {
+  ok: boolean;
+  issues: GitWorktreeMutationIssue[];
+}
+
+export interface GitWorktreePruneResult {
+  ok: boolean;
+  /** Number of stale administrative records reported by `git worktree prune --verbose`; parse failure counts as 0. */
+  prunedCount: number;
   issues: GitWorktreeMutationIssue[];
 }
 

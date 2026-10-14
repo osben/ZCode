@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { FolderOpen } from "lucide-react";
+import { FolderOpen, RotateCcwIcon } from "lucide-react";
 import type { AppSettings, WorktreeLocationMode } from "@zcode/shared";
 import { Button } from "@/components/ui/button.js";
 import { Input } from "@/components/ui/input.js";
@@ -11,11 +11,19 @@ import {
   SelectValue,
 } from "@/components/ui/select.js";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip.js";
+import {
   composeBranchName,
   computeWorktreeTargetPath,
+  DEFAULT_WORKTREE_BRANCH_PREFIX,
   isValidCustomWorktreeLocationPath,
   type WorktreeTaskProjectTab,
 } from "@/command-center/worktreeTaskFlow.js";
+import { generateWorktreeBranchNameCandidate } from "@/command-center/worktreeNameGenerator.js";
 import { useOptionalPlatform } from "@/hooks/usePlatform.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import {
@@ -24,15 +32,102 @@ import {
 } from "@/settings/WorktreesProjectOverridesCard.js";
 import { SettingsGroupCard, SettingsRow } from "@/settings/SettingsPageParts.js";
 
-const BRANCH_PREFIX_EXAMPLE_INPUT = "task-name";
 // Fallback sample when no local workspace tab is open; the example prefers a real project path.
 const LOCATION_EXAMPLE_FALLBACK_PROJECT_PATH = "~/projects/demo-app";
-// Stage F 评审要求：预置模式（sibling/inside/global）的示例行用固定短格式，custom 仍计算真实路径。
+// Stage F review requirement: preset modes (sibling/inside/global) show a fixed short example; custom still computes the real path.
 const WORKTREE_LOCATION_EXAMPLES: Partial<Record<WorktreeLocationMode, string>> = {
   sibling: "example-repo-worktrees/my-branch",
   inside: "example-repo/.worktrees/my-branch",
   global: "~/.zcode/worktrees/example-repo/my-branch",
 };
+
+/**
+ * Full-width text setting row (2026-10-13 review): the 192px SettingsRow control column clipped
+ * mono inputs, so label/description stack above a flex-1 input with an icon reset button.
+ */
+function WorktreeTextSettingRow({
+  label,
+  description,
+  inputId,
+  value,
+  placeholder,
+  onValueChange,
+  onCommit,
+  onRevert,
+  onReset,
+  resetDisabled,
+  resetLabel,
+  example,
+}: {
+  label: string;
+  description: string;
+  inputId: string;
+  value: string;
+  placeholder: string;
+  onValueChange: (value: string) => void;
+  onCommit: () => void;
+  /** Escape handler: restore the draft from the effective saved value. */
+  onRevert: () => void;
+  onReset: () => void;
+  resetDisabled: boolean;
+  resetLabel: string;
+  example: string;
+}) {
+  const { intl } = useZCodeIntl();
+  return (
+    <div className="border-t border-border px-4 py-3 first:border-t-0">
+      <label htmlFor={inputId} className="block text-ui-base font-medium text-foreground">
+        {label}
+      </label>
+      <div className="mt-1 text-ui-base leading-6 text-foreground-subtle">{description}</div>
+      <div className="mt-3 flex items-center gap-2">
+        <Input
+          id={inputId}
+          size="lg"
+          value={value}
+          autoComplete="off"
+          spellCheck={false}
+          placeholder={placeholder}
+          onChange={(event) => onValueChange(event.target.value)}
+          onBlur={onCommit}
+          onKeyDown={(event) => {
+            // Enter commits, Escape reverts to the effective saved value.
+            if (event.key === "Enter") {
+              event.preventDefault();
+              onCommit();
+              event.currentTarget.blur();
+            } else if (event.key === "Escape") {
+              event.preventDefault();
+              onRevert();
+              event.currentTarget.blur();
+            }
+          }}
+          className="min-w-0 flex-1 font-mono"
+        />
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                disabled={resetDisabled}
+                aria-label={intl.formatMessage({ id: resetLabel })}
+                onClick={onReset}
+              >
+                <RotateCcwIcon className="size-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{intl.formatMessage({ id: resetLabel })}</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      </div>
+      <p className="mt-3 truncate font-mono text-ui-sm text-foreground-subtle" title={example}>
+        {example}
+      </p>
+    </div>
+  );
+}
 
 export function WorktreesSection({
   settings,
@@ -53,8 +148,11 @@ export function WorktreesSection({
   const { intl } = useZCodeIntl();
   const platform = useOptionalPlatform();
   const locationMode: WorktreeLocationMode = settings?.worktreeLocationMode ?? "sibling";
-  const branchPrefix = settings?.worktreeBranchPrefix ?? "";
-  // Stage F：全局存储仅在实现了 IPlatformService.getAppWorktreesDir 的平台（desktop）可选。
+  // Unset (or explicitly empty — normalizeSettingsPatch deletes the field) resolves to the
+  // flow default (zcode/, 2026-10-13); display shows the effective value.
+  const branchPrefix = settings?.worktreeBranchPrefix || DEFAULT_WORKTREE_BRANCH_PREFIX;
+  const savedBranchPrefixIsEmpty = (settings?.worktreeBranchPrefix ?? "") === "";
+  // Stage F: global storage is offered only on platforms implementing IPlatformService.getAppWorktreesDir (desktop).
   const supportsGlobalWorktreeStorage = typeof platform?.getAppWorktreesDir === "function";
 
   // WTS-01: the custom path is a draft until blur; invalid values stay as a field-level error and are not persisted.
@@ -86,7 +184,7 @@ export function WorktreesSection({
 
   const commitCustomPath = useCallback(() => {
     const trimmed = customPathDraft.trim();
-    // 空串经 normalizeSettingsPatch 删除字段（回到 sibling 约定）；中间态（相对路径）不落盘。
+    // An empty string deletes the field via normalizeSettingsPatch (back to the sibling default); intermediate states (relative paths) are not persisted.
     if (
       (trimmed.length === 0 || isValidCustomWorktreeLocationPath(trimmed)) &&
       trimmed !== (settings?.worktreeCustomLocationPath ?? "")
@@ -107,20 +205,29 @@ export function WorktreesSection({
 
   const commitBranchPrefix = useCallback(() => {
     const trimmed = branchPrefixDraft.trim();
+    if (trimmed.length === 0) {
+      setBranchPrefixDraft(DEFAULT_WORKTREE_BRANCH_PREFIX);
+    }
+    // Empty string deletes the field via normalizeSettingsPatch; the display (and the flow)
+    // then resolve to DEFAULT_WORKTREE_BRANCH_PREFIX.
     if (trimmed !== branchPrefix) {
-      // 空串经 normalizeSettingsPatch 删除字段 = Reset to default。
       void onUpdate({ worktreeBranchPrefix: trimmed });
     }
   }, [branchPrefix, branchPrefixDraft, onUpdate]);
 
   const handleResetBranchPrefix = useCallback(() => {
-    setBranchPrefixDraft("");
-    if (branchPrefix) {
+    setBranchPrefixDraft(DEFAULT_WORKTREE_BRANCH_PREFIX);
+    if (!savedBranchPrefixIsEmpty) {
       void onUpdate({ worktreeBranchPrefix: "" });
     }
-  }, [branchPrefix, onUpdate]);
+  }, [onUpdate, savedBranchPrefixIsEmpty]);
 
-  const branchPrefixExample = composeBranchName(branchPrefixDraft, BRANCH_PREFIX_EXAMPLE_INPUT);
+  // Deterministic preview (review 2026-10-13): "Preview: <prefix><generated name>" with a
+  // fixed RNG so the generated part does not flicker between renders.
+  const branchPrefixExample = composeBranchName(
+    branchPrefixDraft,
+    generateWorktreeBranchNameCandidate(() => 0),
+  );
 
   // Recommendation (a): the location row always previews a concrete target path for the current
   // mode. Preset modes use the fixed short examples (Stage F); custom computes the real path,
@@ -133,7 +240,7 @@ export function WorktreesSection({
     locationMode === "custom"
       ? computeWorktreeTargetPath(exampleProjectPath, branchPrefixExample, {
           mode: locationMode,
-          // computeWorktreeTargetPath 的 customPath 是 string | null；条件展开会留下 undefined 形状。
+          // computeWorktreeTargetPath takes customPath as string | null; a conditional spread would leave an undefined shape.
           customPath: exampleCustomPath || null,
           appWorktreesDir: null,
         })
@@ -167,7 +274,9 @@ export function WorktreesSection({
                     {intl.formatMessage({ id: "settings.worktrees.location.global" })}
                   </SelectItem>
                 ) : null}
-                <SelectItem value="custom">
+                {/* Review 2026-10-13: custom location is temporarily disabled — the preset
+                    modes cover current needs; a previously saved custom mode keeps working. */}
+                <SelectItem value="custom" disabled>
                   {intl.formatMessage({ id: "settings.worktrees.location.custom" })}
                 </SelectItem>
               </SelectContent>
@@ -242,55 +351,22 @@ export function WorktreesSection({
       </SettingsGroupCard>
 
       <SettingsGroupCard>
-        <SettingsRow
+        <WorktreeTextSettingRow
           label={intl.formatMessage({ id: "settings.worktrees.branchPrefix" })}
           description={intl.formatMessage({ id: "settings.worktrees.branchPrefix.description" })}
-          control={
-            <div className="flex w-full items-center justify-end gap-2">
-              <Input
-                aria-label={intl.formatMessage({ id: "settings.worktrees.branchPrefix" })}
-                size="lg"
-                value={branchPrefixDraft}
-                autoComplete="off"
-                spellCheck={false}
-                placeholder={intl.formatMessage({
-                  id: "settings.worktrees.branchPrefix.placeholder",
-                })}
-                onChange={(event) => setBranchPrefixDraft(event.target.value)}
-                onBlur={commitBranchPrefix}
-                onKeyDown={(event) => {
-                  // Enter фиксирует, Escape откатывает к сохранённому значению.
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    commitBranchPrefix();
-                    event.currentTarget.blur();
-                  } else if (event.key === "Escape") {
-                    event.preventDefault();
-                    setBranchPrefixDraft(branchPrefix);
-                    event.currentTarget.blur();
-                  }
-                }}
-                className="w-64 font-mono"
-              />
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={!branchPrefix && !branchPrefixDraft.trim()}
-                onClick={handleResetBranchPrefix}
-              >
-                {intl.formatMessage({ id: "settings.worktrees.branchPrefix.reset" })}
-              </Button>
-            </div>
-          }
-          detail={
-            <p className="mt-3 font-mono text-ui-sm text-foreground-subtle">
-              {intl.formatMessage(
-                { id: "settings.worktrees.branchPrefix.example" },
-                { name: branchPrefixExample },
-              )}
-            </p>
-          }
+          inputId="worktrees-branch-prefix"
+          value={branchPrefixDraft}
+          placeholder={DEFAULT_WORKTREE_BRANCH_PREFIX}
+          onValueChange={setBranchPrefixDraft}
+          onCommit={commitBranchPrefix}
+          onRevert={() => setBranchPrefixDraft(branchPrefix)}
+          onReset={handleResetBranchPrefix}
+          resetDisabled={branchPrefixDraft === branchPrefix && savedBranchPrefixIsEmpty}
+          resetLabel="settings.worktrees.branchPrefix.reset"
+          example={intl.formatMessage(
+            { id: "settings.worktrees.branchPrefix.example" },
+            { name: branchPrefixExample },
+          )}
         />
       </SettingsGroupCard>
 
