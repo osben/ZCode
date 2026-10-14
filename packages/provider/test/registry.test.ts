@@ -8,6 +8,10 @@ import {
   type Provider,
 } from "../src/index.js";
 import { createApiKeyProviderConfig } from "./provider-config-fixtures.js";
+import {
+  createAccountProviderConfig,
+  createChatgptAccountProviderConfig,
+} from "./provider-config-fixtures.js";
 import { resolveEffectiveModelSelection } from "../src/effective-model-selection.js";
 
 function provider(
@@ -143,6 +147,83 @@ describe("当前有效选择只读解析", () => {
         classifyProvider,
         accountStates: {
           "old-account": { availability: "available", entitled: true, current: true },
+          "new-account": { availability: "available", entitled: true, current: true },
+        },
+      }),
+    ).toEqual({ effectiveSelection: null, selectionIssue: "account-connection-unavailable" });
+  });
+
+  it("keeps a current ChatGPT plan selection when a zhipu plan is also current", () => {
+    const classifyChatgptDomain = (id: string) =>
+      id === "chatgpt-plan"
+        ? ("chatgpt-plan" as const)
+        : id === "zai-individual"
+          ? ("account-plan" as const)
+          : classifyProvider(id);
+    const chatgptEntry = {
+      ...provider("chatgpt-plan", "gpt-model"),
+      config: createChatgptAccountProviderConfig({ models: ["gpt-model"] }),
+    };
+    const zaiEntry = {
+      ...provider("zai-individual", "same"),
+      config: createAccountProviderConfig({ models: ["same"] }),
+    };
+    const selection = Object.freeze({
+      providerId: "chatgpt-plan",
+      modelId: "gpt-model",
+      options: Object.freeze({ reasoningLevel: "high" }),
+    });
+
+    expect(
+      resolveEffectiveModelSelection({
+        registry: { revision: 1, providers: [chatgptEntry, zaiEntry] },
+        selection,
+        classifyProvider: classifyChatgptDomain,
+        accountStates: {
+          "chatgpt-plan": { availability: "available", entitled: true, current: true },
+          "zai-individual": { availability: "available", entitled: true, current: true },
+        },
+      }),
+    ).toEqual({ effectiveSelection: selection });
+  });
+
+  it("remaps a zhipu selection within its domain while ChatGPT is also current", () => {
+    const classifyChatgptDomain = (id: string) =>
+      id === "chatgpt-plan"
+        ? ("chatgpt-plan" as const)
+        : id === "zai-individual"
+          ? ("account-plan" as const)
+          : classifyProvider(id);
+    const chatgptEntry = {
+      ...provider("chatgpt-plan", "gpt-model"),
+      config: createChatgptAccountProviderConfig({ models: ["gpt-model"] }),
+    };
+    const zaiEntry = {
+      ...provider("zai-individual", "same"),
+      config: createAccountProviderConfig({ models: ["same"] }),
+    };
+    expect(
+      resolveEffectiveModelSelection({
+        registry: { revision: 1, providers: [chatgptEntry, zaiEntry] },
+        selection: { ...original, providerId: "old-account" },
+        classifyProvider: classifyChatgptDomain,
+        accountStates: {
+          "chatgpt-plan": { availability: "available", entitled: true, current: true },
+          "zai-individual": { availability: "available", entitled: true, current: true },
+        },
+      }),
+    ).toEqual({
+      effectiveSelection: { ...original, providerId: "zai-individual" },
+    });
+  });
+
+  it("does not remap a missing ChatGPT provider to another account exposing the same model", () => {
+    expect(
+      resolveEffectiveModelSelection({
+        registry: { revision: 1, providers: [provider("new-account", "same")] },
+        selection: { ...original, providerId: "chatgpt-plan" },
+        classifyProvider: (id) => (id === "chatgpt-plan" ? "chatgpt-plan" : classifyProvider(id)),
+        accountStates: {
           "new-account": { availability: "available", entitled: true, current: true },
         },
       }),

@@ -292,13 +292,78 @@ request id.
   in ChatGPT settings; dismissible; shown ONCE.
 - Login status polling is serialized: schedule the next poll only after the
   current poll settles, and ignore completions after the settings view unmounts.
+- The completion RPC (`pollChatGptPlanLogin`) returns as soon as the
+  authorization code is exchanged and tokens are persisted; the account-overlay
+  refresh (`onChatGptPlanSessionChange`) runs detached with logged failures so
+  slow plan-backend queries can never keep the "Waiting for ChatGPT..." state
+  alive. `logoutChatGptPlan` follows the same rule after clearing tokens.
 - Active indicator: **"Using ChatGPT plan"** with logo, near the
   composer/model selector.
 - Usage-limit state: **"Manage usage"** primary (no "Buy app credits" — we do
   not sell credits).
+- Sign out shows an in-flight state (disabled button with a spinner) while
+  revocation and local token clearing run; the overlay refresh stays detached.
 - Copy distinguishes ChatGPT plan usage from app-level subscriptions.
 - Provider icon: reuse the OpenAI entries in
   `packages/ui/src/assets/provider-icons/model-provider-logo-sources.json`.
+
+### Settings navigation and ChatGPT API template
+
+- Settings provider navigation renders a dedicated **ChatGPT** group AFTER the
+  zai/bigmodel preset blocks and BEFORE custom providers. The ChatGPT Plan node
+  never appears above the Z.ai blocks.
+- The group contains the ChatGPT Plan node (visible whenever the provider is
+  configured; signed-out renders the standard not-connected status and the
+  detail page offers sign-in). Template-added API providers stay in the custom
+  group, mirroring how `zai-api`/`bigmodel-standard-api` providers behave —
+  builtin template schemas allow only `standard-personal` personal groups, and
+  the fork keeps that upstream contract.
+- ChatGPT Plan is NOT offered in Add provider: a subscription connects via
+  sign-in, not via template creation.
+- API access to OpenAI models reuses the existing built-in **`openai`**
+  template (api-key, `openai-responses` at `https://api.openai.com/v1`,
+  management URL `platform.openai.com/api-keys`) unchanged — no duplicate
+  ChatGPT-branded template and no template model-list edits (the catalog
+  integrity contracts pin the official template list). Plan-only slugs are
+  reachable through the plan provider; API users add custom models manually.
+  Template-added providers stay in the custom group, mirroring how
+  `zai-api`/`bigmodel-standard-api` providers behave — builtin template
+  schemas allow only `standard-personal` personal groups, and the fork keeps
+  that upstream contract.
+- Fork catalog changes always bump the builtin release revision, which must
+  stay above the revision served by the upstream control plane so the remote
+  synchronizer never replaces fork-only entries.
+- Plan-family gpt-6 slugs (`gpt-6`, `gpt-6.1` × `astra|sol|luna`) must match the
+  dedicated `modelRules`/`modelApiRules` regexes (reasoning levels
+  `low/medium/high/xhigh/max`, `reasoning.effort` passthrough); falling to the
+  catch-all `.*` rule renders GLM-style `disabled/enabled` levels.
+- Reasoning specs accept an optional `default` (must be one of `values`);
+  fresh selections use it and fall back to the highest value when omitted.
+  The gpt-6 and gpt-5.6 plan families set `default: "high"` to conserve plan
+  usage quota (upstream's highest-value default stays for everything else).
+- Host/Worker identity classification owns the account domain: `chatgpt-plan`
+  is distinct from the zai/bigmodel `account-plan` kind. Effective selection
+  resolution compares these stable kinds, even when the original provider is
+  absent from the executable Registry after a plan switch. It never remaps a
+  signed-out ChatGPT selection to a zai/bigmodel provider.
+- When an overlay replaces reasoning `values` without specifying `default`,
+  retain the inherited default only if it remains in the new list; otherwise
+  omit it and use the normal highest-value fallback for fresh selections.
+  An explicitly supplied unsupported default remains a validation error.
+- Regression scenarios: an old individual-plan selection resolves to the
+  current team plan while ChatGPT is also current; a signed-out ChatGPT
+  selection stays unavailable even if another plan exposes the same model;
+  replacing `low/medium/high` with `low/medium` keeps the model valid and
+  initializes new selections at `medium`.
+
+```mermaid
+flowchart LR
+  Identity[Host/Worker identity classifier] --> Kind[Stable account domain]
+  State[Applied account snapshot] --> Resolve[Effective selection resolver]
+  Kind --> Resolve
+  Registry[Executable Registry] --> Resolve
+  Resolve --> Selection[Selection within the same domain]
+```
 
 ### Host-side (Desktop) decisions (Phase 2)
 

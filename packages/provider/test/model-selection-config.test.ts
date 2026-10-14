@@ -105,6 +105,22 @@ describe("normalizeModelSelection", () => {
       options: { reasoningLevel: "high" },
     });
   });
+  it("uses the catalog reasoning default instead of the highest value when present", () => {
+    expect(
+      completeNewModelSelection(
+        registryView({
+          values: ["low", "medium", "high"],
+          default: "medium",
+          map: "{'reasoning': {'effort': reasoningLevel}}",
+        }),
+        { providerId: "provider-a", modelId: "model-a", options: { reasoningLevel: "low" } },
+      ),
+    ).toEqual({
+      providerId: "provider-a",
+      modelId: "model-a",
+      options: { reasoningLevel: "medium" },
+    });
+  });
   it("新选择缺少 reasoning 时保留模型并清空 reasoning", () => {
     expect(
       normalizeModelSelection(registryView(), {
@@ -131,7 +147,12 @@ describe("normalizeModelSelection", () => {
   });
 });
 
-function registryView(): ProviderRegistryView {
+function registryView(
+  reasoning: { values: string[]; default?: string; map: string } = {
+    values: ["low", "high"],
+    map: "{'reasoning': {'effort': reasoningLevel}}",
+  },
+): ProviderRegistryView {
   return {
     revision: 1,
     providers: ["provider-a", "provider-b"].map((providerId) => ({
@@ -164,8 +185,9 @@ function registryView(): ProviderRegistryView {
             }),
             optionSpecs: new ModelOptionSpecsConfig({
               reasoningLevel: {
-                values: ["low", "high"],
-                map: "{'reasoning': {'effort': reasoningLevel}}",
+                values: reasoning.values,
+                ...(reasoning.default ? { default: reasoning.default } : {}),
+                map: reasoning.map,
               },
               maxOutputTokens: {
                 max: 8_000,

@@ -10,6 +10,7 @@ import {
 import {
   createAccountProviderConfig,
   createApiKeyProviderConfig,
+  createChatgptAccountProviderConfig,
 } from "./provider-config-fixtures.js";
 
 function configuredProviders(): ProviderConfigMap {
@@ -340,6 +341,49 @@ describe("resolveAccountProviderConfigs", () => {
         ],
       }),
     ).toThrow("Account 连接指向非 Account Provider: api-provider");
+  });
+
+  it("accepts chatgpt-account connections instead of failing the whole resolution", () => {
+    const configured = new ProviderConfigMap([
+      ["chatgpt-plan", createChatgptAccountProviderConfig()],
+      ["coding-plan", createAccountProviderConfig({ models: ["model-a"] })],
+    ]);
+
+    const result = resolveAccountProviderConfigs({
+      configuredProviders: configured,
+      previousProviders: ProviderConfigMap.empty(),
+      connections: [
+        { providerId: "chatgpt-plan", status: "available" },
+        { providerId: "coding-plan", status: "available" },
+      ],
+    });
+
+    expect(
+      Object.fromEntries(result.entries().map(([id, config]) => [id, config.toJSON()])),
+    ).toEqual({
+      "chatgpt-plan": { access: { type: "chatgpt-account", entitled: true } },
+      "coding-plan": { access: { type: "zhipu-account", entitled: true } },
+    });
+  });
+
+  it("maps signed-out chatgpt-account connections to the fail-closed overlay", () => {
+    const result = resolveAccountProviderConfigs({
+      configuredProviders: new ProviderConfigMap([
+        ["chatgpt-plan", createChatgptAccountProviderConfig()],
+      ]),
+      previousProviders: ProviderConfigMap.empty(),
+      connections: [
+        {
+          providerId: "chatgpt-plan",
+          status: "unavailable",
+          unavailableReason: "not-authenticated",
+        },
+      ],
+    });
+
+    expect(result.get("chatgpt-plan")?.toJSON()).toEqual({
+      access: { type: "chatgpt-account", entitled: false },
+    });
   });
 
   it("普通 api-key Provider 不属于 Account Overlay", () => {

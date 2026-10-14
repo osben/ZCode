@@ -235,4 +235,29 @@ describe("model selection groups", () => {
       },
     ]);
   });
+
+  it("keeps registry groups for ChatGPT plan sessions and hides them for custom providers", () => {
+    const view: ModelSelectionView = {
+      revision: 1,
+      providers: [
+        {
+          providerId: BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan,
+          providerName: "ChatGPT Plan",
+          config: {
+            access: { type: "chatgpt-account", entitled: true },
+            api: { type: "openai-responses", baseUrl: "https://api.openai.com/v1" },
+          },
+          models: [{ modelId: "gpt-6-luna", config: {} }],
+        },
+      ],
+    };
+    // A session left on a ChatGPT plan model must still be able to switch models.
+    expect(
+      buildRegistryModelSelectGroups(BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan, view),
+    ).toHaveLength(1);
+    // Registry groups stay hidden for custom (non-agent) providers.
+    expect(buildRegistryModelSelectGroups("d6819161-0127-45d7-b88d-82f2a73208aa", view)).toEqual(
+      [],
+    );
+  });
 });

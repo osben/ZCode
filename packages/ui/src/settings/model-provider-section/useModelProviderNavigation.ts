@@ -182,21 +182,6 @@ export function useModelProviderNavigation({
         id: "preset",
         title: intl.formatMessage({ id: "settings.modelProvider.presetTitle" }),
         items: [
-          // ChatGPT plan is an independent identity domain: always listed, never filtered
-          // by the zai/bigmodel active-provider family scope.
-          ...modelProviders
-            .filter((provider) => isChatGptPlanSubscriptionProviderId(provider.providerId))
-            .map((provider) => ({
-              key: createPresetProviderNodeKey(BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan),
-              type: "preset" as const,
-              presetId: BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan,
-              label: "ChatGPT Plan",
-              logo: provider.config.logo,
-              provider,
-              displayName: "ChatGPT Plan",
-              statusProvider: provider,
-              statusActive: provider.executable === true,
-            })),
           ...presetProviders.map(({ id, displayName, provider }) => {
             const statusProvider = resolvePresetFamilyStatusProvider({
               presetId: id,
@@ -223,6 +208,26 @@ export function useModelProviderNavigation({
           }),
           ...codingPlanItems.filter((item) => isStartPlanModelProviderId(item.presetId)),
         ],
+      },
+      {
+        // ChatGPT plan is an independent identity domain: always listed, never filtered
+        // by the zai/bigmodel active-provider family scope, and rendered after those blocks.
+        id: "chatgpt",
+        // Brand name, matching the hardcoded "ChatGPT Plan" node label.
+        title: "ChatGPT",
+        items: modelProviders
+          .filter((provider) => isChatGptPlanSubscriptionProviderId(provider.providerId))
+          .map((provider) => ({
+            key: createPresetProviderNodeKey(BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan),
+            type: "preset" as const,
+            presetId: BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan,
+            label: "ChatGPT Plan",
+            logo: provider.config.logo,
+            provider,
+            displayName: "ChatGPT Plan",
+            statusProvider: provider,
+            statusActive: provider.executable === true,
+          })),
       },
       {
         id: "custom",

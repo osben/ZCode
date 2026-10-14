@@ -312,7 +312,7 @@ describe("ProviderConfigMap overlay", () => {
     ).toThrow(/object/i);
   });
 
-  it("Schema 拒绝已退役的 Option Spec default", () => {
+  it("Schema accepts an optional Option Spec default that must be one of values", () => {
     expect(() =>
       parseModelConfig({
         optionSpecs: {
@@ -323,7 +323,58 @@ describe("ProviderConfigMap overlay", () => {
           },
         },
       }),
-    ).toThrow(/unrecognized|default/i);
+    ).not.toThrow();
+    const parsed = parseModelConfig({
+      optionSpecs: {
+        reasoningLevel: {
+          values: ["low", "high"],
+          default: "medium",
+          map: "{'reasoning': {'effort': reasoningLevel}}",
+        },
+      },
+    });
+    expect(
+      parsed
+        .validateComplete(["m"])
+        .some((issue) => issue.path.join(".").endsWith("optionSpecs.reasoningLevel.default")),
+    ).toBe(true);
+  });
+
+  it("drops an inherited default excluded by replacement reasoning values", () => {
+    const base = new EnumOptionSpecConfig({
+      values: ["low", "medium", "high"],
+      default: "high",
+      map: "{}",
+    });
+    const effective = base.overlay(new EnumOptionSpecConfig({ values: ["low", "medium"] }));
+
+    expect(effective.toJSON()).toEqual({ values: ["low", "medium"], map: "{}" });
+    expect(effective.validateComplete()).toEqual([]);
+    expect(base.default).toBe("high");
+  });
+
+  it("preserves a supported inherited default and validates explicit defaults", () => {
+    const base = new EnumOptionSpecConfig({
+      values: ["low", "medium", "high"],
+      default: "high",
+      map: "{}",
+    });
+
+    expect(base.overlay(new EnumOptionSpecConfig({ values: ["medium", "high"] })).default).toBe(
+      "high",
+    );
+    expect(base.overlay(new EnumOptionSpecConfig({ map: "{}" })).default).toBe("high");
+    const valid = base.overlay(
+      new EnumOptionSpecConfig({ values: ["low", "medium"], default: "medium" }),
+    );
+    expect(valid.default).toBe("medium");
+    expect(valid.validateComplete()).toEqual([]);
+    const invalid = base.overlay(
+      new EnumOptionSpecConfig({ values: ["low", "medium"], default: "high" }),
+    );
+    expect(invalid.validateComplete()).toContainEqual(
+      expect.objectContaining({ code: "invalid-option-spec", path: ["default"] }),
+    );
   });
 
   it("用 null 清除字段，并在最终完整性校验中报告必填值缺失", () => {
