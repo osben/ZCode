@@ -175,7 +175,7 @@ html[data-document-hidden] *::after {
   [role="menuitem"]:not([aria-disabled="true"]):not([data-disabled]),
   [role="menuitemcheckbox"]:not([aria-disabled="true"]):not([data-disabled]),
   [role="menuitemradio"]:not([aria-disabled="true"]):not([data-disabled]),
-  [role="option"]:not([aria-disabled="true"]):not([data-disabled]),
+  [role="option"]:not([aria-disabled="true"]):not([data-disabled="true"]):not([data-disabled=""]),
   [role="treeitem"]:not([aria-disabled="true"]):not([data-disabled]),
   summary:not([aria-disabled="true"]) {
     cursor: pointer;
