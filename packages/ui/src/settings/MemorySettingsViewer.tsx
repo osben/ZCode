@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { IMemoryService, ProjectMemoryWorkspaceSummary } from "@zcode/services";
 import {
   TID_SETTINGS_MEMORY_COUNT,
@@ -77,15 +77,15 @@ export function MemorySettingsViewer({
     return () => window.clearInterval(interval);
   }, []);
 
-  // A catalog refresh or workspace switch invalidates in-flight and cached previews and closes the
-  // accordion so a stale file name never renders another workspace's content.
-  useEffect(() => {
-    if (catalogState === "loading") {
-      previewRequestIdRef.current += 1;
-      setPreviews(new Map());
-      setOpenFileNames([]);
-    }
-  }, [catalogState]);
+  // A catalog refresh or a workspace switch invalidates in-flight and cached previews and closes
+  // the accordion so a stale file name never renders another workspace's content. The scope id is
+  // part of the deps because switching scopes keeps catalogState at "ready"; useLayoutEffect so
+  // the stale preview is never painted.
+  useLayoutEffect(() => {
+    previewRequestIdRef.current += 1;
+    setPreviews(new Map());
+    setOpenFileNames([]);
+  }, [catalogState, selectedWorkspace?.id]);
 
   const formatMemoryCount = (count: number) =>
     intl.formatPlural({ id: "settings.memory.viewer.memoryCount" }, count);
@@ -132,31 +132,35 @@ export function MemorySettingsViewer({
     (workspaceId: string, fileName: string) => {
       const requestId = previewRequestIdRef.current + 1;
       previewRequestIdRef.current = requestId;
-      setPreviews((previous) => new Map(previous).set(fileName, { status: "loading" }));
+      // The request id lives in the loading entry itself: with multiple rows open, file B's
+      // request must not invalidate file A's in-flight callbacks (scoped per file, not global).
+      setPreviews((previous) => new Map(previous).set(fileName, { status: "loading", requestId }));
       memoryService
         .readProjectMemoryFile({ workspaceId, fileName })
         .then((result) => {
-          if (previewRequestIdRef.current !== requestId) {
-            return;
-          }
-          setPreviews((previous) =>
-            new Map(previous).set(fileName, {
+          setPreviews((previous) => {
+            const entry = previous.get(fileName);
+            if (entry?.status !== "loading" || entry.requestId !== requestId) {
+              return previous;
+            }
+            return new Map(previous).set(fileName, {
               status: "ready",
               content: result.content,
-            }),
-          );
+            });
+          });
         })
         .catch((error: unknown) => {
-          if (previewRequestIdRef.current !== requestId) {
-            return;
-          }
-          setPreviews((previous) =>
-            new Map(previous).set(fileName, {
+          setPreviews((previous) => {
+            const entry = previous.get(fileName);
+            if (entry?.status !== "loading" || entry.requestId !== requestId) {
+              return previous;
+            }
+            return new Map(previous).set(fileName, {
               status: "error",
               kind: classifyMemoryPreviewError(error),
               message: error instanceof Error ? error.message : String(error),
-            }),
-          );
+            });
+          });
         });
     },
     [memoryService],
@@ -231,6 +235,7 @@ export function MemorySettingsViewer({
   const renderFileList = (files: ProjectMemoryWorkspaceSummary["files"]) => (
     <Accordion
       type="multiple"
+      className="overflow-hidden rounded-xl bg-surface"
       value={openFileNames.filter((name) => files.some((file) => file.name === name))}
       onValueChange={(value) => handleAccordionValueChange(files, value)}
     >

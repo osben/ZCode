@@ -470,6 +470,47 @@ describe("MemorySettingsSection", () => {
     expect(platformMock.openInFileManager).toHaveBeenCalledWith("/memory/z-code-1111111111111111");
   });
 
+  it("keeps per-file preview requests scoped when multiple rows open", async () => {
+    const memoryService = createService();
+    const deferred = new Map<string, (value: { content: string; updatedAt: number }) => void>();
+    vi.mocked(memoryService.readProjectMemoryFile).mockImplementation(
+      ({ fileName }: { workspaceId: string; fileName: string }) =>
+        new Promise((resolve) => {
+          deferred.set(fileName, resolve);
+        }),
+    );
+    renderSection(memoryService);
+    await screen.findByTestId(TID_SETTINGS_MEMORY_SCOPE_TRIGGER);
+
+    fireEvent.click(screen.getByTestId(testId(TID_SETTINGS_MEMORY_FILE_NAME, "fact-a.md")));
+    fireEvent.click(screen.getByTestId(testId(TID_SETTINGS_MEMORY_FILE_NAME, "MEMORY.md")));
+    expect(screen.getAllByText("settings.memory.viewer.fileLoading")).toHaveLength(2);
+
+    deferred.get("MEMORY.md")?.({ content: "# Index body", updatedAt: 1 });
+    expect(await screen.findByText("# Index body")).toBeTruthy();
+
+    deferred.get("fact-a.md")?.({ content: "# Fact body", updatedAt: 1 });
+    expect(await screen.findByText("# Fact body")).toBeTruthy();
+  });
+
+  it("clears previews and closes rows when the workspace scope changes", async () => {
+    const memoryService = createService();
+    renderSection(memoryService);
+    await screen.findByTestId(TID_SETTINGS_MEMORY_SCOPE_TRIGGER);
+
+    fireEvent.click(screen.getByTestId(testId(TID_SETTINGS_MEMORY_FILE_NAME, "MEMORY.md")));
+    expect(await screen.findByText("preview body")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /second/ }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /z-code/ }));
+
+    expect(screen.queryByText("preview body")).toBeNull();
+    // Re-expanding must issue a fresh read instead of reusing the stale entry.
+    fireEvent.click(screen.getByTestId(testId(TID_SETTINGS_MEMORY_FILE_NAME, "MEMORY.md")));
+    expect(await screen.findByText("preview body")).toBeTruthy();
+    expect(memoryService.readProjectMemoryFile).toHaveBeenCalledTimes(2);
+  });
+
   it("expands the row from the chevron toggle outside the trigger", async () => {
     const memoryService = createService();
     renderSection(memoryService);

@@ -36,7 +36,7 @@ const MEMORY_INDEX_LINE_LIMIT = 200;
 type MemoryPreviewErrorKind = "deleted" | "changed" | "tooLarge" | "unknown";
 
 export type MemoryPreviewRecord =
-  | { status: "loading" }
+  | { status: "loading"; requestId: number }
   | { status: "ready"; content: string }
   | { status: "error"; kind: MemoryPreviewErrorKind; message: string | undefined };
 
