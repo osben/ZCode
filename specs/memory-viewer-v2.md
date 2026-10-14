@@ -51,7 +51,8 @@ rewritten.
    states reusing `fileTooLarge` / `fileChanged` / `fileDeleted` / `noSelection` keys.
 4. **Index budget chip**: `MEMORY.md` shows the number of lines in the exact content the CLI injects,
    against the `200`-line limit. Count after the CLI's frontmatter removal, top-level HTML-comment
-   removal, and trim; empty injected content is `0` lines. This is a real system limit — the
+   removal (including comments indented by up to three spaces), and trim; empty injected content
+   is `0` lines. This is a real system limit — the
    injection-time truncation bound — not a UI invention, and it is deterministic (unlike tokens).
    When the file exceeds the bound the agent silently sees a truncated index, so proximity to 200
    is decision-relevant information.

@@ -61,8 +61,9 @@ function stripProjectMemoryIndexHtmlComments(content: string): string {
       continue;
     }
 
-    if (lineContent.startsWith("<!--")) {
-      const commentEnd = lineContent.indexOf("-->");
+    const commentPrefix = /^ {0,3}<!--/u.exec(lineContent)?.[0];
+    if (commentPrefix) {
+      const commentEnd = lineContent.indexOf("-->", commentPrefix.length);
       if (commentEnd === -1) {
         inComment = true;
         continue;

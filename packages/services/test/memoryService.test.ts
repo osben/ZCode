@@ -490,7 +490,11 @@ describe("memoryService Project Memory frontmatter meta", () => {
   it.each([
     ["empty frontmatter", "---\n---\n", 0],
     ["top-level HTML comment only", "<!-- internal note -->\n", 0],
+    ["top-level HTML comment indented by one space", " <!-- internal note -->\n", 0],
+    ["top-level HTML comment indented by two spaces", "  <!-- internal note -->\n", 0],
+    ["top-level HTML comment indented by three spaces", "   <!-- internal note -->\n", 0],
     ["content after a top-level HTML comment", "<!-- internal note -->\n# Index\n", 1],
+    ["content after an indented top-level HTML comment", "   <!-- internal note -->\n# Index\n", 1],
     ["HTML comments inside code fences", "```md\n<!-- literal -->\n```", 3],
   ])("counts the CLI-injected index lines for %s", async (_label, content, expected) => {
     const workspaceId = "normalized-index-project-8888888888888888";
