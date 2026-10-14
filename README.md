@@ -7,29 +7,26 @@
   <a href="https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=47ag983c-8fcb-4d6d-814b-5395193a712c&amp;qr_code=true">Feishu community</a> ·
   <a href="https://discord.gg/z9aBcQXZQ3">Discord</a>
 </p>
-<p align="center">
-  English
-</p>
 
 ZCode is an AI coding workspace with desktop, browser, and terminal interfaces. This repository contains the clients, backend services, shared UI, and Agent CLI and runtime source code.
 
 ## Fork Modifications
 
-This fork extends upstream [zai-org/ZCode](https://github.com/zai-org/ZCode) with:
+This is a personal fork of [zai-org/ZCode](https://github.com/zai-org/ZCode). I build it for myself; use it if you want. Upstream releases are merged in regularly. See [CHANGELOG.md](CHANGELOG.md) for the full list of changes:
 
-- Resume action on the chat error banner.
-- Instructions section in Settings for editing the global AGENTS.md file.
-- Accent color palettes, tinted surfaces, and a terminal WebGL rendering toggle.
-- Ukrainian (uk-UA) interface localization.
-- Merged-branch badge and hover cards in the task sidebar.
-- Voice dictation with local transcription model selection.
-- Voice dictation feedback chimes with volume control and optional system-audio mute while recording (Handy-inspired).
-- Fixes for code-scanning findings (ReDoS-prone regexes and others).
-- English translation of AGENTS.md and in-code documentation.
-- CI: PR checks (unit and node:test suites, CodeQL, CodeRabbit, Dependabot) and a fork release workflow with `-fork.N` versions.
+- Sign in with a ChatGPT Plus/Pro account and run the agent on that plan. Direct Coding Plan routing (fixes GLM-5.3 404s).
+- Local voice dictation with model management, feedback chimes, and dictation in the mobile web remote.
+- Git worktree task flow: create, manage, and open worktrees from the desktop or the phone.
+- Message pins, output styles, system prompt overrides, a global instructions editor, a resume button on errors, and auto-continue after a Coding Plan quota reset.
+- Memory viewer v2 and a context meter that matches the real compaction policy.
+- Themes: 10 accent palettes with tinted surfaces, Ukrainian localization, merged-branch badges and task hover cards in the sidebar.
+- Self-hosted web remote: relay server, Railway-ready page, open-on-desktop, remote worktree open, and a `/remote` bot command.
+- Live tok/s, Model trajectory tab, and JetBrains Toolbox / Android Studio detection in Open in Editor.
+- Fork release pipeline (`-fork.N` versions), faster CI, and English docs.
 
 ## Updates
 
+- 2026-10-13: Ported the upstream v3.15.2 auth fix and the v3.15.3 auto-update improvements.
 - 2026-10-10: Updated to ZCode v3.15.1.
 - 2026-9-23: Updated to ZCode v3.14.3.
 
