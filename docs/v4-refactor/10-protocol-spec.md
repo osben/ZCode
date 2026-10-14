@@ -608,7 +608,9 @@ interface SessionUsageState {
   contextWindow: {
     usedTokens: number;
     maxTokens: number;
-    autoCompactThresholdTokens: number | null; // null = auto compact 关闭
+    autoCompactThresholdTokens: number | null; // legacy required field; null is unknown unless authoritative=true
+    autoCompactThresholdAuthoritative?: boolean; // additive; true makes the auto threshold (including null) authoritative
+    microcompactThresholdTokens?: number | null; // additive; absent = unknown/no warning; null = microcompact 关闭或不支持
   } | null; // null = 尚无一次模型往返
   cumulative: {
     // 会话累计（跨 compact 累计，不回退）
@@ -619,6 +621,8 @@ interface SessionUsageState {
   };
 }
 ```
+
+为保持未升级 V4 客户端可解析，旧字段 `autoCompactThresholdTokens` 始终保留且必填；未知值使用 `null` 占位。新增的可选 `autoCompactThresholdAuthoritative` 是 additive metadata：仅为 `true` 时，auto threshold 的数字或 `null` 才是 runtime 权威结果；缺省/false 表示旧 host、旧事件或尚未解析的模型切换状态，客户端可使用默认估值。`microcompactThresholdTokens` 是 additive 可选字段，旧数据缺省时保持未知且不显示 warning，因为旧数据无法证明 opt-in 策略已启用；显式 `null` 表示 runtime 确认 microcompact 关闭或不支持。新主轮 `ModelComplete` 必须投影两个权威结果（并将 auto authoritative 置为 `true`），以免把占位 `null` 误判为 disabled。
 
 conflation 语义：值未变不下发（P-05）；A 区整体替换保证「不会把正数 used 覆盖成 0」类 bug 无处生长。计费/配额（coding plan）不在 conversation topic，归 usage 域。
 

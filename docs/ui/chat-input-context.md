@@ -1,61 +1,123 @@
 # Chat Input Context
 
-> **当前状态**：本文已按 V4 composer 接线校准。上下文用量来自 V4 conversation snapshot，
-> 不再读取 legacy task runtime/store。
+> **Current status**: this document is calibrated to the V4 composer wiring. Context usage comes
+> from the V4 conversation snapshot; the legacy task runtime/store is no longer read.
 
-## 目标
+## Goal
 
-把聊天输入栏底部的上下文用量，从静态文本改成 AI Elements 的 `Context` compound component。
+Turn the context usage entry at the bottom of the chat input bar from static text into the
+AI Elements `Context` compound component.
 
-## 当前实现
+## Current implementation
 
 - `packages/ui/src/v4/composer/V4ComposerToolbar.tsx`
-  - 把 snapshot 的 `usage.contextWindow.usedTokens` / `maxTokens` / cache / breakdown 转成输入栏展示模型
-  - 复用 `packages/ui/src/chat-input-toolbar/contextUsage.tsx` 的 `ChatContextUsage`
-  - 复用已加载的 Z.ai / BigModel Coding Plan entitlement，不在 context 菜单里重复发起 quota 请求
-  - Coding Plan `Usage Remaining` 复用 paid Coding Plan 的 entitlement/state 解析工具，但展示入口只保留在输入框 context 和 Usage 页
-  - footer badge 与输入框 context 的 Coding Plan entitlement 使用同一套 provider/apiKey 指纹缓存，并对齐 paid plan 查询参数，避免同源额度拆成两份缓存
-  - 使用 `ContextTrigger` 作为上下文入口
-  - 使用 `ContextContentBody` 展示上下文窗口占用、breakdown、cache hit rate，以及 Coding Plan `Usage Remaining`
-  - cache hit rate 只有在主轮累计命中率大于等于 78% 时展示；低于 78% 的值不在紧凑 context 面板中显示
-  - 输入框 context 内的 Coding Plan 用量独立渲染，不复用 sidebar 菜单面板 UI
+  - Maps the snapshot's `usage.contextWindow.usedTokens` / `maxTokens` / cache / breakdown into the input-bar display model
+  - Reuses `ChatContextUsage` from `packages/ui/src/chat-input-toolbar/contextUsage.tsx`
+  - Reuses the already-loaded Z.ai / BigModel Coding Plan entitlement instead of issuing duplicate quota requests from the context menu
+  - Coding Plan `Usage Remaining` reuses the paid Coding Plan entitlement/state parsing utilities, but the display entry stays limited to the input-bar context and the Usage page
+  - The footer badge and the input-bar context share one provider/apiKey fingerprint cache for the Coding Plan entitlement and align paid-plan query parameters, so quotas from the same source are not split into two caches
+  - Uses `ContextTrigger` as the context entry point
+  - Uses `ContextContentBody` to show context window usage, breakdown, cache hit rate, and Coding Plan `Usage Remaining`
+  - Cache hit rate is shown only when the main-turn cumulative hit rate is ≥ 78%; lower values are not displayed in the compact context panel
+  - Coding Plan usage inside the input-bar context renders independently and does not reuse the sidebar menu panel UI
 - `packages/ui/src/components/ai-elements/context.tsx`
-  - 增加了 0 上限保护，避免进度百分比出现无效值
-  - 改为跟随当前环境 locale 格式化百分比、compact 数字和货币
+  - Added a zero upper-bound guard so the progress percentage can never become invalid
+  - Percentages, compact numbers, and currency now follow the current environment locale
 - `packages/ui/src/CodingPlanUsageRemainingPanel.tsx`
-  - 承载 Usage 页/输入框 context 复用的剩余额度数字行展示与 provider 切换
-  - 导出 entitlement/state 解析工具供输入框 context 复用数据语义
-  - 输入框 context 菜单中的 Coding Plan 三条额度进度条按顺序使用 usage chart 蓝、绿、紫，即 `--color-usage-chart-1` / `--color-usage-chart-2` / `--color-usage-chart-3`
-  - 输入框 context 菜单中的 Coding Plan 额度进度条使用设置页 Start Plan 的紧凑高度，使用 `h-1.5`
-  - 输入框 context 菜单中的 Coding Plan 进度条文字上下排列：subtle label、`percent · reset`，其中百分比使用 mono，重置时间使用 `text-ui-xs` 且不使用 mono
-  - 输入框 context 菜单中的 Coding Plan 用量按实际可展示额度数自适应列数：1 条显示 1 列，2 条显示 2 列，3 条显示 3 列；单条内部保持 label、剩余百分比、进度条上下排列的紧凑结构
-  - 输入框 context 菜单中的 Coding Plan 区块跟随 body 内边距，不再使用 footer 式外扩边距和上边框分隔
-  - 输入框 context 菜单中的 Coding Plan 标题行复用 `Context window` 的紧凑标题样式，不再使用独立 header 分隔层
-  - 输入框 context 菜单中的 Start Plan `Today's balance` 独立渲染，不复用设置页 `StartPlanBalanceCard` 或 Coding Plan 面板组件；布局参考 Coding Plan 的紧凑标题、meter 和分隔节奏
-  - 输入框 context 菜单中的 Start Plan `Today's balance` 只在当前模型属于 Start Plan provider 时展示，标题右侧提供 `Upgrade` 按钮直达对应 Start Plan provider 的套餐升级入口
-  - 输入框 context 菜单中的 Start Plan `Upgrade` 按钮参考设置页 Start Plan 升级按钮：活动折扣时使用 gradient 圆角胶囊样式，并展示折扣 badge
-  - 输入框 context 菜单中的 Start Plan `Today's balance` 展示剩余百分比、renew 时间和进度条，其中 renew 时间优先来自 `subscription.details[0].renewTime`，兜底使用余额项的 `nextResetTime`；今天只显示时间，格式为 `99% · 23:02`，非今天显示日期和时间，格式为 `99% · Jun 15 23:02`；不展示已用量、剩余量或总量文案，进度条高度使用 `h-1.5`，进度条保持 `success` 绿色
-  - 输入框 context 菜单中的 Start Plan 余额按实际可展示模型额度数自适应列数：1 条显示 1 列，2 条显示 2 列，3 条显示 3 列；单条内部保持模型 label、剩余百分比、进度条上下排列的紧凑结构
-  - `Context windows` 与 `Coding Plan` 两个 section 标题统一使用 `text-ui-base`
-  - `Context windows` 标题右侧的 used / total 摘要使用本地化紧凑 token 单位；英文使用大写 `K` / `M` / `B`，中文使用 `万` / `亿`
-  - `Context windows` 进度分段色阶以 Coding Plan 蓝色 `--color-usage-chart-1` 为基准，按占比顺序逐级变浅
-  - 输入框 context 菜单中的 Coding Plan 详情入口显示为 link 风格的 `More` 文案加右箭头
-  - 输入框 context 菜单中的 Coding Plan `More` 入口点击时先关闭 context 面板，再打开 usage 详情，避免跳转后浮层残留
-  - 输入框 context 菜单中的 Coding Plan 只有前面已展示 `Context windows` 用量区块时，才显示上分隔线和顶部间距
-  - Coding Plan 出现可用重置机会时，context 触发器复用项目统一的 `ControlHintTooltip` 及其默认 offset，并启用封装内的 `standalone` Provider 边界以支持独立 SSR/测试渲染；Tooltip 立即常驻显示礼物图标与 `{count} 次重置额度`；用户 hover、focus 或 tap 打开 context 面板后，本窗口收起首次提醒；业务层只控制展示状态与富内容，不直接组合底层 Tooltip primitives
-  - 同一机会最早到期时间进入最后 3 分钟时，Tooltip 再次常驻显示闹钟图标与实时倒计时 `重置额度过期 {time}`；如果首次提醒尚未收起，则原地切换为临期提醒
-  - 礼物图标使用主题语义成功色，临期闹钟使用主题语义警告色；临期文案中的倒计时 `{time}` 使用固定 `h-3.5`（14px）、`text-ui-xs px-1.5`、浅 warning 背景、warning 文字和 `tabular-nums` 的紧凑 pill 样式；闹钟持续左右摆动，`prefers-reduced-motion` 下静止；临期提醒被查看后同一机会不再重复，机会失效、额度已满或过期时立即收起
-  - Context 圆形触发按钮独立表达当前机会状态：存在有效机会且剩余时间大于 3 分钟时只使用 success 前景色、不增加状态背景，进入最后 3 分钟后切换为淡 warning 背景与 warning 前景色；用户关闭 Tooltip 不清除按钮状态色，机会失效或过期后恢复默认色
-  - context 触发器 Tooltip 同时只展示一种状态，优先级为「正在重置/已重置」>「临期机会」>「首次机会」；Tooltip 仅提醒，重置操作仍在 context 面板完成
-  - 初次与临期机会 Tooltip 右侧均提供圆形关闭按钮；关闭只标记当前阶段已读，不打开 context 面板、不影响机会本身；已读状态由当前 renderer 窗口共享，因此切换会话或会话组件重新挂载后，同一 `sourceKey + earliestExpiresAt` 机会的同一阶段不会再次显示；该状态不落盘、不跨窗口，新过期时间仍按新机会提醒；按钮复用共享 `Button` 的 `icon-xs` 尺寸并覆盖为 `rounded-full`，不使用负 margin，使用 `关闭提醒` / `Dismiss reminder` 无障碍标签
-  - 临期提醒中闹钟与文案保持 `gap-1.5`，倒计时文案组与关闭按钮使用 `gap-0`，避免右侧出现多余空隙
-  - 机会提醒内容沿用模型 Tooltip 的 `text-ui-sm` 字号；由于圆形关闭按钮固定为 `20px`，提醒 Tooltip 使用 `bg-background py-0.5 pr-0.5`，使整体尺寸与模型 Tooltip 对齐并使用页面背景色
+  - Hosts the remaining-quota number rows and provider switching shared by the Usage page and the input-bar context
+  - Exports entitlement/state parsing utilities so the input-bar context can reuse the data semantics
+  - The three Coding Plan quota bars in the input-bar context menu use the usage chart blue, green, and purple in order: `--color-usage-chart-1` / `--color-usage-chart-2` / `--color-usage-chart-3`
+  - The Coding Plan quota bars use the settings-page Start Plan compact height, `h-1.5`
+  - Coding Plan bar text stacks vertically: subtle label, `percent · reset`; the percentage uses mono, the reset time uses `text-ui-xs` and is not mono
+  - Coding Plan usage columns adapt to the number of displayable quotas: 1 quota → 1 column, 2 → 2, 3 → 3; each item keeps the compact label / remaining percent / bar vertical structure
+  - The Coding Plan block follows the body padding and no longer uses footer-style outset margins or a top border separator
+  - The Coding Plan title row reuses the compact `Context window` title style instead of a separate header divider layer
+  - Start Plan `Today's balance` renders independently and does not reuse the settings-page `StartPlanBalanceCard` or the Coding Plan panel components; the layout follows Coding Plan's compact title, meter, and separator rhythm
+  - Start Plan `Today's balance` shows only when the current model belongs to a Start Plan provider; an `Upgrade` button on the title's right leads directly to that Start Plan provider's plan upgrade entry
+  - The Start Plan `Upgrade` button mirrors the settings-page Start Plan upgrade button: a gradient rounded-pill style during active discounts, with a discount badge
+  - Start Plan `Today's balance` shows remaining percent, renew time, and a bar; renew time prefers `subscription.details[0].renewTime` and falls back to the balance item's `nextResetTime`; today shows time only as `99% · 23:02`, another day shows date and time as `99% · Jun 15 23:02`; no used/remaining/total text is displayed, the bar height is `h-1.5`, and the bar stays `success` green
+  - Start Plan balance columns adapt the same way: 1 quota → 1 column, 2 → 2, 3 → 3; each item keeps the compact model label / remaining percent / bar vertical structure
+  - The `Context windows` and `Coding Plan` section titles both use `text-ui-base`
+  - The used / total summary next to the `Context windows` title uses localized compact token units; English uses uppercase `K` / `M` / `B`, Chinese uses `万` / `亿`
+  - The `Context windows` progress segments are based on the Coding Plan blue `--color-usage-chart-1` and fade step by step in proportion order
+  - The Coding Plan details entry in the input-bar context menu renders as link-style `More` text with a right arrow
+  - Clicking the Coding Plan `More` entry closes the context panel first, then opens the usage details, so no overlay is left behind after navigation
+  - The Coding Plan block shows its top separator and top spacing only when the `Context windows` usage block is displayed above it
+  - When a Coding Plan reset opportunity appears, the context trigger reuses the project-wide `ControlHintTooltip` with its default offset and enables the wrapper's `standalone` Provider boundary to support independent SSR/test rendering; the Tooltip immediately shows a persistent gift icon with `{count} reset quotas`; once the user hovers, focuses, or taps to open the context panel, the first reminder collapses for this window; the business layer controls only display state and rich content, and does not compose low-level Tooltip primitives directly
+  - When the same opportunity's earliest expiry enters its final 3 minutes, the Tooltip again shows a persistent alarm icon with a live countdown `Reset quota expires {time}`; if the first reminder has not been dismissed, it switches to the urgent reminder in place
+  - The gift icon uses the theme semantic success color and the urgent alarm uses the theme semantic warning color; the countdown `{time}` in urgent copy uses a fixed `h-3.5` (14px), `text-ui-xs px-1.5`, a light warning background, warning text, and `tabular-nums` compact pill styling; the alarm sways left and right continuously and stands still under `prefers-reduced-motion`; after the urgent reminder has been viewed, the same opportunity does not repeat, and it collapses immediately when the opportunity becomes invalid, the quotas are full, or it expires
+  - The round context trigger button expresses the current opportunity state on its own: with a valid opportunity and more than 3 minutes left it uses only the success foreground color without a state background; inside the final 3 minutes it switches to a light warning background with warning foreground; dismissing the Tooltip does not clear the button state color, and the default color returns once the opportunity becomes invalid or expires
+  - The context trigger Tooltip shows only one state at a time, with the priority "resetting/reset" > "urgent opportunity" > "first opportunity"; the Tooltip only reminds — the reset action still happens in the context panel
+  - Both the first and urgent opportunity Tooltips provide a round close button on the right; closing only marks the current phase as read — it does not open the context panel or affect the opportunity itself; the read state is shared by the current renderer window, so after switching sessions or remounting the session component, the same phase of the same `sourceKey + earliestExpiresAt` opportunity does not show again; this state is not persisted and does not cross windows, and a new expiry still reminds as a new opportunity; the button reuses the shared `Button` `icon-xs` size overridden to `rounded-full`, uses no negative margin, and has the `关闭提醒` / `Dismiss reminder` accessibility label
+  - In the urgent reminder the alarm and the copy keep `gap-1.5`, while the countdown text group and the close button use `gap-0` to avoid extra space on the right
+  - The opportunity reminder content uses the model Tooltip's `text-ui-sm` size; because the round close button is fixed at `20px`, the reminder Tooltip uses `bg-background py-0.5 pr-0.5` so its overall size aligns with the model Tooltip and uses the page background color
 - `packages/ui/src/i18n/locales/en-US.ts`
 - `packages/ui/src/i18n/locales/zh-CN.ts`
-  - 补充了 hover card 的说明文案
+  - Added the hover card copy
 
-## 结果
+## Result
 
-- 输入栏底部仍保留简洁的 context 入口
-- 用户悬停后可以看到更完整的上下文解释与当前 Coding Plan 剩余额度
-- 组件形式与 `elements.ai-sdk` 的 context 文档保持一致
+- The chat input bar keeps a compact context entry
+- Hovering reveals a fuller context explanation plus the current Coding Plan remaining quota
+- The component shape stays consistent with the `elements.ai-sdk` context docs
+
+## Context budget tone (ZCO-19, additive)
+
+The context meter must report the runtime's compaction thresholds, not arbitrary fixed percentages;
+reaching a threshold does not guarantee that a compaction action will run. The threshold math lives
+in one place, `packages/shared/src/contextBudgetPolicy.ts`, including the output-reserve cap and
+configurable buffer. The CLI compact policy (`apps/zcode-cli/packages/core/src/compact/policy.ts`)
+delegates its existing threshold helpers to shared; `microcompact.ts` and the UI consume the same
+shared constants/helpers. Shared constants and calculations are the single source of truth; core
+keeps its existing export names as wrappers.
+
+Threshold math (defaults, mirroring the runtime policy):
+
+- `autoCompactThreshold = max(0, contextWindow − min(maxOutputTokens ?? 32K, 21K) − 13K)` — the
+  token count at which the next model step triggers a full summary compaction.
+- An explicitly configured `bufferTokens: 0` is valid and removes the configurable safety buffer;
+  an omitted or invalid buffer uses the 13K default.
+- `microcompactThreshold = max(0, min(floor(autoCompactThreshold × 0.9), autoCompactThreshold − 2K))` — the token count at which old tool results start being cleared, matching `buildDefaultMicrocompactThreshold` in the runtime.
+- The runtime resolves `autoCompactThreshold` from the selected model, context-budget strategy, model output limit, and effective compact configuration. Main-turn completion events carry it into `usage.contextWindow.autoCompactThresholdTokens` and mark it authoritative. The required field remains `null` when unknown for old-client compatibility; the additive authority flag distinguishes that placeholder from an authoritative `null` (disabled).
+- Main-turn completion events also carry `usage.contextWindow.microcompactThresholdTokens`. It is the configured `microcompact.thresholdTokens`, or the default formula above when microcompact is enabled without an override; `null` means microcompact is disabled or unsupported. The UI uses this authoritative threshold when present. If the field is absent in a legacy event, the UI treats microcompact as unknown and does not show a microcompact warning because legacy data cannot establish that the opt-in policy is enabled.
+- Legacy events without an authoritative auto-compact threshold still use the default auto-compact estimate. This fallback does not infer microcompact state.
+- V4 usage snapshots retain the required auto threshold field for older clients and use an additive authority flag to distinguish legacy/unknown `null` from authoritative disabled `null`. Microcompact remains additive: an absent field is unknown and does not warn, while explicit `null` is disabled/unsupported.
+- On model selection, numeric thresholds are invalidated because they belong to the previous model; explicit `null` values are retained so a disabled/unsupported policy is not mistaken for a legacy unknown threshold before the next main-turn completion.
+
+UI tone mapping (`resolveContextBudgetTone`):
+
+- `critical`: `usedTokens ≥ autoCompactThreshold` — the auto-compact threshold has been reached.
+- `warning`: `microcompactThresholdTokens` is a number and `usedTokens ≥ microcompactThresholdTokens` — the microcompact threshold has been reached. An absent or null threshold does not produce a microcompact warning. A configured zero threshold is an immediate token-pressure boundary in the runtime.
+  These tones report token-budget state only; runtime may still skip either operation based on
+  available history, compact candidates, or safety guards.
+- `normal`: below the microcompact threshold, or invalid input (`usedTokens ≤ 0`/non-finite).
+
+Rendering rules:
+
+- The round trigger recolors via foreground semantic tokens: `warning` → `text-warning`,
+  `critical` → `text-destructive`. A quota-reset opportunity tone on the same trigger keeps
+  priority (transient state wins over steady state).
+- The context panel gains one label/value row `chat.contextUsage.autoCompact` showing the
+  auto-compact point as `≈{compact tokens} ({percent of window})`, styled like the cache-hit-rate
+  row. Numeric thresholds are rendered even when the threshold is zero; an explicit `null` (disabled)
+  suppresses the row.
+- The trigger carries `data-usage-tone={tone}`; the hidden `TID_V4_MODEL_CONFIG` anchor adds the
+  same attribute for E2E assertions.
+- The trigger's accessible name appends a localized threshold-reached status whenever the context
+  budget tone is active. It does not claim compaction is occurring or guaranteed. Quota-reset tones
+  retain their visual priority.
+- Legacy events without authoritative thresholds use the 21K preflight reserve estimate; current
+  main-turn events use the runtime thresholds directly.
+
+Acceptance scenarios:
+
+1. 200K window, no max output, auto-compact enabled, and microcompact explicitly enabled without a threshold override: auto is 166 000 and micro is 149 400; used 149 399 renders normal, 149 400 warning, and 166 000 critical. The panel row shows `≈166K (83%)` in en-US.
+2. Microcompact disabled or auto-compact disabled: its corresponding threshold is `null`, and the UI does not warn for that policy.
+3. A configured microcompact threshold is displayed as the warning boundary; the UI does not substitute its default. Legacy events with an absent microcompact threshold do not show a microcompact warning. A configured zero threshold is immediate in the runtime.
+4. Quota-reset reminder visible with `usedTokens ≥ autoCompactThreshold`: trigger keeps the
+   quota tone (success/urgent) and does not apply the budget tone.
+5. Invalid usage (`used = 0` or non-finite): no trigger recolor, tone attribute reads `normal`.
+6. A high-usage session with explicit `null` thresholds keeps both policies disabled immediately
+   after a model switch; only a later authoritative main-turn completion can replace those states.
+7. An authoritative auto-compact threshold of zero is an immediate boundary and renders `≈0 (0%)`;
+   an explicit `null` disables the row.

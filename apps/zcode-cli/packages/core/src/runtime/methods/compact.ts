@@ -4,6 +4,8 @@ import {
   CompactTrigger,
   CoreErrorType,
   DEFAULT_COMPACT_CONTEXT_WINDOW,
+  buildDefaultMicrocompactThreshold,
+  getAutoCompactThreshold,
   SessionEventType,
   createModelUsageSummaryFromEvents,
   runWithContextAsync,
@@ -311,6 +313,46 @@ export async function autoCompactIfNeeded(
     });
     return "failed";
   }
+}
+
+/**
+ * Effective compaction thresholds for the executing model, using the same config assembly as
+ * `autoCompactIfNeeded`; null marks a disabled policy. A missing model window keeps the runtime's
+ * default window. Emitted on main-turn completions so the UI meter uses the authoritative triggers.
+ */
+export function resolveExecutionContextBudgetThresholds(params: {
+  compactConfig?: AutoCompactPolicyConfig;
+  modelContextBudgetStrategy?: "legacy" | "preflight-v1";
+  modelContextWindow: number | undefined;
+  modelMaxOutputTokens: number | undefined;
+}): {
+  autoCompactThresholdTokens: number | null;
+  microcompactThresholdTokens: number | null;
+} {
+  const { compactConfig, modelContextBudgetStrategy, modelContextWindow, modelMaxOutputTokens } =
+    params;
+  if (compactConfig?.enabled === false) {
+    return { autoCompactThresholdTokens: null, microcompactThresholdTokens: null };
+  }
+  const config: AutoCompactPolicyConfig = {
+    contextWindow: modelContextWindow,
+    ...compactConfig,
+    maxOutputTokens: resolveNormalRequestMaxOutputTokens({ modelMaxOutputTokens }),
+    modelContextBudgetStrategy,
+  };
+  const autoCompactThresholdTokens = getAutoCompactThreshold(config);
+  const configuredMicroThreshold = config.microcompact?.thresholdTokens;
+  const microcompactThresholdTokens =
+    config.microcompact?.enabled === true
+      ? typeof configuredMicroThreshold === "number" &&
+        Number.isFinite(configuredMicroThreshold) &&
+        configuredMicroThreshold >= 0
+        ? Math.floor(configuredMicroThreshold)
+        : configuredMicroThreshold === undefined
+          ? buildDefaultMicrocompactThreshold(autoCompactThresholdTokens)
+          : null
+      : null;
+  return { autoCompactThresholdTokens, microcompactThresholdTokens };
 }
 
 function buildProviderUsageTokenOverride(

@@ -136,6 +136,7 @@ function sessionUsageSeedFromRuntimeContextUsage(
     contextWindow: {
       usedTokens: contextUsage.used,
       maxTokens: contextWindowOverride ?? null,
+      // Preserve the required V4 wire field; absent runtime threshold facts remain unknown.
       autoCompactThresholdTokens: null,
       ...(contextUsage.cache ? { cache: contextUsage.cache } : {}),
       ...(contextUsage.breakdown ? { breakdown: contextUsage.breakdown } : {}),

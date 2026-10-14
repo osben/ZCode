@@ -66,7 +66,7 @@ describe("ChatContextUsage mobile interaction", () => {
 
     renderContextUsage();
 
-    const trigger = screen.getByRole("button", { name: "chat.contextUsage" });
+    const trigger = screen.getByTestId("chat-context-usage-trigger");
     fireEvent.pointerDown(trigger, { pointerType: "touch" });
     fireEvent.touchStart(trigger);
     fireEvent.pointerUp(trigger, { pointerType: "touch" });
@@ -113,7 +113,7 @@ describe("ChatContextUsage mobile interaction", () => {
 
     renderContextUsage();
 
-    fireEvent.pointerDown(screen.getByRole("button", { name: "chat.contextUsage" }), {
+    fireEvent.pointerDown(screen.getByTestId("chat-context-usage-trigger"), {
       pointerType: "mouse",
     });
 

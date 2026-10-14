@@ -70,7 +70,10 @@ import {
   recordMainTurnCacheHitUsage,
   recordMainTurnModelUsage,
 } from "./turn-model-step-usage.js";
-import { estimateCurrentModelInputTokens } from "./compact.js";
+import {
+  estimateCurrentModelInputTokens,
+  resolveExecutionContextBudgetThresholds,
+} from "./compact.js";
 import {
   resolveModelStepMaxOutputTokens,
   resolveNormalRequestMaxOutputTokens,
@@ -647,6 +650,14 @@ async function runModelBackedTurnStepImpl(
       // so long-running tasks lose the context meter size and hide it from the input bar.
       ...(querySource === "main_turn" && executionContextWindow !== undefined
         ? { contextWindow: executionContextWindow }
+        : {}),
+      ...(querySource === "main_turn"
+        ? resolveExecutionContextBudgetThresholds({
+            compactConfig: this.config.compact,
+            modelContextBudgetStrategy: this.config.modelContextBudgetStrategy,
+            modelContextWindow: executionContextWindow,
+            modelMaxOutputTokens: executionMaxOutputTokens,
+          })
         : {}),
       querySource,
       stopReason: result.finishReason,

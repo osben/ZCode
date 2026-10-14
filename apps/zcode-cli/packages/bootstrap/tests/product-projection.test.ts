@@ -1077,11 +1077,13 @@ describe("ProductProjection 黄金测试（L1）", () => {
     expect(snapshot.control.sessionEnded).toBe(true);
     expect(snapshot.control.canStop).toBe(false);
     expect(snapshot.inputRouting.mode).toBe("startNow");
-    expect(snapshot.usage.contextWindow).toEqual({
+    expect(snapshot.usage.contextWindow).toMatchObject({
       usedTokens: 150,
       maxTokens: 200_000,
-      autoCompactThresholdTokens: null,
     });
+    expect(snapshot.usage.contextWindow?.autoCompactThresholdTokens).toBeNull();
+    expect(snapshot.usage.contextWindow).not.toHaveProperty("autoCompactThresholdAuthoritative");
+    expect(snapshot.usage.contextWindow).not.toHaveProperty("microcompactThresholdTokens");
     expect(snapshot.usage.cumulative.inputTokens).toBe(120);
     expect(snapshot.seq).toBe(log.events.length);
   });
@@ -7030,6 +7032,8 @@ describe("fork / modelChange marker", () => {
         stopReason: "end_turn",
         querySource: "main_turn",
         contextWindow: 200_000,
+        autoCompactThresholdTokens: 166_000,
+        microcompactThresholdTokens: 149_400,
         usage: { inputTokens: 120, outputTokens: 30 },
       },
       { turnId: "turn-1" },
@@ -7038,6 +7042,9 @@ describe("fork / modelChange marker", () => {
     expect(projection.getSnapshot().usage.contextWindow).toMatchObject({
       usedTokens: 150,
       maxTokens: 200_000,
+      autoCompactThresholdTokens: 166_000,
+      autoCompactThresholdAuthoritative: true,
+      microcompactThresholdTokens: 149_400,
     });
 
     projection.applyEvent(
@@ -7071,10 +7078,14 @@ describe("fork / modelChange marker", () => {
 
     // Fix goal: the model switch event is itself the authoritative commit point of the runtime's
     // new capability; do not wait for the next send to finish.
-    expect(projection.getSnapshot().usage.contextWindow).toMatchObject({
+    const switchedContextWindow = projection.getSnapshot().usage.contextWindow;
+    expect(switchedContextWindow).toMatchObject({
       usedTokens: 150,
       maxTokens: 1_000_000,
     });
+    expect(switchedContextWindow?.autoCompactThresholdTokens).toBeNull();
+    expect(switchedContextWindow).not.toHaveProperty("autoCompactThresholdAuthoritative");
+    expect(switchedContextWindow).not.toHaveProperty("microcompactThresholdTokens");
 
     projection.applyEvent(
       log.push(
@@ -7090,9 +7101,44 @@ describe("fork / modelChange marker", () => {
     );
     // When later old adapters do not carry contextWindow, they must also fall back to the new
     // window right after the switch.
-    expect(projection.getSnapshot().usage.contextWindow).toMatchObject({
+    const legacyCompleteContextWindow = projection.getSnapshot().usage.contextWindow;
+    expect(legacyCompleteContextWindow).toMatchObject({
       usedTokens: 200,
       maxTokens: 1_000_000,
+    });
+    expect(legacyCompleteContextWindow?.autoCompactThresholdTokens).toBeNull();
+    expect(legacyCompleteContextWindow).not.toHaveProperty("autoCompactThresholdAuthoritative");
+    expect(legacyCompleteContextWindow).not.toHaveProperty("microcompactThresholdTokens");
+
+    projection.applyEvent(
+      log.push(SessionEventType.ModelComplete, {
+        content: "disabled",
+        stopReason: "end_turn",
+        querySource: "main_turn",
+        contextWindow: 1_000_000,
+        autoCompactThresholdTokens: null,
+        microcompactThresholdTokens: null,
+        usage: { inputTokens: 900_000, outputTokens: 0 },
+      }),
+    );
+    expect(projection.getSnapshot().usage.contextWindow).toMatchObject({
+      usedTokens: 900_000,
+      autoCompactThresholdTokens: null,
+      autoCompactThresholdAuthoritative: true,
+      microcompactThresholdTokens: null,
+    });
+
+    projection.applyEvent(
+      log.push(SessionEventType.ModelSelected, {
+        modelSelection: { providerId: "custom", modelId: "disabled-policy-model" },
+        contextWindow: 1_000_000,
+      }),
+    );
+    expect(projection.getSnapshot().usage.contextWindow).toMatchObject({
+      usedTokens: 900_000,
+      autoCompactThresholdTokens: null,
+      autoCompactThresholdAuthoritative: true,
+      microcompactThresholdTokens: null,
     });
   });
 

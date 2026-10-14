@@ -11,6 +11,9 @@ import {
 import {
   TID_CHAT_CONTEXT_USAGE_TRIGGER,
   type CodingPlanResetType,
+  getAutoCompactThresholdTokens,
+  resolveContextBudgetTone,
+  type ZCodeContextBudgetTone,
   type ZCodeContextUsageBreakdownItem,
   type ZCodeProvider,
 } from "@zcode/shared";
@@ -62,6 +65,7 @@ import {
   resolveContextQuotaResetOpportunityTriggerTone,
   resolveContextTriggerTooltipKind,
   shouldDismissContextQuotaResetOpportunityReminder,
+  type ContextQuotaResetOpportunityTriggerTone,
 } from "@/chat-input-toolbar/contextQuotaResetOpportunityReminder.js";
 
 type ContextUsageBreakdownSource = ZCodeContextUsageBreakdownItem["source"];
@@ -227,6 +231,26 @@ export function getContextCompressionCommand(_provider: ZCodeProvider): string {
   return "/compact";
 }
 
+/**
+ * Steady context-budget tone for the round trigger. A quota-reset opportunity tone is transient
+ * and keeps priority; never render both on the same trigger.
+ */
+export function resolveContextTriggerToneClassName(
+  contextTone: ZCodeContextBudgetTone,
+  quotaTriggerTone: ContextQuotaResetOpportunityTriggerTone | null,
+): string | null {
+  if (quotaTriggerTone !== null) {
+    return null;
+  }
+  if (contextTone === "warning") {
+    return "text-warning";
+  }
+  if (contextTone === "critical") {
+    return "text-destructive";
+  }
+  return null;
+}
+
 // Currently effective used_at for automatic/operational completion (startedAt is empty); manual completion does not participate in trigger interactions.
 function resolveAutomaticCompletedAt(entry: CodingPlanQuotaResetUiEntry | null): number | null {
   return entry?.status === "completed" && entry.startedAt === null && entry.observedAt !== null
@@ -258,6 +282,9 @@ export function ChatContextUsage({
     size: number;
     cache?: { hitRate: number | null };
     breakdown?: ZCodeContextUsageBreakdownItem[];
+    autoCompactThresholdTokens?: number | null;
+    autoCompactThresholdAuthoritative?: boolean;
+    microcompactThresholdTokens?: number | null;
   } | null;
   selectedProvider: ZCodeProvider;
   intl: ReturnType<typeof useZCodeIntl>["intl"];
@@ -826,6 +853,33 @@ export function ChatContextUsage({
     [locale],
   );
 
+  // Tone mirrors the runtime compaction policy (see packages/shared/src/contextBudgetPolicy.ts):
+  // warning and critical report reached thresholds; runtime may still skip the compaction action.
+  const contextTone = renderableTaskUsage
+    ? resolveContextBudgetTone({
+        autoCompactThresholdTokens:
+          renderableTaskUsage.autoCompactThresholdAuthoritative === true
+            ? renderableTaskUsage.autoCompactThresholdTokens
+            : undefined,
+        contextWindow: renderableTaskUsage.size,
+        microcompactThresholdTokens: renderableTaskUsage.microcompactThresholdTokens,
+        usedTokens: renderableTaskUsage.used,
+      })
+    : "normal";
+  const autoCompactThresholdTokens = !renderableTaskUsage
+    ? null
+    : renderableTaskUsage.autoCompactThresholdAuthoritative === true
+      ? typeof renderableTaskUsage.autoCompactThresholdTokens === "number"
+        ? renderableTaskUsage.autoCompactThresholdTokens
+        : null
+      : getAutoCompactThresholdTokens({ contextWindow: renderableTaskUsage.size });
+  const autoCompactLabel =
+    renderableTaskUsage && autoCompactThresholdTokens !== null
+      ? `≈${formatContextUsageTokenCount(autoCompactThresholdTokens, locale)} (${percentageFormatter.format(
+          autoCompactThresholdTokens / renderableTaskUsage.size,
+        )})`
+      : null;
+
   if (
     (!renderableTaskUsage || !contextUsageLabel) &&
     !hasCodingPlanUsageRemaining &&
@@ -852,6 +906,12 @@ export function ChatContextUsage({
       : intl.formatMessage({
           id: "settings.modelProvider.startPlan.balance.title",
         }));
+  const triggerAccessibleLabel =
+    contextTone === "warning"
+      ? `${triggerLabel}. ${intl.formatMessage({ id: "chat.contextUsage.tone.warning" })}`
+      : contextTone === "critical"
+        ? `${triggerLabel}. ${intl.formatMessage({ id: "chat.contextUsage.tone.critical" })}`
+        : triggerLabel;
   const contextUsedTokens = renderableTaskUsage?.used ?? 0;
   const contextMaxTokens = renderableTaskUsage?.size ?? 1;
 
@@ -890,13 +950,15 @@ export function ChatContextUsage({
         {/* Bugfix: The span hosts ControlHintTooltip’s asChild anchor while the inner ContextTrigger remains the HoverCard trigger, avoiding two Radix overlays attaching refs to the same DOM node. Manual-redemption processing is shown by the “Reset” button inside the popover, not as a spinner on the trigger. */}
         <span className="inline-flex shrink-0">
           <ContextTrigger
-            aria-label={triggerLabel}
+            aria-label={triggerAccessibleLabel}
             className={cn(
               "text-foreground-subtle",
+              resolveContextTriggerToneClassName(contextTone, opportunityTriggerTone),
               opportunityTriggerTone === "available" && "text-success",
               opportunityTriggerTone === "urgent" && "bg-warning/10 text-warning",
             )}
             data-chat-toolbar-popover-trigger="true"
+            data-usage-tone={contextTone}
             data-testid={TID_CHAT_CONTEXT_USAGE_TRIGGER}
             onPointerDown={(event) => {
               // Radix HoverCard prevents the following click during touchstart, so the panel cannot open on mobile.
@@ -940,6 +1002,14 @@ export function ChatContextUsage({
                 segments={progressSegments}
                 value={usagePercent * PERCENT_MAX}
               />
+              {autoCompactLabel ? (
+                <div className="flex items-center justify-between gap-3 text-ui-sm">
+                  <span className="text-foreground-subtle">
+                    {intl.formatMessage({ id: "chat.contextUsage.autoCompact" })}
+                  </span>
+                  <span className="font-mono text-ui-sm text-foreground">{autoCompactLabel}</span>
+                </div>
+              ) : null}
             </div>
           ) : null}
           {renderableTaskUsage && (breakdownSegments.length > 0 || cacheHitRateLabel) ? (

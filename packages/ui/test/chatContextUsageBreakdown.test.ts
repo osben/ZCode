@@ -932,6 +932,59 @@ describe("ChatContextUsage", () => {
     expect(html).not.toContain("0/1M (0%)");
   });
 
+  it("renders authoritative context compaction boundaries and trigger tones", () => {
+    const warningHtml = renderToStaticMarkup(
+      createElement(ChatContextUsage, {
+        intl: { formatMessage: ({ id }: { id: string }) => id },
+        locale: "en-US",
+        selectedProvider: "glm",
+        taskUsage: {
+          used: 149_400,
+          size: 200_000,
+          autoCompactThresholdTokens: 166_000,
+          autoCompactThresholdAuthoritative: true,
+          microcompactThresholdTokens: 149_400,
+        },
+      }),
+    );
+    expect(warningHtml).toContain('data-usage-tone="warning"');
+    expect(warningHtml).toContain("text-warning");
+    expect(warningHtml).toContain("≈166K (83%)");
+
+    const criticalHtml = renderToStaticMarkup(
+      createElement(ChatContextUsage, {
+        intl: { formatMessage: ({ id }: { id: string }) => id },
+        locale: "en-US",
+        selectedProvider: "glm",
+        taskUsage: {
+          used: 166_000,
+          size: 200_000,
+          autoCompactThresholdTokens: 166_000,
+          autoCompactThresholdAuthoritative: true,
+          microcompactThresholdTokens: null,
+        },
+      }),
+    );
+    expect(criticalHtml).toContain('data-usage-tone="critical"');
+    expect(criticalHtml).toContain("text-destructive");
+
+    const disabledHtml = renderToStaticMarkup(
+      createElement(ChatContextUsage, {
+        intl: { formatMessage: ({ id }: { id: string }) => id },
+        locale: "en-US",
+        selectedProvider: "glm",
+        taskUsage: {
+          used: 166_000,
+          size: 200_000,
+          autoCompactThresholdTokens: null,
+          autoCompactThresholdAuthoritative: true,
+          microcompactThresholdTokens: null,
+        },
+      }),
+    );
+    expect(disabledHtml).toContain('data-usage-tone="normal"');
+  });
+
   it("renders cache hit rate when the context usage reaches the display threshold", () => {
     const html = renderToStaticMarkup(
       createElement(ChatContextUsage, {

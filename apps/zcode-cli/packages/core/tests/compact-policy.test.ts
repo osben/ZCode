@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  resolveExecutionContextBudgetThresholds,
+} from "../src/runtime/methods/compact.js";
+import {
   DEFAULT_AUTOCOMPACT_OUTPUT_RESERVE_TOKENS,
   MAX_OUTPUT_TOKENS_FOR_SUMMARY,
   estimateMessageTokens,
@@ -20,6 +23,39 @@ const ENOUGH_MESSAGES = [
 ];
 
 describe("auto compact policy", () => {
+  it("projects effective auto and opt-in microcompact thresholds", () => {
+    const base = {
+      modelContextWindow: 200_000,
+      modelMaxOutputTokens: undefined,
+      modelContextBudgetStrategy: "preflight-v1" as const,
+    };
+    expect(resolveExecutionContextBudgetThresholds(base)).toEqual({
+      autoCompactThresholdTokens: 166_000,
+      microcompactThresholdTokens: null,
+    });
+    expect(
+      resolveExecutionContextBudgetThresholds({ ...base, modelContextWindow: undefined }),
+    ).toEqual({ autoCompactThresholdTokens: 166_000, microcompactThresholdTokens: null });
+    expect(
+      resolveExecutionContextBudgetThresholds({
+        ...base,
+        compactConfig: { microcompact: { enabled: true } },
+      }),
+    ).toEqual({ autoCompactThresholdTokens: 166_000, microcompactThresholdTokens: 149_400 });
+    expect(
+      resolveExecutionContextBudgetThresholds({
+        ...base,
+        compactConfig: { microcompact: { enabled: true, thresholdTokens: 80_000 } },
+      }),
+    ).toEqual({ autoCompactThresholdTokens: 166_000, microcompactThresholdTokens: 80_000 });
+    expect(
+      resolveExecutionContextBudgetThresholds({
+        ...base,
+        compactConfig: { enabled: false, microcompact: { enabled: true } },
+      }),
+    ).toEqual({ autoCompactThresholdTokens: null, microcompactThresholdTokens: null });
+  });
+
   it("counts reasoning blocks in the local fallback estimate", () => {
     expect(
       estimateMessageTokens([
@@ -57,6 +93,7 @@ describe("auto compact policy", () => {
       modelContextBudgetStrategy: "preflight-v1" as const,
     };
 
+    expect(getAutoCompactThreshold(config)).toBe(1_000);
     expect(shouldAutoCompact({ config, messages })).toMatchObject({
       estimatedTokenCount: 1_335,
       reason: "above_threshold",

@@ -68,7 +68,7 @@ it.each(["initial", "urgent"] as const)(
     const rendered = render(view());
     const query = () => document.querySelector(`[data-context-reset-reminder="${phase}"]`);
     expect(query()).not.toBeNull();
-    const trigger = screen.getByRole("button", { name: "chat.contextUsage" });
+    const trigger = screen.getByTestId("chat-context-usage-trigger");
     let workspaceId: string;
     act(() => {
       workspaceId = store!.getState().addTab("/workspace");
@@ -85,7 +85,7 @@ it.each(["initial", "urgent"] as const)(
     expect(query()).toBeNull();
     act(() => store!.getState().activateTab(workspaceId!));
     expect(query()).not.toBeNull();
-    expect(screen.getByRole("button", { name: "chat.contextUsage" })).toBe(trigger);
+    expect(screen.getByTestId("chat-context-usage-trigger")).toBe(trigger);
     fireEvent.pointerDown(document.body);
     expect(state.dismiss).toHaveBeenCalledTimes(1);
   },

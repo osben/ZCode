@@ -267,6 +267,27 @@ interface ContextWindowProjectionState {
   usedTokens: number;
 }
 
+function invalidateResolvedContextBudgetThresholds(
+  contextWindow: NonNullable<SessionUsageState["contextWindow"]>,
+): NonNullable<SessionUsageState["contextWindow"]> {
+  const {
+    autoCompactThresholdTokens,
+    autoCompactThresholdAuthoritative,
+    microcompactThresholdTokens,
+    ...remaining
+  } = contextWindow;
+  return {
+    ...remaining,
+    // Keep the required legacy field populated for old V4 clients. Numeric thresholds are stale
+    // after a model switch; only an authoritative disabled null survives with its authority bit.
+    autoCompactThresholdTokens: null,
+    ...(autoCompactThresholdTokens === null && autoCompactThresholdAuthoritative === true
+      ? { autoCompactThresholdAuthoritative: true }
+      : {}),
+    ...(microcompactThresholdTokens === null ? { microcompactThresholdTokens: null } : {}),
+  };
+}
+
 export interface SessionSubagentsSeed {
   revision: number;
   childSessionIds: string[];
@@ -4888,6 +4909,8 @@ export class ProductProjection {
       (contextWindow === null
         ? previousContextWindow !== null
         : previousContextWindow === null || previousContextWindow.maxTokens !== contextWindow);
+    const modelIdentityChanged = prev.provider !== provider || prev.model !== model;
+    const contextBudgetChanged = contextWindowChanged || modelIdentityChanged;
     // Once a log event touches model selection, a seed cannot overwrite it (even a same-value return
     // counts as a touch).
     // Exception: ModelSelected synthesized during cold recovery (HYDRATION_TRACE_ID) only rebuilds
@@ -4926,7 +4949,7 @@ export class ProductProjection {
             to: { provider, model },
           }
         : undefined;
-    if (!configChanged && !contextWindowChanged && modelTransition === undefined) {
+    if (!configChanged && !contextBudgetChanged && modelTransition === undefined) {
       return [];
     }
     return [
@@ -4941,7 +4964,7 @@ export class ProductProjection {
           // switch. Preserve the event ID and source/destination identities; the client still shows
           // the toast only at the live online-delivery boundary.
           ...(modelTransition ? { modelTransition } : {}),
-          ...(contextWindowChanged
+          ...(contextBudgetChanged
             ? {
                 usage: {
                   ...this.snapshot.usage,
@@ -4952,12 +4975,17 @@ export class ProductProjection {
                     contextWindow === null
                       ? null
                       : previousContextWindow
-                        ? { ...previousContextWindow, maxTokens: contextWindow }
-                        : {
-                            usedTokens: this.contextWindowState.usedTokens,
-                            maxTokens: contextWindow,
-                            autoCompactThresholdTokens: null,
-                          },
+                        ? {
+                            ...invalidateResolvedContextBudgetThresholds(previousContextWindow),
+                            ...(contextWindow !== undefined ? { maxTokens: contextWindow } : {}),
+                          }
+                        : contextWindow === undefined
+                          ? null
+                          : {
+                              usedTokens: this.contextWindowState.usedTokens,
+                              maxTokens: contextWindow,
+                              autoCompactThresholdTokens: null,
+                            },
                 },
               }
             : {}),
@@ -5035,6 +5063,7 @@ export class ProductProjection {
     this.contextWindowState.usedTokens = usedTokens;
     const maxTokens = payload.contextWindow ?? this.contextWindowState.maxTokens;
     const cumulative = this.snapshot.usage.cumulative;
+    const previousContextWindow = this.snapshot.usage.contextWindow;
     deltas.push({
       op: "state.updated",
       patch: {
@@ -5049,7 +5078,21 @@ export class ProductProjection {
                   usedTokens,
                   maxTokens,
                   autoCompactThresholdTokens:
-                    this.snapshot.usage.contextWindow?.autoCompactThresholdTokens ?? null,
+                    payload.autoCompactThresholdTokens !== undefined
+                      ? payload.autoCompactThresholdTokens
+                      : (previousContextWindow?.autoCompactThresholdTokens ?? null),
+                  ...(payload.autoCompactThresholdTokens !== undefined ||
+                  previousContextWindow?.autoCompactThresholdAuthoritative === true
+                    ? { autoCompactThresholdAuthoritative: true }
+                    : {}),
+                  ...(payload.microcompactThresholdTokens !== undefined
+                    ? { microcompactThresholdTokens: payload.microcompactThresholdTokens }
+                    : previousContextWindow?.microcompactThresholdTokens !== undefined
+                      ? {
+                          microcompactThresholdTokens:
+                            previousContextWindow.microcompactThresholdTokens,
+                        }
+                      : {}),
                   ...(payload.cacheHit ? { cache: payload.cacheHit } : {}),
                   ...(payload.contextUsageBreakdown && payload.contextUsageBreakdown.length > 0
                     ? { breakdown: payload.contextUsageBreakdown }
@@ -5198,8 +5241,22 @@ export class ProductProjection {
                 : {
                     usedTokens: tokensAfter,
                     maxTokens,
-                    autoCompactThresholdTokens:
-                      this.snapshot.usage.contextWindow?.autoCompactThresholdTokens ?? null,
+                    ...(this.snapshot.usage.contextWindow?.autoCompactThresholdTokens !== undefined
+                      ? {
+                          autoCompactThresholdTokens:
+                            this.snapshot.usage.contextWindow.autoCompactThresholdTokens,
+                        }
+                      : { autoCompactThresholdTokens: null }),
+                    ...(this.snapshot.usage.contextWindow?.autoCompactThresholdAuthoritative ===
+                    true
+                      ? { autoCompactThresholdAuthoritative: true }
+                      : {}),
+                    ...(this.snapshot.usage.contextWindow?.microcompactThresholdTokens !== undefined
+                      ? {
+                          microcompactThresholdTokens:
+                            this.snapshot.usage.contextWindow.microcompactThresholdTokens,
+                        }
+                      : {}),
                   },
           },
         },

@@ -121,6 +121,7 @@ export * from "./official-mcp-tool-error.js";
 export * from "./conversation-message-projection-policy.js";
 export * from "./conversation-share.js";
 export * from "./conversation-preview-artifacts.js";
+export * from "./contextBudgetPolicy.js";
 export * from "./zcode-session-task-status.js";
 export * from "./zcode-session-content-profile.js";
 export * from "./zcode-tool-projection-memory.js";
