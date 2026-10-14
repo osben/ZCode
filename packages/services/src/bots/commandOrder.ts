@@ -6,6 +6,7 @@ const BOT_POLICY_COMMAND_ORDER = [
   "model",
   "mode",
   "thoughtLevel",
+  "remote",
   "reply",
 ] as const satisfies readonly (keyof BotCommandPolicy)[];
 

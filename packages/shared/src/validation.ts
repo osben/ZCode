@@ -711,6 +711,16 @@ export const hostBotRemoteWorkspaceRuntimePortMessageSchema = z.object({
   error: z.string().optional(),
 });
 
+export const hostBotRemoteWorkspaceWebRemoteLinkResultMessageSchema = z.object({
+  type: z.literal("bot-remote-workspace-web-remote-link-result"),
+  requestId: nonEmptyStringSchema,
+  ok: z.boolean(),
+  url: z.string().optional(),
+  sessionId: z.string().optional(),
+  reason: z.enum(["workspace-not-open", "feature-disabled"]).optional(),
+  error: z.string().optional(),
+});
+
 export const sessionMessageRequestSchema = z.object({
   content: nonEmptyStringSchema,
   createdAt: nonEmptyStringSchema,
@@ -892,6 +902,7 @@ export const hostIncomingMessageSchema = z.discriminatedUnion("type", [
   hostBotRemoteWorkspaceReconnectResultMessageSchema,
   hostBotRemoteWorkspaceConnectionStatusResultMessageSchema,
   hostBotRemoteWorkspaceRuntimePortMessageSchema,
+  hostBotRemoteWorkspaceWebRemoteLinkResultMessageSchema,
   hostSessionMessageDeliverMessageSchema,
   hostSessionMessageDeliveryResultMessageSchema,
   hostFeedbackLogArchiveResultMessageSchema,
@@ -1245,6 +1256,16 @@ export const hostBotRemoteWorkspaceRuntimePortRequestResponseSchema = z.object({
   target: remoteTargetSchema,
 });
 
+// Unlike the three remote-only Bot workspace requests above, a web-remote link is also minted for
+// local workspaces, so workspaceIdentity and target are optional here.
+export const hostBotRemoteWorkspaceWebRemoteLinkRequestResponseSchema = z.object({
+  type: z.literal("bot-remote-workspace-web-remote-link-request"),
+  requestId: nonEmptyStringSchema,
+  workspacePath: nonEmptyStringSchema,
+  workspaceIdentity: nonEmptyStringSchema.optional(),
+  target: remoteTargetSchema.optional(),
+});
+
 export const hostSessionMessageSendRequestedResponseSchema = z.object({
   type: z.literal("session-message-send-requested"),
   request: sessionMessageRequestSchema,
@@ -1478,6 +1499,7 @@ export const hostResponseMessageSchema = z.discriminatedUnion("type", [
   hostBotRemoteWorkspaceReconnectRequestResponseSchema,
   hostBotRemoteWorkspaceConnectionStatusRequestResponseSchema,
   hostBotRemoteWorkspaceRuntimePortRequestResponseSchema,
+  hostBotRemoteWorkspaceWebRemoteLinkRequestResponseSchema,
   hostSessionMessageSendRequestedResponseSchema,
   hostSessionRouteAnnounceResponseSchema,
   hostSessionMessageDeliverResultResponseSchema,

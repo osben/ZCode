@@ -48,6 +48,7 @@ const telegramCommandDescriptions = {
   model: "Select model",
   mode: "Select mode",
   thoughtLevel: "Select thinking level",
+  remote: "Get a web remote control link",
   reply: "Select reply detail",
 } as const;
 
@@ -60,6 +61,7 @@ const telegramCommandNames = {
   model: "model",
   mode: "mode",
   thoughtLevel: "think",
+  remote: "remote",
   reply: "reply",
 } as const;
 

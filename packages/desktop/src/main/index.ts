@@ -657,6 +657,19 @@ const explicitQuitRef = { current: false };
 let appQuitPreparationInFlight: Promise<void> | null = null;
 let hasPreparedAppQuit = false;
 const windowWorkspaceMap = new Map<number, Set<string>>();
+// Bot /remote: deduplicates concurrent find-or-start operations per workspace key. Two simultaneous
+// /remote requests would both observe "no runtime" and each call manager.start for the same
+// window, where the second start stops and replaces the transport the first just established.
+const botWebRemoteLinkInFlight = new Map<
+  string,
+  Promise<{
+    ok: boolean;
+    url?: string;
+    sessionId?: string;
+    reason?: "workspace-not-open" | "feature-disabled";
+    error?: string;
+  }>
+>();
 const windowTaskRealtimeHostIdMap = new Map<number, string>();
 const windowUnreadCountMap = new Map<number, number>();
 const windowHostProcessMap = new Map<number, ElectronUtilityProcess>();
@@ -715,6 +728,8 @@ const UPDATE_STATUS_WINDOW_READY_HEIGHT = UPDATE_STATUS_WINDOW_PROGRESS_HEIGHT -
 const UPDATE_STATUS_WINDOW_TRAFFIC_LIGHT_POSITION = { x: 10, y: 10 } as const;
 const mainSettingService = createSettingService();
 const webRemoteControlCredentialService = createCredentialService();
+// Shared by the web-remote manager and the Bot /remote link handler so both apply the same gate decision.
+const webRemoteControlFeatureGate = createWebRemoteControlFeatureGate();
 const appLaunchGate = createAppLaunchGate();
 const appLaunchCoordinator = createAppLaunchCoordinator(appLaunchGate);
 const appTelemetryCredentialService = createCredentialService();
@@ -969,7 +984,7 @@ const webRemoteControlManager = createWebRemoteControlManager({
       });
     },
   },
-  featureGate: createWebRemoteControlFeatureGate(),
+  featureGate: webRemoteControlFeatureGate,
   logger,
   relayMessageLogger: webRemoteControlRelayLogger,
   platformHandlers: {
@@ -2018,6 +2033,71 @@ function createWindowInstance(startupBootstrap: StartupWindowBootstrap = {}) {
                 error: error instanceof Error ? error.message : String(error),
               };
             }
+          },
+          // Bot /remote: mint a web-remote control link for the bound workspace. Reuse a live
+          // runtime when possible; otherwise start one on a window that can serve the workspace.
+          // Concurrent requests for the same workspace share one in-flight operation so two
+          // /remote calls cannot race into competing manager.start calls on the same window
+          // (start stops and replaces that window's runtime).
+          handleBotRemoteWorkspaceWebRemoteLinkRequest: async ({
+            win,
+            requestId,
+            workspacePath,
+            workspaceIdentity,
+            target,
+          }) => {
+            const workspaceKey = workspaceIdentity?.trim() || workspacePath;
+            const inFlight = botWebRemoteLinkInFlight.get(workspaceKey);
+            if (inFlight) {
+              return inFlight;
+            }
+            const operation = (async () => {
+              try {
+                if (!webRemoteControlFeatureGate.isEnabled()) {
+                  return { ok: false, reason: "feature-disabled" as const };
+                }
+                const existing = await webRemoteControlManager.findLinkForWorkspace({
+                  workspacePath,
+                  ...(workspaceIdentity ? { workspaceIdentity } : {}),
+                });
+                if (existing) {
+                  return { ok: true, url: existing.url, sessionId: existing.sessionId };
+                }
+                if (target && workspaceIdentity) {
+                  // Remote workspace: attach the session to the bot's host window (idempotent when
+                  // already connected), then start the runtime on that same window.
+                  const sessionId = await remoteSessionManager.reconnectBotRemoteWorkspaceSession(
+                    win,
+                    { target, workspacePath, workspaceIdentity, requestId },
+                  );
+                  const started = await webRemoteControlManager.start(win.id, {
+                    workspacePath,
+                    workspaceIdentity,
+                    remoteSessionId: sessionId,
+                  });
+                  return { ok: true, url: started.qrUrl, sessionId: started.sessionId };
+                }
+                for (const [windowId, windowPaths] of windowWorkspaceMap) {
+                  if (!windowPaths.has(workspacePath)) {
+                    continue;
+                  }
+                  const started = await webRemoteControlManager.start(windowId, { workspacePath });
+                  return { ok: true, url: started.qrUrl, sessionId: started.sessionId };
+                }
+                return { ok: false, reason: "workspace-not-open" as const };
+              } catch (error) {
+                return {
+                  ok: false,
+                  error: error instanceof Error ? error.message : String(error),
+                };
+              }
+            })().finally(() => {
+              if (botWebRemoteLinkInFlight.get(workspaceKey) === operation) {
+                botWebRemoteLinkInFlight.delete(workspaceKey);
+              }
+            });
+            botWebRemoteLinkInFlight.set(workspaceKey, operation);
+            return operation;
           },
           // browser-use: main executes commands with WebContentsView + CDP.
           handleBrowserExecuteRequest: ({ win: browserWin, ...request }) =>

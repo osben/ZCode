@@ -46,6 +46,7 @@ export function normalizeBotCommandPolicy(
     thoughtLevel: commands.thoughtLevel ?? DEFAULT_BOT_COMMANDS.thoughtLevel,
     sandboxMode: commands.sandboxMode ?? DEFAULT_BOT_COMMANDS.sandboxMode,
     approvalPolicy: commands.approvalPolicy ?? DEFAULT_BOT_COMMANDS.approvalPolicy,
+    remote: commands.remote ?? DEFAULT_BOT_COMMANDS.remote,
     reply: commands.reply ?? DEFAULT_BOT_COMMANDS.reply,
   };
 }

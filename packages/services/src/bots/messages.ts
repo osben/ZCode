@@ -34,7 +34,14 @@ const messages = {
     helpModel: "**/模型** — 切换模型",
     helpMode: "**/模式** — 切换运行模式",
     helpThoughtLevel: "**/思考** — 切换思考级别",
+    helpRemote: "**/远程** — 获取 Web 远程控制链接",
     helpReply: "**/回复** — 切换回复详细程度",
+    remoteLinkReady: "Web 远程控制链接（有效期与桌面端远程控制会话一致，请勿转发给他人）：\n{url}",
+    remoteLinkPrivateOnly: "仅支持在私聊中获取 Web 远程控制链接。",
+    remoteLinkUnavailable: "当前运行环境不支持生成 Web 远程控制链接。",
+    remoteLinkWorkspaceNotOpen: "该工作区未在桌面端打开，请先在桌面端打开后再获取链接。",
+    remoteLinkFeatureDisabled: "此构建已禁用 Web 远程控制。",
+    remoteLinkFailed: "生成 Web 远程控制链接失败：{message}",
     webhookSecretInvalid: "Webhook secret 校验失败。",
     // Bug fix: this error is triggered through the shared provider callback path; WeChat/Feishu failures must not be shown as Telegram failures.
     callbackFailed: "处理机器人回调失败：{message}",
@@ -162,7 +169,16 @@ const messages = {
     helpModel: "**/model** — Switch model",
     helpMode: "**/mode** — Switch run mode",
     helpThoughtLevel: "**/think** — Switch thought level",
+    helpRemote: "**/remote** — Get a web remote control link",
     helpReply: "**/reply** — Switch reply detail",
+    remoteLinkReady:
+      "Web remote control link (valid while the desktop remote-control session lasts; do not forward it to others):\n{url}",
+    remoteLinkPrivateOnly: "Web remote control links can only be requested in a private chat.",
+    remoteLinkUnavailable: "Web remote control links are not available in this environment.",
+    remoteLinkWorkspaceNotOpen:
+      "This workspace is not open on the desktop. Open it there first, then request the link again.",
+    remoteLinkFeatureDisabled: "Web remote control is disabled in this build.",
+    remoteLinkFailed: "Failed to create a web remote control link: {message}",
     webhookSecretInvalid: "Webhook secret verification failed.",
     callbackFailed: "Failed to process bot callback: {message}",
     sessionExpiredNewTaskHint:
@@ -299,7 +315,17 @@ const messages = {
     helpModel: "**/model** — змінити модель",
     helpMode: "**/mode** — змінити режим виконання",
     helpThoughtLevel: "**/think** — змінити рівень міркувань",
+    helpRemote: "**/remote** — отримати посилання веб-віддаленого керування",
     helpReply: "**/reply** — змінити детальність відповідей",
+    remoteLinkReady:
+      "Посилання веб-віддаленого керування (діє, доки активний сеанс віддаленого керування на комп'ютері; не перешлійте його іншим):\n{url}",
+    remoteLinkPrivateOnly:
+      "Посилання веб-віддаленого керування можна запитувати лише в особистому чаті.",
+    remoteLinkUnavailable: "Посилання веб-віддаленого керування недоступні в цьому середовищі.",
+    remoteLinkWorkspaceNotOpen:
+      "Цей робочий простір не відкрито на комп'ютері. Спершу відкрийте його там, потім запросіть посилання ще раз.",
+    remoteLinkFeatureDisabled: "Веб-віддалене керування вимкнено в цій збірці.",
+    remoteLinkFailed: "Не вдалося створити посилання веб-віддаленого керування: {message}",
     webhookSecretInvalid: "Не вдалося перевірити секрет вебхука.",
     callbackFailed: "Не вдалося обробити зворотний виклик бота: {message}",
     sessionExpiredNewTaskHint:

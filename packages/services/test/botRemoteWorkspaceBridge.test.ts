@@ -6,6 +6,11 @@ type ParentPortListener = (event: { data: unknown; ports?: unknown[] }) => void;
 
 class ParentPortMock {
   readonly messages: unknown[] = [];
+  overrideWebRemoteLinkResult: {
+    ok: boolean;
+    reason?: "workspace-not-open" | "feature-disabled";
+  } | null = null;
+  ignoreWebRemoteLinkRequests = false;
   private readonly listeners = new Set<ParentPortListener>();
 
   postMessage(message: unknown): void {
@@ -36,6 +41,26 @@ class ParentPortMock {
           sessionId: "session-1",
         });
       });
+      return;
+    }
+
+    if (payload.type === HostResponseTypes.BotRemoteWorkspaceWebRemoteLinkRequest) {
+      if (!this.ignoreWebRemoteLinkRequests) {
+        const override = this.overrideWebRemoteLinkResult;
+        queueMicrotask(() => {
+          this.emit({
+            type: HostMessageTypes.BotRemoteWorkspaceWebRemoteLinkResult,
+            requestId: payload.requestId,
+            ...(override
+              ? override
+              : {
+                  ok: true,
+                  url: "https://relay.example/remote/v4?sid=web-1&hash=h&t=1",
+                  sessionId: "web-1",
+                }),
+          });
+        });
+      }
       return;
     }
 
@@ -224,6 +249,102 @@ describe("createBotRemoteWorkspaceService", () => {
       askUserQuestionAutoResolutionEnabled: false,
       modelIoFullRetentionEnabled: false,
     });
+  });
+
+  it("mints a web-remote link for a local workspace without remote identity", async () => {
+    const port = new ParentPortMock();
+    const { bridge } = createBridge(port);
+
+    await expect(bridge.mintWebRemoteLink({ workspacePath: "/local/project" })).resolves.toEqual({
+      ok: true,
+      url: "https://relay.example/remote/v4?sid=web-1&hash=h&t=1",
+      sessionId: "web-1",
+    });
+
+    expect(port.messages).toContainEqual(
+      expect.objectContaining({
+        type: HostResponseTypes.BotRemoteWorkspaceWebRemoteLinkRequest,
+        workspacePath: "/local/project",
+      }),
+    );
+    const request = port.messages.find(
+      (message) =>
+        (message as { type?: string }).type ===
+        HostResponseTypes.BotRemoteWorkspaceWebRemoteLinkRequest,
+    ) as Record<string, unknown>;
+    expect(request["workspaceIdentity"]).toBeUndefined();
+    expect(request["target"]).toBeUndefined();
+  });
+
+  it("mints a web-remote link for a remote workspace with the resolved target", async () => {
+    const port = new ParentPortMock();
+    const { bridge } = createBridge(port);
+
+    await expect(
+      bridge.mintWebRemoteLink({
+        workspacePath: "/workspace/link",
+        workspaceIdentity: "remote:docker:demo:/workspace/link",
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      url: "https://relay.example/remote/v4?sid=web-1&hash=h&t=1",
+      sessionId: "web-1",
+    });
+
+    expect(port.messages).toContainEqual(
+      expect.objectContaining({
+        type: HostResponseTypes.BotRemoteWorkspaceWebRemoteLinkRequest,
+        workspacePath: "/workspace/link",
+        workspaceIdentity: "remote:docker:demo:/workspace/link",
+        target: { kind: "docker", container: "demo" },
+      }),
+    );
+  });
+
+  it("fails fast for a remote workspace without stored connection info", async () => {
+    const port = new ParentPortMock();
+    const { bridge } = createBridge(port);
+
+    const result = await bridge.mintWebRemoteLink({
+      workspacePath: "/workspace/unknown",
+      workspaceIdentity: "remote:docker:other:/workspace/unknown",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(port.messages).toHaveLength(0);
+  });
+
+  it("propagates the failure reason when main cannot serve the workspace", async () => {
+    const port = new ParentPortMock();
+    port.overrideWebRemoteLinkResult = {
+      ok: false,
+      reason: "workspace-not-open" as const,
+    };
+    const { bridge } = createBridge(port);
+
+    await expect(bridge.mintWebRemoteLink({ workspacePath: "/local/project" })).resolves.toEqual({
+      ok: false,
+      reason: "workspace-not-open",
+    });
+  });
+
+  it("times out when main never answers a web-remote link request", async () => {
+    vi.useFakeTimers();
+    try {
+      const port = new ParentPortMock();
+      port.ignoreWebRemoteLinkRequests = true;
+      const { bridge } = createBridge(port);
+
+      const promise = bridge.mintWebRemoteLink({ workspacePath: "/local/project" });
+      const assertion = expect(promise).resolves.toEqual({
+        ok: false,
+        error: "Web remote control link request timed out.",
+      });
+      await vi.advanceTimersByTimeAsync(90_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("syncs only cached remote Bot runtimes without spawning another runtime", async () => {

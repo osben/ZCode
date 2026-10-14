@@ -211,6 +211,19 @@ export function spawnHostProcess(
       workspaceIdentity: string;
       target: RemoteTarget;
     }) => Promise<{ ok: boolean; port?: MessagePortMain; error?: string }>;
+    handleBotRemoteWorkspaceWebRemoteLinkRequest?: (params: {
+      win: BrowserWindow;
+      requestId: string;
+      workspacePath: string;
+      workspaceIdentity?: string;
+      target?: RemoteTarget;
+    }) => Promise<{
+      ok: boolean;
+      url?: string;
+      sessionId?: string;
+      reason?: "workspace-not-open" | "feature-disabled";
+      error?: string;
+    }>;
     /** Host → main: scheduled-task dispatch result, forwarded to cron scheduler to settle the scheduling state machine. */
     onCronRunResult?: (result: {
       runId: string;
@@ -730,6 +743,48 @@ export function spawnHostProcess(
         .catch((error) => {
           child.postMessage({
             type: HostMessageTypes.BotRemoteWorkspaceRuntimePort,
+            requestId: request.requestId,
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      return;
+    }
+
+    if (result.data.type === HostResponseTypes.BotRemoteWorkspaceWebRemoteLinkRequest) {
+      const request = result.data;
+      const handler = dependencies.handleBotRemoteWorkspaceWebRemoteLinkRequest;
+      if (!handler) {
+        child.postMessage({
+          type: HostMessageTypes.BotRemoteWorkspaceWebRemoteLinkResult,
+          requestId: request.requestId,
+          ok: false,
+          error: "Bot web-remote link handler is not injected.",
+        });
+        return;
+      }
+
+      void handler({
+        win,
+        requestId: request.requestId,
+        workspacePath: request.workspacePath,
+        ...(request.workspaceIdentity ? { workspaceIdentity: request.workspaceIdentity } : {}),
+        ...(request.target ? { target: request.target } : {}),
+      })
+        .then((linkResult) => {
+          child.postMessage({
+            type: HostMessageTypes.BotRemoteWorkspaceWebRemoteLinkResult,
+            requestId: request.requestId,
+            ok: linkResult.ok === true,
+            ...(linkResult.url ? { url: linkResult.url } : {}),
+            ...(linkResult.sessionId ? { sessionId: linkResult.sessionId } : {}),
+            ...(linkResult.reason ? { reason: linkResult.reason } : {}),
+            ...(linkResult.error ? { error: linkResult.error } : {}),
+          });
+        })
+        .catch((error) => {
+          child.postMessage({
+            type: HostMessageTypes.BotRemoteWorkspaceWebRemoteLinkResult,
             requestId: request.requestId,
             ok: false,
             error: error instanceof Error ? error.message : String(error),

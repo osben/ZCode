@@ -4,6 +4,7 @@ import {
   hostBotRemoteWorkspaceConnectionStatusResultMessageSchema,
   hostBotRemoteWorkspaceRuntimePortMessageSchema,
   hostBotRemoteWorkspaceReconnectResultMessageSchema,
+  hostBotRemoteWorkspaceWebRemoteLinkResultMessageSchema,
   type RemoteTarget,
 } from "@zcode/shared";
 import { type IZCodeTaskService as IZCodeTaskServiceShape } from "../session/zcodeTaskService.js";
@@ -24,6 +25,14 @@ interface ParentPortLike {
 interface ParentPortMessageEvent {
   data: unknown;
   ports?: unknown[];
+}
+
+interface BotWebRemoteLinkResult {
+  ok: boolean;
+  url?: string;
+  sessionId?: string;
+  reason?: "workspace-not-open" | "feature-disabled";
+  error?: string;
 }
 
 export function createBotRemoteWorkspaceService(params: {
@@ -50,6 +59,7 @@ export function createBotRemoteWorkspaceService(params: {
     string,
     (result: { ok: boolean; connected?: boolean; error?: string }) => void
   >();
+  const pendingWebRemoteLinks = new Map<string, (result: BotWebRemoteLinkResult) => void>();
   const runtimeServicesByWorkspaceKey = new Map<string, RemoteBotWorkspaceRuntimeServices>();
   let latestAppRuntimePreferences: ZCodeAgentAppRuntimePreferences | undefined;
   let appRuntimePreferencesRevision = 0;
@@ -83,6 +93,26 @@ export function createBotRemoteWorkspaceService(params: {
         ok: connectionStatusResult.data.ok,
         connected: connectionStatusResult.data.connected,
         error: connectionStatusResult.data.error,
+      });
+      return;
+    }
+
+    const webRemoteLinkResult = hostBotRemoteWorkspaceWebRemoteLinkResultMessageSchema.safeParse(
+      event.data,
+    );
+    if (webRemoteLinkResult.success) {
+      const { requestId } = webRemoteLinkResult.data;
+      const resolve = pendingWebRemoteLinks.get(requestId);
+      if (!resolve) {
+        return;
+      }
+      pendingWebRemoteLinks.delete(requestId);
+      resolve({
+        ok: webRemoteLinkResult.data.ok,
+        url: webRemoteLinkResult.data.url,
+        sessionId: webRemoteLinkResult.data.sessionId,
+        reason: webRemoteLinkResult.data.reason,
+        error: webRemoteLinkResult.data.error,
       });
       return;
     }
@@ -245,6 +275,58 @@ export function createBotRemoteWorkspaceService(params: {
     }): Promise<IZCodeTaskServiceShape | null> {
       return (await getRuntimeServices(target))?.zcodeTaskService ?? null;
     },
+    async mintWebRemoteLink(target: { workspacePath: string; workspaceIdentity?: string }): Promise<
+      | {
+          ok: true;
+          url: string;
+          sessionId?: string;
+        }
+      | {
+          ok: false;
+          reason?: "workspace-not-open" | "feature-disabled";
+          error?: string;
+        }
+    > {
+      const workspaceIdentity = target.workspaceIdentity?.trim();
+      const remoteTarget = workspaceIdentity
+        ? await buildRemoteTargetForWorkspace({
+            workspacePath: target.workspacePath,
+            workspaceIdentity,
+          })
+        : null;
+      if (workspaceIdentity && !remoteTarget) {
+        return { ok: false, error: "No stored connection info for this remote workspace." };
+      }
+      const requestId = `bot-web-remote-link-${randomUUID()}`;
+      const result = await new Promise<BotWebRemoteLinkResult>((resolve) => {
+        pendingWebRemoteLinks.set(requestId, resolve);
+        activeParentPort.postMessage({
+          type: HostResponseTypes.BotRemoteWorkspaceWebRemoteLinkRequest,
+          requestId,
+          workspacePath: target.workspacePath,
+          ...(workspaceIdentity ? { workspaceIdentity } : {}),
+          ...(remoteTarget ? { target: remoteTarget } : {}),
+        });
+        // Main may need to start a runtime and wait for relay QR-ready, so stay above that timeout.
+        setTimeout(() => {
+          if (pendingWebRemoteLinks.delete(requestId)) {
+            resolve({ ok: false, error: "Web remote control link request timed out." });
+          }
+        }, 90_000);
+      });
+      if (result.ok && result.url) {
+        return {
+          ok: true,
+          url: result.url,
+          ...(result.sessionId ? { sessionId: result.sessionId } : {}),
+        };
+      }
+      return {
+        ok: false,
+        ...(result.reason ? { reason: result.reason } : {}),
+        ...(result.error ? { error: result.error } : {}),
+      };
+    },
     async getModelSelectionService(target: { workspacePath: string; workspaceIdentity: string }) {
       return (await getRuntimeServices(target))?.modelSelectionService ?? null;
     },
@@ -265,6 +347,7 @@ export function createBotRemoteWorkspaceService(params: {
       pending.clear();
       pendingRuntimePorts.clear();
       pendingConnectionStatus.clear();
+      pendingWebRemoteLinks.clear();
       runtimeServicesByWorkspaceKey.clear();
       connectedWorkspaceKeys.clear();
     },

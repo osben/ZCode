@@ -1671,6 +1671,48 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
       pushWorkspaceListUpdated(runtime);
     },
 
+    // Bot /remote reuse path: return a freshly minted connect URL from a live runtime that can
+    // already serve the requested workspace, without restarting it (a restart would drop an
+    // active phone pairing). Returns null when no live runtime covers the workspace.
+    async findLinkForWorkspace(target: {
+      workspacePath: string;
+      workspaceIdentity?: string;
+    }): Promise<{ url: string; sessionId: string } | null> {
+      if (!dependencies.featureGate.isEnabled()) {
+        return null;
+      }
+      const workspaceKey = resolveWebRemoteControlWorkspaceKey(target);
+      for (const runtime of runtimes.values()) {
+        if (runtime.status === "error") {
+          continue;
+        }
+        // Only bridgeable targets count as "serving": the synced list deliberately keeps
+        // disconnected remote tabs for display, and failRemoteSession can clear a runtime's
+        // remoteSessionId while leaving the runtime alive. Reusing either would hand the Bot a
+        // URL whose workspace bridge open is rejected; those cases must fall through to the
+        // reconnect-and-start path instead.
+        const servesWorkspace = getAvailableWorkspaces(runtime).some(
+          (workspace) =>
+            resolveWebRemoteControlWorkspaceKey(workspace) === workspaceKey &&
+            isBridgeableRemoteTarget(workspace),
+        );
+        if (!servesWorkspace || runtime.deviceSid === "pending" || !runtime.passHash) {
+          continue;
+        }
+        const endpointUrls = await dependencies.getEndpointUrls?.();
+        const baseUrl = endpointUrls?.remoteUrl ?? dependencies.mobileRemoteControlUrl;
+        return {
+          url: createQrUrl(
+            { deviceSid: runtime.deviceSid, passHash: runtime.passHash },
+            baseUrl,
+            runtime.theme,
+          ),
+          sessionId: runtime.deviceSid,
+        };
+      }
+      return null;
+    },
+
     async disposeWindow(windowId: number): Promise<void> {
       clearStartAuthorizationsForWindow(windowId);
       await stopWindowRuntime(windowId, "window-disposed");

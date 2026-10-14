@@ -128,6 +128,7 @@ export function createDefaultCommands(): BotConfig["allowedCommands"] {
     model: true,
     mode: true,
     thoughtLevel: true,
+    remote: true,
     reply: true,
   };
 }
