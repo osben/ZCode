@@ -168,16 +168,20 @@ describe("editors", () => {
     const fixtureRoot = mkdtempSync(join(tmpdir(), "zcode-editors-toolbox-"));
     const originalLocalAppData = process.env.LOCALAPPDATA;
     process.env.LOCALAPPDATA = pathWin32.join(fixtureRoot, "Local");
+    const programsRoot = pathWin32.join(process.env.LOCALAPPDATA, "Programs");
+    const directIdeaDir = pathWin32.join(programsRoot, "IntelliJ IDEA Ultimate");
+    const directIdeaExe = pathWin32.join(directIdeaDir, "bin", "idea64.exe");
     const appsRoot = pathWin32.join(process.env.LOCALAPPDATA, "JetBrains", "Toolbox", "apps");
     const ideaDir = pathWin32.join(appsRoot, "IDEA-U");
     const channelDir = pathWin32.join(ideaDir, "ch-0");
-    const toolboxExe = pathWin32.join(channelDir, "243.21565.193", "bin", "idea64.exe");
+    const legacyIdeaExe = pathWin32.join(channelDir, "243.21565.193", "bin", "idea64.exe");
     // Only the Community edition is installed: the missing PyCharm-P directory must not stop
     // the scan from finding its sibling app code.
     const pycharmDir = pathWin32.join(appsRoot, "PyCharm-C");
     const pycharmChannelDir = pathWin32.join(pycharmDir, "ch-1");
     const pycharmExe = pathWin32.join(pycharmChannelDir, "2026.1.2", "bin", "pycharm64.exe");
     const directories = new Map<string, string[]>([
+      [programsRoot, ["IntelliJ IDEA Ultimate"]],
       [appsRoot, ["IDEA-U", "PyCharm-C"]],
       [ideaDir, ["ch-0", "settings.json"]],
       // A legacy short-numbered build must sort below the current one: a lexical sort would
@@ -188,7 +192,8 @@ describe("editors", () => {
     ]);
     const files = new Set<string>([
       pathWin32.join(ideaDir, "settings.json"),
-      toolboxExe,
+      directIdeaExe,
+      legacyIdeaExe,
       pathWin32.join(channelDir, "99.5.1", "bin", "idea64.exe"),
       pycharmExe,
     ]);
@@ -233,7 +238,7 @@ describe("editors", () => {
         throw new Error("missing pycharm editor def");
       }
 
-      expect(resolveEditorDefAppPath(ideaDef)).toBe(toolboxExe);
+      expect(resolveEditorDefAppPath(ideaDef)).toBe(directIdeaExe);
       expect(resolveEditorDefAppPath(pycharmDef)).toBe(pycharmExe);
     } finally {
       if (originalLocalAppData === undefined) {

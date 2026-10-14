@@ -200,6 +200,7 @@ function findWindowsJetBrainsExecutableCandidates(
   const roots = uniquePaths([
     ...getWindowsProgramFilesRoots().map((root) => pathWin32.join(root, "JetBrains")),
     pathWin32.join(getWindowsLocalProgramsRoot(), "JetBrains"),
+    getWindowsLocalProgramsRoot(),
   ]);
   const candidates: string[] = [];
 
