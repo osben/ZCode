@@ -17,6 +17,7 @@
 - 空白页与 tab strip 的「+」菜单均展示当前工作区已启用的插件面板（`ui.surfaces`），共用 `usePluginUiSurfaces` 与现有插件打开动作；菜单使用标准 `DropdownMenuItem`，支持鼠标、触屏、键盘选择，选择后关闭菜单。
 - 插件入口只在正式会话、宿主打开动作与 bridge 可用时出现；草稿、无可用面板或不支持的宿主不显示插件项。标题沿用清单本地化规则。打开时完整传递 workspacePath、workspaceIdentity、remoteSessionId 和 parentSessionId，同一 surface 重复打开沿用既有 tab 去重规则。
 - 修复原因：插件入口此前只接入空白页，有 tab 后切换到另一套「+」菜单，后者漏接插件列表。两处入口共享组件，仅切换按钮/菜单呈现；不增加插件注册表、会话状态或 runtime。桌面 continuous、手机 replayable 和现有插件宿主支持边界保持不变。
+- The `+` menu and the `Open tab` empty state also offer a Model trajectory entry for the active task (`model-trajectory` in `OpenTabLauncherItemId`). The entry is hidden (not disabled) while no active task exists, matching the selection-side-conversation gating. Opening always targets the active task and reuses the existing per-task tab identity `model-trajectory:<taskId>`: an already-open tab for that task is re-activated instead of duplicated, and the title falls back to `modelTrajectory.title` when no task title is available.
 
 ```text
 Host 已启用插件 → usePluginUiSurfaces → 空白页按钮 / + 菜单项

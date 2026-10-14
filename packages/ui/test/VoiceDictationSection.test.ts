@@ -107,7 +107,7 @@ vi.mock("@/hooks/useVoiceDictationRuntimeState.js", () => ({
   }),
 }));
 vi.mock("@/shortcuts/useShortcutBindings.js", () => ({
-  useShortcutCommandLabel: () => "Cmd+Shift+D",
+  useShortcutCommandLabelParts: () => ["Cmd", "Shift", "D"],
 }));
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
@@ -507,5 +507,18 @@ describe("VoiceDictationSection feedback sounds", () => {
 
     resolveSave();
     await act(async () => {});
+  });
+});
+
+describe("VoiceDictationSection shortcut row", () => {
+  it("renders the binding as one keycap per key, not a joined chip", async () => {
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+
+    // Regression guard: the row previously rendered the joined label (Cmd+Shift+D) inside a single Kbd.
+    const keys = ["Cmd", "Shift", "D"].map((key) => screen.getByText(key));
+    const chips = keys.map((node) => node.closest("kbd"));
+    expect(chips.every(Boolean)).toBe(true);
+    expect(new Set(chips).size).toBe(3);
+    expect(screen.queryByText("Cmd+Shift+D")).toBeNull();
   });
 });

@@ -8,7 +8,7 @@ import { useMemo } from "react";
 import { type ShortcutCommandId } from "@zcode/shared";
 import { useSettings } from "@/hooks/useSettingService.js";
 import { resolveEffectiveShortcutBindings, type EffectiveShortcutBindings } from "./bindings.js";
-import { formatShortcutBindingLabel } from "./label.js";
+import { formatShortcutBindingLabel, formatShortcutBindingLabelParts } from "./label.js";
 
 /** Current active shortcut table (read-only view combining defaults and user overrides). */
 export function useEffectiveShortcutBindings(): EffectiveShortcutBindings {
@@ -27,4 +27,14 @@ export function useShortcutCommandLabel(commandId: ShortcutCommandId): string {
   const effective = useEffectiveShortcutBindings();
   const first = effective[commandId]?.[0] ?? "";
   return first === "" ? "" : formatShortcutBindingLabel(first);
+}
+
+/**
+ * Same binding as useShortcutCommandLabel but split into per-key parts (["⌃", "⌥", "⌘", "K"]),
+ * for keycap chips rendered as separate Kbd elements; an unassigned command returns an empty array.
+ */
+export function useShortcutCommandLabelParts(commandId: ShortcutCommandId): string[] {
+  const effective = useEffectiveShortcutBindings();
+  const first = effective[commandId]?.[0] ?? "";
+  return first === "" ? [] : formatShortcutBindingLabelParts(first);
 }
