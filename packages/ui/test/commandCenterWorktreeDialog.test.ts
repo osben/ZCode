@@ -5,7 +5,8 @@
 // - setup page: destination / branch name input / base-branch list / Start logic;
 // - Start (checkout): closes the palette and follows the App open+draft contract without touching Git;
 // - Start (worktree): opens the created directory after createWorktree succeeds;
-// - target-path-exists with an existing worktree for the branch: inline recovery entry opens the existing directory instead of creating one (WT-04);
+// - target-path-exists with an existing worktree for the branch: inline recovery entry opens it (WT-04);
+// - an already occupied branch disables Start and requires the explicit Open worktree action;
 // - global storage (Stage F): with platform.getAppWorktreesDir the target path lives under ~/.zcode/worktrees and the
 //   preview uses the ~ prefix; without the platform method Start is blocked as an invalid location with an inline error.
 // The Command component is mocked following commandCenterPageStackDialog.test.ts (cmdk Input stays real).
@@ -262,6 +263,82 @@ describe("CommandCenterDialog worktree flow", () => {
     });
   });
 
+  it("keeps Start disabled for an occupied branch until Open worktree is selected", async () => {
+    stubRepositoryData();
+    getLocalBranches.mockResolvedValue({
+      headRefType: "branch",
+      currentBranchName: "main",
+      branches: [
+        {
+          name: "main",
+          isCurrent: true,
+          upstreamName: null,
+          commitHash: "a",
+          commitTimestampMs: 1,
+        },
+        {
+          name: "zcode/task-9",
+          isCurrent: false,
+          upstreamName: null,
+          commitHash: "b",
+          commitTimestampMs: 1,
+        },
+      ],
+    });
+    listWorktrees.mockResolvedValue({
+      isGitAvailable: true,
+      isRepository: true,
+      worktrees: [
+        {
+          path: "/dev/alpha-worktrees/zcode-task-9",
+          headCommitHash: "c",
+          branchName: "zcode/task-9",
+          isMain: false,
+          isBare: false,
+          isDetached: false,
+          isCurrent: false,
+        },
+      ],
+    });
+    const { container, onOpenChange, onCreateTaskInWorkspace } = renderWorktreeDialog();
+    openSetupPage(container);
+    await waitFor(() => expect(getRow(container, "base main")).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("commandCenter.worktree.branchName"), {
+      target: { value: "task-9" },
+    });
+
+    const start = screen.getByRole("button", { name: "commandCenter.worktree.start" });
+    await waitFor(() => expect(start).toHaveProperty("disabled", true));
+    fireEvent.click(start);
+    expect(createWorktree).not.toHaveBeenCalled();
+    expect(onCreateTaskInWorkspace).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "commandCenter.worktree.openExisting" }));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(onCreateTaskInWorkspace).toHaveBeenCalledWith(
+      "/dev/alpha-worktrees/zcode-task-9",
+      undefined,
+    );
+  });
+
+  it("keeps Start available when only the optional worktree list fails", async () => {
+    stubRepositoryData();
+    listWorktrees.mockRejectedValue(new Error("worktree list unavailable"));
+    const { container } = renderWorktreeDialog();
+    openSetupPage(container);
+    await waitFor(() => expect(getRow(container, "base main")).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("commandCenter.worktree.branchName"), {
+      target: { value: "task-9" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "commandCenter.worktree.start" })).toHaveProperty(
+        "disabled",
+        false,
+      );
+    });
+  });
+
   it("start with current checkout closes the palette and opens the workspace without Git calls", async () => {
     stubRepositoryData();
     const { container, onOpenChange, onCreateTaskInWorkspace } = renderWorktreeDialog();
@@ -403,21 +480,23 @@ describe("CommandCenterDialog worktree flow", () => {
       branchName: null,
       issues: [{ code: "target-path-exists", message: "Target path already exists." }],
     } satisfies GitWorktreeCreateResult);
-    listWorktrees.mockResolvedValue({
-      isGitAvailable: true,
-      isRepository: true,
-      worktrees: [
-        {
-          path: "/dev/alpha-worktrees/zcode-task-9",
-          headCommitHash: "c",
-          branchName: "zcode/task-9",
-          isMain: false,
-          isBare: false,
-          isDetached: false,
-          isCurrent: false,
-        },
-      ],
-    });
+    listWorktrees
+      .mockResolvedValueOnce({ isGitAvailable: true, isRepository: true, worktrees: [] })
+      .mockResolvedValue({
+        isGitAvailable: true,
+        isRepository: true,
+        worktrees: [
+          {
+            path: "/dev/alpha-worktrees/zcode-task-9",
+            headCommitHash: "c",
+            branchName: "zcode/task-9",
+            isMain: false,
+            isBare: false,
+            isDetached: false,
+            isCurrent: false,
+          },
+        ],
+      });
     const { container, onOpenChange, onCreateTaskInWorkspace } = renderWorktreeDialog();
     openSetupPage(container);
     await waitFor(() => {

@@ -832,23 +832,25 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
     setWorktreeListResult(null);
     setWorktreePruneMessage(null);
     setWorktreeForceConfirmPath(null);
-    void baseServices.gitService.listWorktrees({ workspacePath: setupWorkspacePath }).then(
-      (worktreesResult) => {
-        if (!cancelled) {
-          setWorktreeListResult(
-            worktreesResult?.isRepository && worktreesResult.isGitAvailable
-              ? worktreesResult
-              : null,
-          );
-        }
-      },
-      (error: unknown) => {
-        logger.debug("[CommandCenter] optional worktree list failed", {
-          workspacePath: setupWorkspacePath,
-          error: getErrorMessage(error),
-        });
-      },
-    );
+    void Promise.resolve()
+      .then(() => baseServices.gitService.listWorktrees({ workspacePath: setupWorkspacePath }))
+      .then(
+        (worktreesResult) => {
+          if (!cancelled) {
+            setWorktreeListResult(
+              worktreesResult?.isRepository && worktreesResult.isGitAvailable
+                ? worktreesResult
+                : null,
+            );
+          }
+        },
+        (error: unknown) => {
+          logger.debug("[CommandCenter] optional worktree list failed", {
+            workspacePath: setupWorkspacePath,
+            error: getErrorMessage(error),
+          });
+        },
+      );
     Promise.all([
       baseServices.gitService.getWorkspaceRepositoryInfo({ workspacePath: setupWorkspacePath }),
       baseServices.gitService.getLocalBranches({ workspacePath: setupWorkspacePath }),
@@ -934,8 +936,8 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
       return;
     }
     let cancelled = false;
-    baseServices.gitService
-      .listWorktrees({ workspacePath: setupWorkspacePath })
+    Promise.resolve()
+      .then(() => baseServices.gitService.listWorktrees({ workspacePath: setupWorkspacePath }))
       .then((result) => {
         if (cancelled) {
           return;
