@@ -255,10 +255,12 @@ function findWindowsJetBrainsToolboxExecutableCandidates(
             continue;
           }
           const channelDir = pathWin32.join(root, appCode, channelEntry.name);
+          // Version directories are numeric build numbers (99.x, 243.x): a lexical sort would
+          // place "99.5.1" above "243.21565.193" and resolve the older build first.
           const versionEntries = readdirSync(channelDir, { withFileTypes: true })
             .filter((entry) => entry.isDirectory())
             .map((entry) => entry.name)
-            .sort((left, right) => right.localeCompare(left));
+            .sort((left, right) => right.localeCompare(left, undefined, { numeric: true }));
           for (const versionEntry of versionEntries) {
             candidates.push(pathWin32.join(channelDir, versionEntry, "bin", executableName));
           }

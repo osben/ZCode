@@ -180,13 +180,16 @@ describe("editors", () => {
     const directories = new Map<string, string[]>([
       [appsRoot, ["IDEA-U", "PyCharm-C"]],
       [ideaDir, ["ch-0", "settings.json"]],
-      [channelDir, ["243.21565.193", "242.2365.12"]],
+      // A legacy short-numbered build must sort below the current one: a lexical sort would
+      // place "99.5.1" above "243.21565.193" and resolve the older build first.
+      [channelDir, ["243.21565.193", "242.2365.12", "99.5.1"]],
       [pycharmDir, ["ch-1"]],
       [pycharmChannelDir, ["2026.1.2"]],
     ]);
     const files = new Set<string>([
       pathWin32.join(ideaDir, "settings.json"),
       toolboxExe,
+      pathWin32.join(channelDir, "99.5.1", "bin", "idea64.exe"),
       pycharmExe,
     ]);
 
