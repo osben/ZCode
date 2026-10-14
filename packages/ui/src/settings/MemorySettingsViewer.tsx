@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { IMemoryService, ProjectMemoryWorkspaceSummary } from "@zcode/services";
 import {
   TID_SETTINGS_MEMORY_COUNT,
@@ -239,14 +247,16 @@ export function MemorySettingsViewer({
       value={openFileNames.filter((name) => files.some((file) => file.name === name))}
       onValueChange={(value) => handleAccordionValueChange(files, value)}
     >
-      {files.map((file) => (
-        <MemoryFileAccordionItem
-          key={file.name}
-          file={file}
-          open={openFileNames.includes(file.name)}
-          preview={previews.get(file.name)}
-          onToggle={toggleFile}
-        />
+      {files.map((file, index) => (
+        <Fragment key={file.name}>
+          {index > 0 ? <div className="h-px bg-border/50" aria-hidden="true" /> : null}
+          <MemoryFileAccordionItem
+            file={file}
+            open={openFileNames.includes(file.name)}
+            preview={previews.get(file.name)}
+            onToggle={toggleFile}
+          />
+        </Fragment>
       ))}
     </Accordion>
   );

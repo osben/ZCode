@@ -117,7 +117,11 @@ export const MemoryFileAccordionItem = memo(function MemoryFileAccordionItem({
 }) {
   const { intl } = useZCodeIntl();
   return (
-    <AccordionItem value={file.name} data-testid={testId(TID_SETTINGS_MEMORY_FILE, file.name)}>
+    <AccordionItem
+      value={file.name}
+      className="border-transparent"
+      data-testid={testId(TID_SETTINGS_MEMORY_FILE, file.name)}
+    >
       <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center">
         {/* The built-in trigger icon is hidden so the editor control can sit between the row content and the chevron. */}
         <AccordionTrigger className="min-w-0 px-4 py-3 text-left text-ui-base hover:no-underline [&_[data-slot=accordion-trigger-icon]]:hidden">
