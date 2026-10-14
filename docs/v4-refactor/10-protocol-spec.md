@@ -609,7 +609,7 @@ interface SessionUsageState {
     usedTokens: number;
     maxTokens: number;
     autoCompactThresholdTokens?: number | null; // absent = legacy / unknown (client estimates); null = auto compact 关闭
-    microcompactThresholdTokens?: number | null; // absent = legacy / unknown (client estimates); null = microcompact 关闭或不支持
+    microcompactThresholdTokens?: number | null; // absent = legacy / unknown (no warning; opt-in state unknown); null = microcompact 关闭或不支持
   } | null; // null = 尚无一次模型往返
   cumulative: {
     // 会话累计（跨 compact 累计，不回退）
@@ -621,7 +621,7 @@ interface SessionUsageState {
 }
 ```
 
-两个阈值字段均区分缺省与显式 `null`：缺省表示旧事件或恢复种子没有权威阈值，客户端按默认策略估算；显式 `null` 表示 runtime 确认对应压缩策略关闭或不支持。新主轮 `ModelComplete` 必须同时投影两个字段（包含显式 `null`），以避免 UI 将策略关闭误判为 legacy fallback。
+两个阈值字段均区分缺省与显式 `null`：缺省表示旧事件或恢复种子没有权威阈值；auto-compact 可按默认策略估算，microcompact 则保持未知且不显示 warning，因为旧数据无法证明 opt-in 策略已启用。显式 `null` 表示 runtime 确认对应压缩策略关闭或不支持。新主轮 `ModelComplete` 必须同时投影两个字段（包含显式 `null`），以避免 UI 将策略关闭误判为 legacy fallback。
 
 conflation 语义：值未变不下发（P-05）；A 区整体替换保证「不会把正数 used 覆盖成 0」类 bug 无处生长。计费/配额（coding plan）不在 conversation topic，归 usage 域。
 

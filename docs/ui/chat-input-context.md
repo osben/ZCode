@@ -97,7 +97,8 @@ Rendering rules:
   priority (transient state wins over steady state).
 - The context panel gains one label/value row `chat.contextUsage.autoCompact` showing the
   auto-compact point as `≈{compact tokens} ({percent of window})`, styled like the cache-hit-rate
-  row.
+  row. Numeric thresholds are rendered even when the threshold is zero; an explicit `null` (disabled)
+  suppresses the row.
 - The trigger carries `data-usage-tone={tone}`; the hidden `TID_V4_MODEL_CONFIG` anchor adds the
   same attribute for E2E assertions.
 - The trigger's accessible name appends a localized threshold-reached status whenever the context
@@ -116,3 +117,5 @@ Acceptance scenarios:
 5. Invalid usage (`used = 0` or non-finite): no trigger recolor, tone attribute reads `normal`.
 6. A high-usage session with explicit `null` thresholds keeps both policies disabled immediately
    after a model switch; only a later authoritative main-turn completion can replace those states.
+7. An authoritative auto-compact threshold of zero is an immediate boundary and renders `≈0 (0%)`;
+   an explicit `null` disables the row.

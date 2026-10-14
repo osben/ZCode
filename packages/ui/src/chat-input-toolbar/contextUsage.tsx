@@ -862,14 +862,13 @@ export function ChatContextUsage({
         usedTokens: renderableTaskUsage.used,
       })
     : "normal";
-  const autoCompactThresholdTokens = renderableTaskUsage
-    ? renderableTaskUsage.autoCompactThresholdTokens === null
-      ? 0
+  const autoCompactThresholdTokens =
+    !renderableTaskUsage || renderableTaskUsage.autoCompactThresholdTokens === null
+      ? null
       : (renderableTaskUsage.autoCompactThresholdTokens ??
-        getAutoCompactThresholdTokens({ contextWindow: renderableTaskUsage.size }))
-    : 0;
+        getAutoCompactThresholdTokens({ contextWindow: renderableTaskUsage.size }));
   const autoCompactLabel =
-    renderableTaskUsage && autoCompactThresholdTokens > 0
+    renderableTaskUsage && autoCompactThresholdTokens !== null
       ? `≈${formatContextUsageTokenCount(autoCompactThresholdTokens, locale)} (${percentageFormatter.format(
           autoCompactThresholdTokens / renderableTaskUsage.size,
         )})`

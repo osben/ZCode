@@ -35,8 +35,8 @@ function renderContextUsage(
   taskUsage: {
     used: number;
     size: number;
-    autoCompactThresholdTokens: number | null;
-    microcompactThresholdTokens: number | null;
+    autoCompactThresholdTokens?: number | null;
+    microcompactThresholdTokens?: number | null;
   },
   locale: "en-US" | "uk-UA" | "zh-CN" = "en-US",
 ): string {
@@ -92,6 +92,28 @@ describe("ChatContextUsage runtime compaction budget rendering", () => {
     expect(disabledMarkup).not.toContain("text-warning");
     expect(disabledMarkup).not.toContain("text-destructive");
     expect(disabledMarkup).not.toContain("≈166K");
+  });
+
+  it("renders a zero auto-compact threshold as an immediate boundary", () => {
+    const markup = renderContextUsage({
+      used: 1,
+      size: 200_000,
+      autoCompactThresholdTokens: 0,
+      microcompactThresholdTokens: null,
+    });
+
+    expect(markup).toContain('data-usage-tone="critical"');
+    expect(markup).toContain("≈0 (0%)");
+  });
+
+  it("does not infer an opt-in microcompact warning from absent legacy thresholds", () => {
+    const markup = renderContextUsage({
+      used: 150_000,
+      size: 200_000,
+    });
+
+    expect(markup).toContain('data-usage-tone="normal"');
+    expect(markup).not.toContain("threshold reached");
   });
 
   it("localizes the accessible budget status", () => {
