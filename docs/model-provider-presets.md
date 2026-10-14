@@ -5,8 +5,8 @@
 > chatgpt. OpenAI now runs an official "Sign in with ChatGPT" (SIWC)
 > token-sharing program for open-source agents, which provides a legitimate
 > plan-backed provider. The `account:chatgpt-plan` preset is intentionally
-> added under that program. See `specs/chatgpt-plan-signin.md` and the program
-> docs (https://developers.openai.com/siwc, in particular
+> added under that program. See the program docs
+> (https://developers.openai.com/siwc, in particular
 > https://developers.openai.com/siwc/token-sharing-open-source). This does not
 > reinstate codex/claude/gemini OAuth presets.
 
