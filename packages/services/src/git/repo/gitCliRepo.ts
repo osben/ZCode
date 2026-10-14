@@ -15,6 +15,7 @@ import type {
   GitIdentity,
   GitLocalBranch,
   GitLocalBranchListResult,
+  GitRepositoryRemotesResult,
   GitWorkspaceRepositoryInfo,
   GitWorktreeCreateResult,
   GitWorktreeListResult,
@@ -622,6 +623,29 @@ function parseRemoteList(stdout: string): string[] {
     .filter((line) => line.length > 0);
 }
 
+interface GitRepositoryRemoteEntry {
+  name: string;
+  url: string;
+}
+
+function parseRemoteVerboseList(stdout: string): GitRepositoryRemoteEntry[] {
+  const urlByName = new Map<string, string>();
+  for (const line of stdout.replace(/\r\n/g, "\n").split("\n")) {
+    const match = line.trim().match(/^(\S+)\t(\S+)\s+\((fetch|push)\)$/);
+    if (!match) continue;
+    const [, name, url, direction] = match;
+    if (name === undefined || url === undefined || direction === undefined) continue;
+    if (direction === "fetch" || !urlByName.has(name)) urlByName.set(name, url);
+  }
+  return [...urlByName.entries()]
+    .map(([name, url]) => ({ name, url }))
+    .sort((a, b) => {
+      if (a.name === "origin") return -1;
+      if (b.name === "origin") return 1;
+      return a.name.localeCompare(b.name);
+    });
+}
+
 interface GitIndexEntry {
   mode: string;
   objectHash: string;
@@ -800,6 +824,19 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
     });
     ensureGitCommandSucceeded("git remote", result);
     return parseRemoteList(result.stdout);
+  }
+
+  async function listRepositoryRemoteEntries(
+    resolution: GitResolvedRepository,
+  ): Promise<GitRepositoryRemoteEntry[]> {
+    const result = await commandProvider.run({
+      cwd: resolution.repoRoot,
+      args: ["remote", "-v"],
+      timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+      maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
+    });
+    ensureGitCommandSucceeded("git remote -v", result);
+    return parseRemoteVerboseList(result.stdout);
   }
 
   async function resolvePushRemote(status: GitStatusSnapshot): Promise<string> {
@@ -981,6 +1018,24 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
           };
         },
       );
+    },
+
+    async getRepositoryRemotes(workspacePath: string): Promise<GitRepositoryRemotesResult> {
+      const resolution = await this.resolveRepository(workspacePath);
+      if (!resolution.isGitAvailable || !resolution.isRepository) {
+        return {
+          workspacePath,
+          isGitAvailable: resolution.isGitAvailable,
+          isRepository: resolution.isRepository,
+          remotes: [],
+        };
+      }
+      return {
+        workspacePath,
+        isGitAvailable: true,
+        isRepository: true,
+        remotes: await listRepositoryRemoteEntries(resolution),
+      };
     },
 
     async getStatus(workspacePath: string): Promise<GitStatusSnapshot> {

@@ -1789,6 +1789,7 @@ const zhCN: Record<string, string> = {
   "workspaceSidebar.searchTasksPlaceholder": "搜索任务...",
   "workspaceSidebar.searchArchivedTasksPlaceholder": "搜索归档任务...",
   "workspaceSidebar.closeTaskSearch": "关闭任务搜索",
+  "workspaceSidebar.openOnGitHub": "在 GitHub 上打开",
   "workspaceSidebar.remove": "移除",
   "workspaceSidebar.removeRunningWorkspace.title": "移除运行中的项目？",
   "workspaceSidebar.removeRunningWorkspace.description":

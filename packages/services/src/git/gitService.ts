@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- IGitService delegation and merge-status caching share the same service owner. */
 import { resolve } from "node:path";
 import type {
   GitBranchComparison,
@@ -227,6 +228,10 @@ export function createGitService(options?: {
 
     async getWorkspaceRepositoryInfo(params) {
       return await repo.getWorkspaceRepositoryInfo(params.workspacePath);
+    },
+
+    async getRepositoryRemotes(params) {
+      return await repo.getRepositoryRemotes(params.workspacePath);
     },
 
     async getLocalBranches(params) {

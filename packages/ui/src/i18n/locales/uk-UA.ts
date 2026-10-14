@@ -1730,6 +1730,7 @@ const ukUA: Record<string, string> = {
   "workspaceSidebar.searchTasksPlaceholder": "Пошук завдань...",
   "workspaceSidebar.searchArchivedTasksPlaceholder": "Пошук в архівних завданнях...",
   "workspaceSidebar.closeTaskSearch": "Закрити пошук завдань",
+  "workspaceSidebar.openOnGitHub": "Відкрити на GitHub",
   "workspaceSidebar.remove": "Вилучити",
   "workspaceSidebar.removeRunningWorkspace.title": "Вилучити активний проєкт?",
   "workspaceSidebar.removeRunningWorkspace.description":
