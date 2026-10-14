@@ -5200,8 +5200,8 @@ const enUS: Record<string, string> = {
   "chat.reasoning.durationFewSeconds": "a few seconds",
   "chat.reasoning.durationSeconds": "{seconds} seconds",
   "chat.contextUsage": "Context usage {used} of {total}",
-  "chat.contextUsage.tone.warning": "Warning: microcompact is clearing older tool results.",
-  "chat.contextUsage.tone.critical": "Critical: auto-compact will start on the next model step.",
+  "chat.contextUsage.tone.warning": "Warning: microcompact threshold reached.",
+  "chat.contextUsage.tone.critical": "Critical: auto-compact threshold reached.",
   "chat.contextUsage.title": "Context windows",
   "chat.contextUsageDescription":
     "Prompt text, tool calls, and responses all share this context window.",

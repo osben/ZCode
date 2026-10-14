@@ -81,9 +81,10 @@ Threshold math (defaults, mirroring the runtime policy):
 
 UI tone mapping (`resolveContextBudgetTone`):
 
-- `critical`: `usedTokens ≥ autoCompactThreshold` — auto-compact fires on the next model step.
-- `warning`: `usedTokens ≥ microcompactThreshold` — microcompact is actively clearing old tool
-  results.
+- `critical`: `usedTokens ≥ autoCompactThreshold` — the auto-compact threshold has been reached.
+- `warning`: `usedTokens ≥ microcompactThreshold` — the microcompact threshold has been reached.
+  These tones report token-budget state only; runtime may still skip either operation based on
+  available history, compact candidates, or safety guards.
 - `normal`: below the microcompact threshold, or invalid input (`usedTokens ≤ 0`/non-finite).
 
 Rendering rules:
@@ -96,8 +97,9 @@ Rendering rules:
   row.
 - The trigger carries `data-usage-tone={tone}`; the hidden `TID_V4_MODEL_CONFIG` anchor adds the
   same attribute for E2E assertions.
-- The trigger's accessible name appends a localized warning or critical status whenever the
-  context budget tone is active. Quota-reset tones retain their visual priority.
+- The trigger's accessible name appends a localized threshold-reached status whenever the context
+  budget tone is active. It does not claim compaction is occurring or guaranteed. Quota-reset tones
+  retain their visual priority.
 - Legacy events without authoritative thresholds use the 21K preflight reserve estimate; current
   main-turn events use the runtime thresholds directly.
 

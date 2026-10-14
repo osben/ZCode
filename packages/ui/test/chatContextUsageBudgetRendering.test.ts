@@ -67,7 +67,7 @@ describe("ChatContextUsage runtime compaction budget rendering", () => {
     expect(markup).toContain('data-usage-tone="warning"');
     expect(markup).toContain("text-warning");
     expect(markup).toContain("≈166K (83%)");
-    expect(markup).toContain("Warning: microcompact is clearing older tool results.");
+    expect(markup).toContain("Warning: microcompact threshold reached.");
   });
 
   it("renders critical at auto-compact and stays normal when auto-compact is disabled", () => {
@@ -80,7 +80,7 @@ describe("ChatContextUsage runtime compaction budget rendering", () => {
     expect(criticalMarkup).toContain('data-usage-tone="critical"');
     expect(criticalMarkup).toContain("text-destructive");
     expect(criticalMarkup).toContain("≈166K (83%)");
-    expect(criticalMarkup).toContain("Critical: auto-compact will start on the next model step.");
+    expect(criticalMarkup).toContain("Critical: auto-compact threshold reached.");
 
     const disabledMarkup = renderContextUsage({
       used: 180_000,
@@ -105,7 +105,7 @@ describe("ChatContextUsage runtime compaction budget rendering", () => {
         },
         "uk-UA",
       ),
-    ).toContain("Попередження: мікрокомпактування очищає старі результати інструментів.");
+    ).toContain("Попередження: досягнуто порогу мікрокомпактування.");
     expect(
       renderContextUsage(
         {
@@ -116,7 +116,7 @@ describe("ChatContextUsage runtime compaction budget rendering", () => {
         },
         "zh-CN",
       ),
-    ).toContain("严重：下一轮模型调用将触发自动压缩。");
+    ).toContain("严重：已达到自动压缩阈值。");
   });
 
   it("keeps a quota opportunity tone ahead of the steady context tone", () => {
@@ -133,6 +133,6 @@ describe("ChatContextUsage runtime compaction budget rendering", () => {
     expect(trigger).toContain('data-usage-tone="warning"');
     expect(trigger).toContain("text-success");
     expect(trigger).not.toContain("text-warning");
-    expect(trigger).toContain("Warning: microcompact is clearing older tool results.");
+    expect(trigger).toContain("Warning: microcompact threshold reached.");
   });
 });
