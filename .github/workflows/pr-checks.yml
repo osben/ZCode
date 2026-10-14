@@ -124,10 +124,12 @@ jobs:
       # executable itself because path.txt can remain even when the Electron binary is missing.
       - name: Ensure Electron binary
         run: |
-          if ! node -e 'const fs = require("node:fs"); fs.accessSync(require("electron"), fs.constants.X_OK)' 2>/dev/null; then
-            (cd node_modules/electron && node install.js)
+          electron_binary="$(node -e 'const fs = require("node:fs"); const path = require("node:path"); const dir = path.dirname(require.resolve("electron")); const name = fs.readFileSync(path.join(dir, "path.txt"), "utf8").trim(); process.stdout.write(path.join(dir, "dist", name))' 2>/dev/null || true)"
+          if [ -z "$electron_binary" ] || [ ! -x "$electron_binary" ]; then
+            (cd node_modules/electron && env -u ELECTRON_SKIP_BINARY_DOWNLOAD node install.js)
           fi
-          node -e 'const fs = require("node:fs"); fs.accessSync(require("electron"), fs.constants.X_OK)'
+          electron_binary="$(node -e 'const fs = require("node:fs"); const path = require("node:path"); const dir = path.dirname(require.resolve("electron")); const name = fs.readFileSync(path.join(dir, "path.txt"), "utf8").trim(); process.stdout.write(path.join(dir, "dist", name))')"
+          test -x "$electron_binary"
 
       - name: Build workspace packages needed by unit tests
         # storage-preparation 协议用例经 bootstrap 源码引用 @zcode/adapters/storage 的 dist 导出，
