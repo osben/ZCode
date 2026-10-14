@@ -38,7 +38,7 @@ describe("WorkspaceSidebar project pins", () => {
       "utf8",
     );
     expect(itemSource).toContain("TID_WORKSPACE_TOGGLE_PIN");
-    expect(itemSource).toContain("onToggleWorkspacePinned(workspaceDisplayKey, !isPinned)");
+    expect(itemSource).toContain("onToggleWorkspacePinned(!isPinned)");
     expect(itemSource).toContain('data-testid="workspace-customize"');
     // The pin glyph is a row state indicator, not a drag affordance.
     expect(itemSource).toContain('data-workspace-pinned-indicator="true"');
