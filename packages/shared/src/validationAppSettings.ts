@@ -1,6 +1,5 @@
 /* oxlint-disable eslint(max-lines) -- The AppSettings schema centralizes legacy migrations, defaults, and patch validation; splitting it would weaken the single entry point for settings migration. */
 import { z } from "zod";
-import type { AppSettings } from "./protocol.js";
 import { REMOTE_ASSET_INSTALL_MODES } from "./remoteAssetInstallMode.js";
 import { isKnownRemoteResourcePackageId } from "./remoteResourcePackages.js";
 import { wslUserSchema } from "./wslUserValidation.js";
@@ -64,13 +63,6 @@ const enabledBuiltinAgentCliProvidersSchema = z
   .array(z.enum(["claude", "opencode", "gemini", "codex", "glm"]))
   .transform(() => [...ZCODE_ENABLED_AGENT_PROVIDERS]);
 const providerFamilyDomainSchema = z.enum(["zai", "bigmodel"]);
-
-const worktreeLocationModeSchema = z.enum(["sibling", "inside", "global", "custom"]);
-const worktreeProjectOverrideSchema = z.object({
-  defaultBaseBranch: nonEmptyStringSchema.optional(),
-  branchPrefix: nonEmptyStringSchema.optional(),
-});
-
 export const postUpdateReleaseNotesPayloadSchema = z.object({
   version: nonEmptyStringSchema,
   title: nonEmptyStringSchema,
@@ -466,19 +458,6 @@ function migrateLegacyWorkspaceSession(value: unknown): unknown {
   return migrated;
 }
 
-const voiceDictationSettingsSchema = z.object({
-  modelId: nonEmptyStringSchema.nullable().optional(),
-  microphoneDeviceId: nonEmptyStringSchema.nullable().optional(),
-  language: nonEmptyStringSchema.optional(),
-  pushToTalk: z.boolean().optional(),
-  idleUnloadMinutes: z
-    .union([z.literal(1), z.literal(5), z.literal(10), z.literal(15), z.literal(30)])
-    .optional(),
-  feedbackSounds: z.boolean().optional(),
-  feedbackVolume: z.number().int().min(0).max(100).optional(),
-  muteWhileRecording: z.boolean().optional(),
-});
-
 const appSettingsObjectSchema = z.object({
   recentProjects: z.array(z.string()).default([]),
   // An unknown locale (such as a new language written by a newer version and then read by an older version) falls back only to the default:
@@ -487,10 +466,6 @@ const appSettingsObjectSchema = z.object({
   // User shortcut overrides (semantic validation is tolerant in the effective map in ui/src/shortcuts; the schema validates shape only).
   shortcutBindings: z.record(z.string(), z.array(z.string())).optional(),
   localePreference: localePreferenceSchema.default("system").catch("system"),
-  // Non-critical preference: an unknown voiceDictation value written by a newer version should only
-  // be dropped, not fail the entire setting.json parse, make settingService fall back to defaults,
-  // and erase all settings on the next write-back; same catch policy as locale.
-  voiceDictation: voiceDictationSettingsSchema.optional().catch(undefined),
   terminalInheritSystemProfile: z.boolean().default(true),
   terminalFontFamily: nonEmptyStringSchema.optional(),
   integratedTerminalShell: integratedTerminalShellSelectionSchema.optional(),
@@ -522,7 +497,6 @@ const appSettingsObjectSchema = z.object({
   toolGroupingChangesEnabled: z.boolean().default(false),
   zcodeInteractionBehavior: zcodeInteractionBehaviorSchema.default("queue"),
   askUserQuestionAutoResolutionEnabled: z.boolean().default(true),
-  codingPlanLimitAutoContinueDefaultEnabled: z.boolean().default(true).catch(true),
   modelIoFullRetentionEnabled: z.boolean().default(false),
   dynamicWorkflowMode: dynamicWorkflowModeSettingSchema,
   enabledBuiltinAgentCliProviders: enabledBuiltinAgentCliProvidersSchema.default([
@@ -550,14 +524,6 @@ const appSettingsObjectSchema = z.object({
   webRemoteControlExternalRelayDevice: webRemoteControlExternalRelayDeviceSchema.optional(),
   webRemoteControlLastEnabledContext: webRemoteControlLastEnabledContextSchema.optional(),
   zcodeEndpointOrigin: zcodeEndpointOriginSchema.optional(),
-  // 与 locale/voiceDictation 相同的读取容错：单个坏值（例如更新版本写入的枚举）不应让整份 setting.json 解析失败回退默认值；写入侧 patch schema 保持严格。
-  worktreeLocationMode: worktreeLocationModeSchema.optional().catch(undefined),
-  worktreeCustomLocationPath: nonEmptyStringSchema.optional().catch(undefined),
-  worktreeBranchPrefix: nonEmptyStringSchema.optional().catch(undefined),
-  worktreeProjectOverrides: z
-    .record(z.string(), worktreeProjectOverrideSchema)
-    .optional()
-    .catch(undefined),
 });
 
 export const appSettingsSchema = z.preprocess(
@@ -582,7 +548,6 @@ export const appSettingsPatchSchema = z.object({
   recentProjects: z.array(z.string()).optional(),
   locale: localeSchema.optional(),
   shortcutBindings: z.record(z.string(), z.array(z.string())).optional(),
-  voiceDictation: voiceDictationSettingsSchema.optional(),
   localePreference: localePreferenceSchema.optional(),
   terminalInheritSystemProfile: z.boolean().optional(),
   terminalFontFamily: nonEmptyStringSchema.optional(),
@@ -610,7 +575,6 @@ export const appSettingsPatchSchema = z.object({
   toolGroupingChangesEnabled: z.boolean().optional(),
   zcodeInteractionBehavior: zcodeInteractionBehaviorSchema.optional(),
   askUserQuestionAutoResolutionEnabled: z.boolean().optional(),
-  codingPlanLimitAutoContinueDefaultEnabled: z.boolean().optional(),
   modelIoFullRetentionEnabled: z.boolean().optional(),
   // The empty string is the "clear the selection and return to follow" sentinel: RPC swallows undefined, and normalizeSettingsPatch normalizes it to a deletion.
   dynamicWorkflowMode: z.union([z.enum(DYNAMIC_WORKFLOW_MODES), z.literal("")]).optional(),
@@ -655,8 +619,4 @@ export const appSettingsPatchSchema = z.object({
   webRemoteControlExternalRelayDevice: webRemoteControlExternalRelayDeviceSchema.optional(),
   webRemoteControlLastEnabledContext: webRemoteControlLastEnabledContextSchema.optional(),
   zcodeEndpointOrigin: zcodeEndpointOriginSchema.optional(),
-  worktreeLocationMode: worktreeLocationModeSchema.optional(),
-  worktreeCustomLocationPath: nonEmptyStringSchema.optional(),
-  worktreeBranchPrefix: nonEmptyStringSchema.optional(),
-  worktreeProjectOverrides: z.record(z.string(), worktreeProjectOverrideSchema).optional(),
 });

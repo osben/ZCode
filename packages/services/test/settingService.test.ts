@@ -1066,3 +1066,172 @@ describe("settingService", () => {
     });
   });
 });
+
+// Fork-owned settings live in fork-settings.json next to setting.json (see FORK_SETTING_KEYS):
+// the upstream app shares setting.json with this fork and strips unknown keys on every write, so
+// anything fork-owned must never touch that file.
+describe("fork settings sidecar", () => {
+  function settingsFile(home: string): string {
+    return join(home, ".zcode", "v2", "setting.json");
+  }
+
+  function forkSettingsFile(home: string): string {
+    return join(home, ".zcode", "v2", "fork-settings.json");
+  }
+
+  function readJsonFile(path: string): Record<string, unknown> {
+    return JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
+  }
+
+  it("routes fork-owned patches to the sidecar and keeps setting.json upstream-clean", async () => {
+    const home = makeTempHome();
+    const service = await createSettingServiceInHome(home);
+
+    await service.update({
+      locale: "en-US",
+      voiceDictation: { modelId: "parakeet", feedbackSounds: false },
+      worktreeLocationMode: "global",
+      codingPlanLimitAutoContinueDefaultEnabled: false,
+    });
+
+    const forkStored = readJsonFile(forkSettingsFile(home));
+    expect(forkStored.voiceDictation).toEqual({ modelId: "parakeet", feedbackSounds: false });
+    expect(forkStored.worktreeLocationMode).toBe("global");
+    expect(forkStored.codingPlanLimitAutoContinueDefaultEnabled).toBe(false);
+
+    // setting.json keeps only the upstream-known key: the whole point is that a foreign writer
+    // re-parsing this file can no longer delete fork preferences.
+    const mainStored = readJsonFile(settingsFile(home));
+    expect(mainStored.locale).toBe("en-US");
+    expect(mainStored).not.toHaveProperty("voiceDictation");
+    expect(mainStored).not.toHaveProperty("worktreeLocationMode");
+    expect(mainStored).not.toHaveProperty("codingPlanLimitAutoContinueDefaultEnabled");
+
+    await expect(service.get()).resolves.toMatchObject({
+      locale: "en-US",
+      voiceDictation: { modelId: "parakeet", feedbackSounds: false },
+      worktreeLocationMode: "global",
+      codingPlanLimitAutoContinueDefaultEnabled: false,
+    });
+  });
+
+  it("keeps fork settings when a foreign writer rewrites setting.json without them", async () => {
+    const home = makeTempHome();
+    const service = await createSettingServiceInHome(home);
+    await service.update({ voiceDictation: { modelId: "parakeet" } });
+
+    // Simulate the upstream app: it re-parses setting.json through its own schema and writes the
+    // file back without any fork-only key.
+    writeFileSync(
+      settingsFile(home),
+      JSON.stringify({ locale: "zh-CN", recentProjects: [] }),
+      "utf-8",
+    );
+
+    await expect(service.get()).resolves.toMatchObject({
+      voiceDictation: { modelId: "parakeet" },
+      locale: "zh-CN",
+    });
+  });
+
+  it("never materializes defaults into the sidecar file", async () => {
+    // Only explicit user choices may be persisted: a default written to the file would stay pinned
+    // forever, and a future default change would never reach users who never touched the setting.
+    const home = makeTempHome();
+    const service = await createSettingServiceInHome(home);
+
+    await service.update({ voiceDictation: { modelId: "parakeet" } });
+
+    const stored = readJsonFile(forkSettingsFile(home));
+    expect(stored).not.toHaveProperty("codingPlanLimitAutoContinueDefaultEnabled");
+    // The effective view still surfaces the default.
+    await expect(service.get()).resolves.toMatchObject({
+      voiceDictation: { modelId: "parakeet" },
+      codingPlanLimitAutoContinueDefaultEnabled: true,
+    });
+
+    // Once the user changes the value it is persisted verbatim, and flipping back to the default
+    // value also persists it (an explicit choice beats any future default change).
+    await service.update({ codingPlanLimitAutoContinueDefaultEnabled: false });
+    expect(readJsonFile(forkSettingsFile(home)).codingPlanLimitAutoContinueDefaultEnabled).toBe(
+      false,
+    );
+    await service.update({ codingPlanLimitAutoContinueDefaultEnabled: true });
+    expect(readJsonFile(forkSettingsFile(home)).codingPlanLimitAutoContinueDefaultEnabled).toBe(
+      true,
+    );
+  });
+
+  it("migrates legacy fork keys from setting.json into the sidecar on first read", async () => {
+    const home = makeTempHome();
+    const settingsDir = join(home, ".zcode", "v2");
+    mkdirSync(settingsDir, { recursive: true });
+    writeFileSync(
+      settingsFile(home),
+      JSON.stringify({
+        locale: "en-US",
+        recentProjects: [],
+        voiceDictation: { modelId: "parakeet", feedbackVolume: 83 },
+        worktreeLocationMode: "custom",
+        worktreeCustomLocationPath: "/worktrees",
+      }),
+      "utf-8",
+    );
+
+    const service = await createSettingServiceInHome(home);
+    await expect(service.get()).resolves.toMatchObject({
+      voiceDictation: { modelId: "parakeet", feedbackVolume: 83 },
+      worktreeLocationMode: "custom",
+      worktreeCustomLocationPath: "/worktrees",
+    });
+
+    // The migration moved the values into the sidecar and cleaned setting.json. The legacy file
+    // carried no explicit codingPlanLimit choice, so none may be materialized into the sidecar.
+    const mainStored = readJsonFile(settingsFile(home));
+    expect(mainStored).not.toHaveProperty("voiceDictation");
+    expect(mainStored).not.toHaveProperty("worktreeLocationMode");
+    const forkStored = readJsonFile(forkSettingsFile(home));
+    expect(forkStored.voiceDictation).toEqual({
+      modelId: "parakeet",
+      feedbackVolume: 83,
+    });
+    expect(forkStored).not.toHaveProperty("codingPlanLimitAutoContinueDefaultEnabled");
+
+    // Reading again is idempotent and does not resurrect the keys in setting.json.
+    await expect(service.get()).resolves.toMatchObject({
+      voiceDictation: { modelId: "parakeet", feedbackVolume: 83 },
+    });
+    expect(readJsonFile(settingsFile(home))).not.toHaveProperty("voiceDictation");
+  });
+
+  it("falls back to defaults when the sidecar is unreadable instead of failing reads", async () => {
+    const home = makeTempHome();
+    const settingsDir = join(home, ".zcode", "v2");
+    mkdirSync(settingsDir, { recursive: true });
+    writeFileSync(forkSettingsFile(home), "{broken json", "utf-8");
+
+    const service = await createSettingServiceInHome(home);
+    const settings = await service.get();
+    expect(settings.voiceDictation).toBeUndefined();
+    expect(settings.codingPlanLimitAutoContinueDefaultEnabled).toBe(true);
+
+    // A later fork-side save recreates a valid sidecar.
+    await service.update({ voiceDictation: { modelId: "whisper-small" } });
+    await expect(service.get()).resolves.toMatchObject({
+      voiceDictation: { modelId: "whisper-small" },
+    });
+  });
+
+  it("clears a fork setting via an explicit undefined and drops it from the sidecar file", async () => {
+    // JSON cannot store undefined, so the cleared key must disappear from the sidecar entirely
+    // instead of shadowing the effective default with an undefined entry.
+    const home = makeTempHome();
+    const service = await createSettingServiceInHome(home);
+    await service.update({ worktreeBranchPrefix: "fork/" });
+    expect(readJsonFile(forkSettingsFile(home)).worktreeBranchPrefix).toBe("fork/");
+
+    await service.update({ worktreeBranchPrefix: undefined });
+    expect((await service.get()).worktreeBranchPrefix).toBeUndefined();
+    expect(readJsonFile(forkSettingsFile(home))).not.toHaveProperty("worktreeBranchPrefix");
+  });
+});

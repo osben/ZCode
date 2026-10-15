@@ -4,6 +4,8 @@ import { coalesceConsecutiveZCodeAssistants } from "../src/zcodePersistedMessage
 import {
   appSettingsSchema,
   appSettingsPatchSchema,
+  forkAppSettingsPatchSchema,
+  forkAppSettingsSchema,
   hostIncomingMessageSchema,
   hostResponseMessageSchema,
   wslConnectOptionsSchema,
@@ -535,17 +537,23 @@ describe("hostResponseMessageSchema", () => {
   });
 
   it("recovers an invalid saved Coding Plan auto-continue default and validates boolean patches", () => {
-    const invalidSavedValue = appSettingsSchema.safeParse({
+    // The key is fork-owned storage (forkAppSettings sidecar): the read surface keeps recovering an
+    // invalid saved value to the default, and the patch surface stays strict — but both live in the
+    // fork schema, and the upstream-shared setting.json schema strips the key entirely.
+    const invalidSavedValue = forkAppSettingsSchema.safeParse({
       codingPlanLimitAutoContinueDefaultEnabled: "false",
     });
-    const explicitDisabled = appSettingsSchema.parse({
+    const explicitDisabled = forkAppSettingsSchema.parse({
       codingPlanLimitAutoContinueDefaultEnabled: false,
     });
-    const validPatch = appSettingsPatchSchema.parse({
+    const validPatch = forkAppSettingsPatchSchema.parse({
       codingPlanLimitAutoContinueDefaultEnabled: false,
     });
-    const invalidPatch = appSettingsPatchSchema.safeParse({
+    const invalidPatch = forkAppSettingsPatchSchema.safeParse({
       codingPlanLimitAutoContinueDefaultEnabled: "false",
+    });
+    const strippedFromMainSchema = appSettingsSchema.parse({
+      codingPlanLimitAutoContinueDefaultEnabled: false,
     });
 
     expect(invalidSavedValue.success).toBe(true);
@@ -555,6 +563,7 @@ describe("hostResponseMessageSchema", () => {
     expect(explicitDisabled.codingPlanLimitAutoContinueDefaultEnabled).toBe(false);
     expect(validPatch.codingPlanLimitAutoContinueDefaultEnabled).toBe(false);
     expect(invalidPatch.success).toBe(false);
+    expect(strippedFromMainSchema).not.toHaveProperty("codingPlanLimitAutoContinueDefaultEnabled");
   });
 
   it("首次统一开启消息流 reasoning，迁移后保留用户选择", () => {

@@ -9,9 +9,12 @@ import type {
 import {
   appSettingsPatchSchema,
   appSettingsSchema,
+  extractLegacyForkSettings,
   formatLogPrefix,
   formatZodError,
+  splitForkSettingsPatch,
 } from "@zcode/shared";
+import type { ForkAppSettings } from "@zcode/shared";
 import type { ISettingService } from "./setting.js";
 import { normalizeSettingsPatch } from "#src/setting/normalizeSettingsPatch.js";
 import { copyDataDirectory, getDataBaseDir, validateDataBaseDirTarget } from "../paths.js";
@@ -19,6 +22,13 @@ import { isEffectiveDevelopmentNodeEnv } from "../runtime-tools/nodeEnv.js";
 import { maybeThrowInjectedFsFault } from "../fs/fsFaultInjection.js";
 import { atomicWriteText } from "../fs/atomicFileUtils.js";
 import { withSettingsWriteQueueTimeout } from "./settingsWriteQueue.js";
+import { getSettingsDir, getSettingsFile } from "./settingsPaths.js";
+import {
+  readForkSettings,
+  readStoredForkSettings,
+  seedForkSettingsFromLegacy,
+  updateForkSettings,
+} from "./forkSettingsSidecar.js";
 import {
   migrateLegacyAccountConnectionSettings,
   needsLegacyAccountConnectionMigration,
@@ -41,24 +51,6 @@ const debugLog = (...args: unknown[]) => {
   }
   console.debug(formatLogPrefix("settingService", process.pid), ...args);
 };
-
-function resolveUserHomeDir() {
-  // An isolated Desktop Dev instance has its own home, but the settings service still wrote to the real HOME,
-  // causing startup migration and appearance changes to affect other instances. Match Electron's explicit home override.
-  const envHome =
-    process.env.ZCODE_DESKTOP_HOME_DIR?.trim() ||
-    process.env.HOME?.trim() ||
-    process.env.USERPROFILE?.trim();
-  return envHome && envHome.length > 0 ? envHome : homedir();
-}
-
-function getSettingsDir() {
-  return join(resolveUserHomeDir(), ".zcode", "v2");
-}
-
-function getSettingsFile() {
-  return join(getSettingsDir(), "setting.json");
-}
 
 function defaultSettings(): AppSettings {
   return appSettingsSchema.parse({});
@@ -111,8 +103,9 @@ function shouldPersistSettingsMigrations(rawValue: unknown): boolean {
 interface ReadSettingsResult {
   settings: AppSettings;
   needsMigrationPersist: boolean;
+  /** Fork-owned keys found in the raw setting.json before the schema stripped them; set only when the one-time sidecar migration still has something to move. */
+  legacyForkSettings?: Partial<ForkAppSettings>;
 }
-
 async function readSettingsWithMeta(): Promise<ReadSettingsResult> {
   const settingsFile = getSettingsFile();
   try {
@@ -159,6 +152,7 @@ async function readSettingsWithMeta(): Promise<ReadSettingsResult> {
     return {
       settings: result.data,
       needsMigrationPersist: shouldPersistSettingsMigrations(rawValue),
+      legacyForkSettings: extractLegacyForkSettings(rawValue),
     };
   } catch (err) {
     if (
@@ -278,27 +272,41 @@ export function createSettingServiceWithMigrations(): {
       // runtime will retain the old switch value. Wait for queued writes first so startup preferences use the committed choice.
       await updateQueue;
       const result = await readSettingsWithMeta();
-      if (!result.needsMigrationPersist) {
-        return result.settings;
+      const forkSettings = await readForkSettings();
+      if (!result.needsMigrationPersist && !result.legacyForkSettings) {
+        return { ...result.settings, ...forkSettings };
       }
 
       await enqueueSettingsWrite(async (shouldCommit, enterCommitPhase) => {
         const latest = await readSettingsWithMeta();
-        if (!latest.needsMigrationPersist) {
+        const latestForkSettings = await readStoredForkSettings();
+        if (latest.legacyForkSettings) {
+          // One-time sidecar migration: seed fork keys still living in setting.json (sidecar wins
+          // on conflicts), then let the write below persist setting.json without them.
+          await seedForkSettingsFromLegacy(latest.legacyForkSettings, latestForkSettings);
+        }
+        if (!latest.needsMigrationPersist && !latest.legacyForkSettings) {
           return;
         }
 
         // Initialization rationale: older settings may have persisted defaults with indistinguishable origins; migrate once using the schema after upgrade.
-        // Migration writes must use updateQueue and reread the latest file inside the queue to avoid overwriting other concurrently saved settings.
+        // The schema no longer contains the fork keys, so the persisted object drops them here.
         await writeSettings(latest.settings, shouldCommit, runSettingsCommit, enterCommitPhase);
       });
 
-      return readSettings();
+      const [settings, migratedForkSettings] = await Promise.all([
+        readSettings(),
+        readForkSettings(),
+      ]);
+      return { ...settings, ...migratedForkSettings };
     },
 
     async update(patch: Partial<AppSettings>, expectedAccountSettings): Promise<void> {
       const runUpdate = async (shouldCommit: () => boolean, enterCommitPhase: () => void) => {
-        const validatedPatch = appSettingsPatchSchema.parse(normalizeSettingsPatch(patch));
+        // Fork-owned keys are routed to the sidecar file before the main validation: their schemas
+        // no longer exist in appSettingsPatchSchema, and an unknown key would be silently stripped.
+        const { forkPatch, basePatch } = splitForkSettingsPatch(normalizeSettingsPatch(patch));
+        const validatedPatch = appSettingsPatchSchema.parse(basePatch);
         const current = await readSettings();
         if (expectedAccountSettings) {
           // The user may switch accounts during the query. Validate inside the same write queue; a caller-side read-then-write is insufficient.
@@ -331,6 +339,9 @@ export function createSettingServiceWithMigrations(): {
           enterCommitPhase,
           Object.hasOwn(patch, "providerFamilyConnectionSelections"),
         );
+        if (Object.keys(forkPatch).length > 0) {
+          await updateForkSettings(forkPatch);
+        }
       };
 
       await enqueueSettingsWrite(runUpdate);

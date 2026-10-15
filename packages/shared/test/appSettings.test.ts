@@ -1,4 +1,10 @@
 import { describe, expect, it } from "vitest";
+import {
+  FORK_SETTING_KEYS,
+  forkAppSettingsPatchSchema,
+  forkAppSettingsSchema,
+  splitForkSettingsPatch,
+} from "../src/forkAppSettings.js";
 import { appSettingsPatchSchema, appSettingsSchema } from "../src/validationAppSettings.js";
 
 describe("app settings", () => {
@@ -208,6 +214,7 @@ describe("app settings", () => {
 
   it("discards a damaged voiceDictation value without resetting other settings", () => {
     // Non-critical preference: a damaged value or one written by a newer version should only discard itself, never fail parsing the whole settings.json.
+    // voiceDictation is fork-owned storage (forkAppSettings), so the main setting.json schema strips it.
     const settings = appSettingsSchema.parse({
       locale: "en-US",
       recentProjects: ["/workspace/demo"],
@@ -218,19 +225,23 @@ describe("app settings", () => {
     expect(settings.recentProjects).toEqual(["/workspace/demo"]);
     expect(settings.voiceDictation).toBeUndefined();
 
-    // The patch surface stays strict: invalid values must still be rejected at save time instead of being silently swallowed.
+    // The sidecar read surface stays tolerant, and the patch surface stays strict: invalid values
+    // must be rejected at save time instead of being silently swallowed.
     expect(
-      appSettingsPatchSchema.safeParse({ voiceDictation: { pushToTalk: "yes" } }).success,
+      forkAppSettingsSchema.parse({
+        voiceDictation: { modelId: 42, idleUnloadMinutes: 60 },
+      }).voiceDictation,
+    ).toBeUndefined();
+    expect(
+      forkAppSettingsPatchSchema.safeParse({ voiceDictation: { pushToTalk: "yes" } }).success,
     ).toBe(false);
     expect(
-      appSettingsPatchSchema.parse({ voiceDictation: { modelId: "parakeet" } }).voiceDictation,
+      forkAppSettingsPatchSchema.parse({ voiceDictation: { modelId: "parakeet" } }).voiceDictation,
     ).toEqual({ modelId: "parakeet" });
   });
 
   it("accepts the feedback sound preferences and rejects out-of-range volume", () => {
-    const settings = appSettingsSchema.parse({
-      locale: "en-US",
-      recentProjects: [],
+    const fork = forkAppSettingsSchema.parse({
       voiceDictation: {
         modelId: "parakeet",
         feedbackSounds: true,
@@ -238,7 +249,7 @@ describe("app settings", () => {
         muteWhileRecording: true,
       },
     });
-    expect(settings.voiceDictation).toEqual({
+    expect(fork.voiceDictation).toEqual({
       modelId: "parakeet",
       feedbackSounds: true,
       feedbackVolume: 54,
@@ -246,19 +257,35 @@ describe("app settings", () => {
     });
 
     // Absent fields keep the effective defaults handled by the consumers (off / 70).
-    expect(
-      appSettingsSchema.parse({ locale: "en-US", recentProjects: [] }).voiceDictation,
-    ).toBeUndefined();
+    expect(forkAppSettingsSchema.parse({}).voiceDictation).toBeUndefined();
 
     expect(
-      appSettingsPatchSchema.safeParse({ voiceDictation: { feedbackVolume: 101 } }).success,
+      forkAppSettingsPatchSchema.safeParse({ voiceDictation: { feedbackVolume: 101 } }).success,
     ).toBe(false);
     expect(
-      appSettingsPatchSchema.safeParse({ voiceDictation: { feedbackVolume: -1 } }).success,
+      forkAppSettingsPatchSchema.safeParse({ voiceDictation: { feedbackVolume: -1 } }).success,
     ).toBe(false);
     expect(
-      appSettingsPatchSchema.safeParse({ voiceDictation: { feedbackVolume: 70.5 } }).success,
+      forkAppSettingsPatchSchema.safeParse({ voiceDictation: { feedbackVolume: 70.5 } }).success,
     ).toBe(false);
+  });
+
+  it("keeps every registered fork-owned key out of the upstream-shared setting.json schema", () => {
+    // The upstream app shares setting.json with this fork and strips unknown keys on every write,
+    // so a fork-only key placed in appSettingsObjectSchema instead of FORK_SETTING_KEYS would be
+    // wiped by the next upstream write (this already deleted the selected dictation model once).
+    const probe = Object.fromEntries(FORK_SETTING_KEYS.map((key) => [key, null]));
+    const parsed = appSettingsSchema.parse(probe);
+    for (const key of FORK_SETTING_KEYS) {
+      expect(parsed).not.toHaveProperty(key);
+    }
+
+    // The patch splitter routes every registry key away from the base (setting.json) patch.
+    const { forkPatch, basePatch } = splitForkSettingsPatch(
+      Object.fromEntries(FORK_SETTING_KEYS.map((key) => [key, true])) as never,
+    );
+    expect(Object.keys(forkPatch).sort()).toEqual([...FORK_SETTING_KEYS].sort());
+    expect(Object.keys(basePatch)).toEqual([]);
   });
 
   it("preserves localized pending post-update release notes", () => {

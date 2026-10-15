@@ -239,8 +239,8 @@ export function getProviderWorkspaceConfigDir(): string {
 
 /**
  * Copy the .zcode/v2 data directory from one base dir to another.
- * Excludes setting.json and its transient atomic-write siblings — bootstrap
- * state must only live at the default homedir location.
+ * Excludes setting.json / fork-settings.json and their transient atomic-write
+ * siblings — bootstrap state must only live at the default homedir location.
  */
 export async function copyDataDirectory(oldBaseDir: string, newBaseDir: string): Promise<void> {
   const oldDir = join(oldBaseDir, ".zcode", "v2");
@@ -254,6 +254,11 @@ export async function copyDataDirectory(oldBaseDir: string, newBaseDir: string):
         // setting.json.lock and setting.json.*.tmp are created/deleted briefly during atomic writes;
         // if a lock disappears during copying, ENOENT would fail the data-directory migration.
         // These files are bootstrap write intermediates and must not be migrated to the new data root.
+        return false;
+      }
+      if (sourceName === "fork-settings.json" || sourceName.startsWith("fork-settings.json.")) {
+        // Fork settings live next to setting.json at the default homedir location (the setting
+        // service resolves them from home, not from the data dir); keep them out of data migration.
         return false;
       }
       // fs.cp cannot copy symbolic links in an unprivileged Windows environment (EPERM).
