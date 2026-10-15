@@ -667,11 +667,9 @@ const EMPTY_CLAIMS: SiwcIdTokenClaims = { sub: "" };
 async function closeServer(server: Server): Promise<void> {
   if (!server.listening) return;
   await new Promise<void>((resolve, reject) => {
-    // The system browser keeps its keep-alive socket to the loopback open after the
-    // success page; a bare close() waits it out (observed ~11s) and delays the login
-    // completion returned to the UI. The response is already flushed, so dropping the
-    // remaining connections immediately is safe for this one-shot server.
-    server.closeAllConnections();
+    // Stop accepting callbacks before dropping the browser's remaining keep-alive socket;
+    // closeAllConnections alone leaves a window for another connection to be accepted.
     server.close((error) => (error ? reject(error) : resolve()));
+    server.closeAllConnections();
   });
 }

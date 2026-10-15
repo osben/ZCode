@@ -1,8 +1,9 @@
 import { createSign, generateKeyPairSync } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
+import { Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ICredentialService } from "../src/credential/credential.js";
 import { SiwcAuthService } from "../src/oauth/siwc/siwcAuthService.js";
 import { SIWC_CREDENTIAL_KEYS, SIWC_ISSUER } from "../src/oauth/siwc/siwcOAuth.js";
@@ -219,6 +220,31 @@ describe("SiwcAuthService (host side)", () => {
 
     expect([first, second].filter(Boolean)).toHaveLength(1);
     expect(fixture.backend.exchangeCalls).toEqual(["host-auth-code"]);
+  });
+
+  it("stops accepting callback connections before force-closing the remaining ones", async () => {
+    const fixture = await createFixture();
+    const start = await fixture.service.startLogin();
+    fixture.nonceRef.value = new URL(start.authorizeUrl).searchParams.get("nonce") ?? "";
+    await completeBrowserRedirect(start);
+    const closeOrder: string[] = [];
+    const close = Server.prototype.close;
+    const closeAllConnections = Server.prototype.closeAllConnections;
+    vi.spyOn(Server.prototype, "close").mockImplementation(function (callback) {
+      closeOrder.push("close");
+      return close.call(this, callback);
+    });
+    vi.spyOn(Server.prototype, "closeAllConnections").mockImplementation(function () {
+      closeOrder.push("closeAllConnections");
+      return closeAllConnections.call(this);
+    });
+
+    try {
+      await fixture.service.pollLogin();
+      expect(closeOrder).toEqual(["close", "closeAllConnections"]);
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   it("closes the callback server and clears pending login when the callback rejects", async () => {
