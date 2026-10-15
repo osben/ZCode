@@ -1286,6 +1286,29 @@ describe("fork settings sidecar", () => {
     }
   });
 
+  it("aborts seeding when the migration re-read fails, keeping the legacy file untouched", async () => {
+    // If the locked re-read of setting.json fails after the caller's initial read succeeded,
+    // the failure must propagate: a silent no-op would let the caller's cleanup write delete
+    // the legacy keys from their only stored location.
+    const home = makeTempHome();
+    const settingsDir = join(home, ".zcode", "v2");
+    mkdirSync(settingsDir, { recursive: true });
+    writeFileSync(settingsFile(home), "{broken json", "utf-8");
+
+    const { maybeSeedLegacyForkSettings } = await import("../src/setting/forkSettingsSidecar.js");
+    process.env.HOME = home;
+    await expect(
+      maybeSeedLegacyForkSettings(
+        { voiceDictation: { modelId: "parakeet" } },
+        { shouldCommit: () => true },
+      ),
+    ).rejects.toThrow();
+
+    // The main file was not rewritten by a cleanup pass and no partial sidecar appeared.
+    expect(readFileSync(settingsFile(home), "utf-8")).toBe("{broken json");
+    expect(existsSync(forkSettingsFile(home))).toBe(false);
+  });
+
   it("ignores a stale legacy snapshot whose keys were already migrated and cleared", async () => {
     // Instance A captures its legacy snapshot before the sidecar lock; instance B migrates and the
     // user then clears the key. When A resumes, re-checking setting.json under the lock must seed

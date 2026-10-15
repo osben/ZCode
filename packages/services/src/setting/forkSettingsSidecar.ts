@@ -28,13 +28,13 @@ export interface ForkSettingsWriteGuards {
   shouldCommit: () => boolean;
 }
 
-/** Tolerant JSON read: any missing/unreadable/broken file yields undefined instead of throwing. */
-async function readRawJsonFile(filePath: string): Promise<unknown> {
-  try {
-    return JSON.parse(await readFile(filePath, "utf-8"));
-  } catch {
-    return undefined;
-  }
+/**
+ * Strict JSON read for the migration re-read: read and parse failures propagate so the caller's
+ * cleanup write cannot run after failed seeding (that would delete the legacy keys from their
+ * only stored location). A missing file propagates too and is equally safe: nothing is seeded.
+ */
+async function readJsonFileStrict(filePath: string): Promise<unknown> {
+  return JSON.parse(await readFile(filePath, "utf-8"));
 }
 
 /**
@@ -166,11 +166,14 @@ export async function maybeSeedLegacyForkSettings(
   if (!legacyForkSettings) return;
   const forkSettingsFile = getForkSettingsFile();
   await withAtomicFileLock(forkSettingsFile, async () => {
-    // A raw read/parse failure yields undefined, which seeds nothing: an unreadable main file is
-    // not a source worth seeding from.
-    const stillPresent = pickForkSettings(
-      ((await readRawJsonFile(getSettingsFile())) ?? {}) as Record<string, unknown>,
-    );
+    // Re-read the legacy source under the sidecar lock and let read/parse failures propagate:
+    // if seeding cannot confirm the keys, the caller's cleanup write must not run and delete
+    // them from their only stored location.
+    const rawMain = await readJsonFileStrict(getSettingsFile());
+    const stillPresent =
+      rawMain && typeof rawMain === "object" && !Array.isArray(rawMain)
+        ? pickForkSettings(rawMain as Record<string, unknown>)
+        : {};
     if (Object.keys(stillPresent).length === 0) {
       return;
     }
