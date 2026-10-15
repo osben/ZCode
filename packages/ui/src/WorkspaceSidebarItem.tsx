@@ -240,10 +240,14 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
   );
   const remoteWorkspaceError = remoteWorkspaceErrorByWorkspaceKey[remoteWorkspaceKey];
   const workspaceSidebarLabel = formatRemoteWorkspaceDisplayLabel(tab.label, tab.remoteTarget);
+  const workspaceGitHubUrlRequestIdRef = useRef(0);
   const refreshWorkspaceGitHubUrl = useCallback(() => {
+    const requestId = ++workspaceGitHubUrlRequestIdRef.current;
+    setWorkspaceGitHubUrl(null);
     services.gitService
       .getRepositoryRemotes({ workspacePath: tab.workspacePath })
       .then((result) => {
+        if (requestId !== workspaceGitHubUrlRequestIdRef.current) return;
         const githubUrl =
           result.remotes
             .map((remote) => gitRemoteUrlToWebUrl(remote.url))
@@ -252,6 +256,7 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
         setWorkspaceGitHubUrl(githubUrl);
       })
       .catch((error: unknown) => {
+        if (requestId !== workspaceGitHubUrlRequestIdRef.current) return;
         logger.debug("[WorkspaceSidebarItem] repository remotes lookup failed", {
           workspacePath: tab.workspacePath,
           error,

@@ -24,7 +24,8 @@ export function gitRemoteUrlToWebUrl(rawUrl: string): string | null {
 
 function buildRepositoryWebUrl(host: string, rawPath: string): string | null {
   const normalizedHost = host.trim().toLowerCase();
+  const webHost = normalizedHost === "ssh.github.com" ? "github.com" : normalizedHost;
   const path = rawPath.replace(/^\/+/, "");
-  if (!normalizedHost || !path) return null;
-  return `https://${normalizedHost}/${path}`;
+  if (!webHost || !path) return null;
+  return `https://${webHost}/${path}`;
 }

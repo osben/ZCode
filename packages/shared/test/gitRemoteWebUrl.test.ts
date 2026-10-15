@@ -33,4 +33,10 @@ describe("gitRemoteUrlToWebUrl", () => {
       "https://github.com/osben/ZCode",
     );
   });
+
+  it("maps GitHub SSH-over-443 remotes to the canonical web host", () => {
+    expect(gitRemoteUrlToWebUrl("ssh://git@ssh.github.com:443/osben/ZCode.git")).toBe(
+      "https://github.com/osben/ZCode",
+    );
+  });
 });

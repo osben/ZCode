@@ -10,7 +10,7 @@ import {
 } from "../helpers/desktop-app.js";
 
 const GITHUB_REMOTE_NAME = "zcode-e2e-github";
-const GITHUB_REMOTE_URL = "git@github.com:osben/ZCode.git";
+const GITHUB_REMOTE_URL = "ssh://git@ssh.github.com:443/osben/ZCode.git";
 const GITHUB_WEB_URL = "https://github.com/osben/ZCode";
 const OPEN_GITHUB_TEST_ID = "workspace-open-on-github";
 
