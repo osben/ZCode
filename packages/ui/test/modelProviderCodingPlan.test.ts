@@ -878,10 +878,14 @@ describe("model provider coding plan", () => {
 
     expect(capturedGroups.map((group) => group.id)).toEqual(["preset", "chatgpt", "custom"]);
     const chatgptGroup = capturedGroups.find((group) => group.id === "chatgpt");
-    expect(chatgptGroup?.title).toBe("ChatGPT");
+    expect(chatgptGroup?.title).toBe("settings.modelProvider.chatgpt.navigationTitle");
     expect(chatgptGroup?.items.map((item) => item.presetId)).toEqual([
       BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan,
     ]);
+    expect(chatgptGroup?.items[0]).toMatchObject({
+      label: "settings.modelProvider.chatgpt.navigationPlan",
+      displayName: "settings.modelProvider.chatgpt.navigationPlan",
+    });
     expect(
       capturedGroups[0]?.items.some(
         (item) => item.presetId === BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan,

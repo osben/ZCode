@@ -3681,6 +3681,8 @@ const zhCN: Record<string, string> = {
   "settings.modelProvider.slot.reasoning": "Reasoning（推理任务）",
   "settings.modelProvider.mappingNotSet": "未设置",
   "settings.modelProvider.chatgpt.badge.subscription": "订阅",
+  "settings.modelProvider.chatgpt.navigationTitle": "ChatGPT",
+  "settings.modelProvider.chatgpt.navigationPlan": "ChatGPT 套餐",
   "settings.modelProvider.chatgpt.description":
     "通过你的 ChatGPT Plus/Pro 订阅运行 OpenAI 模型（OpenAI 官方令牌共享计划）。用量计入套餐 5 小时窗口。",
   "settings.modelProvider.chatgpt.notSignedIn": "使用 ChatGPT 账号登录后即可使用套餐模型。",

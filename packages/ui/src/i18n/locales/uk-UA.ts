@@ -3608,6 +3608,8 @@ const ukUA: Record<string, string> = {
   "settings.modelProvider.modelsPlaceholder": "Одна назва моделі на рядок",
   "settings.modelProvider.modelsCount": "Моделей: {count}",
   "settings.modelProvider.chatgpt.badge.subscription": "Підписка",
+  "settings.modelProvider.chatgpt.navigationTitle": "ChatGPT",
+  "settings.modelProvider.chatgpt.navigationPlan": "План ChatGPT",
   "settings.modelProvider.chatgpt.description":
     "Запуск агентів на моделях OpenAI через підписку ChatGPT Plus/Pro (офіційний обмін токенами OpenAI). Використання зараховується у 5-годинне вікно плану.",
   "settings.modelProvider.chatgpt.notSignedIn":
