@@ -19,11 +19,12 @@ export function isFontFamilyStale(
   value: string | null,
   installedFamilies: string[] | null,
 ): boolean {
+  const normalizedValue = value?.toLowerCase();
   return Boolean(
-    value &&
+    normalizedValue &&
     installedFamilies !== null &&
-    !BUNDLED_FONT_FAMILIES.some((family) => family === value) &&
-    !installedFamilies.includes(value),
+    !BUNDLED_FONT_FAMILIES.some((family) => family.toLowerCase() === normalizedValue) &&
+    !installedFamilies.some((family) => family.toLowerCase() === normalizedValue),
   );
 }
 
@@ -31,10 +32,10 @@ export const MAX_CUSTOM_FONT_FAMILY_LENGTH = 100;
 
 /** Stack appended after a custom UI font; mirrors styles.css after the bundled name. */
 const UI_FONT_FALLBACK_STACK =
-  '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
+  '"Inter Variable", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
 /** Stack appended after a custom mono font; mirrors styles.css after the bundled name. */
 const MONO_FONT_FALLBACK_STACK =
-  'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", monospace';
+  '"JetBrains Mono Variable", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", monospace';
 
 /** Trim, strip quotes, and length-cap a user-provided family name; empty input means no override. */
 export function normalizeCustomFontFamily(value: unknown): string | null {

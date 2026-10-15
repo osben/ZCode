@@ -71,6 +71,12 @@ describe("isFontFamilyStale", () => {
     expect(isFontFamilyStale("JetBrains Mono Variable", [])).toBe(false);
   });
 
+  it("matches installed and bundled family names without case sensitivity", () => {
+    expect(isFontFamilyStale("arial", ["Arial"])).toBe(false);
+    expect(isFontFamilyStale("inter variable", [])).toBe(false);
+    expect(isFontFamilyStale("JETBRAINS MONO VARIABLE", [])).toBe(false);
+  });
+
   it("marks a custom family stale only after installed fonts have loaded", () => {
     expect(isFontFamilyStale("Custom Font", null)).toBe(false);
     expect(isFontFamilyStale("Custom Font", ["Installed Font"])).toBe(true);
@@ -83,10 +89,12 @@ describe("apply font family overrides", () => {
     const { properties } = stubDocument();
     applyUiFontFamily("My Font");
     expect(properties.get("--font-sans")).toBe(
-      '"My Font", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
+      '"My Font", "Inter Variable", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
     );
     applyMonoFontFamily("My Mono");
-    expect(properties.get("--font-mono")).toContain('"My Mono", ui-monospace');
+    expect(properties.get("--font-mono")).toContain(
+      '"My Mono", "JetBrains Mono Variable", "JetBrains Mono", ui-monospace',
+    );
   });
 
   it("keeps the CJK-safe mono fallback order", () => {

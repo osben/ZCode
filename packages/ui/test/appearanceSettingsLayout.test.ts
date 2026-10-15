@@ -50,6 +50,12 @@ describe("appearance settings layout", () => {
     expect(picker).toContain("getQueryLocalFonts");
     expect(picker).toContain("CommandInput");
     expect(picker).toContain("FontFamilyInputFallback");
+    expect(picker).toContain('value={intl.formatMessage({ id: "settings.fontFamilyDefault" })}');
+  });
+
+  it("українські описи шрифтів називають вбудований шрифт типовим за замовчуванням", () => {
+    expect(ukUA["settings.uiFontDescription"]).toContain("шрифт за замовчуванням");
+    expect(ukUA["settings.monoFontDescription"]).toContain("шрифт за замовчуванням");
   });
 
   it("语言选项除系统默认外使用对应语言自名", () => {

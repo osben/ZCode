@@ -22,9 +22,6 @@ import {
   type LocalFontData,
 } from "@/lib/uiFonts.js";
 
-/** Sentinel value of the "Default" option; selecting it clears the override (null). */
-const DEFAULT_FONT_OPTION_VALUE = "__default__";
-
 /** Installed-family cache shared by the UI and mono pickers; null = enumeration failed → input fallback. */
 let installedFamiliesPromise: Promise<string[] | null> | null = null;
 
@@ -173,7 +170,7 @@ function FontFamilyCombobox({
               </CommandEmpty>
               <CommandGroup className="p-1">
                 <CommandItem
-                  value={DEFAULT_FONT_OPTION_VALUE}
+                  value={intl.formatMessage({ id: "settings.fontFamilyDefault" })}
                   onSelect={() => {
                     onChange(null);
                     onOpenChange(false);
