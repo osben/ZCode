@@ -57,6 +57,16 @@ export {
   localeSchema,
   postUpdateReleaseNotesPayloadSchema,
 } from "./validationAppSettings.js";
+export {
+  FORK_SETTING_KEYS,
+  extractLegacyForkSettings,
+  forkAppSettingsPatchSchema,
+  forkAppSettingsSchema,
+  forkAppSettingsStoredSchema,
+  pickForkSettings,
+  splitForkSettingsPatch,
+} from "./forkAppSettings.js";
+export type { ForkAppSettings, ForkAppSettingsStored, ForkSettingKey } from "./forkAppSettings.js";
 export { isValidWslUser, WSL_USER_MAX_LENGTH, wslUserSchema } from "./wslUserValidation.js";
 export { zcodeTaskModeSchema } from "./zcode-task-mode-schema.js";
 

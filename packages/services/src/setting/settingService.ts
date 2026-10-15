@@ -9,16 +9,26 @@ import type {
 import {
   appSettingsPatchSchema,
   appSettingsSchema,
+  extractLegacyForkSettings,
+  forkAppSettingsPatchSchema,
   formatLogPrefix,
   formatZodError,
+  splitForkSettingsPatch,
 } from "@zcode/shared";
+import type { ForkAppSettings } from "@zcode/shared";
 import type { ISettingService } from "./setting.js";
 import { normalizeSettingsPatch } from "#src/setting/normalizeSettingsPatch.js";
 import { copyDataDirectory, getDataBaseDir, validateDataBaseDirTarget } from "../paths.js";
 import { isEffectiveDevelopmentNodeEnv } from "../runtime-tools/nodeEnv.js";
 import { maybeThrowInjectedFsFault } from "../fs/fsFaultInjection.js";
-import { atomicWriteText } from "../fs/atomicFileUtils.js";
-import { withSettingsWriteQueueTimeout } from "./settingsWriteQueue.js";
+import { atomicWriteText, withAtomicFileLock } from "../fs/atomicFileUtils.js";
+import { createSettingsWriteQueue } from "./settingsWriteQueue.js";
+import { getSettingsDir, getSettingsFile } from "./settingsPaths.js";
+import {
+  maybeSeedLegacyForkSettings,
+  readForkSettings,
+  updateForkSettings,
+} from "./forkSettingsSidecar.js";
 import {
   migrateLegacyAccountConnectionSettings,
   needsLegacyAccountConnectionMigration,
@@ -41,24 +51,6 @@ const debugLog = (...args: unknown[]) => {
   }
   console.debug(formatLogPrefix("settingService", process.pid), ...args);
 };
-
-function resolveUserHomeDir() {
-  // An isolated Desktop Dev instance has its own home, but the settings service still wrote to the real HOME,
-  // causing startup migration and appearance changes to affect other instances. Match Electron's explicit home override.
-  const envHome =
-    process.env.ZCODE_DESKTOP_HOME_DIR?.trim() ||
-    process.env.HOME?.trim() ||
-    process.env.USERPROFILE?.trim();
-  return envHome && envHome.length > 0 ? envHome : homedir();
-}
-
-function getSettingsDir() {
-  return join(resolveUserHomeDir(), ".zcode", "v2");
-}
-
-function getSettingsFile() {
-  return join(getSettingsDir(), "setting.json");
-}
 
 function defaultSettings(): AppSettings {
   return appSettingsSchema.parse({});
@@ -111,8 +103,9 @@ function shouldPersistSettingsMigrations(rawValue: unknown): boolean {
 interface ReadSettingsResult {
   settings: AppSettings;
   needsMigrationPersist: boolean;
+  /** Fork-owned keys found in the raw setting.json before the schema stripped them; set only when the one-time sidecar migration still has something to move. */
+  legacyForkSettings?: Partial<ForkAppSettings>;
 }
-
 async function readSettingsWithMeta(): Promise<ReadSettingsResult> {
   const settingsFile = getSettingsFile();
   try {
@@ -159,6 +152,7 @@ async function readSettingsWithMeta(): Promise<ReadSettingsResult> {
     return {
       settings: result.data,
       needsMigrationPersist: shouldPersistSettingsMigrations(rawValue),
+      legacyForkSettings: extractLegacyForkSettings(rawValue),
     };
   } catch (err) {
     if (
@@ -193,6 +187,7 @@ async function writeSettings(
   runExclusiveCommit: (commit: () => Promise<void>) => Promise<void> = (commit) => commit(),
   enterCommitPhase: () => void = () => undefined,
   commitAccountSelection = false,
+  baseWriteOptions?: { useFileLock?: boolean },
 ): Promise<void> {
   const settingsDir = getSettingsDir();
   const settingsFile = getSettingsFile();
@@ -212,6 +207,9 @@ async function writeSettings(
     delete persisted.providerFamilyConnectionSelections;
   }
   await atomicWriteText(settingsFile, JSON.stringify(persisted, null, 2), {
+    // Callers that hold the main-file lock across their whole read-merge-write turn (queued
+    // updates and the migration) must not re-acquire it here.
+    useFileLock: baseWriteOptions?.useFileLock !== false,
     beforeRename: () => {
       if (!shouldCommit()) {
         // An old write that times out before commit may clean up its temporary file, but must not rename late and overwrite a newer language preference.
@@ -239,98 +237,113 @@ export function createSettingServiceWithMigrations(): {
     resolveOrganization: (connection: LegacyTeamConnection) => Promise<string | null>,
   ) => Promise<readonly ProviderFamilyDomain[]>;
 } {
-  let updateQueue = Promise.resolve();
-  let commitQueue = Promise.resolve();
-  let writeQueueGeneration = 0;
-
-  const runSettingsCommit = async (commit: () => Promise<void>) => {
-    const queued = commitQueue.then(commit, commit);
-    commitQueue = queued.catch(() => {});
-    await queued;
-  };
-
-  const enqueueSettingsWrite = async (
-    runUpdate: (shouldCommit: () => boolean, enterCommitPhase: () => void) => Promise<void>,
-  ) => {
-    const runCurrentUpdate = () => {
-      const currentGeneration = ++writeQueueGeneration;
-      const shouldCommit = () => currentGeneration === writeQueueGeneration;
-      return withSettingsWriteQueueTimeout(
-        (enterCommitPhase) => runUpdate(shouldCommit, enterCommitPhase),
-        () => {
-          if (writeQueueGeneration === currentGeneration) {
-            writeQueueGeneration += 1;
-          }
-        },
-      );
-    };
-    const queued = updateQueue.then(
-      () => runCurrentUpdate(),
-      () => runCurrentUpdate(),
-    );
-    updateQueue = queued.catch(() => {});
-    await queued;
-  };
+  const { enqueueSettingsWrite, runSettingsCommit, waitForQueuedWrites } =
+    createSettingsWriteQueue();
 
   const service: ISettingService = {
     async get(): Promise<AppSettings> {
       // A Session may be created or cold-restored immediately after settings change; if this read overtakes an enqueued write,
       // runtime will retain the old switch value. Wait for queued writes first so startup preferences use the committed choice.
-      await updateQueue;
+      await waitForQueuedWrites();
       const result = await readSettingsWithMeta();
-      if (!result.needsMigrationPersist) {
-        return result.settings;
+      const forkSettings = await readForkSettings();
+      if (!result.needsMigrationPersist && !result.legacyForkSettings) {
+        return { ...result.settings, ...forkSettings };
       }
 
       await enqueueSettingsWrite(async (shouldCommit, enterCommitPhase) => {
-        const latest = await readSettingsWithMeta();
-        if (!latest.needsMigrationPersist) {
-          return;
-        }
+        // The whole main-file read-modify-write runs under the main-file lock: another service
+        // instance saving a base preference while this turn's migration is in flight must not be
+        // undone by this turn writing its older snapshot back.
+        await mkdir(getSettingsDir(), { recursive: true });
+        await withAtomicFileLock(getSettingsFile(), async () => {
+          const latest = await readSettingsWithMeta();
+          await maybeSeedLegacyForkSettings(latest.legacyForkSettings, { shouldCommit });
+          if (!latest.needsMigrationPersist && !latest.legacyForkSettings) {
+            return;
+          }
 
-        // Initialization rationale: older settings may have persisted defaults with indistinguishable origins; migrate once using the schema after upgrade.
-        // Migration writes must use updateQueue and reread the latest file inside the queue to avoid overwriting other concurrently saved settings.
-        await writeSettings(latest.settings, shouldCommit, runSettingsCommit, enterCommitPhase);
+          // Initialization rationale: older settings may have persisted defaults with indistinguishable origins; migrate once using the schema after upgrade.
+          // The schema no longer contains the fork keys, so the persisted object drops them here.
+          await writeSettings(
+            latest.settings,
+            shouldCommit,
+            runSettingsCommit,
+            enterCommitPhase,
+            false,
+            { useFileLock: false },
+          );
+        });
       });
 
-      return readSettings();
+      const [settings, migratedForkSettings] = await Promise.all([
+        readSettings(),
+        readForkSettings(),
+      ]);
+      return { ...settings, ...migratedForkSettings };
     },
 
     async update(patch: Partial<AppSettings>, expectedAccountSettings): Promise<void> {
       const runUpdate = async (shouldCommit: () => boolean, enterCommitPhase: () => void) => {
-        const validatedPatch = appSettingsPatchSchema.parse(normalizeSettingsPatch(patch));
-        const current = await readSettings();
-        if (expectedAccountSettings) {
-          // The user may switch accounts during the query. Validate inside the same write queue; a caller-side read-then-write is insufficient.
-          const expected = appSettingsPatchSchema.parse(expectedAccountSettings);
-          if (
-            current.providerFamilyDomain !== expected.providerFamilyDomain ||
-            JSON.stringify(current.providerFamilyConnectionSelections ?? {}) !==
-              JSON.stringify(expected.providerFamilyConnectionSelections ?? {})
-          ) {
-            throw new Error("Account connection settings changed");
+        // Fork-owned keys are routed to the sidecar file before the main validation: their schemas
+        // no longer exist in appSettingsPatchSchema, and an unknown key would be silently stripped.
+        // Both halves of the patch are validated before either file is modified, so a mixed
+        // valid/invalid patch rejects as a whole instead of half-applying.
+        const { forkPatch, basePatch } = splitForkSettingsPatch(normalizeSettingsPatch(patch));
+        const validatedPatch = appSettingsPatchSchema.parse(basePatch);
+        const hasForkPatch = Object.keys(forkPatch).length > 0;
+        const validatedForkPatch = hasForkPatch
+          ? forkAppSettingsPatchSchema.parse(forkPatch)
+          : undefined;
+        // The whole main-file read-modify-write runs under the main-file lock: a base preference
+        // another service instance saves concurrently cannot be overwritten by this instance
+        // writing back its older snapshot (the migration rewrite included).
+        await mkdir(getSettingsDir(), { recursive: true });
+        await withAtomicFileLock(getSettingsFile(), async () => {
+          const read = await readSettingsWithMeta();
+          if (expectedAccountSettings) {
+            // The user may switch accounts during the query. Validate inside the same write queue; a caller-side read-then-write is insufficient.
+            const expected = appSettingsPatchSchema.parse(expectedAccountSettings);
+            if (
+              read.settings.providerFamilyDomain !== expected.providerFamilyDomain ||
+              JSON.stringify(read.settings.providerFamilyConnectionSelections ?? {}) !==
+                JSON.stringify(expected.providerFamilyConnectionSelections ?? {})
+            ) {
+              throw new Error("Account connection settings changed");
+            }
           }
-        }
-        const merged = appSettingsSchema.parse({
-          ...current,
-          ...validatedPatch,
+          // An update that arrives before the first get() must not destroy the only stored copy of
+          // pre-sidecar fork preferences: seed the sidecar (sidecar wins) before the main file is
+          // rewritten without those keys.
+          await maybeSeedLegacyForkSettings(read.legacyForkSettings, { shouldCommit });
+          const merged = appSettingsSchema.parse({
+            ...read.settings,
+            ...validatedPatch,
+          });
+
+          // Opening a workspace writes recentProjects and lastWorkspaceSession almost simultaneously.
+          // Previously both updates overwrote the file based on their own stale settings reads,
+          // so the later patch could erase the earlier field and prevent session restoration at next startup.
+          // Serialize writes so each patch merges against the latest state actually persisted by the previous write.
+          if (merged.recentProjects) {
+            merged.recentProjects = [...new Set(merged.recentProjects)].slice(
+              0,
+              MAX_RECENT_PROJECTS,
+            );
+          }
+
+          await writeSettings(
+            merged,
+            shouldCommit,
+            runSettingsCommit,
+            enterCommitPhase,
+            Object.hasOwn(patch, "providerFamilyConnectionSelections"),
+            { useFileLock: false },
+          );
         });
-
-        // Opening a workspace writes recentProjects and lastWorkspaceSession almost simultaneously.
-        // Previously both updates overwrote the file based on their own stale settings reads,
-        // so the later patch could erase the earlier field and prevent session restoration at next startup.
-        // Serialize writes so each patch merges against the latest state actually persisted by the previous write.
-        if (merged.recentProjects) {
-          merged.recentProjects = [...new Set(merged.recentProjects)].slice(0, MAX_RECENT_PROJECTS);
+        if (validatedForkPatch) {
+          await updateForkSettings(validatedForkPatch, { shouldCommit });
         }
-
-        await writeSettings(
-          merged,
-          shouldCommit,
-          runSettingsCommit,
-          enterCommitPhase,
-          Object.hasOwn(patch, "providerFamilyConnectionSelections"),
-        );
       };
 
       await enqueueSettingsWrite(runUpdate);
