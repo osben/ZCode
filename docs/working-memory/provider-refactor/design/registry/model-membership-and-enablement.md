@@ -1,25 +1,25 @@
-# Provider 模型成员、启停与顺序
+# Provider Model Members, Enable/Disable, and Ordering
 
-> 状态：当前有效设计
+> Status: Current effective design
 >
-> 最近更新：2026-08-26
+> Last updated: 2026-08-26
 
-## 目标
+## Goal
 
-模型成员、模型启停和模型顺序是三种不同事实：
+Model members, model enable/disable, and model ordering are three different types of facts:
 
 ```text
 Provider Config
-├─ builtinModelIds / modelIds  -> 有哪些模型
-└─ modelOrder                  -> 按什么顺序展示
+├─ builtinModelIds / modelIds  -> which models exist
+└─ modelOrder                  -> in what order to display
 
 Model Config
-└─ enabled                     -> 某个成员能否执行
+└─ enabled                     -> whether a member can execute
 ```
 
-Provider 成员数组不能声明模型能力或启停；Model Rule 不能创建成员或决定成员所有权。
+Provider member arrays cannot declare model capabilities or enable/disable; Model Rules cannot create members or decide member ownership.
 
-## 成员所有权
+## Member Ownership
 
 ```ts
 interface ProviderConfig {
@@ -29,49 +29,47 @@ interface ProviderConfig {
 }
 ```
 
-`builtinModelIds` 由 ZCode Built-in 或 Account Built-in 管理，`modelIds` 由 Personal 管理。完成 Overlay 后，
-Resolver 将缺失或 `null` 归一化为 `[]`，再产生 source-aware inventory。
+`builtinModelIds` is managed by ZCode Built-in or Account Built-in; `modelIds` is managed by Personal. After completing Overlay,
+the Resolver normalizes missing or `null` to `[]`, then produces a source-aware inventory.
 
-成员 ID 去除首尾空格后按大小写敏感的精确字符串比较：
+Member IDs are compared case-sensitively after trimming leading/trailing whitespace:
 
-- 同一数组重复：保留第一次出现，忽略后项；
-- Built-in 与 Personal 同 ID：Built-in-wins，只产生一个 Built-in 成员；
-- 正常 Settings 禁止 Personal 新增 Built-in 已有 ID；
-- 用户手写重复配置仍能确定性读取，下一次保存相关 Provider 时从 Personal 数组删除重复和 stale 项；
-- 不建立冲突对象、暂停身份或第二个同名模型。
+- Duplicates within the same array: keep the first occurrence, ignore later items;
+- Built-in and Personal same ID: Built-in-wins, producing only one Built-in member;
+- Normal Settings prohibit Personal from adding IDs already existing in Built-in;
+- User-handwritten duplicate configs can still be deterministically read; duplicates and stale items are removed from the Personal array the next time the related Provider is saved;
+- No conflict objects, suspended identities, or second models with the same name are created.
 
-Model Config Rule 命中一个不存在的 ID 不会创造成员；它只在将来某个 Provider 真正拥有该成员时参与解析。
+Model Config Rules hitting a non-existent ID do not create members; they only participate in resolution when a Provider truly owns that member in the future.
 
-## 显式 Built-in 来源
+## Explicit Built-in Source
 
-Provider 在 Effective/Registry/Settings DTO 中使用完整 `builtin: boolean`。Model 行的 `builtin` 由 Host 根据最终
-source-aware inventory 显式返回；Renderer 不按 ID、Preset 白名单、Personal Map membership 或 UI 分组猜测。
+Providers use complete `builtin: boolean` in Effective/Registry/Settings DTOs. The Host explicitly returns the `builtin` field for Model rows based on the final source-aware inventory; Renderers do not guess by ID, Preset whitelists, Personal Map membership, or UI grouping.
 
-Builtin Model ID 只读且不显示删除按钮。Personal Model ID 可通过原子 rename 修改，Personal Model 可以删除。
+Builtin Model IDs are read-only and do not show delete buttons. Personal Model IDs can be modified through atomic rename; Personal Models can be deleted.
 
 ## Model Config `enabled`
 
-### Provider 规则外层的启停（Todo107 后续裁决）
+### Provider Rule Outer Enable/Disable (Todo107 subsequent decision)
 
-`ProviderConfigRule.enabled?: boolean` 与 providerId、providerName 同层，不放进 config 或 Access。
-Resolver 将缺省统一解释为 true。Personal 开关只写外层 enabled，不改 Key、成员、模型开关或账号连接。
-Facade 返回归一化的 enabled 和现有 executable；UI 只映射灰（关闭）、黄（开启但不可执行）、绿（就绪）。
-账号组使用当前连接对应具体 Provider 的公共结果，不能用套餐菜单 statusActive 代替执行资格。
-已绑定 Model 不受配置开关追溯撤销；历史选择保持，后续执行遵循原有解析与准入。
+`ProviderConfigRule.enabled?: boolean` is at the same level as providerId and providerName; it is not placed inside config or Access.
+The Resolver uniformly interprets defaults as true. Personal switches only write the outer `enabled`; they do not change Keys, members, model switches, or account connections.
+Facades return normalized enabled and existing executables; UI only maps gray (disabled), yellow (enabled but not executable), and green (ready). Account groups use the current connection's corresponding Provider's public results and cannot substitute plan menu statusActive for execution eligibility.
+Bound Models are not retroactively revoked by config switches; historical selections remain; subsequent execution follows existing resolution and admission.
 
 ```ts
 interface ModelConfig {
   enabled?: boolean | null;
-  // properties / optionSpecs（含 per-option map）/ narrow encoding facts
+  // properties / optionSpecs (including per-option map) / narrow encoding facts
 }
 ```
 
-`enabled` 是模型执行门禁，不是成员关系、可见性、授权或完整性：
+`enabled` is a model execution gate, not member relationship, visibility, authorization, or completeness:
 
 ```text
 Provider complete
-AND Provider Rule enabled（缺省 true）
-AND Account Provider entitled（仅账号类型）
+AND Provider Rule enabled (default true)
+AND Account Provider entitled (account types only)
 AND membership exists
 AND Effective Model Config enabled
 AND Model Config complete
@@ -80,25 +78,23 @@ AND Model Config complete
 Executable Model
 ```
 
-Executable Model 才进入 Registry，因此也才可能被 fallback、测试、内部精确 ID 或 ModelFactory 使用。普通用户候选在此
-基础上再要求 Provider `visibility=visible`。Model 没有独立 visibility，也不保存 selectable/executable。
+Only Executable Models enter Registry, and thus can be used by fallback, tests, internal exact IDs, or ModelFactory. Normal user candidates additionally require Provider `visibility=visible`. Models do not have independent visibility, nor do they save selectable/executable.
 
-disabled Model：
+disabled Models:
 
-- 留在 Settings 中；
-- 保留 Properties、Options、Reasoning 和顺序；
-- 可以编辑或重新启用；模型列表不提供 enabled“恢复默认”；
-- 不能测试、fallback、选择或精确创建；
-- 不为内部任务提供绕过门禁的路径。
+- Remain in Settings;
+- Retain Properties, Options, Reasoning, and ordering;
+- Can be edited or re-enabled; the model list does not provide an enabled "restore default";
+- Cannot test, fallback, select, or create by exact ID;
+- Do not provide bypass gates for internal tasks.
 
-已经创建的不可变 Model 不因 Config 刷新中断；后续创建使用新的 enabled 状态。
+Already-created immutable Models are not interrupted by config refreshes; subsequent creations use the new enabled state.
 
-## Built-in 默认与 Personal 覆盖
+## Built-in Defaults and Personal Overrides
 
-Built-in 通用 Rule 提供完整默认 `enabled=true`。更具体、位置更后的 Built-in Rule 可以将淘汰或不建议继续使用的模型
-默认设为 `false`。这使 ZCode 发布新配置时能够调整官方默认，而不需要改 Provider 成员。
+Built-in general Rules provide complete default `enabled=true`. More specific, later-positioned Built-in Rules can default淘汰 or no-longer-recommended models to `false`. This allows ZCode to adjust official defaults when publishing new configs, without changing Provider members.
 
-Personal Rules 在全部 Built-in Rules 之后：
+Personal Rules come after all Built-in Rules:
 
 ```text
 Built-in general enabled=true
@@ -113,13 +109,11 @@ Personal provider-model enabled=true/false
 Effective Model Config enabled
 ```
 
-用户切换开关只写 Personal `enabled` 叶子，并保存明确布尔值；模型列表不提供“恢复默认”入口。正常新建 Personal
-Model 时明确写 `enabled=true`，避免新增流程依赖隐式猜测。Schema 和 Overlay 仍允许通过配置编辑删除该叶子，
-但这不是模型列表开关的产品操作。
+Users toggling switches only write Personal `enabled` leaves and save explicit boolean values; the model list does not provide a "restore default" entry. When normally creating a new Personal Model, `enabled=true` is explicitly written to avoid relying on implicit guesses for new flows. Schema and Overlay still allow deleting this leaf through config editing, but this is not a product operation of the model list switch.
 
-## Provider/Model 专属 Rule
+## Provider/Model-specific Rules
 
-Built-in 与 Personal Model Rules 使用共同的结构：
+Built-in and Personal Model Rules use the same structure:
 
 ```ts
 type ModelConfigRule =
@@ -139,51 +133,48 @@ type ModelConfigRule =
     };
 ```
 
-`provider-model` 的目标是一个精确 Provider/Model 组合。它可以属于两个 Source：
+`provider-model` targets a precise Provider/Model combination. It can belong to two Sources:
 
-- Built-in 专属 Rule 由 ZCode Built-in Release 管理，可以声明某个 Built-in Provider/Model 组合的官方特化；
-- Personal 专属 Rule 由 Settings 管理，可以覆盖 Built-in 或 Personal Model。
+- Built-in specific Rules are managed by the ZCode Built-in Release and can declare official specializations for Built-in Provider/Model combinations;
+- Personal specific Rules are managed by Settings and can override Built-in or Personal Models.
 
-只有 Personal 专属 Rule 参与用户生命周期：
+Only Personal-specific Rules participate in user lifecycles:
 
-- Settings 修改单模型字段时创建或更新；
-- Personal Model rename 时移动；
-- Personal Model delete 时删除；
-- Provider Personal Overlay delete 时删除该 Provider 的全部专属 Rule；
-- 恢复最后一个字段后删除空 Rule。
+- Created or updated when Settings modifies single-model fields;
+- Moved when Personal Models are renamed;
+- Deleted when Personal Models are deleted;
+- All specific Rules for that Provider are deleted when deleting the Provider's Personal Overlay;
+- Empty Rules are deleted after restoring the last field.
 
-`match` Rule 同样可以属于 Built-in 或 Personal Source，用于一组模型/API/Provider/Endpoint 的共同事实。任何
-Provider/Model rename、delete、去重都不猜测或改写 Match Rule；Built-in 专属 Rule 也不受用户操作影响。专属 Rule
-使用结构化 ID，不把精确 ID 转义成正则，也不增加 `exclusive` 标志。
+`match` Rules can also belong to Built-in or Personal Sources, used for common facts across groups of models/APIs/Providers/Endpoints. Any Provider/Model rename, delete, or deduplication does not guess or rewrite Match Rules; Built-in specific Rules are also unaffected by user operations. Specific Rules use structured IDs, not escaping precise IDs to regex, and do not add `exclusive` flags.
 
-## Model 顺序
+## Model Ordering
 
-基础顺序分为三段：
+Basic ordering is divided into three segments:
 
 ```text
-未出现在 modelOrder 的 Built-in
+Built-in not appearing in modelOrder
               +
-modelOrder 中仍有效的成员
+Members still valid in modelOrder
               +
-未出现在 modelOrder 的 Personal
+Personal not appearing in modelOrder
 ```
 
-这保证在线配置新发布、用户尚未排序的 Built-in Model 默认在最前。正常 Settings 新增 Personal Model 时，会在同一次
-原子操作中更新 `modelIds`、完整 `modelOrder` 和初始专属 Rule，所以未排序 Personal 只来自手写或异常输入。
+This ensures that newly released online config Built-in Models that users have not yet sorted default to the front. When normal Settings adds Personal Models, a complete `modelOrder` and initial specific Rule are atomically updated in the same atomic operation, so unsorted Personal comes only from handwritten or abnormal inputs.
 
-用户拖动保存时：
+When users save by dragging:
 
-1. 读取当前 Effective source-aware inventory；
-2. 按用户结果排列；
-3. 删除 stale 和重复 ID；
-4. 补入所有遗漏成员；
-5. 保存完整 `modelOrder`。
+1. Read the current effective source-aware inventory;
+2. Arrange according to user results;
+3. Delete stale and duplicate IDs;
+4. Fill in all missing members;
+5. Save the complete `modelOrder`.
 
-disabled Model 仍按 `modelOrder` 出现在 Settings。Selection 过滤 disabled 后，其他模型保持相对顺序。
+Disabled Models still appear in Settings by `modelOrder`. After Selection filters disabled models, other models maintain their relative ordering.
 
-## 生命周期操作
+## Lifecycle Operations
 
-### 新增 Personal Model
+### Adding Personal Models
 
 ```text
 validate new modelId
@@ -195,72 +186,70 @@ atomic write
 └─ provider-model rule { enabled: true }
 ```
 
-如果 ID 与 Built-in 或已有 Personal 成员重复，正常保存拒绝。
+If the ID duplicates a Built-in or existing Personal member, normal saves are rejected.
 
-### 重命名 Personal Model
+### Renaming Personal Models
 
-原子替换：
+Atomic replacement:
 
-- `modelIds` 中的旧 ID；
-- `modelOrder` 中的旧 ID；
-- 旧 `provider-model` 专属 Rule 的目标 ID。
+- The old ID in `modelIds`;
+- The old ID in `modelOrder`;
+- The old `provider-model` specific Rule's target ID.
 
-预览必须先移动 Personal 专属 Rule，再用新 ID 和 Effective Provider API/Endpoint 解析 Built-in Rules，最后叠加原 Personal
-稀疏值。用户明确填写的值不变，继承默认随新 ID 更新。通用 Match Rules 不改写。
+Preview must first move the Personal-specific Rule, then resolve Built-in Rules using the new ID and Effective Provider API/Endpoint, then overlay the original Personal sparse values. User-entered explicit values remain unchanged; inherited defaults update with the new ID. Generic Match Rules do not rewrite.
 
-### 删除 Personal Model
+### Deleting Personal Models
 
-原子删除：
+Atomic deletion:
 
-- `modelIds` 成员；
-- `modelOrder` 位置；
-- 对应 `provider-model` 专属 Rule。
+- The member in `modelIds`;
+- The position in `modelOrder`;
+- The corresponding `provider-model` specific Rule.
 
-通用 Match Rules 不删除。Builtin Model 没有此操作。
+Generic Match Rules are not deleted. Builtin Models have no such operation.
 
-### 删除 Provider Personal Overlay
+### Deleting Provider Personal Overlays
 
-删除 Provider Personal Overlay，并删除该 Provider 的全部 `provider-model` 专属 Rules；通用 Match Rules 保留。
-Built-in Provider 回落到 Built-in 基线，Personal-only Provider 因没有其他根定义而自然消失。
+Delete the Provider's Personal Overlay, and delete all `provider-model` specific Rules for that Provider; Generic Match Rules are retained.
+Built-in Providers fall back to the Built-in baseline; Personal-only Providers naturally disappear without other root definitions.
 
-## Settings 与 Selection
+## Settings and Selection
 
-Settings 返回全部 visible Provider 的完整成员，包括 disabled/incomplete Model，并显式给出：
+Settings returns complete members of all visible Providers, including disabled/incomplete Models, and explicitly provides:
 
-- `builtin`；
-- Effective `enabled`；
-- Personal 是否明确覆盖 enabled；
-- Effective/Personal Model Config；
-- 完整性 issues；
-- 派生 executable/selectable；
-- 统一顺序。
+- `builtin`;
+- Effective `enabled`;
+- Whether Personal explicitly overrides enabled;
+- Effective/Personal Model Config;
+- Completeness issues;
+- Derived executable/selectable;
+- Unified ordering.
 
-Selection 只返回 visible Provider 中 executable 的模型，并保留 Registry 顺序。Renderer 不再过滤、排序、Overlay 或从
-Connection/Preset/Catalog 制造候选。
+Selection returns only executable models from visible Providers, maintaining Registry order. Renderers no longer filter, sort, Overlay, or manufacture candidates from Connections/Presets/Catalogs.
 
-## 接受用例
+## Acceptance Cases
 
-| 编号 | 输入/操作                                 | 结果                                                 |
-| ---- | ----------------------------------------- | ---------------------------------------------------- |
-| MM01 | Built-in `[A,B]`，Personal `[X]`          | Inventory 为 Built-in A/B + Personal X               |
-| MM02 | 两个来源都有 X                            | 只产生 Built-in X；Personal 重复忽略，保存时清理     |
-| MM03 | 一个数组出现 `[A,A,B]`                    | 保留第一个 A 与 B                                    |
-| MM04 | Built-in Rule 将旧 A 设为 disabled        | A 留在 Settings；不进入 Registry/Selection/fallback  |
-| MM05 | 用户把 A 的开关切为 true                  | A 重新 executable，并保留 Personal enabled=true      |
-| MM06 | 新 Built-in C 不在用户 modelOrder         | C 出现在未排序 Built-in 前段                         |
-| MM07 | Settings 新建 Personal Y                  | 成员、完整顺序、enabled=true 专属 Rule 原子保存      |
-| MM08 | Personal Y 重命名为 Z                     | 成员、顺序、专属 Rule 原子移动；通用 Match Rule 不改 |
-| MM09 | 删除 Personal Y                           | 成员、顺序、专属 Rule 删除；通用 Match Rule 保留     |
-| MM10 | Provider disabled                         | 所有模型留在 Settings；Registry/Selection 不包含     |
-| MM11 | Provider hidden 且 enabled，Model enabled | 普通 Settings/Selection 不展示；内部可精确创建       |
-| MM12 | Model disabled 后 Config 刷新             | 已有 Active Model 完成生命周期；新创建拒绝           |
+| ID   | Input/Operation                            | Result                                                                           |
+| ---- | ------------------------------------------ | -------------------------------------------------------------------------------- |
+| MM01 | Built-in `[A,B]`, Personal `[X]`           | Inventory is Built-in A/B + Personal X                                           |
+| MM02 | Both sources have X                        | Only produces Built-in X; Personal duplicate ignored, cleaned at save time       |
+| MM03 | One array has `[A,A,B]`                    | Keeps the first A and B                                                          |
+| MM04 | Built-in Rule sets old A to disabled       | A remains in Settings; does not enter Registry/Selection/fallback                |
+| MM05 | User switches A's toggle to true           | A becomes executable again, retains Personal enabled=true                        |
+| MM06 | New Built-in C not in user's modelOrder    | C appears in the unsorted Built-in front segment                                 |
+| MM07 | Settings creates Personal Y                | Members, complete ordering, enabled=true specific Rule atomically saved          |
+| MM08 | Personal Y renamed to Z                    | Members, ordering, specific Rule atomically moved; Generic Match Rules unchanged |
+| MM09 | Delete Personal Y                          | Members, ordering, specific Rule deleted; Generic Match Rules retained           |
+| MM10 | Provider disabled                          | All models remain in Settings; not included in Registry/Selection                |
+| MM11 | Provider hidden and enabled, Model enabled | Normal Settings/Selection not displayed; internal exact creation possible        |
+| MM12 | Model disabled then config refreshed       | Existing Active Models complete their lifecycle; new creations rejected          |
 
-## 不采用的方案
+## Non-adopted Approaches
 
-- 单一 `models[]`：Personal 快照会遮蔽后来发布的 Built-in 成员；
-- `enabledModelIds`：完整正向集合无法同时表达官方未来默认和用户逐模型覆盖；
-- Provider 内 default + per-model enablement policy：重复 Model Rule 的 Overlay 能力；
-- Model visibility：与 Provider visibility/Model enabled 重叠，制造第二套隐藏语义；
-- 重复成员冲突 DTO：正常 UI 已禁止重复，手写输入可用 Built-in-wins + 保存规范化处理；
-- 用正则编码 UI 精确 Rule：生命周期归属不清，rename/delete 必须猜测；
-- 通用 equality/identity 抽象：成员判断使用明确 providerId/modelId 比较即可。
+- A single `models[]`: Personal snapshots would obscure later-released Built-in members;
+- `enabledModelIds`: Complete positive collections cannot simultaneously express official future defaults and user-per-model overrides;
+- Provider-level default + per-model enablement policy: Duplicate Model Rule overlay capabilities;
+- Model visibility: Overlaps with Provider visibility/Model enabled, creating a second set of hidden semantics;
+- Duplicate member conflict DTOs: Normal UI already prohibits duplicates; handwritten input can be handled by Built-in-wins + save normalization;
+- Encoding UI exact Rules with regex: Lifecycle ownership is unclear; rename/delete must be guessed;
+- Generic equality/identity abstraction: Member judgment using explicit providerId/modelId comparison is sufficient.
