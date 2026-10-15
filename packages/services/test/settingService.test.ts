@@ -1162,6 +1162,74 @@ describe("fork settings sidecar", () => {
     );
   });
 
+  it("rejects a mixed valid/invalid patch without touching either file", async () => {
+    // Both halves of the patch are validated before either file is written: a valid locale combined
+    // with an invalid fork value must reject as a whole, not half-apply.
+    const home = makeTempHome();
+    const service = await createSettingServiceInHome(home);
+    await service.update({ locale: "zh-CN" });
+
+    await expect(
+      service.update({
+        locale: "en-US",
+        voiceDictation: { pushToTalk: "yes" },
+      }),
+    ).rejects.toThrow();
+
+    expect(readJsonFile(settingsFile(home)).locale).toBe("zh-CN");
+    expect(existsSync(forkSettingsFile(home))).toBe(false);
+  });
+
+  it("seeds the sidecar when an update lands before the first read", async () => {
+    // readSettings() silently strips legacy fork keys, so an update that runs before the migration
+    // get() would otherwise rewrite setting.json and destroy the only stored copy.
+    const home = makeTempHome();
+    const settingsDir = join(home, ".zcode", "v2");
+    mkdirSync(settingsDir, { recursive: true });
+    writeFileSync(
+      settingsFile(home),
+      JSON.stringify({
+        locale: "zh-CN",
+        recentProjects: [],
+        voiceDictation: { modelId: "parakeet" },
+      }),
+      "utf-8",
+    );
+
+    const service = await createSettingServiceInHome(home);
+    await service.update({ locale: "en-US" });
+
+    expect(readJsonFile(forkSettingsFile(home)).voiceDictation).toEqual({ modelId: "parakeet" });
+    const mainStored = readJsonFile(settingsFile(home));
+    expect(mainStored.locale).toBe("en-US");
+    expect(mainStored).not.toHaveProperty("voiceDictation");
+    await expect(service.get()).resolves.toMatchObject({
+      locale: "en-US",
+      voiceDictation: { modelId: "parakeet" },
+    });
+  });
+
+  it("serializes concurrent sidecar updates from separate service instances", async () => {
+    // Desktop main and the window Host each own a setting-service instance with a private write
+    // queue; the file lock is what keeps their sidecar read-merge-write turns from losing writes.
+    const home = makeTempHome();
+    const serviceA = await createSettingServiceInHome(home);
+    const serviceB = await createSettingServiceInHome(home);
+
+    await Promise.all([
+      serviceA.update({ voiceDictation: { modelId: "from-a" } }),
+      serviceB.update({ worktreeBranchPrefix: "from-b/" }),
+    ]);
+
+    const stored = readJsonFile(forkSettingsFile(home));
+    expect(stored.voiceDictation).toEqual({ modelId: "from-a" });
+    expect(stored.worktreeBranchPrefix).toBe("from-b/");
+    await expect(serviceA.get()).resolves.toMatchObject({
+      voiceDictation: { modelId: "from-a" },
+      worktreeBranchPrefix: "from-b/",
+    });
+  });
+
   it("migrates legacy fork keys from setting.json into the sidecar on first read", async () => {
     const home = makeTempHome();
     const settingsDir = join(home, ".zcode", "v2");

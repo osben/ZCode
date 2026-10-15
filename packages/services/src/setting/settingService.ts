@@ -10,6 +10,7 @@ import {
   appSettingsPatchSchema,
   appSettingsSchema,
   extractLegacyForkSettings,
+  forkAppSettingsPatchSchema,
   formatLogPrefix,
   formatZodError,
   splitForkSettingsPatch,
@@ -24,9 +25,8 @@ import { atomicWriteText } from "../fs/atomicFileUtils.js";
 import { withSettingsWriteQueueTimeout } from "./settingsWriteQueue.js";
 import { getSettingsDir, getSettingsFile } from "./settingsPaths.js";
 import {
+  maybeSeedLegacyForkSettings,
   readForkSettings,
-  readStoredForkSettings,
-  seedForkSettingsFromLegacy,
   updateForkSettings,
 } from "./forkSettingsSidecar.js";
 import {
@@ -279,12 +279,7 @@ export function createSettingServiceWithMigrations(): {
 
       await enqueueSettingsWrite(async (shouldCommit, enterCommitPhase) => {
         const latest = await readSettingsWithMeta();
-        const latestForkSettings = await readStoredForkSettings();
-        if (latest.legacyForkSettings) {
-          // One-time sidecar migration: seed fork keys still living in setting.json (sidecar wins
-          // on conflicts), then let the write below persist setting.json without them.
-          await seedForkSettingsFromLegacy(latest.legacyForkSettings, latestForkSettings);
-        }
+        await maybeSeedLegacyForkSettings(latest.legacyForkSettings, { shouldCommit });
         if (!latest.needsMigrationPersist && !latest.legacyForkSettings) {
           return;
         }
@@ -305,9 +300,15 @@ export function createSettingServiceWithMigrations(): {
       const runUpdate = async (shouldCommit: () => boolean, enterCommitPhase: () => void) => {
         // Fork-owned keys are routed to the sidecar file before the main validation: their schemas
         // no longer exist in appSettingsPatchSchema, and an unknown key would be silently stripped.
+        // Both halves of the patch are validated before either file is modified, so a mixed
+        // valid/invalid patch rejects as a whole instead of half-applying.
         const { forkPatch, basePatch } = splitForkSettingsPatch(normalizeSettingsPatch(patch));
         const validatedPatch = appSettingsPatchSchema.parse(basePatch);
-        const current = await readSettings();
+        const hasForkPatch = Object.keys(forkPatch).length > 0;
+        const validatedForkPatch = hasForkPatch
+          ? forkAppSettingsPatchSchema.parse(forkPatch)
+          : undefined;
+        const { settings: current, legacyForkSettings } = await readSettingsWithMeta();
         if (expectedAccountSettings) {
           // The user may switch accounts during the query. Validate inside the same write queue; a caller-side read-then-write is insufficient.
           const expected = appSettingsPatchSchema.parse(expectedAccountSettings);
@@ -319,6 +320,10 @@ export function createSettingServiceWithMigrations(): {
             throw new Error("Account connection settings changed");
           }
         }
+        // An update that arrives before the first get() must not destroy the only stored copy of
+        // pre-sidecar fork preferences: seed the sidecar (sidecar wins) before the main file is
+        // rewritten without those keys.
+        await maybeSeedLegacyForkSettings(legacyForkSettings, { shouldCommit });
         const merged = appSettingsSchema.parse({
           ...current,
           ...validatedPatch,
@@ -339,8 +344,8 @@ export function createSettingServiceWithMigrations(): {
           enterCommitPhase,
           Object.hasOwn(patch, "providerFamilyConnectionSelections"),
         );
-        if (Object.keys(forkPatch).length > 0) {
-          await updateForkSettings(forkPatch);
+        if (validatedForkPatch) {
+          await updateForkSettings(validatedForkPatch, { shouldCommit });
         }
       };
 
