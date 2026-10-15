@@ -1,200 +1,200 @@
-# 模型供应商重构上线回归范围（2026-09-11）
+# Model Provider Refactor Release Regression Scope (2026-09-11)
 
-> 状态：待执行
+> Status: Pending Execution
 >
-> 对照范围：老 staging（`staging_backup @ 790884b1ce`）→ 当前 staging（`b8499d8b2a`）
+> Reference: Old staging (`staging_backup @ 790884b1ce`) → Current staging (`b8499d8b2a`)
 
-本次重构尚未上线，本文是整个重构的累计上线回归范围，不是最近一批改动的增量清单。[上一版回归范围](./03-provider-refactor-release-regression-scope.md)的全部检查内容继续保留，并补入老 staging 以来的改动与同期合入功能；已有开发或测试记录不作为删减范围的理由。
+This refactor has not yet gone live. This document is the cumulative release regression scope for the entire refactor, not an incremental list for the latest batch. All checks from the [previous regression scope](./03-provider-refactor-release-regression-scope.md) remain in effect, with changes from the old staging and concurrently merged features added. Existing development or test records do not justify reducing scope.
 
-以下只圈产品功能与关键场景，不展开详细用例，也不代表已经验收通过。后续 staging 再有新增改动，继续补入同一份清单。
+The following only circumscribes product functions and key scenarios, without expanding into detailed test cases, and does not represent that anything has been accepted. Subsequent staging additions continue to be added to the same list.
 
-## 1. 模型设置页面
+## 1. Model Settings Page
 
-- 检查页面进入、刷新、不同窗口尺寸，以及供应商和模型较多时左右列表的独立滚动与完整显示。
-- 检查供应商与模型的改名、排序、启停和删除，包含拖拽到列表边缘的情况。
-- 检查供应商禁用、配置不完整和就绪时的状态提示，以及重新启用后的配置保留。
-- 检查输入框自动保存、连续编辑、保存反馈、失败重试和提示关闭，留意横幅遮挡与裁切。
+- Check page entry, refresh, different window sizes, and independent scrolling and full display of left/right lists when there are many providers and models.
+- Check provider and model renaming, sorting, enabling/disabling, and deletion, including dragging to list edges.
+- Check status prompts for provider disablement, incomplete configuration, and readiness, as well as configuration retention after re-enabling.
+- Check input box auto-save, continuous editing, save feedback, failure retries, and dismissing prompts; watch for banner occlusion and clipping.
 
-## 2. 添加和配置供应商
+## 2. Adding and Configuring Providers
 
-- 检查智谱与其他供应商的分组、模板添加、自定义添加和重复添加后的名称区分、隔离与排序。
-- 检查首次使用页面的账号登录和手动 API Key 配置，以及配置后的默认模型与首次发送。
-- 分别使用普通 API 和 Coding Plan API，检查名称、Logo、地址、API 格式、模型列表、获取 Key 入口和实际聊天。
-- 检查手动填写个人或团队套餐 Key、不登录账号时的使用，以及已填写 Key 后的获取入口。
-- 检查不同供应商之间的配置隔离，以及配置不完整、名称重复、地址错误和删除供应商时的反馈。
+- Check Zhipu and other provider grouping, template addition, custom addition, and name differentiation, isolation, and sorting after re-adding.
+- Check account login and manual API Key configuration on the first-use page, as well as default model and first send after configuration.
+- Using both normal API and Coding Plan API separately, check name, Logo, address, API format, model list, key acquisition entry, and actual chat.
+- Check manually entering personal or team plan keys, usage without logging in, and the acquisition entry after keys are filled.
+- Check configuration isolation between different providers, and feedback for incomplete configuration, duplicate names, wrong addresses, and provider deletion.
 
-## 3. 添加和编辑模型配置
+## 3. Adding and Editing Model Configuration
 
-- 检查添加与编辑模型、修改模型 ID、智能配置开关，以及未知型号的兜底配置。
-- 检查智能配置下的单项修改、修改标记和恢复；关闭后检查手动配置完整性。
-- 检查上下文、最大输出、输入类型、模型能力和推理配置的编辑与保存。
-- 检查推理参数映射的排版、输入和错误提示，以及取消、重新打开后的内容。
+- Check adding and editing models, modifying model IDs, smart configuration toggle, and fallback configuration for unknown models.
+- Check single-item modification, modification markers, and reset under smart configuration; check manual configuration completeness after disabling.
+- Check editing and saving context, max output, input types, model capabilities, and reasoning configuration.
+- Check reasoning parameter mapping layout, input, error prompts, dismissal, and content after re-opening.
 
-## 4. 升级、回滚和数据保留
+## 4. Upgrades, Rollbacks, and Data Retention
 
-- 从旧版升级，检查原有内置与自定义供应商的配置、模型、顺序和选择，以及会话、定时任务和闲时任务。
-- 检查升级后首次启动、旧模型名称、大小写和推理档位的恢复，以及重启后的继续使用。
-- 检查内置配置更新后，已有供应商、新增模型、默认配置与用户修改的保留。
-- 检查回滚旧版、回滚后继续使用再升级，覆盖升级前已有和新版创建的内容。
-- 模型选择失效、需要重选可以接受；会话和任务内容必须能打开，不能因模型配置缺失出现读取异常。
-- 检查配置缺失或损坏、未登录或暂时没有可用供应商时的启动、恢复与提示，不影响其他供应商，也不误删历史内容。
+- Upgrade from the old version; check original built-in and custom provider configurations, models, order, and selection, as well as sessions, scheduled tasks, and idle-time tasks.
+- Check first launch after upgrade, old model names, case sensitivity, and reasoning tier recovery, as well as continued use after restart.
+- Check retention of existing providers, new models, default configurations, and user modifications after built-in config updates.
+- Check rollback to the old version, continued use after rollback, then upgrade; covering both existing and newly created content before overwrite upgrade.
+- Model selection becoming invalid and requiring re-selection is acceptable; session and task content must be openable, with no read errors due to missing model configuration.
+- Check startup, recovery, and prompts when configuration is missing or corrupted, not logged in, or temporarily without available providers; this does not affect other providers and does not delete historical content.
 
-## 5. 智谱账号和套餐
+## 5. Zhipu Accounts and Plans
 
-- 分别检查 Z.AI 与 BigModel 的登录、退出、重新登录和重启恢复，以及体验、个人、团队套餐的页面、额度与使用。
-- 检查套餐及团队切换、再次选择当前套餐，以及模型名单、供应商开关与状态提示。
-- 检查套餐模型的编辑、排序、启停、连接测试和实际聊天。
-- 检查未开通、取凭据失败、套餐失效和刷新失败时的提示、重试与手动切换。
-- 检查体验套餐领取成功、失败和重复领取，以及升级购买、额度重置、从官网返回应用后的刷新。
-- 检查模型请求触发账号验证时的提示、验证失败与完成后的继续使用。
+- Check Z.AI and BigModel login, logout, re-login, and restart recovery separately; check pages, quotas, and usage for experience, personal, and team plans.
+- Check plan and team switching, re-selecting the current plan, model lists, provider toggles, and status prompts.
+- Check plan model editing, sorting, enabling/disabling, connection testing, and actual chat.
+- Check prompts, retries, and manual switching for unactivated states, credential fetch failures, plan expiration, and refresh failures.
+- Check experience plan claiming success, failure, and duplicate claiming, as well as upgrades, purchases, quota resets, and refresh after returning from the official website.
+- Check prompts, verification failures, and continued usage after verification completion when model requests trigger account verification.
 
-## 6. 启动和工作区切换
+## 6. Startup and Workspace Switching
 
-- 冷启动或刚打开本地工作区时，立即检查模型列表、默认选择、新建任务和首次发送。
-- 检查模型加载失败后的重试与恢复。
-- 检查切换工作区、重启应用和恢复任务后的模型选择，避免不同工作区相互影响。
+- On cold start or just opening a local workspace, immediately check the model list, default selection, new tasks, and first send.
+- Check retry and recovery after model loading fails.
+- Check model selection after switching workspaces, restarting the app, and restoring tasks, avoiding cross-workspace interference.
 
-## 7. 普通聊天中的模型选择
+## 7. Model Selection in Normal Chat
 
-- 检查新任务默认模型首发、切换供应商、模型和推理档位，以及当前和后续消息的界面与实际使用是否一致。
-- 检查运行中追加指令，分别覆盖保持原模型和更换模型；留意模型配置、输出风格调整后的继续执行。
-- 检查连续发送、排队、停止、重发、带附件发送、编辑消息、分支会话和侧聊。
-- 检查变更前确认与完全控制下的操作、权限批准和拒绝后的继续执行。
-- 检查不同供应商下同名模型的选择、使用和重启恢复，以及模型禁用、供应商删除或套餐变化后的提示。
-- 检查修改配置不会意外中断已在运行的任务，也不会清掉原有会话内容。
+- Check new task default model first send, provider/model/reasoning tier switching, and whether the interface and actual usage of current and subsequent messages are consistent.
+- Check appending instructions during execution, separately covering keeping the original model and switching models; note continued execution after model configuration and output style adjustments.
+- Check continuous sending, queuing, stopping, re-sending, sending with attachments, editing messages, branch sessions, and side chats.
+- Check operations under "confirm before change" and full control, permission approval, and continued execution after denial.
+- Check selection, usage, and restart recovery for same-name models under different providers, as well as prompts after model disable, provider deletion, or plan changes.
+- Check that modifying configuration does not unexpectedly interrupt running tasks or clear existing session content.
 
-## 8. API 格式和模型能力
+## 8. API Formats and Model Capabilities
 
-- 覆盖 Messages、Chat Completions、Responses 三类 API、近期新增模型和仍在使用的旧模型，检查真实请求与模型切换。
-- 检查推理档位、关闭推理、不能关闭推理的模型、工具调用和结构化输出，以及跨模型继续已有对话。
-- 检查图片、视频、PDF、原生联网和对话中系统消息，以及不支持相应能力时的提示；注意普通 API 与套餐能力的区别。
-- 检查长上下文、最大输出、超限提示和输出中断后的继续生成，以及压缩后继续聊天与重启恢复。
-- 检查鉴权失败、限流、空响应、流式中断、网络恢复、重试和取消，不重复执行已完成的操作。
+- Cover Messages, Chat Completions, Responses three API types, recently added models, and still-used old models; check real requests and model switching.
+- Check reasoning tiers, disabling reasoning, models whose reasoning cannot be disabled, tool calls, structured output, and continuing existing conversations across models.
+- Check images, video, PDF, native web access, and system messages in conversations, and prompts when capabilities are not supported; note the difference between normal APIs and plan capabilities.
+- Check long context, max output, overflow prompts, continued generation after output interruption, continued chat after compression, and restart recovery.
+- Check auth failure, rate limiting, empty responses, streaming interruption, network recovery, retries, and cancellation, without re-executing completed operations.
 
-## 9. 模型连接测试
+## 9. Model Connection Testing
 
-- 覆盖普通 Key、手动套餐 Key，以及体验、个人、团队账号套餐，包含刚保存配置后立即测试。
-- 检查成功、失败、重试和关闭提示，以及模型名称与反馈文案。
-- 检查不能关闭推理的模型，以及远程工作区中的连接测试。
+- Cover normal keys, manual plan keys, and experience, personal, and team account plans, including testing immediately after saving configuration.
+- Check success, failure, retry, and dismissing prompts, as well as model names and feedback copy.
+- Check models whose reasoning cannot be disabled, and connection testing in remote workspaces.
 
-## 10. 使用统计和额度提示
+## 10. Usage Statistics and Quota Prompts
 
-- 检查使用统计的总量、明细、筛选和历史模型记录。
-- 检查聊天区域和侧边栏的套餐额度、上下文用量、重置提醒和额度不足提示，留意提醒重复出现。
-- 检查切换账号、模型或工作区后的更新，以及升级前后记录的连续性。
+- Check total amounts, details, filters, and historical model records in usage statistics.
+- Check plan quotas, context usage, reset reminders, and insufficient quota prompts in the chat area and sidebar; watch for reminders appearing repeatedly.
+- Check updates after switching accounts, models, or workspaces, as well as record continuity before and after upgrades.
 
-## 11. 记忆功能
+## 11. Memory Features
 
-- 检查记忆读取、提取和整理时使用的模型，以及重启后的继续使用。
-- 检查切换聊天模型、多个任务同时运行，以及记忆请求失败后的提示和普通聊天是否正常。
+- Check the models used for memory reading, extraction, and organization, as well as continued use after restart.
+- Check switching chat models, running multiple tasks simultaneously, and prompts after memory request failures, and whether normal chat functions normally.
 
-## 12. 标题和提交信息生成
+## 12. Titles and Commit Message Generation
 
-- 检查任务标题首次生成、失败、响应慢和重启后的表现，以及自动生成与用户手动改名同时发生的情况。
-- 检查有无暂存改动、改动较大时的提交信息生成、取消和失败，以及已有填写内容的保留。
-- 检查生成提交信息期间，工作区改动继续变化的情况。
-- 覆盖不同模型，包含不能关闭推理的模型。
+- Check task title first generation, failure, slow responses, and behavior after restart, as well as situations where automatic generation and user manual renaming occur simultaneously.
+- Check commit message generation with and without staged changes, large changes, cancellation, and failure, as well as retention of existing filled content.
+- Check situations where workspace changes continue during commit message generation.
+- Cover different models, including models whose reasoning cannot be disabled.
 
-## 13. Goal
+## 13. Goals
 
-- 检查创建、替换、清除和重启恢复，以及标题生成。
-- 检查完成验证的推理档位、输出上限，以及成功、失败、取消和重试。
-- 检查切换模型或快速替换目标后，标题、验证结果和目标状态是否对应。
+- Check creation, replacement, clearing, and restart recovery, as well as title generation.
+- Check completion verification reasoning tiers, output limits, success, failure, cancellation, and retry.
+- Check whether titles, verification results, and target statuses correspond after switching models or quickly replacing targets.
 
 ## 14. Repo Wiki
 
-- 检查模型选择、开始生成、长时间运行、长内容、取消、失败和再次生成。
-- 检查生成遵循模型输出上限，不再要求单独选择输出预算。
-- 检查旧 Wiki 配置、重启后查看或继续生成，以及切换项目和修改 Wiki 设置时的模型使用与配置隔离。
+- Check model selection, start generation, long-running, long content, cancellation, failure, and re-generation.
+- Check generation follows the model output limit; no longer requires separate output budget selection.
+- Check old Wiki configurations, viewing or continuing generation after restart, and model usage and configuration isolation when switching projects and modifying Wiki settings.
 
-## 15. 子智能体和后台任务
+## 15. Sub-agents and Background Tasks
 
-- 检查内置与自定义子智能体的指定模型和继承模型，以及推理档位。
-- 检查用户已有子智能体配置升级后，配置内容与提示词的保留。
-- 检查父子任务并行和任务切换，以及后台子智能体、后台命令的启动、停止、完成通知和重启后的显示与使用。
-- 检查后台任务运行时继续发送消息或切换任务。
-- 检查子任务中的权限确认、提问和继续执行，不影响父任务的模型选择。
+- Check specified models and inherited models for built-in and custom sub-agents, as well as reasoning tiers.
+- Check retention of configuration content and prompts after user existing sub-agent configurations upgrade.
+- Check parent-child task parallelism and task switching, as well as startup, stop, completion notifications for background sub-agents and background commands, and display and usage after restart.
+- Check continuing to send messages or switching tasks while background tasks run.
+- Check permission confirmation, questions, and continued execution in sub-tasks, without affecting parent task model selection.
 
-## 16. Hooks、MCP 和插件工具
+## 16. Hooks, MCP, and Plugin Tools
 
-- 检查阻断、补充信息、报错和工具完成后的继续执行。
-- 检查 MCP 连接、登录和版本兼容，以及插件、内置工具在不同 API 格式下的调用与报错，包含套餐相关工具。
-- 检查权限确认、拒绝和重试，以及切换模型后的工具使用。
+- Check blocking, supplementary information, errors, and continued execution after tool completion.
+- Check MCP connection, login, and version compatibility, as well as plugin and built-in tool calls and errors under different API formats, including plan-related tools.
+- Check permission confirmation, denial, and retry, as well as tool usage after switching models.
 
-## 17. 定时任务
+## 17. Scheduled Tasks
 
-- 检查创建、编辑、启停、到点运行、错过执行和历史记录，以及执行后的任务标题。
-- 检查模型与推理档位的保存，以及旧任务升级和重启后的运行。
-- 检查模型下线、供应商删除、套餐失效和执行失败时的提示与后续操作，不影响普通聊天的选择。
+- Check creation, editing, start/stop, scheduled execution, missed executions, and history, as well as task titles after execution.
+- Check saving of models and reasoning tiers, as well as running of old tasks after upgrade and restart.
+- Check prompts and follow-up actions when models are discontinued, providers are deleted, plans expire, or executions fail, without affecting normal chat selections.
 
-## 18. 闲时任务
+## 18. Idle-Time Tasks
 
-- 检查创建入口、套餐与额度限制，以及创建、模型选择、等待调度、执行、取消、查看结果和重新执行。
-- 覆盖 Z.AI、BigModel 的个人和团队套餐，检查升级前已有闲时任务在升级、重启后的记录、状态与继续使用。
-- 检查模型下线、登录过期、套餐失效、额度不足和网络异常后的提示与恢复，不改变普通聊天的模型选择。
-- 检查远程工作区和手机端的入口与任务查看。
+- Check creation entry, plan and quota limits, as well as creation, model selection, waiting for scheduling, execution, cancellation, viewing results, and re-execution.
+- Cover Z.AI, BigModel personal and team plans; check records, status, and continued use of existing idle-time tasks from before upgrade, after upgrade and restart.
+- Check prompts and recovery when models are discontinued, logins expire, plans expire, quotas are insufficient, or networks are abnormal, without changing normal chat model selections.
+- Check remote workspace and mobile device entries and task viewing.
 
-## 19. Bot
+## 19. Bots
 
-- 使用已配置的飞书、Telegram 等 Bot 启动并完成任务，检查原有 Bot 配置和绑定任务的升级、重启恢复。
-- 检查绑定已有会话、修改模型与推理档位，以及绑定任务已删除后的恢复。
-- 检查 Bot 与桌面查看同一会话时，模型选择、内容和任务状态的一致性。
-- 检查任务启动、终端事件、最终回复和错误提示，以及同一卡片上的流式回复、进度和终端输出。
-- 检查多选问题、自定义回答、权限确认，以及完成后的卡片状态。
+- Use configured Feishu, Telegram, and other bots to launch and complete tasks; check original bot configurations and bound task upgrades and restart recovery.
+- Check binding existing sessions, modifying models and reasoning tiers, and recovery after bound tasks are deleted.
+- Check consistency of model selection, content, and task status when bots and desktop view the same session.
+- Check task startup, terminal events, final replies, and error prompts, as well as streaming replies, progress, and terminal output on the same card.
+- Check multi-select questions, custom answers, permission confirmations, and card states after completion.
 
-## 20. 远程工作区
+## 20. Remote Workspaces
 
-- 检查首次连接后本地账号、供应商和默认模型在远端的使用，以及远端安装、升级后的首发。
-- 检查本地登录、退出或修改模型设置后，已连接远端的更新和继续聊天。
-- 检查配置同步失败、远端写入失败、断网、重连和远端重启，以及同一远端的多个工作区。
-- 检查本地与不同远端之间的账号、供应商、任务和模型选择不会串用。
+- Check usage of local accounts, providers, and default models remotely after first connection, as well as first launch after remote installation and upgrade.
+- Check updates and continued chat in already-connected remotes after local login, logout, or model settings changes.
+- Check config sync failure, remote write failure, disconnection, reconnection, and remote restart, as well as multiple workspaces in the same remote.
+- Check that accounts, providers, tasks, and model selections between local and different remotes do not cross-use.
 
-## 21. 多端显示和操作
+## 21. Multi-Device Display and Operations
 
-- 检查桌面、本地 Web 和手机远控中的模型设置、列表、选择、提示文案和任务恢复。
-- 检查本地与远程工作区切换、桌面与手机操作同一任务，以及手机断线重连后的继续使用。
-- 覆盖窄窗口、浅深主题、中英文和中文输入法。
-- 检查 CLI 的登录、退出、默认模型、显式模型与子智能体，以及 TUI 和脚本任务中的使用。
-- 检查帮助、版本等不依赖模型的 CLI 命令。
+- Check model settings, lists, selections, prompt copy, and task recovery on desktop, local Web, and mobile remote control.
+- Check switching between local and remote workspaces, operating the same task on desktop and mobile, and continued use after mobile disconnection reconnection.
+- Cover narrow windows, light/dark themes, Chinese/English, and Chinese input methods.
+- Check CLI login, logout, default models, explicit models, and sub-agents, as well as usage in TUI and script tasks.
+- Check help, version, and other CLI commands that do not depend on models.
 
-## 22. 正式安装包
+## 22. Production Install Packages
 
-- 使用全新用户目录安装，完成启动、登录、添加供应商、选模和首次聊天。
-- 从上一正式版覆盖安装，检查原有登录、供应商配置、默认模型和已有任务，并继续发送。
-- 覆盖 macOS、Windows、Linux 安装包中的供应商、模型和图标，以及安装、升级、卸载和重新安装。
-- 检查安装权限提示、安装失败反馈，以及不同安装方式下的应用启动。
-- 检查官网登录或购买套餐后唤起应用、账号刷新、更新后重启，以及桌面与 Web 版本对齐后的使用。
+- Install with a brand-new user directory; complete startup, login, adding providers, selecting models, and first chat.
+- Overwrite install from the previous official version; check existing logins, provider configurations, default models, and existing tasks, then continue sending.
+- Cover providers, models, and icons in macOS, Windows, and Linux install packages, as well as installation, upgrade, uninstall, and re-installation.
+- Check install permission prompts, install failure feedback, and app launches under different installation methods.
+- Check launching apps after official website login or plan purchases, account refresh, post-update restart, and usage after desktop and Web version alignment.
 
-## 23. 会话分享和导入
+## 23. Session Sharing and Import
 
-- 检查选择已完成内容、发布分享、权限设置、取消和失败重试，运行中任务与切换会话也要覆盖。
-- 检查分享中的正文、用户附件和生成文件，以及缺失、超大或不可分享内容的提示。
-- 检查浏览器查看、登录访问、应用唤起与导入后继续聊天，以及导入文件的查看和打开。
-- 检查本地与支持分享的远程工作区，避免不同任务的分享选择串用。
+- Check selecting completed content, publishing shares, permission settings, cancellation, and failure retries; cover running tasks and session switching.
+- Check body, user attachments, and generated files in shares, as well as prompts for missing, oversized, or non-shareable content.
+- Check browser viewing, login access, app launching, continued chat after import, and viewing/opening imported files.
+- Check local and supported remote workspaces, avoiding share selection cross-use between different tasks.
 
-## 24. 插件管理、浏览器和电脑控制
+## 24. Plugin Management, Browser, and Computer Control
 
-- 检查插件安装、启停、更新提示、更新、卸载和重启后的配置保留。
-- 检查浏览器弹窗、窗口尺寸、任务切换和本地文件打开，不同任务之间不串状态。
-- 检查电脑控制的系统授权、启动与恢复，以及父子任务、后台任务和远程工作区中的可用范围。
-- 检查相关工具运行时，停止任务、重启应用和插件更新后的继续使用。
+- Check plugin installation, enable/disable, update prompts, updates, uninstall, and configuration retention after restart.
+- Check browser popups, window sizes, task switching, and local file opening, without cross-task state leakage.
+- Check computer control system authorization, startup, and recovery, as well as availability scope in parent-child tasks, background tasks, and remote workspaces.
+- Check continued use after stopping tasks, restarting apps, and plugin updates when relevant tools run.
 
-## 25. 工作区显示和文件恢复
+## 25. Workspace Display and File Recovery
 
-- 检查工作区侧栏、独立面板、终端、拖动调整大小，以及不同系统的窗口边框和菜单。
-- 检查消息、工具结果、媒体预览和文件打开，包含长内容与大文件。
-- 检查任务中的文件变更记录、回退和恢复，以及磁盘空间不足、文件过大时的提示。
-- 检查重启后打开旧任务、切换任务和工作区时的响应与内容完整性。
+- Check workspace sidebar, independent panels, terminals, drag resizing, and window borders and menus under different systems.
+- Check messages, tool results, media previews, and file opening, including long content and large files.
+- Check file change records, rollbacks, and recovery in tasks, as well as prompts when disk space is insufficient or files are too large.
+- Check response and content completeness when opening old tasks, switching tasks, and workspaces after restart.
 
-## 26. 资源管理和存储清理
+## 26. Resource Management and Storage Cleanup
 
-- 检查资源管理器入口、CPU 和内存显示，以及任务和插件启停后的更新。
-- 检查磁盘占用扫描、分类查看、取消、刷新和清理确认。
-- 检查清理范围与保护提示，确认会话、任务、配置和仍需使用的文件不会被误删。
-- 检查扫描与清理期间的正常聊天、窗口关闭和再次打开。
+- Check resource manager entries, CPU and memory display, and updates after task and plugin enable/disable.
+- Check disk usage scanning, categorized viewing, cancellation, refresh, and cleanup confirmation.
+- Check cleanup scope and protection prompts; confirm that sessions, tasks, configurations, and still-needed files will not be mistakenly deleted.
+- Check normal chat, window closing, and reopening during scanning and cleanup.
 
-## 27. 错误反馈和排查信息
+## 27. Error Feedback and Diagnostic Information
 
-- 检查模型、工具和任务失败后的错误摘要、详情、重试与反馈入口。
-- 检查停止、异常退出和重启恢复后的状态，避免把已恢复的任务继续显示为失败。
-- 检查诊断信息和用量记录能对应实际任务及模型，且不暴露 Key 或私人凭据。
+- Check error summaries, details, retries, and feedback entries after model, tool, and task failures.
+- Check states after stopping, abnormal exits, and restart recovery, avoiding continuing to show recovered tasks as failed.
+- Check that diagnostic information and usage records correspond to actual tasks and models, without exposing keys or private credentials.
