@@ -1,38 +1,38 @@
-# Todo103：staging 固定范围整合账本
+# Todo103: Staging Fixed-Range Integration Ledger
 
-> 执行中。基线 recovery `f0174b57f5c9157760879d17a5ebeeacf90bb85d`、staging `790884b1ce4b990583ab40625b5f283e2169eb36`；以来源 JSON 的完整 SHA 为机械校验依据。
-> 分组、建议方向与事实证据分开记录；“计划保留”不是“已经保留”。源提交内不同意图允许拆开裁决。
+> In progress. Baseline recovery `f0174b57f5c9157760879d17a5ebeeacf90bb85d`, staging `790884b1ce4b990583ab40625b5f283e2169eb36`; using complete SHA from source JSON as mechanical verification basis.
+> Groups, suggested directions, and factual evidence recorded separately; “plan to retain” is not “already retained”. Different intents within source commits permit split rulings.
 
-## 1. 来源与状态
+## 1. Sources and Status
 
-[完整 Goal](../steps/todo-103-staging-safe-integration.md)；[逐提交 / 文件清单](todo103-staging-source-inventory.json)。
+[Full Goal](../steps/todo-103-staging-safe-integration.md); [per-commit / file inventory](todo103-staging-source-inventory.json).
 
-来源清单：193 个非 merge 提交、60 个 merge 提交，941 个净变化路径，950 个历史触及或冲突路径。235 个双改路径＝107 个显式冲突＋128 个自动合并双改路径。没有净变化的路径仍保留历史来源，不能仅凭 HEAD 没差异认定无关。
+Source inventory: 193 non-merge commits, 60 merge commits, 941 net-change paths, 950 history-touched or conflict paths. 235 dual-change paths = 107 explicit conflicts + 128 auto-merge dual-change paths. Paths with no net changes still retain history sources; cannot assume irrelevance just because HEAD has no diff.
 
-本次工作区为独立 worktree。默认 projects 目录是另一工作区，不用于本目标。没有修改真实用户配置或远端应用数据。
+This workspace is an independent worktree. The default projects directory is another workspace, not used for this goal. No real user configuration or remote application data modified.
 
-## 2. 功能组与必须检查的边界
+## 2. Functional Groups and Required Boundary Checks
 
-| ID  | 功能 / 来源方向                                        | 与当前重构交集、处理依据                                                                                        | 状态       |
-| --- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- | ---------- |
-| G01 | Windows 安装器、各平台发布和 preflight                 | 保留安装修复；版本保留 3.12.0，不回退 3.11.x；检查 CUA 打包、服务端能力与下载制品配套。已有85/m2恢复须证明等价  | 16条来源已裁决/实施；Windows执行验收待补，见17/18节 |
-| G02 | Help config、内部技能、仓库架构门禁                    | 非冲突功能保留；新增门禁不得隐藏重构违反项；不把未要求的 MR 创建当成自动外部写入授权                            | 已裁决/批量保留；门禁证据见 §37 |
-| G03 | CUA 生命周期、移除灰度、插件图标                       | 按当前服务边界重接；producer 升级只能使用原子工具，不手改 SHA；本地 / remote 和插件资源闭包                     | 已重接/构建及单测；见 §25/38 |
-| G04 | Subagent 可用性、插件模型覆盖                          | 插件设置功能保留意图；协议 / 内部使用 ModelSelection，显式选择复用99，隐式继承不改；不写插件 Markdown           | 两条来源已实施/复审；待最终整合回归 |
-| G05 | Bot 已删除任务恢复、飞书发送错误                       | Bot 绑定 Session 单一事实、公共命令 / 有效选择解析不回退；保留新恢复与错误提示                                  | 已实施、组内复审；见 §20 |
-| G06 | Wiki 全局默认、remote路由与lane同步                    | 94输出limit、97一次迁移、99Worker事实不回退；不恢复旧 Provider store / generationModel 正式读取或第二套发送同步 | 已重接；Pro Wiki 通过，见 §23/38 |
-| G07 | 会话内 OffPeakCreate/List、轮尾卡与编辑                | 已绑定 Ticket 不跨账号重映射；绑定 Session 与本次闲时执行选择分离；核对新协议 / 事件 / 权限 / 存储全链          | 已重接；OP10及绑定派发OP-CHAT-02通过，见 §41/42 |
-| G08 | 官方版本安全校验的请求隔离、取消、超时与重试           | 保留安全挑战行为；不复活旧工作区catalog、自动恢复旁路；保留精确连接测试prompt和99应用确认                       | 已重接；Pro 四场景通过，见 §26/31/39 |
-| G09 | OAuth 过期、stale401、候选端点隔离                     | 过期响应不得注销新登录；配置 / Account / OAuth 层边界不互相覆盖；错误不冒充无权益                               | 五条来源已裁决/实施/复审；Pro 2/2，见19节 |
-| G10 | 套餐响应式、领取时间、购买入口和遥测；删除死购买流程   | 保留93状态变化提示＋手动CTA、完整 owned plans 不等于 current；删除死流程不能误删现用入口；新遥测适配Account事实 | 已重接；Pro 领取/购买/响应式通过，见 §35/38 |
-| G11 | 对话分享 / Web share                                   | 保留独立功能；检查 Session / ModelSelection 新契约、隐私边界、资源与依赖、版本；不另起手机Host                  | 已重接/组内复审；公开发布未实跑，见 §31/41 |
-| G12 | 权限拒绝反馈、路由字段、side chat / fork提醒           | continuous/replayable、CommandInbox、冻结执行及workspaceIdentity隔离；禁止老模型字段从协议回流正式运行          | 已保留/协议复核；Pro 权限 5/5，见 §41 |
-| G13 | Subagent / usage / stop / 错误遥测                     | 保留分类、首次结算、底层错误归因；model id / provider id 用当前结构；脱敏与不重复报送                           | 10条来源已实施/复审；待最终整合回归 |
-| G14 | 内存采样、Session事件保留、后台子任务释放              | 有界保留不可破坏 replayable恢复、持久历史、Subagent继承与已冻结模型；高频日志受控                               | 已保留/生命周期复核，见 §40 |
-| G15 | 浏览器恢复 / 截图 / 视口 / DPI                         | 原行为保留或证明已恢复；检查 CUA 与插件入口依赖；不能为截图改变执行归属                                         | 已保留；Mac 两项通过/一项既有失败，见 §37/39 |
-| G16 | mention选择、文件链接、插件搜索、添加菜单              | 保留交互；保留新Composer草稿与提交语义，所有入口双语 / 主题 / 手机兼容                                          | 已保留/Submission交集复核；见 §31/37/39 |
-| G17 | remoteSessionId保存、scope日志、MCP watchdog测试       | path不是identity，settings tab不能丢远端session；测试等待变化须核对真实生命周期                                 | 已实施/单测复审，真实SSH验收待环境；见22节 |
-| G18 | workspace / sidebar / terminal / settings 新布局与回归 | 分离展示与业务状态；保留当前模型设置smart配置、Map排版 / 键盘隔离；手机与各OS布局分别验收                       | 已重接；Pro 布局/编辑器通过，Windows待补，见 §39 |
+| ID | Function / source direction | Intersection with current refactoring, handling basis | Status |
+| -- | --------------------------- | ----------------------------------------------------- | ------ |
+| G01 | Windows installer, per-platform release and preflight | Retain installation fixes; version stays 3.12.0, no rollback to 3.11.x; verify CUA packaging, server capabilities, and downloadable artifacts. Existing 85/m2 recovery must prove equivalence | 16 source items ruled/implemented; Windows acceptance pending, see sections 17/18 |
+| G02 | Help config, internal skills, repo architecture gate | Non-conflicting features retained; new gates must not hide refactoring violations; do not treat unrequested MR creation as automatic external write authorization | Ruled / bulk retained; gate evidence see §37 |
+| G03 | CUA lifecycle, removal gray-out, plugin icons | Reconnect per current service boundaries; producer upgrade must use atomic tools, no manual SHA edits; local / remote and plugin resource closure | Reconnected / built and unit-tested; see §25/38 |
+| G04 | Subagent availability, plugin model coverage | Plugin settings retention intent; protocol / internal use ModelSelection, explicit choice reuses 99, implicit inheritance unchanged; do not write plugin Markdown | Two source items implemented / reviewed; pending final integration regression |
+| G05 | Bot restored tasks, Feishu send errors | Bot binding Session single source; public commands / effective choice parsing no rollback; retain new recovery and error prompts | Implemented, group-internal review; see §20 |
+| G06 | Wiki global default, remote routing and lane sync | 94 output limit, 97 one-shot migration, 99 Worker facts no rollback; do not restore old Provider store / generationModel formal reading or second send sync | Reconnected; Pro Wiki passed, see §23/38 |
+| G07 | In-session OffPeakCreate/List, tail cards and editing | Bound Ticket not remapped across accounts; bound Session separated from this off-peak execution choice; verify new protocol / events / permissions / storage full chain | Reconnected; OP10 and bound dispatch OP-CHAT-02 passed, see §41/42 |
+| G08 | Official version security validation request isolation, cancellation, timeout, retry | Retain security challenge behavior; do not revive old workspace catalog, auto-recovery bypass; retain precise connection test prompt and 99 application confirmation | Reconnected; Pro four scenarios passed, see §26/31/39 |
+| G09 | OAuth expired, stale401, candidate endpoint isolation | Expired responses must not logout new login; config / Account / OAuth layer boundaries do not override each other; errors must not impersonate without entitlements | Five source items ruled / implemented / reviewed; Pro 2/2, see section 19 |
+| G10 | Plan responsive, claim time, purchase entry and telemetry; remove dead purchase flow | Retain 93 status change prompt + manual CTA, full owned plans not equal current; removing dead flow must not delete currently used entries; new telemetry adapts to Account facts | Reconnected; Pro claim / purchase / responsive passed, see §35/38 |
+| G11 | Conversation share / Web share | Retain independent feature; verify Session / ModelSelection new contract, privacy boundaries, resources and dependencies, version; do not start separate mobile Host | Reconnected / group-internal review; public release not live-run, see §31/41 |
+| G12 | Permission denial feedback, routing fields, side chat / fork reminders | continuous/replayable, CommandInbox, frozen execution, and workspaceIdentity isolation; old model fields must not flow back from protocol into formal operation | Retained / protocol reviewed; Pro permissions 5/5, see §41 |
+| G13 | Subagent / usage / stop / error telemetry | Retain categorization, first settlement, bottom-layer error attribution; model id / provider id use current structure; de-identification and duplicate reporting prevention | 10 source items implemented / reviewed; pending final integration regression |
+| G14 | Memory sampling, Session event retention, background subtask release | Bounded retention cannot break replayable recovery, persistent history, Subagent inheritance and frozen models; high-frequency logs controlled | Retained / lifecycle reviewed, see §40 |
+| G15 | Browser recovery / screenshot / viewport / DPI | Original behavior retained or proven restored; verify CUA and plugin entry dependencies; screenshot must not change execution ownership | Retained; Mac two passed / one pre-existing failure, see §37/39 |
+| G16 | mention selection, file links, plugin search, add menu | Retain interaction; retain new Composer draft and submission semantics, all entries bilingual / theme / mobile compatible | Retained / Submission intersection reviewed; see §31/37/39 |
+| G17 | remoteSessionId saved, scope logs, MCP watchdog test | path is not identity, settings tab cannot lose remote session; test waiting for changes must verify real lifecycle | Implemented / unit-tested reviewed, real SSH acceptance pending environment; see section 22 |
+| G18 | workspace / sidebar / terminal / settings new layout and regression | Separate display from business state; retain current model settings smart configuration, Map layout / keyboard isolation; mobile and per-OS layout acceptance separately | Reconnected; Pro layout/editor passed, Windows pending, see §39 |
 
 ## 3. 影响图摘要
 
