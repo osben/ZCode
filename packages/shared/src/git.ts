@@ -165,6 +165,20 @@ export interface GitWorkspaceRepositoryInfo {
   isGitAvailable: boolean;
 }
 
+/** One configured git remote (`git remote -v`, fetch URL preferred over push). */
+export interface GitRepositoryRemote {
+  name: string;
+  url: string;
+}
+
+export interface GitRepositoryRemotesResult {
+  workspacePath: string;
+  isGitAvailable: boolean;
+  isRepository: boolean;
+  /** Empty when git is unavailable or the workspace is not inside a repository. */
+  remotes: GitRepositoryRemote[];
+}
+
 /** Modeled after `git worktree list --porcelain`: one entry per worktree of the repository. */
 export interface GitWorktreeEntry {
   /** Absolute worktree path (from the porcelain `worktree` line). */

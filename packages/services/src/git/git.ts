@@ -23,6 +23,7 @@ import type {
   GitPushResult,
   GitRefreshRequest,
   GitRefreshResult,
+  GitRepositoryRemotesResult,
   GitRepositoryRequest,
   GitRepositorySummary,
   GitWorkspaceRepositoryInfo,
@@ -41,6 +42,7 @@ import { createServiceDescriptor } from "../descriptors.js";
 export interface IGitService {
   getRepositorySummary(params: GitRepositoryRequest): Promise<GitRepositorySummary>;
   getWorkspaceRepositoryInfo(params: GitRepositoryRequest): Promise<GitWorkspaceRepositoryInfo>;
+  getRepositoryRemotes(params: GitRepositoryRequest): Promise<GitRepositoryRemotesResult>;
   getLocalBranches(params: GitRepositoryRequest): Promise<GitLocalBranchListResult>;
   getCommitGraph(params: GitCommitGraphRequest): Promise<GitCommitGraphResult>;
   switchBranch(params: GitSwitchBranchRequest): Promise<GitBranchMutationResult>;
