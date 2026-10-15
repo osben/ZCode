@@ -1,11 +1,12 @@
-// M5 gate: the composer toolbar (model selector / thought level / mode / slash candidate panel).
+// M5 gate: the composer toolbar (model selector / thought level / mode / voice entry / slash candidate panel).
 // Evidence tier L3:
 // 1) slash panel — shows the CLI builtin and App Composer-only catalog (compact/goal/init/plan; no resume-goal), fuzzy filtering, and inserting a command pill on selection;
 // 2) model selector — after switching to another registered model + thought level, the Composer Draft updates immediately;
 // 3) mode selection — ChatModeSwitchControl immediately updates the same Composer Draft;
 // 4) context usage — the usage.contextWindow projection after the first ModelComplete (data-usage-used>0).
 // 5) task -> draft — even with a model catalog present, the slash catalog rehydrates independently and custom commands keep appearing.
-// 6) draft -> known task — the same workspace's slash catalog is not cleared by task navigation.
+// 6) draft -> known task — the same workspace's slash catalog is not cleared by task navigation;
+// 7) voice entry — enabled dictation stays in the primary toolbar and exposes a separate shortcut hint.
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -19,6 +20,8 @@ import {
   TID_CHAT_MODEL_SELECT_TRIGGER,
   TID_CHAT_THOUGHT_LEVEL_SELECT_TRIGGER,
   TID_V4_COMPOSER_INPUT,
+  TID_V4_COMPOSER_SEND,
+  TID_V4_COMPOSER_VOICE_ENTRY,
 } from "@zcode/shared";
 import {
   clickV4SlashOption,
@@ -334,6 +337,78 @@ describe("v4 M5 门禁：composer 工具条与 slash 候选面板", () => {
     // context usage: the usage.contextWindow projection is non-zero after the first ModelComplete
     const projection = await getV4ConfigProjection();
     expect(projection.usageUsed).toBeGreaterThan(0);
+  });
+
+  it("enabled voice dictation stays in the primary toolbar with a separate shortcut hint", async () => {
+    await prepareV4ConversationE2E({ skipProvider: true });
+
+    const voiceButton = $(`[data-testid="${TID_V4_COMPOSER_VOICE_ENTRY}"]`);
+    await voiceButton.waitForDisplayed({ timeout: 15000 });
+    const control = await browser.execute((voiceTestId) => {
+      const button = document.querySelector<HTMLButtonElement>(`[data-testid="${voiceTestId}"]`);
+      return {
+        inPrimaryToolbar: Boolean(button?.closest("[data-composer-trailing-actions]")),
+        inLeadingActions: Boolean(button?.closest("[data-composer-leading-actions]")),
+        accessibleName: button?.getAttribute("aria-label") ?? null,
+        phase: button?.getAttribute("data-voice-phase") ?? null,
+      };
+    }, TID_V4_COMPOSER_VOICE_ENTRY);
+
+    expect(control.inPrimaryToolbar).toBe(true);
+    expect(control.inLeadingActions).toBe(false);
+    expect(control.accessibleName).toBeTruthy();
+    expect(control.phase).toBe("idle");
+    const sendButton = $(`[data-testid="${TID_V4_COMPOSER_SEND}"]`);
+    expect(await voiceButton.getSize()).toEqual(await sendButton.getSize());
+
+    await $(`[data-testid="${TID_V4_COMPOSER_INPUT}"]`).moveTo();
+    await browser.waitUntil(
+      async () =>
+        browser.execute(
+          () =>
+            !Array.from(
+              document.querySelectorAll<HTMLElement>('[data-slot="tooltip-content"]'),
+            ).some((element) => element.getClientRects().length > 0),
+        ),
+      { timeoutMsg: "previous composer tooltip did not close before hovering voice dictation" },
+    );
+    await voiceButton.moveTo();
+
+    const readVoiceTooltip = () =>
+      browser.execute((accessibleName) => {
+        const visible = Array.from(
+          document.querySelectorAll<HTMLElement>('[data-slot="tooltip-content"]'),
+        ).find((element) => {
+          const style = window.getComputedStyle(element);
+          return (
+            style.display !== "none" &&
+            style.visibility !== "hidden" &&
+            Number(style.opacity || "1") > 0 &&
+            element.getClientRects().length > 0 &&
+            element.querySelector("span")?.textContent?.trim() === accessibleName
+          );
+        });
+        return visible
+          ? {
+              label: visible.querySelector("span")?.textContent?.trim() ?? null,
+              shortcut: visible.querySelector('kbd[data-slot="kbd"]')?.textContent?.trim() ?? null,
+            }
+          : null;
+      }, control.accessibleName);
+    await browser.waitUntil(
+      async () => {
+        const tooltip = await readVoiceTooltip();
+        return Boolean(tooltip?.label && tooltip.shortcut);
+      },
+      {
+        timeout: 5000,
+        timeoutMsg: "voice dictation tooltip did not show separate action and shortcut hints",
+      },
+    );
+
+    const tooltip = await readVoiceTooltip();
+    expect(tooltip?.label).toBe(control.accessibleName);
+    expect(tooltip?.shortcut).toBeTruthy();
   });
 
   it("模式/模型/思考深度 picker 互斥，后打开者保持唯一可见", async () => {

@@ -2268,6 +2268,14 @@ function ConversationComposerImpl({
             onSendCompressionCommand={onSendCompressionCommand}
           />
         </span>
+        {voiceDictationEnabled ? (
+          <V4ComposerDictationControl
+            disabled={disabled}
+            onTranscript={insertVoiceTranscript}
+            scopeRef={voiceScopeRef}
+            webRemote={isWebRemoteControl}
+          />
+        ) : null}
         {showStopControl ? (
           <ControlHintTooltip title={stopTooltipTitle} shortcut="Esc">
             <Button
@@ -2341,6 +2349,9 @@ function ConversationComposerImpl({
       sessionId,
       showStopControl,
       stopTooltipTitle,
+      voiceDictationEnabled,
+      insertVoiceTranscript,
+      voiceScopeRef,
       workspaceIdentity,
       workspacePath,
     ],
@@ -2377,14 +2388,6 @@ function ConversationComposerImpl({
           onOpen={onOpenRunningBackgroundWorks}
           openTarget={backgroundWorkOpenTarget}
         />
-        {voiceDictationEnabled ? (
-          <V4ComposerDictationControl
-            disabled={disabled}
-            onTranscript={insertVoiceTranscript}
-            scopeRef={voiceScopeRef}
-            webRemote={isWebRemoteControl}
-          />
-        ) : null}
       </>
     ),
     [
@@ -2401,8 +2404,6 @@ function ConversationComposerImpl({
       remoteSessionId,
       runningSubagentCount,
       snapshot?.backgroundWorks,
-      voiceDictationEnabled,
-      insertVoiceTranscript,
       workspaceIdentity,
       workspacePath,
     ],
