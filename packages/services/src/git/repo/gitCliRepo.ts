@@ -631,7 +631,7 @@ interface GitRepositoryRemoteEntry {
 function parseRemoteVerboseList(stdout: string): GitRepositoryRemoteEntry[] {
   const urlByName = new Map<string, string>();
   for (const line of stdout.replace(/\r\n/g, "\n").split("\n")) {
-    const match = line.trim().match(/^(\S+)\t(\S+)\s+\((fetch|push)\)$/);
+    const match = line.trim().match(/^(\S+)\t(\S+)\s+\((fetch|push)\)(?:\s+\[[^\]\r\n]*\])?$/);
     if (!match) continue;
     const [, name, url, direction] = match;
     if (name === undefined || url === undefined || direction === undefined) continue;

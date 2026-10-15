@@ -937,6 +937,8 @@ describeIfGit("gitCliRepo getRepositoryRemotes", () => {
       runGit(repoPath, ["remote", "add", "zcode-fork", "git@github.com:osben/fork.git"]);
       runGit(repoPath, ["remote", "add", "origin", "https://github.com/osben/ZCode.git"]);
       runGit(repoPath, ["remote", "set-url", "--push", "origin", "git@github.com:osben/push.git"]);
+      runGit(repoPath, ["config", "remote.origin.promisor", "true"]);
+      runGit(repoPath, ["config", "remote.origin.partialclonefilter", "blob:none"]);
       const repo = createGitCliRepo();
 
       const result = await repo.getRepositoryRemotes(repoPath);

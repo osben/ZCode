@@ -6,6 +6,9 @@ describe("gitRemoteUrlToWebUrl", () => {
     expect(gitRemoteUrlToWebUrl("git@github.com:osben/ZCode.git")).toBe(
       "https://github.com/osben/ZCode",
     );
+    expect(gitRemoteUrlToWebUrl("github.com:osben/ZCode.git")).toBe(
+      "https://github.com/osben/ZCode",
+    );
     expect(gitRemoteUrlToWebUrl("ssh://git@gitlab.example.com:2222/group/subgroup/repo.git")).toBe(
       "https://gitlab.example.com/group/subgroup/repo",
     );
@@ -21,7 +24,16 @@ describe("gitRemoteUrlToWebUrl", () => {
     expect(gitRemoteUrlToWebUrl("  git@GitHub.com:osben/ZCode.git  ")).toBe(
       "https://github.com/osben/ZCode",
     );
-    for (const value of ["", "not a url", "https://github.com", "git@github.com", "/tmp/repo"]) {
+    for (const value of [
+      "",
+      "not a url",
+      "https://github.com",
+      "git@github.com",
+      "/tmp/repo",
+      "C:/Users/osben/ZCode",
+      "C:\\Users\\osben\\ZCode",
+      "C:relative-repo",
+    ]) {
       expect(gitRemoteUrlToWebUrl(value)).toBeNull();
     }
   });
