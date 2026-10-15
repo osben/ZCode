@@ -11,10 +11,10 @@ The upstream ZCode app shares `setting.json` with this fork. Every upstream writ
 `packages/shared/src/forkAppSettings.ts` is the single source of truth:
 
 - `FORK_SETTING_KEYS` lists every fork-owned key. Current set: `voiceDictation`, `codingPlanLimitAutoContinueDefaultEnabled`, `worktreeLocationMode`, `worktreeCustomLocationPath`, `worktreeBranchPrefix`, `worktreeProjectOverrides`.
-- `forkAppSettingsSchema` (read tolerance: a damaged value drops only itself) and `forkAppSettingsPatchSchema` (strict, used on save).
-- `splitForkSettingsPatch` routes a patch by key; `pickForkSettings` extracts the fork keys from a raw `setting.json` object for the one-time migration.
+- `forkAppSettingsStoredSchema` (what the sidecar persists: only explicitly set values), `forkAppSettingsSchema` (effective view with materialized defaults, read tolerance: a damaged value drops only itself) and `forkAppSettingsPatchSchema` (strict, used on save).
+- `splitForkSettingsPatch` routes a patch by key; `pickForkSettings` / `extractLegacyForkSettings` extract the fork keys from a raw `setting.json` object for the one-time migration.
 
-Fork keys must never be added to `appSettingsObjectSchema` / `appSettingsPatchSchema`. A contract test in `packages/shared/test/appSettings.test.ts` fails if a registered key leaks back into the main schema, and the upstream schema comparison above is the review checklist for any new fork-only setting.
+Fork keys must never be added to `appSettingsObjectSchema` / `appSettingsPatchSchema`. A contract test in `packages/shared/test/appSettings.test.ts` fails if a registered key leaks back into the main schema. Before adding a new fork-only key, check it against the upstream settings schema: the key must not exist there, and it must be added to `FORK_SETTING_KEYS` in the same change.
 
 ## Service behavior (`packages/services/src/setting/settingService.ts`)
 
@@ -25,12 +25,12 @@ Fork keys must never be added to `appSettingsObjectSchema` / `appSettingsPatchSc
 
 ## One-time migration
 
-On the first `get()` that observes fork keys still living in `setting.json` (pre-sidecar data), inside the write queue:
+On the first `get()` or `update()` that observes fork keys still living in `setting.json` (pre-sidecar data), inside the write queue:
 
 1. Seed the sidecar with those values; on conflict the sidecar wins.
 2. Persist `setting.json` without the fork keys (the schema already strips them).
 
-The migration is idempotent. Known limitation: an older fork build (predating the sidecar) still writes fork keys into `setting.json`; the next new-build read re-migrates, but between those two runs upstream writes can strip what the old build wrote.
+Before seeding, the legacy source is re-read under the sidecar lock, so only fork keys still present in `setting.json` are seeded and a stale snapshot can never restore a value another instance already cleared. The migration is idempotent. Known limitation: an older fork build (predating the sidecar) still writes fork keys into `setting.json`; the next new-build read re-migrates, but between those two runs upstream writes can strip what the old build wrote.
 
 ## Data-directory moves
 

@@ -1259,6 +1259,9 @@ describe("fork settings sidecar", () => {
     try {
       const service = await createSettingServiceInHome(home);
       const pendingGet = service.get(); // stalls acquiring the main-file lock
+      // Let get() finish its outside-lock fast-path read and reach the lock wait before the
+      // concurrent write lands, so the migration's inside-lock re-read is what must observe it.
+      await new Promise((resolve) => setTimeout(resolve, 100));
       // Another instance commits its base-setting save while the migration turn is still waiting.
       writeFileSync(
         settingsFile(home),
