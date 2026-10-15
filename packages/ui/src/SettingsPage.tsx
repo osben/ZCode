@@ -409,6 +409,10 @@ export function SettingsPage({
   const setCodePreviewSettings = useZCodeStore((state) => state.setCodePreviewSettings);
   const uiFontSizePx = useZCodeStore((state) => state.uiFontSizePx);
   const setUiFontSizePx = useZCodeStore((state) => state.setUiFontSizePx);
+  const uiFontFamily = useZCodeStore((state) => state.uiFontFamily);
+  const setUiFontFamily = useZCodeStore((state) => state.setUiFontFamily);
+  const monoFontFamily = useZCodeStore((state) => state.monoFontFamily);
+  const setMonoFontFamily = useZCodeStore((state) => state.setMonoFontFamily);
   const notificationEnabled = useZCodeStore((state) => state.notificationEnabled);
   const setNotificationEnabled = useZCodeStore((state) => state.setNotificationEnabled);
   const notificationSoundEnabled = useZCodeStore((state) => state.notificationSoundEnabled);
@@ -2006,6 +2010,10 @@ export function SettingsPage({
                                 failureStage: "local_commit",
                               })
                             }
+                            uiFontFamily={uiFontFamily}
+                            setUiFontFamily={setUiFontFamily}
+                            monoFontFamily={monoFontFamily}
+                            setMonoFontFamily={setMonoFontFamily}
                           />
                         ) : activeSection === "shortcuts" ? (
                           <ShortcutSettingsSection isDesktop={Boolean(isDesktop)} />

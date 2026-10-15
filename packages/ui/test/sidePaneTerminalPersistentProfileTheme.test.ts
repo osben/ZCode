@@ -32,6 +32,21 @@ describe("side pane terminal persistent profile theme 跨重挂保活契约", ()
     expect(source).toContain("profileTheme");
   });
 
+  it("persists and hydrates the terminal profile font with the registry-owned session", () => {
+    const registrySource = readSource(
+      "packages/ui/src/terminal/sidePaneTerminalSessionRegistry.ts",
+    );
+    const sessionSource = readSource("packages/ui/src/terminal/TerminalSession.tsx");
+
+    expect(registrySource).toContain("profileFontFamily");
+    expect(registrySource).toContain("profileFontIsCustom");
+    expect(registrySource).toContain("profileFontIsFallback");
+    expect(sessionSource).toContain("terminalProfileFontRef.current = {");
+    expect(sessionSource).toContain("fontFamily: existingEntry.profileFontFamily");
+    expect(sessionSource).toContain("existingEntry.term.options.fontFamily = resolveFontFamily()");
+    expect(sessionSource).toContain("entry.profileFontFamily = profileFontFamily");
+  });
+
   it("首次创建时 create 返回的 theme 必须写入 entry.profileTheme", () => {
     const source = readSource("packages/ui/src/terminal/TerminalSession.tsx");
 

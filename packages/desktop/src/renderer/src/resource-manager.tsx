@@ -14,8 +14,14 @@ import {
 import {
   ResourceManagerApp,
   ZCodeIntlProvider,
+  applyMonoFontFamily,
+  applyUiFontFamily,
   applyUiFontSizePx,
+  loadMonoFontFamily,
+  loadUiFontFamily,
   loadUiFontSizePx,
+  subscribeToMonoFontFamilyStorageChanges,
+  subscribeToUiFontFamilyStorageChanges,
   subscribeToUiFontSizeStorageChanges,
 } from "@zcode/ui";
 
@@ -41,6 +47,10 @@ applyTheme(savedTheme.mode, savedTheme.palette);
 // afterward, without changing html font-size or connecting to the business Host.
 applyUiFontSizePx(loadUiFontSizePx());
 subscribeToUiFontSizeStorageChanges();
+applyUiFontFamily(loadUiFontFamily());
+applyMonoFontFamily(loadMonoFontFamily());
+subscribeToUiFontFamilyStorageChanges();
+subscribeToMonoFontFamilyStorageChanges();
 
 const root = document.getElementById("root");
 if (root) {

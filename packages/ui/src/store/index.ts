@@ -1,6 +1,6 @@
 /** Zustand Store — global state management. State that must sync across windows is broadcast through BroadcastService. The `state:` channel prefix identifies state-synchronization messages. */
 import { create } from "zustand";
-import type { IBroadcastService, BroadcastMessage } from "@zcode/services";
+import type { IBroadcastService } from "@zcode/services";
 import type { OAuthProviderId, UserInfo } from "@zcode/shared";
 import type { CodingPlanResetType } from "@zcode/shared";
 import type { CodePreviewSettings } from "@/lib/codePreviewSettings.js";
@@ -9,9 +9,7 @@ import type {
   CodingPlanQuotaResetUiEntry,
 } from "@/lib/codingPlanQuotaResetUi.js";
 import {
-  applyCodingPlanQuotaResetAutoPlayedBroadcast,
   createCodingPlanQuotaResetStoreActions,
-  parseCodingPlanQuotaResetAutoPlayedBroadcastMessage,
   type CodingPlanQuotaResetAutomaticObservations,
   type CodingPlanQuotaResetAutoPlayReservation,
   type CodingPlanQuotaResetAutoPlayReservationAttempt,
@@ -25,6 +23,8 @@ import {
   normalizeUiFontSizePx,
   UI_FONT_SIZE_STORAGE_KEY,
 } from "@/lib/uiFontSize.js";
+import { createFontPreferencesSlice, type FontPreferencesState } from "@/store/fontPreferences.js";
+import { wireStateBroadcast } from "@/store/stateBroadcast.js";
 import {
   isTaskNotificationEnabled,
   isTaskNotificationSoundPreferenceEnabled,
@@ -36,8 +36,6 @@ import {
   THEME_PALETTE_STORAGE_KEY,
   THEME_STORAGE_KEY,
   applyTheme,
-  isThemePalette,
-  migrateThemeSelection,
   readStoredThemeSelection,
 } from "../useTheme.js";
 import { createSystemThemeSync } from "./systemThemeSync.js";
@@ -108,7 +106,7 @@ function loadTerminalWebglEnabled(): boolean {
 // State definition
 // ============================================================================
 
-export interface ZCodeState {
+export interface ZCodeState extends FontPreferencesState {
   /** Display-detail preference; does not change Agent permissions or execution capabilities. */
   interfaceMode: InterfaceMode;
   setInterfaceMode: (mode: InterfaceMode) => void;
@@ -225,17 +223,6 @@ export interface ZCodeState {
 }
 
 // ============================================================================
-// Fields to broadcast — only changes to these fields are sent to other windows.
-// ============================================================================
-
-const BROADCAST_FIELDS = new Set(["theme", "palette", "locale", "uiFontSizePx", "interfaceMode"]);
-
-type BroadcastField = "theme" | "palette" | "locale" | "uiFontSizePx" | "interfaceMode";
-
-/** Broadcast channel name prefix. */
-const STATE_CHANNEL_PREFIX = "state:";
-
-// ============================================================================
 // Store factory
 // ============================================================================
 
@@ -246,8 +233,6 @@ export function createZCodeStore(
     initialIsRestoringOAuthSession?: boolean;
   } = {},
 ) {
-  /** Marker for applying an update received from broadcast; prevents rebroadcast loops. */
-  let applyingBroadcast = false;
   let loginEntryRequestSeq = 0;
   const syncSystemThemeListener = createSystemThemeSync(() => ({
     mode: useStore.getState().theme,
@@ -260,10 +245,7 @@ export function createZCodeStore(
     setInterfaceMode: (mode) => {
       const interfaceMode = normalizeInterfaceMode(mode);
       if (get().interfaceMode !== interfaceMode) {
-        logger.debug("[InterfaceMode] 切换界面模式", {
-          interfaceMode,
-          source: applyingBroadcast ? "broadcast" : "local",
-        });
+        logger.debug("[InterfaceMode] 切换界面模式", { interfaceMode });
       }
       writeSafeLocalStorage(INTERFACE_MODE_STORAGE_KEY, interfaceMode);
       set({ interfaceMode });
@@ -314,6 +296,8 @@ export function createZCodeStore(
       applyUiFontSizePx(normalizedFontSizePx);
       set({ uiFontSizePx: normalizedFontSizePx });
     },
+
+    ...createFontPreferencesSlice((partial) => set(partial)),
 
     performanceMode: loadPerformanceMode(),
     setPerformanceMode: (enabled: boolean) => {
@@ -425,68 +409,9 @@ export function createZCodeStore(
     clearOnboardingDialogRequest: () => set({ onboardingDialogRequested: false }),
   }));
 
-  // Zustand v5 setState uses different overloads for replace=true/false,
-  // so wrapping it directly and forwarding replace selected incompatible signatures under strict typing.
-  // Subscribe to state changes and broadcast only the fields that actually need cross-window sync; this is clearer and avoids overload conflicts.
-  useStore.subscribe((state, prevState) => {
-    if (applyingBroadcast) {
-      return;
-    }
-
-    for (const field of BROADCAST_FIELDS as Set<BroadcastField>) {
-      if (state[field] === prevState[field]) {
-        continue;
-      }
-
-      broadcastService.send({
-        channel: `${STATE_CHANNEL_PREFIX}${field}`,
-        payload: state[field],
-      });
-    }
-  });
-
-  // Listen for broadcasts from other windows.
-  broadcastService.onMessage((msg: BroadcastMessage) => {
-    // Enforce "play once across windows" for automatic completion. After another window broadcasts a played used_at, this window merges
-    // the played record and hides any prompt playing for the same used_at; local echoes were already ignored during parsing.
-    const autoPlayed = parseCodingPlanQuotaResetAutoPlayedBroadcastMessage(msg);
-    if (autoPlayed) {
-      useStore.setState((state) => applyCodingPlanQuotaResetAutoPlayedBroadcast(state, autoPlayed));
-      return;
-    }
-
-    if (!msg.channel.startsWith(STATE_CHANNEL_PREFIX)) return;
-
-    const field = msg.channel.slice(STATE_CHANNEL_PREFIX.length) as BroadcastField;
-    if (!BROADCAST_FIELDS.has(field)) return;
-
-    applyingBroadcast = true;
-    try {
-      // Call the corresponding setter so side effects (localStorage, DOM) also run.
-      const state = useStore.getState();
-      if (field === "theme" && typeof msg.payload === "string") {
-        // Normalize through the migration function to support legacy window-broadcast values such as zai-dark.
-        state.setTheme(migrateThemeSelection(msg.payload, null).mode);
-      } else if (field === "palette" && isThemePalette(msg.payload)) {
-        state.setPalette(msg.payload);
-      } else if (field === "locale" && typeof msg.payload === "string") {
-        state.setLocale(msg.payload);
-      } else if (
-        field === "interfaceMode" &&
-        (msg.payload === "office" || msg.payload === "coding")
-      ) {
-        state.setInterfaceMode(normalizeInterfaceMode(msg.payload));
-      } else if (field === "uiFontSizePx" && typeof msg.payload === "number") {
-        state.setUiFontSizePx(msg.payload);
-      }
-    } finally {
-      applyingBroadcast = false;
-    }
-  });
-
-  syncSystemThemeListener(useStore.getState().theme);
-  applyTheme(useStore.getState().theme, useStore.getState().palette);
-  applyUiFontSizePx(useStore.getState().uiFontSizePx);
+  // Zustand v5 setState uses different overloads for replace=true/false, so the broadcast wiring
+  // lives in stateBroadcast.ts and only observes committed state changes.
+  wireStateBroadcast(useStore, broadcastService, syncSystemThemeListener);
 
   return useStore;
 }

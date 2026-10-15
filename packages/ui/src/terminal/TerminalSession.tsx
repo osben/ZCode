@@ -8,6 +8,7 @@ import type { ILink, ILinkHandler, ITheme, IWindowsPty } from "@xterm/xterm";
 import type { IServiceAccessor } from "@zcode/services";
 import type { IDisposable } from "@zcode/rpc";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { resolveTerminalFontFamily } from "@/lib/uiFonts.js";
 import { useZCodeStoreWithDefault } from "@/store/StoreProvider.js";
 import type { ZCodeState } from "@/store/index.js";
 import { logger } from "@/logger.js";
@@ -39,10 +40,11 @@ import {
 } from "@/terminal/sidePaneTerminalSessionRegistry.js";
 
 const DEFAULT_TERMINAL_FONT_FAMILY =
-  "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, Consolas, 'Cascadia Mono', 'JetBrains Mono', 'MesloLGS NF', 'Hack Nerd Font', monospace";
+  "\"JetBrains Mono Variable\", \"JetBrains Mono\", ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, Consolas, 'Cascadia Mono', 'JetBrains Mono', 'MesloLGS NF', 'Hack Nerd Font', monospace";
 const TERMINAL_RESIZE_DRAG_THROTTLE_MS = 300;
 // Stable module-level selector: useZCodeStoreWithDefault requires a stable selector reference or it will rerender indefinitely.
 const selectTerminalWebglEnabled = (state: ZCodeState) => state.terminalWebglEnabled;
+const selectMonoFontFamily = (state: ZCodeState) => state.monoFontFamily;
 const TERMINAL_INPUT_FALLBACK_RECENT_DATA_MS = 150;
 const TERMINAL_INPUT_FALLBACK_KEYDOWN_INPUT_MS = 40;
 const TERMINAL_INPUT_FALLBACK_FLUSH_DELAY_MS = 150;
@@ -157,6 +159,27 @@ export function TerminalSession({
   const terminalWebglEnabled = useZCodeStoreWithDefault(selectTerminalWebglEnabled, false);
   const terminalWebglEnabledRef = useRef(terminalWebglEnabled);
   terminalWebglEnabledRef.current = terminalWebglEnabled;
+  // Custom mono font: null = bundled default. terminalProfileFontRef keeps the
+  // font resolved by terminalService.create so a later custom-font change can reapply over it.
+  const monoFontFamily = useZCodeStoreWithDefault(selectMonoFontFamily, null);
+  const monoFontFamilyRef = useRef(monoFontFamily);
+  monoFontFamilyRef.current = monoFontFamily;
+  const terminalProfileFontRef = useRef<{
+    fontFamily: string | undefined;
+    isCustom: boolean;
+    isFallback: boolean;
+  }>({ fontFamily: undefined, isCustom: false, isFallback: false });
+  const resolveFontFamily = useCallback(
+    () =>
+      resolveTerminalFontFamily({
+        customMonoFamily: monoFontFamilyRef.current,
+        profileFontFamily: terminalProfileFontRef.current.fontFamily,
+        profileFontIsCustom: terminalProfileFontRef.current.isCustom,
+        profileFontIsFallback: terminalProfileFontRef.current.isFallback,
+        defaultStack: DEFAULT_TERMINAL_FONT_FAMILY,
+      }),
+    [],
+  );
 
   const flushTerminalServiceResize = useCallback(() => {
     if (resizeInFlightRef.current) {
@@ -319,6 +342,17 @@ export function TerminalSession({
     });
   }, [sessionId]);
 
+  // Reapply the mono font family when the Appearance setting changes while the session is mounted
+  // Detached side-pane sessions pick the new font up on remount.
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) {
+      return;
+    }
+    term.options.fontFamily = resolveFontFamily();
+    scheduleFitAndResize("final");
+  }, [monoFontFamily, resolveFontFamily, scheduleFitAndResize]);
+
   useEffect(() => {
     isVisibleRef.current = isVisible;
     if (isVisible) {
@@ -352,6 +386,12 @@ export function TerminalSession({
         termRef.current = existingEntry.term;
         fitAddonRef.current = existingEntry.fitAddon;
         terminalIdRef.current = existingEntry.terminalId || undefined;
+        terminalProfileFontRef.current = {
+          fontFamily: existingEntry.profileFontFamily,
+          isCustom: existingEntry.profileFontIsCustom,
+          isFallback: existingEntry.profileFontIsFallback,
+        };
+        existingEntry.term.options.fontFamily = resolveFontFamily();
         el.appendChild(existingEntry.hostEl);
         const reuseThemeObserver = new MutationObserver(() => {
           // Read from entry.profileTheme: after remount, the component-local ref has reset to undefined,
@@ -404,7 +444,7 @@ export function TerminalSession({
 
       const term = new XTerm({
         fontSize: 13,
-        fontFamily: DEFAULT_TERMINAL_FONT_FAMILY,
+        fontFamily: resolveFontFamily(),
         theme: mergeTerminalTheme(terminalProfileThemeRef.current),
         linkHandler: {
           allowNonHttpProtocols: false,
@@ -526,6 +566,9 @@ export function TerminalSession({
         term,
         fitAddon,
         terminalId: "",
+        profileFontFamily: undefined,
+        profileFontIsCustom: false,
+        profileFontIsFallback: false,
         cwd: cwd ?? "",
         // workspaceKey is used to dispose by workspace when a workspace tab is actually closed (matching bottom-terminal openWorkspaceKeys).
         workspaceKey: workspaceKey ?? cwd ?? "",
@@ -568,7 +611,19 @@ export function TerminalSession({
           // Otherwise scheduleFitAndResize("init") may be deduplicated by pendingSize, leaving the PTY at the wrong cols/rows.
           flushTerminalServiceResize();
           term.options.windowsPty = normalizeWindowsPtyOption(windowsPty);
-          term.options.fontFamily = fontFamily || DEFAULT_TERMINAL_FONT_FAMILY;
+          const profileFontFamily =
+            fontFamilySource === "fallback" ? undefined : fontFamily || undefined;
+          const profileFontIsCustom = fontFamilySource === "custom";
+          const profileFontIsFallback = fontFamilySource === "fallback";
+          terminalProfileFontRef.current = {
+            fontFamily: profileFontFamily,
+            isCustom: profileFontIsCustom,
+            isFallback: profileFontIsFallback,
+          };
+          entry.profileFontFamily = profileFontFamily;
+          entry.profileFontIsCustom = profileFontIsCustom;
+          entry.profileFontIsFallback = profileFontIsFallback;
+          term.options.fontFamily = resolveFontFamily();
           const nextFontSize = normalizeTerminalFontSize(fontSize);
           if (nextFontSize) {
             term.options.fontSize = nextFontSize;
@@ -769,7 +824,7 @@ export function TerminalSession({
 
     const term = new XTerm({
       fontSize: 13,
-      fontFamily: DEFAULT_TERMINAL_FONT_FAMILY,
+      fontFamily: resolveFontFamily(),
       theme: mergeTerminalTheme(terminalProfileThemeRef.current),
       linkHandler: {
         allowNonHttpProtocols: false,
@@ -908,7 +963,12 @@ export function TerminalSession({
         // On height increases, Windows ConPTY does not return scrollback to the viewport like a traditional Unix PTY.
         // Without xterm's windowsPty compatibility, PSReadLine later redraws input at old coordinates over the previous command's output.
         term.options.windowsPty = normalizeWindowsPtyOption(windowsPty);
-        term.options.fontFamily = fontFamily || DEFAULT_TERMINAL_FONT_FAMILY;
+        terminalProfileFontRef.current = {
+          fontFamily: fontFamilySource === "fallback" ? undefined : fontFamily || undefined,
+          isCustom: fontFamilySource === "custom",
+          isFallback: fontFamilySource === "fallback",
+        };
+        term.options.fontFamily = resolveFontFamily();
         const nextFontSize = normalizeTerminalFontSize(fontSize);
         if (nextFontSize) {
           term.options.fontSize = nextFontSize;
