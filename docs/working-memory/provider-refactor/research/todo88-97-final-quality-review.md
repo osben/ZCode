@@ -1,49 +1,49 @@
-# Todo88–97：近期实现与抽象复审
+# Todo88–97: Recent Implementations And Abstraction Reviews
 
-> 2026-09-09 后续校正：本文“三项待裁决”是当时记录。95C 不兼容未上线 Personal 配置已裁决，待实施；96 显式 Subagent 已由 Todo99 完成；97 Wiki 迁移边界仍需收口。残余验证/失败只在 [Todo102](../steps/todo-102-verification-debt-closeout.md) 推进，不重复挂起旧 Todo。
+> 2026-09-09 subsequent corrections: This document's "three decisions pending" are records from that time. 95C incompatibility with un-shipped Personal configs already decided, pending implementation; 96 explicit Subagents already completed by Todo99; 97 Wiki migration boundaries still need closing. Remaining verification/failures only advancing in [Todo102](../steps/todo-102-verification-debt-closeout.md), not repeatedly suspending old Todos.
 
-2026-09-08 UTC。复审对象是北京时间9月7日至8日的 Provider/Selection Todo 提交及本次94–97实现；不合入后续 staging，不把无关 CUA/MCP/消息气泡等恢复提交冒充本次已逐行审查。提交历史以 `git log --first-parent` 定位，按契约链路检查当前结果，而非提交存在就判保留。
+2026-09-08 UTC. Review objects are Beijing-time September 7–8's Provider/Selection Todo submissions and this round's 94–97 implementations; not merging subsequent stagings, not treating unrelated CUA/MCP/message bubble recovery submissions as this round's line-by-line-reviewed. Submission histories located by `git log --first-parent`, checking current results by contract chains, not judging retention by submission existences.
 
-## 结论与明确发现
+## Conclusions And Explicit Findings
 
-这轮已有可验证的实现，但不能把所有 Todo 一概写成完成。三个实质边界待裁决；本轮二审也找出了自己的过度兼容与序列化遗漏，已经先复现再纠正。
+This round has verifiable implementations, but cannot write all Todos as completed. Three substantive boundaries pending decisions; this round's second reviews also finding their own over-compatibilities and serialization omissions, already reproduced then corrected.
 
-| 问题 | 来源 / 处理 | 证据 |
-| --- | --- | --- |
-| 恢复会话时 Registry 校验失败会丢原意图 | Todo88/96链路；96已改为返回原意图，Runtime只绑定有效选择 | 真实SQLite、App/Protocol continuous/replayable回归 |
-| Bot 旧字符串迁移依赖候选、远端菜单失败借另一 Workspace 缓存 | 96删除候选门禁和跨目标缓存；保留新版文件权威 | Bot全组及同路径不同身份测试 |
-| Subagent 全 profile 内存换 ID、普通 JSON reader 回读旧 map | 97迁移先落盘，正式 reader 单源；仅用户 Markdown自动写 | 文件集成、Host/Agent初始化、Pro I20 |
-| Session 普通 entry codec 搬运旧 thoughtLevel | 97移到真正已发布格式的 SQLite 单向导入，不删历史展示 | codec与迁移23条 |
-| 新 Wiki modelSelection / 新 builtin JSON map 仍转换 builtin ID | 本轮96/97过度兼容，二审纠正。staging发布格式分别是generationModel与旧双map，新字段不再转换 | 两项负向红灯后修复；不改变Wiki读时写入裁决 |
-| Markdown Provider ID 以 custom: 开头时序列化歧义 | 97二审增加用例，用既有编码解决，不发明新格式 | custom: / 分隔符 / 模型名往返测试 |
-| Wiki预算移除后遗留两个未使用变量/import | 94二审清理，不修改其他存量lint问题 | lint警告数从41降至39；最终命令结果见执行记录 |
+| Issues                                                                                                  | Sources / Processing                                                                                                                                                    | Evidence                                                                                |
+| ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Recovery sessions' Registry validation failures losing original intentions                              | Todo88/96 chains; 96 changed to returning original intentions, Runtimes only binding valid selections                                                                   | Real SQLite, App/Protocol continuous/replayable regressions                             |
+| Bot old string migrations depend on candidates, remote menu failures borrowing another Workspace caches | 96 deleted candidate gates and cross-target caches; retaining new-version file authorities                                                                              | Bot full groups and same-path different-identity tests                                  |
+| Subagent full profile memory swapping IDs, plain JSON readers re-reading old maps                       | 97 migrations first writing to disks, formal readers single-sourced; only user Markdowns auto-writing                                                                   | File integrations, Host/Agent initializations, Pro I20                                  |
+| Session plain entries codecs moving old thoughtLevels                                                   | 97 moved to truly shipped-format SQLite one-way imports, not deleting history displays                                                                                  | Codecs and migrations 23 items                                                          |
+| New Wikis modelSelection / new builtin JSON maps still converting builtin IDs                           | This round's 96/97 over-compatibilities, second-review corrected. Staging-shipped formats separately generationModels and old dual-maps, new fields no longer converted | Two negative red-lights then fixed; not changing Wiki read-time writing decisions       |
+| Markdown Provider IDs starting with custom: causing serialization ambiguities                           | 97 second reviews adding cases, solving with existing encodings, not inventing new formats                                                                              | custom: / delimiters / model-name round-trip tests                                      |
+| Wiki budget removals leaving two unused variables/imports                                               | 94 second reviews cleaned, not modifying other existing lint issues                                                                                                     | Lint warning counts dropping from 41 to 39; final command results see execution records |
 
-## 按 Todo / 提交审阅
+## Per-Todo / Submission Reviews
 
-| 组 | 主要提交 | 核对的契约与质量结论 |
-| --- | --- | --- |
-| 88 数据迁移、能力、账号 | `2cd7434ddb`及后续补丁 | 不把旧backend zcode当Provider；缺组织连接仍通过OAuth唯一匹配补齐，网络在写队列外，提交复查意图。Selection离线迁移不删除这条真实连接迁移。能力/未知型号兜底由Provider解析测试覆盖。历史83/88条款被后续裁决替代，不能照旧恢复自动切套餐或永久Markdown内存兼容 |
-| 89 设置写入 | `c3e5fb37c2` | Facade可信成员快照→ConfigService事务；添加/排序可创建稀疏Provider Overlay，编辑/启停只改精确模型字段。动态继承成员不变成个人成员，不允许重命名/删除。版本冲突保留草稿，headers/未编辑字段不丢失；窄启停保留智能模式标记 |
-| 90/92 智能配置 | `14986fd36e`、`d645a7582a` | 添加/编辑共享草稿；固定模式不按ID重查推荐，完整性由UI与写入层验证；重新开启只重置本次草稿且保留enabled。A→B→A/切Provider/关闭模式废弃旧回包；保存失败保留输入。Scoped边框及双语文案复用，没有修改全局控件样式 |
-| 91 Probe | `b6c0f7373a` | system/user两条精确白名单；正式Model流式调用，三种Adapter离线请求验证。无Start权益探测捷径，无普通对话Prompt替换，未用真实账号试探网关 |
-| 93 失效手动切换 | `b088da8799`、`7cd5f57462` | 根观察器按账号/完整连接key及代次判断确定状态转移；首读/unknown/手动未开通不自动切。建议目标固定、点击重新校验、条件写入；写成功后刷新失败不假报未保存。不存在另一套权益来源或Session批量写回 |
-| 87/96 有效选择 | `cd6c4ff87c`、`ac00daec9c`、`e401dbcbb4`、`f0047c4430`、`a3517b732f`、`dd38abe9fb` | 迁移原意图与运行有效结果分离；getView按目标Host及输入返回结果，目标切换立即隔离旧回包。Composer接受提交、任务首次派发、Wiki生成、Bot各保留自己的提交边界；运行中冻结值不重解。显式Subagent目标已明确但Host事实协议仍缺，不能称全入口收口 |
-| 94 Wiki Limit | `a56dc32c26` | 不再有独立输出预算、正文减半/增预算救援；请求原样使用目标模型Limit，普通重试/超时/截断失败保留。不是给Factory另加默认预算 |
-| 95 Map | `9b0f11e996` | 专用Map只美化：所有合法值输出及省略/null/已有body等价；仅API兜底行为增强。未知字段容忍属于用户接受的兼容假设，不是验证过所有服务商。关闭档位改名C未完成 |
-| 97 原字段与全域审计 | `0c32ba2b59`及二审补丁 | 用户目录原地迁移、无中间态兼容、旧字段仅import；项目/插件不写。JSON内部格式不随Markdown回退；完整存储表独立记录例外和实际发布依据 |
+| Groups                                     | Main Submissions                                                                   | Verified Contracts And Quality Conclusions                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ------------------------------------------ | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 88 Data migrations, capabilities, accounts | `2cd7434ddb` and subsequent patches                                                | Not treating old backends zcode as Providers; missing organization connections still uniquely matched through OAuth, networks outside write queues, submissions re-checking intentions. Selection offline migrations not deleting this real connection migration. Capabilities/unknown model fallbacks covered by Provider resolution tests. Historical 83/88 clauses superseded by subsequent decisions, cannot restoring automatic plan switching or permanent Markdown memory compatibilities as-is |
+| 89 Settings writing                        | `c3e5fb37c2`                                                                       | Facade trusted member snapshots → ConfigService transactions; adding/sorting creating sparse Provider Overlays, editing/enabling/disabling only changing exact model fields. Dynamic inheritance members not becoming personal members, renaming/deleting not permitted. Version conflicts retaining drafts, headers/unedited fields not losing; narrow enabling/disabling retaining smart-mode markers                                                                                                |
+| 90/92 Smart configurations                 | `14986fd36e`, `d645a7582a`                                                         | Adding/editing sharing drafts; fixed modes not re-querying recommendations by IDs, integrity verified by UIs and writing layers; re-enabling only resetting this round's drafts and retaining enabled. A→B→A/provider-switching/closing modes discarding old rebroadcasts; saving failures retaining inputs. Scoped borders and bilingual copy reusing, not modifying global control styles                                                                                                            |
+| 91 Probes                                  | `b6c0f7373a`                                                                       | system/user two precise whitelists; formal Model streaming calls, three Adapters offline request verifications. No Start-entitlement probing shortcuts, no plain conversation Prompt replacements, not using real accounts probing gateways                                                                                                                                                                                                                                                            |
+| 93 Invalidation manual switching           | `b088da8799`, `7cd5f57462`                                                         | Root observers determining status transitions by accounts/complete connection keys and generations; first-read/unknown/manual-not-activated not auto-switching. Suggested targets fixed, clicking re-validating, conditional writing; successful writing refreshing failures not falsely reporting unsaved. No second entitlement sources or Session batch write-backs                                                                                                                                 |
+| 87/96 Valid selections                     | `cd6c4ff87c`, `ac00daec9c`, `e401dbcbb4`, `f0047c4430`, `a3517b732f`, `dd38abe9fb` | Migrated original intentions and runtime valid results separated; getView returning results by target Hosts and inputs, target switching immediately isolating old rebroadcasts. Compositions accepting submissions, tasks first dispatches, Wikis generating, Bots each retaining their own submission boundaries; running frozen values not re-parsed. Explicit Subagent targets clear but Host fact protocols still missing, cannot claim full-entry closing                                        |
+| 94 Wiki Limits                             | `a56dc32c26`                                                                       | No longer independent output budgets, half-body/budget-increased rescue requests; requests using target model Limits as-is, plain retries/timeouts/cutting failures retained. Not adding default budgets to Factory separately                                                                                                                                                                                                                                                                         |
+| 95 Maps                                    | `9b0f11e996`                                                                       | Dedicated Maps only beautifying: all legal values output and omission/null/existing-body equivalent; only API fallback behaviors enhanced. Unknown field tolerance belonging to user-accepted compatibility assumptions, not verifying all providers. Closing tier renames C incomplete                                                                                                                                                                                                                |
+| 97 Old fields and full-domain audits       | `0c32ba2b59` and second-review patches                                             | User directories in-place migrations, no intermediate compatibilities, old fields only importing; projects/plugins not writing. JSON internal formats not retreating by Markdowns; complete storage tables independently recording exceptions and actual shipped bases                                                                                                                                                                                                                                 |
 
-## 验证口径
+## Verification Standards
 
-- 根扩大组61文件/900条、Agent17文件/201条；设置/账号补充29文件/420条；连接迁移/选型补充6文件/62条。各组有重叠，不相加冒充独立用例总数。
-- 二审小补丁共享/服务13文件/184条通过。根typecheck/lint及Agent bootstrap typecheck通过；Pro最终组合回归结果继续写总记录。
-- Pro `desktop-e2e-20260908173912732-p98589-498cb410db57162d`：Start领取4项、设置polish7项、智能配置1项、写入恢复1项，共13通过；真实remote对应1项skip，不算通过。Todo97两轮SE/I20各4项通过。
-- Pending E2E 仅运行和记录证据，没有未经人工审阅批量晋级。所有Pro验证使用隔离目录/测试数据/本地mock，不操作同事数据，不调用真实模型账号。
-- 不声称已覆盖手机实机、真实SSH故障、Windows、全部供应商请求。Web包部署仍由用户处理；novel已恢复，不重新开题。
+- Root expanded groups 61 files/900 items, Agents 17 files/201 items; settings/accounts supplementary 29 files/420 items; connection migrations/selections supplementary 6 files/62 items. Groups have overlaps, not adding to fake independent case totals.
+- Second-review small patches shared/services 13 files/184 items passed. Root typecheck/lint and Agent bootstrap typecheck passed; Pro final combination regression results continuing writing total records.
+- Pro `desktop-e2e-20260908173912732-p98589-498cb410db57162d`: Start claiming 4 items, settings polish 7 items, smart configurations 1 item, writing recoveries 1 item, total 13 passed; real remote correspondences 1 item skipped, not counting as passed. Todo97 two rounds SE/I20 each 4 items passed.
+- Pending E2E only running and recording evidences, not batch-promoting未经人工审阅. All Pro verifications using isolated directories/test data/local mocks, not manipulating colleagues' data, not calling real model accounts.
+- Not claiming covering mobile real machines, real SSH failures, Windows, all provider requests. Web package deployments still handled by users; novel restored, not re-opening topics.
 
-## 还需要二次裁决
+## Still Needing Secondary Decisions
 
-1. **95C**：统一关闭档位名会影响仅覆盖Map的Personal配置。旧表达式判断off，新值disabled可能变成开启。A/B已完成；不能靠全局字符串替换自定义Map解决C。
-2. **96显式Subagent**：独立Agent没有Host当前账号事实；需要严格协议端口委托所属Host解析，或者明确保留原校验。不能做仅设置页跟随的半套功能。
-3. **97 Wiki**：此前裁决读取不写盘，97要求全域一次落盘迁移；需决定首次读取落盘还是明确Wiki例外。其新字段不回读旧值已单独修好，与此选择无冲突。
+1. **95C**: Unified closing tier names would affect plans only covering Maps' Personal configs. Old expressions judging off, new values disabled possibly becoming enabled. A/B completed; cannot rely on global string replacements fixing custom Maps for C.
+2. **96 explicit Subagents**: Independent Agents lacking Host current account facts; needing strict protocol-port entrusting Hosts to parse, or explicitly retaining original validations. Cannot implement half-implementations for settings-page-only following.
+3. **97 Wikis**: Previous decisions reading not writing disks, 97 requiring full-domain one-shot migrations; deciding first-read-to-disk or explicit Wiki exceptions. Its new fields not re-reading old values already individually fixed, not conflicting with this choice.
 
-小阻塞已与独立工作分开；这三个涉及既有语义/协议权限，不按“能继续推进”擅自裁决。目标仍未完成。
+Small blockers already separated from independent work; these three involving existing semantics/protocol authorities, not deciding independently by "can continue advancing". Targets still uncompleted.
