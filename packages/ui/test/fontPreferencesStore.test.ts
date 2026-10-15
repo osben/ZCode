@@ -39,4 +39,25 @@ describe("font preference store synchronization", () => {
     expect(document.documentElement.style.getPropertyValue("--font-mono")).toContain("Mono Test");
     expect(send).not.toHaveBeenCalled();
   });
+
+  it("removes cleared font preferences from localStorage and broadcasts null", () => {
+    const send = vi.fn(async () => {});
+    const store = createZCodeStore({
+      send,
+      acquireClaim: async () => ({ status: "unavailable" }),
+      commitClaim: async () => {},
+      releaseClaim: async () => {},
+      tryClaim: async () => false,
+      onMessage: () => ({ dispose: () => {} }),
+    });
+
+    store.getState().setUiFontFamily("Inter Test");
+    store.getState().setMonoFontFamily("Mono Test");
+    store.getState().setUiFontFamily(null);
+    store.getState().setMonoFontFamily(null);
+
+    expect(localStorage.getItem(UI_FONT_FAMILY_STORAGE_KEY)).toBeNull();
+    expect(localStorage.getItem(MONO_FONT_FAMILY_STORAGE_KEY)).toBeNull();
+    expect(send).toHaveBeenLastCalledWith({ channel: "state:monoFontFamily", payload: null });
+  });
 });

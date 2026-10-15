@@ -24,6 +24,9 @@ function createMockEntry(
     term: { dispose: vi.fn() } as unknown as XTerm,
     fitAddon: { fit: vi.fn() } as unknown as FitAddon,
     terminalId: `pty-${key}`,
+    profileFontFamily: undefined,
+    profileFontIsCustom: false,
+    profileFontIsFallback: false,
     cwd,
     // workspaceKey 用于 workspace tab 关闭时按 workspace 批量回收（对称下侧 openWorkspaceKeys）。
     workspaceKey,
@@ -79,9 +82,7 @@ describe("sidePaneTerminalSessionRegistry", () => {
     registry.detachDom("t1");
     expect(entry.hostEl.parentElement).not.toBe(host);
     // hostEl 应回到隐藏暂存容器
-    expect(
-      entry.hostEl.parentElement?.getAttribute("data-side-pane-terminal-stash"),
-    ).toBe("");
+    expect(entry.hostEl.parentElement?.getAttribute("data-side-pane-terminal-stash")).toBe("");
   });
 
   it("detachDom 不删 entry —— 跨 workspace 切换保活的核心", () => {
@@ -109,6 +110,21 @@ describe("sidePaneTerminalSessionRegistry", () => {
     registry.attachDom("t1", host2);
     expect(registry.get("t1")?.hostEl).toBe(entry.hostEl);
     expect(entry.hostEl.parentElement).toBe(host2);
+  });
+
+  it("detach 后保留 profile font 信息供重挂时恢复", () => {
+    const entry = createMockEntry("t1");
+    entry.profileFontFamily = "System Profile Mono";
+    entry.profileFontIsCustom = false;
+    entry.profileFontIsFallback = false;
+    registry.register("t1", entry);
+    registry.detachDom("t1");
+
+    expect(registry.get("t1")).toMatchObject({
+      profileFontFamily: "System Profile Mono",
+      profileFontIsCustom: false,
+      profileFontIsFallback: false,
+    });
   });
 
   it("release 调 dispose + 删除 entry（显式关 tab 回收）", () => {

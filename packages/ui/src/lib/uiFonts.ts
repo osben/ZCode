@@ -15,6 +15,18 @@ export const MONO_FONT_FAMILY_STORAGE_KEY = "zcode-mono-font-family";
 /** Families shipped in the bundle; offered first in the font picker. */
 export const BUNDLED_FONT_FAMILIES = ["Inter Variable", "JetBrains Mono Variable"] as const;
 
+export function isFontFamilyStale(
+  value: string | null,
+  installedFamilies: string[] | null,
+): boolean {
+  return Boolean(
+    value &&
+    installedFamilies !== null &&
+    !BUNDLED_FONT_FAMILIES.some((family) => family === value) &&
+    !installedFamilies.includes(value),
+  );
+}
+
 export const MAX_CUSTOM_FONT_FAMILY_LENGTH = 100;
 
 /** Stack appended after a custom UI font; mirrors styles.css after the bundled name. */
@@ -84,16 +96,19 @@ export function resolveTerminalFontFamily(options: {
   profileFontFamily: string | undefined;
   /** True when profileFontFamily came from the terminal-specific user setting, which outranks the appearance mono font. */
   profileFontIsCustom: boolean;
+  /** True when terminalService supplied only its generic fallback stack. */
+  profileFontIsFallback?: boolean;
   defaultStack: string;
 }): string {
-  if (options.profileFontIsCustom && options.profileFontFamily) {
-    return options.profileFontFamily;
+  const profileFontFamily = options.profileFontIsFallback ? undefined : options.profileFontFamily;
+  if (options.profileFontIsCustom && profileFontFamily) {
+    return profileFontFamily;
   }
   const mono = normalizeCustomFontFamily(options.customMonoFamily);
   if (mono) {
-    return `"${mono}", ${options.profileFontFamily || options.defaultStack}`;
+    return `"${mono}", ${profileFontFamily || options.defaultStack}`;
   }
-  return options.profileFontFamily || options.defaultStack;
+  return profileFontFamily || options.defaultStack;
 }
 
 function subscribeToFontFamilyStorageChange(key: string, apply: () => void): () => void {

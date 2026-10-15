@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   applyMonoFontFamily,
   applyUiFontFamily,
+  isFontFamilyStale,
   loadMonoFontFamily,
   loadUiFontFamily,
   MAX_CUSTOM_FONT_FAMILY_LENGTH,
@@ -61,6 +62,19 @@ describe("load persisted families", () => {
     });
     expect(loadUiFontFamily()).toBe("Inter");
     expect(loadMonoFontFamily()).toBe("SF Mono");
+  });
+});
+
+describe("isFontFamilyStale", () => {
+  it("accepts bundled families even when they are not installed system fonts", () => {
+    expect(isFontFamilyStale("Inter Variable", [])).toBe(false);
+    expect(isFontFamilyStale("JetBrains Mono Variable", [])).toBe(false);
+  });
+
+  it("marks a custom family stale only after installed fonts have loaded", () => {
+    expect(isFontFamilyStale("Custom Font", null)).toBe(false);
+    expect(isFontFamilyStale("Custom Font", ["Installed Font"])).toBe(true);
+    expect(isFontFamilyStale("Installed Font", ["Installed Font"])).toBe(false);
   });
 });
 
@@ -148,6 +162,18 @@ describe("resolveTerminalFontFamily", () => {
         customMonoFamily: null,
         profileFontFamily: undefined,
         profileFontIsCustom: false,
+        defaultStack,
+      }),
+    ).toBe(defaultStack);
+  });
+
+  it("uses the bundled default stack instead of the service fallback stack", () => {
+    expect(
+      resolveTerminalFontFamily({
+        customMonoFamily: null,
+        profileFontFamily: "ui-monospace, SFMono-Regular, monospace",
+        profileFontIsCustom: false,
+        profileFontIsFallback: true,
         defaultStack,
       }),
     ).toBe(defaultStack);

@@ -1,6 +1,6 @@
 /** User font-family overrides as a store slice. Extracted from store/index.ts to keep the main store module small. */
 import type { BroadcastMessage } from "@zcode/services";
-import { writeSafeLocalStorage } from "@/lib/browserEnvironment.js";
+import { removeSafeLocalStorage, writeSafeLocalStorage } from "@/lib/browserEnvironment.js";
 import {
   applyMonoFontFamily,
   applyUiFontFamily,
@@ -27,14 +27,22 @@ export function createFontPreferencesSlice(
     uiFontFamily: loadUiFontFamily(),
     setUiFontFamily: (value: string | null) => {
       const fontFamily = normalizeCustomFontFamily(value);
-      writeSafeLocalStorage(UI_FONT_FAMILY_STORAGE_KEY, fontFamily ?? "");
+      if (fontFamily) {
+        writeSafeLocalStorage(UI_FONT_FAMILY_STORAGE_KEY, fontFamily);
+      } else {
+        removeSafeLocalStorage(UI_FONT_FAMILY_STORAGE_KEY);
+      }
       applyUiFontFamily(fontFamily);
       set({ uiFontFamily: fontFamily });
     },
     monoFontFamily: loadMonoFontFamily(),
     setMonoFontFamily: (value: string | null) => {
       const fontFamily = normalizeCustomFontFamily(value);
-      writeSafeLocalStorage(MONO_FONT_FAMILY_STORAGE_KEY, fontFamily ?? "");
+      if (fontFamily) {
+        writeSafeLocalStorage(MONO_FONT_FAMILY_STORAGE_KEY, fontFamily);
+      } else {
+        removeSafeLocalStorage(MONO_FONT_FAMILY_STORAGE_KEY);
+      }
       applyMonoFontFamily(fontFamily);
       set({ monoFontFamily: fontFamily });
     },

@@ -16,6 +16,7 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import {
   BUNDLED_FONT_FAMILIES,
   getQueryLocalFonts,
+  isFontFamilyStale,
   normalizeCustomFontFamily,
   normalizeInstalledFontFamilies,
   type LocalFontData,
@@ -136,7 +137,7 @@ function FontFamilyCombobox({
   const triggerPreviewStyle = value
     ? { fontFamily: `"${value}"` }
     : { fontFamily: mono ? "var(--font-mono)" : "var(--font-sans)" };
-  const staleValue = Boolean(value && families !== null && !families.includes(value));
+  const staleValue = isFontFamilyStale(value, families);
 
   return (
     <div className="flex w-[260px] min-w-0 flex-col gap-1">

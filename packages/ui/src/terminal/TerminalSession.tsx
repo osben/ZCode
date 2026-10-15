@@ -164,16 +164,18 @@ export function TerminalSession({
   const monoFontFamily = useZCodeStoreWithDefault(selectMonoFontFamily, null);
   const monoFontFamilyRef = useRef(monoFontFamily);
   monoFontFamilyRef.current = monoFontFamily;
-  const terminalProfileFontRef = useRef<{ fontFamily: string | undefined; isCustom: boolean }>({
-    fontFamily: undefined,
-    isCustom: false,
-  });
+  const terminalProfileFontRef = useRef<{
+    fontFamily: string | undefined;
+    isCustom: boolean;
+    isFallback: boolean;
+  }>({ fontFamily: undefined, isCustom: false, isFallback: false });
   const resolveFontFamily = useCallback(
     () =>
       resolveTerminalFontFamily({
         customMonoFamily: monoFontFamilyRef.current,
         profileFontFamily: terminalProfileFontRef.current.fontFamily,
         profileFontIsCustom: terminalProfileFontRef.current.isCustom,
+        profileFontIsFallback: terminalProfileFontRef.current.isFallback,
         defaultStack: DEFAULT_TERMINAL_FONT_FAMILY,
       }),
     [],
@@ -384,6 +386,12 @@ export function TerminalSession({
         termRef.current = existingEntry.term;
         fitAddonRef.current = existingEntry.fitAddon;
         terminalIdRef.current = existingEntry.terminalId || undefined;
+        terminalProfileFontRef.current = {
+          fontFamily: existingEntry.profileFontFamily,
+          isCustom: existingEntry.profileFontIsCustom,
+          isFallback: existingEntry.profileFontIsFallback,
+        };
+        existingEntry.term.options.fontFamily = resolveFontFamily();
         el.appendChild(existingEntry.hostEl);
         const reuseThemeObserver = new MutationObserver(() => {
           // Read from entry.profileTheme: after remount, the component-local ref has reset to undefined,
@@ -558,6 +566,9 @@ export function TerminalSession({
         term,
         fitAddon,
         terminalId: "",
+        profileFontFamily: undefined,
+        profileFontIsCustom: false,
+        profileFontIsFallback: false,
         cwd: cwd ?? "",
         // workspaceKey is used to dispose by workspace when a workspace tab is actually closed (matching bottom-terminal openWorkspaceKeys).
         workspaceKey: workspaceKey ?? cwd ?? "",
@@ -600,10 +611,18 @@ export function TerminalSession({
           // Otherwise scheduleFitAndResize("init") may be deduplicated by pendingSize, leaving the PTY at the wrong cols/rows.
           flushTerminalServiceResize();
           term.options.windowsPty = normalizeWindowsPtyOption(windowsPty);
+          const profileFontFamily =
+            fontFamilySource === "fallback" ? undefined : fontFamily || undefined;
+          const profileFontIsCustom = fontFamilySource === "custom";
+          const profileFontIsFallback = fontFamilySource === "fallback";
           terminalProfileFontRef.current = {
-            fontFamily: fontFamily || undefined,
-            isCustom: fontFamilySource === "custom",
+            fontFamily: profileFontFamily,
+            isCustom: profileFontIsCustom,
+            isFallback: profileFontIsFallback,
           };
+          entry.profileFontFamily = profileFontFamily;
+          entry.profileFontIsCustom = profileFontIsCustom;
+          entry.profileFontIsFallback = profileFontIsFallback;
           term.options.fontFamily = resolveFontFamily();
           const nextFontSize = normalizeTerminalFontSize(fontSize);
           if (nextFontSize) {
@@ -945,8 +964,9 @@ export function TerminalSession({
         // Without xterm's windowsPty compatibility, PSReadLine later redraws input at old coordinates over the previous command's output.
         term.options.windowsPty = normalizeWindowsPtyOption(windowsPty);
         terminalProfileFontRef.current = {
-          fontFamily: fontFamily || undefined,
+          fontFamily: fontFamilySource === "fallback" ? undefined : fontFamily || undefined,
           isCustom: fontFamilySource === "custom",
+          isFallback: fontFamilySource === "fallback",
         };
         term.options.fontFamily = resolveFontFamily();
         const nextFontSize = normalizeTerminalFontSize(fontSize);
