@@ -18,7 +18,13 @@ describe("cursor pointer base rule", () => {
 
   it("covers Radix div-based interactive roles (they use data-disabled, not :disabled)", () => {
     for (const role of ["menuitem", "menuitemcheckbox", "menuitemradio", "option", "treeitem"]) {
-      expect(rule).toContain(`[role="${role}"]:not([aria-disabled="true"]):not([data-disabled])`);
+      const dataDisabledExclusion =
+        role === "option"
+          ? ':not([data-disabled="true"]):not([data-disabled=""])'
+          : ":not([data-disabled])";
+      expect(rule).toContain(
+        `[role="${role}"]:not([aria-disabled="true"])${dataDisabledExclusion}`,
+      );
     }
     expect(rule).toMatch(
       /\[role="button"\]:not\(:disabled\):not\(\[aria-disabled="true"\]\):not\(\s*\[data-disabled\]\s*\)/u,
