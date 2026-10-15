@@ -22,6 +22,36 @@ interface StorageLike {
   setItem(key: string, value: string): void;
 }
 
+const pendingEntriesByStorage = new WeakMap<
+  StorageLike,
+  Map<string, WorkspaceDisplayEntry | null>
+>();
+
+function getPendingEntries(storage: StorageLike): Map<string, WorkspaceDisplayEntry | null> {
+  let pendingEntries = pendingEntriesByStorage.get(storage);
+  if (!pendingEntries) {
+    pendingEntries = new Map();
+    pendingEntriesByStorage.set(storage, pendingEntries);
+  }
+  return pendingEntries;
+}
+
+function applyPendingEntries(
+  entries: Record<string, WorkspaceDisplayEntry>,
+  pendingEntries: Map<string, WorkspaceDisplayEntry | null>,
+): Record<string, WorkspaceDisplayEntry> {
+  if (pendingEntries.size === 0) return entries;
+  const mergedEntries = { ...entries };
+  for (const [workspaceKey, entry] of pendingEntries) {
+    if (entry === null) {
+      delete mergedEntries[workspaceKey];
+    } else {
+      mergedEntries[workspaceKey] = entry;
+    }
+  }
+  return mergedEntries;
+}
+
 function getBrowserStorage(): StorageLike | null {
   if (typeof window === "undefined") {
     return null;
@@ -80,11 +110,13 @@ function readStoredEntries(
 function persistEntries(
   entries: Record<string, WorkspaceDisplayEntry>,
   storage: StorageLike | null,
-) {
+): boolean {
   try {
     storage?.setItem(WORKSPACE_DISPLAY_STORAGE_KEY, JSON.stringify(entries));
+    return storage !== null;
   } catch {
     // Keep the in-memory state when persistence is unavailable.
+    return false;
   }
 }
 
@@ -92,11 +124,15 @@ export function createWorkspaceDisplayStore(
   storage: StorageLike | null = getBrowserStorage(),
 ): UseBoundStore<StoreApi<WorkspaceDisplayState>> {
   return create<WorkspaceDisplayState>()((set, get) => {
+    const pendingEntries = storage ? getPendingEntries(storage) : new Map();
     const updateEntry = (
       workspaceKey: string,
       patch: (entry: WorkspaceDisplayEntry) => WorkspaceDisplayEntry | null,
     ) => {
-      const entries = storage ? readStoredEntries(storage, get().entries) : get().entries;
+      const entries = applyPendingEntries(
+        storage ? readStoredEntries(storage, get().entries) : get().entries,
+        pendingEntries,
+      );
       const current = entries[workspaceKey] ?? {};
       const next = patch(current);
       const updatedEntries = { ...entries };
@@ -105,7 +141,14 @@ export function createWorkspaceDisplayStore(
       } else {
         updatedEntries[workspaceKey] = next;
       }
-      persistEntries(updatedEntries, storage);
+      const persisted = persistEntries(updatedEntries, storage);
+      if (storage) {
+        if (persisted) {
+          pendingEntries.clear();
+        } else {
+          pendingEntries.set(workspaceKey, updatedEntries[workspaceKey] ?? null);
+        }
+      }
       set({ entries: updatedEntries });
     };
 
@@ -142,7 +185,11 @@ export const useWorkspaceDisplayStore = createWorkspaceDisplayStore();
 if (typeof window !== "undefined") {
   window.addEventListener("storage", (event) => {
     if (event.key !== null && event.key !== WORKSPACE_DISPLAY_STORAGE_KEY) return;
-    useWorkspaceDisplayStore.setState({ entries: readStoredEntries(getBrowserStorage()) });
+    const storage = getBrowserStorage();
+    const entries = readStoredEntries(storage);
+    useWorkspaceDisplayStore.setState({
+      entries: storage ? applyPendingEntries(entries, getPendingEntries(storage)) : entries,
+    });
   });
 }
 

@@ -133,6 +133,29 @@ describe("workspaceDisplayStore", () => {
     });
   });
 
+  it("retains unpersisted updates and removals across later successful reads", () => {
+    const values = new Map([
+      ["zcode-workspace-display", JSON.stringify({ "/repo": { displayName: "Saved" } })],
+    ]);
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: () => {
+        throw new Error("storage quota exceeded");
+      },
+    };
+    const store = createWorkspaceDisplayStore(storage);
+
+    store.getState().setWorkspaceDisplayName("/repo", "Updated");
+    store.getState().setWorkspaceColor("/repo", "blue");
+    expect(store.getState().entries["/repo"]).toEqual({ displayName: "Updated", color: "blue" });
+
+    store.getState().setWorkspaceDisplayName("/repo", null);
+    store.getState().setWorkspaceColor("/repo", null);
+    store.getState().setWorkspaceColor("/other", "orange");
+
+    expect(store.getState().entries).toEqual({ "/other": { color: "orange" } });
+  });
+
   it("selects the entry by identity fallback key", () => {
     const store = createWorkspaceDisplayStore(createMemoryStorage());
     store.getState().setWorkspaceDisplayName("identity-1", "Remote repo");

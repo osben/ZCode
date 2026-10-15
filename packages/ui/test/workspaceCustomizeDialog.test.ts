@@ -10,20 +10,22 @@ function currentEntry() {
   return useWorkspaceDisplayStore.getState().entries["/ws/a"];
 }
 
-function renderDialog() {
-  return render(
-    createElement(
-      ZCodeIntlProvider,
-      { initialLocale: "en-US" },
-      createElement(WorkspaceCustomizeDialog, {
-        open: true,
-        onOpenChange: () => {},
-        workspaceKey: "/ws/a",
-        defaultName: "Folder A",
-        entry: currentEntry(),
-      }),
-    ),
+function dialogTree(entry = currentEntry()) {
+  return createElement(
+    ZCodeIntlProvider,
+    { initialLocale: "en-US" },
+    createElement(WorkspaceCustomizeDialog, {
+      open: true,
+      onOpenChange: () => {},
+      workspaceKey: "/ws/a",
+      defaultName: "Folder A",
+      entry,
+    }),
   );
+}
+
+function renderDialog() {
+  return render(dialogTree());
 }
 
 afterEach(() => {
@@ -71,6 +73,24 @@ describe("WorkspaceCustomizeDialog", () => {
       expect(screen.getByLabelText("Blue").getAttribute("aria-pressed")).toBe("true"),
     );
     expect(screen.getByLabelText("No color").getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("preserves unsaved drafts when saved preferences change while open", async () => {
+    useWorkspaceDisplayStore.setState({
+      entries: { "/ws/a": { displayName: "Saved", color: "red" } },
+    });
+    const view = renderDialog();
+    const input = screen.getByTestId("workspace-customize-display-name") as HTMLInputElement;
+
+    await waitFor(() => expect(input.value).toBe("Saved"));
+    fireEvent.change(input, { target: { value: "Unsaved name" } });
+    fireEvent.click(screen.getByLabelText("Green"));
+
+    view.rerender(dialogTree({ displayName: "Saved", color: "blue" }));
+
+    expect(input.value).toBe("Unsaved name");
+    expect(screen.getByLabelText("Green").getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByLabelText("Blue").getAttribute("aria-pressed")).toBe("false");
   });
 
   it("switches between color presets without the selection reverting", async () => {

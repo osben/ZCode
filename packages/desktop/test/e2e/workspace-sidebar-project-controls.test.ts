@@ -44,10 +44,13 @@ describe("workspace sidebar project controls E2E", () => {
     await browser.waitUntil(
       () =>
         browser.execute(
-          (params) =>
-            document
-              .querySelector(`[data-testid="${params.rowId}"]`)
-              ?.querySelector('[data-workspace-pinned-indicator="true"]') !== null,
+          (params) => {
+            const row = Array.from(document.querySelectorAll<HTMLElement>("[data-testid]")).find(
+              (candidate) => candidate.dataset.testid === params.rowId,
+            );
+            if (!row) return false;
+            return row.querySelector('[data-workspace-pinned-indicator="true"]') !== null;
+          },
           { rowId: testId(TID_WORKSPACE_ITEM, secondWorkspace) },
         ),
       { timeout: 10_000, timeoutMsg: "Pinned project indicator did not appear" },
@@ -64,10 +67,13 @@ describe("workspace sidebar project controls E2E", () => {
     await browser.waitUntil(
       () =>
         browser.execute(
-          (rowId) =>
-            document
-              .querySelector(`[data-testid="${rowId}"]`)
-              ?.querySelector('[data-workspace-pinned-indicator="true"]') === null,
+          (rowId) => {
+            const row = Array.from(document.querySelectorAll<HTMLElement>("[data-testid]")).find(
+              (candidate) => candidate.dataset.testid === rowId,
+            );
+            if (!row) return false;
+            return row.querySelector('[data-workspace-pinned-indicator="true"]') === null;
+          },
           testId(TID_WORKSPACE_ITEM, secondWorkspace),
         ),
       { timeout: 10_000, timeoutMsg: "Pinned project indicator did not clear" },
@@ -102,7 +108,9 @@ describe("workspace sidebar project controls E2E", () => {
       () =>
         browser.execute(
           (params) => {
-            const row = document.querySelector(`[data-testid="${params.rowId}"]`);
+            const row = Array.from(document.querySelectorAll<HTMLElement>("[data-testid]")).find(
+              (candidate) => candidate.dataset.testid === params.rowId,
+            );
             const icon = row?.querySelector<HTMLElement>("[data-workspace-color]");
             return (
               row?.textContent?.includes(params.label) && icon?.dataset.workspaceColor === "blue"
@@ -121,7 +129,9 @@ describe("workspace sidebar project controls E2E", () => {
       () =>
         browser.execute(
           (params) => {
-            const row = document.querySelector(`[data-testid="${params.rowId}"]`);
+            const row = Array.from(document.querySelectorAll<HTMLElement>("[data-testid]")).find(
+              (candidate) => candidate.dataset.testid === params.rowId,
+            );
             const icon = row?.querySelector<HTMLElement>("[data-workspace-color]");
             return (
               !row?.textContent?.includes("Sidebar Alias") && icon?.dataset.workspaceColor === ""

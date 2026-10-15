@@ -55,17 +55,21 @@ export function WorkspaceCustomizeDialog({
   const [nameDraft, setNameDraft] = useState("");
   const [colorDraft, setColorDraft] = useState<ZCodeTaskGroupColor | null>(null);
   const compositionActiveRef = useRef(false);
+  const draftSeedRef = useRef({ open: false, workspaceKey });
 
-  // Re-seed the drafts each time the dialog opens so edits from a previous
-  // session of the dialog and concurrent changes do not leak between opens.
+  // Seed drafts when the dialog opens or switches workspaces. Saved changes
+  // arriving while it stays open must not discard the user's in-progress edits.
   // The name field is prefilled with the effective name (custom name or folder label),
   // not left as a placeholder — an empty submit still clears back to the folder name.
   useEffect(() => {
-    if (open) {
+    const shouldSeed =
+      open && (!draftSeedRef.current.open || draftSeedRef.current.workspaceKey !== workspaceKey);
+    draftSeedRef.current = { open, workspaceKey };
+    if (shouldSeed) {
       setNameDraft(entry?.displayName ?? defaultName);
       setColorDraft(entry?.color ?? null);
     }
-  }, [open, defaultName, entry?.color, entry?.displayName]);
+  }, [open, workspaceKey, defaultName, entry?.color, entry?.displayName]);
 
   const handleSave = () => {
     const trimmedName = nameDraft.trim();
