@@ -1,7 +1,9 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
 import {
   createWorkspaceDisplayStore,
   selectWorkspaceDisplayEntry,
+  useWorkspaceDisplayStore,
   type WorkspaceDisplayState,
 } from "@/store/workspaceDisplayStore.js";
 
@@ -29,6 +31,39 @@ describe("workspaceDisplayStore", () => {
 
     const persisted = JSON.parse(storage.getItem("zcode-workspace-display") ?? "{}");
     expect(persisted["/repo"]).toEqual({ displayName: "My Repo", color: "purple" });
+  });
+
+  it("merges a window's workspace update with the latest persisted entries", () => {
+    const storage = createMemoryStorage();
+    const firstWindow = createWorkspaceDisplayStore(storage);
+    const secondWindow = createWorkspaceDisplayStore(storage);
+
+    firstWindow.getState().setWorkspaceDisplayName("/repo/a", "A");
+    secondWindow.getState().setWorkspaceDisplayName("/repo/b", "B");
+
+    expect(JSON.parse(storage.getItem("zcode-workspace-display") ?? "{}")).toEqual({
+      "/repo/a": { displayName: "A" },
+      "/repo/b": { displayName: "B" },
+    });
+    expect(secondWindow.getState().entries).toEqual({
+      "/repo/a": { displayName: "A" },
+      "/repo/b": { displayName: "B" },
+    });
+  });
+
+  it("reloads other-window changes from the localStorage event", () => {
+    localStorage.setItem(
+      "zcode-workspace-display",
+      JSON.stringify({ "/repo/b": { color: "blue" } }),
+    );
+    useWorkspaceDisplayStore.setState({ entries: { "/repo/a": { displayName: "Stale" } } });
+
+    window.dispatchEvent(new StorageEvent("storage", { key: "zcode-workspace-display" }));
+
+    expect(useWorkspaceDisplayStore.getState().entries).toEqual({
+      "/repo/b": { color: "blue" },
+    });
+    localStorage.removeItem("zcode-workspace-display");
   });
 
   it("removing the display name keeps the color and vice versa", () => {

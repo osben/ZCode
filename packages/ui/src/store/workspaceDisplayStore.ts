@@ -90,16 +90,17 @@ export function createWorkspaceDisplayStore(
       workspaceKey: string,
       patch: (entry: WorkspaceDisplayEntry) => WorkspaceDisplayEntry | null,
     ) => {
-      const current = get().entries[workspaceKey] ?? {};
+      const entries = storage ? readStoredEntries(storage) : get().entries;
+      const current = entries[workspaceKey] ?? {};
       const next = patch(current);
-      const entries = { ...get().entries };
+      const updatedEntries = { ...entries };
       if (next === null || Object.keys(next).length === 0) {
-        delete entries[workspaceKey];
+        delete updatedEntries[workspaceKey];
       } else {
-        entries[workspaceKey] = next;
+        updatedEntries[workspaceKey] = next;
       }
-      persistEntries(entries, storage);
-      set({ entries });
+      persistEntries(updatedEntries, storage);
+      set({ entries: updatedEntries });
     };
 
     return {
@@ -131,6 +132,13 @@ export function createWorkspaceDisplayStore(
 
 /** App-wide singleton backed by browser localStorage (no-op storage outside the renderer). */
 export const useWorkspaceDisplayStore = createWorkspaceDisplayStore();
+
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", (event) => {
+    if (event.key !== null && event.key !== WORKSPACE_DISPLAY_STORAGE_KEY) return;
+    useWorkspaceDisplayStore.setState({ entries: readStoredEntries(getBrowserStorage()) });
+  });
+}
 
 /** Convenience selector: entry for a workspace with the standard identity fallback. */
 export function selectWorkspaceDisplayEntry(

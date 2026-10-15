@@ -48,6 +48,19 @@ describe("WorkspaceCustomizeDialog", () => {
     });
   });
 
+  it("does not save the display name when Enter confirms an IME candidate", async () => {
+    useWorkspaceDisplayStore.setState({ entries: {} });
+    renderDialog();
+    const input = screen.getByTestId("workspace-customize-display-name");
+
+    fireEvent.compositionStart(input);
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true, keyCode: 229 });
+
+    expect(useWorkspaceDisplayStore.getState().entries["/ws/a"]).toBeUndefined();
+    expect(screen.getByTestId("workspace-customize-dialog")).toBeTruthy();
+    fireEvent.compositionEnd(input);
+  });
+
   it("re-seeds the saved selection when the dialog reopens", async () => {
     useWorkspaceDisplayStore.setState({
       entries: { "/ws/a": { color: "blue" } },

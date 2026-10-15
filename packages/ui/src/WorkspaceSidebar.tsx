@@ -447,17 +447,26 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   const [activeWorkspaceDragWidth, setActiveWorkspaceDragWidth] = useState<number | null>(null);
   const baseServices = useBaseWorkspaceServices();
   const [pinnedWorkspaceKeys, setPinnedWorkspaceKeys] = useState<Set<string>>(() => new Set());
+  const [pinnedWorkspaceKeysLoaded, setPinnedWorkspaceKeysLoaded] = useState(false);
   useEffect(() => {
     let cancelled = false;
+    setPinnedWorkspaceKeysLoaded(false);
+    setPinnedWorkspaceKeys(new Set());
     baseServices.zcodeTaskService
       .listPinnedWorkspaceKeys()
       .then((keys) => {
-        if (!cancelled) setPinnedWorkspaceKeys(new Set(keys));
+        if (!cancelled) {
+          setPinnedWorkspaceKeys(new Set(keys));
+          setPinnedWorkspaceKeysLoaded(true);
+        }
       })
       .catch((error) => {
-        logger.warn("[WorkspaceSidebar] failed to load pinned workspaces", {
-          error: error instanceof Error ? error.message : String(error),
-        });
+        if (!cancelled) {
+          setPinnedWorkspaceKeysLoaded(true);
+          logger.warn("[WorkspaceSidebar] failed to load pinned workspaces", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       });
     return () => {
       cancelled = true;
@@ -482,6 +491,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   );
   const handleToggleWorkspacePinned = useCallback(
     (workspaceKey: string, pinned: boolean) => {
+      if (!pinnedWorkspaceKeysLoaded) return;
       setPinnedWorkspaceKeys((current) => {
         const next = new Set(current);
         if (pinned) next.add(workspaceKey);
@@ -498,7 +508,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
         toast(intl.formatMessage({ id: "workspaceSidebar.pinFailed" }));
       });
     },
-    [baseServices, intl],
+    [baseServices, intl, pinnedWorkspaceKeysLoaded],
   );
   const [webRemoteCollapsedWorkspaceKeys, setWebRemoteCollapsedWorkspaceKeys] = useState<
     Set<string>
@@ -1913,7 +1923,11 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
                                               mobileActiveTaskKey={mobileActiveTaskKey}
                                               isWebRemoteControl={isWebRemoteControlSidebar}
                                               workspaceKey={workspaceKey}
-                                              onToggleWorkspacePinned={handleToggleWorkspacePinned}
+                                              onToggleWorkspacePinned={
+                                                pinnedWorkspaceKeysLoaded
+                                                  ? handleToggleWorkspacePinned
+                                                  : undefined
+                                              }
                                               onShowMoreWorkspaceTasks={
                                                 handleShowMoreWorkspaceTasks
                                               }

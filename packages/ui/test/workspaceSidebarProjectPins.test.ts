@@ -52,6 +52,14 @@ describe("WorkspaceSidebar project pins", () => {
     expect(source).not.toContain("readPinnedWorkspaceKeys");
   });
 
+  it("does not expose pin actions until the initial pinned-key request settles", () => {
+    const source = readWorkspaceSidebarSource();
+    expect(source).toMatch(
+      /onToggleWorkspacePinned=\{\s*pinnedWorkspaceKeysLoaded\s*\?\s*handleToggleWorkspacePinned\s*:\s*undefined/su,
+    );
+    expect(source).toContain("if (!pinnedWorkspaceKeysLoaded) return;");
+  });
+
   it("ships pin labels in every locale", () => {
     for (const locale of [enUS, ukUA, zhCN]) {
       expect(locale["workspaceSidebar.pinProject"]).toBeTruthy();

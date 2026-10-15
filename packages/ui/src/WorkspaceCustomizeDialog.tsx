@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ZCodeTaskGroupColor } from "@zcode/services";
 import { Button } from "@/components/ui/button.js";
 import {
@@ -14,6 +14,7 @@ import { Label } from "@/components/ui/label.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { cn } from "@/components/lib/utils.js";
 import { TASK_GROUP_COLORS } from "@/workspace-grouped-tasks/types.js";
+import { isImeComposingKeyEvent } from "@/lib/imeComposition.js";
 import {
   useWorkspaceDisplayStore,
   type WorkspaceDisplayEntry,
@@ -53,6 +54,7 @@ export function WorkspaceCustomizeDialog({
 
   const [nameDraft, setNameDraft] = useState("");
   const [colorDraft, setColorDraft] = useState<ZCodeTaskGroupColor | null>(null);
+  const compositionActiveRef = useRef(false);
 
   // Re-seed the drafts each time the dialog opens so edits from a previous
   // session of the dialog and concurrent changes do not leak between opens.
@@ -102,8 +104,22 @@ export function WorkspaceCustomizeDialog({
               value={nameDraft}
               placeholder={defaultName}
               onChange={(event) => setNameDraft(event.target.value)}
+              onCompositionStart={() => {
+                compositionActiveRef.current = true;
+              }}
+              onCompositionEnd={() => {
+                compositionActiveRef.current = false;
+              }}
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
+                  if (
+                    isImeComposingKeyEvent({
+                      compositionActive: compositionActiveRef.current,
+                      nativeEvent: event.nativeEvent,
+                    })
+                  ) {
+                    return;
+                  }
                   event.preventDefault();
                   handleSave();
                 }

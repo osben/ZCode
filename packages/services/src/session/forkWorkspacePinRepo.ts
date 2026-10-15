@@ -111,22 +111,23 @@ export class ForkWorkspacePinRepo {
     db.exec(`CREATE TABLE IF NOT EXISTS tasks_schema_migration (
       id TEXT PRIMARY KEY, checksum TEXT NOT NULL, time_applied INTEGER NOT NULL
     )`);
-    const applied = db
-      .prepare("SELECT checksum FROM tasks_schema_migration WHERE id=?")
-      .get(FORK_WORKSPACE_PINS_MIGRATION_ID) as { checksum: string } | undefined;
-    if (applied) {
-      if (applied.checksum !== checksum) {
-        throw Object.assign(
-          new Error(
-            `Task database migration checksum mismatch: ${FORK_WORKSPACE_PINS_MIGRATION_ID}`,
-          ),
-          { kind: "checksum_mismatch" },
-        );
-      }
-      return;
-    }
     db.exec("BEGIN IMMEDIATE");
     try {
+      const applied = db
+        .prepare("SELECT checksum FROM tasks_schema_migration WHERE id=?")
+        .get(FORK_WORKSPACE_PINS_MIGRATION_ID) as { checksum: string } | undefined;
+      if (applied) {
+        if (applied.checksum !== checksum) {
+          throw Object.assign(
+            new Error(
+              `Task database migration checksum mismatch: ${FORK_WORKSPACE_PINS_MIGRATION_ID}`,
+            ),
+            { kind: "checksum_mismatch" },
+          );
+        }
+        db.exec("COMMIT");
+        return;
+      }
       db.exec(FORK_WORKSPACE_PINS_SCHEMA);
       db.prepare("INSERT INTO tasks_schema_migration VALUES (?,?,?)").run(
         FORK_WORKSPACE_PINS_MIGRATION_ID,

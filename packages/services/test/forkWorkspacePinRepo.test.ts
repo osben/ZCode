@@ -60,6 +60,29 @@ describe("ForkWorkspacePinRepo", () => {
     expect(await repo.listPinnedWorkspaceKeys()).toEqual(["identity:/remote/b"]);
   });
 
+  it("initializes the fork migration from two window-owned repositories", async () => {
+    const first = new ForkWorkspacePinRepo(buildDbPath());
+    const second = new ForkWorkspacePinRepo(buildDbPath());
+    try {
+      await Promise.all([first.ensureReady(), second.ensureReady()]);
+      expect(await first.listPinnedWorkspaceKeys()).toEqual([]);
+      expect(await second.listPinnedWorkspaceKeys()).toEqual([]);
+
+      const db = new DatabaseSync(buildDbPath());
+      try {
+        const rows = db
+          .prepare("SELECT id FROM tasks_schema_migration WHERE id = '9001_fork_workspace_pins'")
+          .all();
+        expect(rows).toHaveLength(1);
+      } finally {
+        db.close();
+      }
+    } finally {
+      first.close();
+      second.close();
+    }
+  });
+
   it("survives reopen and rejects a tampered fork migration checksum", async () => {
     repo = new ForkWorkspacePinRepo(buildDbPath());
     await repo.ensureReady();
