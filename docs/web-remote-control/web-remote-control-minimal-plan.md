@@ -1,145 +1,143 @@
-# Mobile Remote Access 最小跑通规划（历史方案）
+# Mobile Remote Access Minimal Run Plan (Historical Plan)
 
-> **已废弃：** 本文描述的是已经移除的仓库内 relay 和远控专用 Host 方案，仅作为历史记录保留。
-> 当前实现按 endpoint 选择外部 relay：production 为 `wss://zcode.z.ai/ws`，标准 test 为
-> `wss://zcode.z.ai/ws`。默认二维码入口按 App 版本选择 `/remote/v3` 或 `/remote/v4`；
-> `3.4.0` 稳定版门槛及预发布版本规则见现行架构文档，显式 URL 覆盖优先。
-> 手机通过 shared-host attachment 连接目标桌面窗口唯一 Window Host 中的 local/remote workspace scope；
-> 不启动手机专用 Host/Agent。当前事实以 [Web Remote Control Architecture](./web-remote-control-architecture.md) 为准。
+> **Deprecated:** This document describes the already-removed in-repo relay and remote-control-dedicated host plan, retained for historical records only.
+> The current implementation selects the external relay by endpoint: production is `wss://zcode.z.ai/ws`, standard test is
+> `wss://zcode.z.ai/ws`. The default QR code entry selects `/remote/v3` or `/remote/v4` by App version;
+> the `3.4.0` stable version threshold and pre-release version rules are described in the current architecture document; explicit URL overrides take priority.
+> The mobile client connects to the local/remote workspace scope in the single Window Host of the target desktop window through shared-host attachment;
+> no mobile-dedicated Host/Agent is started. Current facts are defined by [Web Remote Control Architecture](./web-remote-control-architecture.md).
 
-关联文档：
+Related documents:
 
 - `todo/web-remote-control.md`
 - `docs/remote-workspace-session-in-current-window.md`
 
-## 0. 结论先行
+## 0. Conclusion First
 
-这期如果按“**最小跑通，先不管安全**”来做，建议**不要**沿用 `todo/web-remote-control.md` 里“host process 内再开一个本地 WebSocket server，再由 main 进程桥接到 relay”的方案，而是改成下面这条更贴近当前代码现状的路径：
+If this round is done as "**minimal run, ignoring security for now**," it is recommended **not** to continue using the "open a local WebSocket server inside the host process, then bridge from the main process to the relay" plan from `todo/web-remote-control.md`, but to instead use this path that is closer to the current code status:
 
-1. Desktop main 在用户点击“开启Web 远程控制”后，**单独拉起一条 Web 远程控制 专用 host process**
-2. 这条 host 不给 renderer 用，main 自己持有它的 `MessagePort`
-3. main 与 relay 建立控制连接
-4. relay 在手机接入后，再给 main 分配一条 session data WebSocket
-5. main 直接桥接：`relay data ws <-> MessagePort <-> host ChannelServer`
-6. 手机端复用 `packages/web`，只是把服务入口从本地 `/ws` 改成 relay 的 mobile ws
+1. The Desktop main **spawns a Web remote control dedicated host process** after the user clicks "Enable Web Remote Control"
+2. This host is not usable by the renderer; the main holds its `MessagePort` itself
+3. The main establishes a control connection with the relay
+4. After the mobile client connects, the relay allocates a session data WebSocket to the main
+5. The main directly bridges: `relay data ws <-> MessagePort <-> host ChannelServer`
+6. The mobile client reuses `packages/web`, just changing the service entry from the local `/ws` to the relay's mobile ws
 
-这样做的原因很直接：
+The reasons are straightforward:
 
-1. **当前代码已经不是“一个 host = 一个 activeServices”模型了。**
-   历史实现曾是“base host + remote workspace session host”；当前契约已统一为单 Host 内按 workspaceKey 暴露远端 workspace service scope。
-2. **单独起 mobile host，local / remote 可以统一处理。**
-   本地 workspace 起 `init-local`，远程 workspace 起 `init-remote`，都能得到完整 `IServiceAccessor`。
-3. **不需要给现有 host 再加一个本地 ws server。**
-   直接复用已经跑通的 `MessagePortProtocol + ChannelServer`，总体改动更小，风险更低。
-4. **不会影响 desktop renderer 当前正在使用的链路。**
-   Web 远程控制 是旁路能力，失败时也不容易把主窗口 RPC 链路带坏。
+1. **The current code is no longer the "one host = one activeServices" model.**
+   Historical implementations were "base host + remote workspace session host"; the current contract has been unified to exposing remote workspace service scope by workspaceKey within a single Host.
+2. **Starting a mobile host separately unifies local / remote handling.**
+   Local workspaces start `init-local`; remote workspaces start `init-remote`; both get a complete `IServiceAccessor`.
+3. **No need to add a local ws server to the existing host.**
+   Directly reuse the already-working `MessagePortProtocol + ChannelServer`; the overall changes are smaller and the risk is lower.
+4. **It does not affect the path currently used by the desktop renderer.**
+   Web remote control is a side-capability; failure is unlikely to corrupt the main window's RPC path.
 
-另外，仓库里虽然已经有 `packages/relay/dist/*`，但目前**没有对应 source/package 定义**，应视为历史产物，不作为这次实现基线。本期要把 relay 作为 monorepo 里的正式包重新建起来。
+Additionally, although there are already `packages/relay/dist/*` in the repository, there is currently **no corresponding source/package definition**, so it should be treated as a historical artifact, not as the baseline for this implementation. This round needs to re-build the relay as a formal package in the monorepo.
 
-## 0.1 历史实现曾落地补充
+## 0.1 Historical Implementation Notes Filled In
 
-围绕“会话生命周期和错误页”以及“SSH remote 收稳”，这个早期实现阶段额外补了这几件事：
+Around "session lifecycle and error pages" and "stabilizing SSH remote", this early implementation phase additionally covered:
 
-1. relay 会为已结束的 mobile session 保留一段短时 tombstone，并记录关闭原因
-2. mobile web 在以下场景会直接落明确错误页，而不是一直 loading：
-   - 链接已失效
-   - 会话已被其他页面占用
-   - 桌面端已断开或停止共享
-   - relay 不可用 / 连接异常
-3. Desktop main 会在 Web 远程控制 发生异常关闭时保留 `error + failure reason`，不再直接回到 `idle`
-4. SSH remote 模式下，mobile 专用 host 会先等待 remote host 真正 `Connected`，再开始桥接，避免手机端卡在初始化
+1. The relay keeps a short-lived tombstone for ended mobile sessions and records the close reason
+2. The mobile web lands on an explicit error page in the following scenarios, rather than staying loading:
+   - The link has expired
+   - The session has been occupied by another page
+   - The desktop has disconnected or stopped sharing
+   - The relay is unavailable / connection abnormal
+3. The Desktop main retains `error + failure reason` when Web remote control ends abnormally, rather than directly returning to `idle`
+4. In SSH remote mode, the mobile-dedicated host waits for the remote host to truly `Connected` before starting the bridge, avoiding the mobile client getting stuck in initialization
 
-该历史阶段曾经保持的产品边界：
+The product boundaries maintained by this historical phase:
 
-1. Web 远程控制 只支持进入 Desktop **已经打开**的 workspace
-2. 不支持在手机端新建 Docker / SSH / WSL workspace
-3. 不支持断线重连和 session 恢复
+1. Web remote control only supports entering **already opened** workspaces on the Desktop
+2. Does not support creating Docker / SSH / WSL workspaces on the mobile client
+3. Does not support disconnection reconnection and session recovery
 
-当前实现已经演进为 shared-host attachment + 原地恢复：手机 `/remote` 连接目标桌面窗口
-唯一 Window Host 中已有的 local/remote workspace scope，不创建专用 mobile host；手机消息流使用
-`replayable` snapshot/replay 恢复，桌面继续使用 `continuous` direct stream。本文后续章节
-仅保留为早期最小方案记录。
+The current implementation has evolved to shared-host attachment + in-place recovery: the mobile `/remote` connects to the local/remote workspace scope in the single Window Host of the target desktop window, without creating a dedicated mobile host; the mobile message stream uses
+`replayable` snapshot/replay recovery, while the desktop continues with `continuous` direct stream. The subsequent chapters of this document are retained only as records of the early minimal plan.
 
-## 1. 范围与边界
+## 1. Scope and Boundaries
 
-### 本期目标
+### This Round's Goals
 
-1. Desktop 当前 workspace 可以生成一个Web 远程控制二维码
-2. 手机浏览器扫码后，打开复用 `packages/web` 的 UI
-3. 手机端能访问和 Desktop 当前 workspace 一致的服务能力
-4. 至少支持两类 workspace：
-   - 本地 workspace
-   - SSH remote workspace
+1. The current desktop workspace can generate a Web remote control QR code
+2. After scanning the QR code, the mobile browser opens a UI reusing `packages/web`
+3. The mobile client can access service capabilities consistent with the current desktop workspace
+4. At least two types of workspaces are supported:
+   - Local workspaces
+   - SSH remote workspaces
 
-### 明确不做
+### Explicitly Out of Scope
 
-1. 不做 TLS / OAuth / token 校验闭环
-2. 不做 Desktop 端确认弹窗
-3. 不做多手机同时连接
-4. 不做断线重连 / session 恢复
-5. 不做和 Desktop 当前 tab / 当前 task 的实时同步
-6. 不做只读权限控制
-7. 不做跨设备广播一致性保证
+1. No TLS / OAuth / token validation closed loop
+2. No desktop confirmation dialog
+3. No multiple mobile devices connecting simultaneously
+4. No disconnection reconnection / session recovery
+5. No real-time sync with the current desktop tab / current task
+6. No read-only permission control
+7. No cross-device broadcast consistency guarantee
 
-### 这期的最小产品定义
+### The Minimal Product Definition for This Round
 
-“最小跑通”定义为：
+"Minimal run" is defined as:
 
-1. Desktop 从当前 workspace 发起“开启Web 远程控制”
-2. 手机扫码后能直接进入该 workspace
-3. 手机端至少能完成文件浏览、基本聊天、基本终端连接
-4. Desktop 关闭Web 远程控制后，手机端连接立即失效
+1. The desktop initiates "Enable Web Remote Control" from the current workspace
+2. After the mobile client scans the QR code, it can directly enter that workspace
+3. The mobile client can at least complete file browsing, basic chat, and basic terminal connection
+4. When the desktop disables Web remote control, the mobile connection immediately becomes invalid
 
-## 2. 现状约束
+## 2. Current Constraints
 
-## 2.1 Desktop 现状
+## 2.1 Desktop Current State
 
-当前 desktop 的服务结构是：
+The current service structure of the desktop is:
 
-- App 只有 1 个主 workspace window 和 1 个 Host Process
-- Host 内按 workspaceKey 维护每 workspace 1 个 CLI
-- renderer 通过 `MessagePort` 收到 base services
-- remote workspace tab 再把“base services + remote workspace services”组合成一份 `IServiceAccessor`
+- The App has 1 main workspace window and 1 Host Process
+- The Host maintains 1 CLI per workspace by workspaceKey
+- The renderer receives base services through `MessagePort`
+- The remote workspace tab combines "base services + remote workspace services" into a single `IServiceAccessor`
 
-这意味着：
+This means:
 
-1. **Host 内的 remote workspace scope 只暴露该 workspace 相关服务**
-   没有本地 `setting/credential/oauth/modelProvider` 这些全局能力
-2. **base host 也不能代表当前 remote tab**
-   因为当前 tab 真正使用的 file/system/terminal/zcode task/session 可能来自另一个 remote session host
+1. **The remote workspace scope inside the Host only exposes services related to that workspace**
+   There are no global capabilities like `setting/credential/oauth/modelProvider` locally
+2. **The base host cannot represent the current remote tab**
+   Because the current tab truly uses file/system/terminal/zcode task/session from another remote session host
 
-所以 Web 远程控制 如果直接“借现有 host”，会很容易在 local / remote 场景下出现服务不完整的问题。
+Therefore, if Web remote control directly "borrows the existing host," it will easily encounter incomplete service issues in the local / remote scenarios.
 
-## 2.2 Web 现状
+## 2.2 Web Current State
 
-`packages/web/src/main.tsx` 目前只有两种入口：
+`packages/web/src/main.tsx` currently has only two entry points:
 
 1. `/ws`
 2. `/ws/remote/:id`
 
-并且 `Root` 已经支持 `initialWorkspaceAbsPath`，这对 Web 远程控制 很重要，因为我们可以让手机端**直接落到目标 workspace**，不需要再先进项目选择页。
+And the `Root` already supports `initialWorkspaceAbsPath`, which is important for Web remote control, because we can let the mobile client **directly land on the target workspace** without first entering the project selection page.
 
-## 2.3 Relay 现状
+## 2.3 Relay Current State
 
-当前 `packages/relay/` 只有编译产物，没有：
+The current `packages/relay/` only has compiled artifacts, without:
 
 - `src/`
 - `package.json`
 - `tsconfig.json`
-- build/dev 脚本
+- build/dev scripts
 
-所以本期 relay 应视为**重新落包**，而不是在现有源码上迭代。
+So the relay this round should be treated as **re-packaging**, not iterating on existing source code.
 
-## 3. 推荐方案
+## 3. Recommended Solution
 
-## 3.1 总体架构
+## 3.1 Overall Architecture
 
 ```mermaid
 flowchart LR
-  UI["Desktop UI\n当前 workspace 菜单"] --> Platform["IPlatformService.startWebRemoteControl()"]
+  UI["Desktop UI\nCurrent workspace menu"] --> Platform["IPlatformService.startWebRemoteControl()"]
   Platform --> Main["Desktop Main\nWebRemoteControlManager"]
-  Main --> Host["专用 Mobile Host\nInitLocal / InitRemote"]
-  Host --> Remote["SSH Remote Server\n(仅 remote workspace)"]
+  Main --> Host["Dedicated Mobile Host\nInitLocal / InitRemote"]
+  Host --> Remote["SSH Remote Server\n(remote workspace only)"]
   Main --> RelayCtrl["Relay Control WS"]
   Phone["Mobile Browser"] --> RelayWeb["Relay Web / Bootstrap"]
   Phone --> RelayData["Relay Mobile WS"]
@@ -148,54 +146,54 @@ flowchart LR
   Main --> Host
 ```
 
-## 3.2 关键设计决策
+## 3.2 Key Design Decisions
 
-### 决策 A：每次开启Web 远程控制，都创建一条专用 mobile host
+### Decision A: Create a Dedicated Mobile Host Every Time Web Remote Control is Enabled
 
-不复用 renderer 当前链路。
+Do not reuse the renderer's current path.
 
-原因：
+Reasons:
 
-1. 生命周期最好管
-2. local / remote 统一
-3. 失败面更小
-4. main 可以直接持有 `MessagePort` 做桥接
+1. Lifecycle is easier to manage
+2. Local / remote is unified
+3. Failure surface is smaller
+4. The main can directly hold the `MessagePort` for bridging
 
-### 决策 B：relay 分控制面和数据面
+### Decision B: Split the Relay into Control and Data Planes
 
-建议拆成两类 ws：
+It is recommended to split into two types of ws:
 
-1. **desktop control ws**
-   - 用于 tunnel 注册
-   - 用于通知“某个 mobile session 已经来连了”
-2. **desktop session data ws**
-   - 每个 mobile session 一条
-   - 进入桥接后只传二进制 RPC 帧，不再混控制消息
+1. **Desktop control ws**
+   - Used for tunnel registration
+   - Used to notify "a mobile session has connected"
+2. **Desktop session data ws**
+   - One per mobile session
+   - After entering the bridge, only binary RPC frames are transmitted, without mixing control messages
 
-这样可以避免：
+This avoids:
 
-1. 在同一条 ws 里做 JSON 控制消息和二进制流复用
-2. base64 包装 RPC 帧
-3. 在 relay / main 两端写一层额外的 session 多路复用协议
+1. Reusing JSON control messages and binary streams in the same ws
+2. Base64 wrapping RPC frames
+3. Writing an additional session multiplexing protocol on both the relay / main ends
 
-### 决策 C：Web 远程控制 面向“workspace”，不是面向“窗口”
+### Decision C: Web Remote Control is Directed at "Workspaces", Not "Windows"
 
-UI 发起时必须把当前 workspace 上下文带给 main：
+The UI must pass the current workspace context to the main when initiating:
 
-- 本地 workspace：`workspacePath`
-- 远程 workspace：`workspacePath + remoteSessionId`
+- Local workspace: `workspacePath`
+- Remote workspace: `workspacePath + remoteSessionId`
 
-main 再根据 `remoteSessionId` 去解析当前 mobile host 应该起 `init-local` 还是 `init-remote`。
+The main then determines whether the current mobile host should start `init-local` or `init-remote` based on `remoteSessionId`.
 
-## 4. 分模块规划
+## 4. Module-by-Module Plan
 
 ## 4.1 `packages/shared`
 
-新增 Web 远程控制 领域类型，建议独立文件，例如：
+Add Web remote control domain types, recommended as independent files, e.g.:
 
 - `packages/shared/src/mobile-access.ts`
 
-建议包含：
+Recommended contents:
 
 ```ts
 export interface WebRemoteControlContext {
@@ -221,7 +219,7 @@ export interface WebRemoteControlStatus {
 }
 ```
 
-同时扩展：
+Also extend:
 
 - `packages/shared/src/channels.ts`
   - `PlatformChannels.StartWebRemoteControl`
@@ -232,29 +230,29 @@ export interface WebRemoteControlStatus {
   - `IPlatformService.stopWebRemoteControl()`
   - `IPlatformService.getWebRemoteControlStatus()`
 
-如果 relay 控制消息要共享类型，再加：
+If relay control messages need to share types, add:
 
 - `DesktopControlMessage`
 - `RelayControlMessage`
 
 ## 4.2 `packages/desktop/src/main`
 
-这是本期主战场，建议新建专门模块，例如：
+This is the main battlefield of this round; it is recommended to create a dedicated module, e.g.:
 
 - `packages/desktop/src/main/webRemoteControlManager.ts`
 
-职责：
+Responsibilities:
 
-1. 接收 UI 发起的 `start/stop/status`
-2. 解析当前 workspace 是 local 还是 remote
-3. 为 Web 远程控制 单独启动 host process
-4. 保留这条 host 的 `MessagePort`
-5. 建立 relay control ws
-6. 在 mobile session 真正接入时，再建立 relay data ws
-7. 负责 `MessagePort <-> relay data ws` 的二进制桥接
-8. 负责会话结束后的统一清理
+1. Receive `start/stop/status` initiated by the UI
+2. Determine whether the current workspace is local or remote
+3. Start a dedicated host process for Web remote control
+4. Retain the `MessagePort` for this host
+5. Establish the relay control ws
+6. When the mobile session truly connects, establish the relay data ws
+7. Responsible for the `MessagePort <-> relay data ws` binary bridge
+8. Responsible for unified cleanup after the session ends
 
-这里建议在 main 内部维护：
+It is recommended to maintain inside the main:
 
 ```ts
 interface WebRemoteControlRuntime {
@@ -273,36 +271,36 @@ interface WebRemoteControlRuntime {
 }
 ```
 
-还需要顺手调整当前 remote session 跟踪结构：
+The current remote session tracking structure also needs to be adjusted:
 
-- 现在 `remoteWorkspaceSessionProcessMap` 只记了 `process + webContentsId`
-- 这期至少要补上 `target`
-- 否则 main 无法根据 `remoteSessionId` 还原出 `init-remote` 需要的 `RemoteTarget`
+- Currently, `remoteWorkspaceSessionProcessMap` only records `process + webContentsId`
+- This round needs to at least add `target`
+- Otherwise, the main cannot restore the `RemoteTarget` needed by `init-remote` from the `remoteSessionId`
 
-### 为什么这里不改 host
+### Why Not Modify the Host Here
 
-因为 host 已经支持：
+Because the host already supports:
 
 - `InitLocal`
 - `InitRemote`
 - `MessagePortProtocol`
 - `ChannelServer`
 
-main 只要把 spawn 逻辑稍微抽一下，允许“**不要把 port 发给 renderer，而是留在 main 手里**”，就够用了。
+The main only needs to extract the spawn logic slightly, allowing "**do not send the port to the renderer, but keep it in the main**", which is sufficient.
 
 ## 4.3 `packages/desktop/src/preload`
 
-扩展 `window.zcode` bridge：
+Extend the `window.zcode` bridge:
 
 - `startWebRemoteControl(context)`
 - `stopWebRemoteControl()`
 - `getWebRemoteControlStatus()`
 
-保持只做 main IPC 转发，不放业务逻辑。
+Only keep the main IPC forwarding; do not place business logic.
 
 ## 4.4 `packages/desktop/src/renderer/src/main.tsx`
 
-把新能力接进 `desktopPlatform`：
+Connect the new capabilities to `desktopPlatform`:
 
 - `startWebRemoteControl`
 - `stopWebRemoteControl`
@@ -310,60 +308,60 @@ main 只要把 spawn 逻辑稍微抽一下，允许“**不要把 port 发给 re
 
 ## 4.5 `packages/ui`
 
-UI 最小化处理，不新开复杂页面，只做一个轻量入口 + 状态面板。
+The UI minimal processing; no new complex pages; only a lightweight entry + status panel.
 
-建议入口位置：
+Recommended entry point locations:
 
-1. 当前 workspace 的更多菜单
-2. 或 workspace sidebar footer 的工具入口
+1. The more menu of the current workspace
+2. Or the tool entry at the workspace sidebar footer
 
-最小交互：
+Minimal interactions:
 
-1. 点击“Web 远程控制”
-2. 弹出一个 dialog / popover
-3. 内部展示：
+1. Click "Web Remote Control"
+2. Display a dialog / popover
+3. Internally:
    - QR code
-   - 复制链接按钮
-   - 当前状态
-   - 关闭访问按钮
+   - Copy link button
+   - Current status
+   - Close access button
 
-本期不做：
+This round does not include:
 
-1. 已连接设备列表
-2. 权限设置
-3. 手机连接确认弹窗
+1. Connected device list
+2. Permission settings
+3. Mobile connection confirmation dialog
 
-注意点：
+Notes:
 
-1. UI 日志统一走 `packages/ui/src/logger.ts`
-2. 文案要补中英双语
-3. 新 UI 要兼容 4 套主题
-4. 按 `DESIGN.md` 复用现有 dialog/button/tooltip 体系，不要另起视觉风格
+1. UI logs uniformly go through `packages/ui/src/logger.ts`
+2. Text needs to be bilingual (Chinese / English)
+3. New UI must be compatible with 4 themes
+4. Reuse the existing dialog/button/tooltip system according to `DESIGN.md`; do not start a new visual style
 
 ## 4.6 `packages/web`
 
-Web 远程控制 模式复用现有 web UI，但新增一条 bootstrap 路径。
+Web remote control mode reuses the existing web UI, but adds a bootstrap path.
 
-建议流程：
+Recommended flow:
 
-1. 手机打开 `https://relay-domain/r/<token>`
-2. web 入口读取 `token`
-3. 先请求 `GET /api/remote-control/bootstrap/<token>`
-4. 拿到：
+1. The mobile client opens `https://relay-domain/r/<token>`
+2. The web entry reads the `token`
+3. First request `GET /api/remote-control/bootstrap/<token>`
+4. Receive:
    - `workspacePath`
    - `wsUrl`
-5. 再 `connectViaWebSocket(wsUrl)`
-6. 把 `workspacePath` 作为 `Root.initialWorkspaceAbsPath`
-7. 同时把 `restoreSession` 关掉，避免手机端把本地浏览器残留 tab 状态带进来
+5. Then `connectViaWebSocket(wsUrl)`
+6. Use the `workspacePath` as `Root.initialWorkspaceAbsPath`
+7. Also turn off `restoreSession` to avoid the mobile client bringing in residual tab state from the local browser
 
-本期 mobile web 建议明确两点：
+This round, the mobile web should clarify two points:
 
-1. **直接落到 workspace**
-2. **不恢复之前的本地浏览器 session**
+1. **Directly land on the workspace**
+2. **Do not restore previous local browser sessions**
 
 ## 4.7 `packages/relay`
 
-这期把 relay 作为 monorepo 正式包重建，建议目录：
+This round, re-build the relay as a formal package in the monorepo, recommended directory:
 
 ```text
 packages/relay/
@@ -379,16 +377,16 @@ packages/relay/
     types.ts
 ```
 
-### 角色
+### Roles
 
-1. 管 desktop tunnel
-2. 生成Web 远程控制 session
-3. 持有 token -> session 的映射
-4. 提供 mobile bootstrap API
-5. 连接 mobile ws 和 desktop data ws
-6. 提供 health check
+1. Manage desktop tunnels
+2. Generate Web remote control sessions
+3. Maintain token -> session mappings
+4. Provide the mobile bootstrap API
+5. Connect the mobile ws and the desktop data ws
+6. Provide health checks
 
-### 最小接口
+### Minimal Interface
 
 ```text
 GET  /health
@@ -400,155 +398,157 @@ WS   /ws/desktop/session/:sessionId
 GET  /r/:token
 ```
 
-### 关键说明
+### Key Notes
 
-`GET /r/:token` 可以有两种实现：
+`GET /r/:token` can have two implementations:
 
-1. 生产态：直接返回 web build 产物入口
-2. 开发态：转发/重定向到 web dev server
+1. Production mode: directly return the web build product entry
+2. Development mode: forward/redirect to the web dev server
 
-为了最小落地，建议 relay 支持一个环境变量：
+For minimal implementation, it is recommended that the relay support an environment variable:
 
 - `WEB_REMOTE_CONTROL_ORIGIN`
 
-有它时走 dev redirect / proxy，没有它时走本地静态资源。
+When present, use the dev redirect / proxy; when absent, use the local static resource.
 
-## 5. 协议建议
+## 5. Protocol Recommendations
 
-## 5.1 Desktop 开启Web 远程控制
+## 5.1 Desktop Enabling Web Remote Control
 
-1. UI 调 `startWebRemoteControl({ workspacePath, remoteSessionId? })`
-2. main 判断：
-   - 没有 `remoteSessionId` -> 起 `InitLocal`
-   - 有 `remoteSessionId` -> 找到对应 `RemoteTarget`，起 `InitRemote`
-3. main 建立 relay control ws
-4. relay 返回 `tunnelId`
-5. main 调 `POST /api/remote-control/sessions`
-6. relay 返回：
+1. The UI calls `startWebRemoteControl({ workspacePath, remoteSessionId? })`
+2. The main determines:
+   - No `remoteSessionId` -> start `InitLocal`
+   - With `remoteSessionId` -> find the corresponding `RemoteTarget`, start `InitRemote`
+3. The main establishes the relay control ws
+4. The relay returns `tunnelId`
+5. The main calls `POST /api/remote-control/sessions`
+6. The relay returns:
    - `sessionId`
    - `token`
    - `connectUrl`
    - `qrUrl`
-7. main 把结果回给 renderer
+7. The main returns the result to the renderer
 
-## 5.2 手机接入
+## 5.2 Mobile Client Access
 
-1. 手机打开 `/r/:token`
-2. 页面拉 bootstrap
-3. 页面连 `ws/mobile/:token`
-4. relay 找到对应 session，并通知 desktop control ws：
+1. The mobile client opens `/r/:token`
+2. The page pulls the bootstrap
+3. The page connects to `ws/mobile/:token`
+4. The relay finds the corresponding session and notifies the desktop control ws:
 
 ```ts
-{ type: "mobile-session-request", sessionId }
+{
+  type: ("mobile-session-request", sessionId);
+}
 ```
 
-5. main 收到后立即建立 `ws/desktop/session/:sessionId`
-6. relay 在 mobile ws 和 desktop session ws 都 ready 后，开始原样透传二进制数据
-7. main 在本地桥接：
+5. The main immediately establishes `ws/desktop/session/:sessionId` after receiving the notification
+6. After the relay has the mobile ws and the desktop session ws ready, it starts transmitting binary data as-is
+7. The main locally bridges:
 
 ```text
 desktop session ws <-> MessagePortMain <-> host ChannelServer
 ```
 
-## 5.3 关闭
+## 5.3 Close
 
-任一端关闭时：
+When either end closes:
 
-1. relay 关闭另一侧 ws
-2. main 销毁 mobile host
-3. main 清理 runtime map
-4. UI 状态回到 idle
+1. The relay closes the other ws
+2. The main destroys the mobile host
+3. The main cleans up the runtime map
+4. The UI status returns to idle
 
-## 6. 分阶段实施计划
+## 6. Phase-by-Phase Implementation Plan
 
-## 阶段 0：落包与脚手架
+## Phase 0: Re-packaging and Scaffolding
 
-目标：把 relay 从“只有 dist 的历史残留”变成正式包。
+Goal: Turn the relay from "only a dist historical remnant" into a formal package.
 
-工作项：
+Tasks:
 
-1. 新建 `packages/relay/package.json`
-2. 新建 `packages/relay/src/*`
-3. 接入根脚本：
+1. Create `packages/relay/package.json`
+2. Create `packages/relay/src/*`
+3. Connect root scripts:
    - `pnpm --filter @zcode/relay dev`
    - `pnpm --filter @zcode/relay build`
-4. 把 relay 加进根 `typecheck`
-5. 把 relay 加进根 `lint`
+4. Add the relay to the root `typecheck`
+5. Add the relay to the root `lint`
 
-退出标准：
+Exit criteria:
 
-1. `packages/relay` 能独立 dev/build
-2. 根构建链路认识这个包
+1. `packages/relay` can independently dev/build
+2. The root build chain recognizes this package
 
-## 阶段 1：本地链路打通（先不做 UI）
+## Phase 1: Local Path Unblocking (No UI First)
 
-目标：先证明“relay data ws <-> main MessagePort <-> host RPC”是通的。
+Goal: First prove that "relay data ws <-> main MessagePort <-> host RPC" works.
 
-工作项：
+Tasks:
 
-1. main 支持创建 mobile host 并保留 port
-2. relay 支持 desktop control / session / mobile 三类连接
-3. web 先用一个临时 URL 参数模式连上 relay
-4. 手工输入 token 验证本地 workspace 能打开
+1. The main supports creating a mobile host and retaining the port
+2. The relay supports three types of connections: desktop control / session / mobile
+3. The web connects to the relay first using a temporary URL parameter mode
+4. Manually input the token to verify that the local workspace can open
 
-退出标准：
+Exit criteria:
 
-1. 不依赖 QR，手工打开 URL 已经能从手机端看到本地 workspace
-2. 文件服务和终端服务至少有一个操作成功
+1. No QR dependency; manually opening the URL already shows the local workspace from the mobile client
+2. At least one operation succeeds for the file service and terminal service
 
-## 阶段 2：Desktop UI 闭环
+## Phase 2: Desktop UI Closed Loop
 
-目标：把“开启Web 远程控制 -> 显示二维码 -> 关闭访问”接到产品 UI 里。
+Goal: Connect the "enable Web remote control -> display QR code -> close access" into the product UI.
 
-工作项：
+Tasks:
 
-1. `IPlatformService` 补 start/stop/status
-2. preload / renderer bridge 接好
-3. UI 增加入口和二维码弹层
-4. 加复制链接、错误提示、关闭按钮
+1. Add start/stop/status to `IPlatformService`
+2. Connect the preload / renderer bridge
+3. Add the entry and QR code layer to the UI
+4. Add the copy link, error prompt, and close button
 
-退出标准：
+Exit criteria:
 
-1. 用户不需要手工拼 URL
-2. 从 desktop UI 可以完整启动和关闭Web 远程控制
+1. The user does not need to manually拼 the URL
+2. The full Web remote control can be started and closed from the desktop UI
 
-## 阶段 3：SSH Remote Workspace 支持
+## Phase 3: SSH Remote Workspace Support
 
-目标：把当前 remote workspace 也接进同样流程。
+Goal: Connect the current remote workspace to the same flow.
 
-工作项：
+Tasks:
 
-1. main 为 `remoteWorkspaceSessionProcessMap` 补充 `target`
-2. `startWebRemoteControl(context)` 支持 `remoteSessionId`
-3. main 用 `InitRemote` 创建 mobile host
-4. mobile web 直达远端 workspace path
+1. Add `target` to the main's `remoteWorkspaceSessionProcessMap`
+2. Support `remoteSessionId` in `startWebRemoteControl(context)`
+3. The main creates the mobile host using `InitRemote`
+4. The mobile web directly reaches the remote workspace path
 
-退出标准：
+Exit criteria:
 
-1. 从 SSH remote tab 发起Web 远程控制
-2. 手机端看到的是远端文件系统和远端终端
+1. Initiate Web remote control from the SSH remote tab
+2. The mobile client sees the remote file system and the remote terminal
 
-## 阶段 4：稳定性与收尾
+## Phase 4: Stability and Wrap-up
 
-目标：把这条链路做成可持续维护的能力，而不是一次性 demo。
+Goal: Make this path a sustainably maintainable capability, not a one-time demo.
 
-工作项：
+Tasks:
 
-1. 日志补齐
-2. 异常清理补齐
-3. 增加最关键单测/集成测试
-4. 更新开发文档和联调命令
+1. Add logging
+2. Add abnormal cleanup
+3. Add the most critical unit/integration tests
+4. Update the development documentation and debugging commands
 
-退出标准：
+Exit criteria:
 
-1. 手机端中途断开不会残留 host / ws 僵尸会话
-2. relay 重启、desktop 关闭等场景能完成清理
+1. The mobile client disconnecting mid-stream does not leave zombie host / ws sessions
+2. Scenarios such as relay restart, desktop shutdown, can complete cleanup
 
-## 7. 最小日志方案
+## 7. Minimal Logging Plan
 
-### main 日志
+### Main Logging
 
-统一使用 `packages/desktop/src/main/logger.ts`，建议前缀：
+Uniformly use `packages/desktop/src/main/logger.ts`; recommended prefixes:
 
 - `[mobile-access] start`
 - `[mobile-access] relay-control-connected`
@@ -557,17 +557,17 @@ desktop session ws <-> MessagePortMain <-> host ChannelServer
 - `[mobile-access] stop`
 - `[mobile-access] cleanup`
 
-### ui 日志
+### UI Logging
 
-统一使用 `packages/ui/src/logger.ts`，只打低频日志，例如：
+Uniformly use `packages/ui/src/logger.ts`; only log low-frequency events, e.g.:
 
-- 打开弹层
-- 复制链接
-- 用户点击关闭
+- Opening the dialog
+- Copying the link
+- The user clicking close
 
-### relay 日志
+### Relay Logging
 
-relay 自己维护结构化前缀，例如：
+The relay maintains its own structured prefixes, e.g.:
 
 - `[relay] tunnel-registered`
 - `[relay] session-created`
@@ -575,106 +575,106 @@ relay 自己维护结构化前缀，例如：
 - `[relay] desktop-session-connected`
 - `[relay] bridge-closed`
 
-## 8. 测试建议
+## 8. Testing Recommendations
 
-本期至少要补下面几类：
+At least the following categories must be covered this round:
 
-1. relay `SessionManager` 单测
-2. relay desktop/mobile 匹配与超时清理单测
-3. main `WebRemoteControlManager` 生命周期单测
-4. web bootstrap 单测
+1. Relay `SessionManager` unit tests
+2. Relay desktop/mobile matching and timeout cleanup unit tests
+3. The main `WebRemoteControlManager` lifecycle unit tests
+4. Web bootstrap unit tests
 
-手工回归用例至少包含：
+Manual regression cases must at least include:
 
-1. 本地 workspace 扫码成功
-2. SSH remote workspace 扫码成功
-3. Desktop 关闭访问后，手机端立即失效
-4. 手机主动断开后，Desktop 状态恢复 idle
-5. Desktop 退出时无残留 relay session
+1. Local workspace QR scan success
+2. SSH remote workspace QR scan success
+3. After the desktop disables access, the mobile connection immediately becomes invalid
+4. After the mobile actively disconnects, the desktop status returns to idle
+5. No residual relay sessions when the desktop exits
 
-## 9. 风险与取舍
+## 9. Risks and Trade-offs
 
-### 风险 1：remote workspace 解析仍依赖现有 `remoteSessionId`
+### Risk 1: Remote Workspace Parsing Still Depends on Existing `remoteSessionId`
 
-这是当前最小路径，但它说明 Web 远程控制 仍然依赖“renderer 知道当前 workspace 背后是哪条 remote session”。
+This is the current minimal path, but it shows that Web remote control still depends on "the renderer knows which remote session lies behind the current workspace."
 
-本期接受这个耦合，后续如果仓库引入真正的 `workspaceId / workspaceDescriptor`，再一起升级。
+This round accepts this coupling; if the repository introduces a true `workspaceId / workspaceDescriptor` later, upgrade it together.
 
-### 风险 2：mobile host 会重复创建本地全局服务
+### Risk 2: The Mobile Host Will Duplicate Create Local Global Services
 
-例如 setting / credential / oauth / modelProvider 都会在新 host 里再起一份。
+For example, `setting / credential / oauth / modelProvider` will all start again in the new host.
 
-本期接受，因为：
+This round accepts this because:
 
-1. 这样 local / remote 统一
-2. 架构更干净
-3. 跑通优先
+1. This unifies local / remote
+2. The architecture is cleaner
+3. Get it working first
 
-后续如果要优化资源占用，再考虑把“全局本地服务”和“workspace 服务”拆成可组合的 host 装配方式。
+If resource optimization is needed later, consider splitting "global local services" and "workspace services" into composable host assembly methods.
 
-### 风险 3：web UI 在手机上可能暴露桌面型交互问题
+### Risk 3: The Web UI May Expose Desktop Interaction Issues on Mobile
 
-本期先接受桌面 UI 的移动端适配不完美，只保证能用。
+This round first accepts that the mobile adaptation of the desktop UI is imperfect; only ensure it works.
 
-后续再针对手机布局做专门优化。
+Optimize specifically for the mobile layout later.
 
-## 10. 推荐落地顺序
+## 10. Recommended Implementation Order
 
-建议实际开工顺序如下：
+It is recommended to start in the following order:
 
-1. 重建 `packages/relay`
-2. main 侧 mobile host + MessagePort bridge
-3. web mobile bootstrap
-4. local workspace 跑通
-5. desktop UI 二维码入口
-6. SSH remote workspace 跑通
-7. 测试与文档收尾
+1. Re-build `packages/relay`
+2. The main-side mobile host + MessagePort bridge
+3. The web mobile bootstrap
+4. Get the local workspace working
+5. The desktop UI QR code entry
+6. Get the SSH remote workspace working
+7. Testing and documentation wrap-up
 
-## 11. 一句话版本
+## 11. One-Sentence Version
 
-这期最稳的最小方案是：**把 Web 远程控制 做成“main 持有的专用 host 会话 + relay 控制/数据双通道 + web 复用现有 UI 的直达 workspace 模式”**，而不是继续假设 host 里存在一个能同时代表 local / remote 当前工作区的统一 `activeServices`。
+The most stable minimal plan for this round is: **Make Web remote control into "a dedicated host session held by the main + relay control/data dual channels + the web reusing existing UI to directly reach the workspace mode"**, rather than continuing to assume that a unified `activeServices` representing the current local / remote workspace exists inside the host.
 
-## 12. 当前落地状态
+## 12. Current Implementation Status
 
-截至当前 worktree，这条链路已经完成了最小骨架：
+As of the current worktree, this path has completed the minimal skeleton:
 
-1. `packages/relay` 已正式落包，具备 desktop control、mobile bootstrap、desktop/mobile data ws 这些基础入口
-2. desktop main 已接入 `WebRemoteControlManager`，能为当前 workspace 拉起专用 host，并通过 relay 建 session
-3. web 已支持 `remoteControlToken + relayOrigin` 的 bootstrap 模式，手机端可以直达目标 workspace
-4. desktop UI 已有 sidebar 入口和二维码弹层
-5. local workspace 与 SSH remote workspace 都按同一套发起接口建模
+1. `packages/relay` has been formally packaged, possessing basic entries for desktop control, mobile bootstrap, and desktop/mobile data ws
+2. The desktop main has connected `WebRemoteControlManager` and can spawn a dedicated host for the current workspace and build sessions through the relay
+3. The web supports the `remoteControlToken + relayOrigin` bootstrap mode; the mobile client can directly reach the target workspace
+4. The desktop UI already has the sidebar entry and QR code dialog layer
+5. Both local workspaces and SSH remote workspaces are modeled by the same initiation interface
 
-另外，已经补了一轮最关键的稳定性修正：
+Additionally, the most critical stability fixes have been filled in:
 
-1. relay 会缓存桥接建立前手机端抢先发出的 RPC 帧，避免扫码后首屏初始化请求被吞掉
-2. desktop main 会保留 Web 远程控制 的错误状态，避免桥接失败后直接掉回 `idle`
-3. 二维码弹层会轮询当前 Web 远程控制 状态，能看到 `running -> active / error` 的变化
-4. SSH remote 模式下，main 会等待 mobile host 先完成远端建连，再开始桥接 RPC，避免手机端长期卡在初始化
-5. mobile web 下的 Docker / WSL 探测已通过 relay control socket 代理回 desktop main，不再误用 web fallback 的固定 `false / []`
+1. The relay caches RPC frames sent by the mobile client before the bridge is established, avoiding the first-screen initialization request being swallowed after scanning the QR code
+2. The desktop main retains the Web remote control error state, avoiding dropping directly back to `idle` after the bridge fails
+3. The QR code dialog polls the current Web remote control status, able to see `running -> active / error` changes
+4. In SSH remote mode, the main waits for the mobile host to complete the remote connection first before starting the bridge RPC, avoiding the mobile client getting stuck in initialization for a long time
+5. The Docker / WSL detection under the mobile web has been proxied back to the desktop main through the relay control socket, no longer incorrectly using the web fallback's fixed `false / []`
 
-当前仍然保留一个明确边界：
+One clear boundary is still retained:
 
-1. Web 远程控制 页面里“新建 remote session”还没有补 `MessagePort` 注入链路
-2. 因此手机页目前只支持访问**已经由 desktop 发起并打开的当前 workspace**
-3. 如果后续要支持“在手机页里新建 SSH / Docker / WSL 连接”，需要单独设计 remote session 的移动端接管协议
+1. "Create new remote session" in the Web remote control page has not been supplemented with the `MessagePort` injection path
+2. Therefore, the mobile page currently only supports accessing **the current workspace already initiated and opened by the desktop**
+3. If "creating new SSH / Docker / WSL connections on the mobile page" is supported in the future, a separate protocol for mobile takeover of remote sessions needs to be designed
 
-## 13. 本地联调命令
+## 13. Local Debugging Commands
 
-当前最小联调建议按下面顺序启动：
+The current minimal debugging is recommended to be started in the following order:
 
-1. 启动 relay
+1. Start the relay
    - `pnpm dev:relay`
-2. 启动 web
+2. Start the web
    - `pnpm dev:web`
-3. 启动 desktop，并指向 relay
+3. Start the desktop, pointing to the relay
    - `ZCODE_WEB_REMOTE_CONTROL_RELAY_URL=http://localhost:8787 pnpm dev:desktop`
 
-联调时还需要补一项环境约定：
+One additional environmental convention needs to be supplemented for debugging:
 
-1. relay 需要知道手机扫码后该跳去哪个 web 地址
-2. 本地开发可设置 `WEB_REMOTE_CONTROL_ORIGIN=http://localhost:5173`
+1. The relay needs to know which web address the mobile client should jump to after scanning the QR code
+2. For local development, set `WEB_REMOTE_CONTROL_ORIGIN=http://localhost:5173`
 
-因此更完整的 relay 启动示例是：
+Therefore, a more complete relay startup example is:
 
 ```bash
 WEB_REMOTE_CONTROL_ORIGIN=http://localhost:5173 pnpm dev:relay
