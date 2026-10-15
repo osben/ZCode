@@ -1,9 +1,9 @@
 /** Convert supported Git remote syntaxes into HTTPS repository web URLs. */
 export function gitRemoteUrlToWebUrl(rawUrl: string): string | null {
-  const value = rawUrl
-    .trim()
-    .replace(/\/+$/, "")
-    .replace(/\.git$/i, "");
+  const trimmedUrl = rawUrl.trim();
+  let end = trimmedUrl.length;
+  while (end > 0 && trimmedUrl.charCodeAt(end - 1) === 47) end -= 1;
+  const value = trimmedUrl.slice(0, end).replace(/\.git$/i, "");
   if (value.length === 0) return null;
 
   const scpLikeMatch = value.match(/^[^@/]+@([^:/]+):(.+)$/);

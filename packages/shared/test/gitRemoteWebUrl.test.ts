@@ -25,4 +25,12 @@ describe("gitRemoteUrlToWebUrl", () => {
       expect(gitRemoteUrlToWebUrl(value)).toBeNull();
     }
   });
+
+  it("handles remotes with long trailing slash runs", () => {
+    const trailingSlashes = "/".repeat(50_000);
+
+    expect(gitRemoteUrlToWebUrl(`https://github.com/osben/ZCode${trailingSlashes}`)).toBe(
+      "https://github.com/osben/ZCode",
+    );
+  });
 });
