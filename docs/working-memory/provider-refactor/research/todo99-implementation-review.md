@@ -94,7 +94,7 @@ Product verification: Air creates isolated directory `/Users/dev/zcode-todo99-e2
 
 ### Additionally discovered existing failures
 
-`zcode-protocol.test.ts` "remote SSH/WSL default disable all Cron" still fails: actual denylist only has Bash, expected 4 more Cron. Baseline has same difference; production source code retains unused remote tool constants/identity imports. Did not delete assertions for all-green this round, did not擅自 modify Cron product semantics, needs separate verification of original disable contract.
+`zcode-protocol.test.ts` "remote SSH/WSL default disable all Cron" still fails: actual denylist only has Bash, expected 4 more Cron. Baseline has same difference; production source code retains unused remote tool constants/identity imports. Did not delete assertions for all-green this round, did not modify Cron product semantics without justification, needs separate verification of original disable contract.
 
 ## 6. Document and Diagram Correction
 
@@ -109,7 +109,7 @@ Test directory `/Users/dev/zcode-todo99-e2e.1lO3PN`, Node 24.14.0, Electron/Chro
 | Case / run                                                                                                         | Result and actual evidence                                                                                                                                         |
 | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `conversation-session-model-provider-effective-selection`, `desktop-e2e-20260909104713317-p13081-192c13543a9c637f` | 2/2 pass: original selection preserved not sent, Team/high actual request, old scheduled selection actually dispatched                                             |
-| `conversation-session-worker-effective-selection`, `desktop-e2e-20260909111544019-p19700-8c54b26069ee4be6`         | 3/3 pass: W99-E01, E02/E03/E06, E04, evidence分层 below                                                                                                            |
+| `conversation-session-worker-effective-selection`, `desktop-e2e-20260909111544019-p19700-8c54b26069ee4be6`         | 3/3 pass: W99-E01, E02/E03/E06, E04, evidence stratified below                                                                                                     |
 | `bots/manual-review/pending/bot-effective-selection`, `desktop-e2e-20260909112059410-p20639-1fd964b954aa4d72`      | 5/5 pass: available/unavailable after binding, proactive highest tier set, first dispatch/menu retains original intent; this group is still synthetic task harness |
 
 Each run's `summary.json`, `summary.md`, `test-results.ndjson` located in above test directory's `packages/desktop/.e2e-artifacts/<run>/`; model request evidence additionally in `network-capture/coding-plan-data-plane.json` and `upstream-provider.json`. Large WDIO logs not committed to Git.

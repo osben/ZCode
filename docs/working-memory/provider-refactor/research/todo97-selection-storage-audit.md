@@ -1,6 +1,6 @@
 # Todo97: Selection Storage Boundary Audits
 
-2026-09-08, based on workspaces after `dd38abe9fb`; 2026-09-09 supplementing Wiki one-shot migrations. Not "searching field-names equals completions": tracking per-entry-point migrations, formal reading, uses, saving, and restarts. Decided development scopes completed; verification-debts归 Todo102.
+2026-09-08, based on workspaces after `dd38abe9fb`; 2026-09-09 supplementing Wiki one-shot migrations. Not "searching field-names equals completions": tracking per-entry-point migrations, formal reading, uses, saving, and restarts. Decided development scopes completed; verification-debts deferred to Todo102.
 
 ## Shipped Bases And Current Formats
 
