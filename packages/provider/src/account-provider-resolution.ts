@@ -186,7 +186,9 @@ function indexConnections(
 }
 
 function isAccountConstrainedProvider(config: ProviderConfig): boolean {
-  return config.access?.type === "zhipu-account";
+  // Chatgpt-account providers share the account connection pipeline: rejecting them here made
+  // indexConnections throw and take down resolution for every account provider at once.
+  return config.access?.type === "zhipu-account" || config.access?.type === "chatgpt-account";
 }
 
 function normalizeModelIds(values: readonly ModelId[] | null | undefined): readonly ModelId[] {

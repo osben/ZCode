@@ -32,6 +32,9 @@ export interface SidePaneTerminalSessionEntry {
   term: XTerm;
   fitAddon: FitAddon;
   terminalId: string;
+  profileFontFamily: string | undefined;
+  profileFontIsCustom: boolean;
+  profileFontIsFallback: boolean;
   cwd: string;
   /**
    * workspaceKey for the terminal (workspaceIdentity?.trim() || workspacePath).

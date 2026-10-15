@@ -1742,6 +1742,7 @@ const ukUA: Record<string, string> = {
   "workspaceSidebar.customizeColorLabel": "Колір",
   "workspaceSidebar.customizeColorNone": "Без кольору",
   "workspaceSidebar.customizeReset": "Скинути до стандартних",
+  "workspaceSidebar.openOnGitHub": "Відкрити на GitHub",
   "workspaceSidebar.remove": "Вилучити",
   "workspaceSidebar.removeRunningWorkspace.title": "Вилучити активний проєкт?",
   "workspaceSidebar.removeRunningWorkspace.description":
@@ -2235,6 +2236,20 @@ const ukUA: Record<string, string> = {
   "settings.uiFontSize": "Розмір шрифту інтерфейсу",
   "settings.uiFontSizeDescription":
     "Змінює розмір тексту інтерфейсу, не впливаючи на значки й розміри елементів макета.",
+  "settings.uiFont": "Шрифт інтерфейсу",
+  "settings.uiFontDescription":
+    "Гарнітура тексту інтерфейсу. Порожнє значення — вбудований шрифт за замовчуванням (Inter).",
+  "settings.monoFont": "Шрифт коду",
+  "settings.monoFontDescription":
+    "Гарнітура блоків коду, дифів і терміналу. Порожнє значення — вбудований шрифт за замовчуванням (JetBrains Mono). Окреме налаштування шрифту термінала має вищий пріоритет.",
+  "settings.fontFamilyReset": "Скинути до типового шрифту",
+  "settings.fontFamilyNotFound": "Шрифт не знайдено в цій системі",
+  "settings.fontFamilyDefault": "Типовий",
+  "settings.fontFamilySearchPlaceholder": "Пошук шрифтів...",
+  "settings.fontFamilyEmpty": "Немає відповідних шрифтів",
+  "settings.fontFamilyBundled": "Вбудовані",
+  "settings.fontFamilyInstalled": "Встановлені шрифти",
+  "settings.fontFamilyLoading": "Завантаження шрифтів...",
   "settings.systemTitle": "Загальні",
   "settings.systemDescription": "Ці налаштування впливають на роботу поточного вікна.",
   "settings.locale": "Мова",
@@ -3620,6 +3635,8 @@ const ukUA: Record<string, string> = {
   "settings.modelProvider.modelsPlaceholder": "Одна назва моделі на рядок",
   "settings.modelProvider.modelsCount": "Моделей: {count}",
   "settings.modelProvider.chatgpt.badge.subscription": "Підписка",
+  "settings.modelProvider.chatgpt.navigationTitle": "ChatGPT",
+  "settings.modelProvider.chatgpt.navigationPlan": "План ChatGPT",
   "settings.modelProvider.chatgpt.description":
     "Запуск агентів на моделях OpenAI через підписку ChatGPT Plus/Pro (офіційний обмін токенами OpenAI). Використання зараховується у 5-годинне вікно плану.",
   "settings.modelProvider.chatgpt.notSignedIn":

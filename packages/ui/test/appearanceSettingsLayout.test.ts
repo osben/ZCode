@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import enUS from "../src/i18n/locales/en-US.js";
+import ukUA from "../src/i18n/locales/uk-UA.js";
 import zhCN from "../src/i18n/locales/zh-CN.js";
 
 describe("appearance settings layout", () => {
@@ -25,6 +26,36 @@ describe("appearance settings layout", () => {
     expect(enUS["settings.appearance.interfaceTitle"]).toBe("Interface Setting");
     expect(enUS["settings.appearance.codeTitle"]).toBe("Code settings");
     expect(enUS["settings.previewSectionTitle"]).toBe("Code preview");
+  });
+
+  it("字体设置文案在三种语言下齐全且指向内置默认字体", () => {
+    for (const locale of [enUS, ukUA, zhCN]) {
+      expect(locale["settings.uiFont"]).toBeTruthy();
+      expect(locale["settings.uiFontDescription"]).toContain("Inter");
+      expect(locale["settings.monoFont"]).toBeTruthy();
+      expect(locale["settings.monoFontDescription"]).toContain("JetBrains Mono");
+      expect(locale["settings.fontFamilyReset"]).toBeTruthy();
+      expect(locale["settings.fontFamilyNotFound"]).toBeTruthy();
+      expect(locale["settings.fontFamilyDefault"]).toBeTruthy();
+      expect(locale["settings.fontFamilySearchPlaceholder"]).toBeTruthy();
+      expect(locale["settings.fontFamilyEmpty"]).toBeTruthy();
+      expect(locale["settings.fontFamilyBundled"]).toBeTruthy();
+      expect(locale["settings.fontFamilyInstalled"]).toBeTruthy();
+      expect(locale["settings.fontFamilyLoading"]).toBeTruthy();
+    }
+  });
+
+  it("字体选择控件在有 Local Font Access 时用可搜索下拉，缺失时回退到自由输入", () => {
+    const picker = readFileSync("packages/ui/src/settings/FontFamilyPicker.tsx", "utf8");
+    expect(picker).toContain("getQueryLocalFonts");
+    expect(picker).toContain("CommandInput");
+    expect(picker).toContain("FontFamilyInputFallback");
+    expect(picker).toContain('value={intl.formatMessage({ id: "settings.fontFamilyDefault" })}');
+  });
+
+  it("українські описи шрифтів називають вбудований шрифт типовим за замовчуванням", () => {
+    expect(ukUA["settings.uiFontDescription"]).toContain("шрифт за замовчуванням");
+    expect(ukUA["settings.monoFontDescription"]).toContain("шрифт за замовчуванням");
   });
 
   it("语言选项除系统默认外使用对应语言自名", () => {

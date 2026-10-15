@@ -928,3 +928,32 @@ describeIfGit("gitCliRepo worktree operations", () => {
     GIT_INTEGRATION_TEST_TIMEOUT_MS,
   );
 });
+
+describeIfGit("gitCliRepo getRepositoryRemotes", () => {
+  it(
+    "lists remotes with origin first and returns no remotes outside repositories",
+    async () => {
+      const { container, repoPath } = createWorktreeTestRepo();
+      runGit(repoPath, ["remote", "add", "zcode-fork", "git@github.com:osben/fork.git"]);
+      runGit(repoPath, ["remote", "add", "origin", "https://github.com/osben/ZCode.git"]);
+      runGit(repoPath, ["remote", "set-url", "--push", "origin", "git@github.com:osben/push.git"]);
+      runGit(repoPath, ["config", "remote.origin.promisor", "true"]);
+      runGit(repoPath, ["config", "remote.origin.partialclonefilter", "blob:none"]);
+      const repo = createGitCliRepo();
+
+      const result = await repo.getRepositoryRemotes(repoPath);
+
+      expect(result.isGitAvailable).toBe(true);
+      expect(result.isRepository).toBe(true);
+      expect(result.remotes).toEqual([
+        { name: "origin", url: "https://github.com/osben/ZCode.git" },
+        { name: "zcode-fork", url: "git@github.com:osben/fork.git" },
+      ]);
+
+      const outside = await repo.getRepositoryRemotes(container);
+      expect(outside.isRepository).toBe(false);
+      expect(outside.remotes).toEqual([]);
+    },
+    GIT_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+});

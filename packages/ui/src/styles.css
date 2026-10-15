@@ -2,6 +2,8 @@
 @import "tw-animate-css";
 @import "tailwind-scrollbar-hide/v4";
 @import "shadcn/tailwind.css";
+@import "@fontsource-variable/inter/index.css";
+@import "@fontsource-variable/jetbrains-mono/index.css";
 @import "@xterm/xterm/css/xterm.css";
 @import "katex/dist/katex.min.css";
 @import "./highspeed/highspeed-activation.css";
@@ -166,14 +168,35 @@ html[data-document-hidden] *::after {
   }
 }
 
+/* Buttons, links, and interactive role elements should signal clickability consistently.
+ * Exclude disabled controls, including Radix items that use data-disabled instead of :disabled. */
+@layer base {
+  a[href]:not([aria-disabled="true"]),
+  button:not(:disabled):not([aria-disabled="true"]),
+  [role="button"]:not(:disabled):not([aria-disabled="true"]):not([data-disabled]),
+  [role="menuitem"]:not([aria-disabled="true"]):not([data-disabled]),
+  [role="menuitemcheckbox"]:not([aria-disabled="true"]):not([data-disabled]),
+  [role="menuitemradio"]:not([aria-disabled="true"]):not([data-disabled]),
+  [role="option"]:not([aria-disabled="true"]):not([data-disabled="true"]):not([data-disabled=""]),
+  [role="treeitem"]:not([aria-disabled="true"]):not([data-disabled]),
+  summary:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+}
+
 /* === Theme variables === */
 
 @theme {
+  /* Bundled defaults. Custom user fonts override --font-sans / --font-mono at
+   * runtime via documentElement.style.setProperty; a missing override falls back to these values. */
+  --font-sans:
+    "Inter Variable", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   /* Windows Consolas lacks Chinese glyphs, so Tailwind’s default stack falls back to a serif Chinese font.
    * Keep each platform’s Western monospace font and explicitly add platform CJK sans-serif fonts before generic monospace. */
   --font-mono:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
-    "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", monospace;
+    "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
+    Consolas, "Liberation Mono", "Courier New", "Microsoft YaHei UI", "Microsoft YaHei",
+    "PingFang SC", "Noto Sans CJK SC", monospace;
   --text-ui-xl: calc(var(--ui-font-size) + 4px);
   --text-ui-lg: calc(var(--ui-font-size) + 2px);
   --text-ui-base: var(--ui-font-size);

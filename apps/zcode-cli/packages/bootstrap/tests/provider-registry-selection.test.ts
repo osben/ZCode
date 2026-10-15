@@ -12,6 +12,36 @@ import {
 import { createApiKeyProviderConfig } from "./provider-config-fixtures.js";
 
 describe("listRegistryBackedModels", () => {
+  it("projects an explicit reasoning default instead of the highest value", () => {
+    const registry = new ProviderRegistry([
+      {
+        providerId: "provider-a",
+        config: createApiKeyProviderConfig({ models: ["model-a"] }),
+        models: [
+          {
+            modelId: "model-a",
+            config: new ModelConfig({
+              properties: completeModelProperties(),
+              optionSpecs: new ModelOptionSpecsConfig({
+                reasoningLevel: {
+                  values: ["low", "medium", "high", "max"],
+                  default: "high",
+                  map: '{"reasoning_effort":reasoningLevel}',
+                },
+                maxOutputTokens: {
+                  max: 32_000,
+                  map: '{"max_completion_tokens":maxOutputTokens}',
+                },
+              }),
+            }),
+          },
+        ],
+      },
+    ]);
+
+    expect(listRegistryBackedModels(registry)[0]?.reasoning.defaultLevel).toBe("high");
+  });
+
   it("直接把 Registry 事实投影为协议 Model Option，不建立内部 alias DTO", () => {
     const registry = new ProviderRegistry([
       {

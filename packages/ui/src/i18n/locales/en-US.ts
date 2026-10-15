@@ -1931,6 +1931,7 @@ const enUS: Record<string, string> = {
   "workspaceSidebar.customizeColorLabel": "Color",
   "workspaceSidebar.customizeColorNone": "No color",
   "workspaceSidebar.customizeReset": "Reset to default",
+  "workspaceSidebar.openOnGitHub": "Open on GitHub",
   "workspaceSidebar.remove": "Remove",
   "workspaceSidebar.removeRunningWorkspace.title": "Remove a running project?",
   "workspaceSidebar.removeRunningWorkspace.description":
@@ -2554,6 +2555,20 @@ const enUS: Record<string, string> = {
   "settings.uiFontSize": "UI font size",
   "settings.uiFontSizeDescription":
     "Adjust interface text without changing icons or layout dimensions.",
+  "settings.uiFont": "UI font",
+  "settings.uiFontDescription":
+    "Font family for interface text. Leave empty for the bundled default (Inter).",
+  "settings.monoFont": "Code font",
+  "settings.monoFontDescription":
+    "Font family for code blocks, diffs, and the terminal. Leave empty for the bundled default (JetBrains Mono). The terminal-specific font setting takes precedence.",
+  "settings.fontFamilyReset": "Reset to default font",
+  "settings.fontFamilyNotFound": "Font not found on this system",
+  "settings.fontFamilyDefault": "Default",
+  "settings.fontFamilySearchPlaceholder": "Search fonts...",
+  "settings.fontFamilyEmpty": "No matching fonts",
+  "settings.fontFamilyBundled": "Bundled",
+  "settings.fontFamilyInstalled": "Installed fonts",
+  "settings.fontFamilyLoading": "Loading fonts...",
   "settings.systemTitle": "General",
   "settings.systemDescription": "These preferences affect the current window experience.",
   "settings.locale": "Language",
@@ -3932,6 +3947,8 @@ const enUS: Record<string, string> = {
   "settings.modelProvider.slot.reasoning": "Reasoning (reasoning tasks)",
   "settings.modelProvider.mappingNotSet": "Not set",
   "settings.modelProvider.chatgpt.badge.subscription": "Subscription",
+  "settings.modelProvider.chatgpt.navigationTitle": "ChatGPT",
+  "settings.modelProvider.chatgpt.navigationPlan": "ChatGPT Plan",
   "settings.modelProvider.chatgpt.description":
     "Run agents on OpenAI models through your ChatGPT Plus/Pro plan (official OpenAI token sharing). Usage counts against the plan's 5-hour window.",
   "settings.modelProvider.chatgpt.notSignedIn":

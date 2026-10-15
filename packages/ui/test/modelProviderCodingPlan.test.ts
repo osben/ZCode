@@ -848,6 +848,51 @@ describe("model provider coding plan", () => {
     ).toBe(true);
   });
 
+  it("ChatGPT plan renders in its own section after the preset blocks", () => {
+    let capturedGroups: ModelProviderNavGroup[] = [];
+
+    function Harness() {
+      const { navigationGroups } = useModelProviderNavigation({
+        presetProviders: [
+          {
+            id: BUILTIN_MODEL_PROVIDER_IDS.zaiStartPlan,
+            displayName: "Z.ai",
+            provider: null,
+          },
+        ],
+        modelProviders: [
+          createProvider({
+            id: BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan,
+            name: "ChatGPT Plan",
+          }),
+        ],
+        selectedNodeKey: null,
+        setSelectedNodeKey: vi.fn(),
+        intl: { formatMessage: ({ id }: { id: string }) => id } as never,
+      });
+      capturedGroups = navigationGroups;
+      return createElement("div");
+    }
+
+    renderToStaticMarkup(createElement(Harness));
+
+    expect(capturedGroups.map((group) => group.id)).toEqual(["preset", "chatgpt", "custom"]);
+    const chatgptGroup = capturedGroups.find((group) => group.id === "chatgpt");
+    expect(chatgptGroup?.title).toBe("settings.modelProvider.chatgpt.navigationTitle");
+    expect(chatgptGroup?.items.map((item) => item.presetId)).toEqual([
+      BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan,
+    ]);
+    expect(chatgptGroup?.items[0]).toMatchObject({
+      label: "settings.modelProvider.chatgpt.navigationPlan",
+      displayName: "settings.modelProvider.chatgpt.navigationPlan",
+    });
+    expect(
+      capturedGroups[0]?.items.some(
+        (item) => item.presetId === BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan,
+      ),
+    ).toBe(false);
+  });
+
   it("unlink 后独立 Start 入口仍保留，浏览不连接", () => {
     let capturedGroups: ModelProviderNavGroup[] = [];
     let capturedNavigationItems: ReturnType<typeof useModelProviderNavigation>["navigationItems"] =

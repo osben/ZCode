@@ -39,7 +39,6 @@ function V4ComposerVoiceButtonImpl({
           ? "voiceDictation.composer.stop"
           : "voiceDictation.composer.start",
   });
-  const tooltip = shortcutLabel ? `${label} (${shortcutLabel})` : label;
   const Icon = recording ? Square : busy ? LoaderCircle : Mic;
   const levelPercent = Math.round(Math.max(0, Math.min(1, level)) * 100);
   // Persistent polite live region: announces phase changes even when focus is elsewhere
@@ -108,11 +107,11 @@ function V4ComposerVoiceButtonImpl({
           ) : null}
         </div>
       ) : null}
-      <ControlHintTooltip title={tooltip}>
+      <ControlHintTooltip title={label} shortcut={shortcutLabel || undefined}>
         <Button
           type="button"
           variant="ghost"
-          size="icon-sm"
+          size="icon-md"
           data-testid={TID_V4_COMPOSER_VOICE_ENTRY}
           data-voice-phase={phase}
           aria-label={label}

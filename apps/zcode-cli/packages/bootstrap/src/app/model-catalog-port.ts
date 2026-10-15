@@ -40,7 +40,7 @@ export function createModelCatalogPort(deps: ModelCatalogPortDeps): ModelCatalog
           const reasoningLevels = [...reasoning.values];
           // The default level is the last level, following the **same rule** as provider-registry-selection.ts's `toModelOption`
           // (the GUI picker's `reasoning.defaultLevel`). Different defaults here could produce a discrepancy only the user would notice: the picker defaults to high while `subagent_model` defaults to low when no level is specified. Models without levels omit the entire field (empty array + no default).
-          const defaultReasoningLevel = reasoning.values.at(-1);
+          const defaultReasoningLevel = reasoning.default ?? reasoning.values.at(-1);
           const contextWindow = model.config.properties.contextWindow;
           // In the registry, `providerName` is `string | null | undefined` (config-service.ts normalizes empty strings to `null`), while the port contract uses `string | undefined`. Normalize all three "no name" cases to **one** answer: omit the key. Never pass through `null` or an empty string; it would be printed as-is in the ListModels row, while the reader expects to fall back to providerId if no name was set.
           const providerLabel = provider.providerName?.trim();

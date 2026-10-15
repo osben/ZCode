@@ -8,6 +8,7 @@ import type {
   GitIdentity,
   GitLocalBranchListResult,
   GitPushResult,
+  GitRepositoryRemotesResult,
   GitRepositorySummary,
   GitWorktreeCreateResult,
   GitWorktreeListResult,
@@ -77,6 +78,7 @@ export interface GitCliRepo {
   invalidate(workspacePath: string): void;
   resolveRepository(workspacePath: string): Promise<GitResolvedRepository>;
   getWorkspaceRepositoryInfo(workspacePath: string): Promise<GitWorkspaceRepositoryInfo>;
+  getRepositoryRemotes(workspacePath: string): Promise<GitRepositoryRemotesResult>;
   getStatus(workspacePath: string): Promise<GitStatusSnapshot>;
   getCommitGraph(
     workspacePath: string,

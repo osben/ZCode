@@ -30,9 +30,20 @@ export const completeEnumOptionSpecDataSchema = z
       .min(1, "reasoningLevel.values 不能为空")
       .refine((values) => new Set(values).size === values.length, "reasoningLevel.values 不能重复")
       .readonly(),
+    /** Explicit level for fresh selections; null clears an inherited default, and omission falls back to the highest value. */
+    default: z.string().min(1).nullable().optional(),
     map: optionMapSchema("reasoningLevel"),
   })
-  .strict();
+  .strict()
+  .superRefine((spec, context) => {
+    if (spec.default != null && !spec.values.includes(spec.default)) {
+      context.addIssue({
+        code: "custom",
+        path: ["default"],
+        message: "reasoningLevel.default 必须是 values 之一",
+      });
+    }
+  });
 
 export const completeLimitOptionSpecDataSchema = z
   .object({

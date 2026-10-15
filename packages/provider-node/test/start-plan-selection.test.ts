@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   AccountProviderService,
+  ChatgptAccountAccessConfig,
   ProviderConfig,
   ProviderConfigMap,
   ZhipuAccountAccessConfig,
@@ -27,19 +28,29 @@ it("Host/Worker 共用 facade：Start 与付费并存，Start 不映射或迁移
       account = new AccountProviderService({
         configSource,
         resolve: async () => ({
-          providers: new ProviderConfigMap(
-            [ids.bigmodelStartPlan, ids.bigmodelTeamCodingPlan].map((id) => [
-              id,
+          providers: new ProviderConfigMap([
+            ...[ids.bigmodelStartPlan, ids.bigmodelTeamCodingPlan].map(
+              (id) =>
+                [
+                  id,
+                  new ProviderConfig({
+                    access: new ZhipuAccountAccessConfig({
+                      entitled: id !== ids.bigmodelStartPlan || available,
+                    }),
+                    builtinModelIds: ["GLM-5.2"],
+                  }),
+                ] as const,
+            ),
+            [
+              ids.chatgptPlan,
               new ProviderConfig({
-                access: new ZhipuAccountAccessConfig({
-                  entitled: id !== ids.bigmodelStartPlan || available,
-                }),
-                builtinModelIds: ["GLM-5.2"],
+                access: new ChatgptAccountAccessConfig({ entitled: true }),
+                builtinModelIds: ["gpt-6-sol"],
               }),
-            ]),
-          ),
-          states: Object.fromEntries(
-            [ids.bigmodelStartPlan, ids.bigmodelTeamCodingPlan].map((id) => [
+            ],
+          ]),
+          states: Object.fromEntries([
+            ...[ids.bigmodelStartPlan, ids.bigmodelTeamCodingPlan].map((id) => [
               id,
               {
                 current: true,
@@ -48,7 +59,8 @@ it("Host/Worker 共用 facade：Start 与付费并存，Start 不映射或迁移
                 entitled: id !== ids.bigmodelStartPlan || available,
               },
             ]),
-          ),
+            [ids.chatgptPlan, { current: true, availability: "available", entitled: true }],
+          ]),
         }),
       });
       return account;
@@ -73,6 +85,14 @@ it("Host/Worker 共用 facade：Start 与付费并存，Start 不映射或迁移
       expect.arrayContaining([ids.bigmodelStartPlan, ids.bigmodelTeamCodingPlan]),
     );
     expect(first.effectiveSelection).toEqual(start);
+    const chatgpt = {
+      providerId: ids.chatgptPlan,
+      modelId: "gpt-6-sol",
+      options: { reasoningLevel: "high" },
+    };
+    expect(facade.getView(undefined, undefined, { selection: chatgpt }).effectiveSelection).toEqual(
+      chatgpt,
+    );
     expect({
       result: facade.getView(undefined, undefined, {
         selection: { ...start, providerId: ids.bigmodelIndividualCodingPlan },

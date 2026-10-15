@@ -70,6 +70,7 @@ import {
   TID_WORKSPACE_FILE_TREE_BUTTON,
   TID_WORKSPACE_ITEM,
   TID_WORKSPACE_TOGGLE_PIN,
+  gitRemoteUrlToWebUrl,
   testId,
 } from "@zcode/shared";
 import type { ZCodeTaskMeta } from "@zcode/shared";
@@ -97,6 +98,7 @@ import {
   scanWindowsReservedDeviceNameFiles,
 } from "@/lib/workspaceRemovalSafety.js";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
+import { useOptionalPlatform } from "@/hooks/usePlatform.js";
 import { toast } from "@/components/ui/toast.js";
 
 export type SortableBindings = Pick<ReturnType<typeof useSortable>, "attributes" | "listeners">;
@@ -222,6 +224,7 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
     tab.workspaceIdentity,
     tab.remoteTarget,
   );
+  const platform = useOptionalPlatform();
   const confirmDialog = useConfirmDialog();
   const baseServices = useBaseWorkspaceServices();
   const zcodeTaskService = services.zcodeTaskService;
@@ -259,6 +262,37 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
   const workspaceIconColorClass = workspaceDisplayEntry?.color
     ? WORKSPACE_ICON_COLOR_CLASS[workspaceDisplayEntry.color]
     : "text-foreground-subtle";
+  const workspaceGitHubUrlRequestIdRef = useRef(0);
+  const refreshWorkspaceGitHubUrl = useCallback(() => {
+    const requestId = ++workspaceGitHubUrlRequestIdRef.current;
+    setWorkspaceGitHubUrl(null);
+    services.gitService
+      .getRepositoryRemotes({ workspacePath: tab.workspacePath })
+      .then((result) => {
+        if (requestId !== workspaceGitHubUrlRequestIdRef.current) return;
+        const githubUrl =
+          result.remotes
+            .map((remote) => gitRemoteUrlToWebUrl(remote.url))
+            .find((url): url is string => url !== null && url.startsWith("https://github.com/")) ??
+          null;
+        setWorkspaceGitHubUrl(githubUrl);
+      })
+      .catch((error: unknown) => {
+        if (requestId !== workspaceGitHubUrlRequestIdRef.current) return;
+        logger.debug("[WorkspaceSidebarItem] repository remotes lookup failed", {
+          workspacePath: tab.workspacePath,
+          error,
+        });
+        setWorkspaceGitHubUrl(null);
+      });
+  }, [services.gitService, tab.workspacePath]);
+  const handleWorkspaceActionMenuOpenChange = useCallback(
+    (open: boolean) => {
+      setWorkspaceActionMenuOpen(open);
+      if (open) refreshWorkspaceGitHubUrl();
+    },
+    [refreshWorkspaceGitHubUrl],
+  );
   const sshWorkspaceTooltipDetails = getSshWorkspaceTooltipDetails(tab);
   const reconnectRuntimeLogs =
     reconnectingRemoteWorkspaceLogsByWorkspaceKey[remoteWorkspaceKey] ?? [];
@@ -288,6 +322,10 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
   const [workspaceRowHovered, setWorkspaceRowHovered] = useState(false);
   const [workspaceRowFocusWithin, setWorkspaceRowFocusWithin] = useState(false);
   const [workspaceActionMenuOpen, setWorkspaceActionMenuOpen] = useState(false);
+  const [workspaceGitHubUrl, setWorkspaceGitHubUrl] = useState<string | null>(null);
+  const handleOpenWorkspaceOnGitHub = useCallback(() => {
+    if (workspaceGitHubUrl) platform?.openExternal(workspaceGitHubUrl);
+  }, [platform, workspaceGitHubUrl]);
   const [isHoverNone] = useState(
     () =>
       typeof window !== "undefined" &&
@@ -940,7 +978,7 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
                     {shouldMountWorkspaceRowActions ? (
                       <DropdownMenu
                         open={workspaceActionMenuOpen}
-                        onOpenChange={setWorkspaceActionMenuOpen}
+                        onOpenChange={handleWorkspaceActionMenuOpenChange}
                       >
                         <ControlHintTooltip title={intl.formatMessage({ id: "common.more" })}>
                           <DropdownMenuTrigger asChild>
@@ -984,6 +1022,14 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
                           >
                             {intl.formatMessage({ id: "workspaceSidebar.customize" })}
                           </DropdownMenuItem>
+                          {workspaceGitHubUrl ? (
+                            <DropdownMenuItem
+                              data-testid="workspace-open-on-github"
+                              onSelect={handleOpenWorkspaceOnGitHub}
+                            >
+                              {intl.formatMessage({ id: "workspaceSidebar.openOnGitHub" })}
+                            </DropdownMenuItem>
+                          ) : null}
                           <DropdownMenuItem
                             data-testid={testId(TID_WORKSPACE_CLOSE, tab.workspacePath)}
                             onMouseDown={(event) => {
