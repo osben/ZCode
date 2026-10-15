@@ -377,6 +377,22 @@ describe("ProviderConfigMap overlay", () => {
     );
   });
 
+  it("allows null to clear an inherited reasoning default and use the fallback", () => {
+    const base = new EnumOptionSpecConfig({
+      values: ["low", "medium", "high"],
+      default: "high",
+      map: "{}",
+    });
+    const cleared = base.overlay(new EnumOptionSpecConfig({ default: null }));
+
+    expect(cleared.toJSON()).toEqual({
+      values: ["low", "medium", "high"],
+      default: null,
+      map: "{}",
+    });
+    expect(cleared.validateComplete()).toEqual([]);
+  });
+
   it("用 null 清除字段，并在最终完整性校验中报告必填值缺失", () => {
     const base = new ModelConfig({
       properties: new ModelPropertiesConfig({

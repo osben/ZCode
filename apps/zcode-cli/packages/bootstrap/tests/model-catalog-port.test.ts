@@ -14,6 +14,7 @@ import type { ProviderRegistryModelSource } from "../src/app/provider-registry-m
 interface FakeModel {
   modelId: string;
   reasoningLevels: string[];
+  reasoningDefault?: string | null;
   contextWindow?: number;
 }
 
@@ -47,7 +48,14 @@ function fakeRegistry(providers: FakeProvider[]): {
           models: provider.models.map((model) => ({
             modelId: model.modelId,
             config: {
-              optionSpecs: { reasoningLevel: { values: model.reasoningLevels } },
+              optionSpecs: {
+                reasoningLevel: {
+                  values: model.reasoningLevels,
+                  ...(model.reasoningDefault === undefined
+                    ? {}
+                    : { default: model.reasoningDefault }),
+                },
+              },
               properties: { contextWindow: model.contextWindow },
             },
           })),
@@ -155,6 +163,27 @@ describe("createModelCatalogPort", () => {
       defaultReasoningLevel: "high",
       contextWindow: 200_000,
     });
+  });
+
+  it("uses an explicit reasoning default instead of the highest value", () => {
+    const fake = fakeRegistry([
+      {
+        providerId: "zhipu",
+        models: [
+          {
+            modelId: "glm-6",
+            reasoningLevels: ["low", "medium", "high", "max"],
+            reasoningDefault: "high",
+          },
+        ],
+      },
+    ]);
+    const port = createModelCatalogPort({
+      registry: fake.registry,
+      currentSelection: () => undefined,
+    });
+
+    expect(port.listModels()[0]?.defaultReasoningLevel).toBe("high");
   });
 
   it("a model with no reasoning levels gets an empty array and no default", () => {

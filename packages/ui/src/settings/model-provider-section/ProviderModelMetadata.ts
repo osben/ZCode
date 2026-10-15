@@ -284,8 +284,14 @@ export function resolveProviderModelDraftCommit({
     deleteMutable(sparsePersonalConfig, "optionSpecs");
   }
   const effectiveOptionSpecs = { ...currentModel.config.optionSpecs };
+  const currentReasoningDefault = currentModel.config.optionSpecs?.reasoningLevel?.default;
   effectiveOptionSpecs.reasoningLevel = {
     values: [...reasoningLevelValues],
+    ...(currentReasoningDefault === null ||
+    (currentReasoningDefault !== undefined &&
+      reasoningLevelValues.includes(currentReasoningDefault))
+      ? { default: currentReasoningDefault }
+      : {}),
     map: effectiveReasoningMap,
   };
   if (resolvedMaxOutputSpec !== undefined) {

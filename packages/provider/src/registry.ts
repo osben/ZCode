@@ -131,7 +131,10 @@ export function validateModelSelectionOptions(
   model: {
     readonly config: {
       readonly optionSpecs: {
-        readonly reasoningLevel: { readonly values: readonly string[]; readonly default?: string };
+        readonly reasoningLevel: {
+          readonly values: readonly string[];
+          readonly default?: string | null;
+        };
       };
     };
   },

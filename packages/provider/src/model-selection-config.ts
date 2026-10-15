@@ -20,7 +20,7 @@ interface ModelSelectionCompletionView {
         readonly optionSpecs: {
           readonly reasoningLevel: {
             readonly values: readonly string[];
-            readonly default?: string;
+            readonly default?: string | null;
           };
         };
       };
