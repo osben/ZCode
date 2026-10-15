@@ -1230,6 +1230,59 @@ describe("fork settings sidecar", () => {
     });
   });
 
+  it("does not let a pending migration write undo a concurrent base-setting save", async () => {
+    // Instance A's migration turn waits for the main-file lock; while it waits, another service
+    // instance commits a base preference. Once A proceeds, its read happens inside the lock, so
+    // the cleanup write must persist the concurrently saved value, not an older snapshot.
+    const home = makeTempHome();
+    const settingsDir = join(home, ".zcode", "v2");
+    mkdirSync(settingsDir, { recursive: true });
+    writeFileSync(
+      settingsFile(home),
+      JSON.stringify({
+        locale: "zh-CN",
+        recentProjects: [],
+        voiceDictation: { modelId: "parakeet" },
+      }),
+      "utf-8",
+    );
+
+    const { acquireFileLock } = await import("@zcode/shared/node");
+    const releaseMainLock = await acquireFileLock(settingsFile(home));
+    let released = false;
+    const releaseOnce = () => {
+      if (!released) {
+        released = true;
+        void releaseMainLock();
+      }
+    };
+    try {
+      const service = await createSettingServiceInHome(home);
+      const pendingGet = service.get(); // stalls acquiring the main-file lock
+      // Another instance commits its base-setting save while the migration turn is still waiting.
+      writeFileSync(
+        settingsFile(home),
+        JSON.stringify({
+          locale: "en-US",
+          recentProjects: [],
+          voiceDictation: { modelId: "parakeet" },
+        }),
+        "utf-8",
+      );
+
+      await releaseOnce();
+      await pendingGet;
+
+      expect(readJsonFile(settingsFile(home)).locale).toBe("en-US");
+      await expect(service.get()).resolves.toMatchObject({
+        locale: "en-US",
+        voiceDictation: { modelId: "parakeet" },
+      });
+    } finally {
+      releaseOnce();
+    }
+  });
+
   it("ignores a stale legacy snapshot whose keys were already migrated and cleared", async () => {
     // Instance A captures its legacy snapshot before the sidecar lock; instance B migrates and the
     // user then clears the key. When A resumes, re-checking setting.json under the lock must seed
