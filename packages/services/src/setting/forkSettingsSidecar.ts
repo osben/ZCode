@@ -6,10 +6,11 @@ import {
   forkAppSettingsStoredSchema,
   formatLogPrefix,
   formatZodError,
+  pickForkSettings,
 } from "@zcode/shared";
 import { atomicWriteText, withAtomicFileLock } from "../fs/atomicFileUtils.js";
 import { isEffectiveDevelopmentNodeEnv } from "../runtime-tools/nodeEnv.js";
-import { getForkSettingsFile, getSettingsDir } from "./settingsPaths.js";
+import { getForkSettingsFile, getSettingsDir, getSettingsFile } from "./settingsPaths.js";
 
 const log = (...args: unknown[]) =>
   console.log(formatLogPrefix("forkSettings", process.pid), ...args);
@@ -25,6 +26,15 @@ function debugLog(...args: unknown[]) {
 /** Same stale-write protection writeSettings() uses for the main file: an expired queue turn must not rename late. */
 export interface ForkSettingsWriteGuards {
   shouldCommit: () => boolean;
+}
+
+/** Tolerant JSON read: any missing/unreadable/broken file yields undefined instead of throwing. */
+async function readRawJsonFile(filePath: string): Promise<unknown> {
+  try {
+    return JSON.parse(await readFile(filePath, "utf-8"));
+  } catch {
+    return undefined;
+  }
 }
 
 /** Read the raw sidecar payload, or undefined when the file is missing or unreadable. */
@@ -128,9 +138,14 @@ export async function updateForkSettings(
 }
 
 /**
- * One-time sidecar migration step: seed fork keys still living in setting.json (raw, pre-parse)
- * into the sidecar. The sidecar wins on conflicts — it is the source of truth once it exists.
- * No-op when there is nothing to migrate.
+ * One-time sidecar migration step: seed fork keys still living in setting.json into the sidecar.
+ * The sidecar wins on conflicts — it is the source of truth once it exists. No-op when there is
+ * nothing to migrate.
+ *
+ * The legacy snapshot argument may be stale: it was captured outside the sidecar lock, and another
+ * service instance may have migrated and even cleared sidecar keys in the meantime. Only keys
+ * still present in setting.json are seeded, re-checked under the lock, so a stale snapshot can
+ * never resurrect a value the user already cleared.
  */
 export async function maybeSeedLegacyForkSettings(
   legacyForkSettings: Partial<ForkAppSettings> | undefined,
@@ -139,8 +154,16 @@ export async function maybeSeedLegacyForkSettings(
   if (!legacyForkSettings) return;
   const forkSettingsFile = getForkSettingsFile();
   await withAtomicFileLock(forkSettingsFile, async () => {
+    // A raw read/parse failure yields undefined, which seeds nothing: an unreadable main file is
+    // not a source worth seeding from.
+    const stillPresent = pickForkSettings(
+      ((await readRawJsonFile(getSettingsFile())) ?? {}) as Record<string, unknown>,
+    );
+    if (Object.keys(stillPresent).length === 0) {
+      return;
+    }
     const merged = forkAppSettingsStoredSchema.parse({
-      ...legacyForkSettings,
+      ...stillPresent,
       ...(await readStoredForkSettings()),
     });
     await writeForkSettings(merged, { useFileLock: false, guards });

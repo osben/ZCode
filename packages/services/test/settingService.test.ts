@@ -1230,6 +1230,32 @@ describe("fork settings sidecar", () => {
     });
   });
 
+  it("ignores a stale legacy snapshot whose keys were already migrated and cleared", async () => {
+    // Instance A captures its legacy snapshot before the sidecar lock; instance B migrates and the
+    // user then clears the key. When A resumes, re-checking setting.json under the lock must seed
+    // nothing, otherwise the stale snapshot would resurrect the cleared value.
+    const home = makeTempHome();
+    const settingsDir = join(home, ".zcode", "v2");
+    mkdirSync(settingsDir, { recursive: true });
+    writeFileSync(
+      settingsFile(home),
+      JSON.stringify({ locale: "zh-CN", recentProjects: [], worktreeBranchPrefix: "stale/" }),
+      "utf-8",
+    );
+
+    const serviceB = await createSettingServiceInHome(home);
+    await serviceB.get(); // migrates the legacy key into the sidecar and cleans setting.json
+    await serviceB.update({ worktreeBranchPrefix: undefined }); // the user clears it
+
+    const { maybeSeedLegacyForkSettings } = await import("../src/setting/forkSettingsSidecar.js");
+    await maybeSeedLegacyForkSettings(
+      { worktreeBranchPrefix: "stale/" },
+      { shouldCommit: () => true },
+    );
+
+    expect(readJsonFile(forkSettingsFile(home))).not.toHaveProperty("worktreeBranchPrefix");
+  });
+
   it("migrates legacy fork keys from setting.json into the sidecar on first read", async () => {
     const home = makeTempHome();
     const settingsDir = join(home, ".zcode", "v2");
