@@ -16,5 +16,8 @@ export function createSettingsTestServices(): IServiceAccessor {
       get: async () => ({}),
       update: async () => {},
     },
+    zcodeTaskService: {
+      listPinnedWorkspaceKeys: async () => [],
+    },
   } as unknown as IServiceAccessor;
 }
