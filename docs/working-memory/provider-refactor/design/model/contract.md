@@ -75,13 +75,15 @@ modelId 临时推断。
 
 ## Option Specs
 
-公共 Option 使用固定字段。每个模型通过 Option Specs 描述合法范围、语义顺序、硬上限和请求映射；Option Spec 不拥有执行默认值：
+公共 Option 使用固定字段。每个模型通过 Option Specs 描述合法范围、语义顺序、硬上限、请求映射和新选择的默认档位：
 
 ```ts
 interface EnumOptionSpec {
   type: "enum";
   // 按语义强度从低到高；values[0] 是最低公开档位。
   values: readonly string[];
+  // Fresh model selections use this level; null explicitly clears an inherited default.
+  default?: string | null;
   map: string;
 }
 
@@ -104,7 +106,7 @@ interface ModelOptions {
 
 `reasoningLevel` 是用户期望的推理强度。它是软约束：Adapter 尽可能用目标协议的 effort、level、toggle 或兼容 budget 表达。
 `reasoningLevel.values` 按推理强度从低到高排列；`values[0]` 是模型公开的最低档位，但不保证等于关闭。
-标准模型选择确实缺省时在 Host Selection 边界选择 `values.at(-1)`；明确采用低成本策略的辅助请求显式选择
+标准模型的新选择优先使用 `default`；未设置或通过 `null` 清除继承值时，Host Selection 回退到 `values.at(-1)`。值列表被替换后，若继承的 `default` 不再属于新列表，必须丢弃该默认值；Personal Overlay 也不得保存不在其有效 `values` 中的默认值。明确采用低成本策略的辅助请求显式选择
 `values[0]`。不得扫描 `off`、`nothink`、`none` 等名称猜测关闭能力。
 
 `maxOutputTokens` 是推理与最终回答共享的总生成 Token 硬上限。Model 校验调用值没有超过对应 `LimitOptionSpec.max`，不替调用方静默截断。

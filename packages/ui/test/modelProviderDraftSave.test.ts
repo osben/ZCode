@@ -366,6 +366,25 @@ describe("Model metadata uses formal Model Config", () => {
     expect(result.model.personalConfig.optionSpecs?.reasoningLevel?.default).toBe("high");
   });
 
+  it("removes a personal reasoning default when editing excludes its value", () => {
+    const model = createModel();
+    model.personalConfig = {
+      optionSpecs: { reasoningLevel: { default: "high" } },
+    };
+    model.hasPersonalConfig = true;
+    const draft = updateModelDraft(
+      createProviderModelDraftValues(model),
+      { reasoningLevelValuesValue: ["low"] },
+      model,
+    );
+
+    const result = resolveProviderModelDraftCommit({ currentModel: model, draft });
+
+    expect(result.status).toBe("commit");
+    if (result.status !== "commit") return;
+    expect(result.model.personalConfig.optionSpecs?.reasoningLevel).toEqual({ values: ["low"] });
+  });
+
   it("已有 Personal 容量覆盖继续作为真实输入值", () => {
     const model = createModel();
     model.personalConfig = {
