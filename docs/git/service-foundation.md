@@ -1,28 +1,28 @@
-# Git 底层服务实现总结
+# Git Underlying Service Implementation Summary
 
-更新日期：2026-04-09
+Update date: 2026-04-09
 
-## 本次目标
+## Scope of This Task
 
-本次只实现 Git 的底层服务与通信架构，不接入上层 Git pane 的真实交互。
+This time only implements Git's underlying service and communication architecture, without connecting upper-layer Git pane's real interaction.
 
-完成范围：
+Completion scope:
 
-- 在 `packages/shared/src/git.ts` 补齐 Git RPC 所需 DTO
-- 在 `packages/shared/src/channels.ts` 注册 `git` 服务频道
-- 在 `packages/services/src/git/` 落地 `config -> providers -> repo -> service` 结构
-- 在本地、远端、Web 三条服务链路中接入 `IGitService`
-- 补充服务层测试，验证真实 Git CLI 执行
+- Supplement Git RPC required DTO in `packages/shared/src/git.ts`
+- Register `git` service channel in `packages/shared/src/channels.ts`
+- Implement `config -> providers -> repo -> service` structure under `packages/services/src/git/`
+- Connect local / remote / Web three service access chains `IGitService`
+- Supplement service layer test, verify real Git CLI execution
 
-## 实现关系图
+## Implementation Relationship Diagram
 
 ```mermaid
 flowchart LR
   UI["UI / Hooks（后续接入）"] --> Accessor["IServiceAccessor.gitService"]
   Accessor --> RPC["ProxyChannel / RPC"]
 
-  RPC -->|"Desktop Local"| Local["本地 Host Process"]
-  RPC -->|"Desktop Remote"| Remote["远端 zcode-server"]
+  RPC -->|"Desktop Local"| Local["Local Host Process"]
+  RPC -->|"Desktop Remote"| Remote["Remote zcode-server"]
   RPC -->|"Web"| Web["WebSocket -> zcode-server"]
 
   Local --> GitService["GitService"]
@@ -35,16 +35,16 @@ flowchart LR
 
   Env --> GitCLI["System Git CLI"]
   Cmd --> GitCLI
-  GitCLI --> GitConfig["用户真实 Git 配置"]
-  GitCLI --> WorkspaceRepo["workspace 所在环境的 Git 仓库"]
+  GitCLI --> GitConfig["User's real Git configuration"]
+  GitCLI --> WorkspaceRepo["workspace location environment's Git repository"]
 ```
 
-这张图对应两条核心原则：
+This diagram corresponds to two core principles:
 
-- 上层永远只通过统一的 `IGitService` 协议访问 Git 能力，不感知执行位置
-- 真正执行 Git 命令的一定是 workspace 所在那一侧的服务实例，而不是固定绑在本机平台层
+- Upper layer always through unified `IGitService` protocol access Git capability, does not perceive execution position
+- Actually executes Git command is workspace location environment service's instance, not fixed bound to host platform
 
-## 目录结构
+## Directory Structure
 
 ```text
 packages/services/src/git/
@@ -60,47 +60,48 @@ packages/services/src/git/
     gitCliRepo.ts
 ```
 
-## 分层职责
+## Layered Responsibilities
 
 ### Config
 
-负责 Git 域的静态规则与工具方法：
+Responsible for Git domain's static rules and utility methods:
 
-- Git binary 候选路径
-- 默认 timeout / 输出大小限制
-- 命令执行环境变量
-- 跨平台路径规范化
-- repo 路径与 workspace 作用域判断
+- Git binary candidate paths
+- Default timeout / output size limit
+- Command execution environment variables
+- Cross-platform path normalization
+- Repo root and workspace scope judgment strategy
 
 ### Providers
 
-`Providers` 层只负责“怎么执行”，不负责 Git 业务语义。
+`Providers` layer only responsible for "how to execute", not Git business semantics.
 
 #### GitEnvironmentProvider
 
-负责：
+Responsible for:
 
-- 解析当前环境里可用的 Git binary
-- 缓存探测结果，避免重复执行 `git --version`
-- 生成统一的 Git 执行环境变量
+- Parse available Git binary in current environment
+- Cache detection results, avoid repeatedly executing `git --version`
+- Generate unified Git execution environment variables
 
 #### GitCommandProvider
 
-负责：
+Responsible for:
 
-- 统一执行 Git CLI
-- 控制 `cwd`、`env`、timeout、输出大小
-- 记录命令、耗时、exit code、stdoutBytes、stderrSummary
+- Unified execution Git CLI
+- Control `cwd`、`env`、timeout、output size
+- Record command、耗时、exit code、stdoutBytes、stderrSummary
 
 ### Repo
 
-`GitCliRepo` 是对系统 Git CLI 的薄封装，职责是“把 Git 原始输出变成结构化数据”。
+`GitCliRepo` is thin wrapper of system Git CLI, responsibility is "将 Git 原始 output 变成结构化数据".
 
-当前已覆盖：
+Current has covered:
 
-- 仓库解析
+- Repository parsing
 - status
 - diff
+
 - branch comparison
 - stage / unstage / discard / commit
 - identity
@@ -119,31 +120,31 @@ packages/services/src/git/
 关键职责：
 
 - 按当前 `workspacePath` 做作用域过滤
-- 将 repo 层原始状态映射成 `GitFileChange`
+- 将 repo 层原始状态映射成 `GitFileChange[]`
 - 把 branch comparison、identity、refresh 等高层语义统一收口
 
-## 关键实现流程
+## Key Implementation Flow
 
-### 1. 仓库解析
+### 1. Repository Parsing
 
-`GitCliRepo.resolveRepository()` 的流程：
+`GitCliRepo.resolveRepository()` flow:
 
-1. 通过 `GitEnvironmentProvider` 找可用的 Git binary
+1. 通过 `GitEnvironmentProvider` 找当前环境可用的 Git binary
 2. 在 `workspacePath` 下执行 `git rev-parse --show-toplevel --show-prefix`
 3. 得到：
    - `repoRoot`
    - `workspaceInRepoPath`
-4. 如果 Git 不存在或当前目录不在仓库内，返回结构化空结果，而不是把异常直接暴露给上层
+4. 如果 Git 不存在或当前目录不在仓库内，返回 structure 化空 result，而不是把异常直接 expose 给上层
 
 这样做的目的是让上层可以稳定拿到：
 
 - 是否安装了 Git
 - 当前 workspace 是否处于 Git 仓库中
-- workspace 是 repo 根目录还是子目录
+- workspace 是 repo 根目录还是子 directory
 
-### 2. 状态获取
+### 2. Status Obtaining
 
-`GitCliRepo.getStatus()` 的流程：
+`GitCliRepo.getStatus()` flow:
 
 1. 执行 `git status --porcelain=v2 --branch -z`
 2. 执行 staged / unstaged 两个 `git diff --numstat -z`
@@ -153,11 +154,11 @@ packages/services/src/git/
 
 这里的关键点是：
 
-- `status --porcelain=v2` 保证格式稳定，不受系统语言影响
+- `status --porcelain=v2` 保证 format 稳定，不受 system 语言影响
 - staged / unstaged 的行数统计统一在 repo 层完成
 - 上层不需要再猜测某个文件到底属于 staged、unstaged、untracked 还是 conflicted
 
-### 3. workspace 子目录过滤
+### 3. Workspace Subdirectory Filter
 
 `GitService.getChanges()` 不会直接把整个 repo 的变化原样抛给 UI，而是根据：
 
@@ -167,11 +168,11 @@ packages/services/src/git/
 
 只保留当前 workspace 作用域内的变更。
 
-这样当用户打开的是 monorepo 子目录时，默认看到的是“当前 workspace 相关的改动”，不会被整个仓库的其他目录干扰。
+这样当用户打开的是 monorepo 子 directory 时，默认看到的是“当前 workspace 相关的改动”，不会被整个 repository 其他 directory 干扰。
 
-### 4. 单文件 diff
+### 4. Single File Diff
 
-`GitCliRepo.getDiff()` 的策略：
+`GitCliRepo.getDiff()` strategy:
 
 - `staged`：走 `git diff --cached`
 - `unstaged`：走 `git diff`
@@ -184,18 +185,18 @@ packages/services/src/git/
 
 这样上层在拿 diff 时不需要额外特判“这是 untracked 文件”。
 
-### 5. 写操作
+### 5. Write Operations
 
-当前 repo 层已经实现以下真实 Git 写操作：
+Current repo layer has implemented following real Git write operations:
 
 - `stage` -> `git add -- <paths>`
 - `unstage` -> `git restore --staged -- <paths>`
 - `discard` -> `git restore ...`
 - `commit` -> `git commit -m <message>`
 
-这些能力已经通过 `IGitService` 暴露，但上层 UI 还没有正式接入。
+这些能力已经通过 `IGitService` expose，但上层 UI 还没有正式接入。
 
-## 通信接线
+## Communication Wiring
 
 Git 服务现在和 `file/system/terminal` 一样走统一 RPC 链路。
 
@@ -207,7 +208,7 @@ Git 服务现在和 `file/system/terminal` 一样走统一 RPC 链路。
 
 - renderer 侧看到的仍然是 `IServiceAccessor.gitService`
 - 当前窗口对应的 Remote Host service collection 暴露远端 `gitService`，renderer 再按 remote session /
-  workspace scope 选择该服务；窗口 Local Host 不负责替远端 workspace 建立 Git 代理
+  workspace scope 选择该 service；窗口 Local Host 不负责替远端 workspace 建立 Git 代理
 - 这保证 Git 执行位置始终跟随远端 workspace，而不是错误地落到本机
 
 ### Web
@@ -221,11 +222,11 @@ Git 服务现在和 `file/system/terminal` 一样走统一 RPC 链路。
 - 执行位置跟随 workspace
 - UI 不需要区分 local / remote / web
 
-## 问题解答
+## Problem Solutions
 
-### 1. GitService 如何获取用户本地 Git 命令和 Git 配置
+### 1. How GitService obtains user's local Git command and Git configuration
 
-#### Git 命令
+#### Git command
 
 `GitEnvironmentProvider` 会按顺序探测：
 
@@ -233,38 +234,38 @@ Git 服务现在和 `file/system/terminal` 一样走统一 RPC 链路。
 2. `git`
 3. Windows 下的常见 Git 安装路径
 
-探测方式是执行一次 `git --version`，成功后缓存结果，后续复用。
+探测方式是执行一次 `git --version`，成功后缓存 result，后续复用。
 
-#### Git 配置
+#### Git configuration
 
 不直接自己解析 `~/.gitconfig`，而是统一通过 Git CLI 读取。
 
-例如身份信息读取方式：
+例如 identity information reading method:
 
 - `git config --show-scope --show-origin --get user.name`
 - `git config --show-scope --show-origin --get user.email`
 
-这样拿到的是 Git 自己最终判定的有效配置，天然兼容：
+这样拿到的是 Git 自己最终判定的有效 configuration，天然兼容：
 
 - global / local / worktree scope
 - includeIf
-- 平台默认配置加载逻辑
+- 平台默认 configuration loading logic
 
-### 2. GitService 怎么做多端兼容
+### 2. GitService how to do multi-end compatibility
 
-多端兼容的核心不是“每端单独写一套 Git 实现”，而是：
+Multi-end compatibility 的核心不是 "每端单独写一套 Git 实现"，而是：
 
-- 统一协议：`IGitService`
+- 统一 protocol：`IGitService`
 - 统一分层：`Service -> Repo -> Providers -> System Git CLI`
-- 统一原则：Git 执行位置跟随 workspace 所在环境
+- 统一原则：Git 执行位置跟随 workspace 所在 environment
 
-#### 本地 / 远端 / Web 兼容
+#### Local / Remote / Web compatibility
 
-- 本地：本机 host process 注册本地实现
+- 本地：本机 host process 注册本地 implementation
 - 远端：远端 server 提供 Git 服务，本地只做 RPC 代理
 - Web：浏览器通过 websocket 消费同一套远端服务
 
-#### 多操作系统兼容
+#### 多操作系统 compatibility
 
 当前已经处理：
 
@@ -273,15 +274,15 @@ Git 服务现在和 `file/system/terminal` 一样走统一 RPC 链路。
 - `\` 与 `/` 路径分隔符差异
 - `realpath` 归一化，避免 macOS `/var` 与 `/private/var` 导致路径误判
 
-### 3. GitService 现在提供哪些服务接口，分别是做什么的
+### 3. GitService now provides which service interfaces, are respectively what doing
 
 #### `getRepositorySummary`
 
-返回仓库摘要信息：
+返回 repository 摘要信息：
 
 - `repoRoot`
 - `workspaceInRepoPath`
-- 分支名
+- Branch name
 - ahead / behind
 - 是否 dirty
 - 是否安装 Git
@@ -302,16 +303,16 @@ Git 服务现在和 `file/system/terminal` 一样走统一 RPC 链路。
 
 返回单文件 diff。
 
-支持：
+Support:
 
 - unstaged diff
 - staged diff
 - branch comparison diff
-- untracked 文件兜底 diff
+- untracked files兜底 diff
 
 #### `getBranchComparison`
 
-返回当前分支相对 upstream 的比较结果，包括：
+返回当前分支相对 upstream 的 comparison result，包括：
 
 - `baseRef`
 - `headRef`
@@ -328,18 +329,18 @@ Git 服务现在和 `file/system/terminal` 一样走统一 RPC 链路。
 
 #### `discardPaths`
 
-丢弃文件改动，支持工作区丢弃和 staged 丢弃。
+丢弃文件改动，支持 workspace 丢弃和 staged 丢弃。
 
 #### `commit`
 
 执行提交，返回：
 
 - `commitHash`
-- 提交后的最新仓库摘要
+- 提交后的 latest repository 摘要
 
 #### `getIdentity`
 
-读取当前有效的 Git 身份信息：
+读取当前有效的 Git identity information：
 
 - `userName`
 - `userEmail`
@@ -356,16 +357,16 @@ Git 服务现在和 `file/system/terminal` 一样走统一 RPC 链路。
 
 适合上层做刷新入口时直接调用。
 
-## 验证结果
+## Verification Results
 
 本轮已验证：
 
 - `pnpm typecheck` 通过
 - `pnpm test:unit -- packages/services/test/gitService.test.ts` 通过
 
-`pnpm lint` 当前仍未完全通过，但剩余失败项是仓库内既有历史问题，不是本轮新增 Git 底层服务引入的错误。
+`pnpm lint` 当前仍未完全通过，但剩余 failure items 是仓库内既有历史问题，不是本轮新增 Git 底层服务引入的错误。
 
-## 当前边界
+## Current Boundary
 
 当前已经完成的是：
 
@@ -377,5 +378,5 @@ Git 服务现在和 `file/system/terminal` 一样走统一 RPC 链路。
 
 - 上层 Git pane 改为消费真实 `gitService`
 - Git pane 写操作 UI 正式接线
-- Git 仓库动态订阅刷新
+- Git 仓库 dynamic 订阅刷新
 - 更细粒度 hunk 级操作

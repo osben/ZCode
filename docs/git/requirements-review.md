@@ -1,91 +1,91 @@
-# Git 需求评审与验收清单
+# Git Requirements Review and Acceptance Checklist
 
-更新日期：2026-04-09
+Update date: 2026-04-09
 
-## 文档说明
+## Document Description
 
-这份文档用于整理本次 Git 接入开发的当前结果。
+This document is used to organize current results of Git integration development.
 
-评审基线来自：
+Review baseline comes from:
 
 - `docs/git/requirements.md`
-- 当前已落地代码实现
+- Current landed code implementation
 
-本文档只记录两个状态：
+This document only records two statuses:
 
-- `实现状态`
-  - `已完成`：代码已经实现，功能主链路可运行
-  - `未完成`：当前实现与需求不一致，或尚未落地
-- `验收状态`
-  - 当前统一先记为 `未验收`
-  - 验收需要由用户手动完成
-  - 用户验收成功后，再更新为 `已验收`
+- `Implementation status`
+  - `Completed`: code has been implemented, main functional chain can run
+  - `Not completed`: current implementation inconsistent with requirements, or not landed yet
+- `Acceptance status`
+  - Currently uniformly recorded as `Not accepted`
+  - Acceptance needs to be completed manually by user
+  - After user accepts successfully, update to `Accepted`
 
-## 本次接入范围
+## Scope of This Integration
 
-本次接入已经完成的核心工作：
+Core work completed in this integration:
 
-- Git UI 接入真实 `IGitService`
-- `未暂存` / `已暂存` / `全部分支更改` 切到真实仓库数据
-- `上一轮更改` 保留 ZCode task per-turn 快照链路
-- Git pane 支持真实单文件 diff 按需加载
-- 顶部 Git 入口与 Git pane 复用同一份 Git 状态
+- Git UI connected to real `IGitService`
+- `Not staged` / `Staged` / `All branch changes` switched to real repository data
+- `Previous round changes` retains ZCode task per-turn snapshot chain
+- Git pane supports real single file diff on-demand loading
+- Top Git entry and Git pane share same Git status
 
-当前总体判断：
+Current overall judgment:
 
-- Git UI 与真实 service 的主链路已经跑通
-- 功能已进入“可人工验收”阶段
-- 仍有少量需求项与原始 `requirements.md` 存在偏差，需要后续确认
+- Git UI and real service main chain has been connected
+- Functionality has entered "manual acceptance" stage
+- Still a small number of requirement items deviate from original `requirements.md`, need subsequent confirmation
 
-## 需求清单
+## Requirement List
 
-| 需求项                                                             | 实现状态   | 验收状态 | 备注                                              |
-| ------------------------------------------------------------------ | ---------- | -------- | ------------------------------------------------- |
-| 顶部 Git 入口位于 `WorkspaceHeader`，支持打开/关闭右侧 Git pane    | 已完成     | 已验收   | 已接入顶部入口与开关逻辑                          |
-| 顶部在存在改动时显示 `Git + +/-` 胶囊统计                          | 已完成     | 已验收   | Git pane 未打开时也可见                           |
-| Git pane 复用右侧共享 pane，与 Browser / Code Viewer 共槽位        | 已完成     | 已验收   | 已按现有主布局接入                                |
-| Git pane 保持轻量结构：标题栏、来源切换、主内容区                  | 已完成     | 已验收   | 当前仍是轻量只读布局                              |
-| 支持 `未暂存` / `已暂存` / `全部分支更改` / `上一轮更改` 四个来源  | 已完成     | 已验收   | 四个来源都可切换                                  |
-| 来源切换后，文件列表、目录过滤、diff 内容同步切换                  | 已完成     | 已验收   | 顶部统计也跟随同一数据集                          |
-| `未暂存` / `已暂存` / `全部分支更改` 接入真实仓库数据              | 已完成     | 已验收   | 已接入真实 `IGitService`                          |
-| `上一轮更改` 优先复用当前 task 的 per-turn 文件快照和摘要          | 已完成     | 已验收   | 当前保持只读视图                                  |
-| 文件列表展示 workspace 相对路径全路径                              | 已完成     | 已验收   | 已按列表项展示                                    |
-| 文件列表展示 `+/-` 统计                                            | 已完成     | 已验收   | 已展示行数变化                                    |
-| 非 `未暂存` 项可展示状态 badge                                     | 已完成     | 已验收   | 包括 `已暂存` / `未跟踪` / `冲突` / `分支比较` 等 |
-| 文件项支持展开 / 收起                                              | 已完成     | 已验收   | 已支持展开 inline diff                            |
-| 支持 `未暂存` / `已暂存` / `全部分支更改` / `上一轮更改` 四类 diff | 已完成     | 已验收   | 当前为按需加载 diff                               |
-| 二进制文件给出不可预览提示                                         | 已完成     | 已验收   | 已有降级文案                                      |
-| 超大 diff 给出裁剪提示                                             | 已完成     | 未验收   | 已有降级文案                                      |
-| 无法生成 patch 时给出不可用提示                                    | 已完成     | 未验收   | 已有降级文案                                      |
-| Git pane 打开文件树后，右侧展开目录侧边栏                          | 已完成     | 已验收   | 当前已能展开右侧树                                |
-| 文件树支持目录折叠 / 展开                                          | 已完成     | 已验收   | 当前已支持                                        |
-| 文件树顶部支持当前目录树内的文件筛选                               | 已完成     | 已验收   | “全部目录”入口已替换为搜索框，支持即时筛选        |
-| 选择目录后主区只展示该目录下的文件改动                             | 已完成     | 已验收   | 当前已支持目录过滤                                |
-| 当前版本不包含仓库摘要头部                                         | 已完成     | 已验收   | 未展示 repo root、branch、ahead/behind 等信息块   |
-| 当前版本不包含底部提交区                                           | 已完成     | 已验收   | 未恢复提交区                                      |
-| 当前版本不包含提交身份提示区                                       | 已完成     | 已验收   | UI 未展示身份区                                   |
-| 当前版本不包含批量操作按钮区                                       | 已完成     | 已验收   | UI 未展示批量操作区                               |
-| 当前版本至少处理“当前来源没有任何改动”空态                         | 已完成     | 未验收   | 已支持                                            |
-| 当前版本至少处理“diff 无法预览”空态                                | 已完成     | 未验收   | 已支持                                            |
-| UI 层需要保留 Git pane 日志                                        | 已完成     | 已验收   | 已记录切换来源、展开文件、打开文件树、选择目录等  |
-| 打开 / 关闭 Git pane 需要记录日志                                  | 已完成     | 已验收   | 由 `useAppPanels` 记录                            |
-| 保持国际化兼容                                                     | 已完成     | 已验收   | 中英文文案已补齐                                  |
-| 保持双主题兼容方向                                                 | 已完成     | 已验收   | 当前实现未引入主题破坏性分叉                      |
-| 保持本地 / 远程 / 多操作系统兼容方向                               | 已完成     | 未验收   | 通过统一 `IGitService` 链路接入                   |
+| Requirement item                                                                                          | Implementation status | Acceptance status | Remarks                                                                                       |
+| --------------------------------------------------------------------------------------------------------- | --------------------- | ----------------- | --------------------------------------------------------------------------------------------- |
+| Top Git entry located in `WorkspaceHeader`, supports opening/closing right Git pane                       | Completed             | Accepted          | Connected top entry and switch logic                                                          |
+| Top displays `Git +/-` capsule statistic when changes exist                                               | Completed             | Accepted          | Visible even when Git pane not opened                                                         |
+| Git pane reuses right shared pane, shares slot with Browser / Code Viewer                                 | Completed             | Accepted          | Connected per existing main layout                                                            |
+| Git pane maintains lightweight structure: title bar, source switch, main content area                     | Completed             | Accepted          | Current is still lightweight read-only layout                                                 |
+| Supports four sources: `Not staged` / `Staged` / `All branch changes` / `Previous round changes`          | Completed             | Accepted          | Four sources all switchable                                                                   |
+| After source switch, file list, directory filter, diff content switch synchronously                       | Completed             | Accepted          | Top statistic also follows same dataset                                                       |
+| `Not staged` / `Staged` / `All branch changes` connected to real repository data                          | Completed             | Accepted          | Connected to real `IGitService`                                                               |
+| `Previous round changes` preferentially reuses current task per-turn file snapshot and summary            | Completed             | Accepted          | Current maintains read-only view                                                              |
+| File list displays workspace relative full path                                                           | Completed             | Accepted          | Displayed per list item                                                                       |
+| File list displays `+/-` statistic                                                                        | Completed             | Accepted          | Line changes already displayed                                                                |
+| Non `Not staged` items can display status badge                                                           | Completed             | Accepted          | Includes `Staged` / `Untracked` / `Conflicted` / `Branch comparison` etc.                     |
+| File item supports expand/collapse                                                                        | Completed             | Accepted          | Already supports inline diff expansion                                                        |
+| Supports diff for four classes: `Not staged` / `Staged` / `All branch changes` / `Previous round changes` | Completed             | Accepted          | Current is on-demand loaded diff                                                              |
+| Binary file gives non-previewable hint                                                                    | Completed             | Accepted          | Degradation text already available                                                            |
+| Oversized diff gives cropping hint                                                                        | Completed             | Not accepted      | Degradation text already available                                                            |
+| Patch generation failure gives unavailable hint                                                           | Completed             | Not accepted      | Degradation text already available                                                            |
+| After Git pane opens file tree, right side expands directory sidebar                                      | Completed             | Accepted          | Current already can expand right tree                                                         |
+| File tree supports directory collapse/expand                                                              | Completed             | Accepted          | Current already supports                                                                      |
+| File tree top supports file filtering within current directory tree                                       | Completed             | Accepted          | "All directories" entry replaced by search box, supports instant filtering                    |
+| After directory selected, main area only displays file changes under that directory                       | Completed             | Accepted          | Current already supports directory filtering                                                  |
+| Current version does not include repository summary header                                                | Completed             | Accepted          | Does not display info block such as repo root, branch, ahead/behind                           |
+| Current version does not include bottom commit area                                                       | Completed             | Accepted          | Commit area not restored                                                                      |
+| Current version does not include commit identity hint area                                                | Completed             | Accepted          | UI does not display identity area                                                             |
+| Current version does not include batch operation button area                                              | Completed             | Accepted          | UI does not display batch operation area                                                      |
+| Current version at least handles "no changes under current source" empty state                            | Completed             | Not accepted      | Already supported                                                                             |
+| Current version at least handles "diff cannot be previewed" empty state                                   | Completed             | Not accepted      | Already supported                                                                             |
+| UI layer needs to retain Git pane logs                                                                    | Completed             | Accepted          | Already records source switching, file expansion, opening file tree, directory selection etc. |
+| Open/close Git pane needs logging                                                                         | Completed             | Accepted          | Recorded by `useAppPanels`                                                                    |
+| Maintain internationalization compatibility                                                               | Completed             | Accepted          | Chinese/English texts all supplemented                                                        |
+| Maintain dual theme compatibility direction                                                               | Completed             | Accepted          | Current implementation does not introduce theme-breaking fork                                 |
+| Maintain local / remote / multiple operating system compatibility direction                               | Completed             | Not accepted      | Connected via unified `IGitService` chain                                                     |
 
-## 当前结论
+## Current Conclusion
 
-结论如下：
+Conclusions as follows:
 
-1. Git UI 与真实 service 的主接入已经完成。
-2. 当前功能主链路基本可跑通，已经具备人工验收条件。
-3. 当前所有需求项的 `验收状态` 统一为 `未验收`，等待用户手动确认。
-4. 等用户逐项验收后，再按验收结果更新本文件中的状态。
+1. Git UI and real service main access has been completed.
+2. Current function main chain basically runs, has manual acceptance conditions.
+3. Current all requirement items' `Acceptance status` is uniformly `Not accepted`, waiting for user manual confirmation.
+4. After user confirms item by item, update statuses in this file according to acceptance results.
 
-## 验收后更新规则
+## Post-Acceptance Update Rules
 
-后续可以按以下方式更新：
+Subsequently can update as follows:
 
-- 用户确认通过：将对应条目的 `验收状态` 改为 `已验收`
-- 用户确认不通过：保留 `未验收`，并在备注中补充问题
-- 如果用户要求调整实现：先改代码，再更新对应条目的 `实现状态` 与备注
+- User confirms passed: change corresponding entry's `Acceptance status` to `Accepted`
+- User confirms not passed: keep `Not accepted`, supplement problem in remarks
+- If user requires implementation adjustment: first modify code, then update corresponding entry's `Implementation status` and remarks

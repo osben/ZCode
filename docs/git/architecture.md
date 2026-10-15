@@ -1,54 +1,54 @@
-# Git 架构设计
+# Git Architecture Design
 
-## 相关文档
+## Related Documentation
 
-- [Git 分支切换与创建底层能力设计](./branch-switching-service-design.md)
+- [Git Branch Switching and Creation Underlying Capability Design](./branch-switching-service-design.md)
 
-## 背景
+## Background
 
-当前项目已经具备一套比较清晰的分层和跨端通信骨架：
+The current project has already established a relatively clear layered architecture and cross-terminal communication framework:
 
-- UI 通过 hooks 消费服务，不直接访问底层实现
-- Desktop / Web / Remote 都通过 `IServiceAccessor` + RPC 服务链路访问业务能力
-- `IPlatformService` 只承载必须经过宿主环境的动作，不承载常规业务逻辑
+- UI consumes services through hooks, not directly accessing underlying implementations
+- Desktop / Web / Remote all access business capabilities through `IServiceAccessor` + RPC service chain
+- `IPlatformService` only carries actions that must cross the host environment, not carrying regular business logic
 
-Git 功能如果要长期可维护，应该复用现有服务架构，而不是走新的直连路径。
+Git functionality should be maintainable in the long term if it reuses the existing service architecture, rather than taking a new direct connection path.
 
-## 设计目标
+## Design Goals
 
-- Git 能力在本地、远程、Web 三种运行方式下保持统一抽象
-- Git 相关逻辑严格落在 `Types -> Config -> Repo -> Service -> Runtime -> UI` 依赖方向内
-- Git 能读取用户环境里的真实 Git 配置，而不是维护一套项目自己的伪 Git 配置
-- UI 能复用现有右侧 side pane、diff 渲染、文件树组件，避免再造一套壳
+- Git capabilities should maintain unified abstraction in local, remote, and Web three execution environments
+- Git related logic should strictly fall within the `Types -> Config -> Repo -> Service -> Runtime -> UI` dependency direction
+- Git should read real user environment Git configuration, not maintain its own set of pseudo Git configuration
+- UI should reuse existing side pane, diff rendering, file tree components, avoiding to recreate another shell
 
-## 非目标
+## Non-Goals
 
-- v1 不做完整 Git 客户端
-- v1 不做 rebase / cherry-pick / stash / submodule 管理
-- v1 不接管用户的全局 Git 安装、SSH、GPG 或 credential helper 生命周期
-- 会话级回滚与基于 Git 的撤销能力不在本文讨论范围内
+- v1 does not make a complete Git client
+- v1 does not do rebase / cherry-pick / stash / submodule management
+- v1 does not take over user's global Git installation, SSH, GPG or credential helper lifecycle
+- Session-level rollback and Git-based undo capabilities are not within the scope of this document
 
-## 核心判断
+## Core Judgments
 
-### 1. Git 应该是标准业务服务，不应放进 `IPlatformService`
+### 1. Git should be standard business service, not put into `IPlatformService`
 
-推荐新增 `IGitService`，走现有 RPC 服务链路。
+It is recommended to add `IGitService`, going through existing RPC service chain.
 
-原因：
+Reasons:
 
-- Git 不是只在 Electron main 才能做的宿主动作，而是常规业务能力
-- Remote 模式下 Git 必须在远端工作区所在环境执行，不能绑定到本机平台层
-- Web 模式本质上也是通过服务端工作区提供 Git 能力，仍然适合放在 service 层
+- Git is not only the host action that can only be done in Electron main, but is regular business capability
+- Remote mode Git must be executed in remote workspace environment, cannot bind to host platform layer
+- Web mode is essentially also through server workspace providing Git capability, still suitable to put into service layer
 
-这也符合当前 `IPlatformService` 的职责边界：它只放 native dialog、窗口控制、外链打开之类“必须穿越宿主边界”的操作。
+This also conforms to the current `IPlatformService` responsibility boundary: it only puts native dialog, window control, external open and other actions that "must cross host boundary".
 
-## 推荐方案
+## Recommended Solution
 
-### 方案 A：新增独立 `GitService`，本地 / 远程都走同一服务协议
+### Solution A: Add independent `GitService`, both local / remote go through same service protocol
 
-这是推荐方案。
+This is the recommended solution.
 
-#### 高层结构
+#### High-level structure
 
 ```mermaid
 flowchart LR
@@ -60,20 +60,20 @@ flowchart LR
   Provider --> Git["System Git CLI"]
 ```
 
-#### 为什么推荐
+#### Why recommend
 
-- 完全贴合现有项目的服务化架构
-- 本地与远程只是在服务实现来源上不同，不会把 UI 设计绑死在某个平台
-- Git 命令、解析、容错、日志都能在服务层统一收口
-- 后续要扩展 staged/unstaged、branch、commit、discard 等能力时不会散到 UI
+- Fully conforms to existing project's service-oriented architecture
+- Local and remote are only different in service implementation sources, will not lock UI design to any one platform
+- Git commands, parsing, fault tolerance, log can all be unified in service layer for closure
+- Subsequent need to expand staged/unstaged, branch, commit, discard and other capabilities will not scatter to UI
 
-## 分层设计
+## Layered Design
 
 ### Types
 
-建议新增 Git 领域 DTO，放到 `packages/shared/src/git.ts`，并在 `packages/shared/src/index.ts` 导出。
+It is recommended to add Git domain DTO, put in `packages/shared/src/git.ts`, and export in `packages/shared/src/index.ts`.
 
-建议至少包含：
+It is recommended to include at least:
 
 - `GitRepositorySummary`
   - `workspacePath`
@@ -106,42 +106,42 @@ flowchart LR
 
 ### Config
 
-建议新增 Git 领域配置层，负责：
+It is recommended to add Git domain configuration layer, responsible for:
 
-- Git binary 解析策略
-- 命令默认参数
-- 超时、输出大小、日志脱敏规则
-- repo root 与 workspace 子路径关系的判定策略
+- Git binary parsing strategy
+- Command default parameters
+- Timeout, output size, log desensitization rules
+- repo root with workspace subpath relationship judgment strategy
 
-建议文件：
+It is recommended files:
 
 - `packages/services/src/git/config.ts`
 
 ### Providers
 
-为了符合项目里“横切关注点通过 Providers 进入”的原则，Git 域内部建议显式引入 Provider 层。
+In order to conform to project's principle that "horizontal cutting concern enters through Providers", Git domain inside recommends explicit introduce Provider layer.
 
-建议至少拆成两个 provider：
+It is recommended to split into at least two providers:
 
 - `GitCommandProvider`
-  - 负责统一执行 `git` 命令
-  - 负责 cwd、env、timeout、stderr、exit code、日志
+  - Responsible for unified execution `git` commands
+  - Responsible for cwd, env, timeout, stderr, exit code, log
 - `GitEnvironmentProvider`
-  - 负责发现 Git binary
-  - 负责补齐安全环境变量
-  - 负责平台差异适配
+  - Responsible for discovering Git binary
+  - Responsible for complementation of safe environment variables
+  - Responsible for platform difference adaptation
 
-Provider 层只做“如何执行”和“如何适配环境”，不做 Git 业务语义。
+Provider layer only does "how to execute" and "how to adapt environment", not do Git business semantics.
 
 ### Repo
 
-Repo 层是对 Git CLI 的薄封装，不承载 UI 语义。
+Repo layer is thin wrapper of Git CLI, not bearing UI semantics.
 
-建议文件：
+It is recommended files:
 
 - `packages/services/src/git/repo/gitCliRepo.ts`
 
-建议职责：
+It is recommended responsibilities:
 
 - `resolveRepository(workspacePath)`
 - `getStatus(workspacePath)`
@@ -154,14 +154,14 @@ Repo 层是对 Git CLI 的薄封装，不承载 UI 语义。
 
 ### Service
 
-Service 层对 UI 暴露稳定语义，并隐藏 Git CLI 细节。
+Service layer exposes stable semantics to UI, hiding Git CLI details.
 
-建议文件：
+It is recommended files:
 
 - `packages/services/src/git/git.ts`
 - `packages/services/src/git/gitService.ts`
 
-建议对外接口：
+It is recommended external interfaces:
 
 - `getRepositorySummary`
 - `getChanges`
@@ -174,21 +174,21 @@ Service 层对 UI 暴露稳定语义，并隐藏 Git CLI 细节。
 - `getIdentity`
 - `refresh`
 
-如果后续需要订阅式刷新，再补动态事件：
+If subsequently need subscription-based refresh, then additionally supplement dynamic events:
 
 - `onDynamicRepositoryEvent(workspacePath)`
 
 ### Runtime / UI
 
-UI 层只通过 hooks 消费 `IGitService`。
+UI layer only through hooks consume `IGitService`.
 
-当前 hooks：
+Current hooks:
 
 - `packages/ui/src/hooks/useGitRepository.ts`
 - `packages/ui/src/hooks/useGitActions.ts`
 - `packages/ui/src/hooks/useGitAutoRefresh.ts`
 
-UI 组件建议：
+UI components recommended:
 
 - `GitPane`
 - `GitRepositoryHeader`
@@ -197,184 +197,183 @@ UI 组件建议：
 - `GitDiffPanel`
 - `GitCommitPanel`
 
-### Git pane 内部的数据来源切换
+### Git pane internal data source switching
 
-Git pane 左侧建议有一个变更来源下拉，不同模式切换不同的数据来源。
+Git pane left side is recommended to have a change source dropdown, different modes switching different data sources.
 
-建议支持四种模式：
+It is recommended to support four modes:
 
-- `未暂存`
-  - 数据来源：Git worktree 相对 index 的改动
-  - 主要接口：`getChanges` / `getDiff`
-- `已暂存`
-  - 数据来源：Git index 相对 `HEAD` 的改动
-  - 主要接口：`getChanges` / `getDiff`
-- `全部分支更改`
-  - 数据来源：当前分支相对远端跟踪分支的差异
-  - 主要接口：`getBranchComparison`
-- `上一轮更改`
-  - 数据来源：当前 active task 最近一轮的文件变更快照
-  - 主要接口：优先复用现有 task/per-turn 变更数据，不强行塞进 `IGitService`
+- `Not staged`
+  - Data source: Git worktree relative to index changes
+  - Main interfaces: `getChanges` / `getDiff`
+- `Staged`
+  - Data source: Git index relative to `HEAD` changes
+  - Main interfaces: `getChanges` / `getDiff`
+- `All branch changes`
+  - Data source: current branch relative to remote tracking branch differences
+  - Main interfaces: `getBranchComparison`
+- `Previous round changes`
+  - Data source: current active task recent round file changes snapshot
+  - Main interfaces: Prefer to reuse existing task / per-turn changes data, not forcibly inject into `IGitService`
 
-这里建议把“Git pane”理解为“统一的改动审阅面板”，而不是把每一种视图都硬塞成 Git service 的职责。
+It is suggested to understand "Git pane" as "unified change review panel", rather than each view hard塞到 `IGitService` responsibilities.
 
-其中：
+Among them:
 
-- 前三种模式属于 Git 领域，走 `IGitService`
-- `上一轮更改` 属于会话级改动审阅，只在 Git pane 里共用一套树和 diff 展示壳，保持只读
+- First three modes belong to Git domain, going through `IGitService`
+- `Previous round changes` belongs to session-level change review, only in Git pane internal share a set of tree and diff display shell, keeping read-only
 
-这样做的好处是：
+The benefits of doing so are:
 
-- 保持 Git service 的边界清晰
-- `上一轮更改` 不需要为了 UI 入口位置而伪装成 Git 数据
-- 变更树、diff 面板、右侧审阅体验仍然可以复用一套组件
+- Keep Git service boundary clear
+- `Previous round changes` doesn't need to disguise as Git data for UI entrance location
+- Change tree, diff panel, right side review experience can reuse a set of components
 
-## 本地、远程、Web 的执行位置
+## Local, Remote, Web Three Execution Positions
 
-### 本地 Desktop
+### Local Desktop
 
-- `createLocalServices()` 注册本地 `GitService`
-- Git 命令在本机工作区执行
+- `createLocalServices()` register local `GitService`
+- Git commands executed in local workspace
 
 ### Remote Desktop
 
-- Git 必须像 `file/system/terminal` 一样，来自远端服务
-- 不能在本机 host 里替远端 workspace 执行 Git
-- 远端窗口只保留本地的 setting / credential / broadcast；Git 应归入远端服务集合
+- Git must be like `file/system/terminal`, coming from remote service
+- Cannot substitute remote workspace executing Git in host
+- Remote window only keeps local setting / credential / broadcast; Git should be归入 remote service collection
 
 ### Web
 
-- Web 端不单独做 Git 实现
-- 仍通过 websocket 后端服务提供 Git 能力
+- Web end does not separately do Git implementation
+- Still through websocket after-end service provide Git capability
 
-结论：
+Conclusion:
 
-- Git 的执行位置必须和 workspace 的真实落点一致
-- Git 服务的归属应该和 `file/system/terminal` 对齐，而不是和 `setting` 对齐
+- Git execution position must and workspace real falling point consistent
+- Git service affiliation should and `file/system/terminal` align, rather than and `setting` align
 
-## 命令策略
+## Command Strategy
 
-推荐坚持使用系统 Git CLI，而不是引入 JS Git 实现。
+It is recommended to insist on using system Git CLI, rather than introduce JS Git implementation.
 
-原因：
+Reasons:
 
-- 能自然复用用户现有的 Git 安装与配置
-- 兼容 `includeIf`、平台默认路径、Git for Windows 等真实环境
-- 后续遇到 SSH、credential helper、换行符策略时更不容易偏离用户认知
+- Can naturally reuse user's existing Git installation and configuration
+- Compatible with `includeIf`, platform default paths, Git for Windows and other real environment
+- Subsequent encounter SSH, credential helper, line ending strategy and other aspects easier not deviate from user cognition
 
-建议命令：
+It is recommended commands:
 
-- 仓库检测
+- Repository detection
   - `git rev-parse --show-toplevel`
-- 状态
+- Status
   - `git status --porcelain=v2 --branch -z`
-- 读取身份
+- Read identity
   - `git config --get user.name`
   - `git config --get user.email`
-  - 需要来源时再用 `git config --list --show-origin --null`
+  - Need source when again use `git config --list --show-origin --null`
 - diff
   - `git diff --no-ext-diff -- <path>`
   - `git diff --cached --no-ext-diff -- <path>`
-- 分支比较
+- Branch comparison
   - `git diff @{upstream}...HEAD --`
 - stage
   - `git add -- <path...>`
 - unstage
   - `git restore --staged -- <path...>`
-- 丢弃工作树改动
+- Discard workspace changes
   - `git restore --worktree -- <path...>`
-- 提交
+- Commit
   - `git commit -m <message>`
 
-## 仓库根目录与 workspace 路径
+## Repository Root and Workspace Path
 
-`workspacePath` 不一定等于 `repoRoot`。
+`workspacePath` is not necessarily equal to `repoRoot`.
 
-例如：
+For example:
 
-- 用户打开的是 monorepo 根目录
-- 用户打开的是 monorepo 下某个 package 子目录
+- User opened is monorepo root directory
+- User opened is monorepo under some package subdirectory
 
-因此 Git 域必须同时保留三类路径：
+Therefore Git domain must simultaneously retain three categories of paths:
 
 - `workspacePath`
 - `repoRoot`
 - `workspaceInRepoPath`
 
-推荐行为：
+Recommended behavior:
 
-- 服务层始终基于 `repoRoot` 执行 Git
-- UI 默认展示“当前 workspace 作用域内”的文件
-- 后续如果需要，再增加“显示整个仓库”开关
+- Service layer always based on `repoRoot` execute Git
+- UI default display "current workspace scope inside" file
+- Subsequent if need, again add "display entire repository" switch
 
-这样能避免 workspace 打开的是子目录时，直接看到整仓库其它区域变更而产生困惑。
+This can avoid when workspace opened is subdirectory, directly seeing entire repository other area changes that cause confusion.
 
-## 日志与可观测性
+## Log and Observability
 
-根据项目约束，涉及交互和复杂状态切换的能力需要补日志。
+According to project constraints, involving interaction and complex status switching ability need to supplement log.
 
-建议：
+It is recommended:
 
-- UI 层统一使用 `packages/ui/src/logger.ts`
-- `GitCommandProvider` 不默认打印每条 Git 命令；Git 探测和状态查询属于高频内部细节，
-  需要排查时优先在上层一次性生命周期、失败分支或专门调试入口补充有边界的日志。
+- UI layer uniformly use `packages/ui/src/logger.ts`
+- `GitCommandProvider` not default print each Git command; Git probe and status query belongs to high-frequency internal details, need to investigate when priority supplement at upper layer one-time lifecycle, failure branch or special debugging entrance supplement having boundary log.
 
-不要记录：
+Do not record:
 
-- 完整环境变量
-- 敏感 token
-- credential helper 的敏感输出
+- Complete environment variables
+- Sensitive token
+- Credential helper sensitive output
 
-## 与现有 side pane 的结合
+## Integration with Existing Side Pane
 
-当前右侧共享 pane 已经统一承载 `browser` 和 `code-viewer`。
+Current right side shared pane already unified carry `browser` and `code-viewer`.
 
-推荐扩展为：
+It is recommended expand for:
 
 - `browser`
 - `code-viewer`
 - `git`
 
-而不是在左侧 `WorkspaceSidebar` 再新增一个与 task 并列的大导航区。
+Rather than in left `WorkspaceSidebar` again new a with task parallel large navigation region.
 
-原因：
+Reasons:
 
-- 当前左侧栏已经明确承担 workspace / task 导航
-- Git 更像“当前工作区的操作上下文”，适合在右侧展开
-- 可以直接复用现有可调宽度、面板切换、关闭逻辑
+- Current left side already explicitly undertake workspace / task navigation
+- Git more like "current workspace operation context", suitable on the right side expand
+- Can directly reuse existing can adjust width, pane switch, close logic
 
-## 实施顺序建议
+## Implementation Sequence Suggestions
 
 ### Phase 1
 
-- 新增 `IGitService`
-- 本地 / 远程链路打通
-- 仓库检测、状态、diff、stage/unstage、discard、commit
-- UI 右侧 Git pane
+- Add `IGitService`
+- Local / remote chain linking
+- Repository detection, status, diff, stage / unstage / discard, commit
+- UI right side Git pane
 
 ### Phase 2
 
-- 支持按 hunk 操作
-- 支持更精细的 repo/workspace 范围切换
-- 支持动态刷新与文件变化订阅
+- Support hunk operation
+- Support more fine-grained repo / workspace scope switching
+- Support dynamic refresh with file changes subscription
 
-## 风险与待讨论项
+## Risk and Pending Items
 
-- workspace 打开子目录时，Git 默认展示范围是“当前子树”还是“整个仓库”
-- remote 模式下 Git 用户身份是展示远端有效配置，还是同时展示本地与远端来源
-- Web 端是否需要完整提交能力，还是先只读
-- v1 是否允许直接提交，还是先只做查看和暂存
+- Workspace opening subdirectory when, Git default display range is "current sub-tree" still entire repository
+- Remote mode when, Git user identity is display remote effective configuration still simultaneously display local and remote source
+- Web end whether need complete commit capability, still just read-only
+- v1 whether allow direct commit, still just do view and stage
 
 ## TODO
 
-- 会话级回滚能力的边界与交互，后续单独设计
-- 是否需要“基于 Git 的撤销”能力，后续单独评估
-- 如果未来引入 Git checkpoint，再补独立设计文档
-- Git pane 中 `上一轮更改` 的数据复用方式，后续结合现有 task store 再细化
+- Session-level rollback capability boundary and interaction, follow-up separate design
+- Whether need "based on Git undo" capability, follow-up separately assess
+- If subsequently introduce Git checkpoint, then supplement independent design document
+- Git pane `previous round changes` data reuse method, follow-up combine existing task store again refine
 
-## 当前推荐结论
+## Current Recommended Conclusion
 
-- 架构上新增独立 `GitService`
-- 执行位置跟随 workspace 所在环境
-- Git UI 优先挂在右侧共享 pane
-- 先做 Git pane 的仓库级基础能力，再逐步扩展更细粒度 Git 功能
+- Architecture on add independent `GitService`
+- Execution position follow workspace fall environment
+- Git UI priority hang on right side shared pane
+- First do Git pane repository level foundation capability, then gradually expand more fine-grained Git functionality
