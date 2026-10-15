@@ -189,7 +189,7 @@ function FontFamilyCombobox({
                   <FontFamilyOption
                     key={family}
                     family={family}
-                    selected={value === family}
+                    selected={value?.toLowerCase() === family.toLowerCase()}
                     onSelect={() => {
                       onChange(family);
                       onOpenChange(false);
