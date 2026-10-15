@@ -109,28 +109,47 @@ describe("DataRootLock", () => {
     const barrierFile = join(root, "go");
     const resultsFile = join(root, "results");
     const readyDir = join(root, "ready");
+    const contenderCount = 8;
     await mkdir(readyDir);
     await writeFile(lockFile, `${JSON.stringify({ pid: DEAD_PID, acquiredAt: 0 })}\n`, "utf8");
     // Root-level Vitest and the package script run with different cwd values; the source path cannot be derived from cwd, or children would import a nonexistent root/src/runtime/lock.ts.
     const moduleUrl = new URL("../src/runtime/lock.ts", import.meta.url).href;
     const childProgram = `
-      import { access, appendFile, writeFile } from "node:fs/promises";
+      import { access, appendFile, readFile, writeFile } from "node:fs/promises";
       import { setTimeout as delay } from "node:timers/promises";
       const { DataRootLock } = await import(process.env.ZCODE_TEST_LOCK_MODULE);
       await writeFile(process.env.ZCODE_TEST_LOCK_READY, "ready\\n");
       while (true) { try { await access(process.env.ZCODE_TEST_LOCK_BARRIER); break; } catch { await delay(5); } }
       const lock = new DataRootLock(process.env.ZCODE_TEST_LOCK_FILE);
+      let acquired = false;
       try {
         await lock.acquire();
-        await appendFile(process.env.ZCODE_TEST_LOCK_RESULTS, "success " + process.env.ZCODE_TEST_LOCK_CHILD + "\\n");
-        await delay(1_000);
-        await lock.release();
+        acquired = true;
       } catch {
         await appendFile(process.env.ZCODE_TEST_LOCK_RESULTS, "locked " + process.env.ZCODE_TEST_LOCK_CHILD + "\\n");
       }
+      if (acquired) {
+        try {
+          await appendFile(process.env.ZCODE_TEST_LOCK_RESULTS, "success " + process.env.ZCODE_TEST_LOCK_CHILD + "\\n");
+          const resultDeadline = Date.now() + 20_000;
+          while (Date.now() < resultDeadline) {
+            const results = await readFile(process.env.ZCODE_TEST_LOCK_RESULTS, "utf8").catch(() => "");
+            const resultCount = results.trim().split(String.fromCharCode(10)).filter(Boolean).length;
+            if (resultCount === ${contenderCount}) break;
+            await delay(5);
+          }
+          const results = await readFile(process.env.ZCODE_TEST_LOCK_RESULTS, "utf8");
+          const resultCount = results.trim().split(String.fromCharCode(10)).filter(Boolean).length;
+          if (resultCount !== ${contenderCount}) {
+            throw new Error("Timed out waiting for every lock contender to finish");
+          }
+        } finally {
+          await lock.release();
+        }
+      }
     `;
     const children = Array.from(
-      { length: 8 },
+      { length: contenderCount },
       (_, index) =>
         new Promise<void>((resolve, reject) => {
           const child = spawn(
@@ -176,6 +195,8 @@ describe("DataRootLock", () => {
     const results = (await readFile(resultsFile, "utf8")).trim().split("\n");
     expect(allChildrenReady).toBe(true);
     expect(results.filter((result) => result.startsWith("success "))).toHaveLength(1);
-    expect(results.filter((result) => result.startsWith("locked "))).toHaveLength(7);
+    expect(results.filter((result) => result.startsWith("locked "))).toHaveLength(
+      contenderCount - 1,
+    );
   }, 30_000);
 });
