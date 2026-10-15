@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "revision": 33,
+  "revision": 36,
   "config": {
     "providerConfigRules": {
       "templateRules": [
@@ -1459,7 +1459,8 @@
             },
             "optionSpecs": {
               "reasoningLevel": {
-                "values": ["none", "low", "medium", "high", "xhigh", "max"]
+                "values": ["none", "low", "medium", "high", "xhigh", "max"],
+                "default": "high"
               },
               "maxOutputTokens": {
                 "max": 128000
@@ -1491,7 +1492,7 @@
           }
         },
         {
-          "modelMatch": ".*gpt-6-astra(?:[.\\-:/\\[].*)?",
+          "modelMatch": ".*gpt-6(?:\\.\\d+)?-(?:astra|sol|luna)(?:[.\\-:/\\[].*)?",
           "config": {
             "properties": {
               "contextWindow": 1050000,
@@ -1505,7 +1506,8 @@
             },
             "optionSpecs": {
               "reasoningLevel": {
-                "values": ["low", "medium", "high", "xhigh", "max"]
+                "values": ["low", "medium", "high", "xhigh", "max"],
+                "default": "high"
               },
               "maxOutputTokens": {
                 "max": 128000
@@ -3212,7 +3214,7 @@
           }
         },
         {
-          "modelMatch": ".*gpt-6-astra(?:[.\\-:/\\[].*)?",
+          "modelMatch": ".*gpt-6(?:\\.\\d+)?-(?:astra|sol|luna)(?:[.\\-:/\\[].*)?",
           "apiTypeMatch": "openai-responses",
           "config": {
             "optionSpecs": {
@@ -4282,7 +4284,7 @@
           }
         },
         {
-          "modelMatch": ".*gpt-6-astra(?:[.\\-:/\\[].*)?",
+          "modelMatch": ".*gpt-6(?:\\.\\d+)?-(?:astra|sol|luna)(?:[.\\-:/\\[].*)?",
           "apiTypeMatch": "anthropic-messages",
           "baseUrlMatch": "https://openrouter\\.ai/api(?:/v1)?/?",
           "config": {

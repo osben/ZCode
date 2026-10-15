@@ -307,6 +307,8 @@ request id.
   `SiwcAuthService` in `packages/services/src/oauth/siwc/`; the loopback listener runs in the
   host process (the `zcode://` deep link is unusable for SIWC). The zai/bigmodel flow,
   `oauth:active_provider`, and `zcodejwttoken` are never touched.
+- Detached ChatGPT Plan account refresh failures after login or logout emit a warning with
+  the failure as log context; the warning message is not a correlation/trace ID.
 - Hosted-agent request auth: the host answers `interaction/requestProviderRuntimeHeaders`
   for `account:chatgpt-plan` via the same resolver semantics (stable clientId+subject scope,
   force-refresh after a rejected token, the SAME `siwc-chatgpt.refresh` cross-process lock

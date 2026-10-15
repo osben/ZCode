@@ -1126,7 +1126,13 @@ export class OAuthService implements IOAuthService {
   async pollChatGptPlanLogin(): Promise<SiwcLoginCompletionResult | null> {
     const result = await this.siwcAuth.pollLogin();
     if (result) {
-      await this.onChatGptPlanSessionChange?.();
+      // The completion RPC must flip the "Waiting for ChatGPT..." UI state as soon as the
+      // authorization is exchanged. The account-overlay refresh re-queries plan backends and
+      // was observed taking over a minute; run it detached so only the registry/picker update
+      // lags, propagated through the account source change events.
+      void this.onChatGptPlanSessionChange?.().catch((error) => {
+        serviceLog.warn(undefined, "ChatGPT plan account refresh after login failed", { error });
+      });
     }
     return result;
   }
@@ -1138,7 +1144,11 @@ export class OAuthService implements IOAuthService {
   async logoutChatGptPlan(): Promise<{ revoked: boolean; signedOut: boolean }> {
     const result = await this.siwcAuth.logout();
     if (result.signedOut) {
-      await this.onChatGptPlanSessionChange?.();
+      // Same rationale as pollChatGptPlanLogin: tokens are already cleared locally, so the
+      // overlay refresh must not block the sign-out result on slow plan backend queries.
+      void this.onChatGptPlanSessionChange?.().catch((error) => {
+        serviceLog.warn(undefined, "ChatGPT plan account refresh after logout failed", { error });
+      });
     }
     return result;
   }

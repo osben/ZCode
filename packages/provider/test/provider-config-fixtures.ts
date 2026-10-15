@@ -1,5 +1,6 @@
 import {
   ApiKeyAccessConfig,
+  ChatgptAccountAccessConfig,
   ProviderApiConfig,
   ProviderConfig,
   ZhipuAccountAccessConfig,
@@ -65,6 +66,21 @@ export function createAccountProviderConfig(
     }),
     api: createProviderApi(input),
     builtinModelIds: input.models,
+    visibility: input.visibility,
+  });
+}
+
+/** ChatGPT plan (SIWC) provider fixture; entitlement is resolved at runtime from the host account source. */
+export function createChatgptAccountProviderConfig(
+  input: CommonProviderFixtureInput = {},
+): ProviderConfig {
+  return new ProviderConfig({
+    group: input.group === null ? undefined : input.group,
+    logo: input.logo,
+    access: new ChatgptAccountAccessConfig(),
+    api: createProviderApi(input),
+    builtinModelIds: input.models,
+    personalModelIds: input.personalModels,
     visibility: input.visibility,
   });
 }

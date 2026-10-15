@@ -3920,6 +3920,8 @@ const enUS: Record<string, string> = {
   "settings.modelProvider.slot.reasoning": "Reasoning (reasoning tasks)",
   "settings.modelProvider.mappingNotSet": "Not set",
   "settings.modelProvider.chatgpt.badge.subscription": "Subscription",
+  "settings.modelProvider.chatgpt.navigationTitle": "ChatGPT",
+  "settings.modelProvider.chatgpt.navigationPlan": "ChatGPT Plan",
   "settings.modelProvider.chatgpt.description":
     "Run agents on OpenAI models through your ChatGPT Plus/Pro plan (official OpenAI token sharing). Usage counts against the plan's 5-hour window.",
   "settings.modelProvider.chatgpt.notSignedIn":

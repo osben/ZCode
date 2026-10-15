@@ -1,14 +1,14 @@
 import {
-  isZCodeAgentProvider,
+  ZCODE_AGENT_PROVIDER,
   resolveModelProviderFamilySpecByProviderId,
   zcodeProviderAccountAccessSchema,
   type ZCodeProviderAccountAccess,
-  type ZCodeProvider,
 } from "@zcode/shared";
 import type { ProviderConfigObject } from "@zcode/provider";
 import type { ModelSelectionView } from "@zcode/services";
 import type { ModelSelectGroup } from "@/ModelConfigSelect.js";
 import { decodeCustomModelValue, encodeCustomModelValue } from "@/lib/zcodeCustomModelValue.js";
+import { isChatGptPlanSubscriptionProviderId } from "@/lib/chatgptPlanProvider.js";
 import { shouldShowModelVisionBadge } from "@/lib/modelVisionBadge.js";
 
 export interface ModelProviderGroupLabelOptions {
@@ -24,16 +24,22 @@ export interface ModelProviderGroupLabelOptions {
 }
 
 function supportsRegistryApiFormat(
-  selectedProvider: ZCodeProvider,
+  selectedProvider: string,
   apiFormat: string | null | undefined,
 ): boolean {
   if (!apiFormat) return false;
   // Only the glm (ZCode Agent) provider remains; third-party CLI api-format differences became irrelevant when those providers were removed.
-  return isZCodeAgentProvider(selectedProvider);
+  // The ChatGPT plan runs through the same bundled agent (SIWC wiring in the CLI), so its
+  // sessions must keep the registry picker; otherwise selecting a gpt model collapses the
+  // menu to "Manage models" with no way back.
+  return (
+    selectedProvider === ZCODE_AGENT_PROVIDER ||
+    isChatGptPlanSubscriptionProviderId(selectedProvider)
+  );
 }
 
 export function buildRegistryModelSelectGroups(
-  selectedProvider: ZCodeProvider,
+  selectedProvider: string,
   view: ModelSelectionView,
   labels: ModelProviderGroupLabelOptions = {},
 ): ModelSelectGroup[] {

@@ -667,6 +667,9 @@ const EMPTY_CLAIMS: SiwcIdTokenClaims = { sub: "" };
 async function closeServer(server: Server): Promise<void> {
   if (!server.listening) return;
   await new Promise<void>((resolve, reject) => {
+    // Stop accepting callbacks before dropping the browser's remaining keep-alive socket;
+    // closeAllConnections alone leaves a window for another connection to be accepted.
     server.close((error) => (error ? reject(error) : resolve()));
+    server.closeAllConnections();
   });
 }

@@ -65,7 +65,7 @@ export function shouldShowModelProviderGroupLoadingIndicator(params: {
   presetLoading: boolean;
   customLoading: boolean;
 }): boolean {
-  if (params.groupId === "preset") {
+  if (params.groupId === "preset" || params.groupId === "chatgpt") {
     return params.presetLoading;
   }
   return params.customLoading;
@@ -401,7 +401,7 @@ export function ModelProviderSectionNavigation({
                 ) : null}
               </div>
 
-              {group.id === "preset" ? (
+              {group.id === "preset" || group.id === "chatgpt" ? (
                 <PresetProviderCardNavigation
                   group={group}
                   selectedNodeKey={selectedNodeKey}
