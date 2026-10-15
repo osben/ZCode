@@ -190,6 +190,41 @@ afterEach(() => {
 });
 
 describe("oauthService", () => {
+  it("logs detached ChatGPT Plan refresh failures as messages, not trace IDs", async () => {
+    const service = createBigModelService({
+      onChatGptPlanSessionChange: async () => {
+        throw new Error("refresh failed");
+      },
+    });
+    const siwcAuth = (
+      service as unknown as {
+        siwcAuth: {
+          pollLogin: () => Promise<unknown>;
+          logout: () => Promise<{ revoked: boolean; signedOut: boolean }>;
+        };
+      }
+    ).siwcAuth;
+    vi.spyOn(siwcAuth, "pollLogin").mockResolvedValue({});
+    vi.spyOn(siwcAuth, "logout").mockResolvedValue({ revoked: false, signedOut: true });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await service.pollChatGptPlanLogin();
+    await service.logoutChatGptPlan();
+
+    await vi.waitFor(() => {
+      expect(warn).toHaveBeenCalledWith(
+        expect.any(String),
+        "ChatGPT plan account refresh after login failed",
+        { error: expect.any(Error) },
+      );
+      expect(warn).toHaveBeenCalledWith(
+        expect.any(String),
+        "ChatGPT plan account refresh after logout failed",
+        { error: expect.any(Error) },
+      );
+    });
+  });
+
   it.each([false, true])("Z.AI polling 先换业务 JWT 再签发 PAT，team=%s", async (team) => {
     let now = 2_000_000_000_000;
     const requests: Array<{ url: string; init?: RequestInit }> = [];

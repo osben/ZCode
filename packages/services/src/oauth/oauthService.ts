@@ -1131,7 +1131,7 @@ export class OAuthService implements IOAuthService {
       // was observed taking over a minute; run it detached so only the registry/picker update
       // lags, propagated through the account source change events.
       void this.onChatGptPlanSessionChange?.().catch((error) => {
-        serviceLog.warn("ChatGPT plan account refresh after login failed", { error });
+        serviceLog.warn(undefined, "ChatGPT plan account refresh after login failed", { error });
       });
     }
     return result;
@@ -1147,7 +1147,7 @@ export class OAuthService implements IOAuthService {
       // Same rationale as pollChatGptPlanLogin: tokens are already cleared locally, so the
       // overlay refresh must not block the sign-out result on slow plan backend queries.
       void this.onChatGptPlanSessionChange?.().catch((error) => {
-        serviceLog.warn("ChatGPT plan account refresh after logout failed", { error });
+        serviceLog.warn(undefined, "ChatGPT plan account refresh after logout failed", { error });
       });
     }
     return result;
