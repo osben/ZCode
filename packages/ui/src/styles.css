@@ -166,6 +166,22 @@ html[data-document-hidden] *::after {
   }
 }
 
+/* Buttons, links, and interactive role elements should signal clickability consistently.
+ * Exclude disabled controls, including Radix items that use data-disabled instead of :disabled. */
+@layer base {
+  a[href]:not([aria-disabled="true"]),
+  button:not(:disabled):not([aria-disabled="true"]),
+  [role="button"]:not(:disabled):not([aria-disabled="true"]):not([data-disabled]),
+  [role="menuitem"]:not([aria-disabled="true"]):not([data-disabled]),
+  [role="menuitemcheckbox"]:not([aria-disabled="true"]):not([data-disabled]),
+  [role="menuitemradio"]:not([aria-disabled="true"]):not([data-disabled]),
+  [role="option"]:not([aria-disabled="true"]):not([data-disabled="true"]):not([data-disabled=""]),
+  [role="treeitem"]:not([aria-disabled="true"]):not([data-disabled]),
+  summary:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+}
+
 /* === Theme variables === */
 
 @theme {

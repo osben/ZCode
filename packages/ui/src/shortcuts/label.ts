@@ -9,6 +9,13 @@ import {
   type KeyboardShortcutPlatformInfo,
 } from "../lib/keyboardShortcuts.js";
 
+const NAMED_KEY_GLYPHS: Readonly<Record<string, string>> = {
+  ArrowUp: "↑",
+  ArrowDown: "↓",
+  ArrowLeft: "←",
+  ArrowRight: "→",
+};
+
 /**
  * Binding string → per-key tokens (for rendering keycaps in settings): macOS ["⇧","⌘","P"],
  * Windows/Linux ["Ctrl","Shift","P"]. Labels and keycaps share the same token sequence,
@@ -24,7 +31,8 @@ export function formatShortcutBindingLabelParts(
   }
 
   const displayKey =
-    parsed.key === "=" ? "+" : parsed.key.length === 1 ? parsed.key.toUpperCase() : parsed.key;
+    NAMED_KEY_GLYPHS[parsed.key] ??
+    (parsed.key === "=" ? "+" : parsed.key.length === 1 ? parsed.key.toUpperCase() : parsed.key);
   const isApple = isAppleKeyboardPlatform(platformInfo);
 
   if (isApple) {
@@ -68,7 +76,7 @@ export function formatShortcutBindingLabelParts(
 
 /**
  * Binding string → platform display label. macOS uses symbols (⌘ K, ⌃ ⌥ ⇧ ⌘ P); Windows/Linux use
- * the Ctrl+Shift+P style; display "=" as "+" (zoom semantics) and preserve named keys.
+ * the Ctrl+Shift+P style; display "=" as "+" (zoom semantics), arrows as glyphs, and other named keys as text.
  */
 export function formatShortcutBindingLabel(
   binding: string,
