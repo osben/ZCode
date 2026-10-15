@@ -217,6 +217,10 @@ export const TID_WORKSPACE_LIST = "workspace-list";
 export const TID_WORKSPACE_ITEM = "workspace-item";
 /** Sidebar close-workspace button (dynamic suffix is workspacePath). */
 export const TID_WORKSPACE_CLOSE = "workspace-close";
+/** Sidebar project row pin/unpin menu item (dynamic suffix is workspacePath). */
+export const TID_WORKSPACE_TOGGLE_PIN = "workspace-toggle-pin";
+/** Divider between pinned and unpinned projects in the sidebar workspace list. */
+export const TID_WORKSPACE_PIN_DIVIDER = "workspace-pin-divider";
 /** Conversation subsection in the project view. */
 export const TID_CONVERSATION_SECTION = "conversation-section";
 /** Project subsection in the project view. */

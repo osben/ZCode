@@ -65,6 +65,14 @@ Test entry points are defined by the target package's current `package.json` and
 - Accepted busy/running input is serially admitted by the CLI/runtime `CommandInbox`; the Renderer only keeps uncommitted drafts and the pending optimistic overlay, and Host owner/lease is responsible for routing.
 - Preserve owner/lease, cross-Host routing, and stale run protection; do not remove boundary checks based on a single path alone.
 
+## Shared Databases and Fork Divergence
+
+- The upstream app and this fork share the same user data: `~/.zcode/v2/tasks-index.sqlite` and `~/.zcode/cli/db/db.sqlite`. Both use per-id checksum ledgers (for example `tasks_schema_migration`); each build applies only its own migration definitions and ignores unknown ledger rows, so additive migrations from either side coexist.
+- Never modify upstream migration definitions or anything feeding their checksums: migration ids and order, schema DDL strings, frozen column declarations, migration SQL — including comments inside those strings. A changed checksum makes the other build reject the shared database.
+- Fork-owned tables and columns must use a `fork_` name prefix so a future upstream table can never collide with them.
+- Fork migrations use non-colliding ids (`9001_fork_*`), are additive only, and never take numbers in the upstream `000N` sequence.
+- `setting.json` is not fork-safe storage: settings writes re-parse through the app settings schema, which strips keys unknown to the writing build (an upstream release would delete fork keys, and an older fork build would delete newer upstream keys). Fork-only state lives in `fork_`-prefixed storage (a fork DB table or a sidecar file), never as new `setting.json` keys.
+
 ## Workspace Identity
 
 - `workspaceIdentity` is used for identity isolation; `workspacePath` is used for file operations, command cwd, Git, and path display.

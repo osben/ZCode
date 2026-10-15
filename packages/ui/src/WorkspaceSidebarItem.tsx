@@ -22,6 +22,7 @@ import {
   LoaderCircle,
   RefreshCwIcon,
   MessageCirclePlus,
+  Pin,
   XIcon,
 } from "lucide-react";
 import type { useSortable } from "@dnd-kit/sortable";
@@ -57,10 +58,18 @@ import type { WorkspaceTabState } from "@/store/tabStore.js";
 import type { RemoteConnectionLogEntry } from "@/hooks/useRemoteConnectionLogs.js";
 import { ReconnectingRemoteWorkspaceLogTooltip } from "@/WorkspaceSidebar/ReconnectingRemoteWorkspaceLogTooltip.js";
 import { cn } from "@/components/lib/utils.js";
+import { WorkspaceCustomizeDialog } from "@/WorkspaceCustomizeDialog.js";
+import {
+  selectWorkspaceDisplayEntry,
+  useWorkspaceDisplayStore,
+} from "@/store/workspaceDisplayStore.js";
+import { WORKSPACE_ICON_COLOR_CLASS } from "@/lib/workspaceDisplayColors.js";
+import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
 import {
   TID_WORKSPACE_CLOSE,
   TID_WORKSPACE_FILE_TREE_BUTTON,
   TID_WORKSPACE_ITEM,
+  TID_WORKSPACE_TOGGLE_PIN,
   gitRemoteUrlToWebUrl,
   testId,
 } from "@zcode/shared";
@@ -145,6 +154,8 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
   taskListLiveWorkflowCount = 0,
   mobileActiveTaskKey,
   isWebRemoteControl = false,
+  isPinned = false,
+  onToggleWorkspacePinned,
   onShowMoreTasks,
   reconnectingRemoteWorkspaceKeys,
   remoteWorkspaceErrorByWorkspaceKey,
@@ -176,6 +187,8 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
   taskListLiveWorkflowCount?: number;
   mobileActiveTaskKey?: string | null;
   isWebRemoteControl?: boolean;
+  isPinned?: boolean;
+  onToggleWorkspacePinned?: (pinned: boolean) => void;
   onShowMoreTasks: () => void;
   reconnectingRemoteWorkspaceKeys: string[];
   remoteWorkspaceErrorByWorkspaceKey: Record<string, string>;
@@ -240,6 +253,15 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
   );
   const remoteWorkspaceError = remoteWorkspaceErrorByWorkspaceKey[remoteWorkspaceKey];
   const workspaceSidebarLabel = formatRemoteWorkspaceDisplayLabel(tab.label, tab.remoteTarget);
+  const workspaceDisplayKey = buildTaskWorkspaceKey(tab.workspacePath, tab.workspaceIdentity);
+  const workspaceDisplayEntry = useWorkspaceDisplayStore((state) =>
+    selectWorkspaceDisplayEntry(state, tab.workspacePath, tab.workspaceIdentity),
+  );
+  const [customizeDialogOpen, setCustomizeDialogOpen] = useState(false);
+  const workspaceDisplayLabel = workspaceDisplayEntry?.displayName?.trim() || workspaceSidebarLabel;
+  const workspaceIconColorClass = workspaceDisplayEntry?.color
+    ? WORKSPACE_ICON_COLOR_CLASS[workspaceDisplayEntry.color]
+    : "text-foreground-subtle";
   const workspaceGitHubUrlRequestIdRef = useRef(0);
   const refreshWorkspaceGitHubUrl = useCallback(() => {
     const requestId = ++workspaceGitHubUrlRequestIdRef.current;
@@ -763,31 +785,41 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
     // which reduces visual noise and avoids implying a standalone arrow toggle.
     if (isExpanded && !isDisconnectedRemoteWorkspace) {
       return isRemoteWorkspace ? (
-        <Cloud className="h-4 w-4 text-foreground-subtle" />
+        <Cloud className={cn("h-4 w-4", workspaceIconColorClass)} />
       ) : isHomeWorkspace ? (
-        <House className="h-4 w-4 text-foreground-subtle" />
+        <House className={cn("h-4 w-4", workspaceIconColorClass)} />
       ) : (
-        <FolderOpen className="h-4 w-4 text-foreground-subtle" />
+        <FolderOpen className={cn("h-4 w-4", workspaceIconColorClass)} />
       );
     }
 
     return isRemoteWorkspace ? (
-      <Cloud className="h-4 w-4 text-foreground-subtle" />
+      <Cloud className={cn("h-4 w-4", workspaceIconColorClass)} />
     ) : isHomeWorkspace ? (
-      <House className="h-4 w-4 text-foreground-subtle" />
+      <House className={cn("h-4 w-4", workspaceIconColorClass)} />
     ) : (
-      <Folder className="h-4 w-4 text-foreground-subtle" />
+      <Folder className={cn("h-4 w-4", workspaceIconColorClass)} />
     );
   };
 
   const workspaceLabelContent = (
     <div className="flex min-w-0 flex-1 items-center gap-2">
-      <span className="relative flex size-4 shrink-0 items-center justify-center">
+      <span
+        className="relative flex size-4 shrink-0 items-center justify-center"
+        data-workspace-color={workspaceDisplayEntry?.color ?? ""}
+      >
         {renderWorkspaceIcon()}
       </span>
       <div className="min-w-0 truncate text-ui-base text-foreground-subtle">
-        {workspaceSidebarLabel}
+        {workspaceDisplayLabel}
       </div>
+      {isPinned ? (
+        <Pin
+          aria-hidden="true"
+          data-workspace-pinned-indicator="true"
+          className="size-3 shrink-0 text-foreground-subtle"
+        />
+      ) : null}
       {!isExpanded && taskListHasUnread ? (
         <span
           aria-hidden="true"
@@ -972,6 +1004,24 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
                             onOpenMcpSync={() => setRemoteMcpSyncOpen(true)}
                             onOpenPluginSync={() => setRemotePluginSyncOpen(true)}
                           />
+                          {onToggleWorkspacePinned ? (
+                            <DropdownMenuItem
+                              data-testid={testId(TID_WORKSPACE_TOGGLE_PIN, tab.workspacePath)}
+                              onSelect={() => onToggleWorkspacePinned(!isPinned)}
+                            >
+                              {intl.formatMessage({
+                                id: isPinned
+                                  ? "workspaceSidebar.unpinProject"
+                                  : "workspaceSidebar.pinProject",
+                              })}
+                            </DropdownMenuItem>
+                          ) : null}
+                          <DropdownMenuItem
+                            data-testid="workspace-customize"
+                            onSelect={() => setCustomizeDialogOpen(true)}
+                          >
+                            {intl.formatMessage({ id: "workspaceSidebar.customize" })}
+                          </DropdownMenuItem>
                           {workspaceGitHubUrl ? (
                             <DropdownMenuItem
                               data-testid="workspace-open-on-github"
@@ -1246,6 +1296,13 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
             zcodeSessionService: services.zcodeSessionService,
           });
         }}
+      />
+      <WorkspaceCustomizeDialog
+        open={customizeDialogOpen}
+        onOpenChange={setCustomizeDialogOpen}
+        workspaceKey={workspaceDisplayKey}
+        defaultName={workspaceSidebarLabel}
+        entry={workspaceDisplayEntry}
       />
     </li>
   );

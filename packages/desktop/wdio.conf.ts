@@ -297,6 +297,7 @@ const PASSIVE_AGENT_STARTUP_SPEC = "workspace-passive-agent-startup.test.ts";
 const AGENT_WARMUP_LIFECYCLE_SPEC = "workspace-agent-warmup-lifecycle.test.ts";
 const AGENT_WARMUP_SMALL_SET_SPEC = "workspace-agent-warmup-small-set.test.ts";
 const PROVIDER_SAVE_DORMANT_AGENT_SPEC = "workspace-provider-save-dormant-agent.test.ts";
+const WORKSPACE_SIDEBAR_PROJECT_CONTROLS_SPEC = "workspace-sidebar-project-controls.test.ts";
 const MODEL_PROVIDER_REGRESSION_GAPS_SPEC =
   "conversation-session-model-provider-regression-gaps.test.ts";
 // Only borrows this fixture's "multiple workspaces restored" startup state to exercise workspace switching; it does not assert agent warmup behavior.
@@ -307,6 +308,7 @@ const AGENT_WARMUP_FIXTURE_SPECS = [
   AGENT_WARMUP_LIFECYCLE_SPEC,
   AGENT_WARMUP_SMALL_SET_SPEC,
   PROVIDER_SAVE_DORMANT_AGENT_SPEC,
+  WORKSPACE_SIDEBAR_PROJECT_CONTROLS_SPEC,
   BROWSER_CROSS_WORKSPACE_CLOSE_SPEC,
   WORKSPACE_REMOVAL_RUNTIME_RELEASE_SPEC,
   MODEL_PROVIDER_REGRESSION_GAPS_SPEC,
@@ -314,6 +316,7 @@ const AGENT_WARMUP_FIXTURE_SPECS = [
 /** Specs that only need two workspaces use the small scenario to skip seeding 7 directories. */
 const SMALL_AGENT_WARMUP_SPECS = [
   AGENT_WARMUP_SMALL_SET_SPEC,
+  WORKSPACE_SIDEBAR_PROJECT_CONTROLS_SPEC,
   BROWSER_CROSS_WORKSPACE_CLOSE_SPEC,
   WORKSPACE_REMOVAL_RUNTIME_RELEASE_SPEC,
   MODEL_PROVIDER_REGRESSION_GAPS_SPEC,

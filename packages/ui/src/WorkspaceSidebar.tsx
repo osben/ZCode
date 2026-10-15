@@ -1,5 +1,6 @@
 /* eslint-disable max-lines -- The archived-view toggle follows the existing sidebar structure, so keep it in the same file for now. */
 import {
+  Fragment,
   memo,
   useCallback,
   useEffect,
@@ -41,6 +42,11 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
+import { WORKSPACE_ICON_COLOR_CLASS } from "@/lib/workspaceDisplayColors.js";
+import {
+  selectWorkspaceDisplayEntry,
+  useWorkspaceDisplayStore,
+} from "@/store/workspaceDisplayStore.js";
 import {
   SortableContext,
   sortableKeyboardCoordinates,
@@ -56,6 +62,7 @@ import {
   TID_PROJECT_SECTION,
   TID_SIDEBAR,
   TID_WORKSPACE_LIST,
+  TID_WORKSPACE_PIN_DIVIDER,
 } from "@zcode/shared";
 import { resolveWebRemoteControlWorkspaceKey } from "@zcode/shared";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
@@ -73,6 +80,8 @@ import {
 } from "@/components/ui/dropdown-menu.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
+import { toast } from "@/components/ui/toast.js";
+import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { NewTaskButtonGroup } from "@/NewTaskButtonGroup.js";
 import { selectWorkspaceZCodeState, useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { useZCodeStore } from "@/store/StoreProvider.js";
@@ -141,6 +150,10 @@ import {
   resolveWorkspaceDragExpanded,
   workspaceVerticalListSortingStrategy,
 } from "@/lib/workspaceSidebarDrag.js";
+import {
+  isWorkspaceDragAcrossPinnedBoundary,
+  orderWorkspaceTabsByPinned,
+} from "@/lib/workspacePinPreference.js";
 import { createPortal } from "react-dom";
 
 function WorkspaceNewTaskTooltip({
@@ -188,6 +201,13 @@ const EMPTY_RECONNECTING_REMOTE_WORKSPACE_LOGS_BY_WORKSPACE_KEY: Record<
 
 function WorkspaceDragOverlay({ tab, width }: { tab: WorkspaceTabState; width: number | null }) {
   const isRemote = Boolean(tab.remoteSessionId || tab.remoteTarget || tab.workspaceIdentity);
+  const workspaceDisplayEntry = useWorkspaceDisplayStore((state) =>
+    selectWorkspaceDisplayEntry(state, tab.workspacePath, tab.workspaceIdentity),
+  );
+  const displayLabel = workspaceDisplayEntry?.displayName?.trim() || tab.label;
+  const overlayIconClass = workspaceDisplayEntry?.color
+    ? WORKSPACE_ICON_COLOR_CLASS[workspaceDisplayEntry.color]
+    : "text-foreground-subtle";
   return (
     <div
       data-testid="workspace-drag-overlay"
@@ -197,11 +217,11 @@ function WorkspaceDragOverlay({ tab, width }: { tab: WorkspaceTabState; width: n
       {/* Bugfix: The project-list icon is inside a Button, where the button SVG rule sets it to 14px at runtime;
           after moving into an overlay outside the Button it no longer inherits that rule, so set the same size explicitly to prevent the preview icon from growing. */}
       {isRemote ? (
-        <Cloud className="size-3.5 shrink-0 text-foreground-subtle" />
+        <Cloud className={cn("size-3.5 shrink-0", overlayIconClass)} />
       ) : (
-        <Folder className="size-3.5 shrink-0 text-foreground-subtle" />
+        <Folder className={cn("size-3.5 shrink-0", overlayIconClass)} />
       )}
-      <span className="min-w-0 flex-1 truncate px-1">{tab.label}</span>
+      <span className="min-w-0 flex-1 truncate px-1">{displayLabel}</span>
     </div>
   );
 }
@@ -425,6 +445,99 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
     useState<WorkspaceTaskVisibleLimitByKey>({});
   const [activeWorkspaceDragId, setActiveWorkspaceDragId] = useState<string | null>(null);
   const [activeWorkspaceDragWidth, setActiveWorkspaceDragWidth] = useState<number | null>(null);
+  const baseServices = useBaseWorkspaceServices();
+  const [pinnedWorkspaceKeys, setPinnedWorkspaceKeys] = useState<Set<string>>(() => new Set());
+  const [pinnedWorkspaceKeysLoaded, setPinnedWorkspaceKeysLoaded] = useState(false);
+  const pinMutationStateByWorkspaceKey = useRef(
+    new Map<string, { confirmedPinned: boolean; requestVersion: number; pending: Promise<void> }>(),
+  );
+  useEffect(() => {
+    let cancelled = false;
+    setPinnedWorkspaceKeysLoaded(false);
+    setPinnedWorkspaceKeys(new Set());
+    pinMutationStateByWorkspaceKey.current.clear();
+    baseServices.zcodeTaskService
+      .listPinnedWorkspaceKeys()
+      .then((keys) => {
+        if (!cancelled) {
+          pinMutationStateByWorkspaceKey.current = new Map(
+            keys.map((key) => [
+              key,
+              { confirmedPinned: true, requestVersion: 0, pending: Promise.resolve() },
+            ]),
+          );
+          setPinnedWorkspaceKeys(new Set(keys));
+          setPinnedWorkspaceKeysLoaded(true);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          pinMutationStateByWorkspaceKey.current.clear();
+          setPinnedWorkspaceKeysLoaded(true);
+          logger.warn("[WorkspaceSidebar] failed to load pinned workspaces", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [baseServices]);
+  const pinnedProjectTabIds = useMemo(
+    () =>
+      new Set(
+        projectWorkspaceTabs
+          .filter((tab) =>
+            pinnedWorkspaceKeys.has(
+              buildTaskWorkspaceKey(tab.workspacePath, tab.workspaceIdentity),
+            ),
+          )
+          .map((tab) => tab.id),
+      ),
+    [pinnedWorkspaceKeys, projectWorkspaceTabs],
+  );
+  const orderedProjectWorkspaceTabs = useMemo(
+    () => orderWorkspaceTabsByPinned(projectWorkspaceTabs, pinnedProjectTabIds),
+    [pinnedProjectTabIds, projectWorkspaceTabs],
+  );
+  const handleToggleWorkspacePinned = useCallback(
+    (workspaceKey: string, pinned: boolean) => {
+      if (!pinnedWorkspaceKeysLoaded) return;
+      const mutations = pinMutationStateByWorkspaceKey.current;
+      const mutation = mutations.get(workspaceKey) ?? {
+        confirmedPinned: false,
+        requestVersion: 0,
+        pending: Promise.resolve(),
+      };
+      const requestVersion = ++mutation.requestVersion;
+      mutations.set(workspaceKey, mutation);
+      setPinnedWorkspaceKeys((current) => {
+        const next = new Set(current);
+        if (pinned) next.add(workspaceKey);
+        else next.delete(workspaceKey);
+        return next;
+      });
+      mutation.pending = mutation.pending
+        .then(() => baseServices.zcodeTaskService.setWorkspacePinned({ workspaceKey, pinned }))
+        .then(
+          () => {
+            mutation.confirmedPinned = pinned;
+          },
+          () => {
+            if (mutation.requestVersion === requestVersion) {
+              setPinnedWorkspaceKeys((current) => {
+                const next = new Set(current);
+                if (mutation.confirmedPinned) next.add(workspaceKey);
+                else next.delete(workspaceKey);
+                return next;
+              });
+            }
+            toast(intl.formatMessage({ id: "workspaceSidebar.pinFailed" }));
+          },
+        );
+    },
+    [baseServices, intl, pinnedWorkspaceKeysLoaded],
+  );
   const [webRemoteCollapsedWorkspaceKeys, setWebRemoteCollapsedWorkspaceKeys] = useState<
     Set<string>
   >(() => new Set());
@@ -817,6 +930,11 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
       if (!over || active.id === over.id) {
         return;
       }
+      if (
+        isWorkspaceDragAcrossPinnedBoundary(pinnedProjectTabIds, String(active.id), String(over.id))
+      ) {
+        return;
+      }
 
       // Project drag displays only the project subsequence, but tabStore stores the full workspace order.
       // Mixing their indices directly places projects incorrectly when conversation workspaces are present.
@@ -830,7 +948,13 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
         reorderWorkspaceTabs(indices.fromIndex, indices.toIndex);
       }
     },
-    [projectWorkspaceTabs, reorderWorkspaceTabs, resetWorkspaceDrag, workspaceTabs],
+    [
+      pinnedProjectTabIds,
+      projectWorkspaceTabs,
+      reorderWorkspaceTabs,
+      resetWorkspaceDrag,
+      workspaceTabs,
+    ],
   );
   const activeWorkspaceDragTab = useMemo(
     () =>
@@ -1771,11 +1895,11 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
                                   onDragCancel={handleWorkspaceDragCancel}
                                 >
                                   <SortableContext
-                                    items={projectWorkspaceTabs.map((tab) => tab.id)}
+                                    items={orderedProjectWorkspaceTabs.map((tab) => tab.id)}
                                     strategy={workspaceVerticalListSortingStrategy}
                                   >
                                     <ul data-testid={TID_WORKSPACE_LIST} className="space-y-2 pb-4">
-                                      {projectWorkspaceTabs.map((tab) => {
+                                      {orderedProjectWorkspaceTabs.map((tab, orderedIndex) => {
                                         const workspaceKey = buildTaskWorkspaceKey(
                                           tab.workspacePath,
                                           tab.workspaceIdentity,
@@ -1784,49 +1908,72 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
                                         const taskLoading =
                                           workspaceTaskLists.loadingByWorkspaceKey[workspaceKey] ??
                                           false;
+                                        const isWorkspacePinned =
+                                          pinnedWorkspaceKeys.has(workspaceKey);
 
                                         return (
-                                          <SortableWorkspaceSidebarItem
-                                            key={tab.id}
-                                            tab={tab}
-                                            isActiveWorkspace={tab.workspacePath === workspacePath}
-                                            isExpanded={resolveWorkspaceDragExpanded({
-                                              activeDragId: activeWorkspaceDragId,
-                                              expanded: expandedWorkspacePaths.has(
-                                                tab.workspacePath,
-                                              ),
-                                              tabId: tab.id,
-                                            })}
-                                            activateTab={activateTab}
-                                            closeTab={closeTab}
-                                            toggleWorkspaceExpanded={toggleWorkspaceExpanded}
-                                            onSelectTask={onSelectTask}
-                                            onStartDraftInWorkspace={onStartDraftInWorkspace}
-                                            taskItems={
-                                              taskGroup?.items ?? EMPTY_WORKSPACE_TASK_ITEMS
-                                            }
-                                            taskListLoading={taskLoading}
-                                            taskListHasMore={taskGroup?.hasMore ?? false}
-                                            taskListHasUnread={taskGroup?.hasUnread ?? false}
-                                            taskListLiveWorkflowCount={
-                                              taskGroup?.liveWorkflowCount ?? 0
-                                            }
-                                            mobileActiveTaskKey={mobileActiveTaskKey}
-                                            isWebRemoteControl={isWebRemoteControlSidebar}
-                                            workspaceKey={workspaceKey}
-                                            onShowMoreWorkspaceTasks={handleShowMoreWorkspaceTasks}
-                                            reconnectingRemoteWorkspaceKeys={
-                                              reconnectingRemoteWorkspaceKeys
-                                            }
-                                            remoteWorkspaceErrorByWorkspaceKey={
-                                              remoteWorkspaceErrorByWorkspaceKey
-                                            }
-                                            reconnectingRemoteWorkspaceLogsByWorkspaceKey={
-                                              reconnectingRemoteWorkspaceLogsByWorkspaceKey
-                                            }
-                                            onReconnectRemoteWorkspace={onReconnectRemoteWorkspace}
-                                            onOpenFileTree={handleOpenWorkspaceFileTree}
-                                          />
+                                          <Fragment key={tab.id}>
+                                            {orderedIndex === pinnedProjectTabIds.size &&
+                                            pinnedProjectTabIds.size > 0 ? (
+                                              <li
+                                                aria-hidden="true"
+                                                data-testid={TID_WORKSPACE_PIN_DIVIDER}
+                                                className="mx-2.5 h-px bg-border"
+                                              />
+                                            ) : null}
+                                            <SortableWorkspaceSidebarItem
+                                              tab={tab}
+                                              isActiveWorkspace={
+                                                tab.workspacePath === workspacePath
+                                              }
+                                              isExpanded={resolveWorkspaceDragExpanded({
+                                                activeDragId: activeWorkspaceDragId,
+                                                expanded: expandedWorkspacePaths.has(
+                                                  tab.workspacePath,
+                                                ),
+                                                tabId: tab.id,
+                                              })}
+                                              isPinned={isWorkspacePinned}
+                                              activateTab={activateTab}
+                                              closeTab={closeTab}
+                                              toggleWorkspaceExpanded={toggleWorkspaceExpanded}
+                                              onSelectTask={onSelectTask}
+                                              onStartDraftInWorkspace={onStartDraftInWorkspace}
+                                              taskItems={
+                                                taskGroup?.items ?? EMPTY_WORKSPACE_TASK_ITEMS
+                                              }
+                                              taskListLoading={taskLoading}
+                                              taskListHasMore={taskGroup?.hasMore ?? false}
+                                              taskListHasUnread={taskGroup?.hasUnread ?? false}
+                                              taskListLiveWorkflowCount={
+                                                taskGroup?.liveWorkflowCount ?? 0
+                                              }
+                                              mobileActiveTaskKey={mobileActiveTaskKey}
+                                              isWebRemoteControl={isWebRemoteControlSidebar}
+                                              workspaceKey={workspaceKey}
+                                              onToggleWorkspacePinned={
+                                                pinnedWorkspaceKeysLoaded
+                                                  ? handleToggleWorkspacePinned
+                                                  : undefined
+                                              }
+                                              onShowMoreWorkspaceTasks={
+                                                handleShowMoreWorkspaceTasks
+                                              }
+                                              reconnectingRemoteWorkspaceKeys={
+                                                reconnectingRemoteWorkspaceKeys
+                                              }
+                                              remoteWorkspaceErrorByWorkspaceKey={
+                                                remoteWorkspaceErrorByWorkspaceKey
+                                              }
+                                              reconnectingRemoteWorkspaceLogsByWorkspaceKey={
+                                                reconnectingRemoteWorkspaceLogsByWorkspaceKey
+                                              }
+                                              onReconnectRemoteWorkspace={
+                                                onReconnectRemoteWorkspace
+                                              }
+                                              onOpenFileTree={handleOpenWorkspaceFileTree}
+                                            />
+                                          </Fragment>
                                         );
                                       })}
                                     </ul>
