@@ -616,7 +616,7 @@ adding breakpoint overrides.
 - keep controls compact and operational
 - use text hierarchy to express density
 - use monospace for technical values and command-like content
-- show a pointer cursor on clickable elements; ad-hoc clickable `<div>` rows must add `cursor-pointer` (menu rows keep `cursor-default` by convention)
+- show a pointer cursor on clickable elements; the base cursor rule covers enabled interactive roles, so do not add `cursor-default` to enabled controls (menu rows may keep `cursor-default` by convention)
 - support all shipped themes
 - design for desktop, web, and cross-platform rendering constraints
 - account for localization and long labels

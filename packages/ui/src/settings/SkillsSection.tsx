@@ -600,7 +600,7 @@ export function SkillsSection({
         <div
           role="button"
           tabIndex={0}
-          className="min-w-0 cursor-default rounded-md outline-none focus-visible:ring-2 focus-visible:ring-input-border-focused focus-visible:ring-offset-2 focus-visible:ring-offset-card"
+          className="min-w-0 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-input-border-focused focus-visible:ring-offset-2 focus-visible:ring-offset-card"
           onClick={() => setSelectedSkill(skill)}
           onKeyDown={(event) => {
             if (event.key === "Enter" || event.key === " ") {
