@@ -60,6 +60,15 @@ describe("WorkspaceSidebar project pins", () => {
     expect(source).toContain("if (!pinnedWorkspaceKeysLoaded) return;");
   });
 
+  it("serializes writes and restores the last confirmed value after a failed request", () => {
+    const source = readWorkspaceSidebarSource();
+    expect(source).toContain("mutation.pending = mutation.pending");
+    expect(source).toContain(".then(() => baseServices.zcodeTaskService.setWorkspacePinned");
+    expect(source).toContain("mutation.confirmedPinned = pinned;");
+    expect(source).toContain("if (mutation.requestVersion === requestVersion)");
+    expect(source).toContain("if (mutation.confirmedPinned) next.add(workspaceKey);");
+  });
+
   it("ships pin labels in every locale", () => {
     for (const locale of [enUS, ukUA, zhCN]) {
       expect(locale["workspaceSidebar.pinProject"]).toBeTruthy();

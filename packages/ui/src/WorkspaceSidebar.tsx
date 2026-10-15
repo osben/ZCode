@@ -448,20 +448,31 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   const baseServices = useBaseWorkspaceServices();
   const [pinnedWorkspaceKeys, setPinnedWorkspaceKeys] = useState<Set<string>>(() => new Set());
   const [pinnedWorkspaceKeysLoaded, setPinnedWorkspaceKeysLoaded] = useState(false);
+  const pinMutationStateByWorkspaceKey = useRef(
+    new Map<string, { confirmedPinned: boolean; requestVersion: number; pending: Promise<void> }>(),
+  );
   useEffect(() => {
     let cancelled = false;
     setPinnedWorkspaceKeysLoaded(false);
     setPinnedWorkspaceKeys(new Set());
+    pinMutationStateByWorkspaceKey.current.clear();
     baseServices.zcodeTaskService
       .listPinnedWorkspaceKeys()
       .then((keys) => {
         if (!cancelled) {
+          pinMutationStateByWorkspaceKey.current = new Map(
+            keys.map((key) => [
+              key,
+              { confirmedPinned: true, requestVersion: 0, pending: Promise.resolve() },
+            ]),
+          );
           setPinnedWorkspaceKeys(new Set(keys));
           setPinnedWorkspaceKeysLoaded(true);
         }
       })
       .catch((error) => {
         if (!cancelled) {
+          pinMutationStateByWorkspaceKey.current.clear();
           setPinnedWorkspaceKeysLoaded(true);
           logger.warn("[WorkspaceSidebar] failed to load pinned workspaces", {
             error: error instanceof Error ? error.message : String(error),
@@ -492,21 +503,38 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   const handleToggleWorkspacePinned = useCallback(
     (workspaceKey: string, pinned: boolean) => {
       if (!pinnedWorkspaceKeysLoaded) return;
+      const mutations = pinMutationStateByWorkspaceKey.current;
+      const mutation = mutations.get(workspaceKey) ?? {
+        confirmedPinned: false,
+        requestVersion: 0,
+        pending: Promise.resolve(),
+      };
+      const requestVersion = ++mutation.requestVersion;
+      mutations.set(workspaceKey, mutation);
       setPinnedWorkspaceKeys((current) => {
         const next = new Set(current);
         if (pinned) next.add(workspaceKey);
         else next.delete(workspaceKey);
         return next;
       });
-      void baseServices.zcodeTaskService.setWorkspacePinned({ workspaceKey, pinned }).catch(() => {
-        setPinnedWorkspaceKeys((current) => {
-          const next = new Set(current);
-          if (pinned) next.delete(workspaceKey);
-          else next.add(workspaceKey);
-          return next;
-        });
-        toast(intl.formatMessage({ id: "workspaceSidebar.pinFailed" }));
-      });
+      mutation.pending = mutation.pending
+        .then(() => baseServices.zcodeTaskService.setWorkspacePinned({ workspaceKey, pinned }))
+        .then(
+          () => {
+            mutation.confirmedPinned = pinned;
+          },
+          () => {
+            if (mutation.requestVersion === requestVersion) {
+              setPinnedWorkspaceKeys((current) => {
+                const next = new Set(current);
+                if (mutation.confirmedPinned) next.add(workspaceKey);
+                else next.delete(workspaceKey);
+                return next;
+              });
+            }
+            toast(intl.formatMessage({ id: "workspaceSidebar.pinFailed" }));
+          },
+        );
     },
     [baseServices, intl, pinnedWorkspaceKeysLoaded],
   );

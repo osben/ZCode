@@ -40,6 +40,7 @@ export class ForkWorkspacePinRepo {
   private dbPath: string | null = null;
   private resolvedDbPath: string | null = null;
   private initializePromise: Promise<void> | null = null;
+  private lifecycleGeneration = 0;
 
   constructor(
     dbPath?: string,
@@ -54,8 +55,9 @@ export class ForkWorkspacePinRepo {
       this.close();
     }
     if (!this.initializePromise) {
-      this.initializePromise = this.initialize(path).catch((error) => {
-        this.close();
+      const generation = this.lifecycleGeneration;
+      this.initializePromise = this.initialize(path, generation).catch((error) => {
+        if (generation === this.lifecycleGeneration) this.close();
         throw error;
       });
     }
@@ -63,6 +65,7 @@ export class ForkWorkspacePinRepo {
   }
 
   close(options?: { throwOnError?: boolean }): void {
+    this.lifecycleGeneration += 1;
     let closeError: unknown;
     try {
       this.db?.close();
@@ -141,8 +144,11 @@ export class ForkWorkspacePinRepo {
     }
   }
 
-  private async initialize(path: string): Promise<void> {
+  private async initialize(path: string, generation: number): Promise<void> {
     await mkdir(dirname(path), { recursive: true });
+    if (generation !== this.lifecycleGeneration) {
+      throw new Error("ForkWorkspacePinRepo initialization was closed before it completed");
+    }
     if (!this.db) {
       this.db = new DatabaseSync(path);
       this.dbPath = path;

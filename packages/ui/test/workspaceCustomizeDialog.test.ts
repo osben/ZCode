@@ -44,7 +44,7 @@ describe("WorkspaceCustomizeDialog", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => {
-      expect(useWorkspaceDisplayStore.getState().entries["/ws/a"]?.color).toBe("blue");
+      expect(useWorkspaceDisplayStore.getState().entries["/ws/a"]).toEqual({ color: "blue" });
     });
   });
 
@@ -103,10 +103,21 @@ describe("WorkspaceCustomizeDialog", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => {
-      // Clearing the color keeps the prefilled display name as an explicit customization
-      // (name prefill semantics); only the color is dropped.
+      expect(useWorkspaceDisplayStore.getState().entries["/ws/a"]).toBeUndefined();
+    });
+  });
+
+  it("trims an explicitly customized display name before saving", async () => {
+    useWorkspaceDisplayStore.setState({ entries: {} });
+    renderDialog();
+    const input = screen.getByTestId("workspace-customize-display-name");
+    fireEvent.change(input, { target: { value: "  My Folder  " } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
       expect(useWorkspaceDisplayStore.getState().entries["/ws/a"]).toEqual({
-        displayName: "Folder A",
+        displayName: "My Folder",
       });
     });
   });

@@ -113,6 +113,26 @@ describe("workspaceDisplayStore", () => {
     expect(store.getState().entries).toEqual({});
   });
 
+  it("keeps in-memory updates when storage reads and writes throw", () => {
+    const storage = {
+      getItem: () => {
+        throw new Error("storage blocked");
+      },
+      setItem: () => {
+        throw new Error("storage quota exceeded");
+      },
+    };
+    const store = createWorkspaceDisplayStore(storage);
+
+    expect(store.getState().entries).toEqual({});
+    store.getState().setWorkspaceDisplayName("/repo", "Memory only");
+    store.getState().setWorkspaceColor("/repo", "blue");
+
+    expect(store.getState().entries).toEqual({
+      "/repo": { displayName: "Memory only", color: "blue" },
+    });
+  });
+
   it("selects the entry by identity fallback key", () => {
     const store = createWorkspaceDisplayStore(createMemoryStorage());
     store.getState().setWorkspaceDisplayName("identity-1", "Remote repo");

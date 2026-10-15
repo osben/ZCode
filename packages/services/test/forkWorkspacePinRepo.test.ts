@@ -83,6 +83,16 @@ describe("ForkWorkspacePinRepo", () => {
     }
   });
 
+  it("rejects initialization closed during its asynchronous directory creation", async () => {
+    repo = new ForkWorkspacePinRepo(buildDbPath());
+    const staleInitialization = repo.ensureReady();
+    repo.close();
+
+    await expect(staleInitialization).rejects.toThrow(/closed before it completed/);
+    await expect(repo.ensureReady()).resolves.toBeUndefined();
+    await expect(repo.listPinnedWorkspaceKeys()).resolves.toEqual([]);
+  });
+
   it("survives reopen and rejects a tampered fork migration checksum", async () => {
     repo = new ForkWorkspacePinRepo(buildDbPath());
     await repo.ensureReady();

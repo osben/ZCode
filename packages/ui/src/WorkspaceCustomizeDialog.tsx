@@ -68,7 +68,9 @@ export function WorkspaceCustomizeDialog({
   }, [open, defaultName, entry?.color, entry?.displayName]);
 
   const handleSave = () => {
-    setWorkspaceDisplayName(workspaceKey, nameDraft.trim() ? nameDraft : null);
+    const trimmedName = nameDraft.trim();
+    const isDefaultName = !entry?.displayName && trimmedName === defaultName.trim();
+    setWorkspaceDisplayName(workspaceKey, trimmedName && !isDefaultName ? trimmedName : null);
     setWorkspaceColor(workspaceKey, colorDraft);
     onOpenChange(false);
   };

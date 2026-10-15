@@ -307,6 +307,7 @@ export function createZCodeTaskServiceAdapter(
     overlays: overlays.size,
   }));
   const taskIndexRepo = options.taskIndexRepo ?? new TaskIndexRepo();
+  const ownsForkWorkspacePinRepo = !options.forkWorkspacePinRepo;
   const forkWorkspacePinRepo = options.forkWorkspacePinRepo ?? new ForkWorkspacePinRepo();
   const taskIndexSyncer = options.taskIndexSyncer;
 
@@ -1892,6 +1893,7 @@ export function createZCodeTaskServiceAdapter(
     taskIndexTerminalDisposable.dispose();
     taskIndexReadyDisposable.dispose();
     taskIndexRepo.close();
+    if (ownsForkWorkspacePinRepo) forkWorkspacePinRepo.close();
     for (const emitter of taskEmitters.values()) emitter.dispose();
     for (const emitter of globalTaskEmitters.values()) emitter.dispose();
     errorEmitter.dispose();

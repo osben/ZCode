@@ -62,16 +62,18 @@ function normalizeEntries(value: unknown): Record<string, WorkspaceDisplayEntry>
   return entries;
 }
 
-function readStoredEntries(storage: StorageLike | null): Record<string, WorkspaceDisplayEntry> {
-  const rawValue = storage?.getItem(WORKSPACE_DISPLAY_STORAGE_KEY);
-  if (!rawValue) {
-    return {};
-  }
-
+function readStoredEntries(
+  storage: StorageLike | null,
+  fallback: Record<string, WorkspaceDisplayEntry> = {},
+): Record<string, WorkspaceDisplayEntry> {
   try {
+    const rawValue = storage?.getItem(WORKSPACE_DISPLAY_STORAGE_KEY);
+    if (!rawValue) {
+      return {};
+    }
     return normalizeEntries(JSON.parse(rawValue));
   } catch {
-    return {};
+    return fallback;
   }
 }
 
@@ -79,7 +81,11 @@ function persistEntries(
   entries: Record<string, WorkspaceDisplayEntry>,
   storage: StorageLike | null,
 ) {
-  storage?.setItem(WORKSPACE_DISPLAY_STORAGE_KEY, JSON.stringify(entries));
+  try {
+    storage?.setItem(WORKSPACE_DISPLAY_STORAGE_KEY, JSON.stringify(entries));
+  } catch {
+    // Keep the in-memory state when persistence is unavailable.
+  }
 }
 
 export function createWorkspaceDisplayStore(
@@ -90,7 +96,7 @@ export function createWorkspaceDisplayStore(
       workspaceKey: string,
       patch: (entry: WorkspaceDisplayEntry) => WorkspaceDisplayEntry | null,
     ) => {
-      const entries = storage ? readStoredEntries(storage) : get().entries;
+      const entries = storage ? readStoredEntries(storage, get().entries) : get().entries;
       const current = entries[workspaceKey] ?? {};
       const next = patch(current);
       const updatedEntries = { ...entries };
