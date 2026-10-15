@@ -1,17 +1,17 @@
-# 后续任务：Host tasks-index 初始化可观测性
+# Subsequent Task: The Host tasks-index Initialization Observability
 
-> 最新范围：已并入 [Todo 145：进入 ZCode 前统一准备数据库](./todo-145-global-database-startup-loading.md)，不再单独延后。以下为前轮范围记录；Repo 构造与实际打开/迁移的时机须按新 TODO 重新核对。
+> Latest scope: Merged into [Todo 145: Unified Database Preparation Before Entering ZCode](./todo-145-global-database-startup-loading.md); no longer delayed separately. The following is the scope record of the previous round; the Repo construction and the actual open/migration timing must be re-checked according to the new TODO.
 
-状态：待单独设计；不纳入 Todo 144 本次会话库 hotfix。
+Status: Pending separate design; not part of the Todo 144 this session library hotfix.
 
-2026-09-14 用户讨论改动规模后确认先完成会话库范围。
-Host 部分 Repo 在服务发布前同步打开或迁移 tasks-index.sqlite，届时会话库状态服务尚不可用。
-必须先设计状态提供方、数据库执行线程、依赖服务的准入顺序、后台 scheduler/bot 启动以及失败重试边界，再实现。
+The 2026-09-14 user discussion on the change scale confirms to complete the session library scope first.
+The Host's partial Repo synchronously opens or migrates the tasks-index.sqlite before the service release; at this time, the session library status service is not yet available.
+The status provider, the database execution thread, the admission order of the dependency service, the startup of the background scheduler/bot, and the failure retry boundary must be designed first, and then implemented.
 
-- [ ] 梳理 AutomationRepo、OffPeakTaskRepo、TaskIndexRepo 的初始化和迁移时机。
-- [ ] 决定迁移 Worker 或延迟服务初始化方案；Main 保持调度/透传职责。
-- [ ] SQLite 保持同一物理库的唯一迁移协调者，避免再加 Host 迁移锁。
-- [ ] 服务发布前即可观察阶段；依赖 Repo 的业务只能在事务提交后开放。
-- [ ] 验证多窗口、远端 Host、手机 shared-host、崩溃/重连及失败恢复。
+- [ ] Review the initialization and migration timing of the AutomationRepo, OffPeakTaskRepo, and TaskIndexRepo.
+- [ ] Decide the migration Worker or the delayed service initialization plan; the Main maintains the scheduling/passthrough responsibility.
+- [ ] The SQLite keeps the unique migration coordinator of the same physical library, avoiding the additional Host migration lock.
+- [ ] The observability stage is available before the service release; the business depending on the Repo can only be opened after the transaction is committed.
+- [ ] Verify the multi-window, remote Host, mobile shared-host, crash/reconnection, and failure recovery.
 
-会话库和任务索引是不同文件，各自的锁与完成状态不能混用。
+The session library and the task index are different files; the lock and the completion status of each cannot be mixed.
