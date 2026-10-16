@@ -44,9 +44,10 @@ describe("ConversationComposer worktree setup queue (source contract)", () => {
   });
 
   it("clears the visible editor at queue time and restores only when no newer edit exists", () => {
-    const claimStart = source.indexOf("const claimSubmittedDraft = () => {");
+    const claimStart = source.indexOf("const claimSubmittedDraft = (clearEditor = true) => {");
     const claimEnd = source.indexOf("const restoreSubmittedDraft = () => {");
     const claim = source.slice(claimStart, claimEnd);
+    expect(claim).toContain("if (clearEditor) {");
     expect(claim).toContain("inputApiRef.current?.clear();");
     expect(claim).toContain('updateText("");');
     expect(claim).toContain("cleanupRevision = contentRevisionRef.current;");
