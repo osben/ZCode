@@ -73,15 +73,38 @@ export const chatgptAccountAccessDataSchema = z
     type: completeChatgptAccountAccessDataSchema.shape.type,
   })
   .strict();
+/**
+ * External ACP agent provider access: a local agent process (opencode,
+ * cursor-agent, …) driven over JSON-RPC stdio instead of an HTTP endpoint.
+ * Providers with this access do not require an `api` section.
+ */
+const acpAgentEnvKeySchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
+export const completeAcpAgentAccessDataSchema = z
+  .object({
+    type: z.literal("acp-agent"),
+    agentId: z.string().min(1),
+    command: nonBlankRequiredString,
+    args: z.array(z.string()).readonly(),
+    env: z.record(acpAgentEnvKeySchema, z.string()).readonly().nullable().optional(),
+  })
+  .strict();
+export const acpAgentAccessDataSchema = z
+  .object({
+    ...sparseShape(completeAcpAgentAccessDataSchema.shape),
+    type: completeAcpAgentAccessDataSchema.shape.type,
+  })
+  .strict();
 export const providerAccessDataSchema = z.discriminatedUnion("type", [
   apiKeyAccessDataSchema,
   zhipuAccountAccessDataSchema,
   chatgptAccountAccessDataSchema,
+  acpAgentAccessDataSchema,
 ]);
 export const completeProviderAccessDataSchema = z.discriminatedUnion("type", [
   completeApiKeyAccessDataSchema,
   completeZhipuAccountAccessDataSchema,
   completeChatgptAccountAccessDataSchema,
+  completeAcpAgentAccessDataSchema,
 ]);
 
 export const completeProviderApiDataSchema = z
