@@ -4,7 +4,7 @@ Update date: 2026-04-09
 
 ## Description
 
-This document lists from `requirements-review.md`中所有 `Acceptance status` 为 `Not accepted` 的 requirement item，共 5 项。
+This document lists all requirement items in `requirements-review.md` whose `Acceptance status` is `Not accepted`, for a total of 5 items.
 
 ## Unaccepted Requirements
 
