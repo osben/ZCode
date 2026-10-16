@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { PinIcon } from "lucide-react";
 import {
   TID_V4_TURN_NAVIGATOR,
   TID_V4_TURN_NAVIGATOR_ITEM,
@@ -72,6 +73,7 @@ function ConversationTurnNavigatorImpl({
       }),
     [intl, renderUnits],
   );
+  const pinnedLabel = intl.formatMessage({ id: "chat.turnNavigator.pinnedLabel" });
 
   const activeUnitIndex = useMemo(
     () =>
@@ -162,6 +164,10 @@ function ConversationTurnNavigatorImpl({
               visualFocusItemIndex,
             });
             const showScrollActiveColor = visualFocusItemIndex === undefined && active;
+            const jumpToQueryLabel = intl.formatMessage(
+              { id: "chat.turnNavigator.jumpToQuery" },
+              { index: String(itemIndex + 1) },
+            );
             return (
               <div
                 key={item.key}
@@ -173,10 +179,11 @@ function ConversationTurnNavigatorImpl({
                     <button
                       type="button"
                       aria-current={active ? "location" : undefined}
-                      aria-label={intl.formatMessage(
-                        { id: "chat.turnNavigator.jumpToQuery" },
-                        { index: String(itemIndex + 1) },
-                      )}
+                      // The pinned state is color-only on the bar and the hover card is not part of the
+                      // accessible name, so pinned entries append the localized pin label here.
+                      aria-label={
+                        item.isPinned ? `${jumpToQueryLabel}, ${pinnedLabel}` : jumpToQueryLabel
+                      }
                       aria-posinset={itemIndex + 1}
                       aria-setsize={items.length}
                       data-testid={testId(TID_V4_TURN_NAVIGATOR_ITEM, item.key)}
@@ -186,6 +193,7 @@ function ConversationTurnNavigatorImpl({
                       data-query-row-id={item.rowId}
                       data-active={active ? "true" : "false"}
                       data-running={item.isRunning ? "true" : "false"}
+                      data-pinned={item.isPinned ? "true" : "false"}
                       data-visual-color-tone={visualState.colorTone}
                       data-visual-scale={String(visualState.scaleX)}
                       data-visual-tone={visualState.tone}
@@ -207,6 +215,9 @@ function ConversationTurnNavigatorImpl({
                           visualState.colorTone === "focus" && "bg-foreground",
                           visualState.colorTone === "muted" &&
                             (showScrollActiveColor ? "bg-foreground" : "bg-foreground-subtlest"),
+                          // Pinned color wins over focus/muted (tailwind-merge keeps the last bg utility);
+                          // proximity scale/opacity still apply on top, keeping pinned bars findable at a glance.
+                          item.isPinned && "bg-pinned-turn",
                         )}
                         style={{
                           opacity: showScrollActiveColor
@@ -227,6 +238,13 @@ function ConversationTurnNavigatorImpl({
                     className="w-80 max-w-[calc(100vw-2rem)] border border-popover-border bg-popover p-3 text-popover-foreground shadow-lg"
                   >
                     <div className="space-y-2">
+                      {item.isPinned ? (
+                        <p className="flex items-center gap-1 text-ui-sm text-foreground-subtle">
+                          {/* Decorative icon; the adjacent text is the accessible label. */}
+                          <PinIcon className="size-3 text-pinned-turn" aria-hidden />
+                          {pinnedLabel}
+                        </p>
+                      ) : null}
                       <p className="line-clamp-2 whitespace-pre-line text-ui-base font-medium leading-5">
                         {item.userPreview}
                       </p>

@@ -319,6 +319,8 @@ html[data-document-hidden] *::after {
   --color-success-foreground: var(--color-foreground-inverse);
   --color-idle-task: var(--color-violet-600);
   --color-idle-task-surface: var(--color-violet-50);
+  /* Pinned-entry bars in the conversation turn navigator (specs/turn-navigator-pin-highlight.md). */
+  --color-pinned-turn: var(--color-amber-600);
   --color-destructive: var(--color-red-600);
   --color-destructive-foreground: var(--color-foreground-inverse);
   --color-warning: var(--color-yellow-600);
@@ -473,6 +475,7 @@ html[data-document-hidden] *::after {
   --color-success-foreground: var(--color-foreground-inverse);
   --color-idle-task: var(--color-violet-400);
   --color-idle-task-surface: color-mix(in oklab, var(--color-violet-950) 50%, transparent);
+  --color-pinned-turn: var(--color-amber-400);
   --color-destructive: var(--color-red-500);
   --color-destructive-foreground: var(--color-foreground-inverse);
   --color-warning: var(--color-yellow-500);
@@ -619,6 +622,7 @@ html[data-document-hidden] *::after {
   --color-success-foreground: #ffffff;
   --color-idle-task: #9e77ed;
   --color-idle-task-surface: #f5f3ff;
+  --color-pinned-turn: var(--color-amber-600);
   --color-destructive: #e03131;
   --color-destructive-foreground: #ffffff;
   --color-warning: #e07b00;
@@ -765,6 +769,7 @@ html[data-document-hidden] *::after {
   --color-success-foreground: #000000;
   --color-idle-task: #7b5ce5;
   --color-idle-task-surface: #160d38;
+  --color-pinned-turn: var(--color-amber-400);
   --color-destructive: #ff5c5c;
   /* Zai Dark previously set the destructive foreground to black, conflicting with the fixed white text design for red danger buttons. */
   --color-destructive-foreground: #ffffff;
