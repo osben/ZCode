@@ -31,6 +31,6 @@ The root cause is that the read-only branch of the `ProviderConnectionSection` o
 
 - The `ProviderConnectionSection`'s read-only branch uniformly uses a single-layer read-only field appearance; the Base URL and the visible API Format fix the display of the `LockKeyholeIcon` on the right;
 - The text uses `min-w-0 + flex-1 + break-all` to occupy the remaining width, and the lock icon stays `shrink-0`; the long URL does not cover or squeeze off the status hint;
-- The Chinese and English provide the accessibility names "{field} (read only)" and "{field} (read only)" respectively;
+- The Chinese and English provide the accessibility names "{field}（只读）" and "{field} (read only)" respectively;
 - The editable branch still uses the original `Input` and `ProviderApiFormatSelect`; the save, the Overlay, and the Registry are not changed;
 - 36 Provider/Model UI targeted tests pass, the root `pnpm typecheck` passes, the root `pnpm lint` passes (0 error, 34 pre-existing warnings), the format check of the modified files and the `git diff --check` pass.
