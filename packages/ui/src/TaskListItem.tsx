@@ -821,12 +821,10 @@ export const MemoTaskItem = memo(function TaskListItem({
       </TooltipTrigger>
       <TaskSidebarHoverCard
         task={task}
-        workspaceLabel={workspaceLabel}
         attentionLabel={taskAttentionDisplay}
         activity={taskActivity}
         branchMergeStatus={branchMergeStatus}
         intl={intl}
-        isRemote={isRemoteTask}
       />
     </Tooltip>
   );

@@ -50,7 +50,6 @@ function GroupedTaskRowComponent({
   activeWorkspaceIdentity,
   activeTaskId,
   mobileActiveTaskKey,
-  workspaceLabel,
   onSelectTask,
   onCloseTask,
   onOpenFileTree,
@@ -505,12 +504,10 @@ function GroupedTaskRowComponent({
             </TooltipTrigger>
             <TaskSidebarHoverCard
               task={task}
-              workspaceLabel={workspaceLabel}
               attentionLabel={taskAttentionDisplay}
               activity={taskActivity}
               branchMergeStatus={branchMergeStatus}
               intl={intl}
-              isRemote={Boolean(task.workspaceIdentity?.trim())}
             />
           </Tooltip>
         </TooltipProvider>
