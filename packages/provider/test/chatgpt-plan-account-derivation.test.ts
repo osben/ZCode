@@ -91,8 +91,8 @@ describe("per-account chatgpt plan provider id helpers", () => {
 describe("deriveChatGptPlanAccountConfigSnapshot", () => {
   it("replaces the base entry with per-account entries and clones model rules", () => {
     const snapshot = deriveChatGptPlanAccountConfigSnapshot(createBaseSnapshot(), [
-      { accountKey: ACCOUNT_A, providerName: "work@example.com" },
-      { accountKey: ACCOUNT_B, providerName: "home@example.com" },
+      { accountKey: ACCOUNT_A, providerName: "work@example.com", revisionKey: "fingerprint-a" },
+      { accountKey: ACCOUNT_B, providerName: "home@example.com", revisionKey: "fingerprint-b" },
     ]);
     const providers = snapshot.zcodeBuiltinProviders;
     expect(providers.get(BASE_ID)).toBeUndefined();
@@ -115,7 +115,9 @@ describe("deriveChatGptPlanAccountConfigSnapshot", () => {
 
   it("suffixes the dedup revision with the account set and keeps the builtin revision raw", () => {
     const base = createBaseSnapshot();
-    const accounts = [{ accountKey: ACCOUNT_A, providerName: "work@example.com" }];
+    const accounts = [
+      { accountKey: ACCOUNT_A, providerName: "work@example.com", revisionKey: "fingerprint-a" },
+    ];
     const first = deriveChatGptPlanAccountConfigSnapshot(base, accounts);
     const same = deriveChatGptPlanAccountConfigSnapshot(base, accounts);
     expect(first.revision).toBe(same.revision);
@@ -124,21 +126,27 @@ describe("deriveChatGptPlanAccountConfigSnapshot", () => {
     expect(first.zcodeBuiltinRevision).toBe(base.zcodeBuiltinRevision);
     const added = deriveChatGptPlanAccountConfigSnapshot(base, [
       ...accounts,
-      { accountKey: ACCOUNT_B, providerName: "home@example.com" },
+      { accountKey: ACCOUNT_B, providerName: "home@example.com", revisionKey: "fingerprint-b" },
     ]);
     expect(added.revision).not.toBe(first.revision);
     expect(added.zcodeBuiltinRevision).toBe(base.zcodeBuiltinRevision);
     // Account order must not matter for the revision.
     const reordered = deriveChatGptPlanAccountConfigSnapshot(base, [
-      { accountKey: ACCOUNT_B, providerName: "home@example.com" },
-      { accountKey: ACCOUNT_A, providerName: "work@example.com" },
+      { accountKey: ACCOUNT_B, providerName: "home@example.com", revisionKey: "fingerprint-b" },
+      ...accounts,
     ]);
     expect(reordered.revision).toBe(added.revision);
     // A presentation change (revisionKey) must republish even with the same account set.
     const renamed = deriveChatGptPlanAccountConfigSnapshot(base, [
-      { accountKey: ACCOUNT_A, providerName: "renamed@example.com", revisionKey: "abc123def456" },
+      {
+        accountKey: ACCOUNT_A,
+        providerName: "renamed@example.com",
+        revisionKey: "fingerprint-renamed",
+      },
     ]);
     expect(renamed.revision).not.toBe(first.revision);
+    expect(first.revision).not.toContain(ACCOUNT_A);
+    expect(first.revision).not.toContain("work@example.com");
   });
 
   it("drops the chatgpt family entirely with zero accounts", () => {
@@ -151,9 +159,13 @@ describe("deriveChatGptPlanAccountConfigSnapshot", () => {
 
   it("deduplicates repeated account keys and ignores invalid keys", () => {
     const snapshot = deriveChatGptPlanAccountConfigSnapshot(createBaseSnapshot(), [
-      { accountKey: ACCOUNT_A, providerName: "one@example.com" },
-      { accountKey: ACCOUNT_A, providerName: "two@example.com" },
-      { accountKey: "not-hex-at-all!!", providerName: "bad@example.com" },
+      { accountKey: ACCOUNT_A, providerName: "one@example.com", revisionKey: "fingerprint-one" },
+      { accountKey: ACCOUNT_A, providerName: "two@example.com", revisionKey: "fingerprint-two" },
+      {
+        accountKey: "not-hex-at-all!!",
+        providerName: "bad@example.com",
+        revisionKey: "fingerprint-invalid",
+      },
     ]);
     const derivedIds = [...snapshot.zcodeBuiltinProviders.keys()].filter((id) =>
       isChatGptPlanAccountProviderId(id),

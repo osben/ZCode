@@ -1,5 +1,5 @@
 import { createSign, generateKeyPairSync } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm } from "node:fs/promises";
 import { Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +9,7 @@ import {
   buildSiwcAccountProviderAuthSourceKey,
   buildSiwcAccountProviderIdentityKey,
   SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY,
+  SIWC_ACCOUNTS_LOCK_FILE_NAME,
   SIWC_LEGACY_CREDENTIAL_KEYS,
 } from "@zcode/shared";
 import type { ICredentialService } from "../src/credential/credential.js";
@@ -558,6 +559,21 @@ describe("SiwcAuthService (host side, multi-account)", () => {
       ACCOUNT_KEYS.refreshToken,
       ACCOUNT_KEYS.accessToken,
     ]);
+  });
+
+  it("does not take the accounts lock for host token resolution without legacy credentials", async () => {
+    const fixture = await createFixture();
+    await fixture.credentials.save(ACCOUNT_KEYS.clientId, ISSUED_CLIENT_ID);
+    await fixture.credentials.save(ACCOUNT_KEYS.accessToken, "host-access-valid");
+    await fixture.credentials.save(ACCOUNT_KEYS.refreshToken, "host-refresh-valid");
+    await fixture.credentials.save(ACCOUNT_KEYS.accessExpiresAt, String(NOW_SECONDS + 3600));
+
+    await expect(fixture.service.resolveAccessToken(ACCOUNT_KEY)).resolves.toBe(
+      "host-access-valid",
+    );
+    await expect(access(join(fixture.dir, SIWC_ACCOUNTS_LOCK_FILE_NAME))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("cancels a pending login and reports no accounts afterwards", async () => {

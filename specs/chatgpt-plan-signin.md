@@ -197,9 +197,16 @@ Same store, same encryption (`~/.zcode/v2/credentials.json`), keyed per account
 - Legacy pre-multi-account flat keys (`oauth:chatgpt:client_id`, …) are
   migrated once — idempotently, under the credential store file lock — into the
   slot of the (single) legacy account, then removed.
+- The migration checks its legacy trigger keys before taking the cross-process
+  accounts lock; when migration is needed, it re-reads all legacy values while
+  holding the lock. Normal token resolution with no legacy credentials does not
+  take that lock.
 - Key-name builders live in `@zcode/shared` (pure string functions) so the
   host service and the CLI resolver cannot drift; the refresh lock file is
   `siwc-chatgpt.<K>.refresh` (per account, same name on host and CLI).
+- If `ZCODE_DATA_BASE_DIR` is unset, the standalone CLI reads the Desktop
+  bootstrap setting under the default home directory and uses its configured
+  `dataBaseDir`, keeping the credentials file and account locks shared.
 
 Host id: persisted once at `~/.zcode/v2/siwc-host-id.txt` (0600, plain text;
 not a secret). Format: `urn:uuid:` URI. One host id serves ALL account
@@ -233,6 +240,10 @@ other saved accounts; logout ends only that account's renewable session.
   account set from the credential store; a change in the set bumps the
   registry revision (picker and sessions refresh through the existing
   `onDidChange` / `onChatGptPlanSessionChange` paths).
+- Derived registry revisions contain only process-keyed fingerprints of each
+  account key and display label. Fingerprints remain stable within the process
+  and change when the set or display label changes; raw account keys and labels
+  never appear in revision strings or their logs.
 - **Session binding**: each conversation stores `ModelSelection
 {providerId, modelId}` — picking an account's entry binds the session to
   that account. The existing `expectedAccountScope` (sha256 of clientId+sub)
@@ -459,7 +470,9 @@ sequenceDiagram
   vs re-auth authorize-URL shaping (hints present/absent); per-account
   terminal-failure clearing leaves other accounts intact; registry derivation
   clones provider entries AND `builtinProviderModelRules` and bumps revision
-  on account-set change (Desktop wrapper + CLI standalone runtime); account
+  on account-set/presentation change without logging identifiers (Desktop
+  wrapper + CLI standalone runtime); no account lock on token resolution without
+  legacy trigger keys; account
   entitlement map; prefix predicates (`isChatGptPlanAccountProviderId`) at all
   former exact-equality sites; picker renders per-account groups
   (email label).

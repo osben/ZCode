@@ -3,7 +3,7 @@ import { createGenUiService } from "./gen-ui/node.js";
 import { channelReplyHostRequestSchema, channelReplyResultSchema } from "@zcode/shared";
 /* eslint-disable max-lines -- Host-process service registration and startup wiring must stay together so dependency injection order remains easy to trace. */
 // Node.js service implementations — NOT safe to import in browser code
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +20,10 @@ import {
   type DynamicWorkflowMode,
   type ProviderProvisioningTrigger,
 } from "@zcode/shared";
+
+// Stable only for this process: revisions are cache keys, and a per-process random HMAC key
+// keeps account identifiers and display names out of logged configRevision values.
+const chatGptPlanRevisionKey = randomBytes(32);
 
 export * from "./voice-dictation/index.js";
 export {
@@ -1426,12 +1430,12 @@ export function createLocalServices(options: {
         return {
           accountKey: account.accountKey,
           providerName,
-          // Presentation digest (no PII in the revision): a renamed account must republish
-          // the derived snapshot even when the account set itself is unchanged.
-          revisionKey: createHash("sha256") // codeql[js/insufficient-password-hash]
-            .update(providerName, "utf-8")
+          // Key the account+presentation fingerprint so neither account keys nor email/name
+          // values can be recovered from the logged registry revision.
+          revisionKey: createHmac("sha256", chatGptPlanRevisionKey)
+            .update(JSON.stringify([account.accountKey, providerName]), "utf-8")
             .digest("hex")
-            .slice(0, 12),
+            .slice(0, 32),
         };
       });
     });

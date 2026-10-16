@@ -13,11 +13,11 @@ export interface DerivedChatGptPlanAccount {
   /** Picker group label (the account's email or name fallback). */
   readonly providerName: string;
   /**
-   * Opaque presentation fingerprint (e.g. a salted digest of providerName, supplied by the
-   * node-side callers): included in the revision so a renamed account republishes the
-   * derived snapshot even when the account set itself is unchanged. Must contain no PII.
+   * Process-keyed fingerprint of the account key and display label, supplied by node-side
+   * callers. It is included in the revision so account-set and label changes republish the
+   * derived snapshot without exposing identifiers or display names.
    */
-  readonly revisionKey?: string;
+  readonly revisionKey: string;
 }
 
 /**
@@ -46,10 +46,7 @@ export function deriveChatGptPlanAccountConfigSnapshot(
   // must remain the plain builtin revision on every side.
   const accountSuffix = validAccounts.length
     ? `#chatgpt:${validAccounts
-        .map(
-          (account) =>
-            `${buildChatGptPlanAccountProviderId(account.accountKey)}:${account.revisionKey ?? ""}`,
-        )
+        .map((account) => account.revisionKey)
         .sort()
         .join(",")}`
     : "";

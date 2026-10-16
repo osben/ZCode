@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import {
   createCodingPlanApiKeyResolver,
   createSiwcAccessTokenResolver,
@@ -31,6 +31,10 @@ import {
   isChatGptPlanAccountProviderId,
   type ProviderFamilyDomain,
 } from "@zcode/shared";
+
+// Registry revisions are process-local cache keys. A per-process HMAC key keeps account keys
+// and display names out of the revision while preserving stability across this runtime's reads.
+const chatGptPlanRevisionKey = randomBytes(32);
 
 /** Builtin template provider id of the ChatGPT plan (SIWC) account provider family. */
 export const CHATGPT_PLAN_PROVIDER_ID = BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan;
@@ -272,12 +276,12 @@ export function createStandaloneChatGptPlanConfigSourceWrapper(
         return {
           accountKey: account.accountKey,
           providerName,
-          // Presentation digest (no PII in the revision): a renamed account must republish
-          // the derived snapshot even when the account set itself is unchanged.
-          revisionKey: createHash("sha256") // codeql[js/insufficient-password-hash]
-            .update(providerName, "utf-8")
+          // Key the account+presentation fingerprint so neither account keys nor email/name
+          // values can be recovered from the logged registry revision.
+          revisionKey: createHmac("sha256", chatGptPlanRevisionKey)
+            .update(JSON.stringify([account.accountKey, providerName]), "utf-8")
             .digest("hex")
-            .slice(0, 12),
+            .slice(0, 32),
         };
       });
     });

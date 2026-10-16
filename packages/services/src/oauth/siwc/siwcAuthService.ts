@@ -14,6 +14,7 @@ import {
   buildSiwcAccountProviderAuthSourceKey,
   buildSiwcAccountProviderIdentityKey,
   buildSiwcAccountRefreshLockFileName,
+  isChatGptPlanAccountKey,
   SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY,
   SIWC_ACCOUNTS_LOCK_FILE_NAME,
   SIWC_LEGACY_CREDENTIAL_KEYS,
@@ -674,8 +675,21 @@ export class SiwcAuthService {
    * destination slot: a delayed second migrator replaying consumed legacy tokens over a
    * freshly rotated slot would trip refresh_token_reused and invalidate the login.
    */
-  private migrateLegacyCredentials(): Promise<void> {
-    return this.withAccountsLock(() => this.migrateLegacyCredentialsLocked());
+  private async migrateLegacyCredentials(): Promise<void> {
+    const legacy = SIWC_LEGACY_CREDENTIAL_KEYS;
+    const triggers = await this.readCredentialStrings(
+      legacy.clientId,
+      legacy.refreshToken,
+      legacy.userInfo,
+    );
+    if (
+      !triggers[legacy.clientId]?.trim() &&
+      !triggers[legacy.refreshToken]?.trim() &&
+      !triggers[legacy.userInfo]?.trim()
+    ) {
+      return;
+    }
+    await this.withAccountsLock(() => this.migrateLegacyCredentialsLocked());
   }
 
   private async migrateLegacyCredentialsLocked(): Promise<void> {
@@ -763,7 +777,7 @@ function isAccountRecord(value: unknown): value is SiwcStoredAccountRecord {
   const candidate = value as Partial<SiwcStoredAccountRecord>;
   return (
     typeof candidate.accountKey === "string" &&
-    /^[a-f0-9]{16}$/.test(candidate.accountKey) &&
+    isChatGptPlanAccountKey(candidate.accountKey) &&
     typeof candidate.sub === "string" &&
     candidate.sub.trim() !== ""
   );

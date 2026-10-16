@@ -1,10 +1,11 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   buildChatGptPlanAccountProviderId,
   buildSiwcAccountCredentialKeys,
+  SIWC_ACCOUNTS_LOCK_FILE_NAME,
   SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY,
   SIWC_LEGACY_CREDENTIAL_KEYS,
 } from "@zcode/shared";
@@ -301,6 +302,29 @@ describe("SIWC access token resolver (per-account)", () => {
       name: "SiwcReloginRequiredError",
       reason: "not_signed_in",
     });
+  });
+
+  it("does not take the accounts lock for token resolution without legacy credentials", async () => {
+    const store = await createStore();
+    await seedAccount(store, {
+      accountKey: ACCOUNT_KEY_1,
+      accessToken: "access-valid",
+      expiresAt: NOW_SECONDS + 3600,
+      refreshToken: "refresh-valid",
+    });
+    const { tokenClient } = createFakeTokenClient([]);
+    const resolver = createSiwcAccessTokenResolver({
+      credentialStore: store,
+      tokenClient,
+      now: () => NOW_SECONDS * 1000,
+    });
+
+    await expect(resolver.resolve({ providerId: PROVIDER_ID_1 })).resolves.toMatchObject({
+      apiKey: "access-valid",
+    });
+    await expect(
+      access(join(dirname(store.filePath), SIWC_ACCOUNTS_LOCK_FILE_NAME)),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("migrates legacy flat credentials into the account slot and deletes them", async () => {

@@ -6,7 +6,6 @@ import {
   buildSiwcAccountCredentialKeys,
   buildSiwcAccountRefreshLockFileName,
   parseChatGptPlanAccountProviderId,
-  SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY,
   type SiwcStoredAccountRecord,
 } from "@zcode/shared";
 import type { SharedZCodeCredentialStore } from "../shared-credentials.js";
@@ -17,7 +16,7 @@ import {
   parseSiwcScopes,
   type SiwcTokenClient,
 } from "./index.js";
-import { migrateLegacySiwcCredentials } from "./siwc-account-store.js";
+import { migrateLegacySiwcCredentials, readSiwcAccountIndex } from "./siwc-account-store.js";
 
 const SIWC_REFRESH_LOCK_MAX_WAIT_MS = 45_000;
 /** Refresh this long before expiry (SIWC access tokens live 1 hour). */
@@ -125,8 +124,7 @@ export function createSiwcAccountScope(input: {
 export async function listSiwcPlanAccounts(
   credentialStore: Pick<SharedZCodeCredentialStore, "loadMany">,
 ): Promise<readonly (SiwcStoredAccountRecord & { readonly entitled: boolean })[]> {
-  const rawIndex = await credentialStore.loadMany([SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY]);
-  const records = parseSiwcAccountIndex(rawIndex[SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY]);
+  const records = await readSiwcAccountIndex(credentialStore);
   const result: (SiwcStoredAccountRecord & { readonly entitled: boolean })[] = [];
   for (const record of records) {
     const keys = buildSiwcAccountCredentialKeys(record.accountKey);
@@ -145,28 +143,6 @@ export async function listSiwcPlanAccounts(
     });
   }
   return result;
-}
-
-function parseSiwcAccountIndex(raw: string | null | undefined): readonly SiwcStoredAccountRecord[] {
-  if (!raw?.trim()) return [];
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.flatMap((entry) => (isSiwcAccountRecord(entry) ? [entry] : []));
-  } catch {
-    return [];
-  }
-}
-
-function isSiwcAccountRecord(value: unknown): value is SiwcStoredAccountRecord {
-  if (typeof value !== "object" || value === null) return false;
-  const candidate = value as Partial<SiwcStoredAccountRecord>;
-  return (
-    typeof candidate.accountKey === "string" &&
-    /^[a-f0-9]{16}$/.test(candidate.accountKey) &&
-    typeof candidate.sub === "string" &&
-    candidate.sub.trim() !== ""
-  );
 }
 
 /**

@@ -75,7 +75,7 @@ function parseAccountRecord(input: unknown): SiwcStoredAccountRecord | null {
 
 /** Read and validate the persisted account index; malformed entries are dropped. */
 export async function readSiwcAccountIndex(
-  store: SiwcAccountStore,
+  store: Pick<SharedZCodeCredentialStore, "loadMany">,
 ): Promise<readonly SiwcStoredAccountRecord[]> {
   const raw = await store.loadMany([SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY]);
   const value = raw[SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY];
@@ -187,6 +187,19 @@ async function loadLegacyCredentials(store: SiwcAccountStore): Promise<LegacySiw
 export async function migrateLegacySiwcCredentials(
   store: SiwcAccountStore,
 ): Promise<readonly SiwcStoredAccountRecord[]> {
+  const legacyKeys = SIWC_LEGACY_CREDENTIAL_KEYS;
+  const triggers = await store.loadMany([
+    legacyKeys.clientId,
+    legacyKeys.refreshToken,
+    legacyKeys.userInfo,
+  ]);
+  if (
+    !triggers[legacyKeys.clientId]?.trim() &&
+    !triggers[legacyKeys.refreshToken]?.trim() &&
+    triggers[legacyKeys.userInfo] === null
+  ) {
+    return readSiwcAccountIndex(store);
+  }
   return withSiwcAccountsLock(store, () => migrateLegacySiwcCredentialsLocked(store));
 }
 

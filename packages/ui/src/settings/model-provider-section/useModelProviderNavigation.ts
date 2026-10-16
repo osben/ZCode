@@ -214,14 +214,19 @@ export function useModelProviderNavigation({
         // by the zai/bigmodel active-provider family scope, and rendered after those blocks.
         // Exactly ONE settings entry regardless of the runtime account set (zero accounts
         // must still route to the sign-in page; N accounts must not create duplicate keys).
-        // The first derived per-account entry supplies status/logo when present.
+        // Prefer an executable account so the shared status agrees with a usable provider;
+        // fall back to the first entry when every account is identity-only.
         id: "chatgpt",
         title: intl.formatMessage({ id: "settings.modelProvider.chatgpt.navigationTitle" }),
         items: [
           (() => {
-            const provider = modelProviders.find((candidate) =>
+            const accountProviders = modelProviders.filter((candidate) =>
               isChatGptPlanSubscriptionProviderId(candidate.providerId),
             );
+            const provider =
+              accountProviders.find((candidate) => candidate.executable) ??
+              accountProviders[0] ??
+              null;
             return {
               key: createPresetProviderNodeKey(BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan),
               type: "preset" as const,

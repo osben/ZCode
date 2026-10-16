@@ -7,6 +7,7 @@ import {
   type ModelSelection,
   type Provider,
 } from "../src/index.js";
+import { buildChatGptPlanAccountProviderId, isChatGptPlanAccountProviderId } from "@zcode/shared";
 import { createApiKeyProviderConfig } from "./provider-config-fixtures.js";
 import {
   createAccountProviderConfig,
@@ -234,26 +235,28 @@ describe("当前有效选择只读解析", () => {
     // The Desktop overlay marks every entitled account current; family-level remapping would
     // see two current providers and fail. Exact-id resolution must keep account A's selection.
     const chatgptClassifier = (id: string) =>
-      id.startsWith("chatgpt-plan") ? ("chatgpt-plan" as const) : classifyProvider(id);
+      isChatGptPlanAccountProviderId(id) ? ("chatgpt-plan" as const) : classifyProvider(id);
+    const accountProviderA = buildChatGptPlanAccountProviderId("a".repeat(16));
+    const accountProviderB = buildChatGptPlanAccountProviderId("b".repeat(16));
     const registry = {
       revision: 1,
       providers: [
         {
-          ...provider("chatgpt-plan:a1", "gpt-model"),
+          ...provider(accountProviderA, "gpt-model"),
           config: createChatgptAccountProviderConfig({ models: ["gpt-model"] }),
         },
         {
-          ...provider("chatgpt-plan:b2", "gpt-model"),
+          ...provider(accountProviderB, "gpt-model"),
           config: createChatgptAccountProviderConfig({ models: ["gpt-model"] }),
         },
       ],
     };
     const accountStates = {
-      "chatgpt-plan:a1": { availability: "available", entitled: true, current: true },
-      "chatgpt-plan:b2": { availability: "available", entitled: true, current: true },
+      [accountProviderA]: { availability: "available", entitled: true, current: true },
+      [accountProviderB]: { availability: "available", entitled: true, current: true },
     };
     const accountSelection = Object.freeze({
-      providerId: "chatgpt-plan:a1",
+      providerId: accountProviderA,
       modelId: "gpt-model",
       options: Object.freeze({ reasoningLevel: "high" }),
     });
@@ -273,7 +276,7 @@ describe("当前有效选择只读解析", () => {
         selection: { ...accountSelection },
         classifyProvider: chatgptClassifier,
         accountStates: {
-          "chatgpt-plan:b2": { availability: "available", entitled: true, current: true },
+          [accountProviderB]: { availability: "available", entitled: true, current: true },
         },
       }),
     ).toEqual({ effectiveSelection: null, selectionIssue: "provider-not-found" });
