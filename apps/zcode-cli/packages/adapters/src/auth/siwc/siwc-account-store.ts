@@ -202,7 +202,7 @@ export async function migrateLegacySiwcCredentials(
   if (
     !triggers[legacyKeys.clientId]?.trim() &&
     !triggers[legacyKeys.refreshToken]?.trim() &&
-    triggers[legacyKeys.userInfo] === null
+    !triggers[legacyKeys.userInfo]?.trim()
   ) {
     return readSiwcAccountIndex(store);
   }

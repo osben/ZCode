@@ -15,7 +15,7 @@ import {
   type HttpClientRunOptions,
 } from "@zcode/contracts";
 import {
-  loadTlsCaCertificates,
+  createTlsCaLoader,
   resolveProxyForRequest,
   resolveWebFetchProxyForRequest,
 } from "../network/http-config.js";
@@ -44,10 +44,11 @@ export interface NodeHttpClientAdapterOptions {
 }
 
 export class NodeHttpClientAdapter implements HttpClientPort {
-  private tlsCaCertificates: Buffer | undefined;
-  private tlsCaLoaded = false;
+  private readonly resolveTlsCaCertificates: ReturnType<typeof createTlsCaLoader>;
 
-  constructor(private readonly options: NodeHttpClientAdapterOptions = {}) {}
+  constructor(private readonly options: NodeHttpClientAdapterOptions = {}) {
+    this.resolveTlsCaCertificates = createTlsCaLoader(options);
+  }
 
   async request(
     request: HttpClientRequest,
@@ -70,8 +71,6 @@ export class NodeHttpClientAdapter implements HttpClientPort {
       request.egressPolicy === "public"
         ? (this.options.dnsLookup ?? defaultPublicDnsLookup())
         : undefined;
-    const tlsCaCertificates = this.resolveTlsCaCertificates();
-    const egress = buildEgressInfo(proxy, tlsCaCertificates);
     const abortController = new AbortController();
     const abortState = linkAbortSignals(options.signal, abortController);
     let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -84,6 +83,8 @@ export class NodeHttpClientAdapter implements HttpClientPort {
     }
 
     try {
+      const tlsCaCertificates = await this.resolveTlsCaCertificates(abortController.signal);
+      const egress = buildEgressInfo(proxy, tlsCaCertificates);
       if (publicDnsLookup) {
         assertPublicEgressProxyBoundary(url, proxy.proxyUrl);
         await assertPublicEgressDestination(url, publicDnsLookup, {
@@ -127,17 +128,6 @@ export class NodeHttpClientAdapter implements HttpClientPort {
       if (timeout) clearTimeout(timeout);
       abortState.unlink();
     }
-  }
-
-  private resolveTlsCaCertificates(): Buffer | undefined {
-    if (!this.tlsCaLoaded) {
-      this.tlsCaCertificates = loadTlsCaCertificates({
-        caCertFile: this.options.caCertFile,
-        env: this.options.env,
-      });
-      this.tlsCaLoaded = true;
-    }
-    return this.tlsCaCertificates;
   }
 }
 

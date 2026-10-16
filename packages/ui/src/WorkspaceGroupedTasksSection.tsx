@@ -540,7 +540,14 @@ export function WorkspaceGroupedTasksSection({
   activeWorkspaceIdentity?: string;
   activeTaskId: string | null;
   mobileActiveTaskKey?: string | null;
-  onSelectTask: (workspacePath: string, taskId: string, workspaceIdentity?: string) => void;
+  onSelectTask: (
+    workspacePath: string,
+    taskId: string,
+    workspaceIdentity?: string,
+    targetRemoteSessionId?: string,
+    expectedUnreadAt?: number,
+    options?: { readOnly?: boolean; selectionSideChat?: boolean },
+  ) => void;
   onCreateTask: (request?: CreateTaskRequest) => void;
   onOpenFileTree?: (target: {
     workspacePath: string;

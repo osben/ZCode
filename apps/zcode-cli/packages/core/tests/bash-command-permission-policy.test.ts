@@ -1,3 +1,8 @@
+import { createHash } from "node:crypto";
+import {
+  BASH_COMMAND_REGISTRY,
+  type BashCommandRegistryNode,
+} from "../src/tool/handlers/generated/bash-command-registry.js";
 import { describe, expect, it } from "vitest";
 import type { PermissionRuleset } from "@zcode/contracts";
 import { PermissionService } from "../src/permission/service.js";
@@ -5,6 +10,32 @@ import { createBashPermissionRulePolicy } from "../src/tool/handlers/bash-comman
 import { bashToolEntry } from "../src/tool/handlers/bash.js";
 
 describe("Bash command permission rule policy", () => {
+  it("preserves eager-baseline suggestions and decisions for every static alias path", () => {
+    const hash = createHash("sha256");
+    let count = 0;
+    function visit(node: BashCommandRegistryNode, tokens: string[]) {
+      for (const alias of node[0]) {
+        const command = [...tokens, alias, "registry-parity-target"].join(" ");
+        const policy = createBashPermissionRulePolicy(command);
+        const rules = policy.suggestedPermissionUpdates.flatMap((update) => update.rules);
+        const outcomes = (["allow", "ask", "deny"] as const).map((behavior) =>
+          policy.evaluateRules(behavior, rules),
+        );
+        hash.update(JSON.stringify([command, policy.suggestedPermissionUpdates, outcomes]));
+        hash.update("\n");
+        count++;
+        for (const child of node[3]) visit(child, [...tokens, alias]);
+      }
+    }
+    for (const [name, node] of Object.entries(BASH_COMMAND_REGISTRY)) {
+      visit([[name], node[1], node[2], node[3]], []);
+    }
+    expect(count).toBe(46_296);
+    expect(hash.digest("hex")).toBe(
+      "7cc1d6d66044159faad23a5906cf7272790d7bdc6e8f95c7907394ff5c7a29dc",
+    );
+  });
+
   it.each([
     ["pnpm run lint --fix", "pnpm run lint:*"],
     ["pnpm --dir /tmp/project run lint --fix", "pnpm run lint:*"],

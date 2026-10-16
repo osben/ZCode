@@ -1,38 +1,45 @@
-import { Cpu, FileDiff, Folder, GitBranch, GitMerge, Cloud } from "lucide-react";
+import { Cpu, FileDiff, GitBranch } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import type { GitBranchMergeStatus, ZCodeTaskMeta } from "@zcode/shared";
+import type { ZCodeTaskMeta } from "@zcode/shared";
 import { TooltipContent } from "@/components/ui/tooltip.js";
+import { WorktreeTaskMarker } from "@/components/WorktreeTaskMarker.js";
 import { thoughtLevelLabelId } from "@/chat-input-toolbar/thoughtLevelOptions.js";
 import type { IntlInstance } from "@/i18n/IntlProvider.js";
 import { formatTaskRelativeTime } from "@/lib/taskListItemPresentation.js";
 import { getTaskChangeSummary } from "@/lib/taskChangeSummary.js";
+import { providerBrandIconSrc } from "@/lib/oauthProviderIcon.js";
 import { parseModelPickerValue } from "@/lib/zcodeSessionProjection.js";
 import { formatGroupedTaskHoverChangeParts } from "@/workspace-grouped-tasks/task-row-tooltip.js";
 import type { TaskListRowActivity } from "@/v4/taskListRowActivity.js";
 
+/**
+ * Sidebar task hover card (specs/task-hover-card-layout.md): three detail lines under the row —
+ * title + worktree marker + relative time, branch + change stats, provider + model + thought
+ * level. The sidebar row owns run-state signaling; the card keeps only the resolved status as a
+ * probe attribute.
+ */
 export function TaskSidebarHoverCard({
   task,
-  workspaceLabel,
   attentionLabel,
   activity,
-  branchMergeStatus,
   intl,
-  isRemote = false,
 }: {
   task: ZCodeTaskMeta;
-  workspaceLabel: string;
   attentionLabel: string | null;
   activity: TaskListRowActivity | null;
-  branchMergeStatus?: GitBranchMergeStatus;
   intl: Pick<IntlInstance, "formatMessage">;
-  isRemote?: boolean;
 }) {
   const status = resolveStatus(task, activity, attentionLabel, intl);
   const modelAndEffort = resolveModelAndEffort(task, intl);
   const changeParts = formatGroupedTaskHoverChangeParts(getTaskChangeSummary(task));
-  const isBranchMerged = branchMergeStatus?.state === "merged";
+  const branchLabel = task.executionWorktree?.branchName;
   const lastActivity = activity?.lastActivityAt ?? task.updatedAt;
+  const taskTitle =
+    task.title ||
+    intl.formatMessage({
+      id: task.forkedFromTaskId ? "taskList.forkedUntitled" : "taskList.untitled",
+    });
 
   return (
     <TooltipContent
@@ -46,34 +53,43 @@ export function TaskSidebarHoverCard({
         data-task-hover-status={status?.kind}
         className="flex min-w-0 flex-col gap-2.5"
       >
-        <div className="flex items-center justify-between gap-3">
-          {status ? <span className={status.className}>{status.label}</span> : <span />}
-          <span className="shrink-0 text-foreground-subtle">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="min-w-0 truncate text-ui-base text-foreground">{taskTitle}</span>
+          {task.executionWorktree ? <WorktreeTaskMarker task={task} /> : null}
+          <span className="ml-auto shrink-0 text-foreground-subtle">
             {formatTaskRelativeTime(lastActivity, intl)}
           </span>
         </div>
 
-        <InfoRow icon={isRemote ? Cloud : Folder}>
-          <span className="truncate">{workspaceLabel}</span>
-        </InfoRow>
-
-        {isBranchMerged || branchMergeStatus?.headRef ? (
-          <InfoRow icon={isBranchMerged ? GitMerge : GitBranch}>
-            {isBranchMerged ? (
-              <span className="text-primary">
-                {intl.formatMessage({ id: "taskList.branchMergedTag" })}
-              </span>
-            ) : (
-              <span className="truncate">{branchMergeStatus.headRef}</span>
-            )}
-            {isBranchMerged && changeParts.length > 0 ? (
+        {branchLabel ? (
+          <InfoRow icon={<RowGlyph icon={GitBranch} />}>
+            <span className="truncate">{branchLabel}</span>
+            {changeParts.length > 0 ? (
               <ChangeStats className="ml-auto" parts={changeParts} />
             ) : null}
+          </InfoRow>
+        ) : changeParts.length > 0 ? (
+          // No branch source: keep the diff facts visible on their own line instead of dropping them.
+          <InfoRow icon={<RowGlyph icon={FileDiff} />}>
+            <ChangeStats parts={changeParts} />
           </InfoRow>
         ) : null}
 
         {modelAndEffort ? (
-          <InfoRow icon={Cpu}>
+          <InfoRow
+            icon={
+              providerBrandIconSrc(modelAndEffort.providerId) ? (
+                <img
+                  src={providerBrandIconSrc(modelAndEffort.providerId) ?? ""}
+                  alt=""
+                  aria-hidden="true"
+                  className="size-4 shrink-0 object-contain"
+                />
+              ) : (
+                <RowGlyph icon={Cpu} />
+              )
+            }
+          >
             {modelAndEffort.model ? (
               <span className="min-w-0 truncate">{modelAndEffort.model}</span>
             ) : null}
@@ -83,25 +99,23 @@ export function TaskSidebarHoverCard({
           </InfoRow>
         ) : null}
 
-        {!isBranchMerged && changeParts.length > 0 ? (
-          <InfoRow icon={FileDiff}>
-            <ChangeStats parts={changeParts} />
-          </InfoRow>
-        ) : null}
-
         {/* TODO: Show PR number/status once task metadata has a trustworthy source. */}
       </div>
     </TooltipContent>
   );
 }
 
-function InfoRow({ icon: Icon, children }: { icon: LucideIcon; children: ReactNode }) {
+function InfoRow({ icon, children }: { icon: ReactNode; children: ReactNode }) {
   return (
     <div className="flex min-w-0 items-center gap-2 text-ui-base">
-      <Icon aria-hidden="true" className="size-4 shrink-0 text-foreground-subtle" />
+      {icon}
       {children}
     </div>
   );
+}
+
+function RowGlyph({ icon: Icon }: { icon: LucideIcon }) {
+  return <Icon aria-hidden="true" className="size-4 shrink-0 text-foreground-subtle" />;
 }
 
 function ChangeStats({ parts, className }: { parts: string[]; className?: string }) {
@@ -174,6 +188,7 @@ function resolveModelAndEffort(task: ZCodeTaskMeta, intl: Pick<IntlInstance, "fo
     return null;
   }
   return {
+    providerId: modelSelection?.providerId,
     model: model || null,
     effort: effort ? (effortLabelId ? intl.formatMessage({ id: effortLabelId }) : effort) : null,
   };
@@ -183,6 +198,7 @@ function parseTaskModelForDisplay(value: string) {
   try {
     const selection = parseModelPickerValue(value);
     return {
+      providerId: selection.providerId,
       modelId: selection.modelId,
       reasoningLevel: selection.options?.reasoningLevel,
     };
@@ -191,6 +207,7 @@ function parseTaskModelForDisplay(value: string) {
     // provider/model without blocking sidebar rendering.
     const [model = "", reasoningLevel] = value.split("$", 2);
     return {
+      providerId: undefined,
       modelId: model.slice(model.lastIndexOf("/") + 1),
       reasoningLevel,
     };

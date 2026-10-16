@@ -1,6 +1,7 @@
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import {
   SESSION_TASK_TYPES,
+  type ChildSessionInfo,
   type ClaimLegacySessionWorkspaceInput,
   type CreateSessionInput,
   type FileDiff,
@@ -17,17 +18,13 @@ import { decodeSessionRow } from "../codecs.js";
 import { encodeJson } from "../json.js";
 import type { SessionRow } from "../rows.js";
 
-export function createSession(
-  db: DatabaseSync,
-  input: CreateSessionInput,
-): SessionInfo {
+export function createSession(db: DatabaseSync, input: CreateSessionInput): SessionInfo {
   const now = Date.now();
   const timeCreated = input.time?.created ?? now;
   const timeUpdated = input.time?.updated ?? timeCreated;
 
-  db
-    .prepare(
-      `
+  db.prepare(
+    `
       insert into session (
         id, project_id, workspace_id, parent_id, trace_id, task_type, slug, directory, path,
         execution_directory, execution_branch,
@@ -56,29 +53,28 @@ export function createSession(
         time_title_updated = excluded.time_title_updated,
         time_updated = excluded.time_updated
       `,
-    )
-    .run(
-      input.id,
-      input.projectID,
-      input.workspaceID ?? null,
-      input.parentID ?? null,
-      input.traceID ?? null,
-      input.taskType ?? "interactive",
-      input.slug,
-      input.directory,
-      input.path ?? null,
-      input.executionDirectory ?? null,
-      input.executionBranch ?? null,
-      input.title,
-      input.titleSource ?? "first_input",
-      input.titleMessageID ?? null,
-      input.version,
-      input.shareURL ?? null,
-      encodeJson(input.permission),
-      timeCreated,
-      timeUpdated,
-      input.titleSource || input.titleMessageID ? timeUpdated : null,
-    );
+  ).run(
+    input.id,
+    input.projectID,
+    input.workspaceID ?? null,
+    input.parentID ?? null,
+    input.traceID ?? null,
+    input.taskType ?? "interactive",
+    input.slug,
+    input.directory,
+    input.path ?? null,
+    input.executionDirectory ?? null,
+    input.executionBranch ?? null,
+    input.title,
+    input.titleSource ?? "first_input",
+    input.titleMessageID ?? null,
+    input.version,
+    input.shareURL ?? null,
+    encodeJson(input.permission),
+    timeCreated,
+    timeUpdated,
+    input.titleSource || input.titleMessageID ? timeUpdated : null,
+  );
 
   return mustGetSession(db, input.id);
 }
@@ -128,9 +124,8 @@ export async function updateSession(
   const titleChanged = input.title !== undefined && input.title !== current.title;
   const nextTitleSource = input.titleSource ?? current.titleSource ?? "first_input";
 
-  db
-    .prepare(
-      `
+  db.prepare(
+    `
       update session set
         directory = ?,
         path = ?,
@@ -152,38 +147,32 @@ export async function updateSession(
         time_updated = max(time_updated, ?)
       where id = ?
       `,
-    )
-    .run(
-      input.directory ?? current.directory,
-      input.path === undefined ? (current.path ?? null) : input.path,
-      input.title ?? current.title,
-      nextTitleSource,
-      input.titleMessageID === undefined
-        ? (current.titleMessageID ?? null)
-        : input.titleMessageID,
-      input.shareURL === undefined ? (current.shareURL ?? null) : input.shareURL,
-      summary === null ? null : (summary.additions ?? null),
-      summary === null ? null : (summary.deletions ?? null),
-      summary === null ? null : (summary.files ?? null),
-      summary === null ? null : encodeJson(summary.diffs),
-      input.revert === undefined ? encodeJson(current.revert) : encodeJson(input.revert),
-      input.permission === undefined ? encodeJson(current.permission) : encodeJson(input.permission),
-      titleChanged || input.titleSource !== undefined || input.titleMessageID !== undefined
-        ? now
-        : (current.time.titleUpdated ?? null),
-      input.timeCompacting === undefined ? (current.time.compacting ?? null) : input.timeCompacting,
-      input.timeArchived === undefined ? (current.time.archived ?? null) : input.timeArchived,
-      input.timeUpdated ?? now,
-      input.id,
-    );
+  ).run(
+    input.directory ?? current.directory,
+    input.path === undefined ? (current.path ?? null) : input.path,
+    input.title ?? current.title,
+    nextTitleSource,
+    input.titleMessageID === undefined ? (current.titleMessageID ?? null) : input.titleMessageID,
+    input.shareURL === undefined ? (current.shareURL ?? null) : input.shareURL,
+    summary === null ? null : (summary.additions ?? null),
+    summary === null ? null : (summary.deletions ?? null),
+    summary === null ? null : (summary.files ?? null),
+    summary === null ? null : encodeJson(summary.diffs),
+    input.revert === undefined ? encodeJson(current.revert) : encodeJson(input.revert),
+    input.permission === undefined ? encodeJson(current.permission) : encodeJson(input.permission),
+    titleChanged || input.titleSource !== undefined || input.titleMessageID !== undefined
+      ? now
+      : (current.time.titleUpdated ?? null),
+    input.timeCompacting === undefined ? (current.time.compacting ?? null) : input.timeCompacting,
+    input.timeArchived === undefined ? (current.time.archived ?? null) : input.timeArchived,
+    input.timeUpdated ?? now,
+    input.id,
+  );
 
   return mustGetSession(db, input.id);
 }
 
-export function getSession(
-  db: DatabaseSync,
-  sessionID: SessionId,
-): SessionInfo | null {
+export function getSession(db: DatabaseSync, sessionID: SessionId): SessionInfo | null {
   const row = db.prepare("select * from session where id = ?").get(sessionID) as
     | SessionRow
     | undefined;
@@ -249,6 +238,75 @@ export async function listSessions(
     .prepare(`select * from session ${where} order by time_updated desc, id desc${limit}`)
     .all(...values) as unknown as SessionRow[];
   return rows.map(decodeSessionRow);
+}
+
+/** Sidebar child facts cover exactly these task types (specs/sidebar-child-conversation-counts.md). */
+const CHILD_SESSION_TASK_TYPES = ["selection_side_chat", "subagent_child"] as const;
+
+function buildChildSessionScope(parentIds: readonly SessionId[]): {
+  where: string;
+  values: SQLInputValue[];
+} {
+  return {
+    where: `parent_id in (${parentIds.map(() => "?").join(", ")}) and task_type in (${CHILD_SESSION_TASK_TYPES.map(() => "?").join(", ")}) and time_archived is null`,
+    values: [...parentIds, ...CHILD_SESSION_TASK_TYPES],
+  };
+}
+
+export function countChildSessions(
+  db: DatabaseSync,
+  parentIds: readonly SessionId[],
+): Map<string, { sideChats: number; subagents: number }> {
+  const result = new Map<string, { sideChats: number; subagents: number }>();
+  if (parentIds.length === 0) return result;
+  const scope = buildChildSessionScope(parentIds);
+  const rows = db
+    .prepare(
+      `select parent_id, task_type, count(*) as n from session where ${scope.where} group by parent_id, task_type`,
+    )
+    .all(...scope.values) as unknown as Array<{ parent_id: string; task_type: string; n: number }>;
+  for (const row of rows) {
+    const entry = result.get(row.parent_id) ?? { sideChats: 0, subagents: 0 };
+    if (row.task_type === "selection_side_chat") entry.sideChats += row.n;
+    else entry.subagents += row.n;
+    result.set(row.parent_id, entry);
+  }
+  return result;
+}
+
+export function listChildSessions(
+  db: DatabaseSync,
+  parentIds: readonly SessionId[],
+  limitPerParent: number,
+): Map<string, ChildSessionInfo[]> {
+  const result = new Map<string, ChildSessionInfo[]>();
+  if (parentIds.length === 0 || limitPerParent <= 0) return result;
+  const scope = buildChildSessionScope(parentIds);
+  // Cap in SQL (row_number per parent): without it every refresh decodes every live child row of
+  // every tracked parent, which grows without bound as parents accumulate (spec §3 heat control).
+  const rows = db
+    .prepare(
+      `select * from (
+         select session.*, row_number() over (partition by parent_id order by time_updated desc, id desc) as child_rank
+         from session where ${scope.where}
+       ) where child_rank <= ?`,
+    )
+    .all(...scope.values, limitPerParent) as unknown as SessionRow[];
+  for (const row of rows) {
+    const info = decodeSessionRow(row);
+    if (info.taskType !== "selection_side_chat" && info.taskType !== "subagent_child") continue;
+    const parentKey = String(info.parentID);
+    const bucket = result.get(parentKey) ?? [];
+    if (bucket.length >= limitPerParent) continue;
+    bucket.push({
+      id: info.id,
+      title: info.title,
+      taskType: info.taskType,
+      lastActivityAt: info.time.updated,
+    });
+    result.set(parentKey, bucket);
+  }
+  return result;
 }
 
 export function claimLegacySessionWorkspace(
@@ -358,9 +416,10 @@ export async function clearRevert(db: DatabaseSync, sessionID: SessionId): Promi
 }
 
 export function touchSession(db: DatabaseSync, sessionID: SessionId, timeUpdated: number): void {
-  db
-    .prepare("update session set time_updated = max(time_updated, ?) where id = ?")
-    .run(timeUpdated, sessionID);
+  db.prepare("update session set time_updated = max(time_updated, ?) where id = ?").run(
+    timeUpdated,
+    sessionID,
+  );
 }
 
 function normalizeSessionTaskTypes(taskTypes: readonly SessionTaskType[] | undefined): string[] {

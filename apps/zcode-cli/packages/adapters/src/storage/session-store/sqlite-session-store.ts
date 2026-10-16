@@ -1,6 +1,7 @@
 import * as permissionFullAccessRepository from "./repositories/permission-full-access.js";
 import { DatabaseSync } from "node:sqlite";
 import type {
+  ChildSessionInfo,
   CollaborationMode,
   ClaimLegacySessionWorkspaceInput,
   RepairLegacyRemoteSessionWorkspaceInput,
@@ -592,6 +593,19 @@ export class SqliteSessionStore
 
   async listSessions(input: ListSessionsInput = {}): Promise<SessionInfo[]> {
     return sessionRepository.listSessions(this.db, input);
+  }
+
+  async countChildSessions(input: {
+    parentIds: readonly SessionId[];
+  }): Promise<Map<string, { sideChats: number; subagents: number }>> {
+    return sessionRepository.countChildSessions(this.db, input.parentIds);
+  }
+
+  async listChildSessions(input: {
+    parentIds: readonly SessionId[];
+    limitPerParent: number;
+  }): Promise<Map<string, ChildSessionInfo[]>> {
+    return sessionRepository.listChildSessions(this.db, input.parentIds, input.limitPerParent);
   }
 
   async claimLegacySessionWorkspace(input: ClaimLegacySessionWorkspaceInput): Promise<number> {

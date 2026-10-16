@@ -2,7 +2,7 @@ import http from "node:http";
 import https from "node:https";
 import { ProxyAgent } from "proxy-agent";
 import {
-  loadTlsCaCertificates,
+  createTlsCaLoader,
   resolveProxyUrlForRequest,
   resolveTlsCaCertFile,
 } from "./http-config.js";
@@ -32,16 +32,7 @@ export function createNetworkProxyFetch(options: NetworkProxyFetchOptions): Netw
     return directFetch;
   }
 
-  let tlsCaCertificates: Buffer | undefined;
-  let tlsCaCertificatesLoaded = false;
-
-  const getTlsCaCertificates = (): Buffer | undefined => {
-    if (!tlsCaCertificatesLoaded) {
-      tlsCaCertificates = loadTlsCaCertificates(options);
-      tlsCaCertificatesLoaded = true;
-    }
-    return tlsCaCertificates;
-  };
+  const getTlsCaCertificates = createTlsCaLoader(options);
 
   return async (input, init) => {
     const requestUrl = readFetchInputUrl(input);
@@ -57,7 +48,7 @@ export function createNetworkProxyFetch(options: NetworkProxyFetchOptions): Netw
 
     const request = await normalizeFetchRequest(input, init);
     return fetchWithAgent(request, {
-      ca: caCertFile ? getTlsCaCertificates() : undefined,
+      ca: caCertFile ? await getTlsCaCertificates(request.signal) : undefined,
       proxyUrl,
     });
   };

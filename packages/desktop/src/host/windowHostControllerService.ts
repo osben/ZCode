@@ -102,6 +102,12 @@ function sessionOverlay(
     ...(summary.executionWorktreeMissing !== undefined
       ? { executionWorktreeMissing: summary.executionWorktreeMissing }
       : {}),
+    ...(summary.sideChatCount !== undefined ? { sideChatCount: summary.sideChatCount } : {}),
+    ...(summary.subagentCount !== undefined ? { subagentCount: summary.subagentCount } : {}),
+    ...(summary.runningSubagentCount !== undefined
+      ? { runningSubagentCount: summary.runningSubagentCount }
+      : {}),
+    ...(summary.childSessions !== undefined ? { childSessions: summary.childSessions } : {}),
     ...(summary.pendingInteraction
       ? {
           pendingInteraction: {
