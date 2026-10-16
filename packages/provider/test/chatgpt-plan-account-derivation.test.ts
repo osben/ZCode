@@ -191,7 +191,7 @@ describe("deriveChatGptPlanAccountConfigSnapshot", () => {
   });
 
   it("forwards change events and derives on every read", async () => {
-    let accounts: { accountKey: string; providerName: string }[] = [];
+    let accounts: { accountKey: string; providerName: string; revisionKey: string }[] = [];
     const listeners = new Set<() => void>();
     const source = {
       async read() {
@@ -207,7 +207,13 @@ describe("deriveChatGptPlanAccountConfigSnapshot", () => {
     const dispose = derived.onDidChange(() => {
       seen += 1;
     });
-    accounts = [{ accountKey: ACCOUNT_A, providerName: "work@example.com" }];
+    accounts = [
+      {
+        accountKey: ACCOUNT_A,
+        providerName: "work@example.com",
+        revisionKey: "fingerprint-a",
+      },
+    ];
     const first = await derived.read();
     expect(
       first.zcodeBuiltinProviders.get(buildChatGptPlanAccountProviderId(ACCOUNT_A)),
