@@ -85,7 +85,7 @@ function GroupedTaskRowComponent({
     workspaceIdentity?: string,
     targetRemoteSessionId?: string,
     expectedUnreadAt?: number,
-    options?: { readOnly?: boolean },
+    options?: { readOnly?: boolean; selectionSideChat?: boolean },
   ) => void;
   onCloseTask: (task: ZCodeTaskMeta) => void;
   onOpenFileTree?: (task: ZCodeTaskMeta) => void;
@@ -310,10 +310,9 @@ function GroupedTaskRowComponent({
     isChildSessionsExpanded(task.taskId),
   );
   const handleToggleChildSessions = () => {
-    setChildSessionsExpanded((expanded) => {
-      persistChildSessionsExpanded(task.taskId, !expanded);
-      return !expanded;
-    });
+    const next = !childSessionsExpanded;
+    persistChildSessionsExpanded(task.taskId, next);
+    setChildSessionsExpanded(next);
   };
   const handleCloseTask = (event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();

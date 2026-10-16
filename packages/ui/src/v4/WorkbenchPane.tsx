@@ -176,6 +176,7 @@ interface PaneRestoredGuardProps {
   scope: PaneWorkspaceScope;
   sessionId: string;
   subagentOnly: boolean;
+  selectionSideChatOnly: boolean;
   onConfirmed: (paneId: string) => void;
   onMissing: (paneId: string) => void;
 }
@@ -196,6 +197,7 @@ function PaneRestoredGuard({
   scope,
   sessionId,
   subagentOnly,
+  selectionSideChatOnly,
   onConfirmed,
   onMissing,
 }: PaneRestoredGuardProps) {
@@ -221,7 +223,8 @@ function PaneRestoredGuard({
         return;
       }
       settled = true;
-      if (subagentOnly) {
+      if (subagentOnly || selectionSideChatOnly) {
+        const expectedKind = subagentOnly ? "subagent_child" : "selection_side_chat";
         void agentService
           .listSessions({
             workspacePath,
@@ -234,7 +237,7 @@ function PaneRestoredGuard({
             if (
               sessions.some(
                 (session) =>
-                  session.sessionId === sessionId && session.sessionKind === "subagent_child",
+                  session.sessionId === sessionId && session.sessionKind === expectedKind,
               )
             ) {
               onConfirmed(paneId);
@@ -246,7 +249,7 @@ function PaneRestoredGuard({
             // A failed lookup is not proof that a persisted session was deleted.
             if (disposed) return;
             settled = false;
-            logger.warn("[workbench] restored subagent task type lookup failed", {
+            logger.warn("[workbench] restored child task type lookup failed", {
               error: error instanceof Error ? error.message : String(error),
               sessionId,
               workspaceIdentity,
@@ -274,6 +277,7 @@ function PaneRestoredGuard({
     paneId,
     sessionId,
     subagentOnly,
+    selectionSideChatOnly,
     workspacePath,
     workspaceIdentity,
     remoteSessionId,
@@ -293,6 +297,8 @@ export interface WorkbenchShellBinding {
   isDesktop?: boolean;
   /** Read-only intent from sidebar selection applies only to panes bound to this child session. */
   readOnlySessionId?: string | null;
+  /** Restricted selection-side-chat command capability applies only to its selected pane. */
+  selectionSideChatSessionId?: string | null;
   readOnly?: boolean;
   compactForRemoteControl?: boolean;
   sessionId: string | null;
@@ -558,6 +564,10 @@ export function WorkbenchLeafPane({
     (isShellWorkspace && shell.readOnly) ||
     (sessionId && sessionId === shell.readOnlySessionId),
   );
+  const selectionSideChat = Boolean(
+    (isPrimary ? primaryBinding?.selectionSideChat : binding?.selectionSideChat) ||
+    (sessionId && sessionId === shell.selectionSideChatSessionId),
+  );
   const shouldUseShellStatusPanel = isShellWorkspace;
   const paneSearchResultHighlightRequest =
     sessionId === shell.searchResultHighlightRequest?.taskId
@@ -585,6 +595,9 @@ export function WorkbenchLeafPane({
             scope={scope}
             sessionId={sessionId}
             subagentOnly={Boolean((isPrimary ? primaryBinding : binding)?.readOnly)}
+            selectionSideChatOnly={Boolean(
+              (isPrimary ? primaryBinding : binding)?.selectionSideChat,
+            )}
             onConfirmed={onConfirmRestoredSession}
             onMissing={onClosePane}
           />
@@ -592,6 +605,7 @@ export function WorkbenchLeafPane({
         <SessionPane
           paneId={paneId}
           readOnly={readOnly}
+          selectionSideChat={selectionSideChat}
           sessionId={sessionId}
           openTrigger={isPrimary ? "sidebar" : "split"}
           activeSelectionSideChatSessionId={resolvePaneActiveSelectionSideChatSessionId(

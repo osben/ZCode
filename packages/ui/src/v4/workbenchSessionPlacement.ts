@@ -20,6 +20,7 @@ import {
 export interface WorkbenchSessionTarget extends PaneWorkspaceScope {
   readonly sessionId: string;
   readonly readOnly?: boolean;
+  readonly selectionSideChat?: boolean;
 }
 
 export interface WorkbenchSplitPlacementOptions {
@@ -47,8 +48,13 @@ interface SplitResolution {
 }
 
 function targetBinding(target: WorkbenchSessionTarget): WorkbenchSessionBinding {
-  const { sessionId, readOnly, ...workspaceScope } = target;
-  return { workspaceScope, sessionId, ...(readOnly ? { readOnly: true } : {}) };
+  const { sessionId, readOnly, selectionSideChat, ...workspaceScope } = target;
+  return {
+    workspaceScope,
+    sessionId,
+    ...(readOnly ? { readOnly: true } : {}),
+    ...(selectionSideChat ? { selectionSideChat: true } : {}),
+  };
 }
 
 function draftPrimaryOwnsLayout(shellBinding: WorkbenchSessionBinding | null): boolean {
@@ -158,6 +164,7 @@ export function placeWorkbenchSessionInSplit(
       workspaceScope: resolution.binding.workspaceScope,
       sessionId: resolution.binding.sessionId,
       ...(resolution.binding.readOnly ? { readOnly: true } : {}),
+      ...(resolution.binding.selectionSideChat ? { selectionSideChat: true } : {}),
     });
     logger.debug("[v4-workbench] session split beside primary draft", {
       sessionId: resolution.binding.sessionId,
@@ -202,11 +209,12 @@ export function selectWorkbenchSession(
     if (existingPaneId) {
       layout.focusPane(existingPaneId);
       const existingBinding = layout.panes[existingPaneId];
-      if (binding.readOnly && existingBinding && !existingBinding.readOnly) {
+      if ((binding.readOnly || binding.selectionSideChat) && existingBinding) {
         layout.replacePaneBinding(existingPaneId, {
           workspaceScope: binding.workspaceScope,
           sessionId: binding.sessionId,
-          readOnly: true,
+          ...(binding.readOnly ? { readOnly: true } : {}),
+          ...(binding.selectionSideChat ? { selectionSideChat: true } : {}),
         });
       }
     } else if (paneId !== V4_PRIMARY_PANE_ID && layout.panes[paneId]) {
@@ -217,6 +225,7 @@ export function selectWorkbenchSession(
         workspaceScope: binding.workspaceScope,
         sessionId: binding.sessionId,
         ...(binding.readOnly ? { readOnly: true } : {}),
+        ...(binding.selectionSideChat ? { selectionSideChat: true } : {}),
       });
       logger.debug("[v4-workbench] draft split focused pane replaced", {
         paneId,

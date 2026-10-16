@@ -1261,6 +1261,20 @@ export class ConversationV4Gateway {
     this.publishCurrentSummaryToIndex(sessionId);
   }
 
+  /** Publish child-store facts for an existing index row, including parents with no live runtime. */
+  publishSessionIndexChildFacts(
+    sessionId: string,
+    facts: Pick<
+      SessionSummary,
+      "sideChatCount" | "subagentCount" | "runningSubagentCount" | "childSessions"
+    >,
+  ): void {
+    for (const workspaceId of this.indexPublishers.keys()) {
+      const publisher = this.indexPublishers.get(workspaceId);
+      if (publisher?.updateChildFacts(sessionId, facts)) this.flushIndex(workspaceId);
+    }
+  }
+
   /** Session-list metadata (fallback when the host hook is absent: createdAt=0, lastActivityAt=now). */
   private resolveIndexMeta(sessionId: string): SessionIndexMeta {
     const meta = this.host.getSessionIndexMeta?.(sessionId);

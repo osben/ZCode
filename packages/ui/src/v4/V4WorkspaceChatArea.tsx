@@ -73,6 +73,7 @@ export interface V4WorkspaceChatAreaProps {
   isDesktop?: boolean;
   readOnly?: boolean;
   readOnlySessionId?: string | null;
+  selectionSideChatSessionId?: string | null;
   /** False when an overlay such as Settings is open; hidden panes must not consume one-time Composer requests. */
   foregroundEnabled?: boolean;
   remoteSessionId?: string;
@@ -150,6 +151,7 @@ export function V4WorkspaceChatArea({
   isDesktop = false,
   readOnly = false,
   readOnlySessionId = null,
+  selectionSideChatSessionId = null,
   foregroundEnabled = true,
   remoteSessionId,
   compactForRemoteControl = false,
@@ -274,9 +276,12 @@ export function V4WorkspaceChatArea({
             workspaceScope: shellScope,
             sessionId: primaryPaneSessionId,
             ...(primaryPaneSessionId === readOnlySessionId ? { readOnly: true } : {}),
+            ...(primaryPaneSessionId === selectionSideChatSessionId
+              ? { selectionSideChat: true }
+              : {}),
           }
         : null,
-    [primaryPaneSessionId, readOnlySessionId, shellScope],
+    [primaryPaneSessionId, readOnlySessionId, selectionSideChatSessionId, shellScope],
   );
   const placementShellBinding = useMemo<WorkbenchSessionBinding | null>(
     () => primarySessionBinding,
@@ -291,6 +296,7 @@ export function V4WorkspaceChatArea({
       isDesktop,
       compactForRemoteControl,
       readOnlySessionId,
+      selectionSideChatSessionId,
       readOnly,
       sessionId: primaryPaneSessionId,
       // primaryPaneSessionId is deliberately cleared when the active task is taken over by split panes;

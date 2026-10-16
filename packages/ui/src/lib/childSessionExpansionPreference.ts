@@ -68,5 +68,9 @@ export function persistChildSessionsExpanded(
   const nextState = expanded
     ? { ...currentState, [parentSessionId]: true as const }
     : Object.fromEntries(Object.entries(currentState).filter(([key]) => key !== parentSessionId));
-  storage.setItem(CHILD_SESSION_EXPANSION_STORAGE_KEY, JSON.stringify(nextState));
+  try {
+    storage.setItem(CHILD_SESSION_EXPANSION_STORAGE_KEY, JSON.stringify(nextState));
+  } catch {
+    // Expansion is a local preference; storage failure must not break the toggle.
+  }
 }

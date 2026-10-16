@@ -125,6 +125,7 @@ export function createChildSessionFactsResolver(deps: {
       deferredRefreshes.delete(key);
       void refresh([key]);
     }, Math.max(1, delayMs));
+    (timer as { unref?: () => void }).unref?.();
     deferredRefreshes.set(key, timer);
   };
 

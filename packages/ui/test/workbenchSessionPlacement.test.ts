@@ -186,6 +186,19 @@ describe("workbench session placement", () => {
     });
   });
 
+  it("preserves selection-side-chat capability in a split pane", () => {
+    placeWorkbenchSessionInSplit(
+      null,
+      { ...target("side-chat"), selectionSideChat: true },
+      { mode: "context-menu", side: "right" },
+    );
+
+    expect(usePaneLayoutStore.getState().panes["pane-1"]).toMatchObject({
+      sessionId: "side-chat",
+      selectionSideChat: true,
+    });
+  });
+
   it("upgrades an already-open group binding to read-only for subagent navigation", () => {
     useWorkbenchGroupStore.setState(groupSnapshot());
 

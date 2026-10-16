@@ -59,6 +59,14 @@ describe("子代理冷恢复主列表隔离", () => {
       30000,
     );
     await assertChildIsolated(childId);
+    await childMarker.click();
+    await parent.click();
+    await waitForV4Pane(
+      (state) => state.sessionId === parentId,
+      "reselecting the parent row did not restore the parent session",
+      30000,
+    );
+    await waitForV4AssistantMessageContaining(PARENT_DONE, 30000);
     await openChild();
     await assertChildIsolated(childId);
     expect(readChildId(parentId)).toBe(childId);

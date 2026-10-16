@@ -56,9 +56,9 @@ describe("child session counts marker (specs/sidebar-child-conversation-counts.m
     expect(childRowsSource).toContain(
       "onSelectTask(task.workspacePath, sessionId, task.workspaceIdentity, undefined, undefined,",
     );
-    expect(childRowsSource).toContain(
-      'openSession(child.sessionId, child.taskType === "subagent_child")',
-    );
+    expect(childRowsSource).toContain("openSession(child.sessionId, child.taskType)");
+    expect(childRowsSource).toContain('readOnly: taskType === "subagent_child"');
+    expect(childRowsSource).toContain('selectionSideChat: taskType === "selection_side_chat"');
     // True totals minus the capped list drive the overflow row.
     expect(childRowsSource).toContain("taskList.childMoreLabel");
     expect(childRowsSource).toContain("overflow");
@@ -91,5 +91,15 @@ describe("child session expansion preference", () => {
       setItem: (key: string, value: string) => void backing.set(key, value),
     };
     expect(readChildSessionExpansionState(storage)).toEqual({});
+  });
+
+  it("does not break the expansion toggle when storage writes fail", () => {
+    const storage = {
+      getItem: () => null,
+      setItem: () => {
+        throw new Error("storage is unavailable");
+      },
+    };
+    expect(() => persistChildSessionsExpanded("s-parent", true, storage)).not.toThrow();
   });
 });

@@ -1,6 +1,6 @@
 # Sidebar child conversations (side chats + subagents)
 
-Status: implemented 2026-10-15 on feat/Oct-15 (uncommitted, alongside the worktree-health WIP). Revised 2026-10-15 (v2): icon counters on the row — no toggle — plus a clickable child list under the parent row. v1 was counters + a show/hide toggle.
+Status: implemented (PR #92). Revised 2026-10-15 (v2): icon counters on the row — no toggle — plus a clickable child list under the parent row. v1 was counters + a show/hide toggle.
 
 ## Problem
 
@@ -102,6 +102,8 @@ The hierarchy already exists in the DB and in `context.sessions`; the only gap i
 - If an invalidation arrives inside the one-second TTL, retain the stale facts and schedule one trailing refresh for the first eligible instant. Do not require an unrelated later sidebar resolve to drain the invalidation.
 - Parent-summary invalidation follows lifecycle and membership changes, not `ModelStreaming` chunks. Streaming is high frequency and does not change child membership or running state; `TurnStarted` and terminal events continue to update live running facts.
 - Read-only intent belongs to the selected subagent pane binding. A workspace can contain another independently writable pane, which remains writable while the subagent pane is open.
+- Pane binding persistence retains its child capability (`subagent_child` read-only or `selection_side_chat` writable with restricted commands), including draft-owned split layouts and renderer reload recovery. Restored children are validated by explicit session ID and task type rather than the filtered top-level index.
+- If a child event refreshes facts for a parent that is not loaded in a conversation runtime, update that parent's existing cold sessions-index summary in place. Preserve its activity timestamp and do not start a parent runtime.
 - Restored child-pane validation uses the existing `session/list` explicit-ID query, which reads persisted identity and task type without starting a runtime. The bounded top-level sessions-index list is not proof that a child session is missing. A missing or non-subagent target still closes the restored pane.
 - The sidebar isolation E2E places the parent row in grouped mode and locates it by the grouped-row key before checking the expanded child row.
 

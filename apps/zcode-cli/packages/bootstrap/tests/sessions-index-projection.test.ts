@@ -756,4 +756,47 @@ describe("sidebar child-conversation facts", () => {
       session: { childSessions: [{ running: false }, { running: false }] },
     });
   });
+
+  it("updates child facts on a cold summary without changing session activity", () => {
+    const projection = new SessionsIndexProjection("ws-1", "log-epoch-1");
+    projection.seed({
+      ...deriveSessionSummary(plainSnapshot("s-cold-parent"), {
+        workspaceId: "ws-1",
+        createdAt: 1000,
+        lastActivityAt: 2000,
+      }),
+      title: "Parent conversation",
+    });
+
+    const deltas = projection.updateChildFacts("s-cold-parent", {
+      sideChatCount: 1,
+      subagentCount: 1,
+      runningSubagentCount: 1,
+      childSessions: [childrenA[0]!],
+    });
+    expect(deltas).toHaveLength(1);
+    expect(deltas[0]).toMatchObject({
+      op: "session.upserted",
+      session: {
+        sessionId: "s-cold-parent",
+        title: "Parent conversation",
+        lastActivityAt: 2000,
+        sideChatCount: 1,
+        subagentCount: 1,
+        runningSubagentCount: 1,
+        childSessions: [childrenA[0]],
+      },
+    });
+    expect(projection.updateChildFacts("s-cold-parent", {
+      sideChatCount: 1,
+      subagentCount: 1,
+      runningSubagentCount: 1,
+      childSessions: [childrenA[0]!],
+    })).toEqual([]);
+
+    expect(projection.updateChildFacts("s-cold-parent", {})).toMatchObject([
+      { op: "session.upserted", session: { lastActivityAt: 2000, title: "Parent conversation" } },
+    ]);
+    expect(projection.getSnapshot().sessions[0]).not.toHaveProperty("childSessions");
+  });
 });

@@ -98,7 +98,7 @@ export function GroupItem({
     workspaceIdentity?: string,
     targetRemoteSessionId?: string,
     expectedUnreadAt?: number,
-    options?: { readOnly?: boolean },
+    options?: { readOnly?: boolean; selectionSideChat?: boolean },
   ) => void;
   onCloseTask: (task: ZCodeTaskMeta) => void;
   onOpenFileTree?: (task: ZCodeTaskMeta) => void;

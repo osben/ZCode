@@ -18,7 +18,7 @@ type SelectTaskHandler = (
   workspaceIdentity?: string,
   targetRemoteSessionId?: string,
   expectedUnreadAt?: number,
-  options?: { readOnly?: boolean },
+  options?: { readOnly?: boolean; selectionSideChat?: boolean },
 ) => void;
 
 export function TaskChildSessionRows({
@@ -36,12 +36,13 @@ export function TaskChildSessionRows({
     (task.sideChatCount ?? 0) + (task.subagentCount ?? 0) - listed.length,
   );
   const openSession =
-    (sessionId: string, readOnly = false) =>
+    (sessionId: string, taskType: "subagent_child" | "selection_side_chat" | null = null) =>
     (event: MouseEvent<HTMLButtonElement>) => {
       event.preventDefault();
       event.stopPropagation();
       onSelectTask(task.workspacePath, sessionId, task.workspaceIdentity, undefined, undefined, {
-        readOnly,
+        readOnly: taskType === "subagent_child",
+        selectionSideChat: taskType === "selection_side_chat",
       });
     };
   return (
@@ -51,7 +52,7 @@ export function TaskChildSessionRows({
           key={child.sessionId}
           data-child-session-id={child.sessionId}
           type="button"
-          onClick={openSession(child.sessionId, child.taskType === "subagent_child")}
+          onClick={openSession(child.sessionId, child.taskType)}
           aria-label={intl.formatMessage(
             {
               id:
@@ -73,7 +74,7 @@ export function TaskChildSessionRows({
             {child.running ? (
               <LoaderIcon
                 aria-label={intl.formatMessage({ id: "taskList.childRunningLabel" })}
-                className="size-3 animate-spin"
+                className="size-3 motion-safe:animate-spin"
               />
             ) : (
               <span className="tabular-nums">

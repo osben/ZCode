@@ -1774,7 +1774,10 @@ export function createConversationV4Gateway(
     getDetachedChildren: () => context.v4Gateway?.getDetachedChildSessionFacts() ?? [],
     onRefresh: (parentKeys) => {
       for (const parentKey of parentKeys) {
-        context.v4Gateway?.publishSessionIndexSummary(parentKey);
+        context.v4Gateway?.publishSessionIndexChildFacts(
+          parentKey,
+          childSessionFactsResolver.resolve(parentKey),
+        );
       }
     },
     logger: context.logger,
@@ -1849,7 +1852,7 @@ export function createConversationV4Gateway(
       );
       childSessionFactsResolver.noteParents(childCountFacts.keys());
       childSessionFactsResolver.noteParents(childListFacts.keys());
-      return Promise.all(
+      return await Promise.all(
         stored.map(async (session) => {
           const childCounts = childCountFacts.get(String(session.id));
           const childList = childListFacts.get(String(session.id)) ?? [];
@@ -2041,7 +2044,10 @@ export function createConversationV4Gateway(
     onChildSessionActivity: (parentSessionId) => {
       childSessionFactsResolver.invalidate([parentSessionId]);
       // Update live running flags immediately; refreshed persisted totals/list are published by onRefresh.
-      context.v4Gateway?.publishSessionIndexSummary(parentSessionId);
+      context.v4Gateway?.publishSessionIndexChildFacts(
+        parentSessionId,
+        childSessionFactsResolver.resolve(parentSessionId),
+      );
       void childSessionFactsResolver.refresh([parentSessionId]);
     },
     getSessionIndexMeta: (sessionId) => {

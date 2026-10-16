@@ -30,19 +30,13 @@ export function ChildSessionCountsMarker({
   if (sideChats <= 0 && subagentTotal <= 0) return null;
   const tooltipParts: string[] = [];
   if (sideChats > 0) {
-    tooltipParts.push(
-      intl.formatMessage({ id: "taskList.childSideChatsCount" }, { count: sideChats }),
-    );
+    tooltipParts.push(intl.formatPlural({ id: "taskList.childSideChatsCount" }, sideChats));
   }
   if (subagentTotal > 0) {
-    tooltipParts.push(
-      intl.formatMessage({ id: "taskList.childSubagentsCount" }, { count: subagentTotal }),
-    );
+    tooltipParts.push(intl.formatPlural({ id: "taskList.childSubagentsCount" }, subagentTotal));
   }
   if (running > 0) {
-    tooltipParts.push(
-      intl.formatMessage({ id: "taskList.childSubagentsRunningCount" }, { count: running }),
-    );
+    tooltipParts.push(intl.formatPlural({ id: "taskList.childSubagentsRunningCount" }, running));
   }
   const tooltip = tooltipParts.join(" · ");
   const segmentClass = "flex items-center gap-0.5 tabular-nums";
@@ -57,7 +51,7 @@ export function ChildSessionCountsMarker({
       {subagentTotal > 0 ? (
         <span className={segmentClass}>
           {running > 0 ? (
-            <LoaderIcon aria-hidden="true" className="size-3.5 shrink-0 animate-spin" />
+            <LoaderIcon aria-hidden="true" className="size-3.5 shrink-0 motion-safe:animate-spin" />
           ) : (
             <Bot aria-hidden="true" className="size-3.5 shrink-0" />
           )}

@@ -237,6 +237,30 @@ export class SessionsIndexProjection {
     return [{ op: "session.upserted", session: summary }];
   }
 
+  /** Update child facts on an existing cold or live row without changing activity or starting a conversation runtime. */
+  updateChildFacts(
+    sessionId: string,
+    facts: Pick<
+      SessionSummary,
+      "sideChatCount" | "subagentCount" | "runningSubagentCount" | "childSessions"
+    >,
+  ): SessionsIndexDelta[] {
+    const prev = this.summaries.get(sessionId);
+    if (!prev) return [];
+    const next = { ...prev };
+    delete next.sideChatCount;
+    delete next.subagentCount;
+    delete next.runningSubagentCount;
+    delete next.childSessions;
+    if (facts.sideChatCount) next.sideChatCount = facts.sideChatCount;
+    if (facts.subagentCount) next.subagentCount = facts.subagentCount;
+    if (facts.runningSubagentCount) next.runningSubagentCount = facts.runningSubagentCount;
+    if (facts.childSessions?.length) next.childSessions = facts.childSessions;
+    if (summariesEqual(prev, next)) return [];
+    this.summaries.set(sessionId, next);
+    return [{ op: "session.upserted", session: next }];
+  }
+
   /** Remove a session; return a remove delta if it existed. */
   remove(sessionId: string): SessionsIndexDelta[] {
     if (!this.summaries.has(sessionId)) return [];
