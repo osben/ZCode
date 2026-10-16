@@ -26,4 +26,4 @@ This ensures that observer renderers no longer repeatedly consume intermediate c
 
 ## UI Behavior
 
-The replayable observer can skip rendering streaming body text during operation, displaying only a "another device is sending messages..." loading prompt. After the task ends, the snapshot alignment replaces it with the final message block. The desktop continuous end continues to maintain real-time body text rendering through the direct stream.
+The desktop continuous client continues to maintain real-time body-text rendering through the direct stream.
