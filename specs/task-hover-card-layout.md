@@ -35,6 +35,8 @@ group, so the workspace is context, not content.
 
 Run-state indicators remain visible on the sidebar row while hover/focus actions are shown; opening
 the detail card must not hide the running spinner or error/unread marker.
+For a mobile-active task, the phone marker occupies the leading status slot while visible; when
+hover/focus actions suppress that marker, restore the task's leading run-state indicator in the slot.
 
 ## Acceptance scenarios
 
@@ -51,3 +53,5 @@ the detail card must not hide the running spinner or error/unread marker.
 7. An empty normal or forked task title uses the same localized fallback as its row.
 8. Hovering or focusing a running/error task keeps its row status indicator visible beside actions
    in both grouped and regular task rows.
+9. A mobile-active unread/error/running task shows its phone marker at rest and its run-state
+   indicator when hover/focus actions take the leading slot.

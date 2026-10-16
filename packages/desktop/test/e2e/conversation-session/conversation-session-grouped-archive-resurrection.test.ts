@@ -138,14 +138,22 @@ async function readGroupedUnreadAndCloseState(taskId: string) {
     const close = row?.querySelector<HTMLElement>(
       'button[aria-label="Close"], button[aria-label="关闭"]',
     );
+    const unreadRect = unread?.getBoundingClientRect();
+    const closeRect = close?.getBoundingClientRect();
     return {
       unreadVisible: Boolean(
         unread &&
+        unreadRect &&
+        unreadRect.width > 0 &&
+        unreadRect.height > 0 &&
         getComputedStyle(unread).display !== "none" &&
         getComputedStyle(unread).visibility !== "hidden",
       ),
       closeActionVisible: Boolean(
         close &&
+        closeRect &&
+        closeRect.width > 0 &&
+        closeRect.height > 0 &&
         getComputedStyle(close).display !== "none" &&
         getComputedStyle(close).visibility !== "hidden",
       ),

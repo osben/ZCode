@@ -156,15 +156,25 @@ async function readHoveredUnreadAndPinState(taskId: string) {
     (taskTestId) => {
       const row = document.querySelector<HTMLElement>(`[data-testid="${taskTestId}"]`);
       const unread = row?.querySelector<HTMLElement>('[data-unread-indicator="true"]');
-      const pin = row?.querySelector<HTMLElement>('button[aria-label="Pin"]');
+      const pin = row?.querySelector<HTMLElement>(
+        'button[aria-label="Pin task"], button[aria-label="置顶任务"], button[aria-label="Закріпити завдання"]',
+      );
+      const unreadRect = unread?.getBoundingClientRect();
+      const pinRect = pin?.getBoundingClientRect();
       return {
         unreadVisible: Boolean(
           unread &&
+          unreadRect &&
+          unreadRect.width > 0 &&
+          unreadRect.height > 0 &&
           getComputedStyle(unread).display !== "none" &&
           getComputedStyle(unread).visibility !== "hidden",
         ),
         pinActionVisible: Boolean(
           pin &&
+          pinRect &&
+          pinRect.width > 0 &&
+          pinRect.height > 0 &&
           getComputedStyle(pin).display !== "none" &&
           getComputedStyle(pin).visibility !== "hidden",
         ),

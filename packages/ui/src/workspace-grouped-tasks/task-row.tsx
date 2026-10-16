@@ -225,7 +225,10 @@ function GroupedTaskRowComponent({
               <LoaderIcon className="size-3.5 animate-spin text-foreground-subtle" />
             ) : statusDotClassName ? (
               <span aria-hidden="true" className="flex size-4 shrink-0 items-center justify-center">
-                <span className={cn("size-1.5 rounded-full", statusDotClassName)} />
+                <span
+                  data-unread-indicator={leadingIndicator === "unread" ? "true" : undefined}
+                  className={cn("size-1.5 rounded-full", statusDotClassName)}
+                />
               </span>
             ) : null}
             {!hasPendingInteraction && isTaskCron ? (
@@ -429,7 +432,10 @@ function GroupedTaskRowComponent({
                   aria-hidden="true"
                   className="flex size-4 shrink-0 items-center justify-center"
                 >
-                  <span className={cn("size-1.5 rounded-full", statusDotClassName)} />
+                  <span
+                    data-unread-indicator={leadingIndicator === "unread" ? "true" : undefined}
+                    className={cn("size-1.5 rounded-full", statusDotClassName)}
+                  />
                 </span>
               ) : null}
               {!hasPendingInteraction && isTaskCron ? (

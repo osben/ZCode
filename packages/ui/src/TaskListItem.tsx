@@ -593,7 +593,7 @@ export const MemoTaskItem = memo(function TaskListItem({
               className={cn(
                 "flex size-4 items-center justify-center transition-opacity",
                 shouldRenderPinActionOnLeft && "hidden",
-                isMobileActive && "invisible",
+                isMobileActive && !shouldSuppressWorkspaceTaskMetadata && "invisible",
               )}
             >
               {leadingIndicator === "error" ? (
