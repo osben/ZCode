@@ -23,10 +23,10 @@ When assembling runtimeConfig for a new session with `params.executionWorktree` 
 
 ### 2. Resume boundary — preserve history and block filesystem actions
 
-Resume paths must not fail the whole resume because the directory is gone; the session history is still valid. Keep the session's identity, rows, drafts, and worktree fact. The runtime may use the parent directory only to initialize conversation services; Host-side operation guards must reject filesystem and terminal actions requiring the missing execution worktree. The parent must never be presented as the worktree or used as a fallback target for those actions.
+Resume paths must not fail the whole resume because the directory is gone; the session history is still valid. Keep the session's identity, rows, drafts, and worktree fact. Bootstrap may use the parent directory only to initialize conversation services. The resumed runtime keeps the missing execution path as its working directory, and a Host-side operation guard revalidates it before each filesystem, Git, or terminal tool call. These actions fail with a clear worktree-missing error; the parent must never be used as their fallback target.
 
 - Protocol resume (`materializeSessionRecord`, `server-operations.ts:1514`): if the persisted `executionDirectory` does not exist on disk, keep the worktree fact on the record but mark it `missing: true` on the runtime-internal fact (the wire flag is §3's `executionWorktreeMissing`). Preserve the parent workspace as the session's listing identity. Do not silently convert the worktree execution target into the parent workspace.
-- Cold-resume backstop in core (`resume.ts:125-134`): stat `session.executionDirectory`; when missing, retain `config.executionWorktree` as `{ path, branchName?, missing: true }` (do NOT unset it — the fact must stay visible to the wire meta and model-context renderer, see execution-worktree-model-context.md). The runtime remains available for history-based conversation. A centralized operation guard must reject file, shell, and other filesystem actions against the missing execution worktree with a clear error; it must revalidate the path before each action so deletion during a run also fails closed. One `warn` log (`event: "session.resume.execution_worktree_missing"`, `module: "core.runtime"`, sessionId + path). Never throw from resume. `getExecutionWorktree` (`apps/zcode-cli/packages/core/src/runtime/internal-methods.ts:89`) gains the same optional `missing` on its return type.
+- Cold-resume backstop in core (`resume.ts:125-134`): stat `session.executionDirectory`; when missing, keep it as `workingDirectory` and retain `config.executionWorktree` as `{ path, branchName?, missing: true }` (do NOT unset it — the fact must stay visible to the wire meta and model-context renderer, see execution-worktree-model-context.md). The runtime remains available for history-based conversation. A centralized operation guard must reject file, Git, shell, and other filesystem actions against the missing execution worktree with a clear error; it must revalidate the path before each action so deletion during a run also fails closed. One `warn` log (`event: "session.resume.execution_worktree_missing"`, `module: "core.runtime"`, sessionId + path). Never throw from resume. `getExecutionWorktree` (`apps/zcode-cli/packages/core/src/runtime/internal-methods.ts:89`) gains the same optional `missing` on its return type.
 - Both checks are a single `stat` — no git probing, no `listWorktrees`.
 
 ### 3. Wire: `missing` health flag on the sessions-index summary
@@ -63,7 +63,7 @@ History survives worktree cleanup, so resume stays available. Filesystem work fa
 
 1. Session created with `executionWorktree` pointing at an existing directory → creates normally (unchanged happy path).
 2. Create with a nonexistent path → createSession fails with the precise error; no session row is created.
-3. Worktree deleted externally, then resume → turn runs in the parent workspace; tool calls work; `warn` logged once; `config.executionWorktree` kept on the resumed runtime as `{ path, branchName?, missing: true }` (the fact must stay visible to the wire meta and the model-context renderer).
+3. Worktree deleted externally, then resume → history remains available; workspace/filesystem/Git/shell tool calls fail closed and never run in the parent; `warn` logged once; `config.executionWorktree` kept on the resumed runtime as `{ path, branchName?, missing: true }` (the fact must stay visible to the wire meta and the model-context renderer).
 4. Same resume → the session row carries `executionWorktreeMissing: true` immediately (no refresh needed), and the user can ask questions about stored history.
 5. In a missing-worktree session, an agent file or terminal action returns a clear missing-worktree error and never executes in the parent workspace; deleting the directory during a run has the same result on the next action.
 6. Externally deleted worktree, no resume → next summary derivation (session event, gateway cold start, or index publisher construction) flips the badge to the missing state (color + tooltip); no realtime push required.
@@ -82,5 +82,5 @@ History survives worktree cleanup, so resume stays available. Filesystem work fa
 - Behind-base tracking and merge-back flows (separate future spec; PI-Desktop-style preview/merge/conflict).
 - `git worktree repair` or any repair/recreate action.
 - Realtime fs watching of worktree directories.
-- A dedicated "Resume" button or toast on missing rows (the badge + parent-workspace fallback are the v1 surface).
+- A dedicated "Resume" button or toast on missing rows (the badge and clear blocked-tool error are the v1 surface).
 - Recreating the worktree automatically.

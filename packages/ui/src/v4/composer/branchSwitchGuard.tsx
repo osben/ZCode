@@ -57,7 +57,9 @@ export function useBranchSwitchGuardShell({
   workspaceTabs,
 }: {
   workspaceTabs: ReadonlyArray<
-    Pick<WorkspaceTabState, "workspacePath" | "workspaceIdentity"> & { remoteSessionId?: string }
+    Pick<WorkspaceTabState, "workspacePath" | "workspaceIdentity"> & {
+      remoteSessionId?: string;
+    }
   >;
 }) {
   const { intl } = useZCodeIntl();
@@ -68,8 +70,9 @@ export function useBranchSwitchGuardShell({
     workspaceTabs,
     sortBy: "updated",
     searchQuery: "",
-    expanded: false,
-    collapsedLimit: 50,
+    // The guard must include active tasks outside the currently rendered sidebar page.
+    expanded: true,
+    collapsedLimit: 0,
   });
   const itemsRef = useRef<readonly BranchGuardTaskLike[]>(items);
   itemsRef.current = items;

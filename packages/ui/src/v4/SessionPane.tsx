@@ -404,7 +404,11 @@ export interface SessionPaneProps {
   summaryPanelVariantOverride?: ChatViewSummaryPanelVariant | null;
   onSummaryPanelVariantOverrideChange?: (variant: ChatViewSummaryPanelVariant | null) => void;
   onRefreshGit?: () => void;
-  onOpenGitReview?: (sourceId?: GitChangeSourceId) => void;
+  onOpenGitReview?: (
+    sourceId?: GitChangeSourceId,
+    executionWorkspacePath?: string,
+    executionSessionId?: string,
+  ) => void;
   onOpenBrowserUrl?: (url: string) => void;
   onOpenAutomationsMain?: OpenAutomationsMain;
   onOpenCodeViewer?: (source: CodeViewerSource) => void;
@@ -2117,14 +2121,21 @@ export function SessionPane({
   dispatchCommandRef.current = dispatchCommand;
 
   const prepareWorktreeSession = useCallback(
-    async ({ branchName, targetPath }: ComposerWorktreePreparationParams) => {
+    async ({ branchName, targetPath, baseBranch }: ComposerWorktreePreparationParams) => {
       const existingSessionId = sessionIdRef.current;
       const existingPreparation = snapshotRef.current?.meta.worktreePreparation;
       if (existingSessionId && existingPreparation) {
         if (existingPreparation.status !== "preparing") {
           const resetAck = await dispatchCommand(
             "updateWorktreePreparation",
-            { status: "preparing" },
+            {
+              status: "preparing",
+              worktreePreparation: {
+                branchName,
+                targetPath,
+                ...(baseBranch ? { baseBranch } : {}),
+              },
+            },
             existingSessionId,
           );
           if (resetAck.status !== "accepted") {
@@ -2171,6 +2182,17 @@ export function SessionPane({
       ).then(() => undefined),
     [dispatchCommand],
   );
+  const handleWorktreePreparationRetry = useCallback(async () => {
+    if (!sessionId) throw new Error("Worktree preparation session is unavailable");
+    const ack = await dispatchCommand(
+      "updateWorktreePreparation",
+      { status: "preparing" },
+      sessionId,
+    );
+    if (ack.status !== "accepted") {
+      throw new Error(ack.reasonCode ?? "Worktree preparation retry was rejected");
+    }
+  }, [dispatchCommand, sessionId]);
 
   const handleFetchFileChanges = useCallback(
     (target: ConversationRowTarget, options: ConversationFileChangesRequestOptions) => {
@@ -5844,7 +5866,11 @@ export function SessionPane({
               workflowSectionOpen={workflowSectionOpen}
               onWorkflowSectionOpenChange={setWorkflowSectionOpen}
               onRefreshGit={sessionExecutionWorktree ? refreshWorktreeGit : onRefreshGit}
-              onOpenGitReview={onOpenGitReview}
+              onOpenGitReview={
+                sessionExecutionWorktree && sessionId
+                  ? (sourceId) => onOpenGitReview?.(sourceId, executionGitPath, sessionId)
+                  : onOpenGitReview
+              }
               onPauseGoal={
                 !readOnly && !selectionSideChat && snapshot?.availability.pauseGoal.allowed
                   ? handlePauseGoal
@@ -5996,6 +6022,8 @@ export function SessionPane({
                         {...(workspaceIdentity ? { workspaceIdentity } : {})}
                         sessionId={sessionId!}
                         preparation={snapshot.meta.worktreePreparation}
+                        onRetryPreparation={handleWorktreePreparationRetry}
+                        onPreparationFailed={handleWorktreePreparationFailed}
                       />
                     ) : isDraft ? (
                       <div data-testid={TID_CHAT_EMPTY} className="w-full">

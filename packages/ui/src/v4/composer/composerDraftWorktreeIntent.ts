@@ -3,13 +3,11 @@
  * (specs/composer-worktree-setup-steps.md; supersedes the review-6c first-send interception).
  *
  * Mechanism: while the checkbox (inside the draft empty-state header) is active it writes the
- * intent into the slot. On Send, ConversationComposer reads the slot and — without awaiting or
- * blocking — asks the intent for the synchronous creation params (validated location, generated
- * branch name, target path), starts the pipeline store entry + runner, and queues the send. The
- * setup rows render from the store in the conversation pane; the queued send dispatches
- * automatically when the pipeline turns ready. The slot is a stable object (created via useMemo):
- * value changes do not re-render consumers; volatile inputs (branch list, settings) are read
- * inside buildCreationParams at queue time.
+ * intent into the slot. On Send, ConversationComposer resolves and validates creation params,
+ * reserves the durable Host session, then starts the renderer Git pipeline and queues the send.
+ * Setup rows render from the store; the queued send dispatches when the pipeline turns ready. The
+ * slot is a stable object (created via useMemo): value changes do not re-render consumers;
+ * volatile inputs (branch list, settings) are read inside buildCreationParams at queue time.
  */
 import { createContext, useContext } from "react";
 
@@ -37,11 +35,9 @@ export interface ComposerWorktreePreparationParams {
 export interface ComposerDraftWorktreeIntent {
   workspaceKey: string;
   /**
-   * Start the setup pipeline for this send: compute the creation params (location validation,
-   * collision-safe branch name, target path, base branch — HEAD default when the branch list has
-   * not loaded), write the pipeline store entry synchronously (creating, or failed with the
-   * validation reason), and kick off the creation runner. Returns before any git call resolves;
-   * the composer queues its send and dispatches when the store turns ready.
+   * Start the setup pipeline for this send: compute and validate creation params, reserve the Host
+   * session, write its session-scoped pipeline entry, and kick off Git creation. Returns before Git
+   * creation resolves; the composer queues its send and dispatches when the store turns ready.
    */
   beginCreation: (
     queuedPromptPreview: string,

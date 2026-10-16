@@ -120,6 +120,7 @@ export function useGitBranchSwitcher({
     if (!open) {
       return;
     }
+    let cancelled = false;
 
     // Fetch the branch list every time the dropdown opens so a successful switch does not reuse
     // the snapshot from the previous opening.
@@ -128,6 +129,7 @@ export function useGitBranchSwitcher({
     void gitService
       .listWorktrees({ workspacePath })
       .then((list) => {
+        if (cancelled) return;
         const next = new Map<string, string>();
         for (const entry of list.worktrees) {
           if (entry.branchName && !entry.isCurrent) {
@@ -137,8 +139,11 @@ export function useGitBranchSwitcher({
         setWorktreeOccupancy(next);
       })
       .catch(() => {
-        setWorktreeOccupancy(new Map());
+        if (!cancelled) setWorktreeOccupancy(new Map());
       });
+    return () => {
+      cancelled = true;
+    };
   }, [gitService, loadBranches, open, workspacePath]);
 
   const notifyMutationFailure = useCallback(

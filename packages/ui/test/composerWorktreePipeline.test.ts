@@ -14,6 +14,7 @@ import {
   beginWorktreePipelineCreation,
   reconcileCreatingComposerWorktreePipeline,
   retryComposerWorktreePipeline,
+  restoreComposerWorktreePipelineFromPreparation,
   startComposerWorktreePipeline,
 } from "@/v4/composer/composerWorktreePipeline.js";
 
@@ -72,17 +73,29 @@ describe("composerWorktreePipelineStore state machine", () => {
     const store = useComposerWorktreePipelineStore.getState();
     seedCreating({ queuedPromptPreview: "hello" });
     store.markReady(WORKSPACE_KEY, "/dev/alpha-worktrees/zcode-sleepy-capybara", false);
-    expect(currentPipeline()).toMatchObject({ status: "ready", queuedPromptPreview: "hello" });
+    expect(currentPipeline()).toMatchObject({
+      status: "ready",
+      queuedPromptPreview: "hello",
+    });
 
     store.consume(WORKSPACE_KEY);
-    expect(currentPipeline()).toMatchObject({ status: "consumed", queuedPromptPreview: undefined });
+    expect(currentPipeline()).toMatchObject({
+      status: "consumed",
+      queuedPromptPreview: undefined,
+    });
   });
 
   it("creating → failed → retry marks creating again with the frozen params", () => {
     const store = useComposerWorktreePipelineStore.getState();
-    seedCreating();
+    seedCreating({
+      sessionId: "session-prepared-1",
+      queuedPromptPreview: "frozen input",
+    });
     store.markFailed(WORKSPACE_KEY, "boom");
-    expect(currentPipeline()).toMatchObject({ status: "failed", failureMessage: "boom" });
+    expect(currentPipeline()).toMatchObject({
+      status: "failed",
+      failureMessage: "boom",
+    });
 
     createWorktree.mockResolvedValue({
       ok: true,
@@ -96,9 +109,16 @@ describe("composerWorktreePipelineStore state machine", () => {
       formatMessage: (id: string) => id,
     }).then((outcome) => {
       expect(outcome).toBe("ready");
-      expect(currentPipeline()).toMatchObject({ status: "ready" });
+      expect(currentPipeline()).toMatchObject({
+        status: "ready",
+        sessionId: "session-prepared-1",
+        queuedPromptPreview: "frozen input",
+      });
       expect(createWorktree).toHaveBeenCalledWith(
-        expect.objectContaining({ branchName: PARAMS.branchName, targetPath: PARAMS.targetPath }),
+        expect.objectContaining({
+          branchName: PARAMS.branchName,
+          targetPath: PARAMS.targetPath,
+        }),
       );
     });
   });
@@ -107,20 +127,51 @@ describe("composerWorktreePipelineStore state machine", () => {
     const store = useComposerWorktreePipelineStore.getState();
     seedCreating({ queuedPromptPreview: "hello" });
     store.withdraw(WORKSPACE_KEY);
-    expect(currentPipeline()).toMatchObject({ orphaned: true, queuedPromptPreview: undefined });
+    expect(currentPipeline()).toMatchObject({
+      orphaned: true,
+      queuedPromptPreview: undefined,
+    });
 
     store.markReady(WORKSPACE_KEY, "/dev/alpha-worktrees/zcode-sleepy-capybara", false);
-    expect(currentPipeline()).toMatchObject({ status: "ready", orphaned: true });
+    expect(currentPipeline()).toMatchObject({
+      status: "ready",
+      orphaned: true,
+    });
   });
 
   it("markValidationFailed writes a params-less failed entry (no Retry surface)", () => {
     useComposerWorktreePipelineStore.getState().markValidationFailed(WORKSPACE_KEY, "bad path");
-    expect(currentPipeline()).toMatchObject({ status: "failed", failureMessage: "bad path" });
+    expect(currentPipeline()).toMatchObject({
+      status: "failed",
+      failureMessage: "bad path",
+    });
     expect(currentPipeline()?.params).toBeUndefined();
   });
 });
 
 describe("startComposerWorktreePipeline runner", () => {
+  it("restores a Host preparation marker as a retryable session-scoped pipeline", () => {
+    restoreComposerWorktreePipelineFromPreparation({
+      workspaceKey: WORKSPACE_KEY,
+      workspacePath: WORKSPACE_KEY,
+      sessionId: "session-prepared-1",
+      preparation: {
+        status: "failed",
+        branchName: PARAMS.branchName,
+        targetPath: PARAMS.targetPath,
+        baseBranch: "main",
+        failureMessage: "Git interrupted",
+      },
+    });
+
+    expect(currentPipeline()).toMatchObject({
+      status: "failed",
+      sessionId: "session-prepared-1",
+      params: { ...PARAMS, baseFromHeadDefault: false },
+      failureMessage: "Git interrupted",
+    });
+  });
+
   it("waits for Host identity before starting Git and retains that ID in the pipeline", async () => {
     let resolvePreparation: (sessionId: string) => void = () => {};
     let resolveCreate: (value: GitWorktreeCreateResult) => void = () => {};
@@ -152,7 +203,31 @@ describe("startComposerWorktreePipeline runner", () => {
     await Promise.resolve();
     expect(createWorktree).not.toHaveBeenCalled();
     resolvePreparation("session-prepared-1");
-    await expect(begin).resolves.toEqual({ ok: true, sessionId: "session-prepared-1" });
+    await expect(begin).resolves.toEqual({
+      ok: true,
+      sessionId: "session-prepared-1",
+    });
+    await expect(
+      beginWorktreePipelineCreation({
+        gitService,
+        workspaceKey: WORKSPACE_KEY,
+        workspacePath: WORKSPACE_KEY,
+        effectiveLocation: {
+          mode: "sibling",
+          customPath: null,
+          appWorktreesDir: null,
+          prefix: "zcode/",
+          baseBranchDefault: null,
+          hasProjectOverride: false,
+        },
+        branchName: "zcode/another-branch",
+        baseFromHeadDefault: true,
+        queuedPromptPreview: "second input",
+        prepareSession: vi.fn(),
+        formatMessage: (id: string) => id,
+      }),
+    ).resolves.toEqual({ ok: true, sessionId: "session-prepared-1" });
+    expect(createWorktree).toHaveBeenCalledTimes(1);
     expect(currentPipeline()).toMatchObject({
       status: "creating",
       sessionId: "session-prepared-1",
@@ -166,6 +241,50 @@ describe("startComposerWorktreePipeline runner", () => {
       issues: [],
     });
     await vi.waitFor(() => expect(currentPipeline()?.status).toBe("ready"));
+  });
+
+  it("joins concurrent session reservations for the same workspace", async () => {
+    let resolvePreparation: (sessionId: string) => void = () => {};
+    const prepareSession = vi.fn(
+      () => new Promise<string>((resolve) => (resolvePreparation = resolve)),
+    );
+    createWorktree.mockResolvedValue({
+      ok: true,
+      worktreePath: PARAMS.targetPath,
+      branchName: PARAMS.branchName,
+      issues: [],
+    } satisfies GitWorktreeCreateResult);
+    const input = {
+      gitService,
+      workspaceKey: WORKSPACE_KEY,
+      workspacePath: WORKSPACE_KEY,
+      effectiveLocation: {
+        mode: "sibling" as const,
+        customPath: null,
+        appWorktreesDir: null,
+        prefix: "zcode/",
+        baseBranchDefault: null,
+        hasProjectOverride: false,
+      },
+      branchName: PARAMS.branchName,
+      baseBranch: PARAMS.baseBranch,
+      baseFromHeadDefault: false,
+      queuedPromptPreview: "frozen input",
+      prepareSession,
+      formatMessage: (id: string) => id,
+    };
+    const first = beginWorktreePipelineCreation(input);
+    const second = beginWorktreePipelineCreation(input);
+
+    expect(second).toBe(first);
+    expect(prepareSession).toHaveBeenCalledTimes(1);
+    resolvePreparation("session-prepared-1");
+    await expect(second).resolves.toEqual({
+      ok: true,
+      sessionId: "session-prepared-1",
+    });
+    await vi.waitFor(() => expect(currentPipeline()?.status).toBe("ready"));
+    expect(createWorktree).toHaveBeenCalledTimes(1);
   });
 
   it("reuses the in-flight promise for the same workspace (idempotent double-send)", async () => {
@@ -248,7 +367,11 @@ describe("reconcileCreatingComposerWorktreePipeline", () => {
 
   it("marks failed when no worktree exists for the branch", async () => {
     seedCreating();
-    listWorktrees.mockResolvedValue({ isGitAvailable: true, isRepository: true, worktrees: [] });
+    listWorktrees.mockResolvedValue({
+      isGitAvailable: true,
+      isRepository: true,
+      worktrees: [],
+    });
     await reconcileCreatingComposerWorktreePipeline({
       gitService,
       workspaceKey: WORKSPACE_KEY,
@@ -257,6 +380,24 @@ describe("reconcileCreatingComposerWorktreePipeline", () => {
     });
     expect(currentPipeline()).toMatchObject({
       status: "failed",
+      failureMessage: "worktreeSetup.reconcile.staleCreating",
+    });
+  });
+
+  it("marks failed when Git worktree state cannot be read", async () => {
+    seedCreating({ sessionId: "session-prepared-1" });
+    listWorktrees.mockRejectedValue(new Error("Git unavailable"));
+
+    await reconcileCreatingComposerWorktreePipeline({
+      gitService,
+      workspaceKey: WORKSPACE_KEY,
+      branchName: PARAMS.branchName,
+      formatMessage: (id: string) => id,
+    });
+
+    expect(currentPipeline()).toMatchObject({
+      status: "failed",
+      sessionId: "session-prepared-1",
       failureMessage: "worktreeSetup.reconcile.staleCreating",
     });
   });

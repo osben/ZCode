@@ -330,6 +330,16 @@ export class ConversationTopicPublisher {
     this.wireSnapshotBytesUpperBound = this.measureWireSnapshotBytes(this.getWireSnapshot());
   }
 
+  /** Invalidate each subscriber's pending frame and make its next flush carry the current snapshot. */
+  requestSnapshotForSubscribers(): void {
+    for (const subscription of this.subscriptions.values()) {
+      subscription.buffer = [];
+      subscription.bufferBytes = 0;
+      subscription.resyncRequired = true;
+      subscription.inFlight = null;
+    }
+  }
+
   /** Inject a usage seed: on cold restore, persisted token watermarks replace the 0 placeholders synthesized from the transcript. */
   seedUsage(seed: SessionUsageSeed): void {
     this.projection.seedUsage(seed);

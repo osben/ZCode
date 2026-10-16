@@ -108,6 +108,10 @@ interface HostStub {
   executed: CommandEnvelope[];
   errors: Array<{ scope: string; error: unknown }>;
   sessions: Set<string>;
+  preparationSeeds: Map<
+    string,
+    { branchName: string; targetPath: string; baseBranch?: string; status: "preparing" | "failed" | "cancelled" }
+  >;
   executeImpl: (
     envelope: CommandEnvelope,
     admission?: { admissionSeq: number; admittedAt: number; queueItemId: string },
@@ -147,6 +151,7 @@ function makeHost(): HostStub {
     executed: [],
     errors: [],
     sessions: new Set(["session-1"]),
+    preparationSeeds: new Map(),
     executeImpl: async () => undefined,
     persistedEvents: new Map(),
     synthesizedSessions: new Set(),
@@ -226,6 +231,7 @@ function makeGateway(host: HostStub): ConversationV4Gateway {
           synthesized: host.synthesizedSessions.has(sessionId),
         },
       getSessionConfigSeed: (sessionId) => host.configSeeds.get(sessionId) ?? null,
+      getSessionPreparationSeed: (sessionId) => host.preparationSeeds.get(sessionId) ?? null,
       getSessionMemoryEnabled: (sessionId) => host.memorySettings?.get(sessionId),
       getConversationFileChanges: async (sessionId, targetRowId, messageIds) => {
         host.fileChangeCalls.push({ sessionId, targetRowId, messageIds });
@@ -302,6 +308,35 @@ describe("订阅与帧调度", () => {
     expect(result.initialFrame?.payload.kind).toBe("snapshot");
     // The initial frame only enters the server's internal dispatch result; it does not go out the online notification exit.
     expect(host.frames).toHaveLength(0);
+  });
+
+  it("preparation status changes refresh live subscribers with a snapshot", async () => {
+    const host = makeHost();
+    const gateway = makeGateway(host);
+    const log = new EventLog();
+    gateway.ingest("session-1", sessionCreated(log));
+    const subscribed = await gateway.subscribe(subscribeParams());
+    expect(subscribed.ack.subscriptionId).toBeTruthy();
+
+    host.preparationSeeds.set("session-1", {
+      branchName: "zcode/fresh-otter",
+      targetPath: "/tmp/fresh-otter",
+      baseBranch: "main",
+      status: "failed",
+    });
+    gateway.notifyPreparedSessionChanged("session-1");
+    await vi.advanceTimersByTimeAsync(CONTINUOUS_WINDOW);
+
+    const updated = host.frames.at(-1);
+    expect(updated?.payload.kind).toBe("snapshot");
+    if (updated?.payload.kind === "snapshot") {
+      expect(updated.payload.snapshot.meta.worktreePreparation).toMatchObject({
+        status: "failed",
+        branchName: "zcode/fresh-otter",
+        targetPath: "/tmp/fresh-otter",
+        baseBranch: "main",
+      });
+    }
   });
 
   it("只从 live ingest 发送 telemetry fact，并按 eventId 有界入口去重", () => {

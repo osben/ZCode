@@ -200,9 +200,11 @@ describe("SessionsIndexProjection 黄金测试（L1）", () => {
         executionWorktreeMissing: true,
       }),
     ).toHaveLength(0);
+    const missingSnapshotParse = sessionsIndexSnapshotSchema.safeParse(projection.getSnapshot());
+    expect(missingSnapshotParse.success).toBe(true);
     // Recreated worktree (flag omitted again) is a real health flip, not a no-op.
     expect(projection.upsertFromConversation(snapshot, healthyExtra)).toHaveLength(1);
-    // The flagged summary still satisfies the wire schema (cross-version additive field).
+    // The healthy state still satisfies the wire schema after clearing the flag.
     const parsed = sessionsIndexSnapshotSchema.safeParse(projection.getSnapshot());
     expect(parsed.success).toBe(true);
   });

@@ -661,6 +661,21 @@ describe("useComposerAttachments eager upload", () => {
     act(() => root.unmount());
   });
 
+  it("只 подготавливает frozen attachment IDs and leaves later attachments out of the send", async () => {
+    const transfer = createTransferService();
+    mocks.service = transfer.service;
+    transfer.stage.mockImplementation(async ({ operationId }) => resultFor(operationId));
+    const { root } = renderProbe({ attachmentSessionId: "session-1", scopeId: "task-a" });
+    await addPaths(["/tmp/first.png", "/tmp/second.png"]);
+    await vi.waitFor(() =>
+      expect(latestApi?.attachments.every((item) => item.uploadStatus === "ready")).toBe(true),
+    );
+    const [first, second] = latestApi!.attachments;
+    await expect(latestApi?.prepareForSend([first!.id])).resolves.toEqual([first!.attachmentRef]);
+    expect(second!.id).not.toBe(first!.id);
+    act(() => root.unmount());
+  });
+
   it("发送接纳只移交和清理本次附件，等待期间新增的附件仍属于草稿", async () => {
     const transfer = createTransferService();
     mocks.service = transfer.service;

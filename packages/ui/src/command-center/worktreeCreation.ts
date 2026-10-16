@@ -40,18 +40,11 @@ export type WorktreeCreationOutcome =
       errorDetail: string | null;
     };
 
-/**
- * TEMPORARY manual-test delay (remove after the manual pass): 5s before the git call so the
- * pipeline states (send-button spinner, popover Creating/Withdrawing, withdraw mid-creation,
- * auto-dispatch on ready) can be observed by hand. Skipped under vitest and in production builds.
- */
-function artificialWorktreeCreationDelay(): Promise<void> {
-  if (import.meta.env.MODE === "test" || import.meta.env.MODE === "production") {
-    return Promise.resolve();
-  }
-  return new Promise((resolve) => {
-    setTimeout(resolve, 5000);
-  });
+/** Optional delay for controlled manual/E2E verification; normal app flows have no artificial wait. */
+function waitForWorktreeCreationTestGate(): Promise<void> {
+  const delayMs = Number(import.meta.env["VITE_E2E_WORKTREE_CREATION_DELAY_MS"] ?? 0);
+  if (!Number.isFinite(delayMs) || delayMs <= 0) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
 /**
@@ -75,7 +68,7 @@ export async function executeWorktreeCreation({
 }): Promise<WorktreeCreationOutcome> {
   let result: GitWorktreeCreateResult;
   try {
-    await artificialWorktreeCreationDelay();
+    await waitForWorktreeCreationTestGate();
     result = await gitService.createWorktree({
       workspacePath,
       branchName,

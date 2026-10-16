@@ -316,6 +316,11 @@ export interface V4CommandCoreHost {
   updateWorktreePreparation?(sessionId: string, input: {
     status: "preparing" | "failed" | "cancelled";
     failureMessage?: string;
+    worktreePreparation?: {
+      branchName: string;
+      targetPath: string;
+      baseBranch?: string;
+    };
   }): Promise<void>;
   /** Create a hidden selection_side_chat child from a stable persisted boundary in the parent session. */
   createSelectionSideSession?(

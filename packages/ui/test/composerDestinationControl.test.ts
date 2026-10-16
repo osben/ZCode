@@ -155,8 +155,11 @@ describe("workspace isolation (source contract)", () => {
     // The cached list can outlive a branch switch or a project switch; only the live summary
     // may name the base. HEAD is the fallback solely when no branch can be named (detached).
     expect(source).not.toContain("branchesResult?.currentBranchName");
-    expect(source).toContain("baseBranch ?? (headDefault ? undefined : currentBranchName)");
+    expect(source).toContain(
+      "baseBranch ?? branchIntent ?? (headDefault ? undefined : currentBranchName)",
+    );
     expect(source).toContain("baseFromHeadDefault: headDefault");
+    expect(source).toContain("switcher.setOpen(nextOpen)");
   });
 });
 

@@ -11,6 +11,7 @@ import {
   type SessionStorePort,
 } from "@zcode/contracts";
 import { AgentRuntime } from "../src/runtime.js";
+import { getMissingExecutionWorktreeToolError } from "../src/runtime/helpers/execution-worktree-guard.js";
 import { createTestSessionEventStore } from "./test-event-store.js";
 import { createTestModelFactory } from "./test-runtime-model.js";
 
@@ -77,6 +78,22 @@ function createWarnCaptureLogger(): {
 }
 
 describe("execution worktree sessions", () => {
+  it("blocks workspace tools for a missing worktree but leaves non-workspace tools available", async () => {
+    const missingWorktree = { path: "/workspace/project/.worktrees/task", missing: true };
+    const isDirectory = vi.fn(async () => false);
+
+    await expect(
+      getMissingExecutionWorktreeToolError(missingWorktree, "none", "Read", isDirectory),
+    ).resolves.toContain(missingWorktree.path);
+    await expect(
+      getMissingExecutionWorktreeToolError(missingWorktree, "none", "ListModels", isDirectory),
+    ).resolves.toBeUndefined();
+    await expect(
+      getMissingExecutionWorktreeToolError(missingWorktree, "network", "WebSearch", isDirectory),
+    ).resolves.toBeUndefined();
+    expect(isDirectory).toHaveBeenCalledTimes(1);
+  });
+
   it("cold resume restores the execution worktree as working directory", async () => {
     const worktreePath = createTempWorktree();
     const session = buildSession({
@@ -122,7 +139,7 @@ describe("execution worktree sessions", () => {
     );
   });
 
-  it("cold resume falls back to the parent workspace when the worktree directory is missing", async () => {
+  it("cold resume retains the missing worktree as cwd so tools cannot target the parent", async () => {
     // Simulate out-of-band deletion: the persisted path points at a directory that no longer exists.
     const deletedWorktreePath = join(tmpdir(), "zcode-worktree-resume-deleted");
     const session = buildSession({
@@ -155,8 +172,8 @@ describe("execution worktree sessions", () => {
         };
       };
     };
-    // The turn runs in the parent workspace, never in the dead cwd.
-    expect(internal.workingDirectory).toBe("/workspace/project");
+    // Keep the missing execution path as cwd; the tool executor rejects workspace operations.
+    expect(internal.workingDirectory).toBe(deletedWorktreePath);
     // The fact stays visible (marked missing) for the wire meta and the env bullet.
     expect(internal.config.executionWorktree).toEqual({
       path: deletedWorktreePath,

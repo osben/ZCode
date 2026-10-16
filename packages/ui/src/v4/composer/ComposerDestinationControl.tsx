@@ -209,7 +209,8 @@ export function ComposerDestinationControl({
   useEffect(() => {
     if (!intentSlot || !worktreeMode) return;
     const headDefault = detached || currentBranchName === null;
-    const resolvedBase = baseBranch ?? (headDefault ? undefined : currentBranchName);
+    const resolvedBase =
+      baseBranch ?? branchIntent ?? (headDefault ? undefined : currentBranchName);
     const intent = {
       workspaceKey,
       beginCreation: (
@@ -238,6 +239,7 @@ export function ComposerDestinationControl({
   }, [
     baseBranch,
     baseServices.gitService,
+    branchIntent,
     computeWorktreeBranchName,
     currentBranchName,
     detached,
@@ -287,7 +289,13 @@ export function ComposerDestinationControl({
 
   return (
     <>
-      <Popover open={open} onOpenChange={setOpen}>
+      <Popover
+        open={open}
+        onOpenChange={(nextOpen) => {
+          setOpen(nextOpen);
+          switcher.setOpen(nextOpen);
+        }}
+      >
         <PopoverTrigger asChild>
           <Button
             type="button"

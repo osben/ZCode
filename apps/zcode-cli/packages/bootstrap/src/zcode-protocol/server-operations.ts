@@ -3442,8 +3442,9 @@ async function resolveRecordExecutionWorktree(
 export async function isWorktreeDirectoryMissing(path: string): Promise<boolean> {
   try {
     return !(await stat(path)).isDirectory();
-  } catch {
-    return true;
+  } catch (error) {
+    if (isMissingWorktreePathError(error)) return true;
+    throw error;
   }
 }
 
@@ -3451,9 +3452,15 @@ export async function isWorktreeDirectoryMissing(path: string): Promise<boolean>
 export function isWorktreeDirectoryMissingSync(path: string): boolean {
   try {
     return !statSync(path).isDirectory();
-  } catch {
-    return true;
+  } catch (error) {
+    if (isMissingWorktreePathError(error)) return true;
+    throw error;
   }
+}
+
+function isMissingWorktreePathError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return code === "ENOENT" || code === "ENOTDIR";
 }
 
 async function createRecord(

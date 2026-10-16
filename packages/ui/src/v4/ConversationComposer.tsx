@@ -1319,7 +1319,7 @@ function ConversationComposerImpl({
     };
     if (queued.workspaceKey !== workspaceKey) {
       detachQueued();
-      useComposerWorktreePipelineStore.getState().withdraw(queued.workspaceKey);
+      useComposerWorktreePipelineStore.getState().detachQueuedSend(queued.workspaceKey);
       queued.restore();
       return;
     }
@@ -1362,32 +1362,40 @@ function ConversationComposerImpl({
     }
   }, [onWorktreePreparationFailed, worktreePipeline, workspaceKey]);
 
-  // Turning worktree mode off or leaving the draft detaches the queued submission. The Git call
-  // may finish, but the orphaned result can only be reused by a later explicit worktree send.
+  // Explicitly turning worktree mode off withdraws the queued send. Navigation only detaches the
+  // renderer callback; Host preparation remains durable and can be resumed on return.
   useEffect(() => {
     const queued = pendingWorktreeSendRef.current;
-    if (
-      !queued ||
-      (queued.workspaceKey === workspaceKey &&
-        worktreeIntentActive &&
-        (sessionId === null || sessionId === queued.preparedSessionId))
-    ) {
+    if (!queued) {
       return;
     }
+    const navigatedAway =
+      queued.workspaceKey !== workspaceKey ||
+      (sessionId !== null && sessionId !== queued.preparedSessionId);
+    if (navigatedAway) {
+      pendingWorktreeSendRef.current = null;
+      setWorktreeQueued(false);
+      useComposerWorktreePipelineStore.getState().detachQueuedSend(queued.workspaceKey);
+      queued.restore();
+      return;
+    }
+    if (worktreeIntentActive && (sessionId === null || sessionId === queued.preparedSessionId))
+      return;
     pendingWorktreeSendRef.current = null;
     setWorktreeQueued(false);
     useComposerWorktreePipelineStore.getState().withdraw(queued.workspaceKey);
     queued.restore();
   }, [draftMode, sessionId, worktreeIntentActive, workspaceKey]);
 
-  // Composer unmount (workspace/tab switch) withdraws the queued send: the in-flight git call
-  // finishes and lands with an orphan note (directory left on disk); a later intent reuses it.
+  // Composer unmount (workspace/tab switch) detaches the renderer callback and restores the draft;
+  // the Host-owned preparation and Git operation continue for the same session.
   useEffect(
     () => () => {
       if (pendingWorktreeSendRef.current) {
         const queued = pendingWorktreeSendRef.current;
         pendingWorktreeSendRef.current = null;
-        useComposerWorktreePipelineStore.getState().withdraw(queued.workspaceKey);
+        setWorktreeQueued(false);
+        useComposerWorktreePipelineStore.getState().detachQueuedSend(queued.workspaceKey);
         queued.restore();
       }
     },
@@ -1525,7 +1533,8 @@ function ConversationComposerImpl({
       let preparedSessionIdForSend: string | undefined;
       let queueWorktreeSend = false;
       if (
-        ((draftMode && sessionId === null) || snapshot?.meta.worktreePreparation !== undefined) &&
+        ((draftMode && sessionId === null) ||
+          snapshotRef.current?.meta.worktreePreparation !== undefined) &&
         worktreeIntent &&
         worktreeIntent.workspaceKey === workspaceKey
       ) {
@@ -1533,7 +1542,9 @@ function ConversationComposerImpl({
           useComposerWorktreePipelineStore.getState(),
           workspaceKey,
         );
-        const currentPreparedSessionId = snapshot?.meta.worktreePreparation ? sessionId : null;
+        const currentPreparedSessionId = snapshotRef.current?.meta.worktreePreparation
+          ? sessionId
+          : null;
         if (
           pipeline?.status === "ready" &&
           pipeline.worktreePath &&
@@ -1677,7 +1688,9 @@ function ConversationComposerImpl({
         };
         try {
           // Second gate: consume only refs whose pre-upload is complete; do not fall back to uploading on send click.
-          const readyAttachmentRefs = await attachmentsApi.prepareForSend();
+          const readyAttachmentRefs = await attachmentsApi.prepareForSend(
+            queueWorktreeSend ? submittedAttachmentIds : undefined,
+          );
           if (readyAttachmentRefs === null) {
             if (telemetrySeed.localTtft)
               getLocalTtftObserver()?.exclude(telemetrySeed.localTtft, "rejected");
@@ -1870,7 +1883,11 @@ function ConversationComposerImpl({
           return;
         }
         setWorktreeQueued(true);
-        if (!preparedSessionIdForSend || worktreePipeline?.status !== "creating") {
+        const currentPipeline = selectComposerWorktreePipeline(
+          useComposerWorktreePipelineStore.getState(),
+          workspaceKey,
+        );
+        if (!preparedSessionIdForSend || currentPipeline?.status !== "creating") {
           const begin = await worktreeIntent.beginCreation(trimmed, onPrepareWorktreeSession);
           if (!begin.ok) {
             setWorktreeQueued(false);
@@ -1891,6 +1908,8 @@ function ConversationComposerImpl({
     },
     [
       attachmentsApi,
+      baseWorkspaceServices,
+      branchSwitchGuard,
       conversationSelectionReferences,
       conversationTelemetry,
       draftConfig,
@@ -1900,6 +1919,8 @@ function ConversationComposerImpl({
       getCodeCommentContexts,
       telemetryDraftConfig,
       modelSelectionView,
+      intl,
+      onPrepareWorktreeSession,
       onSendText,
       pendingShareContext,
       provider,
@@ -1916,8 +1937,10 @@ function ConversationComposerImpl({
       updateComposerContent,
       webElementContexts,
       worktreeIntentSlot,
+      worktreeIntentActive,
       pptxElementReferences,
       workspaceIdentity,
+      workspaceKey,
       workspacePath,
     ],
   );

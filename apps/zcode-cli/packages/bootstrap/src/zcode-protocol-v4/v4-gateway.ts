@@ -703,6 +703,10 @@ export class ConversationV4Gateway {
       publisher.seedWorktreePreparation(
         this.host.getSessionPreparationSeed?.(sessionId) ?? undefined,
       );
+      publisher.requestSnapshotForSubscribers();
+      for (const [routeKey, state] of this.flushStates) {
+        if (state.sessionId === sessionId) this.scheduleFlush(routeKey, state, publisher);
+      }
       this.publishCurrentSummaryToIndex(sessionId);
     } catch (error) {
       this.host.onError?.("v4.preparedSession.publish", error);

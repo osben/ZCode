@@ -6,7 +6,7 @@ Status: §1 (draft branch intent) and §2 (guard) implemented 2026-10-15; §3 wo
 
 The branch picker shown in the draft composer header (`GitBranchSwitcher` in `WorkspaceShellLayout.tsx:1559`) performs an **immediate** `git switch --no-guess` on the shared workspace checkout (`useGitBranchSwitcher.ts:251` → `gitCliRepo.ts:1500`) while no chat exists yet. The picker reads as a setting for the future chat, but it mutates the working tree for everything in the workspace: other open sessions, and any agent mid-turn. There is also no guard against switching while tasks are active. Separately, a worktree session's status panel targets the parent workspace (`SessionPane.tsx:5671` → `ConversationStatusPanel`), so the worktree's own branch cannot be switched from the UI.
 
-Decided 2026-10-15 (user): draft branch selection becomes intent applied at send; switching with active tasks asks for confirmation with a list; worktree-session panel targeting is in scope; the "New worktree" checkbox stays untouched for now and the unified control requires mockup approval (§4).
+Decided 2026-10-15 (user): draft branch selection becomes intent applied at send; switching with active tasks asks for confirmation with a list; worktree-session panel targeting is in scope; the unified destination control replaces the checkbox behind a default-on renderer-local flag (§4).
 
 ## Contract
 
@@ -16,7 +16,7 @@ Decided 2026-10-15 (user): draft branch selection becomes intent applied at send
 - The intent lives beside the existing worktree draft intent (the `composerDraftWorktreeIntent` slot pattern; since specs/composer-worktree-setup-steps.md the slot is consumed as `beginCreation` at send, non-blocking). It is cleared with the draft; navigating away or clearing has no side effects. (Anchor amended 2026-10-15: the spec originally pointed at `interceptFirstSend`, replaced by the setup pipeline.)
 - On send without the worktree intent (checkout mode):
   - selected branch equals the current one → proceed exactly as today (no switch).
-  - different branch → run the guard (§2), then `gitService.switchBranch` (existing issue handling and commit-assist dialog), then session creation proceeds. A failed or cancelled switch aborts the send: **no session is created**, draft text and intent are preserved.
+  - different branch → run the guard (§2), then `gitService.switchBranch`, then session creation proceeds. A failed or cancelled switch aborts the send with the switch failure message: **no session is created**, draft text and intent are preserved, and commit-assist handling is not invoked. The guard considers every active task in the workspace, including tasks beyond the collapsed sidebar page.
 - While the "New worktree" checkbox intent is active (the intent slot is registered or a setup pipeline is running/ready for the workspace), the header picker is disabled with a hint ("the worktree form sets the branch") so the draft never holds two competing branch sources. The worktree flow itself is unchanged (created at send per the decided Variant B).
 
 ### 2. Guard: confirm with the list of affected active tasks
@@ -53,7 +53,7 @@ Replaces the header `GitBranchSwitcher` chip AND the `ChatEmptyWorktreeTaskToggl
 2. Draft send, branch unchanged → session created; no switch call.
 3. Draft send, different branch, no active tasks → switch runs, then the session is created on it.
 4. Draft send, different branch, a running task in the workspace → confirm lists it; cancel aborts everything; confirm switches, then creates.
-5. Switch failure (dirty-tree conflict path) → commit-assist dialog as today; on final failure no session is created and the draft is intact.
+5. Switch failure (dirty-tree conflict path) → abort with the switch failure message; no commit-assist flow or session creation runs, and the draft text and intent remain intact.
 6. Worktree checkbox active → header picker disabled; the worktree form's branch is the only source (flow unchanged).
 7. Clearing the draft or switching conversations drops the intent with no side effects.
 8. Status panel of a checkout session with its own turn running → confirm lists it; confirm switches.
@@ -70,7 +70,6 @@ Replaces the header `GitBranchSwitcher` chip AND the `ChatEmptyWorktreeTaskToggl
 
 ## Out of scope
 
-- The unified destination control's appearance (mockups first, §4).
 - GitPane and other workspace-level git widgets (their immediate-switch semantics are unchanged; §2 already guards the dangerous cases).
 - Copilot-style per-chat branch workspaces as a new workspace kind — worktree sessions already cover isolation.
 - Any protocol/shared-schema change.

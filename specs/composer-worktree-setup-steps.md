@@ -95,17 +95,21 @@ that the first input was not admitted.
 - On failure or cancellation, restore frozen text, attachments, and references only when the editor
   revision still matches the frozen revision. Never overwrite newer text. A failed session retains
   its setup error and Retry action.
-- Navigation away, tab unmount, and reconnect do not withdraw or duplicate Host-owned preparation.
-  Returning to the session ID resumes the same progress state. Explicit Cancel is the only user
-  action that abandons the queued submission.
+- Navigation away, tab unmount, and reconnect detach the renderer-local callback, restore the frozen
+  draft, and keep Host-owned preparation running. Returning to the session ID resumes the same
+  progress state. Explicit Cancel is the only user action that abandons the queued submission.
 - Attachments-only submissions follow the same lifecycle without a text preview.
+- The attachment IDs in a queued submission are frozen at queue time; attachments added while Git
+  setup runs remain in the next draft and are not sent with the queued message.
 
 ### Existing worktree and branch-list behavior
 
 Existing worktrees reuse the same prepared session and activate in place; do not transfer the draft
-to a second workspace or create a second directory. A missing or failed branch list degrades to
-base=HEAD, with a visible note; it does not block Send. Invalid custom/global target locations remain
-synchronous failures before the session starts Git creation. The five-second Git delay is unchanged.
+to a second workspace or create a second directory. Before retrying a non-active prepared session
+with different frozen parameters, update its Host marker to the new branch, target path, and base
+branch so activation validates against the same values Git used. A missing or failed branch list
+degrades to base=HEAD, with a visible note; it does not block Send. Invalid custom/global target
+locations remain synchronous failures before the session starts Git creation.
 
 The Command Center “New task in worktree” action remains its separate Start-driven flow and opens its
 own workspace. Its branch-name collision avoidance and shared `executeWorktreeCreation` request
@@ -129,11 +133,15 @@ early transcript persistence or a second accepted-input store.
 4. The authoritative user message appears in that session before agent output; the session remains
    indexed under the parent workspace and Git Tools resolve against its scoped execution worktree.
 5. Repeated activation, duplicate Send, navigation, remount, and reconnect do not create another
-   session, runtime, worktree, or first-input admission.
+   session, runtime, worktree, or first-input admission. The per-workspace idempotency guard is
+   acquired before awaiting Host session reservation, so concurrent composers join one reservation.
 6. Failure and explicit Cancel preserve the session ID and safely restore frozen editor content,
    attachments, and references without replacing newer edits.
-7. Restart during preparation recovers the same session ID and settles from worktree state to ready
-   or failed without creating a runtime at the parent cwd.
+7. Restart during preparation recovers the same session ID, reconstructs renderer pipeline state
+   from Host branch/path/base-branch metadata, and checks Git state. It settles to ready when that worktree
+   exists, or to a retryable failed state when it is absent or Git state cannot be read, without creating a runtime at the parent
+   cwd. Live subscribers receive preparation state changes through a refreshed conversation
+   snapshot.
 8. Existing matching worktree activates in the same session without creating a second directory.
 9. Missing/failed branch list uses HEAD and notes the default; invalid destination fails before Git
    creation; the five-second delay remains unchanged.

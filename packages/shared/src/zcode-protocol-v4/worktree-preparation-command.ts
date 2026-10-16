@@ -16,6 +16,13 @@ export const worktreePreparationCreateSessionFields = {
 export const updateWorktreePreparationPayloadSchema = z.object({
   status: z.enum(["preparing", "failed", "cancelled"]),
   failureMessage: z.string().optional(),
+  worktreePreparation: z
+    .object({
+      branchName: z.string().min(1),
+      targetPath: z.string().min(1),
+      baseBranch: z.string().optional(),
+    })
+    .optional(),
 });
 
 export const worktreePreparationUpdatedResultSchema = z.object({

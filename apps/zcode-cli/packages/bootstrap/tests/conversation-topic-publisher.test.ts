@@ -150,6 +150,29 @@ describe("分享导入来源种子", () => {
   });
 });
 
+describe("worktree preparation subscriber refresh", () => {
+  it("sends a refreshed snapshot after host-owned preparation changes", () => {
+    const publisher = new ConversationTopicPublisher("session-1", "epoch-1");
+    const { ack } = publisher.subscribe({ connectionId: "conn-1" });
+    publisher.seedWorktreePreparation({
+      status: "preparing",
+      branchName: "zcode/fresh-otter",
+      targetPath: "/tmp/fresh-otter",
+    });
+    publisher.requestSnapshotForSubscribers();
+
+    const frame = publisher.flush(ack.subscriptionId);
+    expect(frame?.payload.kind).toBe("snapshot");
+    if (frame?.payload.kind === "snapshot") {
+      expect(frame.payload.snapshot.meta.worktreePreparation).toMatchObject({
+        status: "preparing",
+        branchName: "zcode/fresh-otter",
+        targetPath: "/tmp/fresh-otter",
+      });
+    }
+  });
+});
+
 describe("subscribe(base) 裁决矩阵", () => {
   function publisherWith(events: readonly SessionEvent[], retention?: number) {
     const publisher = new ConversationTopicPublisher("session-1", "epoch-1", {

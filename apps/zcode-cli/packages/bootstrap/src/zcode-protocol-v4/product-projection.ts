@@ -729,6 +729,7 @@ export class ProductProjection {
       current?.status === preparation.status &&
       current.branchName === preparation.branchName &&
       current.targetPath === preparation.targetPath &&
+      current.baseBranch === preparation.baseBranch &&
       current.failureMessage === preparation.failureMessage
     ) {
       return;

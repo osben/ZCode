@@ -361,6 +361,7 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
   gitWorktreeChangeSummary,
   activeGitSourceId,
   gitState,
+  gitRepositoryWorkspacePath,
   browserNavigationRequest,
   browserRestoreUrls,
   providerConfigFile,
@@ -1605,7 +1606,9 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
             disabled={worktreeIntentActive}
             triggerTitle={
               worktreeIntentActive
-                ? intl.formatMessage({ id: "git.branchSwitcher.worktreeIntentHint" })
+                ? intl.formatMessage({
+                    id: "git.branchSwitcher.worktreeIntentHint",
+                  })
                 : undefined
             }
             selectionIntent={
@@ -1650,6 +1653,10 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
     [
       isOfficeMode,
       workspaceRemoteSessionId,
+      activeDraftWorkspaceKey,
+      canRenderGitDestinationControl,
+      destinationControlEnabled,
+      draftBranchIntent,
       handleOpenPluginStore,
       handleSelectComposerPlugin,
       allowOpenWorkspace,
@@ -1663,6 +1670,7 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
       isWebRemoteControlShell,
       isWindowsDesktop,
       isDesktop,
+      intl,
       onCancelRemoteProject,
       onConnectRemote,
       onOpenFolderFromWorkspaceMenu,
@@ -1671,6 +1679,7 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
       workspaceAbsPath,
       workspaceIdentity,
       workspaceTabs,
+      worktreeIntentActive,
     ],
   );
   const handleV4SessionDeleted = useCallback(() => {
@@ -1887,6 +1896,7 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
       activeTaskId={activeTaskId}
       sidePaneOwnerId={sidePaneOwnerId}
       gitState={gitState}
+      gitRepositoryWorkspacePath={gitRepositoryWorkspacePath}
       activeGitSourceId={activeGitSourceId}
       panelRef={options.mobileOverlay ? mobileSidePanePanelRef : sidePanePanelRef}
       panelElementRef={

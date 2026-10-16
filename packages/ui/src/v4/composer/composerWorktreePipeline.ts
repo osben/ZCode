@@ -28,6 +28,7 @@ import {
 } from "@/store/composerWorktreePipelineStore.js";
 
 const inFlightByWorkspaceKey = new Map<string, Promise<"ready" | "failed">>();
+const beginInFlightByWorkspaceKey = new Map<string, Promise<ComposerWorktreeBeginResult>>();
 
 /** Whether a creation attempt is currently running for the workspace (used by the stale reconcile). */
 export function isComposerWorktreePipelineInFlight(workspaceKey: string): boolean {
@@ -117,10 +118,10 @@ export function startComposerWorktreePipeline({
 /**
  * Queue-time worktree creation kickoff shared by both destination entries (the legacy
  * "New worktree" checkbox and the unified destination control): location validation, target-path
- * resolution, the creating store entry (visible before the first await), and the runner start.
+ * resolution, the Host session reservation, and the runner start.
  * Callers keep their own branch-name generation and base resolution.
  */
-export async function beginWorktreePipelineCreation({
+export function beginWorktreePipelineCreation({
   gitService,
   workspaceKey,
   workspacePath,
@@ -143,55 +144,117 @@ export async function beginWorktreePipelineCreation({
   prepareSession: (params: ComposerWorktreePreparationParams) => Promise<string>;
   formatMessage: (id: string, values?: Record<string, string>) => string;
 }): Promise<ComposerWorktreeBeginResult> {
-  const failWith = (id: string) => {
-    useComposerWorktreePipelineStore
-      .getState()
-      .markValidationFailed(workspaceKey, formatMessage(id));
-    return { ok: false } as const;
-  };
-  if (
-    effectiveLocation.mode === "custom" &&
-    !isValidCustomWorktreeLocationPath(effectiveLocation.customPath)
-  ) {
-    return failWith("commandCenter.worktree.error.custom-location-invalid");
+  const inFlight = beginInFlightByWorkspaceKey.get(workspaceKey);
+  if (inFlight) return inFlight;
+  const existing = useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey[workspaceKey];
+  if (existing?.sessionId && (existing.status === "creating" || existing.status === "ready")) {
+    return Promise.resolve({ ok: true, sessionId: existing.sessionId });
   }
-  if (effectiveLocation.mode === "global" && !effectiveLocation.appWorktreesDir) {
-    return failWith("commandCenter.worktree.error.global-location-unavailable");
-  }
-  const targetPath = computeWorktreeTargetPath(workspacePath, branchName, effectiveLocation);
-  if (!targetPath) {
-    return failWith("commandCenter.worktree.error.target-path-invalid");
-  }
-  const params = {
-    workspacePath,
-    branchName,
-    targetPath,
-    ...(baseBranch ? { baseBranch } : {}),
-    baseFromHeadDefault,
-  };
-  let sessionId: string;
-  try {
-    sessionId = await prepareSession({
-      workspaceKey,
+
+  const attempt = (async (): Promise<ComposerWorktreeBeginResult> => {
+    const failWith = (id: string) => {
+      useComposerWorktreePipelineStore
+        .getState()
+        .markValidationFailed(workspaceKey, formatMessage(id));
+      return { ok: false } as const;
+    };
+    if (
+      effectiveLocation.mode === "custom" &&
+      !isValidCustomWorktreeLocationPath(effectiveLocation.customPath)
+    ) {
+      return failWith("commandCenter.worktree.error.custom-location-invalid");
+    }
+    if (effectiveLocation.mode === "global" && !effectiveLocation.appWorktreesDir) {
+      return failWith("commandCenter.worktree.error.global-location-unavailable");
+    }
+    const targetPath = computeWorktreeTargetPath(workspacePath, branchName, effectiveLocation);
+    if (!targetPath) {
+      return failWith("commandCenter.worktree.error.target-path-invalid");
+    }
+    const params = {
+      workspacePath,
       branchName,
       targetPath,
       ...(baseBranch ? { baseBranch } : {}),
+      baseFromHeadDefault,
+    };
+    let sessionId: string;
+    try {
+      sessionId = await prepareSession({
+        workspaceKey,
+        branchName,
+        targetPath,
+        ...(baseBranch ? { baseBranch } : {}),
+      });
+    } catch (error) {
+      useComposerWorktreePipelineStore
+        .getState()
+        .markValidationFailed(workspaceKey, getErrorMessage(error));
+      return { ok: false };
+    }
+    useComposerWorktreePipelineStore.getState().startPipeline(workspaceKey, {
+      status: "creating",
+      sessionId,
+      params,
+      createdAt: Date.now(),
+      queuedPromptPreview,
     });
-  } catch (error) {
-    useComposerWorktreePipelineStore
-      .getState()
-      .markValidationFailed(workspaceKey, getErrorMessage(error));
-    return { ok: false };
-  }
+    void startComposerWorktreePipeline({
+      gitService,
+      workspaceKey,
+      params,
+      formatMessage,
+    });
+    return { ok: true, sessionId } as const;
+  })();
+  beginInFlightByWorkspaceKey.set(workspaceKey, attempt);
+  const clearInFlight = () => {
+    if (beginInFlightByWorkspaceKey.get(workspaceKey) === attempt) {
+      beginInFlightByWorkspaceKey.delete(workspaceKey);
+    }
+  };
+  void attempt.then(clearInFlight, clearInFlight);
+  return attempt;
+}
+
+/** Rebuild renderer-only setup state from the durable Host preparation marker after a reload. */
+export function restoreComposerWorktreePipelineFromPreparation({
+  workspaceKey,
+  workspacePath,
+  sessionId,
+  preparation,
+}: {
+  workspaceKey: string;
+  workspacePath: string;
+  sessionId: string;
+  preparation: {
+    branchName: string;
+    targetPath: string;
+    baseBranch?: string;
+    status: "preparing" | "failed" | "cancelled";
+    failureMessage?: string;
+  };
+}): void {
+  if (preparation.status === "cancelled") return;
+  const current = useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey[workspaceKey];
+  if (current?.sessionId === sessionId) return;
   useComposerWorktreePipelineStore.getState().startPipeline(workspaceKey, {
-    status: "creating",
+    status: preparation.status === "preparing" ? "creating" : "failed",
     sessionId,
-    params,
+    params: {
+      workspacePath,
+      branchName: preparation.branchName,
+      targetPath: preparation.targetPath,
+      ...(preparation.baseBranch ? { baseBranch: preparation.baseBranch } : {}),
+      baseFromHeadDefault: !preparation.baseBranch,
+    },
     createdAt: Date.now(),
-    queuedPromptPreview,
+    ...(preparation.status === "failed"
+      ? {
+          failureMessage: preparation.failureMessage ?? "Worktree creation failed",
+        }
+      : {}),
   });
-  void startComposerWorktreePipeline({ gitService, workspaceKey, params, formatMessage });
-  return { ok: true, sessionId } as const;
 }
 
 /**
@@ -214,8 +277,10 @@ export function retryComposerWorktreePipeline({
   }
   store.startPipeline(workspaceKey, {
     status: "creating",
+    ...(entry.sessionId ? { sessionId: entry.sessionId } : {}),
     params: entry.params,
     createdAt: Date.now(),
+    ...(entry.queuedPromptPreview ? { queuedPromptPreview: entry.queuedPromptPreview } : {}),
     ...(entry.orphaned ? { orphaned: true } : {}),
   });
   return startComposerWorktreePipeline({
@@ -247,7 +312,9 @@ export async function reconcileCreatingComposerWorktreePipeline({
   const entry = store.pipelineByWorkspaceKey[workspaceKey];
   if (!entry || entry.status !== "creating" || !entry.params) return;
   try {
-    const list = await gitService.listWorktrees({ workspacePath: entry.params.workspacePath });
+    const list = await gitService.listWorktrees({
+      workspacePath: entry.params.workspacePath,
+    });
     const existing = findWorktreeForBranch(list.worktrees, branchName);
     if (existing) {
       store.markReady(workspaceKey, existing.path, true);
@@ -255,9 +322,10 @@ export async function reconcileCreatingComposerWorktreePipeline({
       store.markFailed(workspaceKey, formatMessage("worktreeSetup.reconcile.staleCreating"));
     }
   } catch (error) {
-    logger.debug("[WorktreePipeline] stale-creating reconcile list failed", {
+    logger.warn("[WorktreePipeline] stale-creating reconcile list failed", {
       workspaceKey,
       error: getErrorMessage(error),
     });
+    store.markFailed(workspaceKey, formatMessage("worktreeSetup.reconcile.staleCreating"));
   }
 }

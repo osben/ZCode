@@ -191,6 +191,7 @@ async function persistPreparedWorktreeStatus(
   prepared: ZCodeProtocolPreparedWorktreeSession,
   status: "preparing" | "failed" | "cancelled" | "active",
   failureMessage?: string,
+  worktreePreparation?: Pick<ZCodeProtocolPreparedWorktreeSession, "branchName" | "targetPath" | "baseBranch">,
 ): Promise<void> {
   const store = context.deps.sessionStore;
   if (!store?.saveSessionEntry) throw new Error("Worktree preparation requires session-entry storage");
@@ -201,15 +202,23 @@ async function persistPreparedWorktreeStatus(
     type: PREPARED_WORKTREE_ENTRY_TYPE,
     time: { created: prepared.createdAt, updated: now },
     data: {
-      branchName: prepared.branchName,
-      targetPath: prepared.targetPath,
-      ...(prepared.baseBranch ? { baseBranch: prepared.baseBranch } : {}),
+      branchName: worktreePreparation?.branchName ?? prepared.branchName,
+      targetPath: worktreePreparation?.targetPath ?? prepared.targetPath,
+      ...((worktreePreparation ? worktreePreparation.baseBranch : prepared.baseBranch)
+        ? { baseBranch: worktreePreparation?.baseBranch ?? prepared.baseBranch }
+        : {}),
       status,
       ...(failureMessage ? { failureMessage } : {}),
     },
   });
   prepared.status = status;
   prepared.updatedAt = now;
+  if (worktreePreparation) {
+    prepared.branchName = worktreePreparation.branchName;
+    prepared.targetPath = worktreePreparation.targetPath;
+    if (worktreePreparation.baseBranch) prepared.baseBranch = worktreePreparation.baseBranch;
+    else delete prepared.baseBranch;
+  }
   if (failureMessage) prepared.failureMessage = failureMessage;
   else delete prepared.failureMessage;
   if (status === "active") preparedWorktreeMap(context).delete(String(prepared.sessionId));
@@ -1357,8 +1366,15 @@ export function createConversationV4Gateway(
       const sessionId = String((record as ZCodeProtocolSessionRecord).app.sessionId);
       const prepared = preparedWorktreeMap(context).get(sessionId);
       if (prepared && (record as ZCodeProtocolSessionRecord).persistence === "immediate") {
-        await persistPreparedWorktreeStatus(context, prepared, "active");
-        context.v4Gateway?.notifyPreparedSessionChanged(sessionId);
+        try {
+          await persistPreparedWorktreeStatus(context, prepared, "active");
+          context.v4Gateway?.notifyPreparedSessionChanged(sessionId);
+        } catch (error) {
+          context.logger?.warn("Could not persist active worktree preparation", {
+            sessionId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
     },
     // deleteSession execution: inline the four steps from the old closeSession op (do not import the
@@ -1461,7 +1477,7 @@ export function createConversationV4Gateway(
     },
     prepareWorktreeSession: async ({ workspaceId, branchName, targetPath, baseBranch }) => {
       const store = context.deps.sessionStore;
-      if (!store?.saveSessionEntry) {
+      if (!store?.saveSessionEntry || !store.deleteEmptySession) {
         throw new Error("Worktree preparation requires session and session-entry storage");
       }
       const workspace = resolveWorkspaceRefFromId(workspaceId);
@@ -1494,6 +1510,14 @@ export function createConversationV4Gateway(
         await persistPreparedWorktreeStatus(context, prepared, "preparing");
       } catch (error) {
         preparedWorktreeMap(context).delete(String(sessionId));
+        try {
+          await store.deleteEmptySession(sessionId);
+        } catch (cleanupError) {
+          context.logger?.warn("Could not remove an empty worktree preparation session", {
+            sessionId: String(sessionId),
+            error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+          });
+        }
         throw error;
       }
       context.v4Gateway?.notifyPreparedSessionChanged(String(sessionId));
@@ -1509,6 +1533,7 @@ export function createConversationV4Gateway(
         prepared,
         input.status,
         input.failureMessage,
+        input.worktreePreparation,
       );
       context.v4Gateway?.notifyPreparedSessionChanged(sessionId);
     },
@@ -2006,6 +2031,7 @@ export function createConversationV4Gateway(
       return {
         branchName: prepared.branchName,
         targetPath: prepared.targetPath,
+        ...(prepared.baseBranch ? { baseBranch: prepared.baseBranch } : {}),
         status: prepared.status,
         ...(prepared.failureMessage ? { failureMessage: prepared.failureMessage } : {}),
       };

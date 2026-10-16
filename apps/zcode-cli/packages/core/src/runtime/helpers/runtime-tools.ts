@@ -22,6 +22,8 @@ import {
 import { isStaleBranchRuntimeTaskEvent } from "../methods/runtime-command-generation.js";
 import { resolveEnabledProjectMemoryRoot } from "./project-memory.js";
 import { sessionHasLoadedSkill } from "../../agent/loaded-skills.js";
+import { getMissingExecutionWorktreeToolError } from "./execution-worktree-guard.js";
+import type { ToolMetadata } from "../../tool/types.js";
 
 const DEFAULT_SUBAGENT_BACKGROUND_BASH_MAX_MS = 3_600_000;
 const EMPTY_RUNTIME_HOOK_CONFIG = {
@@ -214,6 +216,20 @@ function createRuntimeToolExecutor(
         : undefined,
     getBashShellSelection: () => getSessionShellSelectionFromConfig(runtime.config),
     hookRunner,
+    validateToolExecution: (metadata: ToolMetadata) =>
+      getMissingExecutionWorktreeToolError(
+        runtime.config.executionWorktree,
+        metadata.sideEffectScope,
+        metadata.name,
+      ).then((message) => {
+        if (message && runtime.config.executionWorktree) {
+          runtime.config.executionWorktree = {
+            ...runtime.config.executionWorktree,
+            missing: true,
+          };
+        }
+        return message;
+      }),
     getWorkingDirectory: () => runtime.workingDirectory,
     setWorkingDirectory: runtime.setWorkingDirectory.bind(runtime),
     getWorkspaceRoot: () => runtime.workspaceRoot,

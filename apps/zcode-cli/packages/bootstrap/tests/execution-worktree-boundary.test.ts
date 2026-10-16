@@ -1,14 +1,16 @@
 // Execution-worktree boundary behavior (spec: execution-worktree-missing-handling.md §1-2):
 // create rejects a dead worktree path before any runtime/record is created; resume keeps the
 // fact but marks it missing so the runtime falls back to the parent workspace.
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { createProjectId, createSessionId, type SessionInfo } from "@zcode/contracts";
 import {
   activateSessionForResume,
   createSessionRecordForV4,
+  isWorktreeDirectoryMissing,
+  isWorktreeDirectoryMissingSync,
 } from "../src/zcode-protocol/server-operations.js";
 import { buildWorkspaceRef } from "../src/zcode-protocol/workspace.js";
 import type { ZCodeProtocolAgentServerContext } from "../src/zcode-protocol/server-types.js";
@@ -77,6 +79,19 @@ function persistedSession(overrides: Partial<SessionInfo>): SessionInfo {
 }
 
 describe("execution worktree boundary health check", () => {
+  it("treats only absent path errors as missing and propagates other stat failures", async () => {
+    const missingPath = join(tmpdir(), "zcode-worktree-boundary-does-not-exist");
+    await expect(isWorktreeDirectoryMissing(missingPath)).resolves.toBe(true);
+    expect(isWorktreeDirectoryMissingSync(missingPath)).toBe(true);
+
+    const symlinkLoop = join(createTempDir(), "loop");
+    symlinkSync(symlinkLoop, symlinkLoop);
+    await expect(isWorktreeDirectoryMissing(symlinkLoop)).rejects.toMatchObject({ code: "ELOOP" });
+    expect(() => isWorktreeDirectoryMissingSync(symlinkLoop)).toThrow(
+      expect.objectContaining({ code: "ELOOP" }),
+    );
+  });
+
   it("create rejects a nonexistent worktree path before any record or runtime is created", async () => {
     const captured: CapturedAppOptions[] = [];
     const context = contextWithCapturingApp(captured);

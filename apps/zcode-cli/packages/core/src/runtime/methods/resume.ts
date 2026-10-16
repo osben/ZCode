@@ -125,9 +125,8 @@ export async function resumeFromStore(
 
   // Execution-worktree sessions persist their execution cwd separately from the workspace
   // directory (listing identity); restore the worktree first so the resumed turn runs there.
-  // Backstop for out-of-band deletion (rm / git worktree prune / re-clone): the history is still
-  // valid, so fall back to the parent workspace instead of resuming into a dead cwd. The fact stays
-  // on the runtime config (marked missing) for the sessions-index badge and the env bullet.
+  // If it was deleted out-of-band, keep the missing path as cwd and block workspace tools below;
+  // the fact stays on runtime config for the sessions-index badge and environment context.
   this.workingDirectory = session.executionDirectory ?? session.directory;
   if (session.executionDirectory) {
     let executionWorktreeMissing: boolean;
@@ -137,9 +136,8 @@ export async function resumeFromStore(
       executionWorktreeMissing = true;
     }
     if (executionWorktreeMissing) {
-      this.workingDirectory = session.directory;
       this.logger?.warn(
-        "Session resume execution worktree directory is missing; falling back to the parent workspace",
+        "Session resume execution worktree directory is missing; workspace tools remain blocked until it is restored",
         {
           ...traceContextToLogContext(traceContext),
           event: "session.resume.execution_worktree_missing",

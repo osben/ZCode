@@ -174,6 +174,7 @@ export type InputRouting = z.infer<typeof inputRoutingSchema>;
 export const worktreePreparationStateSchema = z.object({
   branchName: z.string(),
   targetPath: z.string(),
+  baseBranch: z.string().optional(),
   status: z.enum(["preparing", "failed", "cancelled"]),
   failureMessage: z.string().optional(),
 });

@@ -12,6 +12,7 @@ import { useCallback, useEffect } from "react";
 import { Check, GitBranch, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
 import { cn } from "@/components/lib/utils.js";
+import { getErrorMessage } from "@/lib/errorMessage.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { resolveWorkspaceKey } from "@zcode/shared";
@@ -24,6 +25,7 @@ import {
   isComposerWorktreePipelineInFlight,
   reconcileCreatingComposerWorktreePipeline,
   retryComposerWorktreePipeline,
+  restoreComposerWorktreePipelineFromPreparation,
 } from "@/v4/composer/composerWorktreePipeline.js";
 
 /** Whether the workspace has a pipeline whose rows should replace the draft greeting. */
@@ -48,6 +50,8 @@ export function ConversationWorktreeSetupSteps({
   workspaceIdentity,
   sessionId,
   preparation,
+  onRetryPreparation,
+  onPreparationFailed,
 }: {
   workspacePath: string;
   workspaceIdentity?: string;
@@ -58,10 +62,15 @@ export function ConversationWorktreeSetupSteps({
     status: "preparing" | "failed" | "cancelled";
     failureMessage?: string;
   };
+  onRetryPreparation: () => Promise<void>;
+  onPreparationFailed: (sessionId: string, failureMessage: string) => Promise<void>;
 }) {
   const { intl } = useZCodeIntl();
   const baseServices = useBaseWorkspaceServices();
-  const workspaceKey = resolveWorkspaceKey({ workspacePath, workspaceIdentity });
+  const workspaceKey = resolveWorkspaceKey({
+    workspacePath,
+    workspaceIdentity,
+  });
   const pipelineEntry = useComposerWorktreePipelineStore((state) =>
     selectComposerWorktreePipeline(state, workspaceKey),
   );
@@ -75,16 +84,39 @@ export function ConversationWorktreeSetupSteps({
       workspaceKey,
       branchName: entry.params.branchName,
       formatMessage: (id, values) => intl.formatMessage({ id }, values),
+    }).then(async () => {
+      const settled =
+        useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey[workspaceKey];
+      if (settled?.sessionId === sessionId && settled.status === "failed") {
+        await onPreparationFailed(sessionId, settled.failureMessage ?? "Worktree creation failed");
+      }
     });
-  }, [baseServices.gitService, entry, intl, workspaceKey]);
+  }, [baseServices.gitService, entry, intl, onPreparationFailed, sessionId, workspaceKey]);
 
   useEffect(() => {
+    if (!entry && preparation.status !== "cancelled") {
+      restoreComposerWorktreePipelineFromPreparation({
+        workspaceKey,
+        workspacePath,
+        sessionId,
+        preparation,
+      });
+      return;
+    }
     settleStaleCreating();
-  }, [settleStaleCreating]);
+  }, [
+    baseServices.gitService,
+    entry,
+    intl,
+    preparation,
+    sessionId,
+    settleStaleCreating,
+    workspaceKey,
+    workspacePath,
+  ]);
 
   if (!entry) {
-    // No pipeline entry in this renderer (reload/reconnect during Host-owned preparation): the
-    // Host seed is authoritative for recovery.
+    // First paint during reload; the effect below restores renderer state from the Host seed.
     return preparation.status === "preparing" ? (
       <div
         data-worktree-setup-steps="true"
@@ -166,11 +198,27 @@ export function ConversationWorktreeSetupSteps({
                   variant="outline"
                   size="sm"
                   onClick={() => {
-                    void retryComposerWorktreePipeline({
-                      gitService: baseServices.gitService,
-                      workspaceKey,
-                      formatMessage: (id, values) => intl.formatMessage({ id }, values),
-                    });
+                    void (async () => {
+                      try {
+                        await onRetryPreparation();
+                        const outcome = await retryComposerWorktreePipeline({
+                          gitService: baseServices.gitService,
+                          workspaceKey,
+                          formatMessage: (id, values) => intl.formatMessage({ id }, values),
+                        });
+                        if (outcome === "failed") {
+                          const failureMessage =
+                            useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey[
+                              workspaceKey
+                            ]?.failureMessage ?? "Worktree creation failed";
+                          await onPreparationFailed(sessionId, failureMessage);
+                        }
+                      } catch (error) {
+                        useComposerWorktreePipelineStore
+                          .getState()
+                          .markFailed(workspaceKey, getErrorMessage(error));
+                      }
+                    })();
                   }}
                 >
                   {intl.formatMessage({ id: "worktreeSetup.retry" })}

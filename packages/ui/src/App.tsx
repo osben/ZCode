@@ -365,6 +365,14 @@ export function App({
   const [canOpenCommunityFromQuickPick, setCanOpenCommunityFromQuickPick] = useState(false);
   const [gitSelectedSourceId, setGitSelectedSourceId] = useState<GitChangeSourceId>("unstaged");
   const [gitRefreshVersion, setGitRefreshVersion] = useState(0);
+  const [gitReviewExecutionTarget, setGitReviewExecutionTarget] = useState<{
+    workspacePath: string;
+    sessionId: string;
+  } | null>(null);
+  const gitRepositoryWorkspacePath =
+    gitReviewExecutionTarget?.sessionId === activeTaskId
+      ? gitReviewExecutionTarget.workspacePath
+      : workspaceAbsPath;
   const { browserRestoreUrls, handleBrowserUrlChange } = useTaskSidePaneMemoryBridge({
     activeTaskId,
     gitSelectedSourceId,
@@ -471,7 +479,7 @@ export function App({
   }, []);
   const openSettingsTab = useTabStore((state) => state.openSettingsTab);
   const gitState = useGitRepository({
-    workspacePath: workspaceAbsPath,
+    workspacePath: gitRepositoryWorkspacePath,
     activeTaskId,
     includeExtendedData: hasGitTab,
     // Key logic: fetch real Git data only when the workspace changes, the Git pane opens, or the user explicitly refreshes.
@@ -482,7 +490,7 @@ export function App({
     workspaceIdentity,
   });
   useGitAutoRefresh({
-    workspacePath: workspaceAbsPath,
+    workspacePath: gitRepositoryWorkspacePath,
     workspaceIdentity,
     remoteSessionId: workspaceRpcTarget.remoteSessionId ?? null,
     gitSummary: gitState.summary,
@@ -546,16 +554,28 @@ export function App({
     return null;
   }, [gitChangeSummaryBySourceId]);
   const handleOpenGitReview = useCallback(
-    (sourceId?: GitChangeSourceId) => {
+    (
+      sourceId?: GitChangeSourceId,
+      executionWorkspacePath?: string,
+      executionSessionId?: string,
+    ) => {
       if (workspaceReadOnlyReason) {
         return;
       }
+      setGitReviewExecutionTarget(
+        executionWorkspacePath && executionSessionId
+          ? {
+              workspacePath: executionWorkspacePath,
+              sessionId: executionSessionId,
+            }
+          : null,
+      );
       if (sourceId) {
         setGitSelectedSourceId(sourceId);
       }
       handleOpenGit();
     },
-    [handleOpenGit, workspaceReadOnlyReason],
+    [handleOpenGit, workspaceAbsPath, workspaceReadOnlyReason],
   );
   const isSidePaneOpen = !isSidePaneCollapsed;
   useEffect(() => {
@@ -1362,6 +1382,7 @@ export function App({
           gitWorktreeChangeSummary={gitWorktreeChangeSummary}
           activeGitSourceId={activeGitSourceId}
           gitState={gitState}
+          gitRepositoryWorkspacePath={gitRepositoryWorkspacePath}
           browserNavigationRequest={browserNavigationRequest}
           browserRestoreUrls={browserRestoreUrls}
           providerConfigFile={providerConfigFile}

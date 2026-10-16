@@ -38,12 +38,8 @@ describe("会话区 Worktree 首发真实会话 E2E", () => {
 
     const setupStage = await $('[data-worktree-setup-steps="true"]');
     await setupStage.waitForDisplayed({ timeout: 10000 });
-    await browser.waitUntil(
-      async () =>
-        (await $('[data-worktree-setup-step="creating"]').isExisting()) ||
-        (await $('[data-worktree-setup-step="ready"]').isExisting()),
-      { timeout: 10000, timeoutMsg: "chat shell did not show worktree setup progress" },
-    );
+    const creatingStep = $('[data-worktree-setup-step="creating"]');
+    await creatingStep.waitForDisplayed({ timeout: 10000 });
     expect(await $('button[aria-label="Choose workspace"]').isExisting()).toBe(false);
     expect(await $('button[aria-label="Choose where this task runs"]').isExisting()).toBe(false);
     const header = await $('[data-testid="workspace-header"]');
@@ -54,6 +50,7 @@ describe("会话区 Worktree 首发真实会话 E2E", () => {
     await waitForComposerText("", "queued first message was not removed from the editor");
     await assertVisibleUserMessagesNotContaining(prompt);
 
+    await $('[data-worktree-setup-step="ready"]').waitForDisplayed({ timeout: 30000 });
     await waitForUserMessageContaining(prompt);
     const admitted = await waitForChatState(
       (snapshot) => Boolean(snapshot.sessionId || snapshot.taskId),

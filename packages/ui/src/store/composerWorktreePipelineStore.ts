@@ -45,12 +45,12 @@ export interface ComposerWorktreePipelineEntry {
   /** Present on failed. */
   failureMessage?: string;
   /**
-   * The user withdrew (unchecked the box / composer unmounted) while the git call was in flight.
+   * The user explicitly withdrew (unchecked the box) while the git call was in flight.
    * The call is not cancellable: it runs to completion, the directory is left on disk (orphan note),
    * and the queued send was dropped. An orphaned ready entry is reusable by a later intent.
    */
   orphaned?: boolean;
-  /** Whether a queued send is still attached (cleared by withdrawal). Rendered as the prompt preview. */
+  /** Whether a queued send is still attached (cleared by withdrawal or navigation detach). */
   queuedPromptPreview?: string;
 }
 
@@ -66,6 +66,8 @@ interface ComposerWorktreePipelineState {
   markValidationFailed: (workspaceKey: string, failureMessage: string) => void;
   /** Withdraw the queued send; the in-flight result lands with an orphan note. */
   withdraw: (workspaceKey: string) => void;
+  /** Detach a renderer-local queued callback during navigation while Host preparation continues. */
+  detachQueuedSend: (workspaceKey: string) => void;
   dropWorkspace: (workspaceKey: string) => void;
 }
 
@@ -132,6 +134,8 @@ export const useComposerWorktreePipelineStore = create<ComposerWorktreePipelineS
         orphaned: true,
       }),
     ),
+  detachQueuedSend: (workspaceKey) =>
+    set((state) => patchEntry(state, workspaceKey, { queuedPromptPreview: undefined })),
   dropWorkspace: (workspaceKey) =>
     set((state) => {
       const { [workspaceKey]: _removed, ...rest } = state.pipelineByWorkspaceKey;
