@@ -234,63 +234,63 @@ helper.
 Current precise text scan shows `modelProviderFamilySelectedKeys` or `selectedConnectionKey` appears in at least 37 non-test
 files: 18 UI, 11 Services, 5 Shared, 3 Desktop.
 
-| Scope                       | Current Responsibilities                            | Target                                  |
-| --------------------------- | --------------------------------------------------- | --------------------------------------- |
-| AppSettings / Schema        | Persist mode and string key                         | Single structured selection             |
-| Provider Settings           | Navigation, switch, restore, and pending state      | Edit structured selection               |
-| Account Resolver            | Parse Plan/Team key and generate accessId           | Look up connection by Access fields     |
-| Request Auth                | Identify Plan, account, and Team Scope from accessId | Consume complete Account Access         |
-| Usage / Entitlement         | Generate query context from selected key            | Consume Account Connection View         |
-| Session / Task / Repo Wiki  | Layer-by-layer passthrough of selected keys         | Delete passthrough; use Registry/Account Service |
-| Off-Peak                    | Parse Settings, compare two IDs                     | Consume current Account Access          |
-| Official MCP                | Re-parse Plan and Team Scope                        | Consume current Account Access          |
-| Desktop remote host         | Temporarily construct selected key map for Team Key | Pass structured Account Access directly |
+| Scope                      | Current Responsibilities                             | Target                                           |
+| -------------------------- | ---------------------------------------------------- | ------------------------------------------------ |
+| AppSettings / Schema       | Persist mode and string key                          | Single structured selection                      |
+| Provider Settings          | Navigation, switch, restore, and pending state       | Edit structured selection                        |
+| Account Resolver           | Parse Plan/Team key and generate accessId            | Look up connection by Access fields              |
+| Request Auth               | Identify Plan, account, and Team Scope from accessId | Consume complete Account Access                  |
+| Usage / Entitlement        | Generate query context from selected key             | Consume Account Connection View                  |
+| Session / Task / Repo Wiki | Layer-by-layer passthrough of selected keys          | Delete passthrough; use Registry/Account Service |
+| Off-Peak                   | Parse Settings, compare two IDs                      | Consume current Account Access                   |
+| Official MCP               | Re-parse Plan and Team Scope                         | Consume current Account Access                   |
+| Desktop remote host        | Temporarily construct selected key map for Team Key  | Pass structured Account Access directly          |
 
 ### 3.1 UI Surface Matrix
 
-| User Scenario              | UI Entry                      | Draft/Display Owner       | Submit Sink              | This Task Changes          | Isolation Boundary                       |
-| -------------------------- | ----------------------------- | ------------------------- | ------------------------ | -------------------------- | ---------------------------------------- |
-| Switch API Key/Plan connection | Provider Settings         | Local pending selection   | AppSettings              | Single submit structured selection | Do not change Personal Provider Config   |
-| View current connection and plan | Provider Settings / Usage | Account Connection View   | None or Usage request    | Do not parse accessId/key  | Dynamic quotas do not enter Registry     |
-| Select model               | Composer model control      | Composer Draft            | Session/Task command     | Candidates only from Registry | Do not switch connections in model selector |
-| Create off-peak task       | Off-Peak entry              | Off-Peak support view     | Off-Peak service         | Host consumes Account Access | Do not send credentials to Renderer      |
-| OAuth login restore        | Root callback               | AppSettings               | Setting Service          | Write structured selection | Settings mount does not reorder valid selections |
+| User Scenario                    | UI Entry                  | Draft/Display Owner     | Submit Sink           | This Task Changes                  | Isolation Boundary                               |
+| -------------------------------- | ------------------------- | ----------------------- | --------------------- | ---------------------------------- | ------------------------------------------------ |
+| Switch API Key/Plan connection   | Provider Settings         | Local pending selection | AppSettings           | Single submit structured selection | Do not change Personal Provider Config           |
+| View current connection and plan | Provider Settings / Usage | Account Connection View | None or Usage request | Do not parse accessId/key          | Dynamic quotas do not enter Registry             |
+| Select model                     | Composer model control    | Composer Draft          | Session/Task command  | Candidates only from Registry      | Do not switch connections in model selector      |
+| Create off-peak task             | Off-Peak entry            | Off-Peak support view   | Off-Peak service      | Host consumes Account Access       | Do not send credentials to Renderer              |
+| OAuth login restore              | Root callback             | AppSettings             | Setting Service       | Write structured selection         | Settings mount does not reorder valid selections |
 
 Automation, Subagent, and Repo Wiki only share Registry model candidates; do not own Account Connection selection. Current code passthrough selected keys
 to these paths is bridge code awaiting deletion, not representing product semantics.
 
 ### 3.2 State Owner and Commit Sink
 
-| State/Fact                    | Authoritative Owner                        | Persistence/Cache                      | Consumers                     |
-| ----------------------------- | ------------------------------------------ | -------------------------------------- | ----------------------------- |
-| User's current connection selection intent | AppSettings structured selection | `setting.json`                   | Account Resolver, Settings UI |
-| Current account identity and entitlement | OAuth/Account/Plan services        | Their respective existing caches       | Account Resolver              |
-| Currently available Account Connection  | Account Provider Service         | last-known-good Account Source       | Registry, Account Views       |
-| Provider execution Account Access     | Effective Provider Config / Model  | Registry revision / Active Model | Request Auth                  |
-| API Key/JWT/Team Secret         | Credential / Request Auth service  | Existing Credential Store          | Single request attempt        |
-| Off-Peak Ticket/Auth            | Off-Peak execution context           | Current dispatch memory              | idle Model request-auth       |
+| State/Fact                                 | Authoritative Owner               | Persistence/Cache                | Consumers                     |
+| ------------------------------------------ | --------------------------------- | -------------------------------- | ----------------------------- |
+| User's current connection selection intent | AppSettings structured selection  | `setting.json`                   | Account Resolver, Settings UI |
+| Current account identity and entitlement   | OAuth/Account/Plan services       | Their respective existing caches | Account Resolver              |
+| Currently available Account Connection     | Account Provider Service          | last-known-good Account Source   | Registry, Account Views       |
+| Provider execution Account Access          | Effective Provider Config / Model | Registry revision / Active Model | Request Auth                  |
+| API Key/JWT/Team Secret                    | Credential / Request Auth service | Existing Credential Store        | Single request attempt        |
+| Off-Peak Ticket/Auth                       | Off-Peak execution context        | Current dispatch memory          | idle Model request-auth       |
 
 ## 4. Impact Brief
 
-| Field              | Conclusion                                                                                                         |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------ |
-| Developer intent   | Delete account connection string protocol and cross-layer passthrough; unify selection, Provider Access, and request authentication |
-| Capability         | Provider Registry, Plan Entitlements, Provider Settings, Off-Peak, Official MCP                                      |
-| Change layer       | `persistence`, `option-source`, `validation`, `commit-effect`                                                      |
-| Operating mode     | implementation-handoff                                                                                             |
-| Primary seeds      | `AccountProviderConnectionResolver`, `AppSettings`, `resolveOffPeakCredentials`, `resolveOfficialMcpCredentials` |
-| Out of scope       | Plan product logic redo, remote Provisioning, Credential center refactoring, Queue/Recovery, Model selection lifecycle |
+| Field            | Conclusion                                                                                                                          |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Developer intent | Delete account connection string protocol and cross-layer passthrough; unify selection, Provider Access, and request authentication |
+| Capability       | Provider Registry, Plan Entitlements, Provider Settings, Off-Peak, Official MCP                                                     |
+| Change layer     | `persistence`, `option-source`, `validation`, `commit-effect`                                                                       |
+| Operating mode   | implementation-handoff                                                                                                              |
+| Primary seeds    | `AccountProviderConnectionResolver`, `AppSettings`, `resolveOffPeakCredentials`, `resolveOfficialMcpCredentials`                    |
+| Out of scope     | Plan product logic redo, remote Provisioning, Credential center refactoring, Queue/Recovery, Model selection lifecycle              |
 
-| Level            | Relationship                                                    | Reason                                         |
-| ---------------- | --------------------------------------------------------------- | ---------------------------------------------- |
-| must-inspect   | AppSettings -> Provider Settings -> Account Resolver            | selection's persistence/commit main chain      |
-| must-inspect   | Account Resolver -> Account Built-in Config -> Registry         | Structured connection fact's unique projection chain |
-| must-inspect   | Active Model -> Request Auth                                    | Old Model cannot follow new account on switch  |
-| must-inspect   | Account Access -> Off-Peak / Official MCP                       | Currently re-parses strings; off-peak has ID comparison gap |
-| should-inspect | Usage / Entitlement / Sidebar                                   | Currently rebuilds product context from selected key/accessId |
-| conditional    | Local/Remote Host Account Source                                | Remote Environment must use its own Account Source |
-| invariant-only | desktop continuous / mobile replayable                          | This task does not change task/session/stream recovery semantics |
-| evidence-only  | Existing connection-key helper tests                            | Only proves old protocol behavior, not that old abstraction should be retained |
+| Level          | Relationship                                            | Reason                                                                         |
+| -------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| must-inspect   | AppSettings -> Provider Settings -> Account Resolver    | selection's persistence/commit main chain                                      |
+| must-inspect   | Account Resolver -> Account Built-in Config -> Registry | Structured connection fact's unique projection chain                           |
+| must-inspect   | Active Model -> Request Auth                            | Old Model cannot follow new account on switch                                  |
+| must-inspect   | Account Access -> Off-Peak / Official MCP               | Currently re-parses strings; off-peak has ID comparison gap                    |
+| should-inspect | Usage / Entitlement / Sidebar                           | Currently rebuilds product context from selected key/accessId                  |
+| conditional    | Local/Remote Host Account Source                        | Remote Environment must use its own Account Source                             |
+| invariant-only | desktop continuous / mobile replayable                  | This task does not change task/session/stream recovery semantics               |
+| evidence-only  | Existing connection-key helper tests                    | Only proves old protocol behavior, not that old abstraction should be retained |
 
 Feature graph already records Account Connection source authority, Provider execution snapshots, and UI/Schema decoupling invariants. Current environment has no callable
 codegraph tool; this impact scope uses semantic graphs and precise `rg` call site reviews; evidence at symbol level must be supplemented by `dep:refs`, TypeScript
@@ -400,16 +400,16 @@ before implementation.
 
 Stable Case IDs:
 
-| Case ID | Setup                              | Action                          | Assertions                                         |
-| ------- | ---------------------------------- | ------------------------------- | -------------------------------------------------- |
-| AC-01   | Save Team selection                | Restart Settings                | organization/project recovered as-is; no string parse |
-| AC-02   | Account A creates Model            | Request old Model after switching to Account B | Identity mismatch before network; does not use B credentials |
-| AC-03   | Team project P1 Active             | Switch to P2                    | Old Model retains P1; new Model uses P2              |
-| AC-04   | Personal writes fake Account Access | Create and request Model        | Schema does not reject by source; Request Auth clearly fails |
-| AC-05   | Valid scoped Account Access        | Create Off-Peak ticket          | Not compared to unscoped key; obtains dual credentials normally |
-| AC-06   | Connection switching during credential parsing | Parse Off-Peak/MCP | Do not mix two-generation JWT/API Key/scope |
-| AC-07   | Remote Environment                 | Sync/refresh Providers          | Use remote Account Source; do not read local selection for execution |
-| AC-08   | Both Individual and Team Providers exist | Switch structured connection selection | Only matching Provider enabled; model candidates only appear under current connection |
+| Case ID | Setup                                          | Action                                         | Assertions                                                                            |
+| ------- | ---------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------- |
+| AC-01   | Save Team selection                            | Restart Settings                               | organization/project recovered as-is; no string parse                                 |
+| AC-02   | Account A creates Model                        | Request old Model after switching to Account B | Identity mismatch before network; does not use B credentials                          |
+| AC-03   | Team project P1 Active                         | Switch to P2                                   | Old Model retains P1; new Model uses P2                                               |
+| AC-04   | Personal writes fake Account Access            | Create and request Model                       | Schema does not reject by source; Request Auth clearly fails                          |
+| AC-05   | Valid scoped Account Access                    | Create Off-Peak ticket                         | Not compared to unscoped key; obtains dual credentials normally                       |
+| AC-06   | Connection switching during credential parsing | Parse Off-Peak/MCP                             | Do not mix two-generation JWT/API Key/scope                                           |
+| AC-07   | Remote Environment                             | Sync/refresh Providers                         | Use remote Account Source; do not read local selection for execution                  |
+| AC-08   | Both Individual and Team Providers exist       | Switch structured connection selection         | Only matching Provider enabled; model candidates only appear under current connection |
 
 ## 7. Non-Goals
 

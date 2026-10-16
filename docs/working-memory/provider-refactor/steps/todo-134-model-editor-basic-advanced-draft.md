@@ -6,12 +6,12 @@ Later layout discussion is recorded in [Todo141](todo-141-model-editor-product-u
 
 ## Final Interaction and Scope
 
-| Area | Content |
-| --- | --- |
-| Default body | Model ID, context length, ordered reasoning-level list (edit the supported levels, not the session's selected level) |
-| Advanced settings, collapsed by default | Maximum output Token limit, input types, model capabilities, reasoning-parameter mapping |
-| Fixed bottom-left | Smart-configuration toggle and existing explanation |
-| Fixed bottom-right | Reset (outline button), Save (primary button), Cancel |
+| Area                                    | Content                                                                                                              |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Default body                            | Model ID, context length, ordered reasoning-level list (edit the supported levels, not the session's selected level) |
+| Advanced settings, collapsed by default | Maximum output Token limit, input types, model capabilities, reasoning-parameter mapping                             |
+| Fixed bottom-left                       | Smart-configuration toggle and existing explanation                                                                  |
+| Fixed bottom-right                      | Reset (outline button), Save (primary button), Cancel                                                                |
 
 - Expand Advanced settings inline within the same dialog; do not use the separate secondary page considered in early discussion. Do not repeat basic fields.
 - Add and Edit reuse the same view. Built-in model IDs remain read-only. Reopening the dialog defaults to collapsed Advanced settings.
@@ -31,13 +31,13 @@ Later layout discussion is recorded in [Todo141](todo-141-model-editor-product-u
 6. Some old valid manual files contained MFJS. At the existing file-codec normalization boundary, recognize the old editable or old complete shape and extract current manual fields. Do not change `schemaVersion`, add a global data migration, or pretend unknown/corrupt formats succeeded after stripping fields.
 7. Preserve identity and edit-generation protection for existing recommendations and reset behavior. Add no recommendation cache, second draft, or persisted collapse state.
 
-| Action | Draft | Persistence |
-| --- | --- | --- |
-| Expand/collapse | Preserve all fields | No write |
-| Edit basic/advanced fields | Update the same draft | No write |
-| Reset / switch smart mode | Use existing Hook and async protection | No write |
-| Save | Validate all editable fields; automatically expand and focus errors in advanced fields | Use the existing submission only after validation succeeds |
-| Cancel | Discard this editing session | No write |
+| Action                     | Draft                                                                                  | Persistence                                                |
+| -------------------------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Expand/collapse            | Preserve all fields                                                                    | No write                                                   |
+| Edit basic/advanced fields | Update the same draft                                                                  | No write                                                   |
+| Reset / switch smart mode  | Use existing Hook and async protection                                                 | No write                                                   |
+| Save                       | Validate all editable fields; automatically expand and focus errors in advanced fields | Use the existing submission only after validation succeeds |
+| Cancel                     | Discard this editing session                                                           | No write                                                   |
 
 Use existing structured field identifiers to locate errors; do not parse translated copy. Resubmitting the same error after manually collapsing Advanced must also expand it. Keep existing control locking while saving. Do not change ModelSelection, account synchronization, requests, or in-flight execution to fix presentation.
 
@@ -49,18 +49,18 @@ Use existing structured field identifiers to locate errors; do not parse transla
 - Do not change desktop continuous/mobile replayable paths, shared-host, Registry authority, databases, or real user config.
 - Codegraph was unavailable; use targeted searches for declared provider-settings/model-capabilities surfaces. Architecture context returned legacy/unmanaged; no new module boundary.
 
-| Case | Requirement |
-| --- | --- |
-| M134-01 | Basic fields visible by default, Advanced collapsed; no MFJS/output type; correct footer order |
-| M134-02 | Expand/collapse preserves values and does not write; overlay highlight, checkboxes, and locked text remain |
-| M134-03 | Basic/advanced fields submit together; manual save excludes hidden system fields |
-| M134-04 | Advanced-field error expands and focuses; same error works on repeat submission |
-| M134-05 | Existing protection for reset/mode/close/save and stale recommendation results remains |
-| M134-06 | New model ID editable, built-in edit read-only; cancel does not persist and reopening defaults to collapsed |
-| M134-07 | Desktop/narrow screen, light/dark, Chinese/English, labels/keyboard help, and footer layout |
-| M134-08 | New manual schema rejects hidden fields; can save without MFJS; system MFJS follows rules |
+| Case    | Requirement                                                                                                  |
+| ------- | ------------------------------------------------------------------------------------------------------------ |
+| M134-01 | Basic fields visible by default, Advanced collapsed; no MFJS/output type; correct footer order               |
+| M134-02 | Expand/collapse preserves values and does not write; overlay highlight, checkboxes, and locked text remain   |
+| M134-03 | Basic/advanced fields submit together; manual save excludes hidden system fields                             |
+| M134-04 | Advanced-field error expands and focuses; same error works on repeat submission                              |
+| M134-05 | Existing protection for reset/mode/close/save and stale recommendation results remains                       |
+| M134-06 | New model ID editable, built-in edit read-only; cancel does not persist and reopening defaults to collapsed  |
+| M134-07 | Desktop/narrow screen, light/dark, Chinese/English, labels/keyboard help, and footer layout                  |
+| M134-08 | New manual schema rejects hidden fields; can save without MFJS; system MFJS follows rules                    |
 | M134-09 | Old valid manual shape can be read and survives repeated read/write; unknown/corrupt config remains rejected |
-| M134-10 | Unrelated smart-mode edits retain existing hidden system overlays and create no new hidden overlays |
+| M134-10 | Unrelated smart-mode edits retain existing hidden system overlays and create no new hidden overlays          |
 
 Acceptance uses domain/draft unit tests and actual Chromium interactions with real components/Hooks. Update the existing Electron E2E fields and advanced-expansion steps. A component fixture does not count as full mobile shared-host or production-client acceptance.
 

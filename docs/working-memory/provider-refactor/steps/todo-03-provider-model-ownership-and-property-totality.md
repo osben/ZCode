@@ -78,11 +78,11 @@ interface ProviderConfig {
 
 Normal assembly follows this mental model:
 
-| Config Source                        | Field Normally Maintained | Semantics                                       |
-| ------------------------------------ | ------------------------- | ------------------------------------------------- |
-| ZCode Built-in Provider Config       | `builtinModelIds`         | ZCode declared Built-in models and order          |
-| Account Built-in Provider Config     | `builtinModelIds`         | Overrides Built-in model set when account API provides |
-| Personal Provider Config             | `modelIds`                | User-added, deleted, renamed, and sorted Personal models |
+| Config Source                    | Field Normally Maintained | Semantics                                                |
+| -------------------------------- | ------------------------- | -------------------------------------------------------- |
+| ZCode Built-in Provider Config   | `builtinModelIds`         | ZCode declared Built-in models and order                 |
+| Account Built-in Provider Config | `builtinModelIds`         | Overrides Built-in model set when account API provides   |
+| Personal Provider Config         | `modelIds`                | User-added, deleted, renamed, and sorted Personal models |
 
 This is field meaning and code maintenance principle, not a permission system. This task does not establish Source-specific Provider Config types, strict Source
 Schema, cross-layer field rejection logic, or Config Service source permission checks.

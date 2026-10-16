@@ -39,10 +39,10 @@ Delete exactly these two complete Model rules. Aliases with the same names also 
 
 Change the first generic Model rule, `modelMatch: ".*"`:
 
-| Config field | Current value | Approved target |
-| --- | --- | --- |
-| `properties.contextWindow` | `200000` | `1000000` |
-| `optionSpecs.maxOutputTokens.max` | `32000` | `128000` |
+| Config field                      | Current value | Approved target |
+| --------------------------------- | ------------- | --------------- |
+| `properties.contextWindow`        | `200000`      | `1000000`       |
+| `optionSpecs.maxOutputTokens.max` | `32000`       | `128000`        |
 
 - Use these values as the mainstream default baseline per the user's decision.
 - Here, output means the maximum-output limit in Model Config. Do not add a policy that defaults each request to 128000 output Tokens; do not add another request-default layer.

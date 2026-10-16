@@ -22,6 +22,7 @@ fix(web-remote): harden mobile reconnect flow
 
 Will generate:
 
+<!-- prettier-ignore -->
 ```md
 * **web-remote:** harden mobile reconnect flow ([38dd68b](...))
   * add safe home-only services

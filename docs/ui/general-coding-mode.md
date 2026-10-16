@@ -10,17 +10,17 @@ Opening file content from a filename is out of scope: currently, a filename with
 
 In Settings and the avatar menu, list the mode options in this order: “Coding mode → General mode.” Default to Coding mode when there is no saved preference, and retain existing users' choices.
 
-| Scenario | General mode | Coding mode |
-| --- | --- | --- |
-| Command execution and execution groups | Keep summaries and running/failure status; hide commands, output, expansion, and raw-error hover prompts | Display and expand details according to the existing rules |
-| File edits and change groups | Keep file summaries and file entry points; hide expansion, inline Diff, and added/deleted line counts | Keep change details |
-| Conversation status and turn changes | Hide the Git environment section and turn-change summary | Keep Git and change information |
-| Thinking | Keep raw thinking, including code blocks, with existing collapse/expand behavior | Keep the raw displayed text |
-| Code in final responses | Always wrap lines, hide the wrap toggle, and retain Copy | Respect and retain the user's existing line-wrap preference |
-| Automatic context compaction | Use the wording “Optimize conversation” | Keep the existing context-compaction wording |
-| Top-level external open options | File manager only | Installed editors, terminals, and file manager |
-| Creating reviews and terminals | Hide related entry points from launch cards, add menus, command palette, and recently closed items; hide the bottom terminal create button | Keep the existing entry points |
-| Already-open panels | Review and terminal tabs and the bottom terminal remain visible, switchable, usable, and closable; keep the current active tab | Same as General mode |
+| Scenario                               | General mode                                                                                                                               | Coding mode                                                 |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------- |
+| Command execution and execution groups | Keep summaries and running/failure status; hide commands, output, expansion, and raw-error hover prompts                                   | Display and expand details according to the existing rules  |
+| File edits and change groups           | Keep file summaries and file entry points; hide expansion, inline Diff, and added/deleted line counts                                      | Keep change details                                         |
+| Conversation status and turn changes   | Hide the Git environment section and turn-change summary                                                                                   | Keep Git and change information                             |
+| Thinking                               | Keep raw thinking, including code blocks, with existing collapse/expand behavior                                                           | Keep the raw displayed text                                 |
+| Code in final responses                | Always wrap lines, hide the wrap toggle, and retain Copy                                                                                   | Respect and retain the user's existing line-wrap preference |
+| Automatic context compaction           | Use the wording “Optimize conversation”                                                                                                    | Keep the existing context-compaction wording                |
+| Top-level external open options        | File manager only                                                                                                                          | Installed editors, terminals, and file manager              |
+| Creating reviews and terminals         | Hide related entry points from launch cards, add menus, command palette, and recently closed items; hide the bottom terminal create button | Keep the existing entry points                              |
+| Already-open panels                    | Review and terminal tabs and the bottom terminal remain visible, switchable, usable, and closable; keep the current active tab             | Same as General mode                                        |
 
 Mode-based filtering of external open options applies only to the top-level “Open” button and follows existing SSH/WSL/Docker availability constraints. Mode changes must not override saved external-app preferences. Context menus for file links in replies and for the file tree in the sidebar retain all available external apps; do not filter by General/Coding mode.
 

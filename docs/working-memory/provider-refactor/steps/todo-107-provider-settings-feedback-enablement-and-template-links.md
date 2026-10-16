@@ -4,11 +4,11 @@
 
 ## 1. This Round's Todo Overview
 
-| Todo | Scope | Status |
-| --- | --- | --- |
-| [105](./todo-105-account-provider-model-list-trim.md) | Remove GLM-5-Turbo and GLM-5.2 from personal/team Account Provider preset lists | Implemented |
-| [106](./todo-106-mcs-capability-rule-correction.md) | MCS support scope, default Opus 4.8 capability, Start/off-peak MCS and native search, one site rule per URL | Implemented |
-| This Todo | Delete feedback, close button for connection tests, vertical dragging, API Key entry, Provider `enabled`, and unified status indicator | Implemented; see delivery review for verification scope |
+| Todo                                                  | Scope                                                                                                                                  | Status                                                  |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| [105](./todo-105-account-provider-model-list-trim.md) | Remove GLM-5-Turbo and GLM-5.2 from personal/team Account Provider preset lists                                                        | Implemented                                             |
+| [106](./todo-106-mcs-capability-rule-correction.md)   | MCS support scope, default Opus 4.8 capability, Start/off-peak MCS and native search, one site rule per URL                            | Implemented                                             |
+| This Todo                                             | Delete feedback, close button for connection tests, vertical dragging, API Key entry, Provider `enabled`, and unified status indicator | Implemented; see delivery review for verification scope |
 
 For exact requirements of 105 and 106, see their individual documents; do not maintain a duplicate acceptance checklist here. Implement 106 according to the new principle in [Design V2](../design-v2/design.md): “mainstream configuration, official sources first; do not lower default capabilities for outdated third parties.”
 
