@@ -19,6 +19,14 @@ import {
 import { createServiceDescriptor } from "../descriptors.js";
 import type { ModelConnectivityResult } from "@zcode/shared";
 import { createServiceLogger } from "../logger/serviceLogger.js";
+import type {
+  AcpAgentDetectionResult,
+  AcpAgentLoginResult,
+  AcpAgentStatusReport,
+  AcpAgentTestInput,
+  AcpAgentTestResult,
+  ProviderSettingsAcpAgentsBridge,
+} from "./acpAgentsContract.js";
 
 export type {
   ProviderSettingsProviderView,
@@ -68,6 +76,14 @@ export interface IProviderSettingsService {
   testModelConnectivity(
     input: ProviderSettingsConnectivityRequest,
   ): Promise<ModelConnectivityResult>;
+  /** Detect the ACP agent CLIs (opencode, cursor) installed on the host environment. */
+  detectAcpAgents(input?: { readonly refresh?: boolean }): Promise<AcpAgentDetectionResult>;
+  /** Run a full ACP roundtrip (spawn → initialize → session/new → prompt) and return the raw frames. */
+  testAcpAgent(input: AcpAgentTestInput): Promise<AcpAgentTestResult>;
+  /** Best-effort login status for an agent CLI; `supported: false` when unknown. */
+  getAcpAgentStatus(input: { readonly agentId: string }): Promise<AcpAgentStatusReport>;
+  /** Open the user's terminal with the agent's login command. */
+  startAcpAgentLogin(input: { readonly agentId: string }): Promise<AcpAgentLoginResult>;
 }
 
 export const IProviderSettingsService = createServiceDescriptor<IProviderSettingsService>(
@@ -110,6 +126,7 @@ export function createProviderSettingsService(
   facade: ProviderSettingsFacade,
   ensureReady: () => Promise<void> = async () => {},
   testConnectivity?: ProviderSettingsConnectivityTester,
+  acpAgents?: ProviderSettingsAcpAgentsBridge,
 ): IProviderSettingsService {
   return {
     onDidChange: toEvent((listener) => facade.onDidChange(listener)),
@@ -206,6 +223,30 @@ export function createProviderSettingsService(
         modelId: input.modelId,
       });
     },
+    detectAcpAgents: async (input) =>
+      acpAgents
+        ? acpAgents.detect(input)
+        : { supported: false, agents: [], detectedAt: Date.now() },
+    testAcpAgent: async (input) =>
+      acpAgents
+        ? acpAgents.test(input)
+        : {
+            ok: false,
+            error: { message: "ACP agents are not supported in this environment" },
+            frames: [],
+            framesDropped: 0,
+            durationMs: 0,
+          },
+    getAcpAgentStatus: async (input) =>
+      acpAgents ? acpAgents.status(input) : { supported: false },
+    startAcpAgentLogin: async (input) =>
+      acpAgents
+        ? acpAgents.startLogin(input)
+        : {
+            opened: false,
+            command: "",
+            error: "ACP agents are not supported in this environment",
+          },
   };
 }
 
