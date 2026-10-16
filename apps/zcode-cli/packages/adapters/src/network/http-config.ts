@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { rootCertificates } from "node:tls";
 import {
   ZCODE_AGENT_CA_CERT_ENV_KEY,
   ZCODE_HTTP_PROXY_ENV_KEY,
@@ -126,12 +127,48 @@ export function resolveTlsCaCertFile(options: NetworkTlsOptions): string | undef
   return undefined;
 }
 
-export function loadTlsCaCertificates(options: NetworkTlsOptions): Buffer | undefined {
+export async function loadTlsCaCertificates(
+  options: NetworkTlsOptions,
+): Promise<Buffer | undefined> {
   const caCertFile = resolveTlsCaCertFile(options);
   if (!caCertFile) {
     return undefined;
   }
-  return readFileSync(caCertFile);
+  const customCa = await readFile(caCertFile);
+  // Explicit tls.ca replaces Node's public roots, so custom trust must include them.
+  return Buffer.concat([Buffer.from(`${rootCertificates.join("\n")}\n`), customCa]);
+}
+
+export function createTlsCaLoader(options: NetworkTlsOptions) {
+  let cached: Promise<Buffer | undefined> | undefined;
+  return (signal?: AbortSignal | null): Promise<Buffer | undefined> => {
+    signal?.throwIfAborted();
+    const loading = cached ??= loadTlsCaCertificates(options).catch((error) => {
+      cached = undefined;
+      throw error;
+    });
+    if (!signal) return loading;
+
+    // A caller can stop waiting without aborting the read shared by other requests.
+    return new Promise((resolve, reject) => {
+      const onAbort = () => {
+        signal.removeEventListener("abort", onAbort);
+        reject(signal.reason);
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      if (signal.aborted) onAbort();
+      loading.then(
+        (certificates) => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(certificates);
+        },
+        (error) => {
+          signal.removeEventListener("abort", onAbort);
+          reject(error);
+        },
+      );
+    });
+  };
 }
 
 function readExplicitNoProxyValue(options: NetworkProxyOptions): string | undefined {
