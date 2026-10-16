@@ -19,7 +19,7 @@ When adding a new trend chart, do not use `started_at` directly as the overview 
 
 Currently three dashboards are maintained within the Base:
 
-- `E2E Test Quality Dashboard`: Overview dashboard. The trend component aggregates by `started_day`; throughput and timing-type metrics take `AVERAGE`, and failure-count metrics take `SUM`.
+- `E2E Test Quality Dashboard`: Overview dashboard. The trend component aggregates by `started_day`; pass-rate and timing-type metrics take `AVERAGE`, and failure-count metrics take `SUM`.
 - `E2E Test Quality Dashboard - macOS`: macOS-specific dashboard, uniformly filtered by `platform = darwin`.
 - `E2E Test Quality Dashboard - Windows`: Windows-specific dashboard, uniformly filtered by `platform = win32`.
 
