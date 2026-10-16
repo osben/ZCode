@@ -1,50 +1,39 @@
-# Chat Empty Time Greeting
+# Chat Empty-State Time-based Greeting
 
-新建对话草稿态的空态标题不再展示 workspace 或项目名，而是按用户本地时间显示一条欢迎词。该文案用于降低“系统已经创建任务”的误解，也避免把入口语义绑定到具体项目。
+In the draft state for a new conversation, the empty-state heading no longer shows the workspace or project name. Instead, it displays a greeting based on the user's local time. This copy reduces the chance that users think a task has already been created and avoids tying the entry point to a particular project.
 
-## 行为
+## Behavior
 
-- 使用用户设备上的浏览器/renderer 当前本地小时数选择文案，不使用服务端、workspace 或远程主机时区。
-- 时段划分：
-  - `05:00-08:59`：早上
-  - `09:00-11:59`：上午
-  - `12:00-13:59`：中午
-  - `14:00-17:59`：下午
-  - `18:00-22:59`：晚上
-  - `23:00-04:59`：夜深
-- 文案必须走 `packages/ui` 的 i18n locale，不在组件内硬编码用户可见字符串。
-- 标题文案不插入 workspace/project 名称，避免和当前工作区、远程 workspace identity 或手机远控上下文混淆。
-- 中午文案使用“休息一下”语义，避免继续强调推进任务。
-- 下午文案使用“接下来交给助手处理”的轻松语义，不使用“摸鱼”等可能弱化工作场景专业度的网络表达。
-- 夜深文案简洁提醒用户照顾自己，不预设用户已经困倦。
+- Select the copy using the current local hour in the user's device browser/Renderer; do not use the server, workspace, or remote host timezone.
+- Time ranges:
+  - `05:00-08:59`: Early morning
+  - `09:00-11:59`: Morning
+  - `12:00-13:59`: Noon
+  - `14:00-17:59`: Afternoon
+  - `18:00-22:59`: Evening
+  - `23:00-04:59`: Late night
+- Copy must come from the i18n locale in `packages/ui`; do not hard-code user-visible strings in the component.
+- Do not insert workspace/project names in the heading, which could cause confusion with the current workspace, remote `workspaceIdentity`, or mobile remote-control context.
+- The noon greeting should suggest taking a break instead of emphasizing continuing work.
+- The afternoon greeting should have a relaxed tone suggesting that the assistant can take it from here; avoid internet slang such as “slacking off” that could undermine professionalism in a work context.
+- The late-night greeting should briefly remind users to take care of themselves without assuming they are already tired.
 
-## 简体中文文案
+## English Copy
 
-| 时段 | 文案                           |
-| ---- | ------------------------------ |
-| 早上 | 早上好呀，新的一天开始啦       |
-| 上午 | 上午好呀，有什么想让我帮忙的吗 |
-| 中午 | 中午好呀，要不要先休息一下     |
-| 下午 | 下午好呀，接下来交给我吧       |
-| 晚上 | 晚上好呀，今天辛苦啦           |
-| 夜深 | 夜深啦，别忘了照顾好自己哦     |
+Preserve the intent for each time of day and use natural local phrasing rather than translating Chinese particles word for word.
 
-## 英文文案
+| Time period | Copy |
+| --- | --- |
+| Early morning | Morning, ready when you are |
+| Morning | Morning, how can I help? |
+| Noon | Noon break? |
+| Afternoon | Good afternoon! Leave the rest to me. |
+| Evening | Evening, nice work today |
+| Late night | It's late—remember to take care of yourself. |
 
-英文保留相同时段意图，使用自然的本地表达，不逐字翻译中文语气词。
+## Visuals
 
-| 时段          | 文案                                         |
-| ------------- | -------------------------------------------- |
-| Early morning | Morning, ready when you are                  |
-| Morning       | Morning, how can I help?                     |
-| Noon          | Noon break?                                  |
-| Afternoon     | Good afternoon! Leave the rest to me.        |
-| Evening       | Evening, nice work today                     |
-| Late night    | It's late—remember to take care of yourself. |
-
-## 视觉
-
-- 标题使用 UI 默认无衬线字体，不使用 `font-serif`。
-- 桌面端保留原有较大标题层级，手机远控草稿态保留紧凑标题层级。
-- 文案需要兼容中英文长度差异，不依赖项目名拼接或固定宽度。
-- 空态 Logo 在浅色主题继续使用内联线框图形；深色主题使用 `packages/ui/src/assets/Z.svg`，并通过主题类互斥渲染，避免两套图形同时占位或被读屏器识别。浅色线框图形保留底部渐隐遮罩和 `opacity-70`；深色资源自带渐变与透明度，不得再次叠加公共遮罩或透明度。
+- Use the UI's default sans-serif font for the heading; do not use `font-serif`.
+- Keep the existing larger heading hierarchy on desktop and the compact hierarchy in the mobile remote-control draft state.
+- The copy must accommodate length differences between Chinese and English; do not rely on project-name concatenation or a fixed width.
+- For the empty-state logo, continue using the inline outline graphic in light theme and `packages/ui/src/assets/Z.svg` in dark theme. Render them mutually exclusively through theme classes so they do not both occupy space or appear to screen readers. Keep the bottom fade mask and `opacity-70` on the light outline. The dark asset includes its own gradient and opacity; do not apply another shared mask or opacity.

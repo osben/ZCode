@@ -1,67 +1,67 @@
-# Todo 146：无待执行迁移时静默启动
+# Todo146: Silent Startup When No Migration Is Pending
 
-日期：2026-09-15；承接 Todo 145 与用户确认的启动展示。状态：实现与代码复审完成；Electron GUI / 目标平台验收待补。
+Date: 2026-09-15; follows Todo145 and the user-confirmed startup display behavior. Status: implementation and code review complete; Electron GUI/target-platform acceptance remains outstanding.
 
-## 目标与展示合同
+## Goal and Display Contract
 
-- 正常重启且无待执行 migration：原有 Logo → 主界面，全程无标题、说明、计时、文字按钮；不人为延迟。
-- 确认待迁移后：升级本地数据 → 保存更新 → 完成启动 → 主界面。空库用初始化文案，不称升级历史记录。
-- 仅确认迁移需求后等锁才显示等待文字；未确认或无需迁移的等锁保持 Logo。错误始终显示，适用时手动重试；不自动重跑迁移。
-- 跨库准备期间保持初始化/升级总提示；只在 Host 标明最后一个数据库的真实提交阶段显示保存，最后库就绪/服务装配显示完成启动。中间库的提交和维护不提前宣布收尾。
-- 展示一旦由本次迁移需求触发，保留至本次启动结束；跨数据库、维护、服务装配不倒退为升级。刷新从同代 Host 快照恢复，新 attempt 重置事实。
+- Normal restart with no pending migration: existing Logo → main window. No title, explanation, timer, or text button; do not add an artificial delay.
+- After confirming a migration is pending: “Updating local data” → “Saving update” → “Finishing startup” → main window. Use initialization copy for an empty database; do not call it historical-record upgrade.
+- Show lock-wait copy only after migration need is confirmed and the process is waiting for a lock. Continue showing Logo while waiting on a lock before confirming migration or when no migration is needed. Always show errors; provide manual retry when applicable. Do not rerun migrations automatically.
+- During cross-database preparation, keep the overall initialization/upgrade notice. Show “Saving” only during the real commit phase of the last database, as marked by the Host. Show “Finishing startup” only when the last database is ready or services are being assembled. Do not announce completion during an intermediate database commit or maintenance.
+- Once migration-triggered progress is displayed, retain it until this startup finishes; do not revert to Upgrade during cross-database work, maintenance, or service assembly. On refresh, restore from the same-generation Host snapshot. A new attempt resets the facts.
 
 ```text
-SQLite 执行端检查账本 → Host 聚合本次迁移事实 → Renderer 派生静默/迁移/错误
-                                ↓
-                          同源 ARMS 事实
-无待执行项 → 静默维护/服务装配 → 同代 ready + port → 主界面
-有待执行项 → 显示提示/拿锁后复查 → 原 SQL/COMMIT → 维护/服务装配 → 主界面
+SQLite executor checks ledger → Host aggregates migration facts for this attempt → Renderer derives silent/migration/error
+                                      ↓
+                               same-source ARMS facts
+No pending work → silent maintenance/service assembly → same-generation ready + port → main window
+Pending work → show notice/wait for lock/recheck → existing SQL/COMMIT → maintenance/service assembly → main window
 ```
 
-## 实现边界
+## Implementation Boundaries
 
-- 保留现有全局 phase；维护独立为 maintaining。新增结构化 migration 事实：kind（none/initialize/upgrade）、实际执行数量、已提交数量；字段未知时不推断无需迁移。
-- 迁移执行端在拿锁前读取账本作展示预检；遇 BUSY 保持未知并沿既有等锁路径等待。拿锁后再次读真实账本再执行。预检不授权执行，不改变冻结 SQL、checksum、迁移 ID、单库事务边界。
-- Host 按内部数据库 ID 聚合：需求 kind 在一次 attempt 内保持，执行/提交数量按每库最新快照求和，不因重复阶段通知累计；服务装配、失败和刷新保留事实。重试清空上次事实。
-- CLI 新事实为可选协议字段，旧通知仍可解析；不向旧远端发送新的存储专用控制命令。手机仍 shared-host，desktop-continuous 与 web-remote-replayable 不变。
-- 同一 Host attempt 内按 CLI 报告、规范化的真实数据库路径复用成功准备；只有成功关闭并退出的 Worker 可登记。失败、重试、新 Host 都不复用旧完成集合。重复路径在专用握手回复 reuse 后不再打开/迁移，仍需退出确认；不承诺完全消除 CLI bundle 启动开销。
-- 正常启动不挂计时器/正文，RootStartupLoading 复用 Logo 与主题；中文英文同步。错误页面保持恢复能力。
-- ARMS 保留总准备耗时和既定磁盘统计范围，新增迁移种类及实际执行/提交数量，区分无迁移和其他进程已完成。不增加周期网络请求或磁盘扫描。
-- 不通过永久 migrated 标记跳过数据库检查，不移除原有维护，不改变 SQLite 锁策略；不声称没有迁移即零 IO 或保证毫秒启动。
+- Keep the existing global phase; make maintenance a separate `maintaining` phase. Add structured migration facts: kind (`none`/`initialize`/`upgrade`), actual execution count, and committed count. If the fields are unknown, do not infer that migration is unnecessary.
+- Before acquiring the lock, the migration executor reads the ledger as a display preflight. On BUSY, retain “unknown” and use the existing lock-wait path. After lock acquisition, read the real ledger again before execution. Preflight does not authorize execution and must not change frozen SQL, checksums, migration IDs, or the per-database transaction boundary.
+- Host aggregates by internal database ID. Keep the required migration kind stable within one attempt. Sum execution/commit counts from the latest snapshot per database; do not accumulate duplicate phase notifications. Preserve facts through service assembly, failure, and refresh. A retry clears previous facts.
+- New CLI facts are optional protocol fields; old notifications remain parseable. Do not send new storage-specific control commands to older remote hosts. Mobile remains on shared-host; desktop-continuous and web-remote-replayable remain unchanged.
+- Within one Host attempt, reuse successful preparation for the same CLI-reported, normalized real database path. Register only Workers that completed successfully, closed, and exited. Failed attempts, retries, and new Hosts do not reuse old completion sets. After the dedicated handshake says `reuse`, a duplicate path is not reopened/migrated but still requires exit confirmation. Do not promise to eliminate all CLI bundle startup overhead.
+- Normal startup mounts no timer or body copy. `RootStartupLoading` reuses Logo and theme; keep Chinese/English synchronized. Error pages retain recovery actions.
+- ARMS retains total preparation duration and the established disk-statistics scope; add migration type and actual execution/commit counts to distinguish no migration from work completed by another process. Add no periodic network requests or disk scans.
+- Do not skip database checks with a permanent migrated marker; do not remove existing maintenance or change SQLite lock policy. Do not claim no migration means zero I/O or guarantees millisecond startup.
 
-## 执行清单
+## Execution Checklist
 
-- [x] 更新 spec、catalog、coverage matrix。
-- [x] 测试先行：无迁移重启、初始化、升级、锁竞争、回滚提交事实、Host 聚合/刷新/重试、同库复用、无文字和错误展示、ARMS。
-- [x] 执行端及严格协议新增事实；维护状态独立。
-- [x] Host 聚合与本次成功路径复用。
-- [x] 静默 UI、按事实显示迁移、双语言及遥测。
-- [x] 类型检查、lint、架构门禁、冻结迁移回归、构建、隔离运行探针、开发后复审。
-- [ ] Electron GUI / 目标平台验收：E2E 已更新并执行，但创建会话前环境失败，不能计通过。
-- [x] 记录结果并提交；GUI 环境失败如实记录，不晋级 pending、不声称通过。
+- [x] Update the spec, catalog, and coverage matrix.
+- [x] Test first: restart without migration, initialization, upgrade, lock competition, rollback of commit facts, Host aggregation/refresh/retry, same-database reuse, no-text and error display, ARMS.
+- [x] Add executor-side structured facts and strict protocol support; keep maintenance state separate.
+- [x] Host aggregation and reuse on successful preparation.
+- [x] Silent UI, fact-driven migration display, both locales, and telemetry.
+- [x] Typecheck, lint, architecture gate, frozen-migration regression, builds, isolated runtime probes, and post-implementation review.
+- [ ] Electron GUI/target-platform acceptance: E2E was updated and executed, but the environment failed before session creation; this does not count as passed.
+- [x] Record results and commit. Report the GUI environment failure honestly; do not promote a pending test or claim success.
 
-## 验收用例
+## Acceptance Cases
 
-| ID | 场景 | 断言 |
+| ID | Scenario | Assertion |
 | --- | --- | --- |
-| SILENTDB-01 | 已完成迁移，重启并持有写锁 | Logo 可见、无任何正文/按钮，Root 不提前挂载；释放后进入 |
-| SILENTDB-02 | 空库/旧库 | 初始化/升级区分；只在需求确认后显示；ready 在 COMMIT/关闭之后 |
-| SILENTDB-03 | 对方持锁并完成剩余迁移 | 本连接不重跑；需求曾存在，执行/提交为 0 |
-| SILENTDB-04 | SQL 中途失败 | 显示错误；实际执行计数可非零、已提交为 0；手动重试新 attempt |
-| SILENTDB-05 | 多库混合及 reload | 仅一个库需升级也能显示，维护/下一个库不会倒序提示；同代快照恢复 |
-| SILENTDB-06 | 同一实际会话库、不同 cwd | 仅首次成功执行准备；相对路径指向不同库不合并；失败不复用 |
-| SILENTDB-07 | ARMS | kind/执行/提交与 Host 同源；原有总耗时和磁盘统计保留 |
-| SILENTDB-08 | 中英文与主题 | 正常启动无可见文字；错误和迁移文案可见且对应真实事实 |
+| SILENTDB-01 | Migration complete; restart while holding a write lock | Logo visible with no body text/buttons; Root is not mounted early; enter after release |
+| SILENTDB-02 | Empty/old database | Distinguish initialize/upgrade; show only after migration need is confirmed; ready only after COMMIT/close |
+| SILENTDB-03 | Another process holds the lock and completes remaining migration | This connection does not rerun it; migration need existed, execution/commit counts are 0 |
+| SILENTDB-04 | SQL fails midway | Show error; execution count may be nonzero, committed count is 0; manual retry starts a new attempt |
+| SILENTDB-05 | Mixed databases and reload | Show when only one database needs upgrade; do not reverse the notice during maintenance/next database; restore same-generation snapshot |
+| SILENTDB-06 | Same real session database, different cwd | Prepare only on first success; different databases reached through relative paths do not merge; failure is not reused |
+| SILENTDB-07 | ARMS | Kind/execution/commit facts share Host source; retain existing total duration and disk statistics |
+| SILENTDB-08 | Chinese/English and themes | Normal startup has no visible text; error/migration copy appears only for corresponding real facts |
 
-E2E 继续使用 conversation-session-database-startup pending spec；无真实用户 DB、无 20 GB 性能测试。
+Continue using the conversation-session-database-startup pending spec for E2E. No real user DB and no 20 GB performance test.
 
-## 实施与验证记录
+## Implementation and Verification Record
 
-- 应用侧最终集中回归 11 文件 144 项通过；随后增加预检前后重复等锁回归，tasks 准备 6 项通过。早先包含 relay、磁盘、服务等待的扩展回归 12 文件 54 项通过，Repo 扩展回归 4 文件 110 项通过。
-- CLI 异步迁移与 session-store 回归 2 文件 52 项通过；冻结 SQL 与崩溃恢复 2 文件 7 项通过。只改变预检/通知；任务库迁移定义与会话库全部迁移 SQL 相对 HEAD 保持原文，checksum 计算和锁内账本复查保留。
-- 根 typecheck、lint（45 warnings / 0 errors）、architecture（0 violations）；desktop E2E 类型检查；CLI adapters/bootstrap 的 tsc 构建通过。桌面 tsup、Vite 与 CLI bundle 构建通过。
-- 真实内置 Worker 隔离探针：空任务库 3/3、空会话库 22/22；再次打开均 none + 0/0、账本不变；reuse 只发路径/完成帧。未触碰用户数据库，不做 20 GB 性能测试。
-- React 实际挂载测试：静默期间无正文、无计时器；确认迁移后开启计时器；失败清理计时器，重试清空显示。多库中间提交/维护不显示全局保存/收尾。
-- 复审修正：成功 COMMIT 立即发布已提交事实，后续关闭失败不把提交数丢为 0；预检前后每个拿锁阶段独立发布等待，未知等待不会吞掉确认迁移后的提示；异步 realpath 完成时检查 Worker 是否已退出，避免迟到写回。
-- E2E 用例已更新（静默锁等待、刷新、Host 重建、释放锁后 DOM 全程无文字），执行在创建浏览器会话前失败：`session not created: Chrome instance exited`。报告：`packages/desktop/.e2e-artifacts/desktop-e2e-20260915073633586-p297237-e0c4161e03b58901/summary.json`。pending 不晋级；Windows/macOS、手机远控、ARMS 后台入库尚未实测。
-- 日志：本机 `/tmp/zcode-silent-startup-*.log`。静默仅是展示合同，数据库检查/原维护仍会执行；缓存限同次成功准备，不提供跨启动永久跳过。迁移总耗时/内存不作下降承诺，磁盘采样频率不变。
+- Final app regression passed 144 cases across 11 files. After adding repeated lock contention around preflight, six task-preparation cases passed. Earlier expanded regression for relay, disk, and service waiting passed 54 cases across 12 files; repository expansion passed 110 cases across four files.
+- CLI async-migration and session-store regressions passed 52 cases across two files; frozen SQL and crash recovery passed seven across two files. Only preflight/notifications changed; task-database migration definitions and all session-database migration SQL remained byte-for-byte identical to HEAD. Checksum calculation and locked ledger rechecks remain.
+- Root typecheck passed; lint had 0 errors / 45 warnings; architecture had 0 violations. Desktop E2E typecheck, CLI adapters/bootstrap TypeScript build, desktop tsup/Vite, and CLI bundle build passed.
+- Isolated real built-in Worker probes: empty task DB 3/3, empty session DB 22/22. Reopening each reported `none + 0/0`, with ledger unchanged. Reuse sends only path/completion frames. No user DB was touched; no 20 GB performance test was run.
+- React mounted tests verified no body/timer while silent, timer starts only after migration is confirmed, failure cleans up timer, and retry clears display. Intermediate multi-database commit/maintenance does not show global save/completion.
+- Review fixes: publish committed facts immediately after successful COMMIT so a later close failure does not zero the committed count; publish lock-wait state independently for each preflight and post-lock stage so unknown waits do not hide a confirmed migration notice; check Worker exit after async `realpath` completes to prevent a late writeback.
+- E2E was updated for silent lock wait, refresh, Host recreation, and a full DOM-without-text check after lock release. It failed before creating a browser session: `session not created: Chrome instance exited`. Report: `packages/desktop/.e2e-artifacts/desktop-e2e-20260915073633586-p297237-e0c4161e03b58901/summary.json`. The pending test was not promoted. Windows/macOS, mobile remote control, and ARMS backend ingestion remain untested.
+- Logs: local `/tmp/zcode-silent-startup-*.log`. Silence is a display contract only: database checks and existing maintenance still run. Cache reuse is limited to successful preparation in the same attempt; it does not permanently skip checks across restarts. No decrease in total migration time or memory is promised; disk-sampling frequency is unchanged.

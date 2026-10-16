@@ -1,26 +1,25 @@
-# Feature Boundary Graph 可视化
+# Feature Boundary Graph Visualization
 
-## 目标
+## Goal
 
-在 `@zcode/dev-docs` 中提供 `feature-boundary-planner` 语义图的可读视图，替代在对话区域查看大图。页面直接读取
-`.agents/skills/feature-boundary-planner/references/zcode-feature-graph.yaml`，让开发者可以从能力节点追踪 UI 入口、状态 owner、服务、持久化和交付边界。
+Provide a readable view of the `feature-boundary-planner` semantic graph in `@zcode/dev-docs`, replacing the need to inspect a large graph in the conversation area. The page reads `.agents/skills/feature-boundary-planner/references/zcode-feature-graph.yaml` directly, allowing developers to trace capability nodes to UI entry points, state owners, services, persistence, and delivery boundaries.
 
-## 产品边界
+## Product Boundaries
 
-- 图谱以 YAML 为唯一数据源；页面构建时解析 YAML，不维护第二份手写节点关系数据。
-- 默认展示完整语义图，支持按关键词定位节点、按关系等级收窄连线，并保留画布缩放、平移和适配视图。
-- 选中节点后只突出一阶邻居，并在详情栏展示节点类型、ID、别名、文档、代码种子、不变量和直接关系。
-- YAML 中引用但未在 `nodes` 声明的端点以“未声明端点”显示，不自动补写产品语义。
-- 页面只读，不修改 YAML，也不把静态可达性解释成新的产品依赖。
+- YAML is the graph's single source of truth. Parse YAML at page-build time; do not maintain a second hand-authored set of node relationships.
+- Show the complete semantic graph by default. Support finding nodes by keyword, narrowing edges by relationship level, and zooming, panning, and fitting the canvas to the view.
+- After a node is selected, highlight only its first-degree neighbors and show the node type, ID, aliases, documentation, code seeds, invariants, and direct relationships in the detail panel.
+- Display endpoints referenced in YAML but not declared in `nodes` as “undeclared endpoints”; do not automatically invent product semantics for them.
+- The page is read-only: it must not edit YAML or interpret static reachability as a new product dependency.
 
-## 实现约束
+## Implementation Constraints
 
-- 使用已有 `@xyflow/react` 和 dev-docs 的主题 token，兼容浅色/深色主题与窄屏布局。
-- 图谱加载失败时显示明确错误状态；布局在后台计算，首屏显示加载状态。
-- 节点和详情交互必须支持键盘操作；选中状态通过 `aria-live` 暴露。
-- 关系与节点类型使用稳定的颜色/文字组合，不能只依赖颜色传达含义。
+- Use the existing `@xyflow/react` and dev-docs theme tokens, supporting light/dark themes and narrow layouts.
+- If graph loading fails, show an explicit error state. Compute layout in the background and show a loading state on first render.
+- Node and detail interactions must support keyboard input; expose selection state through `aria-live`.
+- Use stable color/text combinations for relationships and node types; never communicate meaning through color alone.
 
-## 验证证据
+## Verification Evidence
 
-- 单元测试校验 YAML 解析后的节点/边计数、未声明端点保留和直接邻居计算。
-- `@zcode/dev-docs` 的 typecheck、lint、unit test 和 production build 必须通过。
+- Unit tests validate the number of nodes/edges after YAML parsing, preservation of undeclared endpoints, and direct-neighbor calculation.
+- `@zcode/dev-docs` typecheck, lint, unit tests, and production build must pass.

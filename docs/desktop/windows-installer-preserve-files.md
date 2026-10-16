@@ -1,30 +1,30 @@
-# Windows 更新：安装目录文件保留规范
+# Windows Updates: Preserve Files in the Installation Directory
 
-## 目标
+## Goal
 
-managed 覆盖更新只清理由 ZCode 发行包声明拥有的文件，安装目录中用户或其他程序放置的无关文件必须保留。安装器不得再以 `RMDir /r $INSTDIR` 作为该更新路径的清理策略；无 manifest 的历史升级不在本规范保证范围内。
+Managed in-place updates may remove only files declared as owned by the ZCode release package. Unrelated files placed in the installation directory by users or other programs must be preserved. The installer must not use `RMDir /r $INSTDIR` to clean up this update path. This specification does not guarantee preservation for legacy upgrades without a manifest.
 
-## 所有权清单
+## Ownership Manifest
 
-- 打包阶段在 Windows 应用输出目录根部生成 `.zcode-install-manifest`，每行一个相对文件路径（反斜杠分隔、UTF-8、以换行结束）。清单只包含发行包实际携带的文件。
-- 清单文件随应用包一起安装，供下一次更新时的旧卸载器读取；清单本身也属于 ZCode 所有文件。
-- `customRemoveFiles` 仅按清单删除文件，不删除安装目录根目录或任意未列出的文件/目录。删除失败立即终止旧卸载器并保留未处理的文件，交由安装器报告失败。
-- 清单路径缺失或无法读取时采用迁移安全策略：当前卸载器不删除任何安装目录文件，继续安装并保留旧版本残留。注意：首次从没有清单的旧版本升级仍会先运行旧卸载器；旧卸载器可能递归删除整个目录，本规范暂不承诺该路径的无关文件保留，需后续单独实现可回滚的 legacy 迁移。
-- 清单由打包流程生成而非用户输入。实现仍拒绝绝对路径和 `..` 路径，避免恶意或损坏清单越界删除。
+- During packaging, generate `.zcode-install-manifest` at the root of the Windows app output directory. It contains one relative file path per line, uses backslashes, is UTF-8, and ends with a newline. The manifest lists only files actually included in the release package.
+- Install the manifest with the app package so the old uninstaller can read it during the next update. The manifest itself is also a ZCode-owned file.
+- `customRemoveFiles` deletes files listed in the manifest only; it must not remove the installation directory root or any unlisted files/directories. On deletion failure, immediately stop the old uninstaller and preserve remaining files for the installer to report the failure.
+- If the manifest is missing or unreadable, use a migration-safe policy: the current uninstaller deletes no files from the installation directory, continues installation, and leaves old-version files in place. Note that an initial upgrade from a version without a manifest still runs the old uninstaller first; that uninstaller may recursively delete the entire directory. This specification does not promise preservation of unrelated files on that path; a separately implemented, rollback-capable legacy migration is required.
+- The packaging process generates the manifest; it is not user input. The implementation must still reject absolute paths and paths containing `..` to prevent a malicious or corrupted manifest from deleting files outside its scope.
 
-## 版本边界
+## Version Boundaries
 
-- manifest 是 ownership cleanup 的能力标记；从首个带 manifest 的版本开始，后续版本之间的覆盖更新属于强保证范围。
-- 首次从没有 manifest 的历史版本升级时，旧卸载器可能仍执行全树清理或返回原生错误文案。本规范不为该路径增加迁移备份、恢复和回滚，用户可以通过卸载重装或手动迁移完成升级。
-- 版本持续前进时，只对新版本之间仍可复现的失败增加保护和诊断，不追求一次性兼容所有历史安装状态。
+- The manifest marks availability of ownership-based cleanup. In-place updates between versions are covered by the strong guarantee starting with the first version that includes a manifest.
+- During the first upgrade from a legacy version without a manifest, the old uninstaller may still clean up the entire tree or return a native error message. This specification adds no migration backup, recovery, or rollback for that path; users can upgrade by uninstalling and reinstalling or manually migrating files.
+- As versions advance, add protection and diagnostics only for failures that remain reproducible between new versions. Do not attempt one-time compatibility with every historical installation state.
 
-## 兼容和边界
+## Compatibility and Boundaries
 
-- 普通卸载（无 `--updated`）继续由 electron-builder 默认流程处理；本规范只改变覆盖更新的清理阶段。
-- 安装目录之外的数据目录（例如 `%USERPROFILE%\.zcode`）不在清单范围内，也不会被更新清理。
-- 清单只记录文件，不主动删除空目录，因此目录中无关文件和目录结构均保留。
+- Ordinary uninstallation (without `--updated`) continues to use electron-builder's default flow; this specification changes only the cleanup phase for in-place updates.
+- Data directories outside the installation directory (for example, `%USERPROFILE%\.zcode`) are outside the manifest and are not cleaned up during updates.
+- The manifest lists files only and does not actively delete empty directories, so unrelated files and directory structures remain intact.
 
-## 验证要求
+## Verification Requirements
 
-- NSIS 隔离夹具验证：带清单时列出的旧应用文件被删除、未列出的 `user-data.txt` 保留；新卸载器清单缺失时所有旧文件保留；删除被 Windows 文件句柄阻断时返回非零并写入 `cleanup-failed` 与数字 PID。旧卸载器的 legacy 递归清理不在本阶段覆盖范围内。
-- 夹具使用 electron-builder 对应的真实 NSIS 编译器；不写入真实安装目录、桌面、开始菜单或产品注册表。
+- An isolated NSIS fixture must verify: listed old app files are deleted when a manifest is present and unlisted `user-data.txt` is preserved; all old files are preserved when the new uninstaller cannot find a manifest; and if a Windows file handle blocks deletion, the process returns nonzero and writes `cleanup-failed` with a numeric PID. Legacy recursive cleanup by the old uninstaller is outside this phase.
+- Use the real NSIS compiler corresponding to electron-builder in the fixture. Do not write to a real installation directory, desktop, Start menu, or product registry.
