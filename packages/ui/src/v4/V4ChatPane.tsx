@@ -36,6 +36,7 @@ export interface V4ChatPaneProps {
   /** Prompt-template telemetry currently covers Desktop only. */
   isDesktop?: boolean;
   readOnly?: boolean;
+  selectionSideChat?: boolean;
   compactForRemoteControl?: boolean;
   /** CLI session ID; null = first send from a draft. */
   sessionId: string | null;
@@ -92,6 +93,7 @@ export function V4ChatPane({
   workspaceIdentity,
   isDesktop = false,
   readOnly = false,
+  selectionSideChat = false,
   compactForRemoteControl = false,
   sessionId,
   openTrigger = "sidebar",
@@ -135,6 +137,7 @@ export function V4ChatPane({
       <SessionPane
         paneId="workspace-main"
         readOnly={readOnly}
+        selectionSideChat={selectionSideChat}
         sessionId={sessionId}
         openTrigger={openTrigger}
         workspacePath={workspacePath}

@@ -19,10 +19,15 @@ export interface SessionSummaryDeriveExtra {
   /** Execution worktree facts from the runtime; drives the sidebar badge and open-in-IDE target. */
   executionWorktree?: { path: string; branchName?: string };
   /**
-   * True when the execution worktree directory was absent (host-side stat at the meta source).
-   * Kept out of `executionWorktree` because that nested wire shape is strict and shared with the
-   * create params; the top-level summary field is the additive cross-version channel.
+   * Sidebar child-conversation facts (spec: sidebar-child-conversation-counts.md §3): true totals
+   * from the store TTL cache plus the capped newest-first list; running flags come from the live
+   * session registry without I/O. Absent when the session has no children.
    */
+  sideChatCount?: number;
+  subagentCount?: number;
+  runningSubagentCount?: number;
+  childSessions?: SessionSummary["childSessions"];
+  /** True when the execution worktree directory was absent on disk at the meta source. */
   executionWorktreeMissing?: boolean;
 }
 
@@ -105,6 +110,12 @@ export function deriveSessionSummary(
     lastActivityAt: extra.lastActivityAt,
     ...(lastAssistantPreview ? { lastAssistantPreview } : {}),
     ...(extra.executionWorktree ? { executionWorktree: extra.executionWorktree } : {}),
+    ...(extra.sideChatCount ? { sideChatCount: extra.sideChatCount } : {}),
+    ...(extra.subagentCount ? { subagentCount: extra.subagentCount } : {}),
+    ...(extra.runningSubagentCount ? { runningSubagentCount: extra.runningSubagentCount } : {}),
+    ...(extra.childSessions && extra.childSessions.length > 0
+      ? { childSessions: extra.childSessions }
+      : {}),
     ...(extra.executionWorktreeMissing ? { executionWorktreeMissing: true } : {}),
     createdAt: extra.createdAt,
   };
@@ -134,6 +145,12 @@ function summariesEqual(a: SessionSummary, b: SessionSummary): boolean {
     // fan-out, and the value is at most two scalar fields.
     a.executionWorktree?.path === b.executionWorktree?.path &&
     a.executionWorktree?.branchName === b.executionWorktree?.branchName &&
+    // Child-conversation facts: normalize absent ≈ 0 the same way, and compare the capped list by
+    // value so a counters-only or list-only change still emits a delta (acceptance #8).
+    (a.sideChatCount ?? 0) === (b.sideChatCount ?? 0) &&
+    (a.subagentCount ?? 0) === (b.subagentCount ?? 0) &&
+    (a.runningSubagentCount ?? 0) === (b.runningSubagentCount ?? 0) &&
+    JSON.stringify(a.childSessions ?? null) === JSON.stringify(b.childSessions ?? null) &&
     // Normalize absent ≈ false so a producer flipping between omitting the flag and false does not
     // emit a no-op delta, while a real health flip (false ↔ true) always produces one.
     (a.executionWorktreeMissing ?? false) === (b.executionWorktreeMissing ?? false) &&
@@ -218,6 +235,30 @@ export class SessionsIndexProjection {
     if (this.summaries.has(summary.sessionId)) return [];
     this.summaries.set(summary.sessionId, summary);
     return [{ op: "session.upserted", session: summary }];
+  }
+
+  /** Update child facts on an existing cold or live row without changing activity or starting a conversation runtime. */
+  updateChildFacts(
+    sessionId: string,
+    facts: Pick<
+      SessionSummary,
+      "sideChatCount" | "subagentCount" | "runningSubagentCount" | "childSessions"
+    >,
+  ): SessionsIndexDelta[] {
+    const prev = this.summaries.get(sessionId);
+    if (!prev) return [];
+    const next = { ...prev };
+    delete next.sideChatCount;
+    delete next.subagentCount;
+    delete next.runningSubagentCount;
+    delete next.childSessions;
+    if (facts.sideChatCount) next.sideChatCount = facts.sideChatCount;
+    if (facts.subagentCount) next.subagentCount = facts.subagentCount;
+    if (facts.runningSubagentCount) next.runningSubagentCount = facts.runningSubagentCount;
+    if (facts.childSessions?.length) next.childSessions = facts.childSessions;
+    if (summariesEqual(prev, next)) return [];
+    this.summaries.set(sessionId, next);
+    return [{ op: "session.upserted", session: next }];
   }
 
   /** Remove a session; return a remove delta if it existed. */

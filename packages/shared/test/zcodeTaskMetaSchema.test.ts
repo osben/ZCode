@@ -21,6 +21,40 @@ describe("zcodeTaskMetaSchema", () => {
     expect(parsed.meta.unreadAt).toBe(12);
   });
 
+  it("会保留 sessions-index child conversation facts in task metadata", () => {
+    const parsed = zcodeSessionFileSchema.parse({
+      meta: {
+        taskId: "task-child-facts",
+        traceId: "trace-child-facts",
+        title: "Child facts",
+        workspacePath: "/tmp/workspace",
+        createdAt: 1,
+        updatedAt: 2,
+        mode: "default",
+        sideChatCount: 1,
+        subagentCount: 2,
+        runningSubagentCount: 1,
+        childSessions: [
+          {
+            sessionId: "child-session",
+            title: "Child session",
+            taskType: "subagent_child",
+            lastActivityAt: 3,
+            running: true,
+          },
+        ],
+      },
+      messages: [],
+    });
+
+    expect(parsed.meta).toMatchObject({
+      sideChatCount: 1,
+      subagentCount: 2,
+      runningSubagentCount: 1,
+      childSessions: [{ sessionId: "child-session", running: true }],
+    });
+  });
+
   it("会保留 zcode target 持久化字段", () => {
     const parsed = zcodeSessionFileSchema.parse({
       meta: {

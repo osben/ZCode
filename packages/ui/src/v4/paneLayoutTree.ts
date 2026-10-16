@@ -64,6 +64,8 @@ export interface PaneBinding {
   readonly sessionId: string | null;
   /** Read-only pane does not render a composer/input; currently used for a child session opened inline from a subagent row. */
   readonly readOnly?: boolean;
+  /** Selection-side-chat panes keep the composer but suppress commands restricted by the Host. */
+  readonly selectionSideChat?: boolean;
   /** Binding restored from persistence but not yet verified by sessions-index for this scope (the marker itself is not persisted). If present, confirmRestoredPaneSession clears it; if the session was deleted, closePane collapses gracefully. */
   readonly restoredUnvalidated?: boolean;
 }
