@@ -23,7 +23,7 @@ The lower half of the Air connectivity test success banner is missing; the model
 
 Under the reproduction conditions of this round, no ordinary CSS layer or the parent container overflow is found to clip the banner in half. This conclusion does not deny the user's screenshot, nor can it completely exclude the layout problem under other timing/device conditions.
 
-"The backdrop-filter and the GPU composite rendering exception" is still only a candidate; there is no evidence comparing the before and after of the failure; claiming the root cause based on this, or directly adding the z-index / deleting the blur as the verified fix, is prohibited.
+"The backdrop-filter and GPU compositing rendering anomaly" is still only a candidate; there is no evidence comparing the before and after of the failure; claiming the root cause based on this, or directly adding the z-index / deleting the blur as the verified fix, is prohibited.
 
 The next step should connect the CDP when it is truly reproduced on the Air, record the banner rect, the composite layer, and the screen shot at the same time, and then do the single variable comparison (such as deleting the blur, disabling the relevant animation) that only affects the memory style. The Air currently has no debugging port; confirmation with the user before restart is required; the task cannot be interrupted without authorization.
 
