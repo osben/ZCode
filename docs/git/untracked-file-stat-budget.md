@@ -4,10 +4,10 @@ Update date: 2026-09-14
 
 ## Reason and Scope
 
-Windows 3.12.1 logs Host multiple time about 2.67 GiB heap external memory peak, accompanying Git refresh.
-Existing `buildUntrackedStats`对所有未跟踪 file 并发 `readFile`，完整加载后才 identify 二进制。
-隔离复现中，256 MiB 二进制 file 使堆 external memory 增加约 256 MiB，最终全部返回 zero 行。
-`git status` 的 512 KiB output limit 只约束 path list，不能约束 file content 大小。
+Windows 3.12.1 logs showed the Host reaching an external-memory peak of about 2.67 GiB during Git refresh.
+Existing `buildUntrackedStats` concurrently calls `readFile` for every untracked file and only identifies binaries after fully loading them.
+In an isolated reproduction, a 256 MiB binary file increased external heap memory by about 256 MiB, while the final result still reported zero lines.
+`git status`'s 512 KiB output limit constrains only the path list, not the size of file contents.
 
 本次修复 Git 状态刷新中的未跟踪文件统计；不调整 Git 命令、已跟踪文件统计或 diff 预览。
 
