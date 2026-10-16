@@ -3,8 +3,8 @@
 > Current implementation facts are consolidated in `zcode-official-server-mcp-auth-spec.md`. This document preserves the phased design and evolution of decisions;
 > it is no longer the direct implementation reference for current authentication headers, scope, quotas, or UI behavior.
 
-> Date: 2026-08-14 (implementation completed 2026-08-15)  
-> Status: Implemented (client side; backend pending, see §12)  
+> Date: 2026-08-14 (implementation completed 2026-08-15)
+> Status: Implemented (client side; backend pending, see §12)
 > Scope: ZCode client/Agent runtime; no UI or official MCP backend changes; do not include fake capabilities in the production release directory
 
 ## 1. Target
