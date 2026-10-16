@@ -248,7 +248,7 @@ export async function readStandaloneAccountProviderConfigSnapshot(
     // Consent gating per account: each signed-in slot is entitled only with stored tokens AND
     // the plan-usage scope; an identity-only account stays visible-but-inert (entitled=false
     // hides it from the regular registry until consent is granted).
-    const accounts = await listSiwcPlanAccounts(credentialStore);
+    const accounts = await listSiwcPlanAccounts(credentialStore).catch(() => []);
     for (const account of accounts) {
       providers = providers.set(
         buildChatGptPlanAccountProviderId(account.accountKey),
