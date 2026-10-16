@@ -55,6 +55,7 @@ export const ConversationPinnedBar = memo(function ConversationPinnedBar({
     <div
       data-testid={TID_V4_PINNED_BAR}
       data-v4-pinned-bar="true"
+      role="group"
       aria-label={intl.formatMessage({ id: "chat.pinnedBar.title" })}
       className={cn(
         "flex shrink-0 items-center gap-1.5 overflow-x-auto px-4 py-1.5 @md/conversation:px-6",
