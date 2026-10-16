@@ -63,6 +63,25 @@ describe("timeouts and cancellation", () => {
     }
   });
 
+  it("settles a cancel that raced ahead of the agent's wait (slow-runner regression)", async () => {
+    const cwd = await createTempDir();
+    const runtime = await startMockRuntime(cwd, "cancel-early");
+    try {
+      const inFlight = runtime.prompt("task");
+      // Give the prompt time to reach the mock, then cancel while it is still
+      // in its pre-wait delay — the exact window that hung on CI runners.
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      const startedAt = Date.now();
+      await runtime.cancel();
+      const response = await inFlight;
+      expect(response.stopReason).toBe("cancelled");
+      expect(Date.now() - startedAt).toBeLessThan(2_500);
+    } finally {
+      await runtime.stop();
+      await cleanupTempDir(cwd);
+    }
+  });
+
   it("fails the prompt with MessageTooLargeError when a frame exceeds the limit", async () => {
     const cwd = await createTempDir();
     const runtime = await startMockRuntime(cwd, "big", {}, { maxFrameBytes: 64 * 1024 });
