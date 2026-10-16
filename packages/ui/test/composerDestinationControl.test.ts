@@ -42,7 +42,7 @@ describe("WorkspaceShellLayout rollback wiring (source contract)", () => {
   const source = readFileSync(
     resolve(process.cwd(), "packages/ui/src/app-shell/WorkspaceShellLayout.tsx"),
     "utf8",
-  );
+  ).replace(/\s+/gu, " ");
 
   it("renders the unified control only when the flag is on; the old pair remains for rollback", () => {
     expect(source).toContain("canRenderGitDestinationControl && destinationControlEnabled ? (");
