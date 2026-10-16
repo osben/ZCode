@@ -37,7 +37,7 @@ Renderer no longer maintains builtin:zapi identity or intranet visibility gate.
 - Current Design, settings documentation, and product documents delete ZAPI entry description; Changelog, historical implementation logs, and archived plans continue as historical evidence;
 - Tests using ZAPI as any Provider ID use neutral test IDs, avoiding tests continuing to imply product support.
 
-General `SystemService.probeIntranet`, intranet dependency download URL, and `INTRANET_MACHINE_HOST` are not ZAPI, continue retained.
+General `SystemService.probeIntranet`, the intranet dependency download URL, and `INTRANET_MACHINE_HOST` are not ZAPI and remain retained.
 
 ## 3. Compatibility Boundaries
 
