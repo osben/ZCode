@@ -339,6 +339,40 @@ describe("订阅与帧调度", () => {
     }
   });
 
+  it("waits for subscribe ACK admission before sending a metadata snapshot", async () => {
+    const host = makeHost();
+    const gateway = makeGateway(host);
+    const log = new EventLog();
+    gateway.ingest("session-1", sessionCreated(log));
+    const subscribe = await gateway.subscribeReserved(subscribeParams());
+
+    host.preparationSeeds.set("session-1", {
+      branchName: "zcode/fresh-otter",
+      targetPath: "/tmp/fresh-otter",
+      baseBranch: "main",
+      status: "preparing",
+    });
+    gateway.notifyPreparedSessionChanged("session-1");
+    await vi.advanceTimersByTimeAsync(CONTINUOUS_WINDOW);
+    expect(host.frames).toEqual([]);
+
+    expect(subscribe.commit()).toBe(true);
+    await vi.advanceTimersByTimeAsync(CONTINUOUS_WINDOW);
+    expect(host.frames.at(-1)?.payload).toMatchObject({
+      kind: "snapshot",
+      snapshot: {
+        meta: {
+          worktreePreparation: {
+            status: "preparing",
+            branchName: "zcode/fresh-otter",
+            targetPath: "/tmp/fresh-otter",
+          },
+        },
+      },
+    });
+    gateway.dispose();
+  });
+
   it("publishes cleared preparation metadata when a prepared session becomes active", async () => {
     const host = makeHost();
     const gateway = makeGateway(host);

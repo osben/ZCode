@@ -151,6 +151,32 @@ describe("分享导入来源种子", () => {
 });
 
 describe("worktree preparation subscriber refresh", () => {
+  it("keeps an outstanding reservation and follows it with the newer metadata snapshot", () => {
+    const publisher = new ConversationTopicPublisher("session-1", "epoch-1");
+    const subscribed = publisher.subscribeReserved({ connectionId: "conn-1" });
+    const initialReservation = subscribed.reservation;
+    expect(initialReservation).not.toBeNull();
+
+    publisher.seedWorktreePreparation({
+      status: "preparing",
+      branchName: "zcode/fresh-otter",
+      targetPath: "/tmp/fresh-otter",
+    });
+    publisher.requestSnapshotForSubscribers();
+
+    expect(publisher.reserveFlush(subscribed.ack.subscriptionId)).toBe(initialReservation);
+    expect(initialReservation?.commit()).toBe(true);
+    const updated = publisher.reserveFlush(subscribed.ack.subscriptionId);
+    expect(updated?.frame.payload.kind).toBe("snapshot");
+    if (updated?.frame.payload.kind === "snapshot") {
+      expect(updated.frame.payload.snapshot.meta.worktreePreparation).toMatchObject({
+        status: "preparing",
+        branchName: "zcode/fresh-otter",
+        targetPath: "/tmp/fresh-otter",
+      });
+    }
+  });
+
   it("sends a refreshed snapshot after host-owned preparation changes", () => {
     const publisher = new ConversationTopicPublisher("session-1", "epoch-1");
     const { ack } = publisher.subscribe({ connectionId: "conn-1" });

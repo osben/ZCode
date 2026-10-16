@@ -113,6 +113,8 @@ interface Subscription {
   sentSeq: number;
   /** Stable logical frame reserved during encoding/writing. */
   inFlight: TopicFrameReservation<ConversationTopicFrame> | null;
+  /** Metadata snapshot requests that arrived after the current frame was reserved. */
+  snapshotRequestGeneration: number;
   nextLogicalFrameOrdinal: number;
 }
 
@@ -339,7 +341,7 @@ export class ConversationTopicPublisher {
       subscription.buffer = [];
       subscription.bufferBytes = 0;
       subscription.resyncRequired = true;
-      subscription.inFlight = null;
+      subscription.snapshotRequestGeneration += 1;
     }
   }
 
@@ -861,6 +863,7 @@ export class ConversationTopicPublisher {
       resyncRequired: false,
       sentSeq: 0,
       inFlight: null,
+      snapshotRequestGeneration: 0,
       nextLogicalFrameOrdinal: 1,
     };
     this.subscriptions.set(subscription.subscriptionId, subscription);
@@ -1167,6 +1170,7 @@ export class ConversationTopicPublisher {
     deliveryKind: TopicFrameDeliveryKind,
   ): TopicFrameReservation<ConversationTopicFrame> {
     let committed = false;
+    const snapshotRequestGeneration = subscription.snapshotRequestGeneration;
     const reservation: TopicFrameReservation<ConversationTopicFrame> = {
       deliveryKind,
       logicalFrameId: `${subscription.subscriptionId}-lf-${this.nextLogicalFrameSerial++}`,
@@ -1182,7 +1186,11 @@ export class ConversationTopicPublisher {
         }
         subscription.sentSeq = frame.toSeq;
         subscription.inFlight = null;
-        if (snapshotRecovery) {
+        if (subscription.snapshotRequestGeneration > snapshotRequestGeneration) {
+          // Metadata may have changed while this frame waited for transport admission. Keep the
+          // current ACK/resync reservation intact, then send a fresh authoritative snapshot.
+          subscription.resyncRequired = true;
+        } else if (snapshotRecovery) {
           // While a snapshot is in flight, resyncRequired stops accepting deltas.
           // If the authoritative watermark advances again, the next reservation must send the latest snapshot.
           subscription.resyncRequired = this.currentSeq > frame.toSeq;
