@@ -646,7 +646,7 @@ function ConversationComposerImpl({
   } | null>(null);
   const reportedWorktreeFailuresRef = useRef(new Set<string>());
   const worktreePipeline = useComposerWorktreePipelineStore((state) =>
-    selectComposerWorktreePipeline(state, workspaceKey),
+    selectComposerWorktreePipeline(state, workspaceKey, sessionId),
   );
   const worktreeIntentActive = useDraftBranchIntentStore((state) =>
     selectWorktreeIntentActive(state, workspaceKey),
@@ -1380,7 +1380,9 @@ function ConversationComposerImpl({
     };
     if (queued.workspaceKey !== workspaceKey) {
       detachQueued();
-      useComposerWorktreePipelineStore.getState().detachQueuedSend(queued.workspaceKey);
+      useComposerWorktreePipelineStore
+        .getState()
+        .detachQueuedSend(queued.workspaceKey, queued.preparedSessionId);
       queued.restore();
       return;
     }
@@ -1436,7 +1438,9 @@ function ConversationComposerImpl({
     if (navigatedAway) {
       pendingWorktreeSendRef.current = null;
       setWorktreeQueued(false);
-      useComposerWorktreePipelineStore.getState().detachQueuedSend(queued.workspaceKey);
+      useComposerWorktreePipelineStore
+        .getState()
+        .detachQueuedSend(queued.workspaceKey, queued.preparedSessionId);
       queued.restore();
       return;
     }
@@ -1444,7 +1448,9 @@ function ConversationComposerImpl({
       return;
     pendingWorktreeSendRef.current = null;
     setWorktreeQueued(false);
-    useComposerWorktreePipelineStore.getState().withdraw(queued.workspaceKey);
+    useComposerWorktreePipelineStore
+      .getState()
+      .withdraw(queued.workspaceKey, queued.preparedSessionId);
     queued.restore();
   }, [draftMode, sessionId, worktreeIntentActive, workspaceKey]);
 
@@ -1456,7 +1462,9 @@ function ConversationComposerImpl({
         const queued = pendingWorktreeSendRef.current;
         pendingWorktreeSendRef.current = null;
         setWorktreeQueued(false);
-        useComposerWorktreePipelineStore.getState().detachQueuedSend(queued.workspaceKey);
+        useComposerWorktreePipelineStore
+          .getState()
+          .detachQueuedSend(queued.workspaceKey, queued.preparedSessionId);
         queued.restore();
       }
     },
@@ -1627,6 +1635,7 @@ function ConversationComposerImpl({
         const pipeline = selectComposerWorktreePipeline(
           useComposerWorktreePipelineStore.getState(),
           workspaceKey,
+          sessionId,
         );
         const currentPreparedSessionId = snapshotRef.current?.meta.worktreePreparation
           ? sessionId
@@ -1913,7 +1922,9 @@ function ConversationComposerImpl({
           }
           if (executionWorktree) {
             // Setup pipeline terminal success: this worktree result is consumed by exactly this session.
-            useComposerWorktreePipelineStore.getState().consume(workspaceKey);
+            useComposerWorktreePipelineStore
+              .getState()
+              .consume(workspaceKey, preparedSessionIdForSend);
           }
           setHeldQueueConfirmation(null);
           // Transfer staged content to the task only after a successful send; on failure, keep it as a retryable draft.
@@ -1994,6 +2005,7 @@ function ConversationComposerImpl({
         const currentPipeline = selectComposerWorktreePipeline(
           useComposerWorktreePipelineStore.getState(),
           workspaceKey,
+          sessionId,
         );
         if (!preparedSessionIdForSend || currentPipeline?.status !== "creating") {
           const begin = await worktreeIntent.beginCreation(trimmed, onPrepareWorktreeSession);

@@ -17,7 +17,8 @@ const sessionPane = readFileSync(
 describe("status panel worktree disclosure", () => {
   it("renders the session's own branch and directory above the parent git widgets", () => {
     expect(panel).toContain('data-status-panel-worktree="true"');
-    expect(panel).toContain("executionWorktree.branchName");
+    expect(panel).toContain("gitSummary.branchName");
+    expect(panel).toContain('intl.formatMessage({ id: "git.head.detached" })');
     expect(panel).toContain("worktreeDirectoryNameOf(executionWorktree.path)");
     // Full path stays available as the tooltip.
     expect(panel).toContain("title={executionWorktree.path}");

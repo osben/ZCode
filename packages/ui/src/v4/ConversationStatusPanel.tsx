@@ -442,8 +442,10 @@ function GitStatusSection({
           >
             <Split className="size-4 shrink-0 rotate-90" aria-hidden="true" />
             <span className="min-w-0 flex-1 truncate">
-              {executionWorktree.branchName ??
-                intl.formatMessage({ id: "destination.worktreeLabel" })}
+              {gitSummary.headRefType === "detached"
+                ? intl.formatMessage({ id: "git.head.detached" })
+                : (gitSummary.branchName ??
+                  intl.formatMessage({ id: "destination.worktreeLabel" }))}
             </span>
             <span className="shrink-0 truncate text-ui-sm opacity-60">
               {worktreeDirectoryNameOf(executionWorktree.path)}

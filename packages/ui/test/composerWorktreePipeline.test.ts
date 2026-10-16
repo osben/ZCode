@@ -40,8 +40,12 @@ function seedCreating(overrides: Record<string, unknown> = {}) {
   });
 }
 
-function currentPipeline() {
-  return selectComposerWorktreePipeline(useComposerWorktreePipelineStore.getState(), WORKSPACE_KEY);
+function currentPipeline(sessionId?: string) {
+  return selectComposerWorktreePipeline(
+    useComposerWorktreePipelineStore.getState(),
+    WORKSPACE_KEY,
+    sessionId,
+  );
 }
 
 beforeEach(() => {
@@ -66,6 +70,30 @@ describe("composerWorktreePipelineStore state machine", () => {
     expect(currentPipeline()).toMatchObject({
       status: "consumed",
       sessionId: "session-prepared-1",
+    });
+  });
+
+  it("ignores a completion from an earlier retry attempt for the same session", () => {
+    const store = useComposerWorktreePipelineStore.getState();
+    const firstAttempt = store.startPipeline(WORKSPACE_KEY, {
+      status: "creating",
+      sessionId: "session-retry",
+      params: PARAMS,
+      createdAt: 1,
+    });
+    const currentAttempt = useComposerWorktreePipelineStore
+      .getState()
+      .startPipeline(WORKSPACE_KEY, {
+        status: "creating",
+        sessionId: "session-retry",
+        params: PARAMS,
+        createdAt: 2,
+      });
+
+    store.markReady(WORKSPACE_KEY, "/dev/stale-worktree", false, "session-retry", firstAttempt);
+    expect(currentPipeline("session-retry")).toMatchObject({
+      status: "creating",
+      attemptId: currentAttempt,
     });
   });
 
@@ -170,6 +198,58 @@ describe("startComposerWorktreePipeline runner", () => {
       params: { ...PARAMS, baseFromHeadDefault: false },
       failureMessage: "Git interrupted",
     });
+  });
+
+  it("keeps concurrent session results isolated when an older preparation is restored", async () => {
+    let resolveCreate: (value: GitWorktreeCreateResult) => void = () => {};
+    createWorktree.mockReturnValue(
+      new Promise<GitWorktreeCreateResult>((resolve) => {
+        resolveCreate = resolve;
+      }),
+    );
+    useComposerWorktreePipelineStore.getState().startPipeline(WORKSPACE_KEY, {
+      status: "creating",
+      sessionId: "session-b",
+      params: PARAMS,
+      createdAt: 2,
+    });
+    const runningB = startComposerWorktreePipeline({
+      gitService,
+      workspaceKey: WORKSPACE_KEY,
+      sessionId: "session-b",
+      params: PARAMS,
+      formatMessage: (id: string) => id,
+    });
+
+    restoreComposerWorktreePipelineFromPreparation({
+      workspaceKey: WORKSPACE_KEY,
+      workspacePath: WORKSPACE_KEY,
+      sessionId: "session-a",
+      preparation: {
+        status: "failed",
+        branchName: "zcode/older-session",
+        targetPath: "/dev/alpha-worktrees/zcode-older-session",
+        failureMessage: "previous attempt failed",
+      },
+    });
+    resolveCreate({
+      ok: true,
+      worktreePath: PARAMS.targetPath,
+      branchName: PARAMS.branchName,
+      issues: [],
+    });
+    await expect(runningB).resolves.toBe("ready");
+
+    expect(currentPipeline("session-a")).toMatchObject({
+      status: "failed",
+      params: { branchName: "zcode/older-session" },
+    });
+    expect(currentPipeline("session-b")).toMatchObject({
+      status: "ready",
+      worktreePath: PARAMS.targetPath,
+      params: { branchName: PARAMS.branchName },
+    });
+    expect(currentPipeline()).toMatchObject({ sessionId: "session-b", status: "ready" });
   });
 
   it("waits for Host identity before starting Git and retains that ID in the pipeline", async () => {

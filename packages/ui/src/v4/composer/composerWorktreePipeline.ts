@@ -3,8 +3,8 @@
  *
  * Wraps the shared executeWorktreeCreation orchestration (request shape, issue→message mapping,
  * WT-04 recovery) and writes the outcome into composerWorktreePipelineStore. Idempotent per
- * workspaceKey: while a creation is in flight, further starts/retries reuse the same promise. The
- * store is the UI-facing state machine; this module owns the async side effects.
+ * workspace and prepared session: starts/retries for that session reuse the same promise. The store
+ * is the UI-facing state machine; this module owns the async side effects.
  */
 import { getErrorMessage } from "@/lib/errorMessage.js";
 import { logger } from "@/logger.js";
@@ -24,15 +24,25 @@ import type {
 } from "@/v4/composer/composerDraftWorktreeIntent.js";
 import {
   useComposerWorktreePipelineStore,
+  selectComposerWorktreePipeline,
   type ComposerWorktreeCreationParams,
 } from "@/store/composerWorktreePipelineStore.js";
 
-const inFlightByWorkspaceKey = new Map<string, Promise<"ready" | "failed">>();
+const inFlightByPipelineKey = new Map<string, Promise<"ready" | "failed">>();
 const beginInFlightByWorkspaceKey = new Map<string, Promise<ComposerWorktreeBeginResult>>();
 
+function pipelineRunKey(workspaceKey: string, sessionId?: string): string {
+  return `${workspaceKey}\0${sessionId ?? "unscoped"}`;
+}
+
 /** Whether a creation attempt is currently running for the workspace (used by the stale reconcile). */
-export function isComposerWorktreePipelineInFlight(workspaceKey: string): boolean {
-  return inFlightByWorkspaceKey.has(workspaceKey);
+export function isComposerWorktreePipelineInFlight(
+  workspaceKey: string,
+  sessionId?: string,
+): boolean {
+  return sessionId
+    ? inFlightByPipelineKey.has(pipelineRunKey(workspaceKey, sessionId))
+    : [...inFlightByPipelineKey.keys()].some((key) => key.startsWith(`${workspaceKey}\0`));
 }
 
 /**
@@ -43,16 +53,24 @@ export function isComposerWorktreePipelineInFlight(workspaceKey: string): boolea
 export function startComposerWorktreePipeline({
   gitService,
   workspaceKey,
+  sessionId,
   params,
   formatMessage,
 }: {
   gitService: WorktreeCreationGitService;
   workspaceKey: string;
+  sessionId?: string;
   params: ComposerWorktreeCreationParams;
   formatMessage: (id: string, values?: Record<string, string>) => string;
 }): Promise<"ready" | "failed"> {
-  const inFlight = inFlightByWorkspaceKey.get(workspaceKey);
+  const runKey = pipelineRunKey(workspaceKey, sessionId);
+  const inFlight = inFlightByPipelineKey.get(runKey);
   if (inFlight) return inFlight;
+  const attemptId = selectComposerWorktreePipeline(
+    useComposerWorktreePipelineStore.getState(),
+    workspaceKey,
+    sessionId,
+  )?.attemptId;
 
   const attempt = (async (): Promise<"ready" | "failed"> => {
     try {
@@ -71,7 +89,7 @@ export function startComposerWorktreePipeline({
           branchName: params.branchName,
           targetPath: outcome.worktreePath,
         });
-        pipelineStore.markReady(workspaceKey, outcome.worktreePath, false);
+        pipelineStore.markReady(workspaceKey, outcome.worktreePath, false, sessionId, attemptId);
         return "ready";
       }
       if (outcome.kind === "existing-worktree") {
@@ -81,7 +99,7 @@ export function startComposerWorktreePipeline({
           branchName: params.branchName,
           targetPath: outcome.worktreePath,
         });
-        pipelineStore.markReady(workspaceKey, outcome.worktreePath, true);
+        pipelineStore.markReady(workspaceKey, outcome.worktreePath, true, sessionId, attemptId);
         return "ready";
       }
       if (outcome.errorDetail !== null) {
@@ -97,7 +115,7 @@ export function startComposerWorktreePipeline({
           issues: outcome.issueCodes,
         });
       }
-      pipelineStore.markFailed(workspaceKey, outcome.message);
+      pipelineStore.markFailed(workspaceKey, outcome.message, sessionId, attemptId);
       return "failed";
     } catch (error) {
       logger.warn("[WorktreePipeline] creation orchestration threw", {
@@ -105,13 +123,15 @@ export function startComposerWorktreePipeline({
         branchName: params.branchName,
         error: getErrorMessage(error),
       });
-      useComposerWorktreePipelineStore.getState().markFailed(workspaceKey, getErrorMessage(error));
+      useComposerWorktreePipelineStore
+        .getState()
+        .markFailed(workspaceKey, getErrorMessage(error), sessionId, attemptId);
       return "failed";
     } finally {
-      inFlightByWorkspaceKey.delete(workspaceKey);
+      inFlightByPipelineKey.delete(runKey);
     }
   })();
-  inFlightByWorkspaceKey.set(workspaceKey, attempt);
+  inFlightByPipelineKey.set(runKey, attempt);
   return attempt;
 }
 
@@ -146,7 +166,10 @@ export function beginWorktreePipelineCreation({
 }): Promise<ComposerWorktreeBeginResult> {
   const inFlight = beginInFlightByWorkspaceKey.get(workspaceKey);
   if (inFlight) return inFlight;
-  const existing = useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey[workspaceKey];
+  const existing = selectComposerWorktreePipeline(
+    useComposerWorktreePipelineStore.getState(),
+    workspaceKey,
+  );
   if (existing?.sessionId && (existing.status === "creating" || existing.status === "ready")) {
     return Promise.resolve({ ok: true, sessionId: existing.sessionId });
   }
@@ -202,6 +225,7 @@ export function beginWorktreePipelineCreation({
     void startComposerWorktreePipeline({
       gitService,
       workspaceKey,
+      sessionId,
       params,
       formatMessage,
     });
@@ -236,25 +260,33 @@ export function restoreComposerWorktreePipelineFromPreparation({
   };
 }): void {
   if (preparation.status === "cancelled") return;
-  const current = useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey[workspaceKey];
-  if (current?.sessionId === sessionId) return;
-  useComposerWorktreePipelineStore.getState().startPipeline(workspaceKey, {
-    status: preparation.status === "preparing" ? "creating" : "failed",
+  const current = selectComposerWorktreePipeline(
+    useComposerWorktreePipelineStore.getState(),
+    workspaceKey,
     sessionId,
-    params: {
-      workspacePath,
-      branchName: preparation.branchName,
-      targetPath: preparation.targetPath,
-      ...(preparation.baseBranch ? { baseBranch: preparation.baseBranch } : {}),
-      baseFromHeadDefault: !preparation.baseBranch,
+  );
+  if (current) return;
+  useComposerWorktreePipelineStore.getState().startPipeline(
+    workspaceKey,
+    {
+      status: preparation.status === "preparing" ? "creating" : "failed",
+      sessionId,
+      params: {
+        workspacePath,
+        branchName: preparation.branchName,
+        targetPath: preparation.targetPath,
+        ...(preparation.baseBranch ? { baseBranch: preparation.baseBranch } : {}),
+        baseFromHeadDefault: !preparation.baseBranch,
+      },
+      createdAt: Date.now(),
+      ...(preparation.status === "failed"
+        ? {
+            failureMessage: preparation.failureMessage ?? "Worktree creation failed",
+          }
+        : {}),
     },
-    createdAt: Date.now(),
-    ...(preparation.status === "failed"
-      ? {
-          failureMessage: preparation.failureMessage ?? "Worktree creation failed",
-        }
-      : {}),
-  });
+    { activate: false },
+  );
 }
 
 /**
@@ -264,14 +296,16 @@ export function restoreComposerWorktreePipelineFromPreparation({
 export function retryComposerWorktreePipeline({
   gitService,
   workspaceKey,
+  sessionId,
   formatMessage,
 }: {
   gitService: WorktreeCreationGitService;
   workspaceKey: string;
+  sessionId?: string;
   formatMessage: (id: string, values?: Record<string, string>) => string;
 }): Promise<"ready" | "failed"> {
   const store = useComposerWorktreePipelineStore.getState();
-  const entry = store.pipelineByWorkspaceKey[workspaceKey];
+  const entry = selectComposerWorktreePipeline(store, workspaceKey, sessionId);
   if (!entry || entry.status !== "failed" || !entry.params) {
     return Promise.resolve("failed");
   }
@@ -286,6 +320,7 @@ export function retryComposerWorktreePipeline({
   return startComposerWorktreePipeline({
     gitService,
     workspaceKey,
+    sessionId: entry.sessionId,
     params: entry.params,
     formatMessage,
   });
@@ -299,33 +334,47 @@ export function retryComposerWorktreePipeline({
 export async function reconcileCreatingComposerWorktreePipeline({
   gitService,
   workspaceKey,
+  sessionId,
   branchName,
   formatMessage,
 }: {
   gitService: WorktreeCreationGitService;
   workspaceKey: string;
+  sessionId?: string;
   branchName: string;
   formatMessage: (id: string, values?: Record<string, string>) => string;
 }): Promise<void> {
-  if (isComposerWorktreePipelineInFlight(workspaceKey)) return;
+  if (isComposerWorktreePipelineInFlight(workspaceKey, sessionId)) return;
   const store = useComposerWorktreePipelineStore.getState();
-  const entry = store.pipelineByWorkspaceKey[workspaceKey];
+  const entry = selectComposerWorktreePipeline(store, workspaceKey, sessionId);
   if (!entry || entry.status !== "creating" || !entry.params) return;
+  const attemptId = entry.attemptId;
+  const ownerSessionId = entry.sessionId;
   try {
     const list = await gitService.listWorktrees({
       workspacePath: entry.params.workspacePath,
     });
     const existing = findWorktreeForBranch(list.worktrees, branchName);
     if (existing) {
-      store.markReady(workspaceKey, existing.path, true);
+      store.markReady(workspaceKey, existing.path, true, ownerSessionId, attemptId);
     } else {
-      store.markFailed(workspaceKey, formatMessage("worktreeSetup.reconcile.staleCreating"));
+      store.markFailed(
+        workspaceKey,
+        formatMessage("worktreeSetup.reconcile.staleCreating"),
+        ownerSessionId,
+        attemptId,
+      );
     }
   } catch (error) {
     logger.warn("[WorktreePipeline] stale-creating reconcile list failed", {
       workspaceKey,
       error: getErrorMessage(error),
     });
-    store.markFailed(workspaceKey, formatMessage("worktreeSetup.reconcile.staleCreating"));
+    store.markFailed(
+      workspaceKey,
+      formatMessage("worktreeSetup.reconcile.staleCreating"),
+      ownerSessionId,
+      attemptId,
+    );
   }
 }

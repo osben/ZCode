@@ -13,7 +13,10 @@ import {
   useDraftBranchIntentStore,
 } from "@/v4/composer/draftBranchIntent.js";
 import { beginWorktreePipelineCreation } from "@/v4/composer/composerWorktreePipeline.js";
-import { useComposerWorktreePipelineStore } from "@/store/composerWorktreePipelineStore.js";
+import {
+  selectComposerWorktreePipeline,
+  useComposerWorktreePipelineStore,
+} from "@/store/composerWorktreePipelineStore.js";
 
 const WORKSPACE_KEY = "/dev/alpha";
 
@@ -273,7 +276,7 @@ describe("beginWorktreePipelineCreation validation (no silent worktree misfires)
     });
     expect(outcome).toEqual({ ok: false });
     expect(createWorktree).not.toHaveBeenCalled();
-    const entry = useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey[KEY];
+    const entry = selectComposerWorktreePipeline(useComposerWorktreePipelineStore.getState(), KEY);
     expect(entry?.status).toBe("failed");
     expect(entry?.failureMessage).toBe("commandCenter.worktree.error.custom-location-invalid");
   });
@@ -306,7 +309,7 @@ describe("beginWorktreePipelineCreation validation (no silent worktree misfires)
       baseFromHeadDefault: false,
     });
     expect(outcome).toEqual({ ok: true, sessionId: "session-1" });
-    const entry = useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey[KEY];
+    const entry = selectComposerWorktreePipeline(useComposerWorktreePipelineStore.getState(), KEY);
     expect(entry).toMatchObject({
       status: "creating",
       params: { branchName: "zcode/sleepy-capybara", baseBranch: "main" },
@@ -319,8 +322,8 @@ describe("beginWorktreePipelineCreation validation (no silent worktree misfires)
       issues: [],
     });
     await new Promise((tick) => setTimeout(tick, 0));
-    expect(useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey[KEY]?.status).toBe(
-      "ready",
-    );
+    expect(
+      selectComposerWorktreePipeline(useComposerWorktreePipelineStore.getState(), KEY)?.status,
+    ).toBe("ready");
   });
 });

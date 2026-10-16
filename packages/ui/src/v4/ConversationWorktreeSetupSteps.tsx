@@ -72,21 +72,25 @@ export function ConversationWorktreeSetupSteps({
     workspaceIdentity,
   });
   const pipelineEntry = useComposerWorktreePipelineStore((state) =>
-    selectComposerWorktreePipeline(state, workspaceKey),
+    selectComposerWorktreePipeline(state, workspaceKey, sessionId),
   );
   const entry = pipelineEntry?.sessionId === sessionId ? pipelineEntry : null;
 
   const settleStaleCreating = useCallback(() => {
     if (!entry || entry.status !== "creating" || !entry.params) return;
-    if (isComposerWorktreePipelineInFlight(workspaceKey)) return;
+    if (isComposerWorktreePipelineInFlight(workspaceKey, sessionId)) return;
     void reconcileCreatingComposerWorktreePipeline({
       gitService: baseServices.gitService,
       workspaceKey,
+      sessionId,
       branchName: entry.params.branchName,
       formatMessage: (id, values) => intl.formatMessage({ id }, values),
     }).then(async () => {
-      const settled =
-        useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey[workspaceKey];
+      const settled = selectComposerWorktreePipeline(
+        useComposerWorktreePipelineStore.getState(),
+        workspaceKey,
+        sessionId,
+      );
       if (settled?.sessionId === sessionId && settled.status === "failed") {
         await onPreparationFailed(sessionId, settled.failureMessage ?? "Worktree creation failed");
       }
@@ -204,19 +208,22 @@ export function ConversationWorktreeSetupSteps({
                         const outcome = await retryComposerWorktreePipeline({
                           gitService: baseServices.gitService,
                           workspaceKey,
+                          sessionId,
                           formatMessage: (id, values) => intl.formatMessage({ id }, values),
                         });
                         if (outcome === "failed") {
                           const failureMessage =
-                            useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey[
-                              workspaceKey
-                            ]?.failureMessage ?? "Worktree creation failed";
+                            selectComposerWorktreePipeline(
+                              useComposerWorktreePipelineStore.getState(),
+                              workspaceKey,
+                              sessionId,
+                            )?.failureMessage ?? "Worktree creation failed";
                           await onPreparationFailed(sessionId, failureMessage);
                         }
                       } catch (error) {
                         useComposerWorktreePipelineStore
                           .getState()
-                          .markFailed(workspaceKey, getErrorMessage(error));
+                          .markFailed(workspaceKey, getErrorMessage(error), sessionId);
                       }
                     })();
                   }}
@@ -227,7 +234,7 @@ export function ConversationWorktreeSetupSteps({
                   variant="outline"
                   size="sm"
                   onClick={() => {
-                    useComposerWorktreePipelineStore.getState().discard(workspaceKey);
+                    useComposerWorktreePipelineStore.getState().discard(workspaceKey, sessionId);
                   }}
                 >
                   {intl.formatMessage({ id: "worktreeSetup.discard" })}

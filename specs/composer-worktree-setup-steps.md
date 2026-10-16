@@ -23,8 +23,10 @@ runtime materialization with the worktree as its initial cwd.
 The CLI Host owns the preparing-session lifecycle and session identity. The session store persists
 the session row and a typed preparation entry using existing session and session-entry storage. The
 V4 gateway projects that authoritative record to the conversation topic and workspace sessions index.
-The renderer owns only the frozen, uncommitted submission and its editor revision snapshot. Git
-creation remains in the existing worktree service flow and keeps its five-second delay unchanged.
+The renderer owns only the frozen, uncommitted submission and its editor revision snapshot. Setup
+pipeline state is scoped by workspace and prepared session; a workspace-level active-session pointer
+serves the draft composer, while existing prepared conversations read their own entry. Git creation
+remains in the existing worktree service flow and keeps its five-second delay unchanged.
 There is exactly one transition that materializes a runtime and admits the frozen first input.
 
 ```text
@@ -46,6 +48,10 @@ Renderer                  V4 Host / session store        Git service       Agent
    |                                | accept first input once  |----------------->|
    |<----- normal session events ---|                         |                  |
 ```
+
+Every asynchronous pipeline completion carries the prepared session and attempt identity it started
+for. Restoring or retrying an older preparation cannot replace another session's active pipeline, and
+a stale completion cannot mutate a newer retry or another prepared session.
 
 The renderer must not create a replacement session, send to a parent-cwd runtime, mutate cwd after
 runtime creation, or own an accepted-input queue. The Host activation operation is idempotent by
@@ -157,6 +163,9 @@ early transcript persistence or a second accepted-input store.
 11. Reload during worktree creation restores the frozen text/editor state as an editable draft on
     the same prepared session; the Host reconciliation settles setup independently and does not
     dispatch the restored draft until the user sends it.
+12. Two prepared sessions in one workspace keep independent pipeline entries: restoring an older
+    failed session while a newer creation is running does not replace it, and only the matching
+    session/attempt can settle its asynchronous result.
 
 ## Validation
 

@@ -28,7 +28,10 @@ import {
   clearV4ComposerDraftWorkspaceTransferRequest,
   consumeV4ComposerDraftWorkspaceTransferRequest,
 } from "@/v4/composer/composerDraftWorkspaceTransfer.js";
-import { useComposerWorktreePipelineStore } from "@/store/composerWorktreePipelineStore.js";
+import {
+  selectComposerWorktreePipeline,
+  useComposerWorktreePipelineStore,
+} from "@/store/composerWorktreePipelineStore.js";
 
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
@@ -298,8 +301,10 @@ describe("ChatEmptyWorktreeTaskToggle intent + setup pipeline", () => {
       baseBranch: "main",
       targetPath: "/dev/alpha-worktrees/zcode-sleepy-capybara",
     });
-    const pipeline =
-      useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey[WORKSPACE_PATH];
+    const pipeline = selectComposerWorktreePipeline(
+      useComposerWorktreePipelineStore.getState(),
+      WORKSPACE_PATH,
+    );
     expect(pipeline).toMatchObject({
       status: "ready",
       worktreePath: "/dev/alpha-worktrees/zcode-sleepy-capybara",
@@ -337,8 +342,10 @@ describe("ChatEmptyWorktreeTaskToggle intent + setup pipeline", () => {
       branchName: "zcode/sleepy-capybara",
       targetPath: "/dev/alpha-worktrees/zcode-sleepy-capybara",
     });
-    const pipeline =
-      useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey[WORKSPACE_PATH];
+    const pipeline = selectComposerWorktreePipeline(
+      useComposerWorktreePipelineStore.getState(),
+      WORKSPACE_PATH,
+    );
     expect(pipeline?.params).toMatchObject({ baseFromHeadDefault: true });
     // Settle the in-flight runner so the module-level promise map does not leak into the next test.
     await act(async () => {});
@@ -358,8 +365,10 @@ describe("ChatEmptyWorktreeTaskToggle intent + setup pipeline", () => {
     await act(async () => {
       await intent.beginCreation("prompt", prepareSession);
     });
-    const pipeline =
-      useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey[WORKSPACE_PATH];
+    const pipeline = selectComposerWorktreePipeline(
+      useComposerWorktreePipelineStore.getState(),
+      WORKSPACE_PATH,
+    );
     expect(pipeline?.status).toBe("failed");
     expect(pipeline?.failureMessage).toBeTruthy();
     expect(utils.intentSlot.current).not.toBeNull();
@@ -395,8 +404,10 @@ describe("ChatEmptyWorktreeTaskToggle intent + setup pipeline", () => {
     await act(async () => {
       await intent.beginCreation("prompt", prepareSession);
     });
-    const pipeline =
-      useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey[WORKSPACE_PATH];
+    const pipeline = selectComposerWorktreePipeline(
+      useComposerWorktreePipelineStore.getState(),
+      WORKSPACE_PATH,
+    );
     expect(pipeline).toMatchObject({
       status: "ready",
       existing: true,
@@ -424,8 +435,10 @@ describe("ChatEmptyWorktreeTaskToggle intent + setup pipeline", () => {
     });
     expect(result).toEqual({ ok: false });
     expect(createWorktree).not.toHaveBeenCalled();
-    const pipeline =
-      useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey[WORKSPACE_PATH];
+    const pipeline = selectComposerWorktreePipeline(
+      useComposerWorktreePipelineStore.getState(),
+      WORKSPACE_PATH,
+    );
     expect(pipeline?.status).toBe("failed");
     expect(pipeline?.failureMessage).toBe("commandCenter.worktree.error.custom-location-invalid");
   });
@@ -473,8 +486,10 @@ describe("ChatEmptyWorktreeTaskToggle intent + setup pipeline", () => {
     expect(result).toEqual({ ok: false });
     expect(mocks.getAppWorktreesDir).not.toHaveBeenCalled();
     expect(createWorktree).not.toHaveBeenCalled();
-    const pipeline =
-      useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey[WORKSPACE_PATH];
+    const pipeline = selectComposerWorktreePipeline(
+      useComposerWorktreePipelineStore.getState(),
+      WORKSPACE_PATH,
+    );
     expect(pipeline?.failureMessage).toBe(
       "commandCenter.worktree.error.global-location-unavailable",
     );
@@ -494,14 +509,16 @@ describe("ChatEmptyWorktreeTaskToggle intent + setup pipeline", () => {
       await intent.beginCreation("prompt", prepareSession);
     });
     expect(
-      useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey[WORKSPACE_PATH]?.status,
+      selectComposerWorktreePipeline(useComposerWorktreePipelineStore.getState(), WORKSPACE_PATH)
+        ?.status,
     ).toBe("creating");
 
     // Uncheck while the git call is in flight: the queued send is withdrawn…
     fireEvent.click(screen.getByRole("checkbox"));
     expect(utils.intentSlot.current).toBeNull();
     expect(
-      useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey[WORKSPACE_PATH]?.orphaned,
+      selectComposerWorktreePipeline(useComposerWorktreePipelineStore.getState(), WORKSPACE_PATH)
+        ?.orphaned,
     ).toBe(true);
     // …but the call finishes and the worktree is left on disk, marked ready+orphaned (reusable).
     await act(async () => {
@@ -513,7 +530,7 @@ describe("ChatEmptyWorktreeTaskToggle intent + setup pipeline", () => {
       });
     });
     expect(
-      useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey[WORKSPACE_PATH],
+      selectComposerWorktreePipeline(useComposerWorktreePipelineStore.getState(), WORKSPACE_PATH),
     ).toMatchObject({ status: "ready", orphaned: true });
   });
 });

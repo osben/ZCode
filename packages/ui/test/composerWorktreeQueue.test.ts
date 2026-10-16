@@ -158,11 +158,11 @@ describe("ConversationComposer worktree setup queue (source contract)", () => {
   });
 
   it("withdraws the queued send on unmount (orphan note; git call finishes)", () => {
-    expect(source).toContain("getState().withdraw(queued.workspaceKey)");
+    expect(source).toContain(".withdraw(queued.workspaceKey, queued.preparedSessionId)");
   });
 
   it("consumes the pipeline exactly on a successful worktree send", () => {
-    const consumeIndex = source.indexOf("getState().consume(workspaceKey);");
+    const consumeIndex = source.indexOf("consume(workspaceKey, preparedSessionIdForSend)");
     const successIndex = source.indexOf("if (executionWorktree) {");
     expect(consumeIndex).toBeGreaterThan(successIndex);
     expect(source).not.toContain("onSendAccepted");
