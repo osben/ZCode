@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { withFileLock } from "@zcode/shared/node";
 import {
   createSharedZCodeCredentialStore,
   createSiwcAccountKey,
@@ -16,6 +17,7 @@ import {
   buildSiwcAccountCredentialKeys,
   buildSiwcAccountProviderAuthSourceKey,
   buildSiwcAccountProviderIdentityKey,
+  buildSiwcAccountRefreshLockFileName,
   SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY,
 } from "@zcode/shared";
 import { readStandaloneAccountProviderConfigSnapshot } from "../src/app/standalone-account-provider-runtime.js";
@@ -396,6 +398,62 @@ describe("ChatGPT plan login (SIWC)", () => {
     expect(after[ACCOUNT_KEYS.clientId]).toBe(ISSUED_CLIENT_ID);
     expect(after[ACCOUNT_KEYS.accessToken]).toBeNull();
     expect(after[ACCOUNT_KEYS.refreshToken]).toBeNull();
+    expect(await listSiwcPlanAccounts(credentialStore)).toHaveLength(0);
+  });
+
+  it("waits for the per-account refresh lock before clearing on logout", async () => {
+    const { credentialStore } = await createWorkspace();
+    await seedAccountSlot(credentialStore, { accountKey: ACCOUNT_KEY, sub: SUB });
+    // Hold the per-account refresh lock the way an in-flight refresh would.
+    let releaseLock!: () => void;
+    const locked = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    const lockHeld = withFileLock(
+      join(dirname(credentialStore.filePath), buildSiwcAccountRefreshLockFileName(ACCOUNT_KEY)),
+      () => locked,
+    );
+    const logoutPromise = logoutChatGptPlan({
+      credentialStore,
+      env: TEST_ENV,
+      tokenClient: createFakeTokenClient({ key: createTestKey(), nonceRef: { value: "" } })
+        .tokenClient,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    // Logout is queued behind the lock: the slot must not be cleared yet.
+    const held = await credentialStore.loadMany([ACCOUNT_KEYS.accessToken]);
+    expect(held[ACCOUNT_KEYS.accessToken]).toBe("siwc-access-1");
+    releaseLock();
+    await lockHeld;
+    const result = await logoutPromise;
+    expect(result.revoked).toBe(true);
+    const after = await credentialStore.loadMany([
+      ACCOUNT_KEYS.accessToken,
+      ACCOUNT_KEYS.refreshToken,
+    ]);
+    expect(after[ACCOUNT_KEYS.accessToken]).toBeNull();
+    expect(after[ACCOUNT_KEYS.refreshToken]).toBeNull();
+    expect(await listSiwcPlanAccounts(credentialStore)).toHaveLength(0);
+  });
+
+  it("reports revoked=false and clears an access-only slot on logout", async () => {
+    const { credentialStore } = await createWorkspace();
+    await seedAccountSlot(credentialStore, { accountKey: ACCOUNT_KEY, sub: SUB });
+    // Access-only registration: no refresh token, so no revocation can be attempted.
+    await credentialStore.delete(ACCOUNT_KEYS.refreshToken);
+    const revoke = { calls: [] as string[] };
+    const result = await logoutChatGptPlan({
+      credentialStore,
+      env: TEST_ENV,
+      tokenClient: createFakeTokenClient({ key: createTestKey(), revoke, nonceRef: { value: "" } })
+        .tokenClient,
+    });
+    expect(result.accountCount).toBe(1);
+    expect(result.revoked).toBe(false);
+    expect(revoke.calls).toHaveLength(0);
+    const after = await credentialStore.loadMany([ACCOUNT_KEYS.clientId, ACCOUNT_KEYS.accessToken]);
+    expect(after[ACCOUNT_KEYS.clientId]).toBe(ISSUED_CLIENT_ID);
+    expect(after[ACCOUNT_KEYS.accessToken]).toBeNull();
     expect(await listSiwcPlanAccounts(credentialStore)).toHaveLength(0);
   });
 

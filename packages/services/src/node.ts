@@ -22,7 +22,10 @@ import {
 } from "@zcode/shared";
 
 // Stable only for this process: revisions are cache keys, and a per-process random HMAC key
-// keeps account identifiers and display names out of logged configRevision values.
+// keeps account identifiers and display names out of logged configRevision values. It keys
+// ONLY the process-local top-level derived `revision`; `zcodeBuiltinRevision`, the cross-process
+// contract carried by account snapshots (`basedOnZCodeBuiltinRevision`), stays raw on every
+// side and never embeds this fingerprint.
 const chatGptPlanRevisionKey = randomBytes(32);
 
 export * from "./voice-dictation/index.js";

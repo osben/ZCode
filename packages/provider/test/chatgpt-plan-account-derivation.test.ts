@@ -147,6 +147,18 @@ describe("deriveChatGptPlanAccountConfigSnapshot", () => {
     expect(renamed.revision).not.toBe(first.revision);
     expect(first.revision).not.toContain(ACCOUNT_A);
     expect(first.revision).not.toContain("work@example.com");
+    // Two processes key their revisionKey with different per-process HMAC keys; the
+    // cross-process contract (`zcodeBuiltinRevision`, carried by account snapshots as
+    // `basedOnZCodeBuiltinRevision`) must not depend on that key.
+    const otherProcess = deriveChatGptPlanAccountConfigSnapshot(base, [
+      {
+        accountKey: ACCOUNT_A,
+        providerName: "work@example.com",
+        revisionKey: "fingerprint-other-process",
+      },
+    ]);
+    expect(otherProcess.zcodeBuiltinRevision).toBe(first.zcodeBuiltinRevision);
+    expect(otherProcess.revision).not.toBe(first.revision);
   });
 
   it("drops the chatgpt family entirely with zero accounts", () => {

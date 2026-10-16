@@ -536,6 +536,71 @@ describe("SiwcAuthService (host side, multi-account)", () => {
     expect(stored[legacy.refreshToken]).toBeUndefined();
   });
 
+  it("waits for an in-flight refresh lock before clearing on logout", async () => {
+    const fixture = await createFixture();
+    await runFullLogin(fixture);
+    await fixture.service.pollLogin();
+    // Hold the per-account refresh lock the way an in-flight refresh would.
+    let releaseLock!: () => void;
+    const locked = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    const lockHeld = withFileLock(
+      join(fixture.dir, `siwc-chatgpt.${ACCOUNT_KEY}.refresh`),
+      () => locked,
+    );
+    const logoutPromise = fixture.service.logout();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    // Logout is queued behind the lock: the slot must not be cleared yet.
+    expect(fixture.credentials.dump()[ACCOUNT_KEYS.accessToken]).toBe("host-access-1");
+    releaseLock();
+    await lockHeld;
+    const result = await logoutPromise;
+    expect(result).toEqual({ accountCount: 1, revoked: true, signedOut: true });
+    expect(fixture.credentials.dump()[ACCOUNT_KEYS.accessToken]).toBeUndefined();
+  });
+
+  it("reports revoked=false and clears an access-only slot on logout", async () => {
+    const fixture = await createFixture();
+    await runFullLogin(fixture);
+    await fixture.service.pollLogin();
+    // Access-only registration: no refresh token, so no revocation can be attempted.
+    fixture.credentials.delete(ACCOUNT_KEYS.refreshToken);
+    const result = await fixture.service.logout();
+    expect(result).toEqual({ accountCount: 1, revoked: false, signedOut: true });
+    const stored = fixture.credentials.dump();
+    expect(stored[ACCOUNT_KEYS.clientId]).toBe(ISSUED_CLIENT_ID);
+    expect(stored[ACCOUNT_KEYS.accessToken]).toBeUndefined();
+    expect((await fixture.service.getStatus()).accounts).toHaveLength(0);
+  });
+
+  it("waits for an in-flight refresh lock before migrating the legacy bundle", async () => {
+    const fixture = await createFixture();
+    const legacy = SIWC_LEGACY_CREDENTIAL_KEYS;
+    fixture.credentials.save(legacy.clientId, ISSUED_CLIENT_ID);
+    fixture.credentials.save(legacy.accessToken, "legacy-access");
+    fixture.credentials.save(legacy.refreshToken, "legacy-refresh");
+    fixture.credentials.save(legacy.userInfo, JSON.stringify({ sub: SUB }));
+    // Hold the destination account's per-account refresh lock the way login/refresh would.
+    let releaseLock!: () => void;
+    const locked = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    const lockHeld = withFileLock(
+      join(fixture.dir, `siwc-chatgpt.${ACCOUNT_KEY}.refresh`),
+      () => locked,
+    );
+    const statusPromise = fixture.service.getStatus();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    // The migration must not copy into the slot while the refresh lock is held.
+    expect(fixture.credentials.dump()[ACCOUNT_KEYS.accessToken]).toBeUndefined();
+    releaseLock();
+    await lockHeld;
+    const status = await statusPromise;
+    expect(status.accounts).toHaveLength(1);
+    expect(fixture.credentials.dump()[ACCOUNT_KEYS.accessToken]).toBe("legacy-access");
+  });
+
   it("resolves a time-valid access token without refresh and rotates near expiry", async () => {
     const fixture = await createFixture();
     fixture.credentials.save(ACCOUNT_KEYS.clientId, ISSUED_CLIENT_ID);

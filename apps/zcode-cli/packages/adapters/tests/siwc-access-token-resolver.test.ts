@@ -2,9 +2,11 @@ import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { withFileLock } from "@zcode/shared/node";
 import {
   buildChatGptPlanAccountProviderId,
   buildSiwcAccountCredentialKeys,
+  buildSiwcAccountRefreshLockFileName,
   SIWC_ACCOUNTS_LOCK_FILE_NAME,
   SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY,
   SIWC_LEGACY_CREDENTIAL_KEYS,
@@ -366,6 +368,37 @@ describe("SIWC access token resolver (per-account)", () => {
     });
     const resolved = await resolver.resolve({ providerId: PROVIDER_ID_1 });
     expect(resolved.apiKey).toBe("access-legacy");
+  });
+
+  it("waits for the per-account refresh lock before migrating into the slot", async () => {
+    const store = await createStore();
+    await store.saveMany({
+      [SIWC_LEGACY_CREDENTIAL_KEYS.clientId]: "oaiapp_legacy",
+      [SIWC_LEGACY_CREDENTIAL_KEYS.accessToken]: "access-legacy",
+      [SIWC_LEGACY_CREDENTIAL_KEYS.refreshToken]: "refresh-legacy",
+      [SIWC_LEGACY_CREDENTIAL_KEYS.userInfo]: JSON.stringify({ sub: SUB_1 }),
+    });
+    // Hold the destination account's per-account refresh lock the way login/refresh would.
+    let releaseLock!: () => void;
+    const locked = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    const lockHeld = withFileLock(
+      join(dirname(store.filePath), buildSiwcAccountRefreshLockFileName(ACCOUNT_KEY_1)),
+      () => locked,
+    );
+    const migration = migrateLegacySiwcCredentials(store);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    // The migration must not copy into the slot while the refresh lock is held.
+    const keys = buildSiwcAccountCredentialKeys(ACCOUNT_KEY_1);
+    const held = await store.loadMany([keys.accessToken]);
+    expect(held[keys.accessToken]).toBeNull();
+    releaseLock();
+    await lockHeld;
+    const records = await migration;
+    expect(records).toHaveLength(1);
+    const migrated = await store.loadMany([keys.accessToken]);
+    expect(migrated[keys.accessToken]).toBe("access-legacy");
   });
 
   it("completes an interrupted migration (partial slot copy, index absent)", async () => {

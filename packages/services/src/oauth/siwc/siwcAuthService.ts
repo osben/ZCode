@@ -290,6 +290,9 @@ export class SiwcAuthService {
   /**
    * Revoke (best effort with backoff), then clear one account's local tokens; the client id
    * is retained and other accounts are untouched. Omitting the key revokes every account.
+   * Each account's read → revoke → clear → remove transaction holds that account's
+   * per-account refresh lock, so a concurrent refresh or login cannot write a rotated token
+   * after the clear.
    */
   async logout(
     accountKey?: string,
@@ -304,33 +307,51 @@ export class SiwcAuthService {
     const tokenClient = createSiwcTokenClient({ fetchFn: this.fetchFn });
     let allRevoked = true;
     for (const record of records) {
-      const keys = buildSiwcAccountCredentialKeys(record.accountKey);
-      const stored = await this.readCredentialStrings(keys.clientId, keys.refreshToken);
-      const clientId = stored[keys.clientId];
-      const refreshToken = stored[keys.refreshToken];
-      if (!clientId || !refreshToken) {
-        // Incomplete slot (a login may persist an access token without a refresh token):
-        // clear whatever token material exists before dropping the record, or
-        // resolveAccessToken could keep serving a token the user signed out of.
-        await this.clearTokenCredentials(record.accountKey);
-        await this.removeAccountRecord(record.accountKey);
-        continue;
-      }
-      let revoked = false;
-      for (let attempt = 0; attempt <= REVOKE_RETRY_DELAYS_MS.length && !revoked; attempt += 1) {
-        try {
-          await tokenClient.revoke({ clientId, refreshToken });
-          revoked = true;
-        } catch (error) {
-          if (error instanceof SiwcRevokeError && (error.httpStatus ?? 0) < 500) break;
-          if (attempt < REVOKE_RETRY_DELAYS_MS.length) {
-            await new Promise((resolve) => setTimeout(resolve, REVOKE_RETRY_DELAYS_MS[attempt]));
+      // Hold the account's per-account refresh lock across read → revoke → clear → remove: a
+      // concurrent refresh or login must not write a rotated token after the clear (live
+      // credentials after sign-out) or race the index removal. Index removal takes the
+      // accounts lock nested, keeping the shared refresh → accounts order.
+      await withFileLock(
+        join(this.configDir, buildSiwcAccountRefreshLockFileName(record.accountKey)),
+        async () => {
+          const keys = buildSiwcAccountCredentialKeys(record.accountKey);
+          const stored = await this.readCredentialStrings(keys.clientId, keys.refreshToken);
+          const clientId = stored[keys.clientId];
+          const refreshToken = stored[keys.refreshToken];
+          if (!clientId || !refreshToken) {
+            // Incomplete slot (a login may persist an access token without a refresh token):
+            // no revocation was attempted, so the aggregate must not report success. Clear
+            // whatever token material exists before dropping the record, or resolveAccessToken
+            // could keep serving a token the user signed out of.
+            allRevoked = false;
+            await this.clearTokenCredentials(record.accountKey);
+            await this.removeAccountRecord(record.accountKey);
+            return;
           }
-        }
-      }
-      if (!revoked) allRevoked = false;
-      await this.clearTokenCredentials(record.accountKey);
-      await this.removeAccountRecord(record.accountKey);
+          let revoked = false;
+          for (
+            let attempt = 0;
+            attempt <= REVOKE_RETRY_DELAYS_MS.length && !revoked;
+            attempt += 1
+          ) {
+            try {
+              await tokenClient.revoke({ clientId, refreshToken });
+              revoked = true;
+            } catch (error) {
+              if (error instanceof SiwcRevokeError && (error.httpStatus ?? 0) < 500) break;
+              if (attempt < REVOKE_RETRY_DELAYS_MS.length) {
+                await new Promise((resolve) =>
+                  setTimeout(resolve, REVOKE_RETRY_DELAYS_MS[attempt]),
+                );
+              }
+            }
+          }
+          if (!revoked) allRevoked = false;
+          await this.clearTokenCredentials(record.accountKey);
+          await this.removeAccountRecord(record.accountKey);
+        },
+        { lockMaxWaitMs: SIWC_REFRESH_LOCK_MAX_WAIT_MS },
+      );
     }
     log.info("ChatGPT plan signed out", {
       accountCount: records.length,
@@ -485,18 +506,23 @@ export class SiwcAuthService {
     // Slot replacement runs under the SAME per-account refresh lock as refreshUnderLock: an
     // in-flight refresh of the previous registration must not interleave (read old pair,
     // then overwrite the freshly saved tokens, or delete the new grant on a terminal error).
+    // The index upsert commits inside the same critical section so slot and index become
+    // visible together: the migration takes the same lock order (refresh → accounts), and an
+    // index record committed after the refresh lock was released could lose the race to it.
     await withFileLock(
       join(this.configDir, buildSiwcAccountRefreshLockFileName(accountKey)),
-      () => this.replaceAccountSlot(accountKey, input),
+      async () => {
+        await this.replaceAccountSlot(accountKey, input);
+        await this.upsertAccountRecord({
+          accountKey,
+          sub: input.claims.sub,
+          email: input.claims.email ?? null,
+          name: input.claims.name ?? null,
+          addedAt: new Date(this.now()).toISOString(),
+        });
+      },
       { lockMaxWaitMs: SIWC_REFRESH_LOCK_MAX_WAIT_MS },
     );
-    await this.upsertAccountRecord({
-      accountKey,
-      sub: input.claims.sub,
-      email: input.claims.email ?? null,
-      name: input.claims.name ?? null,
-      addedAt: new Date(this.now()).toISOString(),
-    });
     return { accountKey, isNewAccount: !existing };
   }
 
@@ -671,9 +697,14 @@ export class SiwcAuthService {
   /**
    * One-time migration of the pre-multi-account flat credentials into the single legacy
    * account's slot. Idempotent; absent legacy keys are a no-op. Runs under the same
-   * cross-process accounts lock as the CLI store, and preserves an already-initialized
-   * destination slot: a delayed second migrator replaying consumed legacy tokens over a
-   * freshly rotated slot would trip refresh_token_reused and invalidate the login.
+   * cross-process locks as the CLI store and preserves an already-initialized destination
+   * slot: a delayed second migrator replaying consumed legacy tokens over a freshly rotated
+   * slot would trip refresh_token_reused and invalidate the login.
+   *
+   * Lock order (shared with the CLI store): the per-account refresh lock FIRST, then the
+   * accounts lock. The migration writes the destination slot, so it must serialize with
+   * login/refresh slot writes; otherwise a login that replaced the slot without its index
+   * record committed yet could be overwritten by the legacy bundle here.
    */
   private async migrateLegacyCredentials(): Promise<void> {
     const legacy = SIWC_LEGACY_CREDENTIAL_KEYS;
@@ -689,7 +720,23 @@ export class SiwcAuthService {
     ) {
       return;
     }
-    await this.withAccountsLock(() => this.migrateLegacyCredentialsLocked());
+    const migrate = () => this.withAccountsLock(() => this.migrateLegacyCredentialsLocked());
+    // Same account-key formula the migration itself uses, so the refresh lock covers the exact
+    // slot the copy would land in. Without a derivable key the migration is a no-op: keep the
+    // accounts-lock-only path.
+    const candidateSub =
+      readUserJsonField(triggers[legacy.userInfo], "sub")?.trim() ||
+      triggers[legacy.clientId]?.trim() ||
+      "";
+    if (!candidateSub) {
+      await migrate();
+      return;
+    }
+    await withFileLock(
+      join(this.configDir, buildSiwcAccountRefreshLockFileName(createSiwcAccountKey(candidateSub))),
+      migrate,
+      { lockMaxWaitMs: SIWC_REFRESH_LOCK_MAX_WAIT_MS },
+    );
   }
 
   private async migrateLegacyCredentialsLocked(): Promise<void> {

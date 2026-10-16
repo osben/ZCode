@@ -5,6 +5,7 @@ import {
   buildSiwcAccountCredentialKeys,
   buildSiwcAccountProviderAuthSourceKey,
   buildSiwcAccountProviderIdentityKey,
+  buildSiwcAccountRefreshLockFileName,
   isChatGptPlanAccountKey,
   SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY,
   SIWC_ACCOUNTS_LOCK_FILE_NAME,
@@ -179,10 +180,15 @@ async function loadLegacyCredentials(store: SiwcAccountStore): Promise<LegacySiw
 /**
  * One-time migration of the pre-multi-account flat credential keys into the signed-in
  * account's per-account slot. Idempotent: absent legacy keys are a no-op. The whole
- * read-copy-write runs under the cross-process accounts lock (the Desktop host migrates
- * the same file), and an already-initialized destination slot is preserved: a delayed
- * second migrator replaying consumed legacy tokens over a freshly rotated slot would
- * otherwise trip refresh_token_reused and invalidate the login.
+ * read-copy-write runs under the cross-process locks (the Desktop host migrates the same
+ * file), and an already-initialized destination slot is preserved: a delayed second
+ * migrator replaying consumed legacy tokens over a freshly rotated slot would otherwise
+ * trip refresh_token_reused and invalidate the login.
+ *
+ * Lock order (shared with the Desktop host): the per-account refresh lock FIRST, then the
+ * accounts lock. The migration writes the destination slot, so it must serialize with
+ * login/refresh slot writes; otherwise a login that replaced the slot without its index
+ * record committed yet could be overwritten by the legacy bundle here.
  */
 export async function migrateLegacySiwcCredentials(
   store: SiwcAccountStore,
@@ -200,7 +206,24 @@ export async function migrateLegacySiwcCredentials(
   ) {
     return readSiwcAccountIndex(store);
   }
-  return withSiwcAccountsLock(store, () => migrateLegacySiwcCredentialsLocked(store));
+  const migrate = () =>
+    withSiwcAccountsLock(store, () => migrateLegacySiwcCredentialsLocked(store));
+  // Same account-key formula the migration itself uses, so the refresh lock covers the exact
+  // slot the copy would land in. Without a derivable key the migration is a no-op: keep the
+  // accounts-lock-only path.
+  const candidateSub =
+    readUserJsonField(triggers[legacyKeys.userInfo], "sub")?.trim() ||
+    triggers[legacyKeys.clientId]?.trim() ||
+    "";
+  if (!candidateSub) return migrate();
+  return withFileLock(
+    join(
+      dirname(store.filePath),
+      buildSiwcAccountRefreshLockFileName(createSiwcAccountKey(candidateSub)),
+    ),
+    migrate,
+    { lockMaxWaitMs: ACCOUNTS_LOCK_MAX_WAIT_MS },
+  );
 }
 
 async function migrateLegacySiwcCredentialsLocked(

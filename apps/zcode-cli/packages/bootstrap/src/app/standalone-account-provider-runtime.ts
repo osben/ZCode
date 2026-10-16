@@ -34,6 +34,9 @@ import {
 
 // Registry revisions are process-local cache keys. A per-process HMAC key keeps account keys
 // and display names out of the revision while preserving stability across this runtime's reads.
+// It keys ONLY the process-local top-level derived `revision`; `zcodeBuiltinRevision`, the
+// cross-process contract carried by account snapshots (`basedOnZCodeBuiltinRevision`), stays
+// raw on every side and never embeds this fingerprint.
 const chatGptPlanRevisionKey = randomBytes(32);
 
 /** Builtin template provider id of the ChatGPT plan (SIWC) account provider family. */
