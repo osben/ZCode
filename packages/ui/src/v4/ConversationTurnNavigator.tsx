@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { PinIcon } from "lucide-react";
 import {
   TID_V4_TURN_NAVIGATOR,
   TID_V4_TURN_NAVIGATOR_ITEM,
@@ -186,6 +187,7 @@ function ConversationTurnNavigatorImpl({
                       data-query-row-id={item.rowId}
                       data-active={active ? "true" : "false"}
                       data-running={item.isRunning ? "true" : "false"}
+                      data-pinned={item.isPinned ? "true" : "false"}
                       data-visual-color-tone={visualState.colorTone}
                       data-visual-scale={String(visualState.scaleX)}
                       data-visual-tone={visualState.tone}
@@ -207,6 +209,9 @@ function ConversationTurnNavigatorImpl({
                           visualState.colorTone === "focus" && "bg-foreground",
                           visualState.colorTone === "muted" &&
                             (showScrollActiveColor ? "bg-foreground" : "bg-foreground-subtlest"),
+                          // Pinned color wins over focus/muted (tailwind-merge keeps the last bg utility);
+                          // proximity scale/opacity still apply on top, keeping pinned bars findable at a glance.
+                          item.isPinned && "bg-pinned-turn",
                         )}
                         style={{
                           opacity: showScrollActiveColor
@@ -227,6 +232,13 @@ function ConversationTurnNavigatorImpl({
                     className="w-80 max-w-[calc(100vw-2rem)] border border-popover-border bg-popover p-3 text-popover-foreground shadow-lg"
                   >
                     <div className="space-y-2">
+                      {item.isPinned ? (
+                        <p className="flex items-center gap-1 text-ui-sm text-foreground-subtle">
+                          {/* Decorative icon; the adjacent text is the accessible label. */}
+                          <PinIcon className="size-3 text-pinned-turn" aria-hidden />
+                          {intl.formatMessage({ id: "chat.turnNavigator.pinnedLabel" })}
+                        </p>
+                      ) : null}
                       <p className="line-clamp-2 whitespace-pre-line text-ui-base font-medium leading-5">
                         {item.userPreview}
                       </p>

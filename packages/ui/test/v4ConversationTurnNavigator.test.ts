@@ -70,13 +70,19 @@ function userInput(
   });
 }
 
-function assistantText(rowId: number, turnId: string, text: string): AssistantTextRow {
+function assistantText(
+  rowId: number,
+  turnId: string,
+  text: string,
+  overrides: Partial<AssistantTextRow> = {},
+): AssistantTextRow {
   return baseRow<AssistantTextRow>({
     rowId,
     turnId,
     kind: "assistantText",
     text,
     state: "complete",
+    ...overrides,
   });
 }
 
@@ -196,10 +202,33 @@ describe("conversation turn navigator helpers", () => {
     expect(items[0]?.assistantPreview).toContain("Assistant paragraph two");
     expect(items[0]?.assistantPreview).not.toContain("private reasoning");
     expect(items[1]?.assistantPreview).toBe(items[0]?.assistantPreview);
-    expect(items.map((item) => item.userPreview).join(" ")).not.toContain(
-      "Assistant paragraph",
-    );
+    expect(items.map((item) => item.userPreview).join(" ")).not.toContain("Assistant paragraph");
     expect(new Set(items.map((item) => item.key)).size).toBe(3);
+  });
+
+  it("marks an item pinned from its query row or the turn's pinned answer", () => {
+    const items = buildConversationTurnNavigatorItems(
+      units([
+        turnHeader(1, "turn-pinned-query"),
+        userInput(2, "turn-pinned-query", "Pinned query", "realUser", {
+          pinnedAt: 1_700_000_050_000,
+        }),
+        assistantText(3, "turn-pinned-query", "Answer to pinned query"),
+        turnHeader(4, "turn-pinned-answer"),
+        userInput(5, "turn-pinned-answer", "Query with pinned answer"),
+        assistantText(6, "turn-pinned-answer", "Pinned answer", { pinnedAt: 1_700_000_060_000 }),
+        turnHeader(7, "turn-unpinned"),
+        userInput(8, "turn-unpinned", "Plain query"),
+        assistantText(9, "turn-unpinned", "Plain answer"),
+      ]),
+      {
+        assistantEmptyPreview: "No assistant text yet",
+        assistantRunningPreview: "Assistant is still working",
+        userFallbackPreview: "User turn",
+      },
+    );
+
+    expect(items.map((item) => item.isPinned)).toEqual([true, true, false]);
   });
 
   it("TN05：只为 realUser turn 建目录，排除 assistant-only 与系统 role=user", () => {

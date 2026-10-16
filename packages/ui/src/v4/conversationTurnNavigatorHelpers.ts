@@ -11,6 +11,7 @@ export interface ConversationTurnNavigatorItem {
   assistantPreview: string;
   assistantPreviewKind: ConversationTurnNavigatorAssistantPreviewKind;
   isRunning: boolean;
+  isPinned: boolean;
 }
 
 export interface BuildConversationTurnNavigatorItemsOptions {
@@ -187,6 +188,11 @@ export function buildConversationTurnNavigatorItems(
     // Split navigator items by query, but preserve the old product semantics for the assistant hover summary:
     // use the text result from the owning product turn; do not infer guide-response segments in the renderer.
     const { assistantPreview, assistantPreviewKind } = buildAssistantPreview(unit, resolvedOptions);
+    // Pinned lookup mirrors PinnedConversationRow (userInput/assistantText only); all of a unit's assistantText
+    // rows live in assistantTextRows, because turn-tail rows are only markers/artifacts.
+    const turnHasPinnedAssistantText = unit.assistantTextRows.some(
+      (row) => row.pinnedAt !== undefined,
+    );
     return realUserInputs.map((row, queryIndex) => ({
       // Do not use product turns as navigator entries and concatenate every steer query from the same turn into one preview.
       // The navigator represents user-visible queries, so create one entry per query using stable row identity;
@@ -206,6 +212,8 @@ export function buildConversationTurnNavigatorItems(
       // One running product turn may already contain several completed guide segments; only the last
       // query represents current work, preventing all old queries from appearing highlighted as running.
       isRunning: unit.isRunning && queryIndex === realUserInputs.length - 1,
+      // A pinned answer marks the query that produced it, so pinned content stays findable from the rail.
+      isPinned: row.pinnedAt !== undefined || turnHasPinnedAssistantText,
     }));
   });
 }

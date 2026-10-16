@@ -2115,6 +2115,7 @@ const ukUA: Record<string, string> = {
   "chat.turnNavigator.emptyAssistant": "Тексту асистента ще немає",
   "chat.turnNavigator.runningAssistant": "Асистент ще працює",
   "chat.turnNavigator.userFallback": "Запит користувача",
+  "chat.turnNavigator.pinnedLabel": "Закріплено",
   "chat.rewind.conflictConfirm":
     "Ці файли змінено поза цим ходом. Примусове відкочування може спричинити конфлікти:\n\n{paths}",
   "taskNav.back": "Назад",

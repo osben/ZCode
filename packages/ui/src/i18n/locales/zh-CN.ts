@@ -2291,6 +2291,7 @@ const zhCN: Record<string, string> = {
   "chat.turnNavigator.emptyAssistant": "暂无助手正文",
   "chat.turnNavigator.runningAssistant": "助手仍在工作",
   "chat.turnNavigator.userFallback": "用户输入",
+  "chat.turnNavigator.pinnedLabel": "已固定",
   "chat.rewind.conflictConfirm":
     "以下文件在该轮之后被外部修改过，强制回滚可能导致冲突：\n\n{paths}",
   "taskNav.back": "后退",
