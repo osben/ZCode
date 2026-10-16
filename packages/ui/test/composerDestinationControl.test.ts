@@ -158,7 +158,7 @@ describe("workspace isolation (source contract)", () => {
     expect(source).toContain("setBaseBranch(null);");
     expect(source).toContain("setBranchesResult(null);");
     expect(source).toContain("setBranchListFailed(false);");
-    expect(source).toContain("}, [workspaceKey]);");
+    expect(source).toContain("}, [workspaceKey, workspacePath]);");
   });
 
   it("derives the automatic base from the live git summary, never the cached branch list", () => {
@@ -170,6 +170,30 @@ describe("workspace isolation (source contract)", () => {
     );
     expect(source).toContain("baseFromHeadDefault: headDefault");
     expect(source).toContain("switcher.setOpen(nextOpen)");
+  });
+});
+
+describe("draft branch creation guard (source contract)", () => {
+  it("confirms affected checkout tasks before creating and switching a branch", () => {
+    const source = readFileSync(
+      resolve(process.cwd(), "packages/ui/src/v4/composer/ComposerDestinationControl.tsx"),
+      "utf8",
+    );
+    const dialog = source.slice(
+      source.indexOf("<GitBranchCreateDialog"),
+      source.indexOf("<GitGraphDialog", source.indexOf("<GitBranchCreateDialog")),
+    );
+    const handler = source.slice(
+      source.indexOf("const handleCreateBranchAndSwitch"),
+      source.indexOf("const currentBranchName"),
+    );
+
+    expect(source).toContain("useBranchSwitchGuard");
+    expect(handler).toContain("await branchSwitchGuard({");
+    expect(handler).toContain('scope: "checkout"');
+    expect(handler).toContain("if (!allowed) return;");
+    expect(handler).toContain("await switcher.createBranchAndSwitch();");
+    expect(dialog).toContain("onSubmit={() => void handleCreateBranchAndSwitch()}");
   });
 });
 

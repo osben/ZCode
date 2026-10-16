@@ -7,7 +7,7 @@
  * Rows: [New worktree + switch] (location from settings, pipeline states, withdraw-not-disable)
  * and [Task branch / Base branch] (project mode: intent applied at send; worktree mode: the base
  * the worktree forks from). The inline branch list keeps the base switcher's footer actions —
- * "Create and switch…" (existing GitBranchCreateDialog, existing immediate semantics) and the
+ * "Create and switch…" (existing GitBranchCreateDialog semantics, protected by the checkout guard) and the
  * branch graph dialog — while list selections write the draft intent instead of switching.
  * ask-codex review adopted: Task/Base labels, dirty-tree cues, HEAD-fallback disclosure.
  */
@@ -53,6 +53,7 @@ import {
   type ComposerWorktreeBeginResult,
 } from "@/v4/composer/composerDraftWorktreeIntent.js";
 import { beginWorktreePipelineCreation } from "@/v4/composer/composerWorktreePipeline.js";
+import { useBranchSwitchGuard } from "@/v4/composer/branchSwitchGuard.js";
 import { Check, ChevronDown, ChevronRight, GitBranch, GitGraph, Plus, Split } from "lucide-react";
 
 /**
@@ -90,6 +91,7 @@ export function ComposerDestinationControl({
   const baseServices = useBaseWorkspaceServices();
   const { settings } = useSettings();
   const platform = useOptionalPlatform();
+  const branchSwitchGuard = useBranchSwitchGuard();
   const workspaceKey = resolveWorkspaceKey({ workspacePath, workspaceIdentity });
   const intentSlot = useComposerDraftWorktreeIntentSlot();
   const branchIntent = useDraftBranchIntentStore((state) =>
@@ -119,16 +121,27 @@ export function ComposerDestinationControl({
     setBaseBranch(null);
     setBranchesResult(null);
     setBranchListFailed(false);
-  }, [workspaceKey]);
+  }, [workspaceKey, workspacePath]);
 
-  // Create-and-switch keeps the base switcher's machinery and its existing immediate semantics;
-  // the destination control never calls switchBranch for list selections (intent instead).
+  // List selections remain draft intent. The create dialog keeps its immediate create-and-switch
+  // action, but confirms before it mutates the shared checkout.
   const switcher = useGitBranchSwitcher({
     workspacePath,
     currentBranchName: gitSummary.branchName,
     headRefType: gitSummary.headRefType,
     onRefreshGit,
   });
+  const handleCreateBranchAndSwitch = useCallback(async () => {
+    if (branchSwitchGuard) {
+      const allowed = await branchSwitchGuard({
+        workspaceKey,
+        targetBranchName: switcher.createBranchName,
+        scope: "checkout",
+      });
+      if (!allowed) return;
+    }
+    await switcher.createBranchAndSwitch();
+  }, [branchSwitchGuard, switcher.createBranchAndSwitch, switcher.createBranchName, workspaceKey]);
 
   const currentBranchName = gitSummary.branchName;
   const detached = gitSummary.headRefType === "detached";
@@ -496,7 +509,7 @@ export function ComposerDestinationControl({
         onOpenChange={switcher.setCreateDialogOpen}
         onBranchNameChange={switcher.setCreateBranchName}
         onCancel={() => switcher.setCreateDialogOpen(false)}
-        onSubmit={() => void switcher.createBranchAndSwitch()}
+        onSubmit={() => void handleCreateBranchAndSwitch()}
       />
       <GitGraphDialog
         open={graphDialogOpen}
