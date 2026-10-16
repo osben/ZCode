@@ -23,9 +23,9 @@ fix(web-remote): harden mobile reconnect flow
 Will generate:
 
 ```md
-- **web-remote:** harden mobile reconnect flow ([38dd68b](...))
-  - add safe home-only services
-  - extend workspace reconnect timeout
+* **web-remote:** harden mobile reconnect flow ([38dd68b](...))
+  * add safe home-only services
+  * extend workspace reconnect timeout
 ```
 
 Related implementation: `scripts/release-it/changelog-writer.mjs`.
