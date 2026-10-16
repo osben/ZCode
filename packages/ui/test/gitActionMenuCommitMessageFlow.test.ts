@@ -30,6 +30,20 @@ function sliceSourceBlock(source: string, startMarker: string, endMarker: string
 }
 
 describe("GitActionMenu commit message flow", () => {
+  it("forwards the scoped branch-switch guard to the commit dialog picker", () => {
+    const source = readGitActionMenuSource();
+    expect(source).toContain("beforeSwitch?: (targetBranchName: string) => Promise<boolean>");
+    expect(source).toContain("<GitBranchSwitcher");
+    expect(source).toContain("beforeSwitch={beforeSwitch}");
+    expect(source).toContain("<GitCommitDialog");
+    const panel = readConversationStatusPanelSource();
+    const menuCall = panel.slice(
+      panel.indexOf("<GitActionMenu"),
+      panel.indexOf("</StatusSection>"),
+    );
+    expect(menuCall).toContain("beforeSwitch={beforeSwitch}");
+  });
+
   it("generates a missing message before commit submission", () => {
     const source = readGitActionMenuSource();
     const generateBlock = sliceSourceBlock(

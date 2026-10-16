@@ -14,7 +14,6 @@ export function shouldRenderComposerDestinationControl(input: {
   const { activeWorkspaceKey, gitState } = input;
   return (
     gitState.workspaceKey === activeWorkspaceKey &&
-    !gitState.loading &&
     gitState.summary.isGitAvailable &&
     gitState.summary.isRepository
   );

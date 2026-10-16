@@ -107,6 +107,16 @@ describe("Git destination visibility follows the selected workspace", () => {
       }),
     ).toBe(false);
   });
+
+  it("keeps the selected destination mounted while the confirmed repository refreshes", () => {
+    expect(
+      visible("/projects/one", {
+        workspaceKey: "/projects/one",
+        loading: true,
+        summary: { isGitAvailable: true, isRepository: true },
+      }),
+    ).toBe(true);
+  });
 });
 
 describe("destination semantics through the shared stores", () => {

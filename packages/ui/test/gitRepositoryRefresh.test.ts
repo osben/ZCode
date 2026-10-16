@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { shouldRefreshLiveGitData } from "../src/hooks/useGitRepository.js";
 
@@ -30,6 +31,25 @@ describe("shouldRefreshLiveGitData", () => {
           workspaceRpcEnabled: true,
         },
       ),
+    ).toBe(true);
+  });
+
+  it("clears the live refresh baseline while disabled so re-enabling fetches unchanged inputs", () => {
+    const source = readFileSync("packages/ui/src/hooks/useGitRepository.ts", "utf8");
+    const disabledBranch = source.slice(
+      source.indexOf("if (!enabled) {"),
+      source.indexOf("if (!workspaceRpcEnabled) {"),
+    );
+
+    expect(disabledBranch).toContain("lastLiveRefreshInputRef.current = null;");
+    expect(
+      shouldRefreshLiveGitData(null, {
+        workspacePath: "/repo-a",
+        workspaceKey: "/repo-a",
+        includeExtendedData: false,
+        refreshToken: 0,
+        workspaceRpcEnabled: true,
+      }),
     ).toBe(true);
   });
 

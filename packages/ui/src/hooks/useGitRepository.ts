@@ -425,7 +425,7 @@ export function useGitRepository(options: {
 
     if (!enabled) {
       requestVersionRef.current += 1;
-      lastLiveRefreshInputRef.current = nextRefreshInput;
+      lastLiveRefreshInputRef.current = null;
       setRepositoryState((current) =>
         createInitialState(workspacePath, {
           workspaceKey,

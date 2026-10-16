@@ -54,6 +54,7 @@ executionWorktreeMissing: z.boolean().optional(),
 - This slot is also where the pending icon-visibility improvement (colored icon + improved tooltip, option 2 of the 2026-10-15 badge study) lands; the missing color is the distinct state on top of it.
 - Header "Open in editor/folder" targets are unchanged (they still point at the worktree path; the missing badge explains why opening fails).
 - Row metadata equality (`useWorkspaceActiveTaskState.ts:61`) must compare the `executionWorktreeMissing` flag (normalized, absent ≈ false) so a state change re-renders.
+- The downstream sidebar display-group cache equality also compares `executionWorktreeMissing` (normalized, absent ≈ false), so deletion and restoration update the marker even when every other task field is unchanged.
 - i18n: new key `taskList.worktreeTaskLabelMissing` in `en-US`, `zh-CN`, `uk-UA` (`packages/ui/src/i18n/locales/`).
 
 ## Why

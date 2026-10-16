@@ -104,6 +104,37 @@ function buildDisplayGroup(params: {
 }
 
 describe("workspace task visible limit", () => {
+  it("rebuilds cached sidebar rows when worktree health changes in either direction", () => {
+    const healthy = {
+      ...createTask(0),
+      executionWorktree: { path: `${WORKSPACE_PATH}/.worktrees/task` },
+    } as ZCodeTaskMeta;
+    const missing = { ...healthy, executionWorktreeMissing: true };
+
+    const healthyGroup = buildDisplayGroup({
+      allTasks: [healthy],
+      cachedTasks: [healthy],
+      visibleLimit: 5,
+    });
+    const missingGroup = buildDisplayGroup({
+      allTasks: [missing],
+      cachedTasks: [missing],
+      previousGroup: healthyGroup,
+      visibleLimit: 5,
+    });
+    const restoredGroup = buildDisplayGroup({
+      allTasks: [healthy],
+      cachedTasks: [healthy],
+      previousGroup: missingGroup,
+      visibleLimit: 5,
+    });
+
+    expect(missingGroup).not.toBe(healthyGroup);
+    expect(missingGroup.items[0]?.executionWorktreeMissing).toBe(true);
+    expect(restoredGroup).not.toBe(missingGroup);
+    expect(restoredGroup.items[0]?.executionWorktreeMissing).toBeUndefined();
+  });
+
   it("uses 5 as the default and increases only the selected workspace by 5", () => {
     const remoteWorkspaceKey = "ssh:host:/workspace";
     const initial = {};
