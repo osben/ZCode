@@ -339,6 +339,36 @@ describe("订阅与帧调度", () => {
     }
   });
 
+  it("publishes cleared preparation metadata when a prepared session becomes active", async () => {
+    const host = makeHost();
+    const gateway = makeGateway(host);
+    const log = new EventLog();
+    gateway.ingest("session-1", sessionCreated(log));
+    const subscribed = await gateway.subscribe(subscribeParams());
+    expect(subscribed.ack.subscriptionId).toBeTruthy();
+
+    host.preparationSeeds.set("session-1", {
+      branchName: "zcode/fresh-otter",
+      targetPath: "/tmp/fresh-otter",
+      baseBranch: "main",
+      status: "preparing",
+    });
+    gateway.notifyPreparedSessionChanged("session-1");
+    await vi.advanceTimersByTimeAsync(CONTINUOUS_WINDOW);
+
+    host.frames.length = 0;
+    host.preparationSeeds.delete("session-1");
+    gateway.notifyPreparedSessionChanged("session-1");
+    await vi.advanceTimersByTimeAsync(CONTINUOUS_WINDOW);
+
+    const updated = host.frames.at(-1);
+    expect(updated?.payload.kind).toBe("snapshot");
+    if (updated?.payload.kind === "snapshot") {
+      expect(updated.payload.snapshot.meta.worktreePreparation).toBeUndefined();
+    }
+    gateway.dispose();
+  });
+
   it("只从 live ingest 发送 telemetry fact，并按 eventId 有界入口去重", () => {
     const host = makeHost();
     const gateway = makeGateway(host);

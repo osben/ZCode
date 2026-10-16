@@ -700,9 +700,7 @@ export class ConversationV4Gateway {
   notifyPreparedSessionChanged(sessionId: string): void {
     try {
       const publisher = this.ensurePublisher(sessionId);
-      publisher.seedWorktreePreparation(
-        this.host.getSessionPreparationSeed?.(sessionId) ?? undefined,
-      );
+      publisher.seedWorktreePreparation(this.host.getSessionPreparationSeed?.(sessionId));
       publisher.requestSnapshotForSubscribers();
       for (const [routeKey, state] of this.flushStates) {
         if (state.sessionId === sessionId) this.scheduleFlush(routeKey, state, publisher);
@@ -1501,9 +1499,7 @@ export class ConversationV4Gateway {
             params.workspace,
           )
         : await this.hydratePublisher(sessionId);
-    publisher.seedWorktreePreparation(
-      this.host.getSessionPreparationSeed?.(sessionId) ?? undefined,
-    );
+    publisher.seedWorktreePreparation(this.host.getSessionPreparationSeed?.(sessionId));
     const cliSessionRestoreMs = !isLiveConversation
       ? Math.max(0, Math.round(performance.now() - restoreStartedAt))
       : undefined;
@@ -3018,9 +3014,7 @@ export class ConversationV4Gateway {
       this.publishers.set(sessionId, publisher);
       // Config seed: inject runtime truth at creation (emits no delta and does not bump revision).
       this.seedPublisherConfig(sessionId, publisher);
-      publisher.seedWorktreePreparation(
-        this.host.getSessionPreparationSeed?.(sessionId) ?? undefined,
-      );
+      publisher.seedWorktreePreparation(this.host.getSessionPreparationSeed?.(sessionId));
     }
     return publisher;
   }

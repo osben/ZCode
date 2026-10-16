@@ -52,6 +52,16 @@ describe("App quick pick command render stability", () => {
       /const gitRepositoryWorkspacePath\s*=\s*[\s\S]*?resolvedActiveTaskMeta\?\.executionWorktree\?\.path\s*\?\?\s*workspaceAbsPath/u,
     );
   });
+
+  it("keeps workspace Git summaries separate from worktree-scoped Review data", () => {
+    expect(appSource).toMatch(
+      /const gitState = useGitRepository\(\{\s*workspacePath: workspaceAbsPath/u,
+    );
+    expect(appSource).toMatch(
+      /const worktreeGitReviewState = useGitRepository\(\{\s*workspacePath: gitRepositoryWorkspacePath,[\s\S]*?enabled: gitRepositoryWorkspacePath !== workspaceAbsPath/u,
+    );
+    expect(appSource).toContain("gitReviewState={gitPaneState}");
+  });
 });
 
 describe("task query cache render subscription boundary", () => {

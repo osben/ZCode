@@ -479,9 +479,9 @@ export function App({
   }, []);
   const openSettingsTab = useTabStore((state) => state.openSettingsTab);
   const gitState = useGitRepository({
-    workspacePath: gitRepositoryWorkspacePath,
+    workspacePath: workspaceAbsPath,
     activeTaskId,
-    includeExtendedData: hasGitTab,
+    includeExtendedData: hasGitTab && gitRepositoryWorkspacePath === workspaceAbsPath,
     // Key logic: fetch real Git data only when the workspace changes, the Git pane opens, or the user explicitly refreshes.
     // Task switches and last-turn summary changes update only local derived data; they do not rerun Git commands.
     refreshToken: gitRefreshVersion,
@@ -489,8 +489,20 @@ export function App({
     remoteTarget: workspaceRpcTarget.remoteTarget,
     workspaceIdentity,
   });
-  useGitAutoRefresh({
+  const worktreeGitReviewState = useGitRepository({
     workspacePath: gitRepositoryWorkspacePath,
+    activeTaskId,
+    enabled: gitRepositoryWorkspacePath !== workspaceAbsPath,
+    includeExtendedData: hasGitTab,
+    refreshToken: gitRefreshVersion,
+    remoteSessionId: workspaceRpcTarget.remoteSessionId ?? null,
+    remoteTarget: workspaceRpcTarget.remoteTarget,
+    workspaceIdentity,
+  });
+  const gitPaneState =
+    gitRepositoryWorkspacePath === workspaceAbsPath ? gitState : worktreeGitReviewState;
+  useGitAutoRefresh({
+    workspacePath: workspaceAbsPath,
     workspaceIdentity,
     remoteSessionId: workspaceRpcTarget.remoteSessionId ?? null,
     gitSummary: gitState.summary,
@@ -499,8 +511,8 @@ export function App({
     onRefreshGit: handleRefreshGit,
   });
   const activeGitSourceId =
-    gitState.sourceOptions.find((option) => option.id === gitSelectedSourceId)?.id ??
-    gitState.sourceOptions[0]?.id ??
+    gitPaneState.sourceOptions.find((option) => option.id === gitSelectedSourceId)?.id ??
+    gitPaneState.sourceOptions[0]?.id ??
     "unstaged";
   const gitChangeSummaryBySourceId = useMemo(() => {
     // Key business logic: the workspace header and Git pane use the same source statistics.
@@ -1382,6 +1394,7 @@ export function App({
           gitWorktreeChangeSummary={gitWorktreeChangeSummary}
           activeGitSourceId={activeGitSourceId}
           gitState={gitState}
+          gitReviewState={gitPaneState}
           gitRepositoryWorkspacePath={gitRepositoryWorkspacePath}
           browserNavigationRequest={browserNavigationRequest}
           browserRestoreUrls={browserRestoreUrls}

@@ -361,6 +361,7 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
   gitWorktreeChangeSummary,
   activeGitSourceId,
   gitState,
+  gitReviewState,
   gitRepositoryWorkspacePath,
   browserNavigationRequest,
   browserRestoreUrls,
@@ -1895,7 +1896,7 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
       workspaceRemoteSessionId={workspaceRemoteSessionId}
       activeTaskId={activeTaskId}
       sidePaneOwnerId={sidePaneOwnerId}
-      gitState={gitState}
+      gitState={gitReviewState}
       gitRepositoryWorkspacePath={gitRepositoryWorkspacePath}
       activeGitSourceId={activeGitSourceId}
       panelRef={options.mobileOverlay ? mobileSidePanePanelRef : sidePanePanelRef}

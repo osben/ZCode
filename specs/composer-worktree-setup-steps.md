@@ -132,6 +132,8 @@ early transcript persistence or a second accepted-input store.
    worktree path as its initial cwd, then admits the frozen first input exactly once.
 4. The authoritative user message appears in that session before agent output; the session remains
    indexed under the parent workspace and Git Tools resolve against its scoped execution worktree.
+   Worktree Review reads its scoped repository while workspace-level Git summaries and plain-session
+   panes continue to describe the parent checkout, including when both sessions are split onscreen.
 5. Repeated activation, duplicate Send, navigation, remount, and reconnect do not create another
    session, runtime, worktree, or first-input admission. The per-workspace idempotency guard is
    acquired before awaiting Host session reservation, so concurrent composers join one reservation.
@@ -142,8 +144,8 @@ early transcript persistence or a second accepted-input store.
    exists, or to a retryable failed state when it is absent or Git state cannot be read, without creating a runtime at the parent
    cwd. Live subscribers receive preparation state changes through a refreshed conversation
    snapshot. A reconnecting subscriber with an older transcript sequence also receives a fresh
-   snapshot while Host-owned preparation metadata is present, because that metadata does not advance
-   the conversation sequence.
+   snapshot whenever the session has had Host-owned preparation metadata, including after activation
+   clears the marker, because metadata changes do not advance the conversation sequence.
 8. Existing matching worktree activates in the same session without creating a second directory.
 9. Missing/failed branch list uses HEAD and notes the default; invalid destination fails before Git
    creation; the five-second delay remains unchanged.

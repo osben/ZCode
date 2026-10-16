@@ -202,6 +202,7 @@ describe("execution worktree sessions", () => {
     await runtime.resumeFromStore();
     const internal = runtime as unknown as {
       workingDirectory: string;
+      workspaceRoot: string;
       config: {
         executionWorktree?: {
           path: string;
@@ -213,6 +214,7 @@ describe("execution worktree sessions", () => {
     };
     // Keep the missing execution path as cwd; the tool executor rejects workspace operations.
     expect(internal.workingDirectory).toBe(deletedWorktreePath);
+    expect(internal.workspaceRoot).toBe(deletedWorktreePath);
     // The fact stays visible (marked missing) for the wire meta and the env bullet.
     expect(internal.config.executionWorktree).toEqual({
       path: deletedWorktreePath,

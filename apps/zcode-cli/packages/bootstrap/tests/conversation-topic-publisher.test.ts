@@ -195,6 +195,26 @@ describe("worktree preparation subscriber refresh", () => {
       });
     }
   });
+
+  it("sends a fresh snapshot when preparation metadata was cleared after the client disconnected", () => {
+    const publisher = new ConversationTopicPublisher("session-1", "epoch-1");
+    const first = publisher.subscribe({ connectionId: "conn-1" });
+    const base = { logEpoch: first.ack.logEpoch, seq: first.ack.seq };
+
+    publisher.seedWorktreePreparation({
+      status: "preparing",
+      branchName: "zcode/fresh-otter",
+      targetPath: "/tmp/fresh-otter",
+    });
+    publisher.seedWorktreePreparation(null);
+
+    const resumed = publisher.subscribe({ connectionId: "conn-2", base });
+    expect(resumed.ack.mode).toBe("snapshot");
+    expect(resumed.frame?.payload.kind).toBe("snapshot");
+    if (resumed.frame?.payload.kind === "snapshot") {
+      expect(resumed.frame.payload.snapshot.meta.worktreePreparation).toBeUndefined();
+    }
+  });
 });
 
 describe("subscribe(base) 裁决矩阵", () => {

@@ -270,6 +270,8 @@ export class ConversationTopicPublisher {
   private readonly subscriptionIdByConnection = new Map<string, string>();
   private nextSubscriptionSerial = 1;
   private nextLogicalFrameSerial = 1;
+  /** Preparation metadata is not sequenced with conversation events; keep its history for reconnect decisions. */
+  private worktreePreparationWasSeeded = false;
   /** Conservative upper bound for the current logical snapshot frame; streaming appends accumulate only deltas and serialize exactly near the limit. */
   private wireSnapshotBytesUpperBound: number;
 
@@ -326,6 +328,7 @@ export class ConversationTopicPublisher {
   seedWorktreePreparation(
     preparation: ConversationSnapshot["meta"]["worktreePreparation"] | null | undefined,
   ): void {
+    if (preparation) this.worktreePreparationWasSeeded = true;
     this.projection.seedWorktreePreparation(preparation);
     this.wireSnapshotBytesUpperBound = this.measureWireSnapshotBytes(this.getWireSnapshot());
   }
@@ -885,10 +888,8 @@ export class ConversationTopicPublisher {
     // Host-owned preparation metadata is seeded outside the conversation event log. A matching
     // transcript watermark therefore cannot prove that a reconnecting client has the latest
     // preparing/failed state; send an authoritative snapshot while that metadata is present.
-    const hasUnsequencedPreparation =
-      this.projection.getSnapshot().meta.worktreePreparation !== undefined;
     const resumable =
-      !hasUnsequencedPreparation &&
+      !this.worktreePreparationWasSeeded &&
       base !== undefined &&
       base.logEpoch === this.logEpoch &&
       base.seq >= this.floorSeq &&
