@@ -201,7 +201,7 @@ function GroupedTaskRowComponent({
             <TaskInteractionBadge
               interaction={task.pendingInteraction}
               formatMessage={(id) => intl.formatMessage({ id })}
-              onSnoozeCountdown={snoozeInteractionAutoResolution}
+              onSnoozeCountdown={dragOverlay ? undefined : snoozeInteractionAutoResolution}
             />
           ) : taskAttentionDisplay ? (
             <Badge
