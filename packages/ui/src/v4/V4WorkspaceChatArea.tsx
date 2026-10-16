@@ -72,6 +72,7 @@ export interface V4WorkspaceChatAreaProps {
   /** Prompt-template telemetry currently covers Desktop only; Web/mobile remote control keeps the UI behavior but does not emit this event. */
   isDesktop?: boolean;
   readOnly?: boolean;
+  readOnlySessionId?: string | null;
   /** False when an overlay such as Settings is open; hidden panes must not consume one-time Composer requests. */
   foregroundEnabled?: boolean;
   remoteSessionId?: string;
@@ -148,6 +149,7 @@ export function V4WorkspaceChatArea({
   workspaceIdentity,
   isDesktop = false,
   readOnly = false,
+  readOnlySessionId = null,
   foregroundEnabled = true,
   remoteSessionId,
   compactForRemoteControl = false,
@@ -278,6 +280,7 @@ export function V4WorkspaceChatArea({
       ...(remoteSessionId ? { remoteSessionId } : {}),
       isDesktop,
       compactForRemoteControl,
+      readOnlySessionId,
       readOnly,
       sessionId: primaryPaneSessionId,
       // primaryPaneSessionId is deliberately cleared when the active task is taken over by split panes;
@@ -327,6 +330,7 @@ export function V4WorkspaceChatArea({
       remoteSessionId,
       isDesktop,
       compactForRemoteControl,
+      readOnlySessionId,
       readOnly,
       primaryPaneSessionId,
       activeSelectionSideChatSessionId,

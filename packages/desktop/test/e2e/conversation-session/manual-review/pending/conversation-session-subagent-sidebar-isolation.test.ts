@@ -41,7 +41,9 @@ describe("子代理冷恢复主列表隔离", () => {
 
     // 真正重启 CLI 清空 detached publisher；打开历史详情必须恢复原身份。
     await restartIntoWorkspacePreservingProfile();
-    const parent = $(`[data-testid="${testId(TID_TASK_ITEM, parentId)}"]`);
+    await assertChildIsolated(childId);
+    await activateGroupedView();
+    const parent = $(`[data-grouped-task-key*="${encodeURIComponent(parentId)}"]`);
     await parent.waitForDisplayed({ timeout: 30000 });
     await parent.click();
     await waitForV4AssistantMessageContaining(PARENT_DONE, 30000);
@@ -62,6 +64,30 @@ describe("子代理冷恢复主列表隔离", () => {
     expect(readChildId(parentId)).toBe(childId);
   });
 });
+
+async function activateGroupedView() {
+  const labels = ["Group", "分组"];
+  let groupTabIndex = -1;
+  await browser.waitUntil(
+    async () => {
+      const tabs = await $$('[role="tab"]');
+      for await (const [index, tab] of tabs.entries()) {
+        if (labels.includes((await tab.getText()).trim())) {
+          groupTabIndex = index;
+          return true;
+        }
+      }
+      return false;
+    },
+    { timeout: 15000, timeoutMsg: "侧栏没有 grouped 视图入口" },
+  );
+  const tabs = await $$('[role="tab"]');
+  await tabs[groupTabIndex]?.click();
+  await browser.waitUntil(
+    () => browser.execute(() => document.querySelectorAll("[data-grouped-task-key]").length > 0),
+    { timeout: 15000, timeoutMsg: "侧栏没有渲染 grouped task rows" },
+  );
+}
 
 function readChildId(parentId: string): string {
   const db = new DatabaseSync(join(paths.storageRoot, "cli", "db", "db.sqlite"), {

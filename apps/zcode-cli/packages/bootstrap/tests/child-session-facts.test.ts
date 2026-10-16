@@ -38,9 +38,14 @@ function createHarness(
     parentSessionId: string;
     sessionId: string;
     running: boolean;
+    taskType: string;
   }> = [];
   const onRefresh = vi.fn();
   const store = {
+    getSession: vi.fn(async (sessionId: string) => {
+      const detached = detachedChildren.find((child) => child.sessionId === sessionId);
+      return detached ? { id: sessionId, taskType: detached.taskType } : null;
+    }),
     countChildSessions: vi.fn(async () => {
       if (shouldFail) throw new Error("store down");
       return new Map(initialCounts);
@@ -201,9 +206,12 @@ describe("child session facts resolver", () => {
       parentSessionId: "s-parent",
       sessionId: "child-detached",
       running: true,
+      taskType: "subagent_child",
     });
-    expect(harness.resolver.resolve("s-parent")).toEqual({ runningSubagentCount: 1 });
+    // Detached facts are counted only after the persisted task type is confirmed.
+    expect(harness.resolver.resolve("s-parent")).toEqual({});
     await flushMicrotasks();
+    expect(harness.resolver.resolve("s-parent")).toMatchObject({ runningSubagentCount: 1 });
     expect(harness.countCalls()).toBe(1);
 
     harness.setChildren(
@@ -273,6 +281,42 @@ describe("child session facts resolver", () => {
     harness.resolver.invalidate(["s-parent"]);
     await harness.resolver.refresh(["s-parent"]);
     expect(harness.countCalls()).toBe(1);
+  });
+
+  it("does not count detached workflow children as running subagents", async () => {
+    const harness = createHarness(new Map([["s-parent", { sideChats: 0, subagents: 0 }]]));
+    harness.detachedChildren.push({
+      parentSessionId: "s-parent",
+      sessionId: "workflow-child",
+      running: true,
+      taskType: "workflow_child",
+    });
+
+    expect(harness.resolver.resolve("s-parent")).toEqual({});
+    await flushMicrotasks();
+    expect(harness.resolver.resolve("s-parent")).toEqual({});
+    expect(harness.countCalls()).toBe(1);
+  });
+
+  it("automatically refreshes an invalidation deferred by the TTL", async () => {
+    vi.useFakeTimers();
+    try {
+      const harness = createHarness(new Map([["s-parent", { sideChats: 1, subagents: 0 }]]));
+      harness.resolver.seed(
+        ["s-parent"],
+        new Map([["s-parent", { sideChats: 1, subagents: 0 }]]),
+        new Map(),
+      );
+      harness.resolver.invalidate(["s-parent"]);
+      await harness.resolver.refresh(["s-parent"]);
+      expect(harness.countCalls()).toBe(0);
+
+      harness.clockMs.value += 1_001;
+      await vi.advanceTimersByTimeAsync(1_001);
+      expect(harness.countCalls()).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("a failing store backs off a full TTL instead of retrying on every fan-out", async () => {

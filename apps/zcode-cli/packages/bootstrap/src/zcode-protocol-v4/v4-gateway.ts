@@ -1113,7 +1113,9 @@ export class ConversationV4Gateway {
     }
     // Fan out to sessions-index defensively; no exception may interrupt the main conversation path.
     this.fanOutToIndex(sessionId, event);
-    this.notifyParentOfChildActivity(sessionId);
+    if (event.type !== SessionEventType.ModelStreaming) {
+      this.notifyParentOfChildActivity(sessionId);
+    }
   }
 
   /**

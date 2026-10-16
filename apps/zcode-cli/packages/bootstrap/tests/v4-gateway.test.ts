@@ -4895,6 +4895,7 @@ describe("detached subagent child publisher 生命周期（session-idle-deactiva
     const gateway = makeGateway(host);
     const childLog = new EventLog("child-facts");
     gateway.ingestDetachedLiveSession("child-facts", sessionCreated(childLog), "parent-facts");
+    gateway.ingestDetachedLiveSession("child-facts", textDelta(childLog, "stream"), "parent-facts");
     expect(gateway.getDetachedChildSessionFacts()).toEqual([
       { parentSessionId: "parent-facts", sessionId: "child-facts", running: false },
     ]);

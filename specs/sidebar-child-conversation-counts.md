@@ -95,3 +95,16 @@ The hierarchy already exists in the DB and in `context.sessions`; the only gap i
 - Counting `workflow_child` / `nested_workflow_child` (owned by `workflowActivity`).
 - Realtime counter push on child completion.
 - Mobile/web task-index row rendering of the counters or list (shared summaries carry them; row UI later if wanted).
+
+## Review follow-up (2026-10-16)
+
+- Detached lifecycle facts must retain the authoritative persisted `taskType`. Only `subagent_child` contributes to `runningSubagentCount`; detached `workflow_child` and `nested_workflow_child` remain excluded, just like their cold-store counts.
+- If an invalidation arrives inside the one-second TTL, retain the stale facts and schedule one trailing refresh for the first eligible instant. Do not require an unrelated later sidebar resolve to drain the invalidation.
+- Parent-summary invalidation follows lifecycle and membership changes, not `ModelStreaming` chunks. Streaming is high frequency and does not change child membership or running state; `TurnStarted` and terminal events continue to update live running facts.
+- Read-only intent belongs to the selected subagent pane binding. A workspace can contain another independently writable pane, which remains writable while the subagent pane is open.
+- Restored child-pane validation uses the existing `session/list` explicit-ID query, which reads persisted identity and task type without starting a runtime. The bounded top-level sessions-index list is not proof that a child session is missing. A missing or non-subagent target still closes the restored pane.
+- The sidebar isolation E2E places the parent row in grouped mode and locates it by the grouped-row key before checking the expanded child row.
+
+Event order for child invalidation remains: lifecycle owner updates child state → resolver invalidates the parent → parent summary is published → a TTL-eligible store refresh completes → refreshed parent summary is published. `ModelStreaming` does not enter this path.
+
+Additional acceptance scenarios: a detached workflow child never affects the subagent count; an in-TTL invalidation refreshes automatically at TTL expiry; streaming chunks do not publish parent-summary refreshes; a restored child pane survives top-level-index omission when the store confirms its subagent type; a separate pane in the same workspace remains writable.

@@ -82,10 +82,55 @@ export function createChildSessionFactsResolver(deps: {
   const generation = new Map<string, number>();
   const seenParentIds = new Set<string>();
   const requestedParentIds = new Set<string>();
+  const deferredRefreshes = new Map<string, ReturnType<typeof setTimeout>>();
+  const detachedTaskTypes = new Map<string, string | null>();
+  const detachedTaskTypeLookups = new Map<string, Promise<void>>();
+  const detachedTaskTypeRetryAt = new Map<string, number>();
   let refreshInFlight: Promise<void> | null = null;
+
+  const resolveDetachedTaskType = (sessionId: string, parentSessionId: string): string | null => {
+    if (detachedTaskTypes.has(sessionId)) return detachedTaskTypes.get(sessionId) ?? null;
+    const store = deps.store();
+    if (
+      !store ||
+      detachedTaskTypeLookups.has(sessionId) ||
+      (detachedTaskTypeRetryAt.get(sessionId) ?? 0) > now()
+    ) {
+      return null;
+    }
+    const lookup = store
+      .getSession(sessionId as SessionId)
+      .then((session) => {
+        detachedTaskTypes.set(sessionId, session?.taskType ?? null);
+        detachedTaskTypeRetryAt.delete(sessionId);
+        deps.onRefresh?.([parentSessionId]);
+      })
+      .catch((error: unknown) => {
+        detachedTaskTypeRetryAt.set(sessionId, now() + CHILD_SESSION_FACTS_TTL_MS);
+        deps.logger?.warn("detached child task type lookup failed", {
+          error: error instanceof Error ? error.message : String(error),
+          event: "zcode_protocol.v4.detached_child_task_type_failed",
+          module: "bootstrap.zcode_protocol",
+          sessionId,
+        });
+      })
+      .finally(() => detachedTaskTypeLookups.delete(sessionId));
+    detachedTaskTypeLookups.set(sessionId, lookup);
+    return null;
+  };
+
+  const scheduleDeferredRefresh = (key: string, delayMs: number): void => {
+    if (deferredRefreshes.has(key)) return;
+    const timer = setTimeout(() => {
+      deferredRefreshes.delete(key);
+      void refresh([key]);
+    }, Math.max(1, delayMs));
+    deferredRefreshes.set(key, timer);
+  };
 
   const discoverLiveParents = (): Map<string, number> => {
     const busySubagents = new Map<string, number>();
+    const currentDetachedIds = new Set<string>();
     for (const record of deps.sessions.values()) {
       if (
         (record.taskType !== "subagent_child" && record.taskType !== "selection_side_chat") ||
@@ -101,13 +146,24 @@ export function createChildSessionFactsResolver(deps: {
     }
     for (const child of deps.getDetachedChildren?.() ?? []) {
       if (!child.parentSessionId || !child.sessionId) continue;
+      currentDetachedIds.add(child.sessionId);
       seenParentIds.add(child.parentSessionId);
-      if (child.running) {
+      const taskType = resolveDetachedTaskType(child.sessionId, child.parentSessionId);
+      if (taskType === "subagent_child" && child.running) {
         busySubagents.set(
           child.parentSessionId,
           (busySubagents.get(child.parentSessionId) ?? 0) + 1,
         );
       }
+    }
+    for (const sessionId of detachedTaskTypes.keys()) {
+      if (!currentDetachedIds.has(sessionId)) {
+        detachedTaskTypes.delete(sessionId);
+        detachedTaskTypeRetryAt.delete(sessionId);
+      }
+    }
+    for (const sessionId of detachedTaskTypeRetryAt.keys()) {
+      if (!currentDetachedIds.has(sessionId)) detachedTaskTypeRetryAt.delete(sessionId);
     }
     return busySubagents;
   };
@@ -169,9 +225,18 @@ export function createChildSessionFactsResolver(deps: {
       return;
     }
     const currentTime = now();
-    const targets = [...requestedParentIds].filter(
-      (key) => currentTime - (updatedAt.get(key) ?? 0) > CHILD_SESSION_FACTS_TTL_MS,
-    );
+    const targets: string[] = [];
+    for (const key of requestedParentIds) {
+      const eligibleAt = (updatedAt.get(key) ?? 0) + CHILD_SESSION_FACTS_TTL_MS + 1;
+      if (currentTime >= eligibleAt) {
+        targets.push(key);
+        const timer = deferredRefreshes.get(key);
+        if (timer) clearTimeout(timer);
+        deferredRefreshes.delete(key);
+      } else {
+        scheduleDeferredRefresh(key, eligibleAt - currentTime);
+      }
+    }
     for (const key of targets) requestedParentIds.delete(key);
     if (targets.length === 0) return;
     refreshInFlight = load(targets);
@@ -213,8 +278,8 @@ export function createChildSessionFactsResolver(deps: {
         const lastUpdatedAt = updatedAt.get(key);
         if (lastUpdatedAt === undefined || now() - lastUpdatedAt > CHILD_SESSION_FACTS_TTL_MS) {
           updatedAt.set(key, 0);
-          generation.set(key, (generation.get(key) ?? 0) + 1);
         }
+        generation.set(key, (generation.get(key) ?? 0) + 1);
         requestedParentIds.add(key);
       }
     },

@@ -1218,7 +1218,7 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
       expectedUnreadAt?: number,
       options?: { readOnly?: boolean },
     ) => {
-      if (options?.readOnly) setReadOnlySubagentSessionId(taskId);
+      setReadOnlySubagentSessionId(options?.readOnly ? taskId : null);
       if (!isWebRemoteControlShell) {
         const workspaceResult = ensureTaskNavigationWorkspace({
           workspacePath: targetWorkspacePath,
@@ -2649,13 +2649,8 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                                   M5⑤: The Desktop main area now hosts two split-pane layers (Layout/Focus); primary-pane
                                   binding semantics and the testid contract (paneId=workspace-main) remain unchanged. */}
                                   <V4WorkspaceChatArea
-                                    readOnly={
-                                      Boolean(workspaceReadOnlyReason) ||
-                                      Boolean(
-                                        readOnlySubagentSessionId &&
-                                        activeTaskId === readOnlySubagentSessionId,
-                                      )
-                                    }
+                                    readOnly={Boolean(workspaceReadOnlyReason)}
+                                    readOnlySessionId={readOnlySubagentSessionId}
                                     foregroundEnabled={isWorkspaceVisible}
                                     workspacePath={workspaceAbsPath}
                                     workspaceIdentity={workspaceIdentity}
