@@ -7,7 +7,6 @@ import { isCronTask, isOffPeakTask, type ZCodeTaskMeta } from "@zcode/shared";
 import { ArrowUpToLine, Clock, GitBranch, ListTree, LoaderIcon, Moon, X } from "lucide-react";
 import { cn } from "@/components/lib/utils.js";
 import { Badge } from "@/components/ui/badge.js";
-import { BranchMergedBadge } from "@/components/BranchMergedBadge.js";
 import { toast } from "@/components/ui/toast.js";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu.js";
 import { Tooltip, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip.js";
@@ -147,14 +146,6 @@ function GroupedTaskRowComponent({
           "bg-sky-500 dark:bg-sky-400"
         : null;
   const canShowHoverActions = !dragOverlay;
-  // Merged ranks below attention/interaction: the row keeps a single right-side
-  // status badge, and the merged details always stay available in the popup.
-  const branchMergedBadge =
-    branchMergeStatus?.state === "merged" ? (
-      <BranchMergedBadge
-        className={canShowHoverActions ? "group-hover/task-row:hidden" : undefined}
-      />
-    ) : null;
   // Workflow-run row: grouped rows also place it below the title;
   // the drag overlay is display-only and does not attach confirmation side effects or click actions.
   const workflowRunLinesNode =
@@ -211,9 +202,7 @@ function GroupedTaskRowComponent({
             >
               {taskAttentionDisplay}
             </Badge>
-          ) : (
-            branchMergedBadge
-          )}
+          ) : null}
           <span
             className={cn(
               "flex shrink-0 items-center gap-1",
@@ -431,8 +420,6 @@ function GroupedTaskRowComponent({
             <Badge className="h-5 border-transparent bg-success/14 px-2 text-ui-base font-medium text-success dark:bg-success/18">
               {taskAttentionDisplay}
             </Badge>
-          ) : !shouldSuppressTaskMetadata ? (
-            branchMergedBadge
           ) : null}
           {!shouldSuppressTaskMetadata ? (
             <span className="flex shrink-0 items-center gap-1">

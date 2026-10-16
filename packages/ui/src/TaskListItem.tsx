@@ -13,7 +13,6 @@ import {
 import { isCronTask, isOffPeakTask, type ZCodeTaskMeta } from "@zcode/shared";
 import { TID_TASK_ARCHIVE, TID_TASK_ITEM, testId } from "@zcode/shared";
 import { Badge } from "@/components/ui/badge.js";
-import { BranchMergedBadge } from "@/components/BranchMergedBadge.js";
 import { Button } from "@/components/ui/button.js";
 import { cn } from "@/components/lib/utils.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
@@ -392,14 +391,12 @@ export const MemoTaskItem = memo(function TaskListItem({
   const taskTitleWithChanges = formatTaskTitleWithChanges(taskTitle, taskChangeSummary, intl);
   const workspaceLabel = getPathLeaf(task.workspacePath);
   const taskItemKey = `${buildTaskWorkspaceKey(task.workspacePath, task.workspaceIdentity)}:${task.taskId}`;
-  // Merged ranks below attention/interaction, same as the grouped task row.
   const branchMergeStatus = useBranchMergeStatusStore((state) =>
     selectBranchMergeStatus(
       state,
       buildTaskWorkspaceKey(task.workspacePath, task.workspaceIdentity),
     ),
   );
-  const branchMergedBadge = branchMergeStatus?.state === "merged" ? <BranchMergedBadge /> : null;
   // Workflow run row: a second channel under the title,
   // independent from the leading 16px slot (error > unread > spinner). Mount only when the session has a run summary.
   const hasWorkflowRunLines = taskActivity?.workflowActivity !== undefined;
@@ -658,9 +655,7 @@ export const MemoTaskItem = memo(function TaskListItem({
                   <Badge className="h-5 shrink-0 border-transparent bg-success/14 px-2 text-ui-base font-medium text-success dark:bg-success/18">
                     {taskAttentionDisplay}
                   </Badge>
-                ) : (
-                  branchMergedBadge
-                )}
+                ) : null}
               </div>
               <div className="flex min-w-0 items-center justify-between gap-2 text-ui-base text-foreground-subtle h-6">
                 <div className="flex min-w-0 items-center gap-1.5">
@@ -763,9 +758,7 @@ export const MemoTaskItem = memo(function TaskListItem({
                     <Badge className="h-5 shrink-0 border-transparent bg-success/14 px-2 text-ui-sm font-medium text-success dark:bg-success/18">
                       {taskAttentionDisplay}
                     </Badge>
-                  ) : (
-                    branchMergedBadge
-                  )}
+                  ) : null}
                 </div>
 
                 {!hasPendingInteraction ? (
