@@ -32,10 +32,6 @@ import { useModelTrajectoryStore } from "@/store/modelTrajectoryStore.js";
 import { buildTaskFeedbackDescription } from "@/lib/taskFeedbackDraft.js";
 import { toast } from "@/components/ui/toast.js";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
-import {
-  useBranchMergeStatusStore,
-  selectBranchMergeStatus,
-} from "@/store/branchMergeStatusStore.js";
 import { useV4SplitPaneEntry } from "@/v4/splitPaneEntryContext.js";
 import { buildWorkbenchSessionKey, useWorkbenchGroupStore } from "@/v4/workbenchGroupStore.js";
 import { useTaskInteractionAutoResolutionSnooze } from "@/hooks/useTaskInteractionAutoResolutionSnooze.js";
@@ -394,12 +390,6 @@ export const MemoTaskItem = memo(function TaskListItem({
   const taskTitleWithChanges = formatTaskTitleWithChanges(taskTitle, taskChangeSummary, intl);
   const workspaceLabel = getPathLeaf(task.workspacePath);
   const taskItemKey = `${buildTaskWorkspaceKey(task.workspacePath, task.workspaceIdentity)}:${task.taskId}`;
-  const branchMergeStatus = useBranchMergeStatusStore((state) =>
-    selectBranchMergeStatus(
-      state,
-      buildTaskWorkspaceKey(task.workspacePath, task.workspaceIdentity),
-    ),
-  );
   // Workflow run row: a second channel under the title,
   // independent from the leading 16px slot (error > unread > spinner). Mount only when the session has a run summary.
   const hasWorkflowRunLines = taskActivity?.workflowActivity !== undefined;
@@ -817,7 +807,6 @@ export const MemoTaskItem = memo(function TaskListItem({
         workspaceLabel={workspaceLabel}
         attentionLabel={taskAttentionDisplay}
         activity={taskActivity}
-        branchMergeStatus={branchMergeStatus}
         intl={intl}
         isRemote={isRemoteTask}
       />

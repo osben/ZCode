@@ -31,10 +31,6 @@ import {
 } from "@/workspace-grouped-tasks/types.js";
 import { TaskWorkflowRunLines } from "@/components/workflow-run-line/TaskWorkflowRunLines.js";
 import { useTaskInteractionAutoResolutionSnooze } from "@/hooks/useTaskInteractionAutoResolutionSnooze.js";
-import {
-  useBranchMergeStatusStore,
-  selectBranchMergeStatus,
-} from "@/store/branchMergeStatusStore.js";
 import { useOptionalTabStore } from "@/store/TabStoreProvider.js";
 import { isWorkspaceReadOnly } from "@/store/tabStore.js";
 import { TaskTitleOverflowText } from "@/components/TaskTitleOverflowText.js";
@@ -99,9 +95,6 @@ function GroupedTaskRowComponent({
     sessionId: task.taskId,
   });
   const workspaceKey = buildTaskWorkspaceKey(task.workspacePath, task.workspaceIdentity);
-  const branchMergeStatus = useBranchMergeStatusStore((state) =>
-    selectBranchMergeStatus(state, workspaceKey),
-  );
   const taskActivity = getTaskListRowActivity(task);
   const taskAttention = getTaskListAttention(task);
   // The interaction pill is currently the highest-priority right-side state; whether it comes from a sessions-index summary or
@@ -495,7 +488,6 @@ function GroupedTaskRowComponent({
               workspaceLabel={workspaceLabel}
               attentionLabel={taskAttentionDisplay}
               activity={taskActivity}
-              branchMergeStatus={branchMergeStatus}
               intl={intl}
               isRemote={Boolean(task.workspaceIdentity?.trim())}
             />
