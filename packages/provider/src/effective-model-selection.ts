@@ -30,7 +30,7 @@ export function resolveEffectiveModelSelection(input: {
     return Object.freeze({ effectiveSelection: null, selectionIssue: "selection-missing" });
   const kind = input.classifyProvider(original.providerId);
   let providerId = original.providerId;
-  if (kind === "account-plan" || kind === "chatgpt-plan") {
+  if (kind === "account-plan") {
     // Classify identity independently of Registry: a previous plan disappears from executable
     // candidates after a connection switch, but must retain its account domain.
     const current = Object.entries(input.accountStates ?? {}).filter(
@@ -44,6 +44,12 @@ export function resolveEffectiveModelSelection(input: {
     }
     providerId = current[0]![0];
   }
+  // ChatGPT plan selections resolve by their EXACT per-account provider id: the Desktop
+  // overlay marks every entitled account current, so family-level remapping here would
+  // (a) see more than one current provider and fail with N entitled accounts, and
+  // (b) silently move a selection to a DIFFERENT account when its own account disappears.
+  // A missing account id (or the legacy base id) falls through to provider-not-found and
+  // the user re-picks.
   const provider = input.registry.providers.find(
     (candidate) => candidate.providerId === providerId,
   );

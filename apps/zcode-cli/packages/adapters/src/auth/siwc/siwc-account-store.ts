@@ -216,25 +216,30 @@ async function migrateLegacySiwcCredentialsLocked(
     [legacyKeys.providerIdentity, buildSiwcAccountProviderIdentityKey(accountKey)],
     [legacyKeys.providerAuthSource, buildSiwcAccountProviderAuthSourceKey(accountKey)],
   ];
+  // Commit protocol (interruption-safe, shared with the Desktop host): the index record is
+  // the commit marker. An absent record means the migration never completed (the host saves
+  // keys sequentially and may stop mid-bundle), so the full legacy bundle is re-copied —
+  // including over a partial slot copy, whose values come from the same source. A record
+  // present means the slot was fully migrated or written by a later login/refresh; replaying
+  // consumed legacy values over it would corrupt the token family, so only the legacy keys go.
   const mapped: Record<string, string> = {};
-  const slotInitialized = await slotHasTokens(store, accountKey);
-  if (!slotInitialized) {
+  const existing = await readSiwcAccountIndex(store);
+  const indexed = existing.some((item) => item.accountKey === accountKey);
+  if (!indexed) {
     for (const [legacyKey, accountKeyDestination] of mapping) {
       const value = legacy.values[legacyKey];
       if (value !== undefined) mapped[accountKeyDestination] = value;
     }
-  }
-
-  const record = parseAccountRecord({
-    accountKey,
-    sub: sub.trim(),
-    email: readUserJsonField(legacy.userInfo, "email"),
-    name: readUserJsonField(legacy.userInfo, "name"),
-    addedAt: new Date().toISOString(),
-  });
-  const existing = await readSiwcAccountIndex(store);
-  if (record && !existing.some((item) => item.accountKey === accountKey)) {
-    mapped[SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY] = JSON.stringify([...existing, record]);
+    const record = parseAccountRecord({
+      accountKey,
+      sub: sub.trim(),
+      email: readUserJsonField(legacy.userInfo, "email"),
+      name: readUserJsonField(legacy.userInfo, "name"),
+      addedAt: new Date().toISOString(),
+    });
+    if (record) {
+      mapped[SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY] = JSON.stringify([...existing, record]);
+    }
   }
   if (Object.keys(mapped).length > 0) await store.saveMany(mapped);
   // Delete the flat keys only while their values are still the migrated ones, so a login
@@ -244,12 +249,6 @@ async function migrateLegacySiwcCredentialsLocked(
   return readSiwcAccountIndex(store);
 }
 
-/** Whether the account slot already holds token material (a later writer owns it). */
-async function slotHasTokens(store: SiwcAccountStore, accountKey: string): Promise<boolean> {
-  const keys = buildSiwcAccountCredentialKeys(accountKey);
-  const values = await store.loadMany([keys.accessToken, keys.refreshToken]);
-  return values[keys.accessToken] !== null || values[keys.refreshToken] !== null;
-}
 
 function readUserJsonField(userInfoRaw: string | null, field: string): string | null {
   if (!userInfoRaw) return null;

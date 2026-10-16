@@ -344,6 +344,36 @@ describe("SIWC access token resolver (per-account)", () => {
     expect(resolved.apiKey).toBe("access-legacy");
   });
 
+  it("completes an interrupted migration (partial slot copy, index absent)", async () => {
+    const store = await createStore();
+    const keys = buildSiwcAccountCredentialKeys(ACCOUNT_KEY_1);
+    // Simulate a Desktop-host migration that saved part of the bundle sequentially and died
+    // before the refresh token and the index record (the commit marker).
+    await store.saveMany({
+      [SIWC_LEGACY_CREDENTIAL_KEYS.clientId]: "oaiapp_legacy",
+      [SIWC_LEGACY_CREDENTIAL_KEYS.accessToken]: "access-legacy",
+      [SIWC_LEGACY_CREDENTIAL_KEYS.refreshToken]: "refresh-legacy",
+      [SIWC_LEGACY_CREDENTIAL_KEYS.scopes]: FULL_SCOPES,
+      [SIWC_LEGACY_CREDENTIAL_KEYS.userInfo]: JSON.stringify({ sub: SUB_1 }),
+    });
+    await store.saveMany({
+      [keys.clientId]: "oaiapp_legacy",
+      [keys.accessToken]: "access-legacy",
+    });
+
+    const records = await migrateLegacySiwcCredentials(store);
+    expect(records).toHaveLength(1);
+    const after = await store.loadMany([
+      keys.refreshToken,
+      keys.scopes,
+      SIWC_LEGACY_CREDENTIAL_KEYS.refreshToken,
+    ]);
+    // The full bundle was re-copied from the source values and the legacy keys removed.
+    expect(after[keys.refreshToken]).toBe("refresh-legacy");
+    expect(after[keys.scopes]).toBe(FULL_SCOPES);
+    expect(after[SIWC_LEGACY_CREDENTIAL_KEYS.refreshToken]).toBeNull();
+  });
+
   it("lists an access-only slot (login without a refresh token stays executable)", async () => {
     const store = await createStore();
     const keys2 = buildSiwcAccountCredentialKeys(ACCOUNT_KEY_1);

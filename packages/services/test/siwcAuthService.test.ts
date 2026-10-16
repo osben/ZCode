@@ -431,6 +431,27 @@ describe("SiwcAuthService (host side, multi-account)", () => {
     expect(await fixture.service.resolveAccessToken(ACCOUNT_KEY)).toBe("legacy-access");
   });
 
+  it("completes an interrupted migration instead of losing the refresh token", async () => {
+    const fixture = await createFixture();
+    const legacy = SIWC_LEGACY_CREDENTIAL_KEYS;
+    await fixture.credentials.save(legacy.clientId, ISSUED_CLIENT_ID);
+    await fixture.credentials.save(legacy.accessToken, "legacy-access");
+    await fixture.credentials.save(legacy.refreshToken, "legacy-refresh");
+    await fixture.credentials.save(
+      legacy.userInfo,
+      JSON.stringify({ sub: SUB, email: "legacy@example.com" }),
+    );
+    // Partial first attempt: only clientId + accessToken landed in the slot before a crash.
+    await fixture.credentials.save(ACCOUNT_KEYS.clientId, ISSUED_CLIENT_ID);
+    await fixture.credentials.save(ACCOUNT_KEYS.accessToken, "legacy-access");
+
+    const status = await fixture.service.getStatus();
+    expect(status.accounts).toHaveLength(1);
+    const stored = fixture.credentials.dump();
+    expect(stored[ACCOUNT_KEYS.refreshToken]).toBe("legacy-refresh");
+    expect(stored[legacy.refreshToken]).toBeUndefined();
+  });
+
   it("resolves a time-valid access token without refresh and rotates near expiry", async () => {
     const fixture = await createFixture();
     fixture.credentials.save(ACCOUNT_KEYS.clientId, ISSUED_CLIENT_ID);

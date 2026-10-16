@@ -227,7 +227,56 @@ describe("当前有效选择只读解析", () => {
           "new-account": { availability: "available", entitled: true, current: true },
         },
       }),
-    ).toEqual({ effectiveSelection: null, selectionIssue: "account-connection-unavailable" });
+    ).toEqual({ effectiveSelection: null, selectionIssue: "provider-not-found" });
+  });
+
+  it("resolves ChatGPT selections by exact account id even with several current accounts", () => {
+    // The Desktop overlay marks every entitled account current; family-level remapping would
+    // see two current providers and fail. Exact-id resolution must keep account A's selection.
+    const chatgptClassifier = (id: string) =>
+      id.startsWith("chatgpt-plan") ? ("chatgpt-plan" as const) : classifyProvider(id);
+    const registry = {
+      revision: 1,
+      providers: [
+        {
+          ...provider("chatgpt-plan:a1", "gpt-model"),
+          config: createChatgptAccountProviderConfig({ models: ["gpt-model"] }),
+        },
+        {
+          ...provider("chatgpt-plan:b2", "gpt-model"),
+          config: createChatgptAccountProviderConfig({ models: ["gpt-model"] }),
+        },
+      ],
+    };
+    const accountStates = {
+      "chatgpt-plan:a1": { availability: "available", entitled: true, current: true },
+      "chatgpt-plan:b2": { availability: "available", entitled: true, current: true },
+    };
+    const accountSelection = Object.freeze({
+      providerId: "chatgpt-plan:a1",
+      modelId: "gpt-model",
+      options: Object.freeze({ reasoningLevel: "high" }),
+    });
+    expect(
+      resolveEffectiveModelSelection({
+        registry,
+        selection: accountSelection,
+        classifyProvider: chatgptClassifier,
+        accountStates,
+      }),
+    ).toEqual({ effectiveSelection: accountSelection });
+    // When its own account disappears, the selection must NOT silently move to the other
+    // current account — the user re-picks.
+    expect(
+      resolveEffectiveModelSelection({
+        registry: { revision: 1, providers: [registry.providers[1]!] },
+        selection: { ...accountSelection },
+        classifyProvider: chatgptClassifier,
+        accountStates: {
+          "chatgpt-plan:b2": { availability: "available", entitled: true, current: true },
+        },
+      }),
+    ).toEqual({ effectiveSelection: null, selectionIssue: "provider-not-found" });
   });
 
   it("闲时只能解析原 hidden 身份，不切到当前普通账号；普通 hidden 仍不可选", () => {

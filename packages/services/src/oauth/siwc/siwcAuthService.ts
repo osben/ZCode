@@ -659,7 +659,6 @@ export class SiwcAuthService {
     if (!sub) return;
     const accountKey = createSiwcAccountKey(sub);
     const keys = buildSiwcAccountCredentialKeys(accountKey);
-    const entries: Record<string, string> = {};
     const mapping: ReadonlyArray<readonly [string | null, string]> = [
       [flat[legacy.clientId] ?? null, keys.clientId],
       [flat[legacy.accessToken] ?? null, keys.accessToken],
@@ -672,29 +671,36 @@ export class SiwcAuthService {
       [flat[legacy.providerIdentity] ?? null, buildSiwcAccountProviderIdentityKey(accountKey)],
       [flat[legacy.providerAuthSource] ?? null, buildSiwcAccountProviderAuthSourceKey(accountKey)],
     ];
-    // A slot that already holds token material was written by a later login or refresh;
-    // replaying the consumed legacy values over it would corrupt the token family.
-    const slot = await this.readTokenState(accountKey);
-    if (!slot?.accessToken && !slot?.refreshToken) {
+    // Commit protocol (interruption-safe): copy the full legacy bundle into the slot, then
+    // write the index record as the commit marker, then delete the legacy keys. An
+    // interrupted migration (sequential saves can stop mid-bundle) leaves the index absent,
+    // so the next attempt re-copies the same source values; a slot whose index record exists
+    // was fully migrated or written by a later login/refresh — replaying consumed legacy
+    // values over it would corrupt the token family, so only the stale legacy keys go.
+    const indexed = (await this.readAccountIndex()).some(
+      (record) => record.accountKey === accountKey,
+    );
+    if (!indexed) {
+      const entries: Record<string, string> = {};
       for (const [value, key] of mapping) {
         if (value !== null) entries[key] = value;
       }
-    }
-    if (Object.keys(entries).length > 0) await this.writeCredentials(entries);
-    // Inline index write: the accounts lock is already held here, and upsertAccountRecord
-    // would re-acquire it (file locks are not reentrant).
-    const index = await this.readAccountIndex();
-    if (!index.some((record) => record.accountKey === accountKey)) {
-      await this.writeAccountIndex([
-        ...index,
-        {
-          accountKey,
-          sub,
-          email: readUserJsonField(rawUser, "email"),
-          name: readUserJsonField(rawUser, "name"),
-          addedAt: new Date(this.now()).toISOString(),
-        },
-      ]);
+      if (Object.keys(entries).length > 0) await this.writeCredentials(entries);
+      // Inline index write: the accounts lock is already held here, and upsertAccountRecord
+      // would re-acquire it (file locks are not reentrant).
+      const index = await this.readAccountIndex();
+      if (!index.some((record) => record.accountKey === accountKey)) {
+        await this.writeAccountIndex([
+          ...index,
+          {
+            accountKey,
+            sub,
+            email: readUserJsonField(rawUser, "email"),
+            name: readUserJsonField(rawUser, "name"),
+            addedAt: new Date(this.now()).toISOString(),
+          },
+        ]);
+      }
     }
     for (const key of [
       legacy.clientId,
