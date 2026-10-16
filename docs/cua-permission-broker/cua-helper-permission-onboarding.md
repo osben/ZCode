@@ -3,7 +3,7 @@
 ## Objectives
 
 The macOS product authorization subject for ZCode CUA must be the external `ZCode Computer Use.app`. The settings page retains the user's active
-permission entry point; the official `request_access` real-time result from the local desktop continuous can be reused through the same onboarding after being confirmed by the trusted Host. Chat errors, tool card text, and PermissionDialog do not carry CUA permission side effects. Only refreshing the state after enabling the plugin successfully, no automatic opening of the permissions UI.
+permission entry point; the official `request_access` real-time result from the local desktop continuous can be reused through the same onboarding after being confirmed by the trusted Host. Chat errors, tool card text, and PermissionDialog do not carry CUA permission side effects. After the plugin is enabled successfully, only refresh the state; do not automatically open the permissions UI.
 
 ## Interactions
 
