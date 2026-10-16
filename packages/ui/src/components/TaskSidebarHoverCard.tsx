@@ -52,7 +52,12 @@ export function TaskSidebarHoverCard({
         className="flex min-w-0 flex-col gap-2.5"
       >
         <div className="flex min-w-0 items-center gap-2">
-          <span className="min-w-0 truncate text-ui-base text-foreground">{task.title}</span>
+          <span className="min-w-0 truncate text-ui-base text-foreground">
+            {task.title ||
+              intl.formatMessage({
+                id: task.forkedFromTaskId ? "taskList.forkedUntitled" : "taskList.untitled",
+              })}
+          </span>
           {task.executionWorktree ? <WorktreeTaskMarker task={task} /> : null}
           <span className="ml-auto shrink-0 text-foreground-subtle">
             {formatTaskRelativeTime(lastActivity, intl)}
