@@ -45,7 +45,6 @@ function GroupedTaskRowComponent({
   activeWorkspaceIdentity,
   activeTaskId,
   mobileActiveTaskKey,
-  workspaceLabel,
   onSelectTask,
   onCloseTask,
   onOpenFileTree,
@@ -139,6 +138,7 @@ function GroupedTaskRowComponent({
           // list so the brand color's meaning does not drift across themes.
           "bg-sky-500 dark:bg-sky-400"
         : null;
+  const hasLeadingStatus = leadingIndicator === "loading" || statusDotClassName !== null;
   const canShowHoverActions = !dragOverlay;
   // Workflow-run row: grouped rows also place it below the title;
   // the drag overlay is display-only and does not attach confirmation side effects or click actions.
@@ -207,7 +207,10 @@ function GroupedTaskRowComponent({
               <LoaderIcon className="size-3.5 animate-spin text-foreground-subtle" />
             ) : statusDotClassName ? (
               <span aria-hidden="true" className="flex size-4 shrink-0 items-center justify-center">
-                <span className={cn("size-1.5 rounded-full", statusDotClassName)} />
+                <span
+                  data-unread-indicator={leadingIndicator === "unread" ? "true" : undefined}
+                  className={cn("size-1.5 rounded-full", statusDotClassName)}
+                />
               </span>
             ) : null}
             {!hasPendingInteraction && isTaskCron ? (
@@ -400,16 +403,19 @@ function GroupedTaskRowComponent({
               {taskAttentionDisplay}
             </Badge>
           ) : null}
-          {!shouldSuppressTaskMetadata ? (
+          {!shouldSuppressTaskMetadata || hasLeadingStatus ? (
             <span className="flex shrink-0 items-center gap-1">
-              {leadingIndicator === "loading" ? (
+              {hasLeadingStatus && leadingIndicator === "loading" ? (
                 <LoaderIcon className="size-3.5 animate-spin text-foreground-subtle" />
-              ) : statusDotClassName ? (
+              ) : hasLeadingStatus && statusDotClassName ? (
                 <span
                   aria-hidden="true"
                   className="flex size-4 shrink-0 items-center justify-center"
                 >
-                  <span className={cn("size-1.5 rounded-full", statusDotClassName)} />
+                  <span
+                    data-unread-indicator={leadingIndicator === "unread" ? "true" : undefined}
+                    className={cn("size-1.5 rounded-full", statusDotClassName)}
+                  />
                 </span>
               ) : null}
               {!hasPendingInteraction && isTaskCron ? (
@@ -485,11 +491,9 @@ function GroupedTaskRowComponent({
             </TooltipTrigger>
             <TaskSidebarHoverCard
               task={task}
-              workspaceLabel={workspaceLabel}
               attentionLabel={taskAttentionDisplay}
               activity={taskActivity}
               intl={intl}
-              isRemote={Boolean(task.workspaceIdentity?.trim())}
             />
           </Tooltip>
         </TooltipProvider>
