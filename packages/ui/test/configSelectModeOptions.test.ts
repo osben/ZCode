@@ -111,6 +111,39 @@ function renderConfigSelect(locale: "zh-CN" | "en-US", props: Parameters<typeof 
 }
 
 describe("ConfigSelect mode options", () => {
+  it("restores focus through the owning trigger instead of the global input", () => {
+    const scopedFocus = vi.fn();
+    const globalFocus = vi.fn();
+    const closest = vi.fn(() => ({ querySelector: () => ({ focus: scopedFocus }) }));
+    vi.stubGlobal("document", { querySelector: () => ({ focus: globalFocus }) });
+    vi.stubGlobal("window", {
+      matchMedia: () => ({ matches: false }),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    try {
+      renderConfigSelect("en-US", {
+        option: {
+          id: "mode",
+          name: "Mode",
+          category: "mode",
+          type: "select",
+          currentValue: "build",
+          options: [{ value: "build", name: "Build" }],
+        },
+        tooltipTitle: "Mode",
+        triggerRef: { current: { closest } as unknown as HTMLSpanElement },
+        onValueChange: vi.fn(),
+      });
+      mockSelectContentProps[0]?.onCloseAutoFocus?.({ preventDefault: vi.fn() });
+      expect(closest).toHaveBeenCalled();
+      expect(scopedFocus).toHaveBeenCalledOnce();
+      expect(globalFocus).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it.each([
     ["zh-CN", "自主模式", "在有风险时询问"],
     ["en-US", "Autonomous mode", "Ask when there’s risk"],

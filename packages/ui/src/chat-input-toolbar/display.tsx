@@ -25,10 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select.js";
-import {
-  isCoarseTouchDevice,
-  shouldRestoreChatInputFocusAfterPickerClose,
-} from "@/lib/pickerFocus.js";
+import { restoreComposerInputFocusAfterPickerClose } from "@/lib/pickerFocus.js";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
@@ -430,21 +427,10 @@ export function ConfigSelect({
             return;
           }
           event.preventDefault();
-          if (
-            !shouldRestoreChatInputFocusAfterPickerClose({
-              isCoarseTouchDevice: isCoarseTouchDevice(),
-            })
-          ) {
-            return;
-          }
-          // Bugfix: when a Bot dialog reuses ConfigSelect, closing its menu must not force focus to the chat input.
-          const input = document.querySelector<HTMLElement>(restoreFocusSelector);
-          logger.debug("[ConfigSelect] picker focus handoff", {
-            category: option.category,
-            restoreFocusSelector,
-            targetFound: Boolean(input),
+          restoreComposerInputFocusAfterPickerClose({
+            anchor: triggerRef?.current ?? null,
+            fallbackSelector: restoreFocusSelector,
           });
-          input?.focus();
         }}
       >
         {option.category === "mode"
