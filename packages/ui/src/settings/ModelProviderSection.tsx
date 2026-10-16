@@ -41,6 +41,14 @@ import {
 } from "./model-provider-section/constants.js";
 import { ModelProviderSectionDetail } from "./model-provider-section/Detail.js";
 import { ModelProviderSectionLayout } from "./model-provider-section/SectionLayout.js";
+import { AcpAgentsPanel } from "./model-provider-section/AcpAgentsPanel.js";
+import {
+  acpProviderId,
+  buildAcpAgentAccess,
+  buildAcpPseudoModelConfig,
+  type AcpAgentFormValues,
+} from "./model-provider-section/acpAgentConfig.js";
+import type { AcpAgentSummary } from "@zcode/services";
 import { ProviderTemplatePicker } from "./model-provider-section/ProviderTemplatePicker.js";
 import type { CodingPlanLoginOptions } from "./model-provider-section/codingPlanPricingCards.js";
 import { useModelProviderNavigation } from "./model-provider-section/useModelProviderNavigation.js";
@@ -250,7 +258,8 @@ export function ModelProviderSection({
   const { intl, locale } = useZCodeIntl();
   const confirmDialog = useConfirmDialog();
   const platform = usePlatform();
-  const { modelSelectionService, oauthService, credentialService } = useServices();
+  const { modelSelectionService, oauthService, credentialService, providerSettingsService } =
+    useServices();
   const {
     modelProviders,
     providerTemplates,
@@ -1077,6 +1086,58 @@ export function ModelProviderSection({
     [testModelConnectivity],
   );
 
+  const acpEnabledProviderIds = useMemo<ReadonlySet<string>>(() => {
+    const ids = new Set<string>();
+    for (const provider of providerSettingsView?.providers ?? []) {
+      if (provider.providerId.startsWith("acp:") && provider.enabled) ids.add(provider.providerId);
+    }
+    return ids;
+  }, [providerSettingsView]);
+
+  // ACP agents become personal providers (`acp:<agentId>`) holding one
+  // synthetic model (modelId = agentId); the model config mirrors the shape
+  // the provider resolver expects (see acpAgentConfig.ts).
+  const handleAcpEnableAgent = useCallback(
+    async (agent: AcpAgentSummary, form: AcpAgentFormValues) => {
+      const providerId = acpProviderId(agent.agentId);
+      await createPersonalProvider({
+        providerId,
+        providerName: `${agent.displayName} (ACP)`,
+        initialConfig: { access: buildAcpAgentAccess(agent, form) },
+      });
+      try {
+        await addPersonalModel(
+          providerId,
+          agent.agentId,
+          buildAcpPseudoModelConfig(agent.agentId),
+          false,
+        );
+      } catch (error) {
+        // Keep activation atomic: a provider without its model would linger as an
+        // unusable entry, so roll it back before surfacing the failure.
+        await deleteProvider(providerId).catch(() => {});
+        throw error;
+      }
+    },
+    [createPersonalProvider, addPersonalModel, deleteProvider],
+  );
+
+  const handleAcpUpdateAgent = useCallback(
+    async (agent: AcpAgentSummary, form: AcpAgentFormValues) => {
+      await providerSettingsService.savePersonalProviderOverlay(acpProviderId(agent.agentId), {
+        access: buildAcpAgentAccess(agent, form),
+      });
+    },
+    [providerSettingsService],
+  );
+
+  const handleAcpDisableAgent = useCallback(
+    async (agent: AcpAgentSummary) => {
+      await deleteProvider(acpProviderId(agent.agentId));
+    },
+    [deleteProvider],
+  );
+
   // On a slow first load, returning null left the entire model provider page blank,
   // so the existing sidebar group and refresh button loading states never rendered.
   // Render the layout shell first and show loading per group, so the page does not appear broken.
@@ -1095,111 +1156,123 @@ export function ModelProviderSection({
   }
 
   return (
-    <ModelProviderSectionLayout
-      description={intl.formatMessage({ id: "settings.modelProviderDescription" })}
-      refreshLabel={intl.formatMessage({ id: "settings.modelProvider.refresh" })}
-      loadingLabel={intl.formatMessage({ id: "common.loading" })}
-      presetLoading={presetLoading}
-      customLoading={customLoading}
-      onRefresh={() => {
-        void refreshModelProviderSection({
-          refresh,
-          // Manually refreshing Settings must also refresh Z.ai and BigModel Team Plan snapshots.
-          // Previously only BigModel refreshed, leaving stale products after Z.ai plan purchases or subscription changes.
-          refreshTeamPlanProducts: refreshAuthenticatedEnterpriseProducts,
-        });
-        refreshCodingPlanEntitlements();
-      }}
-      addProviderLabel={intl.formatMessage({ id: "settings.modelProvider.addProviderAction" })}
-      onAddProvider={() => setTemplatePickerOpen(true)}
-      navigationGroups={navigationGroups}
-      selectedNodeKey={selectedNodeKey}
-      onSelectNavItem={handleSelectNavItem}
-      onReorderProviderIds={handleReorderProviderIds}
-      reorderableProviderIds={reorderableProviderIds}
-    >
-      {(invalidProviderTarget || navigationUnavailable) && !templatePickerOpen ? (
-        <p role="alert" className="mb-3 text-ui-base text-destructive">
-          {intl.formatMessage({
-            id: invalidProviderTarget
-              ? "settings.modelProvider.navigationUnavailable"
-              : "settings.modelProvider.connectionUnavailable",
-          })}
-        </p>
-      ) : null}
-      {templatePickerOpen ? (
-        <ProviderTemplatePicker
-          templates={providerTemplates}
-          creating={creatingProvider}
-          onBack={() => setTemplatePickerOpen(false)}
-          onCreateFromTemplate={(templateId) => {
-            return handleCreateProvider({ templateId });
-          }}
-          onCreateCustom={(label) => {
-            return handleCreateProvider({ providerName: label });
-          }}
-        />
-      ) : (
-        <ModelProviderSectionDetail
-          connectionSelections={effectiveConnectionSelections}
-          providerSettingsView={providerSettingsView}
-          selectedNavItem={selectedNavItem}
-          navigationItems={navigationItems}
-          connectionSettingsFailed={familyConnectionSettingsFailed}
-          startPlanSubscriptionCount={(() => {
-            const providerId =
-              selectedNavItem && "presetId" in selectedNavItem ? selectedNavItem.presetId : null;
-            const family = providerId
-              ? resolveModelProviderFamilySpecByProviderId(providerId)
-              : null;
-            const entitlement = family ? codingPlanEntitlements[family.startPlanProviderId] : null;
-            // Show entitlements fetched for the current family; do not use whether Start is selected as a proxy for entitlement count.
-            return entitlement?.error
-              ? 0
-              : (entitlement?.snapshot?.subscription?.details.length ?? 0);
-          })()}
-          presetLoading={presetLoading}
-          codingPlanAuthError={oauthError}
-          codingPlanPurchaseTokenAuthenticatedByProviderId={
-            codingPlanPurchaseTokenAuthenticatedByProviderId
-          }
-          presetSubscriptionProviderId={presetSubscriptionProviderId}
-          codingPlanStatusSyncProviderId={codingPlanStatusSyncProviderId}
-          codingPlanDisconnectProviderId={codingPlanDisconnectProviderId}
-          onSave={handleSave}
-          onAddPersonalModel={addPersonalModel}
-          onSavePersonalModelDraft={savePersonalModelDraft}
-          onSetPersonalModelEnabled={setPersonalModelEnabled}
-          onDeletePersonalModel={deletePersonalModel}
-          onDelete={handleDelete}
-          // Provider sidebar reorder permissions were incorrectly reused as a model reorder gate, preventing Effective models from Built-in/Account
-          // Providers from being written to Personal modelOrder. Model ordering is independent of the member source.
-          onReorderProviderModels={reorderProviderModels}
-          onTestModel={handleTestModel}
-          onCodingPlanLogin={handleCodingPlanLogin}
-          onRetryCodingPlan={() => {
-            // Failing to retrieve a key does not mean the login expired; use the Host's manual refresh without clearing OAuth or logging in again.
-            logger.info("[ModelProviderSection] 重试获取套餐状态");
-            return refresh().then(() =>
-              refreshCodingPlanEntitlements({ force: true, reason: "manual" }),
-            );
-          }}
-          onCodingPlanDisconnect={handleCodingPlanDisconnect}
-          onOpenApiKeyUrl={handleOpenApiKeyUrl}
-          onSelectNavItem={handleSelectNavItem}
-          onOpenBigModelRegistration={() => {
-            // The registration prompt comes from a failed OAuth checking state; restore the normal state after opening registration so the prompt does not get stuck.
-            setOAuthError(null);
-            setPresetSubscriptionProviderId((current) =>
-              current === BUILTIN_MODEL_PROVIDER_IDS.bigmodelIndividualCodingPlan ? null : current,
-            );
-            platform.openExternal(BIGMODEL_REGISTRATION_URL);
-          }}
-          onCodingPlanPurchaseComplete={async () => {
-            await refreshProviderPanelAfterAuthChange({ refreshReason: "purchase" });
-          }}
-        />
-      )}
-    </ModelProviderSectionLayout>
+    <div className="space-y-6">
+      <AcpAgentsPanel
+        enabledProviderIds={acpEnabledProviderIds}
+        onEnableAgent={handleAcpEnableAgent}
+        onUpdateAgent={handleAcpUpdateAgent}
+        onDisableAgent={handleAcpDisableAgent}
+      />
+      <ModelProviderSectionLayout
+        description={intl.formatMessage({ id: "settings.modelProviderDescription" })}
+        refreshLabel={intl.formatMessage({ id: "settings.modelProvider.refresh" })}
+        loadingLabel={intl.formatMessage({ id: "common.loading" })}
+        presetLoading={presetLoading}
+        customLoading={customLoading}
+        onRefresh={() => {
+          void refreshModelProviderSection({
+            refresh,
+            // Manually refreshing Settings must also refresh Z.ai and BigModel Team Plan snapshots.
+            // Previously only BigModel refreshed, leaving stale products after Z.ai plan purchases or subscription changes.
+            refreshTeamPlanProducts: refreshAuthenticatedEnterpriseProducts,
+          });
+          refreshCodingPlanEntitlements();
+        }}
+        addProviderLabel={intl.formatMessage({ id: "settings.modelProvider.addProviderAction" })}
+        onAddProvider={() => setTemplatePickerOpen(true)}
+        navigationGroups={navigationGroups}
+        selectedNodeKey={selectedNodeKey}
+        onSelectNavItem={handleSelectNavItem}
+        onReorderProviderIds={handleReorderProviderIds}
+        reorderableProviderIds={reorderableProviderIds}
+      >
+        {(invalidProviderTarget || navigationUnavailable) && !templatePickerOpen ? (
+          <p role="alert" className="mb-3 text-ui-base text-destructive">
+            {intl.formatMessage({
+              id: invalidProviderTarget
+                ? "settings.modelProvider.navigationUnavailable"
+                : "settings.modelProvider.connectionUnavailable",
+            })}
+          </p>
+        ) : null}
+        {templatePickerOpen ? (
+          <ProviderTemplatePicker
+            templates={providerTemplates}
+            creating={creatingProvider}
+            onBack={() => setTemplatePickerOpen(false)}
+            onCreateFromTemplate={(templateId) => {
+              return handleCreateProvider({ templateId });
+            }}
+            onCreateCustom={(label) => {
+              return handleCreateProvider({ providerName: label });
+            }}
+          />
+        ) : (
+          <ModelProviderSectionDetail
+            connectionSelections={effectiveConnectionSelections}
+            providerSettingsView={providerSettingsView}
+            selectedNavItem={selectedNavItem}
+            navigationItems={navigationItems}
+            connectionSettingsFailed={familyConnectionSettingsFailed}
+            startPlanSubscriptionCount={(() => {
+              const providerId =
+                selectedNavItem && "presetId" in selectedNavItem ? selectedNavItem.presetId : null;
+              const family = providerId
+                ? resolveModelProviderFamilySpecByProviderId(providerId)
+                : null;
+              const entitlement = family
+                ? codingPlanEntitlements[family.startPlanProviderId]
+                : null;
+              // Show entitlements fetched for the current family; do not use whether Start is selected as a proxy for entitlement count.
+              return entitlement?.error
+                ? 0
+                : (entitlement?.snapshot?.subscription?.details.length ?? 0);
+            })()}
+            presetLoading={presetLoading}
+            codingPlanAuthError={oauthError}
+            codingPlanPurchaseTokenAuthenticatedByProviderId={
+              codingPlanPurchaseTokenAuthenticatedByProviderId
+            }
+            presetSubscriptionProviderId={presetSubscriptionProviderId}
+            codingPlanStatusSyncProviderId={codingPlanStatusSyncProviderId}
+            codingPlanDisconnectProviderId={codingPlanDisconnectProviderId}
+            onSave={handleSave}
+            onAddPersonalModel={addPersonalModel}
+            onSavePersonalModelDraft={savePersonalModelDraft}
+            onSetPersonalModelEnabled={setPersonalModelEnabled}
+            onDeletePersonalModel={deletePersonalModel}
+            onDelete={handleDelete}
+            // Provider sidebar reorder permissions were incorrectly reused as a model reorder gate, preventing Effective models from Built-in/Account
+            // Providers from being written to Personal modelOrder. Model ordering is independent of the member source.
+            onReorderProviderModels={reorderProviderModels}
+            onTestModel={handleTestModel}
+            onCodingPlanLogin={handleCodingPlanLogin}
+            onRetryCodingPlan={() => {
+              // Failing to retrieve a key does not mean the login expired; use the Host's manual refresh without clearing OAuth or logging in again.
+              logger.info("[ModelProviderSection] 重试获取套餐状态");
+              return refresh().then(() =>
+                refreshCodingPlanEntitlements({ force: true, reason: "manual" }),
+              );
+            }}
+            onCodingPlanDisconnect={handleCodingPlanDisconnect}
+            onOpenApiKeyUrl={handleOpenApiKeyUrl}
+            onSelectNavItem={handleSelectNavItem}
+            onOpenBigModelRegistration={() => {
+              // The registration prompt comes from a failed OAuth checking state; restore the normal state after opening registration so the prompt does not get stuck.
+              setOAuthError(null);
+              setPresetSubscriptionProviderId((current) =>
+                current === BUILTIN_MODEL_PROVIDER_IDS.bigmodelIndividualCodingPlan
+                  ? null
+                  : current,
+              );
+              platform.openExternal(BIGMODEL_REGISTRATION_URL);
+            }}
+            onCodingPlanPurchaseComplete={async () => {
+              await refreshProviderPanelAfterAuthChange({ refreshReason: "purchase" });
+            }}
+          />
+        )}
+      </ModelProviderSectionLayout>
+    </div>
   );
 }
