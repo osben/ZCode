@@ -1920,7 +1920,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
 
       // The default branch is trivially an ancestor of origin/HEAD, but it is
       // not a feature branch that has been merged into the default branch.
-      const baseBranchName = baseRef.slice(baseRef.lastIndexOf("/") + 1);
+      const baseBranchName = baseRef.replace(/^origin\//, "");
       if (status.summary.branchName === baseBranchName) {
         return {
           state: "not_merged" satisfies GitBranchMergeState,
