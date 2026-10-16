@@ -7311,9 +7311,59 @@ const ukUA: Record<string, string> = {
     "~/.zcode/AGENTS.md було змінено після відкриття. Перезавантажте, щоб відхилити чернетку, або перезапишіть файл своєю чернеткою.",
   "settings.instructions.conflict.reload": "Перезавантажити",
   "settings.instructions.conflict.overwrite": "Перезаписати",
+  "settings.systemPrompt.title": "Системні промпти",
+  "settings.systemPrompt.description":
+    "Редагуйте вбудовані фрагменти промпту для нових сеансів на активному хості.",
+  "settings.systemPrompt.desktopOnly":
+    "Фрагменти системного промпту можна редагувати в настільному застосунку.",
+  "settings.systemPrompt.host.local": "Цей комп'ютер",
+  "settings.systemPrompt.pinnedHostNotice":
+    "Активний робочий простір на іншому хості. Редактор усе ще працює з {host}, доки ви не збережете або не відхилите чернетку.",
+  "settings.systemPrompt.waitingRemote": "Очікуємо з'єднання з віддаленим хостом...",
+  "settings.systemPrompt.unsupportedHost":
+    "Цей хост поки не підтримує керування системними фрагментами промпту. Оновіть ZCode на віддаленому хості та спробуйте ще раз.",
+  "settings.systemPrompt.loadFailed": "Не вдалося завантажити фрагменти системного промпту.",
+  "settings.systemPrompt.retry": "Повторити",
+  "settings.systemPrompt.customized": "Змінено",
+  "settings.systemPrompt.effectivePreview": "Поточний текст",
+  "settings.systemPrompt.edit": "Редагувати",
+  "settings.systemPrompt.restoreDefault": "Відновити стандартний",
+  "settings.systemPrompt.restoreConfirm.title": "Відновити вбудований промпт?",
+  "settings.systemPrompt.restoreConfirm.description":
+    "Буде видалено змінений промпт «{section}» на хості {host} і відновлено вбудоване стандартне значення.",
+  "settings.systemPrompt.restoreConfirm.confirm": "Відновити стандартний",
+  "settings.systemPrompt.restored": "Фрагмент системного промпту повернуто до стандартного тексту.",
+  "settings.systemPrompt.restoreFailed": "Не вдалося відновити стандартний текст.",
+  "settings.systemPrompt.editorLabel": "Текст промпту",
+  "settings.systemPrompt.characterCount": "{count} символів",
+  "settings.systemPrompt.identityBaselineLoading":
+    "Перевіряємо активний стиль відповідей перед редагуванням…",
+  "settings.systemPrompt.identityBaselineUnavailable":
+    "Не вдалося завантажити стилі відповідей. Перейдіть на вкладку «Стилі відповідей» і повторіть спробу перед редагуванням цього фрагмента.",
+  "settings.systemPrompt.memoryRootHint":
+    "Залиште маркер {placeholder}; під час запуску нового сеансу його буде замінено каталогом пам'яті цього сеансу.",
+  "settings.systemPrompt.emptyHint":
+    "Порожній фрагмент використовує вбудоване стандартне значення і не може зберігатися як зміна.",
+  "settings.systemPrompt.diffTitle": "Зміни",
+  "settings.systemPrompt.save": "Зберегти",
+  "settings.systemPrompt.saved": "Фрагмент системного промпту збережено для нових сеансів.",
+  "settings.systemPrompt.saveFailed": "Не вдалося зберегти фрагмент системного промпту.",
+  "settings.systemPrompt.discard.title": "Відхилити незбережені зміни промпту?",
+  "settings.systemPrompt.discard.leave": "Незбережені зміни системного промпту буде втрачено.",
+  "settings.systemPrompt.discard.hostChanged":
+    "Активний робочий простір змінив хост, поки чернетка промпту була незбережена. Відхилити її та переключитися?",
+  "settings.systemPrompt.discard.confirm": "Відхилити",
+  "settings.systemPrompt.section.cliPrefix": "Префікс CLI",
+  "settings.systemPrompt.section.identityIntro": "Вступ про ідентичність",
+  "settings.systemPrompt.section.harness": "Harness",
+  "settings.systemPrompt.section.communication": "Спілкування",
+  "settings.systemPrompt.section.contextManagement": "Керування контекстом",
+  "settings.systemPrompt.section.memoryGuidance": "Настанови щодо пам'яті",
   "settings.outputStyles.title": "Стилі відповідей",
   "settings.outputStyles.description":
     "Виберіть, як агент формує свої відповіді. Вбудовані стандартні значення зберігаються в коді програми; редагування зберігаються як файли перевизначення, які завжди можна відкотити.",
+  "settings.outputStyles.defaultPrompt":
+    "Додаткових інструкцій стилю відповіді немає. ZCode використовує стандартний системний промпт.",
   "settings.outputStyles.desktopOnly":
     "Стилями відповідей можна керувати в застосунку для комп'ютера.",
   "settings.outputStyles.host.local": "Цей пристрій",

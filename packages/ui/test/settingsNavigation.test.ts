@@ -35,6 +35,10 @@ describe("settingsNavigation", () => {
     expect(navigation.resolveSettingsSection("memory", "general")).toBe(
       "memory",
     );
+    expect(navigation.isSettingsSectionEnabled("systemPrompt")).toBe(true);
+    expect(navigation.resolveSettingsSection("systemPrompt", "general")).toBe(
+      "systemPrompt",
+    );
   });
 
   it("在 production 环境也保留 usage 分区", async () => {

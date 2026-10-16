@@ -82,6 +82,7 @@ import { MemorySettingsSection } from "@/settings/MemorySettingsSection.js";
 import { WorktreesSection } from "@/settings/WorktreesSection.js";
 import { UserInstructionsSettingsSection } from "@/settings/UserInstructionsSettingsSection.js";
 import { OutputStylesSection } from "@/settings/OutputStylesSection.js";
+import { SystemPromptSection } from "@/settings/SystemPromptSection.js";
 import type { UserInstructionsHostTarget } from "@/settings/userInstructionsEditorModel.js";
 import { useConfirmDialogStore } from "@/store/confirmDialogStore.js";
 import { CLOSE_ACTIVE_CONTEXT_REQUEST_EVENT } from "@/lib/closeActiveContext.js";
@@ -691,11 +692,20 @@ export function SettingsPage({
   const handleOutputStylesDirtyChange = useCallback((dirty: boolean) => {
     outputStylesDirtyRef.current = dirty;
   }, []);
-  const confirmLeaveInstructionsDraft = useCallback(async (): Promise<boolean> => {
+  const systemPromptDirtyRef = useRef(false);
+  const handleSystemPromptDirtyChange = useCallback((dirty: boolean) => {
+    systemPromptDirtyRef.current = dirty;
+  }, []);
+  const confirmLeaveSettingsDraft = useCallback(async (): Promise<boolean> => {
     const leavingInstructions = activeSection === "instructions" && instructionsDirtyRef.current;
     const leavingOutputStyles = activeSection === "outputStyles" && outputStylesDirtyRef.current;
-    if (!leavingInstructions && !leavingOutputStyles) return true;
-    const keyPrefix = leavingInstructions ? "settings.instructions" : "settings.outputStyles";
+    const leavingSystemPrompt = activeSection === "systemPrompt" && systemPromptDirtyRef.current;
+    if (!leavingInstructions && !leavingOutputStyles && !leavingSystemPrompt) return true;
+    const keyPrefix = leavingInstructions
+      ? "settings.instructions"
+      : leavingOutputStyles
+        ? "settings.outputStyles"
+        : "settings.systemPrompt";
     return useConfirmDialogStore.getState().requestConfirmation({
       title: intl.formatMessage({ id: `${keyPrefix}.discard.title` }),
       description: intl.formatMessage({ id: `${keyPrefix}.discard.leave` }),
@@ -704,19 +714,20 @@ export function SettingsPage({
     });
   }, [activeSection, intl]);
   const handleGuardedBack = useCallback(() => {
-    void confirmLeaveInstructionsDraft().then((confirmed) => {
+    void confirmLeaveSettingsDraft().then((confirmed) => {
       if (confirmed) onBack?.();
     });
-  }, [confirmLeaveInstructionsDraft, onBack]);
+  }, [confirmLeaveSettingsDraft, onBack]);
   useEffect(() => {
     if (!isDesktop) return;
     const handleCloseActiveContextRequest = (event: Event) => {
       const guardInstructions = activeSection === "instructions" && instructionsDirtyRef.current;
       const guardOutputStyles = activeSection === "outputStyles" && outputStylesDirtyRef.current;
-      if (!guardInstructions && !guardOutputStyles) return;
+      const guardSystemPrompt = activeSection === "systemPrompt" && systemPromptDirtyRef.current;
+      if (!guardInstructions && !guardOutputStyles && !guardSystemPrompt) return;
       // Cmd/Ctrl+W falls back to closing the window in Settings. Intercept it and confirm first when global instructions have an unsaved draft.
       event.preventDefault();
-      void confirmLeaveInstructionsDraft().then((confirmed) => {
+      void confirmLeaveSettingsDraft().then((confirmed) => {
         if (confirmed) void platform.executeDesktopCommand(DesktopCommandIds.CloseWindow);
       });
     };
@@ -727,19 +738,19 @@ export function SettingsPage({
         handleCloseActiveContextRequest,
       );
     };
-  }, [activeSection, confirmLeaveInstructionsDraft, isDesktop, platform]);
+  }, [activeSection, confirmLeaveSettingsDraft, isDesktop, platform]);
   const handleOpenModelProviderSettings = useCallback(() => {
-    void confirmLeaveInstructionsDraft().then((confirmed) => {
+    void confirmLeaveSettingsDraft().then((confirmed) => {
       if (confirmed) setActiveSettingsSection("modelProvider");
     });
-  }, [confirmLeaveInstructionsDraft, setActiveSettingsSection]);
+  }, [confirmLeaveSettingsDraft, setActiveSettingsSection]);
   const handleOpenUsageSettings = useCallback(() => {
     // The gear/back buttons in the settings sidebar footer reuse onBack,
     // but “Usage” in the avatar menu should stay in Settings and switch to Usage rather than return to the workspace.
-    void confirmLeaveInstructionsDraft().then((confirmed) => {
+    void confirmLeaveSettingsDraft().then((confirmed) => {
       if (confirmed) setActiveSettingsSection("usage");
     });
-  }, [confirmLeaveInstructionsDraft, setActiveSettingsSection]);
+  }, [confirmLeaveSettingsDraft, setActiveSettingsSection]);
   const activeWorkspacePath = useTabStore((state) => state.activeWorkspacePath);
   const tabs = useTabStore((state) => state.tabs);
   const workspaceTabs = useMemo(() => tabs.filter(isWorkspaceTab), [tabs]);
@@ -885,7 +896,7 @@ export function SettingsPage({
         const leaveConfirmation =
           resolveSettingsSection(section, activeSection) === activeSection
             ? Promise.resolve(true)
-            : confirmLeaveInstructionsDraft();
+            : confirmLeaveSettingsDraft();
         void leaveConfirmation.then((confirmed) => {
           if (!confirmed) return;
           // When SettingsPage is already open and the user selects a “Personalization/MCP” settings entry from quickpick,
@@ -911,7 +922,7 @@ export function SettingsPage({
           }
         });
       }),
-    [activeSection, confirmLeaveInstructionsDraft, setActiveSettingsSection],
+    [activeSection, confirmLeaveSettingsDraft, setActiveSettingsSection],
   );
 
   useEffect(() => {
@@ -1577,7 +1588,7 @@ export function SettingsPage({
                       })}
                       className="m-1 w-[calc(100%-0.5rem)] justify-start gap-2 rounded-xl px-1.5 text-foreground-subtle hover:bg-surface-hover hover:text-foreground max-lg:m-1 max-lg:size-10 max-lg:justify-center max-lg:px-0"
                       onClick={() => {
-                        void confirmLeaveInstructionsDraft().then((confirmed) => {
+                        void confirmLeaveSettingsDraft().then((confirmed) => {
                           if (!confirmed) return;
                           runUserAction({
                             input: {
@@ -1673,7 +1684,7 @@ export function SettingsPage({
                                   navigate();
                                   return;
                                 }
-                                void confirmLeaveInstructionsDraft().then((confirmed) => {
+                                void confirmLeaveSettingsDraft().then((confirmed) => {
                                   if (confirmed) navigate();
                                 });
                               }}
@@ -2063,6 +2074,12 @@ export function SettingsPage({
                             isDesktop={Boolean(isDesktop)}
                             activeTarget={userInstructionsActiveTarget}
                             onDirtyChange={handleOutputStylesDirtyChange}
+                          />
+                        ) : activeSection === "systemPrompt" ? (
+                          <SystemPromptSection
+                            isDesktop={Boolean(isDesktop)}
+                            activeTarget={userInstructionsActiveTarget}
+                            onDirtyChange={handleSystemPromptDirtyChange}
                           />
                         ) : activeSection === "plugin" ? (
                           <PluginsSection

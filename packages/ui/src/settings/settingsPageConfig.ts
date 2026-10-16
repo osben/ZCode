@@ -20,6 +20,7 @@ import {
   FileSearch,
   ScrollText,
   MessageSquareText,
+  FileText,
   GitBranchPlus,
   Mic,
 } from "lucide-react";
@@ -89,6 +90,12 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     id: "outputStyles",
     icon: MessageSquareText,
     titleId: "settings.outputStyles.title",
+    groupId: "agentCapabilities",
+  },
+  {
+    id: "systemPrompt",
+    icon: FileText,
+    titleId: "settings.systemPrompt.title",
     groupId: "agentCapabilities",
   },
   {

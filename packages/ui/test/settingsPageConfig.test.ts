@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BarChart3, Blocks, Cable, GitBranchPlus, Package, WandSparkles } from "lucide-react";
+import {
+  BarChart3,
+  Blocks,
+  Cable,
+  FileText,
+  GitBranchPlus,
+  Package,
+  WandSparkles,
+} from "lucide-react";
 import enUS from "../src/i18n/locales/en-US.js";
 import zhCN from "../src/i18n/locales/zh-CN.js";
 
@@ -48,6 +56,7 @@ describe("settingsPageConfig", () => {
         sections: [
           "instructions",
           "outputStyles",
+          "systemPrompt",
           "memory",
           "subagents",
           "plugin",
@@ -69,6 +78,7 @@ describe("settingsPageConfig", () => {
       "modelProvider",
       "instructions",
       "outputStyles",
+      "systemPrompt",
       "memory",
       "subagents",
       "plugin",
@@ -93,6 +103,7 @@ describe("settingsPageConfig", () => {
       "modelProvider",
       "instructions",
       "outputStyles",
+      "systemPrompt",
       "memory",
       "subagents",
       "plugin",
@@ -120,6 +131,8 @@ describe("settingsPageConfig", () => {
     expect(SETTINGS_SECTIONS.find((section) => section.id === "plugin")?.icon).toBe(Blocks);
     expect(SETTINGS_SECTIONS.find((section) => section.id === "mcp")?.icon).toBe(Cable);
     expect(SETTINGS_SECTIONS.find((section) => section.id === "skill")?.icon).toBe(WandSparkles);
+    expect(SETTINGS_SECTIONS.find((section) => section.id === "systemPrompt")?.icon).toBe(FileText);
+    expect(enUS["settings.systemPrompt.title"]).toBe("System Prompts");
   });
 
   it("Worktrees 分区仅桌面平台注册，排在 Hooks 之后并提供中英文标题", async () => {
@@ -141,6 +154,7 @@ describe("settingsPageConfig", () => {
     ).toEqual([
       "instructions",
       "outputStyles",
+      "systemPrompt",
       "memory",
       "subagents",
       "plugin",
