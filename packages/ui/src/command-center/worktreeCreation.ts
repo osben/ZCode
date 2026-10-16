@@ -1,8 +1,8 @@
 /**
  * Shared createWorktree orchestration for both creation entries — the palette setup page
- * Start and the empty-state "New worktree" send interception (review recommendation 6c):
+ * Start and the empty-state "New worktree" setup pipeline (specs/composer-worktree-setup-steps.md):
  * same request shape, same issue→message mapping, and the same target-path-exists recovery
- * that lists worktrees and offers the existing directory for the branch instead of a second one.
+ * that lists worktrees and consumes the existing directory for the branch instead of a second one.
  *
  * Unlike the pure functions in worktreeTaskFlow, this module calls gitService and logs; both
  * gitService and message formatting are injected so the two entry points (palette, empty-state) share one semantics.
@@ -40,6 +40,13 @@ export type WorktreeCreationOutcome =
       errorDetail: string | null;
     };
 
+/** Optional delay for controlled manual/E2E verification; normal app flows have no artificial wait. */
+function waitForWorktreeCreationTestGate(): Promise<void> {
+  const delayMs = Number(import.meta.env["VITE_E2E_WORKTREE_CREATION_DELAY_MS"] ?? 0);
+  if (!Number.isFinite(delayMs) || delayMs <= 0) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
 /**
  * Run one creation attempt for both entries: `formatMessage` formats the shared worktree
  * copy; callers keep their own logging scope and busy/inline-error states.
@@ -61,6 +68,7 @@ export async function executeWorktreeCreation({
 }): Promise<WorktreeCreationOutcome> {
   let result: GitWorktreeCreateResult;
   try {
+    await waitForWorktreeCreationTestGate();
     result = await gitService.createWorktree({
       workspacePath,
       branchName,

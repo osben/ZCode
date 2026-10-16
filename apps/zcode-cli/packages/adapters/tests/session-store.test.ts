@@ -1109,6 +1109,41 @@ describe("SQLite session store", () => {
     }
   });
 
+  it("deletes only empty preparation sessions", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "zcode-empty-session-"));
+    const emptyId = createSessionId("empty-preparation");
+    const occupiedId = createSessionId("occupied-preparation");
+    const store = createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
+    const create = (id: typeof emptyId) =>
+      store.createSession({
+        id,
+        projectID: createProjectId("empty-preparation"),
+        slug: String(id),
+        directory: tempRoot,
+        title: "preparation",
+        version: "0.1.0",
+      });
+    try {
+      await create(emptyId);
+      await create(occupiedId);
+      await store.saveSessionEntry({
+        id: "entry_occupied",
+        sessionID: occupiedId,
+        type: "test",
+        time: { created: 1, updated: 1 },
+        data: {},
+      });
+
+      await expect(store.deleteEmptySession(emptyId)).resolves.toBe(true);
+      await expect(store.getSession(emptyId)).resolves.toBeNull();
+      await expect(store.deleteEmptySession(occupiedId)).resolves.toBe(false);
+      await expect(store.getSession(occupiedId)).resolves.not.toBeNull();
+    } finally {
+      store.close();
+      await rm(tempRoot, { force: true, recursive: true });
+    }
+  });
+
   it("atomically creates a fork child and idempotent command fact", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-stable-fork-child-"));
     const dbPath = join(tempRoot, "session.sqlite");

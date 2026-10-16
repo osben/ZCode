@@ -100,14 +100,17 @@ describe("useGlobalTaskList remote connection generation", () => {
       expect(result.current.loading).toBe(false);
       expect(listTaskList).toHaveBeenCalledTimes(1);
       expect(result.current.items).toEqual([]);
+      expect(result.current.hasCurrentResult).toBe(true);
     });
 
     connected = true;
     rerender({ workspaceTabs: [remoteTab(REMOTE_SESSION_ID)] });
+    expect(result.current.hasCurrentResult).toBe(false);
 
     await waitFor(() => {
       expect(listTaskList).toHaveBeenCalledTimes(2);
       expect(result.current.items.map((task) => task.taskId)).toEqual(["task-before-connect"]);
+      expect(result.current.hasCurrentResult).toBe(true);
     });
 
     rerender({ workspaceTabs: [remoteTab(REMOTE_SESSION_ID)] });
@@ -120,6 +123,43 @@ describe("useGlobalTaskList remote connection generation", () => {
       expect(listTaskList).toHaveBeenCalledTimes(3);
     });
 
+    unmount();
+  });
+
+  it("does not expose an authoritative empty result when the initial Controller query fails", async () => {
+    const controller = {
+      listTaskList: vi.fn(async () => {
+        throw new Error("controller unavailable");
+      }),
+      onDynamicControllerFrame: vi.fn(() => () => {}),
+      subscribeControllerV4: vi.fn(async ({ topic }: { topic: string }) => ({
+        ack: { subscriptionId: topic, mode: "snapshot" as const, logEpoch: "epoch-1" },
+      })),
+      unsubscribeControllerV4: vi.fn(async () => undefined),
+      resyncControllerV4: vi.fn(),
+    } as unknown as IWindowControllerService;
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(ServiceProvider, {
+        services: { windowControllerService: controller } as unknown as IServiceAccessor,
+        children,
+      });
+
+    const { result, unmount } = renderHook(
+      () =>
+        useGlobalTaskList({
+          kind: "active",
+          workspaceTabs: [remoteTab()],
+          sortBy: "updated",
+          searchQuery: "",
+          expanded: true,
+          collapsedLimit: 100,
+        }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.items).toEqual([]);
+    expect(result.current.hasCurrentResult).toBe(false);
     unmount();
   });
 });

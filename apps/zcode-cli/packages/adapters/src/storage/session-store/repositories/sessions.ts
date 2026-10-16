@@ -79,6 +79,21 @@ export function createSession(db: DatabaseSync, input: CreateSessionInput): Sess
   return mustGetSession(db, input.id);
 }
 
+export function deleteEmptySession(db: DatabaseSync, sessionID: SessionId): boolean {
+  const result = db
+    .prepare(
+      `
+      delete from session
+      where id = ?
+        and not exists (select 1 from message where session_id = ?)
+        and not exists (select 1 from session_entry where session_id = ?)
+        and not exists (select 1 from session_input where session_id = ?)
+      `,
+    )
+    .run(sessionID, sessionID, sessionID, sessionID);
+  return Number(result.changes) > 0;
+}
+
 export async function updateSession(
   db: DatabaseSync,
   input: UpdateSessionInput,

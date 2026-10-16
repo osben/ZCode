@@ -30,15 +30,15 @@ Implementation is limited to the desktop plugin-sandbox presentation layer; keep
 
 Add real Electron cases to the existing `node packages/desktop/scripts/gen-ui-e2e.mjs` suite:
 
-| Scenario | Assertion |
-| --- | --- |
+| Scenario                                                                            | Assertion                                                                                         |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | Repeatedly switch between a short tab and an SVG chart with fractional-pixel height | Container promptly grows/shrinks, content remains complete, and the root scrollbar takes no width |
-| Desktop width and 390px narrow screen, light/dark themes | Height is correct after reflow; no horizontal overflow |
-| Add/remove nested content and root-level tooltips | Content changes update height; tooltips do not increase body height |
-| Send a real wheel event with the pointer inside the chart | Outer conversation scrolls; guest `scrollY` remains 0 |
-| Expand/collapse | Same guest is retained; body space and post-collapse measurement are correct |
-| Root-node measurement | Do not modify `html.style.height`; no continuous size feedback |
-| `vh`-dependent height | Host size updates do not cause unbounded growth |
-| Height exceeds 10000px | Existing limit and scroll access remain; the view can shrink after content is removed |
+| Desktop width and 390px narrow screen, light/dark themes                            | Height is correct after reflow; no horizontal overflow                                            |
+| Add/remove nested content and root-level tooltips                                   | Content changes update height; tooltips do not increase body height                               |
+| Send a real wheel event with the pointer inside the chart                           | Outer conversation scrolls; guest `scrollY` remains 0                                             |
+| Expand/collapse                                                                     | Same guest is retained; body space and post-collapse measurement are correct                      |
+| Root-node measurement                                                               | Do not modify `html.style.height`; no continuous size feedback                                    |
+| `vh`-dependent height                                                               | Host size updates do not cause unbounded growth                                                   |
+| Height exceeds 10000px                                                              | Existing limit and scroll access remain; the view can shrink after content is removed             |
 
 Protocol-assembly unit tests verify that the root scrollbar style appears after author content and is not injected into MCP documents.

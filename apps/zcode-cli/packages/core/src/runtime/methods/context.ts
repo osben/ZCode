@@ -117,7 +117,11 @@ export function resolveMainAgentSystemPromptOverrides(
   config: Pick<AgentRuntimeConfig, "taskType" | "systemPromptOverrides">,
 ): AgentRuntimeConfig["systemPromptOverrides"] {
   const taskType = config.taskType;
-  if (taskType === "workflow_child" || taskType === "nested_workflow_child" || taskType === "subagent_child") {
+  if (
+    taskType === "workflow_child" ||
+    taskType === "nested_workflow_child" ||
+    taskType === "subagent_child"
+  ) {
     return undefined;
   }
   return config.systemPromptOverrides;
@@ -143,6 +147,8 @@ export function createContextBuilderFromSnapshot(
       currentDate: snapshot.currentDate,
       envInfo,
       model: options.model,
+      // Subagents run in the same (worktree) cwd and must carry the same isolation notice.
+      executionWorktree: this.config.executionWorktree,
       skillMetadataBudget: this.config.skillMetadataBudget,
       skills: this.skillLoadOutcome,
       userInstructions: this.config.subagentContext.userInstructions,
@@ -153,6 +159,7 @@ export function createContextBuilderFromSnapshot(
     workingDirectory: snapshot.workingDirectory,
     envInfo,
     model: options.model,
+    executionWorktree: this.config.executionWorktree,
     presentationSurface: this.config.presentationSurface,
     genUiOutputDirectory: resolveGenUiOutputDirectory(this),
     currentDate: snapshot.currentDate,

@@ -42,16 +42,16 @@ Pending work → show notice/wait for lock/recheck → existing SQL/COMMIT → m
 
 ## Acceptance Cases
 
-| ID | Scenario | Assertion |
-| --- | --- | --- |
-| SILENTDB-01 | Migration complete; restart while holding a write lock | Logo visible with no body text/buttons; Root is not mounted early; enter after release |
-| SILENTDB-02 | Empty/old database | Distinguish initialize/upgrade; show only after migration need is confirmed; ready only after COMMIT/close |
-| SILENTDB-03 | Another process holds the lock and completes remaining migration | This connection does not rerun it; migration need existed, execution/commit counts are 0 |
-| SILENTDB-04 | SQL fails midway | Show error; execution count may be nonzero, committed count is 0; manual retry starts a new attempt |
-| SILENTDB-05 | Mixed databases and reload | Show when only one database needs upgrade; do not reverse the notice during maintenance/next database; restore same-generation snapshot |
-| SILENTDB-06 | Same real session database, different cwd | Prepare only on first success; different databases reached through relative paths do not merge; failure is not reused |
-| SILENTDB-07 | ARMS | Kind/execution/commit facts share Host source; retain existing total duration and disk statistics |
-| SILENTDB-08 | Chinese/English and themes | Normal startup has no visible text; error/migration copy appears only for corresponding real facts |
+| ID          | Scenario                                                         | Assertion                                                                                                                               |
+| ----------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| SILENTDB-01 | Migration complete; restart while holding a write lock           | Logo visible with no body text/buttons; Root is not mounted early; enter after release                                                  |
+| SILENTDB-02 | Empty/old database                                               | Distinguish initialize/upgrade; show only after migration need is confirmed; ready only after COMMIT/close                              |
+| SILENTDB-03 | Another process holds the lock and completes remaining migration | This connection does not rerun it; migration need existed, execution/commit counts are 0                                                |
+| SILENTDB-04 | SQL fails midway                                                 | Show error; execution count may be nonzero, committed count is 0; manual retry starts a new attempt                                     |
+| SILENTDB-05 | Mixed databases and reload                                       | Show when only one database needs upgrade; do not reverse the notice during maintenance/next database; restore same-generation snapshot |
+| SILENTDB-06 | Same real session database, different cwd                        | Prepare only on first success; different databases reached through relative paths do not merge; failure is not reused                   |
+| SILENTDB-07 | ARMS                                                             | Kind/execution/commit facts share Host source; retain existing total duration and disk statistics                                       |
+| SILENTDB-08 | Chinese/English and themes                                       | Normal startup has no visible text; error/migration copy appears only for corresponding real facts                                      |
 
 Continue using the conversation-session-database-startup pending spec for E2E. No real user DB and no 20 GB performance test.
 

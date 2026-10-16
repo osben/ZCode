@@ -1,3 +1,4 @@
+import { stat } from "node:fs/promises";
 import { restorePermissionGrantMarker } from "../helpers/permission-grant-resume.js";
 import { executionStateSchema, resolveExecutionState } from "@zcode/shared";
 import { SESSION_ENTRY_EXECUTION_STATE } from "@zcode/contracts";
@@ -124,11 +125,33 @@ export async function resumeFromStore(
 
   // Execution-worktree sessions persist their execution cwd separately from the workspace
   // directory (listing identity); restore the worktree first so the resumed turn runs there.
+  // If it was deleted out-of-band, keep the missing path as cwd and block workspace tools below;
+  // the fact stays on runtime config for the sessions-index badge and environment context.
   this.workingDirectory = session.executionDirectory ?? session.directory;
   if (session.executionDirectory) {
+    let executionWorktreeMissing: boolean;
+    try {
+      executionWorktreeMissing = !(await stat(session.executionDirectory)).isDirectory();
+    } catch {
+      executionWorktreeMissing = true;
+    }
+    if (executionWorktreeMissing) {
+      this.logger?.warn(
+        "Session resume execution worktree directory is missing; workspace tools remain blocked until it is restored",
+        {
+          ...traceContextToLogContext(traceContext),
+          event: "session.resume.execution_worktree_missing",
+          module: "core.runtime",
+          path: session.executionDirectory,
+          sessionId: this.sessionId,
+        },
+      );
+    }
     this.config.executionWorktree = {
       path: session.executionDirectory,
       ...(session.executionBranch ? { branchName: session.executionBranch } : {}),
+      ...(executionWorktreeMissing ? { missing: true } : {}),
+      workspacePath: session.directory,
     };
   }
   this.config.taskType = session.taskType;

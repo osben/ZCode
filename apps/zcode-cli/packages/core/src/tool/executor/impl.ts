@@ -92,6 +92,7 @@ export class ToolExecutorImpl implements ToolExecutor {
       getMode: options.getMode ?? (() => options.mode ?? "build"),
       maxConcurrency: options.maxConcurrency ?? 10,
       hookRunner: options.hookRunner,
+      validateToolExecution: options.validateToolExecution,
     };
     this.backgroundTasks = new BackgroundTaskTracker(this.deps);
   }

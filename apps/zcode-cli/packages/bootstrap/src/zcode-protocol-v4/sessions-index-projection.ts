@@ -27,6 +27,8 @@ export interface SessionSummaryDeriveExtra {
   subagentCount?: number;
   runningSubagentCount?: number;
   childSessions?: SessionSummary["childSessions"];
+  /** True when the execution worktree directory was absent on disk at the meta source. */
+  executionWorktreeMissing?: boolean;
 }
 
 const MAX_PREVIEW_CHARS = 120;
@@ -114,6 +116,7 @@ export function deriveSessionSummary(
     ...(extra.childSessions && extra.childSessions.length > 0
       ? { childSessions: extra.childSessions }
       : {}),
+    ...(extra.executionWorktreeMissing ? { executionWorktreeMissing: true } : {}),
     createdAt: extra.createdAt,
   };
 }
@@ -148,6 +151,9 @@ function summariesEqual(a: SessionSummary, b: SessionSummary): boolean {
     (a.subagentCount ?? 0) === (b.subagentCount ?? 0) &&
     (a.runningSubagentCount ?? 0) === (b.runningSubagentCount ?? 0) &&
     JSON.stringify(a.childSessions ?? null) === JSON.stringify(b.childSessions ?? null) &&
+    // Normalize absent ≈ false so a producer flipping between omitting the flag and false does not
+    // emit a no-op delta, while a real health flip (false ↔ true) always produces one.
+    (a.executionWorktreeMissing ?? false) === (b.executionWorktreeMissing ?? false) &&
     a.createdAt === b.createdAt
   );
 }

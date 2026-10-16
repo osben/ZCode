@@ -120,14 +120,17 @@ export function getProjectId(this: AgentRuntimeInternal): ProjectId {
 
 export function getExecutionWorktree(
   this: AgentRuntimeInternal,
-): { path: string; branchName?: string } | undefined {
+): { path: string; branchName?: string; missing?: boolean } | undefined {
   // The config value is the single source; resume restores it from the persisted session columns.
+  // `missing` is runtime-only state (the worktree directory vanished); consumers project it to the
+  // sessions-index top-level flag. `workspacePath` stays internal and is not returned here.
   return this.config.executionWorktree
     ? {
         path: this.config.executionWorktree.path,
         ...(this.config.executionWorktree.branchName
           ? { branchName: this.config.executionWorktree.branchName }
           : {}),
+        ...(this.config.executionWorktree.missing ? { missing: true } : {}),
       }
     : undefined;
 }

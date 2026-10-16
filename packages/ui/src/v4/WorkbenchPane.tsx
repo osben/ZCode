@@ -275,7 +275,11 @@ export interface WorkbenchShellBinding {
   summaryPanelVariantOverride?: ChatViewSummaryPanelVariant | null;
   onSummaryPanelVariantOverrideChange?: (variant: ChatViewSummaryPanelVariant | null) => void;
   onRefreshGit?: () => void;
-  onOpenGitReview?: (sourceId?: GitChangeSourceId) => void;
+  onOpenGitReview?: (
+    sourceId?: GitChangeSourceId,
+    executionWorkspacePath?: string,
+    executionSessionId?: string,
+  ) => void;
   onOpenBrowserUrl?: (url: string) => void;
   onOpenAutomationsMain?: OpenAutomationsMain;
   onOpenCodeViewer?: (source: CodeViewerSource) => void;

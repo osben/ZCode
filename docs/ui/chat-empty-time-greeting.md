@@ -22,27 +22,27 @@ In the draft state for a new conversation, the empty-state heading no longer sho
 
 Preserve the intent for each time of day and use natural local phrasing rather than translating Chinese particles word for word.
 
-| Time period | Copy |
-| --- | --- |
-| Early morning | Morning, ready when you are |
-| Morning | Morning, how can I help? |
-| Noon | Noon break? |
-| Afternoon | Good afternoon! Leave the rest to me. |
-| Evening | Evening, nice work today |
-| Late night | It's late—remember to take care of yourself. |
+| Time period   | Copy                                         |
+| ------------- | -------------------------------------------- |
+| Early morning | Morning, ready when you are                  |
+| Morning       | Morning, how can I help?                     |
+| Noon          | Noon break?                                  |
+| Afternoon     | Good afternoon! Leave the rest to me.        |
+| Evening       | Evening, nice work today                     |
+| Late night    | It's late—remember to take care of yourself. |
 
 ## Simplified Chinese Copy Requirements (English Glosses)
 
 The Simplified Chinese strings are defined in `packages/ui/src/i18n/locales/zh-CN.ts`. These English glosses preserve their meanings; they are references, not literal UI copy.
 
-| Time period | Intended meaning of the Simplified Chinese copy |
-| --- | --- |
-| Early morning | Good morning, a new day is beginning. |
-| Morning | Good morning, is there anything you'd like me to help with? |
-| Noon | Hi, it's noon—would you like to take a break first? |
-| Afternoon | Good afternoon, I'll take it from here. |
-| Evening | Good evening, you've worked hard today. |
-| Late night | It's late—remember to take good care of yourself. |
+| Time period   | Intended meaning of the Simplified Chinese copy             |
+| ------------- | ----------------------------------------------------------- |
+| Early morning | Good morning, a new day is beginning.                       |
+| Morning       | Good morning, is there anything you'd like me to help with? |
+| Noon          | Hi, it's noon—would you like to take a break first?         |
+| Afternoon     | Good afternoon, I'll take it from here.                     |
+| Evening       | Good evening, you've worked hard today.                     |
+| Late night    | It's late—remember to take good care of yourself.           |
 
 ## Visuals
 

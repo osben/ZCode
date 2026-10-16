@@ -66,13 +66,13 @@ Access materials needed for final calls may come directly from Config, or be obt
 
 The system has only five configuration input sources:
 
-| Source                              | Meaning                                                          |
-| --------------------------------- | ------------------------------------------------------------- |
-| ZCode Built-in Provider Config    | Account Providers published by ZCode, and reusable Provider Templates |
+| Source                            | Meaning                                                                  |
+| --------------------------------- | ------------------------------------------------------------------------ |
+| ZCode Built-in Provider Config    | Account Providers published by ZCode, and reusable Provider Templates    |
 | Account Built-in Provider Config  | Further constraints by the current account on Built-in account Providers |
-| Personal Provider Config          | User-created Providers, and user overrides on existing Providers |
-| ZCode Built-in Model Config Rules | Static facts about models and API mappings published by ZCode |
-| Personal Model Config Rules       | User's sparse posterior overrides on model facts |
+| Personal Provider Config          | User-created Providers, and user overrides on existing Providers         |
+| ZCode Built-in Model Config Rules | Static facts about models and API mappings published by ZCode            |
+| Personal Model Config Rules       | User's sparse posterior overrides on model facts                         |
 
 Each source has its own strict input Schema. The five Schemas constrain "what each source can write," but after entering domain resolution, they still use common Provider Config, Model Config, and Overlay languages; five separate Runtime types are not established.
 

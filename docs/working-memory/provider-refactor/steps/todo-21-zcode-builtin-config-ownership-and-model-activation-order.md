@@ -118,13 +118,13 @@ first serve the domain model, then reuse Overlay for cross-layer composition.
 Five input sources each have strict Schema, but after entering the domain they share Provider Config, Model Config, and Overlay language; no five sets of Runtime
 DTOs are created.
 
-| Source                            | Writable facts                                                                                      |
-| --------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Source                            | Writable facts                                                                                                       |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | ZCode Built-in Provider Config    | Provider group, identity, display, API/Access template, `builtinModelIds`, Provider default state and declared order |
-| Account Built-in Provider Config  | Account Provider Access/connection constraints, Provider enabled, `builtinModelIds` when server actually returns |
-| Personal Provider Config          | `standard-personal` new Provider, or API/Access/status Overlay for existing Provider; `modelIds/order` |
-| ZCode Built-in Model Config Rules | Complete Model defaults, model/API/Provider/Endpoint specialization, official default enable/disable |
-| Personal Model Config Rules       | User's single-model specific overrides, and user-written generic Match Rules |
+| Account Built-in Provider Config  | Account Provider Access/connection constraints, Provider enabled, `builtinModelIds` when server actually returns     |
+| Personal Provider Config          | `standard-personal` new Provider, or API/Access/status Overlay for existing Provider; `modelIds/order`               |
+| ZCode Built-in Model Config Rules | Complete Model defaults, model/API/Provider/Endpoint specialization, official default enable/disable                 |
+| Personal Model Config Rules       | User's single-model specific overrides, and user-written generic Match Rules                                         |
 
 Strong constraints:
 
@@ -138,13 +138,13 @@ Strong constraints:
 
 The target boundaries for the five Sources are further fixed as:
 
-| Source                     | Must/Allow                                                                                                                                                            | Explicitly Prohibited                                                                         |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| ZCode Built-in Provider    | Each root declaration must provide `standard-builtin`, `zai-family`, or `bigmodel-family` group; label/logo, enabled, visibility, API, Access template, `builtinModelIds` are allowed | `standard-personal`, `modelIds`, `modelOrder`, `providerOrder` |
-| Account Built-in Provider  | Can only override existing ZCode Built-in Family Providers; enabled, structured Account Access, `builtinModelIds` when interface actually returns are allowed                   | group, display fields, visibility, API, Personal members/order, Model Config                      |
-| Personal Provider          | Root allows `providerOrder`; existing Provider Overlay allows label, enabled, visibility, API, Access, `modelIds/modelOrder`; Personal-only root must `group=standard-personal` | `builtinModelIds`; rewriting group for existing Providers                                      |
-| ZCode Built-in Model Rules | `provider-model` and `match`; complete Model Config, official enabled defaults, and evidence-confirmed Built-in-only narrow compatibility facts are allowed                     | Provider members, order, Access, dynamic credentials                                           |
-| Personal Model Rules       | `provider-model` and `match`; user-overridable Model Config sparse fields are allowed                                                                                   | Provider members/order, Access, product protocols not allowed for Personal override, pending Compatibility |
+| Source                     | Must/Allow                                                                                                                                                                            | Explicitly Prohibited                                                                                      |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| ZCode Built-in Provider    | Each root declaration must provide `standard-builtin`, `zai-family`, or `bigmodel-family` group; label/logo, enabled, visibility, API, Access template, `builtinModelIds` are allowed | `standard-personal`, `modelIds`, `modelOrder`, `providerOrder`                                             |
+| Account Built-in Provider  | Can only override existing ZCode Built-in Family Providers; enabled, structured Account Access, `builtinModelIds` when interface actually returns are allowed                         | group, display fields, visibility, API, Personal members/order, Model Config                               |
+| Personal Provider          | Root allows `providerOrder`; existing Provider Overlay allows label, enabled, visibility, API, Access, `modelIds/modelOrder`; Personal-only root must `group=standard-personal`       | `builtinModelIds`; rewriting group for existing Providers                                                  |
+| ZCode Built-in Model Rules | `provider-model` and `match`; complete Model Config, official enabled defaults, and evidence-confirmed Built-in-only narrow compatibility facts are allowed                           | Provider members, order, Access, dynamic credentials                                                       |
+| Personal Model Rules       | `provider-model` and `match`; user-overridable Model Config sparse fields are allowed                                                                                                 | Provider members/order, Access, product protocols not allowed for Personal override, pending Compatibility |
 
 Structure parsing and semantic validation are two steps: single-file Parser strictly rejects unknown fields; constraints requiring knowledge of "whether this ID comes from Built-in" are completed by Source
 assembly validation. Unreleased development middle Rules are directly rejected without adding dual-read or schema migration; truly published
@@ -452,13 +452,13 @@ Personal explicit clear (field permits)
 
 Field controls follow these unified visual semantics:
 
-| Status                         | Visual and Interaction                                                                                |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| Upstream has value, Personal not overridden | Displays real Effective result, but uses low-emphasis text, fill, or stroke; no restore operation |
-| Upstream has no value, Personal not overridden  | Displays neutral dash or "Not set" placeholder, cannot disguise as off or empty default      |
-| Personal explicit override       | Uses normal control emphasis; provides low-interference undo icon, shown on Desktop hover/focus, always discoverable on touch |
-| Personal explicit clear          | Displays clear unset/cleared state; cannot be confused with "no Personal leaves"         |
-| Validation error               | Uses standard error text and semantic colors, not mixed with inheritance/override visual strength  |
+| Status                                         | Visual and Interaction                                                                                                        |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Upstream has value, Personal not overridden    | Displays real Effective result, but uses low-emphasis text, fill, or stroke; no restore operation                             |
+| Upstream has no value, Personal not overridden | Displays neutral dash or "Not set" placeholder, cannot disguise as off or empty default                                       |
+| Personal explicit override                     | Uses normal control emphasis; provides low-interference undo icon, shown on Desktop hover/focus, always discoverable on touch |
+| Personal explicit clear                        | Displays clear unset/cleared state; cannot be confused with "no Personal leaves"                                              |
+| Validation error                               | Uses standard error text and semantic colors, not mixed with inheritance/override visual strength                             |
 
 Text and numbers display upstream values as placeholder when inheritable values exist, without copying them into Personal; displays "Not set" when upstream has no value. Clears Personal
 input to restore inheritance; provides narrow, explicit clear operation only when the field genuinely allows explicit clear. Enums continue to use existing Select language: collapsed displays Effective result;

@@ -4,7 +4,7 @@
 
 **Observation**: After two weeks online, check two things per §5.4. 1) Calibrate the 30 s `render_timeout` threshold - real machine p50 is only 230 ms, 30 s is likely too wide, but need online tail evidence to narrow. 2) Check the proportion of `send_cost_ms − ack_cost_ms` (projection reflow + render segment) on low-config devices vs real machine; if this segment inflates significantly, optimization focus is on rendering rather than network.
 
-**Known Gap**: composer slash command path not yet integrated - `dispatchSlashCommand()` missing `telemetrySeed`; existing sessions' `/compact``, `/goal`, and `emptyGoal`/`unsupportedGoal` local synchronous rejection only report `send_click` without falling through to `send_result`. When ARMS calculates success rate by `send_click_id`, this subset enters as denominator as abandonment; to be excluded separately; fix to follow up.
+**Known Gap**: composer slash command path not yet integrated - `dispatchSlashCommand()` missing `telemetrySeed`; existing sessions' `/compact``, `/goal`, and `emptyGoal`/`unsupportedGoal`local synchronous rejection only report`send_click`without falling through to`send_result`. When ARMS calculates success rate by `send_click_id`, this subset enters as denominator as abandonment; to be excluded separately; fix to follow up.
 
 **Reporting Channel**: **Only Alibaba Cloud ARMS RUM custom events** (`platform.reportArmsCustomEvent`). Does not go through self-developed `/event/report`.
 
@@ -46,22 +46,22 @@ Three gaps:
 
 ### 3.1 Channel: Only Report to ARMS
 
-| Decision Point | Conclusion | Reason |
-| --- | --- | --- |
-| Which channel | **Only ARMS**, no dual reporting to `/event/report` | Core metric is **duration distribution**; ARMS custom event `value` is numeric, natively supports avg/p50/p95/p99 with drill-down by `app_version` / `platform`; `/event/report` `event_extra_detail` are all strings, percentile requires data warehouse re-parsing |
-| Effective end | Electron desktop only | `packages/web/src/main.tsx` `reportArmsCustomEvent` is no-op, Web never receives; reuse existing gating `setUiPerfArmsReporter(isDesktop ? platform : null)` |
-| Relation to existing `send_btn` | `send_btn` semantics, fields, timing, channel **all unchanged** | Data warehouse already uses `send_btn` as `message_completion` pairing seed; two channels independent, this change zero impact on `/event/report` |
+| Decision Point                  | Conclusion                                                      | Reason                                                                                                                                                                                                                                                               |
+| ------------------------------- | --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Which channel                   | **Only ARMS**, no dual reporting to `/event/report`             | Core metric is **duration distribution**; ARMS custom event `value` is numeric, natively supports avg/p50/p95/p99 with drill-down by `app_version` / `platform`; `/event/report` `event_extra_detail` are all strings, percentile requires data warehouse re-parsing |
+| Effective end                   | Electron desktop only                                           | `packages/web/src/main.tsx` `reportArmsCustomEvent` is no-op, Web never receives; reuse existing gating `setUiPerfArmsReporter(isDesktop ? platform : null)`                                                                                                         |
+| Relation to existing `send_btn` | `send_btn` semantics, fields, timing, channel **all unchanged** | Data warehouse already uses `send_btn` as `message_completion` pairing seed; two channels independent, this change zero impact on `/event/report`                                                                                                                    |
 
 **Dual reporting rejected**: Same action leaving one copy in each channel, metric scopes would drift over time (one changes, other forgotten), and `/event/report` already has `send_btn` covering success path; duplicate counting would pollute existing dashboards.
 
 ### 3.2 Event Semantics
 
-| Decision Point | Conclusion | Reason |
-| --- | --- | --- |
-| "Send success" moment | **User message first appears in conversation history** (`snapshot.rows.window` first shows `kind === "userInput"` and `sourceCommandId === commandId`) | Measures what user perceives as "my message sent"; ACK accepted only means Host accepted command, screen still empty |
-| ACK segment separate | Yes, separate `ack_cost_ms` | When end-to-end slows, need to distinguish "upstream slow" vs "reflow+render slow"; difference gives latter |
-| ACK accepted but row not returning | 30 s timeout fallback, report `status=fail` / `reason_code=render_timeout` | Unfinalized leaves dangling `send_click` polluting success denominator; 30 s far exceeds normal reflow time, reaching here means real problem |
-| Report failures? | Yes, share `send_result` with success, distinguish by `status` + `reason_code` | Success rate is core metric; only reporting success = only numerator |
+| Decision Point                     | Conclusion                                                                                                                                             | Reason                                                                                                                                        |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| "Send success" moment              | **User message first appears in conversation history** (`snapshot.rows.window` first shows `kind === "userInput"` and `sourceCommandId === commandId`) | Measures what user perceives as "my message sent"; ACK accepted only means Host accepted command, screen still empty                          |
+| ACK segment separate               | Yes, separate `ack_cost_ms`                                                                                                                            | When end-to-end slows, need to distinguish "upstream slow" vs "reflow+render slow"; difference gives latter                                   |
+| ACK accepted but row not returning | 30 s timeout fallback, report `status=fail` / `reason_code=render_timeout`                                                                             | Unfinalized leaves dangling `send_click` polluting success denominator; 30 s far exceeds normal reflow time, reaching here means real problem |
+| Report failures?                   | Yes, share `send_result` with success, distinguish by `status` + `reason_code`                                                                         | Success rate is core metric; only reporting success = only numerator                                                                          |
 
 **"ACK accepted = success" rejected.** Under this scope real machine measured only 66 ~ 142 ms, measures command upstream round-trip to Host acceptance, not user-perceived message appearance moment — see §2 "User messages have no optimistic rendering". Original scope retained as `ack_cost_ms`, no longer `send_result` finalization signal.
 
@@ -110,19 +110,19 @@ Three events belong to ARMS group **`send_funnel`**. ARMS payload shape is `{ na
 
 ### 5.1 `send_input_focus` — Click Input Box
 
-| Field | Value |
-| --- | --- |
-| `name` | `send_input_focus` |
-| `group` | `send_funnel` |
-| `value` | `1` (count event) |
+| Field   | Value              |
+| ------- | ------------------ |
+| `name`  | `send_input_focus` |
+| `group` | `send_funnel`      |
+| `value` | `1` (count event)  |
 
 `properties`:
 
-| Key | Type | Meaning |
-| --- | --- | --- |
-| `focus_time` | number | Focus occurrence renderer clock (ms) |
-| `composer_scope` | string | `session` (existing) / `draft` (new draft) |
-| `talk_id` | string? | Current `sessionId`; draft state defaults not sent |
+| Key              | Type    | Meaning                                            |
+| ---------------- | ------- | -------------------------------------------------- |
+| `focus_time`     | number  | Focus occurrence renderer clock (ms)               |
+| `composer_scope` | string  | `session` (existing) / `draft` (new draft)         |
+| `talk_id`        | string? | Current `sessionId`; draft state defaults not sent |
 
 **Only reports real user focus, not programmatic focus.** `ConversationComposer` auto-focus (new task, switch session, return cursor after mount, refocus after context block removal) all go through `flushPendingFocus` calling `inputApiRef.current.focus()`, triggering same DOM focus event; implementation marks flag there, `handleEditorFocus` consumes flag and skips reporting. Existing `recordComposerFocus()` timestamp write **unaffected**, both focus types still recorded, `send_btn` `input_start_time` scope unchanged.
 
@@ -130,21 +130,21 @@ No time-window deduplication: one real focus = one event, literally corresponds 
 
 ### 5.2 `send_click` — Click Send
 
-| Field | Value |
-| --- | --- |
-| `name` | `send_click` |
-| `group` | `send_funnel` |
+| Field   | Value             |
+| ------- | ----------------- |
+| `name`  | `send_click`      |
+| `group` | `send_funnel`     |
 | `value` | `1` (count event) |
 
 `properties`: Seed frozen model/mode/plan fields (same source as `send_btn`, i.e. `buildV4ConversationPromptTelemetryExtraDetail` output) plus:
 
-| Key | Type | Meaning |
-| --- | --- | --- |
-| `send_click_id` | string | This send correlation ID (uuid), pairs with `send_result` |
-| `input_send_time` | number | Frozen `sendTime`, same field name and value as `send_btn` |
-| `send_trigger` | string | `button` (click send button) / `shortcut` (Enter submit) |
-| `composer_scope` | string | `session` / `draft` |
-| `talk_id` | string? | Current `sessionId`; draft state defaults not sent |
+| Key               | Type    | Meaning                                                    |
+| ----------------- | ------- | ---------------------------------------------------------- |
+| `send_click_id`   | string  | This send correlation ID (uuid), pairs with `send_result`  |
+| `input_send_time` | number  | Frozen `sendTime`, same field name and value as `send_btn` |
+| `send_trigger`    | string  | `button` (click send button) / `shortcut` (Enter submit)   |
+| `composer_scope`  | string  | `session` / `draft`                                        |
+| `talk_id`         | string? | Current `sessionId`; draft state defaults not sent         |
 
 **Report timing**: Inside `submit()` after send gate passes, `pendingRef` set, `telemetrySeed` frozen. Calls blocked by gate (empty draft, `pendingRef` occupied, attachment not ready) do not report — send button is disabled at this point, not a valid send.
 
@@ -154,41 +154,41 @@ No time-window deduplication: one real focus = one event, literally corresponds 
 
 ### 5.3 `send_result` — Send Result (Success & Failure)
 
-| Field | Value |
-| --- | --- |
-| `name` | `send_result` |
-| `group` | `send_funnel` |
+| Field   | Value                                                                                                                               |
+| ------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `name`  | `send_result`                                                                                                                       |
+| `group` | `send_funnel`                                                                                                                       |
 | `value` | **`send_cost_ms`**: Click send → this finalize moment **end-to-end** duration = finalize timestamp − `sendTime`, failure also fills |
 
 Putting duration in `value` not `properties` is core reason for choosing ARMS channel: ARMS can directly do avg / p50 / p95 / p99 on this event, and slice by properties below.
 
 `properties`: Same seed fields as `send_click`, plus:
 
-| Key | Type | Meaning |
-| --- | --- | --- |
-| `send_click_id` | string | Correlation ID pairing with `send_click` |
-| `status` | string | `success` / `fail` |
-| `reason_code` | string? | Success defaults not sent; failure see table below |
-| `ack_status` | string? | Original ACK status (`accepted` / `duplicate` / `rejected` / `stale` / `failed` / `noop`); no ACK defaults not sent |
-| `send_cost_ms` | number | Same as `value`, redundant for direct numeric view in property dimension |
-| `ack_cost_ms` | number? | Click send → receive ACK duration = ACK timestamp − `sendTime`; failure paths without ACK default not sent |
-| `send_queue_confirmed` | boolean | `true` = went through queue second confirm dialog |
-| `talk_id` | string? | `sessionId` known at finalize; first send not promoted defaults not sent |
-| `message_id` | string? | `commandId` corresponding to ACK; failure paths not entering dispatch default not sent |
+| Key                    | Type    | Meaning                                                                                                             |
+| ---------------------- | ------- | ------------------------------------------------------------------------------------------------------------------- |
+| `send_click_id`        | string  | Correlation ID pairing with `send_click`                                                                            |
+| `status`               | string  | `success` / `fail`                                                                                                  |
+| `reason_code`          | string? | Success defaults not sent; failure see table below                                                                  |
+| `ack_status`           | string? | Original ACK status (`accepted` / `duplicate` / `rejected` / `stale` / `failed` / `noop`); no ACK defaults not sent |
+| `send_cost_ms`         | number  | Same as `value`, redundant for direct numeric view in property dimension                                            |
+| `ack_cost_ms`          | number? | Click send → receive ACK duration = ACK timestamp − `sendTime`; failure paths without ACK default not sent          |
+| `send_queue_confirmed` | boolean | `true` = went through queue second confirm dialog                                                                   |
+| `talk_id`              | string? | `sessionId` known at finalize; first send not promoted defaults not sent                                            |
+| `message_id`           | string? | `commandId` corresponding to ACK; failure paths not entering dispatch default not sent                              |
 
 **`send_cost_ms` vs `ack_cost_ms` relation**: `send_cost_ms − ack_cost_ms` = "projection reflow + React render" segment. When end-to-end slows, check this difference first to avoid misjudging render problems as network problems.
 
 `reason_code` values:
 
-| Value | Trigger Point |
-| --- | --- |
-| `attachment_not_ready` | `attachmentsApi.prepareForSend()` returns `null`, attachment pre-upload second gate fail |
-| `blocked` | `onSendText` returns `"blocked"`, product guard reject |
-| `rejected` / `stale` / `failed` | ACK corresponding status |
-| `render_timeout` | ACK `accepted` / `duplicate` but 30 s projection never reflows corresponding `userInput` row |
-| `transport_error` | `sendCommand` throws exception (non-provider not ready) |
-| `provider_not_ready` | `sendCommand` throws provider not ready exception |
-| `composer_error` | `submit()` catches other exceptions |
+| Value                           | Trigger Point                                                                                |
+| ------------------------------- | -------------------------------------------------------------------------------------------- |
+| `attachment_not_ready`          | `attachmentsApi.prepareForSend()` returns `null`, attachment pre-upload second gate fail     |
+| `blocked`                       | `onSendText` returns `"blocked"`, product guard reject                                       |
+| `rejected` / `stale` / `failed` | ACK corresponding status                                                                     |
+| `render_timeout`                | ACK `accepted` / `duplicate` but 30 s projection never reflows corresponding `userInput` row |
+| `transport_error`               | `sendCommand` throws exception (non-provider not ready)                                      |
+| `provider_not_ready`            | `sendCommand` throws provider not ready exception                                            |
+| `composer_error`                | `submit()` catches other exceptions                                                          |
 
 `attachment_not_ready` and §5.2 "attachment not ready no `send_click`" not contradictory: former is click time `hasUnreadyAttachments` already true, button disabled, never entered `submit()` body; latter is click time attachment appears ready, `send_click` already reported, then `prepareForSend()` fails. Latter not finalizing leaves dangling `send_click` polluting success denominator.
 
@@ -202,11 +202,11 @@ Putting duration in `value` not `properties` is core reason for choosing ARMS ch
 
 When ACK is `accepted` / `duplicate`, supervisor registers awaiting render record keyed by `commandId`, containing seed, `ackCostMs`, and a 30 s timer:
 
-| Trigger | Action |
-| --- | --- |
-| `snapshot.rows.window` shows `kind === "userInput" && sourceCommandId === commandId` | Finalize `status=success`, `send_cost_ms` = render timestamp − `sendTime` |
-| 30 s timer fires first | Finalize `status=fail` / `reason_code=render_timeout`, `send_cost_ms` = 30000 |
-| `dispose()` | Clear all timers, no backfill |
+| Trigger                                                                              | Action                                                                        |
+| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| `snapshot.rows.window` shows `kind === "userInput" && sourceCommandId === commandId` | Finalize `status=success`, `send_cost_ms` = render timestamp − `sendTime`     |
+| 30 s timer fires first                                                               | Finalize `status=fail` / `reason_code=render_timeout`, `send_cost_ms` = 30000 |
+| `dispose()`                                                                          | Clear all timers, no backfill                                                 |
 
 Both paths **first-wins**: either finalizes immediately deregisters record and `clearTimeout`, existing `settledSendClickIds` dedup adds another layer, guarantees one `send_click` → one `send_result`.
 
@@ -239,13 +239,13 @@ Three events all synchronous fire-and-forget, not through `enqueueReport` serial
 
 ## 8. Implementation Locations
 
-| File | Changes |
-| --- | --- |
-| `packages/ui/src/lib/sendFunnelArmsTelemetry.ts` | **New**. Exports `SEND_FUNNEL_ARMS_GROUP` and three event name constants, `setSendFunnelArmsReporter()` / `clearSendFunnelArmsReporterForTest()`, `reportSendFunnelInputFocus()` / `reportSendFunnelSendClick()` / `reportSendFunnelSendResult()`. Structure mirrors `uiPerfArmsTelemetry.ts`. `SendFunnelReasonCode` adds `render_timeout`, `reportSendFunnelSendResult()` adds optional `ackCostMs` → property `ack_cost_ms` |
-| `packages/ui/src/Root.tsx` | Existing `useEffect` adds `setSendFunnelArmsReporter(isDesktop ? platform : null)`, cleanup sets `null` (parallel to `setUiPerfArmsReporter`) |
-| `packages/ui/src/v4/telemetry/conversationTelemetrySupervisor.ts` | `recordComposerFocusClick()` / `recordSendClick()` / `settleSendResult()` now call ARMS helpers above, **no longer `enqueueReport`**; `resolveSendAckSettlement()` returns `await-render` / `settle` two states; new `awaitSendRender()` (register awaiting render + 30 s timer) and `notifyUserInputRendered(commandId)` (render signal entry); `dispose()` clears all awaiting render timers |
-| `packages/ui/src/v4/ConversationComposer.tsx` | Wiring unchanged (method signatures unchanged) |
-| `packages/ui/src/v4/SessionPane.tsx` | ACK branch follows `resolveSendAckSettlement()` new return: `awaitRender` calls `awaitSendRender()`, `settle` calls `settleSendResult()`; new `snapshot`-dependent `useEffect`, iterates all `userInput` rows in `snapshot.rows.window`, passes `sourceCommandId` to `notifyUserInputRendered()` |
+| File                                                              | Changes                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `packages/ui/src/lib/sendFunnelArmsTelemetry.ts`                  | **New**. Exports `SEND_FUNNEL_ARMS_GROUP` and three event name constants, `setSendFunnelArmsReporter()` / `clearSendFunnelArmsReporterForTest()`, `reportSendFunnelInputFocus()` / `reportSendFunnelSendClick()` / `reportSendFunnelSendResult()`. Structure mirrors `uiPerfArmsTelemetry.ts`. `SendFunnelReasonCode` adds `render_timeout`, `reportSendFunnelSendResult()` adds optional `ackCostMs` → property `ack_cost_ms` |
+| `packages/ui/src/Root.tsx`                                        | Existing `useEffect` adds `setSendFunnelArmsReporter(isDesktop ? platform : null)`, cleanup sets `null` (parallel to `setUiPerfArmsReporter`)                                                                                                                                                                                                                                                                                  |
+| `packages/ui/src/v4/telemetry/conversationTelemetrySupervisor.ts` | `recordComposerFocusClick()` / `recordSendClick()` / `settleSendResult()` now call ARMS helpers above, **no longer `enqueueReport`**; `resolveSendAckSettlement()` returns `await-render` / `settle` two states; new `awaitSendRender()` (register awaiting render + 30 s timer) and `notifyUserInputRendered(commandId)` (render signal entry); `dispose()` clears all awaiting render timers                                 |
+| `packages/ui/src/v4/ConversationComposer.tsx`                     | Wiring unchanged (method signatures unchanged)                                                                                                                                                                                                                                                                                                                                                                                 |
+| `packages/ui/src/v4/SessionPane.tsx`                              | ACK branch follows `resolveSendAckSettlement()` new return: `awaitRender` calls `awaitSendRender()`, `settle` calls `settleSendResult()`; new `snapshot`-dependent `useEffect`, iterates all `userInput` rows in `snapshot.rows.window`, passes `sourceCommandId` to `notifyUserInputRendered()`                                                                                                                               |
 
 `send_click_id` generation reuses `globalThis.crypto?.randomUUID?.()` + fallback (same as `codingPlanFunnelTelemetry.createPurchaseFunnelId`).
 

@@ -14,6 +14,7 @@ import type {
 import type { SystemPromptOverrides } from "@zcode/shared";
 import type { AutoCompactPolicyConfig } from "../compact/index.js";
 import type { AgentProfile } from "../subagent/profile.js";
+import type { ExecutionWorktreeEnvFact } from "./sections/env-info.js";
 
 export type {
   EnvInfo,
@@ -105,6 +106,11 @@ export interface ContextBuilderConfig {
   envInfo: EnvInfo;
   /** Execution object for the current step; excluded from Context Source and persisted environment snapshots. */
   model?: Model;
+  /**
+   * Execution-worktree fact rendered into the Environment section at build time (isolation notice);
+   * like `model`, it is a render-time projection and is not persisted into envInfo snapshots.
+   */
+  executionWorktree?: ExecutionWorktreeEnvFact;
   presentationSurface?: PresentationSurface;
   genUiOutputDirectory?: string;
   currentDate?: string;

@@ -61,6 +61,25 @@ describe("mapSessionSummaryToTaskMeta", () => {
     ).toBe(false);
   });
 
+  it("executionWorktreeMissing maps through when true and stays absent otherwise", () => {
+    const meta = mapSessionSummaryToTaskMeta(
+      summary({
+        executionWorktree: { path: "/repo/../worktrees/zcode-sleepy-capybara" },
+        executionWorktreeMissing: true,
+      }),
+      { workspacePath: "/ws" },
+    );
+    expect(meta.executionWorktreeMissing).toBe(true);
+    // Healthy worktree summary: the flag must not create a key (absent ≈ false).
+    expect(
+      "executionWorktreeMissing" in
+        mapSessionSummaryToTaskMeta(
+          summary({ executionWorktree: { path: "/repo/../worktrees/zcode-sleepy-capybara" } }),
+          { workspacePath: "/ws" },
+        ),
+    ).toBe(false);
+  });
+
   it("workflowActivity 原样搬进 sidecar（侧栏运行行的数据），缺席时不建键", () => {
     const workflowActivity: SessionSummary["workflowActivity"] = {
       runs: [

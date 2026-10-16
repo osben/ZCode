@@ -151,15 +151,15 @@ As long as current Team Provider exists in `ProviderSettingsView`, right side al
 
 Team Plan status must retain explicit reasons, no longer reverse-inferred by generic `statusLabelId`:
 
-| Status                     | Plan card behavior                           | Provider config area    |
-| ------------------------ | ------------------------------------ | -------------------- |
-| checking                 | Display loading, clear previous Team quota       | Display if Provider exists  |
-| available                | Display team identity and quota                   | Display                 |
-| explicitly-not-allocated | Explicitly display "team plan unassigned"             | Display                 |
-| credential-unavailable   | Display Project Key/credential reasons and available actions  | Display                 |
-| request-failed / unknown | Display fetch failure and allow retry, not called unassigned | Display                 |
-| provider-loading         | Display Provider loading                   | Editor not yet displayed       |
-| provider-missing         | Display independent config exception                     | Do not render fake plan purchase page   |
+| Status                   | Plan card behavior                                           | Provider config area                  |
+| ------------------------ | ------------------------------------------------------------ | ------------------------------------- |
+| checking                 | Display loading, clear previous Team quota                   | Display if Provider exists            |
+| available                | Display team identity and quota                              | Display                               |
+| explicitly-not-allocated | Explicitly display "team plan unassigned"                    | Display                               |
+| credential-unavailable   | Display Project Key/credential reasons and available actions | Display                               |
+| request-failed / unknown | Display fetch failure and allow retry, not called unassigned | Display                               |
+| provider-loading         | Display Provider loading                                     | Editor not yet displayed              |
+| provider-missing         | Display independent config exception                         | Do not render fake plan purchase page |
 
 Specific types can reuse existing upstream decision results or establish page-local decision union, but only as plan card View State, not entering Provider Config
 or becoming second Account/Registry state.
@@ -212,14 +212,14 @@ controlling Provider detail existence by `status/statusLabelId`.
 
 ## 6. State Owner and Submission Boundaries
 
-| Fact                         | Authoritative Owner                        | Page Projection                    | Persisted?         |
-| ---------------------------- | --------------------------------- | --------------------------- | ------------------ |
-| Effective Provider/Model     | Provider Config Resolver          | `ProviderSettingsView`      | From formal Config source |
-| Personal Provider/Model editing | Personal Config Repository        | Settings Draft/Facade       | Yes                 |
-| Provider executability            | Resolver + Registry integrity        | `enabled/executable/issues` | Not independent field       |
-| Team current connection identity            | Family connection selection       | Navigation selection                    | Existing settings           |
-| Team plan, quota, and error        | Entitlement/Quota Service         | `CodingPlanStatusPanel`     | Only existing cache          |
-| Request-period credentials                   | Host Account Request Auth Service | Not persistently on settings page              | No                 |
+| Fact                             | Authoritative Owner               | Page Projection                   | Persisted?                |
+| -------------------------------- | --------------------------------- | --------------------------------- | ------------------------- |
+| Effective Provider/Model         | Provider Config Resolver          | `ProviderSettingsView`            | From formal Config source |
+| Personal Provider/Model editing  | Personal Config Repository        | Settings Draft/Facade             | Yes                       |
+| Provider executability           | Resolver + Registry integrity     | `enabled/executable/issues`       | Not independent field     |
+| Team current connection identity | Family connection selection       | Navigation selection              | Existing settings         |
+| Team plan, quota, and error      | Entitlement/Quota Service         | `CodingPlanStatusPanel`           | Only existing cache       |
+| Request-period credentials       | Host Account Request Auth Service | Not persistently on settings page | No                        |
 
 ## 7. Invariants and Out-of-Scope
 
@@ -245,16 +245,16 @@ This Todo does not modify:
 
 ## 8. Verification Matrix
 
-| Provider View   | Team status                | Expected config area                           | Expected status card           |
-| --------------- | ------------------------ | ------------------------------------ | -------------------- |
-| Exists and enabled  | available                | Full display, editable allowed Personal fields | Quota normal             |
-| Exists but disabled | available/unknown        | Display and accurately mark non-executable               | Corresponding status             |
-| Exists            | checking                 | Display, no model list flicker                 | Loading                 |
-| Exists            | request-failed           | Display                                 | Fetch failure + retry      |
-| Exists            | explicitly-not-allocated | Display                                 | Explicitly unassigned           |
-| Exists            | credential-unavailable   | Display                                 | Credential reasons             |
-| Loading          | any                     | Provider loading                     | Status must not disguise as unpurchased   |
-| Truly missing        | any                     | Config exception                     | Can retain known plan facts   |
+| Provider View       | Team status              | Expected config area                           | Expected status card                    |
+| ------------------- | ------------------------ | ---------------------------------------------- | --------------------------------------- |
+| Exists and enabled  | available                | Full display, editable allowed Personal fields | Quota normal                            |
+| Exists but disabled | available/unknown        | Display and accurately mark non-executable     | Corresponding status                    |
+| Exists              | checking                 | Display, no model list flicker                 | Loading                                 |
+| Exists              | request-failed           | Display                                        | Fetch failure + retry                   |
+| Exists              | explicitly-not-allocated | Display                                        | Explicitly unassigned                   |
+| Exists              | credential-unavailable   | Display                                        | Credential reasons                      |
+| Loading             | any                      | Provider loading                               | Status must not disguise as unpurchased |
+| Truly missing       | any                      | Config exception                               | Can retain known plan facts             |
 
 Automation must at minimum cover:
 

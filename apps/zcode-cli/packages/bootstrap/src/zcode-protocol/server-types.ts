@@ -120,6 +120,19 @@ export interface ZCodeProtocolSessionRecord {
   restoredModelSelection?: ModelSelection;
 }
 
+/** Host-owned session identity reserved while a worktree is being created; it has no app/runtime. */
+export interface ZCodeProtocolPreparedWorktreeSession {
+  sessionId: SessionId;
+  workspace: ZCodeWorkspaceRef;
+  branchName: string;
+  targetPath: string;
+  baseBranch?: string;
+  createdAt: number;
+  updatedAt: number;
+  status: "preparing" | "failed" | "cancelled" | "active";
+  failureMessage?: string;
+}
+
 export interface ZCodeProtocolClientRequestOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -164,6 +177,7 @@ export interface ZCodeProtocolAgentServerContext {
   // racing with capacity reclamation.
   sessionResidentPool?: SessionResidentPool;
   sessions: Map<string, ZCodeProtocolSessionRecord>;
+  preparedWorktreeSessions?: Map<string, ZCodeProtocolPreparedWorktreeSession>;
   notify(notification: ZCodeProtocolNotification): void;
   requestClient<T>(
     method: ZCodeProtocolMethod,

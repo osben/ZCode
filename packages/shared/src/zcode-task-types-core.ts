@@ -380,6 +380,8 @@ export interface ZCodeTaskMeta {
   runningSubagentCount?: number;
   childSessions?: ZCodeTaskChildSession[];
 
+  /** True when the execution worktree directory is absent on disk. */
+  executionWorktreeMissing?: boolean;
   /** zcode-cli /goal session target; null means it was explicitly cleared. */
   target?: ZCodeTaskGoal | null;
 }

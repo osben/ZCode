@@ -5,7 +5,8 @@
  *
  * Pure-function module on purpose: project list merging, target directory computation, branch name validation
  * with issue-code mapping, and form derived values (deriveWorktreeFormValues) depend on neither React nor
- * services, so the palette setup page, the empty-state checkbox (review 6c), and later stages can reuse them;
+ * services, so the palette setup page, the empty-state setup pipeline (specs/composer-worktree-setup-steps.md),
+ * and later stages can reuse them;
  * the gitService-backed creation orchestration lives in worktreeCreation.ts.
  */
 import type {
@@ -392,7 +393,7 @@ export function findWorktreeForBranch(
 
 /**
  * Derived form values shared by both creation entries — the palette setup page and the
- * empty-state "New worktree" toggle (review 6c): base-branch resolution, prefix composition,
+ * empty-state "New worktree" toggle: base-branch resolution, prefix composition,
  * client-side branch-name validation, location validity, and the target-path previews
  * (display variant tildifies the app-managed directory). Pure; call inside useMemo.
  */

@@ -1125,6 +1125,8 @@ export interface ChildSessionInfo {
 
 export interface SessionStorePort {
   createSession(input: CreateSessionInput): Promise<SessionInfo>;
+  /** Remove a session row only when it has no messages, entries, or admitted input records. */
+  deleteEmptySession?(sessionID: SessionId): Promise<boolean>;
   /** Legacy compatibility primitive; V4 stable / compact-edit forks must use commitForkBundle instead. */
   createForkedSessionWithMetadata?(
     input: CreateSessionInput,

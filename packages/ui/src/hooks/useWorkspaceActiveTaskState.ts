@@ -65,6 +65,8 @@ function areResolvedTaskMetasEqual(left: ZCodeTaskMeta | null, right: ZCodeTaskM
     (left.subagentCount ?? 0) === (right.subagentCount ?? 0) &&
     (left.runningSubagentCount ?? 0) === (right.runningSubagentCount ?? 0) &&
     areTaskMetaJsonFieldsEqual(left.childSessions, right.childSessions) &&
+    // Normalized so absent ≈ false: only a real health flip (false ↔ true) counts as a change.
+    (left.executionWorktreeMissing ?? false) === (right.executionWorktreeMissing ?? false) &&
     areTaskMetaJsonFieldsEqual(left.target, right.target)
   );
 }

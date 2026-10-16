@@ -152,8 +152,11 @@ import { projectSessionConfigToTaskConfigOptions } from "@/v4/composer/sessionCo
 import { useDraftRuntimeRebuildGate } from "@/v4/composer/useDraftRuntimeRebuildGate.js";
 import { useDraftModelReadinessGate } from "@/v4/composer/useDraftModelReadinessGate.js";
 import { useSettings } from "@/hooks/useSettingService.js";
+import { useGitRepository } from "@/hooks/useGitRepository.js";
+import { useGitAutoRefresh } from "@/hooks/useGitAutoRefresh.js";
 import { useZCodeStoreWithDefault } from "@/store/StoreProvider.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
+import { useWorkspaceSessionsIndexItems } from "@/v4/useWorkspaceSessionsIndexItems.js";
 import {
   DEFAULT_CONVERSATION_SHARE_ACCESS_MODE,
   DEFAULT_CONVERSATION_SHARE_DOCK_STATE,
@@ -173,6 +176,8 @@ import {
 import type { ConversationDropTargetController } from "@/v4/composer/conversationDropTarget.js";
 import { shouldIgnoreEscapeForStopGeneration } from "@/v4/composer/escapeStop.js";
 import { ConversationDraftEmptyState } from "@/v4/ConversationDraftEmptyState.js";
+import type { ComposerWorktreePreparationParams } from "@/v4/composer/composerDraftWorktreeIntent.js";
+import { ConversationWorktreeSetupSteps } from "@/v4/ConversationWorktreeSetupSteps.js";
 import { ConversationDraftSuggestedPromptsContainer } from "@/v4/ConversationDraftSuggestedPromptsContainer.js";
 import { ConversationHeader, type PaneWorkspaceBadge } from "@/v4/ConversationHeader.js";
 import { ConversationQueuePanel } from "@/v4/ConversationQueuePanel.js";
@@ -399,7 +404,11 @@ export interface SessionPaneProps {
   summaryPanelVariantOverride?: ChatViewSummaryPanelVariant | null;
   onSummaryPanelVariantOverrideChange?: (variant: ChatViewSummaryPanelVariant | null) => void;
   onRefreshGit?: () => void;
-  onOpenGitReview?: (sourceId?: GitChangeSourceId) => void;
+  onOpenGitReview?: (
+    sourceId?: GitChangeSourceId,
+    executionWorkspacePath?: string,
+    executionSessionId?: string,
+  ) => void;
   onOpenBrowserUrl?: (url: string) => void;
   onOpenAutomationsMain?: OpenAutomationsMain;
   onOpenCodeViewer?: (source: CodeViewerSource) => void;
@@ -631,6 +640,7 @@ export function SessionPane({
     highspeedCardService,
     modelSelectionService,
     usageStatsService,
+    zcodeAgentService,
     zcodeSessionService,
     zcodeTaskService,
   } = useServices();
@@ -1901,6 +1911,14 @@ export function SessionPane({
       recentSubmissionOverride?: ComposerSubmissionConfig | null,
     ): Promise<CommandAck> => {
       const submission = submissionConfigFromCommand(type, payload);
+      // The optimistic-admission watchdog only fits the topic this pane's store subscribes to: its
+      // own session or the prewarm binding. A queued worktree first send reuses the draft-scoped
+      // dispatch closure while targeting the prepared session; tracking it here would wait forever
+      // on the dropped draft topic ("accepted input projection silent" → futile recovery).
+      const tracksOnPaneStore =
+        targetSessionId === null ||
+        targetSessionId === sessionId ||
+        targetSessionId === prewarmBindingRef.current?.sessionId;
       // The accelerated-turn payload's modelSelection is replaced by the hidden acceleration
       // Provider in execution materials. Recent records the user's original Composer selection
       // (the model seed for a new-task draft), so accelerated turns must receive the submission
@@ -1944,7 +1962,7 @@ export function SessionPane({
             }
           : undefined,
       );
-      if (lease?.store && type !== "createSession") {
+      if (lease?.store && type !== "createSession" && tracksOnPaneStore) {
         lease.store.markCommandPending({
           commandId: envelope.commandId,
           type: envelope.type,
@@ -2004,6 +2022,7 @@ export function SessionPane({
       }
       if (
         lease?.store &&
+        tracksOnPaneStore &&
         type === "sendText" &&
         (ack.status === "accepted" || ack.status === "duplicate")
       ) {
@@ -2100,6 +2119,80 @@ export function SessionPane({
     ],
   );
   dispatchCommandRef.current = dispatchCommand;
+
+  const prepareWorktreeSession = useCallback(
+    async ({ branchName, targetPath, baseBranch }: ComposerWorktreePreparationParams) => {
+      const existingSessionId = sessionIdRef.current;
+      const existingPreparation = snapshotRef.current?.meta.worktreePreparation;
+      if (existingSessionId && existingPreparation) {
+        if (existingPreparation.status !== "preparing") {
+          const resetAck = await dispatchCommand(
+            "updateWorktreePreparation",
+            {
+              status: "preparing",
+              worktreePreparation: {
+                branchName,
+                targetPath,
+                ...(baseBranch ? { baseBranch } : {}),
+              },
+            },
+            existingSessionId,
+          );
+          if (resetAck.status !== "accepted") {
+            throw new Error(resetAck.reasonCode ?? "Worktree preparation retry was rejected");
+          }
+        }
+        return existingSessionId;
+      }
+      const { draftCreateSource: createSource, groupedDraftTask } = useZCodeSessionStore
+        .getState()
+        .getWorkspaceState(workspacePath, workspaceIdentity);
+      const ack = await dispatchCommand(
+        "createSession",
+        {
+          workspaceId: workspaceKey,
+          worktreePreparation: { branchName, targetPath },
+        },
+        null,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        createSource,
+      );
+      if (ack.status !== "accepted" || ack.result?.type !== "createSession") {
+        throw new Error(ack.reasonCode ?? "Worktree session preparation was rejected");
+      }
+      const createdSessionId = ack.result.sessionId;
+      handleDraftSessionCreated(createdSessionId, groupedDraftTask, createSource);
+      return createdSessionId;
+    },
+    [dispatchCommand, handleDraftSessionCreated, workspaceIdentity, workspaceKey, workspacePath],
+  );
+
+  // Persist a failed creation into the Host-owned preparation record so recovery/reconnect
+  // renders the recoverable failure (and Retry reuses the same session) instead of spinning.
+  const handleWorktreePreparationFailed = useCallback(
+    (failedSessionId: string, failureMessage: string) =>
+      dispatchCommand(
+        "updateWorktreePreparation",
+        { status: "failed", failureMessage },
+        failedSessionId,
+      ).then(() => undefined),
+    [dispatchCommand],
+  );
+  const handleWorktreePreparationRetry = useCallback(async () => {
+    if (!sessionId) throw new Error("Worktree preparation session is unavailable");
+    const ack = await dispatchCommand(
+      "updateWorktreePreparation",
+      { status: "preparing" },
+      sessionId,
+    );
+    if (ack.status !== "accepted") {
+      throw new Error(ack.reasonCode ?? "Worktree preparation retry was rejected");
+    }
+  }, [dispatchCommand, sessionId]);
 
   const handleFetchFileChanges = useCallback(
     (target: ConversationRowTarget, options: ConversationFileChangesRequestOptions) => {
@@ -3470,6 +3563,7 @@ export function SessionPane({
             workspaceId: workspaceKey,
             ...draftConfigPayload,
             ...(executionWorktree ? { executionWorktree } : {}),
+            ...(options?.preparedSessionId ? { preparedSessionId: options.preparedSessionId } : {}),
           },
           null,
         );
@@ -3481,7 +3575,9 @@ export function SessionPane({
           throw new Error("createSession 缺少 sessionId");
         }
         const newSessionId = createResult.sessionId;
-        handleDraftSessionCreated(newSessionId, groupedDraftTaskAtSend, createSourceAtSend);
+        if (!options?.preparedSessionId) {
+          handleDraftSessionCreated(newSessionId, groupedDraftTaskAtSend, createSourceAtSend);
+        }
         await dispatchSlashCommand(
           draftSlashCommand,
           newSessionId,
@@ -3580,6 +3676,7 @@ export function SessionPane({
             workspaceId: workspaceKey,
             ...draftConfigPayload,
             ...(executionWorktree ? { executionWorktree } : {}),
+            ...(options?.preparedSessionId ? { preparedSessionId: options.preparedSessionId } : {}),
           },
           null,
         );
@@ -3631,12 +3728,14 @@ export function SessionPane({
         if (sendAck.status !== "accepted") {
           throw new Error(sendAck.reasonCode ?? "sendText 被拒绝");
         }
-        handleDraftSessionCreated(
-          newSessionId,
-          groupedDraftTaskAtSend,
-          createSourceAtSend,
-          sendAck.commandId,
-        );
+        if (!options?.preparedSessionId) {
+          handleDraftSessionCreated(
+            newSessionId,
+            groupedDraftTaskAtSend,
+            createSourceAtSend,
+            sendAck.commandId,
+          );
+        }
         return;
       }
       // Attachment refs have already completed Composer's pre-upload state machine.
@@ -4613,6 +4712,55 @@ export function SessionPane({
   // uses a stop barrier before rewind/rerun. The UI should not hide the entire entry behind a completed gate.
   const editActionsEnabled = !readOnly && !selectionSideChat && Boolean(sessionId);
   const isDraft = sessionId === null;
+  // The sidebar's live sessions-index summary owns executionWorktree; the persisted task-list cache
+  // can lag it or omit it, which would make Git Tools fall back to the parent checkout.
+  const sessionIndexScopes = useMemo(
+    () =>
+      remoteSessionId && !zcodeAgentService
+        ? []
+        : [
+            {
+              workspacePath,
+              ...(workspaceIdentity ? { workspaceIdentity } : {}),
+              ...(remoteSessionId ? { endpointKey: remoteSessionId } : {}),
+              ...(zcodeAgentService ? { agentService: zcodeAgentService } : {}),
+            },
+          ],
+    [remoteSessionId, workspaceIdentity, workspacePath, zcodeAgentService],
+  );
+  const { items: sessionIndexItems } = useWorkspaceSessionsIndexItems(sessionIndexScopes);
+  const sessionExecutionWorktree = isDraft
+    ? undefined
+    : sessionIndexItems.find((task) => task.taskId === sessionId)?.executionWorktree;
+  const executionGitPath = sessionExecutionWorktree?.path ?? workspacePath;
+  const [worktreeGitRefreshVersion, setWorktreeGitRefreshVersion] = useState(0);
+  const worktreeGitState = useGitRepository({
+    workspacePath: executionGitPath,
+    activeTaskId: sessionId,
+    enabled: Boolean(sessionExecutionWorktree),
+    refreshToken: worktreeGitRefreshVersion,
+    remoteSessionId,
+    workspaceIdentity,
+  });
+  const refreshWorktreeGit = useCallback(() => {
+    setWorktreeGitRefreshVersion((version) => version + 1);
+  }, []);
+  const worktreeGitDirtyFileCount =
+    (worktreeGitState.sourceOptions.find((option) => option.id === "unstaged")?.count ?? 0) +
+    (worktreeGitState.sourceOptions.find((option) => option.id === "staged")?.count ?? 0);
+  const worktreeGitChangeSummary = useMemo(() => {
+    const changes = [
+      ...worktreeGitState.datasets.unstaged.sections.flatMap((section) => section.changes),
+      ...worktreeGitState.datasets.staged.sections.flatMap((section) => section.changes),
+    ];
+    return changes.reduce(
+      (summary, change) => ({
+        added: summary.added + change.added,
+        removed: summary.removed + change.removed,
+      }),
+      { added: 0, removed: 0 },
+    );
+  }, [worktreeGitState.datasets]);
   // Scroll restoration must use a lease projection matching sessionId. A session-switch render and passive effect
   // do not happen at the same time. If old-lease rows reach the timeline early, the new saved position is clamped
   // to the old content height, and later target rows cannot distinguish this temporary position.
@@ -5380,6 +5528,8 @@ export function SessionPane({
       telemetryVisible={telemetryVisible && conversationTelemetryForegroundEnabled}
       readPlanIdentitySnapshot={readPlanIdentitySnapshot}
       onSendText={handleSendText}
+      onPrepareWorktreeSession={prepareWorktreeSession}
+      onWorktreePreparationFailed={handleWorktreePreparationFailed}
       highspeedCard={activeHighspeedCard}
       highspeedActivationCardId={highspeedActivationCardId}
       onHighspeedActivationApplied={handleHighspeedActivationApplied}
@@ -5596,6 +5746,17 @@ export function SessionPane({
       uploadAttachment={pluginUiUploadAttachment}
       projectionStore={sessionLeaseReady ? lease?.store : null}
     >
+      {sessionExecutionWorktree ? (
+        <ExecutionWorktreeGitAutoRefresh
+          workspacePath={executionGitPath}
+          workspaceIdentity={workspaceIdentity}
+          remoteSessionId={remoteSessionId}
+          gitSummary={worktreeGitState.summary}
+          gitSummaryWorkspaceKey={worktreeGitState.workspaceKey}
+          enabled={focused}
+          onRefreshGit={refreshWorktreeGit}
+        />
+      ) : null}
       <div
         data-testid={testId(TID_V4_SESSION_PANE, paneId)}
         data-session-id={sessionId ?? "draft"}
@@ -5670,12 +5831,20 @@ export function SessionPane({
           {!isDraft ? (
             <ConversationStatusPanel
               workspacePath={workspacePath}
+              gitWorkspacePath={executionGitPath}
               workspaceIdentity={workspaceIdentity}
-              gitSummary={gitSummary}
-              gitDirtyFileCount={gitDirtyFileCount}
-              gitWorktreeReviewSourceId={gitWorktreeReviewSourceId}
-              gitWorktreeChangeSummary={gitWorktreeChangeSummary}
-              activeTaskChangeSummary={activeTaskChangeSummary}
+              gitSummary={sessionExecutionWorktree ? worktreeGitState.summary : gitSummary}
+              gitDirtyFileCount={
+                sessionExecutionWorktree ? worktreeGitDirtyFileCount : gitDirtyFileCount
+              }
+              executionWorktree={sessionExecutionWorktree}
+              gitWorktreeReviewSourceId={
+                sessionExecutionWorktree ? null : gitWorktreeReviewSourceId
+              }
+              gitWorktreeChangeSummary={
+                sessionExecutionWorktree ? worktreeGitChangeSummary : gitWorktreeChangeSummary
+              }
+              activeTaskChangeSummary={sessionExecutionWorktree ? null : activeTaskChangeSummary}
               goal={selectionSideChat ? null : (snapshot?.goal ?? null)}
               sessionPlans={state.sessionPlans}
               plan={snapshot?.plan ?? null}
@@ -5696,8 +5865,12 @@ export function SessionPane({
               onAgentSectionOpenChange={setAgentSectionOpen}
               workflowSectionOpen={workflowSectionOpen}
               onWorkflowSectionOpenChange={setWorkflowSectionOpen}
-              onRefreshGit={onRefreshGit}
-              onOpenGitReview={onOpenGitReview}
+              onRefreshGit={sessionExecutionWorktree ? refreshWorktreeGit : onRefreshGit}
+              onOpenGitReview={
+                sessionExecutionWorktree && sessionId
+                  ? (sourceId) => onOpenGitReview?.(sourceId, executionGitPath, sessionId)
+                  : onOpenGitReview
+              }
               onPauseGoal={
                 !readOnly && !selectionSideChat && snapshot?.availability.pauseGoal.allowed
                   ? handlePauseGoal
@@ -5843,7 +6016,16 @@ export function SessionPane({
                     ) : null
                   }
                   emptyState={
-                    isDraft ? (
+                    !isDraft && snapshot?.meta.worktreePreparation ? (
+                      <ConversationWorktreeSetupSteps
+                        workspacePath={workspacePath}
+                        {...(workspaceIdentity ? { workspaceIdentity } : {})}
+                        sessionId={sessionId!}
+                        preparation={snapshot.meta.worktreePreparation}
+                        onRetryPreparation={handleWorktreePreparationRetry}
+                        onPreparationFailed={handleWorktreePreparationFailed}
+                      />
+                    ) : isDraft ? (
                       <div data-testid={TID_CHAT_EMPTY} className="w-full">
                         <ConversationDraftEmptyState
                           compactForRemoteControl={compactForRemoteControl}
@@ -5905,4 +6087,33 @@ export function SessionPane({
       </div>
     </PluginUiSessionProvider>
   );
+}
+
+function ExecutionWorktreeGitAutoRefresh({
+  workspacePath,
+  workspaceIdentity,
+  remoteSessionId,
+  gitSummary,
+  gitSummaryWorkspaceKey,
+  enabled,
+  onRefreshGit,
+}: {
+  workspacePath: string;
+  workspaceIdentity?: string | null;
+  remoteSessionId?: string | null;
+  gitSummary: GitRepositorySummary;
+  gitSummaryWorkspaceKey: string;
+  enabled: boolean;
+  onRefreshGit: () => void;
+}) {
+  useGitAutoRefresh({
+    workspacePath,
+    workspaceIdentity,
+    remoteSessionId,
+    gitSummary,
+    gitSummaryWorkspaceKey,
+    enabled,
+    onRefreshGit,
+  });
+  return null;
 }

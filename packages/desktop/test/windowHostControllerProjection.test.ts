@@ -51,7 +51,12 @@ describe("WindowHostControllerProjection", () => {
         },
       ],
       sessionsIndex: [
-        { taskId: "task-indexed", liveStatus: "waiting" },
+        {
+          taskId: "task-indexed",
+          liveStatus: "waiting",
+          executionWorktree: { path: "/work/demo/.worktrees/task", branchName: "feature/task" },
+          executionWorktreeMissing: true,
+        },
         { taskId: "session-only", liveStatus: "running" },
       ],
     });
@@ -60,8 +65,22 @@ describe("WindowHostControllerProjection", () => {
       expect.objectContaining({
         address: expect.objectContaining({ taskId: "task-indexed" }),
         liveStatus: "waiting",
+        executionWorktree: {
+          path: "/work/demo/.worktrees/task",
+          branchName: "feature/task",
+        },
+        executionWorktreeMissing: true,
       }),
     ]);
+
+    projection.replaceSourceSessionOverlays(localScope, [
+      {
+        taskId: "task-indexed",
+        liveStatus: "waiting",
+        executionWorktree: { path: "/work/demo/.worktrees/task", branchName: "feature/task" },
+      },
+    ]);
+    expect(projection.getTasks()[0]).not.toHaveProperty("executionWorktreeMissing");
   });
 
   it("没有 live overlay 时不把持久化 running/阻塞残留当作当前运行事实", () => {

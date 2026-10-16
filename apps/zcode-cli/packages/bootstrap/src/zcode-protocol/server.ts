@@ -310,6 +310,7 @@ export class ZCodeProtocolAgentServer {
       requestClient: (method, params, resultSchema, options) =>
         this.requestClient(method, params, resultSchema, options),
       sessions: new Map<string, ZCodeProtocolSessionRecord>(),
+      preparedWorktreeSessions: new Map(),
       // Interaction response registry (the join point for broker reverse requests and v4
       // resolveInteraction commands).
       v4Interactions: new V4InteractionRegistry(

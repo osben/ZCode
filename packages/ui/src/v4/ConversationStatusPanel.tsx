@@ -31,6 +31,7 @@ import {
   PlayIcon,
   SquareIcon,
   SquareTerminalIcon,
+  Split,
   Workflow,
 } from "lucide-react";
 import {
@@ -44,6 +45,7 @@ import type {
   GitRepositorySummary,
   ZCodeSessionRunningSubagent,
   ZCodeTaskChangeSummary,
+  ZCodeTaskMeta,
 } from "@zcode/shared";
 import type {
   BackgroundWorkSummary,
@@ -76,6 +78,8 @@ import { formatBackgroundTaskElapsedLabel } from "@/BackgroundTaskElapsedLabel.j
 import { formatTokensPerSecond, useSessionThroughput } from "@/hooks/useSessionThroughput.js";
 import { GitActionMenu } from "@/GitActionMenu.js";
 import { GitBranchSwitcher } from "@/GitBranchSwitcher.js";
+import { worktreeDirectoryNameOf } from "@/components/WorktreeTaskMarker.js";
+import { useBranchSwitchGuard } from "@/v4/composer/branchSwitchGuard.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import type {
   OpenPlanDetailSideTabRequest,
@@ -111,6 +115,8 @@ export interface ConversationStatusPanelProps {
   gitWorktreeReviewSourceId?: GitChangeSourceId | null;
   gitWorktreeChangeSummary?: { added: number; removed: number } | null;
   activeTaskChangeSummary?: ZCodeTaskChangeSummary | null;
+  executionWorktree?: ZCodeTaskMeta["executionWorktree"];
+  gitWorkspacePath?: string;
   goal?: GoalState | null;
   sessionPlans?: readonly ToolCallRow[];
   plan?: PlanState | null;
@@ -364,6 +370,8 @@ function StatusSection({
 
 function GitStatusSection({
   activeTaskChangeSummary,
+  executionWorktree,
+  gitWorkspacePath,
   gitSummary,
   gitWorktreeReviewSourceId,
   model,
@@ -375,6 +383,7 @@ function GitStatusSection({
   useVerticalFloatingPanels,
 }: {
   activeTaskChangeSummary?: ZCodeTaskChangeSummary | null;
+  executionWorktree?: ZCodeTaskMeta["executionWorktree"];
   gitSummary: GitRepositorySummary | null | undefined;
   gitWorktreeReviewSourceId?: GitChangeSourceId | null;
   model: ConversationStatusPanelModel;
@@ -383,9 +392,21 @@ function GitStatusSection({
   separated: boolean;
   workspaceIdentity?: string;
   workspacePath: string;
+  gitWorkspacePath?: string;
   useVerticalFloatingPanels: boolean;
 }) {
   const { intl } = useZCodeIntl();
+  const branchSwitchGuard = useBranchSwitchGuard();
+  const beforeSwitch = branchSwitchGuard
+    ? (targetBranchName: string) =>
+        branchSwitchGuard({
+          workspaceKey: workspaceIdentity?.trim() || workspacePath,
+          targetBranchName,
+          scope: executionWorktree ? "worktree" : "checkout",
+          ...(executionWorktree ? { worktreePath: executionWorktree.path } : {}),
+        })
+    : undefined;
+  const targetPath = gitWorkspacePath ?? workspacePath;
   const git = model.git;
   if (!git || !gitSummary || !onRefreshGit) {
     return null;
@@ -412,6 +433,25 @@ function GitStatusSection({
       }
     >
       <div className="space-y-0">
+        {executionWorktree ? (
+          // Keep the session's execution directory visible beside its own Git status.
+          <div
+            data-status-panel-worktree="true"
+            title={executionWorktree.path}
+            className="flex h-8 w-full min-w-0 items-center gap-2 rounded-lg px-2 text-left text-ui-base text-[var(--color-foreground)]"
+          >
+            <Split className="size-4 shrink-0 rotate-90" aria-hidden="true" />
+            <span className="min-w-0 flex-1 truncate">
+              {gitSummary.headRefType === "detached"
+                ? intl.formatMessage({ id: "git.head.detached" })
+                : (gitSummary.branchName ??
+                  intl.formatMessage({ id: "destination.worktreeLabel" }))}
+            </span>
+            <span className="shrink-0 truncate text-ui-sm opacity-60">
+              {worktreeDirectoryNameOf(executionWorktree.path)}
+            </span>
+          </div>
+        ) : null}
         {/* Bug cause: the V4 status-panel migration kept only the static Changes display and
             stopped forwarding the old Git review callback, leaving the review entry in the spec unclickable. */}
         <button
@@ -437,10 +477,11 @@ function GitStatusSection({
           </span>
         </button>
         <GitBranchSwitcher
-          workspacePath={workspacePath}
+          workspacePath={targetPath}
           gitSummary={gitSummary}
           dirtyFileCount={git.dirtyFileCount}
           onRefreshGit={onRefreshGit}
+          beforeSwitch={beforeSwitch}
           className="w-full px-0 pt-0"
           triggerClassName="flex h-8 w-full min-w-0 justify-start gap-2 rounded-lg px-2 text-left text-ui-base text-[var(--color-foreground)] hover:bg-[var(--color-hover)] hover:text-[var(--color-foreground)] [&>span]:max-w-[calc(100%-3.5rem)] [&_svg:first-child]:text-[var(--color-foreground)]"
           popoverClassName="w-72 max-w-[calc(100vw-2rem)]"
@@ -449,11 +490,12 @@ function GitStatusSection({
           showFooterActions
         />
         <GitActionMenu
-          workspacePath={workspacePath}
+          workspacePath={targetPath}
           workspaceIdentity={workspaceIdentity}
           gitSummary={gitSummary}
           activeTaskChangeSummary={activeTaskChangeSummary ?? null}
           onRefreshGit={onRefreshGit}
+          beforeSwitch={beforeSwitch}
           triggerLayout="status-row"
           className="w-full"
         />
@@ -1941,6 +1983,8 @@ function ConversationStatusPanelImpl({
   gitWorktreeReviewSourceId,
   gitWorktreeChangeSummary,
   activeTaskChangeSummary,
+  executionWorktree,
+  gitWorkspacePath,
   goal,
   sessionPlans,
   plan,
@@ -2182,8 +2226,10 @@ function ConversationStatusPanelImpl({
                 gitSummary={gitSummary}
                 gitWorktreeReviewSourceId={gitWorktreeReviewSourceId}
                 workspacePath={workspacePath}
+                gitWorkspacePath={gitWorkspacePath}
                 workspaceIdentity={workspaceIdentity}
                 activeTaskChangeSummary={activeTaskChangeSummary}
+                executionWorktree={executionWorktree}
                 onRefreshGit={onRefreshGit}
                 onOpenGitReview={onOpenGitReview}
                 separated={false}

@@ -39,6 +39,7 @@ import type { HookRunner } from "../../hooks/index.js";
 import type { PermissionService } from "../../permission/service.js";
 import type { RuntimeTaskRegistry } from "../../runtime-task/registry.js";
 import type { ToolRegistry } from "../registry.js";
+import type { ToolMetadata } from "../types.js";
 import type { ToolSchedule } from "../scheduler.js";
 import type {
   BackgroundTaskControlPort,
@@ -139,6 +140,7 @@ export interface ToolExecutorOptions {
   getMode?: () => CollaborationMode;
   maxConcurrency?: number;
   hookRunner?: HookRunner;
+  validateToolExecution?: (metadata: ToolMetadata) => Promise<string | undefined>;
 }
 
 export interface ToolExecutor {
@@ -252,4 +254,5 @@ export interface ToolExecutorDeps {
   getMode: () => CollaborationMode;
   maxConcurrency: number;
   hookRunner?: HookRunner;
+  validateToolExecution?: (metadata: ToolMetadata) => Promise<string | undefined>;
 }

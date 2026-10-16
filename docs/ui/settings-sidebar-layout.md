@@ -58,12 +58,12 @@ User explicitly returns to workspace or clicks a task notification
   -> pending interaction appears in the original task's bottom dock
 ```
 
-| Current surface | Background event | Expected result |
-| --- | --- | --- |
-| Settings | Regular permission request | Settings, form values, and current focus remain unchanged; request stays on the original task |
-| Settings | `AskUserQuestion` | Use the same surface-isolation rule as regular permissions; do not force a switch back to the conversation |
-| Settings | Request completes or is dismissed automatically | Update only the background task projection; do not switch away from Settings |
-| Workspace | Permission or question remains pending | Show and allow response using the existing bottom-dock interaction |
+| Current surface | Background event                                | Expected result                                                                                            |
+| --------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Settings        | Regular permission request                      | Settings, form values, and current focus remain unchanged; request stays on the original task              |
+| Settings        | `AskUserQuestion`                               | Use the same surface-isolation rule as regular permissions; do not force a switch back to the conversation |
+| Settings        | Request completes or is dismissed automatically | Update only the background task projection; do not switch away from Settings                               |
+| Workspace       | Permission or question remains pending          | Show and allow response using the existing bottom-dock interaction                                         |
 
 This boundary governs Renderer surfaces and focus ownership only. Do not change `pendingInteractions`, request countdowns, permission responses, task notifications, desktop `desktop-continuous`, or mobile `web-remote-replayable` protocol/recovery semantics. When the mobile `/remote` view has no desktop Settings overlay, continue using existing mobile interactions; do not infer new remote-control behavior from this case.
 

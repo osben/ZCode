@@ -13,15 +13,15 @@ Confirmed through discussion on 2026-09-15: create a separate Alibaba Cloud CMS 
 
 ## Sections
 
-| Section | Contents |
-| --- | --- |
-| Resource overview | Number of reporting device identifiers, event freshness, device distribution and trends for app CPU/RSS, and whole-machine pressure |
-| Version and process role | CPU, RSS, per-process peak, background CPU, JS heap, process counts, and uptime buckets by version/role |
-| MCP resource rankings | Rankings of local MCP memory and background CPU by `mcp_id` |
-| Slow Bash | Duration, resources, exit type, and sampling for local commands running for at least 15 seconds |
-| Remote resources | Role metrics and slow Bash for remote CLI/MCP, separate from local app totals |
-| Single-device investigation | Select a device by `device_mid` and show a timeline of local app, roles, and whole-machine context |
-| Collection quality | Coverage of three event types and roles, sample counts, heap coverage, and telemetry overhead |
+| Section                     | Contents                                                                                                                            |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Resource overview           | Number of reporting device identifiers, event freshness, device distribution and trends for app CPU/RSS, and whole-machine pressure |
+| Version and process role    | CPU, RSS, per-process peak, background CPU, JS heap, process counts, and uptime buckets by version/role                             |
+| MCP resource rankings       | Rankings of local MCP memory and background CPU by `mcp_id`                                                                         |
+| Slow Bash                   | Duration, resources, exit type, and sampling for local commands running for at least 15 seconds                                     |
+| Remote resources            | Role metrics and slow Bash for remote CLI/MCP, separate from local app totals                                                       |
+| Single-device investigation | Select a device by `device_mid` and show a timeline of local app, roles, and whole-machine context                                  |
+| Collection quality          | Coverage of three event types and roles, sample counts, heap coverage, and telemetry overhead                                       |
 
 ## Metrics Contract
 

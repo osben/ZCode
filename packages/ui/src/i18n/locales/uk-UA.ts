@@ -1366,6 +1366,7 @@ const ukUA: Record<string, string> = {
   "git.branchSwitcher.section.branches": "Гілки",
   "git.branchSwitcher.empty": "Немає відповідних гілок",
   "git.branchSwitcher.currentDirty": "Файлів зі змінами без коміту: {count}",
+  "git.branchSwitcher.checkedOutIn": "Checkout у {directory}",
   "git.branchSwitcher.createAction": "Створити нову гілку й перейти на неї...",
   "git.branchSwitcher.createDialog.title": "Створити нову гілку й перейти на неї",
   "git.branchSwitcher.createDialog.description":
@@ -4806,6 +4807,26 @@ const ukUA: Record<string, string> = {
   "chat.empty.home": "Домашня папка",
   "chat.empty.worktree.newWorktree": "Новий worktree",
   "chat.empty.worktree.creating": "Створення worktree…",
+  "worktreeSetup.reconcile.staleCreating": "Налаштування не завершено (з'єднання змінилося)",
+  "git.branchSwitcher.appliesOnSend": "Застосується під час надсилання першого повідомлення",
+  "git.branchSwitcher.worktreeIntentHint":
+    "Гілку для цього завдання визначає налаштування worktree",
+  "branchSwitchGuard.title": "Змінити гілку?",
+  "branchSwitchGuard.listUnavailable":
+    "Не вдалося перевірити активні завдання. Спробуйте ще раз, коли список буде доступний.",
+  "branchSwitchGuard.description":
+    "Перехід на {branch} змінює робоче дерево для {count, plural, one {# активного завдання} few {# активних завдань} many {# активних завдань} other {# активних завдань}}:",
+  "branchSwitchGuard.confirm": "Змінити гілку",
+  "destination.trigger.ariaLabel": "Оберіть, де виконуватиметься завдання",
+  "destination.worktreeLabel": "Worktree",
+  "destination.taskBranch": "Гілка завдання",
+  "destination.baseBranch": "Базова гілка",
+  "destination.creating": "Створюємо worktree…",
+  "destination.ready": "Готово → {path}",
+  "destination.failedRow": "Помилка — надішліть ще раз, щоб повторити",
+  "destination.withdrawing": "Відключаємо — worktree лишається на диску",
+  "destination.headFallback": "Не вдалося завантажити гілки — базою стане HEAD",
+  "destination.viewGraph": "Переглянути граф гілок",
   "chat.empty.createWorkspace.title": "Створити робочий простір",
   "chat.empty.createWorkspace.placeholder": "Назва робочого простору",
   "chat.empty.createWorkspace.locationHint": "Розташування: {path}",
@@ -6653,7 +6674,7 @@ const ukUA: Record<string, string> = {
   "forms.validation.agentSystemPromptHint": "Визначте поведінку й можливості субагента",
   "forms.validation.fileExists": "Файл {fileName} уже існує",
   "taskList.cronTaskLabel": "Завдання за розкладом",
-  "taskList.worktreeTaskLabel": "Worktree-сесія · {branch}",
+  "taskList.worktreeTaskLabel": "Worktree-сесія · {branch} · {directory}",
   "taskList.childSideChatsCount":
     "{count, plural, one {# побічна розмова} few {# побічні розмови} many {# побічних розмов} other {# побічної розмови}}",
   "taskList.childSubagentsCount":
@@ -6664,7 +6685,9 @@ const ukUA: Record<string, string> = {
   "taskList.childSideChatRowLabel": "Побічна розмова: {title}",
   "taskList.childRunningLabel": "Виконується",
   "taskList.childMoreLabel": "Ще {count}",
-  "taskList.worktreeTaskLabelNoBranch": "Worktree-сесія",
+  "taskList.worktreeTaskLabelMissing":
+    "Каталог worktree відсутній; файлові дії недоступні, доки його не буде відновлено",
+  "taskList.worktreeTaskLabelNoBranch": "Worktree-сесія · {directory}",
   "taskList.offPeakTaskLabel": "Завдання в непіковий час",
   "taskList.workflowRun.ariaLabel": "Запуск робочого процесу {name}: {status}",
   "taskList.workflowRun.moreRuns": "Ще +{count}",

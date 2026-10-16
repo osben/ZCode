@@ -135,6 +135,11 @@ Default light and dark CSS variables still exist as fallback foundations, but ne
 - **Idle-time task**: `--color-idle-task` with `--color-idle-task-surface`
   Use only for idle-time queue and paused tags so they remain visually distinct
   from the green scheduled-task treatment.
+- **Worktree task**: `--color-worktree-task`
+  Use for the composer destination control's worktree mode (trigger + "New worktree" row).
+  The sidebar worktree marker (Split rotated 90°) is intentionally un-colored — only its
+  missing state is destructive. Shares the idle-task hue family by approved v1 decision
+  (specs/worktree-icon-visibility.md); the glyphs differ (Moon vs Split).
 - **Diff Added**: `--color-diff-added` with `--color-diff-added-foreground`
 - **Diff Removed**: `--color-diff-removed` with `--color-diff-removed-foreground`
 

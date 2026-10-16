@@ -171,8 +171,11 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
   const traceContext = options.traceContext ?? createRootTraceContext({ sessionId });
   // Execution worktree wins over workingDirectory: the agent executes in the linked worktree while
   // workspacePath (and the persisted session identity) keep pointing at the parent workspace.
+  // A worktree marked missing (resume fallback after out-of-band deletion) must NOT become the
+  // execution cwd; the session continues in the parent workspace instead.
+  const executionWorktree = options.runtimeConfig?.executionWorktree;
   const workingDirectory = resolve(
-    options.runtimeConfig?.executionWorktree?.path ??
+    (executionWorktree && !executionWorktree.missing ? executionWorktree.path : undefined) ??
       options.runtimeConfig?.workingDirectory ??
       process.cwd(),
   );

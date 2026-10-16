@@ -1,4 +1,4 @@
-import { useTabStore } from "@/store/TabStoreProvider.js";
+import { useOptionalTabStore } from "@/store/TabStoreProvider.js";
 import { isWorkspaceTab, type WorkspaceTabState } from "@/store/tabStore.js";
 import { useRemoteWorkspaceSessionStore } from "@/store/remoteWorkspaceSessionStore.js";
 import {
@@ -56,7 +56,7 @@ export function useResolvedRemoteWorkspaceSessionId(
   workspaceIdentity?: string | null,
   remoteTarget?: unknown,
 ): string | null {
-  const activeWorkspaceTab = useTabStore((state) => {
+  const activeWorkspaceTab = useOptionalTabStore((state) => {
     if (!workspacePath || !state.activeTabId) {
       return null;
     }

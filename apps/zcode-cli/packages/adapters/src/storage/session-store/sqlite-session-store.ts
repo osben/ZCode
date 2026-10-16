@@ -313,6 +313,11 @@ export class SqliteSessionStore
     return sessionRepository.createSession(this.db, input);
   }
 
+  async deleteEmptySession(sessionID: SessionId): Promise<boolean> {
+    this.throwBeforeWrite();
+    return sessionRepository.deleteEmptySession(this.db, sessionID);
+  }
+
   async createForkedSessionWithMetadata(
     input: CreateSessionInput,
     metadata: ForkChildSessionMetadata,
