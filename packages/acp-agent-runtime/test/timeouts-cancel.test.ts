@@ -120,4 +120,37 @@ describe("timeouts and cancellation", () => {
       await cleanupTempDir(cwd);
     }
   });
+
+  it("marks the runtime failed after cancel escalation and restarts on the next prompt", async () => {
+    const cwd = await createTempDir();
+    const asks: AcpPermissionAsk[] = [];
+    const runtime = await startMockRuntime(
+      cwd,
+      "permission",
+      {
+        requestPermission: (ask) => {
+          asks.push(ask);
+          if (asks.length === 1) return new Promise(() => {});
+          return Promise.resolve({ outcome: "selected", kind: "allow_once" } as const);
+        },
+      },
+      { timeouts: { cancelGraceMs: 400 } },
+    );
+    try {
+      const first = runtime.prompt("run echo");
+      void first.catch(() => {});
+      await waitFor(() => asks.length > 0, 3_000);
+      await runtime.cancel();
+      await expect(first).rejects.toMatchObject({ code: "ACP_CANCELLED" });
+      // Regression: an escalated cancel must not leave a "ready" runtime with a
+      // cleared connection; the next prompt restarts the agent instead of
+      // failing with ACP_STATE.
+      expect(runtime.state).toBe("failed");
+      const second = await runtime.prompt("run echo again");
+      expect(second.stopReason).toBe("end_turn");
+    } finally {
+      await runtime.stop();
+      await cleanupTempDir(cwd);
+    }
+  });
 });

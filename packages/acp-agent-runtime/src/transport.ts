@@ -78,15 +78,73 @@ export function spawnAcpProcess(input: SpawnAcpProcessInput): SpawnedAcpProcess 
   return { child, stream, spawnFailure, exited, stderrTail };
 }
 
-/** Sends a signal to the whole process group on POSIX, or the child alone on Windows. */
-export function signalProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
+export const WINDOWS_TASKKILL_TIMEOUT_MS = 2_000;
+
+/** `taskkill /T` walks the tree; `/F` forces it on the SIGKILL escalation stage. */
+export function buildWindowsTaskkillArgs(pid: number, signal: NodeJS.Signals): readonly string[] {
+  return ["/pid", String(pid), "/T", ...(signal === "SIGKILL" ? ["/F"] : [])];
+}
+
+async function runWindowsTaskkill(pid: number, signal: NodeJS.Signals): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    const finish = (value: boolean): void => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    let child: ChildProcess;
+    try {
+      child = spawn("taskkill", [...buildWindowsTaskkillArgs(pid, signal)], {
+        stdio: "ignore",
+        windowsHide: true,
+      });
+    } catch {
+      finish(false);
+      return;
+    }
+    const timer = setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // Already gone.
+      }
+      finish(false);
+    }, WINDOWS_TASKKILL_TIMEOUT_MS);
+    child.once("error", () => {
+      clearTimeout(timer);
+      finish(false);
+    });
+    child.once("close", (code) => {
+      clearTimeout(timer);
+      finish(code === 0);
+    });
+  });
+}
+
+/**
+ * Sends a signal to the whole process tree; resolves once a Windows `taskkill`
+ * run finished. On POSIX the group signal (or the direct child as fallback) is
+ * synchronous; Windows has no process groups (`detached` is unavailable), so
+ * the tree is terminated by pid with the system `taskkill` — the same strategy
+ * as `packages/services/src/process/processTreeTerminator.ts`. The base
+ * package cannot import that module (services depends on it, not vice versa),
+ * so the equivalent logic lives here.
+ */
+export async function signalProcessTree(
+  child: ChildProcess,
+  signal: NodeJS.Signals,
+): Promise<void> {
   const pid = child.pid;
   if (pid === undefined) return;
   if (process.platform === "win32") {
-    try {
-      child.kill(signal);
-    } catch {
-      // The process is already gone.
+    const terminated = await runWindowsTaskkill(pid, signal);
+    if (!terminated) {
+      try {
+        child.kill(signal);
+      } catch {
+        // The process is already gone.
+      }
     }
     return;
   }

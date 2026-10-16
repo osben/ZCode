@@ -381,6 +381,11 @@ export class AcpSessionRuntime extends EventEmitter {
   }
 
   private async terminateProcess(reason: Error): Promise<void> {
+    // The session is unusable from here on: mark the runtime failed (unless an
+    // explicit stop already did) BEFORE rejecting the in-flight prompt, so the
+    // prompt's `finally` cannot flip a torn-down runtime back to "ready" — a
+    // later prompt then restarts instead of failing with ACP_STATE.
+    if (this.currentState !== "stopped") this.currentState = "failed";
     const proc = this.process;
     this.process = undefined;
     const active = this.activePrompt;
@@ -401,10 +406,10 @@ export class AcpSessionRuntime extends EventEmitter {
     }
     const exitedEarly = await raceTimeout(proc.exited, this.timeouts.stopGraceMs);
     if (exitedEarly) return;
-    signalProcessTree(proc.child, "SIGTERM");
+    await signalProcessTree(proc.child, "SIGTERM");
     const exitedAfterTerm = await raceTimeout(proc.exited, this.timeouts.killGraceMs);
     if (exitedAfterTerm) return;
-    signalProcessTree(proc.child, "SIGKILL");
+    await signalProcessTree(proc.child, "SIGKILL");
     await proc.exited.catch(() => {});
   }
 
