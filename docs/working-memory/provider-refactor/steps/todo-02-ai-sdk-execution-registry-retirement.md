@@ -1,25 +1,26 @@
-# 02 AI SDK 执行 Registry 退役
+# 02 AI SDK Execution Registry Retirement
 
-> 状态：已完成
+> Status: Complete
 >
-> 已确认边界：Adapter 创建 Model 时直接接收单个、已经完整性校验的 Registry Provider Config 和
-> Registry Model Config；不得把旧执行 Registry 的字段、默认值、查询面、Provider 分类或同形执行 DTO
-> 迁入新的业务 Registry。
+> Confirmed boundary: When an Adapter creates a Model, it receives a single, already-validated Registry Provider
+> Config and Registry Model Config directly; old execution Registry fields, defaults, query surfaces, Provider
+> classifications, or equivalent execution DTOs must not be migrated into the new business Registry.
 >
-> 日期：2026-08-24
+> Date: 2026-08-24
 >
-> 总路线图：[`todo-00-model-abstraction-unification-roadmap.md`](./todo-00-model-abstraction-unification-roadmap.md)
+> Total roadmap: [`todo-00-model-abstraction-unification-roadmap.md`](./todo-00-model-abstraction-unification-roadmap.md)
 >
-> 相关设计：[`../design/registry/model-creation.md`](../design/registry/model-creation.md)
+> Related design: [`../design/registry/model-creation.md`](../design/registry/model-creation.md)
 
-## 1. 任务目标
+## 1. Task objective
 
-删除 Adapter 内部 `AiSdkModelRegistry` 对 Provider 配置的可变 Registry 语义，使业务 Provider Registry
-成为唯一 Provider/Model 静态事实源。ModelFactory 在创建 Model 时把已经解析好的事实一次性传给 Adapter，
-Adapter 返回封装 AI SDK 执行的 Model，不再反向按 ModelRef 查询另一份 Registry。
+Remove the mutable Registry semantics of `AiSdkModelRegistry` inside Adapters, making the business Provider Registry
+the sole source of Provider/Model static facts. ModelFactory passes fully resolved facts to the Adapter at once
+when creating a Model; the Adapter returns a Model wrapping AI SDK execution, no longer querying another Registry
+back by ModelRef.
 
 ```text
-当前
+Current
 
 Business Provider Registry
         |
@@ -38,80 +39,83 @@ Business Provider Registry
         |- bindModel(ModelRef)
         `- resolveConnection(ModelRef)
 
-目标
+Target
 
 Business Provider Registry
         |
-        | ModelFactory create 时一次 lookup
+        | One lookup at ModelFactory create time
         v
 RegistryProviderConfig + RegistryModelConfig + ModelOptions
         |
-        | 单次创建；不复制为第二套 Config
+        | Single creation; no copy as second Config
         v
-Adapter.createModel(完整 Config + 明确执行依赖)
+Adapter.createModel(full Config + explicit execution deps)
         |
         v
-Model 闭包持有静态 AI SDK 执行事实
+Model closure holds static AI SDK execution facts
         |
-        `--> request attempt 只解析动态 Request Auth
+        `--> request attempts only parse dynamic Request Auth
 ```
 
-## 2. 核心裁决
+## 2. Core decisions
 
-### 2.1 退役的是 Registry，不是 AI SDK 执行能力
+### 2.1 What is retired is the Registry, not AI SDK execution capability
 
-必须保留：
+Must retain:
 
-- 正式 `ProviderApiType` 当前声明的 Anthropic Messages、OpenAI Responses 和 OpenAI Chat Completions SDK
-  执行能力；旧 `gateway/custom` 执行分类不能在没有正式 Config API type 的情况下迁入新抽象；
-- API baseURL、静态 Header 和 API Key 投影；
-- proxy、CA、no-proxy、Endpoint Routing；
-- Client Request Signing 和必要的进程级 cache；
-- request-auth 动态覆盖；
-- Provider request body compatibility；
-- Retry、Stream Recovery、Usage、Status、Telemetry 和错误归一化。
+- Official `ProviderApiType` currently declared: Anthropic Messages, OpenAI Responses, and OpenAI Chat Completions SDK
+  execution capabilities; old `gateway/custom` execution classifications must not migrate into a new abstraction
+  without a formal Config API type;
+- API baseURL, static headers, and API Key projection;
+- proxy, CA, no-proxy, and Endpoint Routing;
+- Client request signing and necessary process-level cache;
+- request-auth dynamic override;
+- Provider request body compatibility;
+- Retry, Stream Recovery, Usage, Status, Telemetry, and error normalization.
 
-删除的是允许 Adapter 再次承担“当前有哪些 Provider、默认 Provider 是谁、按字符串解析哪个模型、返回什么
-Connection”的业务查询面。
+What is deleted is the ability for an Adapter to serve as a business query surface for "which Providers currently
+exist, what is the default Provider, which model is resolved by string, and what Connection is returned."
 
-### 2.2 不用另一个名字保留同一结构
+### 2.2 Do not preserve the same structure under another name
 
-禁止把 `AiSdkModelRegistry` 原样改名为：
+Prohibited to rename `AiSdkModelRegistry` identically as:
 
-- `ExecutionModelRegistry`；
-- `ExecutionModelBindingRegistry`；
-- `ConnectionRegistry`；
-- `Runtime Provider Registry`。
+- `ExecutionModelRegistry`;
+- `ExecutionModelBindingRegistry`;
+- `ConnectionRegistry`;
+- `Runtime Provider Registry`.
 
-实现可以有 Adapter 私有参数类型、闭包和工厂 cache，但不能提供 Provider list、默认选择、ModelRef 解析、
-可变配置替换或通用 Connection lookup。
+An implementation may have Adapter-private parameter types, closures, and factory caches, but must not provide
+Provider lists, default selection, ModelRef resolution, mutable config replacement, or general Connection lookup.
 
-### 2.3 Model 创建冻结静态事实
+### 2.3 Model creation freezes static facts
 
-Model 创建时固定：
+Model creation freezes:
 
-- providerId / modelId；
-- API kind/type；
-- baseURL；
-- 静态 headers；
-- 静态 API Key 或 account accessId；
-- Provider options 映射；
-- Model properties / optionSpecs / options；
-- 本次执行需要的基础设施引用。
+- providerId / modelId;
+- API kind/type;
+- baseURL;
+- static headers;
+- static API Key or account accessId;
+- Provider options mapping;
+- Model properties / optionSpecs / options;
+- infrastructure references needed for this execution.
 
-这里冻结的是静态执行事实和依赖引用，不是已经完成动态鉴权的最终 `LanguageModel`。Registry 后续更新不
-改变已创建 Model；每个 request attempt 仍解析当前动态 Request Auth，并在 Retry 时取得刷新后的材料。
-请求期 auth 只能覆盖被明确允许的动态 API Key/Header，不能改变 Endpoint、API kind、Provider options 或
-模型能力。
+What is frozen here is static execution facts and dependency references, not the final `LanguageModel` after
+dynamic authentication is complete. Subsequent Registry updates do not change created Models; each request
+attempt still parses current dynamic Request Auth and obtains refreshed material during retries. Request-time
+auth can only override explicitly allowed dynamic API Keys/Headers, not change Endpoints, API kinds, Provider
+options, or model capabilities.
 
-旧 Registry 的 `apiKeyEnv`、`apiKeyRequired`、默认环境变量、`defaultProviderId`、裸 modelId 解析和
-Connection lookup 一律删除，不进入业务 Provider Config、Registry、Model Config 或新的公共执行抽象。
+The old Registry's `apiKeyEnv`, `apiKeyRequired`, default environment variables, `defaultProviderId`, bare
+modelId resolution, and Connection lookup are all deleted and must not enter business Provider Config, Registry,
+Model Config, or new public execution abstractions.
 
-### 2.4 Adapter 直接消费完整 Registry Config
+### 2.4 Adapter directly consumes full Registry Config
 
-Adapter 创建入口直接接收 Todo 03 完整性边界产出的同一个 `RegistryProviderConfig` 和
-`RegistryModelConfig` 对象。不得先把它们复制或拆成 `AiSdkModelProviderConfig`、
-`ExecutionProviderConfig`、`ExecutionModelConfig`、`ResolvedConnection` 或其他同形 DTO。
+The Adapter creation entry receives the same `RegistryProviderConfig` and `RegistryModelConfig` objects produced
+by Todo 03's validation boundary. Do not copy or split them into `AiSdkModelProviderConfig`,
+`ExecutionProviderConfig`, `ExecutionModelConfig`, `ResolvedConnection`, or other equivalent DTOs.
 
 ```text
 Sparse Provider / Model Config
@@ -122,33 +126,36 @@ Overlay + resolve + validateComplete + requireComplete
              v
 RegistryProviderConfig + RegistryModelConfig
              |
-             | 同一对象直接传递
+             | Same object passed directly
              v
 Adapter.createModel
 ```
 
-Adapter 可以忽略 `label`、`visibility`、模型成员等非执行字段；“只消费其中一部分”不构成再声明一个
-`Pick<>` 公共类型或复制执行投影的理由。`@zcode/adapters` 可以依赖纯领域包 `@zcode/provider` 的完整类型；
-不得为了规避该依赖，把 Provider/Model Config 复制到 `@zcode/contracts`。
+The Adapter may ignore non-execution fields like `label`, `visibility`, and model members; "consuming only
+part of it" does not constitute a reason to declare another `Pick<>` public type or copy the execution projection.
+`@zcode/adapters` may depend on the complete types from the pure domain package `@zcode/provider`; do not
+copy Provider/Model Config to `@zcode/contracts` to avoid that dependency.
 
-### 2.5 Config、绑定选项与执行依赖分工
+### 2.5 Config, binding options, and execution dependency division
 
-完整 Config 之外只传递不能由 Config 表达的事实：
+Beyond full Config, only facts that Config cannot express are passed:
 
-- `providerId`、`modelId`：它们是 Registry 索引键，不要求重复写入 Config 对象；
-- `ModelOptions`：当前 Selection/`Model.bind()` 已绑定的执行值，不是 Model Config 声明；
-- `ModelRequestDependencies`：本次执行作用域的动态 request-auth Source，不进入 Config；
-- 进程级 runtime、network、proxy、CA、routing、signing、retry、logger、status/telemetry sink：由 Adapter
-  构造器或其私有基础设施 Service 注入，不随每个 Provider/Model Config 重复传递。
+- `providerId`, `modelId`: these are Registry index keys, no need to redundantly write into Config objects;
+- `ModelOptions`: the execution value bound by the current Selection/`Model.bind()`, not a Model Config declaration;
+- `ModelRequestDependencies`: dynamic request-auth Source for this execution scope, not part of Config;
+- Process-level runtime, network, proxy, CA, routing, signing, retry, logger, status/telemetry sink: injected
+  by the Adapter constructor or its private infrastructure Service, not passed repeatedly with each Provider/Model Config.
 
-`api-key` 的静态 Key 直接来自 `providerConfig.access`。账号型 Provider 固定 Config 中非 Secret 的
-Account Access 快照，动态账号凭据按 attempt 解析；其结构化连接选择与 Access Context 的具体切换由
-Todo 07 负责。本 Todo 不从 `accessId` 反解析账号事实，也不建立第二套鉴权 Config。
+The static Key for `api-key` comes directly from `providerConfig.access`. For account-type Providers, a non-secret
+Account Access snapshot fixed in Config is used; dynamic account credentials are parsed per attempt; the structured
+connection selection and Access Context switching specifics are handled by Todo 07. This Todo does not reverse-parse
+account facts from `accessId`, nor does it create a second authentication Config.
 
-## 3. 目标接口形态
+## 3. Target interface shape
 
-领域公开接口继续只有 `ModelFactory` 和 `Model`。Adapter 创建入口接收以下事实；实现可以使用对象参数，
-但该对象只是函数参数，不是可查询、可持久化、可同步或可复用的业务 Config 类型：
+The domain public interface continues to be only `ModelFactory` and `Model`. The Adapter creation entry receives
+the following facts; the implementation may use an object parameter, but that object is just a function parameter,
+not a queryable, persistable, synchronizable, or reusable business Config type:
 
 ```ts
 adapter.createModel({
@@ -161,102 +168,107 @@ adapter.createModel({
 });
 ```
 
-Adapter 从 `modelConfig` 直接取得 `properties`、`optionSpecs` 和 `reasoningMapping`，从 `providerConfig`
-直接取得 `api`、`access` 和静态 Header。不要由 Bootstrap 提前拆字段，也不要让 Adapter 再做完整性校验、
-模型成员判断、enabled 判断或 Config 默认值补齐。
+The Adapter gets `properties`, `optionSpecs`, and `reasoningMapping` directly from `modelConfig`, and gets
+`api`, `access`, and static headers directly from `providerConfig`. Do not destructure fields ahead of time
+in Bootstrap, and do not let the Adapter perform validation, model member judgment, enabled judgment, or
+Config default completion itself.
 
-Adapter 内部可以闭包捕获这两个完整 Config 引用，并为 AI SDK 创建短生命周期的私有调用参数；但不能保存
-另一份 Provider map，也不能从 barrel 向 Core/Service/Protocol 导出新的执行 Config 类型。
+The Adapter may closure-capture these two full Config references internally and create short-lived private call
+parameters for AI SDK creation; but it must not save another Provider map, nor export new execution Config types
+from the barrel to Core/Service/Protocol.
 
-进程级共享的 signing state、network transport、Endpoint Routing service、logger、runtime、status sink 等
-继续由 Bootstrap 注入 Adapter。共享 cache 只缓存昂贵执行资源，不提供业务查询能力。
+Process-level shared signing state, network transport, Endpoint Routing service, logger, runtime, status sink, etc.
+continue to be injected by the Bootstrap. Shared caches only cache expensive execution resources, not provide
+business query capabilities.
 
-## 4. 删除与迁移范围
+## 4. Deletion and migration scope
 
 ### 4.1 `AiSdkModelRegistry`
 
-删除或拆解：
+Delete or decompose:
 
-- `providers` 可变 map；
-- `replaceConfig()`；
-- `defaultProviderId`；
-- `parseModelRef()` 依赖；
-- `resolve()`；
-- `bindModel()`；
-- `resolveConnection()`；
-- `AiSdkResolvedModelConnection`；
-- 以 Provider/Model 查询为目的的 list/default helper；
-- 将 `ModelProperties` 放入 Adapter Registry resolved value 的结构。
+- `providers` mutable map;
+- `replaceConfig()`;
+- `defaultProviderId`;
+- `parseModelRef()` dependency;
+- `resolve()`;
+- `bindModel()`;
+- `resolveConnection()`;
+- `AiSdkResolvedModelConnection`;
+- list/default helpers for querying by Provider/Model;
+- structures that put `ModelProperties` into Adapter Registry resolved values.
 
-可抽成 Adapter 私有纯函数或执行服务：
+Can be extracted as Adapter-private pure functions or execution services:
 
-- 单个 Provider Config 到 `LanguageModel` factory 的创建；
-- 静态和动态 auth 的受控合并；
-- transport 组合；
-- signing manager 生命周期；
-- Provider Business Error fetch 包装；
-- SDK 模型实例 cache。
+- Creation of a single Provider Config to `LanguageModel` factory;
+- Controlled merge of static and dynamic auth;
+- Transport composition;
+- Signing manager lifecycle;
+- Provider Business Error fetch wrapping;
+- SDK model instance cache.
 
-如果 cache key 需要 providerId/modelId/baseURL 等字段，它仍只是执行资源 cache；不得以 cache 内容回答业务
-Provider/Model 查询。
+If a cache key needs fields like providerId/modelId/baseURL, it remains an execution resource cache; it must not
+answer business Provider/Model queries with cache content.
 
 ### 4.2 `AiSdkModelAdapter`
 
-删除：
+Delete:
 
-- constructor 的 `registry` 参数；
-- `replaceRegistryConfig()`；
-- 旧 `generateText(AiSdkModelTextRequest)` / `streamText(...)` 若 Todo 01 尚未删除；
-- `createModel()` 内的 `registry.bindModel(options.model)`；
-- 对字符串 ModelRef/default Provider 的支持。
+- `registry` parameter of the constructor;
+- `replaceRegistryConfig()`;
+- old `generateText(AiSdkModelTextRequest)` / `streamText(...)` if Todo 01 has not yet deleted;
+- `registry.bindModel(options.model)` within `createModel()`;
+- Support for string ModelRef/default Provider.
 
-改为：
+Change to:
 
-- `createModel()` 直接接收 providerId/modelId、完整 `RegistryProviderConfig`、完整
-  `RegistryModelConfig`、绑定 options 和必要的执行依赖；
-- `properties`、`optionSpecs`、`reasoningMapping`、API type、baseURL、静态 Header 和 Access 均从完整
-  Config 读取，不再由 Bootstrap 逐字段投影；
-- Model 闭包在每个 attempt 调用 request-auth source，并把结果投影到冻结的 Provider 执行事实；
-- runner 在每个 request attempt 接收结合当次 Request Auth 后解析的 `LanguageModel`/执行参数，不再持有
-  Registry；动态鉴权完成后的 `LanguageModel` 不在 Model 创建时冻结。
+- `createModel()` directly receives providerId/modelId, full `RegistryProviderConfig`, full
+  `RegistryModelConfig`, binding options, and necessary execution dependencies;
+- `properties`, `optionSpecs`, `reasoningMapping`, API type, baseURL, static headers, and Access are all read
+  from the full Config, no longer projected field-by-field by Bootstrap;
+- The Model closure calls the request-auth source on each attempt call, and projects the result onto the frozen
+  Provider execution facts;
+- The runner receives a `LanguageModel`/execution parameter parsed for each request attempt with the current
+  Request Auth combined, no longer holding a Registry; the `LanguageModel` after dynamic authentication completion
+  is not frozen at Model creation time.
 
 ### 4.3 Bootstrap `ApiProviderModelRuntime`
 
-删除：
+Delete:
 
-- Registry revision subscription 仅用于 `#syncExecutionRegistry()` 的逻辑；
-- `createApiProviderAiSdkRegistryConfig(view)` 全量复制；
-- `#modelAdapter.replaceRegistryConfig(...)`；
-- 把 Business Registry View 转成第二份 `providers` map 的代码。
+- Registry revision subscription logic only used for `#syncExecutionRegistry()`;
+- `createApiProviderAiSdkRegistryConfig(view)` full copy;
+- `#modelAdapter.replaceRegistryConfig(...)`;
+- Code that converts the Business Registry View into a second `providers` map.
 
-保留或简化：
+Retain or simplify:
 
-- `modelFactory` 从业务 Registry lookup Provider/Model；
-- 完整性和 options 校验位于业务 Registry/ModelFactory 边界；
-- 把单个完整 Provider/Model Config、绑定 options 和 request dependencies 直接交给 Adapter；
-- visible output budget 等 Selection/执行作用域约束在调用 Adapter 前形成最终绑定 options。
+- `modelFactory` looks up Provider/Model from the business Registry;
+- Validation and options checks occur at the business Registry/ModelFactory boundary;
+- Pass a single full Provider/Model Config, binding options, and request dependencies directly to the Adapter;
+- Visible output budget and other Selection/execution scope constraints form final binding options before calling the Adapter.
 
-若 `ApiProviderModelRuntime` 完成后只包装 `modelFactory`，可以进一步内联为 ModelFactory 创建函数；不要为保留
-类名制造 start/subscription 生命周期。
+If `ApiProviderModelRuntime` ends up wrapping only `modelFactory` after completion, it can be further inlined
+as a ModelFactory creation function; do not create a start/subscription lifecycle just to preserve the class name.
 
-### 4.4 旧 Bootstrap model-config
+### 4.4 Old Bootstrap model-config
 
-审计并缩小 `createAiSdkModelRegistryConfig()`、`createRuntimeAiSdkModelRegistryInfrastructure()`：
+Audit and narrow `createAiSdkModelRegistryConfig()`, `createRuntimeAiSdkModelRegistryInfrastructure()`:
 
-- Provider 列表和 default provider 不再进入 Adapter；
-- 网络、签名、Endpoint Routing、runtime 和 env 等执行基础设施可以保留并改为准确命名；
-- Probe/E2E helper 改为显式创建测试 Model，而不是先造一整个 Registry。
+- Provider lists and default providers no longer enter the Adapter;
+- Network, signing, Endpoint Routing, runtime, and env execution infrastructure can be retained and renamed accurately;
+- Probe/E2E helpers changed to explicitly create test Models, not build an entire Registry first.
 
-### 4.5 Reasoning 差异归入 ZCode Built-in Model Config Rules
+### 4.5 Reasoning differences folded into ZCode Built-in Model Config Rules
 
-所有正式模型和 API 类型的 Reasoning 差异事实统一由 ZCode Built-in Model Config Rules 声明：
+All formal model and API type reasoning difference facts are uniformly declared by ZCode Built-in Model Config Rules:
 
-- `optionSpecs.reasoningLevel.values/default` 声明公开档位；
-- `reasoningMapping[level]` 声明该档位对应的 Provider 请求参数；
-- `disabled`、`off`、`nothink`、`none` 等额外映射可以声明关闭推理的执行参数；
-- Personal Model Config Rules 继续排在 Built-in Rules 之后并覆盖明确提供的配置。
+- `optionSpecs.reasoningLevel.values/default` declares public tiers;
+- `reasoningMapping[level]` declares the Provider request parameters for each tier;
+- Additional mappings for `disabled`, `off`, `nothink`, `none` can declare execution parameters that close reasoning;
+- Personal Model Config Rules continue to be placed after Built-in Rules and override explicitly provided config.
 
-Adapter 只执行正向映射：
+The Adapter only performs forward mapping:
 
 ```text
 Model.options.reasoningLevel
@@ -265,20 +277,22 @@ Model.options.reasoningLevel
 modelConfig.reasoningMapping[level]
              |
              v
-providerConfig.api.type 对应的协议编码
+Protocol encoding corresponding to providerConfig.api.type
 ```
 
-删除 `resolveReasoningDisabledProviderOptions()`、旧 Model Catalog 的请求装配职责，以及按 modelId、旧
-Provider kind、任意 providerOptions 字段或 legacy `extra_body` 反向猜测档位的逻辑。迁入 Built-in Config
-的是模型/API 差异事实，不是这些旧推断算法。
+Delete `resolveReasoningDisabledProviderOptions()`, old Model Catalog request assembly responsibilities, and the logic
+to reverse-guess tiers by modelId, old Provider kind, arbitrary providerOptions fields, or legacy `extra_body`.
+What migrates into Built-in Config is model/API difference facts, not those old inference algorithms.
 
-`runtime-thought-level` 当前还服务既有 Telemetry。本 Todo 不重构 Telemetry schema、Context 或上报通道；
-只移除它对旧 Catalog、modelId hardcode 和旧 Provider 分类的依赖。能从本次 Model options 和明确映射得到的
-观测继续记录，无法可靠得到的字段保持现有 unknown/缺省语义，不为遥测恢复反向猜测。
+`runtime-thought-level` currently still serves existing Telemetry. This Todo does not refactor Telemetry schema,
+Context, or reporting channels; it only removes its dependency on old Catalog, modelId hardcoding, and old
+Provider classifications. Observations that can be obtained from this Model options and explicit mappings continue
+to be recorded; fields that cannot be reliably obtained retain existing unknown/default semantics; do not restore
+reverse-guessing for telemetry.
 
-## 5. 与 Todo 03 的交叉边界
+## 5. Cross-boundary with Todo 03
 
-Todo 03 正在收紧 Registry Provider/Model 的完整类型。两项共同原则是：
+Todo 03 is tightening the complete types of Registry Provider/Model. The common principle of both:
 
 ```text
 Sparse Rule -> resolve + validateComplete -> Complete Registry Model
@@ -287,114 +301,120 @@ Sparse Rule -> resolve + validateComplete -> Complete Registry Model
                                Adapter.createModel
 ```
 
-Todo 02 不应自行补能力默认值，也不应重复建立 `requireCompleteProperties()`。正式切换 Adapter 接口和删除
-旧 Registry 必须基于 Todo 03 已合入的完整类型；在此之前可以先分类测试和识别可保留的执行基础设施，但不
-引入临时完整类型或重复校验 helper。
+Todo 02 should not itself supplement capability defaults, nor redundantly establish `requireCompleteProperties()`.
+Formal switching of the Adapter interface and deletion of the old Registry must be based on the complete types
+already merged by Todo 03; until then, tests can be classified and recognizable execution infrastructure can be
+identified, but no temporary complete types or duplicate validation helpers should be introduced.
 
-## 6. 测试先行
+## 6. Test-first
 
-### 6.1 生命周期
+### 6.1 Lifecycle
 
-1. Model A 创建后更新业务 Registry，A 继续使用旧 API kind/baseURL/static headers；
-2. 更新后创建 Model B，B 使用新事实；
-3. 删除 Provider 后，已创建 A 可以完成当前请求，新创建失败；
-4. Adapter 不再订阅或查询业务 Registry；
-5. 不存在 defaultProviderId/裸 modelId fallback。
+1. After creating Model A, update the business Registry; A continues to use the old API kind/baseURL/static headers;
+2. Create Model B after the update; B uses the new facts;
+3. After deleting a Provider, already-created A can complete its current request, new creations fail;
+4. The Adapter no longer subscribes to or queries the business Registry;
+5. No defaultProviderId/bare modelId fallback exists.
 
-### 6.2 鉴权
+### 6.2 Authentication
 
-1. api-key Model 使用创建时固定 Key；
-2. zhipu-account Model 固定 accessId，每个 attempt 可以刷新动态凭据；
-3. request-auth 无 Source/无材料时网络前失败；
-4. Retry 可取得更新后的 auth；
-5. 动态 auth 不能覆盖 baseURL、API kind、Provider options 或 properties；
-6. Secret 不进入 ModelSelection、Session event、日志或 Registry View。
+1. api-key Models use the Key fixed at creation time;
+2. zhipu-account Models fix accessId; each attempt can refresh dynamic credentials;
+3. request-auth without Source/material fails before the network call;
+4. Retries can obtain updated auth;
+5. Dynamic auth cannot override baseURL, API kind, Provider options, or properties;
+6. Secrets do not enter ModelSelection, Session events, logs, or Registry Views.
 
-### 6.3 Provider 执行能力
+### 6.3 Provider execution capability
 
-按职责迁移旧 Registry tests，而不是一比一保留构造方式：
+Migrate old Registry tests by responsibility, rather than preserving construction methods one-to-one:
 
-- 各 API 类型创建正确 AI SDK LanguageModel；
-- proxy/CA/no-proxy 和 Endpoint Routing 组合不变；
-- Signing gate/key cache 的隔离和生命周期不变；
-- OpenAI Responses JSON compat、Anthropic stream compat 和 body compatibility 不变；
-- Provider Business Error、TLS、Retry/Stream Recovery 归一化不变；
-- generate/stream 共享同一静态执行事实。
+- Each API type creates the correct AI SDK LanguageModel;
+- proxy/CA/no-proxy and Endpoint Routing composition unchanged;
+- Signing gate/key cache isolation and lifecycle unchanged;
+- OpenAI Responses JSON compat, Anthropic stream compat, and body compatibility unchanged;
+- Provider Business Error, TLS, Retry/Stream Recovery normalization unchanged;
+- generate/stream share the same static execution facts.
 
-### 6.4 Config 与 Reasoning
+### 6.4 Config and Reasoning
 
-1. Adapter 接收的 Provider/Model Config 与 Registry 发布对象是同一引用，不经过同形执行 DTO；
-2. Adapter 不补齐稀疏字段，不重新执行 enabled、成员或完整性判断；
-3. reasoningLevel 只经 `reasoningMapping[level]` 正向生成请求参数；
-4. Built-in 和 Personal Rule 后置覆盖形成的 Effective Mapping 均可执行；
-5. disabled/off/nothink/none 使用明确 Mapping，不调用通用字段清洗或模型 hardcode；
-6. 缺少公开 level Mapping 在 Registry 完整性边界失败，不进入 Adapter；
-7. Telemetry 不因移除 Catalog 而增加 Context、Observation DTO 或新的反向推断。
+1. The Provider/Model Config received by the Adapter is the same reference as the Registry published object,
+   not passing through an equivalent execution DTO;
+2. The Adapter does not supplement sparse fields, re-execute enabled, member, or validation judgments;
+3. reasoningLevel only generates request parameters through `reasoningMapping[level]`;
+4. Built-in and Personal Rule post-overlap effective mappings are all executable;
+5. disabled/off/nothink/none use explicit mappings, not generic field scrubbing or model hardcoding;
+6. Missing public level mappings fail at the Registry validation boundary, do not enter the Adapter;
+7. Telemetry does not add Context, Observation DTOs, or new reverse inference due to Catalog removal.
 
-### 6.5 机械边界
+### 6.5 Mechanical boundaries
 
-- 生产代码无 `new AiSdkModelRegistry`；
-- 生产代码无 `replaceRegistryConfig` / `replaceConfig`；
-- Adapter 公共入口不接受 `ModelRef | string`；
-- 生产代码无 `AiSdkModelProviderConfig`、`AiSdkModelRegistryConfig` 或同形替代 DTO；
-- Adapter 请求装配不导入旧 Model Catalog、`AiSdkProviderKind` 或 modelId reasoning hardcode；
-- Core/Service/Protocol 不导入 Adapter 私有执行投影；
-- `dep:refs` 和 `rg` 确认旧 Registry 查询方法无引用。
+- No `new AiSdkModelRegistry` in production code;
+- No `replaceRegistryConfig` / `replaceConfig` in production code;
+- The Adapter public entry does not accept `ModelRef | string`;
+- No `AiSdkModelProviderConfig`, `AiSdkModelRegistryConfig`, or equivalent alternative DTOs in production code;
+- The Adapter request assembly does not import old Model Catalog, `AiSdkProviderKind`, or modelId reasoning hardcoding;
+- Core/Service/Protocol do not import Adapter-private execution projections;
+- `dep:refs` and `rg` confirm the old Registry query methods have no references.
 
-## 7. 实施顺序
+## 7. Implementation order
 
-### Step A：锁定行为测试
+### Step A: Lock behavior tests
 
-- 把旧 Registry tests 按“业务查询行为”与“执行基础设施行为”分类；
-- 为 Model 静态事实冻结和 Request Auth 动态刷新增加失败测试；
-- 明确每种 Provider API 的最小代表测试。
+- Classify old Registry tests by "business query behavior" and "execution infrastructure behavior";
+- Add failing tests for Model static fact freezing and Request Auth dynamic refresh;
+- Define the minimum representative test for each Provider API.
 
-### Step B：建立单 Provider 执行创建路径
+### Step B: Establish single-Provider execution creation path
 
-- 从 Registry class 提取纯 Provider factory/transport/signing 组合；
-- 让 Adapter `createModel()` 直接接收完整 Registry Provider/Model Config；
-- 删除 Bootstrap 对 API/access/properties/optionSpecs/reasoningMapping 的逐字段二次投影；
-- runner 改为消费已经绑定的执行闭包。
+- Extract pure Provider factory/transport/signing composition from the Registry class;
+- Let Adapter `createModel()` directly receive full Registry Provider/Model Config;
+- Delete Bootstrap's field-by-field secondary projection of API/access/properties/optionSpecs/reasoningMapping;
+- Change the runner to consume already-bound execution closures.
 
-### Step C：切换业务 ModelFactory
+### Step C: Switch business ModelFactory
 
-- `ApiProviderModelRuntime.modelFactory` 直接投影单个 Provider/Model；
-- 删除全量 Registry sync/subscription；
-- 验证旧 Model 与新 Registry revision 隔离。
+- `ApiProviderModelRuntime.modelFactory` directly projects a single Provider/Model;
+- Delete full Registry sync/subscription;
+- Verify old Models are isolated from new Registry revisions.
 
-### Step D：物理删除 Registry API
+### Step D: Physical deletion of Registry API
 
-- 删除 `AiSdkModelRegistry`、Config 和 resolved connection 类型；
-- 删除旧 Catalog/reasoning-disabled 的请求装配与反向推断；
-- 迁移 Probe/E2E/test helper；
-- 删除旧测试中只验证 defaultProvider/list/parse 的用例。
+- Delete `AiSdkModelRegistry`, Config, and resolved connection types;
+- Delete old Catalog/reasoning-disabled request assembly and reverse inference;
+- Migrate Probe/E2E/test helpers;
+- Delete old test cases that only verify defaultProvider/list/parse.
 
-### Step E：验证与提交
+### Step E: Verification and submission
 
-- 运行 Adapter、Bootstrap、Core 受影响单测；
-- 运行 `pnpm typecheck`、`pnpm lint`、`pnpm fmt:check`；
-- 对 endpoint routing、request auth、stream/retry 运行代表 E2E/协议回归；
-- 与已裁决并同步实施的 Todo 03 共同形成一个 Conventional Commit。
+- Run affected Adapter, Bootstrap, and Core unit tests;
+- Run `pnpm typecheck`, `pnpm lint`, `pnpm fmt:check`;
+- Run representative E2E/protocol regressions for endpoint routing, request auth, stream/retry;
+- Implement and submit together with the ratified and synchronized Todo 03 as a single Conventional Commit.
 
-## 8. 完成定义
+## 8. Completion definition
 
-完成后，仓库中“Registry”只指业务 Provider Registry。Adapter 可以有执行资源 cache 和基础设施 service，
-但不能再保存另一份 Provider 列表、解析 ModelSelection、提供 Connection 查询或响应配置热替换。每个 Model
-直接持有创建瞬间的完整 Registry Provider/Model Config 和绑定 options；动态访问材料只在 request attempt
-解析。Reasoning 请求参数只来自 Effective Model Config 的明确 Mapping，不再来自旧 Catalog、Provider kind
-或 modelId 推断。
+After completion, "Registry" in the repository refers only to the business Provider Registry. The Adapter may
+have execution resource caches and infrastructure services, but can no longer save another Provider list, parse
+ModelSelection, provide Connection queries, or respond to config hot replacement. Each Model directly holds
+the complete Registry Provider/Model Config and binding options at creation time; dynamic access materials
+are parsed only at request attempts. Reasoning request parameters come only from explicit mappings in the
+Effective Model Config, not from old Catalog, Provider classifications, or modelId inference.
 
-## 9. 实现结果
+## 9. Implementation result
 
-- Adapter 的可变 Provider map、默认 Provider、`resolve` / `bindModel` / `resolveConnection` 和热替换接口
-  已删除；生产代码不再存在 `AiSdkModelRegistry`；
-- `AiSdkModelAdapter.createModel()` 直接接收同一个 `RegistryProviderConfig` / `RegistryModelConfig` 引用，
-  Model 闭包冻结创建时的静态事实，不建立同形执行 Config；
-- Bootstrap 已删除业务 Registry revision 到 Adapter Registry 的全量同步与订阅，只在 ModelFactory 创建时
-  lookup 单个 Provider/Model；
-- request-auth 与账号动态凭据继续按 request attempt 解析，缺失材料在发起网络请求前失败；
-- Provider SDK、代理、CA、Endpoint Routing、签名、Retry、Stream Recovery、Usage、Status 与错误归一化
-  继续由 Adapter 私有执行基础设施承担；
-- 旧 reasoning-disabled helper 与按 modelId/Provider 分类反向猜测的执行路径已删除，明确映射来自 Effective
-  Model Config Rules；reasoning 关闭只使用明确的额外 Mapping key，缺失时不发送 reasoning 参数；
-- Todo 02 与 Todo 03 作为同一条事实链共同实现并提交，没有人为拆成两个相互依赖的提交。
+- The Adapter's mutable Provider map, default Provider, `resolve` / `bindModel` / `resolveConnection`, and
+  hot-replacement interfaces have been deleted; production code no longer contains `AiSdkModelRegistry`;
+- `AiSdkModelAdapter.createModel()` directly receives the same `RegistryProviderConfig` / `RegistryModelConfig`
+  reference; the Model closure freezes creation-time static facts, without creating an equivalent execution Config;
+- Bootstrap has deleted the full sync and subscription from business Registry revision to Adapter Registry,
+  looking up only a single Provider/Model at ModelFactory creation time;
+- request-auth and account dynamic credentials continue to be parsed per request attempt; missing materials
+  fail before network requests are initiated;
+- Provider SDK, proxy, CA, Endpoint Routing, signing, Retry, Stream Recovery, Usage, Status, and error
+  normalization continue to be handled by the Adapter's private execution infrastructure;
+- Old reasoning-disabled helpers and reverse-guessing execution paths by modelId/Provider classification have
+  been deleted; explicit mappings come from Effective Model Config Rules; reasoning closure only uses explicit
+  extra Mapping keys; when missing, no reasoning parameter is sent;
+- Todo 02 and Todo 03 were implemented and submitted together as a single fact chain, not artificially split
+  into two interdependent commits.

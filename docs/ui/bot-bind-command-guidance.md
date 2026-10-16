@@ -1,26 +1,26 @@
-# Bot 绑定命令引导
+# Bot Binding Command Guidance
 
-## 背景
+## Background
 
-用户在 Bot 设置里生成绑定码后，界面只展示 `/bind <code>` 和复制图标。当前提示没有明确说明“这条命令需要发送给机器人”，用户容易误以为复制完成就是绑定完成。
+After users generate a binding code in Bot settings, the UI shows only `/bind <code>` and a copy icon. The current prompt does not clearly say that the command must be sent to the bot, so users may think copying it completes the binding.
 
-## 目标
+## Goals
 
-- 绑定命令面板必须在命令前展示明确引导：复制下面命令，并发送到机器人私聊。
-- 复制按钮文案使用“复制绑定命令”，减少只看到图标时的歧义。
-- 复制成功 toast 继续给下一步：打开机器人私聊，粘贴并发送命令。
-- 绑定码过期、刷新、倒计时逻辑保持不变。
+- Show clear instructions before the binding command: copy the command below and send it in a direct message to the bot.
+- Label the copy button “Copy binding command” to avoid ambiguity when only an icon is visible.
+- After copying, the toast should give the next step: open a direct message with the bot, paste, and send the command.
+- Keep binding-code expiration, refresh, and countdown behavior unchanged.
 
-## UI 规则
+## UI Rules
 
-- 使用现有 `DetailPanel` 层级，不新增新的浮层或嵌套卡片。
-- 命令本体继续使用 `font-mono` 和 `bg-surface`，保持可复制内容的技术属性。
-- 引导文案使用 `text-ui-base leading-5 text-foreground-subtle`，适配中英文换行和手机宽度。
-- 操作步骤只做辅助提示，不引入新的业务状态。
+- Use the existing `DetailPanel` hierarchy; do not add another overlay or nested card.
+- Keep `font-mono` and `bg-surface` on the command itself to preserve its technical, copyable appearance.
+- Use `text-ui-base leading-5 text-foreground-subtle` for the guidance copy, accommodating Chinese and English wrapping and mobile widths.
+- Treat the instructions as helper text only; do not introduce new business state.
 
-## 文案
+## Copy
 
-- 标题：绑定命令
-- 引导：复制下面的绑定命令，并发送给机器人私聊。
-- 复制按钮：复制绑定命令
-- 复制成功：绑定命令已复制，请打开机器人私聊，粘贴并发送。
+- Title: Binding command
+- Guidance: Copy the binding command below and send it in a direct message to the bot.
+- Copy button: Copy binding command
+- Copy success: Binding command copied. Open a direct message with the bot, paste, and send it.

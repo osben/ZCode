@@ -1,87 +1,87 @@
-# 外部 API 请求收拢
+# Consolidating External API Requests
 
-## 范围
+## Scope
 
-本次只收拢外部业务 API，请求统一经过 `ApiClient`：
+This change consolidates external business APIs only; requests all go through `ApiClient`:
 
-- OAuth provider 的 token / userinfo / 业务 API key 链路
-- model provider 的远端配置与 release 查询
+- OAuth provider token / userinfo / business API key paths
+- Remote config and release queries for model providers
 
-明确不包含：
+Explicitly excluded:
 
-- 本地 `/api/*`
+- Local `/api/*`
 - WebSocket
 - SSH
 - RPC / IPC
-- 浏览器本地资源读取
+- Browser-local resource reads
 
-## 统一抽象
+## Shared Abstraction
 
-共享层新增 `packages/shared/src/api.ts`，定义三类基础契约：
+The shared layer adds `packages/shared/src/api.ts`, which defines three basic contracts:
 
-- `ApiClient`：项目内唯一标准 HTTP 接口，保持 `fetch-compatible`
-- `ApiRequestInit`：基于 `RequestInit`，补充 `timeoutMs`
-- `ApiError`：统一承载 `url`、`method`、`status` 与错误消息
+- `ApiClient`: the project's sole standard HTTP interface, kept `fetch-compatible`
+- `ApiRequestInit`: based on `RequestInit`, with `timeoutMs` added
+- `ApiError`: consistently carries `url`, `method`, `status`, and the error message
 
-这样 repo / adapter 只依赖共享契约，不感知 Node 专属实现细节。
+This way, repos/adapters depend only on the shared contract and do not need to know about Node-specific implementation details.
 
-## 默认实现
+## Default Implementation
 
-Node/Desktop host 默认实现放在 `packages/services/src/providers/api/`：
+The default implementation for Node/Desktop hosts is in `packages/services/src/providers/api/`:
 
-- `nodeApiClient.ts`：内部调用 Node 全局 `fetch`
-- `apiJson.ts`：统一处理 JSON 读取、非 2xx 错误与解析失败
-- `apiEndpoints.ts`：集中管理外部 API endpoint 常量
+- `nodeApiClient.ts`: calls Node global `fetch` internally
+- `apiJson.ts`: consistently handles JSON reads, non-2xx errors, and parse failures
+- `apiEndpoints.ts`: centralizes external API endpoint constants
 
-Node 的全局 `fetch` 底层使用 `undici`，因此：
+Node's global `fetch` uses `undici` underneath, so:
 
-- 我们享受 `undici` 的运行时能力
-- 业务层不直接 import `undici`
-- 后续若必须使用 `undici` 高级能力，只需调整 provider 实现层
+- We benefit from `undici` runtime capabilities.
+- The business layer does not import `undici` directly.
+- If advanced `undici` capabilities become necessary, only the provider implementation layer needs to change.
 
-## 注入方式
+## Injection
 
-按分层约束，`ApiClient` 作为横切能力只通过 `Providers` 注入：
+Under the layering constraints, `ApiClient` is a cross-cutting capability injected only through `Providers`:
 
-- `packages/services/src/node.ts` 创建默认 `NodeApiClient`
-- desktop host 复用同一个 `NodeApiClient`
-- OAuth service / model provider service 通过依赖注入消费 `ApiClient`
-- 测试场景可替换成 mock client
+- `packages/services/src/node.ts` creates the default `NodeApiClient`.
+- The desktop Host reuses the same `NodeApiClient`.
+- OAuth and model-provider services consume `ApiClient` through dependency injection.
+- Tests can substitute a mock client.
 
-业务 repo / adapter 不再直接写裸 `fetch`，也不再暴露 `fetchImpl?: typeof fetch` 给业务层。
+Business repos/adapters no longer call raw `fetch` directly or expose `fetchImpl?: typeof fetch` to the business layer.
 
-## 已迁移链路
+## Migrated Paths
 
 - `packages/services/src/oauth/providers/*`
 - `packages/services/src/model-provider/repo/*`
 - `packages/services/src/model-provider/modelProviderService.ts`
 - `packages/services/src/model-provider/modelProviderConnectivityHelpers.ts`
 
-这些链路现在都通过 `ApiClient` 访问外部业务 API。
+These paths now access external business APIs through `ApiClient`.
 
-## 当前边界
+## Current Boundaries
 
-v1 仅统一以下能力：
+Version 1 standardizes only the following capabilities:
 
 - timeout
-- headers 合并
-- 请求级 `x-request-id`
-- JSON / text 读取辅助
-- 非 2xx 错误归一
+- Header merging
+- Request-level `x-request-id`
+- JSON/text reading helpers
+- Normalization of non-2xx errors
 
-当前刻意不做：
+The following are intentionally out of scope:
 
-- 重试
-- 拦截器
-- 连接池高级配置上抛到业务层
-- 非 HTTP 协议统一
+- Retries
+- Interceptors
+- Exposing advanced connection-pool configuration to the business layer
+- Unifying non-HTTP protocols
 
-## 后续约束
+## Future Constraints
 
-新增外部业务 API 时，遵循两条规则：
+When adding an external business API, follow these rules:
 
-1. 业务代码只依赖 `ApiClient`
-2. endpoint 常量集中放在 provider/config 层，不在 repo / service 中散落硬编码 URL
-3. 请求级诊断 ID 统一使用 `x-request-id`，由 `ApiClient` 出口生成；调用方显式传入时保留原值
+1. Business code depends only on `ApiClient`.
+2. Keep endpoint constants in the provider/config layer; do not scatter hard-coded URLs across repos/services.
+3. Use `x-request-id` for request-level diagnostic IDs. `ApiClient` generates it at the egress point and preserves the value when the caller supplies one.
 
-这样可以保持 desktop / web / remote 模式的实现边界稳定，也能避免把 Node 运行时语义泄漏到业务层。
+This keeps implementation boundaries stable across desktop/web/remote modes and prevents Node runtime semantics from leaking into the business layer.

@@ -1,95 +1,93 @@
-# Remote Target 抽象
+# Remote Target Abstraction
 
-## 背景
+## Background
 
-远程链路的核心实现早已不是 SSH 专属：
+The core implementation of remote connections is no longer specific to SSH:
 
-- `packages/server/src/remote/connect.ts` 只依赖 `IRemoteBackend`
-- deploy / stdio handshake / RPC proxy 都可以复用
+- `packages/server/src/remote/connect.ts` depends only on `IRemoteBackend`.
+- Deploy, stdio handshake, and RPC proxy can all be reused.
 
-真正把能力绑死在 SSH 上的，曾经是 desktop → main → host 这一层入口协议：
+What once tied the capability to SSH was the entry protocol at the desktop → main → host layer:
 
-- 共享类型使用 `SSHConnectOptions`
-- 旧 remote Host init payload 使用 `sshOptions`
-- host 直接在入口分支里 new `SSHBackend`
+- Shared types used `SSHConnectOptions`.
+- The old remote Host init payload used `sshOptions`.
+- The Host directly instantiated `SSHBackend` in the entry branch.
 
-这会导致每新增一种 remote 形态（WSL、Docker），都要复制一套 `ConnectWSL` / `InitWSL` / `setupWSLConnection`。
+This meant that every new remote form (WSL, Docker) required copying a set of `ConnectWSL` / `InitWSL` / `setupWSLConnection` methods.
 
-## 本次改动
+## Changes in This Update
 
-当前已经完成三步：
+Three steps have now been completed:
 
-- Phase 0：统一连接契约，不改 deploy / handshake 主流程
-- Phase 1：把 WSL / Docker backend 接到统一 target 上
-- Phase 2：把平台探测和统一 remote 连接 UI 接到 desktop / web 入口
+- Phase 0: unify the connection contract without changing the main deploy/handshake flow.
+- Phase 1: connect the WSL/Docker backends to the unified target.
+- Phase 2: add platform detection and a unified remote-connection UI to the desktop/web entry points.
 
-### 统一 target
+### Unified Target
 
-共享层新增 `RemoteTarget` discriminated union：
+The shared layer adds the `RemoteTarget` discriminated union:
 
 - `kind: "ssh"`
 - `kind: "wsl"`
 - `kind: "docker"`
 
-`IPlatformService.connectRemote()`、`PlatformChannels.ConnectRemote`、Main→Window Host 的
-`ConnectRemoteWorkspace` payload 都统一传 `target`。R1 后 Main 只薄转发该请求，Window Host 内的
-`RemoteConnectionRegistry` 持有连接复用和 logical session 生命周期。
+`IPlatformService.connectRemote()`, `PlatformChannels.ConnectRemote`, and the Main→Window Host `ConnectRemoteWorkspace` payload all pass `target`. After R1, Main only forwards this request; the `RemoteConnectionRegistry` inside the Window Host owns connection reuse and logical-session lifecycles.
 
-### backend 工厂
+### Backend Factory
 
-`packages/server/src/remote/create-backend.ts` 负责把 `RemoteTarget` 转成 `IRemoteBackend`：
+`packages/server/src/remote/create-backend.ts` converts `RemoteTarget` into an `IRemoteBackend`:
 
-- SSH：读取私钥后创建 `SSHBackend`
-- WSL：创建 `WSLBackend`
-- Docker：创建 `DockerBackend`
+- SSH: reads the private key and creates `SSHBackend`.
+- WSL: creates `WSLBackend`.
+- Docker: creates `DockerBackend`.
 
-这样 Window Host 的控制层不再关心具体 transport，只负责：
+The Window Host control layer therefore no longer needs to know the specific transport. It only:
 
-1. 收到 `ConnectRemoteWorkspace { requestId, target }`
-2. 调 `createRemoteBackend(target)`
-3. 交给 `connectRemote()`
-4. 分配 `remoteSessionId` 并暴露严格校验 identity/path 的 scoped attachment
+1. Receives `ConnectRemoteWorkspace { requestId, target }`.
+2. Calls `createRemoteBackend(target)`.
+3. Passes the result to `connectRemote()`.
+4. Allocates `remoteSessionId` and exposes a scoped attachment that strictly validates identity/path.
 
-### 平台探测与统一 UI
+### Platform Detection and Unified UI
 
-`IPlatformService` 新增三类宿主能力：
+`IPlatformService` adds three host capabilities:
 
 - `isDockerAvailable()`
 - `listWSLDistros()`
 - `listDockerContainers()`
 
-Desktop 通过 main process 动态调用 `@zcode/server/remote` 的探测函数，Web 侧保持空实现。
+Desktop dynamically calls the detection functions in `@zcode/server/remote` through the main process; the Web implementation remains empty.
 
-UI 入口不再继续拆 `SSHDialog` / `WSLDialog` / `DockerDialog`，而是统一成一个 remote 连接弹窗：
+The UI no longer splits the entry point into `SSHDialog` / `WSLDialog` / `DockerDialog`; it uses a single remote-connection dialog:
 
-- 始终展示 SSH
-- 仅 Windows desktop 展示 WSL
-- 仅在本机 Docker daemon 可用时展示 Docker
+- Always show SSH.
+- Show WSL only on Windows desktop.
+- Show Docker only when the local Docker daemon is available.
 
-这样新增 transport 时，入口层只需要补：
+When adding a transport, the entry layer only needs:
 
-1. shared target 类型
-2. backend factory 分支
-3. 平台探测能力
-4. 统一弹窗里的一个 mode
+1. A shared target type.
+2. A backend-factory branch.
+3. Platform-detection capability.
+4. A mode in the unified dialog.
 
-## 结果
+## Results
 
-- SSH 现有路径继续可用
-- WSL 已能复用同一条 deploy / handshake / RPC 链路，不需要新增 host/main 协议
-- Docker 已能复用同一条 deploy / handshake / RPC 链路，不需要新增 host/main 协议
-- remote 入口命名不再和具体 transport 绑定
+- The existing SSH path remains available.
+- WSL reuses the same deploy/handshake/RPC path; no new Host/Main protocol is needed.
+- Docker reuses the same deploy/handshake/RPC path; no new Host/Main protocol is needed.
+- Remote entry-point names are no longer tied to a specific transport.
 
-## 当前状态
+## Current Status
 
-- `kind: "ssh"`：已可用
-- `kind: "wsl"`：已可用，优先通过 `\\wsl.localhost\` / `\\wsl$\` 走文件直拷；不可用时回退到 shell 流式上传
-- `kind: "docker"`：已可用，通过 `docker exec` + stdin 流式写入直连本机容器；上传文件由容器当前用户创建，避免后续替换时出现所有权不匹配
-- desktop UI：已可从统一 remote 弹窗选择 SSH / WSL / Docker
-- web UI：只保留 SSH；WSL / Docker 探测能力为空实现，不展示对应入口
+- `kind: "ssh"`: available.
+- `kind: "wsl"`: available; it prefers direct file copying through `\\wsl.localhost\` / `\\wsl$\`, falling back to shell streaming upload when unavailable.
+- `kind: "docker"`: available; it connects directly to a local container using `docker exec` and streaming writes through stdin. The uploaded file is created by the container's current user to avoid ownership mismatches during later replacement.
+- Desktop UI: SSH / WSL / Docker can be selected from the unified remote dialog.
+- Web UI: SSH only; WSL / Docker detection is an empty implementation, so those entry points are not shown.
 
-## 后续建议
+## Follow-up Suggestions
 
-1. 保留并验证 “Docker via SSH” 不回归
-2. 给 remote 弹窗补充更细的 e2e 覆盖（WSL/Docker tab 切换、容器选择）
-3. 视需要补充更多 backend capability（例如 Docker all containers / WSL 默认 distro metadata）
+1. Keep and verify that “Docker via SSH” does not regress.
+2. Add more detailed E2E coverage for the remote dialog (WSL/Docker tab switching, container selection).
+3. Add backend capabilities as needed (for example, all Docker containers or default WSL distro metadata).

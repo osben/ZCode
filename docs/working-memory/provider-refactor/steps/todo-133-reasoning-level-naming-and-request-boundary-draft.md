@@ -1,50 +1,50 @@
-# Todo133：思考档位命名与请求构造边界
+# Todo133: Naming Reasoning Levels and Request-construction Boundaries
 
-> 状态：**Draft，仅记录讨论，未授权实施；命名方案尚未裁决。**
+> Status: **Draft only, recording discussion; implementation is not authorized and the naming decision has not been made.**
 >
-> 2026-09-12 用户要求先记草稿，转看其他问题。本项不属于此前已交付的19项，不自动恢复该 Goal，也不修改配置、迁移或 SDK。
+> On 2026-09-12 the user asked to record a draft and move on to another issue. This item is not part of the previously delivered 19 items. Do not automatically resume that Goal or change configuration, migrations, or the SDK.
 >
-> 关联：[Todo95 关闭档位整理](./todo-95-builtin-reasoning-map-simplification-and-fallback.md)、[Todo113 第二轮目录与配置](./todo-113-round2-research.md)。
+> Related: [Todo95, normalization of disabled levels](./todo-95-builtin-reasoning-map-simplification-and-fallback.md), and [Todo113, second-round catalog and configuration](./todo-113-round2-research.md).
 
-## 背景与已核实事实
+## Background and Verified Facts
 
-- 用户关注的是新旧模型是否采用同一命名标准，不只是同一型号有没有来回改名。
-- Todo95 提交 `2c1addd3d8` 将24条规则的 `off`、1条规则的 `nothink` 改为 `disabled`；原有 GPT-5.6 的 `none` 保留。当前旧值转换入口只处理来源限定的 `off/nothink`。
-- Todo113 提交 `262c42e592` 为 GPT-5.4／Mini／Nano、Qwen3.8 Omni 新增包含 `none` 的专用值域。此前这些型号缺专用配置，可能落到只有 `disabled` 的通用兜底。
-- 因此存在“旧模型使用归一后的 `disabled`，新模型使用原生 `none`”的混用；未发现上述统一提交将原生 `none` 改掉后又恢复的情况。混用符合当时允许原生 `none` 的例外，但是否继续保留该例外需重新讨论。
-- 当前请求主链先校验档位合法性，SDK 构造请求体后，`model-option-map-fetch.ts` 才将 Reasoning Map 应用于最终 JSON。检查过的自有执行主链未发现按 `reasoningLevel === "none"` 选择消息打包分支；这不证明所有 SDK 内部都没有相关分支，也不是已确认的 SDK 故障。
+- The user is concerned with whether old and new models use the same naming standard, not just whether one model's name was changed back and forth.
+- Todo95 commit `2c1addd3d8` changed `off` on 24 rules and `nothink` on one rule to `disabled`; the existing GPT-5.6 `none` values were retained. The current old-value conversion entry point handles only source-scoped `off/nothink`.
+- Todo113 commit `262c42e592` added dedicated value ranges containing `none` for GPT-5.4 / Mini / Nano and Qwen3.8 Omni. These models previously lacked dedicated configuration and may have used a general fallback with only `disabled`.
+- As a result, a mixture exists: older models use normalized `disabled`, while newer models use native `none`. This was consistent with the then-allowed native-`none` exception, but whether to retain the exception needs another discussion.
+- The current primary request path validates the reasoning level first; after the SDK constructs the request body, `model-option-map-fetch.ts` applies the Reasoning Map to the final JSON. The inspected first-party execution path did not show a branch that packages messages based on `reasoningLevel === "none"`. This does not prove that no such branch exists in any SDK internals, and it is not a confirmed SDK bug.
 
 ```text
-Selection 档位 → 值域校验 → 保留为 Map 输入
-                                 |
-SDK 构造消息／请求体               |
-          |                      |
-          +----→ 应用 Reasoning Map → 发出请求
+Selection level → domain validation → retained as Map input
+                                        |
+SDK constructs messages/request body     |
+          |                              |
+          +----→ apply Reasoning Map → send request
 
-若 SDK 在打包前需要思考状态：最终 JSON Patch 未必能覆盖该阶段行为。
+If the SDK needs reasoning state before packaging: a final JSON Patch may not override behavior at that stage.
 ```
 
-## 用户关切
+## User Concern
 
-不坚持必须使用我们自己的关闭名称，也可以考虑遵循原厂；但原厂可能没有可直接照搬的字符串档位，关闭可能由 `thinking.type`、布尔开关、字段省略或请求构造分支表达。仅统一名称或照抄原厂，都不能代替执行语义核对。
+The user does not insist on our own name for a disabled state and is open to following the vendor. However, a vendor may not have a string-valued reasoning level that can be copied directly; disabling may instead be expressed through `thinking.type`, a boolean switch, an omitted field, or a request-construction branch. Standardizing names or copying vendor terminology alone does not replace checking execution semantics.
 
-## 待讨论的方向（均不是实施裁决）
+## Directions for Discussion (None Is an Implementation Decision)
 
-1. **统一内部关闭标识**：内置配置统一 `disabled`，原生参数由 Map 表达；撤销原生 `none` 例外。需评估已有选择与个人 Map 的影响。
-2. **优先原厂命名**：有原生档位则沿用；只有布尔开关、没有原生关闭名称时约定稳定命名。需接受或解决跨模型选择值不一致，明确新增型号采用标准，不能每次临时决定。
-3. **请求阶段边界**：先核实是否有具体 SDK／接口需要在打包前消费思考状态；如存在，明确其正确适配位置。不能靠改字符串名解决，也不在没有证据时新建全局状态或转换层。
+1. **Standardize the internal disabled identifier:** use `disabled` in all built-in configuration and express native request parameters through the Map; remove the native-`none` exception. Assess impacts on existing selections and personal Maps.
+2. **Prefer vendor naming:** retain native levels where provided and choose a stable name when there is only a boolean switch and no native disabled name. This requires accepting or resolving cross-model selection-value differences and defining the rule for new models, rather than making an ad hoc decision each time.
+3. **Request-stage boundary:** first verify whether a specific SDK/API consumes reasoning state before packaging. If it does, define the correct adaptation point. Do not try to fix it by changing the string name, and do not create global state or a conversion layer without evidence.
 
-## 后续调查与验收范围
+## Follow-up Investigation and Acceptance Scope
 
-- [ ] 对照现有模型／API／站点规则，列出关闭值、实际请求字段，以及默认／关闭／低强度思考的区别；特别检查没有官方关闭枚举的模型。
-- [ ] 追踪所用 SDK 的真实构造过程，用有区分力的请求捕获验证是否存在 Map 应用过晚的问题；不能只验证最后 JSON 中出现了目标字段。
-- [ ] 明确选择命名、UI 文案、请求参数分别遵守的规则，再决定是否修改配置或适配代码。
-- [ ] 若改名，评估已保存 `none` 及原来兜底 `disabled` 的选择、个人值域和 Map；明确有限转换范围，不全局替换历史数据。
-- [ ] 方案裁决后先更新 spec、补失败测试，再实施；按实际影响面组织验证，不借草稿启动大回归。
+- [ ] Compare current model/API/site rules and list disabled values, actual request fields, and differences among default, disabled, and low-strength reasoning; pay special attention to models without an official disabled enum.
+- [ ] Trace the real request-construction path in the SDK. Use discriminating captured requests to verify whether the Map is applied too late; checking only whether the target field appears in final JSON is insufficient.
+- [ ] Decide separately what rules naming, UI copy, and request parameters follow before changing configuration or adapter code.
+- [ ] If names change, assess saved `none` selections and fallback `disabled` selections, personal value ranges, and Maps. Define a bounded conversion scope; do not globally replace historical data.
+- [ ] After a decision, update the spec and add a failing test before implementation. Organize verification according to actual impact; do not use this draft to start a broad regression.
 
-## 边界
+## Boundaries
 
-- `minimal/low` 不自动视为关闭；省略参数不自动等于关闭；不支持关闭的模型不能凭命名统一新增关闭能力。
-- 不让通用 Runtime 通过猜测厂商档位字符串分散决定行为；当前 Map 只负责其能表达的请求体变化，不能宣称覆盖所有打包阶段差异。
-- 不擅改用户自定义值域／Map、历史执行记录、正在运行的 Model；新旧选择处理方案需在本项正式裁决后明确。
-- 当前仅记录问题与候选方案，不宣告发现了新的请求故障，不实施 Kimi Code 套餐接入或其他延期功能。
+- `minimal/low` does not automatically mean disabled; omitting a parameter does not automatically mean disabled; do not invent a disabled capability for models that do not support it.
+- Do not make the shared Runtime distribute vendor-level string guessing. The current Map handles only request-body changes it can express; do not claim that it covers all pre-packaging differences.
+- Do not silently change user-defined value ranges/Maps, historical execution records, or currently running Models. Decide how old/new selections are handled only after a formal decision on this item.
+- This document only records the issue and candidate approaches. It does not claim a new request bug was found and does not implement Kimi Code plan support or other deferred features.

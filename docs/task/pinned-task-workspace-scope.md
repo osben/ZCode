@@ -1,19 +1,19 @@
 # Pinned Task Local Workspace Scope
 
-## 背景
+## Background
 
-Pinned 任务列表以前完全跟随当前窗口的 `workspaceTabs` 查询。这个链路在“先恢复 workspace tabs，再渲染 sidebar”的启动路径下没问题，但如果后续支持持久化恢复到某个任务视图，例如直接进入 pinned/timeline 视图，UI tabs 可能还没有创建，pinned 查询就会缺少 workspace scope。
+The pinned task list previously followed the current window's `workspaceTabs` queries entirely. This chain works fine in the startup path of "restore workspace tabs first, then render the sidebar", but if persistent restoration to a task view is later supported — for example, directly entering the pinned/timeline view — UI tabs may not yet be created, and the pinned query would lack workspace scope.
 
-同时，远端 workspace 在没有 `remoteSessionId` 时不能混入 pinned 查询 scope。否则后续服务解析可能落到本地 services，导致同路径远端任务和本地任务串读。
+Additionally, remote workspaces without a `remoteSessionId` must not be mixed into the pinned query scope. Otherwise, subsequent service resolution may fall to local services, causing cross-reading of same-path remote and local tasks.
 
-## 当前策略
+## Current Strategy
 
-- `workspaceTabs` 仍然是当前窗口已打开 workspace 的 UI 状态。
-- Pinned 查询使用 `useLocalWorkspaceScopes` 获取查询 scope。
-- Pinned 只按当前窗口已经打开的本地 workspace tabs 查询。
-- 没有本地 workspace tab 时不兜底读取 `lastWorkspaceSession`，查询 scope 为空。
-- 远程 workspace 不参与这个 fallback scope；远端 pinned 查询需要等远程 session 建立后走对应远端服务链路。
+- `workspaceTabs` remains the UI state of currently opened workspaces in the window.
+- Pinned queries use `useLocalWorkspaceScopes` to obtain the query scope.
+- Pinned queries only against currently opened local workspace tabs in the window.
+- When there is no local workspace tab, no fallback to `lastWorkspaceSession` is performed; the query scope is empty.
+- Remote workspaces do not participate in this fallback scope; remote pinned queries wait for remote session establishment and follow the corresponding remote service chain.
 
-## 边界
+## Boundaries
 
-这个调整只改变 pinned 任务查询的本地 scope 来源，不改变 app 启动时是否恢复真实 workspace tabs。未来如果新增远端 pinned 视图恢复，需要在远端 session ready 后单独接入远端查询 scope，不能通过本地 scope 兜底。
+This adjustment only changes the local scope source for pinned task queries, not whether real workspace tabs are restored on app startup. If a remote pinned view restore is added in the future, the remote query scope must be connected separately after remote session ready; it cannot fall back through local scope.

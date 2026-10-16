@@ -1,22 +1,22 @@
-# Highspeed 客户端分享卡片
+# Highspeed Client-generated Share Card
 
-## 约束
+## Constraints
 
-- 加速卡到期后，客户端直接基于已持久化的 token/TPS 统计发布左下角分享卡，不再调用服务端 `share` 接口。
-- 会话内和左下角入口打开同一张分享弹框；弹框保留 Copy image 操作。
-- Copy image 只生成统计区域的 SVG 图片，不包含弹框底部文案或按钮。
-- 分享地址、share id 及对应 mock 已从 Highspeed 分享链路移除。
+- After an acceleration card expires, the client publishes a lower-left share card directly from persisted token/TPS statistics; it no longer calls the server `share` API.
+- The in-session entry point and lower-left entry point open the same share dialog. Keep the Copy image action in that dialog.
+- Copy image generates an SVG of the statistics area only; it excludes the dialog footer copy and buttons.
+- Remove share URLs, share IDs, and related mocks from the Highspeed sharing flow.
 
-## 20/80 时间估算口径
+## 20/80 Time Estimation
 
-- 普通模型总耗时按工具耗时 20% 与模型推理耗时 80% 组成。
-- Highspeed 只缩短模型推理部分，工具耗时保持不变；模型推理加速倍率使用卡级 `highspeedTps / regularTps`。
-- 对每条消息，以实际 Highspeed 执行耗时 `H` 反推普通模型耗时：`N = H / (0.2 + 0.8 / modelSpeedup)`。
-- 节省时间为 `max(N - H, 0)`；同一张卡的多条串行消息分别计算后累加，避免卡级 TPS 直接反推总耗时造成偏差。
+- Total time for an ordinary model consists of 20% tool time and 80% model-inference time.
+- Highspeed shortens only model inference; tool time stays the same. Calculate the model-inference speedup using the card-level `highspeedTps / regularTps` ratio.
+- For each message, use the actual Highspeed execution time `H` to derive ordinary-model time: `N = H / (0.2 + 0.8 / modelSpeedup)`.
+- Time saved is `max(N - H, 0)`. Calculate each of multiple serial messages on the same card separately, then sum them to avoid errors from deriving total time directly from card-level TPS.
 
-## CLI 持久化真实耗时
+## Persisting Actual CLI Durations
 
-- CLI 在 turn 终态从模型请求和工具生命周期事件聚合 `modelDurationMs`、`toolDurationMs`，并将两者及未归类的 `otherDurationMs` 一并写入 user transcript 的 `highspeed` 元数据；这些字段是可选的，兼容旧消息。
-- 分享统计优先使用这组持久化真实拆分：工具耗时保持不变，模型耗时按 `highspeedTps / regularTps` 倍率还原普通模型耗时；普通版总耗时 = 工具耗时 + 其他耗时 + 普通模型耗时。
-- 如果旧消息没有真实拆分字段，继续使用上面的 20/80 估算，避免历史卡片因 schema 升级而失效。
-- 工具并行执行按时间区间并集计算，避免并行工具被重复累加；模型重试请求按每次请求的实际 duration 累计。
+- At turn termination, the CLI aggregates `modelDurationMs` and `toolDurationMs` from model-request and tool-lifecycle events. It writes both, along with unclassified `otherDurationMs`, to the `highspeed` metadata on the user transcript. These fields are optional to retain compatibility with old messages.
+- Share statistics prefer this persisted actual breakdown: keep tool time unchanged and derive ordinary model time using the `highspeedTps / regularTps` ratio. Ordinary total time = tool time + other time + ordinary model time.
+- If older messages lack actual breakdown fields, continue using the 20/80 estimate above so historical cards remain valid after the schema upgrade.
+- For parallel tool execution, calculate the union of time intervals to avoid double-counting concurrent tools. Accumulate model-retry requests using each request's actual duration.

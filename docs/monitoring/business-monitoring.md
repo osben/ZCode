@@ -1,179 +1,175 @@
-# 业务质量监控
+# Business Quality Monitoring
 
-> **2026-09-11 当前补充（Todo129）**：V4 ConversationTelemetrySupervisor 已消费真实请求 fact 并上报 step/completion。Provider 重构后的官方身份仅在事件字段构造处恢复旧统计 ID；个人/Team 共用旧 Coding Plan 桶，Start 独立，闲时两家共用旧闲时桶。UUID 与未知身份不推断，模型名编码、usage、归因、去重及历史数据不变。详细映射与验收见 [Todo129](../working-memory/provider-refactor/steps/todo-129-impact-and-cases.md)。下方关于“V4 尚未接回”的描述只代表历史状态。
+> **2026-09-11 Current Supplement (Todo129)**: V4 ConversationTelemetrySupervisor has consumed real request facts and reports step/completion. After provider refactor, the official identity only restores old statistics ID at event field construction; Personal/Team share old Coding Plan bucket, Start independent, off-peak two share old off-peak bucket. UUID and unknown identity not inferred; model name encoding, usage, attribution, deduplication and historical data unchanged. Detailed mapping and acceptance see [Todo129](../working-memory/provider-refactor/steps/todo-129-impact-and-cases.md). The description below of "V4 not yet connected" only represents historical state.
 
-> **状态**：指标设计/历史口径。V4 `SessionPane` + projection 主链路尚未接回本文所述的
-> `message_completion` / `agent_step` 聚合；旧 `useZCodeChat`、`taskStreamEventHandlers` 入口已删除。
-> 在 V4 telemetry 接线和验证完成前，不得把下述字段当作当前稳定采集数据。
+> **Status**: Metric design / historical scope. V4 `SessionPane` + projection main link has not yet connected back to the `message_completion` / `agent_step` aggregation described in this article; old `useZCodeChat`, `taskStreamEventHandlers` entries have been deleted. Before V4 telemetry wiring and verification complete, do not treat the following fields as current stable collected data.
 
-## 范围（待补充）
+## Scope (to be supplemented)
 
-<!-- 产品行为、会话/任务质量、埋点事件、本地统计展示等 -->
+<!-- Product behavior, session/task quality, telemetry events, local statistical display, etc. -->
 
-## 与非业务监控的边界
+## Boundary with Non-Business Monitoring
 
-| 归属本文件 | 不归属本文件（见 [performance-monitoring.md](./performance-monitoring.md)） |
-| ---------- | --------------------------------------------------------------------------- |
-| 待补充     | 页面性能、JS 错误、崩溃、RUM、开发期 Profiling                              |
+| Belongs to this article | Does not belong to this article (see [performance-monitoring.md](./performance-monitoring.md)) |
+| ----------------------- | ---------------------------------------------------------------------------------------------- |
+| To be supplemented      | Page performance, JS errors, crashes, RUM, development Profiling                               |
 
-## 上报与存储（待补充）
+## Reporting and Storage (to be supplemented)
 
-<!-- 例如 /report、agent 可观测库、设置页展示等 — 口径与字段由需求定义 -->
+<!-- For example /report, agent observable library, settings page display, etc. — scope and fields defined by requirements -->
 
-## 指标与事件清单（待补充）
+## Metrics and Event List (to be supplemented)
 
 ### `send_btn`
 
-用户发送消息点击 / 提交事件。发送时会读取当前登录身份域的套餐身份快照，并将结果冻结到本轮
-prompt telemetry；后续同一轮 `message_completion` 必须复用同一份字段，不在完成时重新读取账号状态。
+User send message click/submit event. At send time, read current login identity domain's plan identity snapshot and freeze result to current
+prompt telemetry; subsequent same round `message_completion` must reuse same fields, do not re-read account status at completion.
 
-| 字段              | 类型   | 是否新增 | 说明                         | 口径 / 示例                                                                                                                                                                                |
-| ----------------- | ------ | -------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `plan_status`     | string | 是       | 用户发送本轮消息时的套餐身份 | `coding_plan` / `start_plan` / `no_plan` / `unknown`                                                                                                                                       |
-| `plan_product_id` | string | 是       | 当前套餐的后端稳定商品 ID    | Coding Plan 使用订阅 `productId`；Start Plan 使用余额接口 `plans[]` 中服务端优先级排序第一的 active 套餐 `plan_id`（即 entitlement `subscription.details[0]`）；无 active 套餐时为空字符串 |
+| Field             | Type   | New | Description                                           | Scope / Example                                                                                                                                                                                                        |
+| ----------------- | ------ | --- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `plan_status`     | string | Yes | User plan identity when sending current round message | `coding_plan` / `start_plan` / `no_plan` / `unknown`                                                                                                                                                                   |
+| `plan_product_id` | string | Yes | Backend stable product ID of current plan             | Coding Plan uses subscription `productId`; Start Plan uses balance interface `plans[]` server-priority-sorted first active plan `plan_id` (i.e. entitlement `subscription.details[0]`); no active plan is empty string |
 
-套餐身份判定优先级固定为 `Coding Plan > Start Plan > No Plan > Unknown`。请求失败、仍在加载、鉴权异常、
-provider 未配置或快照超过 entitlement cache TTL 时必须上报 `unknown`，不能误归为 `no_plan`。
-Z.AI 与 BigModel 互斥登录身份域由 `providerFamilyDomain` 决定；该字段只用于选择当前身份域下的
-Coding Plan / Start Plan 快照，不作为业务埋点字段上报，也不跟随 `message_completion.model_provider`
-切换。
+Plan identity judgment priority fixed as `Coding Plan > Start Plan > No Plan > Unknown`. Request failure, still loading, authentication exception,
+provider not configured or snapshot exceeds entitlement cache TTL must report `unknown`, cannot misattribute to `no_plan`.
+Z.AI and BigModel mutually exclusive login identity domain decided by `providerFamilyDomain`; this field only used to select current identity domain's
+Coding Plan / Start Plan snapshot, not reported as business telemetry field, nor follows `message_completion.model_provider` switching.
 
-多 active Start Plan 口径：`subscription.details` 现在携带全部 active 套餐并保持服务端优先级顺序，
-`plan_product_id` 取 `details[0]`（服务端排序第一的 active 套餐）。服务端调整套餐排序或套餐增减时该
-维度会跟随翻转，这是明示口径而非身份跳变；按该维度做漏斗/留存对比时需与数据侧对齐此规则。
+Multiple active Start Plan scope: `subscription.details` now carries all active plans and maintains server priority order,
+`plan_product_id` takes `details[0]` (server-sorted first active plan). When server adjusts plan order or plans increase/decrease,
+this dimension will follow flip, this is declared scope not identity jump; doing funnel/retention comparison by this dimension needs align with data side on this rule.
 
 ### `message_completion`
 
-Agent 单轮消息完成事件的历史设计由 UI 侧 `finalizePromptTelemetry()` 聚合后，通过
-`reportAppTelemetryEvent()` 上报到 `/event/report`；当前 V4 主链路未调用该收口。
+Agent single round message completion event historical design aggregated by UI side `finalizePromptTelemetry()`, then
+reported via `reportAppTelemetryEvent()` to `/event/report`; current V4 main link does not call this接口.
 
-| 字段                   | 类型          | 是否新增 | 说明                              | 口径 / 示例                                                         |
-| ---------------------- | ------------- | -------- | --------------------------------- | ------------------------------------------------------------------- |
-| `time_to_first_token`  | string(float) | 否       | 从发送到首 token 的耗时，毫秒     | `firstTokenAt - sendTime`                                           |
-| `waiting_ms`           | string(float) | 否       | 权限等待等用户等待耗时，毫秒      | 本轮各 tool permission request 到 response/终止的累计值             |
-| `duration_ms`          | string(float) | 否       | 本轮墙钟总耗时，包含 `waiting_ms` | `finishedAt - sendTime`                                             |
-| `request_time`         | string(float) | 否       | 用户发送时间戳                    | `sendTime`                                                          |
-| `input_tokens`         | string(float) | 否       | 输入 token 数                     | 成功态有 usage 时上报                                               |
-| `output_tokens`        | string(float) | 否       | 输出 token 数                     | 成功态有 usage 时上报                                               |
-| `reasoning_tokens`     | string(float) | 否       | reasoning token 数                | 无值时为 `0`                                                        |
-| `cached_input_tokens`  | string(float) | 否       | 命中缓存的输入 token 数           | 无值时为 `0`                                                        |
-| `total_tokens`         | string(float) | 否       | 总 token 数                       | 成功态有 usage 时上报                                               |
-| `agent_step_cnt`       | string(int)   | 否       | Agent 步骤数                      | 当前 message 生命周期内实际收口并上报的 `agent_step` 数             |
-| `file_change_cnt`      | string(int)   | 否       | 变更文件数                        | 按本轮 fileChanges 去重 path                                        |
-| `generated_code_lines` | string(int)   | 否       | 新增代码行数                      | 基于 before/after diff 统计 added                                   |
-| `ask_mode`             | string        | 否       | 当前对话模式                      | `chat` / `plan` / 其它 mode id                                      |
-| `retry_cnt`            | string(int)   | 是       | 本轮模型/API 重试次数             | 当前 completion 链路未稳定透出 retry 事件，先默认 `0`               |
-| `tool_call_total`      | string(int)   | 是       | 本轮工具调用总数                  | 当前 message 内实际收口的 `tool_call` step 数                       |
-| `tool_call_failed`     | string(int)   | 是       | 本轮失败工具调用数                | 当前 message 内状态为 fail/timeout 或存在 error 的 `tool_call` step |
-| `error_type`           | string        | 是       | 失败归类                          | 成功为空；有失败工具为 `TOOL_CALL_FAILED`；其它失败为 `UNKNOWN`     |
-| `error_msg`            | string        | 是       | 失败提示                          | 成功为空；失败原文非空时为 `[redacted]`，原文空时为空；归因使用 `error_type`                        |
-| `plan_status`          | string        | 是       | 用户发送本轮消息时的套餐身份      | 复用同轮 `send_btn` 冻结值，不在 completion 发生时重算              |
-| `plan_product_id`      | string        | 是       | 当前套餐的后端稳定商品 ID         | 复用同轮 `send_btn` 冻结值；无法确认时为空字符串                    |
-| `workspace_kind`       | string        | 是       | 本轮 workspace 类型               | `local` / `remote`，由 workspace attachment 冻结                    |
-| `remote_kind`          | string        | 是       | 远程 workspace 类型               | `ssh` / `wsl` / `docker` / `server`；本地或无法解析时为空字符串     |
+| Field                  | Type          | New | Description                                                 | Scope / Example                                                                                                                |
+| ---------------------- | ------------- | --- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `time_to_first_token`  | string(float) | No  | Duration from send to first token, ms                       | `firstTokenAt - sendTime`                                                                                                      |
+| `waiting_ms`           | string(float) | No  | Permission wait etc user waiting duration, ms               | Accumulated value of this round's tool permission request to response/termination                                              |
+| `duration_ms`          | string(float) | No  | This round wall clock total duration, includes `waiting_ms` | `finishedAt - sendTime`                                                                                                        |
+| `request_time`         | string(float) | No  | User send timestamp                                         | `sendTime`                                                                                                                     |
+| `input_tokens`         | string(float) | No  | Input token count                                           | Reported when success has usage                                                                                                |
+| `output_tokens`        | string(float) | No  | Output token count                                          | Reported when success has usage                                                                                                |
+| `reasoning_tokens`     | string(float) | No  | Reasoning token count                                       | `0` when no value                                                                                                              |
+| `cached_input_tokens`  | string(float) | No  | Number of cached input tokens                               | `0` when no value                                                                                                              |
+| `total_tokens`         | string(float) | No  | Total token count                                           | Reported when success has usage                                                                                                |
+| `agent_step_cnt`       | string(int)   | No  | Agent step count                                            | Number of `agent_step` actually closed and reported in current message lifecycle                                               |
+| `file_change_cnt`      | string(int)   | No  | Number of changed files                                     | Deduplicated path count by this round's fileChanges                                                                            |
+| `generated_code_lines` | string(int)   | No  | Number of new code lines                                    | Based on before/after diff statistics added                                                                                    |
+| `ask_mode`             | string        | No  | Current conversation mode                                   | `chat` / `plan` / other mode id                                                                                                |
+| `retry_cnt`            | string(int)   | Yes | Number of model/API retries in this round                   | Current completion link has not stably exposed retry events, default `0` first                                                 |
+| `tool_call_total`      | string(int)   | Yes | Total tool calls in this round                              | Number of `tool_call` steps actually closed in current message                                                                 |
+| `tool_call_failed`     | string(int)   | Yes | Number of failed tool calls in this round                   | Number of `tool_call` steps with fail/timeout status or error in current message                                               |
+| `error_type`           | string        | Yes | Failure classification                                      | Success is empty; failed tool is `TOOL_CALL_FAILED`; other failures `UNKNOWN`                                                  |
+| `error_msg`            | string        | Yes | Failure prompt                                              | Success is empty; failure original text non-empty as `[redacted]`, original text empty is empty; attribution uses `error_type` |
+| `plan_status`          | string        | Yes | User plan identity when sending current round message       | Reuse same round `send_btn` frozen value, not recalculated at completion                                                       |
+| `plan_product_id`      | string        | Yes | Backend stable product ID of current plan                   | Reuse same round `send_btn` frozen value; empty string when unable to confirm                                                  |
+| `workspace_kind`       | string        | Yes | This round workspace type                                   | `local` / `remote`, frozen by workspace attachment                                                                             |
+| `remote_kind`          | string        | Yes | Remote workspace type                                       | `ssh` / `wsl` / `docker` / `server`; empty string when local or unresolvable                                                   |
 
-实现位置：
+Implementation location:
 
-- 字段聚合：`packages/ui/src/lib/messageTelemetry.ts`
-- 完成态上报：旧入口已删除，V4 待接线
-- UI 上报封装：`packages/ui/src/lib/appTelemetry.ts`
+- Field aggregation: `packages/ui/src/lib/messageTelemetry.ts`
+- Completion reporting: old entry deleted, V4 awaiting wiring
+- UI reporting encapsulation: `packages/ui/src/lib/appTelemetry.ts`
 
 ### `agent_step`
 
-Agent 单步执行事件。它的颗粒度比 `message_completion` 更细：一个
-`message_completion` 对应一次用户消息的整体完成态，一次用户消息内可以产生多条
-`agent_step`。
+Agent single step execution event. Its granularity is finer than `message_completion`: one
+`message_completion` corresponds to overall completion state of one user message; one user message can produce multiple
+`agent_step`.
 
-当前只使用 `reasoning` / `tool_call` / `generation` 三种 step，不新增 permission step；
-工具权限等待通过 `tool_call.waiting_ms` 单独表达，不上传用户提问内容。
+Currently only `reasoning` / `tool_call` / `generation` three step types are used, no new permission step added;
+tool permission waiting separately expressed via `tool_call.waiting_ms`, user question content not uploaded.
 
-| 字段                          | 类型        | 是否新增 | 说明                                  | 口径 / 示例                                                                                                                                                                            |
-| ----------------------------- | ----------- | -------- | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `talk_id`                     | string      | 否       | 会话 / task id                        | 通过上报 payload 的 `talkId` 映射                                                                                                                                                      |
-| `message_id`                  | string      | 否       | 当前用户消息 id                       | 通过上报 payload 的 `messageId` 映射                                                                                                                                                   |
-| `step_id`                     | string      | 是       | 本次 Agent step 的全局唯一 id         | `uuid`                                                                                                                                                                                 |
-| `is_tftt_cached`              | string(int) | 是       | 首 token 是否命中缓存                 | 当前无稳定信号，先固定 `0`                                                                                                                                                             |
-| `loop_index`                  | string(int) | 是       | 当前 step 在本次 message 内的顺序     | 从 `1` 开始递增                                                                                                                                                                        |
-| `step_type`                   | string      | 是       | 当前步骤类型                          | `reasoning` / `tool_call` / `generation`                                                                                                                                               |
-| `is_tool_call`                | string(int) | 是       | 是否工具调用                          | `tool_call` 为 `1`，其它为 `0`                                                                                                                                                         |
-| `tool_name`                   | string      | 是       | 工具名称                              | `read_file` / `bash`；非工具为空                                                                                                                                                       |
-| `tool_call_id`                | string      | 是       | 工具调用 id                           | 仅 `tool_call` step 写入，用于和工具终态性能事件关联；非工具为空                                                                                                                       |
-| `agent_id`                    | string      | 是       | 前台 Subagent 关联 id                 | 父 `Agent` step 与其镜像 child 工具写入同一个值；其他 step 省略                                                                                                                        |
-| `duration_ms`                 | string(int) | 是       | 当前 step 墙钟耗时，包含 `waiting_ms` | step 收口时间 - step 开始时间                                                                                                                                                          |
-| `waiting_ms`                  | string(int) | 是       | 当前 step 内的权限等待累计值          | `tool_call` 按 request 到 response/终止累加；其他 step 为 `0`                                                                                                                          |
-| `generation_tail_finalize_ms` | string(int) | 是       | 正文最后一包到任务终态的尾部收口耗时  | 仅桌面 `desktop-continuous` 中主 agent `generation` 被 `task_complete` / `task_error` 收口时写入；其它 step、手机 replayable 恢复、被工具/推理打断的 generation 或工具子输出为空字符串 |
-| `status`                      | string      | 是       | 当前 step 最终状态                    | `success` / `fail` / `timeout`                                                                                                                                                         |
-| `model_request_id`            | string      | 是       | token 所属模型请求                    | 当前 step 不持有 request usage 时为空                                                                                                                                                  |
-| `model_request_count`         | string(int) | 是       | 当前 step 聚合的真实模型请求数        | 主 Agent request 为 `1`；前台 child 生命周期可大于 `1`；无 usage 为 `0`                                                                                                                |
-| `token_usage_scope`           | string      | 是       | token 口径                            | 主 Agent 单请求为 `model_request`；前台 child 聚合为 `subagent_requests`；否则为空                                                                                                     |
-| `input_tokens`                | string(int) | 是       | 单次请求输入 token                    | Provider request usage；同一 request 只归属一条 step                                                                                                                                   |
-| `output_tokens`               | string(int) | 是       | 单次请求输出 token                    | Provider request usage；同一 request 只归属一条 step                                                                                                                                   |
-| `reasoning_tokens`            | string(int) | 是       | 单次请求 reasoning token              | Provider 未返回时为 `0`                                                                                                                                                                |
-| `cached_tokens`               | string(int) | 是       | 单次请求缓存命中 token                | 对应 provider cache read；未返回时为 `0`                                                                                                                                               |
-| `cache_write_input_tokens`    | string(int) | 是       | 单次请求缓存写入 token                | Provider 未返回时为 `0`                                                                                                                                                                |
-| `total_tokens`                | string(int) | 是       | 单次请求总 token                      | Provider 显式 total，缺失时沿统一 usage 规则计算                                                                                                                                       |
-| `error_type`                  | string      | 是       | 失败归类                              | 工具失败为 `TOOL_EXEC_ERROR`；task 失败用错误码；成功为空                                                                                                                              |
-| `error_msg`                   | string      | 是       | 失败提示                              | 错误原文非空时为 `[redacted]`，原文空时为空；成功为空，归因使用 `error_type`                                                                                                                                                       |
-| `workspace_kind`              | string      | 是       | 本步骤 workspace 类型                 | 与同一 `talk_id + message_id` 的 `message_completion` 保持一致；`local` / `remote`                                                                                                     |
-| `remote_kind`                 | string      | 是       | 远程 workspace 类型                   | `ssh` / `wsl` / `docker` / `server`；本地或无法解析时为空字符串                                                                                                                        |
+| Field                         | Type        | New | Description                                                    | Scope / Example                                                                                                                                                                                                                            |
+| ----------------------------- | ----------- | --- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `talk_id`                     | string      | No  | Session / task id                                              | Mapped through report payload's `talkId`                                                                                                                                                                                                   |
+| `message_id`                  | string      | No  | Current user message id                                        | Mapped through report payload's `messageId`                                                                                                                                                                                                |
+| `step_id`                     | string      | Yes | Globally unique id of this Agent step                          | `uuid`                                                                                                                                                                                                                                     |
+| `is_tftt_cached`              | string(int) | Yes | Whether first token hit cache                                  | No stable signal yet, fixed `0` first                                                                                                                                                                                                      |
+| `loop_index`                  | string(int) | Yes | Order of current step in this message                          | Starts from `1` increments                                                                                                                                                                                                                 |
+| `step_type`                   | string      | Yes | Current step type                                              | `reasoning` / `tool_call` / `generation`                                                                                                                                                                                                   |
+| `is_tool_call`                | string(int) | Yes | Whether tool call                                              | `tool_call` is `1`, others `0`                                                                                                                                                                                                             |
+| `tool_name`                   | string      | Yes | Tool name                                                      | `read_file` / `bash`; non-tool empty                                                                                                                                                                                                       |
+| `tool_call_id`                | string      | Yes | Tool call id                                                   | Only `tool_call` step written, used to associate with tool terminal performance event; non-tool empty                                                                                                                                      |
+| `agent_id`                    | string      | Yes | Foreground Subagent association id                             | Parent `Agent` step and its mirrored child tool write same value; other steps omit                                                                                                                                                         |
+| `duration_ms`                 | string(int) | Yes | Current step wall clock duration, includes `waiting_ms`        | Step close time - step start time                                                                                                                                                                                                          |
+| `waiting_ms`                  | string(int) | Yes | Accumulated permission wait within current step                | `tool_call` accumulates by request to response/termination; other steps `0`                                                                                                                                                                |
+| `generation_tail_finalize_ms` | string(int) | Yes | Tail closure delay from last body chunk to task terminal state | Only written for main agent `generation` in desktop `desktop-continuous` closed by `task_complete` / `task_error`; other steps, mobile replayable recovery, generation interrupted by tool/reasoning or tool child output are empty string |
+| `status`                      | string      | Yes | Current step final state                                       | `success` / `fail` / `timeout`                                                                                                                                                                                                             |
+| `model_request_id`            | string      | Yes | Model request to which token belongs                           | Empty when current step doesn't hold request usage                                                                                                                                                                                         |
+| `model_request_count`         | string(int) | Yes | Number of real model requests aggregated in current step       | Main Agent request is `1`; foreground child lifecycle can be > `1`; `0` when no usage                                                                                                                                                      |
+| `token_usage_scope`           | string      | Yes | Token scope                                                    | Main Agent single request is `model_request`; foreground child aggregated is `subagent_requests`; otherwise empty                                                                                                                          |
+| `input_tokens`                | string(int) | Yes | Single request input token                                     | Provider request usage; same request only attributed to one step                                                                                                                                                                           |
+| `output_tokens`               | string(int) | Yes | Single request output token                                    | Provider request usage; same request only attributed to one step                                                                                                                                                                           |
+| `reasoning_tokens`            | string(int) | Yes | Single request reasoning token                                 | `0` when provider not returned                                                                                                                                                                                                             |
+| `cached_tokens`               | string(int) | Yes | Single request cache hit token                                 | Corresponds to provider cache read; `0` when not returned                                                                                                                                                                                  |
+| `cache_write_input_tokens`    | string(int) | Yes | Single request cache write token                               | `0` when provider not returned                                                                                                                                                                                                             |
+| `total_tokens`                | string(int) | Yes | Single request total token                                     | Provider explicit total; calculated by unified usage rule when missing                                                                                                                                                                     |
+| `error_type`                  | string      | Yes | Failure classification                                         | Tool failure is `TOOL_EXEC_ERROR`; task failure uses error code; success empty                                                                                                                                                             |
+| `error_msg`                   | string      | Yes | Failure prompt                                                 | `[redacted]` when error original text non-empty, empty when original text empty; success empty; attribution uses `error_type`                                                                                                              |
+| `workspace_kind`              | string      | Yes | Current step workspace type                                    | Consistent with same `talk_id + message_id` `message_completion`; `local` / `remote`                                                                                                                                                       |
+| `remote_kind`                 | string      | Yes | Remote workspace type                                          | `ssh` / `wsl` / `docker` / `server`; empty string when local or unresolvable                                                                                                                                                               |
 
-`step_type` 判定口径：
+`step_type` judgment scope:
 
-- `agent_thought_chunk` 开始 `reasoning` step。
-- 遇到 `tool_call` / 普通 `agent_message_chunk` / `task_complete` / `task_error` 时收口当前 `reasoning`。
-- `tool_call` 开始 `tool_call` step；`tool_call_update` 到 `completed` / `failed` / `denied` 时收口。
-- 不带 `zcodeTimeline` 且不带 `parentToolUseId` 的主 agent `agent_message_chunk` 开始 `generation` step；遇到后续 `tool_call` / `agent_thought_chunk` / `task_complete` / `task_error` 时收口。
-- `generation_tail_finalize_ms` 只回答桌面 continuous 主链路正文尾包到任务终态之间的 finalize 尾延迟；若正文后继续调用工具、进入新 reasoning，来自手机 replayable 恢复重放，或 chunk 带 `parentToolUseId` 属于工具子输出，则字段为空字符串，避免把下一阶段耗时、恢复重放处理时间或子 agent 输出混入尾延迟。
-- `agent_message_chunk` 若为系统 timeline（如 context compaction），不计入 `generation`。
-- 模型字段在 step 创建时从当前真实 `model_request_started` 冻结，不能从 prompt 最后一次请求覆盖历史
-  step。Provider 只提供 request 级 usage，因此同请求的完整 usage 只写到请求结束时最后一个模型输出
-  step，其它阶段保持 `0`，详见
-  [Agent Step 真实模型与 Token 归属](./agent-step-model-token-attribution.md)。
-- 前台 Subagent 的 child request usage 通过 `childSessionId + parentToolCallId` 归入父 message 对应
-  `Agent` 工具 step；后台 Subagent 的异步 message 生命周期不在当前口径内。
+- `agent_thought_chunk` start `reasoning` step.
+- On `tool_call` / ordinary `agent_message_chunk` / `task_complete` / `task_error` close current `reasoning`.
+- `tool_call` start `tool_call` step; `tool_call_update` to `completed` / `failed` / `denied` close.
+- Main agent `agent_message_chunk` without `zcodeTimeline` and without `parentToolUseId` starts `generation` step; close on subsequent `tool_call` / `agent_thought_chunk` / `task_complete` / `task_error`.
+- `generation_tail_finalize_ms` only answers desktop continuous main link body last chunk to task terminal state finalize tail delay; if body continues tool call, enters new reasoning, comes from mobile replayable recovery replay, or chunk carries `parentToolUseId` belonging to tool sub-output, field is empty string, avoiding mixing next stage duration, recovery replay processing time or child agent output into tail delay.
+- `agent_message_chunk` if system timeline (e.g. context compaction) not counted into `generation`.
+- Model fields frozen at step creation from current real `model_request_started`, cannot cover historical step from prompt's last request. Provider only provides request-level usage, therefore same request's complete usage only written to last model output step at request end, other stages keep `0`, see
+  [Agent Step Real Model and Token Attribution](./agent-step-model-token-attribution.md).
+- Foreground Subagent's child request usage via `childSessionId + parentToolCallId` attributed to parent message corresponding
+  `Agent` tool step; background Subagent's asynchronous message lifecycle not in current scope.
 
-计数作用域：
+Counting scope:
 
-- `activatePromptTelemetry()` 激活新 message 时，`loop_index` 从 `1` 重新开始。
-- 每个 `agent_step` 收口时同步累计当前 message 的 completion 指标。
-- 同一 `talk_id + message_id` 下，`message_completion.agent_step_cnt` 必须等于实际
-  上报的 `agent_step` 条数；不得扫描或累计同 session 的历史 assistant 消息。
+- `activatePromptTelemetry()` activates new message when, `loop_index` restarts from `1`.
+- Each `agent_step` closure simultaneously accumulates current message completion metrics.
+- Under same `talk_id + message_id`, `message_completion.agent_step_cnt` must equal actual
+  reported `agent_step` count; must not scan or accumulate historical assistant messages of same session.
 
-实现位置：
+Implementation location:
 
-- 状态机与字段聚合：`packages/ui/src/lib/messageTelemetry.ts`
-- 流事件接入与上报：旧入口已删除，V4 待接线
-- UI 上报封装：`packages/ui/src/lib/appTelemetry.ts`
+- State machine and field aggregation: `packages/ui/src/lib/messageTelemetry.ts`
+- Stream event access and reporting: old entry deleted, V4 awaiting wiring
+- UI reporting encapsulation: `packages/ui/src/lib/appTelemetry.ts`
 
-## 多端与 clientMode
+## Multi-end and clientMode
 
-远程工作区和手机 Web Remote Control 的使用量口径见
-[远程场景使用量埋点 V1](./remote-usage-telemetry-v1.md)；远程工作区逻辑 session 并发数、断开原因与可观测连接时长见
-[远程工作区连接 ARMS 自定义事件](./remote-usage-arms-telemetry.md)。
+Remote workspace and mobile Web Remote Control usage scope see
+[Remote Scenario Usage Telemetry V1](./remote-usage-telemetry-v1.md); remote workspace logic session concurrency, disconnect reason and observable connection duration see
+[Remote Workspace Connection ARMS Custom Events](./remote-usage-arms-telemetry.md).
 
-远控埋点只观察既有生命周期终态，不改变传输语义：桌面保持 `desktop-continuous`，手机保持
-`web-remote-replayable`；relay 不解析 `rpc-frame`，Web bundle 不新增独立上报器。手机实际使用以
-桌面 shared-host attachment 成功建立 bridge 为准。
+Remote control embed only observes existing lifecycle terminal states, does not change transmission semantics: desktop keeps
+`desktop-continuous`, mobile keeps
+`web-remote-replayable`; relay does not parse `rpc-frame`, Web bundle adds no independent reporter. Mobile actual use judged by
+desktop shared-host attachment successfully establishing bridge.
 
-## 实现索引（代码事实，非规范）
+## Implementation Index (code facts, not specification)
 
-需求定稿前仅作定位参考，以代码为准：
+Only positioning reference before requirements finalized, code prevails:
 
-- 业务埋点上报：`packages/services/src/telemetry/telemetryCore.ts`（`https://zcode.z.ai/api/v1/event/report`）
-- UI 侧封装：`packages/ui/src/lib/appTelemetry.ts`、`packages/ui/src/lib/messageTelemetry.ts`
-- Agent 用量落盘：`apps/zcode-cli/docs/design/v2/usage-observability.md`（CLI 设计 spec，非本目录文档）
-- App Usage 聚合：`docs/superpowers/specs/2026-06-02-app-usage-db-migration-design.md`（功能 spec，非本目录文档）
+- Business embed reporting: `packages/services/src/telemetry/telemetryCore.ts` (`https://zcode.z.ai/api/v1/event/report`)
+- UI encapsulation: `packages/ui/src/lib/appTelemetry.ts`, `packages/ui/src/lib/messageTelemetry.ts`
+- Agent usage persistence: `apps/zcode-cli/docs/design/v2/usage-observability.md` (CLI design spec, not document in this directory)
+- App Usage aggregation: `docs/superpowers/specs/2026-06-02-app-usage-db-migration-design.md` (feature spec, not document in this directory)
 
-## 追记（2026-09-14）：工作流子代理进入 `agent_step` / `agent_composition`
+## Postscript (2026-09-14): Workflow Sub-agent Enters `agent_step` / `agent_composition`
 
-spec：`apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md`「Token telemetry for subagents」。字段口径的增量：
+Spec: `apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md` "Token telemetry for subagents". Field scope increments:
 
-| 字段 | 变化 |
-| --- | --- |
-| `agent_step.agent_role` | 新值 `workflow subagent`（既有 `foreground subagent` / `background subagent` 不变） |
-| `agent_step.agent_id` | 工作流子代理为 `siteId@ordinal` |
-| `agent_step.workflow_run_id` / `child_session_id` / `workflow_tool_call_id` | 新增，只在工作流子代理的 step 上在场 |
-| `agent_step.tool_call_id` | 工作流子代理：工具 step `tool_workflow_<agentId>_<childToolCallId>`，汇总 step `tool_workflow_<agentId>_<runId>` |
-| `agent_step.message_id` | 工作流子代理挂在发起 run 那一轮的 inputId 下；中枢直接启动为 run 专属的合成 UUID v7，该 message 没有 `message_completion` |
-| `message_completion.agent_composition` | 新增 `main_plus_wf` / `main_plus_fg_wf` / `main_plus_bg_wf` / `main_plus_fg_bg_wf`：run 的通知被主对话某一轮消费时置位 |
-| `message_completion.message_source` | 由 workflow 通知唤起的独立轮记 `background_workflow` |
+| Field                                                                       | Change                                                                                                                                                                         |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `agent_step.agent_role`                                                     | New value `workflow subagent` (existing `foreground subagent` / `background subagent` unchanged)                                                                               |
+| `agent_step.agent_id`                                                       | Workflow sub-agent is `siteId@ordinal`                                                                                                                                         |
+| `agent_step.workflow_run_id` / `child_session_id` / `workflow_tool_call_id` | New, only present on workflow sub-agent steps                                                                                                                                  |
+| `agent_step.tool_call_id`                                                   | Workflow sub-agent: tool step `tool_workflow_<agentId>_<childToolCallId>`, summary step `tool_workflow_<agentId>_<runId>`                                                      |
+| `agent_step.message_id`                                                     | Workflow sub-agent hangs under inputId of round that initiated run; middle center directly starts as run-dedicated synthetic UUID v7, this message has no `message_completion` |
+| `message_completion.agent_composition`                                      | Adds `main_plus_wf` / `main_plus_fg_wf` / `main_plus_bg_wf` / `main_plus_fg_bg_wf`: run notification consumed by main conversation some round sets position                    |
+| `message_completion.message_source`                                         | Independent round woken by workflow notification records `background_workflow`                                                                                                 |

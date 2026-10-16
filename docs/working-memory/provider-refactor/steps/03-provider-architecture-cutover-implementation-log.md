@@ -1,245 +1,245 @@
-# M3 实施记录
+# M3 Implementation Log
 
-> 状态：当前基线实现完成，待集成裁决与上线门禁
+> Status: Current baseline implementation completed, pending integration decision and release gate
 >
-> 最近更新：2026-08-21
+> Last updated: 2026-08-21
 >
-> 阶段目标：[`03-provider-architecture-cutover.md`](./03-provider-architecture-cutover.md)
+> Phase goal: [`03-provider-architecture-cutover.md`](./03-provider-architecture-cutover.md)
 
-本文记录 M3 实施过程中超出既定计划、但可以依据现有设计原则自主完成的工程决策。正常代码修改和命令输出不逐项罗列；会改变产品语义、公共抽象或阶段边界的问题仍需进入 Human in the Loop。
+This document records engineering decisions made during M3 implementation that exceed the established plan but can be completed autonomously based on existing design principles. Normal code changes and command output are not listed item by item; issues that change product semantics, public abstractions, or phase boundaries still need to enter Human in the Loop.
 
-## 1. 当前工作树作为实施基线
+## 1. Current Working Tree as Implementation Baseline
 
-M3 从本工作树的 `7f413be9de` 开始实施。该提交是 M2 在较新 staging 上的本地重建结果；当前本地 `origin/staging` 已再次发生历史重建并与本工作树双向分叉。用户已明确要求暂不处理远端分支，因此本轮不 merge、rebase 或恢复旧 staging 实现，也不把 M3.0 误记为完成。
+M3 begins implementation from `7f413be9de` of this working tree. This commit is the local reconstruction result of M2 on a newer staging; the current local `origin/staging` has undergone historical reconstruction again and is bidirectionally forked from this working tree. The user has explicitly requested temporarily not handling the remote branch, so this round does not merge, rebase, or restore old staging implementations, and does not mistakenly record M3.0 as completed.
 
-M3 先在当前 M2 基线上按 Design 推进原子 Submission、Selection、Session Model、旧状态退役和 Settings 收敛。最终上线验收仍保留 staging 拓扑裁决与集成门禁；裁决前的实现提交保持职责单一，便于后续审计式重放。
+M3 first advances atomic Submission, Selection, Session Model, old state retirement, and Settings convergence on the current M2 baseline according to the Design. Final release verification still retains the staging topology decision and integration gate; pre-decision implementation commits maintain single responsibilities, facilitating subsequent audit-style replay.
 
-## 2. Spec 与测试先行
+## 2. Spec and Tests First
 
-原子 Submission 的正式行为先写入 Conversation Protocol Declaration 与 Conversation Product State Space。对应的 Shared、Core、Bootstrap 和 UI 测试在生产实现前迁移，用于锁定以下不变量：
+The formal behavior of atomic Submission is first written to the Conversation Protocol Declaration and Conversation Product State Space. The corresponding Shared, Core, Bootstrap, and UI tests are migrated before production implementation, used to lock the following invariants:
 
-- prompt、attachments、mode 与 ModelSelection 原子接收；
-- Queue 固定入队时的 Selection；
-- Guide 在 Model Step 边界切换；
-- Edit、Retry 与 Goal 保留或继承明确的 Submission 意图；
-- Composer Selection 不再预写当前 Runtime 模型。
+- prompt, attachments, mode, and ModelSelection are atomically received;
+- The Queue freezes the Selection at enqueue time;
+- The Guide switches at the Model Step boundary;
+- Edit, Retry, and Goal retain or inherit explicit Submission intent;
+- The Composer Selection no longer pre-writes the current Runtime model.
 
-## 3. Wire 与领域类型分层
+## 3. Wire and Domain Type Layering
 
-Shared V4 定义可序列化 Submission wire schema，字段语义与 Provider `ModelSelection` 对齐；CLI admission 在边界转换为 Contracts/Core 使用的领域值。Shared 不反向依赖 Provider Registry 或 Model 行为，避免把 Provider 领域依赖压入所有协议消费者。
+Shared V4 defines the serializable Submission wire schema, with field semantics aligned to the Provider's `ModelSelection`; CLI admission converts to domain values used by Contracts/Core at the boundary. Shared does not reverse-depend on the Provider Registry or Model behavior, avoiding pressing Provider domain dependencies into all protocol consumers.
 
-## 4. Guide 在 Core Step 边界切换
+## 4. Guide Switches at the Core Step Boundary
 
-Queue 与 Guide 保存完整 Submission intent。Guide 真正 drain 时由 Core 使用 ModelFactory 创建新 Model，并同时更新当前 Loop 与 Session Selection；Bootstrap 不新增 Core 到 Bootstrap 的长期模型切换回调。已经发出的 Request 继续使用旧 Model，下一 Model Step 才使用新 Model。
+The Queue and Guide save the complete Submission intent. When the Guide actually drains, Core creates a new Model using the ModelFactory, and simultaneously updates the current Loop and Session Selection; the Bootstrap does not add a long-term model switching callback from Core to Bootstrap. Currently sent Requests continue using the old Model; the next Model Step uses the new Model.
 
-## 5. Goal、Edit 与 Retry 的 Selection
+## 5. Selection for Goal, Edit, and Retry
 
-Goal 首轮使用用户 Submission 中冻结的 Selection；自动续轮不保存另一份 continuation model，而在启动时读取届时的 Session Selection。Edit 和 Retry 从 canonical source input 继承原 Submission 的 Selection 与 mode，不读取当前 Composer 或后来变化的 Session 状态。
+The Goal's first round uses the Selection frozen in the user's Submission; automatic continuation rounds do not save another continuation model, but instead read the Session Selection at start time. Edit and Retry inherit the original Submission's Selection and mode from the canonical source input, without reading the current Composer or later-changed Session state.
 
-## 6. Renderer 只维护下一次提交意图
+## 6. The Renderer Only Maintains the Next Submission Intent
 
-Composer 的模型、reasoning 和 mode 选择不再提前发送 `switchModelConfig` 或 `switchCollaborationMode`。Renderer 在发送时通过 `resolveComposerSubmissionConfig()` 形成完整 Submission；App Recent 仍在 Submission 被接受后更新。这样选择控件不会再充当 Active Model 或 Session Selection 的可变投影。
+The Composer's model, reasoning, and mode selections no longer send `switchModelConfig` or `switchCollaborationMode` in advance. The Renderer forms a complete Submission through `resolveComposerSubmissionConfig()` at send time; App Recent still updates after the Submission is accepted. This way, the selection control no longer serves as a mutable projection of the Active Model or Session Selection.
 
-## 7. 当前切片验证边界
+## 7. Current Slice Verification Boundary
 
-根 workspace TypeScript build 通过；Shared/UI 原子 Submission 专项测试 64 项通过；Core Model 生命周期与 Guide 专项测试 7 项通过。Bootstrap 五个相关文件的 138 项断言全部通过，但既有 fake-timer 超时用例产生三个未处理 rejection，使 Vitest 进程退出 1；这类错误不作为本切片的绿色证明，后续全量验收继续保留该基线风险。CLI 依赖构建到 Bootstrap 时只剩 legacy personal provider importer 的两项既有类型错误。
+The root workspace TypeScript build passes; 64 Shared/UI atomic Submission special tests pass; 7 Core Model lifecycle and Guide special tests pass. All 138 assertions across five Bootstrap related files pass, but three unhandled rejections from existing fake-timer timeout cases cause the Vitest process to exit 1; such errors do not serve as green proof for this slice, and the full verification subsequently continues to retain this baseline risk. CLI dependency build to Bootstrap has only two existing type errors from the legacy personal provider importer remaining.
 
-## 8. Session Selection 使用结构化持久格式
+## 8. Session Selection Uses Structured Persistent Format
 
-Contracts 提供协议无关的 `ModelSelection` 解析与从实际 Model 投影 Selection 的函数。Session entry 直接保存 `providerId`、`modelId` 与通用 options，使 reasoning level 和 max output tokens 随 Session 恢复。旧 entry 的顶层 `thoughtLevel` 只在冷读取边界单向兼容；新写入不再产生该字段。
+The Contracts provide protocol-independent `ModelSelection` parsing and functions to project Selection from the actual Model. Session entries directly save `providerId`, `modelId`, and common options, so the reasoning level and max output tokens are preserved with Session recovery. The old entry's top-level `thoughtLevel` is only compatibly handled at cold-read boundaries; new writes no longer produce this field.
 
-## 9. ModelFactory 直接接收 Selection
+## 9. ModelFactory Directly Receives Selection
 
-`RuntimeModelFactoryInput` 改为直接接收结构化 `ModelSelection`。Provider、Model、reasoning level 与 max output tokens 由同一输入进入 Registry ModelFactory，不再由 Factory 从 `ModelRef.variant` 和独立 max-output 字段重新拼装。尚未迁移的 Adapter 只在最终装配边界取得临时 ModelRef 投影；调用用途继续由 operation 与 execution context 表达。
+`RuntimeModelFactoryInput` is changed to directly receive structured `ModelSelection`. The Provider, Model, reasoning level, and max output tokens all enter the Registry ModelFactory through the same input, without the Factory reassembling from `ModelRef.variant` and an independent max-output field. Unmigrated Adapters only obtain the temporary ModelRef projection at the final assembly boundary; the call purpose continues to be expressed by operation and execution context.
 
-## 10. Session Selection 成为运行时模型事实
+## 10. Session Selection Becomes the Runtime Model Fact
 
-Agent Runtime 只持有 `sessionModelSelection`，并通过 `getSessionModelSelection()` / `setSessionModelSelection()` 读写当前 Session 选择；构造阶段仅将尚未迁移的旧配置 `modelRef` 单向转换一次，不再保存 `defaultModelRef` 或另一份可变模型状态。持久化、fork、compact、title、subagent、hook 与 turn loop 都读取同一 Selection。仍要求 `ModelRef` 的旧 Adapter 暂时通过 `getModelRef()` 即时投影，后续 M3.5 将连同旧配置写入口一起删除。
+The Agent Runtime only holds `sessionModelSelection`, reading and writing the current Session selection through `getSessionModelSelection()` / `setSessionModelSelection()`; the construction phase only performs a single one-way conversion of the yet-unmigrated old config `modelRef`, and no longer saves `defaultModelRef` or another mutable model state. Persistence, fork, compact, title, subagent, hooks, and turn loops all read the same Selection. The still-required old `ModelRef` Adapter temporarily projects through `getModelRef()` immediately; subsequent M3.5 will delete it together with the old config write entry.
 
-这一切片以九个 Core 测试文件锁定 Session Selection、Guide step 切换、持久化与派生流程，迁移前 17 项失败，实现后 190 项全部通过。
+This slice locks Session Selection, Guide step switching, persistence, and derivation flows with nine Core test files; 17 tests failed before migration, and all 190 pass after implementation.
 
-## 11. Bootstrap 切换与恢复写入 Selection
+## 11. Bootstrap Switch and Restore Write to Selection
 
-Bootstrap 的 Registry `setModel`、reasoning level 修改和冷恢复统一调用 `setSessionModelSelection()`，不再通过 `updateConfig({ modelRef })` 改写 Session 模型事实。Session entry 从 Runtime 读取并保存完整 Selection，因此 reasoning level 与默认或显式 max output tokens 一起恢复。Turn Overlay 返回的执行期兼容配置暂留，归入后续 M3.5 Adapter 清理。
+The Registry's `setModel`, reasoning level modification, and cold recovery in the Bootstrap uniformly call `setSessionModelSelection()`, without rewriting Session model facts through `updateConfig({ modelRef })`. The Session entry reads and saves the complete Selection from the Runtime, so the reasoning level and default or explicit max output tokens are restored together. The execution-period compatibility configuration left by the Turn Overlay is temporarily retained, to be grouped into the subsequent M3.5 Adapter cleanup.
 
-测试夹具先迁离旧 `updateConfig({ modelRef })` API；由于这些夹具直接调用 Core，新旧实现下均保持绿色，4 个文件 240 项通过。Bootstrap 的模型配置、冷恢复与 off-peak overlay 3 个文件 67 项通过。Provider Registry App Runtime 的 8 项测试中 1 项通过、7 项在进入断言前被当前工作树缺失的 Browser Use seed 构建产物阻断；Bootstrap 构建继续只报 legacy personal provider importer 的两项既有类型错误。
+Test fixtures first migrate away from the old `updateConfig({ modelRef })` API; since these fixtures directly call Core, both old and new implementations remain green, 4 files with 240 tests pass. The Bootstrap's model config, cold recovery, and off-peak overlay 3 files with 67 tests pass. Of 8 tests for the Provider Registry App Runtime, 1 passes and 7 are blocked by missing Browser Use seed build products before entering assertions; the Bootstrap build continues to report only the two existing type errors from the legacy personal provider importer.
 
-## 12. 删除 Runtime Config 的 ModelRef 写入口
+## 12. Delete the ModelRef Write Entry from Runtime Config
 
-全局引用审计确认生产调用方已经离开 `updateConfig({ modelRef })` 后，Core 从 `updateConfig` 的公开类型和实现中删除该字段。运行参数更新与 Session Selection 写入由此形成机械边界：context window、max output tokens 等运行参数更新不能隐式改写 Selection，模型意图只能经 `setSessionModelSelection()` 或 Submission admission 进入。
+A global reference audit confirmed that after production callers have exited `updateConfig({ modelRef })`, the Core deletes this field from the public type and implementation of `updateConfig`. Runtime parameter updates and Session Selection writes thus form a mechanical boundary: context window, max output tokens, and other runtime parameter updates cannot implicitly rewrite Selection; model intent can only enter through `setSessionModelSelection()` or Submission admission.
 
-新增的边界测试与模型生命周期测试共 16 项通过，Core TypeScript build 通过。`dep:refs` 当前无法把嵌套的 `apps/zcode-cli` package 加载进根 project；删除审计因此同时使用全量 knip 与无 scope 的文本调用图，不能把该工具失败误记为零引用证明。
+16 new boundary tests and model lifecycle tests pass; the Core TypeScript build passes. `dep:refs` currently cannot load the nested `apps/zcode-cli` package into the root project; the deletion audit therefore uses both full knip and scope-less text call graphs, and cannot mistakenly record the tool failure as a zero-reference proof.
 
-## 13. 新建 Runtime 直接接收 ModelSelection
+## 13. New Runtime Directly Receives ModelSelection
 
-`AgentRuntimeConfig` 新增结构化 `modelSelection`，Bootstrap Registry 初始化、Workflow child、Script Workflow child 与 Subagent child 都直接传递 Selection；Registry 解析结果同时携带归一化 Selection，不再要求 App 先构造 Session `ModelRef`。Core 构造器暂时保留旧 `modelRef` 的单向读取，只服务尚未迁移的测试、协议 Entry 与兼容配置，生产 child runtime 已离开该字段。
+`AgentRuntimeConfig` adds a structured `modelSelection`; the Bootstrap Registry initialization, Workflow child, Script Workflow child, and Subagent child all directly pass the Selection; the Registry's parsing result simultaneously carries the normalized Selection, without requiring the App to first construct a Session `ModelRef`. The Core constructor temporarily retains the one-way reading of the old `modelRef`, serving only unmigrated tests, protocol Entries, and compatibility configs; production child runtimes have exited this field.
 
-两项先行测试在旧实现下按预期失败，实现后 Core 与 Bootstrap 共 37 项通过。Core 及依赖 build 通过；Bootstrap 仍只报 legacy personal provider importer 的两项既有错误。
+Two preemptive tests fail as expected under the old implementation, and 37 tests pass across Core and Bootstrap after implementation. The Core and dependent build pass; the Bootstrap continues to report only the two existing errors from the legacy personal provider importer.
 
-## 14. Protocol Session Entry 解析为 Selection
+## 14. Protocol Session Entry Parsed as Selection
 
-ZCode Protocol 的 `session/create` 仍接受 wire 层结构化 model DTO，但进入 App Runtime 前直接转换为 `ModelSelection`，reasoning variant 写入 `options.reasoningLevel`，不再构造初始 `ModelRef`。Workspace generate text 仍是独立模型任务，暂时保留自己的旧输入，后续按独立任务迁移切片处理。
+The ZCode Protocol's `session/create` still accepts the wire-layer structured model DTO, but converts directly to `ModelSelection` before entering the App Runtime, with the reasoning variant written to `options.reasoningLevel`, without constructing the initial `ModelRef`. The Workspace generate text is still an independent model task, retaining its own old input for now, to be handled separately in subsequent model migration slices for independent tasks.
 
-新增协议入口测试确认 Runtime 收到完整 Selection 且配置中不存在 `modelRef`；目标测试 1 项通过。
+The new protocol entry test confirms the Runtime receives the complete Selection and the config does not contain `modelRef`; 1 target test passes.
 
-## 15. 执行用途不再编码为 ModelRole
+## 15. Execution Purpose No Longer Encoded as ModelRole
 
-Title、Subagent、Registry Main 与 Turn Overlay 不再向模型身份写入 `ModelRole`。Title 由 `modelCall.operation=session_title_generation` 识别，Subagent 由 child runtime/task context 识别；模型身份只保留 Provider、Model 与尚待迁移的 reasoning variant。生产 Core、Bootstrap、Adapter 与 Contracts 源码中已没有 `ModelRole.*` 构造。
+The Title, Subagent, Registry Main, and Turn Overlay no longer write `ModelRole` to the model identity. The Title is identified by `modelCall.operation=session_title_generation`; the Subagent is identified by the child runtime/task context; the model identity only retains the Provider, Model, and yet-to-be-migrated reasoning variant. There is no longer `ModelRole.*` construction in the production Core, Bootstrap, Adapter, and Contracts source code.
 
-Subagent 初始模型事件测试先在旧实现下失败，删除 role 后与 Title operation 测试共 2 项通过；Core、Adapter 及其依赖 build 通过，Bootstrap 仍停在同两项 legacy importer 基线错误。
+The Subagent initial model event test first fails under the old implementation, and 2 tests pass (including the delete role and Title operation test); the Core, Adapter, and their dependent build pass, with the Bootstrap still stopping at the same two legacy importer baseline errors.
 
-## 16. 模型调试与创建不再传播旧来源元数据
+## 16. Model Debugging and Creation No Longer Propagate Old Source Metadata
 
-Adapter Registry、Core 默认占位选择和 Model IO debug 不再构造或输出 `ModelRefSource`；Core 内部依赖 barrel 同时停止重导出 `ModelRole` / `ModelRefSource`。来源语义保留在 Submission、query source、trace context 和 task context，不再伪装成模型身份字段。
+The Adapter Registry, Core default placeholder selection, and Model IO debug no longer construct or output `ModelRefSource`; Core internal dependency barrels also stop re-exporting `ModelRole` / `ModelRefSource`. The source semantics are retained in the Submission, query source, trace context, and task context, without being disguised as a model identity field.
 
-Model IO debug 测试先确认旧记录仍含 role/source 而失败，清理后 2 项通过，Adapter TypeScript build 通过。Contracts 中的旧类型与 parse/schema 仍暂留给未迁移测试和协议，下一切片继续删除。
+The Model IO debug test first confirms that the old record still contains role/source and fails; 2 tests pass after cleanup, and the Adapter TypeScript build passes. The old types and parse/schema in Contracts are still temporarily reserved for unmigrated tests and protocols; the next slice continues deletion.
 
-## 17. Contracts 删除 ModelRole 与 ModelRefSource
+## 17. Delete ModelRole and ModelRefSource from Contracts
 
-Contracts 已删除 `ModelRole`、`ModelRefSource`、对应 `ModelRef` 字段、parse options 与 JSON Schema properties；全仓 TypeScript 源码和测试均无这两个符号。旧用途不再能通过公共类型或 schema 重新进入系统，Lite role 也随之正式退役。
+The Contracts have deleted `ModelRole`, `ModelRefSource`, the corresponding `ModelRef` field, parse options, and JSON Schema properties; the entire workspace's TypeScript source code and tests have no references to these two symbols. Old uses can no longer re-enter the system through public types or schemas; the Lite role is also formally retired.
 
-Contract 测试先在旧 parser 仍输出 undefined metadata key 时失败，删除后 4 项通过；迁移的 8 个 Core 测试文件 175 项通过，Adapter debug 2 项通过，根 workspace typecheck 通过。Bootstrap session persistence 仍被缺失 Browser Use seed 产物阻断，与本切片无断言关联。
+Contract tests first fail when the old parser still outputs the undefined metadata key; 4 tests pass after deletion; 175 tests pass across 8 migrated Core test files; 2 Adapter debug tests pass; the root workspace typecheck passes. The Bootstrap session persistence is still blocked by missing Browser Use seed build products, unrelated to this slice's assertions.
 
-## 18. 删除 Lite Runtime 配置
+## 18. Delete the Lite Runtime Config
 
-`AgentRuntimeConfig`、Bootstrap 配置装配、Project Memory selector 与 Subagent child 已删除 `liteModelRef` / `liteModelProviderOptions`。独立任务缺省继承当前 Session Selection，再通过 `modelCall.operation` 和 reasoning policy 表达任务策略；Subagent profile 的旧 `lite` 特判也已删除，不再把一个用途别名转换成第二份共享模型状态。
+`AgentRuntimeConfig`, Bootstrap config assembly, the Project Memory selector, and the Subagent child have deleted `liteModelRef` / `liteModelProviderOptions`. Independent tasks default to inheriting the current Session Selection, then express the task strategy through `modelCall.operation` and the reasoning policy; the old `lite` special judgment for Subagent profiles has also been deleted, no longer converting a usage alias into a second shared model state.
 
-先行测试确认旧 Bootstrap 仍生成两个 undefined Lite key 而失败；清理后 Runtime Config、Subagent、Memory 与 Profile 共 103 项通过，Core 及依赖 build 通过。测试 Registry helper 同步改为采集结构化 `modelSelection`。
+A preemptive test confirms the old Bootstrap still generates two undefined Lite keys and fails; after cleanup, 103 tests pass across the Runtime Config, Subagent, Memory, and Profile; the Core and dependent build pass. The test Registry helper is simultaneously changed to collect structured `modelSelection`.
 
-## 19. 删除 AgentRuntimeConfig.modelRef
+## 19. Delete AgentRuntimeConfig.modelRef
 
-Core Runtime 构造配置与 Bootstrap Registry 初始化已删除旧 `modelRef` 输入和兼容读取；Runtime 只能由 `modelSelection` 初始化。未提供 Selection 的低层测试/占位 Runtime 使用明确的 `zcode-unconfigured/missing-model` 结构化占位值，不再通过内部字符串 parser 生成。Protocol、Workflow 与 Subagent 生产入口此前已完成 Selection 迁移。
+The Core Runtime configuration and Bootstrap Registry initialization have deleted the old `modelRef` input and compatibility reading; the Runtime can only be initialized by `modelSelection`. Un-migrated low-layer test/placeholder Runtimes without Selection use the explicit `zcode-unconfigured/missing-model` structured placeholder value, without generating it through an internal string parser. The Protocol, Workflow, and Subagent production entries have previously completed the Selection migration.
 
-12 个 Core 测试文件的 61 个构造夹具和 3 个 Bootstrap 测试/基座先迁移，Core 393 项及连同 Runtime Config 的 420 项通过。Telemetry 同时删除从 ModelRef 投影 `modelRole` 的路径；先行红测转绿，5 项通过。Core、Adapter、Telemetry 及其依赖 build 通过，Bootstrap 回到两项 legacy importer 基线错误。
+The 61 construction fixtures and 3 Bootstrap tests/skeletons of 12 Core test files are migrated first; 393 Core tests and 420 tests including the Runtime Config pass. The Telemetry simultaneously deletes the path projecting `modelRole` from the ModelRef; the preemptive red test turns green, 5 tests pass. The Core, Adapter, Telemetry, and their dependent build pass, and the Bootstrap returns to the two legacy importer baseline errors.
 
-## 20. 持久化与展示直接读取 Session Selection
+## 20. Persistence and Display Directly Read Session Selection
 
-Session fork、message/timeline persistence、Context/Hook prompt metadata 与 Workflow 展示不再调用 `getModelRef()`。旧持久化 DTO 仍要求 branded provider/model 字段时，只在写入边界校验并投影 Selection；reasoning 从 `options.reasoningLevel` 读取。生产 `getModelRef()` 调用从 62 处降至 40 处，剩余调用集中在尚未迁移的独立模型任务、旧事件和 Adapter 输入。
+Session fork, message/timeline persistence, Context/Hook prompt metadata, and Workflow display no longer call `getModelRef()`. When the old persistence DTO still requires the branded provider/model fields, validate and project the Selection only at the write boundary; the reasoning is read from `options.reasoningLevel`. Production `getModelRef()` calls drop from 62 to 40; the remaining calls are concentrated in yet-unmigrated independent model tasks, old events, and Adapter inputs.
 
-相关 fake runtime 先迁为 `getSessionModelSelection()`；Session Fork 25 项、Hook admission 19 项、Runtime persistence 61 项通过，Core 及依赖 build 通过。Bootstrap 工作流测试仍受缺失 Browser Use seed 产物阻断。
+The related fake runtime is first migrated to `getSessionModelSelection()`; 25 Session Fork tests, 19 Hook admission tests, and 61 Runtime persistence tests pass; the Core and dependent build pass. The Bootstrap workflow tests are still blocked by missing Browser Use seed build products.
 
-## 21. Session Facade 退出 Runtime ModelRef 读取
+## 21. Session Facade Exits Runtime ModelRef Reading
 
-Session Facade 的模型展示、Registry 归属判定、reasoning 读取/切换和模型切换前态统一读取 `getSessionModelSelection()`；`ModelRef` 只在尚未迁移的模型变更事件写入边界临时投影，不再从 Runtime 取得第二份模型事实。Overlay 与 Registry 同名时仍按 execution-scoped Overlay 优先，当前 reasoning 直接来自 Selection options。
+The Session Facade's model display, Registry affiliation judgment, reasoning reading/switching, and pre-model-switch state all uniformly read `getSessionModelSelection()`; `ModelRef` is only temporarily projected at the yet-unmigrated model change event write boundary, and no longer obtains a second model fact from the Runtime. When the Overlay and Registry have the same name, the execution-scoped Overlay still takes priority; the current reasoning comes directly from the Selection options.
 
-新增回归测试将 `getModelRef()` 设为调用即抛错，覆盖模型展示、默认/当前 reasoning、档位列表和 reasoning 切换；旧实现按预期失败，迁移后 3 项通过。Provider Registry App 测试仍有 7 项在进入断言前被缺失 Browser Use seed 产物阻断，另 1 项通过；Bootstrap 构建继续只报 legacy personal provider importer 的两项既有类型错误。
+The new regression test sets `getModelRef()` to throw on call, covering model display, default/current reasoning, tier list, and reasoning switching; the old implementation fails as expected, and 3 tests pass after migration. 7 tests for the Provider Registry App are still blocked by missing Browser Use seed products before entering assertions, with 1 additional test passing; the Bootstrap build continues to report only the two existing type errors from the legacy personal provider importer.
 
-## 22. Bootstrap 协议投影退出 Runtime ModelRef 读取
+## 22. Bootstrap Protocol Projection Exits Runtime ModelRef Reading
 
-V4 模型命令、create-session config admission、Registry fallback、V4 config seed 与旧发送端 Submission admission 全部直接读取 Runtime `ModelSelection`。尚未迁移的 `ModelSelected` 事件只在发布边界把 Selection 临时投影为旧事件 DTO；跨进程 config seed 与 canonical Submission 均保持结构化 provider/model/options，不再读取 Runtime ModelRef。Bootstrap 生产源码已无 `getModelRef` 引用。
+V4 model commands, create-session config admission, Registry fallback, V4 config seed, and old sender Submission admission all directly read the Runtime's `ModelSelection`. The yet-unmigrated `ModelSelected` event is only temporarily projected as the old event DTO at the publish boundary; cross-process config seeds and canonical Submissions all maintain structured provider/model/options, without reading the Runtime ModelRef. The Bootstrap's production source code no longer has any `getModelRef` references.
 
-先行测试把模型命令、Registry fallback 和 V4 config seed 的旧 getter 替换为 Selection getter，旧实现分别产生 18 项、1 项和 2 项失败；迁移后模型命令与 fallback 共 35 项、完整冷恢复 32 项通过。
+A preemptive test replaces the old getters for model commands, Registry fallback, and V4 config seed with the Selection getter; the old implementation fails 18, 1, and 2 tests respectively; after migration, 35 tests for model commands and fallback, and 32 tests for the complete cold recovery, pass.
 
-## 23. 持久化缺省模型读取 Selection
+## 23. Persistence Default Model Reads Selection
 
-Assistant message 与 Compact summary/reminder 在调用方未传显式 execution model 时，从 Session Selection 投影旧持久化 DTO；模型请求路径显式传入的请求快照仍保持优先，避免 Guide 切换影响在飞请求归因。默认持久化不再读取 Runtime `getModelRef()`。
+Assistant messages and Compact summaries/reminders project the old persistence DTO from the Session Selection when the caller does not pass an explicit execution model; the model request path's explicitly passed request snapshot still takes priority, avoiding Guide switching from affecting the in-flight request attribution. The default persistence no longer reads the Runtime `getModelRef()`.
 
-两项先行测试均通过“旧 getter 调用即抛错”锁定边界，旧实现各失败 1 项；迁移后持久化专项 5 项、Runtime persistence 61 项、Runtime compact 68 项通过，Core 及依赖 build 通过。
+Two preemptive tests lock the boundary with "calling the old getter throws"; the old implementation fails 1 test each; 5 persistence special tests, 61 Runtime persistence tests, and 68 Runtime compact tests pass after migration; the Core and dependent build pass.
 
-## 24. 删除 AgentRuntime.getModelRef
+## 24. Delete AgentRuntime.getModelRef
 
-`AgentRuntime` 的公开接口、内部接口和 prototype 已删除 `getModelRef()`。普通执行、title、goal verifier、compact、project memory、MCS、embedded search、subagent 和工具装配统一从 Session Selection 读取；仍需要旧 Adapter/执行事件 DTO 的位置在消费边界临时投影，不再暴露第二个共享 Runtime getter。Core 中剩余同名 getter 只属于 Tool Executor 自己的 execution-scoped request context，后续随 ModelRef 类型退役继续迁移。
+The public interface, internal interface, and prototype of `AgentRuntime` have all deleted `getModelRef()`. Normal execution, title, goal verifier, compact, project memory, MCS, embedded search, subagent, and tool assembly all uniformly read from Session Selection; positions still needing the old Adapter/execution event DTO temporarily project at the consumption boundary, without exposing a second shared Runtime getter. The remaining same-name getter in Core belongs only to the Tool Executor's own execution-scoped request context, to be migrated subsequently along with the ModelRef type retirement.
 
-两项模型生命周期测试先断言 Runtime 不再公开旧 getter，旧实现按预期失败；迁移后相关 8 个测试文件 289 项通过，Core 及依赖 build 通过。Bootstrap 构建仍仅有 legacy personal provider importer 的两项既有类型错误。
+Two model lifecycle tests first assert that the Runtime no longer exposes the old getter; the old implementation fails as expected; 289 tests across 8 related test files pass after migration; the Core and dependent build pass. The Bootstrap build has only the two existing type errors from the legacy personal provider importer.
 
-## 25. Settings Service 增加原子身份重命名
+## 25. Add Atomic Identity Renaming to Settings Service
 
-Provider Config Service、Settings Facade 与跨进程 Service 契约新增 `renamePersonalProvider` 和 `renamePersonalModel`。Provider rename 在同一次 Personal Repository update 中保持有序位置并迁移全部精确 Model Config；Model rename 同时替换 Provider 的模型列表项和精确规则。两者都拒绝覆盖 Official 或已有 Personal 身份，Official Provider/Model 不能通过 Personal 设置重命名。
+The Provider Config Service, Settings Facade, and cross-process Service contract add `renamePersonalProvider` and `renamePersonalModel`. The Provider rename maintains the ordered position within a single Personal Repository update and migrates all precise Model Config; the Model rename simultaneously replaces the Provider's model list item and precise rules. Both reject overwriting Official or existing Personal identities; Official Providers/Models cannot be renamed through Personal settings.
 
-三项先行测试在旧实现下因方法缺失失败；实现后 Provider 全量 115 项、Provider build 与根 workspace typecheck 通过。UI 尚未接入这两个操作，下一切片继续移除 label/删除重建式身份编辑。
+Three preemptive tests fail due to missing methods under the old implementation; after implementation, 115 Provider tests pass, as well as the Provider build and root workspace typecheck. The UI has not yet integrated these two operations; the next slice continues to remove the label/delete-and-rebuild-style identity editing.
 
-## 26. 添加 Provider 改为原子创建
+## 26. Adding a Provider Becomes an Atomic Creation
 
-“添加供应商”不再进入 Renderer 持有 UUID、名称、端点、密钥和模型的二次保存表单。Provider Config Service 在一次 Personal Repository 原子更新中同时检查 Official 与 Personal 身份，依次分配 `new-provider`、`new-provider-2`、`new-provider-3`，写入默认启用但尚不完整的 Personal Provider；Settings Facade 等待 Registry 刷新后返回 `{ providerId, view }`。Renderer 点击左侧添加项后直接调用该 Service，并立即选中新身份进入既有详情编辑。
+"Add Provider" no longer enters a secondary save form holding the UUID, name, endpoint, key, and model in the Renderer. The Provider Config Service simultaneously checks Official and Personal identities in a single atomic Personal Repository update, sequentially assigning `new-provider`, `new-provider-2`, `new-provider-3`, and writes a default-enabled but incomplete Personal Provider; the Settings Facade returns `{ providerId, view }` after waiting for the Registry refresh. The Renderer directly calls this Service after clicking the left-side add item, and immediately selects the new identity to enter the existing detail editing.
 
-旧 `AddProviderCard`、UUID 草稿生成器及其整套创建表单测试已经删除，避免保留第二条“先在 UI 组装完整 Provider、再保存”的前朝路径。先行测试在旧实现下分别因 Config Service、Facade 和导航动作缺少原子创建能力失败；实现后 Provider 116 项、Settings Runtime 8 项、Settings UI 199 项与根 workspace typecheck 全部通过。
+The old `AddProviderCard`, UUID draft generator, and its entire creation form test have been deleted, avoiding retaining a second "first assemble the complete Provider in the UI, then save" prior-era path. A preemptive test fails due to the Config Service, Facade, and navigation action all lacking atomic creation capability under the old implementation; after implementation, 116 Provider tests, 8 Settings Runtime tests, 199 Settings UI tests, and the root workspace typecheck all pass.
 
-## 27. Settings UI 接入原子身份重命名
+## 27. Settings UI Integrates Atomic Identity Renaming
 
-Personal-only Provider 的设置页名称现在直接读取 `providerId`，名称提交调用 `renamePersonalProvider(oldId, newId)`，成功后把当前导航选择前向迁移到新身份；不再通过 `config.label` 制造第二个名称事实。Config Service 在 Personal-only Effective 保存和原子 rename 时主动清除历史 `label`，因此旧配置会在下一次编辑或改名时自然收敛。Official Provider 仍保留 Official Config 的只读 label。
+The settings page name for Personal-only Providers now directly reads `providerId`; name submission calls `renamePersonalProvider(oldId, newId)`; after success, the current navigation selection is forward-migrated to the new identity; a second name fact is no longer created through `config.label`. The Config Service proactively clears the historical `label` during Personal-only Effective save and atomic rename, so old configurations naturally converge during the next edit or rename. Official Providers continue to retain the read-only label from the Official Config.
 
-模型编辑对 Model ID 的修改先调用 `renamePersonalModel(providerId, oldId, newId)`，等待有序模型列表与精确 Model Config 原子迁移完成后，才保存同一编辑动作中的 Properties / Option Specs。先行测试锁定 rename-before-save 顺序以及 Personal label 清理；实现后 Provider 117 项、Settings/UI/Runtime 相关 233 项、根 workspace typecheck 通过。保存反馈的 revision 状态仍待下一切片接入。
+The model editing's modification to the Model ID first calls `renamePersonalModel(providerId, oldId, newId)`; after waiting for the ordered model list and precise Model Config atomic migration to complete, it then saves the Properties / Option Specs in the same editing action. A preemptive test locks the rename-before-save order and Personal label clearing; 117 Provider tests, 233 Settings/UI/Runtime related tests, and the root workspace typecheck pass. The revision status of the save feedback still awaits integration by the next slice.
 
-## 28. 连通性测试改走目标 Environment 的正式 Model
+## 28. Connectivity Testing Changes to the Target Environment's Formal Model
 
-设置页“测试模型”不再在 Host 中根据草稿手拼 Anthropic/OpenAI HTTP URL、鉴权头、reasoning body 和一次性请求。UI 先以完整 Effective Draft 调用 `saveEffectiveProvider`，只在返回的 Settings View 中确认 Provider 已 selectable 且 Model 已存在；随后跨 Service/Agent 协议只传目标 workspace 与 `ModelSelection`。CLI 从该 Environment 的 Registry 创建正式 `Model`，发送最小请求并完整消费 `streamText` 到 finish。API Client、Account Config、动态 Runtime Headers、Start Plan 官方版本安全校验、Provider Adapter 与错误语义因此和普通执行共用同一条链路。
+The settings page "test model" no longer manually assembles Anthropic/OpenAI HTTP URLs, authentication headers, reasoning bodies, and one-time requests in the Host based on the draft. The UI first calls `saveEffectiveProvider` with the complete Effective Draft, and only confirms in the returned Settings View that the Provider is selectable and the Model exists; the cross-Service/Agent protocol then only passes the target workspace and `ModelSelection`. The CLI creates a formal `Model` from the Registry of that Environment, sends a minimal request, and fully consumes `streamText` to finish. The API Client, Account Config, dynamic Runtime Headers, Start Plan official version security verification, Provider Adapter, and error semantics thus share the same chain with normal execution.
 
-远程设置页现在通过 `workspacePath + workspaceIdentity + remoteSessionId/remoteTarget` 解析目标 Service Collection；`useModelProviders` 改读当前 `ServiceProvider`，并订阅该 Environment 的 Settings View，避免远端草稿误保存到本地 Host。Host 仍只负责账号 Overlay 同步与协议转发，不持有另一份 Provider 执行配置。
+The remote settings page now resolves the target Service Collection through `workspacePath + workspaceIdentity + remoteSessionId/remoteTarget`; `useModelProviders` reads the current `ServiceProvider` and subscribes to that Environment's Settings View, avoiding saving the remote draft to the local Host. The Host still only handles the account Overlay sync and protocol forwarding, without holding another Provider execution config.
 
-旧 `modelProviderConnectivityProbe`、HTTP helpers、request body builder、logging wrapper 及两套直连探测测试已经删除，共净删除约 1,200 行前朝实现。先行测试覆盖正式 Model stream 消费、协议 active/temporary app、Agent workspace identity 路由、保存后再测试顺序与错误归一化；Core 8 项、Bootstrap 2 项、Services/UI 33 项通过，根 workspace typecheck 通过。Lint 为 0 error、38 个与本切片无关的既有 warning；Bootstrap build 仍只报 legacy personal provider importer 的两项既有类型错误。
+The old `modelProviderConnectivityProbe`, HTTP helpers, request body builder, logging wrapper, and two sets of direct-connectivity probe tests have all been deleted, net removing approximately 1,200 lines of prior-era implementation. A preemptive test covers the formal Model stream consumption, protocol active/temporary app, Agent workspace identity routing, save-then-test sequence, and error normalization; 8 Core tests, 2 Bootstrap tests, and 33 Services/UI tests pass, and the root workspace typecheck passes. Lint is 0 error, 38 pre-existing warnings unrelated to this slice; the Bootstrap build continues to report only the two existing type errors from the legacy personal provider importer.
 
-## 29. Settings UI 以 Draft revision 展示自动保存反馈
+## 29. Settings UI Displays Auto-Save Feedback by Draft Revision
 
-Provider 详情现在为本地 Draft 维护单调递增 revision，并展示 `dirty -> saving -> success/failure` 状态。保存完成只有在响应对应当前 revision 时才生效；在飞请求之后又发生编辑时，旧响应不能覆盖新的 dirty 状态或错误地显示成功。成功勾在短暂保留后淡出；失败保留图标、可访问错误文本与重试入口。父层保存不再吞掉异常，因此字段附近能得到真实失败结果。
+The Provider detail now maintains a monotonically increasing revision for the local Draft, and displays the `dirty -> saving -> success/failure` state. The save only takes effect when the response corresponds to the current revision; when edits occur after an in-flight request, the old response cannot override the new dirty state or incorrectly display success. The success checkmark fades out after briefly retaining; failures retain the icon, accessible error text, and retry entry. The parent save no longer swallows exceptions, so real failure results can be obtained near the field.
 
-Base URL、API Key 和 Provider 名称继续在失焦时提交，并补齐 Enter 提交；API Format、Enabled、模型变更和拖动仍在操作完成后立即保存，模型拖动失败继续恢复原顺序。测试覆盖 revision 门控、dirty/saving/success、失败重试和 Enter 提交；相关 UI 221 项通过，根 workspace typecheck 通过。
+The Base URL, API Key, and Provider name continue to submit on blur, with Enter submission added; the API Format, Enabled, model changes, and drag continue to save immediately after the operation completes; model drag failures continue to restore the original order. Tests cover the revision gate, dirty/saving/success, failure retry, and Enter submission; 221 related UI tests pass, and the root workspace typecheck passes.
 
-## 30. workspace 独立生成链退出 ModelRef 协议
+## 30. The workspace Independent Generation Chain Exits the ModelRef Protocol
 
-`workspace/generateText` 的跨进程参数、结果、Bootstrap App、Core Runtime 和 Services 消费方统一改为结构化 `ModelSelection`。Git 提交消息与 Repo Wiki 直接传递 `options.reasoningLevel`；Core 使用 Selection 创建正式 `Model`，结果再从实际 Model 投影 Selection。旧 `modelRef.variant` 只在尚未迁移的 Adapter、鉴权、事件边界局部投影，不再作为这条协议和独立任务的输入事实。
+The cross-process parameters, results, Bootstrap App, Core Runtime, and Services consumers for `workspace/generateText` are uniformly changed to the structured `ModelSelection`. The Git commit message and Repo Wiki directly pass `options.reasoningLevel`; Core creates a formal `Model` using the Selection, and projects the Selection from the actual result. The old `modelRef.variant` is only locally projected at the yet-unmigrated Adapter, authentication, and event boundaries, without serving as the input fact for this protocol and independent tasks.
 
-同步迁移 Git、Repo Wiki、协议与 Runtime 测试，并增加协议到 App 的断言，确认输入保留 `selection` 且不再下发 `modelRef`。Core 相关 15 项、Bootstrap 协议/连通性 6 项、Services 73 项及根 workspace typecheck 通过。
+The Git, Repo Wiki, protocol, and Runtime tests are simultaneously migrated, and an assertion from the protocol to the App is added, confirming the input retains `selection` and no longer dispatches `modelRef`. 15 Core related tests, 6 Bootstrap protocol/connectivity tests, 73 Services tests, and the root workspace typecheck pass.
 
-## 31. 标题生成配置退出 ModelRef
+## 31. The Title Generation Config Exits ModelRef
 
-`AgentRuntimeConfig.titleGeneration` 的模型覆盖改为 `modelSelection`；空覆盖继续在真正执行时读取当前 Session Selection，显式覆盖则完整保留 reasoning options。标题 sidecar 直接用 Selection 创建正式 `Model`，并返回实际 Model 投影出的 Selection。旧标题事件和动态 Runtime Headers Port 仍要求旧 DTO 时，仅在对应写入/调用边界临时投影，不再把 `ModelRef` 暴露回标题配置或 sidecar 结果。
+The model override for `AgentRuntimeConfig.titleGeneration` is changed to `modelSelection`; the empty override continues to read the current Session Selection at real execution time, and the explicit override fully preserves the reasoning options. The title sidecar directly creates a formal `Model` using the Selection, and returns the Selection projected from the actual Model. When the old title event and dynamic Runtime Headers Port still require the old DTO, the temporary projection is only at the corresponding write/call boundary, without exposing the `ModelRef` back to the title config or sidecar result.
 
-无独立语义的 `titleGenerationModelRef` 和单调用方 `session-title-runtime-headers.ts` 已删除，测试夹具也不再构造嵌套 `modelRef`。先行测试用不同于 Session 的标题 Selection 锁定覆盖行为；Core 标题/持久化相关 88 项、Bootstrap 标题/协议相关 12 项与根 workspace typecheck 通过。Bootstrap build 除 legacy personal provider importer 的两项既有错误外无新增错误。
+The semantically empty `titleGenerationModelRef` and single-caller `session-title-runtime-headers.ts` have been deleted, and test fixtures no longer construct nested `modelRef`. A preemptive test locks the override behavior with a title Selection different from the Session; 88 Core title/persistence tests, 12 Bootstrap title/protocol tests, and the root workspace typecheck pass. The Bootstrap build has no new errors beyond the two existing errors from the legacy personal provider importer.
 
-## 32. Goal 完成验证直接消费 Session Selection
+## 32. Goal Completion Verification Directly Consumes Session Selection
 
-Goal completion verifier 不再把 Session Selection 投影为 `ModelRef`、追加输出预算后再反向转换为 Selection。验证开始时直接冻结一份 Selection，并在该副本的 `options.maxOutputTokens` 上合并请求预算后创建正式 `Model`；请求、重试和 usage 仍共用这次冻结快照。旧 ModelRequest 事件与动态 Header Port 所需身份只在执行边界从实际模型局部投影。
+The Goal completion verifier no longer projects the Session Selection as `ModelRef`, appends the output budget, and then reversely converts to Selection. The verifier directly freezes a Selection at the start, and creates a formal `Model` by merging the request budget with the `options.maxOutputTokens` on that copy; the request, retry, and usage all still share this frozen snapshot. The identity needed for the old ModelRequest event and dynamic Header Port is only locally projected from the actual model at the execution boundary.
 
-Goal completion / post-turn verification 相关 4 项与 Core build 通过。
+4 tests for the Goal completion / post-turn verification and the Core build pass.
 
-## 33. Project Memory sidecar 直接冻结 Selection
+## 33. Project Memory Sidecar Directly Freezes Selection
 
-Project Memory extraction、dream 与 recall 不再从 Session Selection 投影 `ModelRef` 后又反向构造 Selection。调度时冻结结构化 Selection，并在副本上合并输出预算后创建正式 `Model`；跨异步边界的 Agent Context 同时保存该 Selection，Provider 消息构建直接读取它。旧 Tool Executor getter 和动态 Header Port 仍只在其兼容边界使用局部 ModelRef 投影。
+The Project Memory extraction, dream, and recall no longer project `ModelRef` from the Session Selection and then reversely construct Selection. The Selection is frozen at scheduling time, and a formal `Model` is created by merging the output budget on the copy; the Agent Context across the asynchronous boundary simultaneously saves this Selection, and the Provider message builder reads it directly. The old Tool Executor getter and the dynamic Header Port still only use the local ModelRef projection at their compatibility boundary.
 
-Memory agent / extraction / dream / permission 94 项、Memory recall 13 项与 Core build 通过。
+94 tests for the Memory agent / extraction / dream / permission, 13 tests for the Memory recall, and the Core build pass.
 
-## 34. Selection 输出预算合并收敛到纯函数
+## 34. Selection Output Budget Merging Converges to a Pure Function
 
-Core 新增 `withModelSelectionMaxOutputTokens`，以不修改源对象的方式覆盖 Selection 输出预算；Goal verifier、Project Memory 与 Compact 普通 Session 分支统一使用它。Compact 已持有正式 `Model` 时直接从实际 Model 取得 Selection；只有显式 `turnExecutionModel` 继续通过 `runtimeModelSelectionFromRef` 进入 M4 execution-scoped overlay。该旧反向转换 helper 因此不再被任何普通 Session 或 sidecar 路径调用。
+The Core adds `withModelSelectionMaxOutputTokens`, which overrides the Selection's output budget without modifying the source object; the Goal verifier, Project Memory, and Compact normal Session branches all uniformly use it. The Compact directly obtains the Selection from the actual Model when it already holds the formal `Model`; only the explicit `turnExecutionModel` continues to enter the M4 execution-scoped overlay through `runtimeModelSelectionFromRef`. This old reverse conversion helper is thus no longer called by any normal Session or sidecar path.
 
-先行单测覆盖 options 合并与无 override 克隆；Selection 12 项、Compact 72 项、Memory 107 项和 Core build 通过。
+A preemptive unit test covers options merging and no-override cloning; 12 Selection tests, 72 Compact tests, 107 Memory tests, and the Core build pass.
 
-## 35. 删除无效的草稿模型切换保护窗与死导出
+## 35. Delete the Invalid Draft Model Switching Protection Window and Dead Exports
 
-UI 中两套基于 TTL Map 的旧保护窗已经删除：`draftModelConfigSwitchGuard` 的两个 mark 入口在生产代码中均为零调用，唯一剩余的 preserve 调用因此永远面对空 Map，只会原样返回；`thoughtLevelConfigUpdateGuard` 则只被自身测试引用。继续保留这些状态机会让读者误以为 Renderer 仍在维护一份已提交模型状态，并掩盖 Submission 已原子携带 Selection 的事实。删除后 `setConfigOptions` 只执行规范化与等价去重，不再打印逐次生产级配置日志。
+Two sets of the old protection window based on the TTL Map in the UI have been deleted: both mark entries of `draftModelConfigSwitchGuard` have zero calls in production code, and the only remaining preserve call always faces an empty Map, returning as-is; `thoughtLevelConfigUpdateGuard` is only referenced by its own tests. Continuously retaining these state machines would mislead readers into thinking the Renderer still maintains a submitted model state, and masks the fact that the Submission already carries Selection atomically. After deletion, `setConfigOptions` only executes normalization and equivalence deduplication, without printing per-production-configuration logs.
 
-同一轮引用审计还收窄了 Provider 保存和 Composer 模型展示 helper 的公开面，删除三个零引用导出，并修正冷恢复中仍称 `defaultModelRef` 的过期注释。`dep:refs` 用于核对根 workspace UI 导出引用；其对别名 import 存在漏报，因此删除候选同时用全仓文本调用图逐项复核，未把工具漏报当作零引用证明。
+The same round of reference audits also narrows the public surface of Provider save and Composer model display helpers, deleting three zero-reference exports, and correcting the outdated comment in the cold recovery that still refers to `defaultModelRef`. `dep:refs` is used to verify the root workspace UI export references; it has missing reports for alias imports, so the deletion candidates are simultaneously verified item by item with the full workspace text call graph, without treating the tool's missing reports as zero-reference proofs.
 
-删除后草稿配置、Session Store、Composer 恢复、全局模型种子、模型偏好确认与 Provider 设置 6 个文件共 98 项通过；根 workspace typecheck 通过，lint 为 0 error、仅保留与本切片无关的既有 warning。
+After deletion, 98 tests across 6 files (the draft config, Session Store, Composer recovery, global model seed, model preference confirmation, and Provider settings) pass; the root workspace typecheck passes, and the lint is 0 error, retaining only pre-existing warnings unrelated to this slice.
 
-## 36. 全量验收反向迁移遗漏测试夹具
+## 36. Full Verification Backwards-Migrates Omitted Test Fixtures
 
-`test:unit:affected` 因相对远端基准包含已删除文件而自动降级为全仓单测。该运行抓到两类与 M3 直接相关的旧夹具：SessionPane continuity snapshot 没有完整 provider/model/mode，导致原子 Submission 正确拒绝；SettingsPage 的 workspace service mock 未实现新增的目标 Environment 解析结果。两者均按正式契约补齐，不放宽生产校验。
+The `test:unit:affected` automatically degrades to a full workspace test run because the relative remote baseline includes deleted files. This run catches two types of old fixtures directly related to M3: the SessionPane continuity snapshot does not have the complete provider/model/mode, causing the atomic Submission to correctly reject it; the SettingsPage's workspace service mock does not implement the newly-added target Environment resolution result. Both are completed according to the formal contract, without relaxing production validation.
 
-Bootstrap 专项继续发现冷恢复断言和两个 fake app 仍从 `runtimeConfig.modelRef` 初始化。测试基座已经改为读取 `runtimeConfig.modelSelection`（包含 reasoning option），冷恢复同时断言旧字段不存在；Guide fake runtime 也不再构造已删除的共享 `modelRef` 配置。迁移后 UI 两个文件 11 项、Bootstrap 冷恢复与协议行为 33+1 项、Core Guide 1 项通过。
+The Bootstrap special tests continue to find cold recovery assertions and two fake apps still initialized from `runtimeConfig.modelRef`. The test base has been changed to read `runtimeConfig.modelSelection` (containing the reasoning option), and the cold recovery simultaneously asserts the old field does not exist; the Guide fake runtime no longer constructs the deleted shared `modelRef` config. After migration, 11 tests across 2 UI files, 33+1 tests for the Bootstrap cold recovery and protocol behavior, and 1 Core Guide test pass.
 
-## 37. 修复旧 CLI 导入边界的类型真源
+## 37. Fix the Type Truth Source at the Old CLI Import Boundary
 
-Desktop E2E 构建暴露 Bootstrap 一直被掩盖的两项类型错误：普通 `ZCodeConfigFileSchema` 有意把旧 `provider` 留作 passthrough unknown，但一次性导入器先用它解析、再假定该 unknown 已是旧 Provider 类型。专用 `parseLegacyCliModelConfig` 本来已经执行完整旧格式校验，现在直接把已校验的 `provider` 投影返回，导入器只消费这一个真源；普通 Runtime Config 仍不拥有 Provider 字段。
+The Desktop E2E build exposes two type errors long obscured by the Bootstrap: the normal `ZCodeConfigFileSchema` intentionally leaves the old `provider` as passthrough unknown, but the one-time importer first parses it, then assumes this unknown is already the old Provider type. The dedicated `parseLegacyCliModelConfig` already performs the complete old-format validation; now it directly projects and returns the validated `provider`, and the importer only consumes this single truth source; the normal Runtime Config does not own the Provider field.
 
-Adapter 先行测试确认专用投影包含完整 Provider/Model 定义；实现后该测试、Bootstrap 导入器 9 项以及 Adapter/Bootstrap build 全部通过，原来阻断 Desktop E2E 的两项基线错误归零。
+The Adapter preemptive test confirms the dedicated projection includes the complete Provider/Model definition; after implementation, 9 Bootstrap importer tests, the Adapter/Bootstrap build, all pass, and the two baseline errors that previously blocked the Desktop E2E are reduced to zero.
 
-## 38. E2E 设置驱动迁移到原子 Provider 生命周期
+## 38. E2E Settings Migration to Atomic Provider Lifecycle
 
-正式首发用例、设置 UI 用例、两个共享 Provider helper 与四个待评审 reasoning 用例仍在操作已经删除的 `AddProviderCard`：先填写 Renderer 草稿，再点击第二个“添加供应商”按钮。该路径与 M3.6 的原子创建和逐字段自动保存合同冲突，也会让未来恢复 pending case 时得到伪失败。
+The formal first-launch case, settings UI case, two shared Provider helpers, and four pending reasoning cases still operate on the already-deleted `AddProviderCard`: first fill in the Renderer draft, then click the second "add Provider" button. This path conflicts with the atomic creation and per-field auto-save contract of M3.6, and will also produce false failures when recovering pending cases in the future.
 
-E2E 现在共用一条原子设置 helper：点击 `custom:add` 后等待已落盘的普通详情卡，调用身份重命名，再通过 Base URL、API Key 的 blur 和 API Format select 分别自动保存，模型 metadata 弹窗保存后即完成配置，不再寻找第二个提交按钮。名称、Base URL 与 API Format 补充统一 test id，并以 UI 单测先红后绿锁定；过期的复制版 DOM setter/select/save helper 一并删除，净删除约一千行测试代码。设置 UI 的 MP-UI-01 也改为断言原子创建后立即出现普通详情字段且旧 footer 不存在。
+The E2E now shares a single atomic settings helper: after clicking `custom:add`, wait for the published normal detail card, call the identity rename, then automatically save the Base URL, API Key blur, and API Format select respectively; the model metadata popup save immediately completes the configuration, without searching for a second submit button. The names, Base URL, and API Format receive unified test IDs, and are locked by UI unit tests in the red-then-green pattern; the expired duplicate DOM setter/select/save helpers are deleted together, net removing approximately one thousand lines of test code. The Settings UI's MP-UI-01 is also changed to assert the atomic creation immediately shows normal detail fields and the old footer does not exist.
 
-相关 UI 单测 23 项与 Desktop E2E TypeScript 全量检查通过，全仓已无 `model-provider-add-custom-*` 或 `clickAddProviderAction` 引用。本机正式回放先完成 Desktop、CLI、Adapter 与 Bootstrap 构建；宿主最初缺少 `xvfb-run`，随后用临时解包的 Xvfb 与 Electron 动态库启动真实 X Server，Chrome WebDriver session 仍在业务页面装载前退出。按 replay-isolated 规范尝试 Docker 单 spec 验证时，环境又没有 `docker` 命令。两条路径均未进入业务断言，因此不能记录为用例失败或绿色 admission；M3 最终验收保留该项环境待补验证。
+The related UI unit tests (23 tests) and Desktop E2E TypeScript full check pass; the full workspace has no references to `model-provider-add-custom-*` or `clickAddProviderAction`. The local formal playback first completes the Desktop, CLI, Adapter, and Bootstrap builds; the host initially lacks `xvfb-run`, subsequently starts a real X Server using a temporarily unpacked Xvfb and Electron dynamic library, but the Chrome WebDriver session exits before the business page loads. Attempting Docker single-spec verification per the replay-isolated specification, the environment also lacks the `docker` command. Neither path enters business assertions, so they cannot be recorded as case failures or green admissions; the M3 final verification retains this item as an environment awaiting supplementary verification.
 
-## 39. Memory E2E 夹具退出 Lite ModelRef
+## 39. Memory E2E Fixtures Exit the Lite ModelRef
 
-最终旧符号审计发现 Memory runtime E2E 仍用 `modelRef + liteModelRef` 构造 App，并向已经只接受 Registry Config 的 Adapter 传递旧 `modelConfig`。迁移前完整命令在场景启动处以 `createModelAdapter requires registryConfig` 失败；夹具改为通过正式 `createAiSdkModelRegistryConfig` 装配 Adapter，并只向 Runtime 传递结构化 `modelSelection`。
+The final old symbol audit discovers that the Memory runtime E2E still constructs the App with `modelRef + liteModelRef` and passes the old `modelConfig` to the Adapter, which only accepts Registry Config. The complete command fails before migration at the scenario launch with `createModelAdapter requires registryConfig`; the fixture is changed to assemble the Adapter through the formal `createAiSdkModelRegistryConfig`, and only passes the structured `modelSelection` to the Runtime.
 
-首次迁移后运行又暴露既有 trajectory 断言的并发假设：首个 no-op Extraction 如果已经启动，完整轨迹为 6 次；如果下一次用户提交先到达，Scheduler 按既定 `latest pending` 语义合并旧快照，轨迹为 5 次。证据校验现在只接受这两种合法结果，显式 Extraction 的三步工具轨迹、next-session no-op、关闭取消以及文件结果仍各自独立断言。对应证据单测 4 项与 `pnpm --dir apps/zcode-cli test:e2e:memory` 完整构建、运行、产物校验均通过。
+After the first migration run, the existing trajectory assertion's concurrency assumption is exposed: if the first no-op Extraction has already started, the complete trajectory is 6 times; if the next user submission arrives first, the Scheduler merges the old snapshot according to the established `latest pending` semantics, and the trajectory is 5 times. The evidence check now accepts only these two legal results; the explicit Extraction's three-step tool trajectory, next-session no-op, cancel-then-close, and file results are still independently asserted. The corresponding evidence tests (4 tests) and the full `pnpm --dir apps/zcode-cli test:e2e:memory` build, run, and artifact verification all pass.
 
-## 40. 当前基线最终验收状态
+## 40. Current Baseline Final Verification Status
 
-M3.1 至 M3.9 的当前基线实现已经收口。生产源码旧符号审计确认 `defaultModelRef`、`liteModelRef`、`liteModelProviderOptions`、`ModelRole`、`ModelRefSource` 与独立 Connectivity Probe 均已退出；`runtimeModelSelectionFromRef` 只剩 M4 明确保留的 `turnExecutionModel` execution-scoped overlay。根 `pnpm typecheck` 通过，`pnpm lint` 为 0 error、38 个与本阶段无关的既有 warning，改动文件定向格式检查通过。
+The current baseline implementation of M3.1 through M3.9 has been consolidated. The production source code's old symbol audit confirms that `defaultModelRef`, `liteModelRef`, `liteModelProviderOptions`, `ModelRole`, `ModelRefSource`, and the independent Connectivity Probe have all exited; `runtimeModelSelectionFromRef` only remains the explicitly retained `turnExecutionModel` execution-scoped overlay of M4. The root `pnpm typecheck` passes; `pnpm lint` is 0 error, 38 pre-existing warnings unrelated to this phase, and the changed files' targeted format check passes.
 
-全量 affected 单测曾降级为全仓运行，M3 直接相关的旧夹具失败已全部修复；剩余失败集中在 CUA/平台依赖、缺失 Browser Use seed、打包公证和既有 fake-timer rejection。全仓 `fmt:check` 仍被仓库内 Electron 文档的既有非法 HTML 与 GB2312 fixture 阻断。正式 Desktop 原子设置首发 E2E 因当前环境缺少 Docker、宿主 WebDriver session 又在页面加载前退出而未获得 admission。远端 staging 拓扑继续按用户要求留待裁决。因此这里记录“当前基线实现完成”，不把整个 M3 阶段或上线门禁误记为完成。
+The full affected unit tests once degraded to a full workspace run; the old fixtures directly related to M3 have all been fixed; the remaining failures concentrate on CUA/platform dependencies, missing Browser Use seeds, packaging attestations, and existing fake-timer rejections. The full workspace `fmt:check` is still blocked by the existing illegal HTML and GB2312 fixtures in the repository's Electron documentation. The formal Desktop atomic settings first-launch E2E does not gain admission due to the current environment's lack of Docker and the host's WebDriver session exiting before the page loads. The remote staging topology continues to be left for decision as per the user's request. Therefore, this records "the current baseline implementation is completed," without mistakenly recording the entire M3 phase or the release gate as complete.

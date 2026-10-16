@@ -1,69 +1,69 @@
-# Todo 147：Builtin Config 简化与默认基线调整
+# Todo147: Simplify Built-in Config and Adjust Default Baselines
 
-> 状态：持续收集反馈；以下方向已确认，尚未实施。
-> 日期：2026-09-15。
-> 用户要求先建立 Todo，后续反馈继续追加在本文；本轮只记录，不修改运行配置或发布 revision。
+> Status: Collecting feedback. The directions below are confirmed but not yet implemented.
+> Date: 2026-09-15.
+> The user asked to create a Todo first and append further feedback here. This round records notes only; do not modify runtime config or publish a revision.
 
-## 目标
+## Goal
 
-保持既有 Provider / Model 分层与顺序 overlay，让 Builtin Config 更易维护。采用用户确认的封闭模型集合假设与主流默认基线，删除不再需要的特殊规则。
+Keep the existing Provider/Model hierarchy and ordered overlay while making Built-in Config easier to maintain. Adopt the user-approved assumption of a closed model set and mainstream default baseline; remove special rules that are no longer needed.
 
-关联：[当前设计](../design-v2/design.md)、[Todo76 分层与匹配](./todo-76-builtin-provider-config-layering-and-site-rules.md)、[Todo138 通用推理兜底](./todo-138-reasoning-level-ui-and-api-defaults.md)。
+Related: [current design](../design-v2/design.md), [Todo76: layering and matching](./todo-76-builtin-provider-config-layering-and-site-rules.md), [Todo138: general reasoning fallback](./todo-138-reasoning-level-ui-and-api-defaults.md).
 
-## 已确认反馈
+## Confirmed Feedback
 
-### F01：模型匹配使用简单的前后缀通配
+### F01: Use Simple Prefix/Suffix Wildcards for Model Matching
 
-- Model / Model + API 规则按有限、封闭的维护模型集合考虑，不为无限未知型号添加复杂边界正则。
-- 同类型的模型规则可简化为 `.*deepseek-flash.*`，不要求额外的后缀分隔符分组。
-- 通用模型规则在前，更具体、后缀更长的变体规则在后；依靠既有逐字段 overlay 覆盖差异。
-- 顺序由配置维护者显式书写，解析器仍按数组顺序执行；不新增按长度排序或“最相似模型”算法。
-- 字面量中的正则特殊字符仍须正确转义，例如模型版本中的小数点；不把简化理解成取消所有转义。
-- 该原则只作用于 Model / Model + API 匹配；不放宽 Site URL，不改变 Template / Provider + Model 的精确身份匹配。
+- Consider Model and Model + API rules against a finite, closed set of maintained models; do not add complex boundary regexes for infinitely many unknown model names.
+- Rules for the same type of model may be simplified to `.*deepseek-flash.*`; extra suffix-delimiter groups are not required.
+- Put generic model rules first and more specific rules, with longer suffixes, later; existing per-field overlays apply differences.
+- Config maintainers explicitly write the order and the parser continues to process array order. Do not add sorting by length or a “most similar model” algorithm.
+- Continue escaping regex metacharacters in literals correctly, such as decimal points in model versions; simplification does not mean removing all escaping.
+- This principle applies only to Model / Model + API matching. Do not loosen Site URL matching or change exact identity matching for Template / Provider + Model.
 
 ```text
-通用模型规则 → 更具体的型号规则 → 更具体的变体规则
-                  后层只覆盖明确声明的字段
+Generic model rule → more specific model rule → more specific variant rule
+                       Later rules override only explicitly declared fields.
 ```
 
-### F02：删除用户指出的两条 Model 规则
+### F02: Delete the Two Model Rules Identified by the User
 
-位置：`config/provider/zcode-builtin.json` 的 `config.modelConfigRules.modelRules`。
+Location: `config/provider/zcode-builtin.json`, `config.modelConfigRules.modelRules`.
 
-1. 删除匹配 `.*\\[1m\\]`、仅设置 `properties.contextWindow = 1000000` 的规则。
-2. 删除匹配 `.*(?:ox-alpha|glm-x-preview-f|x-preview-f-free).*`、仅设置 `optionSpecs.maxOutputTokens.max = 128000` 的规则。
+1. Delete the rule matching `.*\\[1m\\]` that only sets `properties.contextWindow = 1000000`.
+2. Delete the rule matching `.*(?:ox-alpha|glm-x-preview-f|x-preview-f-free).*` that only sets `optionSpecs.maxOutputTokens.max = 128000`.
 
-删除范围是上述两条完整的 Model 规则。相同别名在 Model + API 层还有推理档位和请求映射，本反馈不要求将那些规则一并删除，也不删除模板成员或用户已保存的模型 ID。
+Delete exactly these two complete Model rules. Aliases with the same names also have reasoning levels and request mappings at the Model + API level; this feedback does not ask to remove those rules, template membership, or user-saved model IDs.
 
-### F03：提高通用默认 context / output 基线
+### F03: Raise the Generic Default Context/Output Baseline
 
-修改第一条 `modelMatch: ".*"` 的通用 Model 规则：
+Change the first generic Model rule, `modelMatch: ".*"`:
 
-| 配置字段 | 当前值 | 已确认目标值 |
-| --- | --- | --- |
-| `properties.contextWindow` | `200000` | `1000000` |
-| `optionSpecs.maxOutputTokens.max` | `32000` | `128000` |
+| Config field                      | Current value | Approved target |
+| --------------------------------- | ------------- | --------------- |
+| `properties.contextWindow`        | `200000`      | `1000000`       |
+| `optionSpecs.maxOutputTokens.max` | `32000`       | `128000`        |
 
-- 依据用户本次裁决，以这两个值作为主流默认基线。
-- 此处 output 指 Model Config 的最大输出上限；不新增“每次请求默认输出 128000”的策略，不增加另一套请求默认值。
-- 后续专用模型、协议、站点及个人规则仍按原顺序覆盖；不把所有模型明确声明的上限强制改成相同数字。
-- 通用推理档位、媒体能力等未提及字段保持现有语义。
+- Use these values as the mainstream default baseline per the user's decision.
+- Here, output means the maximum-output limit in Model Config. Do not add a policy that defaults each request to 128000 output Tokens; do not add another request-default layer.
+- Later specific model, protocol, site, and personal rules continue to override in their existing order. Do not force every explicitly declared model limit to the same value.
+- Keep existing semantics for generic reasoning levels, media capabilities, and fields not mentioned here.
 
-## 实施清单（待执行）
+## Implementation Checklist (Pending)
 
-- [ ] 持续追加用户反馈，明确本次实际执行范围；未确认的 review 建议不自动加入实现。
-- [ ] 实施前同步现行设计中相应的匹配原则与默认基线描述。
-- [ ] 先补回归：通用基线为 1000000 / 128000、上述两条规则不存在、具体型号仍能覆盖通用基线。
-- [ ] 用有差异的基础型号与变体验证书写顺序和逐字段继承；不得仅断言正则字符串变短。
-- [ ] 修改配置并复查所有受影响的规则顺序、有效能力与选项映射；保留已有 Personal 覆盖和精确模型身份。
-- [ ] 更新依赖旧 200000 / 32000 通用基线的测试；区分未知模型兜底与具体型号的显式数值。
-- [ ] 执行相关配置解析、请求映射测试和仓库要求的检查；按实际 UI 影响补充交互验证。
-- [ ] 发布时按届时最新版本递增 builtin revision，沿用现有发布链路；不在反馈阶段提前改 revision。
+- [ ] Continue appending user feedback and clarify the actual implementation scope. Review suggestions that have not been approved do not automatically become implementation requirements.
+- [ ] Before implementation, update the matching principles and default-baseline description in the current design.
+- [ ] Add regression coverage first: generic baseline is 1000000 / 128000, the two rules above are absent, and specific model rules can still override the generic baseline.
+- [ ] Use differing base models and variants to verify order and per-field inheritance; do not merely assert that regex strings got shorter.
+- [ ] Change the config and review all affected rule ordering, effective capabilities, and option mappings; preserve existing Personal overlays and exact model identity.
+- [ ] Update tests that depend on the old generic 200000 / 32000 baseline, distinguishing unknown-model fallback from explicit values for specific models.
+- [ ] Run relevant config parsing and request-mapping tests and required repository checks; add interaction verification if there is actual UI impact.
+- [ ] At release time, increment the built-in revision from the then-current version and use the existing release path. Do not change the revision while only collecting feedback.
 
-## 反馈边界
+## Feedback Boundaries
 
-本 Todo 不自动承接此前 review 中全部建议。维护名单补齐、推理关闭命名、选择最高档策略及其他话题，须根据用户后续反馈分别记录；不把尚在讨论的意见当作实施裁决。
+This Todo does not automatically include every suggestion from prior reviews. Completing the maintained model list, naming for disabled reasoning, highest-level selection policy, and other topics must be recorded separately based on later user feedback; do not treat discussion points as implementation decisions.
 
-## 记录
+## Record
 
-- 2026-09-15：建立反馈 Todo；记录 F01 宽松匹配、F02 删除两条特殊 Model 规则、F03 调整通用基线。仅文档变更，配置仍保持原值。
+- 2026-09-15: Created the feedback Todo; recorded F01 simpler matching, F02 removal of two special Model rules, and F03 generic baseline adjustment. Documentation only; configuration remains at its original values.

@@ -1,42 +1,42 @@
-# 阶段 A：最新 staging 集成计划
+# Stage A: Latest Staging Integration Plan
 
-> 状态：已完成
+> Status: Completed
 >
-> 最近更新：2026-08-25
+> Last updated: 2026-08-25
 >
-> 输入：Provider Refactor `4e8064f8d5`、`origin/staging` `8a7eca86aa`
+> Input: Provider Refactor `4e8064f8d5`, `origin/staging` `8a7eca86aa`
 
-## 1. 目标
+## 1. Objective
 
-把最新 staging 合入 Provider Refactor，形成后续自动化门禁、真实制品验证和最终收尾共同使用的唯一集成基线。
+Integrate the latest staging into Provider Refactor, forming the single integration baseline used by subsequent automated gates, real artifact verification, and final wrap-up.
 
-本阶段只做 staging 语义集成及其直接回归修复，不扩展 Provider 目标设计，不提前实施阶段 B 的 CI 门禁建设，也不进入真实账号和正式制品验证。
+This stage performs only staging semantic integration and its direct regression fixes. It does not expand Provider target design, does not advance to Stage B CI gate construction, and does not enter real account or production artifact verification.
 
-## 2. 集成前事实
+## 2. Pre-Integration Facts
 
-- 当前 Provider Refactor 相对最新 staging 独有 172 个提交，staging 独有 88 个提交。
-- 当前工作区位于 detached HEAD；本地 `provider-refactor-m2` 被另一个 worktree 占用。本阶段不移动或覆盖另一个 worktree 的分支引用。
-- 集成前虚拟合并已知存在两个文本冲突：
+- The current Provider Refactor has 172 unique commits relative to the latest staging, and staging has 88 unique commits.
+- The current workspace is at a detached HEAD; the local `provider-refactor-m2` branch is occupied by another worktree. This stage does not move or overwrite the other worktree's branch references.
+- Virtual merge before integration is known to have two text conflicts:
   - `packages/services/src/zcode-agent/zcodeAgentService.ts`
   - `packages/ui/src/v4/SessionPane.tsx`
-- 其余同时修改的协议、鉴权、Session、Trajectory、Telemetry 和 UI 文件即使自动合并，也需要语义复核。
+- Other simultaneously modified protocol, auth, Session, Trajectory, Telemetry, and UI files need semantic review even if they merge automatically.
 
-## 3. 不变量
+## 3. Invariants
 
-合并后必须继续满足：
+After merging, the following must continue to hold:
 
-1. Host 到 Worker 只同步 Account Provider Config，不恢复完整 Local Provider Registry 同步。
-2. Provider/Model 静态事实只来自 ZCode Built-in Config、Account Provider Config、Personal Provider Config、Built-in Model Config Rules 和 Personal Model Config Rules。
-3. Core 只通过 ModelFactory/Model 执行模型，不恢复 Model Connection Port、ModelRef、AI SDK 执行 Registry 或 Runtime capability map。
-4. 不按具体 modelId 或 Provider 类型在生产代码中推断 reasoning、输入输出格式或其他模型静态能力。
-5. staging 的产品行为、协议演进和 telemetry 应保留，但不得以恢复已退役 Provider 依赖为代价。
-6. Desktop continuous 与 Web Remote replayable 的既有消息边界不因本次合并改变。
+1. Host to Worker syncs only Account Provider Config, not the full Local Provider Registry sync.
+2. Provider/Model static facts come only from ZCode Built-in Config, Account Provider Config, Personal Provider Config, Built-in Model Config Rules, and Personal Model Config Rules.
+3. Core executes models only through ModelFactory/Model, not by restoring Model Connection Port, ModelRef, AI SDK execution Registry, or Runtime capability map.
+4. Production code must not infer reasoning, input/output format, or other model static capabilities based on specific modelId or Provider type.
+5. Staging's product behavior, protocol evolution, and telemetry should be preserved, but not at the cost of restoring retired Provider dependencies.
+6. The existing message boundaries between Desktop continuous and Web Remote replayable do not change due to this merge.
 
-## 4. 已知冲突处理
+## 4. Known Conflict Resolution
 
 ### 4.1 `zcodeAgentService.ts`
 
-正确结果是组合双方有效语义：
+The correct result combines both parties' effective semantics:
 
 ```text
 staging cold-open timing / telemetry
@@ -48,31 +48,31 @@ conversation subscribe
 ensureAccountProviderConfigSynced
                  |
                  v
-Worker 使用自己的 Built-in + Personal 与同步得到的 Account Config
+Worker uses its own Built-in + Personal along with synced Account Config
 ```
 
-- 保留 staging 新增的 cold-open timing 和 telemetry。
-- 保留 Provider Refactor 的 `ensureAccountProviderConfigSynced`。
-- 不恢复 staging 旧基线中的 `ensureLocalProviderRegistrySynced`。
+- Preserve staging's new cold-open timing and telemetry.
+- Preserve Provider Refactor's `ensureAccountProviderConfigSynced`.
+- Do not restore staging's old-baseline `ensureLocalProviderRegistrySynced`.
 
 ### 4.2 `SessionPane.tsx`
 
-- 接入 staging 新增的 Platform/open telemetry 行为。
-- 保留 Provider Refactor 已删除 `modelProviderService` 的结果。
-- UI 不重新取得 Provider Registry 或 Model 运行时事实所有权。
+- Integrate staging's new Platform/open telemetry behavior.
+- Preserve the result of Provider Refactor's deletion of `modelProviderService`.
+- The UI does not re-acquire Provider Registry or Model runtime fact ownership.
 
-## 5. 自动合并文件复核
+## 5. Automated Merge File Review
 
-对双方同时修改但没有文本冲突的文件，按领域复核：
+For files simultaneously modified by both sides without text conflicts, review by domain:
 
-- Protocol：严格 schema、字段方向和本地/远程调用方是否一致。
-- Auth：Account Access 与请求期凭据注入是否保持单链。
-- Transcript/Session：cold resume、hydration 和历史恢复是否保持既有时序。
-- Trajectory/Usage：继续按实际执行 Model 归因，不回读可变 Session 默认选择。
-- UI：staging 新交互不恢复旧 Provider Service、旧 DTO 或第二份模型状态。
-- Feature Graph：不得重新登记已经删除的模型抽象为当前生产事实。
+- Protocol: Strict schema, field direction, and whether local/remote callers are consistent.
+- Auth: Account Access and request-period credential injection maintain a single chain.
+- Transcript/Session: cold resume, hydration, and history recovery maintain the existing sequence.
+- Trajectory/Usage: Continue to attribute Model execution based on actual execution, without reading back variable Session default selection.
+- UI: Staging's new interactions do not restore old Provider Service, old DTO, or a second model state.
+- Feature Graph: Do not re-register already-deleted model abstractions as current production facts.
 
-## 6. 执行与验证顺序
+## 6. Execution and Verification Order
 
 ```text
 fetch latest staging
@@ -81,86 +81,86 @@ fetch latest staging
 merge --no-ff origin/staging
         |
         v
-解决文本冲突 + 复核自动合并文件
+Resolve text conflicts + review auto-merged files
         |
         v
-先运行冲突相关定向测试
+Run conflict-related targeted tests first
         |
         v
-旧符号 / hardcode / Config 双轨扫描
+Old symbols / hardcoded / Config dual-track scan
         |
         v
 typecheck + lint + affected tests
         |
         v
-记录结果并完成 merge commit
+Record results and complete merge commit
 ```
 
-若合并引入真实行为回归，先增加能够复现问题的测试，再修改生产代码。
+If the merge introduces real behavior regressions, add a test that reproduces the issue first, then modify production code.
 
-## 7. 需要暂停讨论的条件
+## 7. Conditions for Pausing Discussion
 
-出现以下任一情况时暂停实施并请求裁决：
+Pause implementation and request arbitration if any of the following occur:
 
-- staging 新行为要求恢复完整 Provider Registry 跨进程同步。
-- staging 引入新的模型静态事实源、远端模型配置或具体模型 hardcode。
-- 合并要求改变 Account、Personal、Built-in 的 Overlay 顺序或职责。
-- staging 的协议变更与现有 Active Model、请求期 Access 或模型选择身份契约无法同时成立。
-- 修复需要扩大到 Remote Provisioning、普通 Queue 或模型选择生命周期。
+- Staging's new behavior requires restoring full Provider Registry cross-process synchronization.
+- Staging introduces new model static fact sources, remote model configuration, or specific model hardcoding.
+- The merge requires changing the Overlay order or responsibilities of Account, Personal, and Built-in.
+- Staging's protocol changes cannot coexist with existing Active Model, request-period Access, or model selection identity contracts.
+- Fixing requires expanding to Remote Provisioning, normal Queues, or model selection lifecycle.
 
-普通代码冲突、测试适配和不改变既有设计的兼容修复不构成人工裁决点。
+Ordinary code conflicts, test adaptation, and compatible fixes that do not change the existing design do not constitute manual arbitration points.
 
-## 8. 完成标准
+## 8. Completion Criteria
 
-- 最新 staging 已形成明确 merge commit。
-- 两个已知冲突按本计划组合语义解决。
-- 自动合并重叠文件完成语义复核。
-- 旧 Provider/Model 抽象、能力投影和具体模型 hardcode 保持归零。
-- 冲突相关测试、typecheck、lint 和受影响测试通过。
-- 阶段执行结果、仍属阶段 B/C/D 的事项和任何既有 baseline 失败已记录。
+- The latest staging has formed a clear merge commit.
+- Both known conflicts are resolved by combining semantics per this plan.
+- Auto-merged overlapping files have completed semantic review.
+- Old Provider/Model abstractions, capability projections, and specific model hardcoding remain at zero.
+- Conflict-related tests, typecheck, lint, and affected tests pass.
+- Stage execution results, items still belonging to Stage B/C/D, and any existing baseline failures have been recorded.
 
-## 9. 实施结果
+## 9. Implementation Results
 
-2026-08-25 已把 `origin/staging` `8a7eca86aa` 合入 Provider Refactor。实际文本冲突与预审一致，只有：
+On 2026-08-25, `origin/staging` `8a7eca86aa` was merged into Provider Refactor. Actual text conflicts matched the pre-review, with only:
 
 - `packages/services/src/zcode-agent/zcodeAgentService.ts`
 - `packages/ui/src/v4/SessionPane.tsx`
 
-`zcodeAgentService` 保留了 staging 的 session open timing，同时把其旧的完整 Provider Registry 同步替换为唯一允许跨 Host/Worker 边界的 Account Provider Config 顺序屏障。`SessionPane` 保留 staging 的 Platform/session-open telemetry，同时没有恢复已退役的 `modelProviderService`。
+`zcodeAgentService` preserves staging's session open timing while replacing its old full Provider Registry sync with the sole allowed cross Host/Worker boundary Account Provider Config ordering barrier. `SessionPane` preserves staging's Platform/session-open telemetry without restoring the retired `modelProviderService`.
 
-自动合并重叠文件已经按 Protocol、Auth、Transcript、Trajectory、UI 和 Feature Graph 分组复核。生产代码扫描没有重新出现：
+Auto-merged overlapping files have been reviewed by Protocol, Auth, Transcript, Trajectory, UI, and Feature Graph groupings. Production code scanning did not reappear:
 
 - `ensureLocalProviderRegistrySynced`
 - `ModelConnectionPort` / `ModelConnectionInfo`
 - `AiSdkModelRegistry`
 - `ZCodeModelRef`
-- `ModelInputMediaCapabilities` 或 Runtime capability map
-- 按具体模型识别 reasoning 强度或静态格式能力的执行策略
+- `ModelInputMediaCapabilities` or Runtime capability map
+- Execution strategies that identify reasoning intensity or static format capabilities by specific models
 
-本次集成验证结果：
+This integration verification results:
 
-- 冲突与 session-open telemetry 定向测试：6 个文件、73 项通过。
-- CLI Adapter/Bootstrap 重叠文件定向测试：3 个文件、224 项通过。
-- 根 `pnpm typecheck` 通过。
-- 根 `pnpm lint` 通过，0 个错误；既有 warning 不作为本次集成新增错误处理。
-- 根 `pnpm test:unit`：1466 个文件通过、1 个跳过；12416 项通过、25 项跳过。
-- `git diff --check` 和本次相关文件的 `oxfmt --check` 通过；同时格式化 staging 新增的 OpenAPI 文件。
+- Conflict and session-open telemetry targeted tests: 6 files, 73 passed.
+- CLI Adapter/Bootstrap overlapping file targeted tests: 3 files, 224 passed.
+- Root `pnpm typecheck` passed.
+- Root `pnpm lint` passed, 0 errors; existing warnings are not handled as new errors for this integration.
+- Root `pnpm test:unit`: 1466 files passed, 1 skipped; 12416 tests passed, 25 skipped.
+- `git diff --check` and `oxfmt --check` on related files passed; formatting of staging's new OpenAPI files simultaneously.
 
-仓库级 `pnpm fmt:check` 仍会被既有 `apps/zcode-cli/tests/gb2312.js` 编码文件和 vendored Electron fiddle HTML 的非法标记阻断。本次新增、冲突解决和直接调整的文件均已单独通过格式检查；全仓 formatter baseline 不在阶段 A 修改第三方 fixture 兜底，继续作为阶段 B 的门禁基线问题记录。
+The repo-level `pnpm fmt:check` is still blocked by existing `apps/zcode-cli/tests/gb2312.js` encoding files and vendored Electron fiddle HTML illegal markup. Files newly added, conflict-resolved, and directly adjusted in this integration have individually passed format checks; the full repository formatter baseline is not modified via third-party fixture fallbacks in Stage A, and continues to be recorded as a gate baseline issue for Stage B.
 
-### 阶段 B 移交问题
+### Stage B Handoff Issues
 
-CLI 子工作区的完整 typecheck 尚不能在当前安装状态下形成有效结果。直接运行 Adapter/Bootstrap `tsc` 会先读取旧的依赖 `dist`；按 Turbo 依赖顺序构建时，`@zcode/contracts` 又从根工作区解析到 Zod v4，而该 CLI 包声明并依赖 Zod v3。由此产生的 Plugin、Workflow、Workspace Hook 和 Tool Display 类型错误不是 Provider 冲突路径的失败，而是 CLI 子工作区 install/lock/门禁未闭环的直接证据。
+The full typecheck of the CLI sub-workspace cannot form valid results under the current install state. Running Adapter/Bootstrap `tsc` directly reads old dependency `dist` first; when building by Turbo dependency order, `@zcode/contracts` resolves to Zod v4 from the root workspace, while this CLI package declares and depends on Zod v3. The resulting Plugin, Workflow, Workspace Hook, and Tool Display type errors are not failures of the Provider conflict path, but direct evidence that the CLI sub-workspace install/lock/gate is not closed.
 
-该问题不在阶段 A 修改业务源码兜底。阶段 B 必须先恢复可复现的 CLI workspace 安装和依赖解析，再把 Core、Adapter、Bootstrap 的 build/typecheck/test 纳入自动阻断门禁。
+This issue is not addressed by modifying business source code in Stage A. Stage B must first restore reproducible CLI workspace install and dependency resolution, then incorporate Core, Adapter, Bootstrap build/typecheck/test into the automated blocking gate.
 
-## 10. 后续 staging 恢复范围裁决（2026-09-06）
+## 10. Subsequent Staging Restoration Scope Arbitration (2026-09-06)
 
-以下为 2026-09-06 当时裁决；不是当前未决清单。后续替代关系见本节末尾。
+These are the arbitrations as of 2026-09-06; not the current outstanding list. Subsequent substitution relationships are at the end of this section.
 
-当时两组 staging 行为明确不恢复：
+Two groups of staging behaviors were explicitly not restored:
 
-1. `SessionPane` 发送前再次同步远程 Provider Registry。当前同步已在远程环境建立、Provider 保存、账号/凭据变化时触发；保存完成后立即发送时存在短暂延迟属于可接受行为，不新增发送前同步屏障。
-2. 账号连接变化后自动修正已有 Session 的 Provider/Model。未来可能同时保留多个连接状态，连接变化不等于已有会话模型失效；不恢复 Account-first、首模型兜底或自动切换逻辑。
+1. `SessionPane` synchronizes the remote Provider Registry again before sending. Current sync already triggers at remote environment establishment, Provider save, and account/credential changes; the brief delay when sending immediately after save is acceptable behavior, no new pre-send sync barrier is added.
+2. Automatically correcting existing Session's Provider/Model after account connection changes. Multiple connection states may be retained simultaneously in the future; connection changes do not mean existing session models are invalid; no Account-first, first-model fallback, or automatic switching logic is restored.
 
-后续收口：第一项不恢复发送前屏障的边界继续保留；第二项旧事件驱动批量改写没有恢复，但已有选择的有效解析已由 Todo87/96/99 统一实现，不能据此拒绝新架构中的账号对应。不得恢复 Account-first 或首模型兜底；也不能将历史 `Configured Default` 回退当作当前契约。保存意图与有效结果分离、既定提交边界仍有效，多连接方案仅保留 Todo101 Draft。
+Subsequent wrap-up: The first item's pre-send barrier non-restoration boundary remains preserved; the second item's old event-driven bulk rewrite was not restored, but the valid parsing of existing selections has been uniformly implemented by Todo87/96/99, and cannot be used to reject accounts corresponding to the new architecture. Account-first or first-model fallback must not be restored; nor can historical `Configured Default` rollbacks serve as the current contract. Save intent and effective results are separated, and committed submission boundaries remain valid, with multi-connection solutions retaining only Todo101 Draft.

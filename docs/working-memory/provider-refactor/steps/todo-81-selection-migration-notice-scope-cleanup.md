@@ -1,56 +1,56 @@
-# Todo 81：模型选择迁移提示按场景收口
+# Todo81: Scope Model-selection Migration Notices by Scenario
 
-> 状态：已完成
+> Status: Complete
 >
-> 日期：2026-09-04
+> Date: 2026-09-04
 
-## 背景
+## Background
 
-模型或 Reasoning 选择失效时，不同功能的后续行为不同。当前普通 Composer 不需要把历史选择迁移失败暴露给用户；已经结束的闲时任务也不会再次执行，继续显示“需要修复”只会制造异常感。仍可能执行的闲时任务和定时任务则必须保留提示与保护，避免之后静默使用错误选择。
+Subsequent behavior differs when a Model or Reasoning selection is invalid. The ordinary Composer does not need to expose migration failure for a historical selection. A completed off-peak task will not execute again, so continuing to show “repair required” only creates a sense of failure. Off-peak tasks that may still execute and scheduled tasks must retain notice and protection to avoid silently using an invalid selection later.
 
-## 目标
+## Goal
 
 ```text
-普通 Composer
-  选择失效       -> 留空，不弹迁移提示
+Regular Composer
+  Invalid selection → leave blank; show no migration notice
 
-已结束闲时任务
-  选择失效       -> 不显示 repair-required，保持正常终态
+Completed off-peak task
+  Invalid selection → do not show repair-required; keep normal terminal state
 
-尚未执行/暂停中/仍可能继续的闲时任务
-  选择失效       -> 保留提示，并阻止错误调度
+Unexecuted/paused/possibly resumable off-peak task
+  Invalid selection → retain notice and block invalid scheduling
 
-定时任务
-  选择失效       -> 保留提示，并要求重新选择
+Scheduled task
+  Invalid selection → retain notice and require reselection
 ```
 
-## 实施范围
+## Implementation Scope
 
-- 完成 Todo 81 中 Composer 的实际收口：模型失效时留空，Reasoning 失效时保留模型并清空 Reasoning，不显示迁移失败 Toast、弹窗或横幅。
-- 调整闲时任务的失效状态展示：仅对仍可能执行的任务保留 `modelSelectionIssue` 提示；完成、失败、取消的历史任务不再显示该提示。
-- 保留尚未执行闲时任务的调度保护，不能因为隐藏提示而静默执行无效模型。
-- 保留定时任务现有的失效提示、保存保护和执行保护。
-- 清理仅服务于 Composer 或已结束闲时任务提示的冗余分支和测试；不删除 Wiki、Bot、Subagent、标题、Goal、Git 的正常操作错误反馈。
-- 不修改 Provider/Model 身份迁移规则，不新增另一套选择状态，也不把 Wiki 的显式选择不可用提示改成 Composer 语义。
+- Finish the actual Composer scope for Todo81: when Model selection is invalid, leave it blank; when Reasoning selection is invalid, keep the Model and clear Reasoning; show no migration-failure Toast, dialog, or banner.
+- Adjust invalid-selection display for off-peak tasks: show `modelSelectionIssue` only when the task may still execute. Do not show it on completed, failed, or canceled historical tasks.
+- Preserve scheduling protection for unexecuted off-peak tasks; hiding the notice must not make an invalid Model execute silently.
+- Preserve existing invalid-selection notice, save protection, and execution protection for scheduled tasks.
+- Remove redundant branches/tests used only for Composer or completed-off-peak notices. Do not remove normal action-error feedback for Wiki, Bot, Subagent, title, Goal, or Git.
+- Do not change Provider/Model identity migration rules, add another selection state, or change Wiki's explicit “selection unavailable” message to Composer semantics.
 
-## 验收
+## Acceptance
 
-- Composer 的模型或 Reasoning 选择失效后不会弹迁移修复提示，重新选择有效配置后可以正常发送。
-- 已完成、失败、取消的历史闲时任务按原终态展示，不再显示模型选择修复错误。
-- 尚未执行、暂停中或仍可能继续的闲时任务仍显示失效提示，且不会被调度。
-- 定时任务仍显示失效提示，重新选择有效模型后才能继续保存或执行。
-- 现有 Wiki、Bot、Subagent、标题、Goal、Git 的真实执行错误反馈保持不变。
-- 补充或更新 Composer、闲时任务和定时任务的定向测试，并确认没有通过放宽断言掩盖失效选择。
+- An invalid Model or Reasoning selection in Composer does not show a migration-repair notice; selecting valid config again allows sending normally.
+- Completed, failed, and canceled off-peak history retains its original terminal state and no longer shows a misleading model-selection repair error.
+- Unexecuted, paused, or potentially resumable off-peak tasks retain the invalid-selection notice and are not scheduled.
+- Scheduled tasks retain the notice and require a valid Model selection before saving or execution can continue.
+- Real action-error feedback for Wiki, Bot, Subagent, title, Goal, and Git remains unchanged.
+- Add/update focused tests for Composer, off-peak, and scheduled tasks; ensure invalid selection is not hidden by weakening assertions.
 
-## 与现有 Todo 的关系
+## Relationship to Existing Todos
 
-- 本 Todo 已合并此前 Composer 草案的范围，不再保留单独的 Composer 待执行项。
-- Todo 70 负责 Session 的旧数据读取、选择失效后的留空恢复，以及不能阻塞历史打开；本 Todo 负责这些结果在 Composer 中不再显示迁移修复提示。
-- Todo 72 负责旧 Provider/Model 身份迁移及任务选择的安全边界；本 Todo 负责闲时任务终态与可执行状态的提示差异，不改变迁移规则。
+- This Todo absorbs the earlier Composer-draft scope; do not keep a separate pending Composer item.
+- Todo70 owns reading old Session data, restoring an empty selection when invalid, and not blocking historical opens. This Todo ensures those results do not show a migration-repair notice in Composer.
+- Todo72 owns migration of old Provider/Model identities and task-selection safety boundaries. This Todo distinguishes notices for terminal versus executable off-peak tasks without changing migration rules.
 
-## 实施记录（2026-09-04）
+## Implementation Record (2026-09-04)
 
-- 新增 `shouldShowOffPeakModelSelectionIssue`，只有 queued、paused、running 这三类仍可能执行的任务显示“模型配置需要更新”。
-- completed、failed、cancelled 等终态任务继续保留原始记录和终态文案，但不再显示会误导用户的 repair-required 提示。
-- 列表卡片和编辑页共用同一判断，未改变调度层对无效 Selection 的阻止逻辑。
-- 定向测试通过：3 个文件、39 tests passed；随后通过 `pnpm typecheck` 与 `pnpm lint`（0 error）。
+- Added `shouldShowOffPeakModelSelectionIssue`; only queued, paused, and running tasks that may still execute show “Model configuration needs an update.”
+- Completed, failed, canceled, and other terminal tasks keep their original records and terminal copy but no longer show a misleading repair-required notice.
+- List cards and edit page use the same judgment. Scheduler behavior that blocks invalid Selection is unchanged.
+- Focused verification passed: 3 files, 39 tests; then `pnpm typecheck` and `pnpm lint` passed (0 errors).

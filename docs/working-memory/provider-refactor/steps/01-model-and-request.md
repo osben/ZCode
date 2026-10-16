@@ -1,23 +1,23 @@
-# M1：Model 与 ModelRequest 实施
+# M1: Model and ModelRequest Implementation
 
-> 状态：已完成并合入 staging
+> Status: Completed and merged into staging
 >
-> 完成日期：2026-08-12
+> Completion date: 2026-08-12
 >
-> MR：!2006
+> MR: !2006
 
-目标设计见 [`../design/model/model.md`](../design/model/model.md)。本篇只记录 M1 的实施范围、实际结果和遗留问题。
+Target design is in [`../design/model/model.md`](../design/model/model.md). This document only records M1's implementation scope, actual results, and remaining issues.
 
-## 实施目标
+## Implementation Goals
 
-M1 统一“模型如何被调用”。此前主 Agent、Compact、Repo Wiki 和其他辅助任务分别读取 Runtime model ref、capability、provider options、API Key 或 Adapter Registry，模型身份、请求参数和 Usage 归因可能来自不同状态。
+M1 unifies "how models are invoked." Previously, main Agent, Compact, Repo Wiki, and other auxiliary tasks independently read Runtime model ref, capability, provider options, API Key, or Adapter Registry, and model identity, request parameters, and Usage attribution could come from different states.
 
-阶段目标是让所有生产模型请求经过同一个公共边界：
+The phase goal is to route all production model requests through a single public boundary:
 
 ```text
-现有 Config / Registry / Runtime / Plan 输入
+Existing Config / Registry / Runtime / Plan inputs
                     |
-                    | 唯一兼容装配入口
+                    | Unique compatible assembly entry
                     v
                   Model
                     |
@@ -25,71 +25,71 @@ M1 统一“模型如何被调用”。此前主 Agent、Compact、Repo Wiki 和
               ModelRequest
                     |
                     v
-            现有 Provider Adapter
+            Existing Provider Adapter
 ```
 
-M1 不重构最终 Provider Registry。旧输入允许在唯一兼容入口中继续存在；Model 后面的业务调用方不得理解旧 Runtime 和 Registry。
+M1 does not refactor the final Provider Registry. Old inputs are allowed to continue existing within the single compatible entry; business callers after the Model must not understand old Runtime and Registry.
 
-## 计划切片
+## Planned Slices
 
 ```text
-M1.1  公共类型、Model Adapter Wrapper 与单元测试
-M1.2  主 Agent Loop、Automatic Compact、Usage 与 Trace
-M1.3  Child Agent、Title、Goal verifier 与 Project Memory
-M1.4  Git、workspace/generateText、WebFetch / WebSearch
+M1.1  Public types, Model Adapter Wrapper, and unit tests
+M1.2  Main Agent Loop, Automatic Compact, Usage, and Trace
+M1.3  Child Agent, Title, Goal verifier, and Project Memory
+M1.4  Git, workspace/generateText, WebFetch / WebSearch
 M1.5  Repo Wiki
-M1.6  删除调用方的旧 ModelPort、Runtime 与 Registry 读取
+M1.6  Delete callers' old ModelPort, Runtime, and Registry reads
 ```
 
-阶段完成判据按整个 M1 计算。实现可以分批提交，但不能因为部分调用方已经迁移而长期保留平行模型客户端。
+Phase completion criteria are calculated for the entire M1. Implementation can be submitted in batches, but parallel model clients cannot be retained long simply because some callers have already migrated.
 
-## 实际结果
+## Actual Results
 
-M1 已将所有已知生产模型调用收敛到 `Model.generateText()` 或 `Model.streamText()`，包括 Repo Wiki 原有的独立 Provider 请求链。
+M1 has converged all known production model calls to `Model.generateText()` or `Model.streamText()`, including Repo Wiki's original independent Provider request chain.
 
-Agent Loop 在开始时取得 Model，并在连续执行期间保持引用。普通 Step、Automatic Compact 和 Child Agent 不再通过可变 Runtime 决定后续请求的模型身份。Usage、Trace 和消息归因使用实际 Model。
+The Agent Loop obtains a Model at start time and maintains the reference during continuous execution. Ordinary Steps, Automatic Compact, and Child Agents no longer decide subsequent request model identity through mutable Runtime. Usage, Trace, and message attribution use the actual Model.
 
-公开 ModelRequest 不再携带 model、Provider connection 或任意 provider options。Properties、Option Specs 和 Options 在统一入口处理；Provider-specific reasoning 转换仍由现有 Adapter 路径承担。
+The public ModelRequest no longer carries model, Provider connection, or arbitrary provider options. Properties, Option Specs, and Options are handled at the unified entry; Provider-specific reasoning conversion is still handled by the existing Adapter path.
 
-M1 按当时输入结构保留 `ModelDescriptor`。新的 Registry 设计会用 ProviderConfig 与 ModelConfig 提供静态查看数据，不改变已经完成的 Model 调用边界。
+M1 retained `ModelDescriptor` per the then-input structure. The new Registry design will use ProviderConfig and ModelConfig to provide static viewing data, without changing the already-completed Model invocation boundary.
 
-完整实施事实和自主决策见 [`01-model-and-request-implementation-log.md`](./01-model-and-request-implementation-log.md)。
+Complete implementation facts and independent decisions are in [`01-model-and-request-implementation-log.md`](./01-model-and-request-implementation-log.md).
 
-## 实施中扩展的范围
+## Scope Expanded During Implementation
 
-Repo Wiki 迁移时确认其截断恢复属于 Wiki 业务策略，应继续保留在统一 Model 之上。旧 app-server 的最小 Model Adapter 注入也保留了明确兼容边界。
+Repo Wiki migration confirmed that its truncation recovery is a Wiki business strategy and should continue atop the unified Model. The minimal Model Adapter injection for old app-server also retained a clear compatible boundary.
 
-输出预算的责任在实施中进一步明确：Model 严格校验调用方输入；Compact、Memory 等任务如果需要较小预算，由任务自己计算，不在 Model 内静默 clamp。
+Output budget responsibility was further clarified during implementation: the Model strictly validates caller inputs; if Compact, Memory, and other tasks need smaller budgets, the tasks compute them themselves, without silent clamping within the Model.
 
-这些决策没有改变 M1 目标，但超出了最初类型定义的细节，均记录在 implementation log。
+These decisions did not change M1's goal but went beyond the initial type definition details, all recorded in the implementation log.
 
-## 合入后复核
+## Post-Merge Review
 
-复核未发现 P0，确认 Model 与 ModelRequest 主边界已经成立，同时发现以下收口项：
+No P0s were found in the review. The Model and ModelRequest main boundary is confirmed to have been established, along with the following closure items:
 
-- Workflow Child 尚未使用正式 Model Factory。
-- 部分 Property 的未知状态可能被硬化为“不支持”。
-- Guide 的模型切换行为在复核时尚未裁决，随后已经确定为在当前 Loop 内从下一 Model Step 生效。
-- 动态 Header 刷新仍会重新取得完整 Provider 对象。
-- 兼容入口仍然比最终目标更容易被新代码使用。
+- Workflow Child not yet using formal Model Factory.
+- Unknown states of some Properties may be hardened to "not supported."
+- Guide's model switching behavior was undecided at review time; subsequently determined to take effect from the next Model Step within the current Loop.
+- Dynamic header refresh still reacquires the full Provider object.
+- Compatible entry points are still easier for new code to enter than the final goal.
 
-详细证据和优先级见 [`01-model-and-request-review.md`](./01-model-and-request-review.md)。其中与 Model 来源有关的问题由 M2 的 Registry 和 ModelFactory 设计继续收敛。
+Detailed evidence and priorities are in [`01-model-and-request-review.md`](./01-model-and-request-review.md). Issues related to Model source are further converged by M2's Registry and ModelFactory design.
 
-Guide/“立即”的目标时序见 [`../design/interaction/interaction.md`](../design/interaction/interaction.md)；Review 中的“未裁决”保留为当时的历史事实。
+Guide/"immediate" target timing is in [`../design/interaction/interaction.md`](../design/interaction/interaction.md); the "undecided" in the Review is preserved as a historical fact from that time.
 
-## 完成判断
+## Completion Judgment
 
-M1 已完成。它交付的稳定边界是：
+M1 is complete. Its stable boundary is:
 
 ```text
-业务模型调用
+Business model calls
 └─ Model.generateText() / streamText()
 
-单次调用输入
+Single-call input
 └─ ModelRequest
 
-连续执行模型身份
-└─ Agent Loop 持有的不可变 Model
+Continuous execution model identity
+└─ Immutable Model held by Agent Loop
 ```
 
-M2 替换 Model 的创建来源，不回退这条公共调用链。
+M2 replaces the Model creation source; it does not roll back this public invocation chain.

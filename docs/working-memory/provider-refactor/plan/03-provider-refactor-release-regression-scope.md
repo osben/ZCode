@@ -1,177 +1,177 @@
-# 模型供应商重构上线回归范围
+# Model Provider Refactor Release Regression Scope
 
-> 状态：待执行
+> Status: Pending Execution
 >
-> 基线日期：2026-09-03
+> Baseline Date: 2026-09-03
 
-本文列出模型供应商重构上线前需要回归的主要功能。每节对应一项用户功能，最终回归应在最新 staging 合入后执行。
+This document lists the main functions that need regression testing before the model provider refactor goes live. Each section corresponds to one user function. The final regression should be executed after the latest staging is merged in.
 
-## 1. 模型设置页面
+## 1. Model Settings Page
 
-- 检查页面进入、刷新、滚动和不同窗口尺寸下的显示。
-- 检查供应商和模型较多时，左右列表能否独立滚动并显示完整。
-- 检查供应商与模型的改名和排序，以及模型的开关和删除。
-- 检查输入框自动保存、保存反馈和连续编辑。
-- 检查模型配置编辑和恢复默认，包括上下文、最大输出、输入类型、模型能力和推理档位。
-- 检查浅色与深色主题、中英文界面和中文输入法。
+- Check page entry, refresh, scrolling, and display under different window sizes.
+- Check whether the left and right lists can scroll independently and display fully when there are many providers and models.
+- Check renaming and sorting of providers and models, as well as model toggles and deletion.
+- Check input box auto-save, save feedback, and continuous editing.
+- Check model configuration editing and reset to defaults, including context, max output, input types, model capabilities, and reasoning tiers.
+- Check light and dark themes, Chinese and English interfaces, and Chinese input methods.
 
-## 2. 添加和配置模型供应商
+## 2. Adding and Configuring Model Providers
 
-- 从“添加供应商”进入模板列表，分别添加内置供应商和纯自定义供应商。
-- 从首次使用页面输入 API Key，配置 Z.AI 或 BigModel 按量 API。
-- 检查新供应商的名称、Logo、接口地址、API 格式和模型列表。
-- 重复添加同一模板，检查名称区分、配置隔离和排序。
-- 填写 API Key、接口地址和模型后，检查保存、连接测试和实际聊天。
-- 检查配置不完整、名称重复、接口错误和删除供应商时的页面反馈。
+- Enter the template list from "Add Provider", then add built-in providers and pure custom providers separately.
+- Enter API Key from the first-use page, configure Z.AI or BigModel pay-per-use APIs.
+- Check the new provider's name, Logo, endpoint URL, API format, and model list.
+- Re-add the same template; check name differentiation, configuration isolation, and sorting.
+- After filling API Key, endpoint URL, and models, check save, connection test, and actual chat.
+- Check page feedback for incomplete configuration, duplicate names, wrong endpoints, and provider deletion.
 
-## 3. 升级后保留模型供应商配置
+## 3. Preserving Model Provider Configuration After Upgrade
 
-- 在旧版本中配置内置供应商和自定义供应商，再升级到新版本，检查原有配置、模型和顺序。
-- 检查升级后的首次启动、应用重启和继续使用模型。
-- 使用缺失或损坏的旧配置启动，检查错误提示及其他供应商的使用。
-- 更新内置模型配置后，检查已有供应商、新增模型和模型默认值。
+- Configure built-in and custom providers in the old version, then upgrade to the new version; check original configuration, models, and order.
+- Check first launch after upgrade, application restart, and continued model usage.
+- Start with missing or corrupted old configuration; check error prompts and usage of other providers.
+- After updating built-in model configuration, check existing providers, new models, and model defaults.
 
-## 4. 智谱账号和套餐模型
+## 4. Zhipu Accounts and Plan Models
 
-- 检查 Z.AI 与 BigModel 的登录、退出、重新登录和应用重启恢复。
-- 分别检查体验套餐、个人套餐和团队套餐的页面、模型、额度和使用状态。
-- 检查体验套餐的领取，以及领取成功、失败和重复领取后的页面刷新。
-- 检查不同套餐和不同团队之间的切换，以及再次选择当前套餐。
-- 检查套餐模型的编辑、排序、开关、连接测试和实际聊天。
-- 检查升级入口、购买后返回应用，以及套餐信息刷新。
-- 检查套餐信息加载失败时的提示和重试。
-- 检查模型请求触发账号验证后的提示和继续使用。
+- Check Z.AI and BigModel login, logout, re-login, and application restart recovery.
+- Check pages, models, quotas, and usage status for experience plans, personal plans, and team plans separately.
+- Check claiming the experience plan, and page refresh after successful, failed, and duplicate claims.
+- Check switching between different plans and different teams, and re-selecting the current plan.
+- Check plan model editing, sorting, toggles, connection tests, and actual chat.
+- Check upgrade entry, returning to the app after purchase, and plan info refresh.
+- Check prompts and retries when plan info fails to load.
+- Check prompts and continued usage after model requests trigger account verification.
 
-## 5. 应用启动和工作区切换
+## 5. Application Startup and Workspace Switching
 
-- 冷启动应用或打开本地工作区后，立即检查模型列表、默认模型、新建任务和首次发送。
-- 检查模型加载失败后的提示、重试和恢复。
-- 检查切换工作区、重启应用和恢复已有任务后的模型使用。
+- After cold-starting the app or opening a local workspace, immediately check the model list, default model, new task, and first send.
+- Check prompts, retries, and recovery after model loading fails.
+- Check model usage after switching workspaces, restarting the app, and restoring existing tasks.
 
-## 6. 普通聊天中的模型选择
+## 6. Model Selection in Normal Chat
 
-- 新建任务并使用默认模型首发，核对界面显示和实际使用的供应商、模型与推理档位。
-- 在任务中切换供应商、模型和推理档位，检查当前消息和后续消息。
-- 检查任务运行中切换模型、追加指令，以及开启“变更前确认”后的操作。
-- 检查连续发送、停止、重发和带附件发送。
-- 检查不同供应商拥有同名模型时的选择、使用和重启恢复。
-- 检查模型关闭或供应商删除后，已有任务的恢复和提示。
+- Create a new task and send with the default model; verify interface display and the actual provider, model, and reasoning tier used.
+- Switch providers, models, and reasoning tiers within a task; check current and subsequent messages.
+- Check switching models during task execution, appending instructions, and operations with "confirm before change" enabled.
+- Check continuous sending, stopping, re-sending, and sending with attachments.
+- Check selection, usage, and restart recovery when different providers have same-name models.
+- Check recovery and prompts for existing tasks after model disable or provider deletion.
 
-## 7. 不同 API 格式与模型能力
+## 7. Different API Formats and Model Capabilities
 
-- 分别使用 Anthropic Messages、OpenAI Chat Completions 和 OpenAI Responses 完成真实请求。
-- 检查不同模型的推理档位，包括不能关闭推理的模型。
-- 检查长上下文、最大输出和超过模型限制时的提示。
-- 检查对话压缩后的继续聊天和重启恢复。
-- 检查图片、视频和 PDF 输入，以及模型不支持相应内容时的提示。
-- 检查工具调用、结构化输出、原生联网和系统消息。
-- 检查鉴权失败、限流、网络中断和取消请求。
+- Complete real requests using Anthropic Messages, OpenAI Chat Completions, and OpenAI Responses separately.
+- Check reasoning tiers for different models, including models whose reasoning cannot be disabled.
+- Check long context, max output, and prompts when exceeding model limits.
+- Check continued chat after conversation compression and restart recovery.
+- Check images, video, and PDF input, and prompts when models do not support corresponding content.
+- Check tool calls, structured output, native web access, and system messages.
+- Check auth failure, rate limiting, network interruption, and request cancellation.
 
-## 8. 使用统计和额度提示
+## 8. Usage Statistics and Quota Prompts
 
-- 检查使用统计页面的总量、明细、筛选和各模型的使用记录。
-- 检查聊天区域和侧边栏中的套餐额度、上下文用量和重置提醒。
-- 切换账号套餐、模型或工作区后，检查统计和额度信息的更新。
+- Check total amounts, details, filters, and usage records for each model on the usage statistics page.
+- Check plan quotas, context usage, and reset reminders in the chat area and sidebar.
+- Check updates to statistics and quota information after switching account plans, models, or workspaces.
 
-## 9. 记忆功能
+## 9. Memory Features
 
-- 检查记忆读取、提取和整理时使用的模型。
-- 检查应用重启后，记忆功能能否继续使用。
-- 检查切换聊天模型或同时运行多个任务时的记忆功能。
-- 检查记忆使用的模型请求失败时，页面提示和普通聊天是否正常。
+- Check the models used for memory reading, extraction, and organization.
+- Check whether memory features continue to work after application restart.
+- Check memory features when switching chat models or running multiple tasks simultaneously.
+- Check page prompts and whether normal chat functions normally when memory model requests fail.
 
-## 10. 任务标题生成
+## 10. Task Title Generation
 
-- 检查首次生成标题、生成失败、响应较慢和应用重启后的表现。
-- 检查自动生成标题和用户手动改名同时发生的情况。
-- 使用不能关闭推理的模型生成标题。
+- Check first title generation, generation failure, slow responses, and behavior after application restart.
+- Check situations where automatic title generation and user manual renaming occur simultaneously.
+- Use models that cannot disable reasoning to generate titles.
 
-## 11. Goal 标题和完成验证
+## 11. Goal Titles and Completion Verification
 
-- 检查 Goal 创建、替换、清除和重启后的标题生成。
-- 检查 Goal 完成验证的成功、失败、取消和重试。
-- 检查快速替换 Goal 时的标题结果，以及验证失败后的 Goal 状态。
+- Check title generation for Goal creation, replacement, clearing, and restart.
+- Check success, failure, cancellation, and retry of Goal completion verification.
+- Check title results when quickly replacing Goals, and Goal status after verification failure.
 
-## 12. Git Commit Message 生成
+## 12. Git Commit Message Generation
 
-- 检查有无暂存改动、改动较大、生成失败和取消时的表现。
-- 检查用户已填写提交信息时，再次生成提交信息的表现。
-- 检查生成期间工作区继续发生变化的情况。
+- Check behavior with and without staged changes, large changes, generation failure, and cancellation.
+- Check behavior when the user has already filled in commit information and generates commit info again.
+- Check situations where the workspace continues to change during generation.
 
 ## 13. Repo Wiki
 
-- 检查模型选择、开始生成、长时间运行、取消和失败。
-- 检查应用重启后继续查看或生成 Wiki。
-- 检查切换项目和修改 Wiki 设置时使用的模型。
+- Check model selection, start generation, long-running, cancellation, and failure.
+- Check continuing to view or generate Wiki after application restart.
+- Check the model used when switching projects and modifying Wiki settings.
 
-## 14. 模型连接测试
+## 14. Model Connection Testing
 
-- 分别测试 API Key 供应商、体验套餐、个人套餐和团队套餐中的模型。
-- 保存供应商配置后立即测试连接。
-- 选择不能关闭推理的模型进行连接测试。
-- 检查成功提示中的模型名称，以及失败提示和重新测试。
-- 在远程工作区中打开模型设置页并测试连接。
+- Test models in API Key providers, experience plans, personal plans, and team plans separately.
+- Test the connection immediately after saving provider configuration.
+- Test connection for models that cannot disable reasoning.
+- Check model names in success prompts, failure prompts, and re-testing.
+- Open the model settings page in a remote workspace and test the connection.
 
-## 15. 子智能体和后台任务
+## 15. Sub-agents and Background Tasks
 
-- 检查内置与自定义子智能体使用的供应商、模型和推理档位。
-- 检查父任务与子任务同时运行时的模型使用和任务切换。
-- 检查应用重启后，父任务与子任务能否继续正常显示和使用。
-- 检查后台子智能体和后台命令的启动、停止和完成通知。
-- 检查后台任务运行时继续发送消息或切换任务。
-- 检查提问卡片、权限确认和工具完成后的继续生成。
+- Check the provider, model, and reasoning tier used by built-in and custom sub-agents.
+- Check model usage and task switching when parent and child tasks run simultaneously.
+- Check whether parent and child tasks continue to display and function normally after application restart.
+- Check startup, stop, and completion notifications for background sub-agents and background commands.
+- Check continuing to send messages or switching tasks while background tasks run.
+- Check question cards, permission confirmation, and continued generation after tool completion.
 
-## 16. Hooks、MCP 和插件工具
+## 16. Hooks, MCP, and Plugin Tools
 
-- 检查 Hooks 对模型请求的阻断、补充信息、报错和后续继续执行。
-- 检查 MCP 服务器的连接、登录和版本兼容。
-- 检查 MCP、插件工具和内置工具在不同 API 格式下的调用和报错。
+- Check Hooks' blocking of model requests, supplementary information, errors, and subsequent execution.
+- Check MCP server connection, login, and version compatibility.
+- Check calls and errors for MCP, plugin tools, and built-in tools under different API formats.
 
-## 17. 定时任务中的模型使用
+## 17. Model Usage in Scheduled Tasks
 
-- 检查定时任务的创建、编辑、启停、到点运行、错过执行和历史记录。
-- 检查定时任务保存和使用的供应商、模型与推理档位。
-- 检查定时任务运行后生成的任务标题。
-- 检查应用重启后的已有任务，以及升级前创建的任务。
-- 检查模型下线、供应商删除、套餐失效和请求失败时的提示与后续操作。
-- 检查定时任务和普通聊天的模型选择互不影响。
+- Check scheduled task creation, editing, start/stop, scheduled execution, missed executions, and history.
+- Check the provider, model, and reasoning tier saved and used by scheduled tasks.
+- Check task titles generated after scheduled task execution.
+- Check existing tasks after application restart, and tasks created before upgrade.
+- Check prompts and follow-up actions when models are discontinued, providers are deleted, plans expire, or requests fail.
+- Check that scheduled task and normal chat model selections do not affect each other.
 
-## 18. 闲时任务和存量任务
+## 18. Idle-Time Tasks and Existing Tasks
 
-- 完整体验闲时任务的新建、模型选择、等待调度、执行、查看结果、取消和重新执行。
-- 分别使用 Z.AI、BigModel、个人套餐和团队套餐创建闲时任务。
-- 升级前先创建闲时任务，升级并重启应用后检查任务记录和当前状态。
-- 检查模型下线、套餐失效、登录过期、额度不足和网络异常时的提示与恢复。
-- 检查闲时任务不会改变普通聊天中的模型选择。
-- 检查远程工作区和手机端的闲时任务入口。
+- Fully experience idle-time task creation, model selection, waiting for scheduling, execution, viewing results, cancellation, and re-execution.
+- Create idle-time tasks using Z.AI, BigModel, personal plans, and team plans separately.
+- Create idle-time tasks before upgrade; after upgrade and app restart, check task records and current status.
+- Check prompts and recovery when models are discontinued, plans expire, logins expire, quotas are insufficient, or networks are abnormal.
+- Check that idle-time tasks do not change model selections in normal chat.
+- Check idle-time task entries for remote workspaces and mobile devices.
 
-## 19. Bot 任务和飞书交互
+## 19. Bot Tasks and Feishu Interaction
 
-- 使用飞书、Telegram 等已配置 Bot 启动并完成任务。
-- 升级应用后，检查原有 Bot 配置和任务目标。
-- 检查任务启动、终端事件、最终结果和错误提示。
-- 检查飞书中的多选问题、自定义回答、权限确认和完成后的卡片状态。
-- 检查同一张飞书卡片上的流式回复、任务进度和终端输出。
+- Use configured bots like Feishu, Telegram, etc., to launch and complete tasks.
+- After upgrading the app, check original bot configurations and task objectives.
+- Check task startup, terminal events, final results, and error prompts.
+- Check multi-select questions, custom answers, permission confirmations, and completed card states in Feishu.
+- Check streaming replies, task progress, and terminal output on the same Feishu card.
 
-## 20. 远程工作区中的模型使用
+## 20. Model Usage in Remote Workspaces
 
-- 首次连接远程工作区后，检查本地账号、供应商和默认模型能否在远端使用。
-- 在本地登录、退出或修改模型设置后，检查已连接远程工作区中的更新。
-- 同一远程环境打开多个工作区后，检查模型配置和任务使用。
-- 检查模型配置同步失败、网络中断、远端写入失败和 SSH 重连。
-- 检查本地工作区和不同远程环境之间的账号、供应商、模型与任务隔离。
+- After first connecting to a remote workspace, check whether local accounts, providers, and default models can be used remotely.
+- After local login, logout, or model settings changes, check updates in already-connected remote workspaces.
+- After opening multiple workspaces in the same remote environment, check model configuration and task usage.
+- Check model config sync failure, network interruption, remote write failure, and SSH reconnection.
+- Check account, provider, model, and task isolation between local workspaces and different remote environments.
 
-## 21. Desktop、Web、手机和 CLI
+## 21. Desktop, Web, Mobile, and CLI
 
-- 检查 Desktop、本地 Web 和手机远控中的模型列表、模型选择和任务恢复。
-- 检查本地与远程工作区切换，以及 Desktop 和手机同时操作同一任务。
-- 检查 CLI 的登录、退出、默认模型、显式模型和子智能体。
-- 检查 TUI 和脚本任务中的模型使用。
-- 检查帮助、版本等不需要模型的 CLI 命令。
+- Check model lists, model selection, and task recovery in Desktop, local Web, and mobile remote control.
+- Check switching between local and remote workspaces, and Desktop and mobile operating on the same task simultaneously.
+- Check CLI login, logout, default models, explicit models, and sub-agents.
+- Check model usage in TUI and script tasks.
+- Check help, version, and other CLI commands that do not require models.
 
-## 22. 正式安装包
+## 22. Production Install Packages
 
-- 使用全新用户目录安装正式包，完成启动、登录、添加供应商、选择模型和发送消息。
-- 从上一正式版本覆盖安装，检查原有登录、供应商配置、默认模型和已有任务，并继续发送消息。
-- 在官网登录或购买套餐后点击“打开 ZCode”，检查应用唤起和账号信息刷新。
-- 分别安装 macOS、Windows 和 Linux 正式包，检查内置供应商、模型和 Logo。
+- Install production packages with a brand-new user directory; complete startup, login, adding providers, selecting models, and sending messages.
+- Overwrite install from the previous official version; check existing logins, provider configurations, default models, and existing tasks, then continue sending messages.
+- After logging in or purchasing plans on the official website, click "Open ZCode"; check app launch and account info refresh.
+- Install macOS, Windows, and Linux official packages separately; check built-in providers, models, and Logos.

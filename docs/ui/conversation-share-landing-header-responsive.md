@@ -1,49 +1,49 @@
-# 分享落地页顶部 Header 响应式布局
+# Responsive Header Layout for the Share Landing Page
 
-## 目标
+## Goal
 
-分享落地页在窄屏和宽屏之间调整浏览器宽度时，`ZCode`、分享标题和「去 ZCode 继续」按钮保持在同一条连续轨道上移动。顶部栏高度、标题单行省略和按钮可用性在过渡期间保持稳定，不因为从窄屏布局切换到宽屏布局而发生瞬移。
+As the browser width changes between narrow and wide layouts, `ZCode`, the share title, and the “Continue in ZCode” button move continuously along the same track. Header height, single-line title truncation, and button availability remain stable through the transition; switching from narrow to wide layout must not cause a jump.
 
-## 布局契约
+## Layout Contract
 
-顶部栏使用固定高度的全宽 shell。品牌、标题和继续按钮始终挂载，由同一组几何变量控制位置：
+The header uses a full-width shell with fixed height. The brand, title, and continue button remain mounted, with their positions controlled by the same set of geometry variables:
 
 ```text
-窄屏 p=0                 过渡 p∈(0,1)                 宽屏 p=1
-内容栏内联排列           品牌/按钮向两侧连续移动         品牌/按钮贴视口边缘
+Narrow p=0                 Transition p∈(0,1)                  Wide p=1
+Inline within content       Brand/button move continuously       Brand/button align with viewport edges
 ```
 
-`p` 根据真实测量的可用宽度计算，不使用单一 CSS 断点。两侧分别判断自己的安全空间：当左侧 gutter 足够容纳 `ZCode`、边距和安全间距时，品牌保持在视口左侧锚点；只有左侧 gutter 不足时，品牌才沿轨道向内容栏回收。右侧 CTA 使用同样的独立规则。标题左边界在品牌右侧安全间距与正文内容栏左边缘之间插值，标题右边界取正文内容栏右边缘和按钮左侧安全间距中的较小值。
+Calculate `p` from the measured available width; do not use a single CSS breakpoint. Check safe space independently on each side: when the left gutter can fit `ZCode`, its margin, and safety spacing, keep the brand at its viewport-side anchor; only move the brand back toward the content column along the track when the left gutter is too small. Apply the same independent rule to the right-side CTA. Interpolate the title's left edge between the safe spacing after the brand and the left edge of the body content column. Set its right edge to the lesser of the body content column's right edge and the safe spacing before the button.
 
-标题始终单行显示并使用原生 ellipsis。窗口调整过程中只改变标题可用宽度，不改变 Header 高度，也不通过 `display: none` 重新挂载或卸载品牌、标题和继续按钮。
+Keep the title on one line at all times and use native ellipsis. During window resizing, change only the available title width; do not change Header height or mount/unmount the brand, title, or continue button with `display: none`.
 
-## 极窄窗口保护
+## Protection for Extremely Narrow Windows
 
-在截图覆盖的窄屏范围内，继续按钮保持完整文案和点击区域。只有当实际宽度低于按钮的最小安全宽度时，才进入紧凑按钮态；紧凑态保留可访问名称和点击区域，通过文案收缩完成，不把按钮从布局中瞬间移除。
+Within the narrow widths covered by screenshots, keep the continue button's full label and click target. Enter compact-button mode only when the actual width is below the button's minimum safe width. In compact mode, preserve the accessible name and click target and shrink the label; do not abruptly remove the button from the layout.
 
-## 主题切换契约
+## Theme Switching Contract
 
-Header 右侧保留一个图标主题按钮，位于「去 ZCode 继续」之前；只读分享没有继续按钮时仍显示主题按钮。按钮根据当前解析后的主题显示太阳或月亮图标，并通过 `aria-label` 和 `title` 说明下一步操作。
+Keep an icon theme button on the right side of the Header, before “Continue in ZCode.” Show the theme button on read-only shares that have no continue button. The icon is a sun or moon based on the currently resolved theme, and `aria-label` and `title` describe the next action.
 
-- 分享入口优先读取 `zcode-theme`，没有已保存偏好时默认 `zai-light`；`system` 继续按系统偏好解析。
-- 点击主题按钮将当前解析主题切换为显式的 `zai-light` 或 `zai-dark`，同步根节点主题 class、浏览器主题元信息和 `zcode-theme` 持久化值。
-- 继续按钮只使用 `bg-primary text-primary-foreground`：浅色主题为黑底白字，深色主题为白底黑字。
-- 主题按钮与继续按钮共同参与右侧几何测量，不能挤压标题或在窄屏下被隐藏。
+- The share entry point first reads `zcode-theme`; when no preference has been saved, default to `zai-light`. Continue resolving `system` from the system preference.
+- Clicking the theme button changes the current resolved theme to an explicit `zai-light` or `zai-dark`, and synchronizes the root theme class, browser theme metadata, and persisted `zcode-theme` value.
+- The continue button uses only `bg-primary text-primary-foreground`: black with white text in the light theme, and white with black text in the dark theme.
+- Measure the theme and continue buttons together as part of the right-side geometry; they must not squeeze the title or be hidden on narrow screens.
 
-## 实现约束
+## Implementation Constraints
 
-- `ResizeObserver` 只更新连续几何值或 CSS 自定义属性，不在每个宽度变化时切换离散 layout enum。
-- 过渡期间使用 transform 或 CSS 变量驱动位置，避免品牌和 CTA 重新参与 flex 排版后挤动标题。
-- Header 使用 `text-ui-*`、语义颜色和现有 rail spacing；不引入任意字号或硬编码颜色。
-- 中文和英文 CTA 分别以实际固有宽度参与测量。
-- 只读分享没有继续按钮时，右侧轨道保持空状态，但品牌和标题仍使用同一套几何计算。
-- 该变更只属于 Web 分享落地页 presentation 层，不改变分享协议、深链、Desktop continuous、手机 `/remote` 或远程 workspace 行为。
+- `ResizeObserver` updates continuous geometry values or CSS custom properties only; it must not switch a discrete layout enum on each width change.
+- During transitions, use transforms or CSS variables to position the brand and CTA, avoiding title shifts when they re-enter flex layout.
+- Use `text-ui-*`, semantic colors, and existing rail spacing in the Header; do not add arbitrary font sizes or hard-coded colors.
+- Measure Chinese and English CTA labels at their actual intrinsic widths.
+- When a read-only share has no continue button, keep the right track empty while the brand and title still use the same geometry calculations.
+- This change is limited to the Web share landing-page presentation layer. Do not change the share protocol, deep links, Desktop continuous behavior, mobile `/remote`, or remote-workspace behavior.
 
-## 验收
+## Acceptance
 
-- 320px、768px、1280px、1920px、2560px 宽度下均无水平溢出。
-- 从窄到宽、从宽到窄连续拖动窗口时，品牌和 CTA 的横坐标单调变化；在对应侧空间仍足够时保持外侧锚点，只有空间不足后才开始向内容栏回收。
-- Header 高度和垂直中心保持稳定，标题不会覆盖 CTA，CTA 不会覆盖标题。
-- 中文、英文、长标题、短标题、只读分享、可导入分享、亮色和暗色主题均通过。
-- 无主题偏好时打开为浅色；点击主题按钮后页面、Markdown 内容和按钮样式同步切换，刷新后保持选择。
-- `prefers-reduced-motion` 下不增加额外缓动，但几何位置仍连续更新。
+- No horizontal overflow at widths of 320px, 768px, 1280px, 1920px, or 2560px.
+- When dragging the window continuously from narrow to wide or wide to narrow, the brand and CTA x-coordinates change monotonically. Keep each outside anchor while its corresponding side has sufficient space; move inward toward the content column only after space runs out.
+- Header height and vertical centering remain stable. The title does not cover the CTA, and the CTA does not cover the title.
+- Chinese and English, long and short titles, read-only and importable shares, and light and dark themes all work.
+- With no theme preference, open in light mode. After clicking the theme button, the page, Markdown content, and button styles switch together, and the choice persists after refresh.
+- Under `prefers-reduced-motion`, add no extra easing; geometry positions must still update continuously.

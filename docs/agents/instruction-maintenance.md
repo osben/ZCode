@@ -1,60 +1,59 @@
-# Agent 指令维护与验收
+# Agent Instruction Maintenance and Acceptance
 
-## 目标与范围
+## Goals and Scope
 
-本规范描述仓库 AGENTS.md、Claude 入口和相关 skills 的组织与验收方式。目标优先级是减少返工、漏验和人工纠正，其次减少无必要的确认、阅读和重复测试。文件长度只用于观察上下文开销，不作为效果提升的证明。
+This specification describes the organization and acceptance criteria for the repository AGENTS.md, Claude entry points, and related skills. The priority is to reduce rework, missed verifications, and manual corrections, followed by reducing unnecessary confirmations, readings, and repeated tests. File length is used only to observe context overhead and is not proof of improved effectiveness.
 
-2026-09-15 确认的行为要求：
+Behavioral requirements confirmed on 2026-09-15:
 
-- 咨询、诊断、评审默认只读；实现、修复请求授权范围内的调查、局部重构、修改和验证自主完成。
-- 超出已确认需求的产品语义、兼容性、数据格式或核心架构变更，先提出具体方案并沟通；已确认方案直接推进。
-- 新功能、行为变化先更新已有 spec；恢复已定义行为的 bugfix 用回归测试留痕；预期未定义时先补齐 spec。
-- 按变更类型验证；必要检查通过后停止，只有新改动、失败或未解释风险才扩大验证。
-- 实施任务验证通过后自动本地 commit；必要验证阻塞时保留工作区改动并说明。Push、MR 由用户请求触发。
+- Consultation, diagnosis, and review are read-only by default; implementation, fix requests within authorized scope, local refactoring, modifications, and verification are completed autonomously.
+- Product semantics, compatibility, data formats, or core architecture changes beyond confirmed requirements should first propose specific plans and communicate; confirmed plans proceed directly.
+- New features and behavior changes first update existing specs; bugfixes that restore defined behavior leave traces via regression tests; when the behavior is undefined, update the spec first.
+- Verify according to the change type; stop after passing necessary checks, and only expand verification for new changes, failures, or unexplained risks.
+- Implementation tasks are automatically committed locally upon passing verification; when necessary verification blocks, leave workspace changes and provide explanations. Push and MR are triggered by user request.
 
-日常开发的执行规则以[根 AGENTS.md](../../AGENTS.md)为准。本节记录本次改造的验收目标，后续规则变更需同步相应验收场景。
+The execution rules for daily development follow the [root AGENTS.md](../../AGENTS.md). This section records the acceptance goals for this refactoring; subsequent rule changes must synchronize corresponding acceptance scenarios.
 
-## 文件分工
+## File Responsibilities
 
-| 位置                              | 负责的内容                                             | 读取条件                                    |
-| --------------------------------- | ------------------------------------------------------ | ------------------------------------------- |
-| 根 AGENTS.md                      | 任务边界、spec、关键工程约束、验证与完成条件、阅读入口 | 所有仓库任务                                |
-| packages/ui/AGENTS.md             | UI 服务访问、状态、平台适配、日志                      | UI 组件、页面、样式或 hooks 变更            |
-| packages/services/AGENTS.md       | 服务日志和服务层注意事项                               | 服务实现变更                                |
-| apps/zcode-cli/AGENTS.md          | CLI 特有契约、工具链和验证                             | CLI 代码变更                                |
-| docs/agents/runtime-boundaries.md | 进程、工作区身份、桌面/手机状态边界                    | process、workspace 状态、远控或实时链路变更 |
-| .claude/CLAUDE.md 与 CLI 对应入口 | 导入共享 AGENTS.md                                     | Claude 加载项目指令                         |
-| 现有领域文档、skills              | 领域事实、专用工具与工作流                             | 根文件或任务命中对应触发条件                |
+| Location                               | Responsible Content                                                                                     | Read Condition                                                     |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| Root AGENTS.md                         | Task boundaries, specs, key engineering constraints, verification and completion criteria, entry points | All repository tasks                                               |
+| packages/ui/AGENTS.md                  | UI service access, state, platform adaptation, logging                                                  | UI component, page, style, or hooks changes                        |
+| packages/services/AGENTS.md            | Service logging and service-layer considerations                                                        | Service implementation changes                                     |
+| apps/zcode-cli/AGENTS.md               | CLI-specific contracts, toolchain, and verification                                                     | CLI code changes                                                   |
+| docs/agents/runtime-boundaries.md      | Processes, workspace identity, desktop/mobile state boundaries                                          | process, workspace state, remote control or real-time link changes |
+| .claude/CLAUDE.md and CLI entry points | Import shared AGENTS.md                                                                                 | Claude loads project instructions                                  |
+| Existing domain documents, skills      | Domain facts, specialized tools, and workflows                                                          | Root file or task matches corresponding trigger                    |
 
-根文件必须写出“何时读哪个文件”，从仓库根目录启动的任务也能找到子目录规则。不要假定新增嵌套 AGENTS.md 后，所有宿主都会在每次编辑文件时自动加载它。Claude 入口用相对于入口文件的导入路径，不复制整份项目规则。
+The root file must specify "when to read which file" so that tasks starting from the repository root can find subdirectory rules. Do not assume that all hosts automatically load a newly nested AGENTS.md on every file edit. Claude entry points use import paths relative to the entry file, not copies of the entire project rules.
 
-可执行架构策略以 `architecture-policy.yaml` 为准；门禁只对其实际覆盖的模块提供保证，未覆盖的语义和模块仍需人工或 agent 检查。仓库事实与文档不一致时，先核实实现和目标契约，不能把现有违规实现自动认定为新的架构规范。
+The executable architecture policy follows `architecture-policy.yaml`; gates only provide guarantees for the modules they actually cover. Uncovered semantics and modules still require manual or agent checks. When repository facts conflict with documentation, first verify the implementation and target contract; existing non-compliant implementations cannot be automatically treated as new architectural specifications.
 
-## 场景验收
+## Scenario Acceptance
 
-每次改变任务边界、读取条件或完成标准时，检查下列请求能否从适用指令中得到一致结论。表中为验收预期，不代表已经运行了这些开发任务。
+Whenever task boundaries, read conditions, or completion criteria change, check whether the following requests can reach consistent conclusions from the applicable instructions. The table shows acceptance expectations and does not represent that these development tasks have been run.
 
-| 代表请求                                  | 应读取/执行                                                      | 应如何结束                                                               |
-| ----------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| “定位手机重连后重复消息的原因，先不要改”  | 远控事实文档、相关实现与运行时证据                               | 给出证据、根因或待验证假设；不改业务代码、不 commit                      |
-| “修正开发文档里的命令”                    | 命令的实际定义、引用文档；检查链接与一致性                       | 文档检查通过后本地 commit；不额外跑应用 E2E                              |
-| “修复已有 spec 定义的解析错误”            | 已有 spec、受影响测试；先复现再修复                              | 回归测试及代码门禁通过；不重复新增功能文档                               |
-| “调整按钮触发的交互”                      | UI 指令、DESIGN、相关功能 spec 和 E2E 工作流                     | 更新 spec/测试，验证受影响桌面及手机路径后 commit                        |
-| “修复远程工作区任务路由”                  | runtime 边界、CLI 指令（若触及 CLI）、相关契约；绘制状态或时序图 | 验证 identity、owner、continuous/replayable 边界；根单测不能替代 CLI/E2E |
-| “实现已确认的交互，但必要 E2E 环境不可用” | 完成可执行实现与验证，记录失败原因和未验证项                     | 保留改动、不自动 commit、不宣称完成验证                                  |
+| Representative Request                                                             | What to Read/Execute                                                                                       | How to Conclude                                                                                         |
+| ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| "Find the cause of duplicate messages after phone reconnection, do not modify yet" | Remote control fact document, related implementation, and runtime evidence                                 | Provide evidence, root cause, or hypotheses pending verification; do not modify business code or commit |
+| "Fix commands in the development documentation"                                    | Actual command definitions, referenced documents; check links and consistency                              | Local commit after documentation check passes; do not additionally run application E2E                  |
+| "Fix a parsing error defined by an existing spec"                                  | Existing spec, affected tests; reproduce before fixing                                                     | Regression test and code gates pass; do not duplicate newly added feature docs                          |
+| "Adjust interaction triggered by a button"                                         | UI instructions, DESIGN, related feature spec, and E2E workflows                                           | Update spec/tests, verify affected desktop and mobile paths, then commit                                |
+| "Fix remote workspace task routing"                                                | Runtime boundaries, CLI instructions (if touching CLI), related contracts; draw state or sequence diagrams | Verify identity, owner, continuous/replayable boundaries; root unit tests cannot replace CLI/E2E        |
+| "Implement a confirmed interaction, but necessary E2E environment is unavailable"  | Complete executable implementation and verification, record failure reasons and unverified items           | Leave changes, do not auto-commit, do not claim verification completed                                  |
 
-还需检查两个跨场景分支：纯视觉修改验证桌面/手机及深浅主题；没有行为变化的重构优先复用现有测试，只有覆盖缺口才新增。
+Two cross-scenario branches must also be checked: pure visual changes verify desktop/mobile and light/dark themes; refactors without behavior changes should优先 reuse existing tests, adding new ones only when coverage gaps exist.
 
-## 实际效果观察
+## Actual Effect Observations
 
-后续真实任务保留任务链接、变更类型、模型/宿主、所用指令版本，以及实际出现的返工、漏验、人工纠正、无必要停顿。优先比较同类任务；模型、依赖或环境不同会影响结果，应同时注明。只有观察到行为改善，才报告开发效果提升；本次文档检查仅验证规则的完整性和一致性。
+Subsequent real tasks retain task links, change types, models/hosts, instruction versions used, and actual occurrences of rework, missed verifications, manual corrections, and unnecessary pauses. Prioritize comparing同类 tasks; different models, dependencies, or environments affect results, so note them together. Only report development effect improvements when behavioral improvements are observed; this document check validates only rule completeness and consistency.
 
-同类错误再次出现时，更新负责该决策的原始规则并增加一个代表场景。避免在根文件、子目录文件和 skills 各追加一份修补要求。过时的接口名录、版本号、路径和脚本摘要应删除或改为指向当前权威入口。
+When the same error reappears, update the original rule responsible for that decision and add a representative scenario. Avoid appending remediation requirements to the root file, subdirectory files, and skills separately. Outdated interface names, version numbers, paths, and script summaries should be deleted or updated to point to the current authoritative entry.
 
-## 本次验收记录（2026-09-15）
+## This Acceptance Record (2026-09-15)
 
-- 已逐项静态检查上述六类请求及纯视觉、纯重构分支：根规则可定位专项入口，spec、验证、阻塞与提交条件在 CLI、架构 skill、E2E skill、提交规范中保持一致。没有运行这些产品开发任务或进行模型 A/B 实验。
-- 已核对本地 Markdown 链接、Claude 导入目标、根/CLI 脚本定义，以及被引用文件是否纳入 Git；检查改动文件格式与 diff 空白。
-- architecture-governance 通过 skill-creator 通用校验。E2E skill 原有 `disable-model-invocation` 字段不被该校验器支持，修改前后得到相同报错；保留原调用策略，并额外核对 YAML、字段差异与工作流语义。此项是既有兼容限制，不报告为通用校验通过。
-- 本次仅改指令、文档和 skill 展示元数据，按纯文档规则验收，未运行应用 typecheck、lint、UT 或 E2E。真实开发效果仍待后续同类任务观察。
-
+- All six categories of requests and pure visual, pure refactor branches were statically checked item by item: root rules can locate specialized entries, and specs, verification, blocking, and commit criteria are consistent across CLI, architecture skill, E2E skill, and commit specifications. These product development tasks were not run, nor were model A/B experiments conducted.
+- Local Markdown links, Claude import targets, root/CLI script definitions, and whether referenced files are included in Git were verified; check format and diff whitespace.
+- architecture-governance passed the general validation via skill-creator. The E2E skill's original `disable-model-invocation` field is not supported by this validator, producing the same error before and after modification; the original invocation strategy is retained, and additional YAML and field differences and workflow semantics are cross-checked. This is a pre-existing compatibility limitation and is not reported as general validation passed.
+- This change only modifies instructions, documents, and skill display metadata, accepted under pure document rules. Application typecheck, lint, UT, or E2E were not run. Real development effects remain to be observed through subsequent同类 tasks.

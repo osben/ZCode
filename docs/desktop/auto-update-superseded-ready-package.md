@@ -1,23 +1,23 @@
-# 自动更新已下载包被新版本替代
+# Auto-update: A Newer Version Supersedes a Downloaded Package
 
-## 背景
+## Background
 
-桌面端使用 `electron-updater` generic feed。客户端运行版本可能落后于已经下载但尚未安装的版本，例如当前进程是 `3.1.2`，已下载 `3.1.3`，用户暂时没有点击重启安装。
+The desktop app uses an `electron-updater` generic feed. The running version may be older than a package that has already been downloaded but not installed. For example, the current process may be running `3.1.2`, with `3.1.3` downloaded while the user has not yet chosen to restart and install it.
 
-旧状态机在 `update-downloaded` 后把菜单固定为“重启以更新”，后台轮询只允许从 `idle` 发起。因此当 stable feed 后续推进到 `3.1.4` 时，同一运行进程不会再次检查，也就不会把可安装包替换为 `3.1.4`。只发现、尚未下载时也有同一类缺口：状态停在 `update-available` 后，轮询和菜单里的“检查更新”都不再请求 manifest，用户只能先安装第一次看到的版本。
+In the old state machine, after `update-downloaded` the menu stayed on “Restart to update,” and background polling could only start from `idle`. If the stable feed later advanced to `3.1.4`, the same running process would not check again and could not replace the installable package with `3.1.4`. There was a similar gap before download: after detecting but not downloading an update, state stayed at `update-available`, and neither polling nor “Check for updates” requested the manifest again, leaving users able to install only the first version they saw.
 
-## 目标语义
+## Target Semantics
 
-- 服务器最新版本是目标，本地包是另一件事实。已经展示 `update-available`、`download-progress` 或 `update-downloaded` 时，后台复查不得把界面切成 `checking`。
-- 启动立即检查一次。没有可见更新时每 15 分钟复查；更新入口还在时每 2 分钟复查。下载完成或取消时，如果没有检查在飞，立即再查一次。下载失败无论来自下载 Promise 还是 error 事件，都再查一次；如果失败发生在当前检查收口前，等收口后再查。强制更新失败不复查。已有检查在飞的完成或取消不另排队，由短轮询接手。
-- 菜单“检查更新”在 `update-available` 时重新请求 manifest，不回放内存里的旧版本。下载中只提示正在下载；已下载且仍等于目标时继续安装。
-- 复查结果更高时替换目标的版本、通道和 release notes。自动下载开启且当前没有下载在途时，下载这个新版本；否则留在发现态，等用户确认。
-- 复查结果等于当前目标时不重复下载。低于当前目标或该版本被跳过时，有 ready 包就留在 ready，没有则回到 idle。
-- 已下载包版本等于当前目标时，用户点击“重启以更新”继续安装该包。目标已经更高而新包尚未就绪时，退出和“重启以更新”都不安装旧包。
-- 若替换下载失败且旧 ready 包仍存在，菜单恢复到旧 ready 状态，避免用户失去原本可安装的更新入口。
+- The latest server version is the target; the local package is a separate fact. When `update-available`, `download-progress`, or `update-downloaded` is already visible, a background recheck must not switch the UI to `checking`.
+- Check once immediately at startup. When no update is visible, recheck every 15 minutes; while an update entry remains available, recheck every 2 minutes. After a download completes or is canceled, check immediately again if no check is in flight. After a download fails—whether the failure came from the download Promise or an error event—check again. If the failure occurs before the current check settles, wait for it to settle before checking again. Do not recheck after a forced-update failure. If a check was already in flight when a download completed or was canceled, do not queue another one; let the short polling interval handle it.
+- “Check for updates” in the menu must request the manifest again in `update-available`, rather than replaying a stale in-memory version. While downloading, show that the download is in progress; if already downloaded and still equal to the target, continue installation.
+- If a recheck returns a higher version, replace the target version, channel, and release notes. If automatic download is enabled and no download is in progress, download the new version; otherwise remain in the discovered state and wait for user confirmation.
+- If a recheck returns the same version as the current target, do not download again. If it is lower than the target or has been skipped, keep an existing ready package in the ready state; otherwise return to `idle`.
+- When the downloaded package version equals the current target, clicking “Restart to update” continues installing that package. If the target is newer and the new package is not ready yet, neither quitting nor “Restart to update” may install the old package.
+- If the replacement download fails while the older ready package still exists, restore the menu to the older ready state so users do not lose their existing installable update.
 
-## 实现约束
+## Implementation Constraints
 
-- 下载由主进程显式触发：`electron-updater` 的 `autoDownload` 关闭，`update-available` 事件里根据 ready 版本判断是否调用 `downloadUpdate()`。下载进行中可以记住更高目标，但不并发启动另一次下载。
-- 版本比较使用 semver coercion，兼容 `v3.1.4` 这类版本字符串；无法解析时只在字符串不同的情况下视为需要下载。
-- 自动轮询从 `idle`、`update-available`、`update-downloaded` 发起。`checking` 与真正的 `download-progress` 仍然跳过，避免并发下载。macOS / Linux 仅在 ready 包版本等于当前目标时保留退出自动安装。
+- Explicitly trigger downloads from the main process: disable `electron-updater` `autoDownload`, then decide whether to call `downloadUpdate()` in the `update-available` event based on the ready-package version. A higher target may be recorded during a download, but do not start another download concurrently.
+- Compare versions using semver coercion to support strings such as `v3.1.4`; if parsing fails, treat differing strings as requiring a download.
+- Start automatic polling from `idle`, `update-available`, and `update-downloaded`. Continue skipping `checking` and actual `download-progress` states to avoid concurrent downloads. On macOS/Linux, retain automatic installation on quit only when the ready package version equals the current target.
