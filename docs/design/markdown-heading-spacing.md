@@ -1,6 +1,6 @@
 # Markdown Heading Spacing
 
-Markdown 标题渲染在 `packages/ui/src/components/ai-elements/message.tsx` 的 `MessageResponse` 中。
+Markdown headings are rendered in `MessageResponse` within `packages/ui/src/components/ai-elements/message.tsx`.
 
-- `h1` 到 `h6` 顶部间距统一使用 `mt-6`。
-- `h1` 到 `h6` 底部间距统一使用 `mb-4`，让标题和后续正文之间保持更清晰的阅读分隔。
+- `h1` through `h6` all use uniform top spacing `mt-6`.
+- `h1` through `h6` all use uniform bottom spacing `mb-4`, providing a clearer visual separation between headings and subsequent body text.

@@ -1,40 +1,41 @@
-# Bugfix 04：Model JSON 编辑器固定高度
+# Bugfix 04: Model JSON Editor Fixed Height
 
-> 状态：已完成
+> Status: Completed
 
-## 问题
+## Problem
 
-Model 配置弹窗中的推理档位 Option Spec 与 Reasoning Mapping 使用多行 JSON 文本。
-共享 `Textarea` 默认采用 `field-sizing-content`，因此 Personal 值为空、Effective JSON 作为
-placeholder 展示时，输入框会随多行 placeholder 自动增高。较长 Mapping 会把弹窗内容整体撑长，
-也让 JSON 看起来像散落在页面上的普通文本。
+The reasoning tier Option Spec and Reasoning Mapping in the Model Config popup use multi-line JSON text.
+The shared `Textarea` defaults to `field-sizing-content`, so when the Personal value is empty and the
+Effective JSON is shown as a placeholder, the input box automatically grows taller with the multi-line
+placeholder. The longer the Mapping, the more it stretches the popup content, and also makes the JSON
+look like plain text scattered on the page.
 
-## 目标行为
+## Target Behavior
 
-- 三个 JSON 配置项继续使用原生可编辑 `Textarea`，不引入第二套 JSON 状态或编辑器依赖；
-- JSON 文本框使用统一固定高度，不随 value 或 placeholder 的行数变化；
-- 超出高度的 JSON 在文本框内部纵向滚动，弹窗本身只负责字段之间的滚动；
-- Personal 值为空时，Effective JSON 仍只作为 placeholder 展示，不写入 Personal Overlay；
-- 保持等宽字体、JSON 标记、键盘编辑、主题和桌面/Web 共用行为。
+- The three JSON config items continue to use the native editable `Textarea`; do not introduce a second JSON state or editor dependency;
+- The JSON text box uses a uniform fixed height, and does not change with the number of lines in the value or placeholder;
+- The JSON exceeding the height scrolls vertically within the text box; the popup itself only handles scrolling between fields;
+- When the Personal value is empty, the Effective JSON is still shown only as a placeholder, without being written to the Personal Overlay;
+- Maintain the monospace font, JSON highlighting, keyboard editing, theme, and desktop/Web shared behavior.
 
-## 根因与修复
+## Root Cause and Fix
 
-根因不是 Config 或 Overlay，而是 `JsonSlotEditor` 只设置了最小高度和可拖动 resize，未覆盖共享
-`Textarea` 的内容自适应尺寸。
+The root cause is not the Config or Overlay, but the `JsonSlotEditor` only sets the minimum height and the draggable resize, without overriding the shared
+`Textarea`'s content-adaptive size.
 
-修复在 `JsonSlotEditor` 的视觉边界内完成：覆盖为 `field-sizing-fixed`，使用固定高度，关闭手动
-resize，并启用内部滚动。不得修改 JSON 解析、Draft、Effective Preview 或保存语义。
+The fix is completed within the visual boundary of the `JsonSlotEditor`: overridden to `field-sizing-fixed`, using a fixed height, disabling the manual
+resize, and enabling the internal scrolling. Do not modify the JSON parsing, Draft, Effective Preview, or the save semantics.
 
-## 验收
+## Acceptance
 
-- 长 JSON value 和长 Effective placeholder 均不会改变文本框高度；
-- 三个 JSON 文本框高度一致；
-- 文本框具有清晰的输入边界，内容溢出时可内部滚动；
-- 保存与恢复默认行为不变；
-- UI 单测、typecheck 和 lint 通过。
+- The long JSON value and the long Effective placeholder do not change the text box height;
+- The three JSON text boxes have the same height;
+- The text box has a clear input boundary, and the content can scroll internally when it overflows;
+- The save and restore-default behavior remain unchanged;
+- The UI unit test, the typecheck, and the lint pass.
 
-## 实施结果
+## Implementation Result
 
-- `JsonSlotEditor` 已统一使用固定高度和内部纵向滚动，长 value/placeholder 不再撑高弹窗；
-- 三个 JSON 字段继续复用同一编辑器，不改变稀疏 Personal Overlay、Effective placeholder 或恢复默认语义；
-- 定向测试明确断言 `field-sizing-fixed`、固定高度和 `resize-none`；对应实现提交为 `39cb217ca3`。
+- The `JsonSlotEditor` uniformly uses a fixed height and the internal vertical scrolling; the long value/placeholder no longer stretches the popup;
+- The three JSON fields continue to reuse the same editor; the sparse Personal Overlay, Effective placeholder, and restore-default semantics are not changed;
+- The targeted test explicitly asserts the `field-sizing-fixed`, the fixed height, and the `resize-none`; the corresponding implementation commit is `39cb217ca3`.

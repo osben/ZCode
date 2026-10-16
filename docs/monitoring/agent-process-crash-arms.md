@@ -1,178 +1,178 @@
-# Agent 进程崩溃 ARMS 上报
+# Agent Process Crash ARMS Reporting
 
-## 目标
+## Goal
 
-桌面端 Host 拉起的 ZCode Agent 是普通 Node 子进程，不属于 Electron
-`child-process-gone` 自动采集范围。Agent 非预期退出时需要由现有
-`RuntimeProcessLifecycleReporter` 主动把崩溃事实送到 desktop main，再由 main
-调用 ARMS `sendCustom`。
+Desktop Host-launched ZCode Agent is a regular Node child process, not included in Electron
+`child-process-gone` automatic collection range. When Agent exits unexpectedly, the existing
+`RuntimeProcessLifecycleReporter` needs to actively send the crash fact to desktop main, then main
+calls ARMS `sendCustom`.
 
-本功能同时满足：
+This functionality simultaneously satisfies:
 
-- `perf_agent_start.value=1`，作为 Agent runtime 级崩溃率的分母。
-- `perf_agent_ready.value=1`，表示同一 runtime 已通过 provider/model 门禁并可执行模型。
-- `perf_agent_crash.value=1`，用于统计 Agent 崩溃次数。
-- 原始事件保留脱敏、限长的错误信息，支持按错误码和稳定指纹聚合。
-- 主动关闭、workspace 重启、应用退出不计为崩溃。
-- 手机远控继续复用桌面 shared host，不在 relay 或 Web 端重复上报。
+- `perf_agent_start.value=1`, as the denominator for Agent runtime-level crash rate.
+- `perf_agent_ready.value=1`, indicating the same runtime has passed provider/model gate and can execute models.
+- `perf_agent_crash.value=1`, for counting Agent crash occurrences.
+- Original events retain sanitized, length-limited error information, supporting aggregation by error code and stable fingerprint.
+- Active closure, workspace restart, application exit are not counted as crashes.
+- Mobile remote control continues to reuse desktop shared host, not duplicating reports in relay or Web end.
 
-## 状态与时序
+## State and Timing
 
 ```text
 Agent stderr
    │
-   ├─ Node spawn 成功
+   ├─ Node spawn successful
    │    └─ host IPC → desktop main → perf_agent_start
    │
-   ├─ Agent service 通过 provider/model 门禁
-   │    └─ ProcessManager.markReady（每个 runtime 幂等一次）
+   ├─ Agent service passes provider/model gate
+   │    └─ ProcessManager.markReady (idempotent once per runtime)
    │         └─ host IPC → desktop main → perf_agent_ready
    │
-   ├─ Host services：脱敏并保留最后 20 行
+   ├─ Host services: sanitize and retain last 20 lines
    │
    └─ Agent exit
         │
         ├─ terminationIntent=expected
-        │    └─ 只做进程登记清理，不发 perf_agent_crash
+        │    └─ Only do process registration cleanup, do not send perf_agent_crash
         │
         ├─ terminationIntent=watchdog_recycle
-        │    └─ request timeout 回收，不混入 crash
+        │    └─ Request timeout recycle, do not mix into crash
         │
         ├─ desktop lifecycle=app_quit/update_install
-        │    └─ main 已进入不可逆退出流程，不发 perf_agent_crash
+        │    └─ main has entered irreversible exit process, do not send perf_agent_crash
         │
-        └─ 无 terminationIntent
+        └─ No terminationIntent
              └─ host IPC → desktop main
                   ├─ terminationReason=protocol-close
-                  │    └─ 即使最终为 SIGTERM / 0x40010004，仍发 perf_agent_crash
+                  │    └─ Even if ultimately SIGTERM / 0x40010004, still send perf_agent_crash
                   │
-                  ├─ 无结构化根因，且 exitCode=0x40010004 / signal=SIGTERM
-                  │    └─ 受控终止噪音，不发 perf_agent_crash
+                  ├─ No structured root cause, and exitCode=0x40010004 / signal=SIGTERM
+                  │    └─ Controlled termination noise, do not send perf_agent_crash
                   │
-                  └─ 其他 unexpected exit
+                  └─ Other unexpected exit
                        └─ ARMS perf_agent_crash(value=1)
 ```
 
-`protocol-close` 是 Agent 崩溃后常见的结果，不是主动退出意图，禁止据此把退出
-标为 expected。
+`protocol-close` is a common result after Agent crash, not an active exit intent, prohibits marking exit as expected based on this.
 
-Desktop main 是应用退出生命周期的唯一事实源。`perf_app_exit` 发出后必须持续保持
-`app_quit` / `update_install`，直到进程退出；Host IPC 晚到的 Agent exit 即使缺少
-termination intent，也不能重新混入 runtime crash。此外，本地 desktop RUM 边界将
-Windows `0x40010004` 和 POSIX `SIGTERM` 在缺少结构化根因时视为受控终止特征：即使
-Host 未提供 termination intent，也不上报 crash。`protocol-close` 本身不能建立主动退出
-意图；Host 必须将首次 cleanup 原因作为 `terminationReason` 传到 desktop main。即使其后
-的进程树回收产生上述系统退出特征，desktop RUM 仍按协议故障上报 crash。该兼容分类只
-影响 desktop RUM，不改写 Host 进程生命周期事件。
+Desktop main is the sole source of truth for application exit lifecycle. `perf_app_exit` emitted must continuously maintain
+`app_quit` / `update_install` until process exit; Host IPC late Agent exit even if lacking
+termination intent, cannot be remixed into runtime crash. Additionally, local desktop RUM boundary treats
+Windows `0x40010004` and POSIX `SIGTERM` as controlled termination characteristics when lacking structured root cause: even
+if Host does not provide termination intent, crash is not reported. `protocol-close` itself cannot establish active exit
+intent; Host must map first cleanup reason as `terminationReason` to desktop main. Even if subsequent
+process tree recovery produces the above system exit characteristics, desktop RUM still reports crash by protocol fault. This
+compat classification only affects desktop RUM, does not rewrite Host process lifecycle events.
 
-ready 状态由 Agent service 持有，因为“进程已 spawn”和“可执行模型”是两个不同阶段。
-ProcessManager 只负责把首次 ready 与当前 `runtime_instance_id` 绑定，并在 exit 事件中携带
-`runtimeReady`。desktop main 不用 IPC 到达时序反推阶段：新 Host 明确映射为
-`startup` / `runtime`，兼容旧 Host 缺字段时映射为 `unknown`。
+Ready state is held by Agent service because "process already spawned" and "executable model" are two different stages.
+ProcessManager only responsible for binding first ready with current `runtime_instance_id`, and carrying
+`runtimeReady` in exit event. desktop main does not IPC arrive time sequence to infer stage: new Host explicitly maps as
+`startup` / `runtime`, maps compatible old Host missing fields as `unknown`.
 
-## 事件契约
+## Event Contract
 
 ### `perf_agent_start`
 
 - `group`: `stability`
 - `value`: `1`
-- 触发：Node `ChildProcess` 发出 `spawn`，确认 runtime 已真实启动。
-- 属性：`process_role=agent`、`runtime_instance_id`、`runtime_generation`、`provider`。
+- Trigger: Node `ChildProcess` emits `spawn`, confirming runtime has actually started.
+- Attributes: `process_role=agent`、`runtime_instance_id`、`runtime_generation`、`provider`.
 
 ### `perf_agent_ready`
 
 - `group`: `stability`
 - `value`: `1`
-- 触发：同一 runtime 首次通过 provider/model 门禁，且仍是当前存活进程。
-- 属性：`process_role=agent`、`runtime_instance_id`、`runtime_generation`、`provider`、
-  `startup_duration_ms`。
-- 同一 `runtime_instance_id` 最多上报一次；只读启动但 provider/model 尚未就绪时只产生
-  `perf_agent_start`，不产生 ready。
+- Trigger: Same runtime first passes provider/model gate, and remains the current live process.
+- Attributes: `process_role=agent`、`runtime_instance_id`=`runtime_generation`=`provider`、
+  `startup_duration_ms`.
+- Same `runtime_instance_id` reported at most once; read-only start but provider/model not yet ready only produces
+  `perf_agent_start`, not ready.
 
 ### `perf_agent_crash`
 
 - `group`: `stability`
 - `value`: `1`
-- 触发：已经创建 Agent runtime，但没有主动退出意图时发生进程退出。缺少结构化根因的
-  `0x40010004` / `SIGTERM` 仍按受控终止特征抑制；`terminationReason=protocol-close`
-  时不受最终退出签名影响。即使 `exitCode=0`，长期运行的 Agent 自行结束也属于非预期退出。
+- Trigger: Agent runtime has been created, but process exits without active exit intent. Lack of structured root cause
+  `0x40010004` / `SIGTERM` still suppressed by controlled termination feature; `terminationReason=protocol-close`
+  not affected by final exit signature. Even if `exitCode=0`, long-running Agent self-termination also counts as unexpected exit.
 
-属性：
+Attributes:
 
-| 字段                  | 说明                                                |
-| --------------------- | --------------------------------------------------- |
-| `process_role`        | 固定为 `agent`                                      |
-| `incident_kind`       | 固定为 `unexpected_exit`                            |
-| `exit_code`           | 无退出码时为空字符串                                |
-| `signal`              | 无 signal 时为空字符串                              |
-| `termination_reason`  | Host 保留的结构化退出根因，例如 `protocol-close`    |
-| `error_name`          | 从 stderr 末尾提取，无法识别时为 `AgentProcessExit` |
-| `error_code`          | 从 Node 错误输出提取，例如 `EPIPE`                  |
-| `error_message`       | 脱敏后的错误摘要                                    |
-| `error_stack`         | 脱敏且最多 4000 字符的 stderr 尾部                  |
-| `error_fingerprint`   | 规范化错误名、错误码和首条错误的稳定哈希            |
-| `stderr_line_count`   | Agent 整个生命周期输出到 stderr 的行数              |
-| `runtime_instance_id` | 每次 spawn 生成的随机不透明 ID，不含 workspace/PID  |
-| `runtime_generation`  | 当前 workspace Agent runtime 代次                   |
-| `uptime_ms`           | Agent 从 spawn 到 exit 的存活时间                   |
-| `crash_phase`         | `startup` / `runtime` / `unknown`                   |
-| `termination_class`   | `exit_zero` / `exit_nonzero` / `signal` / `unknown` |
-| `diagnostic_class`    | `oom` / `sqlite` / `errno` / `generic` / `none`     |
+| Field                 | Description                                                        |
+| --------------------- | ------------------------------------------------------------------ |
+| `process_role`        | Fixed to `agent`                                                   |
+| `incident_kind`       | Fixed to `unexpected_exit`                                         |
+| `exit_code`           | Empty string if no exit code                                       |
+| `signal`              | Empty string if no signal                                          |
+| `termination_reason`  | Host-retained structured exit root cause, e.g. `protocol-close`    |
+| `error_name`          | Extracted from stderr tail, `AgentProcessExit` if unrecognized     |
+| `error_code`          | Extracted from Node error output, e.g. `EPIPE`                     |
+| `error_message`       | Sanitized error summary                                            |
+| `error_stack`         | Sanitized stderr tail, max 4000 characters                         |
+| `error_fingerprint`   | Normalized error name, error code and first error line stable hash |
+| `stderr_line_count`   | Agent lifetime stderr output line count                            |
+| `runtime_instance_id` | Random opaque ID generated per spawn, no workspace/PID             |
+| `runtime_generation`  | Current workspace Agent runtime generation                         |
+| `uptime_ms`           | Agent alive time from spawn to exit                                |
+| `crash_phase`         | `startup` / `runtime` / `unknown`                                  |
+| `termination_class`   | `exit_zero` / `exit_nonzero` / `signal` / `unknown`                |
+| `diagnostic_class`    | `oom` / `sqlite` / `errno` / `generic` / `none`                    |
 
-诊断摘要按确定性优先级提取：OOM → SQLite → errno → 通用异常 → 无诊断。`[Object]`、
-对象尾括号、GC 标题、native stack 地址、Node 内部位置和 SQLite ExperimentalWarning
-仅保留在脱敏后的 `error_stack` 中，不得成为 `error_message`。OOM 使用
-`AgentOutOfMemory / ERR_OUT_OF_MEMORY`；errno 必须把 `EPERM`、`EPIPE` 等写入
-`error_code`；SQLite 即使没有 SQLite code，也通过 `diagnostic_class=sqlite` 聚合。
+Diagnostic summary extracted by determinism priority: OOM → SQLite → errno → generic exception → no diagnosis. `[Object]`,
+object closing parenthesis, GC header, native stack address, Node internal location and SQLite ExperimentalWarning
+are retained only in sanitized `error_stack`, not allowed to become `error_message`. OOM uses
+`AgentOutOfMemory / ERR_OUT_OF_MEMORY`; errno must put `EPERM`、`EPIPE` etc. into
+`error_code`; SQLite aggregates via `diagnostic_class=sqlite` even without SQLite code.
 
 ### `perf_agent_spawn_error`
 
 - `group`: `stability`
 - `value`: `1`
-- 触发：Agent 命令或 cwd 无法 spawn。
-- 属性复用 `error_name`、`error_code`、`error_message`、`error_stack`、
-  `error_fingerprint`、`diagnostic_class`，并携带本次尝试的 `runtime_instance_id`。
+- Trigger: Agent command or cwd cannot spawn.
+- Attributes reuse `error_name`、`error_code`、`error_message`、`error_stack`、
+  `error_fingerprint`、`diagnostic_class`, and carry this attempt's `runtime_instance_id`.
 
-## 退出分类
+## Exit Classification
 
-| 原因                                   | 分类                             | 上报 crash |
-| -------------------------------------- | -------------------------------- | ---------- |
-| `workspace-dispose`                    | `expected`                       | 否         |
-| `manager-dispose` / retry              | `expected`                       | 否         |
-| `request-timeout`                      | `watchdog_recycle`               | 否         |
-| desktop `app_quit` / `update_install`  | 应用退出保护                     | 否         |
-| 无结构化根因的 Windows `0x40010004`    | desktop RUM 受控终止兼容分类     | 否         |
-| 无结构化根因的 POSIX `SIGTERM`         | desktop RUM 受控终止兼容分类     | 否         |
-| `protocol-close` 后任意 code/signal    | 不设置 intent，保持 `unexpected` | 是         |
-| 其他无 cleanup 请求的 code/signal exit | `unexpected`                     | 是         |
+| Cause                                          | Classification                                  | Report crash |
+| ---------------------------------------------- | ----------------------------------------------- | ------------ |
+| `workspace-dispose`                            | `expected`                                      | No           |
+| `manager-dispose` / retry                      | `expected`                                      | No           |
+| `request-timeout`                              | `watchdog_recycle`                              | No           |
+| desktop `app_quit` / `update_install`          | Application exit protection                     | No           |
+| Windows `0x40010004` w/o structured root cause | desktop RUM controlled termination compat class | No           |
+| POSIX `SIGTERM` w/o structured root cause      | desktop RUM controlled termination compat class | No           |
+| `protocol-close` after any code/signal         | No intent set, keep `unexpected`                | Yes          |
+| Other no-cleanup-request code/signal exit      | `unexpected`                                    | Yes          |
 
-首次设置的 termination intent 是根因事实，后续幂等 cleanup 不覆盖它。
+First-set termination intent is root cause fact, subsequent idempotent cleanup does not override it.
 
-## 隐私和容量
+## Privacy and Capacity
 
-- 禁止上传 `workspacePath`、`workspaceIdentity`、command、args、环境变量、
-  session/task id 或模型输入输出。
-- services 层先遮盖 token、cookie、authorization、password、secret 等赋值。
-- services 与 desktop main 两层都遮盖没有赋值前缀的 `sk-...` API key；错误文本不得
-  因缺少 `token=` / `Authorization` 前缀而绕过脱敏。
-- desktop main 再把 workspace 绝对路径替换成 `<workspace>`，错误详情截断到
-  4000 字符。
-- desktop main 同时替换 Windows/macOS/Linux 常见用户主目录；指纹生成前进一步移除
-  任意绝对路径、UUID、PID 和行列号，避免路径泄露和高基数。
-- ARMS 上报属于旁路观测；任何 schema、IPC 或 `sendCustom` 失败都不能影响
-  Agent 启动、退出和自动恢复。
+- Prohibit uploading `workspacePath`、`workspaceIdentity`、command、args、environment variables、
+  session/task ID or model input/output.
+- services layer first masks token、cookie、authorization、password、secret etc. assignments.
+- services and desktop main both mask non-prefixed `sk-...` API key; error text must not
+  bypass masking due to missing `token=` / `Authorization` prefix.
+- desktop main then replaces workspace absolute path with `<workspace>`, error details truncated to
+  4000 characters.
+- desktop main simultaneously replaces common Windows/macOS/Linux user home directories; before fingerprint generation
+  further removes any absolute path, UUID, PID and line/column number, avoiding path leakage and high cardinality.
+- ARMS reporting is side-channel observation; any schema, IPC or `sendCustom` failure cannot
+  affect Agent startup, exit and auto-recovery.
 
-## Agent 进程级异常边界
+## Agent Process-Level Exception Boundary
 
-协议模式（`app-server` / `agent-server`）在 CLI 入口安装进程级异常边界，覆盖：
+Protocol mode (`app-server` / `agent-server`) installs process-level exception boundary at CLI entry, covering:
 
 - `uncaughtException`
 - `unhandledRejection`
 - `uncaughtExceptionMonitor`
 
-该边界把诊断信息写入 `stderr`，不向 stdout 写普通文本，避免破坏 ZCode Protocol
-NDJSON 通道。到达这里的未知异常意味着业务层未能恢复：首次异常报告后交给 CLI
-生命周期 owner 有界退出，不再接受新的业务。普通请求/模型/工具错误仍在原业务边界处理。
+This boundary writes diagnostic information to `stderr`, does not write diagnostic text to stdout, avoiding
+breaking ZCode Protocol NDJSON channel. Reaching here unknown exception means business layer failed to recover: first
+exception report after which CLI lifecycle owner has bounded exit, not accepting new business. Ordinary request/model/tool
+errors still handled in original business boundaries.
 
 ```text
 uncaughtException / unhandledRejection
@@ -180,88 +180,66 @@ uncaughtException / unhandledRejection
              ▼
 CLI process-level boundary
              │
-             ├─ stderr：记录类型、错误名、消息和栈
-             ├─ stdout：不写任何诊断文本
-             └─ CLI owner 停止接单、取消和清理、非零退出
+             ├─ stderr: record type, error name, message and stack
+             ├─ stdout: write no diagnostic text
+             └─ CLI owner stop taking work, cancel and cleanup, non-zero exit
 ```
 
-早期实现通过 listener 保活，依赖 Host timeout 回收；父端已消失时该假设不成立，且
-stderr 的异步 EPIPE 会再次触发边界并循环写坏管道。现在 stderr 写入边界独立吸收该流的
-同步/异步失败并停用出口；不得全局忽略其他流的 EPIPE。`uncaughtExceptionMonitor`
-只记录 origin，strict rejection 仍由 rejection listener 统一报告。清理期间的后续异常
-不重复诊断、不延长首次退出时限。完整时序见 CLI 协议进程生命周期 spec。
+Early implementation used listener keepalive, relying on Host timeout recycle; when parent already gone this assumption invalid, and
+stderr async EPIPE would again trigger boundary and loop writing broken pipe. Now stderr writing boundary independently absorbs this stream's
+sync/async failure and disables outlet; must not globally ignore other streams' EPIPE. `uncaughtExceptionMonitor`
+only records origin, strict rejection still unified reported by rejection listener. Cleanup-period subsequent exceptions
+do not repeat diagnosis, do not extend first exit time limit. Full timing see CLI protocol process lifecycle spec.
 
-该边界只在协议模式安装，不改变普通 headless CLI、TUI、doctor、login 等命令原有的
-失败退出语义。`perf_agent_crash` 仍表示实际退出；异常发生后是否退出不影响 JS 错误上报。
+This boundary only installed in protocol mode, does not change ordinary headless CLI、TUI、doctor、login etc. commands'
+original failure exit semantics. `perf_agent_crash` still indicates actual exit; whether exit occurs after exception does not affect JS error reporting.
 
-### CLI 的 JS 异常上报（2026-09-14 引入）
+### CLI JS Exception Reporting (2026-09-14 introduced)
 
-根因：异常边界保留了进程，但 stderr 只进 debug / exit tail，Electron SDK 无法自动
-捕获 Node 子进程异常。必须在异常发生时显式发送 `exception`，不能依赖退出日志的
-`console.error` 自动采集。
+Root cause: exception boundary retains process, but stderr only goes to debug / exit tail, Electron SDK cannot automatically
+capture Node child process exception. Must explicitly send `exception` when exception occurs, cannot rely on exit log's
+`console.error` auto-collection.
 
 ```text
-CLI 异常边界（errorId 唯一事实源）
-  → stderr 单行 [zcode-process-exception] JSON v1
-  → ProcessManager 校验 / 脱敏 / 绑定当前 runtime_instance_id
+CLI exception boundary (errorId unique fact source)
+  → stderr single line [zcode-process-exception] JSON v1
+  → ProcessManager validate / sanitize / bind current runtime_instance_id
   → RuntimeProcessLifecycleReporter.onException
-  → Host IPC agent-process-exception（运行时 schema 校验）
+  → Host IPC agent-process-exception (runtime schema validation)
   → desktop main sendEvent(exception, type=error)
-  → RUM JS 错误
+  → RUM JS error
 ```
 
-- 共享公开契约为 `@zcode/shared/process-diagnostic`，并从 ZCode Protocol 入口导出。
-  CLI / SEA 构建 alias 必须精确声明该子路径，避免被通用 shared alias 拼到 index.ts 后。
-  字段为 `version/errorId/kind/origin/name/message/stack/occurredAt`；kind/origin 只接受
-  uncaughtException / unhandledRejection。名称最多 128 字符，消息 4000，栈 16000，
-  JSON 行最多 128 Ki 字符（覆盖 JSON 转义膨胀）；未知版本、额外字段、损坏帧不转发。
-- 同一次 monitor + uncaughtException 只由后者输出一次。
-  使用 Node strict rejection 模式时，Node 先触发 origin=unhandledRejection 的 uncaughtException，
-  被处理后再触发 unhandledRejection；该情形统一由后者报告一次，避免同一 rejection 双计数。
-  原有可读 stderr 保留供旧 Host 和 crash tail 使用；新 Host 不把结构化行重复加入 tail。CLI 早期启动即能输出，不依赖
-  stdout 协议就绪；诊断本身不新增计时器、重试队列或业务状态，退出时限由 CLI lifecycle
-  统一持有。任何序列化/写入失败不能再次抛出。
-- ProcessManager 只使用创建该 child 时的 runtime 身份，不按路径查询“当前进程”，避免
-  旧进程晚到的异常被归入新 runtime。IPC 异常是观测旁路，不参与 ready / exit / task 状态。
-- Main 是 RUM SDK 和去重状态的唯一 owner：按 runtimeInstanceId + errorId 保留最近
-  1024 条已提交事件；SDK 同步失败不记成功。相同栈的不同 errorId 必须分别计数。
-  不保证强杀前尚未写入管道的异常送达，不通过异常推断进程已经恢复或崩溃。
-- RUM 事件保留原始错误名、脱敏消息和栈，附带 process_role=agent、process_error_kind、
-  process_error_origin、error_id、runtime_instance_id、runtime_generation、lane（如有）、
-  app_version、arms_env、device_mid 和稳定指纹。沿用 main 的脱敏及 4000 字符上限；
-  不上传 workspace、命令或 task/session 标识。
-- 已走生命周期 reporter 的退出 / spawn 失败日志带明确诊断标记，仅过滤这类
-  console.error 包装事件；本地 error 日志保留，其他 console.error 继续采集。
-  “perf_agent_crash / perf_agent_spawn_error reported” 改为 info，避免上报成功再产生 JS 错误。
-- 新旧 CLI/Host 混用时保留原有 crash 上报；新异常契约不改 stdout wire version。
-  本次覆盖桌面 Host 直接启动的 CLI；独立终端 CLI、SSH/WSL/Docker 远端 Agent 的独立
-  采集入口不在本次新增范围。手机 shared-host 复用此旁路，不在 relay/Web 重复采集，
-  desktop continuous 和 web replayable 的任务事件、owner/lease/队列语义均不改变。
+- Shared public contract is `@zcode/shared/process-diagnostic`, and exported from ZCode Protocol entry.
+  CLI / SEA build alias must precisely declare this subpath, avoiding being pulled into index.ts by generic shared alias.
+  Fields are `version/errorId/kind/origin/name/message/stack/occurredAt`; kind/origin only accept
+  uncaughtException / unhandledRejection. Name max 128 characters, message 4000, stack 16000,
+  JSON line max 128 KiB (covering JSON escaping expansion); unknown version, extra fields, damaged frames not forwarded.
+- Same monitor + uncaughtException only output once by the latter.
+  When using Node strict rejection mode, Node first triggers origin=unhandledRejection's uncaughtException,
+  handled then triggers unhandledRejection; this situation unified reported once by the latter, avoiding same rejection double-count.
+  Original readable stderr retained for old Host and crash tail use; new Host does not add structured lines repeatedly to tail. CLI early startup
+  able to output, not dependent on stdout protocol readiness; diagnostic itself adds no timers, retry queues or business state, exit time limit
+  by CLI lifecycle unified held. Any serialization/write failure cannot re-throw.
+- ProcessManager only uses runtime identity at time of creating that child, not by path query "current process", avoiding
+  late-arriving old process exception attributed to new runtime. IPC exception is observation side-channel, not participating in ready / exit / task state.
+- Main is RUM SDK and deduplication state sole owner: by runtimeInstanceId + errorId retain recent
+  1024 submitted events; SDK sync failure not record success. Same stack different errorId must be separately counted.
+  Not guarantee pre-force-kill unwritten pipe exception delivery, not via exception infer process already recovered or crashed.
+- RUM event retains original error name, sanitized message and stack, attached with process_role=agent、process_error_kind、
+  process_error_origin、error_id、runtime_instance_id、runtime_generation、lane（if any）、
+  app_version、arms_env、device_mid and stable fingerprint; follow main's sanitization and 4000 character limit;
+  no upload of workspace, command or task/session identifiers.
+- Already gone through lifecycle reporter's exit/spawn failure log with clear diagnostic tag, only filter this
+  console.error wrapped event; local error log retained, other console.error continue collection.
+  "perf_agent_crash / perf_agent_spawn_error reported" changed to info, avoid reporting success then producing JS error.
+- New/old CLI/Host mixed use retains original crash reporting; new exception contract does not change stdout wire version.
+  This covers desktop Host directly launched CLI; independent terminal CLI、SSH/WSL/Docker remote Agent independent
+  collection entry not in this new range. Mobile shared-host reuse this side-channel, not duplicate in relay/Web,
+  desktop continuous and web replayable task events, owner/lease/queue semantics unchanged.
 
-验收：真实 CLI 分别注入 throw / rejection，退出前即出现一次 JS exception；随后有界
-exit 1 产生一次实际退出事件，无包装日志 JS 错误。Host 在 stderr drain 后生成 exit tail，
-不能在 child exit 事件或发 EOF 前关掉诊断 reader。
-覆盖 IPC 非法输入、非 Error rejection、生产 debug 关闭、跨平台路径脱敏、重复事件、
-上报失败隔离。线上验证同时记录 SDK 请求/HTTP 响应，并在 RUM 按唯一标记核对索引结果。
-
-## 验证
-
-- 自然 `exit 1`、自然 `exit 0`、`SIGKILL` 均产生一次 crash。
-- 缺少 `terminationReason` 时，Windows `0x40010004` 和 POSIX `SIGTERM` 即使暂被标记为
-  `unexpected`，也不产生 crash。
-- 成功 spawn 产生一次 start，且 start/crash 的 `runtime_instance_id` 相同。
-- 主动 workspace/app cleanup 不产生 crash。
-- `perf_app_exit` 后异步到达的 Agent exit 不产生 crash，且 lifecycle 不恢复为 runtime。
-- `protocol-close → SIGTERM / 0x40010004 / 其他 exit` 均产生 crash，并携带
-  `termination_reason=protocol-close`。
-- 同一 runtime 的 start / ready / crash 共用 `runtime_instance_id`，ready 最多一次。
-- ready 前退出为 `crash_phase=startup`，ready 后退出为 `runtime`，旧 Host 缺字段为 `unknown`。
-- OOM、SQLite、errno 摘要分别得到稳定的 `diagnostic_class`，结构噪音不进入摘要。
-- spawn `ENOENT` 产生一次 `perf_agent_spawn_error`。
-- stderr 中的 credential 和 workspace 路径不会进入最终 payload。
-- 超长 stderr 截断到 4000 字符。
-- 两个 runtime 在短时间内崩溃会产生两条事件，并通过不同
-  `runtime_instance_id` 区分。
-- 协议模式中未捕获同步异常和未处理 Promise rejection 会写入 stderr，但不会立即让
-  CLI 进程退出；普通 CLI/TUI 仍保持原有未捕获异常行为。
-- 进程级异常边界不会向 stdout 写入非协议文本，也不会覆盖既有 `process.exitCode`。
+Verification: real CLI separately inject throw / rejection, before exit appears once JS exception; then bounded
+exit 1 produces one actual exit event, no wrapper log JS error. Host after stderr drain generates exit tail,
+cannot in child exit event or send EOF before turn off diagnostic reader.
+Cover IPC illegal input, non-Error rejection, production debug disabled, cross-platform path sanitization, duplicate events,
+reporting failure isolation. Online verification simultaneously records SDK request/HTTP response, and in RUM check index results by unique marker.

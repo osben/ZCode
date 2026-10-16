@@ -1,36 +1,32 @@
-# Todo147：从生产配置生成测试账号地址，并补齐测试域名签名准入
+# Todo147: Generate Test-account URLs from Production Config and Admit Test Domains for Signing
 
-状态：已实现，定向验证与复审完成；未请求真实模型服务。
+Status: Implemented; focused verification and review completed. No request was sent to a real model service.
 
-## 范围
+## Scope
 
-- 生产 Built-in JSON 为唯一编辑源，脚本同步生成测试 JSON，仅变换账号 Provider 的四类 URL 和对应站点规则。
-- 测试配置保留生产站点规则（手动模板仍使用它们），派生规则逐 URL 生成，能力及优先级不改。
-- revision 同步，不修改用户配置，不发布在线配置，不新增运行时 URL 改写。
-- 签名补充两个明确的 z.ai 测试 hostname；bigmodel.cn 沿用既有匹配。
-- 体验／闲时仍不发 Sig，其他签名、鉴权及 Header 行为保持。
+- The production Built-in JSON is the only editable source. A script synchronizes and generates test JSON by changing only the four account-Provider URL types and their corresponding site rules.
+- Keep production site rules in test config (manual templates still use them). Generate derived rules per URL; do not change capabilities or precedence.
+- Keep the revision synchronized. Do not modify user config, publish online config, or add runtime URL rewriting.
+- Add two explicit z.ai test hostnames to signing; keep the existing `bigmodel.cn` match.
+- Do not send Sig for trial/off-peak access. Keep all other signing, authentication, and Header behavior unchanged.
 
-详细规则与命令见 [双环境构建 Spec](../../../builtin-provider-config-build-environments.md)。
-本裁决接续 Todo146 的“初始两份一致”，之后不再独立维护测试 JSON。
+See the [two-environment build Spec](../../../builtin-provider-config-build-environments.md) for detailed rules and commands. This decision follows Todo146's “the two initial copies are identical”; do not maintain test JSON independently afterward.
 
-## 验收
+## Acceptance
 
-- [x] 脚本可重复生成，生产源不变；新增模型／能力能同步，过期检查失败且不写文件。
-- [x] 真实两份 Release 的八个账号地址与对应模型有效配置一致；手动模板及其他字段保留。
-- [x] 测试域手动 Key 请求实际经过同一 gate、同源握手、Sig；伪域、关闭 gate 与 HTTPS 边界覆盖。
-- [x] 两家体验／闲时在测试域使用真实形状 JWT、流式与非流式均不进入签名。
-- [x] 相关测试、类型、lint、架构与复审完成；未测试真实环境如实记录。
+- [x] Script generation is repeatable and leaves production sources unchanged; new models/capabilities sync; stale checks fail without writing files.
+- [x] The eight account URLs in both real Release configs match valid config for their models; manual templates and other fields are preserved.
+- [x] Manual-key requests to test domains pass through the same gate, same-origin handshake, and Sig; fake domains, disabled gate, and HTTPS boundaries are covered.
+- [x] Trial/off-peak requests for both providers use realistic JWT shapes on test domains and are not signed for streaming or non-streaming requests.
+- [x] Relevant tests, types, lint, architecture, and review are complete; untested real environments are explicitly identified.
 
-## 2026-09-14 验证与复审
+## Verification and Review on 2026-09-14
 
-- Node 生成契约 7 项通过；既有构建契约 13 项通过，均通过 Vitest 包装纳入日常回归。
-- SDK 签名集 70 项通过，注入本地 transport 捕获真实 SDK 请求，断言同源握手、最终 Sig 以及测试域 JWT 例外；不消耗真实账号。
-- 测试 JSON 的差异仅为 8 个账号 URL 与 7 条派生站点规则；生产 JSON 无修改。
-  八个账号当前全部内置模型经完整 Release 解码后，测试／生产有效模型配置一致。
-- 根目录与 adapters 类型检查通过；根目录 lint 0 错误、42 条既有警告；架构 0 违规，改动文件格式检查通过。
-- 额外复查 `model-execution.test.ts`：31 项通过、3 项既有失败。临时恢复执行文件至 HEAD
-  （diff 确认为空）后复跑仍为同三项失败：旧测试期待官方手动 Key 不签名，及两条未声明
-  accountMode、实际被夹具构造成 api-key 的 Start／Off-Peak 用例。未修改这些旧测试或扩大产品修复。
-- adapters 整包 lint 仍受其他未改文件的既有 max-lines 违规阻塞；本次改动文件单独 lint 通过。
-- 没有 UI、用户数据、消息同步／执行权变更，不新增交互 E2E；未执行真实测试账号联网请求或完整签名安装包。
-- 构建只消费已生成文件，不暗中重写；生产配置、模板、模型规则、个人覆盖及签名例外顺序复审无意外变更。
+- Seven Node generation-contract tests and 13 existing build-contract tests passed; both are included in routine regressions through Vitest wrappers.
+- The SDK signing suite passed 70 tests. An injected local transport captured real SDK requests and asserted same-origin handshake, final Sig, and the test-domain JWT exception without using real accounts.
+- Test JSON differs only in eight account URLs and seven derived site rules; production JSON is unchanged. After fully decoding Release output, all built-in models for all eight accounts have matching effective test/production model configuration.
+- Root and adapters typechecks passed; root lint had 0 errors and 42 existing warnings; architecture had 0 violations; format checks passed on changed files.
+- An additional `model-execution.test.ts` check had 31 passes and 3 pre-existing failures. Restored the execution file to HEAD temporarily (confirmed empty diff) and reran; the same three failed: old tests expect official manual Keys not to be signed, and two Start/off-peak cases do not declare `accountMode` and are actually built by the fixture as `api-key`. Those old tests were not changed, and the product fix was not broadened.
+- Package-wide adapters lint remains blocked by pre-existing max-lines violations in other unchanged files; lint on changed files passed.
+- No UI, user-data, message-sync, or execution-authority changes; no interaction E2E was added. No real test-account network request or complete signed installer was run.
+- The build consumes generated files and does not silently rewrite them. Review found no unexpected changes to production config, templates, model rules, personal overlays, or signing-exception order.

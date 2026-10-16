@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo } from "react";
+import { memo, useCallback, useMemo, useRef } from "react";
 import { LightbulbIcon, XIcon, ChevronDownIcon } from "lucide-react";
 import {
   TID_CHAT_MODE_SELECT_TRIGGER,
@@ -26,7 +26,7 @@ import {
   resolveModeOptionIcon,
 } from "@/chat-input-toolbar/display.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import { isCoarseTouchDevice } from "@/lib/pickerFocus.js";
+import { restoreComposerInputFocusAfterPickerClose } from "@/lib/pickerFocus.js";
 import { useShortcutCommandLabel } from "@/shortcuts/useShortcutBindings.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import {
@@ -57,6 +57,7 @@ function V4ComposerModeSwitchImpl({
   | "onSwitchMode"
 >) {
   const { intl } = useZCodeIntl();
+  const modeTriggerRef = useRef<HTMLButtonElement | null>(null);
   const displayProvider = provider ?? ZCODE_AGENT_PROVIDER;
   const modeShortcutLabel = useShortcutCommandLabel("cycleSessionMode");
   const modes = getZCodeAgentAvailableModes();
@@ -112,6 +113,7 @@ function V4ComposerModeSwitchImpl({
         >
           <DropdownMenuTrigger asChild>
             <Button
+              ref={modeTriggerRef}
               variant="ghost"
               size="sm"
               disabled={disabled}
@@ -139,10 +141,10 @@ function V4ComposerModeSwitchImpl({
           className="w-64"
           onCloseAutoFocus={(event) => {
             event.preventDefault();
-            if (!isCoarseTouchDevice())
-              document
-                .querySelector<HTMLElement>(`[data-testid="${TID_V4_COMPOSER_INPUT}"]`)
-                ?.focus();
+            restoreComposerInputFocusAfterPickerClose({
+              anchor: modeTriggerRef.current,
+              fallbackSelector: `[data-testid="${TID_V4_COMPOSER_INPUT}"]`,
+            });
           }}
         >
           <DropdownMenuCheckboxItem

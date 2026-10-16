@@ -1,17 +1,17 @@
-# Z Code 代码架构总览（当前事实）
+# Z Code Code Architecture Overview (Current Facts)
 
-> 本文是进程与分层架构的当前入口。历史方案和迁移计划不能覆盖本文口径。
+> This is the current entry point for process and layer architecture. Historical proposals and migration plans do not supersede the facts stated here.
 
-## 一句话模型
+## The Model in One Sentence
 
-Z Code 可以运行多个 workspace window；每个窗口有且只有一个 Window Host，每个 workspaceKey 最多一个聊天 CLI。Renderer 只通过 service/protocol 边界访问能力；CLI 持有 conversation 的权威状态。远程 workspace 的连接和 scoped services 也由该窗口的同一个 Host 管理。
+Z Code can run multiple workspace windows. Each window has exactly one Window Host, and each `workspaceKey` has at most one chat CLI. The Renderer accesses capabilities only through service/protocol boundaries; the CLI owns authoritative conversation state. Connections and scoped services for remote workspaces are also managed by the same Host for that window.
 
 ```text
 Electron App
-├─ Main Process（调度/原生能力/attachment 中转）
-└─ Workspace Window（每个窗口独立一组）
+├─ Main Process (scheduling/native capabilities/attachment relay)
+└─ Workspace Window (a separate set for each window)
    ├─ Renderer
-   └─ Window Host（唯一 PID）
+   └─ Window Host (the sole PID)
       ├─ LocalSource
       │  ├─ workspaceKey A ── stdio ── zcode-cli A
       │  └─ workspaceKey B ── stdio ── zcode-cli B
@@ -19,35 +19,35 @@ Electron App
       │  ├─ SSH / WSL pooled connection
       │  ├─ Docker / Server dedicated connection
       │  └─ remoteSessionId -> workspaceKey scoped services
-      ├─ ControllerProjection（workspace/task 列表事实）
+      ├─ ControllerProjection (workspace/task list facts)
       └─ AttachmentRegistry
          ├─ desktop-continuous
          └─ web-remote-replayable
 ```
 
-窗口、Host、connection 和 workspace 不是同一层级：窗口 Host 按 workspaceKey 隔离本地 CLI，并在进程内维护远端 connection 与 logical session。SSH 在同一窗口、同一标准化 target 下共享一条连接和一个远端 `zcode-server`；WSL 按 normalized distro/user 共享连接并保留既有 60 秒 idle TTL/running-task protection；Docker、Server 保持 dedicated connection。所有 transport 仍保留独立 `remoteSessionId`、attachment 和 workspaceKey，连接复用不等于 workspace 身份合并。
+Window, Host, connection, and workspace are different levels. A Window Host isolates local CLIs by `workspaceKey` and maintains remote connections and logical sessions in-process. SSH shares one connection and one remote `zcode-server` within a window for the same normalized target. WSL shares connections by normalized distro/user and retains the existing 60-second idle TTL and running-task protection. Docker and Server keep dedicated connections. Every transport still retains its own `remoteSessionId`, attachment, and `workspaceKey`; connection reuse does not merge workspace identities.
 
-## 进程职责
+## Process Responsibilities
 
 ### Main Process
 
-只做平台调度：窗口生命周期、native dialog、external URL、OAuth callback、唯一窗口 Host Process 的监督、远端连接控制请求与 MessagePort/broadcast/远控 attachment 薄转发、日志接收。Main 不拥有连接池、logical session lifecycle、task projection、row、stream、queue、snapshot、goal 或 interaction 状态；`remoteSessionId` 由 Window Host 分配。
+Handles platform coordination only: window lifecycle, native dialogs, external URLs, OAuth callbacks, supervision of the window's sole Host Process, thin forwarding of remote-connection control requests and MessagePort/broadcast/remote-control attachments, and log receipt. Main does not own connection pools, logical-session lifecycles, task projections, rows, streams, queues, snapshots, goals, or interaction state; the Window Host assigns `remoteSessionId`.
 
 ### Renderer
 
-负责 React UI、路由、布局以及草稿/滚动/焦点等本地状态；通过 hooks/service proxy 和 V4 transport 发意图；订阅 snapshot/delta 渲染 projection。Renderer 不直接调用 Repo/Node/CLI，也不维护第二份权威 conversation。
+Owns the React UI, routing, layout, and local state such as drafts/scroll/focus; sends intents through hooks/service proxies and V4 transport; subscribes to snapshots/deltas to render projections. The Renderer does not call Repo/Node/CLI directly or maintain a second authoritative conversation.
 
 ### Host Process
 
-由 `createLocalServices({ parentPort })` 初始化窗口本地服务，并在同一进程中维护 `RemoteConnectionRegistry`、`ControllerProjection` 与 `AttachmentRegistry`。Host 按 workspaceKey 选择或启动本地 CLI，或把 scoped facade 路由到远端权威 service；列表 membership、在线/运行/等待事实与列表写路由由 Controller 持有，但 Host 不替 CLI reducer 拼 conversation rows、stream、permission 或 runtime snapshot。
+Initializes window-local services through `createLocalServices({ parentPort })` and maintains `RemoteConnectionRegistry`, `ControllerProjection`, and `AttachmentRegistry` in the same process. The Host selects or starts a local CLI by `workspaceKey`, or routes a scoped facade to the authoritative remote service. Controller owns list membership, online/running/waiting facts, and list-write routing; the Host does not assemble conversation rows, streams, permissions, or runtime snapshots on behalf of the CLI reducer.
 
-一个窗口只注册一个 realtime `hostId`。每个 attachment 独立持有可信 `clientMode`、订阅、seq、背压和 dispose；关闭一个 attachment 不销毁仍有其他 owner 的 connection。远端断连保留最后可信 task 投影并标记 offline，所有 IO/mutation fail-closed，禁止回落本地；重连后由新 source snapshot 原子替换。
+Each window registers only one realtime `hostId`. Every attachment independently owns its trusted `clientMode`, subscriptions, `seq`, backpressure, and disposal; closing one attachment does not destroy a connection with other owners. On remote disconnection, retain the last trusted task projection and mark it offline; all IO/mutations fail closed, with no fallback to local. After reconnection, atomically replace it with a new source snapshot.
 
-真实窗口关闭、app quit 和 update install 只等待该窗口唯一 Host；Host 内部对 attachment、远端 registry 和本地 services 做有界释放。手机 attachment 断开只释放 attachment，不进入 Host shutdown 屏障。
+Actual window close, app quit, and update install wait only for that window's sole Host. Inside the Host, release attachments, the remote registry, and local services with bounded waits. Disconnecting a mobile attachment releases only that attachment and does not enter the Host shutdown barrier.
 
 ### zcode-cli
 
-每个 workspaceKey 最多一个聊天 CLI 进程。CLI 承载 session/core runtime、V4 command inbox、幂等/CAS 裁决、ProductProjection reducer、conversation topic、queue、goal、interaction、tool 与模型运行态。
+There is at most one chat CLI process per `workspaceKey`. The CLI owns the session/core runtime, V4 command inbox, idempotency/CAS adjudication, ProductProjection reducer, conversation topic, queue, goal, interaction, tool, and model runtime state.
 
 ## Workspace Identity
 
@@ -55,23 +55,23 @@ Electron App
 workspaceKey = workspaceIdentity?.trim() || workspacePath
 ```
 
-- 身份/隔离使用 workspaceKey：CLI 映射、session 绑定、缓存、队列、持久化与跨进程关联。
-- 文件执行使用 workspacePath：cwd、文件读写、Git 和路径展示。
-- SSH/WSL/Docker 必须传递 `workspaceIdentity`；远控同时贯穿 `remoteSessionId`。
+- Use `workspaceKey` for identity/isolation: CLI mapping, session binding, caching, queues, persistence, and cross-process correlation.
+- Use `workspacePath` for file operations: cwd, file reads/writes, Git, and path display.
+- SSH/WSL/Docker must pass `workspaceIdentity`; remote control also carries `remoteSessionId` end to end.
 
-不得用相同远端路径推导相同 workspace 身份，也不得在业务代码手写 remote identity 格式。
+Do not infer the same workspace identity from the same remote path, and do not hand-write the remote identity format in business code.
 
-## Monorepo 分层
+## Monorepo Layers
 
-| 模块                | 职责                                                     |
-| ------------------- | -------------------------------------------------------- |
-| `packages/shared`   | 跨进程类型、V4 schema、workspace identity 与平台契约     |
-| `packages/rpc`      | Channel RPC、MessagePort/WebSocket transport、日志中间件 |
-| `packages/services` | Host 业务服务接口和 Node 实现                            |
-| `packages/client`   | service proxy 与客户端 transport 装配                    |
-| `packages/ui`       | 平台无关 React UI、hooks、V4 projection store            |
-| `packages/desktop`  | Electron main/preload/renderer/host 壳                   |
-| `apps/zcode-cli`    | Agent core、command、projection 与 app-server            |
+| Module              | Responsibility                                                              |
+| ------------------- | --------------------------------------------------------------------------- |
+| `packages/shared`   | Cross-process types, V4 schemas, workspace identity, and platform contracts |
+| `packages/rpc`      | Channel RPC, MessagePort/WebSocket transport, and logging middleware        |
+| `packages/services` | Host business-service interfaces and Node implementations                   |
+| `packages/client`   | Service proxies and client transport composition                            |
+| `packages/ui`       | Platform-independent React UI, hooks, and V4 projection store               |
+| `packages/desktop`  | Electron main/preload/renderer/host shell                                   |
+| `apps/zcode-cli`    | Agent core, commands, projections, and app-server                           |
 
 ```text
 UI -> hooks/types -> service/protocol contracts
@@ -79,9 +79,9 @@ Host services -> adapters/interfaces -> runtime implementations
 Desktop/Web shells -> dependency injection -> shared UI
 ```
 
-禁止 UI 直接调用 Repo、Service 引用 Runtime 具体实现、跨域导入非 Types 模块或形成循环依赖。
+The UI must not call Repos directly; Services must not reference concrete Runtime implementations; cross-domain imports of non-Types modules and circular dependencies are prohibited.
 
-## Conversation 数据流
+## Conversation Data Flow
 
 ```text
 UI command
@@ -95,17 +95,17 @@ UI command
   -> UI rows/status/composer
 ```
 
-desktop 和 mobile 共享这条事实链。差别只在 delivery profile：桌面是 continuous；手机是 replayable，并在 gap 时 snapshot 恢复。relay/Main 不能下沉业务状态。
+Desktop and mobile share this source-of-truth path. The only difference is the delivery profile: desktop is continuous; mobile is replayable and recovers from gaps with a snapshot. Relay/Main must not hold business state.
 
-## 平台抽象与 UI 规则
+## Platform Abstractions and UI Rules
 
-- UI 通过 `IPlatformService` 访问目录选择、外链等平台能力。
-- 组件通过 `useServices()`、`usePlatform()` 等 hooks 获取依赖，不直接使用 `window.zcode` 或 service 单例。
-- Desktop/Web/Mobile 差异通过装配和依赖注入处理，不在共享组件里硬编码平台分支。
+- The UI accesses platform capabilities such as directory selection and external links through `IPlatformService`.
+- Components obtain dependencies through hooks such as `useServices()` and `usePlatform()`; they do not use `window.zcode` or service singletons directly.
+- Handle Desktop/Web/Mobile differences through composition and dependency injection; do not hard-code platform branches into shared components.
 
-## 当前事实入口
+## Current Sources of Truth
 
-- [通信协议分层](./communication-protocol-layers.md)
+- [Communication Protocol Layers](./communication-protocol-layers.md)
 - [ZCode Protocol](../zcode-protocol.md)
 - [Message Flow](./message-flow.md)
 - [Web Remote Control Architecture](../web-remote-control/web-remote-control-architecture.md)

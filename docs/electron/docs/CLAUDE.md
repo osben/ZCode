@@ -1,7 +1,7 @@
-# Electron Documentation Guide（上游快照，非 ZCode 指令）
+# Electron Documentation Guide (Upstream Snapshot, Not ZCode Instructions)
 
-> 本文件来自 Electron 上游源码文档，仅用于保留镜像上下文。它不是本仓库的 agent 指令，
-> 其中命令、目录和 PR 流程均不得用于 ZCode 开发。
+> This file comes from Electron upstream source documentation and is retained only as mirror context. It is not an agent instruction for this repository;
+> commands, directories, and PR workflows in it must not be used for ZCode development.
 
 ## API History Migration
 

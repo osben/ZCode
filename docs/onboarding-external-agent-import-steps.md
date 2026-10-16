@@ -1,30 +1,30 @@
-# 引导迁移向导外部 Agent 导入步骤
+# Onboarding Migration Wizard: External Agent Import Steps
 
-## 背景
+## Background
 
-设置页已经具备从外部 Agent 导入 Skills、MCP 服务器、插件、命令的基础能力。插件导入当前仍需要 Agent 侧支持，入口暂时隐藏；首启引导的数据迁移向导需要先覆盖可用的 Skills、MCP 服务器、命令导入。
+Settings already supports importing Skills, MCP servers, plugins, and commands from external Agents. Plugin import still requires Agent-side support, so its entry point is temporarily hidden. The first-run data migration wizard should initially cover the available Skills, MCP server, and command imports.
 
-## 目标
+## Goals
 
-- 在引导迁移向导的正式迁移前加入三个可用外部导入步骤：
+- Add three available external-import steps before the formal migration step in the onboarding migration wizard:
   - Skills
-  - MCP 服务器
-  - 命令
-- 插件导入步骤暂时隐藏，原因是需要 Agent 侧支持完成后再开放。
-- 代理设置步骤暂时隐藏，不在引导的数据迁移向导里迁移 Agent 代理配置。
-- 每个步骤复用设置页导入弹窗的扫描、scope 切换、刷新、来源展开、逐项选择、全选/取消全选、导入目标、导入方式交互。
-- MCP 服务器步骤复用设置页 MCP 导入逻辑，仅合并配置，不显示软链/复制模式。
-- 进入最终迁移步骤时，将三个可用导入步骤中已选内容统一导入。
+  - MCP servers
+  - Commands
+- Temporarily hide the plugin-import step until the required Agent-side support is available.
+- Temporarily hide the proxy-settings step; do not migrate Agent proxy configuration in the onboarding data migration wizard.
+- Reuse the Settings import dialog interactions in each step: scanning, scope switching, refresh, expanding sources, selecting items individually, select/deselect all, import target, and import method.
+- Reuse the Settings MCP import logic for the MCP-server step; merge configuration only and do not show symlink/copy modes.
+- Import selected items from all three available import steps together when entering the final migration step.
 
-## 行为
+## Behavior
 
-- 三个可用导入步骤按需扫描：用户进入对应步骤时扫描当前类别，避免首屏一次性触发所有外部目录读取。
-- 用户可以不选择任何外部导入项并继续下一步。
-- “开始迁移”在至少选中会话或任一外部导入项时可用。
-- 外部导入结果继续复用 settings-sync 结果统计，进入完成页统一展示导入成功、跳过、失败数量。
+- Scan each of the three available import steps on demand when the user enters that step, rather than reading all external directories on the first screen.
+- Users may select no external items and continue.
+- Enable “Start migration” when at least one session or one external import item is selected.
+- Continue reusing the settings-sync result counts and show the number of successful, skipped, and failed imports together on the completion page.
 
-## 兼容性
+## Compatibility
 
-- 桌面端与 Web 端共用 UI 状态；实际可扫描内容由 settings-sync service 决定。
-- Project 目标仍依赖当前 workspacePath；无 workspace 时 Project 目标禁用。
-- 不引入 Gemini 相关来源。
+- Desktop and Web share UI state; the settings-sync service determines what can actually be scanned.
+- The Project target continues to depend on the current `workspacePath`; disable the Project target when there is no workspace.
+- Do not add Gemini-related sources.

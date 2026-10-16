@@ -1,44 +1,44 @@
-# M2：Registry 聚合与刷新链路
+# M2: Registry Aggregation and Refresh Chain
 
-> 状态：历史现状调研；结论已经进入目标设计和 M2 实现
+> Status: Historical status investigation; conclusions have entered target design and M2 implementation
 >
-> 日期：2026-08-13
+> Date: 2026-08-13
 >
-> 用途：保存 M2 开始时的实现、边界和待裁决问题；正文中的“当前”与“仍待”保留当时语境
+> Purpose: Save implementation, boundaries, and outstanding issues at the start of M2; "current" and "still pending" in the main text preserve the context at that time
 
-> 当前 M2 状态见 [`../steps/02-provider-config-and-registry.md`](../steps/02-provider-config-and-registry.md)，
-> 剩余旧链路见 [`../steps/02-provider-config-and-registry-cleanup.md`](../steps/02-provider-config-and-registry-cleanup.md)。
-> 本文中的候选命名、未决项和聚合方案只用于解释调研过程。
+> Current M2 status is at [`../steps/02-provider-config-and-registry.md`](../steps/02-provider-config-and-registry.md),
+> with remaining old chains at [`../steps/02-provider-config-and-registry-cleanup.md`](../steps/02-provider-config-and-registry-cleanup.md).
+> Candidate names, pending items, and aggregation schemes in this document are used only to explain the investigation process.
 
-M2 要解决的是 Model 如何从当前 Provider 事实产生。讨论 Registry 时，容易把三件事情混在一起：Registry 如何查询多个 Provider Source、Registry 是否保存聚合结果，以及变化如何送达消费者。本篇先把它们拆开。
+M2 addresses how Models are produced from current Provider facts. When discussing Registries, it is easy to mix three things: how the Registry queries multiple Provider Sources, whether the Registry saves aggregated results, and how changes are delivered to consumers. This document separates them first.
 
-## 调研结论的去向
+## Where Investigation Conclusions Go
 
-目标设计已经吸收以下结论：
+The target design has absorbed the following conclusions:
 
 ```text
 Config / Account Sources
           |
           | change
           v
-Registry 构造不可变 View 与轻量索引
+Registry constructs immutable View and lightweight index
           |
-          +-- 查询返回当前 View
-          `-- 变化事件通知消费者重新读取
+          +-- Queries return current View
+          `-- Change events notify consumers to re-read
 ```
 
-每个进程持有自己的 Registry 实例；Host 和 Worker 共享实现，不共享内存对象。事件表达旧 View 已失效，完整数据继续由查询接口提供。对应设计见 [`../design/registry/runtime.md`](../design/registry/runtime.md)。
+Each process holds its own Registry instance; Host and Workers share the implementation but not memory objects. Events express that the old View has expired; complete data continues to be provided by query interfaces. Corresponding design is at [`../design/registry/runtime.md`](../design/registry/runtime.md).
 
-仍待 M2 实施确定的是 Source 如何组合主动失效、文件 watcher 与 freshness check，单个 Source 刷新失败时采用什么策略，以及当前 Host → Worker 完整 Snapshot 如何退出。
+What remains to be determined by M2 implementation are how Sources combine proactive invalidation, file watchers, and freshness checks, what strategy to use when a single Source refresh fails, and how the current Host→Worker full Snapshot exits.
 
-本文中的 `Builtin Provider Source` 和 `Temporary Provider` 是调查当时的代码名称。当前设计分别使用 Official Config + AccountProviderAccess，以及 execution-scoped Provider 描述其目标边界。
+The `Builtin Provider Source` and `Temporary Provider` in this document are codenames from the time of investigation. The current design uses Official Config + AccountProviderAccess, and execution-scoped Providers to describe their target boundaries respectively.
 
-## 已经确认的边界
+## Confirmed Boundaries
 
-同一个 Environment 内，需要 Provider 能力的进程各自持有 Registry 实例。Host、Core Worker、Prompt CLI 和 TUI 复用同一套 Registry 实现，但不共享进程内对象。
+Within the same Environment, processes that need Provider capabilities each hold their own Registry instance. Host, Core Workers, Prompt CLI, and TUI share the same Registry implementation but do not share in-process objects.
 
 ```text
-同一 Environment 的 Provider Facts
+Provider Facts of the Same Environment
                |
        +-------+--------+
        |                |
@@ -46,56 +46,56 @@ Registry 构造不可变 View 与轻量索引
  Host Registry     Worker Registry
        |                |
        v                v
- 查看、选择模型       解析 Selection、创建 Model
+  View, select models  Parse Selection, create Models
 
 Prompt CLI / TUI
-└─ 在自己的进程内直接使用同一套 Registry 实现
+└─ Use the same Registry implementation directly within its own process
 ```
 
-Host 负责模型查看和选择。Submission 携带 `ModelSelection`，Core Worker 根据自己所属 Environment 的 Provider Facts 创建真正执行的 Model。Host 向 Worker 下发完整 Registry Snapshot 是当前迁移期链路，目标状态不再依赖这条链路。
+Host is responsible for model viewing and selection. Submissions carry `ModelSelection`; Core Workers create truly executing Models based on Provider Facts from their own Environment. Host sending complete Registry Snapshots to Workers is the current migration chain; the target state no longer depends on this chain.
 
-Provider Config 只是 Provider Facts 的一种来源。Builtin Provider、Temporary Provider 和远端 Environment 有各自的状态与生命周期，不能从本地配置的刷新方式反推整个 Registry 的实现。
+Provider Config is only one source of Provider Facts. Builtin Providers, Temporary Providers, and remote environments each have their own states and lifecycles; the entire Registry implementation cannot be inferred from how local configs are refreshed.
 
-本阶段暂不展开 Model 内部是否缓存 HTTP Client、连接池、Provider SDK 对象等问题。M2 先确定来源、聚合、查询和刷新边界。
+This phase does not expand on whether Models internally cache HTTP Clients, connection pools, Provider SDK objects, etc. M2 first determines source, aggregation, query, and refresh boundaries.
 
-## 查询和通知是两个问题
+## Queries and Notifications Are Two Separate Issues
 
-Registry 可以在查询时直接访问各个 Source：
+The Registry can access each Source directly during queries:
 
 ```text
 registry.listModels()
         |
         +--> Local Provider Source
         +--> Builtin Provider Source
-        +--> 其他 Source
+        +--> Other Sources
         |
         v
-     合并结果
+     Merged Results
 ```
 
-这种实现不一定需要保存完整聚合副本，但它仍然可能需要变化通知。原因是 Host 中的模型选择器、模型可用性门禁等消费者在保持打开时，需要知道数据已经过期。否则只能在每次交互时重新拉取，或者由每个页面各自决定何时刷新。
+This implementation does not necessarily need to save complete aggregation copies, but it still may need change notifications. The reason is that consumers like model selectors and model availability gates in the Host need to know when data has expired while keeping open. Otherwise, data would have to be re-fetched on every interaction, or each page would individually decide when to refresh.
 
-因此更准确的职责是：
+Therefore, more accurate responsibilities are:
 
 ```text
-查询接口
-└─ 返回调用时的当前 Provider / Model 视图
+Query interface
+└─ Returns the current Provider / Model view at the time of call
 
-变化事件
-└─ 告诉长期存活的消费者：旧视图已经过期，请重新读取
+Change events
+└─ Tell long-lived consumers: the old View has expired, please re-read
 ```
 
-“对外发布变化”首先表示进程内事件，不等于把整份 Registry 广播到其他进程，也不等于 Registry 之间互相同步。
+"Publishing changes externally" first means in-process events, not broadcasting the entire Registry to other processes, nor does it mean Registries synchronize with each other.
 
-## 调研中比较过的聚合方式
+## Aggregation Methods Compared During Investigation
 
-### 查询时聚合
+### Query-Time Aggregation
 
-Registry 不保存聚合结果，每次查询都访问各 Source 并合并。它的对象关系最简单，但每次查询都要重复执行冲突选择、排序和 Descriptor 计算；如果多个 Source 在查询过程中先后变化，同一次查询也可能看到不一致的时间点。
+The Registry does not save aggregated results, accessing each Source and merging on every query. Its object relationships are simplest, but each query repeats conflict resolution, sorting, and Descriptor calculations; if multiple Sources change sequentially during a query, the same query may also see inconsistent time points.
 
-### 物化聚合视图
+### Materialized Aggregation View
 
-Registry 保存一份不可变的当前视图。Source 变化后构造新视图，再一次性替换旧视图。
+The Registry saves one immutable current View. After a Source changes, construct a new View and atomically replace the old one.
 
 ```text
 Source A contribution ----\
@@ -105,11 +105,11 @@ Source B contribution ----/            |
                             list / lookup / descriptor
 ```
 
-查询便宜且视图一致，但 Registry 需要处理刷新、并发和失败。这里的“保存一份”也不必意味着深拷贝所有 Provider、Model 或运行资源；它可以只保存 Source 的不可变贡献和轻量查询索引。
+Queries are cheap and views are consistent, but the Registry needs to handle refreshes, concurrency, and failures. "Saving one" here does not necessarily mean deep-copying all Providers, Models, or runtime resources; it can only save Source's immutable contributions and lightweight query indexes.
 
-### 分来源状态加轻量索引
+### Per-Source States with Lightweight Index
 
-目前更值得继续验证的是这一种：Registry 保留每个 Source 的当前贡献，聚合层只维护查找、分组、排序和冲突选择所需的轻量索引。Source 自己负责取得和刷新事实，Registry 不接管 Source 的内部状态。
+The more promising approach for continued verification is this one: the Registry retains each Source's current contribution, and the aggregation layer only maintains lightweight indexes for lookups, grouping, sorting, and conflict resolution. Sources themselves are responsible for obtaining and refreshing facts; the Registry does not take over Source internal states.
 
 ```text
 Local Source   -> Local contribution ----\
@@ -117,88 +117,84 @@ Local Source   -> Local contribution ----\
 Builtin Source -> Builtin contribution --/
 ```
 
-这项比较推动了当前“不可变 View + 轻量索引”的目标设计。Source 仍拥有自己的获取与刷新机制；Registry 物化适合查询的静态视图，不接管 Source 的网络、文件或账号状态。
+This comparison pushed the current "immutable View + lightweight index" target design. Sources retain their own fetching and refreshing mechanisms; the Registry materializes static views suitable for queries and does not take over Source network, file, or account states.
 
-## 迁移前的代码如何工作
+## How Pre-Migration Code Works
 
-这段记录的是 M2 开始前的旧实现，保留它是为了说明迁移原因。旧 Desktop Host 曾经有一套“缓存快照、
-失效并通知”的实现：
+This record documents the old implementation before M2 began; it is preserved to explain the migration reason. The old Desktop Host once had a "cached snapshot, invalidated, and notified" implementation:
 
 ```text
-Provider Store / Family Settings / Runtime Headers / Plan 状态
+Provider Store / Family Settings / Runtime Headers / Plan status
                               |
                               v
                  ModelProviderService
-                 ├─ 缓存 Registry Snapshot
-                 ├─ save/delete 等操作使缓存失效
-                 └─ 重新构造 Snapshot 后触发全局事件
+                 ├─ Caches Registry Snapshot
+                 ├─ save/delete operations invalidate the cache
+                 └─ Reconstruct Snapshot and trigger global event
 ```
 
-代码曾位于 `packages/services/src/model-provider/modelProviderService.ts`。`getProviderRegistrySnapshot()` 缓存
-`ZCodeProviderRegistrySnapshot`；保存或删除 Provider、Plan 状态和运行时 Header 变化时，
-`emitProviderRegistryChanged()` 会使缓存失效、重新读取并在事件中携带完整 Snapshot。
+The code was located at `packages/services/src/model-provider/modelProviderService.ts`. `getProviderRegistrySnapshot()` caches
+`ZCodeProviderRegistrySnapshot`; when saving or deleting Providers, Plan status, or runtime Header changes,
+`emitProviderRegistryChanged()` invalidates the cache, re-reads, and carries the complete Snapshot in events.
 
-迁移前 Host 到 Core Worker 的链路如下：
+The pre-migration Host to Core Worker chain was:
 
 ```text
 ModelProviderService.onDidChangeProviderRegistry
                     |
                     v
 ZCodeAgentService
-├─ 对每个 active workspace 排队
-├─ 用 revision / generatedAt 去重和防旧快照覆盖
+├─ Queue for each active workspace
+├─ Deduplicate and prevent old snapshots from overwriting using revision / generatedAt
 └─ workspace/updateProviderRegistry
                     |
                     v
 Core Worker Workspace Catalog
-├─ 清空并重建 Provider Map
-├─ 更新现有 Session 的相关投影
-└─ 发布 workspace state / session settings 变化
+├─ Clear and rebuild Provider Map
+├─ Update related projections of existing Sessions
+└─ Publish workspace state / session settings changes
 ```
 
-`packages/services/src/zcode-agent/zcodeAgentService.ts` 曾订阅 Host 侧事件并推送快照；
-`apps/zcode-cli/packages/bootstrap/src/zcode-protocol/workspace-model-catalog.ts` 曾在 Worker 内应用快照。
-这是一条跨进程完整快照复制链，已在本轮 M2 迁移中退出本地生产路径；desktop-attached remote 的兼容退出链路
-另行记录，不能据此恢复本地全局推送。
+`packages/services/src/zcode-agent/zcodeAgentService.ts` once subscribed to Host-side events and pushed snapshots;
+`apps/zcode-cli/packages/bootstrap/src/zcode-protocol/workspace-model-catalog.ts` once applied snapshots within Workers.
+This is a cross-process complete snapshot copy chain, which has exited the local production path in this round of M2 migration; the desktop-attached remote compatibility exit path is recorded separately and cannot be used to restore local global pushes.
 
-迁移前 Renderer 并非统一订阅一个 Registry View：
+The pre-migration Renderer did not uniformly subscribe to one Registry View:
 
-- `useModelProviders` 维护另一份模块级 Provider Config 快照，通过 `getAllCached()`、`getAll()`、乐观保存和显式刷新更新设置页与聊天页。
-- Draft 模型可用性门禁曾订阅 `onDidChangeProviderRegistry`，事件到达时直接采用事件 Snapshot；首次挂载时主动读取一次 Snapshot。
-- Repo Wiki 曾订阅同一事件，但事件只作为失效信号，随后重新调用 `getAllCached()`。
-- App 根部的订阅主要用于把远端 workspace 标记为“需要重新同步 Provider Registry”。
+- `useModelProviders` maintains another module-level Provider Config snapshot, updating settings and chat pages through `getAllCached()`, `getAll()`, optimistic saves, and explicit refreshes.
+- Draft model availability gates once subscribed to `onDidChangeProviderRegistry`, directly adopting the event Snapshot when events arrived; on first mount, proactively read one Snapshot.
+- Repo Wiki once subscribed to the same event, but the event only served as an invalidation signal, followed by re-calling `getAllCached()`.
+- Subscriptions at the App root were mainly used to mark remote workspaces as "needing to re-sync Provider Registry."
 
-所以旧系统同时存在 Provider Config UI Snapshot、Host Registry Snapshot、Worker Workspace Catalog，以及多种刷新方式。
-通知机制本身不是问题；真正的问题是这些 View 的来源、语义和跨进程职责没有收敛。当前版本已经删除旧
-`IModelProviderService.onDidChangeProviderRegistry`，保留的是新 Registry Service 自己的 View 变化通知，以及
-旧 Service 内部为兼容连通性测试使用的缓存失效。
+So the old system simultaneously had Provider Config UI Snapshots, Host Registry Snapshots, Worker Workspace Catalogs, and multiple refresh methods. The notification mechanism itself is not the problem; the real problem is that these Views' sources, semantics, and cross-process responsibilities did not converge. The current version has deleted the old
+`IModelProviderService.onDidChangeProviderRegistry`; what remains is the new Registry Service's own View change notifications, and old Service internal cache invalidation for compatibility connectivity testing.
 
-## 已进入目标设计的通知语义
+## Notification Semantics Already in Target Design
 
-对于同一进程内长期存活的消费者，采用“初次拉取 + 变化通知 + 重新拉取”比较清晰：
+For long-lived consumers within the same process, "initial fetch + change notification + refetch" is clearer:
 
 ```text
-消费者启动
+Consumer starts
     |
-    +--> registry.list...() 取得当前视图
+    +--> registry.list...() obtains current View
     |
-    `--> 订阅 registry.onDidChange
+    `--> Subscribe to registry.onDidChange
                        |
                        v
-                 收到失效通知
+                  Receive invalidation notification
                        |
-                       `--> 重新读取当前视图
+                       `--> Re-read current View
 ```
 
-事件可以只携带 revision、原因或受影响范围，完整数据仍由查询接口提供。这样通知和数据读取不会形成两套权威来源。是否需要更细粒度事件，要等设置页、模型选择器和执行侧的读取用途整理后再决定。
+Events can carry only revision, reason, or affected scope; complete data is still provided by query interfaces. This way, notifications and data reads do not form two authoritative sources. Whether more granular events are needed must be decided after sorting out the reading purposes of settings pages, model selectors, and execution sides.
 
-Core Worker 在创建新 Model 时还需要保证自己使用的 Registry 已经反映最新 Provider Facts。这个要求不等同于 UI 订阅：具体 Source 可以主动刷新、监听外部变化，或者在查询前做 freshness check。Registry 的调用方不应知道文件 watcher、mtime 或某个 Plan 请求的细节。
+Core Workers also need to ensure that the Registry they use reflects the latest Provider Facts when creating new Models. This requirement is not equivalent to UI subscriptions: specific Sources can proactively refresh, listen for external changes, or perform freshness checks before queries. Registry callers should not know about file watchers, mtime, or details of a particular Plan request.
 
-## M2 仍需解决的问题
+## Issues M2 Still Needs to Solve
 
-1. Local Provider Source 如何统一处理 Service 写入、外部文件修改和并发刷新。
-2. 单个 Source 刷新失败时，是保留上一份成功 View，还是发布去除失败来源后的结果。
-3. Registry 失效事件是否需要携带 revision、原因或受影响范围；完整 View 不放进事件。
-4. 当前 Host 向 Worker 推送完整 Snapshot 的链路按什么顺序退出，同时保持内部 CLI/TUI 使用能力。
+1. How Local Provider Sources uniformly handle Service writes, external file modifications, and concurrent refreshes.
+2. When a single Source refresh fails, whether to retain the previous successful View or publish results with the failed Source removed.
+3. Whether Registry invalidation events need to carry revision, reason, or affected scope; complete Views must not be placed in events.
+4. The order in which the current Host→Worker full Snapshot push chain exits, while maintaining internal CLI/TUI usage capability.
 
-Registry 内 Model 对象的缓存方式和 Provider 运行资源所有权不由本调研裁决，见 [`../design/registry/model-creation.md`](../design/registry/model-creation.md)。
+Model caching within Registries and Provider runtime resource ownership are not decided by this investigation; see [`../design/registry/model-creation.md`](../design/registry/model-creation.md).

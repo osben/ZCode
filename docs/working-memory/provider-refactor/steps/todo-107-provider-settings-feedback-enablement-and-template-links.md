@@ -1,115 +1,115 @@
-# Todo 107：Provider 设置反馈、启停状态与模板入口完善
+# Todo107: Improve Provider Settings Feedback, Enablement State, and Template Entry Points
 
-> 状态：实现、组合准入测试及双尺寸/主题浏览器验证完成。2026-09-10。实施/测试证据、逐条边界复审及真实环境限制见 [本批交付复审](./provider-todos-105-113-delivery-review.md)。
+> Status: Implementation, combined admission tests, and browser verification at two viewport sizes/themes completed on 2026-09-10. See [batch delivery review](./provider-todos-105-113-delivery-review.md) for implementation/test evidence, item-by-item boundary review, and real-environment limits.
 
-## 1. 本轮待办总览
+## 1. This Round's Todo Overview
 
-| Todo                                                  | 范围                                                                              | 状态                       |
-| ----------------------------------------------------- | --------------------------------------------------------------------------------- | -------------------------- |
-| [105](./todo-105-account-provider-model-list-trim.md) | 个人／团队 Account Provider 预设名单移除 GLM-5-Turbo、GLM-5.2                     | 已实施                     |
-| [106](./todo-106-mcs-capability-rule-correction.md)   | MCS 支持范围、Opus 4.8 默认能力、Start／闲时 MCS 与原生搜索、一 URL 一条站点规则  | 已实施                     |
-| 本 Todo                                               | 删除反馈、连接测试关闭按钮、纵向拖拽、API Key 入口、Provider enabled 与统一状态灯 | 已实施；验证范围见交付复审 |
+| Todo | Scope | Status |
+| --- | --- | --- |
+| [105](./todo-105-account-provider-model-list-trim.md) | Remove GLM-5-Turbo and GLM-5.2 from personal/team Account Provider preset lists | Implemented |
+| [106](./todo-106-mcs-capability-rule-correction.md) | MCS support scope, default Opus 4.8 capability, Start/off-peak MCS and native search, one site rule per URL | Implemented |
+| This Todo | Delete feedback, close button for connection tests, vertical dragging, API Key entry, Provider `enabled`, and unified status indicator | Implemented; see delivery review for verification scope |
 
-105、106 的具体要求以各自文档为准，不在这里复制另一套验收清单。106 依照 [Design V2](../design-v2/design.md) 已新增的“主流配置、官方优先，不为落后的第三方降低默认能力”原则实施。
+For exact requirements of 105 and 106, see their individual documents; do not maintain a duplicate acceptance checklist here. Implement 106 according to the new principle in [Design V2](../design-v2/design.md): “mainstream configuration, official sources first; do not lower default capabilities for outdated third parties.”
 
-本 Todo 各项已完成核心产品裁决。若实施中发现现有接口无法承载、或需要改变已确认语义，应单列具体差异，不重复讨论已定事项。
+Core product decisions for this Todo have been made. If implementation shows that current interfaces cannot support them or would require changing an approved semantic, record the specific discrepancy rather than reopening settled decisions.
 
-## 2. 删除模型反馈必须对应实际操作
+## 2. Delete-Model Feedback Must Match the Actual Action
 
-现象：删除模型成功后显示“保存成功”。当前 `InlineEditableProviderCard.tsx` 的删除路径复用了 `runSaveOperation` 的保存文案。
+Symptom: after successfully deleting a model, the UI says “Saved successfully.” The deletion path in `InlineEditableProviderCard.tsx` reused save copy from `runSaveOperation`.
 
-- 共用现有操作反馈机制，但为删除区分进行中、成功、失败文案，中英文一起调整；保存操作仍使用保存文案。
-- 保留目标 Provider／模型身份，不能删除了 A 却显示 B 的结果。
-- 失败重试必须重试原删除操作，不转成保存，不影响其他操作的提示。
-- 只在删除确实成功后显示成功；失败时保留当前错误与既有可重试语义。
-- 不新增平行的 Toast 系统，不借文案修复重做保存事务。
+- Reuse existing action feedback, but distinguish in-progress, success, and failure copy for deletion in both Chinese and English. Save actions continue to use save copy.
+- Retain the target Provider/model identity; do not delete A and show the result for B.
+- Retrying a failure must retry the original delete operation, not turn into a save, and must not affect notices for other actions.
+- Show success only after deletion actually succeeds; on failure retain the current error and existing retry semantics.
+- Do not add a parallel Toast system or redesign the save transaction to fix copy.
 
-## 3. 连接测试提示的关闭入口一致
+## 3. Consistent Close Controls for Connection-test Notices
 
-- 成功、失败均提供关闭按钮；中文／英文无障碍标签完整。
-- 测试中不提供关闭叉，避免让人误以为它会取消测试。
-- 沿用原有自动消失时长：成功 3.5 秒，失败 8 秒，进行中不自动消失。
-- 手动关闭只移除相应提示；不取消请求、不影响其他模型的测试或反馈。
-- 保持同一测试身份 pending → success / failure 的替换行为及现有定时器清理，不引入第二套状态来源。
-- 不修改已裁决的连接测试 Prompt、鉴权、模型选择或请求内容。
+- Provide a close button for success and failure, with complete Chinese/English accessible labels.
+- Do not provide a close × while testing, to avoid implying that it cancels the test.
+- Keep existing auto-dismiss durations: success 3.5 seconds, failure 8 seconds, and no auto-dismiss while in progress.
+- Manual close removes only the relevant notice; it does not cancel requests or affect tests/feedback for other models.
+- Preserve replacement from pending → success/failure for the same test identity and existing timer cleanup; do not add a second source of state.
+- Do not change the approved connection-test prompt, authentication, model selection, or request content.
 
-## 4. Provider 排序限制为纵向拖拽
+## 4. Restrict Provider Reordering to Vertical Dragging
 
-现象：向右拖动 Provider 行会移出可视区域，松手后恢复。现有拖拽变换未限制横轴，导航容器又会裁切溢出内容。
+Symptom: dragging a Provider row right moves it out of view, and it returns on release. The existing drag transform is not restricted horizontally, while the navigation container clips overflow.
 
-- Provider 导航仍支持上下排序，但拖拽视觉位移限制在纵轴，不允许拖到右侧后看不见。
-- 复用当前拖拽机制及纵向约束，不通过取消整个面板 overflow 或扩大浮层解决。
-- 保留现有可排序成员范围、持久化和取消操作语义；账号组不能因此获得未授权的排序能力。
-- 保留点击选中、键盘排序及输入／弹窗的键盘事件边界；兼顾手机触摸滚动，不能让排序吞掉正常纵向滚动。
-- 此项针对 Provider 导航排序，不扩大为重写模型列表拖拽。
+- Continue to allow vertical reordering in Provider navigation but constrain visual drag displacement to the vertical axis so an item cannot be dragged out of view to the right.
+- Reuse the current drag mechanism and vertical constraint; do not solve this by removing overflow clipping from the whole panel or enlarging the overlay.
+- Preserve the existing sortable-member scope, persistence, and cancellation semantics; do not grant the account group unauthorized sorting capability.
+- Preserve click-to-select, keyboard reordering, and keyboard-event boundaries for inputs/dialogs. Account for touch scrolling on phones; sorting must not consume normal vertical scrolling.
+- This is limited to Provider navigation sorting; do not rewrite model-list dragging.
 
-## 5. 补齐预设模板的“获取 API Key”入口
+## 5. Add “Get API Key” to Preset Templates
 
-智谱／Z.ai 的普通 API 与 Coding Plan 模板拆分、手动套餐 Key 签名及个人／团队获取入口由后续 [Todo111](./todo-111-zhipu-coding-plan-api-key-and-standard-api-templates.md) 承接。此处通用入口规则继续有效；这两家的具体模板归属与链接选择以 Todo111 为准，避免按原来两个模板的名称继续误配。
+The split between ordinary Zhipu/Z.ai API and Coding Plan templates, signing for manually supplied plan keys, and personal/team acquisition entry points are handled by the later [Todo111](./todo-111-zhipu-coding-plan-api-key-and-standard-api-templates.md). The general entry-point rules here still apply. Follow Todo111 for the specific template assignment and links for those providers so the old two-template names do not lead to incorrect links.
 
-- 仅预设模板提供此入口；任意用户自建 Provider 不猜测 URL。
-- 不根据是否已经填写 API Key 来隐藏入口：有 Key、无 Key 时均可访问模板声明的 URL。
-- 逐一检查当前维护的模板库存，补齐缺项，明确覆盖反馈中的 Kimi；不只修一家公司后宣告全部完成。
-- URL 优先级：官方稳定的 API Key 管理／创建页面 → 官方控制台入口 → 官方获取 Key 的说明页面。需要登录是正常情况，不要求匿名打开就能显示 Key 管理界面。
-- 区分国内／国际站及不同套餐入口；不复用含用户、组织、项目、Token 或临时登录态的私有 URL。
-- 每个 URL 记录官方依据与检查日期；不要为了“补齐”猜一个地址。若没有可确认的直接管理页，采用上述官方上级入口并如实说明。
-- URL 留在现有模板元数据的唯一来源，UI 读取它并通过平台接口打开，不在组件里维护另一张品牌地址表。
-- 同时检查桌面及手机 Web 的展示和打开行为；本轮不扩展账号登录或 Key 自动获取流程。
+- Only preset templates provide this entry; never guess a URL for a user-created Provider.
+- Do not hide the entry based on whether an API Key is already present. The URL declared by the template is accessible both with and without a key.
+- Inspect every currently maintained template and fill missing entries, explicitly including Kimi from the feedback; do not fix one company and claim the entire set is complete.
+- URL priority: stable official API Key management/creation page → official console entry point → official instructions for obtaining a key. Requiring sign-in is normal; anonymous access to the key-management UI is not required.
+- Distinguish domestic/international sites and different plans. Do not reuse private URLs containing a user, organization, project, Token, or temporary login state.
+- Record official evidence and the check date for each URL. Do not guess an address just to fill a gap. If a direct management page cannot be confirmed, use the higher-level official entry above and state that accurately.
+- Keep the URL in the existing template metadata as the single source of truth. The UI reads it and opens it through the platform API; do not maintain another brand URL table in a component.
+- Check display and open behavior on desktop and mobile Web; do not expand this round into account sign-in or automatic key retrieval.
 
-## 6. 恢复 Provider enabled，并统一状态灯
+## 6. Restore Provider `enabled` and Unify Status Indicators
 
-### 6.1 字段与写入边界
+### 6.1 Field and Write Boundaries
 
-- `enabled` 属于具体 Provider 的外层，与 `providerId`、`providerName` 同层，不放入模型配置或嵌套 `config`；它不是 Account Family 总开关。
-- 用户开关通过现有设置写入机制保存到该具体 Provider 的 Personal Overlay／外层规则；沿用版本冲突、刷新与分发机制，不直接写文件或新增独立存储。
-- 未设置 `enabled` 的 Provider 默认启用，由配置／解析层统一确定；不得各 UI 自行 fallback，也不因新增字段让现有 Provider 全部禁用。
-- 沿用现行外层 Schema／Overlay 语义，不为未上线的错误中间配置新增兼容工程。
-- 关闭不删除 Provider、不清空 Key／地址／模型配置、不逐个禁用模型、不解绑套餐、不清空任何持久化 Model Selection。
-- 重新开启保留各模型原来的 enabled，由公共解析重新判断执行资格。
+- `enabled` belongs on the outer object of the specific Provider, at the same level as `providerId` and `providerName`. It does not belong in model config or nested `config`, and it is not an Account Family master switch.
+- Save the user's toggle through the existing settings-write mechanism to that specific Provider's Personal Overlay/outer rule. Reuse version-conflict, refresh, and distribution mechanisms; do not write files directly or add independent storage.
+- A Provider with no `enabled` setting defaults to enabled, determined uniformly by the config/resolution layer. Do not implement UI-local fallbacks or let adding this field disable all existing Providers.
+- Reuse current outer Schema/Overlay semantics; do not add compatibility machinery for erroneous intermediate config that has not shipped.
+- Disabling does not delete a Provider, clear its Key/address/model config, disable models individually, unbind a plan, or clear any persisted Model Selection.
+- Re-enabling preserves each model's existing `enabled` value; the shared resolver recalculates execution eligibility.
 
-### 6.2 唯一判断来源
+### 6.2 Single Source of Judgment
 
 ```text
-Provider enabled + 配置完整性 + 模型可执行性 + Account 权益／当前连接事实
-                              |
-                       公共 Resolver
-                              |
-                   Provider enabled / executable
-                              |
-            +-----------------+-------------------+
-            |                 |                   |
-          禁用            启用且可执行        启用但不可执行
-           灰                 绿                  黄
+Provider enabled + config completeness + model executability + Account entitlement/current connection facts
+                                             |
+                                       Shared Resolver
+                                             |
+                                  Provider enabled / executable
+                                             |
+                    +------------------------+------------------------+
+                    |                        |                        |
+                disabled              enabled and executable     enabled but not executable
+                  gray                       green                         yellow
 ```
 
-- 普通 API Key access：沿用现有配置完整性及至少一个启用、可执行模型的判断；不增加连接测试成功才变绿的条件，也不套账号权益检查。
-- Account access：在公共判断中保留 entitled 等账号执行前置。当前单连接架构下的 current 约束继续有效，不借本 Todo 实施 Todo101 多连接 Draft。
-- UI 只把公共结果映射为颜色，不再次遍历 Key、套餐权益或模型名单建立第二套判断。
-- 账号组圆点取当前连接对应具体 Provider 的公共结果，不再把套餐菜单的 `statusActive` 当作执行资格。
-- 绿表示配置与现有账号事实满足执行前置，不保证远端永不报错；黄不等于一定未开通套餐，不编造具体失效原因。
-- 完整检查新增 enabled 对候选列表、Registry 发布、已有选择的 View 和最终执行校验是否一致；已保存的选择不能因暂时不可执行而被清掉。
+- **Ordinary API Key access:** retain existing config-completeness and “at least one enabled, executable model” checks. Do not require a successful connection test to show green and do not apply account-entitlement checks.
+- **Account access:** retain account execution prerequisites such as entitlement in the shared judgment. Keep current-account constraints for the current single-connection architecture; do not use this Todo to implement the Todo101 multi-connection Draft.
+- UI maps the shared result to a color only; do not traverse Keys, plan entitlements, or model lists again to create a second judgment.
+- The account-group dot uses the shared result for the specific Provider associated with the current connection; do not use the plan menu's `statusActive` as execution eligibility.
+- Green means configuration and current account facts satisfy execution prerequisites; it does not guarantee that the remote service will never fail. Yellow does not necessarily mean the plan is inactive; do not invent a specific failure reason.
+- Check that the new `enabled` field is consistent in candidate lists, Registry publication, views of existing selections, and final execution validation. Do not erase a saved selection because it is temporarily not executable.
 
-### 6.3 开关展示与执行边界
+### 6.3 Toggle Display and Execution Boundaries
 
-- 开关置于 Provider 外层的供应商级区域，不混入某个模型的开关。
-- 账号组的开关仅控制当前连接对应的具体 Provider，并让用户能看出控制的是当前套餐；不联动关闭整个 BigModel／Z.ai 家族。
-- 禁用影响后续执行资格和可执行模型发布；不回收已绑定模型，不中断已经运行的任务，也不擅自替换模型。
-- 灰／黄／绿同时提供准确的文字或无障碍描述，不能只靠颜色区分；遵循 DESIGN.md，覆盖深浅主题和窄屏。
+- Place the toggle in the Provider-level vendor section, not beside an individual model's toggle.
+- In account groups, the toggle controls only the specific Provider for the current connection and makes it clear which current plan is controlled; it does not disable the entire BigModel/Z.ai family.
+- Disabling affects subsequent execution eligibility and publication of executable models; do not unbind already selected models, interrupt running tasks, or replace models automatically.
+- Provide accurate text or accessible descriptions for gray/yellow/green as well as color; follow `DESIGN.md` for light/dark and narrow screens.
 
-## 7. 验收与执行粒度
+## 7. Acceptance and Execution Granularity
 
-- [x] 实施前同步相关当前 spec；先补区分性测试，再改代码。复用原有组件、Facade、Resolver，不新建平行判断链。
-- [x] 操作反馈：删除／保存成功失败、删除重试身份、成功失败手动关闭、多模型并行反馈、定时器清理。
-- [x] 导航排序：明显横向拖动仍可见，纵向排序可保存，取消无写入，键盘与触摸滚动不回退。
-- [x] 模板链接：现有模板逐个有去向，有／无 Key 均展示，自建 Provider 不猜链接，国内／国际地址正确。
-- [x] Provider：缺省启用、显式禁用、配置不全、没有可执行模型、API Key 就绪、Account 有／无权益、非当前账号等组合，设置页与公共执行结果一致。
-- [x] 禁用再启用不丢 Key／模型状态／保存选择；当前套餐与其他套餐开关隔离；已运行任务不被中断。
-- [x] UI 交互补相应 E2E，兼顾桌面／手机 Web、深浅主题、中英文。服务字段变化检查 Host／Worker 现有同步承载完整性，不重做同步架构。
-- [x] 按反馈与拖拽、模板入口、Provider 启停等有意义的批次验收；共享 typecheck、lint、相关单测及必要桌面验证，不每改一小项就跑全量回归。
-- [x] 整批复审已裁决要求、写入边界和 Provider／Selection 抽象；真实环境未验证的部分如实标明，不以“记录了”代替完成。
+- [x] Update the relevant current spec before implementation; add distinguishing tests first. Reuse existing components, Facade, and Resolver; do not add a parallel decision chain.
+- [x] Action feedback: delete/save success and failure, delete-retry identity, manual close for success/failure, parallel feedback for multiple models, timer cleanup.
+- [x] Navigation sorting: visible during obvious horizontal drag, vertical sort persists, cancellation makes no write, keyboard and touch scrolling do not regress.
+- [x] Template links: every existing template has a destination, shown with/without a Key; no guessed link for custom Providers; correct domestic/international links.
+- [x] Provider: unset/default enabled, explicit disabled, incomplete config, no executable models, ready API Key, Account with/without entitlement, and non-current-account combinations match between Settings and shared execution result.
+- [x] Disable/re-enable does not lose Key/model state/saved selection; current-plan switch is isolated from other plans; running tasks are not interrupted.
+- [x] Add relevant UI E2E for desktop/mobile Web, light/dark, and Chinese/English. Check that Host/Worker existing sync carries service-field changes completely; do not redesign synchronization.
+- [x] Verify meaningful batches (feedback/dragging, template entry, Provider enablement) with shared typecheck, lint, relevant unit tests, and necessary desktop checks; do not run full regressions after every small change.
+- [x] Review approved requirements, write boundaries, and Provider/Selection abstractions across the batch. Report unverified real environments accurately; a note that something was recorded is not completion evidence.
 
-## 8. 明确排除／暂缓
+## 8. Explicitly Excluded / Deferred
 
-- **横幅裁切**：用户已要求先忽略，不是本 Todo 关闭前置；[Pro 调查记录](./investigation-provider-feedback-clipping-20260910.md)仍为“未复现、根因未确认”，不得顺手试改 blur、层级或裁切样式并宣称修复。
-- **“完全访问”后仍要求批准**、**有 Coding Plan 但闲时创建按钮灰**：用户明确忽略，不纳入本轮调查或实施。
-- 不改变套餐切换语义，不实施多 Account Provider 并存，不清理真实用户数据，不自动发布或推送。
+- **Banner clipping:** the user asked to ignore this for now; it is not a prerequisite for closing this Todo. The [Pro investigation](./investigation-provider-feedback-clipping-20260910.md) remains “not reproduced, root cause unconfirmed.” Do not casually change blur, stacking, or clipping styles and claim a fix.
+- **Still requiring approval after “Full Access”** and **disabled off-peak creation button with Coding Plan**: the user explicitly excluded these; do not investigate or implement them in this round.
+- Do not change plan-switch semantics, implement multiple Account Providers in parallel, clean real user data, or publish/push automatically.

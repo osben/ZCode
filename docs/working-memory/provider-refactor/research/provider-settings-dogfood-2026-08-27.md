@@ -1,67 +1,67 @@
-# Provider Settings 体验问题记录（2026-08-27）
+# Provider Settings Experience Issue Log (2026-08-27)
 
-## 1. 用途
+## 1. Purpose
 
-本文记录 Provider Refactor 首轮 macOS 实包体验中发现的问题。处理原则：
+This document records issues discovered during the first round of macOS real-package experience after the Provider Refactor. Handling principles:
 
-- 不改变既有 Provider / Model Config、Overlay、Registry 抽象的问题直接修复并由测试固定；
-- 涉及 Account Overlay、套餐权益或模型可用性事实来源的问题只记录运行时证据和代码边界，等待裁决；
-- 不用 UI 兜底、强制启用或绕过 Resolver 掩盖领域问题。
+- Issues that do not change existing Provider/Model Config, Overlay, or Registry abstractions are directly fixed and pinned by tests;
+- Issues involving Account Overlays, plan entitlements, or model availability fact sources only record runtime evidence and code boundaries, awaiting rulings;
+- Do not cover domain issues with UI fallbacks, forced enabling, or bypassing Resolvers.
 
-## 2. 已直接修复
+## 2. Directly Fixed
 
-| 问题 | 根因 | 修复后的契约 |
-| --- | --- | --- |
-| 历史 Provider 重名阻断无关保存 | 保存时对整个 Effective Provider 集合重新执行唯一性门禁，迁移遗留的既有重名会阻断任意 Provider | 只禁止本次名称变更新引入重名；既有历史重名不阻断其他保存 |
-| 空 Base URL 无法保存草稿 Provider | Renderer 把空输入序列化为 `baseURL: ""`，在 Resolver 判断完整性之前就被 URL Schema 拒绝 | 空值不写 `baseURL`；Provider 可以保存但不可执行，非空非法 URL 仍拒绝 |
-| Provider / Model 整行不能拖动 | Provider 依赖独立 grip；Model 的自定义 Pointer Sensor 又把 `useSortable` 自动添加的行级 `role=button` 误判为交互控件 | Provider、Model 的名称、图标及非交互空白都可启动整行拖动，真实控件除外，拖动时禁止选中文字 |
-| 模型弹窗可穿透拖动背景模型 | Radix Dialog 通过 Portal 渲染，但 React 事件仍沿组件树冒泡到模型行的 DnD activator | Dialog content、overlay 和显式 `data-no-model-drag` 区域都不能启动背景排序 |
-| 模型行信息与开关排列混乱 | 摘要和操作没有稳定布局边界 | Context 紧跟 Model ID；开关固定在模型行最右侧；模型行不提供单字段“恢复默认” |
-| Provider 启停重复展示 | 状态标签和操作按钮分别占位 | 一个按钮同时表达当前状态并执行切换 |
-| 模型编辑器把继承值伪装成 Personal 输入 | Draft 使用 Effective Config 初始化；JSON 又额外重复展示只读值 | Personal 输入为空时，继承值只作为 placeholder；删除重复只读 JSON 区 |
-| 模型编辑器层级过深且接近全屏 | 常用字段混在“高级”折叠中，弹窗最大高度接近整个视口 | 去掉“高级”；桌面使用居中的中等最大高度并仅滚动内容区 |
-| 模型编辑器字段顺序不符合使用频率 | Max Output、输入输出格式排在能力和复杂 JSON 后 | `Model ID/启用 -> Context -> Max Output -> 输入 -> 输出 -> 能力 -> 复杂配置` |
-| 只能逐字段恢复继承值 | 缺少模型级清空 Personal Overlay 的入口 | Footer 提供“全部恢复默认”，清空该模型的 Personal Model Config Overlay 后再由用户保存 |
-| 国内 Provider 在新增菜单靠后 | 菜单直接使用 Built-in 配置顺序，旧顺序把海外 Provider 放在前面 | Built-in 配置及新增菜单统一先列国内 Provider，再列海外 Provider |
+| Issue                                                        | Root Cause                                                                                                                                                    | Post-Fix Contract                                                                                                                                             |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Historical Provider duplicate names blocking unrelated saves | Uniqueness gates re-executed on the entire Effective Provider set during save; migration-legacy duplicate names block any Provider                            | Only prevent new duplicates from this name change; existing historical duplicates do not block other saves                                                    |
+| Empty Base URL cannot save draft Provider                    | Renderer serializes empty input as `baseURL: ""`, rejected by URL Schema before Resolver judges completeness                                                  | Null values do not write `baseURL`; Providers can save but cannot execute, non-empty illegal URLs still rejected                                              |
+| Provider/Model entire rows cannot be dragged                 | Providers depend on independent grips; Model's custom Pointer Sensor misjudges the `useSortable` auto-added row-level `role=button` as an interactive control | Provider and Model names, icons, and non-interactive blanks can all initiate entire-row dragging, except real controls; text selection prohibited during drag |
+| Model dialogs can penetrate and drag background models       | Radix Dialogs render through Portals, but React events still bubble up the component tree to the model row's DnD activator                                    | Dialog content, overlays, and explicit `data-no-model-drag` areas cannot initiate background sorting                                                          |
+| Model row info and switch arrangement chaotic                | Summaries and operations lack stable layout boundaries                                                                                                        | Context follows Model ID; switches fixed to the far right of model rows; model rows provide no single-field "restore default"                                 |
+| Provider enable/disable duplicates display                   | Status labels and operation buttons each occupy space                                                                                                         | One button simultaneously expresses current state and executes the toggle                                                                                     |
+| Model editor disguises inherited values as Personal input    | Drafts initialize with Effective Config; JSON additionally redundantly displays read-only values                                                              | When Personal input is empty, inherited values only serve as placeholders; delete redundant read-only JSON area                                               |
+| Model editor hierarchy too deep and nearly full-screen       | Common fields mixed in "Advanced" collapsible, dialog max height nearly the entire viewport                                                                   | Remove "Advanced"; desktop uses centered medium max height, scrolling only the content area                                                                   |
+| Model editor field order does not match usage frequency      | Max Output, input/output formats ranked after capabilities and complex JSON                                                                                   | `Model ID/Enable -> Context -> Max Output -> Input -> Output -> Capabilities -> Complex Config`                                                               |
+| Can only restore inherited values field by field             | Lacks a model-level clear Personal Overlay entry                                                                                                              | Footer provides "restore all defaults", clearing that model's Personal Model Config Overlay before users save                                                 |
+| Domestic Providers ranked late in new menu                   | Menus directly use Built-in configuration order; old order placed overseas Providers first                                                                    | Unified Built-in configurations and new menus list domestic Providers first, then overseas Providers                                                          |
 
-## 3. Personal Config 来源与 Official 名称核对
+## 3. Personal Config Sources and Official Name Verification
 
-Pro 机器保留的迁移前备份与清理前备份证明：
+The pre-migration backup and pre-cleanup backup retained on Pro machines prove:
 
 ```text
-旧 ~/.zcode/v2/config.json.provider
+Old ~/.zcode/v2/config.json.provider
         |
         | Provider V1 importer
         v
-新 config.json.providers + modelConfigRules
+New config.json.providers + modelConfigRules
 ```
 
-清理前的 Personal Config 不是新的 Official Config 内容本身，而是迁移器把旧配置投影进新 Personal Overlay 后留下的结果，
-其中同时包含：
+The pre-cleanup Personal Config is not the new Official Config content itself, but the result of the migration projector projecting old configs into new Personal Overlays,
+which simultaneously contains:
 
-- 旧版本可编辑的 `builtin:*` Provider 配置；
-- 用户创建的自定义 Provider；
-- 用户对标准 Provider 顺序、模型成员和模型属性的 Personal 覆盖。
+- Editable `builtin:*` Provider configurations from old versions;
+- User-created custom Providers;
+- User's Personal overrides to standard Provider order, model members, and model properties.
 
-因此截图中的旧 Coding Plan 重名属于迁移遗留，不是当前 Official Config 又创建了一份同名 Provider。当前
-`config/provider/zcode-builtin.json` 的 Provider label 已核对为唯一；Z.ai / BigModel 的 API、Individual、Team、Start、
-Idle Plan 使用不同名称。为继续体验而执行的 Personal Config 清理保留了带时间戳备份，可恢复。
+Therefore the old Coding Plan duplicate names in screenshots are migration-legacy, not the current Official Config creating another same-name Provider. Current
+`config/provider/zcode-builtin.json`'s Provider labels have been verified as unique; Z.ai/BigModel's APIs, Individual, Team, Start, and
+Idle Plans use different names. Personal Config cleanups executed for continued experience retained timestamped backups for recovery.
 
-## 4. 待裁决：Team Plan 有效但 Account Provider / 权益展示不可用
+## 4. Pending Rulings: Team Plan Valid but Account Provider/Entitlement Display Unavailable
 
-### 4.1 运行时事实
+### 4.1 Runtime Facts
 
-Pro 的 `~/.zcode/v2/logs/2026-08-27.log` 在同一次 Team Plan 选择之后同时出现：
+Pro's `~/.zcode/v2/logs/2026-08-27.log` shows the following simultaneously after the same Team Plan selection:
 
-- Settings 已持久化 `bigmodel -> team-coding-plan`，并包含 product、organization、project；
-- Team Plan 项目校验命中所选项目，机构列表非空；
-- Team Plan quota 接口返回业务成功且有额度数据；
-- 但 Usage entitlement 对 `account:bigmodel-team-coding-plan` 记录的 `organizationId/projectId` 都是 `null`，随后报告未找到可用授权；
-- Registry 在此之前只发布了一个 Personal Provider，没有观察到 Team Account Provider 进入可执行集合。
+- Settings has persisted `bigmodel -> team-coding-plan`, including product, organization, project;
+- Team Plan project validation hits the selected project, organization list is non-empty;
+- Team Plan quota API returns business success with quota data;
+- But Usage entitlement for `account:bigmodel-team-coding-plan` records `organizationId/projectId` as `null`, subsequently reporting no available entitlements found;
+- The Registry has only published one Personal Provider at this point, without observing Team Account Providers entering the executable set.
 
-这证明“账号确实有 Team Plan”与“页面显示获取失败”不是同一个上游请求的真假冲突，而是套餐选择事实进入不同消费者时发生了断裂。
+This proves that "account truly has a Team Plan" and "page displays failure to obtain" are not the same upstream request's true/false conflict, but a breakage in plan selection facts when entering different consumers.
 
-### 4.2 当前链路
+### 4.2 Current Chain
 
 ```text
 setting.json
@@ -72,30 +72,30 @@ providerFamilyConnectionSelections.bigmodel
           |                               |
           v                               v
 Account Provider Resolver          Settings Usage entitlement
-  -> Family availability             -> 从 ProviderSettingsView
-  -> Team project/quota 成功             反查 Account Access
-  -> 生成 Account Overlay             -> 实测得到 null org/project
+  -> Family availability             -> Reverse-lookup Account Access from
+  -> Team project/quota success          ProviderSettingsView
+  -> Generate Account Overlay         -> Reality test returns null org/project
           |                               |
           v                               v
-Effective Provider / Registry       “暂时无法确认 Coding Plan 权益”
+Effective Provider / Registry       "Temporarily unable to confirm Coding Plan entitlement"
 ```
 
-`createAccountProviderConnectionResolver()` 本身直接读取 Family selection，并在可用后才创建带 Team scope 的
-`ZhipuAccountAccessConfig`。而 Renderer 的 `resolveAccountProviderAccess()` 只接受已经出现在
-`ProviderSettingsView.effectiveConfig.access` 中、且能通过完整 Account Access Schema 的结果。也就是说，权益 UI
-把 Account Overlay 的输出重新当作自己的访问输入；一旦 Overlay 没有成功发布完整 access，页面无法使用
-`setting.json` 中已经存在的 Team selection 解释失败原因。
+`createAccountProviderConnectionResolver()` itself directly reads Family selections and creates team-scoped
+`ZhipuAccountAccessConfig` only after availability. Meanwhile, Renderer's `resolveAccountProviderAccess()` only accepts results already appearing in
+`ProviderSettingsView.effectiveConfig.access` and passing the full Account Access Schema. In other words, the entitlement UI
+reuses the Account Overlay output as its own access input; once the Overlay fails to publish complete access, the page cannot use
+the already-existing Team selection in `setting.json` to explain failure reasons.
 
-### 4.3 不能直接采用的修复
+### 4.3 Fixes Not Directly Applicable
 
-- 不能因为 Team quota 请求成功就在 Renderer 强制把 Provider 标为 enabled；这会绕过 Account Overlay。
-- 不能让 Usage UI 自己拼一份新的 `accessId` 或 Account Config；这会产生第二套 Account Access 事实。
-- 不能在 Registry 为空时回退到固定 Provider ID 或默认模型；这会破坏 Provider / Model 身份边界。
+- Cannot force-Flag Providers as enabled in the Renderer just because Team quota requests succeed; this bypasses Account Overlays.
+- Cannot let Usage UIs construct a new `accessId` or Account Config; this produces second sets of Account Access facts.
+- Cannot fall back to fixed Provider IDs or default models when the Registry is empty; this breaks Provider/Model identity boundaries.
 
-### 4.4 后续需要对齐的问题
+### 4.4 Issues to Align Subsequently
 
-1. Team selection 到 Account Overlay 发布之间究竟在哪一步丢失完整 access；需要给 Connection Result / Overlay 发布增加可观察证据并复现实测。
-2. Usage entitlement 应继续消费 Effective Account Access，还是应消费账号连接域的选择事实；两者的职责需要统一，不能各自拼装。
-3. Account Provider 已验证可用但未进入 Registry 时，Settings View 应如何同时呈现“套餐有效”和“Provider 不可执行”的诊断，而不是统一显示获取失败。
+1. Which exact step loses complete access between Team selection and Account Overlay publishing; observable evidence and reproducibility testing need to be added to Connection Results/Overlay publishing.
+2. Whether Usage entitlement continues to consume Effective Account Access, or should consume account connection-domain selection facts; the responsibilities of the two need to be unified, not independently assembled.
+3. How Settings Views should simultaneously present "plan valid" and "Provider not executable" diagnostics when Account Providers have been verified available but have not entered the Registry, rather than uniformly displaying "acquisition failed."
 
-在这些问题裁决前，本轮不修改 Account Overlay、accessId、套餐模型成员约束或 Registry 完整性语义。
+Before these issues are ruled, this round does not modify Account Overlays, accessIds, plan model member constraints, or Registry integrity semantics.

@@ -1,57 +1,57 @@
-# Todo 29：Model Config Resolution 与设置页 Idle Trigger 收口
+# Todo 29: Model Config Resolution and Settings Page Idle Trigger Consolidation
 
-> 状态：已完成
+> Status: Completed
 >
-> 日期：2026-08-27
+> Date: 2026-08-27
 >
-> 来源：Provider 设置页真实体验反馈
+> Source: Provider settings page real experience feedback
 >
-> 关联任务：[`Todo 23`](./todo-23-provider-refactor-decision-gap-closure.md)、
-> [`Todo 27`](./todo-27-provider-settings-dogfood-closeout.md)、
+> Related tasks: [`Todo 23`](./todo-23-provider-refactor-decision-gap-closure.md),
+> [`Todo 27`](./todo-27-provider-settings-dogfood-closeout.md),
 > [`Todo 28`](./todo-28-model-rule-precedence-and-order-canonicalization.md)
 
-## 1. 问题定位
+## 1. Problem Positioning
 
-新增模型弹窗已经通过 Host 根据 `providerId/modelId/api.type/baseURL` 解析 Model Config Rules，
-但 Renderer 对同一份解析结果采用了三套不一致的投影：
+New model popup already resolves Model Config Rules through Host based on `providerId/modelId/api.type/baseURL`,
+but Renderer uses three inconsistent projections for the same resolution result:
 
 ```text
 Model Config Rules Resolution
 ├─ context/max output ──> inherited placeholder
-├─ boolean properties ──> 复制进本地 Draft
-└─ reasoning JSON ──────> 未接入，错误显示为“—”
+├─ boolean properties ──> copied into local Draft
+└─ reasoning JSON ──────> not connected, wrongly displayed as "—"
 ```
 
-因此 `GLM-5.3-Flash` 实际已经命中 1M context、128K max output、Image/Video 和 reasoning
-规则，弹窗却只完整展示了部分默认事实。与此同时，新增模型解析使用 300ms debounce，编辑模型 ID
-解析使用 180ms debounce，Provider 文本保存使用 800ms idle save；短暂停顿会频繁触发请求、字段跳变、
-配置写入和 Registry 刷新。
+Therefore `GLM-5.3-Flash` actually hits 1M context, 128K max output, Image/Video, and reasoning
+rules, but popup only partially displays default facts. Meanwhile, new model parsing uses 300ms debounce, editing model ID
+parsing uses 180ms debounce, Provider text save uses 800ms idle save; brief pauses frequently trigger requests, field jumps,
+config writes, and Registry refreshes.
 
-本 Todo 收口默认配置解析、稀疏 Draft、成功反馈和文本 idle-trigger。它不改变 Model Config Rule
-优先级、Provider/Model Overlay 顺序、Registry 完整性或 Active Model 冻结语义。
+This Todo consolidates default config parsing, sparse Draft, success feedback, and text idle-trigger. It does not change Model Config Rule
+precedence, Provider/Model Overlay order, Registry integrity, or Active Model freeze semantics.
 
-## 2. 统一领域命名
+## 2. Unified Domain Naming
 
-设置页不再使用 `previewModelConfig`、`previewPersonalModelDraft`、`resolvedDefaults` 等近义概念。
-唯一操作命名为 `resolveModelConfig`：
+Settings page no longer uses `previewModelConfig`, `previewPersonalModelDraft`, `resolvedDefaults` and other synonymous concepts.
+Sole operation named `resolveModelConfig`:
 
 ```ts
 const resolution = await providerSettingsService.resolveModelConfig(input);
 setResolution(resolution);
 ```
 
-- 方法：`resolveModelConfig`；
-- 返回结构：`ModelConfigResolution`；
-- Renderer 局部状态：`resolution`；
-- 返回内容继续是 `inheritedConfig/effectiveConfig/issues`；
-- 新增模型只解析当前候选 ID；编辑模型可以携带尚未保存的 Personal Exact Draft 和原 Model ID，
-  但不写 Personal Config、不改变 Registry revision。
+- Method: `resolveModelConfig`;
+- Return structure: `ModelConfigResolution`;
+- Renderer local state: `resolution`;
+- Returned content continues as `inheritedConfig/effectiveConfig/issues`;
+- New model only parses current candidate ID; editing model can carry unsaved Personal Exact Draft and original Model ID,
+  but does not write Personal Config, does not change Registry revision.
 
-`resolve` 表达按当前 Rules 得到配置结果；是否持久化由独立保存命令决定，不再用 `preview` 作为领域名。
+`resolve` expresses obtaining config result by current Rules; whether persisted decided by independent save command, `preview` no longer used as domain name.
 
-## 3. Draft 与继承事实
+## 3. Draft and Inheritance Facts
 
-新增和编辑模型都遵守同一条 Overlay 展示链：
+New and editing models both follow same Overlay display chain:
 
 ```text
 ZCode Built-in + Personal Match Rules
@@ -65,107 +65,107 @@ ZCode Built-in + Personal Match Rules
         effectiveConfig display
 ```
 
-- Renderer 可以在表单展示状态中缓存 Resolution 的布尔值，但该缓存不是 Personal Config；
-- 用户明确触碰的字段单独记录，迟到的 Resolution 不得覆盖这些字段；
-- 数字、布尔和 JSON 均从同一份 Resolution 派生展示值；
-- context/max output 和 reasoning JSON 使用 inherited/effective placeholder；
-- 布尔控件显示 `Personal Draft ?? inheritedConfig`，只有用户明确修改时显示 Personal Override 样式；
-- 通用 Rule 中的 `false` 是完整默认事实，不是“未获得默认值”；
-- 保存时只新增 Provider 的 Personal 模型成员以及真正存在的稀疏 Exact Rule，不反向物化 Effective Config。
+- Renderer can cache Resolution boolean values in form display state, but that cache is not Personal Config;
+- Fields explicitly touched by user recorded separately, late Resolution must not override those fields;
+- Numbers, booleans, and JSON all derive display values from same Resolution;
+- context/max output and reasoning JSON use inherited/effective placeholder;
+- Boolean controls display `Personal Draft ?? inheritedConfig`, only displaying Personal Override style when user explicitly modifies;
+- `false` in general Rules is complete default fact, not "default value not obtained";
+- On save, only new Provider's Personal model members and truly existing sparse Exact Rules created, no reverse-materialization of Effective Config.
 
-## 4. 统一 Idle Trigger
+## 4. Unified Idle Trigger
 
-Provider 文本保存、新增模型配置解析和编辑模型配置解析复用一个 idle-trigger 调度语义：
+Provider text save, new model config parsing, and editing model config parsing share one idle-trigger dispatch semantics:
 
 ```text
 onChange
-├─ 立即更新本地 Draft
-├─ 取消上一计时器
-└─ 1200ms 无新输入
+├─ Immediately update local Draft
+├─ Cancel previous timer
+└─ 1200ms no new input
        |
        v
-  执行当前动作
-  ├─ Provider：保存 Personal Provider Draft
-  └─ Model：解析 Model Config
+  Execute current action
+  ├─ Provider: save Personal Provider Draft
+  └─ Model: parse Model Config
 
-onBlur / Enter / 显式保存
-└─ 取消计时器并立即 flush 当前动作
+onBlur / Enter / explicit save
+└─ Cancel timer and immediately flush current action
 ```
 
-- 统一 idle 时间为 1200ms；
-- 连续输入只执行最后一次；
-- IME composition 期间不触发；
-- Resolution 请求使用单调序号或等价身份校验，过期响应不得更新当前 Model ID；
-- 点击模型保存时若解析仍处于 scheduled/in-flight，必须立即 flush 并等待完成，再在同一次点击中保存，
-  不要求用户二次点击；
-- Provider blur/Enter/切换前保存和卸载保护保持不变；只替换定时调度，不建立第二份保存队列。
+- Unified idle time 1200ms;
+- Continuous input executes only last;
+- IME composition period does not trigger;
+- Resolution requests use monotonically increasing sequence or equivalent identity validation, expired responses must not update current Model ID;
+- When clicking model save while parsing still scheduled/in-flight, must immediately flush and wait completion, then save in same click,
+  no requiring user double-click;
+- Provider blur/Enter/pre-save and unload protection unchanged; only replacing timed dispatch, no creating second save queue.
 
-## 5. Resolution 成功横幅
+## 5. Resolution Success Banner
 
-模型弹窗在新的 Resolution 确实改变继承配置时显示绿色成功横幅：
+Model popup displays green success banner when new Resolution genuinely changes inherited config:
 
-> 已加载模型默认配置
+> Model default config loaded
 
 ```text
-Resolution 完成
-├─ inheritedConfig 与当前已应用结果相同
-│  └─ 静默：不更新字段，不显示横幅
-└─ inheritedConfig 确实变化
-   ├─ 原子更新全部继承展示
-   └─ 显示一条成功横幅
+Resolution complete
+├─ inheritedConfig same as currently applied result
+│  └─ Silent: do not update fields, do not display banner
+└─ inheritedConfig genuinely changed
+   ├─ Atomic update all inherited display
+   └─ Display one success banner
 ```
 
-- 第一次成功加载出配置时显示；
-- 重复失焦、重复解析、只改变大小写但配置相同，以及不同 ID 得到完全相同的继承配置时不显示；
-- 失败、过期或不完整 Resolution 不显示成功横幅；
-- 横幅位于模型弹窗内容区的固定反馈位置，使用现有语义成功色、对勾和国际化，不因内容滚动移出视野；
-- 同一稳定 key 原位替换，不堆叠多条相同反馈。
+- Displayed on first successful config load;
+- Not displayed on repeated blur, repeated parse, same-case-only changes with same config, and different IDs getting identical inherited config;
+- Failure, expired, or incomplete Resolution does not display success banner;
+- Banner located at fixed feedback position of model popup content area, using existing semantic success color, checkmark, and internationalization, not scrolling out of view;
+- Same stable key in-situ replacement, no stacking multiple same feedback.
 
-“已加载”只说明已取得一份规则解析基线；通用 `modelMatch: ".*"` 同样可以提供默认配置，文案不宣称
-服务端已经识别或授权该模型。
+"Loaded" only indicates a rule parse baseline obtained; general `modelMatch: ".*"` can also provide default config, text does not claim
+server has recognized or authorized that model.
 
-## 6. 影响边界
+## 6. Impact Boundaries
 
-| 层级          | 本次处理                           | 保持不变                                     |
+| Layer           | This Round Handling                        | Unchanged                                     |
 | ------------- | ---------------------------------- | -------------------------------------------- |
-| draft-default | 统一 Resolution 投影与稀疏 Draft   | Rule 内容与覆盖优先级                        |
-| presentation  | 新增成功横幅、消除 JSON 缺省误展示 | Model 字段顺序和可编辑范围                   |
-| commit-effect | 统一 1200ms idle/blur flush        | Host 保存、Registry refresh 和 revision 权威 |
-| validation    | 保存前等待当前 Resolution          | 完整性规则和 Adapter compatibility           |
-| persistence   | Provider 文本仍自动保存            | Personal Config Schema 与物理位置            |
+| draft-default | Unified Resolution projection and sparse Draft   | Rule content and override precedence                        |
+| presentation  | New success banner, eliminate JSON default wrong display | Model field order and editable scope                   |
+| commit-effect | Unified 1200ms idle/blur flush        | Host save, Registry refresh, and revision authority |
+| validation    | Wait for current Resolution before save  | Integrity rules and Adapter compatibility           |
+| persistence   | Provider text still auto-saves            | Personal Config Schema and physical location            |
 
-不修改模型选择、连接测试、账号套餐、Remote Provisioning、Desktop continuous、Mobile replayable、队列或恢复链路。
+Does not modify model selection, connection testing, account plan, Remote Provisioning, Desktop continuous, Mobile replayable, queue, or recovery chain.
 
-## 7. 测试计划
+## 7. Test Plan
 
-1. `GLM-5.3-Flash + anthropic-messages` 展示 1M、128K、Image/Video、reasoning spec 和 mapping；
-2. Built-in `false` 能力作为继承值展示，但不写入 Personal Rule；
-3. reasoning JSON 使用 Resolution placeholder，不再显示错误的“—”；
-4. 1200ms 内持续输入不调用 Resolution/Provider save，稳定后只调用一次；
-5. blur/Enter 立即 flush，点击保存等待 Resolution 并一次完成；
-6. 迟到 Resolution 被丢弃；相同 inheritedConfig 不重复更新字段或显示横幅；
-7. 配置变化时横幅显示一次，失败和不完整结果不显示；
-8. Provider name/baseURL/API Key idle save 改为 1200ms，blur 与切换前保存不回归；
-9. 新增模型未触碰字段时只保存成员和必要的稀疏 Personal Rule；
-10. 中英文、浅色/深色主题、键盘与窄窗口下横幅可用。
+1. `GLM-5.3-Flash + anthropic-messages` displays 1M, 128K, Image/Video, reasoning spec, and mapping;
+2. Built-in `false` capabilities displayed as inheritance values, but not written to Personal Rule;
+3. reasoning JSON uses Resolution placeholder, no longer displays wrong "--";
+4. 1200ms continuous input does not call Resolution/Provider save, calls only once after stabilization;
+5. blur/Enter immediately flushes, clicking save waits for Resolution and completes in one operation;
+6. Late Resolution discarded; same inheritedConfig does not redundantly update fields or display banner;
+7. Banner displayed once when config changes, failure and incomplete results do not display;
+8. Provider name/baseURL/API Key idle save changed to 1200ms, blur and pre-save does not regress;
+9. New model untouched fields only save members and necessary sparse Personal Rule;
+10. Chinese/English, light/dark themes, keyboard, and narrow window banner usable.
 
-## 8. 完成标准
+## 8. Completion Criteria
 
-- Settings 只有 `resolveModelConfig` 一套领域命名和一份 Resolution 状态；
-- 新增/编辑弹窗的全部继承字段来自同一 Resolution；
-- Renderer 不把继承布尔值物化为持久化 Personal Config；
-- 文本 idle-trigger 统一为 1200ms，主动结束编辑会立即 flush；
-- 成功横幅只在继承配置发生变化时出现；
-- 相关 Design、Feature Graph、单测、typecheck、lint 和格式检查同步通过；
-- 完成后提交 Conventional Commit。
+- Settings has only one domain naming `resolveModelConfig` and one Resolution state;
+- All inherited fields in new/edit popups from same Resolution;
+- Renderer does not materialize inherited booleans as persistent Personal Config;
+- Text idle-trigger unified to 1200ms, proactively ending editing immediately flushes;
+- Success banner only appears when inherited config changes;
+- Related Design, Feature Graph, unit tests, typecheck, lint, and format checks pass;
+- Submit Conventional Commit upon completion.
 
-## 9. 实施结果
+## 9. Implementation Results
 
-- Settings Facade 与 Service 删除两套 `preview*` 接口，统一为 `resolveModelConfig()`、
-  `ModelConfigResolution` 和 Renderer `resolution` 状态；
-- 新增和重命名弹窗共用 1200ms idle-trigger，blur、Enter 和保存会立即 flush；保存不再因解析在途而要求二次点击；
-- 数字、布尔、Reasoning Option Spec 与 Reasoning Mapping 全部由同一 Resolution 展示；
-- 新增模型表单单独记录已触碰字段，迟到的 Resolution 不覆盖用户输入，最终 Personal Config 继续保持稀疏；
-- “已加载模型默认配置”只在完整的 `inheritedConfig` 真正变化时显示；重复解析不续期、不堆叠；
-- Provider name、Base URL 与 API Key 的停止输入保存统一延长至 1200ms，blur/Enter/切换前保存不变；
-- 真实 Built-in Config、Facade、Provider 自动保存、模型弹窗、迟到响应和稀疏提交均已有定向回归证据。
+- Settings Facade and Service deleted two `preview*` interfaces, unified to `resolveModelConfig()`,
+  `ModelConfigResolution`, and Renderer `resolution` state;
+- New and rename popups share 1200ms idle-trigger, blur, Enter, and save immediately flush; save no longer requires double-click due to parsing in-flight;
+- Numbers, booleans, Reasoning Option Spec, and Reasoning Mapping all displayed by same Resolution;
+- New model form separately records touched fields, late Resolution does not override user input, final Personal Config remains sparse;
+- "Model default config loaded" displayed only when complete `inheritedConfig` genuinely changes; repeated parsing does not renew, does not stack;
+- Provider name, Base URL, and API Key idle-stop-save uniformly extended to 1200ms, blur/Enter/pre-save unchanged;
+- Real Built-in Config, Facade, Provider auto-save, model popup, late response, and sparse submission all have directed regression evidence.

@@ -1,8 +1,8 @@
-# Registry 运行边界
+# Registry Runtime Boundary
 
-Provider Registry 在一个进程中维护所属 Environment 的 Provider View。调用方可以随时读取一致的当前
-视图；ZCode Built-in、Account Built-in 或 Personal Provider Config 变化后，Registry 发布新视图，已经创建的
-Model 保持不变。
+Provider Registry maintains the Provider View for the belonging Environment in a process. Callers can always read a consistent current
+view; after ZCode Built-in, Account Built-in, or Personal Provider Config changes, Registry publishes a new view, and already-created
+Models remain unchanged.
 
 ```text
 Config / Account Sources
@@ -15,13 +15,13 @@ Config / Account Sources
        └─ notify consumers
           |
           v
-新的查询与 Model 创建使用新 View
-旧 Model 继续使用创建时的配置
+New queries and Model creations use the new View
+Old Models continue using the config at creation time
 ```
 
 ## Registry View
 
-Registry View 是有序 Provider 集合：
+The Registry View is an ordered Provider collection:
 
 ```ts
 interface Provider {
@@ -33,39 +33,29 @@ interface Provider {
 }
 ```
 
-这是可执行 Registry View，只包含完整且 enabled 的模型，包括 hidden Provider 下的模型和与 Personal 重名时继续
-生效的 Built-in Model。disabled 和 incomplete 成员留在 Settings Resolution；重复成员在 Inventory 阶段按
-“保留第一次、Built-in-wins”确定化，不把 optional Config 或 `status` 混入 Registry。完整类型的序列化返回值也必须
-保持完整，不能把稀疏基类的 optional 字段重新暴露给协议消费者。
+This is the executable Registry View, containing only complete and enabled models, including models under hidden Providers and Built-in Models that continue to take effect when conflicting with Personal. Disabled and incomplete members remain in Settings Resolution; duplicate members are deterministicized at the Inventory stage by "keep the first, Built-in-wins," and do not mix optional Config or `status` into Registry. The serialization return value of complete types must also remain complete and cannot re-expose optional fields of the sparse base class to protocol consumers.
 
-设置和模型选择按数组顺序展示。Registry 同时建立轻量查询索引：
+Settings and model selections are displayed by array order. Registry also establishes lightweight query indexes:
 
 ```text
 Provider[]
-├─ 对外有序 View
+├─ External ordered View
 └─ providerById
    └─ modelById
       ├─ lookup
       └─ validate selection
 ```
 
-索引引用 View 中的 `RegistryProviderConfig` 和 `RegistryModelConfig`，不复制一套新的配置事实。Registry
-不把 HTTP Client、连接池、动态凭据或 Provider SDK 运行状态放进 View。
+Indexes reference `RegistryProviderConfig` and `RegistryModelConfig` in the View and do not copy a separate set of config facts. Registry does not place HTTP Clients, connection pools, dynamic credentials, or Provider SDK runtime states into the View.
 
-ModelFactory 创建 Active Model 时，将 Effective Model Config 的完整 `properties` 原样冻结到
-`Model.properties`。Core、Compact、Memory、Child Agent 与 Adapter 直接读取其中的
-`input_format` / `output_format`；Runtime Config、Turn 和 Adapter Registry 不维护并行 capability map。
-异步边界无法传递 Active Model 时，只能传递同结构的不可变 Properties 快照。详见
-[`../model/input-output-format.md`](../model/input-output-format.md)。
+When ModelFactory creates Active Models, it freezes the complete `properties` of Effective Model Config as-is into `Model.properties`. Core, Compact, Memory, Child Agents, and Adapters directly read `input_format` / `output_format` from it; Runtime Config, Turns, and Adapter Registries do not maintain parallel capability maps. When async boundaries cannot pass Active Models, only the same-structure immutable Properties snapshots can be passed. See
+[`../model/input-output-format.md`](../model/input-output-format.md).
 
-Registry 不创建 Model。ModelFactory 先用 Registry 完成 lookup/validate，再把完整 Provider/Model Config
-作为私有输入交给 Adapter 创建 Active Model；公共 Model 不暴露这两份 Registry Config。
+Registry does not create Models. ModelFactory first uses Registry to complete lookup/validate, then passes the complete Provider/Model Config as private input to Adapters to create Active Models; public Models do not expose these two Registry Configs.
 
-## 执行步骤中的 Active Model
+## Active Model in Execution Steps
 
-`ModelSelection` 只表达 Session 或 Submission 对“下一次创建哪个 Model”的选择意图。它可以持久化，
-但不能用来反推一个已经开始执行的模型步骤。每个模型步骤由 ModelFactory 创建一个不可变 Active Model，
-并把同一个 Model 传给该步骤的所有执行消费者：
+`ModelSelection` only expresses Session or Submission's selection intent for "which Model to create next." It can be persisted, but cannot be used to retroactively infer a model step that has already started execution. Each model step creates an immutable Active Model through ModelFactory, and passes the same Model to all execution consumers of that step:
 
 ```text
 Session / Submission ModelSelection
@@ -80,80 +70,76 @@ Session / Submission ModelSelection
        Context    Tools    Adapter request
 ```
 
-Context Source 只保存工作目录、平台、Shell、Git、Instructions 等环境事实，不保存执行模型快照。
-Context 中的模型说明、模型相关工具投影和请求 Options 必须在模型步骤开始时从该 Active Model 生成；
-Builder 直接接收该 Model，不再经过 `envInfo.currentModel` 字段；
-Core 不维护把 Session Selection 复制到 Context 再反复刷新的同步机制。
+Context Sources only save working directory, platform, Shell, Git, Instructions, and other environmental facts; they do not save execution model snapshots. Model descriptions, model-related tool projections, and request Options in the Context must be generated from this Active Model at the start of the model step; Builders directly receive this Model, no longer passing through the `envInfo.currentModel` field;
+Core does not maintain a synchronization mechanism that copies Session Selection to Context and repeatedly refreshes it.
 
-- 普通 Submission 在 admission 时先创建 Active Model，再用它初始化 Context、运行 SessionStart Hook 和发起请求；
-- execution-scoped Off-Peak 使用自己的 Active Model，但不改写 Session Selection；
-- Guide 在合法的下一个 model-step 边界创建新 Model，并用它同时替换请求 Context 与后续请求；
-- Subagent 继承父模型时，child Selection、Context 和 ModelFactory 都从实际传入的父 Active Model 派生；
-- 活动步骤中发生的 Session Selection 或 Registry 变化只影响后来创建的 Model，不能污染当前步骤。
+- Normal Submissions first create Active Models during admission, then use them to initialize Context, run SessionStart Hooks, and initiate requests;
+- execution-scoped Off-Peak uses its own Active Model but does not rewrite Session Selection;
+- Guides create new Models at legal next model-step boundaries and replace both request Context and subsequent requests with them;
+- When Subagents inherit from parent models, child Selection, Context, and ModelFactory are all derived from the actual parent Active Model passed in;
+- Session Selection or Registry changes occurring during active steps only affect later-created Models and cannot pollute the current step.
 
-详见 [`../../steps/todo-68-active-model-context-single-source.md`](../../steps/todo-68-active-model-context-single-source.md)。
+See [`../../steps/todo-68-active-model-context-single-source.md`](../../steps/todo-68-active-model-context-single-source.md) for details.
 
-## 发布新 View
+## Publishing New Views
 
-ZCode Built-in、Account 或 Personal ProviderConfigMap 变化后，Registry 重新执行 Provider 与 Model
-两轮解析：
+After ZCode Built-in, Account, or Personal ProviderConfigMap changes, Registry re-executes the two-round Provider and Model resolution:
 
 ```text
-旧 View v1
+Old View v1
       |
 Source change
       |
       v
-构造并校验 View v2
+Construct and validate View v2
       |
       v
-一次性替换 View 与索引
+One-time replacement of View and indexes
       |
       v
 onDidChange(revision)
 ```
 
-消费者在任意时刻只观察到一份完整 View。构建中的中间状态不对外发布。已有 Model 引用创建时的 ProviderConfig、ModelConfig 和 Options，因此 View 替换不会静默改变活动 Agent Loop。
+Consumers observe only one complete View at any time. Intermediate states under construction are not published externally. Existing Models reference the ProviderConfig, ModelConfig, and Options at creation time; View replacements do not silently change active Agent Loops.
 
-单个 Source 读取、解析或刷新失败时，Registry 保留上一份成功的完整 View，并报告具体 Source 与错误；它不会发布缺少该 Source 的部分 View。Source 成功返回删除、禁用、空 Config Map 或账号失效时，这些属于确定的新事实，仍应正常构建并发布。
+When a single Source reads, parses, or refreshes fail, Registry retains the previous successful complete View and reports the specific Source and error; it does not publish partial Views missing that Source. When Sources successfully return deletions, disables, empty Config Maps, or account failures, these are definite new facts and should still be normally constructed and published.
 
-首次启动采用分层恢复，而不是把所有输入都当成同等的 ready barrier：
+First startup uses layered recovery, rather than treating all inputs as equal ready barriers:
 
 ```text
-Bundled 无效 ------------------------------> 启动失败
-Active/LKG 无效或不可写 --------------------> 丢弃/绕过，使用 Bundled
-Personal 无效 ------------------------------> 保留恢复备份，使用空 Personal Overlay
-Account 首次解析失败 ------------------------> 账号 Provider access.entitled=false
-Configured Default 无效 --------------------> 丢弃偏好，使用 Registry fallback
-Resolver/Registry 内部完整性不变量被破坏 ----> 启动失败
+Bundled invalid ----------------------------> Startup failure
+Active/LKG invalid or unwritable ------------> Discard/skip, use Bundled
+Personal invalid ----------------------------> Preserve recovery backup, use empty Personal Overlay
+Account first parse failure -----------------> Account Provider access.entitled=false
+Configured Default invalid ------------------> Discard preference, use Registry fallback
+Resolver/Registry internal completeness invariant violated --> Startup failure
 ```
 
-因此，只有无法建立可信 Built-in 基线或代码内部完整性证明失败时，Provider Runtime 才能阻断启动。可丢弃缓存、
-用户偏好、Personal Overlay 或动态 Account 事实的局部失败必须降级并报告，不能放大为整个应用或 Agent 不可用。
+Therefore, Provider Runtime can only block startup when a trusted Built-in baseline cannot be established or code internal completeness proofs fail. Discardable caches, user preferences, Personal Overlays, or partial failures of dynamic Account facts must be degraded and reported, and cannot be amplified to the entire application or Agent being unavailable.
 
-## 查询与变化通知
+## Queries and Change Notifications
 
-长期存活的消费者采用“读取、订阅失效、重新读取”：
+Long-lived consumers adopt "read, subscribe to invalidation, re-read":
 
 ```text
-消费者启动
+Consumer startup
     |
-    +--> registry.list...() 读取 View v1
+    +--> registry.list...() reads View v1
     |
     `--> registry.onDidChange
                     |
                     v
-              重新读取 View v2
+              Re-read View v2
 ```
 
-变化通知说明旧 View 已失效。完整数据仍由查询接口提供，避免事件 payload 和查询结果形成两份权威来源。事件可以包含 revision、原因或受影响范围；最终粒度在实现阶段根据设置页和模型选择器的刷新需求确定。
+Change notifications indicate that the old View has become invalid. Complete data is still provided by query interfaces, avoiding event payloads and query results forming two authoritative sources. Events can contain revisions, reasons, or affected scopes; final granularity is determined at the implementation stage based on the refresh needs of settings pages and model selectors.
 
-## 每个进程拥有自己的实例
+## Each Process Owns Its Own Instance
 
-同一个 Environment 中，需要 Provider 能力的进程各自持有 Registry 实例：
+Processes requiring Provider capabilities in the same Environment each hold Registry instances:
 
 ```text
-同一 Environment 的 Provider Facts
+Provider Facts in the same Environment
                |
        +-------+--------+
        |                |
@@ -161,15 +147,15 @@ Resolver/Registry 内部完整性不变量被破坏 ----> 启动失败
  Host Registry     Worker Registry
        |                |
        v                v
- 设置、模型选择       创建 Model、执行
+  Settings, model selection   Creation, execution
 
 Prompt CLI / TUI
-└─ 在自己的进程内使用同一 Registry 实现
+└─ Uses the same Registry implementation within its own process
 ```
 
-Registry 对象和内存 View 不跨进程共享；Config、Account 和 Registry 领域实现共享。Host 选择模型时读取自己的 Registry，Submission 只携带 ModelSelection；Core Worker 使用自己所属 Environment 的 Registry 创建执行 Model。
+Registry objects and memory Views are not shared across processes; Config, Account, and Registry domain implementations are shared. Hosts read their own Registry when selecting models; Submissions only carry ModelSelection; Core Workers use Registries belonging to their own Environments to create execution Models.
 
-每个进程的装配对象称为 `ProviderRuntime`。它不增加新的事实或状态模型，只把本进程所需的组件连接起来：
+The assembly object for each process is called `ProviderRuntime`. It does not add new facts or state models; it simply connects the components needed by this process:
 
 ```text
 ProviderRuntime
@@ -182,12 +168,9 @@ ProviderRuntime
 └─ ModelSelectionFacade
 ```
 
-Account Built-in Config Source 由 Entry 注入。尚不提供 Account Provider 的 Entry 可以使用空 Source，普通 API
-Provider 仍能完整运行；需要 Account 进一步约束的 Built-in Provider 由初始 fail-closed Overlay 设为
-`access.entitled=false`。这个缺省只表达当前 Entry 没有账号权益，不回退到旧 Snapshot。
+Account Built-in Config Sources are injected by Entries. Entries that do not yet provide Account Providers can use empty Sources; ordinary API Providers can still run completely; Built-in Providers requiring further Account constraints are set to `access.entitled=false` by the initial fail-closed Overlay. This default only expresses that the current Entry has no account entitlement; it falls back to old Snapshots.
 
-文件读取、原子写入、文件锁、Built-in watcher 与 Personal revision polling 属于 Node.js 运行环境，不进入纯领域包。
-它们集中在 `@zcode/provider-node`：
+File reading, atomic writing, file locks, Built-in watchers, and Personal revision polling belong to Node.js runtime environments and do not enter pure domain packages. They are centralized in `@zcode/provider-node`:
 
 ```text
 @zcode/provider
@@ -200,44 +183,30 @@ Provider 仍能完整运行；需要 Account 进一步约束的 Built-in Provide
 └─ process registry runtime
 ```
 
-Entry 负责定位物理文件并显式注入路径；`@zcode/provider-node` 不假设 Desktop、Worker、CLI 或 TUI 的安装目录。Host 与 Worker 各自读取同一 Environment 的文件，Registry 对象和 View 不跨进程传输。
+Entries are responsible for locating physical files and explicitly injecting paths; `@zcode/provider-node` does not assume Desktop, Worker, CLI, or TUI installation directories. Hosts and Workers each read files of the same Environment; Registry objects and Views are not transmitted across processes.
 
-ZCode Built-in 的远端同步由 Environment 组合根拥有。Local Host、Remote Host、Standalone Server 和没有
-Host 的 Prompt CLI/TUI 各自为所属 Environment 建立一个同步 owner；普通 Core Worker 只读、监听 Host
-注入的同一个 `active.json`，不独立请求 `/client/configs`：
+The remote synchronization of ZCode Built-in is owned by Environment composition roots. Local Hosts, Remote Hosts, Standalone Servers, and Prompt CLIs/TUIs without Hosts each establish a sync owner for their belonging Environments; ordinary Core Workers only read, listening to the same `active.json` injected by Hosts, and do not independently request `/client/configs`:
 
 ```text
 Bundled Release ──┐
-Active/LKG ───────┼─> 选择 max revision ─> active.json ─> Host Registry
+Active/LKG ───────┼─> Select max revision ─> active.json ─> Host Registry
 Remote Release ───┘                              └──────> Worker Registry
 ```
 
-本地有效候选先完成 ready，远端刷新随后在后台执行。多个进程通过 Active 旁的
-`refresh-control.json`、文件锁和短期 lease 合并请求；Active 与刷新控制按规范化 ZCode 控制面 Endpoint
-物理隔离，成功使用一小时量级 TTL，失败递增退避，Endpoint
-变化不继承旧 TTL。显式刷新可以越过 TTL，但不能越过仍有效的 lease。远端仅接受
-`/api/v1/client/configs.data.configs.zcodeBuiltin`，解析成功且 revision 更高时先原子替换 Active，再由现有
-Source change 链触发 Account 与 Registry 刷新。请求期间 Endpoint 已变化的旧响应，以及 dispose 后到达的
-响应，都不能写盘或发布。
+Local valid candidates complete ready first; remote refreshes subsequently execute in the background. Multiple processes merge requests through `refresh-control.json`, file locks, and short-term leases next to Active; Active and refresh control are physically isolated by normalized ZCode control plane Endpoints; successful uses hour-scale TTLs; failures use exponential backoff; Endpoint changes do not inherit old TTLs. Explicit refreshes can bypass TTLs but cannot bypass still-valid leases. Remote only accepts `/api/v1/client/configs.data.configs.zcodeBuiltin`; after successful parsing and higher revision, the Active is atomically replaced first, then the existing Source change chain triggers Account and Registry refreshes. Old responses whose endpoints have already changed during requests, and responses arriving after disposal, cannot be written to disk or published.
 
-Registry 更新仍只影响后来创建的 Model；已经创建的 Active Model 保持创建时冻结事实。其他 Client Config
-消费者、Session、队列、Continuous/Replayable 和远程 Provisioning 不属于这条同步链。
+Registry updates still only affect later-created Models; already-created Active Models retain frozen facts at creation time. Other Client Config consumers, Sessions, queues, Continuous/Replayable, and remote Provisioning do not belong to this sync chain.
 
-Prompt CLI 的一次执行只有一个 App，因此 Registry 与该 Entry 同生共死。TUI 可以在 `/new`、resume 和 fork 时替换 App；这些 App 都借用同一份进程 Registry，避免每次切换 Session 都重新创建文件观察循环。关闭某个 App 不释放 Registry，TUI Entry 终止时才统一释放。
+A single Execution of Prompt CLI has only one App; therefore, Registry and that Entry share the same lifetime. TUI can replace Apps during `/new`, resume, and fork; these Apps all borrow the same process Registry, avoiding recreating file observation loops each time a Session is switched. Closing one App does not release the Registry; TUI Entries only release uniformly when terminating.
 
-Host 通过两个独立频道暴露 Facade：`provider-settings` 负责 Personal Config 的查看与修改，`model-selection` 负责候选模型 View 与 Selection 校验。频道只传普通可序列化对象；Config Class、Source 和 Registry 实例留在 Host 进程。
+Hosts expose Facades through two independent channels: `provider-settings` is responsible for viewing and modifying Personal Config; `model-selection` is responsible for candidate model Views and Selection validation. Channels only transmit ordinary serializable objects; Config Classes, Sources, and Registry instances remain in the Host process.
 
-Selection 校验覆盖完整的通用选择语义：Provider 与 Model 必须存在；显式
-`reasoningLevel` 必须属于模型的 Option Spec；显式 `maxOutputTokens` 必须是正整数且不超过
-模型声明的上限。校验只报告错误，不修改或截断调用方提交的值。Configured Default 与 Facade
-调用复用同一套 Option 校验，避免初始化、设置页和执行入口产生不同结论。
+Selection validation covers the complete general selection semantics: Providers and Models must exist; explicit
+`reasoningLevel` must belong to the model's Option Spec; explicit `maxOutputTokens` must be a positive integer and not exceed the model's declared upper limit. Validation only reports errors and does not modify or truncate values submitted by callers. Configured Default and Facade calls reuse the same set of Option validations, avoiding different conclusions between initialization, settings pages, and execution entries.
 
-`ProviderRuntime` 的启动是两个 Facade 的共享 ready barrier。Host 可以先注册 RPC 频道再异步启动 Runtime，但 `getView`、预览、写入和 Selection 校验都必须等待首次 Config / Account Source 解析完成。多个并发调用共用同一条 Registry 启动链路，不由 Renderer 重试“尚未 start”这种内部初始化状态。
+The startup of `ProviderRuntime` is a shared ready barrier for the two Facades. Hosts can first register RPC channels and then asynchronously start the Runtime, but `getView`, previews, writes, and Selection validations must all wait for the first Config / Account Source parsing to complete. Multiple concurrent calls share the same Registry startup link; they are not retried by Renderers for "not yet start" internal initialization states.
 
-Host 的组合根先创建 Config Runtime，再用它的 Config Service 创建 Account Provider Service，最后把 Config
-Service 与 Account Source 一起装配进 Registry。`ProviderRuntime` 接受已经创建的 Config Runtime，不在
-内部隐藏第二次构造。Account Source 只以 ZCode Built-in Provider Config 为账号 Provider 的静态边界，再
-根据账号事实形成约束；它不读取或吸收 Personal Provider Config，Personal 始终在 Account 之后覆盖。
+The Host's composition root first creates Config Runtime, then creates Account Provider Services using its Config Service, and finally assembles Config Services and Account Sources into Registries. `ProviderRuntime` accepts already-created Config Runtimes and does not hide a second construction internally. Account Sources only use ZCode Built-in Provider Config as the static boundary for account Providers, then form constraints based on account facts; they do not read or absorb Personal Provider Config; Personal always overlays after Account.
 
 ```text
 ProviderConfigRuntime
@@ -248,18 +217,12 @@ ProviderConfigRuntime
                  └─ Account Built-in ProviderConfigMap ─┘
 ```
 
-Client 为这两个频道建立独立代理，共享 `IServiceAccessor` 将二者声明为必备能力。Local Host、Remote
-Workspace Service Collection 与 Web home-only 组合根都必须提供明确实现；Web home-only 使用空 View
-服务表达“当前没有 attached Environment”，不使用 `undefined` 充当能力协商。跨版本远端若需要能力
-判断，应使用显式协议能力。
+Clients establish independent proxies for these two channels, sharing `IServiceAccessor` to declare them as required capabilities. Local Hosts, Remote Workspace Service Collections, and Web home-only composition roots must all provide explicit implementations; Web home-only uses empty View services to express "no attached Environment currently"; it does not use `undefined` as capability negotiation. Cross-version remotes needing capability judgment should use explicit protocol capabilities.
 
-历史实现曾由 Host 向 Worker 推送完整 Registry Snapshot，再由 Worker 维护 Workspace Catalog。
-M2 已经让正式 Entry 与内部 Harness 退出这条事实链路，并强制装配 Process Registry。旧实现的订阅与
-跨进程刷新事实保存在
-[`../../research/m2-registry-aggregation-and-refresh.md`](../../research/m2-registry-aggregation-and-refresh.md)。
+Historical implementations once pushed complete Registry Snapshots from Hosts to Workers, then had Workers maintain Workspace Catalogs. M2 has already let official Entries and internal Harnesses exit this fact chain and forced assembly of Process Registries. Subscriptions and cross-process refresh facts of old implementations are saved at
+[`../../research/m2-registry-aggregation-and-refresh.md`](../../research/m2-registry-aggregation-and-refresh.md).
 
-Account Built-in Provider Config 使用独立的进程级同步边界。Host 和 Worker 各自持有 Registry；Host
-只把账号状态形成的 Account Built-in Config Source 传给 Worker，不传整份 Registry View：
+Account Built-in Provider Config uses independent process-level sync boundaries. Hosts and Workers each hold Registries; Hosts only pass the Account Built-in Config Source formed by account states to Workers, not the entire Registry View:
 
 ```text
 Host Account Built-in Provider Source
@@ -275,73 +238,52 @@ Worker Account Built-in Provider Source
 Worker Registry
 ```
 
-这条协议只连接同一个 Environment 内的 Host 与 Worker。Desktop Local Host 和
-desktop-attached Remote Host 属于两个 Environment，不能通过该协议共享 Account Built-in Config。
-Remote Host 必须从自己的 Config、Credential 与 Account Source 产生 Account Built-in Provider Config，再同步给
-它管理的 Remote Worker。
+This protocol only connects Hosts and Workers within the same Environment. Desktop Local Hosts and
+desktop-attached Remote Hosts belong to two Environments and cannot share Account Built-in Config through this protocol.
+Remote Hosts must produce Account Built-in Provider Config from their own Config, Credentials, and Account Sources, then sync to their managed Remote Workers.
 
 ```text
 Desktop Environment                  Remote Environment
 Local Host -> Local Worker           Remote Host -> Remote Worker
      account config                       account config
 
-两个 Environment 之间的 Provisioning Sync
-└─ 只写 Remote Config / Credential Store
-   不直接调用 provider/updateAccountConfig
+Provisioning Sync between two Environments
+└─ Only writes Remote Config / Credential Store
+   Does not directly call provider/updateAccountConfig
 ```
 
-上图只定义 Environment 所有权边界。远程 Provisioning、远程设置操作、登录和配置同步是独立产品能力，
-不属于 Provider Refactor 或 M4 的实施范围。
+The above diagram only defines Environment ownership boundaries. Remote Provisioning, remote settings operations, logins, and config sync are independent product capabilities and do not belong to the Provider Refactor or M4 implementation scope.
 
-消息中的 Provider Config 是普通可序列化对象，到达 Worker 后由 `@zcode/provider` 的同一
-Schema 校验解析。Account Source 只接受 `builtinModelIds`，并只允许对固定 `zhipu-account` Access 覆盖
-`entitled`；Provider 顶层 `enabled`、Access 身份、API Key、Secret 和请求期鉴权材料不能通过该入口进入
-Registry。相同 revision 不重复发布，新进程在开始
-模型执行前必须先取得当前 Account Built-in Config。
+Provider Configs in messages are ordinary serializable objects, parsed and resolved by the same Schema validation of `@zcode/provider` upon reaching Workers. Account Sources only accept `builtinModelIds` and only allow overriding `entitled` for fixed `zhipu-account` Access; Provider top-level `enabled`, Access identities, API Keys, Secrets, and request-time auth materials cannot enter Registry through this entry. The same revision is not published repeatedly; new processes must first obtain the current Account Built-in Config before starting model execution.
 
-Off-Peak Provider 的动态凭据只在 Model request attempt 上注入，不属于 Account Built-in Config 同步。缺少
-Request Auth 时，Model 在发出网络请求前返回明确的缺凭据错误；Registry 不为它保存临时 Secret。
+Off-Peak Provider dynamic credentials are only injected on Model request attempts and do not belong to Account Built-in Config sync. When Request Auth is missing, Models return explicit missing-credential errors before sending network requests; Registry does not save temporary Secrets for them.
 
-Host 内的 `AccountProviderService` 同时是 Registry 的 Account Source。它读取 Config Service 当前的
-ZCode Built-in Provider Config，把账号、套餐和团队连接解析为 Account Built-in Provider Config。Account 的职责是
-对 Built-in 中与账号相关的 Provider 做进一步约束，不参与 Personal Overlay。远端请求通过注入的 Account
-Resolver 完成，`@zcode/provider` 中的 Service 本身不依赖网络、文件系统或 OAuth 实现。
+`AccountProviderService` within Hosts is also Registry's Account Source. It reads the current ZCode Built-in Provider Config from Config Services, parsing accounts, plans, and team connections into Account Built-in Provider Config. Account's responsibility is to further constrain Built-in account-related Providers; it does not participate in Personal Overlays. Remote requests are completed through injected Account Resolvers; Services in `@zcode/provider` itself do not depend on networks, file systems, or OAuth implementations.
 
-Account Source 每次发布都记录 `basedOnZCodeBuiltinRevision`。Registry 收到 Built-in change 时，在对应
-Account 刷新完成前继续保留上一份完整 Registry，不能发布新 Built-in 与旧 Account 的组合；即使 Overlay
-内容未变，来源 revision 变化也必须形成新 Account Snapshot。Personal change 不触发这道等待。
+Account Sources record `basedOnZCodeBuiltinRevision` with each publish. When Registry receives Built-in changes, it continues to retain the previous complete Registry until the corresponding Account refresh completes; it cannot publish new Built-in with old Account combinations; even when overlay content has not changed, source revision changes must form new Account Snapshots. Personal changes do not trigger this wait.
 
 ```text
 ZCode Built-in Provider Config
           |
-          | Account Resolver 施加账号约束
+          | Account Resolver applies account constraints
           v
 Account Built-in ProviderConfigMap
 ```
 
-首次 `read()` 是账号事实的首次解析尝试；后续 Config 变化或账号事件调用 `refresh()`。刷新成功后原子替换
-Account Snapshot 并通知 Registry。刷新失败时保留上一份成功 Snapshot，并通过错误事件报告；首次刷新尚无
-成功 Snapshot 时，基于同一份 ZCode Built-in revision 发布显式 `access.entitled=false` 的 fail-closed Account Overlay，
-让普通 API Provider 与 Personal Provider 继续启动。该降级不伪造账号可用性、模型成员或 Access，后续刷新成功
-后再原子替换。
+The first `read()` is the first resolution attempt of account facts; subsequent Config changes or account events call `refresh()`. After successful refreshes, Account Snapshots are atomically replaced and Registry is notified. When refreshes fail, the previous successful Snapshot is retained and errors are reported through error events; on first refresh when no successful Snapshot yet exists, an explicit `access.entitled=false` fail-closed Account Overlay is published based on the same ZCode Built-in revision, allowing ordinary API Providers and Personal Providers to continue starting. This degradation does not fabricate account availability, model members, or Access; subsequent successful refreshes atomically replace afterward.
 
-## Source 刷新边界
+## Source Refresh Boundaries
 
-Registry 只接收 Source 已变化的统一信号：
+Registry only receives unified signals that Sources have changed:
 
 ```text
-设置保存 ───────────────┐
-外部配置变化 ────────────┤
-ZCode Built-in Config 更新 ┼─> Source invalidate ─> Registry rebuild
-Account Built-in Config 更新 ─┘
+Settings save ───────────────┐
+External config changes ───────┤
+ZCode Built-in Config updates  ┼─> Source invalidate ─> Registry rebuild
+Account Built-in Config updates ─┘
 ```
 
-Services 侧的 Account Connection Resolver 负责把现有产品状态翻译成领域层的
-Connection Result。它读取当前账号域、每个 Provider Family 的连接模式、已选择的
-Individual/Team 连接、当前账号身份以及权益查询结果；成功时输出完整的 Provider 结果集合，其中可用
-Provider 携带可用状态和可选模型集合。
-原始 Settings 选择状态不进入 Provider Config；非当前账号域时，账号 Provider 的 `entitled` 仍由账号产品事实独立解析；网络或远端服务失败时整轮解析失败，由
-Account Provider Service 保留整份上一版成功 Snapshot，不发布部分结果。
+Account Connection Resolvers on the Services side are responsible for translating existing product states into domain-layer Connection Results. They read the current account domain, connection modes for each Provider Family, currently selected Individual/Team connections, current account identity, and entitlement query results; on success, they output complete Provider result sets, with available Providers carrying availability status and optional model collections. Raw Settings selection states do not enter Provider Config; for non-current account domains, account Providers' `entitled` is still independently resolved by account product facts; network or remote service failures fail the entire resolution round, with the Account Provider Service retaining the entire previous successful Snapshot and not publishing partial results.
 
 ```text
 Account Settings + Credential Port + Plan API
@@ -357,35 +299,25 @@ Account Settings + Credential Port + Plan API
         Account Built-in ProviderConfigMap
 ```
 
-Individual、Team、Start 分别对应固定类型的独立 Built-in Provider，并由 Built-in Access 的 `mode` 与
-`family` 明确表达。Resolver 只投影 `access.entitled` 和 Start 账号模型成员；账号身份、Team scope、Token、Runtime
-Key 与 Header 留在 Account Connection/Request Auth。模型成员没有专属远端结果时由领域解析器沿用当前 Built-in Config 的顺序；能够从
-权益接口取得权威模型集合时，应随 Connection Result 一起提供。
+Individual, Team, and Start each correspond to independently typed Built-in Providers, explicitly expressed by Built-in Access's `mode` and `family`. Resolvers only project `access.entitled` and Start account model collections; account identity, Team scope, Tokens, Runtime Keys, and Headers remain in Account Connection/Request Auth. Models without dedicated remote results follow the current Built-in Config order by domain parsers; when authoritative model collections can be obtained from entitlement interfaces, they should be provided together with Connection Results.
 
-本地 Host 的生产组合根直接创建 `AccountProviderService`。Config 变化由 Service 自己
-订阅；账号连接设置与账号事实分别通过窄事件触发同一条 `refresh()` 链路：
+The local Host's production composition root directly creates `AccountProviderService`. Config changes are subscribed by the Service itself; account connection settings and account facts respectively trigger the same `refresh()` link through narrow events:
 
 ```text
 ObservableSettingService.onDidUpdate
 └─ providerFamilyDomain / providerFamilyConnectionSelections / endpoint origin
                                                         │
 ModelProviderServiceRuntime.onDidInvalidateAccountFacts │
-└─ 登录预置、套餐入口、Coding Plan Key 与可用性变化 ─────┤
+└─ Login presets, plan entries, Coding Plan Keys, and availability changes ─────┤
                                                         v
                                       AccountProviderService.refresh()
 ```
 
-普通 Provider 保存、删除与 runtime header 更新不会触发账号刷新。旧
-`onDidChangeProviderRegistry` 不再承担本地 Account invalidation；刷新内容始终由
-Connection Resolver 根据 Config、账号设置、凭据端口和权益接口重新计算。
+Ordinary Provider saves, deletions, and runtime header updates do not trigger account refreshes. Old
+`onDidChangeProviderRegistry` no longer bears local Account invalidation; refresh content is always recalculated by Connection Resolvers based on Config, account settings, credential ports, and entitlement interfaces.
 
-`desktop-attached-remote` 的历史 Snapshot 兼容链路已经退出生产路径。生产 Entry 必须装配
-Process Registry；缺失 Registry 是组合根错误，不再通过旧协议类型或运行时 fallback 恢复。
-Remote Environment 的 Provider 数据所有权始终位于远端自身。
+The historical Snapshot compatibility link for `desktop-attached-remote` has exited the production path. Production Entries must assemble Process Registries; missing Registries are composition root errors and are no longer recovered through old protocol types or runtime fallbacks. Provider data ownership for Remote Environments always resides on the remote side itself.
 
-文件 watcher、Personal revision polling、mtime、远端 Plan 接口、缓存和并发去重属于各 Source 或配置 Service 的实现。Registry 调用方不感知这些机制。
+File watchers, Personal revision polling, mtime, remote Plan interfaces, caching, and concurrency deduplication belong to the implementations of each Source or Config Service. Registry callers do not perceive these mechanisms.
 
-当前实现已经采用主动通知、Source 文件观察与 revision 去重：设置写入等待 Repository 完成，再以 Registry `refresh()`
-作为提交屏障；Personal Repository 的其他进程变化由低频异步 revision polling 自愈，同一 revision 不重复发布 View。
-连接测试在查找 Provider/Model 前显式刷新当前 Worker Registry，因此不等待下一轮轮询，也不从 Host Snapshot 旁路创建
-Model。普通查询调用方不负责手工检查 mtime。
+The current implementation has already adopted active notifications, Source file observation, and revision deduplication: saves wait for Repositories to complete, then use Registry `refresh()` as a commit barrier; Personal Repository's cross-process changes are self-healed by low-frequency async revision polling; the same revision does not publish Views repeatedly. Connection tests explicitly refresh the current Worker Registry before finding Providers/Models, therefore not waiting for the next round of polling, nor creating Models from Host Snapshots through side-channels. Ordinary query callers are not responsible for manually checking mtimes.

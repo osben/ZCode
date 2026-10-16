@@ -1,22 +1,22 @@
 # Settings Header Action Buttons
 
-## 背景
+## Background
 
-设置页的技能、命令、MCP 服务器等子页都会在说明文本右侧放置高频操作。为了减少不同设置页之间的视觉跳变，这些页头工具按钮需要统一成紧凑的图标按钮。
+Subpages in Settings for skills, commands, MCP servers, and similar areas place frequent actions to the right of the descriptive text. To reduce visual shifts between Settings pages, these header toolbar controls must use a consistent compact icon-button style.
 
-## 交互规范
+## Interaction Rules
 
-- 列表右上角的新增、导入、打开目录、同步、刷新和管理类纯图标操作使用 `Button variant="ghost" size="icon-md"`（28px）。
-- 按钮内只显示语义图标，文案通过 `ControlHintTooltip` 展示。
-- 按钮必须保留同一文案作为 `aria-label`，保证无障碍和国际化语义不丢失。
-- 图标尺寸使用 `size-3.5`，和技能页的新建、导入、刷新按钮保持一致。
-- 同一列表页头内相邻操作按钮统一使用 `gap-2`（8px）。
+- Icon-only actions for adding, importing, opening a directory, syncing, refreshing, and managing items in the upper-right of a list use `Button variant="ghost" size="icon-md"` (28px).
+- Show only a semantic icon inside the button; display its label with `ControlHintTooltip`.
+- Keep the same label as the button's `aria-label` so accessibility and localization semantics are preserved.
+- Use `size-3.5` icons, matching the create, import, and refresh buttons on the Skills page.
+- Use consistent `gap-2` (8px) spacing between adjacent actions in the same list header.
 
-## 当前覆盖
+## Current Coverage
 
-- 技能：新建技能、导入技能、刷新技能列表。
-- 记忆：刷新项目记忆列表。
-- 命令：新建命令、打开用户命令目录、刷新命令列表。
-- 模型设置：刷新模型供应商列表。
-- MCP 服务器：新建 MCP 服务器。
-- 插件、钩子、子智能体：对应列表右上角的纯图标操作。
+- Skills: create a skill, import skills, refresh the skills list.
+- Memory: refresh the project memory list.
+- Commands: create a command, open the user commands directory, refresh the commands list.
+- Model settings: refresh the model-provider list.
+- MCP servers: create an MCP server.
+- Plugins, hooks, and subagents: icon-only actions in the upper-right of the corresponding list.

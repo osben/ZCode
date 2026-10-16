@@ -1,18 +1,17 @@
-# Provider 与 Model 配置体系综述
+# Provider and Model Configuration System Overview
 
-> 状态：当前决策综述；不替代各专题设计中的精确字段契约
+> Status: Current decision summary; does not replace precise field contracts in individual topic designs
 >
-> 最近更新：2026-09-01
+> Last updated: 2026-09-01
 
-本文用一条完整叙事说明 ZCode Provider 与 Model 配置体系已经确认的产品和领域决策。它只回答“系统是什么、各项
-事实属于哪里、最终怎样生效”，不描述旧代码如何迁移，也不保存实施步骤。
+This document provides a complete narrative of the product and domain decisions already confirmed for the ZCode Provider and Model configuration system. It only answers "what the system is, where each fact belongs, and how they ultimately take effect"; it does not describe how old code migrates, nor does it save implementation steps.
 
-## 1. 系统最终要完成什么
+## 1. What the System Ultimately Accomplishes
 
-Provider 与 Model 配置都服务于同一个目标：帮助用户封装一次模型 API 调用。
+Provider and Model configurations both serve the same goal: helping users encapsulate a model API call.
 
 ```text
-Provider Config 路径                         Model Config 路径
+Provider Config Path                         Model Config Path
 ====================                       =================
 
 ZCode Built-in Provider Templates          ZCode Built-in Model Config Rules
@@ -43,10 +42,10 @@ Account Built-in Provider Config                        |
                        ├─ properties
                        ├─ optionSpecs
                        │  └─ per-option raw-body map
-                       └─ 必要的请求编码事实
+                       └─ necessary request encoding facts
                                   |
                                   v
-                    Provider / Model 完整性校验
+                    Provider / Model completeness check
                                   |
                                   v
                          Provider Registry
@@ -59,29 +58,25 @@ Account Built-in Provider Config                        |
                            Model -> Adapter -> API
 ```
 
-左路回答“当前 Environment 最终有哪些 Provider、每个 Provider 有哪些模型、怎样访问服务”；右路回答“某个模型
-具有什么能力、可选择什么参数、这些参数如何映射到目标 API”。两路只在最终模型解析时汇合，不互相冒充。
+The left path answers "which Providers ultimately exist in the current Environment, which models each Provider has, and how to access services"; the right path answers "what capabilities a model has, which parameters can be selected, and how these parameters map to the target API." The two paths only merge at the final model resolution; they do not impersonate each other.
 
-最终调用所需的访问材料可能直接来自 Config，也可能在请求期取得。账号类型的 Provider Config 不管理账号动态凭据；
-账号连接与请求鉴权服务在执行期提供材料，服务端仍负责最终授权。普通 API Provider 可以在 Personal Config 中直接
-保存 API Key。
+Access materials needed for final calls may come directly from Config, or be obtained at request time. Account-type Provider Config does not manage account dynamic credentials; account connections and request auth services provide materials at execution time; the server still handles final authorization. Ordinary API Providers can directly save API Keys in Personal Config.
 
-## 2. 五个配置输入来源
+## 2. Five Configuration Input Sources
 
-系统只有五个配置输入来源：
+The system has only five configuration input sources:
 
-| 来源                              | 含义                                                          |
+| Source                              | Meaning                                                          |
 | --------------------------------- | ------------------------------------------------------------- |
-| ZCode Built-in Provider Config    | ZCode 发布的 Account Provider，以及可复用的 Provider Template |
-| Account Built-in Provider Config  | 当前账号对 Built-in 账号 Provider 的进一步约束                |
-| Personal Provider Config          | 用户创建的 Provider，以及用户对已有 Provider 的最终覆盖       |
-| ZCode Built-in Model Config Rules | ZCode 发布的模型静态事实和 API 映射                           |
-| Personal Model Config Rules       | 用户对模型事实的稀疏后置覆盖                                  |
+| ZCode Built-in Provider Config    | Account Providers published by ZCode, and reusable Provider Templates |
+| Account Built-in Provider Config  | Further constraints by the current account on Built-in account Providers |
+| Personal Provider Config          | User-created Providers, and user overrides on existing Providers |
+| ZCode Built-in Model Config Rules | Static facts about models and API mappings published by ZCode |
+| Personal Model Config Rules       | User's sparse posterior overrides on model facts |
 
-每个来源都有自己的严格输入 Schema。五个 Schema 负责约束“这个来源可以写什么”，但进入领域解析后仍使用共同的
-Provider Config、Model Config 与 Overlay 语言；不建立五套 Runtime 类型。
+Each source has its own strict input Schema. The five Schemas constrain "what each source can write," but after entering domain resolution, they still use common Provider Config, Model Config, and Overlay languages; five separate Runtime types are not established.
 
-Provider Overlay 顺序固定为：
+Provider Overlay order is fixed as:
 
 ```text
 Provider Template? -> ZCode Built-in Account Provider? -> Account Overlay? -> Personal
@@ -90,10 +85,9 @@ Provider Template? -> ZCode Built-in Account Provider? -> Account Overlay? -> Pe
                                                        Effective Provider Config
 ```
 
-因此 Personal 永远是最终用户覆盖。Account 的职责只是进一步约束 ZCode Built-in 中账号相关的 Provider，不读取、
-修改或约束 Personal-only Provider。
+Therefore, Personal is always the final user override. Account's responsibility is only to further constrain account-related Providers in ZCode Built-in; it does not read, modify, or constrain Personal-only Providers.
 
-Model Rules 的关系不是三层 Provider Overlay，而是两个有序数组的拼接：
+Model Rules are not three-layer Provider Overlays, but concatenation of two ordered arrays:
 
 ```text
 ZCode Built-in Model Config Rules
@@ -104,55 +98,47 @@ Personal Model Config Rules
 Effective Model Config Rules
 ```
 
-Personal Rules 排在后面。每条 Rule 只覆盖自己明确提供的配置项；Rule 不负责创建模型成员。
+Personal Rules come last. Each Rule only overrides the config items it explicitly provides; Rules are not responsible for creating model members.
 
-Overlay 是一套自然、可复用的配置合成语义与机制：它规定同一配置槽位如何在多层输入之间继承、覆盖和清除。
-Provider/Model 领域利用这套机制实现自己的领域语义，并自行定义配置空间、成员构成、默认状态和生命周期操作。Overlay
-不是能够自然表达一切业务语义的万能抽象；配置结构必须服从领域模型，不能由 Overlay 的现成能力反向塑造产品语义。
+Overlay is a natural, reusable config composition semantics and mechanism: it specifies how the same config slot is inherited, overridden, and cleared across multiple input layers. The Provider/Model domain uses this mechanism to implement its own domain semantics, and independently defines config space, member composition, default state, and lifecycle operations. Overlay is not a universal abstraction that can naturally express all business semantics; config structures must obey domain models and cannot be shaped by product semantics in reverse from Overlay's existing capabilities.
 
-## 3. Built-in 的准确含义
+## 3. The Accurate Meaning of "Built-in"
 
-`Built-in` 只表示该 Provider 或 Model 成员由 ZCode 内置事实提供，不表示：
+`Built-in` only means that the Provider or Model member is provided by ZCode's built-in facts; it does not mean:
 
-- 使用 ZCode 账号；
-- 已经拥有访问权限；
-- 已经配置凭据；
-- 默认启用；
-- 一定出现在模型选择器。
+- Using ZCode accounts;
+- Already having access permissions;
+- Already configured credentials;
+- Defaulting to enabled;
+- Always appearing in the model selector.
 
-Provider Template 不是 Provider，也没有 `providerId`、`group`、执行状态或 Registry 身份。它只是在创建 Personal
-Provider 时提供可复用的 Built-in 继承基线。Template 使用领域壳保存自身 `nameMap` 与内部 `config` Overlay；
-Model Config Rules 继续集中维护，不进入该壳。真正的 Provider 根只有 Account Built-in Provider 和 Personal Provider。
-Account Provider 使用显式 `group` 表达 Family；普通 Personal Provider 固定使用 `standard-personal`。
+Provider Templates are not Providers, and do not have `providerId`, `group`, execution state, or Registry identity. They simply provide reusable Built-in inheritance baselines when creating Personal Providers. Templates use domain shells to store their own `nameMap` and internal `config` overlays; Model Config Rules continue to be centrally maintained and do not enter those shells. Real Provider roots are only Account Built-in Providers and Personal Providers. Account Providers use explicit `group` to express Families; ordinary Personal Providers use `standard-personal` by default.
 
-这里必须区分稀疏输入与完整结果：
+This must distinguish sparse inputs from complete results:
 
 ```text
 Provider Template
-└─ 以 templateId 为键；不声明 group，也不进入 Registry
+└─ keyed by templateId; does not declare group, nor enters Registry
 
-Account Built-in Provider 根声明
+Account Built-in Provider root declarations
 └─ group = zai-family | bigmodel-family
 
-Personal Provider 根声明
+Personal Provider root declarations
 ├─ group = standard-personal
-└─ templateId? 指向可选的 Built-in Template 基线
+└─ templateId? pointing to an optional Built-in Template baseline
 
-Account / 已有 Provider 的 Personal Overlay
-└─ 不提供 group，也无权改变它
+Account / existing Provider's Personal Overlay
+└─ does not provide group, nor has the authority to change it
 
 Effective Provider / Registry / Settings DTO
-└─ group 必须是完整值
+└─ group must be a complete value
 ```
 
-所以 Provider 不再保存额外 `builtin` boolean，也不存在 `standard-builtin` Concrete Provider。Settings View 直接返回
-准确的 `templateConfig?`、`effectiveBuiltinConfig?`、`personalConfig?` 与 `effectiveConfig`，Renderer 不按 ID 或分组猜来源。
-Model 的 Built-in 来源也不写进 Model Rule；Host 根据成员来自 `builtinModelIds` 还是 `modelIds` 产生展示与操作所需的
-派生来源。Built-in 与 Personal 同 ID 时只形成一个 Built-in 成员。
+Therefore, Providers no longer save extra `builtin` booleans, nor do they have `standard-builtin` Concrete Providers. Settings Views directly return accurate `templateConfig?`, `effectiveBuiltinConfig?`, `personalConfig?`, and `effectiveConfig`; Renderers do not guess sources by IDs or groupings. Built-in sources for Models are not written into Model Rules; the Host generates derived sources needed for display and operations based on whether members come from `builtinModelIds` or `modelIds`. When Built-in and Personal share the same ID, only one Built-in member is formed.
 
-## 4. Provider Config 负责什么
+## 4. What Provider Config is Responsible For
 
-Provider Config 负责模型 API 调用的 Provider 侧装配事实：
+Provider Config is responsible for the Provider-side assembly facts for model API calls:
 
 ```text
 Provider Config
@@ -165,72 +151,61 @@ Provider Config
 └─ modelOrder
 ```
 
-`visibility=hidden` 只隐藏普通 Settings 与 Selection；配置完整且启用的 hidden Provider 仍可由内部产品通过普通
-Registry 和 ModelFactory 精确使用。系统不保存 Provider `selectable`。
+`visibility=hidden` only hides normal Settings and Selection; complete and enabled hidden Providers can still be used precisely by internal products through ordinary Registry and ModelFactory. The system does not save Provider `selectable`.
 
-Provider 顶层没有 `enabled`。Personal Provider 一旦创建，其定义就固定留在 Settings；配置不完整时仍可继续编辑，只是
-不会进入可执行 Registry。Account Provider 固定进入对应 Family，账号资格只由 `zhipu-account access.entitled`
-表达。Model 的执行开关仍由 Model Config `enabled` 表达。
+There is no `enabled` at the top level of Providers. Personal Providers are fixed in Settings once created; Providers with incomplete config can still be edited, but do not enter the executable Registry. Account Providers are fixed into their corresponding Families; account eligibility is only expressed by `zhipu-account access.entitled`. Model execution toggles are still expressed by Model Config `enabled`.
 
-## 5. 模型成员、启用和顺序
+## 5. Model Members, Enablement, and Ordering
 
-Provider 中的三个模型数组各自只有一个含义：
+The three model arrays in Providers each have only one meaning:
 
 ```text
 builtinModelIds
-└─ ZCode Built-in 或 Account Built-in 管理的成员
+└─ Members managed by ZCode Built-in or Account Built-in
 
 modelIds
-└─ 用户管理的 Personal 成员
+└─ Personal members managed by users
 
 modelOrder
-└─ 用户整理后的完整显示顺序
+└─ Complete display order organized by users
 ```
 
-成员只来自 `builtinModelIds + modelIds`。`modelOrder` 不能创建或启用成员；Model Config Rule 也不能创建成员。
+Members only come from `builtinModelIds + modelIds`. `modelOrder` cannot create or enable members; Model Config Rules cannot create members either.
 
-Built-in 与 Personal 成员同 ID 时 Built-in 优先。单个数组内重复 ID 时保留第一次出现。读取时确定性忽略重复后项，
-不建立冲突对象；正常设置页禁止用户写出重复，下一次保存相关 Provider 数组时顺手规范化。
+When Built-in and Personal members share the same ID, Built-in takes priority. Duplicate IDs within a single array keep the first occurrence. Reading deterministically ignores duplicate later items; no conflict objects are created; the normal settings page prohibits users from writing duplicates, and duplicate-related arrays are normalized the next time they are saved.
 
-模型启用属于 Model Config 的 `enabled`。Built-in 通用 Rule 提供完整默认值；具体 Built-in Rule 可以把淘汰或不建议
-继续使用的旧模型默认设为 `false`；Personal 专属 Rule 排在 Built-in Rules 之后，可以只覆盖某个 Provider/Model 的
-`enabled` 叶子。停用模型仍保留在 Settings 中，也保留自己的配置与排序，但不能执行、测试、fallback 或精确创建。
+Model enablement belongs to the `enabled` of Model Config. Built-in general Rules provide complete default values; specific Built-in Rules can default old models that are obsolete or no longer recommended to `false`; Personal-specific Rules come after Built-in Rules and can only override the `enabled` leaf of a specific Provider/Model. Disabled models still remain in Settings, along with their own config and ordering, but cannot execute, test, fallback, or be created by exact ID.
 
-模型基础顺序统一为：
+Model basic ordering is unified as:
 
 ```text
-未出现在 modelOrder 中的 Built-in
+Built-in not appearing in modelOrder
                 +
-modelOrder 中仍有效的成员
+Members still valid in modelOrder
                 +
-未出现在 modelOrder 中的 Personal
+Personal not appearing in modelOrder
 ```
 
-正常设置页新建 Personal Model 时，会在同一次原子保存中更新 `modelIds`、完整 `modelOrder`，并创建该模型的
-Personal 专属 Rule，明确写入 `enabled=true`。因此“未排序 Personal”只处理用户手写、不完整或绕过正常设置页写入
-的配置；正常新增模型不会掉进第三段。用户拖动时也保存当前全部有效成员的完整顺序，并清理 stale/duplicate ID。
+When normal settings pages create new Personal Models, the same atomic save updates `modelIds`, the complete `modelOrder`, and creates a Personal-specific Rule for that model, explicitly writing `enabled=true`. Therefore, "unsorted Personal" only handles user-handwritten, incomplete, or non-normal settings page writes; normal new models do not fall into the third segment. When users drag, they also save the complete order of all current valid members and clean up stale/duplicate IDs.
 
-Provider 顺序使用 Personal 顶层 `providerOrder`，不再借 Provider Map 的插入顺序表达用户排序。Z.ai/BigModel
-Account Family 继续作为固定产品区域，不参与普通 Provider 拖动；所有 Personal Provider 统一参与普通排序。创建
-Template 实例或完全自定义 Provider 时，应把当前完整普通 Provider 顺序一并写入 `providerOrder`；未排序尾段只承担
-外部手写或异常输入的确定性归一化。
+Provider ordering uses Personal top-level `providerOrder`, no longer borrowing Provider Map insertion order. Z.ai/BigModel Account Families continue as fixed product areas and do not participate in normal Provider dragging; all Personal Providers uniformly participate in normal ordering. When creating Template instances or fully custom Providers, the current complete normal Provider ordering should be written to `providerOrder` as well; the unsorted tail segment only handles deterministic normalization for external handwritten or abnormal inputs.
 
-## 6. Enabled、Executable 与 Selectable
+## 6. Enabled, Executable, and Selectable
 
-三个词属于不同层级：
+These three words belong to different layers:
 
 ```text
 Enabled
 └─ Effective Model Config.enabled
 
 Executable
-└─ 当前目标 Host 完成成员、启用和完整性解析后的 Registry 结果
+└─ Registry results after current target Host completes member, enable, and completeness resolution
 
 Selectable
-└─ Executable 结果再经过普通用户可见性过滤后的 Selection View
+└─ Selection View after Executable results are further filtered by normal user visibility
 ```
 
-集合关系是：
+The set relationship is:
 
 ```text
 Selectable Models
@@ -240,15 +215,13 @@ Executable Models
 Enabled Models ⊆ Provider Model Members
 ```
 
-`executable` 和 `selectable` 都不是 Config 字段。进入 Registry 本身表示 executable；进入 Model Selection View
-本身表示 selectable。Settings 为展示问题可以返回派生状态和具体 issues，但不能把它们重新保存为事实。
+`executable` and `selectable` are not Config fields. Entering Registry itself means executable; entering the Model Selection View itself means selectable. Settings can return derived states and specific issues for display purposes, but cannot save them back as facts.
 
-Provider 不需要独立 selectable。一个 Provider 是否出现在模型选择界面，只取决于它是否 visible 且至少拥有一个
-selectable Model。
+Providers do not need independent selectable. Whether a Provider appears in the model selection interface depends only on whether it is visible and has at least one selectable Model.
 
-## 7. Model Config Rules 负责什么
+## 7. What Model Config Rules are Responsible For
 
-Model Config 只负责模型或模型/API 组合的事实：
+Model Config is only responsible for facts about models or model/API combinations:
 
 ```text
 Model Config
@@ -264,17 +237,14 @@ Model Config
 │  ├─ reasoningLevel.values/map
 │  └─ maxOutputTokens.max/map
 ├─ requiresMfjsToolSchema
-└─ 经证据确认、确属请求编码的窄兼容事实
+└─ Narrow compatibility facts confirmed by evidence and truly belonging to request encoding
 ```
 
-每个 Option 的 `map` 直接生成目标 API 原始 JSON Request Body 的 RFC 7396 Patch；独立
-`reasoningMapping`、AI SDK Provider Options 映射和重复 max-output 字段权威均不存在。精确契约见
-[`../model/model-option-map.md`](../model/model-option-map.md)。
+Each Option's `map` directly generates the RFC 7396 Patch for the target API's raw JSON Request Body; independent `reasoningMapping`, AI SDK Provider Options mappings, and duplicate max-output field authorities do not exist. The precise contract is documented in [`../model/model-option-map.md`](../model/model-option-map.md).
 
-Model Config 不包含模型 `visibility`、Provider Access、凭据、成员或排序。模型没有第二套 visibility；普通用户是否能看见
-模型由 Provider visibility 与 Model enabled 共同形成的 Selection View 决定。
+Model Config does not contain model `visibility`, Provider Access, credentials, members, or ordering. Models do not have a second set of visibility; whether normal users can see models is determined by the Selection View formed by Provider visibility and Model enabled together.
 
-Personal Rules 分为两类：
+Personal Rules are divided into two categories:
 
 ```ts
 type ModelConfigRule =
@@ -294,28 +264,20 @@ type ModelConfigRule =
     };
 ```
 
-Effective 组合固定为 `ZCode Built-in Rules + Personal provider-model Rules`。
-Personal 只允许精确 `providerId + modelId` 覆盖；设置页不得通过改写 JSON 物理排列制造全局匹配规则。
+The effective combination is fixed as `ZCode Built-in Rules + Personal provider-model Rules`.
+Personal only allows exact `providerId + modelId` overrides; settings pages must not manufacture global match rules by rewriting JSON physical arrangement.
 
-Built-in 与 Personal 两个 Rule Source 都可以使用 `type="provider-model"`：它表达事实只属于一个精确
-Provider/Model 组合。Built-in 专属 Rule 由 ZCode Built-in Release 管理，不受设置页生命周期操作影响；Personal 专属
-Rule 由设置页管理，Personal Model 重命名时移动、删除时删除，删除 Provider Personal Overlay 时一并删除。
+Both Built-in and Personal Rule Sources can use `type="provider-model"`: it expresses that facts belong to a precise Provider/Model combination. Built-in-specific Rules are managed by ZCode Built-in Releases and are unaffected by settings page lifecycle operations; Personal-specific Rules are managed by the settings page, moved when Personal Models are renamed, and deleted when Personal Models are deleted.
 
-只有 Built-in Source 可以使用 `type="match"` 表达一组目标。Personal 不保存、不读取全局 Match Rule；专属 Rule 使用结构化 ID，
-不需要把 ID 转义成正则，也不使用容易误解的 `exclusive=true` 标记。
+Only Built-in Sources can use `type="match"` to express groups of targets. Personal does not save or read global Match Rules; specific Rules use structured IDs and do not need to escape IDs to regex, nor do they use easily misleading `exclusive=true` flags.
 
-Rule 可以根据真实事实使用 `modelMatch`、`providerMatch`、`apiMatch` 和按需的 `baseURLMatch`。这不等于在业务代码
-中硬编码模型：匹配与配置值都属于 Built-in/Personal Rules，Adapter 和 Runtime 只读取最终解析结果。
+Rules can use `modelMatch`, `providerMatch`, `apiMatch`, and optional `baseURLMatch` based on true facts. This does not mean hardcoding models in business code: matching and config values belong to Built-in/Personal Rules; Adapters and Runtime only read final parsed results.
 
-Built-in Rules 的稳定组织顺序是发布文件的作者规范，不是运行时动态优先级：完整保守兜底之后，依次放置
-Model Match、Model + API Match、Model + API + Endpoint Match、对全部成员成立的 Provider-scoped Match 和
-少量 Provider-Model Exact Rule；同一模型家族连续排列。`modelMatch` 对完整 Model ID 做 ASCII 大小写不敏感的
-正则匹配；其他 matcher 按各自契约匹配。Rule 仍只按物理数组顺序应用，后命中覆盖前命中。完整维护规范见
-[`zcode-builtin-provider-config.md`](./zcode-builtin-provider-config.md)。
+Built-in Rules' stable organization order is an author specification for published files: after complete conservative fallbacks, place Model Matches, Model + API Matches, Model + API + Endpoint Matches, Provider-scoped Matches applicable to all members, and a few Provider-Model Exact Rules in sequence; models of the same family are arranged contiguously. `modelMatch` performs ASCII case-insensitive regex matching on complete Model IDs; other matchers match according to their respective contracts. Rules still only apply in physical array order; later hits override earlier ones. The complete maintenance specification is documented in [`zcode-builtin-provider-config.md`](./zcode-builtin-provider-config.md).
 
-## 8. 模型输入输出格式
+## 8. Model Input Output Format
 
-Config、Registry、Model、Runtime、Adapter 与协议共同使用同一个真实结构：
+Config, Registry, Model, Runtime, Adapters, and protocols all use the same real structure:
 
 ```ts
 properties: {
@@ -332,115 +294,93 @@ properties: {
 }
 ```
 
-不建立平铺 capability DTO，也不从 modelId、Provider 类型或 Session 默认模型派生另一份媒体事实。PDF 继续参与真实
-请求检查和现有编码链；Audio 当前只作为完整静态事实存在。设置页只展示锁定 Text 和可编辑
-Image/Video/PDF，隐藏的 Audio 在编辑其他字段时必须原样保留。
+No flat capability DTOs are established, nor is another set of media facts derived from modelId, Provider type, or Session default models. PDF continues to participate in real request checks and existing encoding chains; Audio currently exists only as complete static facts. Settings pages only display locked Text and editable Image/Video/PDF; hidden Audio must be preserved as-is when editing other fields.
 
-## 9. Provider Access 与请求兼容
+## 9. Provider Access and Request Compatibility
 
-`access.type` 描述访问材料怎样取得，`api.type` 描述请求使用哪种公开协议；两者正交。
-智谱产品协议使用有限的 Access Mode：
+`access.type` describes how access materials are obtained; `api.type` describes which public protocol the requests use; the two are orthogonal. Zhipu product protocols use a limited Access Mode:
 
 ```text
 zhipu-account/start-plan
-└─ 官方版本访问安全校验
+└─ Official version access security verification
 
 zhipu-account/individual-coding-plan | team-coding-plan
-└─ ZCode V4 transport 请求证明准入；不扩散给普通 api-key Provider
+└─ ZCode V4 transport request proof admission; not spread to ordinary api-key Providers
 
 zhipu-account/off-peak
-└─ Off-Peak 排队、Ticket 与重试协议入口
+└─ Off-Peak queuing, Ticket, and retry protocol entry
 ```
 
-这些字段都不是 Model capability。动态安全校验材料、Runtime Key、JWT、Off-Peak Ticket 与远端 rollout
-不进入 Config。
+These fields are not Model capabilities. Dynamic security verification materials, Runtime Keys, JWTs, Off-Peak Tickets, and remote rollouts do not enter Config.
 
-已经确认的兼容决策是：
+Confirmed compatibility decisions are:
 
-- OpenAI-compatible reasoning 使用真实 canonical 历史和当前 SDK 原生编码，删除 ZCode 特殊回放；
-- GitHub Copilot `omitMaxOutputTokens` 删除；
-- Snowflake Cortex 当前不支持，删除专属输出字段改写；
-- 官方版本请求安全校验与 Off-Peak execution protocol 由 `zhipu-account.mode` 分派；
-- `requiresMfjsToolSchema` 留在 Model Config，显式开启才转换，失败报错；
-- DeepSeek Anthropic synthetic empty thinking 已删除；只保留真实 canonical reasoning 回放；
-- 未进入当前基线的 Z.ai text/tool signature 候选不采用。
+- OpenAI-compatible reasoning uses real canonical history and current SDK native encoding; ZCode special replay is deleted;
+- GitHub Copilot `omitMaxOutputTokens` is deleted;
+- Snowflake Cortex is currently unsupported; dedicated output field rewriting is deleted;
+- Official version request security verification and Off-Peak execution protocol are dispatched by `zhipu-account.mode`;
+- `requiresMfjsToolSchema` remains in Model Config; explicitly enabled only when converting; errors on failure;
+- DeepSeek Anthropic synthetic empty thinking has been deleted; only real canonical reasoning replay is retained;
+- Unentered Z.ai text/tool signature candidates are not adopted.
 
-默认历史回放原则是：服务端真实返回什么，同一模型续轮就完整传回什么。Adapter 可以无损投影真实字段，但不能制造
-不存在的 reasoning、thinking 或 signature。
+The default historical replay principle is: whatever the server truly returns, the same model re-run returns completely. Adapters can losslessly project real fields but cannot manufacture non-existent reasoning, thinking, or signatures.
 
-## 10. Settings 的产品语义
+## 10. Settings Page Product Semantics
 
-设置页只编辑目标 Environment Host 拥有的 Personal Config。Local workspace 使用 Local Host；remote workspace 使用
-Remote Host。Renderer 不自行 Overlay、排序、判断来源、制造 fallback 或用本地配置冒充远端事实。
+Settings pages only edit Personal Config owned by the target Environment Host. Local workspaces use Local Hosts; remote workspaces use Remote Hosts. Renderers do not Overlay, sort, judge sources, manufacture fallbacks, or impersonate remote facts with local configs.
 
-设置页提供两个入口：
+The settings page provides two entries:
 
 ```text
-添加供应商
-└─ 从 Provider Templates 中选择
-   └─ 使用当前语言的 Template 名称作为种子，原子创建具有唯一 providerId/label 的 Personal Provider 并进入编辑
+Add Vendor
+└─ Select from Provider Templates
+   └─ Use the Template name in the current language as a seed, atomically creating a Personal Provider with a unique providerId/label and entering editing
 
-创建自定义供应商
-└─ 立即创建 Personal-only Provider 并进入编辑
+Create Custom Vendor
+└─ Immediately create a Personal Provider not referencing Templates
+   ├─ Write group=standard-personal, access.type=api-key
+   │  └─ API Keys may temporarily be missing; Access discriminator fields must not be missing
+   ├─ Do not infer API type, Endpoint, or models
+   └─ Enter complete custom details
 ```
 
-创建是立即生效的，不建立仅存在于 Renderer 的临时 Provider Draft，也不再要求用户在相似页面里点击第二次“创建”。
-Provider ID 永远不可编辑；Provider Name 是独立、可编辑且大小写不敏感唯一的 label。Z.ai/BigModel Family 保持现有
-账号产品组织，不因普通 Provider Template 生命周期而拆散。Z.AI API 与 BigModel API 也只是普通 Template，不占用
-Family 连接方式。
+Creation takes effect immediately; it does not establish temporary Provider Drafts existing only in the Renderer, nor does it require users to click "Create" a second time in similar pages.
+Provider IDs are never editable; Provider Names are independent, editable, and case-insensitive unique labels. Z.ai/BigModel Families maintain existing account product organization and are not broken apart by normal Provider Template lifecycles. Z.AI API and BigModel APIs are also just normal Templates and do not occupy Family connection methods.
 
-Template 选择通过顶部入口在右侧详情区完成，直接使用 Settings View 发布的 Template 顺序和多语言名称，不新增
-Catalog 数据源。Provider 品牌图只由 Effective Provider Config 的 `logo` 决定；UI 资源表只负责把开放的 Built-in
-key 加载为打包素材，未知 key 回退通用图标且不影响执行。
+Template selection is completed through top-level entries in the right detail area, directly consuming the template order and multi-language names published by the Settings View; no additional Catalog data sources, searches, ID sort tables, or Renderer brand lists are created. Provider brand icons are determined only by the Effective Provider Config's `logo`; UI resource tables are only responsible for loading packaged materials for open Built-in keys; unknown keys fall back to generic icons without affecting execution.
 
-Provider 顶层没有 `enabled`。Personal Provider 的定义存在就表示它属于 Settings；API Key、Endpoint 等尚未补齐时仍可
-保存和编辑，但不会进入可执行 Registry。Account Provider 固定显示在 Family，`access.entitled` 只表达账号权益。
-Settings placement 与 Registry executable 消费同一组事实，但不是同一个结论。
+There is no `enabled` at the top level of Providers. Whether a Personal Provider exists is expressed by its Personal root declaration. When API Keys, Endpoints, etc. are not yet complete, they can still be saved and edited, but do not enter the executable Registry. Account Providers display fixedly in Families; `access.entitled` only expresses account entitlement. Settings placement and Registry executable consume the same set of facts, but are not the same conclusions.
 
-UI 中“删除供应商”的 Provider 领域语义是删除该 Personal Provider 实例：
+"Delete Vendor" in the UI product semantics means deleting the Personal Provider instance:
 
 ```text
 group = standard-personal
-└─ 删除其 Personal 根定义、模型专属 Rule 与顺序成员
+└─ Delete its Personal root declaration, model-specific Rules, and ordering members
 
 group = zai-family | bigmodel-family
-└─ Account Provider 由 Built-in 发布，不提供删除操作
+└─ Account Providers are published by Built-in; no delete operation is provided
 ```
 
-系统从不删除 Provider Template 或 Account Built-in Config。Built-in Model 不显示删除按钮；Personal Model 可以删除或修改 ID。两类模型都
-可以启用/停用和排序。Personal Model Config Rule 只记录用户修改后的稀疏覆盖，不负责授予编辑权限；字段能否编辑与
-模型成员能否改名/删除是两条独立产品边界。
+The system never deletes Provider Templates or Account Built-in Config. Builtin Models do not show delete buttons; Personal Models can be deleted or have their IDs modified. Both types of models can be enabled/disabled and reordered. Personal Model Config Rules only record the sparse overrides formed after users explicitly modify them; whether fields can be edited and whether model members can be renamed/deleted are two independent product boundaries.
 
-Model 编辑页只维护稀疏 Personal Rule。文本、数值和 JSON 的继承/生效值显示为 placeholder，不另建只读预览，
-并提供一次清空该模型全部 Personal Rule 覆盖的“全部恢复默认”；模型列表的 `enabled` 开关始终保存明确布尔值且
-不展示单项“恢复默认”。其他允许继承的布尔叶子使用统一控件：Effective 值决定勾选，显式 Personal 叶子以高饱和
-边框表达，不追加“默认/已修改”文字。产品开放的 Model Properties 与 Option 值首版都允许编辑；Option Spec
-Map 是隐藏配置，编辑其他字段时原样保留。`requiresMfjsToolSchema` 放在最后。Provider Access 产品协议不进入
-普通 Model 编辑页。
+The Model editing page only maintains sparse Personal Rules. Text, numeric, and JSON inheritance/effective values are displayed as placeholders; no separate read-only preview is built; a single "restore all defaults" that clears all Personal Rule overrides for that model is provided; the `enabled` toggle in the model list always saves explicit boolean values and does not show per-item "restore default." Other boolean leaves allowing inheritance use a unified control: Effective values determine checkmarks; explicit Personal leaves are expressed with high-saturation borders; no "default/modified" text is appended. Product-open Model Properties and Option values are all editable in the first version; Option Spec Maps are hidden configs and are preserved as-is when editing other fields. `requiresMfjsToolSchema` is placed last. Provider Access product protocols do not enter normal Model editing pages.
 
-Personal Model ID 改变时，必须先在预览语义中把对应 Personal exact Rule 移到新 ID，再使用新 ID 与最终 Provider
-API/Endpoint 重新解析 Built-in Rules，最后叠加原 Personal 稀疏值。这样只有继承默认值变化，用户已经填写的值不会被
-覆盖。
+When Personal Model IDs change, the corresponding Personal exact Rule must first be moved to the new ID in the preview semantics, then Built-in Rules must be re-parsed using the new ID and final Provider API/Endpoint, and finally the original Personal sparse values must be overlaid. This way, only inherited defaults change; user-entered values are not overwritten.
 
-## 11. Built-in 发布与 Client Config
+## 11. Built-in Publishing and Client Config
 
-ZCode Built-in Provider Config 与 Model Config Rules 作为一个原子 Release 发布，不拆成两个彼此可能错配的远端字段。
-仓库/安装包配置是拉取前和拉取失败时的基础兜底；当前 Environment 最近一次成功接受的远端 Release 作为 Active/LKG；
-远端成功结果整体替换同一份 Built-in Source，不与 Bundled 交叉拼接。
+ZCode Built-in Provider Config and Model Config Rules are published as a single atomic Release, not split into two separate remote fields that may mismatch. Repository/package installation configs serve as the basic fallback before and after pulling; the most recent successfully accepted remote Release for the current Environment serves as Active/LKG; successful remote results completely replace the same Built-in Source and do not cross-splice with Bundled.
 
-每个 Environment 使用自己的控制面 Endpoint、Active/LKG 与 Registry。远程 Host 自行选择和刷新远程 Environment 的
-Built-in Release；Desktop Renderer 不把本地 Release 推给远程执行环境。
+Each Environment uses its own control plane Endpoint, Active/LKG, and Registry. Remote Hosts independently select and refresh remote Environment Built-in Releases; Desktop Renderers do not push local Releases to remote execution environments.
 
-LKG 只表示 Last Known Good，不保证比安装包更新。只有 Schema 兼容且 revision 高于 Bundled 的 Active/LKG 才能优先；
-不兼容、损坏或更旧时回退到 Bundled。
+LKG only means Last Known Good and does not guarantee being newer than the package installation. Only Active/LKGs that are Schema-compatible and have a revision higher than Bundled take priority; incompatible, corrupted, or older ones fall back to Bundled.
 
-## 12. 当前仍待裁决的事实
+## 12. Facts Still Pending Decisions
 
-以下问题尚未成为当前设计事实：
+The following issues have not yet become current design facts:
 
-1. DeepSeek Anthropic-compatible 是否真实要求 synthetic empty thinking；必须用真实 A/B 请求回答。
-2. OpenRouter、OpenCode Zen、Azure、Volcano Ark 与 AWS Bedrock 已拆入
-   [`Todo 22`](../../steps/todo-22-additional-builtin-providers-and-cloud-access.md)，不再扩大 Todo 21。Google 原生
-   Provider 与 Vertex AI 当前不支持。
+1. Whether DeepSeek Anthropic-compatible genuinely requires synthetic empty thinking; must be answered with real A/B requests.
+2. OpenRouter, OpenCode Zen, Azure, Volcano Ark, and AWS Bedrock have been split into
+   [`Todo 22`](../../steps/todo-22-additional-builtin-providers-and-cloud-access.md), no longer expanding Todo 21. Google Native Providers and Vertex AI are currently unsupported.
 
-这些问题会改变保存事实或支持范围，应先裁决再写进精确 Schema 与交互设计；其余实现细节不能反向替代裁决。
+These questions will change saved facts or support scope and must be decided before writing into precise Schemas and interaction designs; other implementation details cannot substitute for decisions in reverse.

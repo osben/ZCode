@@ -1,26 +1,26 @@
-# RPC Channel 初始化时序与 "Unknown channel" 问题
+# RPC Channel Initialization Timing and the "Unknown channel" Issue
 
-## 问题现象
+## Symptoms
 
-Remote 模式下，窗口打开时报错：
+In Remote mode, an error appears when the window opens:
 
 ```
 [DirectoryBrowser] 获取系统信息失败: Unknown channel: Channel name 'system'
 timed out after 1000ms
 ```
 
-## ChannelClient 状态迁移
+## ChannelClient State Transitions
 
 ```
-Uninitialized ──[收到 Initialize(200)]──→ Idle ──[发送请求]──→ Idle（保持）
+Uninitialized ──[receives Initialize(200)]──→ Idle ──[sends request]──→ Idle (remains)
 ```
 
-- **Uninitialized**：还没收到服务端 Initialize，所有请求自动排队（`whenInitialized()`），不会超时
-- **Idle**：已收到 Initialize，请求立即发出
+- **Uninitialized**: the server's Initialize has not arrived; all requests are queued automatically (`whenInitialized()`) and do not time out.
+- **Idle**: Initialize has arrived; requests are sent immediately.
 
-## 完整通信流程
+## Full Communication Flow
 
-### Local 模式（正常）
+### Local Mode (Working)
 
 ```
 Main Process                    Host Utility Process              Renderer
@@ -28,22 +28,22 @@ Main Process                    Host Utility Process              Renderer
 fork host process ──────────→
                                 parentPort.on("message")
                                   new ChannelServer()
-                                  ├── 立即发 Initialize ──────────→ 收到 Initialize
+                                  ├── immediately sends Initialize ─→ receives Initialize
                                   ├── state → Idle                   ChannelClient: Uninitialized → Idle
                                   │
-                                  createLocalServices()  (同步)
-                                  exposeOnChannelServer()  (同步)
-                                  注册 file/system/terminal/...
+                                  createLocalServices()  (synchronous)
+                                  exposeOnChannelServer()  (synchronous)
+                                  registers file/system/terminal/...
                                                                      DirectoryBrowser mounts
                                                                      useEffect → systemService.info()
-                                                                     RPC 请求发出 ← ─ ─ ─ ─ ─ ─ ─ ─ ─
-                                                                  ← ─ system channel 已注册，直接处理
-                                                                     返回结果 ──────────────────────→
+                                                                     RPC request sent ← ─ ─ ─ ─ ─ ─ ─ ─ ─
+                                                                  ← ─ system channel is registered; handled directly
+                                                                     result returned ─────────────────→
 ```
 
-**没问题**：`Initialize` 发完后，`registerChannel` 马上同步执行。Renderer 收到 `Initialize` 发请求时，channel 已经注册好了。
+**No issue:** `registerChannel` runs synchronously immediately after `Initialize` is sent. By the time the Renderer receives `Initialize` and sends a request, the channel is already registered.
 
-### Remote 模式（有 bug）
+### Remote Mode (Buggy)
 
 ```
 Main Process                    Host Utility Process              Renderer
@@ -51,29 +51,29 @@ Main Process                    Host Utility Process              Renderer
 fork host process ──────────→
                                 parentPort.on("message")
                                   new ChannelServer()
-                                  ├── 立即发 Initialize ──────────→ 收到 Initialize
+                                  ├── immediately sends Initialize ─→ receives Initialize
                                   │                                 ChannelClient: Uninitialized → Idle
                                   │
                                   await setupRemoteConnection()     DirectoryBrowser mounts
-                                    (SSH 建连，可能 2~5 秒)        useEffect → systemService.info()
-                                  │                                 RPC 请求发出 ─ ─ ─ ─ ─ ─ ─ ─ ─ →
-                                  │                                 system channel 不存在！
-                                  │                                 进入 pendingRequests 队列
-                                  │                                 设 1000ms 超时定时器
+                                    (SSH connection may take 2–5 s)  useEffect → systemService.info()
+                                  │                                 RPC request sent ─ ─ ─ ─ ─ ─ ─ ─ →
+                                  │                                 system channel does not exist!
+                                  │                                 added to pendingRequests queue
+                                  │                                 starts 1000ms timeout timer
                                   │
-                                  │                                 ─── 1000ms 后 ───
-                                  │                                 超时！报错:
+                                  │                                 ─── after 1000ms ───
+                                  │                                 timeout! Error:
                                   │                                 "Unknown channel: 'system'"
                                   │
-                                  ... SSH 还在连接中 ...
+                                  ... SSH is still connecting ...
                                   │
                                   services.exposeOnChannelServer()
-                                  registerChannel("system", ...)    ← 太晚了，请求已超时
+                                  registerChannel("system", ...)    ← too late; the request has timed out
 ```
 
-**根因**：`ChannelServer` 构造时就发了 `Initialize`，renderer 以为服务端已就绪，立即发请求。但 SSH 还没连完，`system` channel 还没注册，1000ms 超时。
+**Root cause:** `ChannelServer` sends `Initialize` during construction, so the Renderer assumes the server is ready and sends a request immediately. But SSH has not connected yet, and the `system` channel has not been registered; the request times out after 1000 ms.
 
-### 修复后的 Remote 模式
+### Remote Mode After the Fix
 
 ```
 Main Process                    Host Utility Process              Renderer
@@ -81,31 +81,32 @@ Main Process                    Host Utility Process              Renderer
 fork host process ──────────→
                                 parentPort.on("message")
                                   new ChannelServer(deferInit=true)
-                                  ├── 不发 Initialize
-                                  │                                 ChannelClient: 保持 Uninitialized
+                                  ├── does not send Initialize
+                                  │                                 ChannelClient: remains Uninitialized
                                   │
                                   await setupRemoteConnection()
-                                    (SSH 建连，可能 2~5 秒)        DirectoryBrowser mounts
+                                    (SSH connection may take 2–5 s)  DirectoryBrowser mounts
                                   │                                 useEffect → systemService.info()
-                                  │                                 ChannelClient 还在 Uninitialized
-                                  │                                 请求自动排队等 Initialize（不会超时）
+                                  │                                 ChannelClient remains Uninitialized
+                                  │                                 request is queued until Initialize (no timeout)
                                   │
                                   services.exposeOnChannelServer()
                                   registerChannel("system", ...)
-                                  server.ready() ─── 发 Initialize → 收到 Initialize
+                                  server.ready() ─── sends Initialize → receives Initialize
                                                                      ChannelClient: Uninitialized → Idle
-                                                                     排队的请求立即发出 ─ ─ ─ ─ ─ → system channel 已注册，直接处理
-                                                                  ← ─ 返回结果 ──────────────────→
+                                                                     queued request sent immediately ─ → system channel is registered; handled directly
+                                                                  ← ─ result returned ────────────────→
 ```
 
-## 修复方案
+## Fix
 
-给 `ChannelServer` 加 `deferInit` 选项：
+Add a `deferInit` option to `ChannelServer`:
 
-- **Local 模式**：构造时立即发 `Initialize`（行为不变）
-- **Remote 模式**：构造时不发 `Initialize`，等 `registerChannel` 全部完成后调 `server.ready()` 手动发送
+- **Local mode**: send `Initialize` immediately during construction (no behavior change).
+- **Remote mode**: do not send `Initialize` during construction; call `server.ready()` to send it manually after all `registerChannel` calls complete.
 
-涉及文件：
-- `packages/rpc/src/channels.ts` — `ChannelServer` 构造函数加 `deferInit` 参数，新增 `ready()` 方法
-- `packages/rpc/src/logging-middleware.ts` — `LoggingChannelServer` 透传 `ready()`
-- `packages/desktop/src/host/index.ts` — remote 模式传 `deferInit=true`，服务注册后调 `server.ready()`
+Files involved:
+
+- `packages/rpc/src/channels.ts` — add the `deferInit` parameter to the `ChannelServer` constructor and add a `ready()` method.
+- `packages/rpc/src/logging-middleware.ts` — forward `ready()` through `LoggingChannelServer`.
+- `packages/desktop/src/host/index.ts` — pass `deferInit=true` in Remote mode and call `server.ready()` after registering services.

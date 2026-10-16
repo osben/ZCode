@@ -1,46 +1,31 @@
-# Gen UI 固定输出目录
+# Gen UI Fixed Output Directory
 
-## 目录契约
+## Directory Contract
 
-生成文件使用执行端 Host 提供的固定输出根目录，默认位于应用数据目录的
-`visualizations/` 下；Agent 不回退到当前工作目录。workspace identity（缺省时使用
-workspace path）与 session ID 共同决定根目录下的会话子目录。
+Generated files use a fixed output root provided by the execution-side Host, located by default under `visualizations/` in the app data directory. The Agent must not fall back to the current working directory. Workspace identity (or `workspacePath` when identity is missing) and session ID together determine a session subdirectory under the root.
 
-“固定目录”是输出位置约定，不是工作区包含关系限制。用户打开 Home、文件系统根目录，
-或其他包含应用数据目录的工作区时，Host 提供的输出根目录仍然有效。代码不应因为
-输出根目录等于或位于工作区之内而拒绝初始化或读取。Skill 中的生成指导不作修改。
+“Fixed directory” is an output-location convention, not a restriction that the directory must be outside the workspace. The Host's output root remains valid when the user opens Home, the filesystem root, or another workspace that contains the app data directory. Code must not reject initialization or reads because the output root equals or is inside the workspace. Do not change generation guidance in the Skill.
 
-会话子目录仅组织生成文件，不是读取授权边界。读取固定 Host 输出根目录中的文件时，
-不要求路径属于当前 workspace/session；fork 继承父会话的 HTML 路径后可直接加载，
-不需要复制文件或改写历史消息。widget state 继续按当前 workspace/session 保存。
+The session subdirectory organizes generated files; it is not a read-authorization boundary. When reading a file in the fixed Host output root, do not require that its path belong to the current workspace/session. A fork that inherits an HTML path from its parent session can load it directly; it does not need to copy the file or rewrite historical messages. Widget state continues to be saved by current workspace/session.
 
-继续拒绝 Host 输出根目录之外的路径、根目录下的子目录或文件符号链接、非普通文件、
-非法 HTML 片段及超过大小限制的文件。Host 输出根目录本身可经符号链接解析，解析后
-仍须执行相同的根目录检查。
+Continue rejecting paths outside the Host output root, child-directory or file symlinks under the root, non-regular files, invalid HTML fragments, and files above the size limit. The Host output root itself may be resolved through a symlink, but after resolution the same root-containment checks still apply.
 
-## 调用链与影响面
+## Call Chain and Impact
 
 ```text
-Host 提供固定根目录 → 按 workspace/session 派生输出目录 → Agent 初始化 / 生成
-                                                           ↓
-界面读取请求（可引用父会话路径）→ 执行端 Host 校验根目录与文件 → 原有桌面沙箱
+Host provides fixed root → derive output directory by workspace/session → Agent initializes/generates
+                                                                          ↓
+UI read request (may reference parent session path) → execution Host validates root and file → existing desktop sandbox
 ```
 
-原校验把“不在当前目录生成”误解为“必须位于工作区之外”，导致 Home 工作区的
-Gen UI 初始化抛错，并连带阻断依赖同一上下文初始化的技能目录和消息执行。
+The previous check incorrectly interpreted “do not generate in the current directory” as “the output must be outside the workspace.” This caused Gen UI initialization to fail when Home was the workspace and also blocked Skill-directory and message execution that depended on the same context initialization.
 
-另一处误解是把生成目录分组当作读取隔离，导致 fork 的消息保留父会话路径后无法展示。
+Another incorrect assumption treated output-directory grouping as read isolation, so fork messages could not render after retaining their parent-session paths.
 
-本次移除工作区包含关系限制及跨 session/workspace 文件读取限制，不修改 skill、
-固定根目录选择、fork 复制规则或远程服务路由。桌面 continuous 与手机 replayable 链路保持原有
-边界；HTML 仍由执行端 Host 读取，widget state 仍属于桌面宿主。
+This change removes the workspace-containment and cross-session/workspace file-read restrictions. It does not change the Skill, fixed-root selection, fork copying rules, or remote-service routing. The desktop continuous and mobile replayable paths retain their existing boundaries; the execution-side Host still reads HTML, and widget state remains owned by the desktop host.
 
-## 回归验证
+## Regression Verification
 
-- 路径单测覆盖输出根目录位于工作区内、等于工作区、工作区为文件系统根目录，以及
-  本地 / SSH workspace identity；相对路径仍拒绝。
-- 文件读取测试覆盖工作区包含输出目录、跨 session/workspace 读取、根目录别名
-  解析，以及既有根目录越界、符号链接、文件类型和体积限制。
-- 现有 Electron Gen UI E2E 将工作区设为输出根目录的祖先，验证真实文件读取、
-  渲染和页面交互；切换会话时引用同一个父会话文件，验证 fork 历史的加载语义。
-  这是远程身份的本地夹具，不代表真实 SSH 传输或完整 fork 命令验证。
+- Path unit tests cover the output root inside the workspace, equal to the workspace, the filesystem root as workspace, and local/SSH workspace identities; relative paths remain rejected.
+- File-read tests cover a workspace containing the output directory, cross-session/workspace reads, root-alias resolution, and existing checks for escaping the root, symlinks, file type, and size.
+- Existing Electron Gen UI E2E sets the workspace to an ancestor of the output root and verifies real file reading, rendering, and page interaction. When switching sessions, reference the same parent-session file to verify fork-history loading semantics. This is a local fixture for remote identity, not validation of real SSH transport or the full fork command.

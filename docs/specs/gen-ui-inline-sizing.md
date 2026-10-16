@@ -1,57 +1,44 @@
-# Gen UI 内联内容测高与滚动条
+# Gen UI Inline Content Sizing and Scrollbars
 
-## 行为
+## Behavior
 
-Gen UI 根文档统一隐藏原生滚动条，不为滚动条预留宽度。只作用于 `html` 和
-`body`，不修改作者组件内的滚动区域，也不通过 `overflow: hidden` 禁止整页滚动。
-普通内联内容按实际内容高度撑开，滚动由外层会话承接；达到现有 10000px 上限或
-进入放大视口时，保持原有内容访问能力，不新增提示或展示模式。
+Hide the native scrollbar on the Gen UI root document, without reserving scrollbar width. Apply only to `html` and `body`; do not change scroll areas inside author components or disable page scrolling with `overflow: hidden`. Ordinary inline content expands to its actual content height, with scrolling handled by the outer conversation. At the existing 10000px limit or in an enlarged viewport, preserve existing content access; do not add a notice or display mode.
 
-## 测量与所有权
+## Measurement and Ownership
 
 ```text
-内容尺寸 / 根子节点 / 视口宽度变化
-  → guest 合并到下一动画帧，读取内容几何（不写根节点高度）
-  → 既有 ui/notifications/size-changed
-  → Gen UI page owner 更新内联高度
-  → 浏览器布局；仅由视口高度驱动的等量变化不再次上报
+Content size / root children / viewport width change
+  → guest batches to the next animation frame and reads content geometry (does not write root height)
+  → existing ui/notifications/size-changed
+  → Gen UI page owner updates inline height
+  → browser layout; equal changes driven only by viewport height are not reported again
 ```
 
-- guest 是内容测量的唯一来源；替换 SDK 自动测高，不并行保留两套 observer。
-- 排除根级 script、style、tooltip。一个内容根节点时结合其边界和 scrollHeight；
-  多个根节点时使用最下方的内容边界；纯文本使用 Range。body 上下 padding 只计一次。
-- ResizeObserver 观察 body 与内容根节点；MutationObserver 更新根节点观察集合；
-  resize 处理视口变化。移除的节点取消观察，页面卸载时断开观察并取消待执行帧。
-- 相同宽度下，内容增量完全等于视口高度增量时不反馈上报，避免 vh / 百分比高度
-  随宿主调整不断增高。放大时宿主继续保持正文占位，收起后重新测量。
-- 根滚动条隐藏样式由沙箱文档装配统一注入，作者片段无需修改；MCP App 和独立
-  HTML 导出不受此样式影响。
+- The guest is the sole source of content measurements; replace SDK automatic sizing rather than keeping two parallel observer systems.
+- Exclude root-level scripts, styles, and tooltips. For one content root, use its bounds and `scrollHeight`; for multiple roots, use the lowest content bound; use `Range` for plain text. Count body top/bottom padding only once.
+- `ResizeObserver` watches `body` and content roots; `MutationObserver` updates the set of observed roots; resize handles viewport changes. Stop observing removed nodes, and disconnect observers and cancel pending frames when the page unloads.
+- At the same width, do not report a content-height increase equal to the viewport-height increase. This prevents `vh` / percentage-height content from growing continuously as the host resizes. During enlargement, the host continues to reserve body space; remeasure after collapse.
+- Inject the root scrollbar-hiding style when assembling the sandbox document; author snippets require no changes. MCP Apps and standalone HTML exports are unaffected.
 
-## 问题证据与边界
+## Evidence and Boundaries
 
-标签从矮内容切到图表时，guest 先溢出、宿主随后撑高；实际 scrollHeight 与
-clientHeight 已相等、滚动距离为 0，根滚动条仍可能保留 15px 宽度。临时隐藏后
-恢复 overflow 可清除该状态，但再次切换标签会复现。旧 SDK 测量会临时把 html
-高度设为 max-content；新测量只读内容几何，避免测量自身引入布局变化。
+When switching from a short-content tab to a chart, the guest initially overflows and the host then expands. Even when actual `scrollHeight` equals `clientHeight` and scroll distance is zero, the root scrollbar may still occupy 15px. Temporarily hiding and restoring overflow clears the condition, but switching tabs can reproduce it. The old SDK measurement temporarily set the `html` height to `max-content`; the new measurement reads content geometry only, avoiding layout changes caused by measurement itself.
 
-实现仅涉及 desktop plugin-sandbox 展示层，保留现有尺寸协议、宿主高度上限及
-放大逻辑。当前 Gen UI 注册要求桌面 sandbox；不新增 Web/手机渲染通路。窄屏
-重排使用同一测量逻辑。无主题颜色、文案、平台分支或 session 消息流改动，桌面
-continuous 与手机 replayable、远端 workspace 路由保持原有边界。
+Implementation is limited to the desktop plugin-sandbox presentation layer; keep the existing size protocol, host height limit, and enlargement behavior. Gen UI registration currently requires a desktop sandbox; do not add a Web/mobile render path. Narrow-screen reflow uses the same measurement logic. Do not change theme colors, copy, platform branches, or session message flow. Keep existing boundaries for desktop continuous, mobile replayable, and remote-workspace routing.
 
-## 回归矩阵
+## Regression Matrix
 
-现有 `node packages/desktop/scripts/gen-ui-e2e.mjs` 中追加真实 Electron 用例：
+Add real Electron cases to the existing `node packages/desktop/scripts/gen-ui-e2e.mjs` suite:
 
-| 场景                                       | 断言                                         |
-| ------------------------------------------ | -------------------------------------------- |
-| 矮标签 ↔ 分数像素高度的 SVG 图表，多次切换 | 容器及时增高/收缩，内容完整，根滚动条不占宽  |
-| 桌面宽度与 390px 窄屏、深浅主题            | 重排后测高正确，无横向溢出                   |
-| 嵌套内容增删、根级 tooltip                 | 内容变化更新高度，tooltip 不撑高正文         |
-| 鼠标位于图表内部发送真实 wheel             | 外层会话滚动，guest scrollY 保持 0           |
-| 放大 / 收起                                | 同一 guest 保留，正文占位和收起后测高正确    |
-| 根节点测量过程                             | 不修改 html.style.height；没有持续尺寸反馈   |
-| vh 依赖高度                                | 宿主尺寸更新不产生无限增长                   |
-| 高度超过 10000px                           | 既有上限与内容可滚动访问仍成立，移除后可收缩 |
+| Scenario | Assertion |
+| --- | --- |
+| Repeatedly switch between a short tab and an SVG chart with fractional-pixel height | Container promptly grows/shrinks, content remains complete, and the root scrollbar takes no width |
+| Desktop width and 390px narrow screen, light/dark themes | Height is correct after reflow; no horizontal overflow |
+| Add/remove nested content and root-level tooltips | Content changes update height; tooltips do not increase body height |
+| Send a real wheel event with the pointer inside the chart | Outer conversation scrolls; guest `scrollY` remains 0 |
+| Expand/collapse | Same guest is retained; body space and post-collapse measurement are correct |
+| Root-node measurement | Do not modify `html.style.height`; no continuous size feedback |
+| `vh`-dependent height | Host size updates do not cause unbounded growth |
+| Height exceeds 10000px | Existing limit and scroll access remain; the view can shrink after content is removed |
 
-协议装配单测验证根滚动条样式位于作者内容之后，且不会注入 MCP 文档。
+Protocol-assembly unit tests verify that the root scrollbar style appears after author content and is not injected into MCP documents.
