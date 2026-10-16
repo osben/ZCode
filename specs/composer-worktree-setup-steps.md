@@ -73,9 +73,11 @@ absent → preparing → ready → active
 The preparation marker and state must survive Host restart/reconnect sufficiently to render a
 recoverable preparation session. If the Host restarts while Git may still be running, recovery checks
 the target worktree by branch/path and settles to `ready` or `failed`; it never starts a runtime until
-the path is validated. The renderer recovers the frozen submission through the existing draft
-recovery path and must not resubmit automatically after a reconnect unless Host activation confirms
-that the first input was not admitted.
+the path is validated. The renderer stores the frozen text/editor draft in a local recovery scope
+keyed to the prepared session, restores it into that session's editable draft after reload, and must
+not resubmit automatically after a reconnect unless Host activation confirms that the first input was
+not admitted. Attachments backed by in-memory `File` objects remain subject to the existing composer
+draft persistence limitation.
 
 ### Submission and editor behavior
 
@@ -152,6 +154,9 @@ early transcript persistence or a second accepted-input store.
 10. Plain sessions, palette Start, per-worktree Git Tools, sibling non-Git destination visibility,
     merge-status badge behavior, and the separate merged-session chat WIP retain their current
     behavior.
+11. Reload during worktree creation restores the frozen text/editor state as an editable draft on
+    the same prepared session; the Host reconciliation settles setup independently and does not
+    dispatch the restored draft until the user sends it.
 
 ## Validation
 

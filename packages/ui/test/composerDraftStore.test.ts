@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearV4ComposerDraft,
+  getV4WorktreeRecoveryScope,
   getV4ComposerDraftStorageKey,
   persistV4ComposerDraft,
   readV4ComposerDraft,
   V4_DRAFT_SCOPE_ROOT,
+  V4_WORKTREE_RECOVERY_PENDING_SCOPE,
 } from "@/v4/composer/composerDraftStore.js";
 
 const selection = {
@@ -140,5 +142,28 @@ describe("Composer Draft 持久选择", () => {
     });
     expect(() => read()).not.toThrow();
     expect(read()).toBeNull();
+  });
+
+  it("keeps a queued worktree draft recoverable by its prepared session until dispatch", () => {
+    const pendingDraft = {
+      text: "ship the change",
+      editorStateJson: '{"root":{"children":[]}}',
+      mode: "edit" as const,
+    };
+    persistV4ComposerDraft(workspace, undefined, V4_WORKTREE_RECOVERY_PENDING_SCOPE, pendingDraft);
+
+    const recoveryScope = getV4WorktreeRecoveryScope("prepared-session");
+    persistV4ComposerDraft(
+      workspace,
+      undefined,
+      recoveryScope,
+      read(V4_WORKTREE_RECOVERY_PENDING_SCOPE)!,
+    );
+    clearV4ComposerDraft(workspace, undefined, V4_WORKTREE_RECOVERY_PENDING_SCOPE);
+
+    expect(read(recoveryScope)).toMatchObject(pendingDraft);
+    expect(read(V4_WORKTREE_RECOVERY_PENDING_SCOPE)).toBeNull();
+    clearV4ComposerDraft(workspace, undefined, recoveryScope);
+    expect(read(recoveryScope)).toBeNull();
   });
 });

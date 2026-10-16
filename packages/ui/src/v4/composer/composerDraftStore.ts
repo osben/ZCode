@@ -36,6 +36,12 @@ interface V4DraftFile {
 
 const STORAGE_KEY_PREFIX = "zcode-v4-composer-drafts:v1:";
 export const V4_DRAFT_SCOPE_ROOT = "__draft__";
+export const V4_WORKTREE_RECOVERY_PENDING_SCOPE = "__worktree_recovery_pending__";
+
+export function getV4WorktreeRecoveryScope(sessionId: string): string {
+  return `__worktree_recovery__:${sessionId}`;
+}
+
 const warnedStorageKeys = new Set<string>();
 
 function warnStorageFailure(key: string, error: unknown) {

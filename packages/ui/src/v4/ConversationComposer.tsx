@@ -133,7 +133,15 @@ import {
   resolveComposerAutoFocus,
   type ComposerAutoFocusOptions,
 } from "@/v4/composer/composerAutoFocus.js";
-import { V4_DRAFT_SCOPE_ROOT, type V4ComposerDraft } from "@/v4/composer/composerDraftStore.js";
+import {
+  clearV4ComposerDraft,
+  getV4WorktreeRecoveryScope,
+  persistV4ComposerDraft,
+  readV4ComposerDraft,
+  V4_DRAFT_SCOPE_ROOT,
+  V4_WORKTREE_RECOVERY_PENDING_SCOPE,
+  type V4ComposerDraft,
+} from "@/v4/composer/composerDraftStore.js";
 import {
   resolveOppositeFollowupDelivery,
   resolveFollowupModifierTooltip,
@@ -152,6 +160,7 @@ import {
   selectComposerWorktreePipeline,
   useComposerWorktreePipelineStore,
 } from "@/store/composerWorktreePipelineStore.js";
+import { isComposerWorktreePipelineInFlight } from "@/v4/composer/composerWorktreePipeline.js";
 import {
   applyDraftBranchIntentForSend,
   selectDraftBranchIntent,
@@ -920,6 +929,8 @@ function ConversationComposerImpl({
   });
   const draftPersistTimerRef = useRef<number | null>(null);
   const suppressDraftPersistRef = useRef(false);
+  const updateComposerContentRef = useRef(updateComposerContent);
+  updateComposerContentRef.current = updateComposerContent;
 
   const snapshotDraftOfEditor = useCallback((): {
     text: string;
@@ -1181,6 +1192,56 @@ function ConversationComposerImpl({
       scopeId: draftScopeId,
     };
   }, [composerDraft, draftScopeId, workspaceIdentity, workspacePath]);
+
+  useEffect(() => {
+    if (
+      !sessionId ||
+      !snapshot?.meta.worktreePreparation ||
+      pending ||
+      worktreeQueued ||
+      isComposerWorktreePipelineInFlight(workspaceKey)
+    ) {
+      return;
+    }
+    const recoveryScope = getV4WorktreeRecoveryScope(sessionId);
+    const recoveryDraft =
+      readV4ComposerDraft(workspacePath, workspaceIdentity, recoveryScope) ??
+      readV4ComposerDraft(workspacePath, workspaceIdentity, V4_WORKTREE_RECOVERY_PENDING_SCOPE);
+    if (!recoveryDraft?.text.trim()) return;
+
+    const currentDraft =
+      readV4ComposerDraft(workspacePath, workspaceIdentity, sessionId) ?? composerDraft;
+    const recoveredText = mergeWithdrawnWorktreeDraftText(recoveryDraft.text, currentDraft.text);
+    const restoredDraft: Omit<V4ComposerDraft, "updatedAt"> = {
+      ...currentDraft,
+      text: recoveredText,
+      ...(recoveredText === recoveryDraft.text && recoveryDraft.editorStateJson
+        ? { editorStateJson: recoveryDraft.editorStateJson }
+        : { editorStateJson: undefined }),
+      ...(currentDraft.mention
+        ? {}
+        : recoveryDraft.mention
+          ? { mention: recoveryDraft.mention }
+          : {}),
+    };
+    if (!persistV4ComposerDraft(workspacePath, workspaceIdentity, sessionId, restoredDraft)) return;
+    updateComposerContentRef.current({
+      text: restoredDraft.text,
+      editorStateJson: restoredDraft.editorStateJson,
+      mention: restoredDraft.mention,
+    });
+    clearV4ComposerDraft(workspacePath, workspaceIdentity, recoveryScope);
+    clearV4ComposerDraft(workspacePath, workspaceIdentity, V4_WORKTREE_RECOVERY_PENDING_SCOPE);
+  }, [
+    composerDraft,
+    pending,
+    sessionId,
+    snapshot?.meta.worktreePreparation,
+    worktreeQueued,
+    workspaceIdentity,
+    workspaceKey,
+    workspacePath,
+  ]);
 
   // External prefill and scope restoration may happen in the same cycle. If the prefill effect runs first, restoration
   // may overwrite the Example Prompt the user just selected with an old draft. Apply it after scope restoration and confirm the one-time insertion request.
@@ -1475,18 +1536,43 @@ function ConversationComposerImpl({
       };
       const restoreSubmittedDraft = () => {
         if (!draftSubmissionClaimed) return;
+        let recoveredText = submittedDraft.text;
         if (contentRevisionRef.current === cleanupRevision) {
-          updateComposerContent(submittedDraft);
+          updateComposerContentRef.current(submittedDraft);
         } else {
           // Keep both messages if the user starts the next draft while Git is working. An old
           // failure/withdrawal must never overwrite that newer editor content.
-          const recoveredText = mergeWithdrawnWorktreeDraftText(
-            submittedDraft.text,
-            textRef.current,
-          );
+          recoveredText = mergeWithdrawnWorktreeDraftText(submittedDraft.text, textRef.current);
           inputApiRef.current?.setText(recoveredText);
           updateText(recoveredText);
-          updateComposerContent({ text: recoveredText });
+          updateComposerContentRef.current({ text: recoveredText });
+        }
+        const recoveryTargetScope = preparedSessionIdForSend ?? V4_DRAFT_SCOPE_ROOT;
+        const restoredDraft: Omit<V4ComposerDraft, "updatedAt"> = {
+          ...composerDraft,
+          ...submittedDraft,
+          text: recoveredText,
+        };
+        if (
+          persistV4ComposerDraft(
+            workspacePath,
+            workspaceIdentity,
+            recoveryTargetScope,
+            restoredDraft,
+          )
+        ) {
+          if (preparedSessionIdForSend) {
+            clearV4ComposerDraft(
+              workspacePath,
+              workspaceIdentity,
+              getV4WorktreeRecoveryScope(preparedSessionIdForSend),
+            );
+          }
+          clearV4ComposerDraft(
+            workspacePath,
+            workspaceIdentity,
+            V4_WORKTREE_RECOVERY_PENDING_SCOPE,
+          );
         }
         suppressDraftPersistRef.current = false;
         draftSubmissionClaimed = false;
@@ -1832,11 +1918,23 @@ function ConversationComposerImpl({
           setHeldQueueConfirmation(null);
           // Transfer staged content to the task only after a successful send; on failure, keep it as a retryable draft.
           await attachmentsApi.adoptSentAttachments(submittedAttachmentIds);
+          if (preparedSessionIdForSend) {
+            clearV4ComposerDraft(
+              workspacePath,
+              workspaceIdentity,
+              getV4WorktreeRecoveryScope(preparedSessionIdForSend),
+            );
+          }
+          clearV4ComposerDraft(
+            workspacePath,
+            workspaceIdentity,
+            V4_WORKTREE_RECOVERY_PENDING_SCOPE,
+          );
           // Bug cause: text entered while the send is pending belongs to the next Submission; an old ACK must not clear it.
           if (contentRevisionRef.current === cleanupRevision) {
             inputApiRef.current?.clear();
             updateText("");
-            updateComposerContent({ text: "" });
+            updateComposerContentRef.current({ text: "" });
           }
           attachmentsApi.clearAttachments(submittedAttachmentIds);
           // As with attachments, remove only refs frozen for this send; refs added while waiting belong to the next message.
@@ -1874,6 +1972,16 @@ function ConversationComposerImpl({
         }
       };
       if (queueWorktreeSend) {
+        const recoveryDraft: Omit<V4ComposerDraft, "updatedAt"> = {
+          ...composerDraft,
+          ...submittedDraft,
+        };
+        persistV4ComposerDraft(
+          workspacePath,
+          workspaceIdentity,
+          V4_WORKTREE_RECOVERY_PENDING_SCOPE,
+          recoveryDraft,
+        );
         claimSubmittedDraft();
         if (!onPrepareWorktreeSession || !worktreeIntent) {
           restoreSubmittedDraft();
@@ -1895,6 +2003,26 @@ function ConversationComposerImpl({
             return;
           }
           preparedSessionIdForSend = begin.sessionId;
+        }
+        const pendingRecoveryDraft = readV4ComposerDraft(
+          workspacePath,
+          workspaceIdentity,
+          V4_WORKTREE_RECOVERY_PENDING_SCOPE,
+        );
+        if (pendingRecoveryDraft) {
+          const persisted = persistV4ComposerDraft(
+            workspacePath,
+            workspaceIdentity,
+            getV4WorktreeRecoveryScope(preparedSessionIdForSend),
+            pendingRecoveryDraft,
+          );
+          if (persisted) {
+            clearV4ComposerDraft(
+              workspacePath,
+              workspaceIdentity,
+              V4_WORKTREE_RECOVERY_PENDING_SCOPE,
+            );
+          }
         }
         pendingWorktreeSendRef.current = {
           workspaceKey,
