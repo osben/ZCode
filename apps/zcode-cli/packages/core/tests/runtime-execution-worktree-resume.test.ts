@@ -85,13 +85,23 @@ describe("execution worktree sessions", () => {
     await expect(
       getMissingExecutionWorktreeToolError(missingWorktree, "none", "Read", isDirectory),
     ).resolves.toContain(missingWorktree.path);
+    for (const toolName of [
+      "CreateWorkflow",
+      "AmendWorkflow",
+      "FillWorkflowHole",
+      "ResumeWorkflowRun",
+    ]) {
+      await expect(
+        getMissingExecutionWorktreeToolError(missingWorktree, "none", toolName, isDirectory),
+      ).resolves.toContain(missingWorktree.path);
+    }
     await expect(
       getMissingExecutionWorktreeToolError(missingWorktree, "none", "ListModels", isDirectory),
     ).resolves.toBeUndefined();
     await expect(
       getMissingExecutionWorktreeToolError(missingWorktree, "network", "WebSearch", isDirectory),
     ).resolves.toBeUndefined();
-    expect(isDirectory).toHaveBeenCalledTimes(1);
+    expect(isDirectory).toHaveBeenCalledTimes(5);
   });
 
   it("clears the missing fact only after a workspace tool confirms the directory was restored", async () => {

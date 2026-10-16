@@ -882,7 +882,13 @@ export class ConversationTopicPublisher {
     };
 
     const base = params.base;
+    // Host-owned preparation metadata is seeded outside the conversation event log. A matching
+    // transcript watermark therefore cannot prove that a reconnecting client has the latest
+    // preparing/failed state; send an authoritative snapshot while that metadata is present.
+    const hasUnsequencedPreparation =
+      this.projection.getSnapshot().meta.worktreePreparation !== undefined;
     const resumable =
+      !hasUnsequencedPreparation &&
       base !== undefined &&
       base.logEpoch === this.logEpoch &&
       base.seq >= this.floorSeq &&

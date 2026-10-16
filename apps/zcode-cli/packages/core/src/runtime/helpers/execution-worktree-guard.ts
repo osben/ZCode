@@ -5,10 +5,14 @@ export interface ExecutionWorktreeGuardFact {
   missing?: boolean;
 }
 
-const WORKSPACE_READ_TOOLS = new Set([
+const WORKSPACE_BOUND_NONE_SCOPE_TOOLS = new Set([
   "Read",
   "Grep",
   "Glob",
+  "CreateWorkflow",
+  "AmendWorkflow",
+  "FillWorkflowHole",
+  "ResumeWorkflowRun",
   "ListSavedWorkflows",
   "ListWorkflowRuns",
   "GetWorkflowRun",
@@ -33,7 +37,7 @@ export async function getMissingExecutionWorktreeToolError(
     sideEffectScope === "workspace" ||
     sideEffectScope === "git" ||
     sideEffectScope === "system" ||
-    (sideEffectScope === "none" && WORKSPACE_READ_TOOLS.has(toolName));
+    (sideEffectScope === "none" && WORKSPACE_BOUND_NONE_SCOPE_TOOLS.has(toolName));
   if (!requiresWorkspace) return undefined;
   const directoryExists = await isDirectory(worktree.path);
   onValidated?.(directoryExists);

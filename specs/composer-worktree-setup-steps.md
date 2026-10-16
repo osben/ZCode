@@ -141,7 +141,9 @@ early transcript persistence or a second accepted-input store.
    from Host branch/path/base-branch metadata, and checks Git state. It settles to ready when that worktree
    exists, or to a retryable failed state when it is absent or Git state cannot be read, without creating a runtime at the parent
    cwd. Live subscribers receive preparation state changes through a refreshed conversation
-   snapshot.
+   snapshot. A reconnecting subscriber with an older transcript sequence also receives a fresh
+   snapshot while Host-owned preparation metadata is present, because that metadata does not advance
+   the conversation sequence.
 8. Existing matching worktree activates in the same session without creating a second directory.
 9. Missing/failed branch list uses HEAD and notes the default; invalid destination fails before Git
    creation; the five-second delay remains unchanged.

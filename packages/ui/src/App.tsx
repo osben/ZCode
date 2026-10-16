@@ -369,10 +369,6 @@ export function App({
     workspacePath: string;
     sessionId: string;
   } | null>(null);
-  const gitRepositoryWorkspacePath =
-    gitReviewExecutionTarget?.sessionId === activeTaskId
-      ? gitReviewExecutionTarget.workspacePath
-      : workspaceAbsPath;
   const { browserRestoreUrls, handleBrowserUrlChange } = useTaskSidePaneMemoryBridge({
     activeTaskId,
     gitSelectedSourceId,
@@ -445,6 +441,10 @@ export function App({
     selectedProvider: workspaceShellZCodeState.selectedProvider,
     intl,
   });
+  const gitRepositoryWorkspacePath =
+    gitReviewExecutionTarget?.sessionId === activeTaskId
+      ? gitReviewExecutionTarget.workspacePath
+      : (resolvedActiveTaskMeta?.executionWorktree?.path ?? workspaceAbsPath);
   const providerConfigFile = useWorkspaceProviderConfigFile(
     workspaceAbsPath,
     workspaceHeaderProvider,
@@ -575,7 +575,7 @@ export function App({
       }
       handleOpenGit();
     },
-    [handleOpenGit, workspaceAbsPath, workspaceReadOnlyReason],
+    [handleOpenGit, workspaceReadOnlyReason],
   );
   const isSidePaneOpen = !isSidePaneCollapsed;
   useEffect(() => {

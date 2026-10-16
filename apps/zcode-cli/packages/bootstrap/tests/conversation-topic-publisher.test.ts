@@ -171,6 +171,30 @@ describe("worktree preparation subscriber refresh", () => {
       });
     }
   });
+
+  it("sends a fresh snapshot when a reconnecting subscriber resumes from an older transcript sequence", () => {
+    const publisher = new ConversationTopicPublisher("session-1", "epoch-1");
+    const first = publisher.subscribe({ connectionId: "conn-1" });
+    expect(first.frame?.payload.kind).toBe("snapshot");
+    const base = { logEpoch: first.ack.logEpoch, seq: first.ack.seq };
+
+    publisher.seedWorktreePreparation({
+      status: "preparing",
+      branchName: "zcode/fresh-otter",
+      targetPath: "/tmp/fresh-otter",
+    });
+
+    const resumed = publisher.subscribe({ connectionId: "conn-2", base });
+    expect(resumed.ack.mode).toBe("snapshot");
+    expect(resumed.frame?.payload.kind).toBe("snapshot");
+    if (resumed.frame?.payload.kind === "snapshot") {
+      expect(resumed.frame.payload.snapshot.meta.worktreePreparation).toMatchObject({
+        status: "preparing",
+        branchName: "zcode/fresh-otter",
+        targetPath: "/tmp/fresh-otter",
+      });
+    }
+  });
 });
 
 describe("subscribe(base) 裁决矩阵", () => {

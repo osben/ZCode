@@ -661,7 +661,7 @@ describe("useComposerAttachments eager upload", () => {
     act(() => root.unmount());
   });
 
-  it("只 подготавливает frozen attachment IDs and leaves later attachments out of the send", async () => {
+  it("prepares only frozen attachment IDs and leaves later attachments out of the send", async () => {
     const transfer = createTransferService();
     mocks.service = transfer.service;
     transfer.stage.mockImplementation(async ({ operationId }) => resultFor(operationId));

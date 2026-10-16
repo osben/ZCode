@@ -46,6 +46,12 @@ describe("App quick pick command render stability", () => {
     expect(appSource).toContain("const taskFindDialogProps = useMemo<TaskFindDialogProps>");
     expect(appSource).toContain("taskFindDialogProps={taskFindDialogProps}");
   });
+
+  it("uses the active worktree for the general Git Review entry", () => {
+    expect(appSource).toMatch(
+      /const gitRepositoryWorkspacePath\s*=\s*[\s\S]*?resolvedActiveTaskMeta\?\.executionWorktree\?\.path\s*\?\?\s*workspaceAbsPath/u,
+    );
+  });
 });
 
 describe("task query cache render subscription boundary", () => {
