@@ -12,10 +12,7 @@ import { cn } from "@/components/lib/utils.js";
 import { Button } from "@/components/ui/button.js";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select.js";
 import type { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import {
-  isCoarseTouchDevice,
-  shouldRestoreChatInputFocusAfterPickerClose,
-} from "@/lib/pickerFocus.js";
+import { restoreComposerInputFocusAfterPickerClose } from "@/lib/pickerFocus.js";
 import {
   getThoughtLevelLabel,
   isNoThoughtLevel,
@@ -315,15 +312,10 @@ export function ThoughtLevelCycleControl({
               return;
             }
             event.preventDefault();
-            if (
-              !shouldRestoreChatInputFocusAfterPickerClose({
-                isCoarseTouchDevice: isCoarseTouchDevice(),
-              })
-            ) {
-              return;
-            }
-            const input = document.querySelector<HTMLElement>(restoreFocusSelector);
-            input?.focus();
+            restoreComposerInputFocusAfterPickerClose({
+              anchor: triggerRef.current,
+              fallbackSelector: restoreFocusSelector,
+            });
           }}
         >
           {entries.map((entry) => (
