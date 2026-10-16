@@ -1,51 +1,51 @@
-# 通用模式与编程模式（M1）
+# General Mode and Coding Mode (M1)
 
-## 目标与范围
+## Goals and Scope
 
-通用模式减少非编程任务中的技术信息；编程模式保留完整的开发入口。本阶段只改变展示和入口，不改变模型、系统提示词、工具权限、Agent 执行能力或历史数据。M2 的产物展示与回复风格、M3 的文件管理器不在本次范围。
+General mode reduces technical details for non-programming tasks; Coding mode retains the full development entry points. This phase changes only presentation and entry points. It does not change models, system prompts, tool permissions, Agent execution capabilities, or historical data. M2 deliverables/presentation and response style, and the M3 file manager, are out of scope.
 
-文件名统一打开文件内容不在本次范围：当前文件名在携带 patch 时仍打开单文件 Diff，否则打开文件；它不是工作区“审查”标签。不要把隐藏审查新建入口误写成禁用所有 Diff。
+Opening file content from a filename is out of scope: currently, a filename with a patch opens the single-file Diff; otherwise, it opens the file. It is not the workspace “Review” tab. Do not misinterpret hiding the “Create review” entry point as disabling all Diff functionality.
 
-## 产品行为
+## Product Behavior
 
-设置页与头像菜单中的切换选项统一按“编程模式 → 通用模式”排列；未保存偏好时默认编程模式，已有用户选择继续保留。
+In Settings and the avatar menu, list the mode options in this order: “Coding mode → General mode.” Default to Coding mode when there is no saved preference, and retain existing users' choices.
 
-| 场景               | 通用模式                                                                     | 编程模式                         |
-| ------------------ | ---------------------------------------------------------------------------- | -------------------------------- |
-| 命令执行、执行分组 | 保留摘要、运行/失败状态；隐藏命令、输出、展开及原始错误悬浮提示              | 按原有规则展示和展开详情         |
-| 文件编辑、修改分组 | 保留文件摘要和文件入口；隐藏展开、内联 Diff、增删行数                        | 保留修改详情                     |
-| 对话状态、轮次变更 | 隐藏 Git 环境区和轮次变更汇总                                                | 保留 Git 与变更信息              |
-| 思考               | 保留原始思考内容，包括代码块；沿用原有折叠与展开行为                         | 保留原始展示文本                 |
-| 正式回复代码       | 固定换行，隐藏换行开关，保留复制                                             | 尊重并保留用户原有换行偏好       |
-| 自动上下文压缩     | 使用“优化对话”措辞                                                           | 保留上下文压缩措辞               |
-| 顶部外部打开方式   | 仅文件管理器                                                                 | 已安装的编辑器、终端及文件管理器 |
-| 审查、终端新建     | 隐藏启动卡片、新增菜单、命令面板和最近关闭中的相关入口；隐藏底部终端新建按钮 | 保留原入口                       |
-| 已打开的面板       | 审查、终端标签及底部终端继续显示、切换、使用和关闭，当前活动标签不变         | 同左                             |
+| Scenario | General mode | Coding mode |
+| --- | --- | --- |
+| Command execution and execution groups | Keep summaries and running/failure status; hide commands, output, expansion, and raw-error hover prompts | Display and expand details according to the existing rules |
+| File edits and change groups | Keep file summaries and file entry points; hide expansion, inline Diff, and added/deleted line counts | Keep change details |
+| Conversation status and turn changes | Hide the Git environment section and turn-change summary | Keep Git and change information |
+| Thinking | Keep raw thinking, including code blocks, with existing collapse/expand behavior | Keep the raw displayed text |
+| Code in final responses | Always wrap lines, hide the wrap toggle, and retain Copy | Respect and retain the user's existing line-wrap preference |
+| Automatic context compaction | Use the wording “Optimize conversation” | Keep the existing context-compaction wording |
+| Top-level external open options | File manager only | Installed editors, terminals, and file manager |
+| Creating reviews and terminals | Hide related entry points from launch cards, add menus, command palette, and recently closed items; hide the bottom terminal create button | Keep the existing entry points |
+| Already-open panels | Review and terminal tabs and the bottom terminal remain visible, switchable, usable, and closable; keep the current active tab | Same as General mode |
 
-外部打开方式的模式过滤仅覆盖顶部“打开”按钮，并遵循既有 SSH/WSL/Docker 可用性限制。模式变化不覆盖已保存的外部应用偏好。回答里的文件链接右键菜单与左侧栏文件树右键菜单均保留完整的可用外部应用，不按通用/编程模式过滤。
+Mode-based filtering of external open options applies only to the top-level “Open” button and follows existing SSH/WSL/Docker availability constraints. Mode changes must not override saved external-app preferences. Context menus for file links in replies and for the file tree in the sidebar retain all available external apps; do not filter by General/Coding mode.
 
-Read/Search/Browser/MCP 等其他工具未统一简化。手动压缩措辞保持原状。切换模式不删除或改写原始工具结果、思考文本和代码换行设置。
+Other tools such as Read/Search/Browser/MCP are not simplified uniformly. Keep wording for manual compaction unchanged. Switching modes does not delete or rewrite raw tool results, thinking text, or code line-wrap settings.
 
-## 状态归属与迁移
+## State Ownership and Migration
 
 ```text
-设置页 / 头像菜单
+Settings / avatar menu
     -> ZCodeStore.setInterfaceMode
         -> localStorage: zcode-interface-mode
-        -> state:interfaceMode 广播 -> 其他窗口 setter（抑制回声）
-        -> 共享 UI 的展示 / 新建入口
+        -> state:interfaceMode broadcast -> setter in other windows (suppress echo)
+        -> presentation / new entry points in shared UI
 
-useAppPanels / taskSidePaneMemory -> 已打开标签、选中项、折叠状态（模式不改写）
-Terminal / TerminalSession      -> 终端会话、PTY（模式不关闭）
-CLI/runtime -> 原始事件与任务状态（模式不参与）
+useAppPanels / taskSidePaneMemory -> open tabs, selected item, collapsed state (not rewritten by mode)
+Terminal / TerminalSession      -> terminal session, PTY (not closed by mode)
+CLI/runtime -> raw events and task state (mode does not participate)
 ```
 
-- 值为 `general` / `coding`。未设置或未知值默认 `coding`，旧 `concise` 迁移为 `general`，旧 `professional` 归一为 `coding`。
-- Desktop 与 Web 共用 UI；Desktop 的偏好通过现有广播同步，Web 可使用现有 no-op 广播。不会引入新的服务端偏好或任务配置。
-- workspace 身份仍使用 `workspaceIdentity?.trim() || workspacePath`。模式切换不改变远程连接、owner 或任务作用域。
-- Desktop continuous 与手机 Web replayable 链路保持原有边界，不新增恢复消息或 runtime 状态。
-- 独立 Dev 实例设置服务遵循显式 `ZCODE_DESKTOP_HOME_DIR`；未设置时保留 HOME / USERPROFILE / homedir 回退，避免外观操作写到其他实例。
+- Values are `general` / `coding`. When unset or unknown, default to `coding`; migrate old `concise` to `general`, and normalize old `professional` to `coding`.
+- Desktop and Web share the UI. Desktop preferences use the existing broadcast sync; Web may use the existing no-op broadcast. Do not add a new server-side preference or task configuration.
+- Workspace identity remains `workspaceIdentity?.trim() || workspacePath`. Mode switching does not change remote connections, ownership, or task scope.
+- Keep existing boundaries for Desktop continuous and mobile Web replayable paths; do not add recovery messages or runtime state.
+- The independent Dev instance's Settings service follows explicit `ZCODE_DESKTOP_HOME_DIR`; when unset, retain the HOME / USERPROFILE / homedir fallback so appearance-related actions do not write to another instance.
 
-## 提交前覆盖
+## Coverage Before Release
 
-验收用例与覆盖状态见 [通用/编程模式验证](../testing/general-coding-mode-verification.md)。目前只声明实际执行过的验证；pending E2E 不等于已进入 CI 或 Docker suite。
+See [General/Coding Mode Verification](../testing/general-coding-mode-verification.md) for acceptance cases and coverage status. Declare only verification that has actually been run; pending E2E does not mean the case has entered the CI or Docker suite.

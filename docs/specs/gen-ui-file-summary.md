@@ -1,48 +1,34 @@
-# Visualize 源文件的会话展示
+# Session Display for Visualize Source Files
 
-## 行为
+## Behavior
 
-有效 visualize 引用的 HTML 是内联可视化的源文件。会话轮尾不再为同一文件显示
-HTML 网站卡片，也不把它计入文件变更摘要的文件数、增加行数、删除行数和展开列表。
-过滤后没有普通文件时，整块变更摘要（含撤销按钮）不显示；混合修改时保留普通文件。
+An HTML file referenced by a valid `visualize` reference is the source file for an inline visualization. At the end of the assistant turn, do not also show an HTML website card for the same file or include it in the file-change summary's file count, added/deleted line counts, or expanded list. If no regular files remain after filtering, hide the entire change summary, including the undo button. For mixed changes, keep regular files.
 
-识别复用 Gen UI 引用解析器，支持 Unicode、key=value 和 JSON 三种写法。只匹配
-当前轮正文中完整且通过 schema 校验的绝对路径；代码示例、无效或未闭合引用不生效。
-完整引用即可用于去重，不提前挂载流式可视化。路径按完整路径匹配，兼容 Windows
-分隔符，不按 basename、扩展名或名为 visualizations 的目录批量隐藏文件。
-普通 HTML、Markdown、Office/PDF 和 localhost 网站卡片沿用原行为。
+Reuse the Gen UI reference parser. Support Unicode, key=value, and JSON forms. Match only complete absolute paths in the current turn's body that pass schema validation; code examples and invalid or unclosed references do not count. A complete reference is sufficient for deduplication; do not mount a streaming visualization prematurely. Match by complete path, support Windows separators, and do not hide files by basename, extension, or all files in a directory named `visualizations`. Keep existing behavior for regular HTML, Markdown, Office/PDF, and localhost website cards.
 
-## 数据与时序
+## Data and Timing
 
 ```text
-当前轮 assistant 正文 → 既有 Gen UI parser → HTML 源文件路径
-                                              ├→ 过滤轮尾预览卡片
-CLI fileChanges → 既有详情读取与缓存 → UI 过滤 ─┴→ 重算可见摘要
-CLI rewind preview / apply ─────────────────────→ 原有整轮撤销
+Current-turn assistant body → existing Gen UI parser → HTML source-file path
+                                                       ├→ filter end-of-turn preview card
+CLI fileChanges → existing detail read and cache → UI filter ─┴→ recompute visible summary
+CLI rewind preview / apply ─────────────────────────────────────→ existing whole-turn undo
 ```
 
-摘要只含聚合值，无法从 header 判断具体源文件。存在有效引用时，折叠态也读取既有
-fileChanges 详情；读取完成前暂不显示摘要，避免先显示包含源文件的统计再消失。
-切换 turn、运行态转终态、摘要计数变化或撤销后，仅使用当前请求对应的详情。
-请求失败保留原摘要与重试读取入口，避免误隐藏普通文件；错误走 UI logger。
+The summary contains aggregate values only, so the header cannot reveal which source file is included. When there is a valid reference, also read existing `fileChanges` details in the collapsed state. Do not show the summary until the read finishes, avoiding a brief display of counts that include the source file. After a turn switch, transition from running to terminal state, summary-count change, or undo, use only the details for the current request. If the request fails, keep the original summary and retry entry point to avoid hiding regular files by mistake; report the error through the UI logger.
 
-CLI 原始变更轨迹、持久化数据、撤销预检和 apply 不修改。混合修改的撤销仍是整轮
-撤销，预检弹窗展示完整操作范围。不改变文件读取授权、Gen UI 挂载与沙箱生命周期。
+Do not modify the CLI's raw change history, persisted data, undo preflight, or apply operation. Undo for mixed changes still undoes the whole turn; the preflight dialog shows the full operation scope. Do not change file-read authorization, Gen UI mounting, or sandbox lifecycle.
 
-桌面和手机 Web 共用过滤规则；手机仍遵守既有 HTML 预览限制，不新增 Gen UI
-运行环境。desktop-continuous 与 web-remote-replayable 的传输、恢复、owner 和队列
-均不改变。远程路径在原 workspaceIdentity / remoteSessionId 上下文中匹配与读取。
+Desktop and mobile Web share the filtering rules; mobile retains existing HTML-preview restrictions and does not gain a Gen UI runtime. Do not change desktop-continuous or web-remote-replayable transport, recovery, ownership, or queues. Match and read remote paths within the existing `workspaceIdentity` / `remoteSessionId` context.
 
-## 验证
+## Verification
 
-| 场景                                              | 断言                                           |
-| ------------------------------------------------- | ---------------------------------------------- |
-| 仅 visualize HTML                                 | 可视化保留，HTML 卡片和整个变更摘要消失        |
-| visualize 与普通 HTML/源码混合                    | 普通卡片保留，统计和展开列表仅包含普通文件     |
-| 三种引用、代码示例、无效/不完整引用、同名不同目录 | 只排除有效引用的完整路径                       |
-| 异步详情、旧请求晚到、终态/撤销状态变化、读取失败 | 不闪回源文件统计，不使用旧详情；失败保留原入口 |
-| 390px / 桌面、深浅主题、手机 compact 模式         | 过滤语义一致，普通文件仍可展开查看             |
+| Scenario | Assertion |
+| --- | --- |
+| Only a `visualize` HTML file | Visualization remains; HTML card and entire change summary disappear |
+| Mixed `visualize` and regular HTML/source files | Regular cards remain; counts and expanded list include only regular files |
+| Three reference forms, code examples, invalid/incomplete references, same filename in different directories | Exclude only the complete path of a valid reference |
+| Async detail request, late old response, terminal/undo-state change, read failure | Do not flash old source-file counts or use old details; preserve the existing entry point on failure |
+| 390px / desktop, light/dark themes, mobile compact mode | Filtering is consistent and regular files remain expandable |
 
-单测覆盖卡片候选、摘要异步投影及轮尾接线；现有
-`node packages/desktop/scripts/gen-ui-e2e.mjs` 使用真实 Electron、Gen UI 沙箱与文件摘要
-组件验证显示和展开行为。夹具不代表真实 SSH 或手机网络恢复验证。
+Unit tests cover card candidates, asynchronous summary projection, and turn-end wiring. The existing `node packages/desktop/scripts/gen-ui-e2e.mjs` uses real Electron, the Gen UI sandbox, and the file-summary component to verify visibility and expansion. The fixture does not represent real SSH or mobile network-recovery verification.

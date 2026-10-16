@@ -1,69 +1,69 @@
-# ZCode 全进程资源监控
+# ZCode All-Process Resource Monitoring
 
-## 已确认的产品范围
+## Confirmed Product Scope
 
-2026-09-15 经讨论确认：新建独立阿里云 CMS 仪表盘，优先回答版本回归和资源健康问题，兼顾单设备排查与采集验收。本期不创建告警、订阅或分享权限。
+Confirmed through discussion on 2026-09-15: create a separate Alibaba Cloud CMS dashboard, primarily to answer questions about version regressions and resource health, while also supporting single-device investigation and telemetry verification. This phase does not create alerts, subscriptions, or sharing permissions.
 
-- 工作空间：`arms-id-placeholder`。
-- 数据源：北京 `arms-project-placeholder` / `logstore-rum`。
-- 应用约束：`service_id = arms-id-placeholder`。
-- 仅消费 `perf_process_window`、`perf_system_window`、`perf_tool_exec_resource`。旧看板继续独立存在，不拼接旧资源事件。
-- 默认 `prod`、最近 24 小时。提供环境、版本和操作系统筛选；硬件筛选用于控制版本比较的机器差异。
-- 双列图表、七个折叠分区，首页突出总览与版本比较。
+- Workspace: `arms-id-placeholder`.
+- Data source: Beijing `arms-project-placeholder` / `logstore-rum`.
+- App constraint: `service_id = arms-id-placeholder`.
+- Consume only `perf_process_window`, `perf_system_window`, and `perf_tool_exec_resource`. The old dashboard remains separate; do not combine old resource events.
+- Default to `prod` and the most recent 24 hours. Provide environment, version, and operating-system filters; use hardware filters to control device differences in version comparisons.
+- Use two-column charts and seven collapsible sections; emphasize overview and version comparison on the home view.
 
-## 分区
+## Sections
 
-| 分区           | 展示内容                                                                      |
-| -------------- | ----------------------------------------------------------------------------- |
-| 资源总览       | 上报设备标识数、事件新鲜度、应用 CPU/RSS 的设备分布与趋势、整机压力           |
-| 版本与进程角色 | 按版本/角色的 CPU、RSS、单进程峰值、后台 CPU、JS heap、进程数量与 uptime 分桶 |
-| MCP 资源排行   | 本机 MCP 按 mcp_id 的内存与后台 CPU 排行                                      |
-| 慢 Bash        | 本机运行至少 15 秒命令的耗时、资源、退出类型及采样情况                        |
-| 远端资源       | 远端 CLI/MCP 的角色指标及远端慢 Bash，独立于本机应用总量                      |
-| 单设备排查     | 按 device_mid 选择设备，展示本机应用、角色、整机上下文时间线                  |
-| 采集质量       | 三类事件及角色覆盖、采样数量、heap 覆盖、遥测自身开销                         |
+| Section | Contents |
+| --- | --- |
+| Resource overview | Number of reporting device identifiers, event freshness, device distribution and trends for app CPU/RSS, and whole-machine pressure |
+| Version and process role | CPU, RSS, per-process peak, background CPU, JS heap, process counts, and uptime buckets by version/role |
+| MCP resource rankings | Rankings of local MCP memory and background CPU by `mcp_id` |
+| Slow Bash | Duration, resources, exit type, and sampling for local commands running for at least 15 seconds |
+| Remote resources | Role metrics and slow Bash for remote CLI/MCP, separate from local app totals |
+| Single-device investigation | Select a device by `device_mid` and show a timeline of local app, roles, and whole-machine context |
+| Collection quality | Coverage of three event types and roles, sample counts, heap coverage, and telemetry overhead |
 
-## 统计契约
+## Metrics Contract
 
-1. 同一时间范围、同一筛选条件下比较有新事件的版本。本期不做共同设备升级前后配对，不自动指定稳定版本，不计算旧/新事件之间的涨跌。
-2. CPU/RSS 稳态指标先按设备及版本汇总窗口均值，再计算设备之间的 P50/P95。趋势图在每个时间桶内执行同一规则。不得把窗口 p95 的分位数标成原始 CPU 样本的 p95。
-3. 峰值先取每设备在范围内的最大值，再计算群体分布；角色总 RSS、最大单进程 RSS 和 heap 的统计口径分别注明。多实例 heap 是最大单进程读数，不是角色 heap 总量。
-4. 每组显示设备标识数量；少于 100 时显示样本不足，local 始终仅用于验收。数值可查看，但不作回归健康评级，不使用红绿表示版本好坏。
-5. 无事件时显示暂无数据；可确认的事件数可为 0，CPU、RSS、比例等无样本指标为 null/空，不填零、不插值补齐缺口。
-6. 整机事件只描述桌面机器及本机应用进程。远端数据的 device_mid 是上报桌面端标识，不是远端物理机 ID；没有上报远端环境 ID，无法在看板中区分同一桌面连接的同规格多台远端机器，禁止将这些样本相加为远端总量。
-7. Windows 慢 Bash 没有进程树资源；sample_count=0 的命令也不参与进程树消耗统计。慢 Bash 只有 >=15 秒命令，不能计算全部命令慢命令率。CPU 时间/耗时为已观测 CPU 核数当量，可大于 1，不能直接证明是在等待网络或输入。
-8. Bash 事件没有 arch、CPU 核数、总内存字段；硬件筛选只对具有该字段的进程/系统分区生效。Bash 不关联猜测远端总内存，不计算整机剩余内存百分比。
-9. uptime 分桶的设备群体可能不同，趋势只提供排查线索，不直接诊断泄漏。缺少 heap 的角色/窗口保留空值。
-10. 低 sample_count 可能来自正常退出残窗，角色缺失可能来自未启动，不直接判为采集故障。遥测自身耗时是窗口内 main 采样聚合的累计墙钟毫秒数，不等于整套遥测 CPU 成本。
+1. Compare versions with new events under the same time range and filters. This phase does not pair devices before and after an upgrade, automatically select a stable version, or calculate increases/decreases between old and new events.
+2. For steady-state CPU/RSS metrics, first aggregate the mean window value by device and version, then calculate P50/P95 across devices. Apply the same rule within each time bucket in trend charts. Do not label percentiles of window p95 values as p95 of raw CPU samples.
+3. For peaks, first take the maximum per device within the range, then calculate the population distribution. State separate definitions for total role RSS, maximum per-process RSS, and heap. For multiple instances, heap is the maximum single-process reading, not total heap for the role.
+4. Show the number of device identifiers in each group. When fewer than 100 are present, label the sample as insufficient; `local` is always for verification only. Values may be inspected but must not receive a regression-health rating or use red/green to indicate whether a version is better or worse.
+5. When there are no events, show no data. A known event count may be 0; metrics with no samples, such as CPU, RSS, and ratios, must be null/empty—not zero-filled and not interpolated across gaps.
+6. Whole-machine events describe the desktop machine and its local app processes only. For remote data, `device_mid` is the reporting desktop identifier, not a remote physical-machine ID. No remote environment ID is reported, so the dashboard cannot distinguish multiple same-spec remote machines connected to one desktop; do not sum these samples into a remote total.
+7. Windows slow Bash has no process-tree resource data; commands with `sample_count=0` do not participate in process-tree consumption metrics. Slow Bash includes only commands lasting at least 15 seconds, so the slow-command rate across all commands cannot be calculated. CPU time/duration is measured in observed CPU-core equivalents and may exceed 1; it does not directly prove waiting for network or input.
+8. Bash events have no `arch`, CPU-core-count, or total-memory fields. Hardware filters apply only to process/system sections that have those fields. Do not infer remote total memory for Bash or calculate the percentage of remaining whole-machine memory.
+9. Device populations may differ between uptime buckets, so trends are investigative clues and do not diagnose leaks by themselves. Preserve null values for roles/windows without heap data.
+10. A low `sample_count` may result from a normal exit with a partial final window, and a missing role may mean it never started; neither alone indicates a collection failure. Telemetry duration is cumulative wall-clock milliseconds spent aggregating main-process samples within the window, not the CPU cost of all telemetry.
 
-## 配置与验收
+## Configuration and Acceptance
 
-可导入 [原生 JSON](./process-resource-dashboard.json) 与 [SQL 查询清单](./process-resource-queries.json) 放在本目录。
+The native [JSON](./process-resource-dashboard.json) and [SQL query list](./process-resource-queries.json) can be imported from this directory.
 
-### 已交付（2026-09-15）
+### Delivered (2026-09-15)
 
-- [线上仪表盘](https://cmsnext.console.aliyun.com/next/region/cn-beijing/workspace/arms-id-placeholder/app/dashboard/detail/dashboard-1789470797128-483124)：`dashboard-1789470797128-483124`。
-- 32 张数据图表/卡片、7 个折叠分区、8 个全局筛选控件；查询清单为 32 条面板查询和 1 条版本列表查询。
-- 默认时间通过 `attribute.time` 固定最近 24 小时；环境采用单选变量 `env`，SQL 缺省为 prod，防止开发和生产混算。版本保留原生多选过滤器。
-- 趋势图使用原生 `classify` 转换，将 `time / series / value` 拆成独立曲线。不能只在 SQL 中 GROUP BY series 后用默认线图，否则不同角色会连成一条线。
-- 全局过滤器统一保留 `xPos=0`，通过 `fixedTopOrder` 排序，防止被原生布局排序分入第一条折叠行。设备输入配有顶部可移除标签；清除标签后单设备区回到未选择空态。
-- 变量按原值替换，字符串必须在 SQL 中显式引用；默认全部维度使用 `all` 分支。不要误以为带前缀的变量会自动添加 SQL 引号。
-- 空样本 CPU/RSS 卡片的聚合查询使用 HAVING 排除无有效值结果，避免显示 `null%`。事件计数仍显示真实 0。整机 CPU 趋势含 90% 参考线；内存水位表含应用占用 40% 和整机空闲 5% 参考阈值，无自动告警。
-- SLS 当前上下文的 `from_unixtime` 已输出北京时间，不能再手动加 28800 秒。
+- [Live dashboard](https://cmsnext.console.aliyun.com/next/region/cn-beijing/workspace/arms-id-placeholder/app/dashboard/detail/dashboard-1789470797128-483124): `dashboard-1789470797128-483124`.
+- 32 data charts/cards, seven collapsible sections, and eight global filters; the query list contains 32 panel queries and one version-list query.
+- Fix the default time to the most recent 24 hours using `attribute.time`; use the single-select `env` variable with SQL defaulting to prod, preventing development and production data from being mixed. Keep the native multi-select filter for versions.
+- Use the native `classify` transformation for trends to split `time / series / value` into separate lines. Do not only `GROUP BY series` in SQL and rely on the default line chart, or different roles will be connected as one line.
+- Keep `xPos=0` on all global filters and order them with `fixedTopOrder` so native layout sorting does not move them into the first collapsed row. Provide a removable tag above the device input; after the tag is cleared, the single-device section returns to its unselected empty state.
+- Variables are substituted as-is; strings must be explicitly quoted in SQL. Use the `all` branch for every dimension by default. Do not assume that a prefixed variable is automatically surrounded by SQL quotes.
+- Use `HAVING` to exclude no-valid-value results in empty-sample CPU/RSS cards, avoiding a displayed `null%`. Event counts still show the actual zero. The whole-machine CPU trend has a 90% reference line; the memory-watermark table has 40% app-usage and 5% whole-machine-free reference thresholds, with no automatic alerts.
+- In the current SLS context, `from_unixtime` already outputs Beijing time; do not manually add 28800 seconds.
 
-### 验证结果
+### Verification Results
 
-- 33 条基础查询全部在真实 SLS 执行通过；覆盖 local、prod、平台/硬件、前后台、指定设备和未指定设备。变量引用修正后，对关键默认值和筛选路径再次执行 SQL 并在真实浏览器验证。
-- 浏览器重新打开默认 prod / 1 天：事件数和设备数为 0，CPU/RSS 和趋势显示“暂无数据”。切到 local / macOS 后查询正常。
-- local 观测：进程事件 231 条、系统事件 24 条、慢 Bash 2 条；版本 3.12.1。系统对照表显示 13 个设备标识及“local：仅验收”；全部新事件覆盖 23 个标识，不能解释为 23 台物理机。
-- 页面核对了版本对照、角色分线、慢 Bash 正常完成/终止各一条、采集覆盖和北京时间。单设备输入能产生角色时间线，清除顶部标签后输入为空；折叠全部分区后 8 个全局筛选器仍保留。
-- MCP / remote 无真实新样本，SQL 成功返回空集；尚不能验证它们的真实数据分布、Windows 资源字段表现或双版本比较效果。生产尚无新事件，不作生产资源结论。
-- `pnpm typecheck`、`pnpm lint` 通过，lint 为 0 error / 43 条既有 warning。本次只新增仪表盘 JSON、查询清单及说明，没有改应用或 Agent 实现。
+- All 33 baseline queries ran successfully against real SLS. Coverage included local, prod, platform/hardware, foreground/background, and selected/unselected devices. After fixing variable references, key defaults and filter paths were rerun in SQL and verified in a real browser.
+- Reopening the browser with default prod / 1 day showed 0 events and devices, with “No data” for CPU/RSS and trends. Queries worked after switching to local / macOS.
+- Local observations: 231 process events, 24 system events, two slow Bash events; version 3.12.1. The system comparison table showed 13 device identifiers and “local: verification only.” All new events covered 23 identifiers; this does not mean there were 23 physical machines.
+- The page was checked for version comparisons, separate role lines, one normally completed and one terminated slow Bash command, collection coverage, and Beijing time. Single-device input produced a role timeline; clearing its top tag cleared the input. All eight global filters remained when every section was collapsed.
+- MCP/remote had no real new samples; SQL successfully returned empty sets. Their real-data distribution, Windows resource-field behavior, and two-version comparison are not yet verified. There are no new production events, so no production-resource conclusions are made.
+- `pnpm typecheck` and `pnpm lint` passed; lint reported 0 errors and 43 existing warnings. This change added only dashboard JSON, the query list, and documentation; it did not change app or Agent implementation.
 
-### 后续更新与回滚
+### Follow-up Updates and Rollback
 
-2026-09-15 的逐图 SQL 复审见 [仪表盘 SQL 复审](./process-resource-dashboard-review.md)。其中记录已确认的口径缺陷与展示增强建议，尚未修改已交付配置。
+The line-by-line SQL review from 2026-09-15 is in [Dashboard SQL Review](./process-resource-dashboard-review.md). It records confirmed metric-definition issues and suggested presentation improvements; the delivered configuration has not been changed.
 
-在已有线上仪表盘的「编辑 → 设置 → 仪表盘 JSON」更新同一 ID；更新前保留当前版本，禁止重复新建同名仪表盘。原生平台的「版本」页可恢复之前配置。修改 SQL 后先运行只读 SLS 查询，再核对环境、空态、实际变量替换和图例，最后同步本目录文件。首批 prod 和第二个新版本到达后，补真实群体、MCP、remote 和跨版本验收；告警另行讨论。
+Update the existing live dashboard under “Edit → Settings → Dashboard JSON,” keeping the same ID. Preserve the current version before updating; do not create another dashboard with the same name. Restore earlier configurations from the native platform's “Versions” page. After modifying SQL, first run read-only SLS queries, then check the environment, empty states, actual variable substitution, and legends, and finally sync the local files in this directory. After the first prod events and a second version arrive, verify real population metrics, MCP, remote data, and cross-version comparison. Discuss alerts separately.
 
-原生格式参考：[阿里云仪表盘 JSON 导入导出说明](https://help.aliyun.com/zh/sls/import-and-export-sls-dashboards)。统计字段定义来自 [全进程资源 spec](../process-resource-telemetry.md)。
+Native format reference: [Alibaba Cloud dashboard JSON import/export guide](https://help.aliyun.com/zh/sls/import-and-export-sls-dashboards). Metric definitions come from the [all-process resource spec](../process-resource-telemetry.md).

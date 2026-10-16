@@ -1,16 +1,16 @@
-# 设置页空置状态
+# Settings Empty State
 
-设置页中的空置状态统一使用透明背景和虚线边框，避免空内容与真实资源卡片产生相同的层级。
+Use a transparent background and dashed border for empty states in Settings so empty content does not have the same visual hierarchy as real resource cards.
 
-## 视觉规范
+## Visual Rules
 
-- 空置状态容器统一使用 `border-dashed border-border`，不设置 `bg-card`、`bg-surface` 或 `bg-background`。
-- 资源列表空置状态保持紧凑布局，使用 `rounded-xl px-4 py-3` 和次级正文。
-- 需要引导创建的空置状态可以保留标题、说明和操作按钮，并使用较大的垂直留白。
-- 数据图表空置状态可以保留居中布局，但遵循相同的虚线边框与透明背景规则。
-- 空置状态不增加装饰图标；图标只用于真实资源条目或有明确语义的操作。
-- 加载、错误、能力限制和未选择工作区属于独立状态，不套用空置状态视觉规范。
+- Empty-state containers consistently use `border-dashed border-border`; do not set `bg-card`, `bg-surface`, or `bg-background`.
+- Keep empty states in resource lists compact, using `rounded-xl px-4 py-3` and secondary body text.
+- Empty states that guide users to create something may retain a title, description, and action button, with more vertical spacing.
+- Empty states for data charts may remain centered, but must follow the same dashed-border and transparent-background rules.
+- Do not add decorative icons to empty states; use icons only for real resource entries or actions with clear meaning.
+- Loading, error, capability-restriction, and no-workspace-selected states are distinct states and must not use the empty-state styling.
 
-## 适用范围
+## Scope
 
-当前覆盖设置页中的插件、技能、子智能体、自动化、MCP、命令、Hooks 和用量统计空置状态。
+Currently applies to empty states for plugins, skills, subagents, automations, MCP, commands, hooks, and usage statistics in Settings.

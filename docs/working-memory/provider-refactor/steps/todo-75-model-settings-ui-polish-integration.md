@@ -1,50 +1,50 @@
-# Todo 75：模型设置页 UI polish 合入与当前架构适配
+# Todo75: Integrate Model Settings UI Polish and Adapt It to the Current Architecture
 
-> 验证归属更新（2026-09-09）：本文残余欠测/失败/人工晋级统一转交 [Todo102](todo-102-verification-debt-closeout.md)，关闭在本文中的独立验证排期；历史证据保留，转交不代表测试通过。
+> Verification ownership update (2026-09-09): remaining untested/failed/manual-promotion items are transferred to [Todo102](todo-102-verification-debt-closeout.md). This closes the separate verification schedule here; historical evidence remains and transfer does not mean tests passed.
 
-> 后续 Desktop 图形 E2E 欠测统一由 Todo 78 收口，本 Todo 不再单独排期。
+> Later, outstanding Desktop graphical E2E verification was consolidated under Todo78; this Todo no longer has a separate schedule.
 
-> 2026-09-07 裁决补正：下文“不再有高级设置分组”仅记录当时合入结果，已被后续用户裁决取代。应增加“推理设置”（档位 + Mapping）和“高级设置”（MFJS）两个带标题容器，不折叠；遗漏修复由 Todo 88 / R13 执行。
+> Decision correction (2026-09-07): the statement below that there would be no Advanced settings group only records the result of that integration at the time; it was superseded by a later user decision. Add two titled, non-collapsible containers: “Reasoning settings” (levels + Mapping) and “Advanced settings” (MFJS). Todo88/R13 handles the omission.
 
-> 状态：已完成（代码与本地验证完成；桌面图形 E2E 待 Mac 环境）
+> Status: Complete (code and local verification complete; Desktop graphical E2E remains for a Mac environment).
 >
-> 日期：2026-09-04
+> Date: 2026-09-04
 >
-> 来源：`fix/model-settings-ui-polish`
+> Source: `fix/model-settings-ui-polish`
 
-## 目标
+## Goal
 
-将设计师分支中与模型设置页相关的 UI 改进合入当前 m2，并在当前 Provider 重构代码上完成必要整理。只调整展示、布局、交互和对应测试，不改变 Provider、Registry、Overlay、模型选择持久化或请求运行时语义。
+Integrate model-settings-page UI improvements from the designer branch into current m2 and make the necessary adjustments for the current Provider-refactor code. Change only presentation, layout, interaction, and related tests. Do not change Provider, Registry, Overlay, model-selection persistence, or request/runtime semantics.
 
-## 保留的改动
+## Changes to Retain
 
-- 模型编辑弹窗的字段布局、模型 ID 与启用开关的排列；
-- 输入模态和模型能力的图标化选项；
-- Reasoning 档位编辑器的尺寸与新增入口；
-- 模型列表内边距、拖拽时的分隔线和添加模型按钮；
-- 设置页头部操作按钮与 Provider 保存反馈样式；
-- 设计师分支新增的模型设置 UI 单测和 E2E 覆盖。
+- Field layout in the model-edit dialog, including Model ID and enable-switch placement.
+- Icon-based options for input modalities and model capabilities.
+- Reasoning-level editor size and add entry point.
+- Model-list padding, dividers while dragging, and Add Model button.
+- Settings header action buttons and Provider save-feedback styling.
+- Model-settings unit tests and E2E coverage added in the designer branch.
 
-## 合入后的整理
+## Cleanup After Integration
 
-- 当前产品没有“高级设置”这一层，移除相关折叠、分组和文档表述；
-- Reasoning 档位按设计师方案使用普通 UI 字体；
-- E2E 保留结构和行为验证，减少对具体 CSS class、像素间距和内部实现的绑定；
-- 确认窄窗口下模型 ID 输入框和启用开关均可正常使用，不新增额外响应式语义；
-- 保留 Audio/PDF 等底层兼容数据，不因 UI 收窄而静默删除。
+- The product at that time had no “Advanced settings” layer; remove related collapse/grouping and documentation language.
+- Use ordinary UI font for reasoning levels as in the designer's proposal.
+- Keep E2E structural and behavioral assertions, reducing unnecessary coupling to specific CSS classes, pixel spacing, and internal implementation.
+- Ensure Model ID input and enable switch remain usable in narrow windows; do not add extra responsive semantics.
+- Preserve lower-layer compatibility data such as Audio/PDF; do not silently remove it because the UI is narrower.
 
-## 执行与验收
+## Execution and Acceptance
 
-1. 合入 `origin/fix/model-settings-ui-polish`，记录合并结果。
-2. 在当前 m2 代码上完成上述整理，检查 Provider 抽象和保存链路未被改变。
-3. 运行模型设置相关单测、E2E、`pnpm typecheck` 和 `pnpm lint`。
-4. 全面 review 变更范围，确认桌面/Web、中英文、深浅主题没有明显回归。
-5. 通过验证后提交并推送当前 m2 分支。
+1. Merge `origin/fix/model-settings-ui-polish` and record the result.
+2. Apply the cleanup above in current m2 and verify Provider abstractions and save flow remain unchanged.
+3. Run model-settings-related unit tests, E2E, `pnpm typecheck`, and `pnpm lint`.
+4. Review the full change scope and check for obvious regressions across desktop/Web, Chinese/English, and light/dark themes.
+5. After verification passes, commit and push the current m2 branch.
 
-## 实施结果
+## Implementation Results
 
-- 已合入 `origin/fix/model-settings-ui-polish`，保留设计师分支的 UI 改动和测试覆盖。
-- 已移除“高级设置”这一不存在的产品层级；Reasoning、Mapping 和 MFJS Tool Schema 直接作为普通模型配置展示。
-- 已同步实现、E2E 和设计文档，未改动 Provider、Registry、Overlay、模型选择持久化或请求运行时语义。
-- 已通过模型设置相关 7 个 UI 测试文件、74 个测试，`pnpm typecheck`、`pnpm lint` 以及 push 前受影响测试；当前环境未执行桌面图形 E2E，需在 Mac 上按既有流程补跑。
-- 合并提交：`700b5ba77c`、`d10f45c65f`；已推送至 `provider-refactor-m2`。
+- Merged `origin/fix/model-settings-ui-polish`, retaining the designer branch's UI changes and test coverage.
+- Removed the then-nonexistent product “Advanced settings” layer; Reasoning, Mapping, and MFJS Tool Schema were displayed directly as ordinary model config.
+- Synced implementation, E2E, and design documentation. Provider, Registry, Overlay, model-selection persistence, and request/runtime semantics were unchanged.
+- Seven model-settings UI test files passed 74 tests, as did `pnpm typecheck`, `pnpm lint`, and the affected pre-push tests. Desktop graphical E2E was not run in the current environment and needs to be rerun on Mac using the existing procedure.
+- Merge commits: `700b5ba77c`, `d10f45c65f`; pushed to `provider-refactor-m2`.

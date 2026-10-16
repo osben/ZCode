@@ -1,17 +1,10 @@
 # Windows Caption Menu Button
 
-- 仅 Windows 桌面端在原生最小化/最大化/关闭按钮左侧渲染一颗自绘菜单按钮。
-- 这颗按钮不替换原生 caption buttons，只补充应用级快捷入口。
-- 自绘按钮与原生 caption buttons 的横向边界以 Window Controls Overlay 暴露的
-  `titlebar-area-x` / `titlebar-area-width` CSS 环境变量为事实源；窗口宽度减去可用
-  titlebar 区域即为右侧原生控制区安全边距。`136px / zoomFactor` 只作为旧 Electron、
-  测试环境或环境变量不可用时的兼容 fallback，不能覆盖真实的系统/DPI 几何。
-- Windows 自绘 Terminal、侧边栏与下拉菜单按钮的宽度由右侧原生控制区总宽度除以三
-  派生，使页面缩放后仍与最小化、最大化、关闭三个原生按钮保持同一列宽；不得把
-  固定 `46px` 作为缩放后的最终视觉宽度。
-- workspace task header、新任务草稿标题栏和 Settings 标题栏必须复用同一安全区计算；
-  在默认缩放、最小 `-3` 档、最大 `+5` 档以及不同 Windows DPI 下，下拉按钮的命中区
-  都不得进入原生最小化按钮区域。
-- 菜单项优先复用已有平台命令与工作区动作，避免再维护一套并行逻辑。
-- 菜单顺序按工作区动作、帮助动作、开发诊断动作、窗口动作分组；帮助分组里在“检查更新”和“问题反馈”之间额外插入分隔线，便于区分系统更新与用户支持动作。
-- 帮助与诊断类入口统一复用 `DesktopCommandIds`，避免 Windows caption 菜单和桌面主菜单出现能力漂移。
+- Render a custom menu button only on Windows desktop, to the left of the native minimize/maximize/close buttons.
+- The custom button supplements app-level shortcuts; it does not replace the native caption buttons.
+- Treat the `titlebar-area-x` / `titlebar-area-width` CSS environment variables exposed by Window Controls Overlay as the source of truth for the horizontal boundary between the custom button and native caption buttons. The window width minus the available titlebar area gives the safety margin for the native controls on the right. Use `136px / zoomFactor` only as a compatibility fallback for older Electron versions, test environments, or when environment variables are unavailable; it must not override actual system/DPI geometry.
+- Derive the width of the custom Windows Terminal, sidebar, and dropdown-menu buttons by dividing the total width of the native controls on the right by three. This keeps them in the same columns as the native minimize, maximize, and close buttons after page zoom. Do not treat a fixed `46px` as the final visual width after zoom.
+- The workspace task header, new-task draft title bar, and Settings title bar must reuse the same safe-area calculation. At the default zoom, the minimum `-3` level, the maximum `+5` level, and different Windows DPI settings, the dropdown button's hit area must not enter the native minimize-button region.
+- Prefer reusing existing platform commands and workspace actions for menu items; avoid maintaining a parallel set of logic.
+- Group menu items in this order: workspace actions, help actions, developer diagnostics, and window actions. In the Help group, add a divider between “Check for updates” and “Report a problem” to distinguish system updates from user support.
+- Reuse `DesktopCommandIds` for help and diagnostic entries so the Windows caption menu and desktop main menu do not drift in capabilities.

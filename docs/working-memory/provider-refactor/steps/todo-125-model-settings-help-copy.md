@@ -1,139 +1,139 @@
-# Todo 125：模型设置页问号说明与定稿文案
+# Todo125: Model Settings Help Popovers and Finalized Copy
 
-> 2026-09-11 执行中：按第 3 节逐字写入中英语言包，9 处问号复用现有 Popover。智能配置位置按 Todo131，不给 ID 加问号。说明不参与表单事件，不改模型配置或执行能力。
+> In progress on 2026-09-11: write the Chinese and English locale strings verbatim according to section 3; reuse the existing Popover for the nine help entries. Smart-configuration placement follows Todo131; do not add a help icon to the ID.
 
-> 后续布局裁决（2026-09-11）：[Todo131](todo-131-model-settings-smart-config-placement-and-restore.md) 将智能配置及问号移到模型 ID 容器右侧，取代本文“仍位于底部”的位置约束；说明文案与问号交互不改，未给模型 ID 增加问号。Todo131 待执行，不代表 UI 已移动。
+> Later layout decision (2026-09-11): [Todo131](todo-131-model-settings-smart-config-placement-and-restore.md) moves smart configuration and its question mark to the right of the Model ID container, superseding this document's “remains at the bottom” placement constraint. Help copy and question-mark interaction do not change; no question mark was added to Model ID. Todo131 is pending and does not mean the UI has moved.
 
-> 状态：产品实现、局部验证与 review 完成；Goal 整批最终验收待执行。2026-09-11 已授权实施。
+> Status: product implementation, focused verification, and review complete; final acceptance of the entire Goal batch remained pending. Implementation was authorized on 2026-09-11.
 >
-> 日期：2026-09-11
+> Date: 2026-09-11
 
-## 1. 背景与实施约束
+## 1. Background and Implementation Constraints
 
-用户希望在模型设置页解释智能配置及各项配置含义。现有“智能配置”文字使用原生 `title`，提示不明显且出现时间由浏览器控制。本 Todo 增加明确的问号说明入口。
+The user wanted explanations for smart configuration and individual settings in the model-settings page. The existing “Smart configuration” text used a native `title`, which was easy to miss and whose appearance timing was browser-controlled. This Todo adds an explicit question-mark entry for help.
 
-**必须按本次逐项讨论后的最终裁决实现，不能自行发挥、顺手改动或重新设计。第 3 节是中文定稿，须逐字使用；不自行润色、增删提醒、添加例子或补充技术细节。** 英文按相同含义翻译，不扩大承诺或限制。若发现文案与实际行为冲突，先给出具体证据并与用户讨论，不擅改文案或业务行为来消除冲突。
+**Implement the final decisions from this round of item-by-item discussion exactly. Do not improvise, make incidental changes, or redesign. Section 3 is the finalized Chinese copy and must be used verbatim; do not polish it, add/remove warnings, examples, or technical details.** Translate the English version with the same meaning; do not expand promises or restrictions. If the copy conflicts with actual behavior, provide specific evidence and discuss it with the user first; do not silently change copy or business behavior to remove the conflict.
 
-- 只增加问号及说明浮层，保留现有布局、字段标题、选项及分组；智能配置仍位于原来的底部。
-- 不改变配置值、默认值、智能/手动模式、覆盖与继承、保存/取消、模型能力或模型选择行为。
-- 不改 Schema、协议、持久化文件、数据表、内置推荐配置、刷新或推送机制；文案描述现有功能，不授权重做功能。
-- 不增加确认弹窗、切换后的额外提醒、教程、示例、链接入口或其他未确认产品元素。
-- 本 Todo 的明确裁决优先于对话中的早期示意和提议。遇到超出范围的需求先讨论，不顺手修复其他问题。
+- Add only the question marks and help popovers. Keep the existing layout, field headings, options, and grouping; smart configuration remains at the existing bottom position.
+- Do not change config values, defaults, smart/manual modes, overlays/inheritance, save/cancel behavior, model capabilities, or model-selection behavior.
+- Do not change schemas, protocols, persistence files, database tables, built-in recommended configuration, refresh, or distribution mechanisms. Copy describes existing features and does not authorize rebuilding them.
+- Do not add confirmation dialogs, extra post-switch warnings, tutorials, examples, links, or other unapproved product elements.
+- The explicit decisions in this Todo supersede earlier sketches and suggestions in the conversation. Discuss out-of-scope needs first; do not use this task to fix unrelated issues.
 
-## 2. 已确认的位置与交互
+## 2. Confirmed Placement and Interaction
 
-- 除模型 ID 外，在第 3 节列出的每个字段或分组标题后添加一个问号图标。正文中的 `ⓘ` 仅用于标示帮助入口位置，实际使用问号图标。
-- 标题下有多个选项时，共用标题后的一个问号，在同一份说明中逐项解释；不在选项旁重复增加问号。
-- 模型 ID 不加问号，不加说明。
-- 桌面鼠标悬停问号立即显示，不使用原生 `title` 的等待提示；手机点击问号显示。
-- 问号支持键盘聚焦查看；点击问号只打开说明，不切换相邻开关或选项，不提交表单。
-- 提示使用现有设计规范与组件风格，兼顾桌面、手机 Web、中英文和深浅主题；不移动原有控件或重做表单布局。
-- 原智能配置 `title` 由新说明入口替代，避免同时出现两份不同文案。
+- Add a question-mark icon after each field or group heading listed in section 3, except Model ID. The `ⓘ` in this document marks where the help entry goes; use a question-mark icon in the UI.
+- When a heading has multiple options beneath it, use one question mark after the heading and explain each option in the same help content; do not add repeated question marks beside individual options.
+- Do not add a question mark or help description to Model ID.
+- On desktop, show the help immediately on pointer hover; do not use the delayed native `title` tooltip. On mobile, show it when the question mark is tapped.
+- Support keyboard focus to view help. Clicking the question mark only opens the help; it must not toggle the adjacent switch/option or submit the form.
+- Use existing design-system and component styles. Support desktop, mobile Web, Chinese/English, and light/dark themes. Do not move existing controls or redesign the form layout.
+- Replace the existing smart-configuration `title` with the new help entry so two different copies are not shown at once.
 
 ```text
-现有字段或分组标题 + 问号
-                     |
-          悬停 / 键盘聚焦 / 手机点击
-                     |
-              显示该标题的说明
-                     |
-         只影响提示显隐，不修改配置草稿
+Existing field/group heading + question mark
+                       |
+              hover / keyboard focus / mobile tap
+                       |
+                show that heading's help
+                       |
+       affects help visibility only; does not change the config draft
 
-表单底部：原智能配置开关 + 原文字 + 问号
+At the bottom of the form: existing smart-configuration toggle + existing text + question mark
 ```
 
-## 3. 最终中文文案（逐字实现）
+## 3. Final Copy (Use Verbatim in Chinese; English Translation Must Match)
 
-### 模型 ID
+### Model ID
 
-不加问号。
+No question mark.
 
-### 上下文窗口 ⓘ
+### Context Window ⓘ
 
-> 模型一次可处理的上下文容量，单位为 Token。ZCode 会据此管理上下文。
-> 请勿超过模型的实际上限。
+> The context capacity the model can process at one time, measured in Tokens. ZCode manages context based on this value.
+> Do not exceed the model's actual limit.
 
-### 最大输出 Token ⓘ
+### Maximum Output Tokens ⓘ
 
-> 单次模型请求允许生成的最大 Token 数。
-> 请勿超过模型的实际上限。
+> The maximum number of Tokens the model may generate in a single request.
+> Do not exceed the model's actual limit.
 
-### 输入类型 ⓘ
+### Input Types ⓘ
 
-> 设置模型能够接收的内容类型：
+> Set the types of content the model can receive:
 >
-> - **文本**：接收文本内容，为必选项。
-> - **图片**：接收图片内容。
-> - **视频**：接收视频内容。
-> - **PDF**：直接接收 PDF 文档。
+> - **Text**: receives text content; required.
+> - **Image**: receives image content.
+> - **Video**: receives video content.
+> - **PDF**: receives PDF documents directly.
 
-### 输出类型 ⓘ
+### Output Types ⓘ
 
-> 模型生成回复的内容类型。目前不支持文本以外的其他选项。
+> The content types that the model generates in replies. Other options besides text are not currently supported.
 
-### 模型能力 ⓘ
+### Model Capabilities ⓘ
 
-> - **结构化输出**：支持通过 JSON Schema 约束模型输出的字段、类型和结构。
-> - **原生联网搜索**：支持使用模型接口内置的联网搜索能力。
-> - **对话中系统消息**：支持在对话中途插入系统指令。
+> - **Structured output**: supports constraining the fields, types, and structure of model output with JSON Schema.
+> - **Native web search**: supports the web-search capability built into the model API.
+> - **System messages in conversations**: supports inserting system instructions midway through a conversation.
 >
-> 请勿勾选模型不支持的能力。
+> Do not select capabilities the model does not support.
 
-### 推理档位（从低到高）ⓘ
+### Reasoning Levels (Low to High) ⓘ
 
-> 设置聊天时可选择的推理档位，**必须按推理强度从低到高排列**。
-> 请勿配置模型不支持的推理档位。
+> Set the reasoning levels available in chat. **They must be ordered from lowest to highest reasoning strength.**
+> Do not configure reasoning levels the model does not support.
 
-### 推理参数映射 ⓘ
+### Reasoning Parameter Mapping ⓘ
 
-> 使用 CEL 表达式，将当前推理档位 `reasoningLevel` 映射为模型接口的请求字段。表达式返回的 JSON 对象会合并到实际发送的请求体中。
+> Use a CEL expression to map the current reasoning level `reasoningLevel` to request fields for the model API. The returned JSON object is merged into the actual request body before sending.
 
-### 高级设置 ⓘ
+### Advanced Settings ⓘ
 
-> **MFJS 工具 Schema**：启用 Moonshot Flavored JSON Schema（Moonshot 的 JSON Schema 格式）兼容处理，常用于 Moonshot 的 Kimi 模型接口。仅在模型接口要求该格式时开启。
+> **MFJS Tool Schema**: Enables Moonshot Flavored JSON Schema compatibility processing, commonly used by Moonshot's Kimi model APIs. Enable it only when the model API requires this format.
 
-### 智能配置 ⓘ
+### Smart Configuration ⓘ
 
-> 根据模型 ID、Base URL 和 API 格式，为您智能匹配推荐配置。ZCode 会持续更新推荐配置，并自动同步给您。
-> 如果手动修改某项配置，该项将转为手动管理，不再跟随推荐更新；其他配置仍由智能配置管理。
+> Intelligently matches recommended settings based on the model ID, Base URL, and API format. ZCode continuously updates the recommendations and syncs them to you automatically.
+> If you manually modify a setting, that setting becomes manually managed and no longer follows recommendation updates; smart configuration continues to manage the other settings.
 
-## 4. 已撤回或澄清的提议（禁止重新引入）
+## 4. Withdrawn or Clarified Suggestions (Do Not Reintroduce)
 
-- 不移动智能配置开关；早期画在顶部的示意已被纠正。
-- 模型 ID 是“所有标题加问号”的明确例外。
-- 输入类型不写文件大小、页数或其他附件限制，也不加“以上为 ZCode 的限制……”等补充。
-- 推理档位继续从低到高。用户明确确认此前“从高到低”是口误，不反转显示、存储或最高档选择逻辑。
-- 推理档位不写“名称和数量可以自定义”；推理参数映射不附示例、转换图或额外接口要求提醒。
-- 不把“请勿超过……”或类似提醒机械添加到所有说明。仅保留第 3 节已经确认的具体句子。
-- 统一按定稿使用“模型”，不换回“模型服务”等表述；智能配置使用与设置页一致的 Base URL、API 格式用语。
-- 不加入“始终最准确”等绝对保证，也不追加关闭/重新开启智能配置的行为说明；本次不修改这些行为。
-- 不新增音频、工具调用等当前页面没有的选项。
+- Do not move the smart-configuration toggle; the earlier sketch showing it at the top was corrected.
+- Model ID is the explicit exception to “add a question mark to every heading.”
+- Do not mention file-size, page-count, or other attachment limits under Input Types; do not add clarifications such as “these are ZCode's limits.”
+- Reasoning levels remain ordered low to high. The user explicitly confirmed that the earlier “high to low” wording was a slip; do not reverse display, storage, or highest-level selection logic.
+- Do not say that reasoning-level “names and quantity are customizable.” Do not add examples, conversion diagrams, or extra interface requirements to reasoning parameter mapping.
+- Do not mechanically add “Do not exceed...” or similar warnings to every help item. Keep only the specific sentences approved in section 3.
+- Use “model” consistently, not “model service.” Use Base URL and API format wording consistent with Settings for smart configuration.
+- Do not promise “always the most accurate” or add behavior explanations about disabling/re-enabling smart configuration; this task does not change that behavior.
+- Do not add audio, tool-call, or other options that are not on the current page.
 
-## 5. 实施入口与验收
+## 5. Implementation Entry Points and Acceptance
 
-参考现有文件，实施时以最新基线为准：
+Use these files as references, verifying the latest baseline when implementing:
 
-- `packages/ui/src/settings/model-provider-section/ProviderModelMetadataDialog.tsx`：表单标题与底部布局。
-- `packages/ui/src/settings/model-provider-section/ProviderModelMetadataDialogActions.tsx`：智能配置文字及现有 `title`。
-- `packages/ui/src/settings/model-provider-section/ProviderModelSettingsGroups.tsx`：推理设置与高级设置。
-- `packages/ui/src/ControlHintTooltip.tsx` 及现有 Tooltip/Popover 组件：复用现有样式与组件，不全局改变其他提示的行为。
-- `packages/ui/src/i18n/locales/zh-CN.ts`、`en-US.ts`：定稿与等义英文翻译。
+- `packages/ui/src/settings/model-provider-section/ProviderModelMetadataDialog.tsx`: form headings and footer layout.
+- `packages/ui/src/settings/model-provider-section/ProviderModelMetadataDialogActions.tsx`: smart-configuration copy and existing `title`.
+- `packages/ui/src/settings/model-provider-section/ProviderModelSettingsGroups.tsx`: reasoning settings and advanced settings.
+- `packages/ui/src/ControlHintTooltip.tsx` and existing Tooltip/Popover components: reuse current style and components; do not globally change other tooltip behavior.
+- `packages/ui/src/i18n/locales/zh-CN.ts`, `en-US.ts`: finalized copy and equivalent English translation.
 
-授权实施后，先读取 `DESIGN.md`，遵守仓库 spec、测试先行及架构门禁规则；本 Todo 作为本项 Working Memory 内的实施规格。
+After implementation is authorized, read `DESIGN.md` first and follow repository spec-first, test-first, and architecture-gate rules. This Todo is the implementation specification for this item in Working Memory.
 
-- [ ] 中文逐字核对第 3 节；英文无遗漏、无新增含义。
-- [ ] 模型 ID 无帮助入口，其余 9 处标题各一个；分组选项不重复放问号，智能配置位置不变。
-- [ ] E2E 验证桌面悬停立即显示、键盘查看、手机点击显示；浮层关闭和切换查看正常，无原生重复提示。
-- [ ] 实际点击帮助入口不会触发开关、修改草稿或保存；原表单编辑、保存、取消行为保持不变。
-- [ ] 深浅主题、中英文、桌面与手机尺寸均可完整阅读，长文案不被弹窗滚动容器裁切或溢出视口。
-- [ ] 完成受影响检查、`pnpm typecheck`、`pnpm lint` 和对应 E2E；验证结果如实记录，未执行的不能标为通过。
+- [ ] Check Chinese copy in section 3 verbatim; English has no omissions or added meaning.
+- [ ] Model ID has no help entry; each of the other nine headings has exactly one. Do not repeat question marks for options within a group; smart-configuration position is unchanged.
+- [ ] E2E verifies immediate desktop hover, keyboard access, and mobile tap; popovers close and switching between help entries works without duplicate native tooltips.
+- [ ] Clicking help does not trigger a toggle, modify the draft, or save; existing form edit/save/cancel behavior is unchanged.
+- [ ] Light/dark themes, Chinese/English, desktop, and mobile sizes all show the full text without clipping in the dialog scroll area or overflowing the viewport.
+- [ ] Complete affected checks, `pnpm typecheck`, `pnpm lint`, and the relevant E2E. Record results honestly; unrun checks are not passing.
 
-## 6. 本次落盘结果
+## 6. Delivered Result for This Item
 
-已实现9处问号，模型 ID 除外；智能位置服从 Todo131。复用现有 Popover/Button 与语言包，仅渲染定稿加粗、行内代码和列表，不接受 HTML 或用户输入。中文9项逐字单测与英文语义复审完成；删除旧原生 title 文案。
+Implemented nine question marks, excluding Model ID; smart-configuration placement follows Todo131. Reused existing Popover/Button and locale files, rendering only finalized copy with bolding, inline code, and lists. HTML and user input are not accepted. The Chinese copy was unit-tested verbatim and English was reviewed for equivalent meaning; the old native `title` copy was removed.
 
-真实 Hook/组件浏览器验证桌面 hover、键盘 focus、手机 tap、Escape 关闭及切换说明；逐个检查浮层完整在视口内、没有修改草稿或写入。390 中文浅色/1200英文深色通过，截图复审英文排版与窄屏几何；Linux 中文字库缺失，**不能宣称中文字形视觉验收通过**。说明无新增模型能力、配置或执行逻辑；shared-host/消息流不变。根 typecheck、lint（0 errors/41 warnings）及架构（0 violations）通过，相关单测60项通过。浏览器交互不是真实手机 Host 联调；最终整批/实机限制由执行账本管理。
+Real Hook/component browser checks verified desktop hover, keyboard focus, mobile tap, Escape-to-close, and switching help entries. Each popover was checked to fit in the viewport and not modify a draft or write settings. 390px Chinese light / 1200px English dark passed. Linux lacked Chinese glyph fonts, so **Chinese glyph rendering was not visually verified**. No new model capabilities, config, or execution logic were added; shared-host/message flow is unchanged. Root typecheck, lint (0 errors/41 warnings), architecture check (0 violations), and 60 related unit tests passed. Browser interaction was not real mobile Host integration; final batch/device limits remain in the execution ledger.
 
-# 最终关联回归补充
+# Final Associated Regression Addition
 
-帮助按钮不得嵌在输入字段的 label 内；标题通过 htmlFor/id 关联输入，帮助按钮是同排独立控件，不能抢走输入的标签或焦点。多个档位的组标题不是单一输入 label。此修正不改帮助文案、状态或保存行为。
+The help button must not be nested inside an input field's label. Associate the heading with the input using `htmlFor`/ID and make the help button a separate control on the same row, so it does not replace the input label or focus target. A group heading for multiple reasoning levels is not a label for one input. This correction does not change help copy, state, or save behavior.

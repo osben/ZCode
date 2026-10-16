@@ -1,48 +1,48 @@
-# Onboarding 原型后续计划
+# Next Steps for the Onboarding Prototype
 
-记录日期：2026-09-15。分支：`prototype/onboarding-suggestions`。
+Recorded: 2026-09-15. Branch: `prototype/onboarding-suggestions`.
 
-## 已确认需求
+## Confirmed Requirements
 
-- 将原有数据迁移环节融入新的 onboarding，避免两套引导连续弹出。
-- 保留当前三步：工作方向 → UI 模式 → 助手偏好。
-- UI 模式接入已合入 staging 的通用／编程模式；工作区记忆沿用设置页术语。
-- 当前处于原型迭代阶段；本文记录需求和建议，不代表迁移交互已实现或全部确认。
+- Integrate the existing data-migration stage into the new onboarding flow so users are not shown two consecutive onboarding sequences.
+- Keep the current three steps: work direction → UI mode → assistant preferences.
+- Connect the UI mode to the general/coding modes already merged into staging; use the Settings terminology for workspace memory.
+- This is still an iterative prototype. This document records requirements and recommendations; it does not mean that migration interactions have been implemented or fully approved.
 
-## 现有实现事实
+## Facts About the Current Implementation
 
-`OccupationOnboarding` 完成后渲染旧 `OnboardingDialog`。旧迁移选择顺序为：会话 → Skills → MCP 服务器 → 命令 → AGENTS.md → 迁移执行／结果；插件及代理设置步骤暂时隐藏。
+After `OccupationOnboarding` completes, the old `OnboardingDialog` is rendered. The legacy migration choices are ordered as: sessions → Skills → MCP servers → commands → AGENTS.md → migration execution/results. The plugin and proxy-settings steps are temporarily hidden.
 
-会话来源是 Claude Code 原生历史；其他导入类别沿用外部 Agent 资源导入能力。AGENTS.md 步骤将 Claude 用户级 CLAUDE.md 复制到 ZCode 用户级 AGENTS.md，覆盖前需要明确确认。
+The session source is native Claude Code history; the other import categories use the external-Agent resource-import capability. The AGENTS.md step copies the user's Claude-level `CLAUDE.md` to the ZCode user-level `AGENTS.md`; require explicit confirmation before overwriting.
 
-## 建议交互（待确认）
+## Proposed Interaction (Pending Confirmation)
 
-保留三步偏好进度条，将迁移作为结束后的可选分支，不将五个技术类别展开成五个必经首启步骤。
+Keep the three-step preference progress indicator and make migration an optional branch after onboarding, rather than expanding five technical categories into five mandatory first-run steps.
 
 ```text
-登录／注册（顺序此前建议，尚待产品确认）
-  → 工作方向 → UI 模式 → 助手偏好
-  → 准备就绪：开始使用（主按钮）／导入已有数据（次按钮）
-      ├─ 开始使用 → 工作区
-      └─ 导入已有数据 → 选择内容 → 确认并导入 → 结果 → 工作区
+Sign in / Sign up (previously suggested order; product confirmation pending)
+  → Work direction → UI mode → Assistant preferences
+  → Ready: Start using ZCode (primary) / Import existing data (secondary)
+      ├─ Start using ZCode → Workspace
+      └─ Import existing data → Select items → Confirm and import → Results → Workspace
 ```
 
-- 准备页复用当前视觉，取消旧欢迎页的重复介绍。说明“用过 Claude Code 等工具？可以导入已有会话和配置，也可以稍后在设置中导入”。
-- 未经用户选择不启动迁移；进入导入分支后再按需扫描，区分扫描中、未发现内容和扫描失败。
-- 选择页集中展示会话、Skills、MCP、命令、用户指令五类；类别展开后选择来源和具体条目，保留原有目标、导入方式与 scope 控件。无工作区时明确提示项目级导入需先选项目。
-- 通用模式仍可导入，不根据职业或模式隐藏能力；使用“历史对话”“自定义指令”等易懂标签，并保留技术名称作为辅助信息。
-- 操作区域：返回／确认并导入；返回时保留选择。预览实际导入目标、冲突与覆盖行为。AGENTS.md 覆盖维持现有显式确认。
-- 执行页展示真实进度；完成页区分成功、跳过、失败，提供进入工作区入口。复用现有运行中退出确认；后台迁移与重试能力需另行确认，不预先承诺。
-- 已有用户、已完成偏好或已跳过迁移的用户不重复弹出；设置中保留主动进入迁移的入口。
+- Reuse the current visual design on the ready page and remove the duplicate introduction from the old welcome page. Explain: “Used tools like Claude Code? Import your existing sessions and configuration, or import them later in Settings.”
+- Do not start migration without user choice. Scan on demand after entering the import branch, distinguishing scanning, no items found, and scan failure.
+- Show the five categories—sessions, Skills, MCP, commands, and user instructions—together on the selection page. After expanding a category, let users select sources and individual items while retaining the existing target, import-method, and scope controls. When there is no workspace, clearly state that project-level imports require selecting a project first.
+- Allow imports in general mode; do not hide capabilities based on occupation or mode. Use accessible labels such as “Conversation history” and “Custom instructions,” retaining technical names as supporting information.
+- Provide Back and Confirm and import actions. Preserve selections when navigating back. Preview the actual import target, conflicts, and overwrite behavior. Keep the existing explicit confirmation before overwriting AGENTS.md.
+- Show real progress on the execution page. On the completion page, distinguish successful, skipped, and failed items and provide an entry point to the workspace. Reuse the existing confirmation when exiting during an active operation. Confirm background migration and retry capabilities separately; do not promise them in advance.
+- Do not show this flow again to existing users, users who have completed preferences, or users who have skipped migration. Keep a manual entry point to migration in Settings.
 
-## 后续实现清单
+## Follow-up Implementation Checklist
 
-- [ ] 确认准备页与可选导入分支方案，以及登录位置。
-- [ ] 用统一流程入口替代新旧引导串接，移除重复欢迎步骤。
-- [ ] 定义偏好完成、迁移未选择／跳过／完成各自的持久化边界，避免一个标记控制所有流程。
-- [ ] 复用迁移服务与导入控件，统一布局与扫描／空／错误／执行／结果状态。
-- [ ] 保留覆盖确认、原始数据保护、已有导入作用域及去重规则。
-- [ ] 对齐桌面、远程工作区和手机能力；保持 shared-host、workspaceIdentity 与 continuous／replayable 边界。
-- [ ] 原型确认可用后再补测试、正式 spec 和提交准备。
+- [ ] Confirm the ready page and optional import branch, including where sign-in belongs.
+- [ ] Replace the chained old/new onboarding entry points with one flow and remove the duplicate welcome step.
+- [ ] Define separate persistence boundaries for preferences completed and migration not selected/skipped/completed; do not let a single flag control every flow.
+- [ ] Reuse the migration service and import controls, with consistent layout and scanning/empty/error/execution/result states.
+- [ ] Preserve overwrite confirmation, source-data protection, existing import scopes, and deduplication rules.
+- [ ] Align desktop, remote workspace, and mobile capabilities; preserve shared-host, `workspaceIdentity`, and continuous/replayable boundaries.
+- [ ] Add tests, a formal spec, and release preparation after the prototype is approved.
 
-参考：`docs/ui/onboarding-migration-flow.md`、`docs/onboarding-external-agent-import-steps.md`。实际能力以当前实现为准。
+References: `docs/ui/onboarding-migration-flow.md` and `docs/onboarding-external-agent-import-steps.md`. Actual capabilities are determined by the current implementation.
