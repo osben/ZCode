@@ -1444,7 +1444,7 @@ function ConversationComposerImpl({
       // claim/restore pair guards the eventual dispatch.
       let draftSubmissionClaimed = false;
       let editorClearedOptimistically = false;
-      const claimSubmittedDraft = () => {
+      const claimSubmittedDraft = (clearEditor = true) => {
         // A queued worktree send claims at queue time; the eventual dispatch re-enters here and
         // must not wipe text typed while the creation was in flight.
         if (draftSubmissionClaimed) return;
@@ -1456,11 +1456,13 @@ function ConversationComposerImpl({
         // If the old scope effect can still persist, the new Composer restores already-sent text as a draft.
         // Claim and hide the draft before submission; restore it on failure rather than masking the race with a delay.
         suppressDraftPersistRef.current = true;
-        updateComposerContent({ text: "" });
-        inputApiRef.current?.clear();
-        updateText("");
+        if (clearEditor) {
+          updateComposerContent({ text: "" });
+          inputApiRef.current?.clear();
+          updateText("");
+          editorClearedOptimistically = true;
+        }
         cleanupRevision = contentRevisionRef.current;
-        editorClearedOptimistically = true;
         draftSubmissionClaimed = true;
       };
       const restoreSubmittedDraft = () => {
@@ -1723,7 +1725,9 @@ function ConversationComposerImpl({
               setPromptHistory(promptHistoryAfterAppend);
             }
           }
-          claimSubmittedDraft();
+          // Keep the ordinary editor visible until the send is accepted. Worktree-queued sends
+          // have already claimed and cleared it so the user can start another draft during Git setup.
+          claimSubmittedDraft(false);
           if (requestedDelivery === "startNow" && contentRevisionRef.current === cleanupRevision) {
             // Atomic takeover waits for the old turn to exit and the new TurnStarted ACK to commit.
             // If the editor also waits for the full flow before clearing, the user may think the shortcut did nothing.
@@ -1819,6 +1823,7 @@ function ConversationComposerImpl({
           if (contentRevisionRef.current === cleanupRevision) {
             inputApiRef.current?.clear();
             updateText("");
+            updateComposerContent({ text: "" });
           }
           attachmentsApi.clearAttachments(submittedAttachmentIds);
           // As with attachments, remove only refs frozen for this send; refs added while waiting belong to the next message.
