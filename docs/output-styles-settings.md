@@ -116,6 +116,11 @@ code constants. The UI makes the file materialization explicit:
 - Creating a custom style shows the future file path live, derived from the name.
 - The `default` style is not editable: the runtime loader ignores an override for id
   `default` (it means "no style"), so the row offers no edit action.
+- The `Default` row shows its effective prompt contents read-only. Its prompt is intentionally
+  empty, so show a localized explanation that it adds no output-style instructions and uses
+  ZCode's standard system prompt. Do not offer edit, restore, or delete actions for `Default`;
+  it remains selectable as the active style. A manually created `default.md` file is ignored by
+  the runtime and must not be presented as a customized effective style.
 
 ## Non-editable prompt surface
 

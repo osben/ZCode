@@ -30,6 +30,10 @@ export const DEFAULT_CLI_PREFIX_PROMPT = "You are ZCode, an interactive coding a
 export const DEFAULT_IDENTITY_INTRO_PROMPT =
   "You are an interactive ZCode agent that helps users with software engineering tasks.";
 
+/** Identity sentence used when an Output Style is active and no intro override exists. */
+export const OUTPUT_STYLE_IDENTITY_INTRO_PROMPT =
+  "You respond to the user according to the active Output Style below while using ZCode's tools and instructions.";
+
 export const DEFAULT_HARNESS_PROMPT = [
   "# Harness",
   "- Text you output outside of tool use is displayed to the user as Github-flavored markdown in a terminal.",
