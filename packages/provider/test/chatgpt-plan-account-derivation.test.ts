@@ -134,6 +134,11 @@ describe("deriveChatGptPlanAccountConfigSnapshot", () => {
       { accountKey: ACCOUNT_A, providerName: "work@example.com" },
     ]);
     expect(reordered.revision).toBe(added.revision);
+    // A presentation change (revisionKey) must republish even with the same account set.
+    const renamed = deriveChatGptPlanAccountConfigSnapshot(base, [
+      { accountKey: ACCOUNT_A, providerName: "renamed@example.com", revisionKey: "abc123def456" },
+    ]);
+    expect(renamed.revision).not.toBe(first.revision);
   });
 
   it("drops the chatgpt family entirely with zero accounts", () => {

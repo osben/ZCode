@@ -3,7 +3,7 @@ import { createGenUiService } from "./gen-ui/node.js";
 import { channelReplyHostRequestSchema, channelReplyResultSchema } from "@zcode/shared";
 /* eslint-disable max-lines -- Host-process service registration and startup wiring must stay together so dependency injection order remains easy to trace. */
 // Node.js service implementations — NOT safe to import in browser code
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -1421,10 +1421,19 @@ export function createLocalServices(options: {
   ): ProviderSource<ProviderConfigSnapshot> =>
     createDerivedChatGptPlanConfigSource(source, async () => {
       const status = await siwcAuthService.getStatus();
-      return status.accounts.map((account) => ({
-        accountKey: account.accountKey,
-        providerName: account.user.email ?? account.user.displayName ?? account.accountKey,
-      }));
+      return status.accounts.map((account) => {
+        const providerName = account.user.email ?? account.user.displayName ?? account.accountKey;
+        return {
+          accountKey: account.accountKey,
+          providerName,
+          // Presentation digest (no PII in the revision): a renamed account must republish
+          // the derived snapshot even when the account set itself is unchanged.
+          revisionKey: createHash("sha256") // codeql[js/insufficient-password-hash]
+            .update(providerName, "utf-8")
+            .digest("hex")
+            .slice(0, 12),
+        };
+      });
     });
   const accountRequestAuthService = createAccountRequestAuthService(
     createAccountProviderRequestAuthService({

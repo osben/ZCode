@@ -344,6 +344,26 @@ describe("SIWC access token resolver (per-account)", () => {
     expect(resolved.apiKey).toBe("access-legacy");
   });
 
+  it("lists an access-only slot (login without a refresh token stays executable)", async () => {
+    const store = await createStore();
+    const keys2 = buildSiwcAccountCredentialKeys(ACCOUNT_KEY_1);
+    await store.saveMany({
+      [keys2.clientId]: "oaiapp_issued",
+      [keys2.accessToken]: "access-only",
+      [keys2.scopes]: FULL_SCOPES,
+      [keys2.userInfo]: JSON.stringify({ sub: SUB_1 }),
+    });
+    await store.save(
+      SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY,
+      JSON.stringify([
+        { accountKey: ACCOUNT_KEY_1, sub: SUB_1, email: null, name: null, addedAt: "" },
+      ]),
+    );
+    const accounts = await listSiwcPlanAccounts(store);
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]).toMatchObject({ accountKey: ACCOUNT_KEY_1, entitled: true });
+  });
+
   it("lists accounts with per-account consent state", async () => {
     const store = await createStore();
     const accountKey2 = createSiwcAccountKey("user-sub-2");

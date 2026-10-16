@@ -15,6 +15,7 @@ import {
   buildSiwcAccountProviderIdentityKey,
   buildSiwcAccountRefreshLockFileName,
   SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY,
+  SIWC_ACCOUNTS_LOCK_FILE_NAME,
   SIWC_LEGACY_CREDENTIAL_KEYS,
   type SiwcPlanAccountStatus,
   type SiwcPlanAccountsStatus,
@@ -589,36 +590,56 @@ export class SiwcAuthService {
     await this.credentialService.save(SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY, JSON.stringify(records));
   }
 
+  /**
+   * Index mutations run under the same cross-process accounts lock as the CLI store: the
+   * shared credentials file is mutated by both processes, and an unlocked read-merge-write
+   * interleaving would drop one side's account entry.
+   */
+  private withAccountsLock<T>(operation: () => Promise<T>): Promise<T> {
+    return withFileLock(join(this.configDir, SIWC_ACCOUNTS_LOCK_FILE_NAME), operation, {
+      lockMaxWaitMs: SIWC_REFRESH_LOCK_MAX_WAIT_MS,
+    });
+  }
+
   private async upsertAccountRecord(record: SiwcStoredAccountRecord): Promise<void> {
-    const existing = await this.readAccountIndex();
-    const next: SiwcStoredAccountRecord[] = [];
-    let replaced = false;
-    for (const item of existing) {
-      if (item.accountKey === record.accountKey) {
-        next.push({ ...record, addedAt: item.addedAt || record.addedAt });
-        replaced = true;
-      } else {
-        next.push(item);
+    await this.withAccountsLock(async () => {
+      const existing = await this.readAccountIndex();
+      const next: SiwcStoredAccountRecord[] = [];
+      let replaced = false;
+      for (const item of existing) {
+        if (item.accountKey === record.accountKey) {
+          next.push({ ...record, addedAt: item.addedAt || record.addedAt });
+          replaced = true;
+        } else {
+          next.push(item);
+        }
       }
-    }
-    if (!replaced) next.push(record);
-    await this.writeAccountIndex(next);
+      if (!replaced) next.push(record);
+      await this.writeAccountIndex(next);
+    });
   }
 
   private async removeAccountRecord(accountKey: string): Promise<void> {
-    const next = (await this.readAccountIndex()).filter(
-      (record) => record.accountKey !== accountKey,
-    );
-    await this.writeAccountIndex(next);
+    await this.withAccountsLock(async () => {
+      const next = (await this.readAccountIndex()).filter(
+        (record) => record.accountKey !== accountKey,
+      );
+      await this.writeAccountIndex(next);
+    });
   }
 
   /**
    * One-time migration of the pre-multi-account flat credentials into the single legacy
-   * account's slot. Idempotent; absent legacy keys are a no-op. The CLI resolver migrates
-   * the same file independently — both sides copy identical values, so concurrent runs
-   * converge without coordination.
+   * account's slot. Idempotent; absent legacy keys are a no-op. Runs under the same
+   * cross-process accounts lock as the CLI store, and preserves an already-initialized
+   * destination slot: a delayed second migrator replaying consumed legacy tokens over a
+   * freshly rotated slot would trip refresh_token_reused and invalidate the login.
    */
-  private async migrateLegacyCredentials(): Promise<void> {
+  private migrateLegacyCredentials(): Promise<void> {
+    return this.withAccountsLock(() => this.migrateLegacyCredentialsLocked());
+  }
+
+  private async migrateLegacyCredentialsLocked(): Promise<void> {
     const legacy = SIWC_LEGACY_CREDENTIAL_KEYS;
     const flat = await this.readCredentialStrings(
       legacy.clientId,
@@ -651,18 +672,29 @@ export class SiwcAuthService {
       [flat[legacy.providerIdentity] ?? null, buildSiwcAccountProviderIdentityKey(accountKey)],
       [flat[legacy.providerAuthSource] ?? null, buildSiwcAccountProviderAuthSourceKey(accountKey)],
     ];
-    for (const [value, key] of mapping) {
-      if (value !== null) entries[key] = value;
+    // A slot that already holds token material was written by a later login or refresh;
+    // replaying the consumed legacy values over it would corrupt the token family.
+    const slot = await this.readTokenState(accountKey);
+    if (!slot?.accessToken && !slot?.refreshToken) {
+      for (const [value, key] of mapping) {
+        if (value !== null) entries[key] = value;
+      }
     }
-    await this.writeCredentials(entries);
-    if (!(await this.readAccountIndex()).some((record) => record.accountKey === accountKey)) {
-      await this.upsertAccountRecord({
-        accountKey,
-        sub,
-        email: readUserJsonField(rawUser, "email"),
-        name: readUserJsonField(rawUser, "name"),
-        addedAt: new Date(this.now()).toISOString(),
-      });
+    if (Object.keys(entries).length > 0) await this.writeCredentials(entries);
+    // Inline index write: the accounts lock is already held here, and upsertAccountRecord
+    // would re-acquire it (file locks are not reentrant).
+    const index = await this.readAccountIndex();
+    if (!index.some((record) => record.accountKey === accountKey)) {
+      await this.writeAccountIndex([
+        ...index,
+        {
+          accountKey,
+          sub,
+          email: readUserJsonField(rawUser, "email"),
+          name: readUserJsonField(rawUser, "name"),
+          addedAt: new Date(this.now()).toISOString(),
+        },
+      ]);
     }
     for (const key of [
       legacy.clientId,

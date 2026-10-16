@@ -1,16 +1,34 @@
 import { createHash } from "node:crypto";
+import { dirname, join } from "node:path";
+import { withFileLock } from "@zcode/shared/node";
 import {
   buildSiwcAccountCredentialKeys,
   buildSiwcAccountProviderAuthSourceKey,
   buildSiwcAccountProviderIdentityKey,
   isChatGptPlanAccountKey,
   SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY,
+  SIWC_ACCOUNTS_LOCK_FILE_NAME,
   SIWC_LEGACY_CREDENTIAL_KEYS,
   type SiwcStoredAccountRecord,
 } from "@zcode/shared";
 import type { SharedZCodeCredentialStore } from "../shared-credentials.js";
 
-type SiwcAccountStore = Pick<SharedZCodeCredentialStore, "loadMany" | "saveMany" | "deleteIfValues">;
+type SiwcAccountStore = Pick<
+  SharedZCodeCredentialStore,
+  "filePath" | "loadMany" | "saveMany" | "deleteIfValues"
+>;
+
+const ACCOUNTS_LOCK_MAX_WAIT_MS = 45_000;
+
+/**
+ * Serialize shared account-file mutations (migration, index read-merge-write) across the
+ * CLI and the Desktop host; both write the same credentials file with the same lock name.
+ */
+function withSiwcAccountsLock<T>(store: SiwcAccountStore, operation: () => Promise<T>): Promise<T> {
+  return withFileLock(join(dirname(store.filePath), SIWC_ACCOUNTS_LOCK_FILE_NAME), operation, {
+    lockMaxWaitMs: ACCOUNTS_LOCK_MAX_WAIT_MS,
+  });
+}
 
 /**
  * Stable per-account slot key: sha256(sub) prefix. Contains no PII, so it is safe in
@@ -84,26 +102,33 @@ export async function writeSiwcAccountIndex(
   });
 }
 
-/** Insert or update one account descriptor, preserving record order. */
+/**
+ * Insert or update one account descriptor, preserving record order. The whole
+ * read-merge-write runs under the cross-process accounts lock: the Desktop host performs
+ * the same mutation against the shared file, and an unlocked interleaving would drop one
+ * side's addition.
+ */
 export async function upsertSiwcAccountRecord(
   store: SiwcAccountStore,
   record: SiwcStoredAccountRecord,
 ): Promise<readonly SiwcStoredAccountRecord[]> {
   const key = requireValidAccountKey(record.accountKey);
-  const existing = await readSiwcAccountIndex(store);
-  const next: SiwcStoredAccountRecord[] = [];
-  let replaced = false;
-  for (const item of existing) {
-    if (item.accountKey === key) {
-      next.push({ ...record, accountKey: key, addedAt: item.addedAt || record.addedAt });
-      replaced = true;
-    } else {
-      next.push(item);
+  return withSiwcAccountsLock(store, async () => {
+    const existing = await readSiwcAccountIndex(store);
+    const next: SiwcStoredAccountRecord[] = [];
+    let replaced = false;
+    for (const item of existing) {
+      if (item.accountKey === key) {
+        next.push({ ...record, accountKey: key, addedAt: item.addedAt || record.addedAt });
+        replaced = true;
+      } else {
+        next.push(item);
+      }
     }
-  }
-  if (!replaced) next.push({ ...record, accountKey: key });
-  await writeSiwcAccountIndex(store, next);
-  return next;
+    if (!replaced) next.push({ ...record, accountKey: key });
+    await writeSiwcAccountIndex(store, next);
+    return next;
+  });
 }
 
 /** Remove one account descriptor from the index (its slot keys must already be cleared). */
@@ -112,9 +137,11 @@ export async function removeSiwcAccountRecord(
   accountKey: string,
 ): Promise<readonly SiwcStoredAccountRecord[]> {
   const key = requireValidAccountKey(accountKey);
-  const next = (await readSiwcAccountIndex(store)).filter((item) => item.accountKey !== key);
-  await writeSiwcAccountIndex(store, next);
-  return next;
+  return withSiwcAccountsLock(store, async () => {
+    const next = (await readSiwcAccountIndex(store)).filter((item) => item.accountKey !== key);
+    await writeSiwcAccountIndex(store, next);
+    return next;
+  });
 }
 
 interface LegacySiwcCredentials {
@@ -151,11 +178,19 @@ async function loadLegacyCredentials(store: SiwcAccountStore): Promise<LegacySiw
 
 /**
  * One-time migration of the pre-multi-account flat credential keys into the signed-in
- * account's per-account slot. Idempotent: absent legacy keys are a no-op. Concurrent
- * migrations copy identical values, so the outcome converges without coordination.
- * Always call before reading the account index.
+ * account's per-account slot. Idempotent: absent legacy keys are a no-op. The whole
+ * read-copy-write runs under the cross-process accounts lock (the Desktop host migrates
+ * the same file), and an already-initialized destination slot is preserved: a delayed
+ * second migrator replaying consumed legacy tokens over a freshly rotated slot would
+ * otherwise trip refresh_token_reused and invalidate the login.
  */
 export async function migrateLegacySiwcCredentials(
+  store: SiwcAccountStore,
+): Promise<readonly SiwcStoredAccountRecord[]> {
+  return withSiwcAccountsLock(store, () => migrateLegacySiwcCredentialsLocked(store));
+}
+
+async function migrateLegacySiwcCredentialsLocked(
   store: SiwcAccountStore,
 ): Promise<readonly SiwcStoredAccountRecord[]> {
   const legacy = await loadLegacyCredentials(store);
@@ -182,9 +217,12 @@ export async function migrateLegacySiwcCredentials(
     [legacyKeys.providerAuthSource, buildSiwcAccountProviderAuthSourceKey(accountKey)],
   ];
   const mapped: Record<string, string> = {};
-  for (const [legacyKey, accountKeyDestination] of mapping) {
-    const value = legacy.values[legacyKey];
-    if (value !== undefined) mapped[accountKeyDestination] = value;
+  const slotInitialized = await slotHasTokens(store, accountKey);
+  if (!slotInitialized) {
+    for (const [legacyKey, accountKeyDestination] of mapping) {
+      const value = legacy.values[legacyKey];
+      if (value !== undefined) mapped[accountKeyDestination] = value;
+    }
   }
 
   const record = parseAccountRecord({
@@ -200,9 +238,17 @@ export async function migrateLegacySiwcCredentials(
   }
   if (Object.keys(mapped).length > 0) await store.saveMany(mapped);
   // Delete the flat keys only while their values are still the migrated ones, so a login
-  // racing the migration cannot lose freshly written state.
+  // racing the migration cannot lose freshly written state. Deletion happens even when the
+  // slot was preserved: the legacy values are stale by definition in that case.
   await store.deleteIfValues(legacy.values);
   return readSiwcAccountIndex(store);
+}
+
+/** Whether the account slot already holds token material (a later writer owns it). */
+async function slotHasTokens(store: SiwcAccountStore, accountKey: string): Promise<boolean> {
+  const keys = buildSiwcAccountCredentialKeys(accountKey);
+  const values = await store.loadMany([keys.accessToken, keys.refreshToken]);
+  return values[keys.accessToken] !== null || values[keys.refreshToken] !== null;
 }
 
 function readUserJsonField(userInfoRaw: string | null, field: string): string | null {

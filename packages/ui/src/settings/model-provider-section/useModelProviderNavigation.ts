@@ -212,23 +212,31 @@ export function useModelProviderNavigation({
       {
         // ChatGPT plan is an independent identity domain: always listed, never filtered
         // by the zai/bigmodel active-provider family scope, and rendered after those blocks.
+        // Exactly ONE settings entry regardless of the runtime account set (zero accounts
+        // must still route to the sign-in page; N accounts must not create duplicate keys).
+        // The first derived per-account entry supplies status/logo when present.
         id: "chatgpt",
         title: intl.formatMessage({ id: "settings.modelProvider.chatgpt.navigationTitle" }),
-        items: modelProviders
-          .filter((provider) => isChatGptPlanSubscriptionProviderId(provider.providerId))
-          .map((provider) => ({
-            key: createPresetProviderNodeKey(BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan),
-            type: "preset" as const,
-            presetId: BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan,
-            label: intl.formatMessage({ id: "settings.modelProvider.chatgpt.navigationPlan" }),
-            logo: provider.config.logo,
-            provider,
-            displayName: intl.formatMessage({
-              id: "settings.modelProvider.chatgpt.navigationPlan",
-            }),
-            statusProvider: provider,
-            statusActive: provider.executable === true,
-          })),
+        items: [
+          (() => {
+            const provider = modelProviders.find((candidate) =>
+              isChatGptPlanSubscriptionProviderId(candidate.providerId),
+            );
+            return {
+              key: createPresetProviderNodeKey(BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan),
+              type: "preset" as const,
+              presetId: BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan,
+              label: intl.formatMessage({ id: "settings.modelProvider.chatgpt.navigationPlan" }),
+              logo: provider?.config.logo ?? null,
+              provider: provider ?? null,
+              displayName: intl.formatMessage({
+                id: "settings.modelProvider.chatgpt.navigationPlan",
+              }),
+              statusProvider: provider ?? null,
+              statusActive: provider?.executable === true,
+            };
+          })(),
+        ],
       },
       {
         id: "custom",

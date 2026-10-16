@@ -6,6 +6,7 @@ import {
   buildSiwcAccountCredentialKeys,
   buildSiwcAccountRefreshLockFileName,
   parseChatGptPlanAccountProviderId,
+  SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY,
   type SiwcStoredAccountRecord,
 } from "@zcode/shared";
 import type { SharedZCodeCredentialStore } from "../shared-credentials.js";
@@ -113,18 +114,59 @@ export function createSiwcAccountScope(input: {
     .digest("hex");
 }
 
-/** All signed-in accounts with their consent state; readers migrate legacy keys first. */
+/**
+ * All signed-in accounts with their consent state. Deliberately READ-ONLY: callers run it
+ * from registry refresh paths subscribed to credential changes, where a migration write
+ * would deadlock (the credential store awaits those listeners). Migration runs at process
+ * startup instead. Presence matches the host's signed-in criterion — an access token OR a
+ * refresh token (a login may persist no refresh token), so an access-only account stays
+ * executable in worker registries exactly like in the Desktop picker.
+ */
 export async function listSiwcPlanAccounts(
-  credentialStore: Pick<SharedZCodeCredentialStore, "loadMany" | "saveMany" | "deleteIfValues">,
+  credentialStore: Pick<SharedZCodeCredentialStore, "loadMany">,
 ): Promise<readonly (SiwcStoredAccountRecord & { readonly entitled: boolean })[]> {
-  const records = await migrateLegacySiwcCredentials(credentialStore);
+  const rawIndex = await credentialStore.loadMany([SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY]);
+  const records = parseSiwcAccountIndex(rawIndex[SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY]);
   const result: (SiwcStoredAccountRecord & { readonly entitled: boolean })[] = [];
   for (const record of records) {
-    const snapshot = await loadSiwcCredentialSnapshot(credentialStore, record.accountKey);
-    if (!snapshot) continue;
-    result.push({ ...record, entitled: isSiwcPlanUsageEntitled(snapshot.scopes) });
+    const keys = buildSiwcAccountCredentialKeys(record.accountKey);
+    const values = await credentialStore.loadMany([
+      keys.accessToken,
+      keys.refreshToken,
+      keys.scopes,
+    ]);
+    const present =
+      values[keys.accessToken]?.trim() !== undefined ||
+      values[keys.refreshToken]?.trim() !== undefined;
+    if (!present) continue;
+    result.push({
+      ...record,
+      entitled: isSiwcPlanUsageEntitled(parseSiwcScopes(values[keys.scopes] ?? undefined)),
+    });
   }
   return result;
+}
+
+function parseSiwcAccountIndex(raw: string | null | undefined): readonly SiwcStoredAccountRecord[] {
+  if (!raw?.trim()) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((entry) => (isSiwcAccountRecord(entry) ? [entry] : []));
+  } catch {
+    return [];
+  }
+}
+
+function isSiwcAccountRecord(value: unknown): value is SiwcStoredAccountRecord {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Partial<SiwcStoredAccountRecord>;
+  return (
+    typeof candidate.accountKey === "string" &&
+    /^[a-f0-9]{16}$/.test(candidate.accountKey) &&
+    typeof candidate.sub === "string" &&
+    candidate.sub.trim() !== ""
+  );
 }
 
 /**
@@ -422,7 +464,10 @@ export async function clearSiwcTokenCredentials(
 
 /** Entitlement gate for one account: signed-in identity plus the plan-usage scope consent. */
 export async function isSiwcPlanEntitled(
-  credentialStore: Pick<SharedZCodeCredentialStore, "loadMany" | "saveMany" | "deleteIfValues">,
+  credentialStore: Pick<
+    SharedZCodeCredentialStore,
+    "filePath" | "loadMany" | "saveMany" | "deleteIfValues"
+  >,
   accountKey: string,
 ): Promise<boolean> {
   await migrateLegacySiwcCredentials(credentialStore);

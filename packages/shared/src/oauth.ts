@@ -295,6 +295,13 @@ export function buildSiwcAccountRefreshLockFileName(accountKey: string): string 
   return `siwc-chatgpt.${requireValidSiwcAccountKey(accountKey)}.refresh`;
 }
 
+/**
+ * Cross-process lock guarding shared SIWC account-file mutations (legacy migration and the
+ * account-index read-merge-write). Host and CLI must use the same name; the lock file lives
+ * next to the shared credentials file in both processes.
+ */
+export const SIWC_ACCOUNTS_LOCK_FILE_NAME = "siwc-chatgpt.accounts" as const;
+
 /** Pre-multi-account flat credential keys; read-only input for the one-time migration. */
 export const SIWC_LEGACY_CREDENTIAL_KEYS = {
   clientId: "oauth:chatgpt:client_id",

@@ -262,15 +262,24 @@ export async function readStandaloneAccountProviderConfigSnapshot(
  * registry (template rule + model rules cloned per signed-in account; base entry dropped).
  */
 export function createStandaloneChatGptPlanConfigSourceWrapper(
-  credentialStore: Pick<SharedZCodeCredentialStore, "loadMany" | "saveMany" | "deleteIfValues">,
+  credentialStore: Pick<SharedZCodeCredentialStore, "loadMany">,
 ): (source: ProviderSource<ProviderConfigSnapshot>) => ProviderSource<ProviderConfigSnapshot> {
   return (source) =>
     createDerivedChatGptPlanConfigSource(source, async () => {
       const accounts = await listSiwcPlanAccounts(credentialStore);
-      return accounts.map((account) => ({
-        accountKey: account.accountKey,
-        providerName: account.email ?? account.name ?? account.accountKey,
-      }));
+      return accounts.map((account) => {
+        const providerName = account.email ?? account.name ?? account.accountKey;
+        return {
+          accountKey: account.accountKey,
+          providerName,
+          // Presentation digest (no PII in the revision): a renamed account must republish
+          // the derived snapshot even when the account set itself is unchanged.
+          revisionKey: createHash("sha256") // codeql[js/insufficient-password-hash]
+            .update(providerName, "utf-8")
+            .digest("hex")
+            .slice(0, 12),
+        };
+      });
     });
 }
 

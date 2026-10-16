@@ -22,6 +22,7 @@ import {
 } from "@zcode/provider-node";
 import {
   createSharedZCodeCredentialStore,
+  migrateLegacySiwcCredentials,
   type SharedZCodeCredentialStore,
 } from "@zcode/adapters/auth";
 import { readLegacyCliPersonalProviderConfig } from "./legacy-cli-personal-provider-config-importer.js";
@@ -61,9 +62,15 @@ export async function startProcessProviderRegistryRuntime(
   // account snapshots whose basedOnZCodeBuiltinRevision must match this config source. Workers
   // enumerate the shared credential file read-only through the same wrapper (the local agent
   // runs on the same machine and user as the host that owns the SIWC credentials).
-  const chatGptPlanConfigStore = credentialStore ?? createSharedZCodeCredentialStore({
-    env: { ...env },
-  });
+  const chatGptPlanConfigStore =
+    credentialStore ?? createSharedZCodeCredentialStore({ env: { ...env } });
+  // Migrate legacy flat SIWC credentials BEFORE the registry starts and before the credential
+  // change subscription below is installed: the derived reads stay write-free afterwards, so
+  // a listener-triggered account refresh can never wait on a migration write that is itself
+  // waiting for that listener (the credential store awaits its listeners on save). A failing
+  // migration must not block startup: the derived source degrades to no chatgpt entries and
+  // the fail-closed account overlay keeps the registry bootable.
+  await migrateLegacySiwcCredentials(chatGptPlanConfigStore).catch(() => undefined);
   let standaloneAccount: AccountProviderService | undefined;
   const bundledFile = options.standalone
     ? env[ZCODE_BUILTIN_PROVIDER_BUNDLED_CONFIG_FILE_ENV]?.trim()
