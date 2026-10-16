@@ -54,6 +54,8 @@ export interface PersonalProviderCreation {
 
 export interface CreatePersonalProviderInput {
   readonly templateId?: ProviderTemplateId;
+  /** Explicit id for domain-managed providers (e.g. `acp:opencode`); defaults to a generated id. */
+  readonly providerId?: ProviderId;
   readonly providerName?: string;
   readonly locale?: ProviderTemplateLocale;
   readonly initialConfig?: ProviderConfig;
@@ -244,7 +246,18 @@ export class ProviderConfigService implements ProviderSource<ProviderConfigSnaps
     let createdProviderId: ProviderId | undefined;
     await this.#updatePersonal((current) => {
       const occupied = new Set([...zcodeBuiltin.providers.keys(), ...current.providers.keys()]);
-      const providerId = nextPersonalProviderId(occupied, templateId);
+      const requestedProviderId = input.providerId?.trim();
+      if (requestedProviderId) {
+        if (occupied.has(requestedProviderId)) {
+          throw new Error(`Provider ID is already in use: ${requestedProviderId}`);
+        }
+        if (/\s/.test(requestedProviderId)) {
+          throw new Error(`Provider ID must not contain whitespace: ${input.providerId}`);
+        }
+      }
+      const providerId = requestedProviderId
+        ? requestedProviderId
+        : nextPersonalProviderId(occupied, templateId);
       createdProviderId = providerId;
       const effectiveProviders = resolvePersonalProviderBaselines(zcodeBuiltin, current.providers);
       const label = nextPersonalProviderLabel(
