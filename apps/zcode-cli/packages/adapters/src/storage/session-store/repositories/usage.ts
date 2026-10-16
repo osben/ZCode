@@ -345,8 +345,13 @@ async function pruneUsageIfDue(db: DatabaseSync): Promise<void> {
     return;
   }
 
-  await pruneUsage(db);
   lastAutomaticUsagePruneAt.set(db, now);
+  try {
+    await pruneUsage(db);
+  } catch (error) {
+    lastAutomaticUsagePruneAt.delete(db);
+    throw error;
+  }
 }
 
 export async function pruneUsage(
