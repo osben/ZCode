@@ -14,9 +14,11 @@ import {
   ChannelServer,
   ChannelClient,
   LoggingChannelServer,
+  ProxyChannel,
   type ISocket,
 } from "@zcode/rpc";
 import type { TopicResourcePeers } from "@zcode/services/node";
+import { createWindowHostControllerRuntime } from "@zcode/services/window-controller";
 import { TOPIC_RESOURCE_RELAY_CHANNEL } from "@zcode/shared";
 import {
   ServiceCollection,
@@ -28,6 +30,8 @@ import {
   ITerminalService,
   IBotsService,
   IProviderProvisioningTargetService,
+  IZCodeTaskService,
+  IWindowControllerService,
 } from "@zcode/services";
 import {
   botProviders,
@@ -128,7 +132,33 @@ function setupChannelServer(
     });
   }
   services.exposeOnChannelServer(server, overrides);
+  const taskService = services.getOptional(IZCodeTaskService);
+  // Standalone Web uses the same list contract as Desktop, but has no window Host
+  // to register it. Keep this projection and its passive observers socket-owned.
+  const controller =
+    clientMode === "web-remote-replayable" &&
+    taskService &&
+    !services.getOptional(IWindowControllerService)
+      ? createWindowHostControllerRuntime({
+          createId: randomUUID,
+          resolveSource: (scope) => ({
+            scope: { kind: "local", ...scope },
+            taskService,
+            agentService,
+            sourceAvailability: "online",
+          }),
+          onSourceError: (_scope, operation, error) =>
+            log("[standalone-controller]", operation, error),
+        })
+      : undefined;
+  if (controller) {
+    server.registerChannel(
+      IWindowControllerService.channelName,
+      ProxyChannel.fromService(controller.service),
+    );
+  }
   socket.onClose(() => {
+    controller?.dispose();
     peer?.dispose();
     reverseClient?.dispose();
     void connectionScope?.dispose();

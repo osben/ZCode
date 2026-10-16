@@ -10,7 +10,7 @@ import {
   CONTROLLER_TASKS_INDEX_TOPIC,
   type SessionsIndexTopicWireCandidate,
 } from "@zcode/shared/zcode-protocol-v4";
-import { createWindowHostControllerRuntime } from "../src/host/windowHostControllerService.js";
+import { createWindowHostControllerRuntime } from "@zcode/services/window-controller";
 
 function meta(params: {
   taskId: string;

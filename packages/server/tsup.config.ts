@@ -73,6 +73,7 @@ export default defineConfig({
     "@zcode/rpc",
     "@zcode/services",
     "@zcode/services/node",
+    "@zcode/services/window-controller",
     "@zcode/client",
   ],
   // ssh2 / node-pty contain .node native addons and cannot be processed by esbuild.

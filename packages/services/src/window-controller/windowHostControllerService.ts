@@ -9,14 +9,16 @@ import type {
 import { matchesTaskListMembershipKind } from "@zcode/shared/zcode-protocol-v4";
 import type {
   IWindowControllerService,
-  IZCodeAgentService,
-  IZCodeTaskService,
   WindowHostControllerFrame,
   WindowHostControllerTaskListItem,
   WindowHostControllerTaskListResult,
+} from "./windowController.js";
+import type { IZCodeAgentService } from "../zcode-agent/zcodeAgent.js";
+import type { IZCodeTaskService } from "../session/zcodeTaskService.js";
+import type {
   ZCodeTaskListQuery,
   ZCodeTaskListWorkspaceScope,
-} from "@zcode/services";
+} from "../session/zcodeTaskListTypes.js";
 import {
   createWindowHostControllerProjection,
   type WindowHostControllerMutation,
