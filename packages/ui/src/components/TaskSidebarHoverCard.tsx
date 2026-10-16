@@ -35,8 +35,10 @@ export function TaskSidebarHoverCard({
   const status = resolveStatus(task, activity, attentionLabel, intl);
   const modelAndEffort = resolveModelAndEffort(task, intl);
   const changeParts = formatGroupedTaskHoverChangeParts(getTaskChangeSummary(task));
-  const isBranchMerged = branchMergeStatus?.state === "merged";
   const branchLabel = task.executionWorktree?.branchName ?? branchMergeStatus?.headRef;
+  const isBranchMerged =
+    branchMergeStatus?.state === "merged" &&
+    (!task.executionWorktree?.branchName || branchMergeStatus.headRef === branchLabel);
   const lastActivity = activity?.lastActivityAt ?? task.updatedAt;
 
   return (
