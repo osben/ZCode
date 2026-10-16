@@ -1,7 +1,5 @@
 # Embedded Search Native Build Spec
 
-规划文档：[tgrep 索引搜索与用户开关实施计划](../plan/2026-10-10-tgrep-indexed-agent-search.md)及其规范契约 [tgrep 索引化 Agent 搜索契约](tgrep-indexed-agent-search.md)。两者均未实现，不改变本文现有 bfs/ugrep 开关与 Session 生命周期契约。
-
 ## 目标
 
 ZCode 的 Bash embedded search 分支最终需要消费随发行包分发的原生搜索程序，而不是依赖用户机器预装的 `find`、`grep`、`rg` 或通过 Node 子进程再次转发到系统命令。
