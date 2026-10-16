@@ -49,7 +49,7 @@ Subagent Runtime
 
 All three callers ultimately only read `useEmbeddedSearchBranch`.
 
-The function is judged to be at `apps/zcode-cli/packages/core/src/embedded-search/capability.ts`; the three call sites are at `runtime/methods/embedded-search-branch.ts`, `tool/executor/call-runner.ts`, and `runtime/methods/subagent.ts`.
+The function is located at `apps/zcode-cli/packages/core/src/embedded-search/capability.ts`; the three call sites are at `runtime/methods/embedded-search-branch.ts`, `tool/executor/call-runner.ts`, and `runtime/methods/subagent.ts`.
 
 Existing tests require retaining some Provider context, on the grounds that branching by model may occur in the future; the historical design also explicitly states first-party currently enabled uniformly, without distinguishing by provider, source, or variant. These contents prove that Provider Connection is reserved information, not a current behavior dependency.
 
