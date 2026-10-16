@@ -4,11 +4,19 @@ import net, { type AddressInfo, type Socket } from "node:net";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { rootCertificates } from "node:tls";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { createNodeHttpClientAdapter } from "../src/http/index.js";
 import { createNetworkProxyFetch } from "../src/network/proxy-fetch.js";
-import { TEST_TLS_CERT, TEST_TLS_KEY } from "./fixtures/tls-localhost.js";
+import { generateTestTlsCertificate } from "./fixtures/tls-localhost.js";
+
+let upstreamIdentity: Awaited<ReturnType<typeof generateTestTlsCertificate>>;
+let proxyIdentity: Awaited<ReturnType<typeof generateTestTlsCertificate>>;
+beforeAll(async () => {
+  [upstreamIdentity, proxyIdentity] = await Promise.all([
+    generateTestTlsCertificate(),
+    generateTestTlsCertificate(),
+  ]);
+});
 
 describe.each(["fetch", "HttpClientPort"] as const)("%s explicit TLS CA", (client) => {
   it.each(["direct", "http-proxy", "https-proxy"] as const)(
@@ -17,17 +25,13 @@ describe.each(["fetch", "HttpClientPort"] as const)("%s explicit TLS CA", (clien
       const directory = await mkdtemp(join(tmpdir(), "zcode-tls-ca-"));
       const caCertFile = join(directory, "ca.pem");
       const unrelatedCaFile = join(directory, "unrelated-ca.pem");
+      const upstreamOnlyCaFile = join(directory, "upstream-only-ca.pem");
       const sockets = new Set<Socket>();
-      const upstream = https.createServer(
-        { key: TEST_TLS_KEY, cert: TEST_TLS_CERT },
-        (_req, res) => {
-          res.end("trusted");
-        },
-      );
+      const upstream = https.createServer(upstreamIdentity, (_req, res) => {
+        res.end("trusted");
+      });
       const proxy =
-        route === "https-proxy"
-          ? https.createServer({ key: TEST_TLS_KEY, cert: TEST_TLS_CERT })
-          : http.createServer();
+        route === "https-proxy" ? https.createServer(proxyIdentity) : http.createServer();
       const connectTargets: string[] = [];
       proxy.on("connect", (request, downstream, head) => {
         connectTargets.push(request.url ?? "");
@@ -48,8 +52,9 @@ describe.each(["fetch", "HttpClientPort"] as const)("%s explicit TLS CA", (clien
       }
 
       try {
-        await writeFile(caCertFile, TEST_TLS_CERT);
-        await writeFile(unrelatedCaFile, rootCertificates[0]!);
+        await writeFile(caCertFile, `${upstreamIdentity.cert}\n${proxyIdentity.cert}`);
+        await writeFile(unrelatedCaFile, proxyIdentity.cert);
+        await writeFile(upstreamOnlyCaFile, upstreamIdentity.cert);
         const upstreamPort = await listen(upstream);
         const proxyPort = route === "direct" ? undefined : await listen(proxy);
         const proxyUrl = proxyPort
@@ -73,9 +78,16 @@ describe.each(["fetch", "HttpClientPort"] as const)("%s explicit TLS CA", (clien
         };
 
         await expect(request(caCertFile)).resolves.toBe("trusted");
+        const successfulConnects = connectTargets.length;
         await expect(request(unrelatedCaFile)).rejects.toThrow(/self[- ]signed certificate/i);
         if (route !== "direct") {
-          expect(connectTargets).toContain(`127.0.0.1:${upstreamPort}`);
+          expect(connectTargets).toHaveLength(successfulConnects + 1);
+          expect(connectTargets.at(-1)).toBe(`127.0.0.1:${upstreamPort}`);
+        }
+        if (route === "https-proxy") {
+          const connectsBeforeProxyRejection = connectTargets.length;
+          await expect(request(upstreamOnlyCaFile)).rejects.toThrow(/self[- ]signed certificate/i);
+          expect(connectTargets).toHaveLength(connectsBeforeProxyRejection);
         }
       } finally {
         for (const socket of sockets) socket.destroy();

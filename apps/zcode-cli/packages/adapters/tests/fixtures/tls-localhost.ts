@@ -1,51 +1,37 @@
-// Public test-only key and self-signed certificate, never used outside loopback tests.
-export const TEST_TLS_KEY = `-----BEGIN PRIVATE KEY-----
-MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDA6yWgEP/5j2g6
-SvfP5d+ervsJG+0MWqqwX/xPho1yClQu1NR1OzxWyv/Jh9P0lrkxKio0/DKaTH+C
-bQckx6m2icKGTDm4SCngPDYJAwpbbseayIscd5jw41UQOQOOuvESrrqZbIwAA0Mc
-9HsjbuTaH47yO3RDH/n5HJCVnzizpOVSZHyqHBE4eDnddqdXxGRnQ+aRYzoZxufL
-C1Bf6AIiRH44re/NX9J6XvTwHhGM3qTq4b0M6HYkRrhVwqoXR2QWuLeNAosKVRMG
-6+bL+fwuJ8zOoMeQ7uQYhSSXpKNpuxchEsjRmAoMjpjgah/oNLGazyREFNbK+NdC
-1/j+Ei6rAgMBAAECggEALJVLNTIojdpz6mDP40ZLBweGMUU4Y44Ce087Zn+AabX0
-XXxG+y6s05wHP+I5fAFnG/MUHPmZkioSn6glqfzQfkRY5aNxBWL79nvDuxJuTtIL
-o/wrlfEXsbe/vUeHyHDwbHJf4jwBILGgTW08leQ3VCdN6DIQPMEDimvtB/7rYixX
-GkDyxLaKq7Xg2WgRjgh7GetlunRwQjLwTKvx/7b+OWjfHFnJa+MllSH00HD28DsH
-n5TUAKRvaEdcEA8sU/dEBQ58D3kdL2KfEbMh5j57E9m7p3srKG2IzZg4UM87wmzQ
-fYWANYyh5TF7VL4/qRfmHFEzisN8ebTZY1dTlA3+sQKBgQDnv6uUSorMGrr5No1+
-LOL4/EhsaHP1SQue2NI3BPrs72c+n1RIz2wuZqgAMpc0XR1m1fLYZgT7hHWNgw1Y
-5cXDDs1L6kl0iOsBBq3HN3s82ICqZ0CuiUhMFgSOONPFNoAPU5pNNj8k2QdGDkGw
-X34vC2m68iKL5zhcR92Et8gbuwKBgQDVG0DJyP4tFa8uFod7DzXQBBzKONqrU/X8
-8yGz61fOu6GDj6IEREQOW0WKK6SsiYi9PS3p28Ll75w44zOKQSxwikGfTtT3XL9H
-FBdsRQ3swUi5ZoqsYKyQo1TJGEwFG4PMTs9xgbENZhyvFKBjLCCYrqCH8KDtY5k2
-u4NzuAJx0QKBgQC2dGvUg1+FU+IyxOVfGl3UI2Otngr1aX3xoMjYMl6P3egOIIjO
-Digg3AeWqD3tJwY36WeZQbDYiK+4Kx5+B+DMMkIla55LVmSW2ThF6QNooxehkUsW
-XtUBui/5/PmVgdQOvQZ1lajfDNMyL5U+E+CXj0e9vFbAiNkRpi7cB4lPcwKBgQCn
-1hn1ki3VFjHsy2OSYM1R8hs2jQZzTuH6gQX3LI/wSsgO1G2WjKlI4UtoYa0FEiC2
-YduqRiE+dLMF/rKV3XSBgfHi5PRHiS1Abqtv4wbvgt6i3gazckQWefyJkHA2yY/I
-tf0c+TaXReerYERdNuDJPydBSRuFOx7tA0upNLAAMQKBgHj5iiaxrkJlyQQm8NwV
-t7kOEnt5oEyaZJGpB0vsMObQjAsVGY51N6fI2DpilxEPEjgELjaUIGGr0/7n1JhU
-ZT2zM25H/hNOiBv3qFk5mb1uVxupwfX9BuKa26ZmXd/0XvNGg2VOuTLbcK5pzyjl
-4Cwh/XnIH2WLhlGmYVHdsqXE
------END PRIVATE KEY-----
-`;
+import { generateKeyPair, randomBytes } from "node:crypto";
+import { promisify } from "node:util";
+import forge from "node-forge";
 
-export const TEST_TLS_CERT = `-----BEGIN CERTIFICATE-----
-MIIDBjCCAe6gAwIBAgIUWsSQuSqF8LeHI+0FUZEGgqh8yg8wDQYJKoZIhvcNAQEL
-BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MCAXDTI2MTAxNjIxNDcyNloYDzIxMjYw
-OTIyMjE0NzI2WjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwggEiMA0GCSqGSIb3DQEB
-AQUAA4IBDwAwggEKAoIBAQDA6yWgEP/5j2g6SvfP5d+ervsJG+0MWqqwX/xPho1y
-ClQu1NR1OzxWyv/Jh9P0lrkxKio0/DKaTH+CbQckx6m2icKGTDm4SCngPDYJAwpb
-bseayIscd5jw41UQOQOOuvESrrqZbIwAA0Mc9HsjbuTaH47yO3RDH/n5HJCVnziz
-pOVSZHyqHBE4eDnddqdXxGRnQ+aRYzoZxufLC1Bf6AIiRH44re/NX9J6XvTwHhGM
-3qTq4b0M6HYkRrhVwqoXR2QWuLeNAosKVRMG6+bL+fwuJ8zOoMeQ7uQYhSSXpKNp
-uxchEsjRmAoMjpjgah/oNLGazyREFNbK+NdC1/j+Ei6rAgMBAAGjTjBMMB0GA1Ud
-DgQWBBTaLvqsDaS3MibM8M++6LT0SPlfrTAaBgNVHREEEzARgglsb2NhbGhvc3SH
-BH8AAAEwDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEABm6kN1KQ
-Ip8M6R5zuitTsd8rb67bHWSDFqij+wE6V051LWDdp7P3vggnn3SgUQ6h4le0ftTo
-F9uOnQG2F7QgcYfff3R0NLdE17qcM0fwimJPr+eVX9Ix4MXsBsEBsHpBIIfVHSB2
-Iarfc9GU6b6B9aeWph46smmsVEChCK7SK7/i8ihmuMymQGr9MpnmddwarzX6b1Nz
-zx/suKrpJBgWKAnfq/0+oQUoBXIVnEYTERtNKH1xsYekci1kocCSSTj90nbR89tr
-zkM2jDWc+QSzP8IKGSBWB+rC3uRN7vKx+fo+tSDFdcpE7Tsqk+Yt0dRkmCBxoddg
-xptfIikBDMsMpQ==
------END CERTIFICATE-----
-`;
+const generateKeyPairAsync = promisify(generateKeyPair);
+
+export async function generateTestTlsCertificate(): Promise<{ key: string; cert: string }> {
+  const { privateKey, publicKey } = await generateKeyPairAsync("rsa", {
+    modulusLength: 2048,
+    privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    publicKeyEncoding: { type: "spki", format: "pem" },
+  });
+  const cert = forge.pki.createCertificate();
+  cert.publicKey = forge.pki.publicKeyFromPem(publicKey);
+  cert.serialNumber = `01${randomBytes(15).toString("hex")}`;
+  cert.validity.notBefore = new Date(Date.now() - 24 * 60 * 60 * 1_000);
+  cert.validity.notAfter = new Date(Date.now() + 7 * 24 * 60 * 60 * 1_000);
+  const attributes = [
+    { name: "commonName", value: `zcode-test-${randomBytes(8).toString("hex")}` },
+  ];
+  cert.setSubject(attributes);
+  cert.setIssuer(attributes);
+  cert.setExtensions([
+    { name: "basicConstraints", cA: true },
+    { name: "keyUsage", keyCertSign: true, digitalSignature: true, keyEncipherment: true },
+    { name: "extKeyUsage", serverAuth: true },
+    {
+      name: "subjectAltName",
+      altNames: [
+        { type: 2, value: "localhost" },
+        { type: 7, ip: "127.0.0.1" },
+      ],
+    },
+  ]);
+  cert.sign(forge.pki.privateKeyFromPem(privateKey), forge.md.sha256.create());
+  return { key: privateKey, cert: forge.pki.certificateToPem(cert) };
+}

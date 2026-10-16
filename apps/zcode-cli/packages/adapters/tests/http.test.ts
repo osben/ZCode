@@ -18,7 +18,7 @@ import {
   resolveTlsCaCertFile,
 } from "../src/network/http-config.js";
 import { createNetworkProxyFetch } from "../src/network/proxy-fetch.js";
-import { TEST_TLS_CERT } from "./fixtures/tls-localhost.js";
+import { generateTestTlsCertificate } from "./fixtures/tls-localhost.js";
 
 describe("NodeHttpClientAdapter", () => {
   afterEach(() => {
@@ -278,7 +278,8 @@ describe("NodeHttpClientAdapter", () => {
   it("loads CA certificates from custom TLS env files", async () => {
     const directory = await mkdtemp(join(tmpdir(), "zcode-http-ca-"));
     const certPath = join(directory, "ca.pem");
-    const pem = `${TEST_TLS_CERT}\n${rootCertificates[0]}`;
+    const { cert } = await generateTestTlsCertificate();
+    const pem = `${cert}\n${rootCertificates[0]}`;
 
     try {
       await writeFile(certPath, pem, "utf8");

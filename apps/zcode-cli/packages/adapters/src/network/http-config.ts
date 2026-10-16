@@ -139,6 +139,38 @@ export async function loadTlsCaCertificates(
   return Buffer.concat([Buffer.from(`${rootCertificates.join("\n")}\n`), customCa]);
 }
 
+export function createTlsCaLoader(options: NetworkTlsOptions) {
+  let cached: Promise<Buffer | undefined> | undefined;
+  return (signal?: AbortSignal | null): Promise<Buffer | undefined> => {
+    signal?.throwIfAborted();
+    const loading = cached ??= loadTlsCaCertificates(options).catch((error) => {
+      cached = undefined;
+      throw error;
+    });
+    if (!signal) return loading;
+
+    // A caller can stop waiting without aborting the read shared by other requests.
+    return new Promise((resolve, reject) => {
+      const onAbort = () => {
+        signal.removeEventListener("abort", onAbort);
+        reject(signal.reason);
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      if (signal.aborted) onAbort();
+      loading.then(
+        (certificates) => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(certificates);
+        },
+        (error) => {
+          signal.removeEventListener("abort", onAbort);
+          reject(error);
+        },
+      );
+    });
+  };
+}
+
 function readExplicitNoProxyValue(options: NetworkProxyOptions): string | undefined {
   return (
     normalizePathLike(options.noProxy) ??
