@@ -72,6 +72,16 @@ describe("model provider navigation i18n", () => {
     const { useModelProviderNavigation } =
       await import("@/settings/model-provider-section/useModelProviderNavigation.js");
     const provider = createCustomProvider();
+    const inactiveChatGptAccount = {
+      ...createCustomProvider(),
+      providerId: `account:chatgpt-plan:${"a".repeat(16)}`,
+      executable: false,
+    };
+    const activeChatGptAccount = {
+      ...createCustomProvider(),
+      providerId: `account:chatgpt-plan:${"b".repeat(16)}`,
+      executable: true,
+    };
     const codingPlanEntitlements = {};
     const commonOptions = {
       presetProviders: [],
@@ -106,5 +116,28 @@ describe("model provider navigation i18n", () => {
     expect(enCustomGroup?.title).toBe("Custom Providers");
     expect(enCustomGroup?.items).toHaveLength(1);
     expect(enCustomGroup?.items[0]?.type).toBe("custom");
+    renderStart();
+    const accountResult = useModelProviderNavigation({
+      ...commonOptions,
+      modelProviders: [inactiveChatGptAccount, activeChatGptAccount],
+      intl: createIntl({}),
+    });
+    const chatGptPlanItem = accountResult.navigationGroups
+      .find((group) => group.id === "chatgpt")
+      ?.items.find((item) => item.presetId === "account:chatgpt-plan");
+    expect(chatGptPlanItem?.statusProvider?.providerId).toBe(activeChatGptAccount.providerId);
+    expect(chatGptPlanItem?.statusActive).toBe(true);
+
+    renderStart();
+    const identityOnlyResult = useModelProviderNavigation({
+      ...commonOptions,
+      modelProviders: [inactiveChatGptAccount],
+      intl: createIntl({}),
+    });
+    const identityOnlyItem = identityOnlyResult.navigationGroups
+      .find((group) => group.id === "chatgpt")
+      ?.items.find((item) => item.presetId === "account:chatgpt-plan");
+    expect(identityOnlyItem?.statusProvider?.providerId).toBe(inactiveChatGptAccount.providerId);
+    expect(identityOnlyItem?.statusActive).toBe(false);
   });
 });

@@ -5,6 +5,7 @@ import {
   buildSiwcAccountCredentialKeys,
   buildSiwcAccountProviderAuthSourceKey,
   buildSiwcAccountProviderIdentityKey,
+  buildSiwcAccountRefreshLockFileName,
   isChatGptPlanAccountKey,
   SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY,
   SIWC_ACCOUNTS_LOCK_FILE_NAME,
@@ -75,7 +76,7 @@ function parseAccountRecord(input: unknown): SiwcStoredAccountRecord | null {
 
 /** Read and validate the persisted account index; malformed entries are dropped. */
 export async function readSiwcAccountIndex(
-  store: SiwcAccountStore,
+  store: Pick<SharedZCodeCredentialStore, "loadMany">,
 ): Promise<readonly SiwcStoredAccountRecord[]> {
   const raw = await store.loadMany([SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY]);
   const value = raw[SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY];
@@ -179,15 +180,50 @@ async function loadLegacyCredentials(store: SiwcAccountStore): Promise<LegacySiw
 /**
  * One-time migration of the pre-multi-account flat credential keys into the signed-in
  * account's per-account slot. Idempotent: absent legacy keys are a no-op. The whole
- * read-copy-write runs under the cross-process accounts lock (the Desktop host migrates
- * the same file), and an already-initialized destination slot is preserved: a delayed
- * second migrator replaying consumed legacy tokens over a freshly rotated slot would
- * otherwise trip refresh_token_reused and invalidate the login.
+ * read-copy-write runs under the cross-process locks (the Desktop host migrates the same
+ * file), and an already-initialized destination slot is preserved: a delayed second
+ * migrator replaying consumed legacy tokens over a freshly rotated slot would otherwise
+ * trip refresh_token_reused and invalidate the login.
+ *
+ * Lock order (shared with the Desktop host): the per-account refresh lock FIRST, then the
+ * accounts lock. The migration writes the destination slot, so it must serialize with
+ * login/refresh slot writes; otherwise a login that replaced the slot without its index
+ * record committed yet could be overwritten by the legacy bundle here.
  */
 export async function migrateLegacySiwcCredentials(
   store: SiwcAccountStore,
 ): Promise<readonly SiwcStoredAccountRecord[]> {
-  return withSiwcAccountsLock(store, () => migrateLegacySiwcCredentialsLocked(store));
+  const legacyKeys = SIWC_LEGACY_CREDENTIAL_KEYS;
+  const triggers = await store.loadMany([
+    legacyKeys.clientId,
+    legacyKeys.refreshToken,
+    legacyKeys.userInfo,
+  ]);
+  if (
+    !triggers[legacyKeys.clientId]?.trim() &&
+    !triggers[legacyKeys.refreshToken]?.trim() &&
+    triggers[legacyKeys.userInfo] === null
+  ) {
+    return readSiwcAccountIndex(store);
+  }
+  const migrate = () =>
+    withSiwcAccountsLock(store, () => migrateLegacySiwcCredentialsLocked(store));
+  // Same account-key formula the migration itself uses, so the refresh lock covers the exact
+  // slot the copy would land in. Without a derivable key the migration is a no-op: keep the
+  // accounts-lock-only path.
+  const candidateSub =
+    readUserJsonField(triggers[legacyKeys.userInfo], "sub")?.trim() ||
+    triggers[legacyKeys.clientId]?.trim() ||
+    "";
+  if (!candidateSub) return migrate();
+  return withFileLock(
+    join(
+      dirname(store.filePath),
+      buildSiwcAccountRefreshLockFileName(createSiwcAccountKey(candidateSub)),
+    ),
+    migrate,
+    { lockMaxWaitMs: ACCOUNTS_LOCK_MAX_WAIT_MS },
+  );
 }
 
 async function migrateLegacySiwcCredentialsLocked(
@@ -216,25 +252,30 @@ async function migrateLegacySiwcCredentialsLocked(
     [legacyKeys.providerIdentity, buildSiwcAccountProviderIdentityKey(accountKey)],
     [legacyKeys.providerAuthSource, buildSiwcAccountProviderAuthSourceKey(accountKey)],
   ];
+  // Commit protocol (interruption-safe, shared with the Desktop host): the index record is
+  // the commit marker. An absent record means the migration never completed (the host saves
+  // keys sequentially and may stop mid-bundle), so the full legacy bundle is re-copied —
+  // including over a partial slot copy, whose values come from the same source. A record
+  // present means the slot was fully migrated or written by a later login/refresh; replaying
+  // consumed legacy values over it would corrupt the token family, so only the legacy keys go.
   const mapped: Record<string, string> = {};
-  const slotInitialized = await slotHasTokens(store, accountKey);
-  if (!slotInitialized) {
+  const existing = await readSiwcAccountIndex(store);
+  const indexed = existing.some((item) => item.accountKey === accountKey);
+  if (!indexed) {
     for (const [legacyKey, accountKeyDestination] of mapping) {
       const value = legacy.values[legacyKey];
       if (value !== undefined) mapped[accountKeyDestination] = value;
     }
-  }
-
-  const record = parseAccountRecord({
-    accountKey,
-    sub: sub.trim(),
-    email: readUserJsonField(legacy.userInfo, "email"),
-    name: readUserJsonField(legacy.userInfo, "name"),
-    addedAt: new Date().toISOString(),
-  });
-  const existing = await readSiwcAccountIndex(store);
-  if (record && !existing.some((item) => item.accountKey === accountKey)) {
-    mapped[SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY] = JSON.stringify([...existing, record]);
+    const record = parseAccountRecord({
+      accountKey,
+      sub: sub.trim(),
+      email: readUserJsonField(legacy.userInfo, "email"),
+      name: readUserJsonField(legacy.userInfo, "name"),
+      addedAt: new Date().toISOString(),
+    });
+    if (record) {
+      mapped[SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY] = JSON.stringify([...existing, record]);
+    }
   }
   if (Object.keys(mapped).length > 0) await store.saveMany(mapped);
   // Delete the flat keys only while their values are still the migrated ones, so a login
@@ -244,12 +285,6 @@ async function migrateLegacySiwcCredentialsLocked(
   return readSiwcAccountIndex(store);
 }
 
-/** Whether the account slot already holds token material (a later writer owns it). */
-async function slotHasTokens(store: SiwcAccountStore, accountKey: string): Promise<boolean> {
-  const keys = buildSiwcAccountCredentialKeys(accountKey);
-  const values = await store.loadMany([keys.accessToken, keys.refreshToken]);
-  return values[keys.accessToken] !== null || values[keys.refreshToken] !== null;
-}
 
 function readUserJsonField(userInfoRaw: string | null, field: string): string | null {
   if (!userInfoRaw) return null;

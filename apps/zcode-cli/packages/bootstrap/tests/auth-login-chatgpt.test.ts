@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { withFileLock } from "@zcode/shared/node";
 import {
   createSharedZCodeCredentialStore,
   createSiwcAccountKey,
@@ -16,6 +17,7 @@ import {
   buildSiwcAccountCredentialKeys,
   buildSiwcAccountProviderAuthSourceKey,
   buildSiwcAccountProviderIdentityKey,
+  buildSiwcAccountRefreshLockFileName,
   SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY,
 } from "@zcode/shared";
 import { readStandaloneAccountProviderConfigSnapshot } from "../src/app/standalone-account-provider-runtime.js";
@@ -55,7 +57,12 @@ function createTestKey(): TestKey {
   };
 }
 
-function buildIdToken(key: TestKey, nonce: string, sub: string = SUB): string {
+function buildIdToken(
+  key: TestKey,
+  nonce: string,
+  sub: string = SUB,
+  aud: string = ISSUED_CLIENT_ID,
+): string {
   const header = Buffer.from(
     JSON.stringify({ alg: "RS256", typ: "JWT", kid: "test-key" }),
   ).toString("base64url");
@@ -63,7 +70,7 @@ function buildIdToken(key: TestKey, nonce: string, sub: string = SUB): string {
     JSON.stringify({
       sub,
       iss: ISSUER,
-      aud: ISSUED_CLIENT_ID,
+      aud,
       exp: NOW_SECONDS + 600,
       iat: NOW_SECONDS,
       nonce,
@@ -272,6 +279,59 @@ describe("ChatGPT plan login (SIWC)", () => {
     expect(first).toBe("siwc-access-1");
   });
 
+  it("replaces the previous registration's bundle when the new grant has no refresh token", async () => {
+    const { credentialStore, dir } = await createWorkspace();
+    const key = createTestKey();
+    await runLoginWithBrowserRedirect({ credentialStore, dir, key });
+
+    // Same subject returns a fresh registration without a refresh token.
+    const nonceRef = { value: "" };
+    const tokenClient = {
+      async exchangeCode() {
+        return {
+          accessToken: "new-access",
+          idToken: buildIdToken(key, nonceRef.value, SUB, "oaiapp_new_client"),
+          tokenType: "bearer" as const,
+          expiresInSeconds: 3600,
+          scope: FULL_SCOPE,
+        };
+      },
+      async refresh() {
+        throw new Error("refresh not exercised");
+      },
+      async revoke() {
+        throw new Error("revoke not exercised");
+      },
+    };
+    await loginChatGptPlan({
+      credentialStore,
+      env: TEST_ENV,
+      noBrowser: true,
+      fetchFn: createFakeAuthFetch(key),
+      tokenClient: tokenClient as never,
+      now: () => NOW_SECONDS * 1000,
+      personalProviderConfigPath: join(dir, "provider_config2.json"),
+      onAuthorizeUrl: async (data) => {
+        const url = new URL(data.authorizeUrl);
+        nonceRef.value = url.searchParams.get("nonce") ?? "";
+        const redirect = new URL(url.searchParams.get("redirect_uri") ?? "");
+        redirect.searchParams.set("state", url.searchParams.get("state") ?? "");
+        redirect.searchParams.set("code", "reauth-code");
+        redirect.searchParams.set("client_id", "oaiapp_new_client");
+        await fetch(redirect);
+      },
+    });
+
+    const stored = await credentialStore.loadMany([
+      ACCOUNT_KEYS.clientId,
+      ACCOUNT_KEYS.accessToken,
+      ACCOUNT_KEYS.refreshToken,
+    ]);
+    expect(stored[ACCOUNT_KEYS.clientId]).toBe("oaiapp_new_client");
+    expect(stored[ACCOUNT_KEYS.accessToken]).toBe("new-access");
+    expect(stored[ACCOUNT_KEYS.refreshToken]).toBeNull();
+  });
+
   it("stores the host id beside an injected credential store even when env points elsewhere", async () => {
     const { credentialStore, dir } = await createWorkspace();
     const otherBaseDir = await mkdtemp(join(tmpdir(), "chatgpt-login-other-base-"));
@@ -338,6 +398,62 @@ describe("ChatGPT plan login (SIWC)", () => {
     expect(after[ACCOUNT_KEYS.clientId]).toBe(ISSUED_CLIENT_ID);
     expect(after[ACCOUNT_KEYS.accessToken]).toBeNull();
     expect(after[ACCOUNT_KEYS.refreshToken]).toBeNull();
+    expect(await listSiwcPlanAccounts(credentialStore)).toHaveLength(0);
+  });
+
+  it("waits for the per-account refresh lock before clearing on logout", async () => {
+    const { credentialStore } = await createWorkspace();
+    await seedAccountSlot(credentialStore, { accountKey: ACCOUNT_KEY, sub: SUB });
+    // Hold the per-account refresh lock the way an in-flight refresh would.
+    let releaseLock!: () => void;
+    const locked = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    const lockHeld = withFileLock(
+      join(dirname(credentialStore.filePath), buildSiwcAccountRefreshLockFileName(ACCOUNT_KEY)),
+      () => locked,
+    );
+    const logoutPromise = logoutChatGptPlan({
+      credentialStore,
+      env: TEST_ENV,
+      tokenClient: createFakeTokenClient({ key: createTestKey(), nonceRef: { value: "" } })
+        .tokenClient,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    // Logout is queued behind the lock: the slot must not be cleared yet.
+    const held = await credentialStore.loadMany([ACCOUNT_KEYS.accessToken]);
+    expect(held[ACCOUNT_KEYS.accessToken]).toBe("siwc-access-1");
+    releaseLock();
+    await lockHeld;
+    const result = await logoutPromise;
+    expect(result.revoked).toBe(true);
+    const after = await credentialStore.loadMany([
+      ACCOUNT_KEYS.accessToken,
+      ACCOUNT_KEYS.refreshToken,
+    ]);
+    expect(after[ACCOUNT_KEYS.accessToken]).toBeNull();
+    expect(after[ACCOUNT_KEYS.refreshToken]).toBeNull();
+    expect(await listSiwcPlanAccounts(credentialStore)).toHaveLength(0);
+  });
+
+  it("reports revoked=false and clears an access-only slot on logout", async () => {
+    const { credentialStore } = await createWorkspace();
+    await seedAccountSlot(credentialStore, { accountKey: ACCOUNT_KEY, sub: SUB });
+    // Access-only registration: no refresh token, so no revocation can be attempted.
+    await credentialStore.delete(ACCOUNT_KEYS.refreshToken);
+    const revoke = { calls: [] as string[] };
+    const result = await logoutChatGptPlan({
+      credentialStore,
+      env: TEST_ENV,
+      tokenClient: createFakeTokenClient({ key: createTestKey(), revoke, nonceRef: { value: "" } })
+        .tokenClient,
+    });
+    expect(result.accountCount).toBe(1);
+    expect(result.revoked).toBe(false);
+    expect(revoke.calls).toHaveLength(0);
+    const after = await credentialStore.loadMany([ACCOUNT_KEYS.clientId, ACCOUNT_KEYS.accessToken]);
+    expect(after[ACCOUNT_KEYS.clientId]).toBe(ISSUED_CLIENT_ID);
+    expect(after[ACCOUNT_KEYS.accessToken]).toBeNull();
     expect(await listSiwcPlanAccounts(credentialStore)).toHaveLength(0);
   });
 

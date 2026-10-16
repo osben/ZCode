@@ -1,10 +1,13 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { withFileLock } from "@zcode/shared/node";
 import {
   buildChatGptPlanAccountProviderId,
   buildSiwcAccountCredentialKeys,
+  buildSiwcAccountRefreshLockFileName,
+  SIWC_ACCOUNTS_LOCK_FILE_NAME,
   SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY,
   SIWC_LEGACY_CREDENTIAL_KEYS,
 } from "@zcode/shared";
@@ -303,6 +306,29 @@ describe("SIWC access token resolver (per-account)", () => {
     });
   });
 
+  it("does not take the accounts lock for token resolution without legacy credentials", async () => {
+    const store = await createStore();
+    await seedAccount(store, {
+      accountKey: ACCOUNT_KEY_1,
+      accessToken: "access-valid",
+      expiresAt: NOW_SECONDS + 3600,
+      refreshToken: "refresh-valid",
+    });
+    const { tokenClient } = createFakeTokenClient([]);
+    const resolver = createSiwcAccessTokenResolver({
+      credentialStore: store,
+      tokenClient,
+      now: () => NOW_SECONDS * 1000,
+    });
+
+    await expect(resolver.resolve({ providerId: PROVIDER_ID_1 })).resolves.toMatchObject({
+      apiKey: "access-valid",
+    });
+    await expect(
+      access(join(dirname(store.filePath), SIWC_ACCOUNTS_LOCK_FILE_NAME)),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("migrates legacy flat credentials into the account slot and deletes them", async () => {
     const store = await createStore();
     await store.saveMany({
@@ -342,6 +368,67 @@ describe("SIWC access token resolver (per-account)", () => {
     });
     const resolved = await resolver.resolve({ providerId: PROVIDER_ID_1 });
     expect(resolved.apiKey).toBe("access-legacy");
+  });
+
+  it("waits for the per-account refresh lock before migrating into the slot", async () => {
+    const store = await createStore();
+    await store.saveMany({
+      [SIWC_LEGACY_CREDENTIAL_KEYS.clientId]: "oaiapp_legacy",
+      [SIWC_LEGACY_CREDENTIAL_KEYS.accessToken]: "access-legacy",
+      [SIWC_LEGACY_CREDENTIAL_KEYS.refreshToken]: "refresh-legacy",
+      [SIWC_LEGACY_CREDENTIAL_KEYS.userInfo]: JSON.stringify({ sub: SUB_1 }),
+    });
+    // Hold the destination account's per-account refresh lock the way login/refresh would.
+    let releaseLock!: () => void;
+    const locked = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    const lockHeld = withFileLock(
+      join(dirname(store.filePath), buildSiwcAccountRefreshLockFileName(ACCOUNT_KEY_1)),
+      () => locked,
+    );
+    const migration = migrateLegacySiwcCredentials(store);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    // The migration must not copy into the slot while the refresh lock is held.
+    const keys = buildSiwcAccountCredentialKeys(ACCOUNT_KEY_1);
+    const held = await store.loadMany([keys.accessToken]);
+    expect(held[keys.accessToken]).toBeNull();
+    releaseLock();
+    await lockHeld;
+    const records = await migration;
+    expect(records).toHaveLength(1);
+    const migrated = await store.loadMany([keys.accessToken]);
+    expect(migrated[keys.accessToken]).toBe("access-legacy");
+  });
+
+  it("completes an interrupted migration (partial slot copy, index absent)", async () => {
+    const store = await createStore();
+    const keys = buildSiwcAccountCredentialKeys(ACCOUNT_KEY_1);
+    // Simulate a Desktop-host migration that saved part of the bundle sequentially and died
+    // before the refresh token and the index record (the commit marker).
+    await store.saveMany({
+      [SIWC_LEGACY_CREDENTIAL_KEYS.clientId]: "oaiapp_legacy",
+      [SIWC_LEGACY_CREDENTIAL_KEYS.accessToken]: "access-legacy",
+      [SIWC_LEGACY_CREDENTIAL_KEYS.refreshToken]: "refresh-legacy",
+      [SIWC_LEGACY_CREDENTIAL_KEYS.scopes]: FULL_SCOPES,
+      [SIWC_LEGACY_CREDENTIAL_KEYS.userInfo]: JSON.stringify({ sub: SUB_1 }),
+    });
+    await store.saveMany({
+      [keys.clientId]: "oaiapp_legacy",
+      [keys.accessToken]: "access-legacy",
+    });
+
+    const records = await migrateLegacySiwcCredentials(store);
+    expect(records).toHaveLength(1);
+    const after = await store.loadMany([
+      keys.refreshToken,
+      keys.scopes,
+      SIWC_LEGACY_CREDENTIAL_KEYS.refreshToken,
+    ]);
+    // The full bundle was re-copied from the source values and the legacy keys removed.
+    expect(after[keys.refreshToken]).toBe("refresh-legacy");
+    expect(after[keys.scopes]).toBe(FULL_SCOPES);
+    expect(after[SIWC_LEGACY_CREDENTIAL_KEYS.refreshToken]).toBeNull();
   });
 
   it("lists an access-only slot (login without a refresh token stays executable)", async () => {

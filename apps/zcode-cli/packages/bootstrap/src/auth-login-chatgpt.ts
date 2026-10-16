@@ -30,7 +30,9 @@ import {
   buildSiwcAccountCredentialKeys,
   buildSiwcAccountProviderAuthSourceKey,
   buildSiwcAccountProviderIdentityKey,
+  buildSiwcAccountRefreshLockFileName,
 } from "@zcode/shared";
+import { withFileLock } from "@zcode/shared/node";
 import type { EnvRecord } from "@zcode/adapters/model";
 import { ZCodeCliLoginError } from "./auth-login-contract.js";
 import { throwIfAborted, waitWithAbort } from "./auth-login-abort.js";
@@ -189,29 +191,47 @@ export async function loginChatGptPlan(
       const accountProviderId = buildChatGptPlanAccountProviderId(accountKey);
       const keys = buildSiwcAccountCredentialKeys(accountKey);
       try {
-        await credentialStore.saveMany({
-          [keys.clientId]: clientId,
-          [keys.accessToken]: exchanged.accessToken,
-          ...(exchanged.refreshToken ? { [keys.refreshToken]: exchanged.refreshToken } : {}),
-          ...(exchanged.idToken ? { [keys.idToken]: exchanged.idToken } : {}),
-          [keys.userInfo]: JSON.stringify(user),
-          ...(exchanged.scope ? { [keys.scopes]: exchanged.scope } : {}),
-          [keys.accessExpiresAt]: String(
-            Math.floor(now() / 1000) + (exchanged.expiresInSeconds ?? 3600),
-          ),
-          ...(exchanged.earliestRefreshAt !== undefined
-            ? { [keys.earliestRefreshAt]: String(exchanged.earliestRefreshAt) }
-            : {}),
-          [buildSiwcAccountProviderIdentityKey(accountKey)]: idToken.sub,
-          [buildSiwcAccountProviderAuthSourceKey(accountKey)]: "oauth",
-        });
-        await upsertSiwcAccountRecord(credentialStore, {
-          accountKey,
-          sub: idToken.sub,
-          email: user.email ?? null,
-          name: user.name ?? null,
-          addedAt: new Date(now()).toISOString(),
-        });
+        // Slot replacement mirrors the host: under the per-account refresh lock (an in-flight
+        // refresh of the previous registration must not interleave), and the previous
+        // registration's optional token fields are DELETED when this exchange omits them —
+        // a same-subject re-login can issue a new client id without a refresh token, and a
+        // stale refresh token beside the new client id would send a mismatched pair.
+        // The index upsert commits inside the same critical section so slot and index become
+        // visible together: the migration takes the same lock order (refresh → accounts), and
+        // an index record committed after the refresh lock was released could lose the race to it.
+        await withFileLock(
+          join(dirname(credentialStore.filePath), buildSiwcAccountRefreshLockFileName(accountKey)),
+          async () => {
+            const entries: Record<string, string> = {
+              [keys.clientId]: clientId,
+              [keys.accessToken]: exchanged.accessToken,
+              ...(exchanged.refreshToken ? { [keys.refreshToken]: exchanged.refreshToken } : {}),
+              ...(exchanged.idToken ? { [keys.idToken]: exchanged.idToken } : {}),
+              [keys.userInfo]: JSON.stringify(user),
+              ...(exchanged.scope ? { [keys.scopes]: exchanged.scope } : {}),
+              [keys.accessExpiresAt]: String(
+                Math.floor(now() / 1000) + (exchanged.expiresInSeconds ?? 3600),
+              ),
+              ...(exchanged.earliestRefreshAt !== undefined
+                ? { [keys.earliestRefreshAt]: String(exchanged.earliestRefreshAt) }
+                : {}),
+              [buildSiwcAccountProviderIdentityKey(accountKey)]: idToken.sub,
+              [buildSiwcAccountProviderAuthSourceKey(accountKey)]: "oauth",
+            };
+            await credentialStore.saveMany(entries);
+            // Unwritten optional token fields are stale from the previous registration.
+            for (const key of [keys.refreshToken, keys.idToken, keys.scopes, keys.earliestRefreshAt]) {
+              if (entries[key] === undefined) await credentialStore.delete(key);
+            }
+            await upsertSiwcAccountRecord(credentialStore, {
+              accountKey,
+              sub: idToken.sub,
+              email: user.email ?? null,
+              name: user.name ?? null,
+              addedAt: new Date(now()).toISOString(),
+            });
+          },
+        );
       } catch (error) {
         throw new ZCodeCliLoginError(
           "credential_write_failed",
@@ -267,7 +287,9 @@ export async function loginChatGptPlan(
 /**
  * Revoke every signed-in ChatGPT plan account (best effort with backoff), then clear each
  * account's local tokens. CLI logout is all-accounts by design: predictable and matching the
- * "logged out from the ChatGPT plan" command semantics.
+ * "logged out from the ChatGPT plan" command semantics. Each account's read → revoke →
+ * clear → remove transaction holds that account's per-account refresh lock, so a concurrent
+ * refresh or login cannot write a rotated token after the clear.
  */
 export async function logoutChatGptPlan(
   options: LogoutChatGptPlanOptions = {},
@@ -284,31 +306,47 @@ export async function logoutChatGptPlan(
   let allRevoked = true;
   let lastError: unknown;
   for (const account of accounts) {
-    const keys = buildSiwcAccountCredentialKeys(account.accountKey);
-    const current = await credentialStore.loadMany([keys.clientId, keys.refreshToken]);
-    const clientId = current[keys.clientId]?.trim();
-    const refreshToken = current[keys.refreshToken]?.trim();
-    if (clientId && refreshToken) {
-      let revoked = false;
-      for (let attempt = 0; attempt <= REVOKE_RETRY_DELAYS_MS.length; attempt += 1) {
-        if (attempt > 0) await delay(REVOKE_RETRY_DELAYS_MS[attempt - 1]!);
-        try {
-          await tokenClient.revoke({ clientId, refreshToken });
-          revoked = true;
-          lastError = undefined;
-          break;
-        } catch (error) {
-          lastError = error;
-          // Already-invalid tokens answer empty 200; 4xx means the token is gone for good.
-          if (error instanceof SiwcRevokeError && (error.httpStatus ?? 0) < 500) break;
+    // Hold the account's per-account refresh lock across read → revoke → clear → remove: a
+    // concurrent refresh or login must not write a rotated token after the clear (live
+    // credentials after sign-out) or race the index removal. Index removal takes the accounts
+    // lock nested, keeping the shared refresh → accounts order.
+    await withFileLock(
+      join(
+        dirname(credentialStore.filePath),
+        buildSiwcAccountRefreshLockFileName(account.accountKey),
+      ),
+      async () => {
+        const keys = buildSiwcAccountCredentialKeys(account.accountKey);
+        const current = await credentialStore.loadMany([keys.clientId, keys.refreshToken]);
+        const clientId = current[keys.clientId]?.trim();
+        const refreshToken = current[keys.refreshToken]?.trim();
+        if (clientId && refreshToken) {
+          let revoked = false;
+          for (let attempt = 0; attempt <= REVOKE_RETRY_DELAYS_MS.length; attempt += 1) {
+            if (attempt > 0) await delay(REVOKE_RETRY_DELAYS_MS[attempt - 1]!);
+            try {
+              await tokenClient.revoke({ clientId, refreshToken });
+              revoked = true;
+              lastError = undefined;
+              break;
+            } catch (error) {
+              lastError = error;
+              // Already-invalid tokens answer empty 200; 4xx means the token is gone for good.
+              if (error instanceof SiwcRevokeError && (error.httpStatus ?? 0) < 500) break;
+            }
+          }
+          if (!revoked) allRevoked = false;
+        } else {
+          // No revocation was attempted for an incomplete slot; the aggregate must not report
+          // a successful revocation.
+          allRevoked = false;
         }
-      }
-      if (!revoked) allRevoked = false;
-    }
-      // Local tokens and the index record are cleared even when revocation could not be
-      // confirmed; only the issued client id stays in the slot.
-      await clearSiwcTokenCredentials(credentialStore, account.accountKey);
-      await removeSiwcAccountRecord(credentialStore, account.accountKey);
+        // Local tokens and the index record are cleared even when revocation could not be
+        // confirmed; only the issued client id stays in the slot.
+        await clearSiwcTokenCredentials(credentialStore, account.accountKey);
+        await removeSiwcAccountRecord(credentialStore, account.accountKey);
+      },
+    );
   }
   if (!allRevoked && lastError !== undefined && env.ZCODE_DEBUG?.trim()) {
     console.warn(
