@@ -12,6 +12,11 @@ import { useRemoteWorkspaceSessionStore } from "@/store/remoteWorkspaceSessionSt
  * the same store entries. The sidebar panel is hidden with CSS and never
  * unmounts, so reopening is reported through `active` — each open re-probes.
  */
+// Determination temporarily off (2026-10-15 user decision): the status is observed per workspace,
+// so every task row inherited the workspace's own merge state — worktree sessions showed "Merged"
+// immediately. Flip back on once the status is resolved per task branch.
+const MERGE_STATUS_PROBES_ENABLED = false;
+
 export function BranchMergeStatusProbes({
   workspaceTabs,
   active,
@@ -54,6 +59,6 @@ export function BranchMergeStatusProbes({
       }),
     [workspaceServiceLookup, workspaceTabs],
   );
-  useBranchMergeStatuses(targets, { active });
+  useBranchMergeStatuses(targets, { active: active && MERGE_STATUS_PROBES_ENABLED });
   return null;
 }

@@ -1,6 +1,14 @@
-# Подсветка смерженных сессий и popup с информацией о merge
+# Недостоверный merge-статус в списке разговоров и hover popup
 
-Статус: реализовано в `feat/merged-session-highlight` (unit-покрытие сценариев 1–5; E2E-инфраструктуры сайдбара в репо нет — сценарии 6–9 проверяются вручную до её появления).
+Статус: Git-сервис и кэш сохраняются, но workspace-level наблюдение и его UI-проекция отключены: текущая ветка workspace не является достоверным статусом отдельной сессии или worktree. В строках и hover popup не показываются merge-индикаторы, пока не появится task-level источник статуса.
+
+Обновление 2026-10-16: hover popup показывает доступные task metadata и `changeSummary`; он не показывает ветку или состояние merge из workspace-пробы. Возобновление merge-индикации требует статуса, адресованного конкретной задаче и её execution worktree (`executionWorktree.branchName`), а не включения workspace-пробы.
+
+## Текущая видимость в списках
+
+- Не показывать `Merged` бейдж ни в grouped sidebar rows, ни в прямом/legacy `TaskListItem`, включая их drag-overlay варианты.
+- Сохранить Git service и его кэш. Не передавать workspace-level merge-статус строкам и hover popup; popup продолжает показывать task status, workspace, модель/effort и task `changeSummary`.
+- Не заменять бейдж другим критерием или состоянием до отдельного решения на основе исследования PR/worktree lifecycle.
 
 ## Уточнение по данным (выяснено при реализации)
 
@@ -20,16 +28,10 @@ Per-session веток в модели данных нет: ни в `ZCodeTaskMe
 
 ## Продуктовые правила
 
-1. Если ветка сессии влита в default branch (локальная проверка), строка показывает бейдж «Merged» (текст из i18n). Бейдж информационный: кликабельна сама строка.
-2. Наведение (та же задержка, что у текущего tooltip) показывает блок:
-   - «Влито в `baseRef`» и время последнего коммита ветки: относительное, абсолютное в `title`. Точное время merge локально не определяется;
-   - `base ← head` ветки;
-   - `+N −M` из `changeSummary` (не пересчитывать);
-   - workspace.
-     Номер PR, заголовок и ссылка недоступны без GitHub, поэтому popup их не показывает.
-3. Состояния `not_merged` и `unknown` не показывают бейдж и не выводят ошибку в строке.
-4. Приоритет в строке: запрос пользователя (`pendingInteraction`) и внимание (`taskAttentionDisplay`) важнее «Merged». «Merged» всё равно виден в popup.
-5. Merged не означает закрытую сессию: автоархивации нет.
+1. Строки разговоров не показывают бейдж `Merged`, даже если в store осталась workspace-level запись со state `merged`.
+2. Hover popup не показывает workspace branch или merge state; он показывает доступные task metadata и `changeSummary`.
+3. Статус merge не передаётся из store в grouped или legacy task row.
+4. Merged не означает закрытую сессию: автоархивации нет.
 
 ## Источник состояния: локальный git
 
@@ -64,11 +66,11 @@ type MergeStatus = {
 ## UI
 
 - Бейдж: `Badge` из `packages/ui/src/components/ui/badge.tsx`, размер `text-ui-xs` (`DESIGN.md:227`). Цвет: акцентный primary (решение пользователя). Не использовать `--color-success`: он закреплён за waiting-подтверждениями (`DESIGN.md:112, 130`).
-- Popup: переиспользовать `packages/ui/src/components/ui/hover-card.tsx` или текущий Tooltip. Текст `text-ui-sm` (`DESIGN.md:226`). Все размеры через `text-ui-*` (`DESIGN.md:11`), без `text-sm`/`text-xs` и произвольных `text-[13px]`.
-- Блок добавляется в существующий popup строки, второй popup не создаётся.
+- Popup: переиспользовать текущий Tooltip. Показывать task status, workspace, модель/effort и task `changeSummary`; workspace branch и merge status не показывать, так как они не принадлежат отдельной задаче. Текст `text-ui-sm` (`DESIGN.md:226`). Все размеры через `text-ui-*` (`DESIGN.md:11`), без `text-sm`/`text-xs` и произвольных `text-[13px]`.
+- Второй popup не создаётся.
 - Интерактивные overlay выше пассивных tooltip (`DESIGN.md:427`).
 - Строки через intl: новые ключи в `en-US`, `zh-CN`, `uk-UA` (`packages/ui/src/i18n/locales/`, ключи `taskList.branchMerged*`).
-- Состояние в `packages/ui/src/store/branchMergeStatusStore.ts`, проба — hook `useBranchMergeStatuses` (`packages/ui/src/hooks/`); невидимый probe-компонент `BranchMergeStatusProbes` монтируется в `WorkspaceSidebar` один раз и покрывает grouped, flat и archived виды (для `.tsx` с JSX). Сайдбар прячется через CSS и не размонтируется, поэтому видимостью управляет явный prop: проба срабатывает при открытии сайдбара и на фокус окна.
+- Git service, cache, store и probe hook остаются для совместимости, но `BranchMergeStatusProbes` не запускает workspace probes (`MERGE_STATUS_PROBES_ENABLED = false`). Перевключать workspace probe недостаточно для task-level UI: grouped и legacy строки не подписываются на этот store и не передают его данные в popup.
 - Внешние ссылки только через `IPlatformService` (`packages/shared/src/platform.ts`), не `window.zcode`.
 - Вторая строка `packages/ui/src/TaskListItem.tsx`: бейдж добавлен в обе её цепочки статусов с тем же правилом приоритета (после pendingInteraction и внимания).
 
@@ -86,20 +88,15 @@ type MergeStatus = {
 
 ## Acceptance scenarios
 
-1. Ветка влита в default branch: в строке виден бейдж «Merged». Наведение показывает «Влито в base», время последнего коммита, `base ← head`, `+N −M`.
-2. Squash или rebase merge: бейдж не показан (ожидаемое ограничение, см. выбор источника).
-3. Ветка не влита (`not_merged`): бейдж не показан.
-4. Ветка не найдена локально: бейдж не показан, ошибок нет.
-5. Нет `origin/HEAD` или ошибка git: статус `unknown`, бейдж не показан, `warn` в логе один раз.
-6. Сессия с `pendingInteraction` и merged ветка: показывается внимание (по приоритету); merged виден в popup.
-7. Смена ветки: кэш сброшен, состояние пересчитано.
-8. Remote workspace: поиск по `workspaceIdentity`, не по пути.
-9. Старый UI с новым CLI и новый UI со старым CLI: без регрессий, бейдж скрыт.
+1. Даже если store содержит `merged`, grouped и legacy строки не показывают бейдж, а hover popup показывает task metadata без workspace branch и merge label.
+2. `changeSummary` остаётся видимым в строке и hover popup.
+3. Remote workspace продолжает показывать корректную remote-метку и task metadata.
+4. Merge-индикация возобновляется только после отдельного task-level контракта и его regression coverage.
 
 ## Валидация
 
 - `pnpm typecheck`, `pnpm lint`, `pnpm architecture:check --changed`.
-- Unit: маппинг exit code `git merge-base --is-ancestor` в `MergeStatus`; TTL и сброс кэша; ключ identity. Реализовано в `packages/services/test/branchMergeStatusService.test.ts` (включая сценарии 1–5 на реальном временном git-репозитории; сайдбар-E2E в репо отсутствует, сценарии 6–9 — ручная проверка).
+- Unit: Git service сохраняет тесты маппинга, TTL и workspace identity в `packages/services/test/branchMergeStatusService.test.ts`. UI проверяется rendered markup тестами task row и hover popup: бейдж, branch и merge label отсутствуют при workspace-level merged status, а task metadata и `changeSummary` остаются.
 
 ## Вне скоупа
 

@@ -1,7 +1,7 @@
-import { Cpu, FileDiff, GitBranch, GitMerge } from "lucide-react";
+import { Cpu, FileDiff, GitBranch } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import type { GitBranchMergeStatus, ZCodeTaskMeta } from "@zcode/shared";
+import type { ZCodeTaskMeta } from "@zcode/shared";
 import { TooltipContent } from "@/components/ui/tooltip.js";
 import { WorktreeTaskMarker } from "@/components/WorktreeTaskMarker.js";
 import { thoughtLevelLabelId } from "@/chat-input-toolbar/thoughtLevelOptions.js";
@@ -10,7 +10,6 @@ import { formatTaskRelativeTime } from "@/lib/taskListItemPresentation.js";
 import { getTaskChangeSummary } from "@/lib/taskChangeSummary.js";
 import { providerBrandIconSrc } from "@/lib/oauthProviderIcon.js";
 import { parseModelPickerValue } from "@/lib/zcodeSessionProjection.js";
-import { isTaskBranchMerged } from "@/lib/taskBranchMergeStatus.js";
 import { formatGroupedTaskHoverChangeParts } from "@/workspace-grouped-tasks/task-row-tooltip.js";
 import type { TaskListRowActivity } from "@/v4/taskListRowActivity.js";
 
@@ -24,20 +23,17 @@ export function TaskSidebarHoverCard({
   task,
   attentionLabel,
   activity,
-  branchMergeStatus,
   intl,
 }: {
   task: ZCodeTaskMeta;
   attentionLabel: string | null;
   activity: TaskListRowActivity | null;
-  branchMergeStatus?: GitBranchMergeStatus;
   intl: Pick<IntlInstance, "formatMessage">;
 }) {
   const status = resolveStatus(task, activity, attentionLabel, intl);
   const modelAndEffort = resolveModelAndEffort(task, intl);
   const changeParts = formatGroupedTaskHoverChangeParts(getTaskChangeSummary(task));
-  const isBranchMerged = isTaskBranchMerged(task, branchMergeStatus);
-  const branchLabel = task.executionWorktree?.branchName ?? branchMergeStatus?.headRef;
+  const branchLabel = task.executionWorktree?.branchName;
   const lastActivity = activity?.lastActivityAt ?? task.updatedAt;
   const taskTitle =
     task.title ||
@@ -65,15 +61,9 @@ export function TaskSidebarHoverCard({
           </span>
         </div>
 
-        {branchLabel || isBranchMerged ? (
-          <InfoRow icon={<RowGlyph icon={isBranchMerged ? GitMerge : GitBranch} />}>
-            {isBranchMerged ? (
-              <span className="text-primary">
-                {intl.formatMessage({ id: "taskList.branchMergedTag" })}
-              </span>
-            ) : (
-              <span className="truncate">{branchLabel}</span>
-            )}
+        {branchLabel ? (
+          <InfoRow icon={<RowGlyph icon={GitBranch} />}>
+            <span className="truncate">{branchLabel}</span>
             {changeParts.length > 0 ? (
               <ChangeStats className="ml-auto" parts={changeParts} />
             ) : null}

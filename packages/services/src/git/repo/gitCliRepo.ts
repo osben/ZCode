@@ -1918,6 +1918,18 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
       const lastCommitAt =
         logResult.exitCode === 0 && !logResult.timedOut ? logResult.stdout.trim() || null : null;
 
+      // The default branch is trivially an ancestor of origin/HEAD, but it is
+      // not a feature branch that has been merged into the default branch.
+      const baseBranchName = baseRef.replace(/^origin\//, "");
+      if (status.summary.branchName === baseBranchName) {
+        return {
+          state: "not_merged" satisfies GitBranchMergeState,
+          baseRef,
+          headRef: status.summary.branchName,
+          lastCommitAt,
+        };
+      }
+
       // The exit code itself carries the state: 0 = ancestor, 1 = not an
       // ancestor, anything else (128: ref missing locally, timeout, …) = unknown
       // surfaced without throwing.

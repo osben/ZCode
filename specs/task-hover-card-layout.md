@@ -16,13 +16,11 @@ run-state signaling (spinner, unread dot, markers). Card layout, top to bottom:
    - The run-status chip moved out of the card: the row already shows status; the card keeps the
      `data-task-hover-status` attribute for probes.
 2. `[branch name] [git change stats]`
-   - Branch source precedence: `task.executionWorktree.branchName` (authoritative for worktree
-     sessions) then `branchMergeStatus.headRef`. Merged state keeps the GitMerge glyph and the
-     merged tag only when the merge status head matches the selected worktree branch. Otherwise
-     show the worktree branch as unmerged. Change stats (`+N −N`, existing `getTaskChangeSummary` source) are right-aligned
-     in the same row and render whenever available, not only when merged.
-   - If no branch source exists, the row falls back to the stats-only row with the FileDiff glyph
-     so diff facts never disappear silently.
+   - The branch comes only from `task.executionWorktree.branchName`; workspace-level branch and
+     merge probes do not describe an individual task. Change stats (`+N −N`, existing
+     `getTaskChangeSummary` source) are right-aligned in the same row and render whenever available.
+   - If the task has no execution-worktree branch, the row falls back to the stats-only row with
+     the FileDiff glyph so diff facts never disappear silently.
 3. `[provider icon when known, else the Cpu chip] [model name] [thought level]`
    - Provider icon resolution is renderer-local: the providerId parsed from `task.model`
      (`parseModelPickerValue`) maps to a bundled brand asset (`providerBrandIconSrc` in
@@ -48,8 +46,8 @@ hover/focus actions suppress that marker, restore the task's leading run-state i
 4. An unknown provider id falls back to the Cpu glyph; known ids render the brand asset.
 5. The run-status chip no longer renders; `data-task-hover-status` still reflects the resolved
    state for tests/probes.
-6. A worktree whose branch differs from the workspace merge-status head displays its own branch and
-   no merged tag; a matching worktree branch displays the merged tag.
+6. Workspace merge status never adds a branch or merged tag to a task hover card; an execution
+   worktree displays its own branch.
 7. An empty normal or forked task title uses the same localized fallback as its row.
 8. Hovering or focusing a running/error task keeps its row status indicator visible beside actions
    in both grouped and regular task rows.

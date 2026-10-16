@@ -15,7 +15,7 @@ vi.mock("@/components/WorktreeTaskMarker.js", () => ({
     createElement("span", { "data-worktree-task-icon": "true" }, "worktree-marker"),
 }));
 
-function baseTask(overrides: Partial<ZCodeTaskMeta>): ZCodeTaskMeta {
+function baseTask(overrides: Partial<ZCodeTaskMeta> = {}): ZCodeTaskMeta {
   return {
     taskId: "hover-card-task",
     traceId: "hover-card-trace",
@@ -28,10 +28,7 @@ function baseTask(overrides: Partial<ZCodeTaskMeta>): ZCodeTaskMeta {
   };
 }
 
-function renderCard(
-  task: ZCodeTaskMeta,
-  extra?: Pick<Parameters<typeof TaskSidebarHoverCard>[0], "branchMergeStatus">,
-) {
+function renderCard(task: ZCodeTaskMeta) {
   return renderToStaticMarkup(
     createElement(TaskSidebarHoverCard, {
       task,
@@ -42,48 +39,39 @@ function renderCard(
           ({
             "taskList.status.completed": "Done",
             "chat.toolbar.thoughtLevel.value.xhigh": "Extra High",
-            "taskList.branchMergedTag": "Merged",
             "taskList.untitled": "Untitled",
             "taskList.forkedUntitled": "Forked task",
           })[id] ?? id,
       },
-      ...extra,
     }),
   );
 }
 
-test("renders title line, merged branch line with stats, and model line", () => {
-  const task = baseTask({
-    model: "account:zai-individual-coding-plan/GLM-5.3",
-    thoughtLevel: "xhigh",
-    changeSummary: {
-      fileCount: 2,
-      added: 12,
-      removed: 3,
-      files: [{ path: "src/main.ts", added: 12, removed: 3 }],
-    },
-  });
-  const html = renderCard(task, {
-    branchMergeStatus: {
-      state: "merged",
-      baseRef: "origin/main",
-      headRef: "feature/hover-card",
-      lastCommitAt: null,
-    },
-  });
+test("renders title, worktree branch with stats, and model details", () => {
+  const html = renderCard(
+    baseTask({
+      executionWorktree: {
+        path: "/repo-worktrees/zcode-lazy-kraken",
+        branchName: "zcode/lazy-kraken",
+      },
+      model: "account:zai-individual-coding-plan/GLM-5.3",
+      thoughtLevel: "xhigh",
+      changeSummary: {
+        fileCount: 2,
+        added: 12,
+        removed: 3,
+        files: [{ path: "src/main.ts", added: 12, removed: 3 }],
+      },
+    }),
+  );
 
-  // Line 1: the card now carries the title; the status chip is gone (row owns run state).
   expect(html).toContain("Refactor hover card");
   expect(html).toContain('data-task-hover-status="completed"');
   expect(html).not.toContain(">Done<");
-  // Line 2: merged tag + stats share the branch line; the raw branch name stays hidden.
-  expect(html).toContain("lucide-git-merge");
-  expect(html).toContain("Merged");
+  expect(html).toContain("worktree-marker");
+  expect(html).toContain("zcode/lazy-kraken");
   expect(html).toContain("+12");
   expect(html).toContain("-3");
-  expect(html).not.toContain("origin/main");
-  expect(html).not.toContain("feature/hover-card");
-  // Line 3: the built-in Z.ai account provider renders its brand asset; model + effort stay.
   expect(html).toContain("<img");
   expect(html).not.toContain("lucide-cpu");
   expect(html).toContain("GLM-5.3");
@@ -91,55 +79,25 @@ test("renders title line, merged branch line with stats, and model line", () => 
   expect(html).toContain("Extra High");
 });
 
-test("worktree branch wins over merge-status head and the worktree marker renders", () => {
-  const task = baseTask({
-    executionWorktree: {
-      path: "/repo-worktrees/zcode-lazy-kraken",
-      branchName: "zcode/lazy-kraken",
-    },
-    model: "zai/GLM-5.3",
-  });
-  const html = renderCard(task, {
-    branchMergeStatus: {
-      state: "not_merged",
-      baseRef: "origin/main",
-      headRef: "feature/other",
-      lastCommitAt: null,
-    },
-  });
+test("shows change stats without a branch and falls back to Cpu for unknown providers", () => {
+  const html = renderCard(
+    baseTask({
+      model: "weird-provider/X-model",
+      changeSummary: {
+        fileCount: 1,
+        added: 5,
+        removed: 1,
+        files: [{ path: "src/a.ts", added: 5, removed: 1 }],
+      },
+    }),
+  );
 
-  expect(html).toContain("worktree-marker");
-  expect(html).toContain("zcode/lazy-kraken");
-  expect(html).not.toContain("feature/other");
-  expect(html).toContain("lucide-git-branch");
-  // Known provider id renders the brand asset (vite inlines the svg as a data URI) instead of Cpu.
-  expect(html).toContain("<img");
-  expect(html).toContain("data:image/svg+xml");
-  expect(html).not.toContain("lucide-cpu");
-});
-
-test("worktree merge status applies only when its head matches the worktree branch", () => {
-  const task = baseTask({
-    executionWorktree: { path: "/tmp/worktree", branchName: "feature/worktree" },
-  });
-  const status = {
-    state: "merged" as const,
-    baseRef: "origin/main",
-    headRef: "feature/parent",
-    lastCommitAt: null,
-  };
-
-  const mismatched = renderCard(task, { branchMergeStatus: status });
-  expect(mismatched).toContain("feature/worktree");
-  expect(mismatched).not.toContain("Merged");
-  expect(mismatched).toContain("lucide-git-branch");
-
-  const matching = renderCard(task, {
-    branchMergeStatus: { ...status, headRef: "feature/worktree" },
-  });
-  expect(matching).toContain("Merged");
-  expect(matching).toContain("lucide-git-merge");
-  expect(matching).not.toContain("feature/worktree");
+  expect(html).toContain("lucide-file-diff");
+  expect(html).toContain("+5");
+  expect(html).toContain("lucide-cpu");
+  expect(html).toContain("X-model");
+  expect(html).not.toContain("lucide-git-branch");
+  expect(html).not.toContain("Merged");
 });
 
 test("empty task titles use the same localized fallback as sidebar rows", () => {
@@ -147,24 +105,6 @@ test("empty task titles use the same localized fallback as sidebar rows", () => 
   expect(renderCard(baseTask({ title: "", forkedFromTaskId: "parent-task" }))).toContain(
     "Forked task",
   );
-});
-
-test("stats survive without any branch source; unknown provider falls back to Cpu", () => {
-  const task = baseTask({
-    model: "weird-provider/X-model",
-    changeSummary: {
-      fileCount: 1,
-      added: 5,
-      removed: 1,
-      files: [{ path: "src/a.ts", added: 5, removed: 1 }],
-    },
-  });
-  const html = renderCard(task);
-
-  expect(html).toContain("lucide-file-diff");
-  expect(html).toContain("+5");
-  expect(html).toContain("lucide-cpu");
-  expect(html).toContain("X-model");
 });
 
 test("canonical built-in account provider IDs resolve to their brand icons", () => {
