@@ -1466,12 +1466,15 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
         remoteSessionId?: string;
       },
       sessionId: string,
+      capabilities?: { selectionSideChat?: boolean },
     ) => {
       handleSelectTaskInChat(
         scope.workspacePath,
         sessionId,
         scope.workspaceIdentity,
         scope.remoteSessionId,
+        undefined,
+        capabilities,
       );
     },
     [handleSelectTaskInChat],

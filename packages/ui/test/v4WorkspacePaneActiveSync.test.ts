@@ -134,7 +134,8 @@ function renderClient(element: ReturnType<typeof createElement>): void {
 
 function createGroupedWorkbenchState({
   readOnlyChild = false,
-}: { readOnlyChild?: boolean } = {}): void {
+  selectionSideChat = false,
+}: { readOnlyChild?: boolean; selectionSideChat?: boolean } = {}): void {
   useWorkbenchGroupStore.getState().splitSessionIntoGroup(
     V4_PRIMARY_PANE_ID,
     "right",
@@ -142,6 +143,7 @@ function createGroupedWorkbenchState({
       workspaceScope: { workspacePath: "/workspace" },
       sessionId: "child-session",
       ...(readOnlyChild ? { readOnly: true } : {}),
+      ...(selectionSideChat ? { selectionSideChat: true } : {}),
     },
     {
       workspaceScope: { workspacePath: "/workspace" },
@@ -213,6 +215,26 @@ describe("V4WorkspaceChatArea pane active sync", () => {
     });
 
     expect(onPaneActiveSessionChange).not.toHaveBeenCalled();
+  });
+
+  it("preserves selection-side-chat capability when a pane becomes shell active", () => {
+    createGroupedWorkbenchState({ selectionSideChat: true });
+    const groupId = useWorkbenchGroupStore.getState().activeGroupId;
+    expect(groupId).toBeTruthy();
+    useWorkbenchGroupStore.getState().focusPane(groupId!, V4_PRIMARY_PANE_ID);
+    const { onPaneActiveSessionChange } = renderWorkspace();
+    const sideChatPane = leafPaneCapture.props.find((props) => props.paneId === "pane-1");
+
+    expect(sideChatPane).toBeTruthy();
+    act(() => {
+      sideChatPane!.onFocusRequest("pane-1");
+    });
+
+    expect(onPaneActiveSessionChange).toHaveBeenCalledWith(
+      { workspacePath: "/workspace" },
+      "child-session",
+      { selectionSideChat: true },
+    );
   });
 
   it("keeps a standalone read-only subagent primary pane read-only when focused and split", () => {

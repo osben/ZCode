@@ -108,7 +108,11 @@ export interface V4WorkspaceChatAreaProps {
     executionWorkspacePath?: string,
     executionSessionId?: string,
   ) => void;
-  onPaneActiveSessionChange?: (scope: PaneWorkspaceScope, sessionId: string) => void;
+  onPaneActiveSessionChange?: (
+    scope: PaneWorkspaceScope,
+    sessionId: string,
+    capabilities?: { selectionSideChat?: boolean },
+  ) => void;
   onOpenBrowserUrl?: (url: string) => void;
   onOpenAutomationsMain?: OpenAutomationsMain;
   onOpenCodeViewer?: (source: CodeViewerSource) => void;
@@ -404,6 +408,7 @@ export function V4WorkspaceChatArea({
               workspaceScope: binding.workspaceScope,
               sessionId: binding.sessionId,
               ...(binding.readOnly ? { readOnly: true } : {}),
+              ...(binding.selectionSideChat ? { selectionSideChat: true } : {}),
             }
           : null;
       },
@@ -417,7 +422,13 @@ export function V4WorkspaceChatArea({
       }
       // A read-only subagent pane is an observation view inside the workbench, not a left-side
       // task-navigation target. Writing back shell activeTaskId would incorrectly move the sidebar highlight/optimistic task to the child.
-      onPaneActiveSessionChange?.(binding.workspaceScope, binding.sessionId);
+      if (binding.selectionSideChat) {
+        onPaneActiveSessionChange?.(binding.workspaceScope, binding.sessionId, {
+          selectionSideChat: true,
+        });
+      } else {
+        onPaneActiveSessionChange?.(binding.workspaceScope, binding.sessionId);
+      }
     },
     [onPaneActiveSessionChange],
   );
