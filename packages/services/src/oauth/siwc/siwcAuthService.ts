@@ -307,6 +307,10 @@ export class SiwcAuthService {
       const clientId = stored[keys.clientId];
       const refreshToken = stored[keys.refreshToken];
       if (!clientId || !refreshToken) {
+        // Incomplete slot (a login may persist an access token without a refresh token):
+        // clear whatever token material exists before dropping the record, or
+        // resolveAccessToken could keep serving a token the user signed out of.
+        await this.clearTokenCredentials(record.accountKey);
         await this.removeAccountRecord(record.accountKey);
         continue;
       }

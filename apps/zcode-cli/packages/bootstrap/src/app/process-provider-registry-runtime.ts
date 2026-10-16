@@ -56,15 +56,21 @@ export async function startProcessProviderRegistryRuntime(
   const credentialStore = options.standalone
     ? (options.standalone.credentialStore ?? createSharedZCodeCredentialStore({ env: { ...env } }))
     : undefined;
+  // The derived per-account ChatGPT plan entries must exist in EVERY process registry: a
+  // Desktop Worker resolves model executions against its own registry, and the host delivers
+  // account snapshots whose basedOnZCodeBuiltinRevision must match this config source. Workers
+  // enumerate the shared credential file read-only through the same wrapper (the local agent
+  // runs on the same machine and user as the host that owns the SIWC credentials).
+  const chatGptPlanConfigStore = credentialStore ?? createSharedZCodeCredentialStore({
+    env: { ...env },
+  });
   let standaloneAccount: AccountProviderService | undefined;
   const bundledFile = options.standalone
     ? env[ZCODE_BUILTIN_PROVIDER_BUNDLED_CONFIG_FILE_ENV]?.trim()
     : undefined;
   const runtime = new NodeProviderRegistryRuntime({
     ...paths,
-    ...(credentialStore
-      ? { wrapConfigSource: createStandaloneChatGptPlanConfigSourceWrapper(credentialStore) }
-      : {}),
+    wrapConfigSource: createStandaloneChatGptPlanConfigSourceWrapper(chatGptPlanConfigStore),
     ...(bundledFile
       ? {
           zcodeBuiltinFilePath: bundledFile,

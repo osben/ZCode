@@ -8,6 +8,7 @@ import {
   buildSiwcAccountCredentialKeys,
   buildSiwcAccountProviderAuthSourceKey,
   buildSiwcAccountProviderIdentityKey,
+  SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY,
   SIWC_LEGACY_CREDENTIAL_KEYS,
 } from "@zcode/shared";
 import type { ICredentialService } from "../src/credential/credential.js";
@@ -368,11 +369,21 @@ describe("SiwcAuthService (host side, multi-account)", () => {
     const fixture = await createFixture();
     await runFullLogin(fixture);
     await fixture.service.pollLogin();
+    // Sign the second account in through the index so the isolation check is real:
+    // logout(ACCOUNT_KEY) must leave the other indexed account fully intact.
     const secondKey = createSiwcAccountKey("user-sub-host-2");
     const secondKeys = buildSiwcAccountCredentialKeys(secondKey);
     fixture.credentials.save(secondKeys.clientId, ISSUED_CLIENT_ID);
     fixture.credentials.save(secondKeys.accessToken, "host-access-b");
     fixture.credentials.save(secondKeys.refreshToken, "host-refresh-b");
+    const indexRaw = await fixture.credentials.load(SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY);
+    fixture.credentials.save(
+      SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY,
+      JSON.stringify([
+        ...(indexRaw ? (JSON.parse(indexRaw) as unknown[]) : []),
+        { accountKey: secondKey, sub: "user-sub-host-2", email: null, name: null, addedAt: "" },
+      ]),
+    );
 
     const result = await fixture.service.logout(ACCOUNT_KEY);
     expect(result).toEqual({ accountCount: 1, revoked: true, signedOut: true });
@@ -380,8 +391,9 @@ describe("SiwcAuthService (host side, multi-account)", () => {
     const stored = fixture.credentials.dump();
     expect(stored[ACCOUNT_KEYS.clientId]).toBe(ISSUED_CLIENT_ID);
     expect(stored[ACCOUNT_KEYS.accessToken]).toBeUndefined();
-    // The other account was not part of the index and is untouched by the slot cleanup.
     expect(stored[secondKeys.accessToken]).toBe("host-access-b");
+    const status = await fixture.service.getStatus();
+    expect(status.accounts.map((account) => account.accountKey)).toEqual([secondKey]);
   });
 
   it("logout without a key revokes every signed-in account", async () => {

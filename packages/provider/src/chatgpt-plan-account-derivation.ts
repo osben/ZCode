@@ -33,10 +33,11 @@ export function deriveChatGptPlanAccountConfigSnapshot(
     accounts.filter((account) => isChatGptPlanAccountKey(account.accountKey)),
   );
 
-  // Registry deduplication is revision-based, so a changed account set must produce a
-  // different revision or derived entries would never republish. With zero accounts the
-  // raw revision is kept: the snapshot then only drops the template entry, and consumers
-  // comparing against the builtin revision (recovery, fail-closed start) stay consistent.
+  // The account-set suffix goes ONLY on the top-level revision (registry deduplication is
+  // revision-based, so a changed account set must produce a different revision or derived
+  // entries would never republish). zcodeBuiltinRevision stays raw: account snapshots carry
+  // it as basedOnZCodeBuiltinRevision and workers compare it against their own config, so it
+  // must remain the plain builtin revision on every side.
   const accountSuffix = validAccounts.length
     ? `#chatgpt:${validAccounts
         .map((account) => buildChatGptPlanAccountProviderId(account.accountKey))
@@ -72,7 +73,6 @@ export function deriveChatGptPlanAccountConfigSnapshot(
   return Object.freeze({
     ...snapshot,
     revision: `${snapshot.revision}${accountSuffix}`,
-    zcodeBuiltinRevision: `${snapshot.zcodeBuiltinRevision}${accountSuffix}`,
     zcodeBuiltinProviders: providers,
     zcodeBuiltinModelRules: modelRules,
   });

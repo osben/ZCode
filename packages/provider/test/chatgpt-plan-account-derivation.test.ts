@@ -113,23 +113,27 @@ describe("deriveChatGptPlanAccountConfigSnapshot", () => {
     expect(rules.some((rule) => rule.type === "template-model")).toBe(true);
   });
 
-  it("changes the revision only when the account set changes", () => {
+  it("suffixes the dedup revision with the account set and keeps the builtin revision raw", () => {
     const base = createBaseSnapshot();
     const accounts = [{ accountKey: ACCOUNT_A, providerName: "work@example.com" }];
     const first = deriveChatGptPlanAccountConfigSnapshot(base, accounts);
     const same = deriveChatGptPlanAccountConfigSnapshot(base, accounts);
-    expect(first.zcodeBuiltinRevision).toBe(same.zcodeBuiltinRevision);
+    expect(first.revision).toBe(same.revision);
+    // The builtin revision is the cross-process contract (account snapshots carry it as
+    // basedOnZCodeBuiltinRevision), so it must stay the raw builtin revision.
+    expect(first.zcodeBuiltinRevision).toBe(base.zcodeBuiltinRevision);
     const added = deriveChatGptPlanAccountConfigSnapshot(base, [
       ...accounts,
       { accountKey: ACCOUNT_B, providerName: "home@example.com" },
     ]);
-    expect(added.zcodeBuiltinRevision).not.toBe(first.zcodeBuiltinRevision);
+    expect(added.revision).not.toBe(first.revision);
+    expect(added.zcodeBuiltinRevision).toBe(base.zcodeBuiltinRevision);
     // Account order must not matter for the revision.
     const reordered = deriveChatGptPlanAccountConfigSnapshot(base, [
       { accountKey: ACCOUNT_B, providerName: "home@example.com" },
       { accountKey: ACCOUNT_A, providerName: "work@example.com" },
     ]);
-    expect(reordered.zcodeBuiltinRevision).toBe(added.zcodeBuiltinRevision);
+    expect(reordered.revision).toBe(added.revision);
   });
 
   it("drops the chatgpt family entirely with zero accounts", () => {

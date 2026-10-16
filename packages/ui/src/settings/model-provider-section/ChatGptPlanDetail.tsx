@@ -88,7 +88,6 @@ export function ChatGptPlanDetail() {
             }
             pollTimerRef.current = null;
             setLoginPending(false);
-            await refreshStatus();
             if (
               completion.newUser &&
               completion.planUsageEntitled &&
@@ -97,6 +96,11 @@ export function ChatGptPlanDetail() {
               localStorage.setItem(FIRST_RUN_MODAL_STORAGE_KEY, "1");
               setShowFirstRunModal(true);
             }
+            // The login itself has completed; a status refresh failure must not surface as
+            // a login error (the stored account simply appears after the next status read).
+            await refreshStatus().catch((refreshError: unknown) => {
+              logger.error("[ChatGptPlanDetail] status refresh failed", { error: refreshError });
+            });
           } catch (caught) {
             if (disposedRef.current) return;
             pollTimerRef.current = null;
@@ -174,6 +178,7 @@ export function ChatGptPlanDetail() {
             key={account.accountKey}
             account={account}
             intl={intl}
+            loginPending={loginPending}
             signOutPending={signOutPending === account.accountKey}
             onSignOut={() => void signOut(account.accountKey)}
             onReconnect={() => void startLogin({ reauthAccountKey: account.accountKey })}
@@ -241,6 +246,8 @@ export function ChatGptPlanDetail() {
 interface AccountRowProps {
   readonly account: SiwcPlanAccountStatus;
   readonly intl: ReturnType<typeof useZCodeIntl>["intl"];
+  /** Any login (add or reconnect) is in flight; only one pending login is allowed. */
+  readonly loginPending: boolean;
   readonly signOutPending: boolean;
   readonly onSignOut: () => void;
   readonly onReconnect: () => void;
@@ -250,6 +257,7 @@ interface AccountRowProps {
 function AccountRow({
   account,
   intl,
+  loginPending,
   signOutPending,
   onSignOut,
   onReconnect,
@@ -280,7 +288,7 @@ function AccountRow({
             {intl.formatMessage({ id: "settings.modelProvider.chatgpt.signOut" })}
           </Button>
           {account.planUsageEntitled ? null : (
-            <Button type="button" variant="outline" onClick={onReconnect}>
+            <Button type="button" variant="outline" disabled={loginPending} onClick={onReconnect}>
               {intl.formatMessage({ id: "settings.modelProvider.chatgpt.reconnect" })}
             </Button>
           )}

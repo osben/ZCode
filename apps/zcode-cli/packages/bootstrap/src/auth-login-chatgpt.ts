@@ -305,10 +305,10 @@ export async function logoutChatGptPlan(
       }
       if (!revoked) allRevoked = false;
     }
-    // Local tokens are cleared even when revocation could not be confirmed; the client id and
-    // account mapping are retained so a future sign-in reuses the registered client.
-    await clearSiwcTokenCredentials(credentialStore, account.accountKey);
-    await removeSiwcAccountRecord(credentialStore, account.accountKey);
+      // Local tokens and the index record are cleared even when revocation could not be
+      // confirmed; only the issued client id stays in the slot.
+      await clearSiwcTokenCredentials(credentialStore, account.accountKey);
+      await removeSiwcAccountRecord(credentialStore, account.accountKey);
   }
   if (!allRevoked && lastError !== undefined && env.ZCODE_DEBUG?.trim()) {
     console.warn(

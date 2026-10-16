@@ -12,6 +12,7 @@
 import { decodeCustomModelValue } from "./custom-model-value.js";
 import { migrateLegacyModelProviderId } from "./legacy-model-provider-identity.js";
 import {
+  BUILTIN_MODEL_PROVIDER_IDS,
   isBuiltinModelProviderId,
   isChatGptPlanAccountProviderId,
 } from "./model-provider-types.js";
@@ -186,12 +187,12 @@ export function resolveTelemetryProviderScope(
   if (!normalized) {
     return { providerId: "", providerScope: "unknown" };
   }
-  // Per-account ChatGPT plan ids carry only a hex account key (no PII), so they stay unredacted.
-  if (
-    isBuiltinModelProviderId(normalized) ||
-    isLegacyBuiltinTelemetryProviderId(normalized) ||
-    isChatGptPlanAccountProviderId(normalized)
-  ) {
+  // Per-account ChatGPT plan ids are a stable per-user pseudonym (sha256(sub) prefix); report
+  // only the family id so telemetry cannot link events to one ChatGPT account.
+  if (isChatGptPlanAccountProviderId(normalized)) {
+    return { providerId: BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan, providerScope: "builtin" };
+  }
+  if (isBuiltinModelProviderId(normalized) || isLegacyBuiltinTelemetryProviderId(normalized)) {
     return { providerId: normalized, providerScope: "builtin" };
   }
   return { providerId: "custom", providerScope: "custom" };

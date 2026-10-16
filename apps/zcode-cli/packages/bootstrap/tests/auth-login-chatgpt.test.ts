@@ -341,7 +341,7 @@ describe("ChatGPT plan login (SIWC)", () => {
     expect(await listSiwcPlanAccounts(credentialStore)).toHaveLength(0);
   });
 
-  it("logout of one account keeps the other account's tokens", async () => {
+  it("logout loops over every signed-in account and clears all slots", async () => {
     const { credentialStore } = await createWorkspace();
     const secondSub = "user-sub-2";
     const secondKey = createSiwcAccountKey(secondSub);
