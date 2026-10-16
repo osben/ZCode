@@ -14,7 +14,7 @@
 
 `GET /api/v1/zcode-plan/billing/balance` now returns real `bucket_id`, `user_plan_id`, `period_start`, `period_end`, and `expires_at` values in `balances[]`. The Service adds optional fields to the existing `UsageQuotaLimit`; convert all times consistently to milliseconds. Derive period-copy type from `plans[].entitlements[]`, matched by `user_plan_id` (or `plan_id` for legacy data) and `entitlement_id`.
 
-Quota buckets are read-only. Exclude buckets known to be expired or not yet effective. Determine validity using `snapshot.serverTime` (or `generatedAt` when missing) to match the server snapshot; do not guess from the device date. Missing or non-finite values must not be misclassified as 0. If a legacy snapshot lacks `bucket_id` or a valid period, do not trigger a one-time low-quota reminder, but a clear remaining value may still be used to determine exhaustion. Period end and bucket expiration are separate concepts; do not use `expires_at` as a substitute for period identity.
+Read model-usage buckets only; exclude non-model quotas from reminder and exhaustion calculations. Exclude model-usage buckets known to be expired or not yet effective. Determine validity using `snapshot.serverTime` (or `generatedAt` when missing) to match the server snapshot; do not guess from the device date. Missing or non-finite values must not be misclassified as 0. If a legacy snapshot lacks `bucket_id` or a valid period, do not trigger a one-time low-quota reminder, but a clear remaining value may still be used to determine exhaustion. Period end and bucket expiration are separate concepts; do not use `expires_at` as a substitute for period identity.
 
 ## State Ownership
 
