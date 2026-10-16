@@ -1,5 +1,5 @@
 import type { OAuthProviderId } from "@zcode/shared";
-import { BIGMODEL_PROVIDER_ID, ZAI_PROVIDER_ID } from "@zcode/shared";
+import { BIGMODEL_PROVIDER_ID, BUILTIN_MODEL_PROVIDER_IDS, ZAI_PROVIDER_ID } from "@zcode/shared";
 import { LogInIcon } from "lucide-react";
 import { cn } from "@/components/lib/utils.js";
 import bigModelIcon from "@/assets/provider-icons/logo-bigmodel.svg";
@@ -40,8 +40,15 @@ export function renderOAuthProviderIcon(provider: OAuthProviderId, className?: s
 const PROVIDER_ID_ICON_SRC: Readonly<Record<string, string>> = {
   glm: zaiIcon,
   [ZAI_PROVIDER_ID]: zaiIcon,
+  [BUILTIN_MODEL_PROVIDER_IDS.zaiIndividualCodingPlan]: zaiIcon,
+  [BUILTIN_MODEL_PROVIDER_IDS.zaiTeamCodingPlan]: zaiIcon,
+  [BUILTIN_MODEL_PROVIDER_IDS.zaiStartPlan]: zaiIcon,
   [BIGMODEL_PROVIDER_ID]: bigModelIcon,
+  [BUILTIN_MODEL_PROVIDER_IDS.bigmodelIndividualCodingPlan]: bigModelIcon,
+  [BUILTIN_MODEL_PROVIDER_IDS.bigmodelTeamCodingPlan]: bigModelIcon,
+  [BUILTIN_MODEL_PROVIDER_IDS.bigmodelStartPlan]: bigModelIcon,
   openai: openAiIcon,
+  [BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan]: openAiIcon,
   anthropic: anthropicIcon,
   deepseek: deepSeekIcon,
   "moonshot-kimi": moonshotKimiIcon,

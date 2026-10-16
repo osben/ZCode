@@ -2,8 +2,9 @@ import { expect, test, vi } from "vitest";
 import { createElement } from "react";
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { ZCodeTaskMeta } from "@zcode/shared";
+import { BUILTIN_MODEL_PROVIDER_IDS, type ZCodeTaskMeta } from "@zcode/shared";
 import { TaskSidebarHoverCard } from "@/components/TaskSidebarHoverCard.js";
+import { providerBrandIconSrc } from "@/lib/oauthProviderIcon.js";
 
 vi.mock("@/components/ui/tooltip.js", () => ({
   TooltipContent: ({ children }: { children: ReactNode }) => createElement("div", null, children),
@@ -27,7 +28,10 @@ function baseTask(overrides: Partial<ZCodeTaskMeta>): ZCodeTaskMeta {
   };
 }
 
-function renderCard(task: ZCodeTaskMeta, extra?: { branchMergeStatus?: ReactNode }) {
+function renderCard(
+  task: ZCodeTaskMeta,
+  extra?: Pick<Parameters<typeof TaskSidebarHoverCard>[0], "branchMergeStatus">,
+) {
   return renderToStaticMarkup(
     createElement(TaskSidebarHoverCard, {
       task,
@@ -77,8 +81,9 @@ test("renders title line, merged branch line with stats, and model line", () => 
   expect(html).toContain("-3");
   expect(html).not.toContain("origin/main");
   expect(html).not.toContain("feature/hover-card");
-  // Line 3: unknown provider keeps the generic glyph; model + effort stay.
-  expect(html).toContain("lucide-cpu");
+  // Line 3: the built-in Z.ai account provider renders its brand asset; model + effort stay.
+  expect(html).toContain("<img");
+  expect(html).not.toContain("lucide-cpu");
   expect(html).toContain("GLM-5.3");
   expect(html).not.toContain("account:zai-individual-coding-plan");
   expect(html).toContain("Extra High");
@@ -94,7 +99,7 @@ test("worktree branch wins over merge-status head and the worktree marker render
   });
   const html = renderCard(task, {
     branchMergeStatus: {
-      state: "active",
+      state: "not_merged",
       baseRef: "origin/main",
       headRef: "feature/other",
       lastCommitAt: null,
@@ -127,4 +132,26 @@ test("stats survive without any branch source; unknown provider falls back to Cp
   expect(html).toContain("+5");
   expect(html).toContain("lucide-cpu");
   expect(html).toContain("X-model");
+});
+
+test("canonical built-in account provider IDs resolve to their brand icons", () => {
+  const zaiIcon = providerBrandIconSrc("zai");
+  const bigModelIcon = providerBrandIconSrc("bigmodel");
+  const openAiIcon = providerBrandIconSrc("openai");
+
+  for (const providerId of [
+    BUILTIN_MODEL_PROVIDER_IDS.zaiIndividualCodingPlan,
+    BUILTIN_MODEL_PROVIDER_IDS.zaiTeamCodingPlan,
+    BUILTIN_MODEL_PROVIDER_IDS.zaiStartPlan,
+  ]) {
+    expect(providerBrandIconSrc(providerId)).toBe(zaiIcon);
+  }
+  for (const providerId of [
+    BUILTIN_MODEL_PROVIDER_IDS.bigmodelIndividualCodingPlan,
+    BUILTIN_MODEL_PROVIDER_IDS.bigmodelTeamCodingPlan,
+    BUILTIN_MODEL_PROVIDER_IDS.bigmodelStartPlan,
+  ]) {
+    expect(providerBrandIconSrc(providerId)).toBe(bigModelIcon);
+  }
+  expect(providerBrandIconSrc(BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan)).toBe(openAiIcon);
 });
