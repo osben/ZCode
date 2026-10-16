@@ -14,15 +14,18 @@ import {
   Cloud,
   CopyIcon,
   Ellipsis,
+  ExternalLink,
   Folder,
   FolderOpen,
   House,
   InfoIcon,
   ListTree,
   LoaderCircle,
+  PinOff,
   RefreshCwIcon,
   MessageCirclePlus,
   Pin,
+  Settings2,
   XIcon,
 } from "lucide-react";
 import type { useSortable } from "@dnd-kit/sortable";
@@ -903,7 +906,9 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
                   "hover:bg-surface-hover hover:text-foreground",
                   isDisconnectedRemoteWorkspace &&
                     "hover:bg-transparent aria-expanded:bg-transparent",
-                  sortableBindings && "cursor-grab active:cursor-grabbing",
+                  sortableBindings &&
+                    !workspaceActionMenuOpen &&
+                    "cursor-grab active:cursor-grabbing",
                 )}
                 onMouseEnter={() => setWorkspaceRowHovered(true)}
                 onMouseLeave={() => setWorkspaceRowHovered(false)}
@@ -914,7 +919,9 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
                   }
                 }}
                 {...(sortableBindings?.attributes ?? {})}
-                {...(sortableBindings?.listeners ?? {})}
+                // An open action menu suspends row dragging: reorder gestures under the open menu
+                // both look broken and can silently reorder behind the overlay.
+                {...(workspaceActionMenuOpen ? {} : (sortableBindings?.listeners ?? {}))}
               >
                 {sshWorkspaceTooltipDetails ? (
                   <TooltipProvider>
@@ -1009,6 +1016,11 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
                               data-testid={testId(TID_WORKSPACE_TOGGLE_PIN, tab.workspacePath)}
                               onSelect={() => onToggleWorkspacePinned(!isPinned)}
                             >
+                              {isPinned ? (
+                                <PinOff className="h-3.5 w-3.5" />
+                              ) : (
+                                <Pin className="h-3.5 w-3.5" />
+                              )}
                               {intl.formatMessage({
                                 id: isPinned
                                   ? "workspaceSidebar.unpinProject"
@@ -1020,6 +1032,7 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
                             data-testid="workspace-customize"
                             onSelect={() => setCustomizeDialogOpen(true)}
                           >
+                            <Settings2 className="h-3.5 w-3.5" />
                             {intl.formatMessage({ id: "workspaceSidebar.customize" })}
                           </DropdownMenuItem>
                           {workspaceGitHubUrl ? (
@@ -1027,6 +1040,7 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
                               data-testid="workspace-open-on-github"
                               onSelect={handleOpenWorkspaceOnGitHub}
                             >
+                              <ExternalLink className="h-3.5 w-3.5" />
                               {intl.formatMessage({ id: "workspaceSidebar.openOnGitHub" })}
                             </DropdownMenuItem>
                           ) : null}
