@@ -374,6 +374,7 @@ export function shouldRefreshLiveGitData(
 export function useGitRepository(options: {
   workspacePath: string;
   activeTaskId: string | null;
+  enabled?: boolean;
   includeExtendedData?: boolean;
   refreshToken?: string | number | boolean | null;
   remoteSessionId?: string | null;
@@ -382,6 +383,7 @@ export function useGitRepository(options: {
 }): GitPaneRepositoryState {
   const {
     workspacePath,
+    enabled = true,
     includeExtendedData = false,
     refreshToken = null,
     remoteSessionId: preferredRemoteSessionId = null,
@@ -420,6 +422,20 @@ export function useGitRepository(options: {
       refreshToken,
       workspaceRpcEnabled,
     };
+
+    if (!enabled) {
+      requestVersionRef.current += 1;
+      lastLiveRefreshInputRef.current = nextRefreshInput;
+      setRepositoryState((current) =>
+        createInitialState(workspacePath, {
+          workspaceKey,
+          loading: false,
+          error: null,
+          revision: current.revision,
+        }),
+      );
+      return;
+    }
 
     if (!workspaceRpcEnabled) {
       requestVersionRef.current += 1;
@@ -532,6 +548,7 @@ export function useGitRepository(options: {
     workspaceKey,
     workspacePath,
     workspaceRpcEnabled,
+    enabled,
   ]);
 
   return useMemo(() => {

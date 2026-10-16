@@ -86,7 +86,7 @@ export interface AgentRuntimeCoreMethods {
   setSessionModelSelection(selection: ModelSelection | undefined): void;
   getProjectId(): ProjectId;
   setWorkingDirectory(cwd: string): void;
-  getExecutionWorktree(): { path: string; branchName?: string } | undefined;
+  getExecutionWorktree(): { path: string; branchName?: string; missing?: boolean } | undefined;
   ensureSessionPersistedForExternalActivity(
     input: string,
     options?: { traceContext?: TraceContext },

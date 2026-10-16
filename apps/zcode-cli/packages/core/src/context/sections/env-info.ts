@@ -8,6 +8,7 @@ import { estimateTokens } from "../utils.js";
 
 const ENVIRONMENT_HEADING = "# Environment";
 const WORKING_DIRECTORY_LABEL = "Primary working directory";
+const EXECUTION_WORKTREE_LABEL = "Execution worktree";
 const IS_GIT_REPOSITORY_LABEL = "Is a git repository";
 const PLATFORM_LABEL = "Platform";
 const SHELL_LABEL = "Shell";
@@ -29,8 +30,37 @@ const CLEAN_GIT_STATUS = "(clean)";
 const DIRTY_GIT_STATUS = "(dirty)";
 const UNKNOWN_GIT_STATUS = "(unknown)";
 
-export function buildEnvInfoSection(envInfo: EnvInfo, model?: Model): ContextSection {
-  const content = buildEnvInfoContent(envInfo, model);
+/**
+ * Runtime-config execution-worktree fact projected into the Environment section at render time
+ * (spec: execution-worktree-model-context.md). Never persisted into EnvInfo snapshots and never
+ * sent on the wire; `missing` and `workspacePath` are runtime-only extensions.
+ */
+export interface ExecutionWorktreeEnvFact {
+  path: string;
+  branchName?: string;
+  /** The worktree directory vanished; the session fell back to the parent workspace cwd. */
+  missing?: boolean;
+  /** Parent workspace reference (the session's listing identity). */
+  workspacePath?: string;
+}
+
+/** One-line worktree isolation notice shared by the main and subagent env sections (no list prefix). */
+export function formatExecutionWorktreeSentence(worktree: ExecutionWorktreeEnvFact): string | null {
+  // The parent reference is the point of the line; without it the isolation/fallback is unexplainable.
+  if (!worktree.workspacePath) return null;
+  if (worktree.missing) {
+    return `${EXECUTION_WORKTREE_LABEL}: the requested worktree ${worktree.path} is missing; this session is running in the parent workspace ${worktree.workspacePath} instead.`;
+  }
+  const branchClause = worktree.branchName ? ` (branch ${worktree.branchName})` : "";
+  return `${EXECUTION_WORKTREE_LABEL}: this session runs in a linked git worktree of ${worktree.workspacePath}${branchClause}; file changes stay in the worktree until they are merged.`;
+}
+
+export function buildEnvInfoSection(
+  envInfo: EnvInfo,
+  model?: Model,
+  executionWorktree?: ExecutionWorktreeEnvFact,
+): ContextSection {
+  const content = buildEnvInfoContent(envInfo, model, executionWorktree);
 
   return {
     name: "Environment Info",
@@ -63,12 +93,21 @@ export function buildGitSystemContextSection(envInfo: EnvInfo): ContextSection |
   };
 }
 
-function buildEnvInfoContent(info: EnvInfo, model?: Model): string {
+function buildEnvInfoContent(
+  info: EnvInfo,
+  model?: Model,
+  executionWorktree?: ExecutionWorktreeEnvFact,
+): string {
   const hasGitRepository = isEnvInfoGitRepository(info);
+  const executionWorktreeLine = executionWorktree
+    ? formatExecutionWorktreeSentence(executionWorktree)
+    : null;
   const lines: string[] = [
     ENVIRONMENT_HEADING,
     "You have been invoked in the following environment:",
     `- ${WORKING_DIRECTORY_LABEL}: ${info.cwd}`,
+    // Plain sessions pass no worktree fact and keep a byte-identical section (pinned by tests).
+    ...(executionWorktreeLine ? [`- ${executionWorktreeLine}`] : []),
     `- ${IS_GIT_REPOSITORY_LABEL}: ${hasGitRepository ? YES_LABEL : NO_LABEL}`,
     `- ${PLATFORM_LABEL}: ${info.platform}`,
     `- ${SHELL_LABEL}: ${info.shell}`,

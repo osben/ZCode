@@ -145,9 +145,23 @@ import { usePrimaryFollowupModifier } from "@/v4/composer/usePrimaryFollowupModi
 import { consumeV4ComposerDraftWorkspaceTransferRequest } from "@/v4/composer/composerDraftWorkspaceTransfer.js";
 import {
   useComposerDraftWorktreeIntentSlot,
-  type ComposerDraftWorktreeInterceptResult,
   type ComposerExecutionWorktree,
+  type ComposerWorktreePreparationParams,
 } from "@/v4/composer/composerDraftWorktreeIntent.js";
+import {
+  selectComposerWorktreePipeline,
+  useComposerWorktreePipelineStore,
+} from "@/store/composerWorktreePipelineStore.js";
+import {
+  applyDraftBranchIntentForSend,
+  selectDraftBranchIntent,
+  selectWorktreeIntentActive,
+  useDraftBranchIntentStore,
+} from "@/v4/composer/draftBranchIntent.js";
+import { mergeWithdrawnWorktreeDraftText } from "@/v4/composer/composerWorktreeDraftRecovery.js";
+import { useBranchSwitchGuard } from "@/v4/composer/branchSwitchGuard.js";
+import { useOptionalBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
+import { toast } from "@/components/ui/toast.js";
 import { useComposerAttachments } from "@/v4/composer/useComposerAttachments.js";
 import type { ConversationDropTargetController } from "@/v4/composer/conversationDropTarget.js";
 import { CodeCommentAttachmentChip } from "@/v4/composer/CodeCommentAttachmentChip.js";
@@ -216,6 +230,8 @@ export interface ConversationComposerSendOptions {
    * stays listed under the current workspace. undefined for ordinary sends.
    */
   executionWorktree?: ComposerExecutionWorktree;
+  /** Existing Host-prepared identity to activate and send into after worktree creation. */
+  preparedSessionId?: string;
 }
 
 export type ConversationComposerSendResult = "sent" | "blocked" | "confirmationRequired";
@@ -455,6 +471,9 @@ export interface ConversationComposerProps {
     text: string,
     options?: ConversationComposerSendOptions,
   ) => Promise<ConversationComposerSendResult | void>;
+  /** Reserve/open the Host-owned session before the worktree Git operation begins. */
+  onPrepareWorktreeSession?: (params: ComposerWorktreePreparationParams) => Promise<string>;
+  onWorktreePreparationFailed?: (sessionId: string, failureMessage: string) => Promise<void>;
   /** Pass the current input text to the parent (editUserQuery uses composer text as newText). */
   onTextChange?: (text: string) => void;
   /** Full composer occupancy state read when admitting a queue undo; attachments include items still uploading. */
@@ -560,6 +579,8 @@ function ConversationComposerImpl({
   telemetryVisible = true,
   readPlanIdentitySnapshot,
   onSendText,
+  onPrepareWorktreeSession,
+  onWorktreePreparationFailed,
   onTextChange,
   onDraftStateChange,
   onStop,
@@ -601,6 +622,31 @@ function ConversationComposerImpl({
   const configPickerScopeKey = `${workspaceKey}\0${draftScopeId}`;
   const [text, setText] = useState("");
   const [pending, setPending] = useState(false);
+  // Worktree setup queue (specs/composer-worktree-setup-steps.md): unlike `pending`, the queued
+  // state never reports busy to the empty state and never blocks editing — it only shows the
+  // spinner on the send button and rejects duplicate sends while creation is in flight.
+  const [worktreeQueued, setWorktreeQueued] = useState(false);
+  const pendingWorktreeSendRef = useRef<{
+    workspaceKey: string;
+    preparedSessionId: string;
+    dispatch: (
+      executionWorktree: ComposerExecutionWorktree,
+      preparedSessionId: string,
+    ) => Promise<void>;
+    restore: () => void;
+  } | null>(null);
+  const reportedWorktreeFailuresRef = useRef(new Set<string>());
+  const worktreePipeline = useComposerWorktreePipelineStore((state) =>
+    selectComposerWorktreePipeline(state, workspaceKey),
+  );
+  const worktreeIntentActive = useDraftBranchIntentStore((state) =>
+    selectWorktreeIntentActive(state, workspaceKey),
+  );
+  // Draft branch intent (specs/composer-branch-switcher-semantics.md): the guard and git access
+  // needed to apply the intent at send time. Null services/guard = harness or compact shell
+  // without providers; the branch resolution then never runs.
+  const baseWorkspaceServices = useOptionalBaseWorkspaceServices();
+  const branchSwitchGuard = useBranchSwitchGuard();
   const [presentedHighspeedCardId, setPresentedHighspeedCardId] = useState<string | null>(null);
   const [highspeedSweepActive, setHighspeedSweepActive] = useState(false);
   const highspeedCardId = highspeedCard?.cardId ?? null;
@@ -1247,6 +1293,7 @@ function ConversationComposerImpl({
   const canSend =
     !disabled &&
     !pending &&
+    !worktreeQueued &&
     hasDraftToSubmit &&
     routingAllowsSend &&
     attachmentsReady &&
@@ -1257,6 +1304,113 @@ function ConversationComposerImpl({
   useEffect(() => {
     if (!canSend) setSendTooltipOpen(false);
   }, [canSend]);
+
+  // Queued worktree send (specs/composer-worktree-setup-steps.md): dispatch exactly once when the
+  // pipeline turns ready. The draft is claimed at queue time (the composer frees immediately and
+  // the chat area shows the pending bubble), so a creation failure restores the message into the
+  // composer for a plain re-send.
+  useEffect(() => {
+    const queued = pendingWorktreeSendRef.current;
+    if (!queued) return;
+    // Every settled outcome detaches the queued submission first; only what happens next differs.
+    const detachQueued = () => {
+      pendingWorktreeSendRef.current = null;
+      setWorktreeQueued(false);
+    };
+    if (queued.workspaceKey !== workspaceKey) {
+      detachQueued();
+      useComposerWorktreePipelineStore.getState().withdraw(queued.workspaceKey);
+      queued.restore();
+      return;
+    }
+    if (worktreePipeline?.orphaned) {
+      detachQueued();
+      queued.restore();
+      return;
+    }
+    if (
+      worktreePipeline?.status === "ready" &&
+      worktreePipeline.worktreePath &&
+      worktreePipeline.params
+    ) {
+      detachQueued();
+      void queued.dispatch(
+        {
+          path: worktreePipeline.worktreePath,
+          branchName: worktreePipeline.params.branchName,
+        },
+        queued.preparedSessionId,
+      );
+      return;
+    }
+    if (worktreePipeline?.status === "failed") {
+      const failureKey = `${queued.preparedSessionId}\0${worktreePipeline.failureMessage ?? ""}`;
+      if (onWorktreePreparationFailed && !reportedWorktreeFailuresRef.current.has(failureKey)) {
+        reportedWorktreeFailuresRef.current.add(failureKey);
+        void onWorktreePreparationFailed(
+          queued.preparedSessionId,
+          worktreePipeline.failureMessage ?? "Worktree creation failed",
+        ).catch((error) => {
+          logger.warn("[WorktreePipeline] could not persist the preparation failure", {
+            error: String(error),
+            sessionId: queued.preparedSessionId,
+          });
+        });
+      }
+      detachQueued();
+      queued.restore();
+    }
+  }, [onWorktreePreparationFailed, worktreePipeline, workspaceKey]);
+
+  // Turning worktree mode off or leaving the draft detaches the queued submission. The Git call
+  // may finish, but the orphaned result can only be reused by a later explicit worktree send.
+  useEffect(() => {
+    const queued = pendingWorktreeSendRef.current;
+    if (
+      !queued ||
+      (queued.workspaceKey === workspaceKey &&
+        worktreeIntentActive &&
+        (sessionId === null || sessionId === queued.preparedSessionId))
+    ) {
+      return;
+    }
+    pendingWorktreeSendRef.current = null;
+    setWorktreeQueued(false);
+    useComposerWorktreePipelineStore.getState().withdraw(queued.workspaceKey);
+    queued.restore();
+  }, [draftMode, sessionId, worktreeIntentActive, workspaceKey]);
+
+  // Composer unmount (workspace/tab switch) withdraws the queued send: the in-flight git call
+  // finishes and lands with an orphan note (directory left on disk); a later intent reuses it.
+  useEffect(
+    () => () => {
+      if (pendingWorktreeSendRef.current) {
+        const queued = pendingWorktreeSendRef.current;
+        pendingWorktreeSendRef.current = null;
+        useComposerWorktreePipelineStore.getState().withdraw(queued.workspaceKey);
+        queued.restore();
+      }
+    },
+    [workspaceKey],
+  );
+
+  // Draft branch intent clears when the user empties a non-empty draft (spec §1 "cleared with the
+  // draft"). Picking a branch before typing anything is unaffected: the transition requires prior
+  // content.
+  const draftHadTextRef = useRef(false);
+  useEffect(() => {
+    const hasText = text.trim().length > 0;
+    if (hasText) {
+      draftHadTextRef.current = true;
+      return;
+    }
+    if (draftHadTextRef.current) {
+      draftHadTextRef.current = false;
+      if (draftMode && sessionId === null) {
+        useDraftBranchIntentStore.getState().clearDraftBranchIntent(workspaceKey);
+      }
+    }
+  }, [draftMode, sessionId, text, workspaceKey]);
 
   const submit = useCallback(
     async (
@@ -1285,112 +1439,15 @@ function ConversationComposerImpl({
       // __draft__, restoring it when the next task is created. Freeze the actual submitted scope at send start.
       const submittedDraft = snapshotDraftOfEditor();
       let cleanupRevision = contentRevisionRef.current;
-      const submission = createSubmissionFromComposer?.() ?? null;
-      const submittedAttachmentIds = attachmentsApi.attachments.map((item) => item.id);
-      if (
-        (!trimmed &&
-          !hasPendingAttachments &&
-          !hasPendingCodeCommentContexts &&
-          !hasPendingWebElementContexts &&
-          !hasPendingPptxElementReferences &&
-          !hasPendingConversationSelections &&
-          !hasPendingPluginUiContexts &&
-          !submittedShareContext) ||
-        pendingRef.current ||
-        !submissionReady ||
-        (createSubmissionFromComposer !== undefined && submission === null) ||
-        attachmentsApi.hasUnreadyAttachments
-      ) {
-        return;
-      }
-      // Empty-state “New worktree” interception (review 6c): before the draft's first send
-      // creates any runtime session, hand the send to the registered intent so it can create
-      // the worktree. A cancel result keeps the draft in the editor with the error surfaced
-      // inline in the worktree form; a proceed result sends normally in the current workspace
-      // with executionWorktree attached, so the session runs in the worktree but stays listed
-      // under this project (no workspace switch, no draft transfer).
-      const worktreeIntent = worktreeIntentSlot?.current;
-      let executionWorktree: ComposerExecutionWorktree | undefined;
-      if (
-        draftMode &&
-        sessionId === null &&
-        worktreeIntent &&
-        worktreeIntent.workspaceKey === workspaceKey
-      ) {
-        pendingRef.current = true;
-        setPending(true);
-        let interceptResult: ComposerDraftWorktreeInterceptResult = { action: "cancel" };
-        try {
-          interceptResult = await worktreeIntent.interceptFirstSend();
-        } catch (error) {
-          logger.warn(
-            `[v4-composer] worktree send interception failed: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        } finally {
-          pendingRef.current = false;
-          setPending(false);
-        }
-        if (interceptResult.action === "cancel") {
-          return;
-        }
-        executionWorktree = interceptResult.executionWorktree;
-      }
-      const sendAction = startUserAction({
-        featureId: "conversation.composer.message",
-        action: "send",
-        trigger: sendTriggerRef.current === "button" ? "button" : "shortcut",
-        workspaceKind: workspaceIdentity?.trim() ? "remote" : "local",
-      });
-      pendingRef.current = true;
-      setPending(true);
-      // Bug cause: draft intent stores only explicit user changes; the normally inherited model is in frozen initialization config.
-      // If the prewarm snapshot has not arrived and we read only draftConfig, send_btn incorrectly becomes an empty model/glm.
-      const telemetryConfig = telemetryDraftConfig ?? snapshotRef.current?.config ?? draftConfig;
-      let telemetrySeed: ConversationPromptTelemetrySeed;
-      if (existingTelemetrySeed) {
-        // Queue re-confirmation reuses the seed from the first click: do not report send_click again or reset the trigger source,
-        // keeping send_click and send_result strictly 1:1.
-        telemetrySeed = existingTelemetrySeed;
-        if (telemetrySeed.localTtft)
-          getLocalTtftObserver()?.confirmation(telemetrySeed.localTtft, false);
-      } else {
-        const freshSeed: ConversationPromptTelemetrySeed = {
-          sendTime: Date.now(),
-          localTtft: !workspaceIdentity?.trim()
-            ? getLocalTtftObserver()?.start(
-                workspacePath,
-                (snapshotRef.current !== null &&
-                  snapshotRef.current.inputRouting.mode !== "startNow") ||
-                  false,
-                trimmed.startsWith("/"),
-              )
-            : undefined,
-          extraDetail: buildV4ConversationPromptTelemetryExtraDetail({
-            askMode: telemetryConfig?.mode,
-            modelName: telemetryConfig?.model,
-            configProvider: telemetryConfig?.provider,
-            agentProvider: provider,
-            providerBaseURL: resolveProviderBaseURL(telemetryConfig?.provider, modelSelectionView),
-            planIdentitySnapshot: readPlanIdentitySnapshot?.(),
-          }),
-        };
-        const sendTrigger = sendTriggerRef.current;
-        sendTriggerRef.current = "shortcut";
-        // recordSendClick fills in sendClickId; use its returned value as the next seed.
-        // Otherwise finalization lacks the correlation key and send_result is skipped as a background task.
-        telemetrySeed =
-          conversationTelemetry?.recordSendClick({
-            sessionId: sessionId ?? null,
-            seed: freshSeed,
-            trigger: sendTrigger,
-          }) ?? freshSeed;
-      }
-      let promptHistoryBeforeSend: readonly string[] | null = null;
-      let promptHistoryAfterAppend: readonly string[] | null = null;
-      let promptHistoryWasPersisted = false;
+      // Draft claim lives in the submit scope (not inside the send closure): a queued worktree
+      // send claims the draft at queue time so the composer frees immediately, and the same
+      // claim/restore pair guards the eventual dispatch.
       let draftSubmissionClaimed = false;
       let editorClearedOptimistically = false;
       const claimSubmittedDraft = () => {
+        // A queued worktree send claims at queue time; the eventual dispatch re-enters here and
+        // must not wipe text typed while the creation was in flight.
+        if (draftSubmissionClaimed) return;
         if (draftPersistTimerRef.current !== null) {
           window.clearTimeout(draftPersistTimerRef.current);
           draftPersistTimerRef.current = null;
@@ -1400,13 +1457,26 @@ function ConversationComposerImpl({
         // Claim and hide the draft before submission; restore it on failure rather than masking the race with a delay.
         suppressDraftPersistRef.current = true;
         updateComposerContent({ text: "" });
+        inputApiRef.current?.clear();
+        updateText("");
+        cleanupRevision = contentRevisionRef.current;
+        editorClearedOptimistically = true;
         draftSubmissionClaimed = true;
       };
       const restoreSubmittedDraft = () => {
         if (!draftSubmissionClaimed) return;
-        // If the user edits while waiting, the current full text is the latest fact; an older failure response must not overwrite it.
         if (contentRevisionRef.current === cleanupRevision) {
           updateComposerContent(submittedDraft);
+        } else {
+          // Keep both messages if the user starts the next draft while Git is working. An old
+          // failure/withdrawal must never overwrite that newer editor content.
+          const recoveredText = mergeWithdrawnWorktreeDraftText(
+            submittedDraft.text,
+            textRef.current,
+          );
+          inputApiRef.current?.setText(recoveredText);
+          updateText(recoveredText);
+          updateComposerContent({ text: recoveredText });
         }
         suppressDraftPersistRef.current = false;
         draftSubmissionClaimed = false;
@@ -1425,197 +1495,394 @@ function ConversationComposerImpl({
         suppressDraftPersistRef.current = false;
         draftSubmissionClaimed = false;
       };
-      const rollbackPromptHistory = () => {
-        if (!promptHistoryWasPersisted || !promptHistoryBeforeSend || !promptHistoryAfterAppend) {
-          return;
+      const submission = createSubmissionFromComposer?.() ?? null;
+      const submittedAttachmentIds = attachmentsApi.attachments.map((item) => item.id);
+      if (
+        (!trimmed &&
+          !hasPendingAttachments &&
+          !hasPendingCodeCommentContexts &&
+          !hasPendingWebElementContexts &&
+          !hasPendingPptxElementReferences &&
+          !hasPendingConversationSelections &&
+          !hasPendingPluginUiContexts &&
+          !submittedShareContext) ||
+        pendingRef.current ||
+        pendingWorktreeSendRef.current !== null ||
+        !submissionReady ||
+        (createSubmissionFromComposer !== undefined && submission === null) ||
+        attachmentsApi.hasUnreadyAttachments
+      ) {
+        return;
+      }
+      // Worktree setup pipeline (specs/composer-worktree-setup-steps.md): the first send with an
+      // active "New worktree" intent starts creation WITHOUT blocking or disabling the composer.
+      // The shell presents a provisional chat from pipeline state; the frozen send dispatches only
+      // after the worktree is ready. A reused ready worktree (retry or orphan reuse) dispatches immediately.
+      const worktreeIntent = worktreeIntentSlot?.current;
+      let executionWorktree: ComposerExecutionWorktree | undefined;
+      let preparedSessionIdForSend: string | undefined;
+      let queueWorktreeSend = false;
+      if (
+        ((draftMode && sessionId === null) || snapshot?.meta.worktreePreparation !== undefined) &&
+        worktreeIntent &&
+        worktreeIntent.workspaceKey === workspaceKey
+      ) {
+        const pipeline = selectComposerWorktreePipeline(
+          useComposerWorktreePipelineStore.getState(),
+          workspaceKey,
+        );
+        const currentPreparedSessionId = snapshot?.meta.worktreePreparation ? sessionId : null;
+        if (
+          pipeline?.status === "ready" &&
+          pipeline.worktreePath &&
+          pipeline.params &&
+          (!currentPreparedSessionId || pipeline.sessionId === currentPreparedSessionId)
+        ) {
+          executionWorktree = {
+            path: pipeline.worktreePath,
+            branchName: pipeline.params.branchName,
+          };
+          preparedSessionIdForSend = currentPreparedSessionId ?? pipeline.sessionId;
+        } else if (pipeline?.status === "creating") {
+          // Already queued: exactly one pipeline and one queued send per workspace.
+          if (!currentPreparedSessionId && !pipeline.sessionId) return;
+          preparedSessionIdForSend = currentPreparedSessionId ?? pipeline.sessionId;
+          queueWorktreeSend = true;
+        } else {
+          // The Host session is reserved below before beginCreation starts any Git work.
+          preparedSessionIdForSend = currentPreparedSessionId ?? undefined;
+          queueWorktreeSend = true;
         }
-        const currentPromptHistory = readPromptHistoryEntries(workspacePath);
-        if (arePromptHistoryEntriesEqual(currentPromptHistory, promptHistoryAfterAppend)) {
-          persistPromptHistoryEntries(workspacePath, promptHistoryBeforeSend);
-          setPromptHistory(promptHistoryBeforeSend);
-          return;
-        }
-        setPromptHistory(currentPromptHistory);
-      };
-      try {
-        // Second gate: consume only refs whose pre-upload is complete; do not fall back to uploading on send click.
-        const readyAttachmentRefs = await attachmentsApi.prepareForSend();
-        if (readyAttachmentRefs === null) {
-          if (telemetrySeed.localTtft)
-            getLocalTtftObserver()?.exclude(telemetrySeed.localTtft, "rejected");
-          // send_click has already been reported; failing to finalize here leaves an unmatched sample and skews the success-rate denominator.
-          conversationTelemetry?.settleSendResult({
-            seed: telemetrySeed,
-            sessionId: sessionId ?? null,
-            status: "fail",
-            reasonCode: "attachment_not_ready",
+      }
+      // Draft branch intent, checkout mode only (the worktree pipeline owns the branch while its
+      // intent is active): a different branch runs the guard, then the switch; a cancelled guard
+      // or failed switch aborts the send with the draft and the intent preserved (spec §1).
+      const branchIntentGitService = baseWorkspaceServices?.gitService;
+      const draftBranchIntent =
+        !queueWorktreeSend &&
+        executionWorktree === undefined &&
+        draftMode &&
+        sessionId === null &&
+        branchIntentGitService
+          ? selectDraftBranchIntent(useDraftBranchIntentStore.getState(), workspaceKey)
+          : null;
+      if (draftBranchIntent && branchIntentGitService) {
+        pendingRef.current = true;
+        setPending(true);
+        try {
+          const resolution = await applyDraftBranchIntentForSend({
+            gitService: branchIntentGitService,
+            ...(branchSwitchGuard ? { guard: branchSwitchGuard } : {}),
+            workspaceKey,
+            workspacePath,
+            branchName: draftBranchIntent,
           });
-          sendAction.fail({ failureStage: "attachment_not_ready" });
-          return;
+          if (resolution.outcome === "aborted") {
+            if (resolution.reason === "switch-failed") {
+              toast(
+                resolution.message ??
+                  intl.formatMessage({ id: "git.branchSwitcher.error.unknown" }),
+              );
+            } else if (resolution.reason === "switch-error") {
+              toast(
+                intl.formatMessage(
+                  { id: "git.branchSwitcher.error.requestFailed" },
+                  { error: resolution.message ?? "" },
+                ),
+              );
+            }
+            // "guard" is a user cancellation: no toast, draft and intent preserved.
+            return;
+          }
+        } finally {
+          pendingRef.current = false;
+          setPending(false);
         }
-        // External context is not sent as protocol attachments. Serialize it in the fixed trailing order selection → code comment → web → PPTX
-        // so historical user rows can parse it losslessly in reverse and hide internal prompt blocks.
-        //
-        // Do not serialize share handover here: the share URL block is renderer-only (nothing in CLI/shared parses it).
-        // Its only purpose was to drive a chip that the product removed, while also putting a share URL into the model prompt.
-        // Model-side content is injected by the hidden shared_context message through inputIntent.sharedContextRefs, independently of the body.
-        const promptText = serializeComposerPromptContexts(trimmed, {
-          codeComments: currentCodeCommentContexts,
-          conversationSelections: [],
-          webElements: currentWebElementContexts,
-          pptxElements: currentPptxElementReferences,
-          pluginUiContexts: currentPluginUiContexts,
+      }
+      // Frozen-send closure: runs the actual dispatch either immediately (plain sends,
+      // reused ready worktree) or from the queued-worktree effect when the pipeline turns ready.
+      const runSend = async (
+        executionWorktree: ComposerExecutionWorktree | undefined,
+        preparedSessionId?: string,
+      ): Promise<void> => {
+        const sendAction = startUserAction({
+          featureId: "conversation.composer.message",
+          action: "send",
+          trigger: sendTriggerRef.current === "button" ? "button" : "shortcut",
+          workspaceKind: workspaceIdentity?.trim() ? "remote" : "local",
         });
-        const contextAttachmentCount =
-          countComposerPromptContexts({
+        pendingRef.current = true;
+        setPending(true);
+        // Bug cause: draft intent stores only explicit user changes; the normally inherited model is in frozen initialization config.
+        // If the prewarm snapshot has not arrived and we read only draftConfig, send_btn incorrectly becomes an empty model/glm.
+        const telemetryConfig = telemetryDraftConfig ?? snapshotRef.current?.config ?? draftConfig;
+        let telemetrySeed: ConversationPromptTelemetrySeed;
+        if (existingTelemetrySeed) {
+          // Queue re-confirmation reuses the seed from the first click: do not report send_click again or reset the trigger source,
+          // keeping send_click and send_result strictly 1:1.
+          telemetrySeed = existingTelemetrySeed;
+          if (telemetrySeed.localTtft)
+            getLocalTtftObserver()?.confirmation(telemetrySeed.localTtft, false);
+        } else {
+          const freshSeed: ConversationPromptTelemetrySeed = {
+            sendTime: Date.now(),
+            localTtft: !workspaceIdentity?.trim()
+              ? getLocalTtftObserver()?.start(
+                  workspacePath,
+                  (snapshotRef.current !== null &&
+                    snapshotRef.current.inputRouting.mode !== "startNow") ||
+                    false,
+                  trimmed.startsWith("/"),
+                )
+              : undefined,
+            extraDetail: buildV4ConversationPromptTelemetryExtraDetail({
+              askMode: telemetryConfig?.mode,
+              modelName: telemetryConfig?.model,
+              configProvider: telemetryConfig?.provider,
+              agentProvider: provider,
+              providerBaseURL: resolveProviderBaseURL(
+                telemetryConfig?.provider,
+                modelSelectionView,
+              ),
+              planIdentitySnapshot: readPlanIdentitySnapshot?.(),
+            }),
+          };
+          const sendTrigger = sendTriggerRef.current;
+          sendTriggerRef.current = "shortcut";
+          // recordSendClick fills in sendClickId; use its returned value as the next seed.
+          // Otherwise finalization lacks the correlation key and send_result is skipped as a background task.
+          telemetrySeed =
+            conversationTelemetry?.recordSendClick({
+              sessionId: sessionId ?? null,
+              seed: freshSeed,
+              trigger: sendTrigger,
+            }) ?? freshSeed;
+        }
+        let promptHistoryBeforeSend: readonly string[] | null = null;
+        let promptHistoryAfterAppend: readonly string[] | null = null;
+        let promptHistoryWasPersisted = false;
+        const rollbackPromptHistory = () => {
+          if (!promptHistoryWasPersisted || !promptHistoryBeforeSend || !promptHistoryAfterAppend) {
+            return;
+          }
+          const currentPromptHistory = readPromptHistoryEntries(workspacePath);
+          if (arePromptHistoryEntriesEqual(currentPromptHistory, promptHistoryAfterAppend)) {
+            persistPromptHistoryEntries(workspacePath, promptHistoryBeforeSend);
+            setPromptHistory(promptHistoryBeforeSend);
+            return;
+          }
+          setPromptHistory(currentPromptHistory);
+        };
+        try {
+          // Second gate: consume only refs whose pre-upload is complete; do not fall back to uploading on send click.
+          const readyAttachmentRefs = await attachmentsApi.prepareForSend();
+          if (readyAttachmentRefs === null) {
+            if (telemetrySeed.localTtft)
+              getLocalTtftObserver()?.exclude(telemetrySeed.localTtft, "rejected");
+            // send_click has already been reported; failing to finalize here leaves an unmatched sample and skews the success-rate denominator.
+            conversationTelemetry?.settleSendResult({
+              seed: telemetrySeed,
+              sessionId: sessionId ?? null,
+              status: "fail",
+              reasonCode: "attachment_not_ready",
+            });
+            sendAction.fail({ failureStage: "attachment_not_ready" });
+            return;
+          }
+          // External context is not sent as protocol attachments. Serialize it in the fixed trailing order selection → code comment → web → PPTX
+          // so historical user rows can parse it losslessly in reverse and hide internal prompt blocks.
+          //
+          // Do not serialize share handover here: the share URL block is renderer-only (nothing in CLI/shared parses it).
+          // Its only purpose was to drive a chip that the product removed, while also putting a share URL into the model prompt.
+          // Model-side content is injected by the hidden shared_context message through inputIntent.sharedContextRefs, independently of the body.
+          const promptText = serializeComposerPromptContexts(trimmed, {
             codeComments: currentCodeCommentContexts,
-            conversationSelections: currentConversationSelections,
+            conversationSelections: [],
             webElements: currentWebElementContexts,
             pptxElements: currentPptxElementReferences,
             pluginUiContexts: currentPluginUiContexts,
-          }) + (submittedShareContext ? 1 : 0);
-        if (trimmed) {
-          promptHistoryBeforeSend = readPromptHistoryEntries(workspacePath);
-          promptHistoryAfterAppend = appendPromptHistoryEntry(promptHistoryBeforeSend, trimmed);
-          if (!arePromptHistoryEntriesEqual(promptHistoryBeforeSend, promptHistoryAfterAppend)) {
-            // After prewarm first-send is accepted, SessionPane immediately promotes to a new session, and the draft Composer
-            // may unmount before the await resumes; do not hide persistence inside a React state updater.
-            // Keep using the old UI's localStorage history rather than the input_history database:
-            // synchronously persist before the real send, then restore the pre-send snapshot if sending fails.
-            persistPromptHistoryEntries(workspacePath, promptHistoryAfterAppend);
-            promptHistoryWasPersisted = true;
-            setPromptHistory(promptHistoryAfterAppend);
+          });
+          const contextAttachmentCount =
+            countComposerPromptContexts({
+              codeComments: currentCodeCommentContexts,
+              conversationSelections: currentConversationSelections,
+              webElements: currentWebElementContexts,
+              pptxElements: currentPptxElementReferences,
+              pluginUiContexts: currentPluginUiContexts,
+            }) + (submittedShareContext ? 1 : 0);
+          if (trimmed) {
+            promptHistoryBeforeSend = readPromptHistoryEntries(workspacePath);
+            promptHistoryAfterAppend = appendPromptHistoryEntry(promptHistoryBeforeSend, trimmed);
+            if (!arePromptHistoryEntriesEqual(promptHistoryBeforeSend, promptHistoryAfterAppend)) {
+              // After prewarm first-send is accepted, SessionPane immediately promotes to a new session, and the draft Composer
+              // may unmount before the await resumes; do not hide persistence inside a React state updater.
+              // Keep using the old UI's localStorage history rather than the input_history database:
+              // synchronously persist before the real send, then restore the pre-send snapshot if sending fails.
+              persistPromptHistoryEntries(workspacePath, promptHistoryAfterAppend);
+              promptHistoryWasPersisted = true;
+              setPromptHistory(promptHistoryAfterAppend);
+            }
           }
-        }
-        claimSubmittedDraft();
-        if (requestedDelivery === "startNow") {
-          // Atomic takeover waits for the old turn to exit and the new TurnStarted ACK to commit.
-          // If the editor also waits for the full flow before clearing, the user may think the shortcut did nothing.
-          // Clear visible text first; if the command is rejected, restore the frozen editor state exactly.
-          inputApiRef.current?.clear();
-          updateText("");
-          cleanupRevision = contentRevisionRef.current;
-          editorClearedOptimistically = true;
-        }
-        const sendResult = await onSendText(promptText, {
-          submission,
-          ...(executionWorktree ? { executionWorktree } : {}),
-          ...(currentConversationSelections.length
-            ? {
-                conversationQuotes: currentConversationSelections.map(
-                  ({ text, path, senderName, senderId, messageId, sentAt }) => ({
-                    text,
-                    path,
-                    senderName,
-                    senderId,
-                    messageId,
-                    sentAt,
-                  }),
-                ),
-              }
-            : {}),
-          telemetrySeed,
-          ...(requestedDelivery ? { requestedDelivery } : {}),
-          ...(heldQueueDisposition ? { heldQueueDisposition } : {}),
-          ...(expectedHeldQueueItemIds ? { expectedHeldQueueItemIds } : {}),
-          ...(readyAttachmentRefs.length > 0 ? { attachments: readyAttachmentRefs } : {}),
-          ...(executionWorktree && submittedAttachmentIds.length > 0
-            ? {
-                reuploadAttachmentsForSession: (targetSessionId: string) =>
-                  attachmentsApi.reuploadForSession(targetSessionId, submittedAttachmentIds),
-              }
-            : {}),
-          ...(contextAttachmentCount > 0 ? { contextAttachmentCount } : {}),
-          ...(submittedShareContext
-            ? {
-                sharedContextRefs: [
-                  {
-                    kind: "shared_context_import" as const,
-                    context_id: submittedShareContext.contextId,
-                  },
-                ],
-              }
-            : {}),
-        });
-        if (sendResult === "blocked") {
-          if (telemetrySeed.localTtft)
-            getLocalTtftObserver()?.exclude(telemetrySeed.localTtft, "rejected");
-          // A product guard is a normal rejection and should not use the exception path. Roll back history staged before sending,
-          // but keep the editor/draft/attachments so the user can switch modes and retry directly.
+          claimSubmittedDraft();
+          if (requestedDelivery === "startNow" && contentRevisionRef.current === cleanupRevision) {
+            // Atomic takeover waits for the old turn to exit and the new TurnStarted ACK to commit.
+            // If the editor also waits for the full flow before clearing, the user may think the shortcut did nothing.
+            // Clear visible text first; if the command is rejected, restore the frozen editor state exactly.
+            inputApiRef.current?.clear();
+            updateText("");
+            cleanupRevision = contentRevisionRef.current;
+            editorClearedOptimistically = true;
+          }
+          const sendResult = await onSendText(promptText, {
+            submission,
+            ...(executionWorktree ? { executionWorktree } : {}),
+            ...(preparedSessionId ? { preparedSessionId } : {}),
+            ...(currentConversationSelections.length
+              ? {
+                  conversationQuotes: currentConversationSelections.map(
+                    ({ text, path, senderName, senderId, messageId, sentAt }) => ({
+                      text,
+                      path,
+                      senderName,
+                      senderId,
+                      messageId,
+                      sentAt,
+                    }),
+                  ),
+                }
+              : {}),
+            telemetrySeed,
+            ...(requestedDelivery ? { requestedDelivery } : {}),
+            ...(heldQueueDisposition ? { heldQueueDisposition } : {}),
+            ...(expectedHeldQueueItemIds ? { expectedHeldQueueItemIds } : {}),
+            ...(readyAttachmentRefs.length > 0 ? { attachments: readyAttachmentRefs } : {}),
+            ...(executionWorktree && submittedAttachmentIds.length > 0
+              ? {
+                  reuploadAttachmentsForSession: (targetSessionId: string) =>
+                    attachmentsApi.reuploadForSession(targetSessionId, submittedAttachmentIds),
+                }
+              : {}),
+            ...(contextAttachmentCount > 0 ? { contextAttachmentCount } : {}),
+            ...(submittedShareContext
+              ? {
+                  sharedContextRefs: [
+                    {
+                      kind: "shared_context_import" as const,
+                      context_id: submittedShareContext.contextId,
+                    },
+                  ],
+                }
+              : {}),
+          });
+          if (sendResult === "blocked") {
+            if (telemetrySeed.localTtft)
+              getLocalTtftObserver()?.exclude(telemetrySeed.localTtft, "rejected");
+            // A product guard is a normal rejection and should not use the exception path. Roll back history staged before sending,
+            // but keep the editor/draft/attachments so the user can switch modes and retry directly.
+            rollbackPromptHistory();
+            restoreSubmittedDraft();
+            conversationTelemetry?.settleSendResult({
+              seed: telemetrySeed,
+              sessionId: sessionId ?? null,
+              status: "fail",
+              reasonCode: "blocked",
+            });
+            sendAction.reject({ resultSource: "authority_ack", admissionResult: "rejected" });
+            return;
+          }
+          if (sendResult === "confirmationRequired") {
+            if (telemetrySeed.localTtft)
+              getLocalTtftObserver()?.confirmation(telemetrySeed.localTtft, true);
+            rollbackPromptHistory();
+            restoreSubmittedDraft();
+            const latestQueueItemIds =
+              snapshotRef.current?.queue.items.map((item) => item.queueItemId) ?? [];
+            // Freeze the current queue on first submit; if it goes stale across clients, replace it with the latest projection and ask the user to confirm again.
+            setHeldQueueConfirmation({
+              // Mark queueConfirmed; after confirmation, reuse this seed for finalization so send_cost_ms includes time spent in the dialog.
+              telemetrySeed: { ...telemetrySeed, queueConfirmed: true },
+              ...(requestedDelivery ? { requestedDelivery } : {}),
+              queueItemIds:
+                latestQueueItemIds.length > 0 ? latestQueueItemIds : submittedQueueItemIds,
+            });
+            sendAction.noop();
+            return;
+          }
+          if (executionWorktree) {
+            // Setup pipeline terminal success: this worktree result is consumed by exactly this session.
+            useComposerWorktreePipelineStore.getState().consume(workspaceKey);
+          }
+          setHeldQueueConfirmation(null);
+          // Transfer staged content to the task only after a successful send; on failure, keep it as a retryable draft.
+          await attachmentsApi.adoptSentAttachments(submittedAttachmentIds);
+          // Bug cause: text entered while the send is pending belongs to the next Submission; an old ACK must not clear it.
+          if (contentRevisionRef.current === cleanupRevision) {
+            inputApiRef.current?.clear();
+            updateText("");
+          }
+          attachmentsApi.clearAttachments(submittedAttachmentIds);
+          // As with attachments, remove only refs frozen for this send; refs added while waiting belong to the next message.
+          currentCodeCommentContexts.forEach(removeCodeCommentContext);
+          currentWebElementContexts.forEach((context) => removeWebElementContext(context.id));
+          currentPluginUiContexts.forEach((context) => removePluginUiContext(context.id));
+          currentPptxElementReferences.forEach((reference) =>
+            removePptxElementReference(reference.id),
+          );
+          currentConversationSelections.forEach((reference) =>
+            removeConversationSelectionReference(reference.id),
+          );
+          // On success, clear the scope draft captured by this submission. Prompt history was synchronously persisted before the real send,
+          // avoiding loss during first-send promotion or clearing the new scope created by promotion.
+          finalizeSubmittedDraft();
+          sendAction.complete({ resultSource: "authority_ack", admissionResult: "accepted" });
+        } catch (error) {
           rollbackPromptHistory();
           restoreSubmittedDraft();
+          if (telemetrySeed.localTtft)
+            getLocalTtftObserver()?.exclude(telemetrySeed.localTtft, "failed");
+          // On failure, keep the draft in the input (do not clear it) and record only the reason.
+          logger.warn(`[v4-composer] 发送失败: ${String(error)}`);
+          // SessionPane already finalizes ACK-side failures; reaching this point means Composer's own flow failed.
           conversationTelemetry?.settleSendResult({
             seed: telemetrySeed,
             sessionId: sessionId ?? null,
             status: "fail",
-            reasonCode: "blocked",
+            reasonCode: "composer_error",
           });
-          sendAction.reject({ resultSource: "authority_ack", admissionResult: "rejected" });
-          return;
+          sendAction.fail({ failureStage: "composer_send" });
+        } finally {
+          pendingRef.current = false;
+          setPending(false);
         }
-        if (sendResult === "confirmationRequired") {
-          if (telemetrySeed.localTtft)
-            getLocalTtftObserver()?.confirmation(telemetrySeed.localTtft, true);
-          rollbackPromptHistory();
+      };
+      if (queueWorktreeSend) {
+        claimSubmittedDraft();
+        if (!onPrepareWorktreeSession || !worktreeIntent) {
           restoreSubmittedDraft();
-          const latestQueueItemIds =
-            snapshotRef.current?.queue.items.map((item) => item.queueItemId) ?? [];
-          // Freeze the current queue on first submit; if it goes stale across clients, replace it with the latest projection and ask the user to confirm again.
-          setHeldQueueConfirmation({
-            // Mark queueConfirmed; after confirmation, reuse this seed for finalization so send_cost_ms includes time spent in the dialog.
-            telemetrySeed: { ...telemetrySeed, queueConfirmed: true },
-            ...(requestedDelivery ? { requestedDelivery } : {}),
-            queueItemIds:
-              latestQueueItemIds.length > 0 ? latestQueueItemIds : submittedQueueItemIds,
-          });
-          sendAction.noop();
+          useComposerWorktreePipelineStore
+            .getState()
+            .markValidationFailed(workspaceKey, "Worktree session preparation is unavailable");
           return;
         }
-        if (executionWorktree) {
-          worktreeIntent?.onSendAccepted();
+        setWorktreeQueued(true);
+        if (!preparedSessionIdForSend || worktreePipeline?.status !== "creating") {
+          const begin = await worktreeIntent.beginCreation(trimmed, onPrepareWorktreeSession);
+          if (!begin.ok) {
+            setWorktreeQueued(false);
+            restoreSubmittedDraft();
+            return;
+          }
+          preparedSessionIdForSend = begin.sessionId;
         }
-        setHeldQueueConfirmation(null);
-        // Transfer staged content to the task only after a successful send; on failure, keep it as a retryable draft.
-        await attachmentsApi.adoptSentAttachments(submittedAttachmentIds);
-        // Bug cause: text entered while the send is pending belongs to the next Submission; an old ACK must not clear it.
-        if (contentRevisionRef.current === cleanupRevision) {
-          inputApiRef.current?.clear();
-          updateText("");
-        }
-        attachmentsApi.clearAttachments(submittedAttachmentIds);
-        // As with attachments, remove only refs frozen for this send; refs added while waiting belong to the next message.
-        currentCodeCommentContexts.forEach(removeCodeCommentContext);
-        currentWebElementContexts.forEach((context) => removeWebElementContext(context.id));
-        currentPluginUiContexts.forEach((context) => removePluginUiContext(context.id));
-        currentPptxElementReferences.forEach((reference) =>
-          removePptxElementReference(reference.id),
-        );
-        currentConversationSelections.forEach((reference) =>
-          removeConversationSelectionReference(reference.id),
-        );
-        // On success, clear the scope draft captured by this submission. Prompt history was synchronously persisted before the real send,
-        // avoiding loss during first-send promotion or clearing the new scope created by promotion.
-        finalizeSubmittedDraft();
-        sendAction.complete({ resultSource: "authority_ack", admissionResult: "accepted" });
-      } catch (error) {
-        rollbackPromptHistory();
-        restoreSubmittedDraft();
-        if (telemetrySeed.localTtft)
-          getLocalTtftObserver()?.exclude(telemetrySeed.localTtft, "failed");
-        // On failure, keep the draft in the input (do not clear it) and record only the reason.
-        logger.warn(`[v4-composer] 发送失败: ${String(error)}`);
-        // SessionPane already finalizes ACK-side failures; reaching this point means Composer's own flow failed.
-        conversationTelemetry?.settleSendResult({
-          seed: telemetrySeed,
-          sessionId: sessionId ?? null,
-          status: "fail",
-          reasonCode: "composer_error",
-        });
-        sendAction.fail({ failureStage: "composer_send" });
-      } finally {
-        pendingRef.current = false;
-        setPending(false);
+        pendingWorktreeSendRef.current = {
+          workspaceKey,
+          preparedSessionId: preparedSessionIdForSend,
+          dispatch: runSend,
+          restore: restoreSubmittedDraft,
+        };
+        return;
       }
+      await runSend(executionWorktree, preparedSessionIdForSend);
     },
     [
       attachmentsApi,
@@ -2306,7 +2573,11 @@ function ConversationComposerImpl({
               aria-label={resolvedSendTooltipTitle}
               className="cursor-pointer gap-1 rounded-lg bg-brand text-ui-base text-foreground-inverse hover:bg-brand/80"
             >
-              {pending ? <Spinner className="size-4" /> : <ArrowUpIcon className="size-4" />}
+              {pending || worktreeQueued ? (
+                <Spinner className="size-4" />
+              ) : (
+                <ArrowUpIcon className="size-4" />
+              )}
               <span className="sr-only">{resolvedSendTooltipTitle}</span>
             </Button>
           </ControlHintTooltip>
@@ -2496,7 +2767,9 @@ function ConversationComposerImpl({
           placeholder={placeholder}
           disabled={disabled || mode === "reject"}
           submitting={pending}
-          submitDisabled={pending || !routingAllowsSend || !attachmentsReady || !submissionReady}
+          submitDisabled={
+            pending || worktreeQueued || !routingAllowsSend || !attachmentsReady || !submissionReady
+          }
           allowSubmitWhenEmpty={
             // The send button already treated code comments as sendable context, but this state was missing here,
             // so Enter treated a code-comment-only input as empty and users had to click Send.

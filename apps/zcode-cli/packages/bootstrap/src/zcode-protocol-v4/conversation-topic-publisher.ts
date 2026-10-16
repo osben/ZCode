@@ -322,6 +322,14 @@ export class ConversationTopicPublisher {
     this.wireSnapshotBytesUpperBound = this.measureWireSnapshotBytes(this.getWireSnapshot());
   }
 
+  /** Worktree preparation is Host-owned setup metadata; it does not enter transcript deltas. */
+  seedWorktreePreparation(
+    preparation: ConversationSnapshot["meta"]["worktreePreparation"] | null | undefined,
+  ): void {
+    this.projection.seedWorktreePreparation(preparation);
+    this.wireSnapshotBytesUpperBound = this.measureWireSnapshotBytes(this.getWireSnapshot());
+  }
+
   /** Inject a usage seed: on cold restore, persisted token watermarks replace the 0 placeholders synthesized from the transcript. */
   seedUsage(seed: SessionUsageSeed): void {
     this.projection.seedUsage(seed);

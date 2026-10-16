@@ -44,18 +44,22 @@ import { SSHDialog } from "@/SSHDialog.js";
 import type { GitLocalBranchListResult, GitWorkspaceRepositoryInfo } from "@zcode/shared";
 import {
   composeBranchName,
-  computeWorktreeTargetPath,
-  isValidCustomWorktreeLocationPath,
   resolveDefaultBaseBranch,
   resolveWorktreeLocation,
 } from "@/command-center/worktreeTaskFlow.js";
 import { generateWorktreeBranchName } from "@/command-center/worktreeNameGenerator.js";
-import { executeWorktreeCreation } from "@/command-center/worktreeCreation.js";
-import { requestV4ComposerDraftWorkspaceTransfer } from "@/v4/composer/composerDraftWorkspaceTransfer.js";
 import {
   useComposerDraftWorktreeIntentSlot,
-  type ComposerDraftWorktreeInterceptResult,
+  type ComposerDraftWorktreeIntent,
+  type ComposerWorktreePreparationParams,
+  type ComposerWorktreeBeginResult,
 } from "@/v4/composer/composerDraftWorktreeIntent.js";
+import { beginWorktreePipelineCreation } from "@/v4/composer/composerWorktreePipeline.js";
+import {
+  selectComposerWorktreePipeline,
+  useComposerWorktreePipelineStore,
+} from "@/store/composerWorktreePipelineStore.js";
+import { useDraftBranchIntentStore } from "@/v4/composer/draftBranchIntent.js";
 import {
   TID_COMPOSER_PROJECT_DETACH,
   TID_COMPOSER_REMOTE_CONNECTION,
@@ -540,12 +544,11 @@ export function isWorktreeCapableRepository(info: GitWorkspaceRepositoryInfo): b
 }
 
 /**
- * Empty-state "New worktree" checkbox (2026-10-13: checkbox-only — the mini-form is gone).
- * Checking it registers the first-send interception intent in the composer slot: the first
- * message send creates the worktree (fully automatic generated branch name, current checkout
- * as base) and redirects the draft to the new directory (text preserved by the existing
- * composer continuity mechanism), where the user sends it again. All state stays in component
- * state (no global store); the Git probe is cached per workspacePath.
+ * Empty-state "New worktree" checkbox (specs/composer-worktree-setup-steps.md). Checking it marks
+ * intent ONLY — nothing is created on check. On Send the composer asks the registered intent to
+ * begin creation: the pipeline store entry + runner start, setup rows render in the conversation
+ * pane, and the queued send dispatches automatically when the worktree is ready. The checkbox
+ * reflects the pipeline (withdraw on uncheck mid-creation; uncheck when the pipeline settles).
  */
 export function ChatEmptyWorktreeTaskToggle({
   workspacePath,
@@ -553,15 +556,12 @@ export function ChatEmptyWorktreeTaskToggle({
   workspaceTabs,
   isDesktop,
   isWebRemoteControlShell,
-  onOpenWorktreeDraft,
 }: {
   workspacePath: string;
   workspaceIdentity?: string;
   workspaceTabs: ReadonlyArray<ChatEmptyWorkspaceMenuTab>;
   isDesktop?: boolean;
   isWebRemoteControlShell: boolean;
-  /** Opens (or reuses) the worktree workspace and starts a draft — the same App-layer contract as the palette. */
-  onOpenWorktreeDraft: (targetWorkspacePath: string) => void;
 }) {
   const { intl } = useZCodeIntl();
   const baseServices = useBaseWorkspaceServices();
@@ -569,6 +569,10 @@ export function ChatEmptyWorktreeTaskToggle({
   // Stage F: the global storage directory is desktop-only; stays null without the provider/method (global mode then behaves as an invalid location).
   const platform = useOptionalPlatform();
   const intentSlot = useComposerDraftWorktreeIntentSlot();
+  const workspaceKey = resolveWorkspaceKey({ workspacePath, workspaceIdentity });
+  const pipeline = useComposerWorktreePipelineStore((state) =>
+    selectComposerWorktreePipeline(state, workspaceKey),
+  );
   const currentTab =
     workspaceTabs.find((workspaceTab) =>
       isWorkspaceMenuTabSelected(workspaceTab, { workspacePath, workspaceIdentity }),
@@ -584,19 +588,23 @@ export function ChatEmptyWorktreeTaskToggle({
   // repository" (the checkbox stays hidden).
   const [repoEligibleByPath, setRepoEligibleByPath] = useState<Record<string, boolean>>({});
   const [checked, setChecked] = useState(false);
-  const [createdWorktree, setCreatedWorktree] = useState<{
-    path: string;
-    branchName: string;
-  } | null>(null);
   const [branchesResult, setBranchesResult] = useState<GitLocalBranchListResult | null>(null);
-  const [busy, setBusy] = useState(false);
-  /** Errors produced only at send time (empty branch name etc.); cleared while typing. Live validation issues render under the input itself. */
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  /** target-path-exists recovery entry (WT-04): open the existing worktree instead of creating a second directory. */
-  const [recoveryPath, setRecoveryPath] = useState<string | null>(null);
   /** Stage F: lazily loaded global storage directory (fetched only in global mode, cached in component state; failures silently keep null). */
   const [appWorktreesDir, setAppWorktreesDir] = useState<string | null>(null);
   const repoEligible = shellEligible && repoEligibleByPath[workspacePath] === true;
+  // Mirror the checkbox intent for the header branch picker (disabled while the worktree setup
+  // owns the draft's branch; spec: composer-branch-switcher-semantics.md §1).
+  useEffect(() => {
+    useDraftBranchIntentStore
+      .getState()
+      .setWorktreeIntentActive(workspaceKey, checked && repoEligible);
+  }, [checked, repoEligible, workspaceKey]);
+  useEffect(
+    () => () => {
+      useDraftBranchIntentStore.getState().setWorktreeIntentActive(workspaceKey, false);
+    },
+    [workspaceKey],
+  );
 
   useEffect(() => {
     if (!shellEligible || repoEligibleByPath[workspacePath] !== undefined) {
@@ -634,21 +642,18 @@ export function ChatEmptyWorktreeTaskToggle({
     if (!repoEligible) {
       return;
     }
-    // Reset on workspace change or uncheck; the branch list loads lazily on check.
+    // Reset on workspace change; the branch list loads lazily on check.
     setChecked(false);
-    setCreatedWorktree(null);
     setBranchesResult(null);
-    setSubmitError(null);
-    setRecoveryPath(null);
   }, [workspacePath, repoEligible]);
 
   useEffect(() => {
     if (!checked || !repoEligible || branchesResult !== null) {
       return;
     }
-    // Load local branches on check (base resolution + client pre-validation). Loading state is
-    // derived from branchesResult === null; no loading dependency that cancels an in-flight
-    // request is introduced.
+    // Load local branches on check (base resolution + collision-safe naming). The list is an
+    // optimization, never a gate: when absent or failed the pipeline degrades to base = HEAD
+    // (spec: composer-worktree-setup-steps.md) and naming avoids only known names.
     let cancelled = false;
     baseServices.gitService.getLocalBranches({ workspacePath }).then(
       (result) => {
@@ -659,12 +664,12 @@ export function ChatEmptyWorktreeTaskToggle({
       },
       (error: unknown) => {
         if (!cancelled) {
-          setSubmitError(
-            intl.formatMessage(
-              { id: "commandCenter.worktree.error.requestFailed" },
-              { error: getErrorMessage(error) },
-            ),
-          );
+          // Non-blocking degradation: no branch list → base = HEAD, noted on the setup row.
+          logger.debug("[ChatEmptyWorktree] branch list failed; base defaults to HEAD", {
+            workspacePath,
+            error: getErrorMessage(error),
+          });
+          setBranchesResult({ headRefType: "branch", currentBranchName: null, branches: [] });
         }
       },
     );
@@ -723,11 +728,6 @@ export function ChatEmptyWorktreeTaskToggle({
   const effectiveBaseBranch = branchesResult
     ? resolveDefaultBaseBranch(branchesResult, effectiveLocation.baseBranchDefault)
     : "";
-  const customLocationInvalid =
-    effectiveLocation.mode === "custom" &&
-    !isValidCustomWorktreeLocationPath(effectiveLocation.customPath);
-  const globalLocationUnavailable =
-    effectiveLocation.mode === "global" && !effectiveLocation.appWorktreesDir;
   const generateComposedBranchName = useCallback((): string => {
     const branchNameSet = new Set(branchesResult?.branches.map((branch) => branch.name) ?? []);
     const generated = generateWorktreeBranchName({
@@ -736,164 +736,62 @@ export function ChatEmptyWorktreeTaskToggle({
     return composeBranchName(effectiveLocation.prefix, generated);
   }, [branchesResult, effectiveLocation]);
 
-  const openWorktreeWithDraftTransfer = useCallback(
-    (targetPath: string) => {
-      // Same contract as "detach project": register the draft text transfer request first,
-      // then the App open + startDraft; the ConversationComposer scope switch carries the
-      // typed text into the new workspace.
-      requestV4ComposerDraftWorkspaceTransfer({
-        sourceWorkspacePath: workspacePath,
-        ...(workspaceIdentity ? { sourceWorkspaceIdentity: workspaceIdentity } : {}),
-        targetWorkspacePath: targetPath,
-      });
-      setChecked(false);
-      onOpenWorktreeDraft(targetPath);
-    },
-    [onOpenWorktreeDraft, workspaceIdentity, workspacePath],
-  );
-
-  const interceptFirstSend =
-    useCallback(async (): Promise<ComposerDraftWorktreeInterceptResult> => {
-      if (busy) {
-        return { action: "cancel" };
-      }
-      if (createdWorktree) {
-        return { action: "proceed", executionWorktree: createdWorktree };
-      }
-      // Branches still loading or their load failed: without the list baseBranch would be
-      // undefined and the per-project default-base-branch override silently ignored — block
-      // the send.
-      if (!branchesResult) {
-        setSubmitError(
-          (current) =>
-            current ?? intl.formatMessage({ id: "commandCenter.worktree.baseBranch.loading" }),
-        );
-        return { action: "cancel" };
-      }
-      if (customLocationInvalid) {
-        setSubmitError(
-          intl.formatMessage({ id: "commandCenter.worktree.error.custom-location-invalid" }),
-        );
-        return { action: "cancel" };
-      }
-      if (globalLocationUnavailable) {
-        setSubmitError(
-          intl.formatMessage({ id: "commandCenter.worktree.error.global-location-unavailable" }),
-        );
-        return { action: "cancel" };
-      }
-      const composedBranchNameValue = generateComposedBranchName();
-      const targetPath = computeWorktreeTargetPath(
+  const beginCreation = useCallback(
+    (
+      queuedPromptPreview: string,
+      prepareSession: (params: ComposerWorktreePreparationParams) => Promise<string>,
+    ): Promise<ComposerWorktreeBeginResult> => {
+      // Validation, target path, and the runner kickoff live in the shared begin helper; only the
+      // name generation and base resolution are this entry's own.
+      const hasBranchList = Boolean(branchesResult && branchesResult.branches.length > 0);
+      return beginWorktreePipelineCreation({
+        gitService: baseServices.gitService,
+        workspaceKey,
         workspacePath,
-        composedBranchNameValue,
         effectiveLocation,
-      );
-      if (!targetPath) {
-        setSubmitError(
-          intl.formatMessage({ id: "commandCenter.worktree.error.target-path-invalid" }),
-        );
-        return { action: "cancel" };
-      }
-
-      setBusy(true);
-      setSubmitError(null);
-      setRecoveryPath(null);
-      try {
-        const outcome = await executeWorktreeCreation({
-          gitService: baseServices.gitService,
-          workspacePath,
-          branchName: composedBranchNameValue,
-          baseBranch: effectiveBaseBranch || undefined,
-          targetPath,
-          formatMessage: (id, values) => intl.formatMessage({ id }, values),
-        });
-        if (outcome.kind === "created") {
-          // Session stays in the current project: the composer proceeds with the normal first send
-          // and carries executionWorktree, so the CLI runs the agent in the worktree directory
-          // while the session lists under this workspace (no switch, no draft transfer).
-          logger.info("[ChatEmptyWorktree] worktree created, first send proceeds in place", {
-            workspacePath,
-            branchName: composedBranchNameValue,
-            targetPath: outcome.worktreePath,
-          });
-          const executionWorktree = {
-            path: outcome.worktreePath,
-            branchName: composedBranchNameValue,
-          };
-          setCreatedWorktree(executionWorktree);
-          return {
-            action: "proceed",
-            executionWorktree,
-          };
-        }
-        if (outcome.kind === "existing-worktree") {
-          setSubmitError(outcome.message);
-          setRecoveryPath(outcome.worktreePath);
-          return { action: "cancel" };
-        }
-        if (outcome.errorDetail !== null) {
-          logger.warn("[ChatEmptyWorktree] worktree create request failed", {
-            workspacePath,
-            branchName: composedBranchNameValue,
-            error: outcome.errorDetail,
-          });
-        } else {
-          logger.warn("[ChatEmptyWorktree] worktree creation rejected", {
-            workspacePath,
-            branchName: composedBranchNameValue,
-            issues: outcome.issueCodes,
-          });
-        }
-        setSubmitError(outcome.message);
-        return { action: "cancel" };
-      } finally {
-        setBusy(false);
-      }
-    }, [
+        branchName: generateComposedBranchName(),
+        ...(effectiveBaseBranch && hasBranchList ? { baseBranch: effectiveBaseBranch } : {}),
+        baseFromHeadDefault: !hasBranchList,
+        queuedPromptPreview,
+        prepareSession,
+        formatMessage: (id, values) => intl.formatMessage({ id }, values),
+      });
+    },
+    [
       baseServices.gitService,
       branchesResult,
-      busy,
-      createdWorktree,
-      customLocationInvalid,
-      generateComposedBranchName,
-      globalLocationUnavailable,
       effectiveBaseBranch,
       effectiveLocation,
+      generateComposedBranchName,
       intl,
-      openWorktreeWithDraftTransfer,
+      workspaceKey,
       workspacePath,
-    ]);
+    ],
+  );
 
   useEffect(() => {
-    if (!intentSlot || (!checked && !createdWorktree) || !repoEligible) {
+    if (!intentSlot || !checked || !repoEligible) {
       return;
     }
-    // Register the first-send interception while checked; unregister on uncheck / unmount
-    // (including after a workspace switch). The interceptor closure updates on every render
-    // while the slot keeps a stable reference — no extra composer re-renders.
-    const intent = {
-      workspaceKey: resolveWorkspaceKey({ workspacePath, workspaceIdentity }),
-      interceptFirstSend,
-      onSendAccepted: () => {
-        setCreatedWorktree(null);
-        setChecked(false);
-      },
-    };
+    // Register the setup intent while checked; unregister on uncheck / unmount (including after a
+    // workspace switch). The intent closure updates on every render while the slot keeps a stable
+    // reference — no extra composer re-renders.
+    const intent: ComposerDraftWorktreeIntent = { workspaceKey, beginCreation };
     intentSlot.current = intent;
     return () => {
       if (intentSlot.current === intent) {
         intentSlot.current = null;
       }
     };
-  }, [
-    checked,
-    createdWorktree,
-    intentSlot,
-    interceptFirstSend,
-    repoEligible,
-    workspaceIdentity,
-    workspacePath,
-  ]);
+  }, [beginCreation, checked, intentSlot, repoEligible, workspaceKey]);
+
+  // Reflect the pipeline on the checkbox: settling (consumed/discarded) clears the intent; a
+  // failed pipeline keeps it so the next send starts a fresh attempt.
+  useEffect(() => {
+    if (pipeline?.status === "consumed" || pipeline?.status === "discarded") {
+      setChecked(false);
+    }
+  }, [pipeline?.status]);
 
   if (!repoEligible) {
     return null;
@@ -901,56 +799,24 @@ export function ChatEmptyWorktreeTaskToggle({
 
   const checkboxId = `chat-empty-worktree-toggle-${workspacePath}`;
   return (
-    <>
-      <label
-        htmlFor={checkboxId}
-        className="flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-2 text-ui-base/relaxed text-foreground-subtle transition-colors hover:bg-surface-hover hover:text-foreground"
-      >
-        <Checkbox
-          id={checkboxId}
-          checked={checked}
-          disabled={busy}
-          onCheckedChange={(value) => {
-            const enabled = value === true;
-            setChecked(enabled);
-            if (!enabled) {
-              setCreatedWorktree(null);
-            }
-            setSubmitError(null);
-            setRecoveryPath(null);
-          }}
-        />
-        <span>{intl.formatMessage({ id: "chat.empty.worktree.newWorktree" })}</span>
-      </label>
-      {/* 2026-10-13 review: the mini-form is hidden — the checkbox alone means "create a
-          worktree for the first message" with a fully automatic generated branch name. Only a
-          transient status (busy / error / WT-04 recovery) renders under the checkbox. */}
-      {checked && (busy || submitError || recoveryPath) ? (
-        <div className="flex w-full min-w-0 flex-col gap-1 px-1 pt-0.5 pb-1">
-          {busy ? (
-            <span className="shrink-0 text-ui-sm text-foreground-subtle">
-              {intl.formatMessage({ id: "chat.empty.worktree.creating" })}
-            </span>
-          ) : null}
-          {submitError ? (
-            <p role="alert" className="text-ui-sm text-destructive">
-              {submitError}
-            </p>
-          ) : null}
-          {recoveryPath ? (
-            <div>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={busy}
-                onClick={() => openWorktreeWithDraftTransfer(recoveryPath)}
-              >
-                {intl.formatMessage({ id: "commandCenter.worktree.openExisting" })}
-              </Button>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-    </>
+    <label
+      htmlFor={checkboxId}
+      className="flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-2 text-ui-base/relaxed text-foreground-subtle transition-colors hover:bg-surface-hover hover:text-foreground"
+    >
+      <Checkbox
+        id={checkboxId}
+        checked={checked}
+        onCheckedChange={(value) => {
+          const enabled = value === true;
+          setChecked(enabled);
+          if (!enabled && (pipeline?.status === "creating" || pipeline?.status === "ready")) {
+            // Withdraw: the git call is not cancellable; its result lands with an orphan note
+            // and the queued send is dropped (spec: composer-worktree-setup-steps.md).
+            useComposerWorktreePipelineStore.getState().withdraw(workspaceKey);
+          }
+        }}
+      />
+      <span>{intl.formatMessage({ id: "chat.empty.worktree.newWorktree" })}</span>
+    </label>
   );
 }

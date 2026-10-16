@@ -711,6 +711,34 @@ export class ProductProjection {
     };
   }
 
+  /** Runtime-less worktree preparations are Host-owned metadata, not transcript rows or turns. */
+  seedWorktreePreparation(
+    preparation: ConversationSnapshot["meta"]["worktreePreparation"] | null | undefined,
+  ): void {
+    if (!preparation) {
+      // A null seed means the preparation no longer exists (activated/cancelled/cleared on the
+      // Host), so a re-subscribed client must not keep seeing the stale preparing/failed marker.
+      if (this.snapshot.meta.worktreePreparation !== undefined) {
+        const { worktreePreparation: _cleared, ...restMeta } = this.snapshot.meta;
+        this.snapshot = { ...this.snapshot, meta: restMeta };
+      }
+      return;
+    }
+    const current = this.snapshot.meta.worktreePreparation;
+    if (
+      current?.status === preparation.status &&
+      current.branchName === preparation.branchName &&
+      current.targetPath === preparation.targetPath &&
+      current.failureMessage === preparation.failureMessage
+    ) {
+      return;
+    }
+    this.snapshot = {
+      ...this.snapshot,
+      meta: { ...this.snapshot.meta, worktreePreparation: { ...preparation } },
+    };
+  }
+
   seedUsage(seed: SessionUsageSeed): void {
     const current = this.snapshot.usage;
     const currentContextWindow = current.contextWindow;

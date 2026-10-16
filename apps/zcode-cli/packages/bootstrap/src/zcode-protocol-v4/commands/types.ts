@@ -287,6 +287,8 @@ export interface V4CommandCoreHost {
    */
   createSessionRecord?(params: {
     workspaceId: string;
+    /** Host-reserved identity to materialize; the Host must validate the preparation marker. */
+    preparedSessionId?: string;
     permissionScope?: "session";
     mcpServers?: CommandPayloadMap["createSession"]["mcpServers"];
     /**
@@ -304,6 +306,17 @@ export interface V4CommandCoreHost {
     /** Gradual-rollout mode accompanying the boolean (launch.md, "On demand: activation"); defaults to alwaysOn. */
     dynamicWorkflowMode?: DynamicWorkflowMode;
   }): Promise<{ sessionId: string }>;
+  /** Reserve a durable session identity without creating a runtime. */
+  prepareWorktreeSession?(params: {
+    workspaceId: string;
+    branchName: string;
+    targetPath: string;
+    baseBranch?: string;
+  }): Promise<{ sessionId: string }>;
+  updateWorktreePreparation?(sessionId: string, input: {
+    status: "preparing" | "failed" | "cancelled";
+    failureMessage?: string;
+  }): Promise<void>;
   /** Create a hidden selection_side_chat child from a stable persisted boundary in the parent session. */
   createSelectionSideSession?(
     sessionId: string,

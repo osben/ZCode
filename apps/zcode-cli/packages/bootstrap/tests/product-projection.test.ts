@@ -10435,3 +10435,30 @@ describe("userInput 行的 epilogueStart（热路径）", () => {
     expect(rows[1]).not.toHaveProperty("epilogueStart");
   });
 });
+
+// Worktree preparation is Host-owned setup metadata seeded outside the event log. A null seed
+// means the preparation no longer exists (activated/cancelled on the Host), so re-subscribed
+// clients must observe the marker removed instead of keeping the stale preparing/failed value.
+describe("seedWorktreePreparation（Host 种子）", () => {
+  it("seeds the marker, updates it, and a null seed removes it", () => {
+    const projection = new ProductProjection("session-1", "epoch-1");
+    const preparing = {
+      branchName: "zcode/lazy-kraken",
+      targetPath: "/repo-worktrees/zcode-lazy-kraken",
+      status: "preparing" as const,
+    };
+    projection.seedWorktreePreparation(preparing);
+    expect(projection.getSnapshot().meta.worktreePreparation).toEqual(preparing);
+
+    const failed = { ...preparing, status: "failed" as const, failureMessage: "git failed" };
+    projection.seedWorktreePreparation(failed);
+    expect(projection.getSnapshot().meta.worktreePreparation).toEqual(failed);
+
+    projection.seedWorktreePreparation(null);
+    expect(projection.getSnapshot().meta.worktreePreparation).toBeUndefined();
+
+    // Idempotent: clearing an already-absent marker is a no-op.
+    projection.seedWorktreePreparation(null);
+    expect(projection.getSnapshot().meta.worktreePreparation).toBeUndefined();
+  });
+});

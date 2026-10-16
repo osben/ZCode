@@ -18,6 +18,12 @@ export interface SessionSummaryDeriveExtra {
   parentSessionId?: string;
   /** Execution worktree facts from the runtime; drives the sidebar badge and open-in-IDE target. */
   executionWorktree?: { path: string; branchName?: string };
+  /**
+   * True when the execution worktree directory was absent (host-side stat at the meta source).
+   * Kept out of `executionWorktree` because that nested wire shape is strict and shared with the
+   * create params; the top-level summary field is the additive cross-version channel.
+   */
+  executionWorktreeMissing?: boolean;
 }
 
 const MAX_PREVIEW_CHARS = 120;
@@ -99,6 +105,7 @@ export function deriveSessionSummary(
     lastActivityAt: extra.lastActivityAt,
     ...(lastAssistantPreview ? { lastAssistantPreview } : {}),
     ...(extra.executionWorktree ? { executionWorktree: extra.executionWorktree } : {}),
+    ...(extra.executionWorktreeMissing ? { executionWorktreeMissing: true } : {}),
     createdAt: extra.createdAt,
   };
 }
@@ -127,6 +134,9 @@ function summariesEqual(a: SessionSummary, b: SessionSummary): boolean {
     // fan-out, and the value is at most two scalar fields.
     a.executionWorktree?.path === b.executionWorktree?.path &&
     a.executionWorktree?.branchName === b.executionWorktree?.branchName &&
+    // Normalize absent ≈ false so a producer flipping between omitting the flag and false does not
+    // emit a no-op delta, while a real health flip (false ↔ true) always produces one.
+    (a.executionWorktreeMissing ?? false) === (b.executionWorktreeMissing ?? false) &&
     a.createdAt === b.createdAt
   );
 }

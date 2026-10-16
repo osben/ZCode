@@ -1,13 +1,33 @@
-import { describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createProjectId,
   createSessionId,
+  type Logger,
+  type LogContext,
   type SessionInfo,
   type SessionStorePort,
 } from "@zcode/contracts";
 import { AgentRuntime } from "../src/runtime.js";
 import { createTestSessionEventStore } from "./test-event-store.js";
 import { createTestModelFactory } from "./test-runtime-model.js";
+
+const tempDirs: string[] = [];
+
+function createTempWorktree(): string {
+  const dir = mkdtempSync(join(tmpdir(), "zcode-worktree-resume-"));
+  tempDirs.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop();
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 function buildSession(overrides: Partial<SessionInfo> = {}): SessionInfo {
   return {
@@ -38,12 +58,31 @@ function buildStore(session: SessionInfo) {
   } as unknown as SessionStorePort;
 }
 
+/** Captures warn calls so the resume fallback's single diagnostic is observable. */
+function createWarnCaptureLogger(): {
+  logger: Logger;
+  warns: Array<{ message: string; context?: LogContext }>;
+} {
+  const warns: Array<{ message: string; context?: LogContext }> = [];
+  const logger: Logger = {
+    debug: () => {},
+    info: () => {},
+    warn: (message, context) => {
+      warns.push({ message, context });
+    },
+    error: () => {},
+    child: () => logger,
+  };
+  return { logger, warns };
+}
+
 describe("execution worktree sessions", () => {
   it("cold resume restores the execution worktree as working directory", async () => {
+    const worktreePath = createTempWorktree();
     const session = buildSession({
       directory: "/workspace/project",
       path: "/workspace/project",
-      executionDirectory: "/workspace/worktrees/zcode-sleepy-capybara",
+      executionDirectory: worktreePath,
       executionBranch: "zcode/sleepy-capybara",
     });
     const runtime = new AgentRuntime(
@@ -57,9 +96,12 @@ describe("execution worktree sessions", () => {
     );
 
     await runtime.resumeFromStore();
-    expect((runtime as unknown as { workingDirectory: string }).workingDirectory).toBe(
-      "/workspace/worktrees/zcode-sleepy-capybara",
-    );
+    const internal = runtime as unknown as {
+      workingDirectory: string;
+      config: { executionWorktree?: { missing?: boolean } };
+    };
+    expect(internal.workingDirectory).toBe(worktreePath);
+    expect(internal.config.executionWorktree?.missing).toBeUndefined();
   });
 
   it("ordinary sessions keep resuming in the persisted workspace directory", async () => {
@@ -78,6 +120,59 @@ describe("execution worktree sessions", () => {
     expect((runtime as unknown as { workingDirectory: string }).workingDirectory).toBe(
       "/workspace/project",
     );
+  });
+
+  it("cold resume falls back to the parent workspace when the worktree directory is missing", async () => {
+    // Simulate out-of-band deletion: the persisted path points at a directory that no longer exists.
+    const deletedWorktreePath = join(tmpdir(), "zcode-worktree-resume-deleted");
+    const session = buildSession({
+      directory: "/workspace/project",
+      path: "/workspace/project",
+      executionDirectory: deletedWorktreePath,
+      executionBranch: "zcode/sleepy-capybara",
+    });
+    const { logger, warns } = createWarnCaptureLogger();
+    const runtime = new AgentRuntime(
+      session.id,
+      { workingDirectory: session.directory, titleGeneration: { enabled: false } },
+      {
+        eventStore: createTestSessionEventStore(),
+        sessionStore: buildStore(session),
+        modelFactory: vi.fn(createTestModelFactory({})),
+        logger,
+      },
+    );
+
+    await runtime.resumeFromStore();
+    const internal = runtime as unknown as {
+      workingDirectory: string;
+      config: {
+        executionWorktree?: {
+          path: string;
+          branchName?: string;
+          missing?: boolean;
+          workspacePath?: string;
+        };
+      };
+    };
+    // The turn runs in the parent workspace, never in the dead cwd.
+    expect(internal.workingDirectory).toBe("/workspace/project");
+    // The fact stays visible (marked missing) for the wire meta and the env bullet.
+    expect(internal.config.executionWorktree).toEqual({
+      path: deletedWorktreePath,
+      branchName: "zcode/sleepy-capybara",
+      missing: true,
+      workspacePath: "/workspace/project",
+    });
+    // Exactly one diagnostic per resume, with the specified event id.
+    const fallbackWarns = warns.filter(
+      (entry) => entry.context?.event === "session.resume.execution_worktree_missing",
+    );
+    expect(fallbackWarns).toHaveLength(1);
+    expect(fallbackWarns[0]?.context).toMatchObject({
+      module: "core.runtime",
+      path: deletedWorktreePath,
+    });
   });
 
   it("persists directory/path as the workspace and the worktree in dedicated columns", async () => {

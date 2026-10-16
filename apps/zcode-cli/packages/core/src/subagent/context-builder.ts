@@ -11,6 +11,7 @@ import {
 import { buildCliPrefixSection } from "../context/sections/cli-prefix.js";
 import { buildCurrentDateSection } from "../context/sections/current-date.js";
 import { buildRequestUserContextSection } from "../context/sections/request-user-context.js";
+import type { ExecutionWorktreeEnvFact } from "../context/sections/env-info.js";
 import { buildSkillsSection } from "../context/sections/skills.js";
 import { estimateTokens } from "../context/utils.js";
 import { buildSubagentCommonNotes, buildSubagentEnvironmentContext } from "./system-prompt.js";
@@ -20,6 +21,8 @@ export interface SubagentContextBuilderConfig {
   currentDate?: string;
   envInfo: EnvInfo;
   model?: Model;
+  /** Worktree isolation notice projected from the parent runtime config; absent for plain sessions. */
+  executionWorktree?: ExecutionWorktreeEnvFact;
   skillMetadataBudget?: number;
   skills?: ContextBuilderConfig["skills"];
   userInstructions?: ContextBuilderConfig["userInstructions"];
@@ -140,6 +143,7 @@ function buildSubagentContextSections(config: SubagentContextBuilderConfig): Con
         agentPrompt: config.agentPrompt,
         envInfo: config.envInfo,
         model: config.model,
+        executionWorktree: config.executionWorktree,
       })}`,
     }),
   );

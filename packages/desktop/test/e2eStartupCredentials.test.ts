@@ -64,6 +64,7 @@ describe("desktop e2e startup credentials", () => {
     "conversation-session-running-guide-steer.test.ts",
     "conversation-session-tool-cross-product.test.ts",
     "conversation-session-v4-fork-edit-branch.test.ts",
+    "conversation-session-worktree-chat-first.test.ts",
   ])("fork/goal/tool spec %s 不播种无关账号身份", (spec) => {
     expect(
       createE2EStartupCredentialSeed({

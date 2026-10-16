@@ -1,4 +1,6 @@
 /* eslint-disable max-lines -- ZCode Protocol session/workspace methods share one server context and snapshot helpers; keep them together during migration. */
+import { stat } from "node:fs/promises";
+import { statSync } from "node:fs";
 import { observeDetachedChildSessionDebug, observeSessionDebug } from "./session-debug.js";
 import {
   TASK_LIST_SESSION_TYPES,
@@ -8,7 +10,11 @@ import { resolveEffectiveBashShellSelection } from "@zcode/adapters/exec";
 import { inputIntentMetadata } from "../zcode-protocol-v4/commands/input-intent.js";
 import { createModelExecutionContext } from "./model-execution.js";
 import type { SendInputOptions } from "../app/types.js";
-import { repairPersistedRemoteSessionPaths, type TurnAttachment } from "@zcode/core";
+import {
+  repairPersistedRemoteSessionPaths,
+  type AgentRuntimeConfig,
+  type TurnAttachment,
+} from "@zcode/core";
 import {
   CoreErrorType,
   SESSION_ENTRY_TARGET_COMPLETION_VERIFICATION,
@@ -1264,10 +1270,11 @@ export async function createSession(
 export async function createSessionRecordForV4(
   context: ZCodeProtocolAgentServerContext,
   rawParams: unknown,
+  preparedSessionId?: string,
 ) {
   return createSessionWithProjection(context, rawParams, undefined, async (record) => ({
     value: { sessionId: record.app.sessionId },
-  }));
+  }), preparedSessionId);
 }
 
 async function createSessionWithProjection<T>(
@@ -1277,10 +1284,11 @@ async function createSessionWithProjection<T>(
   project: (
     record: ZCodeProtocolSessionRecord,
   ) => Promise<{ value: T; phaseDurationsMs?: SnapshotPhaseDurationsMs; messageCount?: number }>,
+  preparedSessionId?: string,
 ): Promise<T> {
   const params = parseParams(zcodeSessionCreateParamsSchema, rawParams);
   const startedAt = Date.now();
-  if (params.sessionId && !params.importedHistory) {
+  if (params.sessionId && !params.importedHistory && !preparedSessionId) {
     // If ordinary session/create allowed callers to supply an ID, it could overwrite an active
     // record in context.sessions, taking over a running session, leaking its runtime, or misrouting
     // later setModel/sendPrompt calls.
@@ -1289,7 +1297,7 @@ async function createSessionWithProjection<T>(
       "sessionId is only supported for imported history creates",
     );
   }
-  const sessionId = (params.sessionId ?? createSessionId()) as SessionId;
+  const sessionId = (preparedSessionId ?? params.sessionId ?? createSessionId()) as SessionId;
   const workspace = params.workspace;
   context.logger?.info("ZCode Protocol session/create started", {
     event: "zcode_protocol.session_create.started",
@@ -3409,6 +3417,45 @@ async function materializeSessionRecord(
   return createRecord(context, params, sessionId, resume, startupPreferences, trace);
 }
 
+/**
+ * Execution-worktree boundary health check (spec: execution-worktree-missing-handling.md §1-2).
+ * A single stat in the CLI process — the same machine workingDirectory resolves against. Create
+ * rejects with a precise error; resume keeps the fact marked missing so the session continues in
+ * the parent workspace while the wire meta and env bullet still see the worktree fact.
+ */
+async function resolveRecordExecutionWorktree(
+  resume: boolean,
+  executionWorktree: ZCodeSessionCreateParams["executionWorktree"] | undefined,
+): Promise<AgentRuntimeConfig["executionWorktree"]> {
+  if (!executionWorktree) return undefined;
+  if (!(await isWorktreeDirectoryMissing(executionWorktree.path))) return executionWorktree;
+  if (!resume) {
+    throw new ProtocolRequestError(
+      -32602,
+      `Execution worktree path does not exist or is not a directory: ${executionWorktree.path}`,
+    );
+  }
+  return { ...executionWorktree, missing: true };
+}
+
+/** True when the path is absent or not a directory (the async variant for cold-seed fan-outs). */
+export async function isWorktreeDirectoryMissing(path: string): Promise<boolean> {
+  try {
+    return !(await stat(path)).isDirectory();
+  } catch {
+    return true;
+  }
+}
+
+/** Synchronous variant for hooks that must not await (sessions-index meta derivation). */
+export function isWorktreeDirectoryMissingSync(path: string): boolean {
+  try {
+    return !statSync(path).isDirectory();
+  } catch {
+    return true;
+  }
+}
+
 async function createRecord(
   context: ZCodeProtocolAgentServerContext,
   params: ZCodeSessionRecordParams,
@@ -3421,6 +3468,13 @@ async function createRecord(
     "workspace" in params && params.workspace
       ? params.workspace
       : buildWorkspaceRef({ workspacePath: context.deps.cwd ?? process.cwd() });
+  // Execution-worktree health at the session boundary (spec: execution-worktree-missing-handling.md
+  // §1-2): create rejects so a session never starts executing in a dead cwd; resume keeps the
+  // persisted fact but marks it missing, and createZCodeApp then falls back to the parent workspace.
+  const recordExecutionWorktree = await resolveRecordExecutionWorktree(
+    resume,
+    "executionWorktree" in params ? params.executionWorktree : undefined,
+  );
   const eventStore = context.deps.createSessionEventStore(sessionId);
   const traceContext = createProtocolRootTraceContext(sessionId, trace);
   const initialModel = "model" in params ? params.model : undefined;
@@ -3493,10 +3547,9 @@ async function createRecord(
       titleGeneration: params.titleGenerationEnabled === false ? { enabled: false } : {},
       workingDirectory: workspace.workspacePath,
       // Execution worktree: createZCodeApp derives the execution cwd from it while workspacePath
-      // above keeps the session identity/persistence anchored to the parent workspace.
-      ...("executionWorktree" in params && params.executionWorktree
-        ? { executionWorktree: params.executionWorktree }
-        : {}),
+      // above keeps the session identity/persistence anchored to the parent workspace. The fact was
+      // health-checked above (create rejects a dead path; resume carries missing: true).
+      ...(recordExecutionWorktree ? { executionWorktree: recordExecutionWorktree } : {}),
       // Keep identity isolation separate from execution paths: core writes only identity to
       // session.workspace_id, while workingDirectory remains the actual path on the remote machine.
       // Local workspaces keep it undefined.

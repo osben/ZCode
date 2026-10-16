@@ -1,3 +1,4 @@
+import { stat } from "node:fs/promises";
 import { restorePermissionGrantMarker } from "../helpers/permission-grant-resume.js";
 import { executionStateSchema, resolveExecutionState } from "@zcode/shared";
 import { SESSION_ENTRY_EXECUTION_STATE } from "@zcode/contracts";
@@ -124,11 +125,35 @@ export async function resumeFromStore(
 
   // Execution-worktree sessions persist their execution cwd separately from the workspace
   // directory (listing identity); restore the worktree first so the resumed turn runs there.
+  // Backstop for out-of-band deletion (rm / git worktree prune / re-clone): the history is still
+  // valid, so fall back to the parent workspace instead of resuming into a dead cwd. The fact stays
+  // on the runtime config (marked missing) for the sessions-index badge and the env bullet.
   this.workingDirectory = session.executionDirectory ?? session.directory;
   if (session.executionDirectory) {
+    let executionWorktreeMissing: boolean;
+    try {
+      executionWorktreeMissing = !(await stat(session.executionDirectory)).isDirectory();
+    } catch {
+      executionWorktreeMissing = true;
+    }
+    if (executionWorktreeMissing) {
+      this.workingDirectory = session.directory;
+      this.logger?.warn(
+        "Session resume execution worktree directory is missing; falling back to the parent workspace",
+        {
+          ...traceContextToLogContext(traceContext),
+          event: "session.resume.execution_worktree_missing",
+          module: "core.runtime",
+          path: session.executionDirectory,
+          sessionId: this.sessionId,
+        },
+      );
+    }
     this.config.executionWorktree = {
       path: session.executionDirectory,
       ...(session.executionBranch ? { branchName: session.executionBranch } : {}),
+      ...(executionWorktreeMissing ? { missing: true } : {}),
+      workspacePath: session.directory,
     };
   }
   this.config.taskType = session.taskType;

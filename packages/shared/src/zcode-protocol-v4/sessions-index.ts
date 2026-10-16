@@ -56,6 +56,10 @@ export const sessionSummarySchema = z.object({
   // sidebar worktree badge and the header/file-tree "open in IDE/folder" target. optional preserves
   // compatibility with old sessions-index frames and stored summaries.
   executionWorktree: zcodeExecutionWorktreeSchema.optional(),
+  // True when the worktree directory was absent when this summary was derived (host-side stat).
+  // Top-level on purpose: old parsers strip unknown summary keys but the nested worktree schema is
+  // strict, so a nested flag would fault whole frames on older clients (spec: execution-worktree-missing-handling.md §3).
+  executionWorktreeMissing: z.boolean().optional(),
   createdAt: timestampSchema,
 });
 export type SessionSummary = z.infer<typeof sessionSummarySchema>;

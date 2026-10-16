@@ -18,7 +18,13 @@ type GlobalTaskListItem = WindowHostControllerTaskListItem;
 const subscribeToNothing = () => () => {};
 const zeroRevision = () => 0;
 
-function buildWorkspaceScopes(workspaceTabs: WorkspaceTabState[]): ZCodeTaskListWorkspaceScope[] {
+type GlobalTaskListWorkspaceTab = Pick<WorkspaceTabState, "workspacePath" | "workspaceIdentity"> & {
+  remoteSessionId?: string;
+};
+
+function buildWorkspaceScopes(
+  workspaceTabs: ReadonlyArray<GlobalTaskListWorkspaceTab>,
+): ZCodeTaskListWorkspaceScope[] {
   const scopes = new Map<string, ZCodeTaskListWorkspaceScope>();
   for (const tab of workspaceTabs) {
     const scope = {
@@ -35,7 +41,11 @@ function buildWorkspaceScopes(workspaceTabs: WorkspaceTabState[]): ZCodeTaskList
 
 export function useGlobalTaskList(params: {
   kind: ZCodeTaskListKind;
-  workspaceTabs: WorkspaceTabState[];
+  workspaceTabs: ReadonlyArray<
+    Pick<WorkspaceTabState, "workspacePath" | "workspaceIdentity"> & {
+      remoteSessionId?: string;
+    }
+  >;
   sortBy: "created" | "updated";
   searchQuery: string;
   expanded: boolean;
