@@ -1,50 +1,50 @@
-# Todo 100：Account / Provider / Effective Selection 链路纯调查
+# Todo 100: Account / Provider / Effective Selection Chain Pure Investigation
 
-> 状态：调查完成；2026-09-09。后续修复范围已裁决并由 Todo99 完成，本调查不再等待实施裁决。下文保留调查时事实，不代表这些缺陷仍全部存在；验证欠账转交 Todo102。
-> 基线：`86bbe157c88e8e599694afb53c39f6dac125ac08`，`provider-refactor-e2e-recovery`。Todo99 的未提交代码是暂停中的实验，不算已完成修复；本项不改动或回滚这些代码。
+> Status: Investigation completed; 2026-09-09. Subsequent fix scope decided and closed by Todo99; this investigation no longer waits for implementation decisions. Facts recorded below not representative of whether these defects still all exist; verification debt handed off to Todo102.
+> Baseline: `86bbe157c88e8e599694afb53c39f6dac125ac08`, `provider-refactor-e2e-recovery`. Todo99's unsubmitted code is a suspended experiment; not counted as completed fixes; this item does not modify or rollback that code.
 
-## 目标与优先级
+## Objectives and Priorities
 
-彻底梳理 Host 与 Core Worker 的账号、Provider 和有效模型选择链路：当前有哪些问题，公共机制已有多少，各执行入口如何消费，长期应重构成什么样。
+Thoroughly trace Host and Core Worker's account, Provider, and effective model selection chains: current problems, how much public mechanism exists, how each execution entry consumes, what long-term restructuring should look like.
 
-1. 优先：输入事实和已应用快照自洽；各入口复用公共 Effective Selection；解析结果正确用于执行且不损坏原意图。
-2. 必查：临时 Account 同步是否完整、去重和应用确认是否真实、Worker 生命周期是否遗漏。同步机制以后可能删除，当前只求正确可靠，不以彻底美化它为主目标。
-3. 排除：实现修复、全仓重构、独立终端 CLI 功能升级、持久化迁移、推送部署。独立 CLI 仅记录架构差异。
+1. Priority: Input facts and applied snapshots self-consistent; each entry point reuses public Effective Selection; parsed results correctly used for execution without corrupting original intent.
+2. Must check: Whether temporary Account sync complete, deduplication and application confirmation real, Worker lifecycle gaps. Sync mechanism may be deleted later; current goal is correctness and reliability, not thorough beautification.
+3. Excluded: Implementation fixes, full repository refactoring, independent terminal CLI feature upgrades, persistence migrations, push deployments. Independent CLI only records architecture differences.
 
-## 已确认边界
+## Confirmed Boundaries
 
-- 允许 Host 使用完整 B、Worker 暂时使用完整 A；不允许进程内混用 A/B 或虚假确认 B 已应用。
-- 原 Selection 是意图；有效选择是临时结果；固定的本次执行不可再重解释。
-- 显式 Subagent 等消费方应复用公共解析；隐式继承、内部执行 override、已绑定 Off-Peak Ticket 保持原执行归属。
-- 读取、刷新、失败不覆盖持久原意图；各业务提交与保存边界不强行统一。
-- 不新增每次发送前强制追平远端最新配置的屏障；不改变 workspace 隔离、桌面 continuous 或手机 replayable。
+- Host allowed to use complete B; Worker temporarily using complete A; in-process mixing A/B or false confirmation of B applied not allowed.
+- Original Selection is intent; effective selection is temporary result; fixed current execution can no longer be re-interpreted.
+- Explicit Subagent and other consumers should reuse public parsing; implicit inheritance, internal execution override, bound Off-Peak Tickets maintain original execution ownership.
+- Read, refresh, failure do not overwrite persisted original intent; each business submission and save boundaries not forced unified.
+- No new barrier added forcing synchronization with latest remote config before each send; no change to workspace isolation, desktop continuous, or mobile replayable.
 
-## 调查方法与交付
+## Investigation Method and Deliverables
 
-以当前事实文档和代码为证据，优先检索已有功能图的 ProviderRegistryService、AccountProviderService、ModelSelectionFacade 和执行入口；codegraph 不可用时明确使用定向调用阅读，不伪称完成图扫描。只读检查及无真实账号的内存验证可执行，不访问或修改真实用户状态。
+Using current fact documents and code as evidence, prioritize retrieving existing feature graphs' ProviderRegistryService, AccountProviderService, ModelSelectionFacade, and execution entries; when codegraph unavailable, explicitly use targeted calls reading, not pretending to have completed graph scans. Read-only checks and memory validations without real accounts executable; do not access or modify real user state.
 
-每项记录：预期、实际链路、基线代码位置、证据强度、用户影响、建议归属、未提交实验是否覆盖、待验证/裁决。结论区分已确认问题、条件性风险、正确机制、待裁决设计；不以可达性当作实际 Bug。
+Each entry recorded: expected, actual chain, baseline code location, evidence strength, user impact, suggested ownership, whether unsubmitted experiments covered, pending verification/decisions. Conclusions distinguish confirmed issues, conditional risks, correct mechanisms, pending decisions; do not equate reachability with actual bugs.
 
-执行报告：[调查结果与目标架构](../research/todo100-account-provider-selection-investigation.md)。报告须包含架构图、逐入口消费表、问题清单、目标架构、最小修复与长期重构的分界、验证缺口。
+Execution report: [Investigation Results and Target Architecture](../research/todo100-account-provider-selection-investigation.md). Report must include architecture diagrams, per-entry consumption tables, issue lists, target architecture, boundary between minimal fixes and long-term refactoring, and verification gaps.
 
-| ID | 调查项 | 完成标准 | 状态 |
-| --- | --- | --- | --- |
-| I01 | 进程和服务装配 | 区分 Host、受管理 Worker、独立 CLI、SSH 环境；列出共享/分叉实现 | 完成：报告 §2 |
-| I02 | Account 事实生产和发布 | 查配置/连接/身份变化、刷新串行化、过期结果与 last-known-good | 完成：§3、§7；异步身份混合列风险，不冒称已复现 |
-| I03 | Provider 已应用快照 | 查源版本匹配、状态/model 一致、通知与快照消费 | 完成：§3、P100-01/02 |
-| I04 | 临时同步正确性 | 首次/事件/按需触发、字段完整性、ack、去重/顺序/失败、不同 Worker 生命周期 | 完成：§6；保留已有队列，不建议先重造同步平台 |
-| I05 | Session / Composer | 原意图→公共解析→提交→最终 Model，缓存及保存边界 | 完成：§3、§5；已有公共 Hook/执行冻结正确 |
-| I06 | Automation / Bot / Wiki | 各自目标 Host、解析/派发点、冻结和配置保存边界 | 完成：§5；P100-04/05 分别记录 Bot 后续轮和附件传递缺口 |
-| I07 | Subagent / Workflow | 显式/隐式/override/嵌套和实际请求，不能只查设置页 | 完成静态链：P100-03、§5；真实 child 网络验证尚未执行 |
-| I08 | 请求鉴权和其他内部模型调用 | 精确执行、账号绑定、辅助模型、继承及 Ticket 例外 | 完成：§5；不把动态鉴权误改成模型选择，也不重绑 Ticket |
-| I09 | 证据与试改复审 | 验证确定问题；区分基线与暂停实验；列出未验证范围 | 完成：§10；52 条现有单测通过，ACK 差异内存复现；试改仍暂停 |
-| I10 | 目标架构与建议顺序 | 公共服务边界、临时同步可移除性、最小修复与待裁决项 | 完成：§8/9；纯公共解析 + applied snapshot + 明确新派发/固定执行边界 |
+| ID  | Investigation Item                                    | Completion Standard                                                                                            | Status                                                                                                            |
+| --- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| I01 | Process and service assembly                          | Distinguish Host, managed Workers, independent CLI, SSH environments; list shared/branched implementations     | Completed: report §2                                                                                              |
+| I02 | Account fact production and publishing                | Check config/connection/identity changes, refresh serialization, expired results and last-known-good           | Completed: §3, §7; async identity mixing risk listed; not falsely claimed reproduced                              |
+| I03 | Provider applied snapshots                            | Check source version matching, status/model consistency, notifications and snapshot consumption                | Completed: §3, P100-01/02                                                                                         |
+| I04 | Temporary sync correctness                            | First-time/event/on-demand triggers, field completeness, ack, dedup/order/failure, different Worker lifecycles | Completed: §6; existing queues retained; do not recommend rebuilding sync platform first                          |
+| I05 | Session / Composer                                    | Original intent → public parsing → submission → final Model, caches and save boundaries                        | Completed: §3, §5; existing public hooks/freezing correct                                                         |
+| I06 | Automation / Bot / Wiki                               | Each target Host, parsing/dispatch points, freezing and config save boundaries                                 | Completed: §5; P100-04/05 separately record Bot subsequent round and attachment passing gaps                      |
+| I07 | Subagent / Workflow                                   | Explicit/implicit/override/nested and actual requests; cannot only check settings page                         | Completed static chain: P100-03, §5; real child network validation not yet executed                               |
+| I08 | Request authentication and other internal model calls | Exact execution, account binding, auxiliary models, inheritance, and Ticket exceptions                         | Completed: §5; do not misconvert dynamic auth to model selection, nor rebind Tickets                              |
+| I09 | Evidence and test modification review                 | Verify confirmed issues; distinguish baselines from suspended experiments; list unverified scopes              | Completed: §10; 52 existing unit tests pass, ACK difference memory-reproduced; test modifications still suspended |
+| I10 | Target architecture and suggested order               | Public service boundaries, temporary sync removability, minimal fixes and pending decisions                    | Completed: §8/9; pure public parsing + applied snapshot + explicit new dispatch/fixed execution boundaries        |
 
-完成条件：以上调查逐项有结果与证据，不能以“需继续核对”替代结论；真实账号/真机验证未执行须明确列出。调查完成不代表产品问题修复，也不自动授权续做 Todo99。
+Completion conditions: all investigation items have results and evidence; cannot replace conclusions with "need to continue checking"; real account/real-device validation not executed must be explicitly listed. Investigation completion does not mean product issues fixed; does not automatically authorize continuing Todo99.
 
-## 执行结论
+## Execution Conclusions
 
-- 确认三项状态/消费缺口：同步丢 states、ACK 不代表真实 applied snapshot、显式 Subagent 未复用公共解析。
-- 另外确认附件派发分支漏传模型选择/执行上下文；Bot 首次创建已接解析，但已有任务后续消息未接，需按新轮/已接纳输入边界收口。
-- Registry/Facade/Hook 已有较完整的一致性保护，不建议推倒重写；Account 上游查询作用域竞态仍是待运行验证的风险，不能夸大为已证实全局混乱。
-- 本项只改调查 Todo、索引、暂停说明及结果报告。产品试改未继续、未提交、未推送。
+- Confirmed three status/consumption gaps: sync dropping states, ACK not representing truly applied snapshots, explicit Subagents not reusing public parsing.
+- Additionally confirmed: attachment dispatch branches miss passing model selection/execution context; Bot first creation received parsing, but existing task subsequent messages not received; must be closed by new round/existing-accepted-input boundaries.
+- Registry/Facade/Hook already have fairly complete consistency protection; not recommended to rebuild from scratch; Account upstream query scope race conditions remain un-run-verified risks, cannot exaggerate to globally confirmed chaos.
+- This item only changes investigation Todos, indices, suspension notes, and results report. Product test modifications not continued, unsubmitted, unpushed.

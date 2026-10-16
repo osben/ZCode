@@ -1,17 +1,17 @@
-# Release changelog body bullets
+# Release Changelog Body Bullets
 
-更新日期：2026-05-08
+Update date: 2026-05-08
 
-`npm run release` 使用 `release-it` 生成版本 changelog。发布配置迁移到 `.release-it.mjs`，因为 `@release-it/conventional-changelog` 的 `writerOpts.transform` 和模板需要 JavaScript 函数，JSON 配置无法表达。
+`npm run release` uses `release-it` to generate version changelog. Release configuration migrates to `.release-it.mjs`, because `@release-it/conventional-changelog` `writerOpts.transform` and template require JavaScript functions, JSON configuration cannot express.
 
-生成规则：
+Generation rules:
 
-- commit header 继续按 Conventional Commits 分组，例如 `feat` 进入 `Features`，`fix` 进入 `Bug Fixes`
-- commit body 中形如 `- xxx`、`* xxx`、`+ xxx` 的独立 bullet 会追加到该 commit 条目下面
-- 非 bullet 段落不会进入 changelog
-- `BREAKING CHANGE` / `BREAKING-CHANGE` 仍交给 conventional changelog 的 notes 机制处理，不作为普通 body bullet 输出
+- commit header continues to be grouped by Conventional Commits, e.g. `feat` enters `Features`, `fix` enters `Bug Fixes`
+- independent bullets in commit body such as `- xxx`、`* xxx`、`+ xxx` will be appended under that commit entry
+- non-bullet paragraphs do not enter changelog
+- `BREAKING CHANGE` / `BREAKING-CHANGE` are still handled by conventional changelog notes mechanism, not output as normal body bullet
 
-示例：
+Examples:
 
 ```text
 fix(web-remote): harden mobile reconnect flow
@@ -20,7 +20,7 @@ fix(web-remote): harden mobile reconnect flow
 - extend workspace reconnect timeout
 ```
 
-会生成：
+Will generate:
 
 ```md
 * **web-remote:** harden mobile reconnect flow ([38dd68b](...))
@@ -28,4 +28,4 @@ fix(web-remote): harden mobile reconnect flow
   * extend workspace reconnect timeout
 ```
 
-相关实现：`scripts/release-it/changelog-writer.mjs`。
+Related implementation: `scripts/release-it/changelog-writer.mjs`.

@@ -1,68 +1,73 @@
-# 21 ZCode Built-in 配置、模型启停、排序与设置页收口
+# 21 ZCode Built-in Config, Model Activation, Sorting, and Settings Consolidation
 
-> 状态：已完成（后续 Todo 23 已删除最后的 Compatibility Config）
+> Status: Completed (subsequent Todo 23 has removed the last Compatibility Config)
 >
-> 日期：2026-08-26
+> Date: 2026-08-26
 >
-> 相关任务：[`02`](./todo-02-ai-sdk-execution-registry-retirement.md)、
-> [`07`](./todo-07-account-connection-selection-and-access-context-cutover.md)、
-> [`17`](./todo-17-provider-registry-settings-authority-boundary-closure.md)、
-> [`18`](./todo-18-zcode-builtin-client-config-sync-and-lkg.md)、
+> Related tasks: [`02`](./todo-02-ai-sdk-execution-registry-retirement.md),
+> [`07`](./todo-07-account-connection-selection-and-access-context-cutover.md),
+> [`17`](./todo-17-provider-registry-settings-authority-boundary-closure.md),
+> [`18`](./todo-18-zcode-builtin-client-config-sync-and-lkg.md),
 > [`22`](./todo-22-additional-builtin-providers-and-cloud-access.md)
 >
-> 相关设计：[`design.md`](../design/design.md)、
-> [`provider-and-model-configuration-overview.md`](../design/registry/provider-and-model-configuration-overview.md)、
-> [`configuration.md`](../design/registry/configuration.md)、
-> [`model-membership-and-enablement.md`](../design/registry/model-membership-and-enablement.md)、
-> [`settings.md`](../design/registry/settings.md)、
-> [`registry.md`](../design/registry/registry.md)、
+> Related design: [`design.md`](../design/design.md),
+> [`provider-and-model-configuration-overview.md`](../design/registry/provider-and-model-configuration-overview.md),
+> [`configuration.md`](../design/registry/configuration.md),
+> [`model-membership-and-enablement.md`](../design/registry/model-membership-and-enablement.md),
+> [`settings.md`](../design/registry/settings.md),
+> [`registry.md`](../design/registry/registry.md),
 > [`request-compatibility-and-access-protocols.md`](../design/registry/request-compatibility-and-access-protocols.md)
 
-## 0. 任务定位
+## 0. Task Positioning
 
-本 Todo 负责整理现有 ZCode Built-in Provider Config 与 Built-in Model Config Rules，并把 Provider/Model 设置页
-收口到同一套领域事实。目标不是为旧实现增加兼容层，而是让 Built-in Config 成为模型与 API 静态事实的唯一来源，
-让 Settings 只编辑 Personal Config，让 Registry 只消费最终解析结果。
+This Todo is responsible for consolidating the existing ZCode Built-in Provider Config and Built-in Model Config Rules, and
+consolidating the Provider/Model Settings page into a single set of domain facts. The goal is not to add a compatibility layer
+to the old implementation, but to make Built-in Config the sole source of static model and API facts,
+let Settings edit only Personal Config, and let Registry consume only the final resolved result.
 
-本 Todo 是本轮实现期间的权威实施 Spec。开发前不要求先把全部内容机械同步到 Design Tree 与 Feature Graph；实现完成后，
-再根据已经落地的最终类型、服务边界和 UI 入口做一次完整同步，并把冲突旧文档明确更新或标记为已被取代。该同步是本 Todo
-的完成门禁，不能延期到后续任务。
+This Todo is the authoritative implementation Spec during the current implementation cycle. It is not required to mechanically
+synchronize all content to the Design Tree and Feature Graph before development; after implementation,
+a full synchronization should be made against the finalized types, service boundaries, and UI entry points, and conflicting
+old documents should be explicitly updated or marked as superseded. This synchronization is the completion gate for this Todo
+and cannot be deferred to subsequent tasks.
 
-实现应忠实落地已经裁决的领域与产品设计，不得仅因局部实现方便、复用现有组件或减少当下改动而自行改变设计。目标模式中
-遇到普通实现歧义、局部正确性冲突或新事实时，优先选择最贴近既有裁决、影响最小且可逆的方案继续执行，同时记录选择和证据，
-在目标完成后再讨论是否需要调整设计；不得把临时权衡自动升级为新设计。只有涉及不可逆破坏、需要新增外部权限，或任何候选
-方案都会违背核心目标时才阻塞目标。
+Implementation must faithfully execute the already-decided domain and product design, and must not alter the design merely for
+local implementation convenience, reuse of existing components, or minimizing current changes. When facing ordinary
+implementation ambiguity, local correctness conflicts, or new facts in the target mode, prioritize the solution closest to
+existing decisions, with minimal impact and reversibility, and record the decisions and evidence; design adjustments should
+only be discussed after the target is complete. Do not automatically escalate temporary trade-offs into new designs. Only
+irreversible damage, the need for new external permissions, or any candidate violating core goals should block the goal.
 
-不纳入本 Todo：
+Not included in this Todo:
 
-- Client Config 公共服务重构；Todo 18 只做当前 Built-in Release 的最小接入；
-- OpenRouter、OpenCode Zen、Azure、Volcano Ark、AWS Bedrock；见 Todo 22；
-- Google Gemini 与 Vertex AI；当前不支持；
-- Off-Peak 结构化错误重构；本轮只调整配置归属；
-- 重建旧 Catalog、Preset 或 Adapter Registry；
-- 逐 commit、逐叶子的重型迁移审计。
+- Client Config public service refactoring; Todo 18 handles only the minimal integration for the current Built-in Release;
+- OpenRouter, OpenCode Zen, Azure, Volcano Ark, AWS Bedrock; see Todo 22;
+- Google Gemini and Vertex AI; not currently supported;
+- Off-Peak structured error refactoring; this round only adjusts config ownership;
+- Rebuilding old Catalog, Preset, or Adapter Registry;
+- Heavy migration audits per commit or per leaf.
 
-### 实施结果（2026-08-26）
+### Implementation Results (2026-08-26)
 
-- 五个 Source Schema、Provider group、结构化 `provider-model` Rule、Model `enabled`、Builtin-wins 与显式 Provider/Model
-  顺序已经进入正式 Config/Resolver/Facade/Repository 链路；Personal 持久化字段已收口为 `modelConfigRules`。
-- Built-in Release 已原子切换 `account:` 账号 Provider，Z.ai/BigModel Family 与普通 API Provider 已分离，Off-Peak
-  已拆成两个隐藏 Family Provider；Account Overlay 决定连接约束、可用成员与对应 Provider enabled。
-- Settings 已直接消费 Host 的 group、添加候选、完整顺序、成员来源与 executable/selectable 结果；Provider ID 只读，
-  Model 完整编辑保存为稀疏 Personal 专属 Rule，继承值、覆盖值与恢复继承有明确交互。
-- 官方版本请求安全校验与 Off-Peak execution protocol 已归入 Provider Access；旧 reasoning/output-token/Provider-ID
-  运行时兼容和 Renderer ID 白名单已删除。后续 Todo 23 进一步删除了最后的 Compatibility Config 与 synthetic
-  empty-thinking 投影。
-- Design Tree、Feature Graph 与历史 Todo 的 superseded 标注已经同步到最终实现。
+- Five Source Schema, Provider group, structured `provider-model` Rule, Model `enabled`, Builtin-wins, and explicit Provider/Model
+  ordering have entered the official Config/Resolver/Facade/Repository pipeline; Personal persistent fields are consolidated to `modelConfigRules`.
+- Built-in Release has atomically switched `account:` account Providers; Z.ai/BigModel Family and regular API Providers are separated; Off-Peak
+  is split into two hidden Family Providers; Account Overlay determines connection constraints, available members, and corresponding Provider enabled.
+- Settings directly consumes Host's group, addition candidates, full ordering, member source, and executable/selectable results; Provider ID is read-only,
+  Model full editing saves as sparse Personal-only Rule, with inherited values, overridden values, and inheritance restoration having clear interactions.
+- Official release request security validation and Off-Peak execution protocol have been folded into Provider Access; old reasoning/output-token/Provider-ID
+  runtime compatibility and Renderer ID whitelist have been deleted. Subsequent Todo 23 further deleted the last Compatibility Config and synthetic
+  empty-thinking projection.
+- Design Tree, Feature Graph, and historical Todo superseded annotations have been synchronized to the final implementation.
 
-本次实现验证：Provider 核心定向测试 255 项通过，根 `typecheck`、`lint`、Desktop E2E typecheck、修改文件格式检查和
-`git diff --check` 通过；根单测 12,416 项通过，另有 2 项因当前 Linux 环境缺少外部 `zip` 命令失败，均位于
-`zcode-server-cli` Windows ZIP 打包/安装测试，与 Provider 改动无关。真实请求和正式 E2E 按最终 Release Checklist 执行。
+This implementation validates: Provider core directed tests 255 passed, root `typecheck`, `lint`, Desktop E2E typecheck, modified file format check, and
+`git diff --check` passed; root unit tests 12,416 passed, with 2 additional items failing due to missing external `zip` command in the current Linux environment, all located in
+`zcode-server-cli` Windows ZIP packaging/installation tests, unrelated to Provider changes. Real requests and official E2E execute per the final Release Checklist.
 
-## 1. 最终双路配置
+## 1. Final Dual-Path Configuration
 
 ```text
-Provider Config 路径                         Model Config 路径
+Provider Config Path                         Model Config Path
 ====================                       =================
 
 ZCode Built-in Provider Config             ZCode Built-in Model Config Rules
@@ -89,10 +94,10 @@ Effective Provider Config                              |
                        ├─ properties
                        ├─ optionSpecs
                        ├─ reasoningMapping
-                       └─ 已确认的窄请求编码事实
+                       └─ confirmed narrow request encoding facts
                                   |
                                   v
-                    完整性与执行资格校验
+                    Integrity and execution qualification validation
                                   |
                                   v
                          Provider Registry
@@ -101,49 +106,49 @@ Effective Provider Config                              |
                        ModelFactory -> Model -> Adapter
 ```
 
-Provider Config 决定 Provider 身份、访问方式、成员和显示顺序。Model Config 决定某个模型是否启用、具有什么能力、
-允许哪些选项，以及选项怎样编码。Model Rule 不能创造成员，Provider 成员数组也不能声明模型能力。
+Provider Config determines Provider identity, access method, members, and display order. Model Config determines whether a model is enabled, what capabilities it has,
+which options are allowed, and how options are encoded. Model Rules cannot create members; Provider member arrays cannot declare model capabilities.
 
-Overlay 是一套自然、可复用的配置合成语义与机制，负责同一配置槽位的继承、覆盖和清除。Provider/Model 领域利用它
-实现自己的配置空间、成员构成、默认状态和生命周期语义。Overlay 不是能够自然支持所有业务语义的万能抽象；结构必须
-先服从领域模型，再复用 Overlay 完成层间组合。
+Overlay is a natural, reusable configuration composition semantics and mechanism, responsible for inheritance, overriding, and clearing of the same configuration slot. Provider/Model domain uses it
+to implement its own configuration space, member composition, default state, and lifecycle semantics. Overlay is not a universal abstraction that can naturally support all business semantics; structure must
+first serve the domain model, then reuse Overlay for cross-layer composition.
 
-## 2. 五个 Source Schema
+## 2. Five Source Schema
 
-五个输入来源各有严格 Schema，但进入领域后共享 Provider Config、Model Config 和 Overlay 语言；不建立五套 Runtime
-DTO。
+Five input sources each have strict Schema, but after entering the domain they share Provider Config, Model Config, and Overlay language; no five sets of Runtime
+DTOs are created.
 
-| Source                            | 可写事实                                                                                      |
-| --------------------------------- | --------------------------------------------------------------------------------------------- |
-| ZCode Built-in Provider Config    | Provider group、身份、展示、API/Access 模板、`builtinModelIds`、Provider 默认状态与声明顺序   |
-| Account Built-in Provider Config  | 账号 Provider 的 Access/连接约束、Provider enabled、服务端确实返回时的 `builtinModelIds`      |
-| Personal Provider Config          | `standard-personal` 新 Provider，或已有 Provider 的 API/Access/状态 Overlay；`modelIds/order` |
-| ZCode Built-in Model Config Rules | 完整 Model 默认、模型/API/Provider/Endpoint 特化、官方默认启停                                |
-| Personal Model Config Rules       | 用户的单模型专属覆盖，以及用户手写的通用 Match Rule                                           |
+| Source                            | Writable facts                                                                                      |
+| --------------------------------- | --------------------------------------------------------------------------------------------------- |
+| ZCode Built-in Provider Config    | Provider group, identity, display, API/Access template, `builtinModelIds`, Provider default state and declared order |
+| Account Built-in Provider Config  | Account Provider Access/connection constraints, Provider enabled, `builtinModelIds` when server actually returns |
+| Personal Provider Config          | `standard-personal` new Provider, or API/Access/status Overlay for existing Provider; `modelIds/order` |
+| ZCode Built-in Model Config Rules | Complete Model defaults, model/API/Provider/Endpoint specialization, official default enable/disable |
+| Personal Model Config Rules       | User's single-model specific overrides, and user-written generic Match Rules |
 
-强约束：
+Strong constraints:
 
-- Personal Overlay 已有 Provider 时不能改写 `group`；Personal-only 根声明必须 `group=standard-personal`；
-- Personal Provider Config 不能写 `builtinModelIds`；
-- Account 只约束 Built-in 账号 Provider，不读取或修改 Personal-only Provider；
-- Account 不写 Model Config，不提供 context、格式、reasoning 等模型静态事实；
-- Personal Provider 的 `modelIds` 禁止包含当前 Effective `builtinModelIds` 中的 ID；手写重复读取时 Built-in-wins，
-  保存相关 Provider 时自动从 Personal 数组清掉；
-- Source Schema 负责结构与字段归属；服务端是否最终授权仍由真实请求决定。
+- Personal Overlay cannot rewrite `group` for existing Providers; Personal-only root declarations must `group=standard-personal`;
+- Personal Provider Config cannot write `builtinModelIds`;
+- Account only constrains Built-in account Providers, does not read or modify Personal-only Providers;
+- Account does not write Model Config, does not provide context, format, reasoning, and other model static facts;
+- Personal Provider's `modelIds` is prohibited from containing IDs in the current Effective `builtinModelIds`; on reading duplicate hand-written entries, Built-in-wins,
+  saving related Providers automatically clears them from Personal arrays;
+- Source Schema is responsible for structure and field ownership; whether the server ultimately authorizes is still determined by actual requests.
 
-五个 Source 的目标边界进一步固定为：
+The target boundaries for the five Sources are further fixed as:
 
-| Source                     | 必须/允许                                                                                                                                                           | 明确禁止                                                                       |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| ZCode Built-in Provider    | 每个根声明必须提供 `standard-builtin`、`zai-family` 或 `bigmodel-family` group；允许 label/logo、enabled、visibility、API、Access 模板、`builtinModelIds`           | `standard-personal`、`modelIds`、`modelOrder`、`providerOrder`                 |
-| Account Built-in Provider  | 只能覆盖已有 ZCode Built-in Family Provider；允许 enabled、结构化 Account Access、接口确实返回时的 `builtinModelIds`                                                | group、展示字段、visibility、API、Personal 成员/顺序、Model Config             |
-| Personal Provider          | 顶层允许 `providerOrder`；已有 Provider Overlay 允许 label、enabled、visibility、API、Access、`modelIds/modelOrder`；Personal-only 根必须 `group=standard-personal` | `builtinModelIds`；已有 Provider 的 group 改写                                 |
-| ZCode Built-in Model Rules | `provider-model` 与 `match`；允许完整 Model Config、官方 enabled 默认和经证据确认的 Built-in-only 窄兼容事实                                                        | Provider 成员、顺序、Access、动态凭据                                          |
-| Personal Model Rules       | `provider-model` 与 `match`；允许用户可覆盖的 Model Config 稀疏字段                                                                                                 | Provider 成员/顺序、Access、未允许 Personal 覆盖的产品协议或待定 Compatibility |
+| Source                     | Must/Allow                                                                                                                                                            | Explicitly Prohibited                                                                         |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| ZCode Built-in Provider    | Each root declaration must provide `standard-builtin`, `zai-family`, or `bigmodel-family` group; label/logo, enabled, visibility, API, Access template, `builtinModelIds` are allowed | `standard-personal`, `modelIds`, `modelOrder`, `providerOrder` |
+| Account Built-in Provider  | Can only override existing ZCode Built-in Family Providers; enabled, structured Account Access, `builtinModelIds` when interface actually returns are allowed                   | group, display fields, visibility, API, Personal members/order, Model Config                      |
+| Personal Provider          | Root allows `providerOrder`; existing Provider Overlay allows label, enabled, visibility, API, Access, `modelIds/modelOrder`; Personal-only root must `group=standard-personal` | `builtinModelIds`; rewriting group for existing Providers                                      |
+| ZCode Built-in Model Rules | `provider-model` and `match`; complete Model Config, official enabled defaults, and evidence-confirmed Built-in-only narrow compatibility facts are allowed                     | Provider members, order, Access, dynamic credentials                                           |
+| Personal Model Rules       | `provider-model` and `match`; user-overridable Model Config sparse fields are allowed                                                                                   | Provider members/order, Access, product protocols not allowed for Personal override, pending Compatibility |
 
-结构解析与语义校验分两步：单文件 Parser 严格拒绝未知字段；需要知道“该 ID 是否来自 Built-in”的约束由 Source
-装配校验完成。当前分支未发布，无 `type` 的开发中间 Rule 直接拒绝，不增加 dual-read 或 schema migration；真正已发布
-旧配置只在 Legacy importer 私有边界转换。
+Structure parsing and semantic validation are two steps: single-file Parser strictly rejects unknown fields; constraints requiring knowledge of "whether this ID comes from Built-in" are completed by Source
+assembly validation. Unreleased development middle Rules are directly rejected without adding dual-read or schema migration; truly published
+old configs are converted only within the Legacy importer private boundary.
 
 ## 3. Provider Config
 
@@ -161,53 +166,53 @@ interface ProviderConfig {
 }
 ```
 
-Provider 顶层 `enabled` 是执行门禁：disabled Provider 不进入 Registry、fallback、选择器或精确创建。
-`visibility=hidden` 只隐藏普通 Settings/Selection；完整且 enabled 的 hidden Provider 仍可由内部产品按精确 ID 使用。
-Provider 不保存 `selectable`。
+Provider top-level `enabled` is the execution gate: disabled Providers do not enter Registry, fallback, selector, or exact creation.
+`visibility=hidden` only hides normal Settings/Selection; complete and enabled hidden Providers can still be used by internal products by exact ID.
+Providers do not save `selectable`.
 
-`group` 是简单、显式的 Provider 产品组织事实，不是执行能力、Access 类型或可见性替代品：
+`group` is a simple, explicit Provider product organization fact, not a substitute for execution capability, Access type, or visibility:
 
 ```text
 standard-builtin
-└─ ZCode 提供模板、用户自行配置的普通 Provider
-   └─ 参与“添加供应商”候选与普通 providerOrder
+└─ Providers provided by ZCode templates, configured by users
+   └─ Participate in "add supplier" candidates and normal providerOrder
 
 standard-personal
-└─ 用户从零创建的 Personal-only Provider
-   └─ 参与普通 providerOrder
+└─ Personal-only Providers created from scratch by users
+   └─ Participate in normal providerOrder
 
 zai-family / bigmodel-family
-└─ 固定属于对应账号 Family 的产品 Provider
-   ├─ 不参与普通 Provider 拖动
-   └─ Settings UI 不提供 Provider 启用/停用操作
+└─ Product providers fixed to corresponding account families
+   ├─ Do not participate in normal Provider dragging
+   └─ Settings UI does not provide Provider enable/disable operations
 ```
 
-Renderer 不再通过 Provider ID 白名单、Access 类型或 Endpoint 推断分组。ZCode Built-in 根声明必须显式提供非 Personal
-group；Personal-only Provider 固定为 `standard-personal`；Account/Personal Overlay 无权改变已有 Provider 分组。
-Provider 不再保存额外 `builtin` boolean；完整 `group` 已经同时表达普通 Built-in、Personal-only 和两个账号 Family。
-`visibility` 继续独立表达是否对普通用户可见，`enabled` 继续独立表达能否执行。
+Renderer no longer infers grouping from Provider ID whitelist, Access type, or Endpoint. ZCode Built-in root declarations must explicitly provide non-Personal
+group; Personal-only Providers are fixed to `standard-personal`; Account/Personal Overlay has no authority to change existing Provider grouping.
+Providers no longer save extra `builtin` boolean; complete `group` simultaneously expresses normal Built-in, Personal-only, and two account families.
+`visibility` continues to independently express whether visible to normal users, `enabled` continues to independently express whether executable.
 
-普通外部 Built-in Provider 默认 `enabled=false`。用户从“添加供应商”选择它时，立即创建 Personal Overlay 并写
-`enabled=true`。Built-in 只表示由 ZCode 内置维护，不表示使用 ZCode 账号、已经有凭据或默认可用。
+Normal external Built-in Providers default to `enabled=false`. When users select it from "Add Supplier," a Personal Overlay is immediately created and
+`enabled=true` is written. Built-in means maintained by ZCode internally, not that it uses a ZCode account, already has credentials, or is available by default.
 
-不采用 `enabledModelIds`。Provider 只维护模型成员与顺序，模型启停由 Model Config 负责。
+`enabledModelIds` is not adopted. Providers only maintain model members and order; model enable/disable is handled by Model Config.
 
-## 4. 模型成员与 Built-in-wins
+## 4. Model Members and Builtin-wins
 
 ```text
 builtinModelIds
-└─ ZCode/Account Built-in 拥有的成员
+└─ ZCode/Account Built-in owned members
 
 modelIds
-└─ 用户拥有的 Personal 成员
+└─ User-owned Personal members
 ```
 
-成员集合只由两者产生。Builtin 与 Personal 同 ID 时只保留一个 Built-in 成员；单数组重复保留第一次出现。读取时
-确定性忽略重复后项，不制造冲突 DTO，也不阻塞 Built-in 模型。正常 UI 禁止创建重复；保存相关 Provider 时自动
-规范化重复与失效成员。
+Member sets are produced only from both. When Builtin and Personal share an ID, only one Built-in member is retained; single-array duplicates retain the first occurrence. On reading,
+deterministic ignoring of duplicate latter items, no conflicting DTOs are created, and Built-in models are not blocked. Normal UI prohibits creating duplicates; saving related Providers automatically
+normalizes duplicates and invalid members.
 
-删除 Built-in Model 不允许，列表不显示删除按钮。Personal Model 可以删除或修改 ID。Provider ID 在任何情况下都
-不可修改；Provider Name/label 可以修改且 trim 后大小写不敏感唯一。
+Deleting Built-in Models is not allowed; the list does not show a delete button. Personal Models can be deleted or have their ID modified. Provider IDs are
+non-modifiable under any circumstances; Provider Name/label can be modified and is case-insensitive unique after trimming.
 
 ## 5. Model Config `enabled`
 
@@ -221,34 +226,34 @@ interface ModelConfig {
 }
 ```
 
-模型不再具有独立 `visibility`。`enabled` 的唯一语义是模型执行门禁：
+Models no longer have independent `visibility`. The sole semantic of `enabled` is the model execution gate:
 
 ```text
 Effective Provider enabled
 AND Provider complete
-AND 模型是 Effective Provider 成员
+AND model is Effective Provider member
 AND Effective Model Config enabled
 AND Model Config complete
         |
         v
-Executable Model（进入 Registry）
+Executable Model (enters Registry)
         |
         + Provider visibility=visible
         v
-Selectable Model（进入普通选择器）
+Selectable Model (enters normal selector)
 ```
 
-disabled 模型仍留在 Settings，保留配置和排序，但不能测试、fallback、精确创建或被任何内部任务绕过。已经创建的
-不可变 Model 不受配置刷新影响；后续创建遵守新状态。
+disabled models remain in Settings, preserving configuration and order, but cannot be tested, used for fallback, exactly created, or bypassed by any internal tasks. Already-created
+immutable Models are not affected by config refresh; subsequent creations respect the new state.
 
-Built-in 通用 Rule 必须提供完整默认 `enabled=true`。官方发布可以用更具体且更靠后的 Built-in Rule 将旧模型设为
-`enabled=false`。Personal Rule 始终在 Built-in Rules 之后，用户可以明确覆盖；“恢复默认”删除 Personal `enabled`
-叶子并重新继承 Built-in。
+Built-in general Rules must provide complete default `enabled=true`. Official releases can use more specific and later Built-in Rules to set older models to
+`enabled=false`. Personal Rules always follow Built-in Rules; users can explicitly override; "restore defaults" deletes Personal `enabled`
+leaves and re-inherits from Built-in.
 
-正常新增 Personal Model 时，成员、顺序与专属 Rule `enabled=true` 原子保存。这样用户新增的模型立即表达明确启用意图，
-而用户手写、未生成专属 Rule 的成员仍按 Built-in 完整兜底解析。
+When normally adding a new Personal Model, members, order, and specific Rule `enabled=true` are atomically saved. This way user-added models immediately express explicit enable intent,
+while user hand-written, ungenerated members still resolve according to Built-in complete fallback.
 
-## 6. Provider/Model 专属 Rule 与通用 Match Rule
+## 6. Provider/Model Specific Rules and Generic Match Rules
 
 ```ts
 type ModelConfigRule =
@@ -268,50 +273,50 @@ type ModelConfigRule =
     };
 ```
 
-`provider-model` 可以属于 Built-in 或 Personal Source：Built-in 用它声明一个精确 Provider/Model 组合的官方事实；
-Personal 用它承载设置页对 Built-in 或 Personal Model 的精确覆盖。只有 Personal 专属 Rule 跟随用户生命周期：
+`provider-model` can belong to Built-in or Personal Source: Built-in uses it to declare official facts for a precise Provider/Model combination;
+Personal uses it to carry exact overrides for Built-in or Personal Models from the settings page. Only Personal-specific Rules follow the user lifecycle:
 
-- 开关 enabled、编辑 Properties/Options/Reasoning 时创建或更新；
-- Personal Model 重命名时与成员和顺序一起原子移动；
-- Personal Model 删除时删除；
-- 删除 Provider Personal Overlay 时，删除该 Provider 的全部专属 Rule；
-- 恢复最后一个覆盖字段后，空 Rule 删除。
+- Created or updated when toggling enabled, editing Properties/Options/Reasoning;
+- Atomically moved with members and order when Personal Model is renamed;
+- Deleted when Personal Model is deleted;
+- When deleting a Provider Personal Overlay, all specific Rules for that Provider are deleted;
+- Empty Rules are deleted after the last overridden field is restored.
 
-`match` 可以属于 Built-in 或 Personal Source，用于一组目标。Provider/Model 删除、重命名、去重均不自动改写或删除
-任何 Match Rule，也不修改 Built-in 专属 Rule。专属 Rule 使用结构化 ID，不借正则表达“精确”，也不引入含义模糊的
-`exclusive` boolean。
+`match` can belong to Built-in or Personal Source, for a group of targets. Provider/Model deletion, renaming, deduplication do not automatically rewrite or delete
+any Match Rules, nor modify Built-in-specific Rules. Specific Rules use structured IDs and do not rely on regex to express "exactness," nor introduce ambiguous
+`exclusive` booleans.
 
-内置 Rules 继续使用 matcher，并可按模型、Provider、API 或规范化 baseURL 的真实差异选择最小充分条件。
+Built-in Rules continue to use matchers, and can select the minimal sufficient condition based on real differences of model, Provider, API, or normalized baseURL.
 
-## 7. Model 与 Provider 顺序
+## 7. Model and Provider Order
 
-Model 的基础顺序固定为三段：
+Model base order is fixed in three segments:
 
 ```text
-未出现在 modelOrder 的 Built-in Model
+Built-in Models not appearing in modelOrder
                   +
-modelOrder 中仍有效的全部成员
+all valid members still in modelOrder
                   +
-未出现在 modelOrder 的 Personal Model
+Personal Models not appearing in modelOrder
 ```
 
-因此在线配置新发布但用户尚未排序的 Built-in Model 默认在最前。正常 UI 新增 Personal Model 时会把当前全部有效成员
-物化到 `modelOrder`，所以“未排序 Personal”只处理用户手写或异常输入。
+Therefore, newly released but user-not-yet-ordered Built-in Models default to the front. Normal UI new Personal Models materialize all current valid members
+into `modelOrder`, so "unsorted Personal" only handles user hand-written or abnormal input.
 
-每次真实调序保存时：
+On each real order save:
 
-1. 保留当前有效成员；
-2. 删除 stale 与重复 ID，重复保留第一次；
-3. 补入所有遗漏成员；
-4. 保存完整 `modelOrder`。
+1. Retain current valid members;
+2. Delete stale and duplicate IDs, retaining the first for duplicates;
+3. Add all missing members;
+4. Save complete `modelOrder`.
 
-disabled 模型仍参与 Settings 顺序；Selection 过滤后保留其余模型相对顺序。
+disabled models still participate in Settings order; Selection filtering preserves the relative order of remaining models.
 
-Provider 使用 Personal 顶层 `providerOrder`，不再依赖 Map 插入顺序的 trick。它采用同样的“未排序 Built-in在前、
-显式顺序居中、未排序 Personal 在后”原则；每次新增或调序都物化当前完整普通 Provider 顺序。Z.ai/BigModel Family
-保持固定产品组织，不参与普通 Provider 拖动。
+Providers use Personal top-level `providerOrder`, no longer relying on Map insertion order tricks. It follows the same "unsorted Built-in first,
+explicit order middle, unsorted Personal back" principle; each new addition or reorder materializes the current complete normal Provider order. Z.ai/BigModel Family
+keeps fixed product organization and does not participate in normal Provider dragging.
 
-Personal 持久化外壳目标为：
+Personal persistent shell goal:
 
 ```ts
 interface PersonalProviderConfigFile {
@@ -322,60 +327,60 @@ interface PersonalProviderConfigFile {
 }
 ```
 
-`providerOrder` 是 Personal Source 自己的集合语义，不参与 Provider 字段 Overlay。ZCode Built-in Provider 基础顺序继续
-来自 Release 中 Provider Map 的声明顺序；Account 不提供顺序。当前分支未发布，现有含义模糊的 `models` 存储字段直接
-改名为 `modelConfigRules`，不为开发中间格式增加 migration；Legacy importer 输出最终字段。
+`providerOrder` is the Personal Source's own collection semantics, not participating in Provider field Overlay. ZCode Built-in Provider base order continues
+from Release's Provider Map declaration order; Account does not provide order. This branch is not yet released, so the existing ambiguous `models` storage field is directly
+renamed to `modelConfigRules`, without adding migration for development middle formats; Legacy importer outputs final fields.
 
-## 8. Settings：Provider 添加、启停与删除
+## 8. Settings: Provider Add, Enable/Disable, and Delete
 
-Provider 导航中的固定顺序为：Z.ai/BigModel Account Family 位于最前；“添加供应商”和“创建自定义供应商”两个固定操作
-紧随其后；普通 `standard-builtin` 与 `standard-personal` Provider 列表位于操作之后。两个操作不参与 `providerOrder`
-或拖动。
+Fixed order in Provider navigation: Z.ai/BigModel Account Families are at the front; "Add Supplier" and "Create Custom Provider" two fixed operations
+follow; normal `standard-builtin` and `standard-personal` Provider lists are after the operations. The two operations do not participate in `providerOrder`
+or dragging.
 
 ```text
-添加供应商
-└─ 候选 = visible + group=standard-builtin - Personal Provider Map keys
-   └─ 点击后立即创建 Personal Overlay(enabled=true)并进入编辑
+Add Supplier
+└─ candidates = visible + group=standard-builtin - Personal Provider Map keys
+   └─ Click immediately creates Personal Overlay(enabled=true) and enters editing
 
-创建自定义供应商
-└─ 先取得唯一且不可再修改的 providerId 与唯一 label
-   └─ 立即创建 group=standard-personal、enabled=true 的 Personal-only Provider
+Create Custom Provider
+└─ First obtain unique and unmodifiable providerId and unique label
+   └─ Immediately create group=standard-personal, enabled=true Personal-only Provider
       ├─ access.type=api
-      ├─ 不预填 api.type、baseURL 或模型
-      └─ 进入完整自定义编辑，不再需要第二次“创建”
+      ├─ Do not prefill api.type, baseURL, or models
+      └─ Enter full custom editing, no longer needing a second "create"
 ```
 
-“已经添加”的权威事实只是 Personal Provider Config Map 是否存在该 providerId。它与 API Key、enabled、executable、
-selectable 无关。Provider enabled 是配置页中的独立开关：disabled 仍留在已配置区域；只有删除 Personal Overlay 才会
-重新进入添加候选。
+The authoritative fact for "already added" is merely whether the Personal Provider Config Map has this providerId. It is unrelated to API Key, enabled, executable,
+selectable. Provider enabled is an independent toggle in the config page: disabled still stays in the configured area; only deleting Personal Overlay causes
+it to re-enter add candidates.
 
-UI 中“删除 Provider”的领域语义永远是删除 Personal Overlay：
+The domain semantics of "Delete Provider" in UI is always deleting Personal Overlay:
 
 ```text
 standard-builtin
-└─ 删除 Personal Overlay + 该 Provider 的 Personal 专属 Rules
-   └─ Effective Provider 回落到 Built-in，重新进入“添加供应商”候选
+└─ Delete Personal Overlay + Personal-specific Rules for that Provider
+   └─ Effective Provider falls back to Built-in, re-enters "Add Supplier" candidates
 
 standard-personal
-└─ 删除 Personal Overlay + 该 Provider 的 Personal 专属 Rules
-   └─ 因不存在其他定义而自然消失
+└─ Delete Personal Overlay + Personal-specific Rules for that Provider
+   └─ Naturally disappears since no other definitions exist
 
 zai-family / bigmodel-family
-└─ 删除 Personal Overlay + 该 Provider 的 Personal 专属 Rules
-   └─ Effective Provider 回落到 Built-in/Account 状态，继续留在固定 Family 区域
+└─ Delete Personal Overlay + Personal-specific Rules for that Provider
+   └─ Effective Provider falls back to Built-in/Account state, stays in fixed Family area
 ```
 
-系统从不删除 ZCode Built-in Config。通用 Personal Match Rules 不随 Provider 删除。Family 不进入普通“添加供应商”候选，
-也不在 UI 提供 Provider enabled 开关；底层字段仍供 Built-in/Account 装配使用，用户手工修改配置形成的特殊状态不属于
-Settings UI 的产品保证范围。
+The system never deletes ZCode Built-in Config. Generic Personal Match Rules are not affected by Provider deletion. Families do not enter normal "Add Supplier" candidates,
+nor does the UI provide Provider enabled toggles; underlying fields still serve Built-in/Account assembly; special states from user-manual configuration modifications are not within
+Settings UI product guarantee scope.
 
-Host Settings 契约至少提供以下权威结果：
+Host Settings contract provides at minimum the following authoritative results:
 
 ```text
 ProviderSettingsView
 ├─ revision
 ├─ addableProviders[]
-│  └─ visible + group=standard-builtin + 尚无 Personal Overlay
+│  └─ visible + group=standard-builtin + no Personal Overlay yet
 ├─ providerOrder[]
 └─ providers[]
    ├─ providerId / group / label
@@ -387,177 +392,177 @@ ProviderSettingsView
       └─ enabled / issues / executable / selectable
 ```
 
-不再返回 `isZCodeBuiltin`、`canReorder`、成员冲突 DTO 或把 Provider executable 命名为 selectable。Renderer 根据
-`group` 组织已配置区域，但候选、顺序、成员来源和所有派生状态均由 Host 产生。
+No longer returning `isZCodeBuiltin`, `canReorder`, member conflict DTOs, or naming Provider executable as selectable. Renderer organizes configured areas based on
+`group`, but candidates, order, member source, and all derived state are produced by Host.
 
-Host Mutation 必须覆盖以下领域操作，具体函数名可以服从代码风格，但不得合并语义：
+Host Mutation must cover the following domain operations; specific function names can serve code style, but semantics must not be merged:
 
-- `addBuiltinProvider(providerId)`：创建 `enabled=true` 的 Personal Overlay，并物化完整 `providerOrder`；
-- `createPersonalProvider({ providerId, label })`：校验身份后立即创建空 API Provider，并物化顺序；
-- `savePersonalProvider(providerId, sparseConfig)`：保存 label/enabled/API/Access 等 Overlay，不修改 ID；
-- `deletePersonalProvider(providerId)`：删除 Personal Overlay 与该 Provider 的 Personal 专属 Rules；
-- `reorderProviders(completeProviderOrder)`；
-- `addPersonalModel`、`renamePersonalModel`、`deletePersonalModel`、`reorderModels`；
-- `savePersonalModelConfig` 与按叶子恢复默认；
-- `previewPersonalModelRename`：先移动专属 Rule，再解析新 Built-in 默认；
-- `testModel`：保存并刷新后通过正式 Registry/ModelFactory 执行。
+- `addBuiltinProvider(providerId)`: creates `enabled=true` Personal Overlay, and materializes complete `providerOrder`;
+- `createPersonalProvider({ providerId, label })`: validates identity, then immediately creates empty API Provider, and materializes order;
+- `savePersonalProvider(providerId, sparseConfig)`: saves label/enabled/API/Access overlays, does not modify ID;
+- `deletePersonalProvider(providerId)`: deletes Personal Overlay and this Provider's Personal-specific Rules;
+- `reorderProviders(completeProviderOrder)`;
+- `addPersonalModel`, `renamePersonalModel`, `deletePersonalModel`, `reorderModels`;
+- `savePersonalModelConfig` and leaf-level default restoration;
+- `previewPersonalModelRename`: moves specific Rules first, then resolves new Built-in defaults;
+- `testModel`: saves and refreshes, then executes through official Registry/ModelFactory.
 
-所有 Mutation 成功响应都必须对应已经持久化且被 Registry 观察到的同一 revision。本地和远程使用同一服务契约，但服务
-实例属于目标 Environment Host。
+All Mutation success responses must correspond to the same revision that has been persisted and observed by Registry. Local and remote use the same service contract, but the service
+instance belongs to the target Environment Host.
 
-## 9. Settings：Model 编辑
+## 9. Settings: Model Editing
 
-模型列表使用紧凑信息行，不再在列表中渲染可编辑 Model ID 输入框，也暂不展示 Built-in/Personal 来源标签。来源仍由 Host
-DTO 显式 `builtin` 提供，用于删除权限和领域操作；Renderer 不使用 ID 白名单或 Preset/Catalog 推断。
+Model list uses compact info rows, no longer rendering editable Model ID input fields in the list, nor displaying Built-in/Personal source labels for now. Source is still provided by Host
+DTO explicit `builtin`, used for delete permissions and domain operations; Renderer does not use ID whitelist or Preset/Catalog inference.
 
-模型行直接展示 Model ID、必要的紧凑摘要、Effective enabled 状态、测试、编辑铅笔和删除操作。编辑铅笔继续外露；删除
-继续在 Personal Model 行外露，Builtin Model 不显示删除。启停控件显示当前 Effective 状态，但列表不强调它来自 Built-in
-默认还是 Personal 覆盖。
+Model rows directly display Model ID, necessary compact summaries, Effective enabled status, test, edit pencil, and delete actions. Edit pencil continues exposed; delete
+continues exposed on Personal Model rows; Builtin Models do not show delete. Enable/disable controls show current Effective status, but the list does not emphasize whether it comes from Built-in
+default or Personal override.
 
-Provider 可编辑时，所有 Effective Built-in/Personal Model 成员均可排序；Builtin Model 只是不允许删除，不能沿用当前
-“仅 Personal Model 可拖动”的限制。可排序模型将整行作为拖动激活区域，不再显示独立拖动块；编辑、删除、启停、测试等
-行内控件必须排除在拖动激活范围之外。指针移动阈值用于区分普通点击和拖动，触屏需要避免与列表滚动冲突，键盘仍需提供
-等价排序能力。普通点击模型行暂不打开编辑器，也不产生配置操作；只有外露的编辑铅笔进入 Model 编辑器。
+When Provider is editable, all Effective Built-in/Personal Model members are sortable; Builtin Models are simply not allowed to delete, cannot reuse the current
+"only Personal Models draggable" restriction. Sortable models use the entire row as the drag activation area, with no independent drag handles displayed; edit, delete, enable/disable, test, and other
+row-level controls must be excluded from the drag activation range. Pointer movement threshold distinguishes normal clicks from dragging; touch needs to avoid conflicts with list scrolling; keyboard still provides
+equivalent sorting capability. Normal clicks on model rows do not open editors, nor produce configuration operations; only the exposed edit pencil enters Model editor.
 
-模型编辑页允许编辑完整 Model Config 字段集合，但持久化始终形成稀疏 Personal Rule，只写用户明确修改或清除的叶子：
+Model edit page allows editing the complete Model Config field set, but persistence always forms sparse Personal Rules, writing only the leaves users explicitly modified or cleared:
 
-- `enabled`；
-- context/max output；
-- input/output format；
-- tool call、structured output、native web search、MCS；
-- option specs 与 reasoning mapping；
-- 已确认允许 Personal 覆盖的请求编码字段；
-- `requiresMfjsToolSchema` 放在最后。
+- `enabled`;
+- context/max output;
+- input/output format;
+- tool call, structured output, native web search, MCS;
+- option specs and reasoning mapping;
+- confirmed allow-for-Personal-override request encoding fields;
+- `requiresMfjsToolSchema` at the end.
 
-模型编辑器必须区分以下事实，不能假设每个字段都有 Built-in 默认值：
+Model editor must distinguish the following facts, not assuming every field has Built-in default value:
 
 ```text
-没有 Personal 叶子 + 上游存在值
-└─ 继承该值
+No Personal leaves + upstream has value
+└─ Inherits that value
 
-没有 Personal 叶子 + 上游不存在值
-└─ 未设置；不能显示成“默认关闭”或虚构空值
+No Personal leaves + upstream has no value
+└─ Not set; cannot display as "default off" or fabricated empty value
 
-存在 Personal 叶子
-└─ 用户明确覆盖
+Has Personal leaves
+└─ User explicitly overrides
 
-Personal 显式 clear（字段允许时）
-└─ 明确清除上游值
+Personal explicit clear (field permits)
+└─ Explicitly clears upstream value
 ```
 
-字段控件遵守以下统一视觉语义：
+Field controls follow these unified visual semantics:
 
-| 状态                      | 视觉与交互                                                                              |
-| ------------------------- | --------------------------------------------------------------------------------------- |
-| 上游有值、Personal 未覆盖 | 显示真实 Effective 结果，但使用低强调文字、填充或描边；无恢复操作                       |
-| 上游无值、Personal 未覆盖 | 显示中性短横线或“未设置” placeholder，不能伪装成关闭或空默认值                          |
-| Personal 明确覆盖         | 使用正常控件强调；提供低干扰的撤销图标，Desktop 在 hover/focus 时显示，触屏端保持可发现 |
-| Personal 显式 clear       | 显示明确的未设置/清除状态；不能与“没有 Personal 叶子”混淆                               |
-| 校验错误                  | 使用标准错误文案和语义颜色，不与继承/覆盖的视觉强弱混用                                 |
+| Status                         | Visual and Interaction                                                                                |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| Upstream has value, Personal not overridden | Displays real Effective result, but uses low-emphasis text, fill, or stroke; no restore operation |
+| Upstream has no value, Personal not overridden  | Displays neutral dash or "Not set" placeholder, cannot disguise as off or empty default      |
+| Personal explicit override       | Uses normal control emphasis; provides low-interference undo icon, shown on Desktop hover/focus, always discoverable on touch |
+| Personal explicit clear          | Displays clear unset/cleared state; cannot be confused with "no Personal leaves"         |
+| Validation error               | Uses standard error text and semantic colors, not mixed with inheritance/override visual strength  |
 
-文本和数值在存在可继承值时将该值显示为 placeholder，不把它复制进 Personal；上游无值时显示“未设置”。清空 Personal
-输入恢复继承，字段确实允许显式 clear 时再提供窄、明确的清除操作。枚举继续使用现有 Select 语言：收起时显示 Effective 结果；
-菜单内区分“继承现有值”“保持未设置”“显式清除”（字段允许时）和明确枚举值，但不在触发器中堆叠
-“默认（当前为 X）”之类长文案。
+Text and numbers display upstream values as placeholder when inheritable values exist, without copying them into Personal; displays "Not set" when upstream has no value. Clears Personal
+input to restore inheritance; provides narrow, explicit clear operation only when the field genuinely allows explicit clear. Enums continue to use existing Select language: collapsed displays Effective result;
+menu distinguishes "inherit existing value," "keep unset," "explicit clear" (when field permits), and explicit enum values, but does not stack
+"Default (currently X)" long text in trigger.
 
-Model 总 `enabled` 使用紧凑 Switch。Input/Output Format，以及 tool call、structured output、native web search、MCS
-等能力 Boolean，使用与现有 Modality 控件协调的 Toggle Chip / Selectable Tag：Outline Button 内含对勾与短标签，可换行排列，
-不改成一排 Switch。继承开启使用低强调选中 Tag，明确开启使用正常强调选中 Tag；继承关闭与明确关闭分别使用低强调和正常
-描边；上游无值使用中性短横线。选中状态使用对勾，未设置使用短横线，Personal 覆盖还具有撤销入口和可访问名称，因此不能
-只依靠颜色区分状态。Text 等锁定事实继续使用现有锁图标与禁用语义。PDF/Audio 暂不展示，但无关编辑必须保留其 Personal 值。
+Model total `enabled` uses compact Switch. Input/Output Format, and capability Booleans for tool call, structured output, native web search, MCS
+etc., use Toggle Chip / Selectable Tag coordinating with existing Modality controls: Outline Button containing checkmark and short label, wrap-able, not
+a row of Switches. Inherited enabled uses low-emphasis selected Tag; explicit enabled uses normal emphasis selected Tag; inherited disabled and explicit disabled use low-emphasis and normal
+stroke respectively; upstream no value uses neutral dash. Selected status uses checkmark, not set uses dash, Personal override has undo entry and accessible name, so cannot
+rely solely on color to distinguish status. Text lock facts continue to use existing lock icon and disabled semantics. PDF/Audio not shown for now, but irrelevant editing must preserve their Personal values.
 
-Option Specs 与 Reasoning Mapping 是高级配置，使用多个独立、带语法高亮或至少等宽字体且可自动格式化的 JSON 文本编辑器，
-不开发总 `optionSpecs` 编辑器、表格、逐行 Mapping 或可视化 Builder。首版至少包括：
+Option Specs and Reasoning Mapping are advanced configurations, using multiple independent, syntax-highlighted or at least monospace-font, auto-formatting JSON text editors,
+without developing total `optionSpecs` editor, tables, per-row Mapping, or visual Builder. First version includes at minimum:
 
 ```text
 Reasoning Level Option Spec JSON
-└─ 直接覆盖 optionSpecs.reasoningLevel
+└─ directly overrides optionSpecs.reasoningLevel
 
 Max Output Tokens Option Spec JSON
-└─ 直接覆盖 optionSpecs.maxOutputTokens
+└─ directly overrides optionSpecs.maxOutputTokens
 
 Reasoning Mapping JSON
-└─ 直接覆盖整个 reasoningMapping
+└─ directly overrides entire reasoningMapping
 ```
 
-每个编辑器对应一个独立配置槽位；编辑器提供 JSON 就直接替换该槽位的上游值，空 Personal 编辑器表示删除该槽位覆盖并重新
-继承。Personal 文件中的 `optionSpecs` 外壳可以只包含被覆盖的子字段，但单个编辑器内部不再做更细粒度 Overlay；
-`reasoningMapping` 也不得在 UI 内偷偷实现按 key 合并。每个槽位的 Effective JSON 通过只读预览、折叠区或页签查看，不能
-先复制 Effective JSON 再保存为 Personal。保存前执行 JSON 解析和对应槽位的严格 Schema 校验，错误尽可能定位到行列或字段
-路径。
+Each editor corresponds to an independent configuration slot; editor provides JSON to directly replace upstream value for that slot; empty Personal editor means deleting that slot override and re-inheriting. `optionSpecs` shell in
+Personal file can only contain overridden sub-fields, but no finer-grained Overlay within single editor;
+`reasoningMapping` must not secretly implement per-key merging within the UI. Each slot's Effective JSON is viewed through read-only preview, collapsible area, or tab; cannot
+first copy Effective JSON then save as Personal. Execute JSON parsing and corresponding slot's strict Schema validation before saving; errors locate to row/column or field
+path as much as possible.
 
-页面不得在每个字段旁堆放醒目的“恢复默认”按钮。恢复继承通过清空输入、Select 的继承/未设置项、Toggle Chip 的低干扰
-撤销入口或 JSON Personal 内容清空完成。
+Page must not pile prominent "restore default" buttons next to each field. Restore inheritance is completed by clearing input, Select's inherit/unset items, Toggle Chip's low-interference
+undo entry, or clearing JSON Personal content.
 
-所有上述控件必须复用 `DESIGN.md` 和现有组件的尺寸、圆角、焦点、菜单与语义 Token。禁止用硬编码浅色/深色值或仅靠
-透明度猜测主题；至少覆盖 Zai Light、Zai Dark、键盘 Focus、Hover、禁用、错误和触屏无 Hover 状态。界面使用 `text-ui-*`
-字体层级，Model ID 和 JSON 使用等宽字体，长中英文文案与窄屏允许合理换行。
+All the above controls must reuse `DESIGN.md` and existing component dimensions, border-radius, focus, menus, and semantic Tokens. Hardcoded light/dark values or guessing theme
+solely by opacity are prohibited; at minimum covers Zai Light, Zai Dark, keyboard Focus, Hover, disabled, error, and touch no-Hover states. UI uses `text-ui-*`
+font hierarchy, Model ID and JSON use monospace font, long Chinese/English text and narrow screens allow reasonable wrapping.
 
-Model 编辑继续使用弹窗，不切换为右侧详情或设置页二级页面。现有 `max-w-xl` 空间不足，Desktop 将弹窗扩大一档，以
-`max-w-2xl` 附近的现有尺寸档位作为起点，而不是扩展成横向工作台或接近全屏的超宽弹窗。字段增长主要通过纵向分区承载；
-弹窗宽高需要保持协调，Header 与 Footer 固定，中间只有一个内容滚动区，避免弹窗与 JSON 编辑器产生多层页面滚动。窄屏和
-Mobile 使用安全边距内的可用宽高，但不改变字段、继承和保存语义。实现可在现有尺寸档位内微调实际宽高，不能靠隐藏已要求
-开放的字段维持旧尺寸。
+Model editing continues using popups, not switching to right-side details or settings page secondary page. Existing `max-w-xl` space is insufficient; Desktop enlarges popup by one tier, using
+`max-w-2xl` nearby existing size tier as starting point, not expanding to horizontal workspace or near-full-screen ultra-wide popup. Field growth mainly uses vertical sections;
+popup width and height must stay coordinated, Header and Footer fixed, only one content scroll area in the middle, avoiding multi-layer page scrolling from popup and JSON editor. Narrow screen and
+Mobile uses available width and height within safe margins, without changing fields, inheritance, and save semantics. Implementation can fine-tune actual width and height within existing size tiers, but cannot maintain old size by hiding already required
+open fields.
 
-Model 编辑弹窗明确采用手动保存，是设置页自动保存心智中的一个有边界例外。打开弹窗时根据当前 Host View 和 revision 建立
-本地 Draft；修改 Model ID、Properties、Option Specs、Reasoning Mapping 等字段只更新 Draft，不逐字段持久化，也不触发
-Registry 刷新。列表中的启停、排序、删除等单一领域操作继续各自即时、原子保存，不被并入弹窗 Draft。
+Model editing popup explicitly adopts manual save, an out-of-bounds exception to the settings page auto-save mental model. Opening popup establishes
+Local Draft based on current Host View and revision; modifying Model ID, Properties, Option Specs, Reasoning Mapping and other fields only updates Draft, does not persist per-field, nor triggers
+Registry refresh. Enable/disable, sorting, delete, and other single-domain operations in the list continue their own immediate, atomic saves, not merged into popup Draft.
 
 ```text
 Host View @ R1
       |
       v
-打开弹窗 -> Local Model Draft @ R1
+Open popup -> Local Model Draft @ R1
                  |
-                 +--> 编辑字段 --------> 只修改 Draft
+                 +--> Edit fields --------> Only modifies Draft
                  |
-                 +--> 取消 / X / Esc ---> 丢弃 Draft，不写配置
+                 +--> Cancel / X / Esc ---> Discard Draft, do not write config
                  |
-                 `--> 保存
+                 `--> Save
                         |
-                        +--> 完整校验失败 ----> 保留弹窗与 Draft，展示错误
+                        +--> Full validation failure ----> Keep popup and Draft, show errors
                         |
-                        `--> 一次原子 Host Mutation
+                        `--> One atomic Host Mutation
                                   |
                                   v
                           Persist + Registry @ R2
                                   |
                                   v
-                              关闭弹窗
+                              Close popup
 ```
 
-保存按钮在 Draft 无效或正在提交时不可重复触发。保存必须一次校验并提交完整 Draft 所表达的稀疏 Personal 配置；Model ID
-修改所需的成员、顺序与专属 Rule 迁移也属于同一次原子 Mutation。只有 Host 确认持久化结果已被 Registry 观察到后才能关闭
-弹窗；保存失败时保留用户输入，不能回退成逐字段自动保存。
+Save button is not re-triggerable when Draft is invalid or being submitted. Save must validate and submit the complete Draft's expressed sparse Personal config in one go; Model ID
+modification requires members, order, and specific Rule migration also belonging to the same atomic Mutation. Only Host confirms persistence result has been observed by Registry before closing
+popup; save failures retain user input, cannot fall back to per-field auto-save.
 
-修改 Personal Model ID 时，必须先在预览语义中移动该模型的 `provider-model` 专属 Rule，再按新 ID、Effective API 和
-Endpoint 重新解析 Built-in Rules，最后叠加原 Personal 稀疏值。这样继承默认会更新，用户明确值不变。
+When modifying Personal Model ID, must first move that model's `provider-model` specific Rule in preview semantics, then re-resolve Built-in Rules by new ID, Effective API, and
+Endpoint, finally overlay original Personal sparse values. This way inherited defaults update, while user explicit values remain unchanged.
 
-## 10. Built-in 配置写作与整理
+## 10. Built-in Config Writing and Organization
 
-Provider 按产品来源连续排列：智谱直接 API 与账号/订阅/Off-Peak在前，外部主流 Provider 在后。普通外部 Built-in
-Provider 默认 `group=standard-builtin`、`enabled=false`、`visibility=visible`，提供协议、Endpoint、Access 模板和推荐成员；
-Personal Config 填写实际访问材料。
+Providers are arranged continuously by product origin: Zhipu direct API and accounts/subscriptions/Off-Peak first, external mainstream Providers last. Normal external Built-in
+Providers default to `group=standard-builtin`, `enabled=false`, `visibility=visible`, providing protocol, Endpoint, Access template, and recommended members;
+Personal Config fills actual access material.
 
-Z.ai/BigModel 各自保留两个不同的 API Key 产品身份：
+Z.ai/BigModel each retain two different API Key product identities:
 
 ```text
 Family API Key Provider
 ├─ account:zai-api-key       -> group=zai-family
 └─ account:bigmodel-api-key  -> group=bigmodel-family
-   └─ 与账号套餐一起由固定 Family UI 管理
+   └─ Managed by fixed Family UI together with account plans
 
-普通 API Provider
+Regular API Provider
 ├─ zai-api           -> group=standard-builtin
 └─ bigmodel-api      -> group=standard-builtin
-   └─ 从“添加供应商”进入，用户独立填写 API Key
+   └─ Entered from "Add Supplier", users fill API Key independently
 ```
 
-两组 Provider 即使 Endpoint、API Schema 和推荐模型相同，也拥有不同 providerId、Personal Overlay、enabled、API Key、
-模型成员和排序。它们不能共享或静默复制凭据。重复静态模型事实继续复用 Model Rules 的 matcher；不得为这四个
-Provider 在 Runtime/Adapter 中增加 ID 特判。
+The two Provider groups have different providerId, Personal Overlay, enabled, API Key,
+model members, and ordering even when Endpoint, API Schema, and recommended models are identical. They cannot share or silently copy credentials. Duplicate static model facts continue to reuse Model Rules' matcher; no ID
+special case in Runtime/Adapter for these four Providers.
 
-现有账号 Provider ID 的 `builtin:` 前缀会一次性改为 `account:`，使物理身份与产品语义一致：
+Old account Provider ID `builtin:` prefix is once changed to `account:`, making physical identity consistent with product semantics:
 
 ```text
 builtin:zai-*       -> account:zai-*
@@ -567,10 +572,10 @@ builtin:offpeak-idle-plan
                      + account:bigmodel-offpeak-idle-plan
 ```
 
-当前分支未发布，不保留旧 ID alias、dual-read 或持久化 migration；测试、Family Spec、ModelSelection fixture 和精确
-Provider 常量必须原子切换。
+This branch is not yet released, so old ID aliases, dual-read, or persistent migration are not retained; tests, Family Spec, ModelSelection fixtures, and exact
+Provider constants must switch atomically.
 
-Off-Peak 不再使用一个执行时动态跟随账号 Family 的共享 Provider，而是拆为两个完整 Provider：
+Off-Peak no longer uses a single execution-time dynamically-following account family shared Provider, but is split into two complete Providers:
 
 ```text
 account:zai-offpeak-idle-plan
@@ -584,143 +589,143 @@ account:bigmodel-offpeak-idle-plan
 └─ access.executionProtocol=off-peak
 ```
 
-Account Built-in Overlay 根据当前结构化 Family/Coding Plan 连接只启用匹配的 Off-Peak Provider，另一个显式
-`enabled=false`。Off-Peak 创建入口按当前 Family 取得对应精确 Provider；不存在“共享 Provider 在请求期换 Family”。
-已保存任务继续持有原 `ModelSelection`：用户切换 Family 后，旧 Family Provider disabled，任务保留但不可调度；切回且
-连接重新有效后恢复。系统不得把已保存任务静默迁移到另一 Family，也不得为其制造替代 ModelSelection。
+Account Built-in Overlay enables only matching Off-Peak Providers based on current structured Family/Coding Plan connection; the other is explicitly
+`enabled=false`. Off-Peak creation entry gets corresponding exact Provider by current Family; there is no "shared Provider switching Family during request."
+Saved tasks continue holding original `ModelSelection`: after user switches Family, old Family Provider is disabled, task is retained but unscheduleable; switching back and
+connection re-validated restores it. The system must not silently migrate saved tasks to another Family, nor create substitute ModelSelection for them.
 
-Model Rules 保持单一有序数组：
+Model Rules maintain a single ordered array:
 
 ```text
-完整保守兜底
+Complete conservative fallback
       |
       v
-模型家族 A
-├─ 仅 model match 的公共事实
-├─ model + API 特化
-├─ provider + model 特化
-└─ 必要的 Endpoint 特化
+Model family A
+├─ Public facts with model match only
+├─ model + API specialization
+├─ provider + model specialization
+└─ necessary Endpoint specialization
       |
       v
-模型家族 B ...
+Model family B ...
 ```
 
-同一模型家族的相关规则连续放置。Runtime、Adapter、UI 不按具体 modelId、Provider ID 或 URL 再建立第二事实。当前
-仓库配置只做轻量正确性复核：所有 Built-in 成员可解析成完整 Model Config，并检查 MCS、Native Web Search、媒体格式、
-Reasoning、MFJS 是否已由 Rules 承接；不恢复严格历史对照表。
+Related rules of the same model family are placed consecutively. Runtime, Adapter, and UI do not establish second facts based on specific modelId, Provider ID, or URL. Current
+repo config does lightweight correctness review: all Built-in members can parse into complete Model Config, and check whether MCS, Native Web Search, media format,
+Reasoning, MFJS are covered by Rules; does not restore strict historical comparison tables.
 
-## 11. Access 与 Adapter 边界
+## 11. Access and Adapter Boundaries
 
-以下事实归 Provider Access：
+The following facts belong to Provider Access:
 
 ```text
 access.executionProtocol = "off-peak"
 ```
 
-官方版本请求安全校验的准入同样归 Provider Access，并在 Adapter 最终 HTTP transport 边界执行（具体字段与实现只在官方版本维护）。
-它不进入 Model properties，不按 modelId 决定，也不替代 API Key 鉴权。
+Official release request security validation admission also belongs to Provider Access, and is executed at Adapter's final HTTP transport boundary (specific fields and implementation are maintained only in official release).
+It does not enter Model properties, is not determined by modelId, nor replaces API Key authentication.
 
-兼容裁决：
+Compatibility decisions:
 
-- OpenAI-compatible reasoning 依赖 canonical 历史与 SDK 原生编码，删除 ZCode 特殊回放；
-- GitHub Copilot `omitMaxOutputTokens` 删除；
-- Snowflake Cortex 当前不支持，删除 `maxOutputTokensRequestField`；
-- 官方版本请求安全校验与 Off-Peak failure/execution protocol 从 Model Config 移入 Access；本轮不重构 Off-Peak 字符串错误；
-- `requiresMfjsToolSchema` 留在 Model Config；启用时投影 Tool JSON Schema，投影失败直接报错；
-- DeepSeek Anthropic 统一执行 canonical replay，不补造 synthetic empty thinking；
-- 未进入当前基线的 Z.ai text/tool signature patch 不合入；如需支持必须先取得真实响应证据，并遵守“收到什么就回放什么”。
+- OpenAI-compatible reasoning depends on canonical history and SDK native encoding; ZCode special replay is deleted;
+- GitHub Copilot `omitMaxOutputTokens` is deleted;
+- Snowflake Cortex is not currently supported; `maxOutputTokensRequestField` is deleted;
+- Official release request security validation and Off-Peak failure/execution protocol are moved from Model Config to Access; this round does not refactor Off-Peak string errors;
+- `requiresMfjsToolSchema` stays in Model Config; when enabled, projects Tool JSON Schema, projection failure directly errors;
+- DeepSeek Anthropic unified execution of canonical replay, no synthetic empty thinking;
+- Z.ai text/tool signature patches not in the current baseline are not merged; if support is needed, real response evidence must be obtained first, following "return whatever is received."
 
-## 12. Client Config 边界
+## 12. Client Config Boundaries
 
-ZCode Built-in Provider Config 与 Built-in Model Config Rules 作为一个原子 `zcodeBuiltin` Release 发布。仓库/安装包内容
-是拉取前和失败时兜底；每个 Environment 使用自己的 Active/LKG 与 Registry。Remote workspace 由 Remote Host 拉取、
-解析并返回其配置，Renderer 不把 Local Host 配置冒充远程事实。
+ZCode Built-in Provider Config and Built-in Model Config Rules are released as an atomic `zcodeBuiltin` Release. Repository/package contents
+are fallback before pull and on failure; each Environment uses its own Active/LKG and Registry. Remote workspaces are pulled and parsed by Remote Host,
+and returns its configuration; Renderer does not pass off Local Host config as remote facts.
 
-本 Todo 只要求新字段沿 Todo 18 的现有最小链路完整 round-trip，不顺手统一全部 `/client/configs` 消费者。
+This Todo only requires new fields to make complete round-trip along Todo 18's existing minimal pipeline, not unify all `/client/configs` consumers by the way.
 
-## 13. 实施顺序
+## 13. Implementation Order
 
-1. 测试先行，建立五个 Source Schema、Provider `group`、Personal Rule union、Provider/Model 完整性和排序测试；
-2. 调整 Config/Protocol/Repository 类型，删除 `enabledModelIds` 候选与 Model visibility；
-3. 实现 `provider-model` 专属 Rule 生命周期和普通 `match` Rule 隔离；
-4. 实现模型 enabled、三段 Model/Provider order、Builtin-wins 与保存规范化；
-5. 整理 `zcode-builtin.json` 的 Provider 和 Rules 顺序，一次性切换 `account:` ID，拆分 Family/普通
-   Z.ai/BigModel API Provider 和双 Off-Peak Provider，补齐模型默认 enabled 与官方停用项；
-6. 迁移官方版本请求安全校验与 Off-Peak execution protocol 到 Access，清理已经裁决删除的 Adapter Compatibility；
-7. 重构 Settings Facade、Mutation 与 UI，统一 Local/Remote Host 权威来源；
-8. 删除 Preset/Catalog 来源推断、旧排序 trick、死字段、死 helper 和过时测试；
-9. 根据最终实现将本 Todo 的事实逐项同步到 Design Tree、Feature Graph 和 superseded 旧文档；
-10. 执行单测、类型检查、Lint、格式检查和受影响 E2E，提交 Conventional Commit。
+1. Tests first, establishing five Source Schema, Provider `group`, Personal Rule union, Provider/Model integrity and order tests;
+2. Adjust Config/Protocol/Repository types, delete `enabledModelIds` candidates and Model visibility;
+3. Implement `provider-model` specific Rule lifecycle and normal `match` Rule isolation;
+4. Implement model enabled, three-segment Model/Provider order, Builtin-wins, and save normalization;
+5. Organize `zcode-builtin.json` Provider and Rules order, atomically switch `account:` IDs, split Family/regular
+   Z.ai/BigModel API Providers and dual Off-Peak Providers, complete model default enabled and official disabled items;
+6. Migrate official release request security validation and Off-Peak execution protocol to Access, clean up decided-to-delete Adapter Compatibility;
+7. Refactor Settings Facade, Mutation, and UI, unify Local/Remote Host authoritative source;
+8. Delete Preset/Catalog source inference, old order tricks, dead fields, dead helpers, and obsolete tests;
+9. Sync this Todo's facts to Design Tree, Feature Graph, and superseded old docs based on final implementation;
+10. Execute unit tests, typecheck, Lint, format check, and affected E2E, commit with Conventional Commit.
 
-## 14. 测试计划
+## 14. Test Plan
 
-### Config 与 Resolver
+### Config and Resolver
 
-- 五个 Source Schema 的允许/拒绝矩阵；
-- ZCode Built-in `group` 必填且不能为 `standard-personal`；Personal-only 固定 `standard-personal`，Overlay 不能改组；
-- 普通 Built-in、Personal-only、Z.ai Family、BigModel Family 四组完整且互斥；
-- 两个 Off-Peak Provider 由 Account Overlay 按当前 Family 互斥启用；
-- Personal 禁止写 `builtinModelIds`，禁止正常保存 Built-in 重复 `modelIds`；
-- Built-in/Personal 同 ID 时 Built-in-wins，单数组重复保留第一次；
-- Model `enabled` 的 Built-in 默认、官方特化、Personal 后置覆盖、恢复默认与 JSON round-trip；
-- `provider-model` 专属 Rule 与 `match` 通用 Rule 的顺序、删除、重命名和空 Rule 清理；
-- Provider/Model enabled、完整性与 Provider visibility 形成 executable/selectable 的公式。
+- Five Source Schema allow/reject matrix;
+- ZCode Built-in `group` is required and cannot be `standard-personal`; Personal-only fixed `standard-personal`, Overlay cannot change group;
+- Four groups of normal Built-in, Personal-only, Z.ai Family, BigModel Family are complete and mutually exclusive;
+- Two Off-Peak Providers are mutually-enabled by Account Overlay by current Family;
+- Personal prohibits writing `builtinModelIds`, prohibits normally saving Built-in duplicate `modelIds`;
+- Built-in/Personal same ID means Built-in-wins, single-array duplicates retain first;
+- Model `enabled` Built-in default, official specialization, Personal deferred override, restore default, and JSON round-trip;
+- `provider-model` specific Rule and `match` generic Rule order, deletion, renaming, and empty Rule cleanup;
+- Provider/Model enabled, integrity, and Provider visibility form executable/selectable formulas.
 
-### 排序与生命周期
+### Ordering and Lifecycle
 
-- Model/Provider 三段顺序；
-- 新 Built-in 自动落在未排序 Built-in 段；
-- 正常新增 Personal 原子更新成员、顺序和 `enabled=true` 专属 Rule；
-- 调序保存补遗漏、删 stale、去重复；
-- Personal Model rename/delete 原子更新成员、顺序和专属 Rule；
-- Provider 删除删除 Overlay 和专属 Rules，不修改通用 Match Rules；
-- disabled 成员在 Settings 保留位置、从 Selection/Registry 排除。
+- Model/Provider three-segment order;
+- New Built-in automatically falls into unsorted Built-in segment;
+- Normal new Personal atomic updates members, order, and `enabled=true` specific Rule;
+- Order save adds missing, deletes stale, removes duplicates;
+- Personal Model rename/delete atomic updates members, order, and specific Rule;
+- Provider deletion deletes Overlay and specific Rules, does not modify generic Match Rules;
+- disabled members retain position in Settings, excluded from Selection/Registry.
 
-### Settings 与跨环境
+### Settings and Cross-Environment
 
-- “已添加”只按 Personal Map membership；Provider disable 不回到添加候选，删除才回到候选；
-- 添加 Built-in 与创建 Personal-only 均立即生效并写 `enabled=true`；
-- 普通候选只来自 `group=standard-builtin`；两个 Family 不依赖 ID 白名单过滤；
-- 两个 Family 不参与普通排序，且 UI 不提供 Provider enabled 开关；删除 Personal Overlay 后仍留在固定 Family 区域；
-- 自定义 Provider 创建时不猜 API Schema、Endpoint 或模型；身份确认后立即创建不完整 Provider；
-- Family API Key 与普通 Z.ai/BigModel API Provider 的 Personal Config、凭据、enabled 和顺序互相隔离；
-- `account:` Provider ID 全链原子切换且无旧 alias；
-- 切换 Family 后，旧 Family Off-Peak 任务保留但不可调度，切回后恢复；不得静默迁移 ModelSelection；
-- Built-in Model 无删除按钮，Provider ID 全部只读，label 唯一；
-- Effective placeholder、明确覆盖和恢复默认；隐藏字段无损保留；
-- 上游有默认、上游无默认、Personal 覆盖和显式 clear 四种编辑状态互不混淆；
-- Model enabled 使用 Switch，能力 Boolean 使用现有风格的 Toggle Chip/Selectable Tag；选中、未设置和 Personal 覆盖具有
-  非纯颜色线索；
-- `optionSpecs.reasoningLevel`、`optionSpecs.maxOutputTokens` 与 `reasoningMapping` 分别使用独立格式化 Personal JSON
-  编辑器和只读 Effective 预览；每个编辑器直接替换自己的槽位，不在编辑器内部继续 Overlay 或按 key 合并；
-- Model 编辑使用比例协调的大一档弹窗而非右侧详情/二级页面；Desktop 不做超宽布局，固定 Header/Footer，只有中间内容区
-  滚动，Mobile 使用安全视口范围；
-- Model 编辑弹窗使用本地 Draft 和手动保存；字段编辑不得提前写配置，取消/X/Esc 不产生 Mutation，保存只发起一次原子
-  Mutation，并在持久化结果被 Registry 观察后关闭；失败时保留 Draft 和弹窗；
-- Model 行的启停、排序和删除仍是即时原子操作，不与弹窗 Draft 混合；
-- 紧凑 Model 行不渲染 Model ID 输入框或来源标签，保留外露的测试、编辑、启停和 Personal 删除操作；
-- 普通点击 Model 行不打开编辑器；编辑只由铅笔进入；整行拖动不被行内按钮误触发，并支持指针阈值、触屏滚动与键盘
-  等价操作；
-- Provider 固定操作、Model 列表和完整 Model 编辑器覆盖 Zai Light/Zai Dark、Desktop 与 Mobile 布局及中英文；
-- 修改 Model ID 先移动 Personal 专属 Rule，再刷新 Built-in Preview；
-- Local workspace 使用 Local Host，remote workspace 使用 Remote Host；Renderer 不做本地兜底解析。
+- "Already added" only by Personal Map membership; Provider disable does not return to add candidates, only delete does;
+- Adding Built-in and creating Personal-only both take effect immediately and write `enabled=true`;
+- Normal candidates only from `group=standard-builtin`; two Families do not rely on ID whitelist filtering;
+- Two Families do not participate in normal ordering, and UI does not provide Provider enabled toggles; deleting Personal Overlay still stays in fixed Family area;
+- Custom Provider creation does not guess API Schema, Endpoint, or models; creates incomplete Provider immediately after identity confirmation;
+- Family API Key and regular Z.ai/BigModel API Provider Personal Config, credentials, enabled, and order are isolated from each other;
+- `account:` Provider IDs atomically switched across chain with no old aliases;
+- After switching Family, old Family Off-Peak tasks are retained but unscheduleable, restored when switching back; no silent ModelSelection migration;
+- Built-in Models have no delete button, Provider IDs all read-only, label is unique;
+- Effective placeholder, explicit override, and restore default; hidden fields preserved losslessly;
+- Four editing states: upstream has default, upstream no default, Personal override, and explicit clear do not confuse each other;
+- Model enabled uses Switch, capability Booleans use existing-style Toggle Chip/Selectable Tag; selected, not set, and Personal override have
+  non-pure-color clues;
+- `optionSpecs.reasoningLevel`, `optionSpecs.maxOutputTokens`, and `reasoningMapping` each use independent formatted Personal JSON
+  editor and read-only Effective preview; each editor directly replaces its own slot, no further Overlay within editor or per-key merging;
+- Model editing uses proportionally coordinated larger popup, not right-side details/secondary page; Desktop does not do ultra-wide layout, fixed Header/Footer, only middle content area
+  scrolling, Mobile uses safe viewport range;
+- Model editing popup uses Local Draft and manual save; field edits do not write config early, Cancel/X/Esc produces no Mutation, save initiates only one atomic
+  Mutation, and closes after persistence result is observed by Registry; failures retain Draft and popup;
+- Model row enable/disable, sorting, and delete are still immediate atomic operations, not mixed with popup Draft;
+- Compact Model row does not render Model ID input box or source label, retains exposed test, edit, enable/disable, and Personal delete operations;
+- Normal clicks on Model row do not open editor; editing only entered by pencil; entire row drag not triggered by row-level buttons, supports pointer threshold, touch scrolling, and keyboard
+  equivalent operations;
+- Provider fixed operations, Model list, and complete Model editor cover Zai Light/Zai Dark, Desktop and Mobile layout and Chinese/English;
+- Modifying Model ID first moves Personal-specific Rules, then refreshes Built-in Preview;
+- Local workspace uses Local Host, remote workspace uses Remote Host; Renderer does not do local fallback parsing.
 
-### Adapter 与回归
+### Adapter and Regression
 
-- 官方版本请求安全校验与 Off-Peak 按 Access 路由，Model Config 不再出现对应字段；
-- 删除 Copilot/Snowflake/旧 OpenAI replay 后无 Runtime fallback；
-- MFJS 开启、关闭和转换失败；
-- DeepSeek A/B 真实请求结果形成可复现 fixture 后再决定字段去留；
-- 普通请求、Compact、Memory、Child Agent、Off-Peak 都只使用 Active Model/Registry 事实。
+- Official release request security validation and Off-Peak route by Access, Model Config no longer shows corresponding fields;
+- Delete Copilot/Snowflake/old OpenAI replay means no Runtime fallback;
+- MFJS open, close, and conversion failure;
+- DeepSeek A/B real request results form reproducible fixtures before deciding field retention;
+- Normal requests, Compact, Memory, Child Agent, Off-Peak all use only Active Model/Registry facts.
 
-## 15. 完成定义
+## 15. Completion Definition
 
-- Design Tree、综述、Feature Graph 与实现一致，不再出现 `enabledModelIds`、Model visibility 或冲突 DTO 作为目标设计；
-- Provider 只管理成员与顺序，Model Config `enabled` 是唯一模型执行门禁；
-- Built-in 通用 Rule 给出完整默认，官方可以通过具体 Rule 默认停用旧模型；
-- 设置页的单模型编辑全部落入结构化 Personal 专属 Rule；通用 Match Rule 不被生命周期操作猜测；
-- “已添加 Provider”、Provider enabled 与 Provider 删除三种语义互不混用；
-- Built-in 配置覆盖当前已知静态模型/API hardcode，不建立新的 Runtime 第二事实；
-- Access 产品协议和 Model 请求兼容归属正确，已裁决删除项没有残留；
-- `pnpm typecheck`、`pnpm lint`、相关单测、格式检查与受影响 E2E 通过；
-- 使用 Conventional Commit 提交。
+- Design Tree, summary, Feature Graph consistent with implementation, no longer showing `enabledModelIds`, Model visibility, or conflicting DTOs as target design;
+- Providers only manage members and order, Model Config `enabled` is the sole model execution gate;
+- Built-in general Rules provide complete defaults, official can default-disable old models via specific Rules;
+- Single-model editing on settings page all falls into structured Personal-specific Rules; generic Match Rules not guessed by lifecycle operations;
+- "Added Provider," Provider enabled, and Provider delete three semantics are not mixed;
+- Built-in config covers current known static model/API hardcode, no new Runtime second facts created;
+- Access product protocols and Model request compatibility are correct, decided-to-delete items have no residue;
+- `pnpm typecheck`, `pnpm lint`, related unit tests, format check, and affected E2E pass;
+- Submitted with Conventional Commit.

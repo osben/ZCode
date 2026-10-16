@@ -1,8 +1,8 @@
-# 本地 TTFT 查询与验收
+# Local TTFT Queries & Acceptance
 
 Status: in-progress
 
-[父合同](ttft-stage-telemetry.md) · [Grafana 看板模板](dashboards/local-ttft.json) · [怎么读一条 Trace](local-ttft-trace-reading.md) · [上线清单](local-ttft-rollout-checklist.md)
+[Parent Contract](ttft-stage-telemetry.md) · [Grafana Dashboard Template](dashboards/local-ttft.json) · [How to Read a Trace](local-ttft-trace-reading.md) · [Launch Checklist](local-ttft-rollout-checklist.md)
 
 本地 OTLP 数据验证与 ARMS 平台验收分别记录。北京 ARMS 项目可查询既有 zcode-cli-agent / zcode-desktop-renderer Trace 和自定义 Metric。2026-09-15 已完成新 service `zcode-local-ttft` 的平台验收：Trace 与 Metric 入库、分位数查询、瀑布关联与诊断口径均核对通过，见[平台验收证据](local-ttft-platform-evidence.json)。仍未完成：控制台界面瀑布目视确认、打包版编译注入写入路径、7 天 Trace / 30 天 Metric 保留及实际费用。
 
