@@ -7,6 +7,7 @@ import {
   useState,
   type CSSProperties,
   type MouseEvent,
+  type PointerEvent,
 } from "react";
 import {
   CheckIcon,
@@ -391,6 +392,11 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
 
   const handleActionMouseDown = useCallback((event: MouseEvent<HTMLElement>) => {
     event.preventDefault();
+    event.stopPropagation();
+  }, []);
+
+  const handleActionPointerDown = useCallback((event: PointerEvent<HTMLElement>) => {
+    // The enclosing PointerSensor receives pointerdown before opening the menu can remove sortable listeners.
     event.stopPropagation();
   }, []);
 
@@ -994,6 +1000,7 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
                               variant="ghost"
                               size="icon-sm"
                               className="shrink-0 text-foreground-subtle hover:bg-surface-hover hover:text-foreground"
+                              onPointerDown={handleActionPointerDown}
                               onMouseDown={handleActionMouseDown}
                               aria-label={intl.formatMessage({ id: "common.more" })}
                             >
