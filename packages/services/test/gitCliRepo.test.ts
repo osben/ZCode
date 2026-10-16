@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -731,6 +732,46 @@ describeIfGit("gitCliRepo worktree operations", () => {
       const defaultCreated = await repo.createWorktree(repoPath, "no-base", defaultBasePath);
       expect(defaultCreated.ok).toBe(true);
       expect(runGit(defaultBasePath, ["rev-parse", "HEAD"])).toBe(mainTip);
+    },
+    GIT_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "creates from the committed base while keeping dirty parent checkout contents in place",
+    async () => {
+      const { container, repoPath } = createWorktreeTestRepo();
+      const repo = createGitCliRepo();
+      const trackedPath = join(repoPath, "tracked.txt");
+      writeFileSync(trackedPath, "committed main content\n");
+      runGit(repoPath, ["add", "tracked.txt"]);
+      runGit(repoPath, ["commit", "-m", "add tracked file"]);
+      runGit(repoPath, ["switch", "release"]);
+      writeFileSync(trackedPath, "requested release content\n");
+      runGit(repoPath, ["add", "tracked.txt"]);
+      runGit(repoPath, ["commit", "-am", "update release content"]);
+      runGit(repoPath, ["switch", "main"]);
+
+      writeFileSync(trackedPath, "unstaged parent edit\n");
+      const untrackedPath = join(repoPath, "untracked.txt");
+      writeFileSync(untrackedPath, "parent-only untracked file\n");
+      const parentStatusBefore = runGit(repoPath, ["status", "--porcelain=v1", "-uall"]);
+      const worktreePath = join(container, "wt-from-release");
+
+      const created = await repo.createWorktree(
+        repoPath,
+        "feature/dirty-parent",
+        worktreePath,
+        "release",
+      );
+
+      expect(created).toMatchObject({ ok: true, worktreePath });
+      expect(readFileSync(join(worktreePath, "tracked.txt"), "utf8")).toBe(
+        "requested release content\n",
+      );
+      expect(existsSync(join(worktreePath, "untracked.txt"))).toBe(false);
+      expect(readFileSync(trackedPath, "utf8")).toBe("unstaged parent edit\n");
+      expect(readFileSync(untrackedPath, "utf8")).toBe("parent-only untracked file\n");
+      expect(runGit(repoPath, ["status", "--porcelain=v1", "-uall"])).toBe(parentStatusBefore);
     },
     GIT_INTEGRATION_TEST_TIMEOUT_MS,
   );

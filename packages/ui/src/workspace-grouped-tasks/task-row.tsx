@@ -4,10 +4,11 @@ import type { KeyboardEvent, MouseEvent } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import type { UniqueIdentifier } from "@dnd-kit/core";
 import { isCronTask, isOffPeakTask, type ZCodeTaskMeta } from "@zcode/shared";
-import { ArrowUpToLine, Clock, GitBranch, ListTree, LoaderIcon, Moon, X } from "lucide-react";
+import { ArrowUpToLine, Clock, ListTree, LoaderIcon, Moon, X } from "lucide-react";
 import { cn } from "@/components/lib/utils.js";
 import { Badge } from "@/components/ui/badge.js";
 import { BranchMergedBadge } from "@/components/BranchMergedBadge.js";
+import { WorktreeTaskMarker } from "@/components/WorktreeTaskMarker.js";
 import { toast } from "@/components/ui/toast.js";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu.js";
 import { Tooltip, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip.js";
@@ -242,24 +243,9 @@ function GroupedTaskRowComponent({
               />
             ) : null}
             {!hasPendingInteraction && task.executionWorktree ? (
-              // Worktree-session marker: the agent runs in a linked worktree while the task stays
-              // in this project; the tooltip names the branch and directory.
-              <span
-                data-worktree-task-icon="true"
-                title={
-                  task.executionWorktree.branchName
-                    ? intl.formatMessage(
-                        { id: "taskList.worktreeTaskLabel" },
-                        { branch: task.executionWorktree.branchName },
-                      )
-                    : intl.formatMessage({ id: "taskList.worktreeTaskLabelNoBranch" })
-                }
-              >
-                <GitBranch
-                  aria-label={intl.formatMessage({ id: "taskList.worktreeTaskLabelNoBranch" })}
-                  className="size-3.5 shrink-0"
-                />
-              </span>
+              // Worktree-session marker, styled like the neighboring clock/moon meta icons (the
+              // shared component owns glyph, colors, and the branch+directory tooltip).
+              <WorktreeTaskMarker task={task} />
             ) : null}
             {!hasPendingInteraction ? <span className="mr-1">{taskTimeLabel}</span> : null}
           </span>
@@ -462,22 +448,9 @@ function GroupedTaskRowComponent({
                 />
               ) : null}
               {!hasPendingInteraction && task.executionWorktree ? (
-                <span
-                  data-worktree-task-icon="true"
-                  title={
-                    task.executionWorktree.branchName
-                      ? intl.formatMessage(
-                          { id: "taskList.worktreeTaskLabel" },
-                          { branch: task.executionWorktree.branchName },
-                        )
-                      : intl.formatMessage({ id: "taskList.worktreeTaskLabelNoBranch" })
-                  }
-                >
-                  <GitBranch
-                    aria-label={intl.formatMessage({ id: "taskList.worktreeTaskLabelNoBranch" })}
-                    className="size-3.5 shrink-0"
-                  />
-                </span>
+                // Worktree-session marker, styled like the neighboring clock/moon meta icons (the
+                // shared component owns glyph, colors, and the branch+directory tooltip).
+                <WorktreeTaskMarker task={task} />
               ) : null}
               {!hasPendingInteraction ? <span className="mr-1">{taskTimeLabel}</span> : null}
             </span>

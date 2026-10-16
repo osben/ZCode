@@ -122,8 +122,21 @@ export function resolveAppRuntimeConfig(input: {
   );
   const runtimeBuiltInModelSelectionOverrides =
     options.runtimeConfig?.subagents?.builtInModelSelectionOverrides ?? {};
+  // Attach the parent workspace reference to the execution-worktree fact so the env bullet can name
+  // it (spec: execution-worktree-model-context.md). options.runtimeConfig.workingDirectory is still
+  // the parent path here; the local workingDirectory below is the (possibly worktree) execution cwd.
+  const executionWorktreeFact = options.runtimeConfig?.executionWorktree;
+  const executionWorktreeWorkspacePath = options.runtimeConfig?.workingDirectory;
   const runtimeConfig: AgentRuntimeConfig = {
     ...options.runtimeConfig,
+    ...(executionWorktreeFact && executionWorktreeWorkspacePath
+      ? {
+          executionWorktree: {
+            ...executionWorktreeFact,
+            workspacePath: executionWorktreeWorkspacePath,
+          },
+        }
+      : {}),
     genUiOutputRoot: (options.env ?? process.env)[GEN_UI_OUTPUT_ROOT_ENV],
     bashTimeoutPolicy:
       options.runtimeConfig?.bashTimeoutPolicy ??

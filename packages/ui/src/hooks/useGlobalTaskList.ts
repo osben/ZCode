@@ -18,7 +18,13 @@ type GlobalTaskListItem = WindowHostControllerTaskListItem;
 const subscribeToNothing = () => () => {};
 const zeroRevision = () => 0;
 
-function buildWorkspaceScopes(workspaceTabs: WorkspaceTabState[]): ZCodeTaskListWorkspaceScope[] {
+type GlobalTaskListWorkspaceTab = Pick<WorkspaceTabState, "workspacePath" | "workspaceIdentity"> & {
+  remoteSessionId?: string;
+};
+
+function buildWorkspaceScopes(
+  workspaceTabs: ReadonlyArray<GlobalTaskListWorkspaceTab>,
+): ZCodeTaskListWorkspaceScope[] {
   const scopes = new Map<string, ZCodeTaskListWorkspaceScope>();
   for (const tab of workspaceTabs) {
     const scope = {
@@ -35,7 +41,11 @@ function buildWorkspaceScopes(workspaceTabs: WorkspaceTabState[]): ZCodeTaskList
 
 export function useGlobalTaskList(params: {
   kind: ZCodeTaskListKind;
-  workspaceTabs: WorkspaceTabState[];
+  workspaceTabs: ReadonlyArray<
+    Pick<WorkspaceTabState, "workspacePath" | "workspaceIdentity"> & {
+      remoteSessionId?: string;
+    }
+  >;
   sortBy: "created" | "updated";
   searchQuery: string;
   expanded: boolean;
@@ -129,16 +139,30 @@ export function useGlobalTaskList(params: {
     ],
   );
   const queryKey = useMemo(() => JSON.stringify(query), [query]);
+  const currentResultKey = JSON.stringify([
+    queryKey,
+    controllerRevision,
+    taskListVersionSignature,
+    workspaceSourceGenerationSignature,
+  ]);
+  const [successfulResultKey, setSuccessfulResultKey] = useState<string | null>(null);
 
   const load = useCallback(
     async (version: WindowControllerTaskListVersion) => {
       const requestSerial = ++requestSerialRef.current;
+      const resultKey = JSON.stringify([
+        queryKey,
+        version.controllerRevision,
+        version.taskListVersionSignature,
+        version.workspaceSourceGenerationSignature,
+      ]);
       if (workspaceScopes.length === 0) {
         setItems([]);
         itemsRef.current = [];
         setTotal(0);
         setHasMore(false);
         setLoading(false);
+        setSuccessfulResultKey(resultKey);
         return;
       }
       if (!controllerRegistry) {
@@ -169,6 +193,7 @@ export function useGlobalTaskList(params: {
         setItems(nextItems);
         setTotal(result.total);
         setHasMore(result.hasMore);
+        setSuccessfulResultKey(resultKey);
       } catch (error) {
         if (requestSerialRef.current === requestSerial) {
           // Keep the last trusted list when a Controller query fails so one source error
@@ -212,6 +237,7 @@ export function useGlobalTaskList(params: {
     total,
     hasMore,
     loading,
+    hasCurrentResult: successfulResultKey === currentResultKey,
     syncingRemoteWorkspaces: loading && hasRemoteScope,
     refresh,
   };

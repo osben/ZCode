@@ -360,6 +360,11 @@ export interface ZCodeTaskMeta {
    * Mirrors the sessions-index sessionSummary field; absent for ordinary sessions.
    */
   executionWorktree?: { path: string; branchName?: string };
+  /**
+   * True when the execution worktree directory is absent on disk (the session falls back to the
+   * parent workspace). Mirrors the sessions-index sessionSummary field; absent means healthy.
+   */
+  executionWorktreeMissing?: boolean;
   /** zcode-cli /goal session target; null means it was explicitly cleared. */
   target?: ZCodeTaskGoal | null;
 }

@@ -328,6 +328,7 @@ const GROUPED_ARCHIVE_RESURRECTION_SPEC =
 const GROUPED_HEADER_PIN_VISIBILITY_SPEC =
   "conversation-session-grouped-header-pin-visibility.test.ts";
 const GIT_REVIEW_ENTRY_SPEC = "conversation-session-git-review-entry.test.ts";
+const WORKTREE_CHAT_FIRST_SPEC = "conversation-session-worktree-chat-first.test.ts";
 const WINDOWS_AGENT_METRIC_PROBE_ABSENCE_SPEC = "windows-agent-metric-probe-absence.test.ts";
 const HOOKS_LIFECYCLE_SPEC = "conversation-session-hooks-lifecycle.test.ts";
 const HOOK_TRUST_SPEC = "conversation-session-hook-trust.test.ts";
@@ -3161,6 +3162,7 @@ async function resetE2EHome(specs: string[] = []) {
   seedE2ESubagentProfiles(specs);
   await seedE2EGitReviewEntryWorkspace(specs);
   seedE2EGitCommitDialogWorkspace(specs);
+  seedE2EWorktreeChatFirstWorkspace(specs);
   if (specs.some((spec) => spec.includes(HOOKS_LIFECYCLE_SPEC))) {
     // Bug root cause: by the time the spec's before hook runs, the app-server has already read the
     // workspace config; writing Hooks inside the test only changes the settings page and cannot
@@ -3287,6 +3289,20 @@ function runGitE2ECommand(cwd: string, args: string[]) {
     env: process.env,
     stdio: "ignore",
   });
+}
+
+function seedE2EWorktreeChatFirstWorkspace(specs: string[] = []) {
+  if (!workerSpecsContain(specs, WORKTREE_CHAT_FIRST_SPEC)) return;
+
+  const workspacePath = resolve(E2E_HOME_DIR, "ZCodeProject");
+  mkdirSync(workspacePath, { recursive: true });
+  writeFileSync(resolve(workspacePath, "README.md"), "Worktree chat-first E2E fixture\n", "utf-8");
+  runGitE2ECommand(workspacePath, ["init", "-q"]);
+  runGitE2ECommand(workspacePath, ["checkout", "-B", "main"]);
+  runGitE2ECommand(workspacePath, ["config", "user.name", "ZCode E2E"]);
+  runGitE2ECommand(workspacePath, ["config", "user.email", "zcode-e2e@example.invalid"]);
+  runGitE2ECommand(workspacePath, ["add", "README.md"]);
+  runGitE2ECommand(workspacePath, ["commit", "-m", "chore: seed worktree chat-first e2e"]);
 }
 
 function seedE2EStartupState(specs: string[] = []) {

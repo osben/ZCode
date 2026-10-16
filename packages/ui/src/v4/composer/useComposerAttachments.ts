@@ -101,7 +101,7 @@ export interface ComposerAttachmentsApi {
   /** Restore queue refs already owned by the session as ready chips without triggering upload/adopt. */
   restoreSessionOwnedAttachments: (attachments: readonly AttachmentRef[]) => boolean;
   /** Return only ready refs; return null as a second submit gate if any attachment is not ready. */
-  prepareForSend: () => Promise<AttachmentRef[] | null>;
+  prepareForSend: (attachmentIds?: readonly string[]) => Promise<AttachmentRef[] | null>;
   /** Re-upload frozen draft content into a newly created session and return refs owned by that session. */
   reuploadForSession: (
     sessionId: string,
@@ -1045,13 +1045,22 @@ export function useComposerAttachments(
     [commitScope, scopeKey],
   );
 
-  const prepareForSend = useCallback(async (): Promise<AttachmentRef[] | null> => {
-    const current = readComposerAttachmentScope(scopeKey);
-    if (current.some((item) => item.uploadStatus !== "ready" || !item.attachmentRef)) {
-      return null;
-    }
-    return current.flatMap((item) => (item.attachmentRef ? [item.attachmentRef] : []));
-  }, [scopeKey]);
+  const prepareForSend = useCallback(
+    async (attachmentIds?: readonly string[]): Promise<AttachmentRef[] | null> => {
+      const current = readComposerAttachmentScope(scopeKey);
+      const selected = attachmentIds
+        ? current.filter((item) => attachmentIds.includes(item.id))
+        : current;
+      if (
+        (attachmentIds && selected.length !== attachmentIds.length) ||
+        selected.some((item) => item.uploadStatus !== "ready" || !item.attachmentRef)
+      ) {
+        return null;
+      }
+      return selected.flatMap((item) => (item.attachmentRef ? [item.attachmentRef] : []));
+    },
+    [scopeKey],
+  );
 
   const reuploadForSession = useCallback(
     async (sessionId: string, attachmentIds: readonly string[]): Promise<AttachmentRef[]> => {

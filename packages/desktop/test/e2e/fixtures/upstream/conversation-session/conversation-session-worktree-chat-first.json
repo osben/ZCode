@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "caseName": "conversation-session-worktree-chat-first",
+  "spec": "./test/e2e/conversation-session/conversation-session-worktree-chat-first.test.ts",
+  "fixtures": [
+    {
+      "id": "worktree-chat-first-title",
+      "description": "Case-local deterministic title response so strict replay does not rely on provider-basic.",
+      "metadata": {
+        "kind": "common",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "Title generation is incidental; the scenario asserts chat presentation and first-message ordering."
+      },
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["Generate a concise title"]
+      },
+      "response": {
+        "statusCode": 200,
+        "statusMessage": "OK",
+        "headers": {
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": "{\"id\":\"upstream-e2e-worktree-chat-first-title\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"deepseek-v4-pro\",\"content\":[{\"type\":\"text\",\"text\":\"{\\\"title\\\":\\\"Worktree Chat\\\"}\"}],\"stop_reason\":\"end_turn\",\"stop_sequence\":null,\"usage\":{\"input_tokens\":125,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":24,\"service_tier\":\"standard\"}}"
+      }
+    },
+    {
+      "id": "worktree-chat-first-message",
+      "description": "Deterministic first-turn text response after the worktree-backed session accepts the queued prompt.",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "The scenario needs a deterministic first-message response after worktree creation and session admission."
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "lastUserMessageIncludes": ["E2E_WORKTREE_CHAT_FIRST_"],
+        "bodyIncludes": ["E2E_WORKTREE_CHAT_FIRST_", "upstream-e2e-ok"],
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
+      },
+      "response": {
+        "statusCode": 200,
+        "statusMessage": "OK",
+        "text": {
+          "id": "upstream-e2e-worktree-chat-first-message",
+          "inputTokens": 128,
+          "outputTokens": 12,
+          "text": "upstream-e2e-ok"
+        }
+      }
+    }
+  ]
+}

@@ -485,6 +485,35 @@ describe("zcode-protocol-v4 command", () => {
     }
   });
 
+  it("updates a prepared worktree target together with its retry status", () => {
+    const result = parseCommandEnvelope({
+      commandId: "cmd-update-worktree-preparation",
+      clientId: "client-1",
+      sessionId: "session-1",
+      type: "updateWorktreePreparation",
+      payload: {
+        status: "preparing",
+        worktreePreparation: {
+          branchName: "zcode/retry",
+          targetPath: "/repo/.worktrees/retry",
+          baseBranch: "integration",
+        },
+      },
+      issuedAt: 1000,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.envelope.payload).toMatchObject({
+        status: "preparing",
+        worktreePreparation: {
+          branchName: "zcode/retry",
+          targetPath: "/repo/.worktrees/retry",
+          baseBranch: "integration",
+        },
+      });
+    }
+  });
+
   it("parses an atomic Submission in createSession.firstInput", () => {
     const result = parseCommandEnvelope({
       commandId: "cmd-create-submission",

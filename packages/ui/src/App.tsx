@@ -365,6 +365,11 @@ export function App({
   const [canOpenCommunityFromQuickPick, setCanOpenCommunityFromQuickPick] = useState(false);
   const [gitSelectedSourceId, setGitSelectedSourceId] = useState<GitChangeSourceId>("unstaged");
   const [gitRefreshVersion, setGitRefreshVersion] = useState(0);
+  const [gitReviewRefreshVersion, setGitReviewRefreshVersion] = useState(0);
+  const [gitReviewExecutionTarget, setGitReviewExecutionTarget] = useState<{
+    workspacePath: string;
+    sessionId: string;
+  } | null>(null);
   const { browserRestoreUrls, handleBrowserUrlChange } = useTaskSidePaneMemoryBridge({
     activeTaskId,
     gitSelectedSourceId,
@@ -437,6 +442,10 @@ export function App({
     selectedProvider: workspaceShellZCodeState.selectedProvider,
     intl,
   });
+  const gitRepositoryWorkspacePath =
+    gitReviewExecutionTarget?.sessionId === activeTaskId
+      ? gitReviewExecutionTarget.workspacePath
+      : (resolvedActiveTaskMeta?.executionWorktree?.path ?? workspaceAbsPath);
   const providerConfigFile = useWorkspaceProviderConfigFile(
     workspaceAbsPath,
     workspaceHeaderProvider,
@@ -469,17 +478,46 @@ export function App({
     // переопросить. Untouched workspace'ы упрутся в сервисный TTL — дешёво.
     useBranchMergeStatusStore.getState().requestRefresh();
   }, []);
+  const handleRefreshGitReview = useCallback(() => {
+    if (gitRepositoryWorkspacePath === workspaceAbsPath) {
+      handleRefreshGit();
+      return;
+    }
+    setGitReviewRefreshVersion((value) => value + 1);
+    useBranchMergeStatusStore.getState().requestRefresh();
+  }, [gitRepositoryWorkspacePath, handleRefreshGit, workspaceAbsPath]);
   const openSettingsTab = useTabStore((state) => state.openSettingsTab);
   const gitState = useGitRepository({
     workspacePath: workspaceAbsPath,
     activeTaskId,
-    includeExtendedData: hasGitTab,
+    includeExtendedData: hasGitTab && gitRepositoryWorkspacePath === workspaceAbsPath,
     // Key logic: fetch real Git data only when the workspace changes, the Git pane opens, or the user explicitly refreshes.
     // Task switches and last-turn summary changes update only local derived data; they do not rerun Git commands.
     refreshToken: gitRefreshVersion,
     remoteSessionId: workspaceRpcTarget.remoteSessionId ?? null,
     remoteTarget: workspaceRpcTarget.remoteTarget,
     workspaceIdentity,
+  });
+  const worktreeGitReviewState = useGitRepository({
+    workspacePath: gitRepositoryWorkspacePath,
+    activeTaskId,
+    enabled: gitRepositoryWorkspacePath !== workspaceAbsPath,
+    includeExtendedData: hasGitTab,
+    refreshToken: gitReviewRefreshVersion,
+    remoteSessionId: workspaceRpcTarget.remoteSessionId ?? null,
+    remoteTarget: workspaceRpcTarget.remoteTarget,
+    workspaceIdentity,
+  });
+  const gitPaneState =
+    gitRepositoryWorkspacePath === workspaceAbsPath ? gitState : worktreeGitReviewState;
+  useGitAutoRefresh({
+    workspacePath: gitRepositoryWorkspacePath,
+    workspaceIdentity,
+    remoteSessionId: workspaceRpcTarget.remoteSessionId ?? null,
+    gitSummary: worktreeGitReviewState.summary,
+    gitSummaryWorkspaceKey: worktreeGitReviewState.workspaceKey,
+    enabled: isWorkspaceVisible && hasGitTab && gitRepositoryWorkspacePath !== workspaceAbsPath,
+    onRefreshGit: handleRefreshGitReview,
   });
   useGitAutoRefresh({
     workspacePath: workspaceAbsPath,
@@ -491,8 +529,8 @@ export function App({
     onRefreshGit: handleRefreshGit,
   });
   const activeGitSourceId =
-    gitState.sourceOptions.find((option) => option.id === gitSelectedSourceId)?.id ??
-    gitState.sourceOptions[0]?.id ??
+    gitPaneState.sourceOptions.find((option) => option.id === gitSelectedSourceId)?.id ??
+    gitPaneState.sourceOptions[0]?.id ??
     "unstaged";
   const gitChangeSummaryBySourceId = useMemo(() => {
     // Key business logic: the workspace header and Git pane use the same source statistics.
@@ -546,10 +584,22 @@ export function App({
     return null;
   }, [gitChangeSummaryBySourceId]);
   const handleOpenGitReview = useCallback(
-    (sourceId?: GitChangeSourceId) => {
+    (
+      sourceId?: GitChangeSourceId,
+      executionWorkspacePath?: string,
+      executionSessionId?: string,
+    ) => {
       if (workspaceReadOnlyReason) {
         return;
       }
+      setGitReviewExecutionTarget(
+        executionWorkspacePath && executionSessionId
+          ? {
+              workspacePath: executionWorkspacePath,
+              sessionId: executionSessionId,
+            }
+          : null,
+      );
       if (sourceId) {
         setGitSelectedSourceId(sourceId);
       }
@@ -1362,6 +1412,9 @@ export function App({
           gitWorktreeChangeSummary={gitWorktreeChangeSummary}
           activeGitSourceId={activeGitSourceId}
           gitState={gitState}
+          gitReviewState={gitPaneState}
+          handleRefreshGitReview={handleRefreshGitReview}
+          gitRepositoryWorkspacePath={gitRepositoryWorkspacePath}
           browserNavigationRequest={browserNavigationRequest}
           browserRestoreUrls={browserRestoreUrls}
           providerConfigFile={providerConfigFile}

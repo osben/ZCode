@@ -113,6 +113,8 @@ interface Subscription {
   sentSeq: number;
   /** Stable logical frame reserved during encoding/writing. */
   inFlight: TopicFrameReservation<ConversationTopicFrame> | null;
+  /** Metadata snapshot requests that arrived after the current frame was reserved. */
+  snapshotRequestGeneration: number;
   nextLogicalFrameOrdinal: number;
 }
 
@@ -270,6 +272,8 @@ export class ConversationTopicPublisher {
   private readonly subscriptionIdByConnection = new Map<string, string>();
   private nextSubscriptionSerial = 1;
   private nextLogicalFrameSerial = 1;
+  /** Preparation metadata is not sequenced with conversation events; keep its history for reconnect decisions. */
+  private worktreePreparationWasSeeded = false;
   /** Conservative upper bound for the current logical snapshot frame; streaming appends accumulate only deltas and serialize exactly near the limit. */
   private wireSnapshotBytesUpperBound: number;
 
@@ -320,6 +324,25 @@ export class ConversationTopicPublisher {
   ): void {
     this.projection.seedSharedContextImport(source);
     this.wireSnapshotBytesUpperBound = this.measureWireSnapshotBytes(this.getWireSnapshot());
+  }
+
+  /** Worktree preparation is Host-owned setup metadata; it does not enter transcript deltas. */
+  seedWorktreePreparation(
+    preparation: ConversationSnapshot["meta"]["worktreePreparation"] | null | undefined,
+  ): void {
+    if (preparation) this.worktreePreparationWasSeeded = true;
+    this.projection.seedWorktreePreparation(preparation);
+    this.wireSnapshotBytesUpperBound = this.measureWireSnapshotBytes(this.getWireSnapshot());
+  }
+
+  /** Invalidate each subscriber's pending frame and make its next flush carry the current snapshot. */
+  requestSnapshotForSubscribers(): void {
+    for (const subscription of this.subscriptions.values()) {
+      subscription.buffer = [];
+      subscription.bufferBytes = 0;
+      subscription.resyncRequired = true;
+      subscription.snapshotRequestGeneration += 1;
+    }
   }
 
   /** Inject a usage seed: on cold restore, persisted token watermarks replace the 0 placeholders synthesized from the transcript. */
@@ -840,6 +863,7 @@ export class ConversationTopicPublisher {
       resyncRequired: false,
       sentSeq: 0,
       inFlight: null,
+      snapshotRequestGeneration: 0,
       nextLogicalFrameOrdinal: 1,
     };
     this.subscriptions.set(subscription.subscriptionId, subscription);
@@ -864,7 +888,11 @@ export class ConversationTopicPublisher {
     };
 
     const base = params.base;
+    // Host-owned preparation metadata is seeded outside the conversation event log. A matching
+    // transcript watermark therefore cannot prove that a reconnecting client has the latest
+    // preparing/failed state; send an authoritative snapshot while that metadata is present.
     const resumable =
+      !this.worktreePreparationWasSeeded &&
       base !== undefined &&
       base.logEpoch === this.logEpoch &&
       base.seq >= this.floorSeq &&
@@ -1024,6 +1052,7 @@ export class ConversationTopicPublisher {
     const base = request.base;
     const resumable =
       !request.forceSnapshot &&
+      !this.worktreePreparationWasSeeded &&
       base !== null &&
       base.logEpoch === this.logEpoch &&
       base.seq >= this.floorSeq &&
@@ -1142,6 +1171,7 @@ export class ConversationTopicPublisher {
     deliveryKind: TopicFrameDeliveryKind,
   ): TopicFrameReservation<ConversationTopicFrame> {
     let committed = false;
+    const snapshotRequestGeneration = subscription.snapshotRequestGeneration;
     const reservation: TopicFrameReservation<ConversationTopicFrame> = {
       deliveryKind,
       logicalFrameId: `${subscription.subscriptionId}-lf-${this.nextLogicalFrameSerial++}`,
@@ -1157,7 +1187,11 @@ export class ConversationTopicPublisher {
         }
         subscription.sentSeq = frame.toSeq;
         subscription.inFlight = null;
-        if (snapshotRecovery) {
+        if (subscription.snapshotRequestGeneration > snapshotRequestGeneration) {
+          // Metadata may have changed while this frame waited for transport admission. Keep the
+          // current ACK/resync reservation intact, then send a fresh authoritative snapshot.
+          subscription.resyncRequired = true;
+        } else if (snapshotRecovery) {
           // While a snapshot is in flight, resyncRequired stops accepting deltas.
           // If the authoritative watermark advances again, the next reservation must send the latest snapshot.
           subscription.resyncRequired = this.currentSeq > frame.toSeq;

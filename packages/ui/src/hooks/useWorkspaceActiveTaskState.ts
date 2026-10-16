@@ -59,6 +59,8 @@ function areResolvedTaskMetasEqual(left: ZCodeTaskMeta | null, right: ZCodeTaskM
     areTaskMetaJsonFieldsEqual(left.repairState, right.repairState) &&
     areTaskMetaJsonFieldsEqual(left.changeSummary, right.changeSummary) &&
     areTaskMetaJsonFieldsEqual(left.executionWorktree, right.executionWorktree) &&
+    // Normalized so absent ≈ false: only a real health flip (false ↔ true) counts as a change.
+    (left.executionWorktreeMissing ?? false) === (right.executionWorktreeMissing ?? false) &&
     areTaskMetaJsonFieldsEqual(left.target, right.target)
   );
 }

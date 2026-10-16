@@ -15,7 +15,9 @@ import { Button } from "@/components/ui/button.js";
 import { Cloud, Ellipsis, Folder, GitBranch, LoaderIcon } from "lucide-react";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
 import { useGlobalTaskList } from "@/hooks/useGlobalTaskList.js";
+import { useOptionalServices } from "@/hooks/useServices.js";
 import { useBaseWorkspaceServices, useWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
+import { useWorkspaceSessionsIndexItems } from "@/v4/useWorkspaceSessionsIndexItems.js";
 import { useTaskListItemContextActions } from "@/useTaskListItemContextActions.js";
 import { TaskActionMenuContent } from "@/TaskActionMenuContent.js";
 import {
@@ -196,14 +198,39 @@ export function WorkspaceHeaderTitleSection({
   const workspaceContextLabel = showRemoteWorkspaceHostLabel
     ? `${workspaceDisplayLabel} @ ${remoteWorkspaceHostLabel}`
     : workspaceDisplayLabel;
-  const workspaceBranchLabel = gitSummary.isRepository
-    ? resolveGitBranchTriggerLabel({
-        headRefType: gitSummary.headRefType,
-        currentBranchName: gitSummary.branchName,
-        detachedLabel: intl.formatMessage({ id: "git.head.detached" }),
-        fallbackLabel: intl.formatMessage({ id: "git.branchSwitcher.label" }),
-      })
-    : null;
+  // Worktree-session context (specs/composer-branch-switcher-semantics.md §3): the path button
+  // describes the active chat's execution location. A session bound to an execution worktree
+  // shows that directory and its branch; the sessions-index summary is the authoritative fact
+  // source (same as the sidebar badge and SessionPane Git Tools), never the task-list cache.
+  const agentService = useOptionalServices()?.zcodeAgentService ?? undefined;
+  const sessionIndexScopes = useMemo(
+    () =>
+      remoteSessionId && !agentService
+        ? []
+        : [
+            {
+              workspacePath: workspaceAbsPath,
+              ...(workspaceIdentity ? { workspaceIdentity } : {}),
+              ...(remoteSessionId ? { endpointKey: remoteSessionId } : {}),
+              ...(agentService ? { agentService } : {}),
+            },
+          ],
+    [agentService, remoteSessionId, workspaceAbsPath, workspaceIdentity],
+  );
+  const { items: sessionIndexItems } = useWorkspaceSessionsIndexItems(sessionIndexScopes);
+  const sessionExecutionWorktree = activeSessionId
+    ? sessionIndexItems.find((task) => task.taskId === activeSessionId)?.executionWorktree
+    : undefined;
+  const workspaceBranchLabel = sessionExecutionWorktree?.branchName
+    ? sessionExecutionWorktree.branchName
+    : gitSummary.isRepository
+      ? resolveGitBranchTriggerLabel({
+          headRefType: gitSummary.headRefType,
+          currentBranchName: gitSummary.branchName,
+          detachedLabel: intl.formatMessage({ id: "git.head.detached" }),
+          fallbackLabel: intl.formatMessage({ id: "git.branchSwitcher.label" }),
+        })
+      : null;
   const isRemoteWorkspace = Boolean(
     remoteWorkspaceHostLabel || workspaceIdentity?.trim() || remoteSessionId,
   );
@@ -432,7 +459,7 @@ export function WorkspaceHeaderTitleSection({
                   </span>
                   {workspaceContextOpen ? (
                     <WorkspaceContextPath
-                      workspacePath={workspaceAbsPath}
+                      workspacePath={sessionExecutionWorktree?.path ?? workspaceAbsPath}
                       workspaceIdentity={workspaceIdentity}
                       remoteSessionId={remoteSessionId}
                     />

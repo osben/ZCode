@@ -38,6 +38,28 @@ async function createSession(
   envelope: CommandEnvelope,
 ): Promise<CommandResult | undefined> {
   const payload = envelope.payload as CommandPayloadMap["createSession"];
+  if (payload.worktreePreparation) {
+    if (
+      payload.preparedSessionId ||
+      payload.firstInput ||
+      payload.executionWorktree ||
+      payload.config ||
+      payload.permissionScope
+    ) {
+      throw new V4InputAdmissionRejectedError(
+        "proto.invalidPayload",
+        "worktree preparation cannot include runtime or input settings",
+      );
+    }
+    if (!host.prepareWorktreeSession) {
+      throw new Error("v4 createSession requires host.prepareWorktreeSession capability");
+    }
+    const prepared = await host.prepareWorktreeSession({
+      workspaceId: payload.workspaceId,
+      ...payload.worktreePreparation,
+    });
+    return { type: "createSession", sessionId: prepared.sessionId };
+  }
   if (!host.createSessionRecord) {
     throw new Error("v4 createSession requires host.createSessionRecord capability");
   }
@@ -50,6 +72,7 @@ async function createSession(
   }
   const { sessionId } = await host.createSessionRecord({
     workspaceId: payload.workspaceId,
+    ...(payload.preparedSessionId ? { preparedSessionId: payload.preparedSessionId } : {}),
     ...(payload.permissionScope ? { permissionScope: payload.permissionScope } : {}),
     mcpServers: payload.mcpServers,
     ...(payload.executionWorktree ? { executionWorktree: payload.executionWorktree } : {}),
@@ -185,6 +208,19 @@ async function deleteSession(
   return undefined;
 }
 
+async function updateWorktreePreparation(
+  host: V4CommandCoreHost,
+  envelope: CommandEnvelope,
+): Promise<CommandResult | undefined> {
+  const sessionId = envelope.sessionId;
+  if (!sessionId || !host.updateWorktreePreparation) {
+    throw new Error("v4 worktree preparation update requires a Host-owned session");
+  }
+  const payload = envelope.payload as CommandPayloadMap["updateWorktreePreparation"];
+  await host.updateWorktreePreparation(sessionId, payload);
+  return { type: "worktreePreparationUpdated", status: payload.status };
+}
+
 async function discardSharedContext(
   host: V4CommandCoreHost,
   envelope: CommandEnvelope,
@@ -207,5 +243,6 @@ export const sessionMgmtHandlers = {
   createSession,
   renameSession,
   deleteSession,
+  updateWorktreePreparation,
   discardSharedContext,
 };

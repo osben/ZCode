@@ -23,6 +23,7 @@ import { useServices } from "@/hooks/useServices.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { getErrorMessage } from "@/lib/errorMessage.js";
 import { logger } from "@/logger.js";
+import { worktreeDirectoryNameOf } from "@/components/WorktreeTaskMarker.js";
 
 interface UseGitBranchSwitcherOptions {
   workspacePath: string;
@@ -56,6 +57,11 @@ export function useGitBranchSwitcher({
   const [branchesResult, setBranchesResult] = useState<GitLocalBranchListResult | null>(null);
   const [loadingBranches, setLoadingBranches] = useState(false);
   const [mutationPending, setMutationPending] = useState(false);
+  // Branch name → worktree directory for branches checked out in ANOTHER worktree: git refuses to
+  // check them out here, so switch surfaces disable them with the directory as the hint.
+  const [worktreeOccupancy, setWorktreeOccupancy] = useState<ReadonlyMap<string, string>>(
+    new Map(),
+  );
 
   const resetSwitchAssistState = useCallback(() => {
     setSwitchAssistStep(null);
@@ -89,6 +95,7 @@ export function useGitBranchSwitcher({
     setCreateDialogOpen(false);
     setCreateBranchName("");
     setBranchesResult(null);
+    setWorktreeOccupancy(new Map());
     resetSwitchAssistState();
   }, [resetSwitchAssistState, workspacePath]);
 
@@ -113,11 +120,31 @@ export function useGitBranchSwitcher({
     if (!open) {
       return;
     }
+    let cancelled = false;
 
     // Fetch the branch list every time the dropdown opens so a successful switch does not reuse
     // the snapshot from the previous opening.
     void loadBranches();
-  }, [loadBranches, open]);
+    // Occupancy is a hint: on failure the list behaves exactly as before (switchable, git rejects).
+    void gitService
+      .listWorktrees({ workspacePath })
+      .then((list) => {
+        if (cancelled) return;
+        const next = new Map<string, string>();
+        for (const entry of list.worktrees) {
+          if (entry.branchName && !entry.isCurrent) {
+            next.set(entry.branchName, worktreeDirectoryNameOf(entry.path));
+          }
+        }
+        setWorktreeOccupancy(next);
+      })
+      .catch(() => {
+        if (!cancelled) setWorktreeOccupancy(new Map());
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [gitService, loadBranches, open, workspacePath]);
 
   const notifyMutationFailure = useCallback(
     (result: GitBranchMutationResult) => {
@@ -400,6 +427,7 @@ export function useGitBranchSwitcher({
     branchesResult,
     loadingBranches,
     mutationPending,
+    worktreeOccupancy,
     switchBranch,
     createBranchAndSwitch,
     openSwitchCommitDialog,

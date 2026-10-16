@@ -260,8 +260,16 @@ export interface AgentRuntimeConfig {
    * workspace (docs/superpowers/specs/2026-10-11-command-center-worktrees-themes-design.md).
    * Persisted as session.execution_directory/execution_branch; cold resume restores
    * workingDirectory from it. Session listing identity still uses workspacePath.
+   * `missing` marks a worktree directory that vanished out-of-band (resume falls back to the
+   * parent workspace but keeps the fact for the wire meta and the env bullet);
+   * `workspacePath` is the parent workspace reference, never sent on the wire.
    */
-  executionWorktree?: { path: string; branchName?: string };
+  executionWorktree?: {
+    path: string;
+    branchName?: string;
+    missing?: boolean;
+    workspacePath?: string;
+  };
   /** Used only for persistence isolation; file and command execution still use workingDirectory. */
   workspaceIdentity?: WorkspaceId;
   envInfo?: EnvInfo; // Optional, will be auto-detected if not provided

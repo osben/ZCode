@@ -6,6 +6,7 @@ import {
   stabilizeTaskListItems,
 } from "@/v4/taskListItemStabilization.js";
 import { attachTaskListRowActivity } from "@/v4/taskListRowActivity.js";
+import { areTaskListItemsEquivalent as areRefreshSignatureItemsEquivalent } from "@/hooks/workspaceTaskListRefreshSignatures.js";
 
 function createTask(overrides: Partial<ZCodeTaskMeta> = {}): ZCodeTaskMeta {
   return {
@@ -87,9 +88,7 @@ describe("buildTaskListItemIdentityKey", () => {
 
 describe("areTaskListItemsEquivalent", () => {
   it("字段数量不同即判为不等价", () => {
-    expect(
-      areTaskListItemsEquivalent(createTask(), createTask({ unreadAt: 7 })),
-    ).toBe(false);
+    expect(areTaskListItemsEquivalent(createTask(), createTask({ unreadAt: 7 }))).toBe(false);
   });
 
   // 回归锁：稳定化的全部价值押在这条等价判断上，一旦退化只表现为「整列表闪一下」，
@@ -122,6 +121,22 @@ describe("areTaskListItemsEquivalent", () => {
     const left = { ...createTask(), workspaceIdentity: undefined } as ZCodeTaskMeta;
 
     expect(areTaskListItemsEquivalent(left, createTask())).toBe(true);
+  });
+
+  it("worktree 健康状态变化时 display-cache 比较判为不等价", () => {
+    const healthy = createTask({
+      executionWorktree: { path: "/repo/.worktrees/task" },
+    } as Partial<ZCodeTaskMeta>);
+    const missing = createTask({
+      executionWorktree: { path: "/repo/.worktrees/task" },
+      executionWorktreeMissing: true,
+    } as Partial<ZCodeTaskMeta>);
+    const restored = createTask({
+      executionWorktree: { path: "/repo/.worktrees/task" },
+    } as Partial<ZCodeTaskMeta>);
+
+    expect(areRefreshSignatureItemsEquivalent([healthy], [missing])).toBe(false);
+    expect(areRefreshSignatureItemsEquivalent([missing], [restored])).toBe(false);
   });
 
   it("嵌套数组顺序变化仍判为不等价", () => {

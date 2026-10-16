@@ -36,6 +36,8 @@ const remoteTask = {
   },
   sourceAvailability: "online" as const,
   liveStatus: "running" as const,
+  executionWorktree: { path: "/work/demo/.worktrees/task", branchName: "feature/task" },
+  executionWorktreeMissing: true,
   activity: {
     phase: "running" as const,
     lastActivityAt: 2,
