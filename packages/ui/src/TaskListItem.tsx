@@ -33,6 +33,7 @@ import { useModelTrajectoryStore } from "@/store/modelTrajectoryStore.js";
 import { buildTaskFeedbackDescription } from "@/lib/taskFeedbackDraft.js";
 import { toast } from "@/components/ui/toast.js";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
+import { isTaskBranchMerged } from "@/lib/taskBranchMergeStatus.js";
 import {
   useBranchMergeStatusStore,
   selectBranchMergeStatus,
@@ -402,7 +403,9 @@ export const MemoTaskItem = memo(function TaskListItem({
       buildTaskWorkspaceKey(task.workspacePath, task.workspaceIdentity),
     ),
   );
-  const branchMergedBadge = branchMergeStatus?.state === "merged" ? <BranchMergedBadge /> : null;
+  const branchMergedBadge = isTaskBranchMerged(task, branchMergeStatus) ? (
+    <BranchMergedBadge />
+  ) : null;
   // Workflow run row: a second channel under the title,
   // independent from the leading 16px slot (error > unread > spinner). Mount only when the session has a run summary.
   const hasWorkflowRunLines = taskActivity?.workflowActivity !== undefined;
@@ -481,30 +484,12 @@ export const MemoTaskItem = memo(function TaskListItem({
   // to avoid showing a button that gives no feedback. Local tasks do not depend on an open tab and can still open by path directly.
   const canOpenFileTree =
     Boolean(onOpenFileTree) && (!task.workspaceIdentity?.trim() || Boolean(remoteSessionId));
-  const fileTreeActionNode =
-    canOpenFileTree &&
-    !workspaceActionsDisabled &&
-    !hasPendingInteraction &&
-    (shouldMountWorkspaceTaskActions || isMobileActive) ? (
-      <span className="inline-flex shrink-0">
-        {/* Bugfix：The Pinned file-tree button had custom hover styling and a tooltip, making it visually inconsistent with the same action in Grouped tasks.
-            Reuse the shared action to align bg-hover, sizing, and pointer behavior. */}
-        <TaskRowActionButton
-          label={intl.formatMessage({ id: "git.action.showTree" })}
-          onClick={handleOpenFileTree}
-          showTooltip
-        >
-          <ListTree className="size-3.5" />
-        </TaskRowActionButton>
-      </span>
-    ) : null;
-  const taskActionGroupNode =
-    fileTreeActionNode || archiveActionNode ? (
-      <span data-task-row-actions="true" className="flex shrink-0 items-center gap-0.5">
-        {fileTreeActionNode}
-        {archiveActionNode}
-      </span>
-    ) : null;
+  const hasLeadingStatus = leadingIndicator !== "none";
+  const shouldRenderPinActionOnLeft =
+    showPinAction &&
+    (showPinnedState || (shouldSuppressWorkspaceTaskMetadata && !hasLeadingStatus));
+  const shouldRenderPinActionOnRight =
+    showPinAction && shouldSuppressWorkspaceTaskMetadata && hasLeadingStatus;
   const pinActionButton = (
     <Button
       type="button"
@@ -524,10 +509,31 @@ export const MemoTaskItem = memo(function TaskListItem({
       <Pin className="size-4" />
     </Button>
   );
-  // hover:none keeps the right-side task actions visible; if it also takes over the leading slot,
-  // Pin permanently replaces error, unread, and loading states on touch devices.
-  const shouldRenderPinAction =
-    showPinAction && (showPinnedState || shouldSuppressWorkspaceTaskMetadata);
+  const fileTreeActionNode =
+    canOpenFileTree &&
+    !workspaceActionsDisabled &&
+    !hasPendingInteraction &&
+    (shouldMountWorkspaceTaskActions || isMobileActive) ? (
+      <span className="inline-flex shrink-0">
+        {/* Bugfix：The Pinned file-tree button had custom hover styling and a tooltip, making it visually inconsistent with the same action in Grouped tasks.
+            Reuse the shared action to align bg-hover, sizing, and pointer behavior. */}
+        <TaskRowActionButton
+          label={intl.formatMessage({ id: "git.action.showTree" })}
+          onClick={handleOpenFileTree}
+          showTooltip
+        >
+          <ListTree className="size-3.5" />
+        </TaskRowActionButton>
+      </span>
+    ) : null;
+  const taskActionGroupNode =
+    fileTreeActionNode || archiveActionNode || shouldRenderPinActionOnRight ? (
+      <span data-task-row-actions="true" className="flex shrink-0 items-center gap-0.5">
+        {fileTreeActionNode}
+        {archiveActionNode}
+        {shouldRenderPinActionOnRight ? pinActionButton : null}
+      </span>
+    ) : null;
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -586,7 +592,7 @@ export const MemoTaskItem = memo(function TaskListItem({
               aria-hidden="true"
               className={cn(
                 "flex size-4 items-center justify-center transition-opacity",
-                shouldRenderPinAction && "hidden",
+                shouldRenderPinActionOnLeft && "hidden",
                 isMobileActive && "invisible",
               )}
             >
@@ -606,7 +612,7 @@ export const MemoTaskItem = memo(function TaskListItem({
                 <span data-idle-indicator="true" className="h-1.5 w-1.5 rounded-full bg-border" />
               ) : null}
             </span>
-            {shouldRenderPinAction ? (
+            {shouldRenderPinActionOnLeft ? (
               <ControlHintTooltip
                 title={
                   workspaceActionsDisabledReason ??

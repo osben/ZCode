@@ -19,6 +19,7 @@ import {
 } from "@/lib/taskListItemPresentation.js";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
 import { buildTaskFeedbackDescription } from "@/lib/taskFeedbackDraft.js";
+import { isTaskBranchMerged } from "@/lib/taskBranchMergeStatus.js";
 import { useTaskListItemContextActions } from "@/useTaskListItemContextActions.js";
 import { useFeedbackStore } from "@/feedback/feedbackStore.js";
 import { getTaskListAttention, getTaskListRowActivity } from "@/v4/taskListRowActivity.js";
@@ -146,15 +147,15 @@ function GroupedTaskRowComponent({
           // list so the brand color's meaning does not drift across themes.
           "bg-sky-500 dark:bg-sky-400"
         : null;
+  const hasLeadingStatus = leadingIndicator === "loading" || statusDotClassName !== null;
   const canShowHoverActions = !dragOverlay;
   // Merged ranks below attention/interaction: the row keeps a single right-side
   // status badge, and the merged details always stay available in the popup.
-  const branchMergedBadge =
-    branchMergeStatus?.state === "merged" ? (
-      <BranchMergedBadge
-        className={canShowHoverActions ? "group-hover/task-row:hidden" : undefined}
-      />
-    ) : null;
+  const branchMergedBadge = isTaskBranchMerged(task, branchMergeStatus) ? (
+    <BranchMergedBadge
+      className={canShowHoverActions ? "group-hover/task-row:hidden" : undefined}
+    />
+  ) : null;
   // Workflow-run row: grouped rows also place it below the title;
   // the drag overlay is display-only and does not attach confirmation side effects or click actions.
   const workflowRunLinesNode =
@@ -419,11 +420,11 @@ function GroupedTaskRowComponent({
           ) : !shouldSuppressTaskMetadata ? (
             branchMergedBadge
           ) : null}
-          {!shouldSuppressTaskMetadata ? (
+          {!shouldSuppressTaskMetadata || hasLeadingStatus ? (
             <span className="flex shrink-0 items-center gap-1">
-              {leadingIndicator === "loading" ? (
+              {hasLeadingStatus && leadingIndicator === "loading" ? (
                 <LoaderIcon className="size-3.5 animate-spin text-foreground-subtle" />
-              ) : statusDotClassName ? (
+              ) : hasLeadingStatus && statusDotClassName ? (
                 <span
                   aria-hidden="true"
                   className="flex size-4 shrink-0 items-center justify-center"

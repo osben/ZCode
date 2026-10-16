@@ -53,6 +53,14 @@ describe("任务列表归档二次确认 E2E", () => {
     expect(taskId).toBeTruthy();
 
     await hoverConversationTaskRow(taskId as string);
+    await markTaskUnread(taskId as string);
+    await hoverConversationTaskRow(taskId as string);
+    await browser.waitUntil(
+      async () =>
+        JSON.stringify(await readHoveredUnreadAndPinState(taskId as string)) ===
+        JSON.stringify({ unreadVisible: true, pinActionVisible: true }),
+      { timeout: 10_000, timeoutMsg: "hover hid the unread indicator or pin action" },
+    );
     const hoverCard = await waitForTaskHoverCard();
     expect(hoverCard.status).toBeTruthy();
     expect(hoverCard.text.length).toBeGreaterThan(0);
@@ -100,6 +108,70 @@ async function useProjectConversationTaskView() {
       }),
     );
   });
+}
+
+async function markTaskUnread(taskId: string) {
+  const opened = await browser.execute(
+    (taskTestId) => {
+      const row = document.querySelector<HTMLElement>(`[data-testid="${taskTestId}"]`);
+      if (!row) return false;
+      const rect = row.getBoundingClientRect();
+      row.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          button: 2,
+          clientX: rect.left + rect.width / 2,
+          clientY: rect.top + rect.height / 2,
+        }),
+      );
+      return true;
+    },
+    testId(TID_TASK_ITEM, taskId),
+  );
+  expect(opened).toBe(true);
+
+  await browser.waitUntil(
+    () =>
+      browser.execute(() =>
+        Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).some((item) =>
+          ["Mark as unread", "标记为未读"].includes((item.textContent ?? "").trim()),
+        ),
+      ),
+    { timeout: 10_000, timeoutMsg: "task menu did not expose Mark as unread" },
+  );
+  const selected = await browser.execute(() => {
+    const item = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+      (candidate) =>
+        ["Mark as unread", "标记为未读"].includes((candidate.textContent ?? "").trim()),
+    );
+    item?.click();
+    return Boolean(item);
+  });
+  expect(selected).toBe(true);
+}
+
+async function readHoveredUnreadAndPinState(taskId: string) {
+  return browser.execute(
+    (taskTestId) => {
+      const row = document.querySelector<HTMLElement>(`[data-testid="${taskTestId}"]`);
+      const unread = row?.querySelector<HTMLElement>('[data-unread-indicator="true"]');
+      const pin = row?.querySelector<HTMLElement>('button[aria-label="Pin"]');
+      return {
+        unreadVisible: Boolean(
+          unread &&
+          getComputedStyle(unread).display !== "none" &&
+          getComputedStyle(unread).visibility !== "hidden",
+        ),
+        pinActionVisible: Boolean(
+          pin &&
+          getComputedStyle(pin).display !== "none" &&
+          getComputedStyle(pin).visibility !== "hidden",
+        ),
+      };
+    },
+    testId(TID_TASK_ITEM, taskId),
+  );
 }
 
 async function startConversationTaskDraft() {

@@ -10,6 +10,7 @@ import { formatTaskRelativeTime } from "@/lib/taskListItemPresentation.js";
 import { getTaskChangeSummary } from "@/lib/taskChangeSummary.js";
 import { providerBrandIconSrc } from "@/lib/oauthProviderIcon.js";
 import { parseModelPickerValue } from "@/lib/zcodeSessionProjection.js";
+import { isTaskBranchMerged } from "@/lib/taskBranchMergeStatus.js";
 import { formatGroupedTaskHoverChangeParts } from "@/workspace-grouped-tasks/task-row-tooltip.js";
 import type { TaskListRowActivity } from "@/v4/taskListRowActivity.js";
 
@@ -35,9 +36,14 @@ export function TaskSidebarHoverCard({
   const status = resolveStatus(task, activity, attentionLabel, intl);
   const modelAndEffort = resolveModelAndEffort(task, intl);
   const changeParts = formatGroupedTaskHoverChangeParts(getTaskChangeSummary(task));
-  const isBranchMerged = branchMergeStatus?.state === "merged";
+  const isBranchMerged = isTaskBranchMerged(task, branchMergeStatus);
   const branchLabel = task.executionWorktree?.branchName ?? branchMergeStatus?.headRef;
   const lastActivity = activity?.lastActivityAt ?? task.updatedAt;
+  const taskTitle =
+    task.title ||
+    intl.formatMessage({
+      id: task.forkedFromTaskId ? "taskList.forkedUntitled" : "taskList.untitled",
+    });
 
   return (
     <TooltipContent
@@ -52,7 +58,7 @@ export function TaskSidebarHoverCard({
         className="flex min-w-0 flex-col gap-2.5"
       >
         <div className="flex min-w-0 items-center gap-2">
-          <span className="min-w-0 truncate text-ui-base text-foreground">{task.title}</span>
+          <span className="min-w-0 truncate text-ui-base text-foreground">{taskTitle}</span>
           {task.executionWorktree ? <WorktreeTaskMarker task={task} /> : null}
           <span className="ml-auto shrink-0 text-foreground-subtle">
             {formatTaskRelativeTime(lastActivity, intl)}

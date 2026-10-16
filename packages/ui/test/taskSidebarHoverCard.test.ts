@@ -43,6 +43,8 @@ function renderCard(
             "taskList.status.completed": "Done",
             "chat.toolbar.thoughtLevel.value.xhigh": "Extra High",
             "taskList.branchMergedTag": "Merged",
+            "taskList.untitled": "Untitled",
+            "taskList.forkedUntitled": "Forked task",
           })[id] ?? id,
       },
       ...extra,
@@ -114,6 +116,37 @@ test("worktree branch wins over merge-status head and the worktree marker render
   expect(html).toContain("<img");
   expect(html).toContain("data:image/svg+xml");
   expect(html).not.toContain("lucide-cpu");
+});
+
+test("worktree merge status applies only when its head matches the worktree branch", () => {
+  const task = baseTask({
+    executionWorktree: { path: "/tmp/worktree", branchName: "feature/worktree" },
+  });
+  const status = {
+    state: "merged" as const,
+    baseRef: "origin/main",
+    headRef: "feature/parent",
+    lastCommitAt: null,
+  };
+
+  const mismatched = renderCard(task, { branchMergeStatus: status });
+  expect(mismatched).toContain("feature/worktree");
+  expect(mismatched).not.toContain("Merged");
+  expect(mismatched).toContain("lucide-git-branch");
+
+  const matching = renderCard(task, {
+    branchMergeStatus: { ...status, headRef: "feature/worktree" },
+  });
+  expect(matching).toContain("Merged");
+  expect(matching).toContain("lucide-git-merge");
+  expect(matching).not.toContain("feature/worktree");
+});
+
+test("empty task titles use the same localized fallback as sidebar rows", () => {
+  expect(renderCard(baseTask({ title: "" }))).toContain("Untitled");
+  expect(renderCard(baseTask({ title: "", forkedFromTaskId: "parent-task" }))).toContain(
+    "Forked task",
+  );
 });
 
 test("stats survive without any branch source; unknown provider falls back to Cpu", () => {

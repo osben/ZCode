@@ -9,6 +9,7 @@ The hover card is a three-line detail view of one task; the sidebar row itself s
 run-state signaling (spinner, unread dot, markers). Card layout, top to bottom:
 
 1. `[session title] [worktree marker when the task has an execution worktree] [relative time]`
+   - Empty titles use the same localized Untitled or Forked Untitled label as the sidebar row.
    - Title truncates; the worktree marker reuses the shared `WorktreeTaskMarker` (glyph, missing
      state, and branch+directory tooltip ownership; specs/worktree-icon-visibility.md).
    - Relative time keeps the existing `formatTaskRelativeTime` format and stays right-aligned.
@@ -17,7 +18,8 @@ run-state signaling (spinner, unread dot, markers). Card layout, top to bottom:
 2. `[branch name] [git change stats]`
    - Branch source precedence: `task.executionWorktree.branchName` (authoritative for worktree
      sessions) then `branchMergeStatus.headRef`. Merged state keeps the GitMerge glyph and the
-     merged tag. Change stats (`+N −N`, existing `getTaskChangeSummary` source) are right-aligned
+     merged tag only when the merge status head matches the selected worktree branch. Otherwise
+     show the worktree branch as unmerged. Change stats (`+N −N`, existing `getTaskChangeSummary` source) are right-aligned
      in the same row and render whenever available, not only when merged.
    - If no branch source exists, the row falls back to the stats-only row with the FileDiff glyph
      so diff facts never disappear silently.
@@ -31,6 +33,9 @@ run-state signaling (spinner, unread dot, markers). Card layout, top to bottom:
 The workspace row (folder + workspace label) is removed: the card lives inside one workspace
 group, so the workspace is context, not content.
 
+Run-state indicators remain visible on the sidebar row while hover/focus actions are shown; opening
+the detail card must not hide the running spinner or error/unread marker.
+
 ## Acceptance scenarios
 
 1. Hovering a completed task shows title + time on line 1, branch + `+N −N` on line 2, provider
@@ -41,3 +46,8 @@ group, so the workspace is context, not content.
 4. An unknown provider id falls back to the Cpu glyph; known ids render the brand asset.
 5. The run-status chip no longer renders; `data-task-hover-status` still reflects the resolved
    state for tests/probes.
+6. A worktree whose branch differs from the workspace merge-status head displays its own branch and
+   no merged tag; a matching worktree branch displays the merged tag.
+7. An empty normal or forked task title uses the same localized fallback as its row.
+8. Hovering or focusing a running/error task keeps its row status indicator visible beside actions
+   in both grouped and regular task rows.

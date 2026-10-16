@@ -58,6 +58,15 @@ describe("TSL37：Group 连续归档不被旧 membership 快照复活", () => {
     await activateGroupedView();
     await waitForGroupedTaskIds(TASK_IDS);
 
+    await markGroupedTaskUnread(TASK_TITLE_MARQUEE_SHORT_ID);
+    await hoverGroupedTask(TASK_TITLE_MARQUEE_SHORT_ID);
+    await browser.waitUntil(
+      async () =>
+        JSON.stringify(await readGroupedUnreadAndCloseState(TASK_TITLE_MARQUEE_SHORT_ID)) ===
+        JSON.stringify({ unreadVisible: true, closeActionVisible: true }),
+      { timeout: 10_000, timeoutMsg: "grouped hover hid the unread indicator or close action" },
+    );
+
     await armMembershipHold();
     await waitForHeldMembershipSnapshot();
 
@@ -74,6 +83,75 @@ describe("TSL37：Group 连续归档不被旧 membership 快照复活", () => {
     await waitForArchivedTaskTitles(TASK_TITLES);
   });
 });
+
+async function markGroupedTaskUnread(taskId: string) {
+  const opened = await browser.execute((id) => {
+    const row = Array.from(document.querySelectorAll<HTMLElement>("[data-grouped-task-key]")).find(
+      (candidate) => candidate.dataset.groupedTaskKey?.includes(id),
+    );
+    if (!row) return false;
+    const rect = row.getBoundingClientRect();
+    row.dispatchEvent(
+      new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        button: 2,
+        clientX: rect.left + rect.width / 2,
+        clientY: rect.top + rect.height / 2,
+      }),
+    );
+    return true;
+  }, taskId);
+  expect(opened).toBe(true);
+  await browser.waitUntil(
+    () =>
+      browser.execute(() =>
+        Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).some((item) =>
+          ["Mark as unread", "标记为未读"].includes((item.textContent ?? "").trim()),
+        ),
+      ),
+    { timeout: 10_000, timeoutMsg: "grouped task menu did not expose Mark as unread" },
+  );
+  const selected = await browser.execute(() => {
+    const item = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+      (candidate) =>
+        ["Mark as unread", "标记为未读"].includes((candidate.textContent ?? "").trim()),
+    );
+    item?.click();
+    return Boolean(item);
+  });
+  expect(selected).toBe(true);
+}
+
+async function hoverGroupedTask(taskId: string) {
+  const row = await $(`[data-grouped-task-key*="${taskId}"]`);
+  await row.waitForDisplayed({ timeout: 10_000 });
+  await row.moveTo();
+}
+
+async function readGroupedUnreadAndCloseState(taskId: string) {
+  return browser.execute((id) => {
+    const row = Array.from(document.querySelectorAll<HTMLElement>("[data-grouped-task-key]")).find(
+      (candidate) => candidate.dataset.groupedTaskKey?.includes(id),
+    );
+    const unread = row?.querySelector<HTMLElement>('[data-unread-indicator="true"]');
+    const close = row?.querySelector<HTMLElement>(
+      'button[aria-label="Close"], button[aria-label="关闭"]',
+    );
+    return {
+      unreadVisible: Boolean(
+        unread &&
+        getComputedStyle(unread).display !== "none" &&
+        getComputedStyle(unread).visibility !== "hidden",
+      ),
+      closeActionVisible: Boolean(
+        close &&
+        getComputedStyle(close).display !== "none" &&
+        getComputedStyle(close).visibility !== "hidden",
+      ),
+    };
+  }, taskId);
+}
 
 async function activateGroupedView() {
   await browser.execute(() => {
