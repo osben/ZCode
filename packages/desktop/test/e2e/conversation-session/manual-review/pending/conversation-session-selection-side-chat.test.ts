@@ -1,4 +1,5 @@
 import {
+  TID_CHAT_MODEL_SELECT_TRIGGER,
   TID_PROMPT_SUGGESTION_PANEL,
   TID_V4_COMPOSER_INPUT,
   TID_V4_COMPOSER_SEND,
@@ -16,6 +17,32 @@ import {
 const PARENT_MARKER = "E2E_SSC_PARENT_SELECTION_MARKER";
 const MAIN_DRAFT = "E2E_SSC_MAIN_DRAFT_KEEP";
 const SIDE_DRAFT = "E2E_SSC_SIDE_DRAFT_KEEP";
+
+async function expectModelPickerCloseToRestoreComposerFocus(paneTestId: string): Promise<void> {
+  const trigger = $(
+    `[data-testid="${paneTestId}"] [data-testid="${TID_CHAT_MODEL_SELECT_TRIGGER}"]`,
+  );
+  await trigger.waitForClickable({ timeout: 15000 });
+  await trigger.click();
+  await browser.keys("Escape");
+  await browser.waitUntil(
+    async () =>
+      browser.execute((nextPaneTestId, triggerTestId, inputTestId) => {
+        const pane = document.querySelector<HTMLElement>(`[data-testid="${nextPaneTestId}"]`);
+        const input = pane?.querySelector<HTMLElement>(`[data-testid="${inputTestId}"]`);
+        return (
+          document.querySelector(`[data-testid="${triggerTestId}"][aria-expanded="true"]`) ===
+            null &&
+          input !== null &&
+          document.activeElement === input
+        );
+      }, paneTestId, TID_CHAT_MODEL_SELECT_TRIGGER, TID_V4_COMPOSER_INPUT),
+    {
+      timeout: 10000,
+      timeoutMsg: `model picker close did not restore focus to ${paneTestId}`,
+    },
+  );
+}
 
 describe("框选文字副屏会话 manual review", () => {
   after(async () => {
@@ -91,6 +118,14 @@ describe("框选文字副屏会话 manual review", () => {
       "辅助对话 2",
       "辅助对话 3",
     ]);
+
+    // SSC34: closing a picker in a secondary composer must restore focus to that composer,
+    // without moving it to the first (main) composer mounted in the document.
+    await expectModelPickerCloseToRestoreComposerFocus(
+      testId(TID_V4_SESSION_PANE, "workspace-main"),
+    );
+    await activateSidePaneTab(threeSides[2]!.tabId);
+    await expectModelPickerCloseToRestoreComposerFocus(threeSides[2]!.paneTestId);
 
     await activateSidePaneTab(recreatedSide.tabId);
     await selectMainTimelineText("E2E_SSC_PARENT");

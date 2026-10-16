@@ -40,10 +40,7 @@ import {
   TID_CHAT_MODEL_SELECT_TRIGGER,
   testId,
 } from "@zcode/shared";
-import {
-  isCoarseTouchDevice,
-  shouldRestoreChatInputFocusAfterPickerClose,
-} from "@/lib/pickerFocus.js";
+import { restoreComposerInputFocusAfterPickerClose } from "@/lib/pickerFocus.js";
 import { RollingToolbarLabel } from "@/chat-input-toolbar/RollingToolbarLabel.js";
 import { ModelInputCapabilityBadge } from "@/components/ModelInputCapabilityBadge.js";
 
@@ -559,17 +556,10 @@ export const ModelConfigSelect = memo(function ModelConfigSelectComponent({
               return;
             }
             event.preventDefault();
-            if (
-              !shouldRestoreChatInputFocusAfterPickerClose({
-                isCoarseTouchDevice: isCoarseTouchDevice(),
-              })
-            ) {
-              return;
-            }
-            // 聊天输入框的 data-testid 挂在 contenteditable 自身上，不是父节点。
-            // 这里与 mode 选择器保持同一个入口，避免关闭模型弹层后找不到输入框而丢失焦点。
-            const input = document.querySelector<HTMLElement>(focusSelectorOnClose);
-            input?.focus();
+            restoreComposerInputFocusAfterPickerClose({
+              anchor: triggerRef?.current ?? null,
+              fallbackSelector: focusSelectorOnClose,
+            });
           }}
         >
           {leadingItems !== undefined && leadingItems.length > 0 ? (
