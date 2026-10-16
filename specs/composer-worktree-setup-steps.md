@@ -154,6 +154,8 @@ early transcript persistence or a second accepted-input store.
    snapshot. A reconnecting subscriber with an older transcript sequence also receives a fresh
    snapshot whenever the session has had Host-owned preparation metadata, including after activation
    clears the marker, because metadata changes do not advance the conversation sequence.
+   Same-subscription resync must also return that authoritative snapshot, even when the client base
+   matches the current transcript sequence.
    If metadata changes while a subscribe/resync frame is awaiting ACK/outbox admission, preserve that
    reservation; after it commits, send the updated snapshot before any later deltas.
 8. Existing matching worktree activates in the same session without creating a second directory.

@@ -241,6 +241,27 @@ describe("worktree preparation subscriber refresh", () => {
       expect(resumed.frame.payload.snapshot.meta.worktreePreparation).toBeUndefined();
     }
   });
+
+  it("same-sub resync sends a fresh snapshot after preparation metadata was cleared", () => {
+    const publisher = new ConversationTopicPublisher("session-1", "epoch-1");
+    const first = publisher.subscribe({ connectionId: "conn-1" });
+    publisher.seedWorktreePreparation({
+      status: "preparing",
+      branchName: "zcode/fresh-otter",
+      targetPath: "/tmp/fresh-otter",
+    });
+    publisher.seedWorktreePreparation(null);
+
+    const resynced = publisher.resyncReserved(first.ack.subscriptionId, {
+      base: { logEpoch: first.ack.logEpoch, seq: first.ack.seq },
+    });
+
+    expect(resynced?.ack.mode).toBe("snapshot");
+    expect(resynced?.reservation?.frame.payload.kind).toBe("snapshot");
+    if (resynced?.reservation?.frame.payload.kind === "snapshot") {
+      expect(resynced.reservation.frame.payload.snapshot.meta.worktreePreparation).toBeUndefined();
+    }
+  });
 });
 
 describe("subscribe(base) 裁决矩阵", () => {

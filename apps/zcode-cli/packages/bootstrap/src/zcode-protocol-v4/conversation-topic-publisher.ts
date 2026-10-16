@@ -1052,6 +1052,7 @@ export class ConversationTopicPublisher {
     const base = request.base;
     const resumable =
       !request.forceSnapshot &&
+      !this.worktreePreparationWasSeeded &&
       base !== null &&
       base.logEpoch === this.logEpoch &&
       base.seq >= this.floorSeq &&
