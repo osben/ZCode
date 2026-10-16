@@ -281,7 +281,7 @@ test("built CLI embeds the compact registry without a runtime Fig dependency", a
   }
 
   assert.match(bundle, /"@commercelayer\/cli"\s*:/);
-  assert.match(bundle, /(?:"git"|git)\s*:\s*\[\["git"\]/);
+  assert.match(bundle, /(?:"git"|git)\s*:\s*['"]\[\[(?:\\)?"git(?:\\)?"\]/);
   assert.doesNotMatch(bundle, /node_modules\/@withfig\/autocomplete/);
   assert.doesNotMatch(bundle, /@withfig\/autocomplete\/build/);
 });
