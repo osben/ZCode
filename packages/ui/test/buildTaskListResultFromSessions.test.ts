@@ -65,6 +65,22 @@ describe("buildTaskListResult", () => {
     expect(r.items.map((t) => t.taskId).sort()).toEqual(["t2", "t3"]);
   });
 
+  it("joins worktree health from the live session summary and clears stale missing state", () => {
+    const executionWorktree = { path: "/ws/.worktrees/task", branchName: "feature/task" };
+    const missing = build("active", {
+      taskIndexItems: [task("t1", { executionWorktreeMissing: true })],
+      sessions: [task("t1", { executionWorktree, executionWorktreeMissing: true })],
+    });
+    expect(missing.items[0]).toMatchObject({ executionWorktree, executionWorktreeMissing: true });
+
+    const healthy = build("active", {
+      taskIndexItems: [task("t1", { executionWorktreeMissing: true })],
+      sessions: [task("t1", { executionWorktree })],
+    });
+    expect(healthy.items[0]).toMatchObject({ executionWorktree });
+    expect(healthy.items[0]?.executionWorktreeMissing).toBeUndefined();
+  });
+
   it("deleted tombstone 优先于所有 kind，普通 archived 对照仍只在归档列表", () => {
     const extra = {
       pinnedIds: new Set(["t2"]),

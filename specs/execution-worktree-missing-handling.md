@@ -46,6 +46,7 @@ executionWorktreeMissing: z.boolean().optional(),
 - **Owner of the fact:** the CLI host that owns the filesystem — computed at the summary-metadata construction sites, NOT inside the projection reducer (it is documented pure, no I/O): the cold-seed stored-summaries provider (`apps/zcode-cli/packages/bootstrap/src/zcode-protocol/v4-bridge.ts:1635`) and the live meta hook `getSessionIndexMeta` implementation (`v4-bridge.ts:1779`, consumed by `resolveIndexMeta` in `v4-gateway.ts:1190-1205`; the hook is synchronous, so the live check is a `statSync`). The reducer just carries the field and includes it in the upsert equality check (`sessions-index-projection.ts:128`).
 - **Refresh cadence:** each time the summary is derived (session events, gateway cold start, sessions-index publisher construction). A plain re-subscription serves conflated state and does not re-stat. No fs watcher, no push on external deletion — the flag converges on the next derivation. This is an observation, not a session event: it does not enter `desktop-continuous` stream or `SessionEvent` journal.
 - Resume detection (§2) marks the runtime fact `missing: true`, which the live meta hook maps to the summary flag immediately so the UI does not wait for a refresh to learn the worktree is gone.
+- Propagate `executionWorktreeMissing` through the transient Host Controller session overlay and task-row projection to sidebar/timeline markers; do not persist it as task metadata. Clear the transient flag when the authoritative sessions-index summary reports the worktree healthy again.
 
 ### 4. UI: badge missing state
 
@@ -74,6 +75,7 @@ History survives worktree cleanup, so resume stays available. Filesystem work fa
 8. Plain sessions (no worktree) → summaries byte-identical to before; badge rendering untouched.
 9. Old UI + new CLI (unknown `executionWorktreeMissing` field) and new UI + old CLI (field absent) → no parse errors (old parsers strip the unknown top-level key), badge shows the normal worktree state.
 10. Projection upsert equality: a summary whose only change is `missing` produces a delta (does not get conflated away).
+11. Missing-state summaries reach Controller-backed sidebar and timeline rows; restoring the worktree clears the marker's missing presentation without changing persisted task metadata.
 
 ## Validation
 

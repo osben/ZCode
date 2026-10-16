@@ -126,6 +126,7 @@ describe("WindowHostControllerService", () => {
                       path: "/work/demo/.worktrees/live",
                       branchName: "feature/live",
                     },
+                    executionWorktreeMissing: true,
                     lastActivityAt: 20,
                     createdAt: 1,
                   },
@@ -175,6 +176,7 @@ describe("WindowHostControllerService", () => {
           path: "/work/demo/.worktrees/live",
           branchName: "feature/live",
         },
+        executionWorktreeMissing: true,
         pendingInteraction: expect.objectContaining({ interactionId: "ask-1" }),
         activity: {
           phase: "running",

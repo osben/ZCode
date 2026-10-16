@@ -4811,6 +4811,7 @@ const zhCN: Record<string, string> = {
   "git.branchSwitcher.appliesOnSend": "将在发送第一条消息时生效",
   "git.branchSwitcher.worktreeIntentHint": "该任务的分支由 worktree 设置决定",
   "branchSwitchGuard.title": "切换分支？",
+  "branchSwitchGuard.listUnavailable": "无法确认当前活动任务。请在任务列表可用后重试。",
   "branchSwitchGuard.description":
     "切换到 {branch} 会改变 {count, plural, other {# 个运行中的任务}}的 working tree：",
   "branchSwitchGuard.confirm": "切换分支",

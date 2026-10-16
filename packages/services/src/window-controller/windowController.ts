@@ -35,6 +35,7 @@ export type WindowHostControllerTaskListItem = ZCodeTaskListItem & {
   sourceAvailability: "online" | "offline";
   liveStatus: WindowHostControllerTaskRow["liveStatus"];
   executionWorktree?: WindowHostControllerTaskRow["executionWorktree"];
+  executionWorktreeMissing?: WindowHostControllerTaskRow["executionWorktreeMissing"];
   activity?: WindowHostControllerTaskRow["activity"];
 };
 

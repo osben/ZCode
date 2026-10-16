@@ -365,6 +365,7 @@ export function App({
   const [canOpenCommunityFromQuickPick, setCanOpenCommunityFromQuickPick] = useState(false);
   const [gitSelectedSourceId, setGitSelectedSourceId] = useState<GitChangeSourceId>("unstaged");
   const [gitRefreshVersion, setGitRefreshVersion] = useState(0);
+  const [gitReviewRefreshVersion, setGitReviewRefreshVersion] = useState(0);
   const [gitReviewExecutionTarget, setGitReviewExecutionTarget] = useState<{
     workspacePath: string;
     sessionId: string;
@@ -477,6 +478,14 @@ export function App({
     // переопросить. Untouched workspace'ы упрутся в сервисный TTL — дешёво.
     useBranchMergeStatusStore.getState().requestRefresh();
   }, []);
+  const handleRefreshGitReview = useCallback(() => {
+    if (gitRepositoryWorkspacePath === workspaceAbsPath) {
+      handleRefreshGit();
+      return;
+    }
+    setGitReviewRefreshVersion((value) => value + 1);
+    useBranchMergeStatusStore.getState().requestRefresh();
+  }, [gitRepositoryWorkspacePath, handleRefreshGit, workspaceAbsPath]);
   const openSettingsTab = useTabStore((state) => state.openSettingsTab);
   const gitState = useGitRepository({
     workspacePath: workspaceAbsPath,
@@ -494,13 +503,22 @@ export function App({
     activeTaskId,
     enabled: gitRepositoryWorkspacePath !== workspaceAbsPath,
     includeExtendedData: hasGitTab,
-    refreshToken: gitRefreshVersion,
+    refreshToken: gitReviewRefreshVersion,
     remoteSessionId: workspaceRpcTarget.remoteSessionId ?? null,
     remoteTarget: workspaceRpcTarget.remoteTarget,
     workspaceIdentity,
   });
   const gitPaneState =
     gitRepositoryWorkspacePath === workspaceAbsPath ? gitState : worktreeGitReviewState;
+  useGitAutoRefresh({
+    workspacePath: gitRepositoryWorkspacePath,
+    workspaceIdentity,
+    remoteSessionId: workspaceRpcTarget.remoteSessionId ?? null,
+    gitSummary: worktreeGitReviewState.summary,
+    gitSummaryWorkspaceKey: worktreeGitReviewState.workspaceKey,
+    enabled: isWorkspaceVisible && hasGitTab && gitRepositoryWorkspacePath !== workspaceAbsPath,
+    onRefreshGit: handleRefreshGitReview,
+  });
   useGitAutoRefresh({
     workspacePath: workspaceAbsPath,
     workspaceIdentity,
@@ -1395,6 +1413,7 @@ export function App({
           activeGitSourceId={activeGitSourceId}
           gitState={gitState}
           gitReviewState={gitPaneState}
+          handleRefreshGitReview={handleRefreshGitReview}
           gitRepositoryWorkspacePath={gitRepositoryWorkspacePath}
           browserNavigationRequest={browserNavigationRequest}
           browserRestoreUrls={browserRestoreUrls}

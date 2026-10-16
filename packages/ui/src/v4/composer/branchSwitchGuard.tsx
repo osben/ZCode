@@ -4,10 +4,19 @@
  * the status-panel switcher. Data comes from the task list the workspace shell already holds
  * (window-controller registry; no new protocol surface).
  */
-import { createContext, useCallback, useContext, useMemo, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { WorkspaceTabState } from "@/store/tabStore.js";
 import { useGlobalTaskList } from "@/hooks/useGlobalTaskList.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { toast } from "@/components/ui/toast.js";
 import {
   collectAffectedActiveTasks,
   type AffectedActiveTask,
@@ -65,7 +74,7 @@ export function useBranchSwitchGuardShell({
   const { intl } = useZCodeIntl();
   const [dialogState, setDialogState] = useState<GuardDialogState | null>(null);
   // The task list hook keeps its own items ref; mirror the latest items for action-time reads.
-  const { items } = useGlobalTaskList({
+  const { items, hasCurrentResult, loading } = useGlobalTaskList({
     kind: "active",
     workspaceTabs,
     sortBy: "updated",
@@ -76,28 +85,54 @@ export function useBranchSwitchGuardShell({
   });
   const itemsRef = useRef<readonly BranchGuardTaskLike[]>(items);
   itemsRef.current = items;
+  const listReadyRef = useRef(hasCurrentResult && !loading);
+  listReadyRef.current = hasCurrentResult && !loading;
+  const activeDialogRef = useRef<GuardDialogState | null>(null);
+  const queuedDialogRequestsRef = useRef<GuardDialogState[]>([]);
 
-  const confirm = useCallback((request: BranchSwitchGuardRequest): Promise<boolean> => {
-    const affected = collectAffectedActiveTasks(itemsRef.current, request);
-    if (affected.length === 0) return Promise.resolve(true);
-    return new Promise<boolean>((resolve) => {
-      setDialogState({ request, affected, resolve });
-    });
+  const confirm = useCallback(
+    (request: BranchSwitchGuardRequest): Promise<boolean> => {
+      if (!listReadyRef.current) {
+        toast(intl.formatMessage({ id: "branchSwitchGuard.listUnavailable" }));
+        return Promise.resolve(false);
+      }
+      const affected = collectAffectedActiveTasks(itemsRef.current, request);
+      if (affected.length === 0) return Promise.resolve(true);
+      return new Promise<boolean>((resolve) => {
+        const nextRequest = { request, affected, resolve };
+        if (activeDialogRef.current) {
+          queuedDialogRequestsRef.current.push(nextRequest);
+          return;
+        }
+        activeDialogRef.current = nextRequest;
+        setDialogState(nextRequest);
+      });
+    },
+    [intl],
+  );
+
+  const settle = useCallback((current: GuardDialogState, allowed: boolean) => {
+    // Resolve outside the state updater: updaters must stay pure (StrictMode double-invokes them).
+    if (activeDialogRef.current !== current) return;
+    current.resolve(allowed);
+    const next = queuedDialogRequestsRef.current.shift() ?? null;
+    activeDialogRef.current = next;
+    setDialogState(next);
   }, []);
 
-  const settle = useCallback(
-    (allowed: boolean) => {
-      // Resolve outside the state updater: updaters must stay pure (StrictMode double-invokes them).
-      dialogState?.resolve(allowed);
-      setDialogState(null);
+  useEffect(
+    () => () => {
+      activeDialogRef.current?.resolve(false);
+      activeDialogRef.current = null;
+      for (const queued of queuedDialogRequestsRef.current.splice(0)) queued.resolve(false);
     },
-    [dialogState],
+    [],
   );
 
   const dialog = useMemo(() => {
     if (!dialogState) return null;
     return (
-      <AlertDialog open onOpenChange={(open) => !open && settle(false)}>
+      <AlertDialog open onOpenChange={(open) => !open && settle(dialogState, false)}>
         <AlertDialogContent data-branch-switch-guard-dialog="true">
           <AlertDialogHeader>
             <AlertDialogTitle>
@@ -123,10 +158,10 @@ export function useBranchSwitchGuardShell({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => settle(false)}>
+            <AlertDialogCancel onClick={() => settle(dialogState, false)}>
               {intl.formatMessage({ id: "common.cancel" })}
             </AlertDialogCancel>
-            <AlertDialogAction onClick={() => settle(true)}>
+            <AlertDialogAction onClick={() => settle(dialogState, true)}>
               {intl.formatMessage({ id: "branchSwitchGuard.confirm" })}
             </AlertDialogAction>
           </AlertDialogFooter>

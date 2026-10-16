@@ -68,6 +68,8 @@ function mergeTaskIndexRowWithSession(
     pendingInteraction: sessionTask.pendingInteraction,
     // The worktree fact is session-projection-owned: the persistent task index has no column for it.
     executionWorktree: sessionTask.executionWorktree,
+    // Health is live session state too; assigning undefined clears a stale marker after recovery.
+    executionWorktreeMissing: sessionTask.executionWorktreeMissing,
   };
   return activity ? attachTaskListRowActivity(merged, activity) : merged;
 }

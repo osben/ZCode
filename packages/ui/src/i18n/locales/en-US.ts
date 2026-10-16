@@ -5122,6 +5122,8 @@ const enUS: Record<string, string> = {
   "git.branchSwitcher.appliesOnSend": "Applies when you send the first message",
   "git.branchSwitcher.worktreeIntentHint": "The worktree setup sets the branch for this task",
   "branchSwitchGuard.title": "Switch branch?",
+  "branchSwitchGuard.listUnavailable":
+    "Couldn't verify active tasks. Try again when the task list is available.",
   "branchSwitchGuard.description":
     "Switching to {branch} changes the working tree for {count, plural, one {# running task} other {# running tasks}}:",
   "branchSwitchGuard.confirm": "Switch branch",

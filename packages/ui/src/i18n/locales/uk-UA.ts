@@ -4812,6 +4812,8 @@ const ukUA: Record<string, string> = {
   "git.branchSwitcher.worktreeIntentHint":
     "Гілку для цього завдання визначає налаштування worktree",
   "branchSwitchGuard.title": "Змінити гілку?",
+  "branchSwitchGuard.listUnavailable":
+    "Не вдалося перевірити активні завдання. Спробуйте ще раз, коли список буде доступний.",
   "branchSwitchGuard.description":
     "Перехід на {branch} змінює робоче дерево для {count, plural, one {# активного завдання} few {# активних завдань} many {# активних завдань} other {# активних завдань}}:",
   "branchSwitchGuard.confirm": "Змінити гілку",

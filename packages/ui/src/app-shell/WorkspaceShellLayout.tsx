@@ -362,6 +362,7 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
   activeGitSourceId,
   gitState,
   gitReviewState,
+  handleRefreshGitReview,
   gitRepositoryWorkspacePath,
   browserNavigationRequest,
   browserRestoreUrls,
@@ -1938,7 +1939,7 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
       onOpenWorkflowWorkspace={handleOpenWorkflowWorkspace}
       onOpenWorkflowArtifact={handleOpenWorkflowArtifact}
       onOpenWorkflowRun={handleOpenWorkflowRun}
-      onRefreshGit={handleRefreshGit}
+      onRefreshGit={handleRefreshGitReview}
       onBrowserNavigationRequestHandled={handleBrowserNavigationRequestHandled}
       onBrowserUrlChange={handleBrowserUrlChange}
       onBrowserPageMetadataChange={handleBrowserPageMetadataChange}

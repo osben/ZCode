@@ -58,7 +58,10 @@ describe("App quick pick command render stability", () => {
       /const gitState = useGitRepository\(\{\s*workspacePath: workspaceAbsPath/u,
     );
     expect(appSource).toMatch(
-      /const worktreeGitReviewState = useGitRepository\(\{\s*workspacePath: gitRepositoryWorkspacePath,[\s\S]*?enabled: gitRepositoryWorkspacePath !== workspaceAbsPath/u,
+      /const worktreeGitReviewState = useGitRepository\(\{\s*workspacePath: gitRepositoryWorkspacePath,[\s\S]*?enabled: gitRepositoryWorkspacePath !== workspaceAbsPath,[\s\S]*?refreshToken: gitReviewRefreshVersion/u,
+    );
+    expect(appSource).toMatch(
+      /useGitAutoRefresh\(\{\s*workspacePath: gitRepositoryWorkspacePath,[\s\S]*?onRefreshGit: handleRefreshGitReview/u,
     );
     expect(appSource).toContain("gitReviewState={gitPaneState}");
   });

@@ -99,6 +99,9 @@ function sessionOverlay(
     ...(summary.titleSource ? { titleSource: summary.titleSource } : {}),
     updatedAt: summary.lastActivityAt,
     ...(summary.executionWorktree ? { executionWorktree: summary.executionWorktree } : {}),
+    ...(summary.executionWorktreeMissing !== undefined
+      ? { executionWorktreeMissing: summary.executionWorktreeMissing }
+      : {}),
     ...(summary.pendingInteraction
       ? {
           pendingInteraction: {
@@ -527,6 +530,9 @@ export function createWindowHostControllerRuntime(options: {
                   ...(projected?.executionWorktree
                     ? { executionWorktree: projected.executionWorktree }
                     : {}),
+                  ...(projected?.executionWorktreeMissing !== undefined
+                    ? { executionWorktreeMissing: projected.executionWorktreeMissing }
+                    : {}),
                   ...(projected?.activity ? { activity: projected.activity } : {}),
                   ...(item.searchSnippets ? { searchSnippets: item.searchSnippets } : {}),
                 };
@@ -578,6 +584,9 @@ export function createWindowHostControllerRuntime(options: {
           sourceAvailability: row.sourceAvailability,
           liveStatus: row.liveStatus,
           ...(row.executionWorktree ? { executionWorktree: row.executionWorktree } : {}),
+          ...(row.executionWorktreeMissing !== undefined
+            ? { executionWorktreeMissing: row.executionWorktreeMissing }
+            : {}),
           ...(row.activity ? { activity: row.activity } : {}),
           ...(row.searchSnippets ? { searchSnippets: row.searchSnippets } : {}),
         }));
