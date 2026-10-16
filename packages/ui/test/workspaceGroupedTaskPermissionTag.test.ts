@@ -1,9 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ZCodeTaskMeta } from "@zcode/shared";
 import { GroupedTaskRow } from "@/workspace-grouped-tasks/task-row.js";
 import { attachTaskListRowActivity } from "@/v4/taskListRowActivity.js";
+import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
+import { useBranchMergeStatusStore } from "@/store/branchMergeStatusStore.js";
 
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
@@ -75,6 +77,7 @@ function renderGroupedTaskRow(
     permissionCount?: number;
     userInputCount?: number;
     phase?: "running" | "completedSuccess";
+    dragOverlay?: boolean;
   } = {},
 ) {
   const task = attachTaskListRowActivity(
@@ -108,9 +111,14 @@ function renderGroupedTaskRow(
       onStartRenameTask: () => {},
       onArchiveTask: () => {},
       onMarkTaskAsUnread: () => {},
+      ...(params.dragOverlay ? { dragOverlay: true } : {}),
     }),
   );
 }
+
+beforeEach(() => {
+  useBranchMergeStatusStore.setState({ statusByWorkspaceKey: {} });
+});
 
 describe("GroupedTaskRow pending interaction tag", () => {
   it("把权限等待渲染为 pill badge", () => {
@@ -202,5 +210,37 @@ describe("GroupedTaskRow pending interaction tag", () => {
     expect(html).toContain('data-cron-task-icon="true"');
     expect(html).toContain('aria-label="定时任务"');
     expect(html).toContain("刚刚");
+  });
+
+  it("hides workspace merge details in grouped rows and drag overlays", () => {
+    const task = createTaskMeta({
+      updatedAt: Date.now(),
+      changeSummary: {
+        fileCount: 1,
+        added: 4,
+        removed: 2,
+        files: [{ path: "src/main.ts", added: 4, removed: 2 }],
+      },
+    });
+    useBranchMergeStatusStore
+      .getState()
+      .setBranchMergeStatus(buildTaskWorkspaceKey(task.workspacePath), {
+        state: "merged",
+        baseRef: "origin/main",
+        headRef: "feature/grouped-task",
+        lastCommitAt: null,
+      });
+
+    const rowHtml = renderGroupedTaskRow({ task });
+    const dragOverlayHtml = renderGroupedTaskRow({ task, dragOverlay: true });
+
+    for (const html of [rowHtml, dragOverlayHtml]) {
+      expect(html).not.toContain('data-branch-merged-badge="true"');
+      expect(html).not.toContain("Merged");
+      expect(html).not.toContain("origin/main");
+      expect(html).not.toContain("feature/grouped-task");
+    }
+    expect(rowHtml).toContain("Grouped 等待确认");
+    expect(dragOverlayHtml).toContain("Grouped 等待确认");
   });
 });

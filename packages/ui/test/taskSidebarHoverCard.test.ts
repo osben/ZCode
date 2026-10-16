@@ -27,33 +27,36 @@ test("renders available task hover details without repeating the title", () => {
       files: [{ path: "src/main.ts", added: 12, removed: 3 }],
     },
   };
+  const hoverCardProps = {
+    task,
+    workspaceLabel: "ZCode",
+    attentionLabel: null,
+    activity: { phase: "completedSuccess", lastActivityAt: Date.now(), hasBackgroundWork: false },
+    intl: {
+      formatMessage: ({ id }: { id: string }) =>
+        ({
+          "taskList.status.completed": "Done",
+          "chat.toolbar.thoughtLevel.value.xhigh": "Extra High",
+        })[id] ?? id,
+    },
+    branchMergeStatus: {
+      state: "merged",
+      baseRef: "origin/main",
+      headRef: "feature/hover-card",
+      lastCommitAt: null,
+    },
+  };
   const html = renderToStaticMarkup(
-    createElement(TaskSidebarHoverCard, {
-      task,
-      workspaceLabel: "ZCode",
-      attentionLabel: null,
-      activity: { phase: "completedSuccess", lastActivityAt: Date.now(), hasBackgroundWork: false },
-      intl: {
-        formatMessage: ({ id }: { id: string }) =>
-          ({
-            "taskList.status.completed": "Done",
-            "chat.toolbar.thoughtLevel.value.xhigh": "Extra High",
-            "taskList.branchMergedTag": "Merged",
-          })[id] ?? id,
-      },
-      branchMergeStatus: {
-        state: "merged",
-        baseRef: "origin/main",
-        headRef: "feature/hover-card",
-        lastCommitAt: null,
-      },
-    }),
+    createElement(
+      TaskSidebarHoverCard,
+      hoverCardProps as Parameters<typeof TaskSidebarHoverCard>[0],
+    ),
   );
 
   expect(html).toContain('data-task-hover-status="completed"');
   expect(html).toContain("ZCode");
-  expect(html).toContain("lucide-git-merge");
-  expect(html).toContain("Merged");
+  expect(html).not.toContain("lucide-git-merge");
+  expect(html).not.toContain("Merged");
   expect(html).not.toContain("origin/main");
   expect(html).not.toContain("feature/hover-card");
   expect(html).toContain("GLM-5.3");

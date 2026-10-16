@@ -7,7 +7,6 @@ import { isCronTask, isOffPeakTask, type ZCodeTaskMeta } from "@zcode/shared";
 import { ArrowUpToLine, Clock, ListTree, LoaderIcon, Moon, X } from "lucide-react";
 import { cn } from "@/components/lib/utils.js";
 import { Badge } from "@/components/ui/badge.js";
-import { BranchMergedBadge } from "@/components/BranchMergedBadge.js";
 import { WorktreeTaskMarker } from "@/components/WorktreeTaskMarker.js";
 import { toast } from "@/components/ui/toast.js";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu.js";
@@ -32,10 +31,6 @@ import {
 } from "@/workspace-grouped-tasks/types.js";
 import { TaskWorkflowRunLines } from "@/components/workflow-run-line/TaskWorkflowRunLines.js";
 import { useTaskInteractionAutoResolutionSnooze } from "@/hooks/useTaskInteractionAutoResolutionSnooze.js";
-import {
-  useBranchMergeStatusStore,
-  selectBranchMergeStatus,
-} from "@/store/branchMergeStatusStore.js";
 import { useOptionalTabStore } from "@/store/TabStoreProvider.js";
 import { isWorkspaceReadOnly } from "@/store/tabStore.js";
 import { TaskTitleOverflowText } from "@/components/TaskTitleOverflowText.js";
@@ -100,9 +95,6 @@ function GroupedTaskRowComponent({
     sessionId: task.taskId,
   });
   const workspaceKey = buildTaskWorkspaceKey(task.workspacePath, task.workspaceIdentity);
-  const branchMergeStatus = useBranchMergeStatusStore((state) =>
-    selectBranchMergeStatus(state, workspaceKey),
-  );
   const taskActivity = getTaskListRowActivity(task);
   const taskAttention = getTaskListAttention(task);
   // The interaction pill is currently the highest-priority right-side state; whether it comes from a sessions-index summary or
@@ -148,14 +140,6 @@ function GroupedTaskRowComponent({
           "bg-sky-500 dark:bg-sky-400"
         : null;
   const canShowHoverActions = !dragOverlay;
-  // Merged ranks below attention/interaction: the row keeps a single right-side
-  // status badge, and the merged details always stay available in the popup.
-  const branchMergedBadge =
-    branchMergeStatus?.state === "merged" ? (
-      <BranchMergedBadge
-        className={canShowHoverActions ? "group-hover/task-row:hidden" : undefined}
-      />
-    ) : null;
   // Workflow-run row: grouped rows also place it below the title;
   // the drag overlay is display-only and does not attach confirmation side effects or click actions.
   const workflowRunLinesNode =
@@ -212,9 +196,7 @@ function GroupedTaskRowComponent({
             >
               {taskAttentionDisplay}
             </Badge>
-          ) : (
-            branchMergedBadge
-          )}
+          ) : null}
           <span
             className={cn(
               "flex shrink-0 items-center gap-1",
@@ -417,8 +399,6 @@ function GroupedTaskRowComponent({
             <Badge className="h-5 border-transparent bg-success/14 px-2 text-ui-base font-medium text-success dark:bg-success/18">
               {taskAttentionDisplay}
             </Badge>
-          ) : !shouldSuppressTaskMetadata ? (
-            branchMergedBadge
           ) : null}
           {!shouldSuppressTaskMetadata ? (
             <span className="flex shrink-0 items-center gap-1">
@@ -508,7 +488,6 @@ function GroupedTaskRowComponent({
               workspaceLabel={workspaceLabel}
               attentionLabel={taskAttentionDisplay}
               activity={taskActivity}
-              branchMergeStatus={branchMergeStatus}
               intl={intl}
               isRemote={Boolean(task.workspaceIdentity?.trim())}
             />

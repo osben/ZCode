@@ -1,7 +1,7 @@
-import { Cpu, FileDiff, Folder, GitBranch, GitMerge, Cloud } from "lucide-react";
+import { Cpu, FileDiff, Folder, Cloud } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import type { GitBranchMergeStatus, ZCodeTaskMeta } from "@zcode/shared";
+import type { ZCodeTaskMeta } from "@zcode/shared";
 import { TooltipContent } from "@/components/ui/tooltip.js";
 import { thoughtLevelLabelId } from "@/chat-input-toolbar/thoughtLevelOptions.js";
 import type { IntlInstance } from "@/i18n/IntlProvider.js";
@@ -16,7 +16,6 @@ export function TaskSidebarHoverCard({
   workspaceLabel,
   attentionLabel,
   activity,
-  branchMergeStatus,
   intl,
   isRemote = false,
 }: {
@@ -24,14 +23,12 @@ export function TaskSidebarHoverCard({
   workspaceLabel: string;
   attentionLabel: string | null;
   activity: TaskListRowActivity | null;
-  branchMergeStatus?: GitBranchMergeStatus;
   intl: Pick<IntlInstance, "formatMessage">;
   isRemote?: boolean;
 }) {
   const status = resolveStatus(task, activity, attentionLabel, intl);
   const modelAndEffort = resolveModelAndEffort(task, intl);
   const changeParts = formatGroupedTaskHoverChangeParts(getTaskChangeSummary(task));
-  const isBranchMerged = branchMergeStatus?.state === "merged";
   const lastActivity = activity?.lastActivityAt ?? task.updatedAt;
 
   return (
@@ -57,21 +54,6 @@ export function TaskSidebarHoverCard({
           <span className="truncate">{workspaceLabel}</span>
         </InfoRow>
 
-        {isBranchMerged || branchMergeStatus?.headRef ? (
-          <InfoRow icon={isBranchMerged ? GitMerge : GitBranch}>
-            {isBranchMerged ? (
-              <span className="text-primary">
-                {intl.formatMessage({ id: "taskList.branchMergedTag" })}
-              </span>
-            ) : (
-              <span className="truncate">{branchMergeStatus.headRef}</span>
-            )}
-            {isBranchMerged && changeParts.length > 0 ? (
-              <ChangeStats className="ml-auto" parts={changeParts} />
-            ) : null}
-          </InfoRow>
-        ) : null}
-
         {modelAndEffort ? (
           <InfoRow icon={Cpu}>
             {modelAndEffort.model ? (
@@ -83,7 +65,7 @@ export function TaskSidebarHoverCard({
           </InfoRow>
         ) : null}
 
-        {!isBranchMerged && changeParts.length > 0 ? (
+        {changeParts.length > 0 ? (
           <InfoRow icon={FileDiff}>
             <ChangeStats parts={changeParts} />
           </InfoRow>

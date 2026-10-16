@@ -193,11 +193,23 @@ test("gitCliRepo.getBranchMergeStatus maps real git states", async (t) => {
   assert.equal(notMerged.headRef, "feat/demo");
   assert.ok(notMerged.lastCommitAt, "tip commit timestamp is returned");
 
-  // A branch already contained in the default branch reads as merged.
+  // The default branch is trivially an ancestor of itself, but is not a merged feature branch.
   await git(repoDir, "checkout", "-q", "main");
-  const merged = await repo.getBranchMergeStatus(repoDir);
-  assert.equal(merged.state, "merged");
-  assert.equal(merged.headRef, "main");
+  const defaultBranch = await repo.getBranchMergeStatus(repoDir);
+  assert.equal(defaultBranch.state, "not_merged");
+  assert.equal(defaultBranch.headRef, "main");
+
+  await git(repoDir, "checkout", "-q", "-b", "feat/merged");
+  await execFileAsync("git", ["commit", "--allow-empty", "-m", "merged feature"], {
+    cwd: repoDir,
+  });
+  await git(repoDir, "checkout", "-q", "main");
+  await git(repoDir, "merge", "--ff-only", "feat/merged");
+  await git(repoDir, "push", "origin", "main");
+  await git(repoDir, "checkout", "-q", "feat/merged");
+  const mergedFeature = await repo.getBranchMergeStatus(repoDir);
+  assert.equal(mergedFeature.state, "merged");
+  assert.equal(mergedFeature.headRef, "feat/merged");
 
   // No origin/HEAD → unknown.
   await git(repoDir, "remote", "set-head", "origin", "-d");
