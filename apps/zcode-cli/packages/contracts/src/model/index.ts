@@ -2,6 +2,7 @@
 // Model Protocol - provider-neutral model contracts
 // ============================================================
 
+import type { SiwcPlanUsageSnapshot } from "@zcode/shared";
 import type { QueryId, SessionId, TraceId, TurnId } from "../interfaces/shared.js";
 import type {
   ProviderNativeToolSpec,
@@ -533,6 +534,12 @@ export interface ModelUsage {
   cacheWriteTokens?: number;
   reasoningTokens?: number;
   serverToolUse?: ModelServerToolUsage;
+  /**
+   * ChatGPT plan (SIWC) usage windows passively captured from response headers. Present only
+   * for chatgpt-account models whose response carried `x-codex-*-used-percent`; additive so
+   * every other provider keeps emitting usage without it.
+   */
+  providerRateLimits?: SiwcPlanUsageSnapshot;
 }
 
 export interface ModelUsageSummary {

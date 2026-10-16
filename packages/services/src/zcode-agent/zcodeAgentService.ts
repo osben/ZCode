@@ -4,7 +4,12 @@ import {
   requestVerificationInteractionAvailable,
 } from "@zcode/shared";
 import { zcodeMcpUiSamplingResultSchema } from "@zcode/shared";
-import { isChatGptPlanAccountProviderId } from "@zcode/shared";
+import {
+  isChatGptPlanAccountProviderId,
+  parseChatGptPlanAccountProviderId,
+  zcodeProviderRateLimitsSchema,
+  type SiwcPlanUsageSnapshot,
+} from "@zcode/shared";
 import { MCP_APPS_SAMPLING_TRANSPORT_TIMEOUT_MS } from "@zcode/shared/mcp-apps";
 import {
   channelReplyRequestSchema,
@@ -965,6 +970,14 @@ interface CreateZCodeAgentServiceOptions extends Omit<
       providerId: string;
     }): Promise<{ accountScope?: string; apiKey: string }>;
   };
+  /**
+   * ChatGPT plan (SIWC) usage recorder owned by the host: receives passively captured plan
+   * usage windows from turn-completion usage payloads and keeps the latest snapshot per
+   * account in memory. Injected by the desktop host; omitted in pure CLI setups.
+   */
+  chatGptPlanUsageRecorder?: {
+    recordUsage(accountKey: string, snapshot: SiwcPlanUsageSnapshot): void;
+  };
   /** Desktop Host asks Main to register the exact local video path authorized for the Agent. */
   authorizeLocalMediaPreviewPath?: (path: string) => Promise<string>;
   modelSelectionReadinessSource?: ModelSelectionReadinessSource;
@@ -1336,6 +1349,7 @@ export function createZCodeAgentService(
   const sessionTraceIdBySessionKey = new Map<string, TraceId>();
   const accountRequestAuthService = options?.accountRequestAuthService;
   const chatGptPlanRequestAuth = options?.chatGptPlanRequestAuth;
+  const chatGptPlanUsageRecorder = options?.chatGptPlanUsageRecorder;
   const accountProviderConfigSource = options?.accountProviderConfigSource;
   const modelSelectionReadinessSource = options?.modelSelectionReadinessSource;
   const sessionRuntimePreferencesAuthority = options?.sessionRuntimePreferencesAuthority ?? "local";
@@ -2005,10 +2019,79 @@ export function createZCodeAgentService(
     if (!shouldDeliverLiveSessionEvent(workspace, normalizedEvent)) {
       return;
     }
+    if (
+      chatGptPlanUsageRecorder &&
+      normalizedEvent.type === "turn.completed" &&
+      turnCompletedCarriesProviderRateLimits(normalizedEvent)
+    ) {
+      // Best effort and asynchronous: recording usage must never block event delivery, and a
+      // missing runtime/snapshot simply skips the update (the next turn retries).
+      void recordChatGptPlanUsageFromTurnCompleted(workspace, normalizedEvent).catch(() => {
+        // Usage display is opportunistic and self-healing on the next turn; the failure is
+        // recoverable, so a warn suffices — no payload, snapshots must stay out of logs.
+        logger.warn(undefined, "ChatGPT plan usage recording skipped after a read failure", {
+          sessionId: normalizedEvent.sessionId,
+        });
+      });
+    }
     emitSessionEvent(workspace, normalizedEvent.sessionId, {
       type: "session.event",
       event: normalizedEvent,
     });
+  }
+
+  /** turn.completed usage is schema-free (z.unknown); detect the captured snapshot structurally. */
+  function turnCompletedCarriesProviderRateLimits(event: ZCodeSessionEvent): boolean {
+    const payload = asSessionEventRecord(event.payload);
+    const usage = asSessionEventRecord(payload?.usage);
+    return usage?.providerRateLimits !== undefined;
+  }
+
+  async function recordChatGptPlanUsageFromTurnCompleted(
+    workspace: ZCodeAgentWorkspaceTarget,
+    event: ZCodeSessionEvent,
+  ): Promise<void> {
+    const recorder = chatGptPlanUsageRecorder;
+    if (!recorder) return;
+    const payload = asSessionEventRecord(event.payload);
+    const parsed = zcodeProviderRateLimitsSchema.safeParse(
+      asSessionEventRecord(payload?.usage)?.providerRateLimits,
+    );
+    if (!parsed.success) return;
+    // Attribute the reading to the account that ran the turn: prefer the model recorded on the
+    // latest message (the exact provider of this turn), falling back to the session's current
+    // model. Only per-account ChatGPT provider ids carry usage, so other providers resolve null.
+    const client = await getReadOnlyClient(workspace, "existing-only");
+    const snapshot = await client.request(
+      zcodeProtocolMethods.sessionRead,
+      {
+        sessionId: event.sessionId,
+        messageLimit: 8,
+      },
+      zcodeSessionStateSnapshotSchema,
+    );
+    const selection =
+      resolveLatestMessageModelSelection(snapshot.messages) ?? snapshot.settings.model.current;
+    const accountKey = selection ? parseChatGptPlanAccountProviderId(selection.providerId) : null;
+    if (accountKey) {
+      recorder.recordUsage(accountKey, parsed.data);
+    }
+  }
+
+  function resolveLatestMessageModelSelection(
+    messages: readonly ZCodeSessionStateSnapshot["messages"][number][],
+  ) {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const model = messages[index]?.info.model;
+      if (model) return model;
+    }
+    return undefined;
+  }
+
+  function asSessionEventRecord(value: unknown): Record<string, unknown> | undefined {
+    return typeof value === "object" && value !== null && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : undefined;
   }
 
   function handleStateUpdated(

@@ -3732,6 +3732,9 @@ const zhCN: Record<string, string> = {
     "本应用中符合条件的 AI 请求将使用你的 ChatGPT 套餐。用量在所有使用该套餐的应用间共享，并在 ChatGPT 设置中管理。",
   "settings.modelProvider.chatgpt.firstRun.gotIt": "知道了",
   "settings.modelProvider.chatgpt.pickerBadge": "订阅",
+  "settings.modelProvider.chatgpt.usage.primary": "5 小时额度：{percent}%",
+  "settings.modelProvider.chatgpt.usage.primaryReset": "{time} 重置",
+  "settings.modelProvider.chatgpt.usage.weekly": "本周额度：{percent}%",
   "settings.modelProvider.presetTitle": "智谱",
   "settings.modelProvider.presetDescription":
     "内置 Z.ai 与 BigModel 供应商，支持通过 OAuth 辅助完成配置。",

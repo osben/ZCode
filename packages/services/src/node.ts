@@ -2123,6 +2123,7 @@ export function createLocalServices(options: {
       : {}),
     accountRequestAuthService,
     chatGptPlanRequestAuth,
+    chatGptPlanUsageRecorder: siwcAuthService,
     ...(modelSelectionReadinessSource ? { modelSelectionReadinessSource } : {}),
     authorizeLocalMediaPreviewPath: options?.authorizeLocalMediaPreviewPath,
     ...offPeakToolWiring,

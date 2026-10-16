@@ -67,6 +67,7 @@ export {
   getModelUsageTotalTokens,
   getCurrentTraceContext,
   getCurrentModelInvocationContext,
+  latestProviderRateLimitsFromEvents,
   getUnsupportedModelInputMediaKind,
   isFileSystemPortError,
   isCoreError,

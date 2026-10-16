@@ -29,6 +29,7 @@ import { createOpenAIResponsesJsonCompatFetch } from "./openai-responses-json-co
 import { createModelOptionMapFetch, type RawRequestBodyCapture } from "./model-option-map-fetch.js";
 import { isAccountAccess } from "./account-access-mode.js";
 import { createSiwcCompatFetch } from "./siwc-request-compat.js";
+import { createSiwcUsageCaptureFetch, type SiwcUsageCapture } from "./siwc-usage-capture.js";
 import { createNetworkProxyFetch } from "../network/proxy-fetch.js";
 import { createProviderEndpointRoutingFetch } from "./provider-endpoint-routing-fetch.js";
 import { normalizeModelTlsFailure } from "./failure-tls.js";
@@ -81,6 +82,8 @@ export interface AiSdkResolvedModel {
   providerKind: AiSdkProviderKind;
   providerOptions?: Record<string, unknown>;
   rawRequestBodyCapture?: RawRequestBodyCapture;
+  /** Present only for chatgpt-account bindings; holds the latest captured plan usage snapshot. */
+  siwcUsageCapture?: SiwcUsageCapture;
   requestObservations?: ModelRequestSecurityPort;
 }
 
@@ -205,12 +208,17 @@ export class AiSdkModelExecution {
   }): AiSdkBoundModelResolution {
     const snapshot = this.captureModelSnapshot(input);
     const optionMaps = compileModelOptionMaps(input.optionSpecs);
+    // One shared mutable capture per binding (not per resolveRequest): per-attempt re-resolution
+    // (runtime-header refresh) must not strand the latest usage snapshot on a discarded resolved
+    // model, so every attempt of this binding writes the object the runner finally reads.
+    const siwcUsageCapture: SiwcUsageCapture | undefined =
+      snapshot.providerConfig.access?.type === "chatgpt-account" ? { snapshot: null } : undefined;
     return {
       // Construct only the base Model here without making a request; actual requests must go through
       // resolveRequest with complete options bound.
-      resolved: this.resolveSnapshot(snapshot, undefined, undefined, undefined),
+      resolved: this.resolveSnapshot(snapshot, undefined, undefined, undefined, siwcUsageCapture),
       resolveRequest: ({ options, requestAuth }) =>
-        this.resolveSnapshot(snapshot, requestAuth, optionMaps, options),
+        this.resolveSnapshot(snapshot, requestAuth, optionMaps, options, siwcUsageCapture),
     };
   }
 
@@ -249,6 +257,7 @@ export class AiSdkModelExecution {
     requestAuth: ModelRequestAuth | undefined,
     optionMaps: CompiledModelOptionMaps | undefined,
     optionValues: ModelOptionValues | undefined,
+    siwcUsageCapture: SiwcUsageCapture | undefined,
   ): AiSdkResolvedModel {
     const providerConfig = applyModelRequestAuth(snapshot.providerConfig, requestAuth);
     // Provider facts from Model creation must be frozen in the current binding. Caching the factory
@@ -263,6 +272,7 @@ export class AiSdkModelExecution {
       rawRequestBodyCapture,
       snapshot.supportsJsonSchemaOutput,
       snapshot.providerConfig.access?.type === "zhipu-account" ? requestAuth?.apiKeyId : undefined,
+      siwcUsageCapture,
     );
     return {
       baseURL: providerConfig.baseURL,
@@ -273,6 +283,7 @@ export class AiSdkModelExecution {
       providerKind: providerConfig.kind,
       providerOptions: providerConfig.providerOptions,
       rawRequestBodyCapture,
+      ...(siwcUsageCapture ? { siwcUsageCapture } : {}),
       requestObservations: this.requestSecurity,
     };
   }
@@ -285,6 +296,7 @@ export class AiSdkModelExecution {
     rawRequestBodyCapture: RawRequestBodyCapture,
     supportsJsonSchemaOutput: boolean,
     apiKeyId?: string,
+    siwcUsageCapture?: SiwcUsageCapture,
   ): LanguageModelFactory {
     const apiKey = this.resolveApiKey(providerConfig);
     // The SDK merges factory default headers; remove the static source here so missing values are truly omitted.
@@ -312,15 +324,21 @@ export class AiSdkModelExecution {
     // the catalog rules injected (e.g. max_output_tokens, rejected by the direct route).
     const shapedFetch =
       providerConfig.access.type === "chatgpt-account" ? createSiwcCompatFetch(fetch) : fetch;
+    // Passive usage capture rides the same chatgpt-account-only chain: it only observes response
+    // headers of requests already being sent and must never trigger its own network calls.
+    const usageFetch =
+      providerConfig.access.type === "chatgpt-account" && siwcUsageCapture
+        ? createSiwcUsageCaptureFetch(shapedFetch, siwcUsageCapture)
+        : shapedFetch;
     const optionFetch =
       optionMaps && optionValues
         ? createModelOptionMapFetch({
             capture: rawRequestBodyCapture,
-            fetch: shapedFetch,
+            fetch: usageFetch,
             maps: optionMaps,
             values: optionValues,
           })
-        : shapedFetch;
+        : usageFetch;
 
     switch (providerConfig.kind) {
       case "openai": {

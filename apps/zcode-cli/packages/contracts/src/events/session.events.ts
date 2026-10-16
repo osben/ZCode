@@ -1294,6 +1294,27 @@ export function createModelUsageSummaryFromEvents(
   return createModelUsageSummary(usages);
 }
 
+/**
+ * Latest ChatGPT plan (SIWC) usage snapshot carried by this turn's model_complete events.
+ * The adapter overwrites its capture per response, so the LAST event holds the freshest
+ * reading; undefined when no chatgpt-account request reported usage headers.
+ */
+export function latestProviderRateLimitsFromEvents(
+  events: readonly SessionEvent[],
+): ModelUsage["providerRateLimits"] {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event?.type !== SessionEventType.ModelComplete) continue;
+    const usage = (event.payload as Partial<ModelCompletePayload>).usage as
+      | ModelUsage
+      | undefined;
+    if (usage?.providerRateLimits) {
+      return usage.providerRateLimits;
+    }
+  }
+  return undefined;
+}
+
 export type SessionEventPayload =
   | SessionCreatedPayload
   | SessionResumedPayload
