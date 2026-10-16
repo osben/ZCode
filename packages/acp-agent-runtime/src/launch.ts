@@ -1,17 +1,25 @@
 /**
  * Launch validation and child environment construction.
  *
- * The inherited parent environment is copied with secret-named variables
- * scrubbed (see `SECRET_NAME_RE`); configuration passed explicitly via
+ * The inherited parent environment is copied with two filters applied:
+ * privileged ZCode runtime variables are removed through the shared
+ * sanitizer predicate, and secret-named variables are scrubbed by segment
+ * (see `SECRET_NAME_RE`). Configuration passed explicitly via
  * `AcpLaunchOptions.env` always wins and may re-introduce any name.
  */
 import { isAbsolute } from "node:path";
+import { shouldSanitizeZCodeRuntimeEnvKey } from "@zcode/shared/runtime-env";
 import { AcpLaunchValidationError } from "./errors.js";
 import type { AcpLaunchOptions } from "./types.js";
 
 const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
-/** Parent variables matching this name pattern are not forwarded to the child. */
-const SECRET_NAME_RE = /(_KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|APIKEY)$/i;
+/**
+ * Secret-looking name segments; matches `AWS_ACCESS_KEY_ID`,
+ * `GOOGLE_APPLICATION_CREDENTIALS`, `DB_PASSWORD`, … while leaving names like
+ * `MONKEY` or `TOKENIZER` alone (the segment must stand between separators).
+ */
+const SECRET_NAME_RE =
+  /(?:^|_)(?:KEY|TOKEN|SECRET|PASSWORD|PASSWORDS|PASSWD|CREDENTIAL|CREDENTIALS|APIKEY)(?:_|$)/i;
 const LIMITS = {
   command: 4096,
   args: 32,
@@ -86,6 +94,10 @@ export function buildChildEnv(
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(parent)) {
     if (value === undefined) continue;
+    // Same privilege boundary as every other spawned subprocess: a leaked
+    // broker socket / authority would let the agent drive the authorized
+    // Helper (confused deputy) — see packages/shared/src/runtimeEnv.ts.
+    if (shouldSanitizeZCodeRuntimeEnvKey(key)) continue;
     if (SECRET_NAME_RE.test(key)) continue;
     env[key] = value;
   }

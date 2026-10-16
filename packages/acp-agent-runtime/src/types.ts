@@ -97,8 +97,19 @@ export interface AcpPermissionAsk {
   readonly raw: unknown;
 }
 
+export type AcpPermissionAnswerKind =
+  | "allow_once"
+  | "allow_always"
+  | "reject_once"
+  | "reject_always";
+
+/**
+ * Host answer for a permission ask. The answer names the intended `kind`
+ * (never an agent-specific `optionId`); the runtime maps it onto the matching
+ * option of the current request.
+ */
 export type AcpPermissionAnswer =
-  | { readonly outcome: "selected"; readonly optionId: string }
+  | { readonly outcome: "selected"; readonly kind: AcpPermissionAnswerKind }
   | { readonly outcome: "cancelled" };
 
 export interface AcpFsBridge {

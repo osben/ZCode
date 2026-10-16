@@ -46,15 +46,16 @@ export function extractPermissionDetail(request: RequestPermissionRequest): stri
 }
 
 /**
- * Converts a host answer into the ACP response. An unknown `optionId`
- * (stale or mismatched) degrades to `cancelled` — never to an implicit allow.
+ * Converts a host answer into the ACP response: the answered `kind` is mapped
+ * onto the matching optionId of this request. An unavailable kind (stale or
+ * mismatched) degrades to `cancelled` — never to an implicit allow.
  */
 export function toPermissionResponse(
   request: RequestPermissionRequest,
   answer: AcpPermissionAnswer,
 ): RequestPermissionResponse {
   if (answer.outcome === "selected") {
-    const match = request.options.find((option) => option.optionId === answer.optionId);
+    const match = request.options.find((option) => option.kind === answer.kind);
     if (match) {
       return { outcome: { outcome: "selected", optionId: match.optionId } };
     }

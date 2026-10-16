@@ -15,7 +15,7 @@ describe("permission bridge", () => {
     const runtime = await startMockRuntime(cwd, "permission", {
       requestPermission: async (ask) => {
         asks.push(ask);
-        return { outcome: "selected", optionId: "allow-once" };
+        return { outcome: "selected", kind: "allow_once" };
       },
     });
     try {
@@ -70,10 +70,26 @@ describe("permission bridge", () => {
     }
   });
 
-  it("never allows on an unknown optionId (stale answer degrades to cancelled)", async () => {
+  it("maps a reject kind onto the request's option id", async () => {
     const cwd = await createTempDir();
     const runtime = await startMockRuntime(cwd, "permission", {
-      requestPermission: async () => ({ outcome: "selected", optionId: "bogus-option" }),
+      requestPermission: async () => ({ outcome: "selected", kind: "reject_once" }),
+    });
+    try {
+      const events = collectEvents(runtime);
+      const response = await runtime.prompt("run echo");
+      expect(response.stopReason).toBe("cancelled");
+      expect(events).toContainEqual({ type: "message_chunk", text: "denied" });
+    } finally {
+      await runtime.stop();
+      await cleanupTempDir(cwd);
+    }
+  });
+
+  it("cancels when the answered kind is not offered (stale answer never allows)", async () => {
+    const cwd = await createTempDir();
+    const runtime = await startMockRuntime(cwd, "permission", {
+      requestPermission: async () => ({ outcome: "selected", kind: "reject_always" }),
     });
     try {
       const events = collectEvents(runtime);

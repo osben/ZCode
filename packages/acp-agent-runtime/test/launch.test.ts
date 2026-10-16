@@ -73,27 +73,41 @@ describe("validateLaunchOptions", () => {
 });
 
 describe("buildChildEnv", () => {
-  it("scrubs secret-named parent variables and keeps the rest", () => {
+  it("scrubs secret-named and privileged ZCode variables, keeping the rest", () => {
     const parent: NodeJS.ProcessEnv = {
       PATH: "/usr/bin",
       HOME: "/home/user",
       EDITOR: "vim",
-      OPENAI_API_KEY: "sk-secret",
-      GH_TOKEN: "gh-secret",
-      DB_PASSWORD: "pw",
-      MY_SECRET: "shh",
+      MONKEY: "banana",
+      TOKENIZER_MODE: "on",
+      OPENAI_API_KEY: "***",
+      GH_TOKEN: "***",
+      DB_PASSWORD: "***",
+      MY_SECRET: "***",
       PLAIN_CREDENTIAL: "cred",
+      AWS_ACCESS_KEY_ID: "AKIAEXAMPLE",
+      GOOGLE_APPLICATION_CREDENTIALS: "/creds.json",
+      ZCODE_CUA_PERMISSION_BROKER_SOCKET: "/tmp/broker.sock",
+      ZCODE_REMOTE_RUNTIME_NETWORK_AUTHORITY: "authority",
       EMPTY_VALUE: undefined,
     };
     const env = buildChildEnv(parent);
     expect(env.PATH).toBe("/usr/bin");
     expect(env.HOME).toBe("/home/user");
     expect(env.EDITOR).toBe("vim");
+    // Segment matching must not over-scrub innocent substrings.
+    expect(env.MONKEY).toBe("banana");
+    expect(env.TOKENIZER_MODE).toBe("on");
     expect(env.OPENAI_API_KEY).toBeUndefined();
     expect(env.GH_TOKEN).toBeUndefined();
     expect(env.DB_PASSWORD).toBeUndefined();
     expect(env.MY_SECRET).toBeUndefined();
     expect(env.PLAIN_CREDENTIAL).toBeUndefined();
+    expect(env.AWS_ACCESS_KEY_ID).toBeUndefined();
+    expect(env.GOOGLE_APPLICATION_CREDENTIALS).toBeUndefined();
+    // Privileged ZCode runtime boundary, shared with every other subprocess.
+    expect(env.ZCODE_CUA_PERMISSION_BROKER_SOCKET).toBeUndefined();
+    expect(env.ZCODE_REMOTE_RUNTIME_NETWORK_AUTHORITY).toBeUndefined();
     expect("EMPTY_VALUE" in env).toBe(false);
   });
 
@@ -101,7 +115,7 @@ describe("buildChildEnv", () => {
     const parent: NodeJS.ProcessEnv = {
       PATH: "/usr/bin",
       EDITOR: "vim",
-      MY_SECRET: "scrubbed",
+      MY_SECRET: "***",
     };
     const env = buildChildEnv(parent, {
       MY_SECRET: "explicit",
