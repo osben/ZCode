@@ -1,3 +1,7 @@
+import {
+  createChildSessionFactsResolver,
+  toWireChildSession,
+} from "../zcode-protocol-v4/child-session-facts.js";
 import { readBackgroundBashOutputFromOwner } from "./background-work-owner.js";
 // v4 gateway binder.
 // ConversationV4Gateway is a domain-independent channel runtime; this file binds it to the protocol
@@ -1557,6 +1561,11 @@ export function createConversationV4Gateway(
       });
     },
   };
+  const childSessionFactsResolver = createChildSessionFactsResolver({
+    store: () => context.deps.sessionStore,
+    sessions: context.sessions,
+    logger: context.logger,
+  });
   nativeExecutor = new V4CommandExecutor(coreHost);
   const loadStoredSessionSummaries = async (
     workspaceId: string,
@@ -1617,28 +1626,41 @@ export function createConversationV4Gateway(
         taskTypes: [...TASK_LIST_SESSION_TYPES],
         workspaceID: parsedRemote ? (workspaceId as WorkspaceId) : null,
       });
-      return stored.map((session) => ({
-        sessionId: String(session.id),
-        workspaceId,
-        ...(session.parentID ? { parentSessionId: String(session.parentID) } : {}),
-        title: session.title ?? "",
-        titleSource: normalizeStoredTitleSource(session.titleSource),
-        phase: "completedSuccess" as const,
-        sessionEnded: true,
-        hasBackgroundWork: false,
-        lastActivityAt: session.time?.updated ?? 0,
-        createdAt: session.time?.created ?? 0,
-        // Execution-worktree sessions keep listing under the parent workspace; the badge and
-        // "open in IDE/folder" consumers need the worktree facts on the cold-seeded row too.
-        ...(session.executionDirectory
-          ? {
-              executionWorktree: {
-                path: session.executionDirectory,
-                ...(session.executionBranch ? { branchName: session.executionBranch } : {}),
-              },
-            }
-          : {}),
-      }));
+      const [childCountFacts, childListFacts] = await childSessionFactsResolver.fetch(
+        stored.map((session) => session.id),
+      );
+      childSessionFactsResolver.noteParents(childCountFacts.keys());
+      return stored.map((session) => {
+        const childCounts = childCountFacts.get(String(session.id));
+        const childList = childListFacts.get(String(session.id)) ?? [];
+        return {
+          sessionId: String(session.id),
+          workspaceId,
+          ...(session.parentID ? { parentSessionId: String(session.parentID) } : {}),
+          title: session.title ?? "",
+          titleSource: normalizeStoredTitleSource(session.titleSource),
+          phase: "completedSuccess" as const,
+          sessionEnded: true,
+          hasBackgroundWork: false,
+          lastActivityAt: session.time?.updated ?? 0,
+          createdAt: session.time?.created ?? 0,
+          // Execution-worktree sessions keep listing under the parent workspace; the badge and
+          // "open in IDE/folder" consumers need the worktree facts on the cold-seeded row too.
+          ...(session.executionDirectory
+            ? {
+                executionWorktree: {
+                  path: session.executionDirectory,
+                  ...(session.executionBranch ? { branchName: session.executionBranch } : {}),
+                },
+              }
+            : {}),
+          ...(childCounts?.sideChats ? { sideChatCount: childCounts.sideChats } : {}),
+          ...(childCounts?.subagents ? { subagentCount: childCounts.subagents } : {}),
+          ...(childList.length
+            ? { childSessions: childList.map((child) => toWireChildSession(child, false)) }
+            : {}),
+        };
+      });
     } catch (error) {
       context.logger?.warn("sessions-index stored summaries failed", {
         error: error instanceof Error ? error.message : String(error),
@@ -1782,6 +1804,7 @@ export function createConversationV4Gateway(
         lastActivityAt: record.updatedAt,
         ...(record.parentSessionId ? { parentSessionId: String(record.parentSessionId) } : {}),
         ...(executionWorktree ? { executionWorktree } : {}),
+        ...childSessionFactsResolver.resolve(sessionId),
       };
     },
     listWorkspaceSessionIds: (workspaceId) =>

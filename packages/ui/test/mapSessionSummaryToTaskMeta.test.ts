@@ -194,3 +194,65 @@ describe("mapSessionSummaryToTaskMeta", () => {
     });
   });
 });
+
+describe("mapSessionSummaryToTaskMeta child-conversation facts", () => {
+  it("maps counters and the capped child list; zero/absent stay absent", () => {
+    const withChildren = mapSessionSummaryToTaskMeta(
+      summary({
+        sideChatCount: 1,
+        subagentCount: 3,
+        runningSubagentCount: 1,
+        childSessions: [
+          {
+            sessionId: "child-sub",
+            title: "research adapters",
+            taskType: "subagent_child",
+            lastActivityAt: 50,
+            running: true,
+          },
+          {
+            sessionId: "child-chat",
+            title: "side chat",
+            taskType: "selection_side_chat",
+            lastActivityAt: 40,
+            running: false,
+          },
+        ],
+      }),
+      { workspacePath: "/ws" },
+    );
+    expect(withChildren.sideChatCount).toBe(1);
+    expect(withChildren.subagentCount).toBe(3);
+    expect(withChildren.runningSubagentCount).toBe(1);
+    expect(withChildren.childSessions).toEqual([
+      {
+        sessionId: "child-sub",
+        title: "research adapters",
+        taskType: "subagent_child",
+        lastActivityAt: 50,
+        running: true,
+      },
+      {
+        sessionId: "child-chat",
+        title: "side chat",
+        taskType: "selection_side_chat",
+        lastActivityAt: 40,
+        running: false,
+      },
+    ]);
+
+    const withoutChildren = mapSessionSummaryToTaskMeta(
+      summary({
+        sideChatCount: 0,
+        subagentCount: 0,
+        runningSubagentCount: 0,
+        childSessions: [],
+      }),
+      { workspacePath: "/ws" },
+    );
+    expect(withoutChildren.sideChatCount).toBeUndefined();
+    expect(withoutChildren.subagentCount).toBeUndefined();
+    expect(withoutChildren.runningSubagentCount).toBeUndefined();
+    expect(withoutChildren.childSessions).toBeUndefined();
+  });
+});

@@ -59,6 +59,12 @@ function areResolvedTaskMetasEqual(left: ZCodeTaskMeta | null, right: ZCodeTaskM
     areTaskMetaJsonFieldsEqual(left.repairState, right.repairState) &&
     areTaskMetaJsonFieldsEqual(left.changeSummary, right.changeSummary) &&
     areTaskMetaJsonFieldsEqual(left.executionWorktree, right.executionWorktree) &&
+    // Child-conversation facts: counters normalize absent ≈ 0; the capped list compares by value
+    // so a count or list change re-renders the row.
+    (left.sideChatCount ?? 0) === (right.sideChatCount ?? 0) &&
+    (left.subagentCount ?? 0) === (right.subagentCount ?? 0) &&
+    (left.runningSubagentCount ?? 0) === (right.runningSubagentCount ?? 0) &&
+    areTaskMetaJsonFieldsEqual(left.childSessions, right.childSessions) &&
     areTaskMetaJsonFieldsEqual(left.target, right.target)
   );
 }

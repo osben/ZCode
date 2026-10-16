@@ -18,6 +18,15 @@ export interface SessionSummaryDeriveExtra {
   parentSessionId?: string;
   /** Execution worktree facts from the runtime; drives the sidebar badge and open-in-IDE target. */
   executionWorktree?: { path: string; branchName?: string };
+  /**
+   * Sidebar child-conversation facts (spec: sidebar-child-conversation-counts.md §3): true totals
+   * from the store TTL cache plus the capped newest-first list; running flags come from the live
+   * session registry without I/O. Absent when the session has no children.
+   */
+  sideChatCount?: number;
+  subagentCount?: number;
+  runningSubagentCount?: number;
+  childSessions?: SessionSummary["childSessions"];
 }
 
 const MAX_PREVIEW_CHARS = 120;
@@ -99,6 +108,12 @@ export function deriveSessionSummary(
     lastActivityAt: extra.lastActivityAt,
     ...(lastAssistantPreview ? { lastAssistantPreview } : {}),
     ...(extra.executionWorktree ? { executionWorktree: extra.executionWorktree } : {}),
+    ...(extra.sideChatCount ? { sideChatCount: extra.sideChatCount } : {}),
+    ...(extra.subagentCount ? { subagentCount: extra.subagentCount } : {}),
+    ...(extra.runningSubagentCount ? { runningSubagentCount: extra.runningSubagentCount } : {}),
+    ...(extra.childSessions && extra.childSessions.length > 0
+      ? { childSessions: extra.childSessions }
+      : {}),
     createdAt: extra.createdAt,
   };
 }
@@ -127,6 +142,12 @@ function summariesEqual(a: SessionSummary, b: SessionSummary): boolean {
     // fan-out, and the value is at most two scalar fields.
     a.executionWorktree?.path === b.executionWorktree?.path &&
     a.executionWorktree?.branchName === b.executionWorktree?.branchName &&
+    // Child-conversation facts: normalize absent ≈ 0 the same way, and compare the capped list by
+    // value so a counters-only or list-only change still emits a delta (acceptance #8).
+    (a.sideChatCount ?? 0) === (b.sideChatCount ?? 0) &&
+    (a.subagentCount ?? 0) === (b.subagentCount ?? 0) &&
+    (a.runningSubagentCount ?? 0) === (b.runningSubagentCount ?? 0) &&
+    JSON.stringify(a.childSessions ?? null) === JSON.stringify(b.childSessions ?? null) &&
     a.createdAt === b.createdAt
   );
 }

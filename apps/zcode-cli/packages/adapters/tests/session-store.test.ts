@@ -361,9 +361,7 @@ describe("SQLite session store", () => {
       });
 
       // Listing by the parent directory still matches: the worktree lives in dedicated columns.
-      await expect(
-        store.listSessions({ directory: "/home/dev/project" }),
-      ).resolves.toHaveLength(1);
+      await expect(store.listSessions({ directory: "/home/dev/project" })).resolves.toHaveLength(1);
       await expect(store.getSession(sessionID)).resolves.toMatchObject({
         directory: "/home/dev/project",
         path: "/home/dev/project",
@@ -558,9 +556,9 @@ describe("SQLite session store", () => {
       "0018_session_input_failed_status",
       "0019_dwf_journal",
       "0020_provider_model_selection",
-        "0021_official_glm_selection",
-        "0022_backfilled_session_reasoning",
-        "0023_session_execution_worktree",
+      "0021_official_glm_selection",
+      "0022_backfilled_session_reasoning",
+      "0023_session_execution_worktree",
     ];
 
     try {
@@ -3287,6 +3285,102 @@ describe("session input ledger (0016)", () => {
     } finally {
       store.close();
       await rm(tempRoot, { force: true, recursive: true });
+    }
+  });
+});
+
+describe("sidebar child session facts", () => {
+  async function seedFamily(store: ReturnType<typeof createSqliteSessionStore>) {
+    const parentID = createSessionId("child-facts-parent");
+    await store.createSession({
+      id: parentID,
+      projectID: createProjectId("child-facts"),
+      slug: "child-facts-parent",
+      directory: "/home/dev/project",
+      path: "/home/dev/project",
+      title: "parent",
+      version: "0.1.0",
+    });
+    const seed = (
+      id: string,
+      taskType: "selection_side_chat" | "subagent_child" | "workflow_child" | "fork",
+      title: string,
+      updated: number,
+      parentIDOverride?: string,
+    ) =>
+      store.createSession({
+        id: createSessionId(id),
+        projectID: createProjectId("child-facts"),
+        parentID: parentIDOverride ?? parentID,
+        taskType,
+        slug: id,
+        directory: "/home/dev/project",
+        path: "/home/dev/project",
+        title,
+        version: "0.1.0",
+        time: { created: updated - 1, updated },
+      });
+
+    await seed("child-sub-new", "subagent_child", "newest subagent", 50);
+    await seed("child-chat", "selection_side_chat", "side chat", 40);
+    await seed("child-sub-old", "subagent_child", "oldest subagent", 30);
+    await seed("child-workflow", "workflow_child", "workflow child", 60);
+    // A second parent with a single side chat, plus a fork that must not count as a child.
+    const otherParent = createSessionId("child-facts-other");
+    await store.createSession({
+      id: otherParent,
+      projectID: createProjectId("child-facts"),
+      slug: "child-facts-other",
+      directory: "/home/dev/project",
+      path: "/home/dev/project",
+      title: "other parent",
+      version: "0.1.0",
+    });
+    await seed("child-other-chat", "selection_side_chat", "other chat", 20, otherParent);
+    await seed("child-fork", "fork", "forked child", 70, otherParent);
+    // Archived children are excluded from both counts and the list.
+    const archivedID = createSessionId("child-sub-archived");
+    await store.createSession({
+      id: archivedID,
+      projectID: createProjectId("child-facts"),
+      parentID: parentID,
+      taskType: "subagent_child",
+      slug: "child-sub-archived",
+      directory: "/home/dev/project",
+      path: "/home/dev/project",
+      title: "archived subagent",
+      version: "0.1.0",
+    });
+    await store.updateSession({ id: archivedID, timeArchived: 100 });
+    return { parentID, otherParent };
+  }
+
+  it("counts side chats and subagents per parent, excluding workflow children, forks, and archived rows", async () => {
+    const store = createSqliteSessionStore({ dbPath: ":memory:" });
+    try {
+      const { parentID, otherParent } = await seedFamily(store);
+      const counts = await store.countChildSessions({ parentIds: [parentID, otherParent] });
+      expect(counts.get(String(parentID))).toEqual({ sideChats: 1, subagents: 2 });
+      expect(counts.get(String(otherParent))).toEqual({ sideChats: 1, subagents: 0 });
+      await expect(store.countChildSessions({ parentIds: [] })).resolves.toBeInstanceOf(Map);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("lists newest-first children capped per parent while counts stay true totals", async () => {
+    const store = createSqliteSessionStore({ dbPath: ":memory:" });
+    try {
+      const { parentID } = await seedFamily(store);
+      const listed = await store.listChildSessions({ parentIds: [parentID], limitPerParent: 2 });
+      const children = listed.get(String(parentID));
+      expect(children.map((child) => child.title)).toEqual(["newest subagent", "side chat"]);
+      expect(children[0]).toMatchObject({ taskType: "subagent_child", lastActivityAt: 50 });
+      // The cap truncates the list, but the grouped counts still report all live children.
+      const counts = await store.countChildSessions({ parentIds: [parentID] });
+      expect(counts.get(String(parentID))).toEqual({ sideChats: 1, subagents: 2 });
+    } finally {
+      store.close();
     }
   });
 });

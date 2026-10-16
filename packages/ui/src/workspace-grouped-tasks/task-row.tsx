@@ -1,3 +1,9 @@
+import { ChildSessionCountsMarker } from "@/components/ChildSessionCountsMarker.js";
+import {
+  isChildSessionsExpanded,
+  persistChildSessionsExpanded,
+} from "@/lib/childSessionExpansionPreference.js";
+import { TaskChildSessionRows } from "@/workspace-grouped-tasks/task-child-sessions.js";
 /* eslint-disable max-lines -- Grouped rows support both drag overlays and regular interactions, so state badges must share the same rendering semantics. */
 import { memo, useState } from "react";
 import type { KeyboardEvent, MouseEvent } from "react";
@@ -261,6 +267,9 @@ function GroupedTaskRowComponent({
                 />
               </span>
             ) : null}
+            {!hasPendingInteraction ? (
+              <ChildSessionCountsMarker task={task} expanded={false} />
+            ) : null}
             {!hasPendingInteraction ? <span className="mr-1">{taskTimeLabel}</span> : null}
           </span>
         </span>
@@ -301,6 +310,17 @@ function GroupedTaskRowComponent({
   });
   const handleSelect = () => {
     onSelectTask(task.workspacePath, task.taskId, task.workspaceIdentity);
+  };
+  // Child-conversation list expansion is per-parent and per-device (localStorage); the marker
+  // doubles as the expander, so no row-level chrome is added (spec: sidebar-child-conversation-counts.md).
+  const [childSessionsExpanded, setChildSessionsExpanded] = useState(() =>
+    isChildSessionsExpanded(task.taskId),
+  );
+  const handleToggleChildSessions = () => {
+    setChildSessionsExpanded((expanded) => {
+      persistChildSessionsExpanded(task.taskId, !expanded);
+      return !expanded;
+    });
   };
   const handleCloseTask = (event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
@@ -479,8 +499,20 @@ function GroupedTaskRowComponent({
                   />
                 </span>
               ) : null}
+
               {!hasPendingInteraction ? <span className="mr-1">{taskTimeLabel}</span> : null}
             </span>
+          ) : null}
+          {!hasPendingInteraction ? (
+            // Deliberately OUTSIDE the hover-suppressed metadata span above: the marker doubles as
+            // the child-list expander, so it must stay mounted and clickable while hover/focus swap
+            // the neighboring metadata for the hover-action cluster (mouseenter would otherwise
+            // unmount it before the click lands).
+            <ChildSessionCountsMarker
+              task={task}
+              expanded={childSessionsExpanded}
+              onToggle={handleToggleChildSessions}
+            />
           ) : null}
           {shouldMountHoverActions ? (
             <span className="flex shrink-0 items-center gap-0.5">
@@ -515,6 +547,9 @@ function GroupedTaskRowComponent({
         </span>
       </span>
       {workflowRunLinesNode}
+      {childSessionsExpanded ? (
+        <TaskChildSessionRows task={task} onSelectTask={onSelectTask} />
+      ) : null}
     </div>
   );
 

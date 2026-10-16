@@ -611,3 +611,89 @@ describe("SessionsIndexPublisher 单测（帧记账）", () => {
     expect(pub.subscriptionIds()).toEqual([replaced.subscriptionId]);
   });
 });
+
+describe("sidebar child-conversation facts", () => {
+  function plainSnapshot(sessionId: string) {
+    const events = buildEvents(sessionId, (push) => {
+      push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
+    });
+    return projectionFor(sessionId, events).getSnapshot();
+  }
+
+  const childrenA = [
+    {
+      sessionId: "child-sub-1",
+      title: "research adapters",
+      taskType: "subagent_child" as const,
+      lastActivityAt: 50,
+      running: true,
+    },
+    {
+      sessionId: "child-chat-1",
+      title: "side chat",
+      taskType: "selection_side_chat" as const,
+      lastActivityAt: 40,
+      running: false,
+    },
+  ];
+
+  it("child counters and the capped list flow from the derive extra onto the summary and the wire schema", () => {
+    const summary = deriveSessionSummary(plainSnapshot("s-parent"), {
+      workspaceId: "ws-1",
+      createdAt: 1000,
+      lastActivityAt: 2000,
+      sideChatCount: 1,
+      subagentCount: 2,
+      runningSubagentCount: 1,
+      childSessions: childrenA,
+    });
+    expect(summary.sideChatCount).toBe(1);
+    expect(summary.subagentCount).toBe(2);
+    expect(summary.runningSubagentCount).toBe(1);
+    expect(summary.childSessions).toEqual(childrenA);
+    // The summary with child facts must stay a valid wire snapshot payload.
+    const parsed = sessionsIndexSnapshotSchema.parse({
+      protocolVersion: 1,
+      workspaceId: "ws-1",
+      logEpoch: "epoch-1",
+      sessions: [summary],
+    });
+    expect(parsed.sessions[0].childSessions).toHaveLength(2);
+  });
+
+  it("absent child facts render no fields, and a counters- or list-only change emits an upsert delta", () => {
+    const plain = deriveSessionSummary(plainSnapshot("s-plain"), {
+      workspaceId: "ws-1",
+      createdAt: 1000,
+      lastActivityAt: 2000,
+    });
+    expect(plain.sideChatCount).toBeUndefined();
+    expect(plain.childSessions).toBeUndefined();
+
+    const projection = new SessionsIndexProjection("ws-1", "log-epoch-1");
+    const snapshot = plainSnapshot("s-parent");
+    const base = { createdAt: 1000, lastActivityAt: 2000 };
+    const withFacts = {
+      ...base,
+      sideChatCount: 1,
+      subagentCount: 2,
+      runningSubagentCount: 1,
+      childSessions: childrenA,
+    };
+    expect(projection.upsertFromConversation(snapshot, withFacts).length).toBeGreaterThan(0);
+    // Identical facts → conflated away.
+    expect(projection.upsertFromConversation(snapshot, withFacts)).toEqual([]);
+    // Counters-only change (running subagent finished) must emit an upsert delta.
+    const settled = projection.upsertFromConversation(snapshot, {
+      ...withFacts,
+      runningSubagentCount: 0,
+      childSessions: childrenA.map((child) => ({ ...child, running: false })),
+    });
+    expect(settled.length).toBeGreaterThan(0);
+    expect(settled[0]).toMatchObject({
+      op: "session.upserted",
+      // runningSubagentCount normalizes to absent at 0; the children flipping to not-running is the visible change.
+      session: { childSessions: [{ running: false }, { running: false }] },
+    });
+  });
+});

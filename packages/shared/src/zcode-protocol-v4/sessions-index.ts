@@ -27,6 +27,8 @@ export const pendingInteractionSummarySchema = z.object({
 });
 export type PendingInteractionSummary = z.infer<typeof pendingInteractionSummarySchema>;
 
+export const SESSION_SUMMARY_CHILD_SESSIONS_MAX = 8;
+
 export const sessionSummarySchema = z.object({
   sessionId: z.string(),
   workspaceId: z.string(),
@@ -56,6 +58,26 @@ export const sessionSummarySchema = z.object({
   // sidebar worktree badge and the header/file-tree "open in IDE/folder" target. optional preserves
   // compatibility with old sessions-index frames and stored summaries.
   executionWorktree: zcodeExecutionWorktreeSchema.optional(),
+  // Sidebar child-conversation facts (spec: sidebar-child-conversation-counts.md). True totals so
+  // the row icons never lie when the list below is capped; absent when the CLI host predates the
+  // feature or the session has no children.
+  sideChatCount: z.number().int().nonnegative().optional(),
+  subagentCount: z.number().int().nonnegative().optional(),
+  // Children of the parent whose runtime is currently alive in this CLI process; 0/absent after a
+  // cold restart until a child re-runs.
+  runningSubagentCount: z.number().int().nonnegative().optional(),
+  childSessions: z
+    .array(
+      z.object({
+        sessionId: z.string(),
+        title: z.string(),
+        taskType: z.enum(["selection_side_chat", "subagent_child"]),
+        lastActivityAt: timestampSchema,
+        running: z.boolean(),
+      }),
+    )
+    .max(SESSION_SUMMARY_CHILD_SESSIONS_MAX)
+    .optional(),
   createdAt: timestampSchema,
 });
 export type SessionSummary = z.infer<typeof sessionSummarySchema>;

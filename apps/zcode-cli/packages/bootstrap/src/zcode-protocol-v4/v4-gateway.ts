@@ -211,6 +211,22 @@ interface BinaryReadCacheEntry {
   payload: Promise<{ bytes: Uint8Array; mediaType: string }>;
 }
 
+interface SessionIndexMeta {
+  createdAt: number;
+  lastActivityAt: number;
+  parentSessionId?: string;
+  /** Execution worktree facts from the runtime; present only for worktree sessions. */
+  executionWorktree?: { path: string; branchName?: string };
+  /**
+   * Sidebar child-conversation facts (spec: sidebar-child-conversation-counts.md §3): true totals
+   * from the store plus the capped newest-first list; running facts come from the live registry.
+   */
+  sideChatCount?: number;
+  subagentCount?: number;
+  runningSubagentCount?: number;
+  childSessions?: SessionSummary["childSessions"];
+}
+
 export interface V4GatewayHost {
   cliVersion?: string;
   /** Whether the session is active in the host registry (basis for the inbox's sessionNotFound decision). */
@@ -243,13 +259,7 @@ export interface V4GatewayHost {
    */
   getSessionWorkspaceId?(sessionId: string): string | null;
   /** sessions-index: list metadata for a session (createdAt/parent session/last activity time). */
-  getSessionIndexMeta?(sessionId: string): {
-    createdAt: number;
-    lastActivityAt: number;
-    parentSessionId?: string;
-    /** Execution worktree facts from the runtime; present only for worktree sessions. */
-    executionWorktree?: { path: string; branchName?: string };
-  } | null;
+  getSessionIndexMeta?(sessionId: string): SessionIndexMeta | null;
   /**
    * Config seed: current runtime truth for the session (model selection/reasoning depth/collaboration mode).
    * Do not hard-code empty projection values: the runtime startup default model, persisted project
@@ -1186,18 +1196,19 @@ export class ConversationV4Gateway {
   }
 
   /** Session-list metadata (fallback when the host hook is absent: createdAt=0, lastActivityAt=now). */
-  private resolveIndexMeta(sessionId: string): {
-    createdAt: number;
-    lastActivityAt: number;
-    parentSessionId?: string;
-    executionWorktree?: { path: string; branchName?: string };
-  } {
+  private resolveIndexMeta(sessionId: string): SessionIndexMeta {
     const meta = this.host.getSessionIndexMeta?.(sessionId);
     return {
       createdAt: meta?.createdAt ?? 0,
       lastActivityAt: meta?.lastActivityAt ?? this.now(),
       ...(meta?.parentSessionId ? { parentSessionId: meta.parentSessionId } : {}),
       ...(meta?.executionWorktree ? { executionWorktree: meta.executionWorktree } : {}),
+      ...(meta?.sideChatCount ? { sideChatCount: meta.sideChatCount } : {}),
+      ...(meta?.subagentCount ? { subagentCount: meta.subagentCount } : {}),
+      ...(meta?.runningSubagentCount ? { runningSubagentCount: meta.runningSubagentCount } : {}),
+      ...(meta?.childSessions && meta.childSessions.length > 0
+        ? { childSessions: meta.childSessions }
+        : {}),
     };
   }
 

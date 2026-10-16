@@ -6654,6 +6654,16 @@ const ukUA: Record<string, string> = {
   "forms.validation.fileExists": "Файл {fileName} уже існує",
   "taskList.cronTaskLabel": "Завдання за розкладом",
   "taskList.worktreeTaskLabel": "Worktree-сесія · {branch}",
+  "taskList.childSideChatsCount":
+    "{count, plural, one {# побічна розмова} few {# побічні розмови} many {# побічних розмов} other {# побічної розмови}}",
+  "taskList.childSubagentsCount":
+    "{count, plural, one {# субагент} few {# субагенти} many {# субагентів} other {# субагента}}",
+  "taskList.childSubagentsRunningCount":
+    "{count, plural, one {# виконується} few {# виконуються} many {# виконується} other {# виконується}}",
+  "taskList.childSubagentRowLabel": "Субагент: {title}",
+  "taskList.childSideChatRowLabel": "Побічна розмова: {title}",
+  "taskList.childRunningLabel": "Виконується",
+  "taskList.childMoreLabel": "Ще {count}",
   "taskList.worktreeTaskLabelNoBranch": "Worktree-сесія",
   "taskList.offPeakTaskLabel": "Завдання в непіковий час",
   "taskList.workflowRun.ariaLabel": "Запуск робочого процесу {name}: {status}",
