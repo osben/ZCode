@@ -34,14 +34,15 @@ export function WorktreeTaskMarker({ task }: { task: ZCodeTaskMeta }) {
     { id: "taskList.worktreeTaskLabelNoBranch" },
     { directory },
   );
+  const worktreeLabel = task.executionWorktree.branchName
+    ? intl.formatMessage(
+        { id: "taskList.worktreeTaskLabel" },
+        { branch: task.executionWorktree.branchName, directory },
+      )
+    : noBranchLabel;
   const title = isMissing
-    ? intl.formatMessage({ id: "taskList.worktreeTaskLabelMissing" })
-    : task.executionWorktree.branchName
-      ? intl.formatMessage(
-          { id: "taskList.worktreeTaskLabel" },
-          { branch: task.executionWorktree.branchName, directory },
-        )
-      : noBranchLabel;
+    ? `${worktreeLabel} · ${intl.formatMessage({ id: "taskList.worktreeTaskLabelMissing" })}`
+    : worktreeLabel;
   // Healthy rows keep the no-branch label as their accessible name (pre-existing behavior).
   const ariaLabel = isMissing ? title : noBranchLabel;
 
