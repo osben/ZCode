@@ -1,80 +1,79 @@
-# ZCode 官方 Server MCP 客户端接入（第一阶段，历史 Decision Log）
+# ZCode Official Server MCP Client Integration (Phase 1, Historical Decision Log)
 
-> 当前实现事实统一见 `zcode-official-server-mcp-auth-spec.md`。本文保留阶段性设计与决策演进，
-> No longer作为当前鉴权头、scope、额度或 UI 行为的直接实现依据。
+> Current implementation facts are consolidated in `zcode-official-server-mcp-auth-spec.md`. This document preserves the phased design and evolution of decisions;
+> it is no longer the direct implementation reference for current authentication headers, scope, quotas, or UI behavior.
 
-> 日期：2026-08-14（2026-08-15 实现完成）  
-> Status：Implemented（客户端侧；后端待开发，见 §12）  
-> Scope：ZCode 客户端/Agent 运行时；Not changed UI，Not changed官方 MCP 后端，不提交 fake 能力到正式发布目录
+> Date: 2026-08-14 (implementation completed 2026-08-15)  
+> Status: Implemented (client side; backend pending, see §12)  
+> Scope: ZCode client/Agent runtime; no UI or official MCP backend changes; do not include fake capabilities in the production release directory
 
 ## 1. Target
 
-第一阶段让 ZCode 能从官方 Plugin 加载远程 Streamable HTTP MCP，并在每次实际 HTTP 请求前，
-为受信任的官方 Origin 注入当前用户的 Coding Plan 身份头。
+Phase 1 enables ZCode to load remote Streamable HTTP MCP servers from official Plugins and inject the current user's Coding Plan identity headers for trusted official Origins before each actual HTTP request.
 
-本阶段交付以下能力：
+This phase delivers the following capabilities:
 
-1. Plugin 的单个 HTTP MCP 可以声明 `zcode_official`；
-2. `jwt_token` provider 使用当前 ZCode 用户 JWT 作为 Bearer Token；仅在 Registry 存在有效
-   Coding Plan Provider 且 MaaS JWT 可用时附加 `X-Bigmodel-Authorization`，并按对应
-   `wireScope` 附加 `Bigmodel-Target-Type` 及 Team 的 organization/project（完整头集合与
-   identity-only 例外见 §6.1）；
-3. 只有Target Origin 等于当前 ZCode API origin 时，MCP transport 才能取得并注入身份头
-   （本条最初要求“官方 Plugin 身份 + Plugin 内 MCP key + 精确 Origin”三者同时命中宿主可信映射，
-   2026-08 收敛为只校验 Origin，理由与残留风险见 §5.1）；
-4. 增加一个Tests专用的 fake 官方 Plugin 与 fake HTTP MCP server，覆盖插件解析、信任判断和
-   MCP `initialize` / `tools/list` / `tools/call` 的真实请求头；
-5. Not added或修改任何 UI 页面、组件、store、Label、i18n 或设置Field。
+1. An individual HTTP MCP in a Plugin can declare `zcode_official`;
+2. The `jwt_token` provider uses the current ZCode user JWT as a Bearer token; append
+   `X-Bigmodel-Authorization` only when the Registry contains a valid Coding Plan Provider and a MaaS JWT is available, and add
+   `Bigmodel-Target-Type` and the Team organization/project according to the corresponding `wireScope` (see §6.1 for the complete header set and
+   the identity-only exception);
+3. The MCP transport may obtain and inject identity headers only when the target Origin matches the current ZCode API origin
+   (the original requirement was for the official Plugin identity, its MCP key, and the exact Origin all to match the host's trusted mapping;
+   in 2026-08 this was narrowed to Origin validation alone. See §5.1 for the rationale and residual risks);
+4. Add a test-only fake official Plugin and fake HTTP MCP server covering Plugin parsing, trust decisions, and
+   the actual request headers for MCP `initialize` / `tools/list` / `tools/call`;
+5. Do not add or modify UI pages, components, stores, labels, i18n, or settings fields.
 
-`serverId`、`capabilityId` 均不在本方案中。Plugin 内 `mcpServers` 的 key 就是该 Plugin 下的
-MCP 身份；运行时仍使用现有命名空间 `plugin:<pluginName>:<mcpKey>` 防止不同 Plugin 重名覆盖。
+`serverId` and `capabilityId` are out of scope. The key under a Plugin's `mcpServers` is that Plugin's MCP identity;
+the runtime continues to use the existing namespace `plugin:<pluginName>:<mcpKey>` to prevent name collisions across Plugins.
 
-## 2. 当前Code事实
+## 2. Current Code Facts
 
-| 当前事实                                                                                                                                                                                                      | Code位置                                                                                                                                                                                            | 本阶段Conclusion                                                                                                                                |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| MCP runtime config 已支持 `stdio`、`http`、`sse`，HTTP 当前只有 `headers` / `oauth`                                                                                                                           | `apps/zcode-cli/packages/contracts/src/interfaces/mcp.port.ts`                                                                                                                                      | 只扩展 HTTP config 的官方鉴权声明，Not added新的 MCP transport                                                                                  |
-| Plugin loader 会把 `.mcp.json` 的 MCP key 投影为 `plugin:<pluginName>:<mcpKey>`，但当前会丢弃未知 `auth` 字段                                                                                                 | `apps/zcode-cli/packages/adapters/src/plugins/mcp.ts`                                                                                                                                               | 在 Plugin 解析Boundaries严格解析 `zcode_official`，同时保留宿主生成的 provenance                                                                |
-| Streamable HTTP transport 通过 `createMcpTransportFetch(...)` 发请求，静态 header 进入 `requestInit`                                                                                                          | `apps/zcode-cli/packages/adapters/src/mcp/index.ts`、`network.ts`                                                                                                                                   | 敏感身份头Must由动态 fetch wrapper 注入，不能写回 config 或长期放在 `requestInit`                                                               |
-| **`http`/`sse` MCP 在没有 `oauth` 字段且静态 `headers` 无 `authorization` 时，默认被赋予 `{type:"authorization_code"}`**，进而创建 OAuth session、起 localhost 回调 server 并把 `authProvider` 交给 transport | `adapters/src/mcp/index.ts` 的 `resolveAuthorizationCodeOAuthConfig` / `hasAuthorizationHeader`；transport 构造见同文件 HTTP 分支                                                                   | `zcode_official` Must显式退出该默认路径（§6.3）。本方案Prohibited静态 `authorization` 且不配 `oauth`，若不显式关闭，官方 MCP 必然落入隐式 OAuth |
-| SDK 在有 `authProvider` 时把 401/403 转成 OAuth 重授权流程，并经 `onAuthorizationRequired` 把 authorizationUrl 写入 MCP record status                                                                         | `@modelcontextprotocol/sdk` client `streamableHttp` 的 401/403 分支；`adapters/src/mcp/oauth.ts` 的 `redirectToAuthorization`；`adapters/src/mcp/index.ts` 的 `createAuthorizationCodeOAuthOptions` | 与"无 UI 自动鉴权"Target冲突。`zcode_official` 需自有 401/403 语义（§6.3），不得触发授权 URL 或浏览器                                           |
-| SDK 组装请求头时 `requestInit.headers` Priority高于 `authProvider` 写入的 `Authorization`，且能覆盖 `mcp-session-id` / `mcp-protocol-version`                                                                 | SDK client `streamableHttp` 的 `_commonHeaders()`                                                                                                                                                   | 保留头黑名单需覆盖协议头，且身份头注入Must发生在最后一棒的 fetch wrapper（§6.3）                                                                |
-| 当前选中 Coding Plan 的 JWT、API Key、Team organization/project 已能被解析成同一份凭证快照                                                                                                                    | `packages/services/src/session/offPeakRuntimeModel.ts`                                                                                                                                              | **作为逻辑参考，不复用、Not modified**（§6.1.1）。官方 MCP 另写一套等价实现，避免与 Off-Peak 耦合                                               |
-| 官方 Plugin 的内置身份、版本及打包根由 Bootstrap 清单管理                                                                                                                                                     | `apps/zcode-cli/packages/bootstrap/src/app/official-plugin-definitions.ts`                                                                                                                          | 该清单**不参与**官方 MCP 授权（§5.1 已移除映射表）；Plugin 声明的 URL 仍不被信任，但校验依据是运行时解析的 ZCode API origin                     |
+| Current fact                                                                                                                                                                                                                                                             | Code location                                                                                                                                                                                                    | Phase 1 conclusion                                                                                                                                                                                          |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| MCP runtime config already supports `stdio`, `http`, and `sse`; HTTP currently supports only `headers` / `oauth`                                                                                                                                                         | `apps/zcode-cli/packages/contracts/src/interfaces/mcp.port.ts`                                                                                                                                                   | Extend only the official-auth declaration in the HTTP config; do not add a new MCP transport                                                                                                                |
+| The Plugin loader projects the MCP key from `.mcp.json` to `plugin:<pluginName>:<mcpKey>`, but currently discards unknown `auth` fields                                                                                                                                  | `apps/zcode-cli/packages/adapters/src/plugins/mcp.ts`                                                                                                                                                            | Strictly parse `zcode_official` at the Plugin parsing boundary while preserving host-generated provenance                                                                                                   |
+| The Streamable HTTP transport sends requests through `createMcpTransportFetch(...)`; static headers are added to `requestInit`                                                                                                                                           | `apps/zcode-cli/packages/adapters/src/mcp/index.ts`, `network.ts`                                                                                                                                                | Sensitive identity headers must be injected by a dynamic fetch wrapper, not written back to config or kept in `requestInit` long-term                                                                       |
+| **When an `http`/`sse` MCP has no `oauth` field and its static `headers` lack `authorization`, it is assigned `{type:"authorization_code"}` by default**, which creates an OAuth session, starts a localhost callback server, and passes `authProvider` to the transport | `resolveAuthorizationCodeOAuthConfig` / `hasAuthorizationHeader` in `adapters/src/mcp/index.ts`; transport construction is in the HTTP branch of the same file                                                   | `zcode_official` must explicitly exit this default path (§6.3). This design prohibits static `authorization` and omits `oauth`; without an explicit opt-out, official MCP would fall into implicit OAuth    |
+| With `authProvider`, the SDK turns 401/403 into an OAuth reauthorization flow and writes the authorization URL to MCP record status through `onAuthorizationRequired`                                                                                                    | The 401/403 branch of `streamableHttp` in the `@modelcontextprotocol/sdk` client; `redirectToAuthorization` in `adapters/src/mcp/oauth.ts`; `createAuthorizationCodeOAuthOptions` in `adapters/src/mcp/index.ts` | Conflicts with the goal of automatic authentication without UI. `zcode_official` needs its own 401/403 semantics (§6.3) and must not trigger an authorization URL or browser                                |
+| When the SDK assembles request headers, `requestInit.headers` takes precedence over `Authorization` written by `authProvider` and can override `mcp-session-id` / `mcp-protocol-version`                                                                                 | `_commonHeaders()` in the SDK client's `streamableHttp`                                                                                                                                                          | The reserved-header denylist must include protocol headers, and identity headers must be injected as the final step in the fetch wrapper (§6.3)                                                             |
+| The JWT, API key, and Team organization/project for the selected Coding Plan can already be resolved into one credential snapshot                                                                                                                                        | `packages/services/src/session/offPeakRuntimeModel.ts`                                                                                                                                                           | **Use as a logical reference, but do not reuse or modify it** (§6.1.1). Implement the equivalent logic separately for official MCP to avoid coupling to Off-Peak                                            |
+| The Bootstrap manifest manages the built-in identity, version, and bundle root for official Plugins                                                                                                                                                                      | `apps/zcode-cli/packages/bootstrap/src/app/official-plugin-definitions.ts`                                                                                                                                       | This manifest **does not participate** in official MCP authorization (the mapping was removed in §5.1); a Plugin-declared URL is still untrusted, but validation uses the runtime-resolved ZCode API origin |
 
-本次扫描使用当前工作区静态Code与 `rg` 证据；当前环境未提供 codegraph 索引，因此没有把
-未验证的间接可达关系当成产品事实。
+This scan used static code in the current workspace and `rg` evidence. A codegraph index was unavailable in this environment,
+so unverified indirect reachability was not treated as a product fact.
 
-## 3. Scope与非Target
+## 3. Scope and Non-Goals
 
-### 3.1 Scope内
+### 3.1 In Scope
 
-- `http` / Streamable HTTP MCP；
-- 官方 Plugin 中逐 MCP 声明鉴权类型；
-- 客户端 host/service 解析当前 Coding Plan 身份；
-- Agent 协议中的无 UI 自动鉴权请求/响应；
-- MCP HTTP transport 的动态 header 注入和 Origin 校验；
-- fake Plugin + fake HTTP MCP 的 adapter/bootstrap/service 定向Tests。
+- `http` / Streamable HTTP MCP;
+- Declaring the authentication type per MCP in official Plugins;
+- Resolving the current Coding Plan identity in the client host/service;
+- Automatic authentication request/response in the Agent protocol, without UI;
+- Dynamic header injection and Origin validation in the MCP HTTP transport;
+- Targeted adapter/bootstrap/service tests using a fake Plugin and fake HTTP MCP.
 
-### 3.2 Scope外
+### 3.2 Out of Scope
 
-- `stdio`、`sse` MCP 的 `zcode_official`；
-- **Start Plan 用户的工具调用权益**。官方 Server MCP 的工具调用仍是 Coding Plan 专属权益；
-  Start Plan 只有 ZCode JWT、没有可用的 Coding Plan Provider。API Key 模式或 Registry 缺少有效
-  Coding Plan Provider 时也走同一 identity-only 语义：连接/发现请求只携带 ZCode JWT，不携带 MaaS
-  JWT，由服务端区分登录态和套餐态错误（`1006` / `3101`）。
-- 官方 MCP 后端工具实现、计费、限流和业务接口设计；
-- `/api/v1/client/configs` 灰度逻辑；第一阶段仅保持现有灰度能力不变；
-- MCP 设置页、Plugin 设置页、Status展示、登录引导等 UI 改动；
-- 新增 usage record 或 capabilities 接口（端点本身已由后端实现，见 §12.3）；
-- 短期 Token 签发。第一阶段 `jwt_token` 使用现有用户 JWT，不在客户端生成新 Token；
-- 把 fake MCP 随正式安装包发布。
+- `zcode_official` for `stdio` and `sse` MCPs;
+- **Tool-call entitlement for Start Plan users.** Official Server MCP tool calls remain an entitlement exclusive to Coding Plan users;
+  Start Plan has only a ZCode JWT and no usable Coding Plan Provider. API Key mode and a Registry with no valid
+  Coding Plan Provider use the same identity-only semantics: connection/discovery requests carry only the ZCode JWT, not the MaaS
+  JWT, so the server can distinguish sign-in-state errors from plan-state errors (`1006` / `3101`).
+- Official MCP backend tool implementation, billing, rate limiting, and business API design;
+- `/api/v1/client/configs` rollout logic; Phase 1 only preserves the existing rollout behavior;
+- UI changes to MCP settings, Plugin settings, status display, sign-in guidance, and similar surfaces;
+- Adding usage-record or capabilities endpoints (the endpoints themselves are already implemented by the backend; see §12.3);
+- Short-lived token issuance. In Phase 1, `jwt_token` uses the existing user JWT; the client does not generate a new token;
+- Shipping the fake MCP in the official installer.
 
-## 4. Plugin 配置合同
+## 4. Plugin Configuration Contract
 
-### 4.1 `.mcp.json` 示例
+### 4.1 `.mcp.json` Example
 
-Tests Plugin 的配置形状如下：
+The test Plugin has the following configuration shape:
 
 ```json
 {
@@ -92,21 +91,21 @@ Tests Plugin 的配置形状如下：
 }
 ```
 
-字段语义：
+Field semantics:
 
-| 字段                              | 语义                                                                                                                                              |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mcpServers.fake-official-search` | Plugin 内 MCP key；仅作凭证解析与日志的归属标识（不参与授权，§5.1），No longer重复声明 `serverId`                                                 |
-| `type: "http"`                    | 使用现有 Streamable HTTP MCP client                                                                                                               |
-| `url`                             | MCP endpoint；可以继续使用现有 Plugin 模板解析，但解析结果Must再做 Origin 校验                                                                    |
-| `auth.type`                       | 精确值 `zcode_official`（区分大小写）；不接受 `zcode-official_auth`、`zcode-official`、`zcode_official_auth` 等别名或大小写变体，避免配置语义分叉 |
-| `auth.provider`                   | 第一阶段只允许 `jwt_token`；后续若增加短期 Token，应新增 provider，而不是改变该值的既有语义                                                       |
-| `timeoutMs`                       | 复用现有 MCP 协议请求超时                                                                                                                         |
+| Field                             | Semantics                                                                                                                                                                                                   |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mcpServers.fake-official-search` | MCP key within the Plugin; used only to associate credential resolution and logs (not authorization, §5.1); no longer declares a duplicate `serverId`                                                       |
+| `type: "http"`                    | Uses the existing Streamable HTTP MCP client                                                                                                                                                                |
+| `url`                             | MCP endpoint; it can use the existing Plugin template resolution, but the resolved value must also undergo Origin validation                                                                                |
+| `auth.type`                       | Exact value `zcode_official` (case-sensitive); aliases and case variants such as `zcode-official_auth`, `zcode-official`, and `zcode_official_auth` are rejected to avoid divergent configuration semantics |
+| `auth.provider`                   | Only `jwt_token` is allowed in Phase 1; if short-lived tokens are added later, add a provider rather than changing the existing meaning of this value                                                       |
+| `timeoutMs`                       | Reuses the existing MCP protocol request timeout                                                                                                                                                            |
 
-`auth` 放在具体 MCP 定义上，而不是 `plugin.json` 顶层。一个 Plugin 可以包含多个 MCP，且每个
-MCP 可以使用不同 URL 或鉴权方式；Plugin 级声明会错误扩大凭证注入Scope。
+Place `auth` on the individual MCP definition, not at the top level of `plugin.json`. A Plugin can contain multiple MCPs, each
+with a different URL or authentication method; a Plugin-level declaration would incorrectly broaden the scope of credential injection.
 
-### 4.2 类型
+### 4.2 Types
 
 ```ts
 export interface ZCodeOfficialMcpAuthConfig {
@@ -123,200 +122,195 @@ export interface McpHttpServerConfig extends McpServerConfigBase {
 }
 ```
 
-约束：
+Constraints:
 
-- `auth` 只允许出现在 `type: "http"`；stdio/sse 出现时 Plugin loader 报
+- `auth` is allowed only with `type: "http"`; if it appears on stdio/sse, the Plugin loader reports
   `plugin_mcp_server_disabled` 并禁用该 MCP；
-  **已被第二阶段修订**：stdio 现在也可声明 `zcode_official`，身份头改经 `tools/call` 的 `_meta`
-  下发，见 `zcode-official-server-mcp-stdio-meta-phase-2-spec.md`。`sse` 仍拒；
-- 第一阶段不允许同一个 MCP 同时配置 `oauth` 与 `zcode_official`；两者同时出现时 Plugin loader 报
-  `plugin_mcp_server_disabled` 并禁用该 MCP，不做Priority裁决；
-- `zcode_official` 命中时Must**显式关闭**该 MCP 的隐式 OAuth 兜底：`authProvider` 传 `undefined`，
-  不创建 OAuth session、不起 localhost 回调 server。仅"不写 `oauth` 字段"不足以达到该效果，
-  Cause见 §2 的既有默认行为与 §6.3；
-- 官方身份不是由 `auth` 字符串单独证明。Plugin loader 仍会生成不可由 `.mcp.json` 控制的运行时
-  provenance：`pluginId`、原始 `mcpKey`、`source`；它们用于日志归属与凭证解析，**但自 2026-08
-  起No longer参与信任判定**（见 §5.1）；
-- 因此，第三方 Plugin 复制同一 `auth` 字段并把 url 指向 ZCode API origin，**确实能取得身份头**。
-  这是移除 marketplace 检查后有意接受的结果：凭证只流向真实 ZCode 后端，风险是滥用而非外泄，
-  由服务端的权益／配额校验兜底。详见 §5.1 的残留风险第 1 条。
+- **Revised in Phase 2:** stdio can now also declare `zcode_official`; identity headers are delivered through `_meta` on `tools/call`.
+  See `zcode-official-server-mcp-stdio-meta-phase-2-spec.md`. `sse` is still rejected;
+- Phase 1 does not allow the same MCP to configure both `oauth` and `zcode_official`; if both appear, the Plugin loader reports
+  `plugin_mcp_server_disabled` and disables the MCP without a priority decision;
+- When `zcode_official` matches, **explicitly disable** this MCP's implicit OAuth fallback: pass `undefined` for `authProvider`,
+  do not create an OAuth session or start a localhost callback server. Merely omitting the `oauth` field is not enough;
+  see §2 for the existing default behavior and §6.3 for the reason;
+- The `auth` string alone does not establish official identity. The Plugin loader still generates runtime
+  provenance that `.mcp.json` cannot control: `pluginId`, the original `mcpKey`, and `source`; they are used to associate logs and credential resolution, **but have not participated in trust decisions since 2026-08** (see §5.1);
+- Therefore, a third-party Plugin that copies the same `auth` field and points its URL to the ZCode API origin **can obtain identity headers**.
+  This is an intentional consequence of removing the marketplace check: credentials flow only to the real ZCode backend, so the risk is abuse rather than exfiltration,
+  with server-side entitlement/quota checks as a safeguard. See residual risk 1 in §5.1.
 
-## 5. 信任模型与 Origin 映射
+## 5. Trust Model and Origin Mapping
 
 ### 5.1 Authoritative Mapping
 
-信任判定实现在 `packages/shared/src/official-mcp-auth.ts`
+Trust validation is implemented in `packages/shared/src/official-mcp-auth.ts`
 （`isOfficialMcpOriginTrusted` / `createOfficialMcpTrustedOriginRegistry`）。
 
-**规则（决策已变更两次，当前为最新）**：
+**Rule (the decision changed twice; this is the current version):**
 
 ```text
-Target origin === 当前 ZCode API origin（https）
+Target origin === current ZCode API origin (https)
 ```
 
-**为什么No longer要求 pluginId 来自官方 marketplace（2026-08 决策变更）**：该检查曾作为第二道
-控制存在（要求 pluginId 以 `@zcode-plugins-official` 结尾）。移除Cause有两条：
+**Why `pluginId` is no longer required to come from the official marketplace (2026-08 decision):** This check once existed as a second
+control (requiring `pluginId` to end in `@zcode-plugins-official`). It was removed for two reasons:
 
-1. **它让官方插件在发布前无法自测。** 本地安装的插件 id 是 `official-tools@inline`
-   （`plugins.dirs`）或 `official-tools@<本地 marketplace>`，永远拿不到官方后缀。而 dev
-   loopback 开关只放开 http loopback，救不了指向真实 https 端点的自测。结果是"要测真实后端
-   就Must先发布到官方 marketplace"——死锁；
-2. **它防御的Scenario已被其它能力覆盖。** 第三方插件若要冒领凭证，它同样可以携带 hook /
-   command，而那是以用户身份执行的任意Code，能直接读取 `~/.zcode` 下的同一份凭证。因此这道
-   检查并非"第三方拿不到凭证"的真实屏障。
+1. **It prevented official Plugins from being tested before release.** A locally installed Plugin has an ID such as `official-tools@inline`
+   (`plugins.dirs`) or `official-tools@<local marketplace>` and never gets the official suffix. The dev
+   loopback switch allows only HTTP loopback and cannot enable a test against the real HTTPS endpoint. The result was “to test the real backend,
+   you must first publish to the official marketplace”—a deadlock;
+2. **Other controls already cover the scenario this check was meant to defend against.** A third-party Plugin trying to claim credentials could also include a hook /
+   command, which is arbitrary code executed as the user and can directly read the same credentials under `~/.zcode`. This check therefore was not a real barrier against third parties obtaining credentials.
 
-**为什么No longer维护 per-mcpKey 白名单**：官方插件不完全随 app 发版，可经带外渠道更新。
-维护 mcpKey 清单会让"插件更新里新增的 MCP"Must等下一次客户端发版才能用，构成真实的发布
-摩擦；而该清单对本地篡改Scenario几乎无防护价值（名字就写在常量里，照抄即可）。因此
-`OfficialPluginDefinition` 上No longer声明 `trustedMcpOrigins`，也不存在 canonical 域名表。
+**Why a per-`mcpKey` allowlist is no longer maintained:** Official Plugins are not always released with the app and can be updated through out-of-band channels.
+Maintaining an `mcpKey` list would mean a new MCP added in a Plugin update could not be used until the next client release, creating real release
+friction; the list would provide almost no protection against local tampering (the names are constants and can simply be copied). Therefore,
+`OfficialPluginDefinition` no longer declares `trustedMcpOrigins`, and there is no canonical-domain table.
 
-**为什么域名用运行时解析而不硬编码**：ZCode API origin 随环境变化（production/test、
-自建环境），硬编码 prod 域名会让非生产环境全部 fail closed。解析口径与闲时任务一致
-（host 侧走 `resolveCurrentZCodeEndpointOrigin`，含 settings 覆盖；CLI 侧走
+**Why resolve the domain at runtime instead of hard-coding it:** The ZCode API origin varies by environment (production/test,
+self-hosted); hard-coding the production domain would make all non-production environments fail closed. The resolution rules match those used by background tasks
+(the host uses `resolveCurrentZCodeEndpointOrigin`, including settings overrides; the CLI uses
 `resolveRuntimeZCodeEndpointOrigin(env)`）。
 
-**为什么把该 origin 纳入信任不扩大信任面**：同一 origin **已经**在收同一批凭证——闲时任务发
-`authorization` + `x-coding-plan-api-key`（`offPeakServerClient`），Coding Plan reset / usage 接口发
-`authorization` + `x-bigmodel-authorization`，而官方 MCP 自 2026-08 起走的正是后者（§6.1）。
-因此这是等价性论证，而不是"官方域名所以可信"。
+**Why trusting this Origin does not broaden the trust boundary:** The same Origin **already** receives the same credentials: background tasks send
+`authorization` + `x-coding-plan-api-key` (`offPeakServerClient`), while Coding Plan reset / usage endpoints send
+`authorization` + `x-bigmodel-authorization`; since 2026-08 the official MCP has used the latter (§6.1).
+This is therefore an equivalence argument, not “the official domain is trusted because it is official.”
 
-**为什么在 shared 而不是 CLI bootstrap**：判定有两个消费者且分属互不可见的包——MCP adapter
-（请求发出前）与 host/services（身份权威Boundaries的二次校验，只依赖 `@zcode/shared`）。单源是硬
-要求，双处判定分叉会让一侧放行、另一侧拒绝。CLI 侧文件只做转发。
+**Why this belongs in shared rather than CLI bootstrap:** There are two consumers in packages that cannot see each other—the MCP adapter
+(before sending a request) and host/services (the second validation at the identity-authority boundary, depending only on `@zcode/shared`). A single source is a hard
+requirement; divergent checks in two places could let one side allow a request while the other rejects it. The CLI-side file only forwards the request.
 
-**唯一的控制与残留风险**：
+**The only control and the residual risks:**
 
-| 控制Field                                  | Prevents What                             |
-| ------------------------------------------ | ----------------------------------------- |
-| origin 相等（https、无 username/password） | 凭证被导向攻击者服务器——**唯一承重Field** |
+| Control                                      | Prevents what                                                                               |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Origin matches (https, no username/password) | Credentials being sent to an attacker-controlled server — **the only load-bearing control** |
 
-因为只剩一道，该检查Must保持严格：https、拒绝带凭证的 URL、逐字符等于运行时解析结果。
+Because only one control remains, this check must stay strict: require HTTPS, reject URLs containing credentials, and require an exact character-for-character match with the runtime-resolved value.
 
-残留风险有五处，均已知并接受：
+There are five known and accepted residual risks:
 
-1. **任何插件都能声明官方鉴权**（移除 marketplace 检查后新增的风险）。第三方插件只要
+1. **Any Plugin can declare official authentication** (a risk introduced by removing the marketplace check). A third-party Plugin can
    `auth.type = zcode_official` 且 url 指向 ZCode API origin，就能让客户端为它注入身份头。
-   凭证只流向真实 ZCode 后端，**不构成外泄**，但构成滥用：以用户身份消耗额度、触发有副作用
-   的官方接口。缓解依赖服务端——官方 MCP 端点走 `requireAuth` + `WithCodingPlan`，服务端对
-   每次调用仍做权益与配额校验；
-2. 能写入官方 plugin 缓存目录的本地攻击者，可在官方插件里加 MCP 并获得凭证注入。同上属
-   滥用而非外泄，per-mcpKey 白名单对该Scenario本来也无效；
-3. 校验只约束"我们批准哪些请求"，不约束"agent 拿到字节后干什么"。host 把身份头返回给
-   agent 后，被攻破的 agent（尤其 desktop-attached remote）可自行改用它。要彻底解决需让
-   host 代发请求、凭证永不出 host，属更大的设计改动，不在本阶段。因此当前设计的定位是
-   **防御纵深**（防 agent 侧 bug、防未走 wrapper 的新Code），不是防已被攻破的 agent。
-   顺带纠正一处曾经写错的推论（SG-03）：targetOrigin 校验**挡不住"知道该 origin 的请求方"**
-   ——agent 经 `ZCODE_BASE_URL` 就知道它，插件也能在配置里写出它。它的作用只是把凭证的
-   **流向**钉死在 ZCode origin；
-4. **没有用户可见的授权确认**。插件声明官方鉴权、宿主发放身份头，全程用户无感。补一次性确认
-   是收紧方向（见 `isOfficialMcpOriginTrusted` 末段），属产品决策，未做；
-5. **审计粒度只到"首次发放"**。host 侧现在会为每个
+   Credentials flow only to the real ZCode backend, so this is **not exfiltration**, but it is abuse: quota can be consumed as the user and official endpoints with side effects can be triggered. Mitigation relies on the server—official MCP endpoints use `requireAuth` + `WithCodingPlan`, and the server checks entitlement and quota on every call;
+2. A local attacker who can write to the official Plugin cache directory can add an MCP to an official Plugin and receive injected credentials. As above, this is
+   abuse rather than exfiltration; a per-`mcpKey` allowlist would not help with this scenario anyway;
+3. Validation constrains “which requests we approve,” not “what the Agent does after receiving the bytes.” After the host returns identity headers to
+   the Agent, a compromised Agent (especially a desktop-attached remote) can use them elsewhere. A complete solution would have the
+   host send the request so credentials never leave the host; that is a larger design change and is out of scope for this phase. The current design is therefore
+   **defense in depth** (against Agent-side bugs and new code that bypasses the wrapper), not protection against a compromised Agent.
+   Also correcting an earlier mistaken inference (SG-03): targetOrigin validation **cannot stop a requester that knows the Origin**—the Agent knows it through `ZCODE_BASE_URL`, and a Plugin can specify it in its config. Its purpose is only to pin the credential
+   **flow** to the ZCode Origin;
+4. **There is no user-visible authorization confirmation.** A Plugin can declare official authentication and the host can issue identity headers without the user noticing. Adding one-time confirmation
+   would tighten the flow (see the end of `isOfficialMcpOriginTrusted`); this requires a product decision and was not implemented;
+5. **Auditing covers only the “first issuance.”** The host now records for each
    (pluginId, mcpKey, workspaceKey) 在本进程内首次发放时记一条 info 级
-   `官方 MCP 身份头已解析`（`firstIssuance: true`），后续同三元组仍走 debug。因此能回答
-   "凭据被哪个插件取走过"，但回答不了"取了多少次"。全量记 info 是消息量级的日志膨胀，
-   本阶段不做。
+   `official MCP identity headers resolved` (`firstIssuance: true`) on the first issuance of each
+   (pluginId, mcpKey, workspaceKey) tuple in a process; later requests for the same tuple remain at debug. This can answer
+   “which Plugin obtained credentials,” but not “how many times.” Logging every issuance at info would cause message-scale log growth,
+   so it is out of scope for this phase.
 
-**若后续要重新收紧**：不要恢复 marketplace 后缀检查（会再次造成上述死锁）。正确方向是给 dev
-Scenario留显式旁路，或把"插件声明官方鉴权"改为Needs/Requires用户可见的一次性授权确认。
+**If tighter controls are needed later:** Do not restore the marketplace-suffix check (it would recreate the deadlock above). The right approach is to keep an explicit bypass for the dev
+scenario, or require a user-visible one-time authorization confirmation when a Plugin declares official authentication.
 
 ### 5.2 Security Rules
 
 ```text
-Plugin MCP 配置
+Plugin MCP configuration
       |
       v
-auth 是否精确为 zcode_official/jwt_token? -- 否 --> 普通 MCP 路径
+Is auth exactly zcode_official/jwt_token? -- No --> regular MCP path
       | 是
       v
-URL.origin 是否 === 运行时 ZCode API origin 且为 HTTPS? -- 否 --> fail closed
+Does URL.origin === the runtime ZCode API origin and use HTTPS? -- No --> fail closed
       |                                                        (official_mcp_origin_untrusted)
       | 是
       v
-向 host 请求当前身份头 --> 动态注入本次 HTTP 请求
+Request current identity headers from the host --> dynamically inject them into this HTTP request
 ```
 
-判定No longer包含"是否官方 marketplace 插件"与"(pluginId, mcpKey) 是否命中可信映射"两步；
-pluginId / mcpKey 仍随请求传递，但只用于日志归属与凭证解析归属。
+Validation no longer includes the checks “is this an official marketplace Plugin?” and “does (pluginId, mcpKey) match a trusted mapping?”;
+`pluginId` / `mcpKey` are still passed with the request, but are used only to associate logs and credential resolution.
 
-stdio Form的判定输入不同（没有 URL 可供校验，targetOrigin 由客户端自行解析），见
+The validation inputs differ for stdio (there is no URL to validate, and the client resolves targetOrigin itself); see
 `zcode-official-server-mcp-stdio-meta-phase-2-spec.md` §5。
 
-- 正式判定只允许 `https:`，并拒绝 URL 中的 username/password；
-- 单元/集成Tests通过依赖注入增加 `http://127.0.0.1:<ephemeral-port>`，本地自测通过
-  `ZCODE_OFFICIAL_MCP_DEV_TRUSTED_ORIGINS` 显式登记 loopback origin；两者都不得放开非 loopback；
-- authenticated fetch 使用 `redirect: "manual"`。第一阶段遇到 3xx 直接失败，避免 Bearer Token
-  被跨 Origin redirect 带走；正式 endpoint 应配置为 canonical URL；
-- Plugin 的静态 `headers` 不得包含（大小写不敏感）任一保留头：`authorization`、
+- Production validation allows only `https:` and rejects usernames/passwords in URLs;
+- Unit/integration tests add `http://127.0.0.1:<ephemeral-port>` through dependency injection; local testing explicitly registers loopback Origins through
+  `ZCODE_OFFICIAL_MCP_DEV_TRUSTED_ORIGINS`. Neither path may allow non-loopback hosts;
+- Authenticated fetch uses `redirect: "manual"`. In Phase 1, any 3xx fails immediately, preventing a Bearer token
+  from being sent through a cross-Origin redirect; production endpoints should use a canonical URL;
+- Static Plugin `headers` must not contain (case-insensitively) any reserved headers: `authorization`,
   `x-coding-plan-api-key`、`x-bigmodel-authorization`、`bigmodel-target-type`、
   `bigmodel-organization`、`bigmodel-project`，以及协议头 `mcp-session-id`、
-  `mcp-protocol-version`；解析时直接禁用该 MCP，不采用静默覆盖。协议头Must入黑名单的Cause见
-  §2：SDK 组装时 `requestInit.headers` Priority高于协议头，静态配置可覆盖 session id；
-- 保留头黑名单与 §6.1 实际注入的头集合Must同源：常量放在 `packages/shared` 由 Plugin parser 与
-  MCP adapter 共同引用，新增身份头时只改一处；同时在 §6.3.2 的 fetch wrapper 合并点二次强制，
-  不只在解析期拦截；
-- 日志只记录 `pluginId`、`mcpKey`、Origin、失败分类、HTTP status 和 request/trace id；Prohibited记录
-  JWT、Coding Plan key、完整请求头或凭证指纹；
-- **服务端 request id 的对账口径**：客户端不发送 `X-Request-Id` / `X-Trace-Id`（服务端
-  `logx.RequestID()` 自行生成、不采纳入站值），只从**响应头**读回 `x-request-id`，作为客户端日志
-  与服务端日志唯一的关联键。因此：
-  - 成功响应记在 `debug`（高频，且成功时不Needs/Requires对账）；
-  - **任一非 2xx 响应Must记在 `warn`**，字段含 `httpStatus` 与 `serverRequestId`。理由是生产
-    构建的 logger 最低级别是 `Info`（`getDefaultMinLevel`），只记 debug 等于出错时拿不到这个 id；
-  - §6.3.3 的分类错误（401 / 403 / 3xx）message 里附带该 id，让它随 MCP record 的失败Cause
-    一起可见，而不是只躺在日志里；
-  - **in-band 失败（HTTP 200 + `isError: true`，如配额耗尽）也要带上该 id**。这类失败对
-    HTTP 层是成功，上面那条非 2xx warn 覆盖不到；而响应头只有 fetch wrapper 看得见（它之上
-    是 MCP SDK，只交出 JSON-RPC 结果）。因此 wrapper 通过回调把 id 上报给 adapter，adapter
-    按 **span** 关联回本次 `tools/call`：写一条 `mcp.tool.call` 的 warn，并在结果的 `_meta`
-    上附 `zcode/officialMcpServerRequestId`（成功路径不附，避免每次调用都塞排障字段）。
-  - 关联键Must是 span 而非 traceId：traceId 覆盖整个顶层 session，同一 session 的多次调用
-    共用它，用它关联会串号。取不到 span（`initialize` / `tools/list` 没有 `_meta`，或调用方
-    未传 trace）时**不填**该字段，绝不用"最近一次响应"兜底——那会把上一次调用的 id 贴到这次
-    失败上，比没有更糟。
+  `mcp-protocol-version`; disable the MCP during parsing rather than silently overriding. See §2 for why protocol headers must be on the denylist:
+  during SDK request assembly, `requestInit.headers` takes precedence over protocol headers, so static config can override the session ID;
+- The reserved-header denylist and the headers actually injected in §6.1 must share one source: keep the constants in `packages/shared` and reference them from both the Plugin parser and
+  MCP adapter; adding an identity header should require changing one place. Also enforce the denylist again at the fetch-wrapper merge point in §6.3.2,
+  not only during parsing;
+- Logs record only `pluginId`, `mcpKey`, Origin, failure classification, HTTP status, and request/trace IDs; never record
+  JWTs, Coding Plan keys, complete request headers, or credential fingerprints;
+- **Server request-ID correlation:** The client does not send `X-Request-Id` / `X-Trace-Id` (the server
+  generates its own `logx.RequestID()` and does not accept inbound values); it reads `x-request-id` only from the **response headers** as the sole correlation key between client and server logs. Therefore:
+  - Log successful responses at `debug` (they are high-frequency and do not need correlation when successful);
+  - **Log every non-2xx response at `warn`**, with `httpStatus` and `serverRequestId` fields. The production
+    logger's minimum level is `Info` (`getDefaultMinLevel`), so logging only at debug would make this ID unavailable when an error occurs;
+  - Include the ID in the messages for the §6.3.3 error classifications (401 / 403 / 3xx), so the failure cause appears with the MCP record
+    rather than only in the logs;
+  - **In-band failures (HTTP 200 + `isError: true`, such as quota exhaustion) must also include this ID**. These failures count as success at the
+    HTTP layer, so the non-2xx warning above does not cover them. Only the fetch wrapper can see response headers (above it,
+    the MCP SDK exposes only the JSON-RPC result). Therefore, the wrapper reports the ID to the adapter through a callback; the adapter
+    associates it with this `tools/call` by **span**, writes an `mcp.tool.call` warning, and adds `zcode/officialMcpServerRequestId` to the result's `_meta`
+    (omit it on success to avoid adding diagnostic fields to every call).
+  - The correlation key **must** be the span, not the traceId: a traceId covers the entire top-level session, so multiple calls in one session
+    share it and would be miscorrelated. If a span is unavailable (`initialize` / `tools/list` have no `_meta`, or the caller
+    did not pass a trace), **omit** this field; never fall back to the “most recent response”—that could attach the previous call's ID to this
+    failure, which is worse than having no ID.
 
-## 6. 鉴权头与凭证归属
+## 6. Authentication Headers and Credential Attribution
 
-### 6.1 `jwt_token` 的请求头
+### 6.1 Request Headers for `jwt_token`
 
-对可信 MCP 的每个 HTTP 请求，动态生成：
+Generate the following dynamically for every HTTP request to a trusted MCP:
 
 ```http
-Authorization: Bearer <current-zcode-jwt>        # 由服务端 requireAuth 校验，始终发送
-X-Bigmodel-Authorization: Bearer <current-family-maas-jwt>   # 仅有效 Coding Plan Provider + MaaS JWT 可用时发送
-Bigmodel-Target-Type: PERSONAL | TEAM            # 仅存在对应 wire scope 时发送
-Bigmodel-Organization: <organization-id>         # 仅 TEAM，且与 project 同时存在
-Bigmodel-Project: <project-id>                   # 仅 TEAM，且与 organization 同时存在
+Authorization: Bearer <current-zcode-jwt>        # validated by server requireAuth; always sent
+X-Bigmodel-Authorization: Bearer <current-family-maas-jwt>   # sent only when a valid Coding Plan Provider and MaaS JWT are available
+Bigmodel-Target-Type: PERSONAL | TEAM            # sent only when the corresponding wire scope exists
+Bigmodel-Organization: <organization-id>         # TEAM only, and only when project is also present
+Bigmodel-Project: <project-id>                   # TEAM only, and only when organization is also present
 ```
 
-服务端契约依据（已按 `zcode-server` 当前Code核对）：`WithCodingPlan` 中间件读取
+Server contract basis (checked against current `zcode-server` code): the `WithCodingPlan` middleware reads
 `X-Coding-Plan-Api-Key`、`X-Bigmodel-Authorization`、`Bigmodel-Organization`、`Bigmodel-Project`、
-`Bigmodel-Target-Type` 五个头，JWT 的 `Authorization` 由 `requireAuth` 单独读取。要点：
+the five headers `Bigmodel-Target-Type`, etc.; JWT `Authorization` is read separately by `requireAuth`. Key points:
 
-- **`Bigmodel-Target-Type` 仅在存在对应 `wireScope` 时发送**，取值 `PERSONAL` / `TEAM`。
-  对 BigModel Personal/Team，wire scope 分别为 PERSONAL/TEAM；ZAI Team 的 wire scope 为
-  `null`，因此不发送该头并沿用服务端 fallback 分支。对 identity-only 请求（Start Plan、API Key
-  模式或 Registry 缺少有效 Coding Plan Provider），同样不发送该头；这些请求只携带 ZCode JWT。
-  当该头发送为 TEAM 时，organization/project Must成对存在；任一缺失时两者都不发送。
-- 服务端 `CodingPlanContext.Valid()` 在 `TargetType=TEAM` 时要求 organization 与 project 同时非空。
-  因此客户端也遵守成对原子性：两者任一缺失时都不发送；发送半套身份头会被直接判为 bad request；
-- **凭证通道（2026-08 变更，本条取代第一阶段决策）**：`X-Bigmodel-Authorization` 与
-  `X-Coding-Plan-Api-Key` 在服务端是**二选一**的通道（`credential := cmp.Or(Authorization, APIKey)`，
-  Authorization 优先）。第一阶段的决策是"沿用 `X-Coding-Plan-Api-Key`、不发 MaaS JWT"，并把切换
-  记为技术债；后端确认后（`middleware/coding_plan.go` 已把 API Key 通道注释为"仅存量客户端兼容，
-  新接入Must用 MaaS JWT 头"），官方 MCP 在套餐凭证可用时改为**只发
-  `X-Bigmodel-Authorization`**。identity-only 请求仍只发 ZCode JWT。三个要点：
-  - **是换凭证，不只是换头名。** 新头Must携带 **MaaS 登录 JWT**
-    （`oauth:<family>:access_token`，与 Coding Plan reset / usage 接口同一份），服务端会
-    `ParseWithoutVerification` 取其 `customer_id` 并要求与当前用户一致。把 Coding Plan 业务 key
-    填进新头会直接解析失败；
-  - **两个头不能同时发。** JWT 会赢得 ZAI 绑定与额度查询，但 API key 的归属校验
-    （`validateIdentityFromApiKey`）仍会照跑一次，一把过期或不属于本人的 key 会让整个请求 403/3101。
-    因此这是替换而不是叠加；
-  - **值带 `Bearer ` 前缀。** 服务端 `strings.CutPrefix(..., "Bearer ")`，裸 token 也接受；
-    这里按 `zcode-server/docs/api_server_mcp.md` 规定的形式发送。
-    Off-Peak 与 model relay 仍走 `X-Coding-Plan-Api-Key`（不同接口族、不同服务端契约），本次刻意不动；
-- 头名大小写不敏感（服务端经 Gin `GetHeader` 做 `textproto` 规范化），按上方 http 块的写法发送即可，
-  无需为大小写单独适配。
+- **Send `Bigmodel-Target-Type` only when the corresponding `wireScope` exists**, with value `PERSONAL` / `TEAM`.
+  For BigModel Personal/Team, the wire scopes are PERSONAL/TEAM respectively; ZAI Team has a wire scope of
+  `null`, so omit this header and use the server fallback branch. For identity-only requests (Start Plan, API Key
+  mode, or a Registry without a valid Coding Plan Provider), also omit this header; these requests carry only the ZCode JWT.
+  When this header is sent as TEAM, organization/project must be present as a pair; if either is missing, omit both.
+- The server's `CodingPlanContext.Valid()` requires both organization and project to be non-empty when `TargetType=TEAM`.
+  The client therefore preserves pair atomicity too: if either is missing, omit both; sending only half of the identity headers is rejected as a bad request;
+- **Credential channel (2026-08 change; supersedes the Phase 1 decision):** `X-Bigmodel-Authorization` and
+  `X-Coding-Plan-Api-Key` are **mutually exclusive** channels on the server (`credential := cmp.Or(Authorization, APIKey)`,
+  with Authorization taking precedence). Phase 1 decided to “continue using `X-Coding-Plan-Api-Key` and not send a MaaS JWT,” and recorded the switch
+  as technical debt. After backend confirmation (`middleware/coding_plan.go` documents the API Key channel as “for existing clients only;
+  new integrations must use the MaaS JWT header”), official MCP now sends **only
+  `X-Bigmodel-Authorization`** when plan credentials are available. Identity-only requests still send only the ZCode JWT. Three key points:
+  - **This changes the credential, not only the header name.** The new header must carry a **MaaS sign-in JWT**
+    (`oauth:<family>:access_token`, the same token as the Coding Plan reset/usage endpoints). The server uses
+    `ParseWithoutVerification` to extract its `customer_id` and requires it to match the current user. Putting a Coding Plan business key
+    in the new header fails parsing directly;
+  - **Do not send both headers.** The JWT takes precedence for ZAI binding and quota lookup, but the API key ownership check
+    (`validateIdentityFromApiKey`) still runs. An expired key or one that does not belong to the user causes the entire request to return 403/3101.
+    This is replacement, not addition;
+  - **The value includes the `Bearer ` prefix.** The server uses `strings.CutPrefix(..., "Bearer ")` and also accepts a bare token;
+    send it in the format specified by `zcode-server/docs/api_server_mcp.md`.
+    Off-Peak and model relay still use `X-Coding-Plan-Api-Key` (a different API family with a different server contract); this change intentionally leaves them alone;
+- Header names are case-insensitive (the server normalizes them through Gin `GetHeader` and `textproto`); send them using the casing shown in the HTTP block above,
+  with no separate case adaptation.
 
 #### 6.1.1 独立实现，不复用 Off-Peak Code（本阶段决策）
 
