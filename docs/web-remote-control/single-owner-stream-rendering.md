@@ -3,8 +3,7 @@
 > Status: Currently only describes non-owner content filtering under replayable subscriptions.
 >
 > The desktop `continuous` subscription still consumes direct dynamic stream events, not the empty batch
-> observer strategy here. The mobile Web remote control `replayable` subscription needs this strategy to reduce the risk of intersection between disconnection recovery and snapshot
-> alignment.
+The mobile Web remote control `replayable` subscription needs this strategy to reduce the risk of interleaving disconnection recovery with snapshot alignment.
 
 ## Background
 
