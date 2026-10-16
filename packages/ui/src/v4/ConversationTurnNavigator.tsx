@@ -73,6 +73,7 @@ function ConversationTurnNavigatorImpl({
       }),
     [intl, renderUnits],
   );
+  const pinnedLabel = intl.formatMessage({ id: "chat.turnNavigator.pinnedLabel" });
 
   const activeUnitIndex = useMemo(
     () =>
@@ -163,6 +164,10 @@ function ConversationTurnNavigatorImpl({
               visualFocusItemIndex,
             });
             const showScrollActiveColor = visualFocusItemIndex === undefined && active;
+            const jumpToQueryLabel = intl.formatMessage(
+              { id: "chat.turnNavigator.jumpToQuery" },
+              { index: String(itemIndex + 1) },
+            );
             return (
               <div
                 key={item.key}
@@ -174,10 +179,11 @@ function ConversationTurnNavigatorImpl({
                     <button
                       type="button"
                       aria-current={active ? "location" : undefined}
-                      aria-label={intl.formatMessage(
-                        { id: "chat.turnNavigator.jumpToQuery" },
-                        { index: String(itemIndex + 1) },
-                      )}
+                      // The pinned state is color-only on the bar and the hover card is not part of the
+                      // accessible name, so pinned entries append the localized pin label here.
+                      aria-label={
+                        item.isPinned ? `${jumpToQueryLabel}, ${pinnedLabel}` : jumpToQueryLabel
+                      }
                       aria-posinset={itemIndex + 1}
                       aria-setsize={items.length}
                       data-testid={testId(TID_V4_TURN_NAVIGATOR_ITEM, item.key)}
@@ -236,7 +242,7 @@ function ConversationTurnNavigatorImpl({
                         <p className="flex items-center gap-1 text-ui-sm text-foreground-subtle">
                           {/* Decorative icon; the adjacent text is the accessible label. */}
                           <PinIcon className="size-3 text-pinned-turn" aria-hidden />
-                          {intl.formatMessage({ id: "chat.turnNavigator.pinnedLabel" })}
+                          {pinnedLabel}
                         </p>
                       ) : null}
                       <p className="line-clamp-2 whitespace-pre-line text-ui-base font-medium leading-5">

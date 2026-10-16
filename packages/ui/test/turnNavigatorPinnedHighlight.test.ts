@@ -24,10 +24,14 @@ describe("turn navigator pinned highlight", () => {
     expect(componentSource.match(/data-pinned=\{item\.isPinned/gu)).toHaveLength(1);
   });
 
-  it("badges the hover card through the pinned label key", () => {
+  it("badges the hover card and the accessible name through the pinned label key", () => {
     expect(componentSource).toContain("item.isPinned ?");
     // The icon is decorative (aria-hidden); the visible text is the single accessible label.
     expect(componentSource.match(/chat\.turnNavigator\.pinnedLabel/gu)).toHaveLength(1);
+    // Pinned entries append the localized pin label to the base jump label (color is not accessible).
+    expect(componentSource).toMatch(
+      /aria-label=\{\s*item\.isPinned \? `\$\{jumpToQueryLabel\}, \$\{pinnedLabel\}` : jumpToQueryLabel\s*\}/,
+    );
   });
 
   it("declares the pinned token in every theme block that declares idle-task", () => {
