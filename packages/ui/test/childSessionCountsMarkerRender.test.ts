@@ -12,6 +12,7 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
     intl: {
       // Return the key so tooltip composition is asserted without locale data.
       formatMessage: ({ id }: { id: string }) => id,
+      formatPlural: ({ id }: { id: string }) => id,
     },
   }),
 }));
