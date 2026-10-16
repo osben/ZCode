@@ -4723,15 +4723,6 @@ export function SessionPane({
   const refreshWorktreeGit = useCallback(() => {
     setWorktreeGitRefreshVersion((version) => version + 1);
   }, []);
-  useGitAutoRefresh({
-    workspacePath: executionGitPath,
-    workspaceIdentity,
-    remoteSessionId,
-    gitSummary: worktreeGitState.summary,
-    gitSummaryWorkspaceKey: worktreeGitState.workspaceKey,
-    enabled: Boolean(sessionExecutionWorktree) && focused,
-    onRefreshGit: refreshWorktreeGit,
-  });
   const worktreeGitDirtyFileCount =
     (worktreeGitState.sourceOptions.find((option) => option.id === "unstaged")?.count ?? 0) +
     (worktreeGitState.sourceOptions.find((option) => option.id === "staged")?.count ?? 0);
@@ -5733,6 +5724,17 @@ export function SessionPane({
       uploadAttachment={pluginUiUploadAttachment}
       projectionStore={sessionLeaseReady ? lease?.store : null}
     >
+      {sessionExecutionWorktree ? (
+        <ExecutionWorktreeGitAutoRefresh
+          workspacePath={executionGitPath}
+          workspaceIdentity={workspaceIdentity}
+          remoteSessionId={remoteSessionId}
+          gitSummary={worktreeGitState.summary}
+          gitSummaryWorkspaceKey={worktreeGitState.workspaceKey}
+          enabled={focused}
+          onRefreshGit={refreshWorktreeGit}
+        />
+      ) : null}
       <div
         data-testid={testId(TID_V4_SESSION_PANE, paneId)}
         data-session-id={sessionId ?? "draft"}
@@ -6057,4 +6059,33 @@ export function SessionPane({
       </div>
     </PluginUiSessionProvider>
   );
+}
+
+function ExecutionWorktreeGitAutoRefresh({
+  workspacePath,
+  workspaceIdentity,
+  remoteSessionId,
+  gitSummary,
+  gitSummaryWorkspaceKey,
+  enabled,
+  onRefreshGit,
+}: {
+  workspacePath: string;
+  workspaceIdentity?: string | null;
+  remoteSessionId?: string | null;
+  gitSummary: GitRepositorySummary;
+  gitSummaryWorkspaceKey: string;
+  enabled: boolean;
+  onRefreshGit: () => void;
+}) {
+  useGitAutoRefresh({
+    workspacePath,
+    workspaceIdentity,
+    remoteSessionId,
+    gitSummary,
+    gitSummaryWorkspaceKey,
+    enabled,
+    onRefreshGit,
+  });
+  return null;
 }
