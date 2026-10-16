@@ -1,36 +1,34 @@
-# Bugfix 09：Kimi 多模态能力证据校正
+# Bugfix 09: Kimi Multimodal Capability Evidence Correction
 
-> 状态：已完成
+> Status: Completed
 >
-> 日期：2026-09-01
+> Date: 2026-09-01
 
-## 问题
+## Problem
 
-Built-in Config 把下列模型能力写错：
+The Built-in Config writes the following model capabilities incorrectly:
 
-| Model            | 当前值                   | 当前官方事实                                              | 目标值       |
-| ---------------- | ------------------------ | --------------------------------------------------------- | ------------ |
-| `kimi-k3`        | Image=false、Video=false | Kimi API 与 K3 发布资料明确为原生视觉，支持图像和视频理解 | true / true  |
-| `kimi-k2.7-code` | Image=false、Video=false | Kimi 官方 FAQ 明确支持 Text、Image、Video                 | true / true  |
-| `k3-256k`        | Image=true、Video=true   | Kimi Code 模型表明确为 Image only                         | true / false |
+| Model            | Current Value            | Current Official Fact                                                                                           | Target Value |
+| ---------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------- | ------------ |
+| `kimi-k3`        | Image=false, Video=false | The Kimi API and the K3 release materials clearly state native visual, supporting image and video understanding | true / true  |
+| `kimi-k2.7-code` | Image=false, Video=false | The Kimi official FAQ clearly supports Text, Image, Video                                                       | true / true  |
+| `k3-256k`        | Image=true, Video=true   | The Kimi Code model table clearly states Image only                                                             | true / false |
 
-`packages/provider-node/test/zcode-builtin-integrity.test.ts` 又断言了前两个错误值，使错误配置能够稳定通过测试。
+The `packages/provider-node/test/zcode-builtin-integrity.test.ts` also asserts the first two incorrect values, allowing the incorrect configuration to stably pass the test.
 
-## 根因
+## Root Cause
 
-2026-08-28 的 Built-in 资料刷新只在研究摘要中记录了 K3 的上下文长度，没有记录多模态能力。实现时把
-“本次资料没有记录”错误地解释为“模型不支持”，将原有的正值降成了 `false`。这不是 Resolver、Overlay 或
-Adapter 的问题，而是发布证据到 Config 的人工投影规则不完整。
+The Built-in data refresh on 2026-08-28 only recorded the K3's context length in the research summary, without recording the multimodal capability. During implementation, "not recorded in this data" was incorrectly interpreted as "the model does not support it," demoting the original positive value to `false`. This is not a problem with the Resolver, the Overlay, or the Adapter; it is the incomplete human projection rule from the release evidence to the Config.
 
-## 修复
+## Fix
 
-1. 先修改完整性测试，固定三项官方事实并证明旧 Config 失败。
-2. 校正对应 Model Match Rules，不增加 Provider/Model 特化代码。
-3. Built-in revision 递增，确保运行中的 Config Source 可以观察到新发布事实。
-4. 在 Built-in 维护设计中加入能力降级门禁：资料缺席不能推翻已经发布的正能力。
-5. 在发布证据报告中记录本次修订和当前官方来源。
+1. First modify the integrity test, fixing the three official facts and proving the old Config fails.
+2. Correct the corresponding Model Match Rules, without adding the Provider/Model specialized code.
+3. Increment the Built-in revision to ensure the running Config Source can observe the new published fact.
+4. Add the capability degradation gate in the Built-in maintenance design: missing data cannot overturn the already-published positive capability.
+5. Record this revision and the current official source in the release evidence report.
 
-## 影响面
+## Impact Scope
 
 ```text
 Built-in Model Match Rules
@@ -42,17 +40,17 @@ Effective Model Config
 Provider Registry / Active Model.properties
         |                    |
         v                    v
-设置页与模型选择器       Runtime 输入检查 / Adapter 编码
+The settings page and the model selector       The Runtime input check / Adapter encoding
 ```
 
-- 不新增 capability DTO，不按 Model ID 在 Runtime 推断能力。
-- 已创建的 Active Model 继续冻结；Config 刷新后新创建的 Model 使用新事实。
-- Desktop continuous、Web Remote replayable、Session Selection 和队列语义不变。
-- Video 仍同时受 `input_format.support_video` 与 Adapter 实际编码能力约束。
+- No new capability DTO is added; the capability is not inferred by the Model ID at Runtime.
+- The already-created Active Model continues to freeze; the new Model created after the Config refresh uses the new fact.
+- The Desktop continuous, Web Remote replayable, Session Selection, and queue semantics remain unchanged.
+- The Video is still constrained by both the `input_format.support_video` and the Adapter's actual encoding capability.
 
-## 验证
+## Verification
 
-- 真实 Built-in Config 解析：K3、K2.7 Code、K3-256K 三项媒体能力。
-- `@zcode/provider-node` 定向单测与 typecheck。
-- 根 `pnpm typecheck`、`pnpm lint`。
-- 配置与文档格式检查、`git diff --check`。
+- The real Built-in Config parses: the K3, K2.7 Code, and K3-256K media capabilities.
+- The `@zcode/provider-node` targeted unit test and typecheck.
+- The root `pnpm typecheck`, `pnpm lint`.
+- The configuration and document format check, the `git diff --check`.

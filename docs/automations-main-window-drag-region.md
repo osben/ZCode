@@ -1,18 +1,16 @@
 # Automations Main Window Drag Region
 
-## 背景
+## Background
 
-Workspace 主视图切到 `automations` 时不会渲染 `WorkspaceHeader`。普通聊天页和草稿页依赖 header 顶部的 `[app-region:drag]` 区域来拖动桌面窗口；定时任务主视图缺少这一层后，桌面端用户无法在页面顶部按住拖动 App。
+When the Workspace main view switches to `automations`, it does not render `WorkspaceHeader`. Regular chat and draft pages rely on the `[app-region:drag]` area at the top of the header to drag the desktop window. Without it, desktop users cannot click and drag the top of the scheduled-tasks view to move the app window.
 
-## 规范
+## Specification
 
-- 桌面端定时任务主视图顶部必须保留一条 `h-12` 的 `[app-region:drag]` 区域，对齐其他主视图标题栏拖拽高度。
-- 定时任务内容区继续独立滚动，不把列表卡片、菜单按钮、创建按钮放进 drag 区域。
-- Web / 手机远控不需要桌面窗口拖拽能力，不增加额外标题栏高度。
-- 如果未来定时任务主视图恢复统一 `WorkspaceHeader`，应移除独立拖拽占位，避免出现双标题栏。
+- On desktop, keep an `h-12` `[app-region:drag]` strip at the top of the scheduled-tasks main view, aligned with the title-bar drag height of other main views.
+- Keep the scheduled-tasks content area independently scrollable; do not place list cards, menu buttons, or the create button inside the drag region.
+- Web and mobile remote control do not need desktop-window dragging; do not add extra title-bar height.
+- If the scheduled-tasks main view later restores the shared `WorkspaceHeader`, remove the separate drag placeholder to avoid two title bars.
 
-## 编辑路径面包屑
+## Editor Breadcrumbs
 
-工作区 Automations 主视图的 48px 桌面拖拽区同时承载二级页面面包屑。列表页只有一级
-“自动化”，按全局规则不显示；新建与编辑页显示“自动化 > 新建任务/任务名称”。一级按钮
-调用编辑视图既有的脏状态返回逻辑，不能绕过未保存确认。移动 Web 不渲染桌面拖拽条。
+The 48px desktop drag region in the Workspace Automations main view also carries the secondary-page breadcrumb. The list page has only the top-level “Automations” page and hides the breadcrumb according to the global rule. Create and edit pages show “Automations > New task/Task name.” The top-level button must call the editor view's existing dirty-state back-navigation logic; it must not bypass the unsaved-changes confirmation. Mobile Web does not render the desktop drag strip.

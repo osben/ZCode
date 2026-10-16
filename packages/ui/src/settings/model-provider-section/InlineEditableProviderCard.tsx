@@ -260,11 +260,15 @@ export function InlineEditableProviderCard({
       draftRef.current[key] = value;
       apply(value);
     };
-    syncField("nameValue", resolvedLabel, setNameValue);
+    // A refresh must not replace the unconfirmed name, including before the first keystroke.
+    // Continue syncing other clean fields; only a provider identity change ends the edit.
+    if (!editingName || nameEditProviderIdRef.current !== provider.providerId) {
+      syncField("nameValue", resolvedLabel, setNameValue);
+    }
     syncField("apiFormat", resolvedApiFormat, setApiFormat);
     syncField("baseUrlValue", resolvedBaseUrl, setBaseUrlValue);
     syncField("apiKeyValue", resolvedApiKey, setApiKeyValue);
-  }, [provider]);
+  }, [provider, editingName]);
 
   const markDraftDirty = useCallback((field: keyof ProviderDraftValues) => {
     dirtyProviderFieldsRef.current.add(field);

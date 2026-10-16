@@ -40,10 +40,7 @@ import {
   TID_CHAT_MODEL_SELECT_TRIGGER,
   testId,
 } from "@zcode/shared";
-import {
-  isCoarseTouchDevice,
-  shouldRestoreChatInputFocusAfterPickerClose,
-} from "@/lib/pickerFocus.js";
+import { restoreComposerInputFocusAfterPickerClose } from "@/lib/pickerFocus.js";
 import { RollingToolbarLabel } from "@/chat-input-toolbar/RollingToolbarLabel.js";
 import { ModelInputCapabilityBadge } from "@/components/ModelInputCapabilityBadge.js";
 
@@ -559,17 +556,10 @@ export const ModelConfigSelect = memo(function ModelConfigSelectComponent({
               return;
             }
             event.preventDefault();
-            if (
-              !shouldRestoreChatInputFocusAfterPickerClose({
-                isCoarseTouchDevice: isCoarseTouchDevice(),
-              })
-            ) {
-              return;
-            }
-            // The chat input’s data-testid is on the contenteditable element itself, not its parent.
-            // Use the same entry point as the mode selector so focus is not lost when the model popover closes and the input cannot be found.
-            const input = document.querySelector<HTMLElement>(focusSelectorOnClose);
-            input?.focus();
+            restoreComposerInputFocusAfterPickerClose({
+              anchor: triggerRef?.current ?? null,
+              fallbackSelector: focusSelectorOnClose,
+            });
           }}
         >
           {leadingItems !== undefined && leadingItems.length > 0 ? (

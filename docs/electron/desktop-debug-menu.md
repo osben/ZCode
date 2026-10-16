@@ -1,10 +1,10 @@
-# Desktop 调试入口
+# Desktop Debug Entry Point
 
-桌面端把开发和诊断相关的入口统一收口到 `Help` 菜单，避免调试能力分散在多个顶层菜单里。
+The desktop app consolidates development and diagnostic entry points in the `Help` menu, keeping debugging tools from being scattered across multiple top-level menus.
 
-当前 `Help` 菜单里的调试入口包括：
+Current debugging entries in the `Help` menu include:
 
 - `Toggle Developer Tools`
-- `Resource Manager`（资源管理器，见 `docs/electron/resource-manager.md`）
+- `Resource Manager` (see `docs/electron/resource-manager.md`)
 
-这样调整后，开发排查时只需要从一个固定位置进入对应工具。
+With this change, developers can access the relevant tools from one fixed location when investigating issues.

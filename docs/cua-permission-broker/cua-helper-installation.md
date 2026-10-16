@@ -1,96 +1,83 @@
-# ZCode Computer Use 外置安装闭环
+# ZCode Computer Use External Installation Closed Loop
 
-## 背景
+## Background
 
-ZCode Computer Use Helper 必须作为独立 `.app` 运行，才能成为 macOS TCC 的独立责任进程。发布包把已签名 Helper 携带在 `ZCode.app/Contents/Resources/cua-helper/` 中；运行时先校验并复制到稳定的用户级路径，再通过 LaunchServices 拉起。它不是 Electron 子进程，也不使用 `Contents/Library/Helpers`。
+The ZCode Computer Use Helper must run as an independent `.app` to be an independent accountability process for macOS TCC. The distribution package carries the already-signed Helper within `ZCode.app/Contents/Resources/cua-helper/`; at runtime, it first validates and copies to a stable user-level path, then launches via LaunchServices. It is not an Electron subprocess and does not use `Contents/Library/Helpers`.
 
-产品安装位置固定为：
+The product installation location is fixed:
 
 ```text
 ${ZCODE_HOME:-$HOME/.zcode}/computer-use/ZCode Computer Use.app
 ```
 
-内部 `ZCode Preview` 与生产版共享 `ZCODE_HOME` 里的任务、配置和凭据，但使用独立的 Helper
-版本目录，避免两个不同 App 版本依次使用 CUA 时互相覆盖或触发降级保护：
+Internal `ZCode Preview` and production share `ZCODE_HOME` tasks, configuration, and credentials, but use independent Helper version directories to avoid two different App versions overwriting each other or triggering downgrade protection when using CUA sequentially:
 
 ```text
 ${ZCODE_HOME:-$HOME/.zcode}/computer-use/preview/ZCode Computer Use.app
 ```
 
-该路径由桌面 Host 注入 `ZCODE_CUA_HELPER_INSTALL_VARIANT=preview`，只改变 CUA 运行组件位置，
-不会改变业务数据根。两个 Helper bundle 的签名身份都保持 `dev.zcode.cua-helper`，因此 macOS
-Accessibility / Screen Recording 的授权主体仍显示为同一个 `ZCode Computer Use`。
+This path is injected by the Desktop Host as `ZCODE_CUA_HELPER_INSTALL_VARIANT=preview`, changing only the CUA runtime component location
+without changing the business data root. Both Helper bundles maintain the signed identity `dev.zcode.cua-helper`, so the macOS
+Accessibility / Screen Recording authorization subject still shows the same `ZCode Computer Use`.
 
-## 安装来源
+## Installation Source
 
-正式产品只有一个安装来源：当前 ZCode.app 内的
-`Contents/Resources/cua-helper/ZCode Computer Use.app`。缺失、无效或无法读取时直接
-fail-closed；产品代码不会尝试网络下载，也没有下载兜底。因此构建与签名门禁必须保证这个
-arm64 Helper 与主 App 一起交付。
+The official product has exactly one installation source: the
+`Contents/Resources/cua-helper/ZCode Computer Use.app` within the current ZCode.app. When missing, invalid, or unreadable, fail-closed directly; the product code does not attempt network downloads and has no download fallback. Therefore, the build and signature gate must ensure this arm64 Helper is delivered together with the main App.
 
-以下覆盖只属于显式本地开发模式，不得作为产品分发配置：
+The following coverage belongs only to explicit local development mode and must not be used as production distribution configuration:
 
-- `ZCODE_CUA_HELPER_DOWNLOAD_URL`：完整 zip URL。
-- `ZCODE_CUA_HELPER_DOWNLOAD_BASE_URL`：版本目录 base URL。
-- `ZCODE_CUA_HELPER_VERSION`：本地下载包的期望 Helper 版本。
-- `ZCODE_CUA_HELPER_TEAM_ID`：期望签名 TeamIdentifier。**未配置时默认锚定 ZCode 官方 team `8A5X4JJ39T`（等价证书 pinning），不是"任意非 ad-hoc team"**；本变量仅用于开发或更换 team 时显式覆盖。
-- `ZCODE_CUA_HELPER_ALLOW_UNSIGNED_LOCAL=1`：仅供本机开发调试。此模式不下载，也不通过
-  release 签名/Gatekeeper 验收；当来源是当前 checkout 显式提供的 bundled Helper 时，即使版本号
-  相同，也必须比较产物内容并在发生变化时原子刷新安装，禁止静默复用旧 Helper。
-- `ZCODE_CUA_PRODUCT_HELPER=0|false|off`（macOS/Windows）：显式关闭默认启用的产品 Helper resolver，
-  关闭后不创建 host、不启动 Helper、不弹 TCC。未设置或显式 `1|true|on` 时，desktop-local
-  按需启动外置 Helper，并把随机 socket/token 只注入给可信 shared `node_repl` host。
+- `ZCODE_CUA_HELPER_DOWNLOAD_URL`: complete zip URL.
+- `ZCODE_CUA_HELPER_DOWNLOAD_BASE_URL`: version directory base URL.
+- `ZCODE_CUA_HELPER_VERSION`: expected Helper version for the local download package.
+- `ZCODE_CUA_HELPER_TEAM_ID`: expected signing TeamIdentifier. **When not configured, it defaults to anchoring the ZCode official team `8A5X4JJ39T` (equivalent certificate pinning), not "any non-ad-hoc team"; this variable is for development or team switching overrides only.**
+- `ZCODE_CUA_HELPER_ALLOW_UNSIGNED_LOCAL=1`: for本机 development debugging only. This mode does not download, nor pass through
+  release signature/Gatekeeper validation; when the source is the bundled Helper explicitly provided by the current checkout, even if the version number is the same, the artifact contents must be compared and atomically refreshed when changed — silent reuse of the old Helper is prohibited.
+- `ZCODE_CUA_PRODUCT_HELPER=0|false|off` (macOS/Windows): explicitly disables the default-enabled product Helper resolver;
+  when disabled, no host is created, no Helper is started, no TCC prompt is shown. When unset or explicitly `1|true|on`, desktop-local
+  on-demand external Helper startup, and the random socket/token is injected only to the trusted shared `node_repl` host.
 
-## 校验
+## Verification
 
-安装器在替换现有 Helper 前必须先在 staging 目录校验。产品内嵌来源用构建 ID、签名、bundle id、
-架构和 Gatekeeper 绑定，不依赖曾经被错误解析为 `0.0.0` 的运行时版本常量；本地下载来源仍检查版本：
+Before replacing an existing Helper, the installer must verify in the staging directory. The product-embedded source is bound by build ID, signature, bundle id,
+architecture, and Gatekeeper; it does not depend on the runtime version constant that was historically incorrectly parsed as `0.0.0`; local downloads still check the version:
 
-- `Info.plist` 的 `CFBundleIdentifier` 必须是 `dev.zcode.cua-helper`。
-- 本地下载来源的 `CFBundleShortVersionString` 或 `CFBundleVersion` 必须等于期望版本。
-- `Contents/MacOS/<CFBundleExecutable>` 必须包含当前目标 arch。
-- `codesign --verify --deep --strict` 必须通过。
-- `codesign -dv --verbose=4` 必须能读到非 ad-hoc `TeamIdentifier`，且必须等于期望 team（默认 `8A5X4JJ39T`，可用 `ZCODE_CUA_HELPER_TEAM_ID` 覆盖）。release 校验下 `expectedTeamIdentifier` 为空会被直接拒绝（fail-closed），不接受未锚定 team 的包。
-- `spctl -a -vv -t exec` 必须通过，用于验证 Gatekeeper/notarization 结果。
+- The `CFBundleIdentifier` in `Info.plist` must be `dev.zcode.cua-helper`.
+- For local downloads, `CFBundleShortVersionString` or `CFBundleVersion` must equal the expected version.
+- `Contents/MacOS/<CFBundleExecutable>` must contain the current target architecture.
+- `codesign --verify --deep --strict` must pass.
+- `codesign -dv --verbose=4` must be able to read a non-ad-hoc `TeamIdentifier`, which must equal the expected team (default `8A5X4JJ39T`, overridable via `ZCODE_CUA_HELPER_TEAM_ID`). Under release verification, an empty `expectedTeamIdentifier` is directly rejected (fail-closed); packages without an anchored team are not accepted.
+- `spctl -a -vv -t exec` must pass, to verify the Gatekeeper/notarization result.
 
-校验失败时不能启动 Helper，也不能把 socket/token 注入给 shared `node_repl` host。
+On verification failure, the Helper must not start, nor inject socket/token to the shared `node_repl` host.
 
-## 本地 dev 模式
+## Local Dev Mode
 
-> Helper 与模型侧 SDK/node_repl bridge 是两类独立资产。Helper 显示 ready 但工具仍不可用时，还需要检查
-> [`cua-dev-mcp-runtime-assets.md`](./cua-dev-mcp-runtime-assets.md) 中的 Dev 构建、插件缓存与
-> session MCP 注册链路。
+> The Helper and the model-side SDK/node_repl bridge are two independent assets. When the Helper shows ready but the tools are still unavailable, you also need to check
+> the Dev build, plugin cache, and session MCP registration chain in [`cua-dev-mcp-runtime-assets.md`](./cua-dev-mcp-runtime-assets.md).
 
-`ZCODE_CUA_HELPER_ALLOW_UNSIGNED_LOCAL=1` 用于解决开发机没有 Developer ID 签名身份时的
-迭代测试问题。产品 Helper resolver 默认启用，不需要额外开启变量；只有
-`ZCODE_CUA_PRODUCT_HELPER=0|false|off` 才关闭。该模式保留 bundle id、版本、架构和 Mach-O 结构校验，
-但允许 ad-hoc/unsigned 签名并跳过 Gatekeeper/notarization；通过后仍按产品路径用
-LaunchServices 启动外置 Helper，并把随机 socket/token 注入给可信 shared `node_repl` host。
+`ZCODE_CUA_HELPER_ALLOW_UNSIGNED_LOCAL=1` is used to solve the iterative testing problem when the development machine lacks a Developer ID signing identity. The product Helper resolver is enabled by default and requires no additional variable; only `ZCODE_CUA_PRODUCT_HELPER=0|false|off` disables it. This mode preserves the bundle id, version, architecture, and Mach-O structure verification, but allows ad-hoc/unsigned signatures and skips Gatekeeper/notarization; after passing, the external Helper is still launched via LaunchServices at the product path, and the random socket/token is injected to the trusted shared `node_repl` host.
 
-非打包 macOS desktop 在显式开启上述 unsigned-local 模式后，优先使用非空的
-`ZCODE_CUA_BUNDLED_HELPER_APP_PATH` 作为本地 bundled source；未设置、空串或仅空白时回退到
-`${ZCODE_HOME:-$HOME/.zcode}/computer-use/dev/ZCode Computer Use Dev.app`。路径缺失或校验失败时
-fail-closed，绝不回退下载。正式打包 desktop 会忽略该开发态覆盖并始终使用
-`ZCode.app/Contents/Resources/cua-helper/ZCode Computer Use.app`，因此 shell 不能改写生产来源。
+Unpacked macOS desktop, after explicitly enabling the above unsigned-local mode, first uses the non-empty
+`ZCODE_CUA_BUNDLED_HELPER_APP_PATH` as the local bundled source; when unset, empty string, or whitespace only, it falls back to
+`${ZCODE_HOME:-$HOME/.zcode}/computer-use/dev/ZCode Computer Use Dev.app`. When the path is missing or verification fails, fail-closed, never fall back to download. The officially packed desktop ignores the development override and always uses
+`ZCode.app/Contents/Resources/cua-helper/ZCode Computer Use.app`, so the shell cannot rewrite the production source.
 
-标准 `pnpm dev:desktop` 启动脚本必须同时注入当前 checkout 的 bundled Helper 路径和
-`ZCODE_CUA_HELPER_ALLOW_UNSIGNED_LOCAL=1`。两者缺一不可：只有路径时 Host 不会进入本地开发
-信任与同版本内容刷新分支，容易继续启动 `~/.zcode` 中版本号相同但 native ABI 已过期的 Helper。
+The standard `pnpm dev:desktop` startup script must inject both the current checkout's bundled Helper path and
+`ZCODE_CUA_HELPER_ALLOW_UNSIGNED_LOCAL=1`. Both are required: with the path alone, the Host does not enter the local development
+trust and same-version content refresh branch, which can continue to start a Helper in `~/.zcode` whose version number is the same but whose native ABI is expired.
 
 ```text
-dev 启动
-  -> 注入 checkout Helper 路径 + unsigned-local 标记
-  -> 校验并比较已安装 Helper 与 checkout 产物
-  -> 内容不同则原子刷新
-  -> LaunchServices 启动 Helper，等待 broker ready
+dev startup
+  -> inject checkout Helper path + unsigned-local flag
+  -> verify and compare installed Helper with checkout artifacts
+  -> if content differs, atomic refresh
+  -> LaunchServices starts Helper, waits for broker ready
 ```
 
-该模式不自动下载 Helper，避免把缺失的本地产物静默替换成远端 signed 产物，也避免把 signed
-产物误覆盖成开发产物。它只能证明本地 App/Helper/socket/token 流程可运行，不能证明稳定
-TCC 身份或 release 可交付性。
+This mode does not automatically download the Helper, avoiding silently replacing missing local artifacts with remote signed ones, or overwriting signed artifacts with development ones. It can only prove that the local App/Helper/socket/token flow works; it cannot prove stable TCC identity or release deliverability.
 
-联合验证尚未发布的 zcode-cua 源码时，先在 producer 仓库执行 `pnpm build`，再给两条构建链
-传入同一个绝对目录：
+When jointly verifying unreleased zcode-cua source code, first run `pnpm build` in the producer repository, then pass the same absolute directory to both build chains:
 
 ```bash
 ZCODE_CUA_HELPER_RUNTIME_PACKAGE_DIR=/absolute/path/to/zcode-cua \
@@ -99,35 +86,32 @@ ZCODE_CUA_RUNTIME_PACKAGE_DIR=/absolute/path/to/zcode-cua \
   pnpm --filter @zcode/cli build
 ```
 
-两个变量只覆盖本次构建输入，不修改 lockfile。未设置时继续使用仓库固定依赖；不能只覆盖
-Helper 而让插件内联旧 frontend，否则跨版本行为会被误判成 Helper 回归。
+These two variables only override the build inputs for this invocation, without modifying the lockfile. When unset, the repository-fixed dependencies continue to be used; you cannot override only the Helper while leaving the plugin with the old frontend inline, otherwise cross-version behavior will be misjudged as a Helper regression.
 
-## 安装与原子替换
+## Installation and Atomic Replacement
 
-产品将 App 内的 Helper 复制到同一安装根目录下的 staging；显式本地开发下载则先下载、解压到
-staging。两者校验通过后使用同一套 promotion：
+The product copies the Helper from inside the App to the staging directory at the same installation root; explicit local downloads first download and extract to staging. Both use the same promotion after passing verification:
 
-1. 已有 Helper 重命名为同目录 backup。
-2. staging Helper 重命名到最终路径。
-3. promotion 失败时回滚 backup。
-4. 成功后删除 backup 和临时目录，并写入 `.zcode-cua-helper-meta.json`。
+1. Rename the existing Helper to a backup in the same directory.
+2. Rename the staging Helper to the final path.
+3. On promotion failure, rollback from backup.
+4. On success, delete the backup and temporary directories, and write `.zcode-cua-helper-meta.json`.
 
-该流程避免跨卷 `rename`，并确保不会把未校验的 Helper 放到产品路径。
+This flow avoids cross-volume `rename` and ensures that unverified Helpers are never placed in the product path.
 
-## Hardened runtime entitlements（最小集）
+## Hardened runtime entitlements (minimal set)
 
-Helper 是独立的 TCC 授权主体（Accessibility / Screen Recording / 输入），不是普通 Electron
-renderer，entitlement 必须是最小集。已批准的集合**恰好**为（`packages/desktop/build/entitlements.helper.plist`，
-由 `packages/desktop/test/runtime-asset-scripts.test.ts` 的 release gate 断言，任何新增都会失败）：
+The Helper is an independent TCC authorization subject (Accessibility / Screen Recording / Input), not a regular Electron
+renderer, so entitlements must be the minimal set. The approved set is **exactly** (`packages/desktop/build/entitlements.helper.plist`,
+asserted by the release gate in `packages/desktop/test/runtime-asset-scripts.test.ts`; any addition will fail):
 
-- `com.apple.security.cs.allow-jit` —— Node SEA 内嵌 V8 在 hardened runtime（W^X）下 JIT 需要 `MAP_JIT`。
-- `com.apple.security.cs.allow-unsigned-executable-memory` —— V8 JIT 在部分 macOS/Node 组合下仍需要可写可执行内存；
-  仅在 `allow-jit` 不足以让 SEA 正常 JIT 时保留。**风险接受边界**：该 entitlement 会削弱 W^X 保护，因此配合
-  “启动 env 净化（`sanitizeHelperLaunchEnv` 剔除 `DYLD_*`/`LD_*`/`NODE_OPTIONS`，两条 LaunchServices 路径共用）”
-  - “移除 `allow-dyld-environment-variables`” 一起，确保没有外部注入通道能利用它。**验证/收敛命令**（在签名后的 release
-    Helper 上）：`codesign -d --entitlements :- "ZCode Computer Use.app"`；若在干净环境下移除本 entitlement 后 SEA 仍能
-    正常 JIT（启动 + 执行一次 broker 请求不崩），应进一步移除（follow-up：release runner 上验证）。
+- `com.apple.security.cs.allow-jit` — Node SEA-embedded V8 needs `MAP_JIT` for JIT under hardened runtime (W^X).
+- `com.apple.security.cs.allow-unsigned-executable-memory` — V8 JIT still requires writable executable memory under some macOS/Node combinations;
+  retained only when `allow-jit` alone is insufficient for SEA to JIT normally. **Risk acceptance boundary**: this entitlement weakens W^X protection, so it is paired with
+  "startup env sanitization (`sanitizeHelperLaunchEnv` strips `DYLD_*`/`LD_*`/`NODE_OPTIONS`, both LaunchServices paths share the mechanism)"
+  - "removal of `allow-dyld-environment-variables`" together, ensuring no external injection channel can exploit it. **Verification/convergence command** (on the signed release
+    Helper): `codesign -d --entitlements :- "ZCode Computer Use.app"`; if the SEA can still JIT normally after removing this entitlement in a clean environment (startup + executing one broker request without crashing), it should be further removed (follow-up: verify on the release runner).
 
-**已移除**：`com.apple.security.cs.disable-library-validation`（R14）—— Helper 只加载随包同一 Team
-（默认 `8A5X4JJ39T`）签名的 `ax_macos.node`，library validation 无需放开；`com.apple.security.cs.allow-dyld-environment-variables`
-（R10）—— 防止 `DYLD_*` 注入这个高权限主体。主 App（`entitlements.mac.plist`）的更宽配置**不得**直接沿用到 Helper。
+**Removed**: `com.apple.security.cs.disable-library-validation` (R14) — the Helper only loads `ax_macos.node` signed by the same Team as the package
+(default `8A5X4JJ39T`), library validation does not need to be relaxed; `com.apple.security.cs.allow-dyld-environment-variables`
+(R10) — prevents `DYLD_*` injection to this high-privilege subject. The broader configuration of the main App (`entitlements.mac.plist`) **must not** be directly applied to the Helper.

@@ -1,49 +1,49 @@
-# 反馈附件后台上传收起窗口
+# Minimize the Window During Background Feedback Attachment Uploads
 
-## 背景
+## Background
 
-反馈提交会先创建工单，再上传截图和诊断日志。诊断日志导出和上传可能耗时较长，如果一直停留在提交窗口，用户会被长时间阻塞在弹窗里。
+Feedback submission first creates a ticket, then uploads screenshots and diagnostic logs. Exporting and uploading diagnostic logs can take a while, which otherwise leaves users blocked in the submission dialog.
 
-## 行为
+## Behavior
 
-- 用户点击“提交反馈”后，工单创建阶段仍保持反馈窗口打开。
-- 工单创建请求必须设置有限超时，避免反馈服务或网络链路悬挂时让提交按钮永久停在“正在连接反馈服务”。
-- 工单创建阶段的“取消”必须是真取消：UI 通过反馈服务的创建 operation id 通知 host process 中断当前创建请求，并停止后续截图和日志上传。
-- 工单创建成功后，截图和日志附件进入后台上传，反馈窗口自动关闭。
-- 顶部帮助菜单的“问题上报”以及其他新建反馈入口始终打开一份新的提交表单，不自动绑定任何已有的后台提交任务；用户不需要等待上一份反馈的附件上传完成。
-- 后台提交任务按 `jobId` 独立存在。多个任务尚未结束时，窗口右下角为每个任务分别展示一张状态卡片，而不是只展示最后一个任务。
-- 点击某张未结束任务卡片时，反馈弹窗只绑定该卡片的 `jobId`，展示对应进度，并恢复该次提交时的原始问题描述、联系方式、截图、日志开关和工单分类；关闭后任务仍在后台继续。新建反馈入口与“打开指定后台任务”是两个不同动作。
-- 后台任务保存的是提交瞬间的用户表单快照。问题描述必须使用用户输入的原文，不能从已经拼入模型、类型等诊断信息的后端 `ticketInput.description` 反向还原。
-- 如果用户未添加截图且关闭日志上传，没有后台附件阶段，继续保留原有提交完成后的跳转行为。
-- 关闭窗口不取消已创建工单后的后台上传任务，现有后台上传状态提示继续负责展示上传进度、暂停和错误；如果关闭发生在工单创建成功前，应取消创建请求。
-- 如果工单创建失败，不自动关闭窗口，继续展示原有错误状态，用户可以修改内容后重试。
-- 如果附件上传失败，不重新弹出提交窗口，沿用现有后台 job 错误和提示逻辑。
-- 如果用户主动取消工单创建，提交状态复位并展示“反馈提交已取消”，不创建附件上传任务；即使后端稍后返回创建成功，也不恢复旧提交 job。
+- Keep the feedback window open while the user clicks “Submit Feedback” and the ticket is being created.
+- The ticket-creation request must have a finite timeout so a hanging feedback service or network connection cannot leave the button stuck on “Connecting to feedback service.”
+- “Cancel” during ticket creation must truly cancel it: the UI uses the feedback service's creation operation ID to tell the host process to abort the current request and stop subsequent screenshot and log uploads.
+- After ticket creation succeeds, upload screenshot and log attachments in the background and close the feedback window automatically.
+- The “Report a problem” entry in the top help menu and all other new-feedback entry points always open a fresh submission form. They do not automatically bind to an existing background submission; users do not need to wait for the previous feedback's attachment uploads to finish.
+- Each background submission task exists independently by `jobId`. If multiple tasks are still active, show a separate status card for each in the lower-right corner instead of showing only the latest task.
+- Clicking an active task card binds the feedback dialog only to that card's `jobId`, shows its progress, and restores the original problem description, contact information, screenshots, log setting, and ticket classification from that submission. Closing the dialog leaves the task running in the background. Creating new feedback and opening a specific background task are distinct actions.
+- A background task stores a snapshot of the user form at submission time. The problem description must use the original user input; do not try to reconstruct it from the backend `ticketInput.description`, which already includes diagnostic information such as model and type.
+- If the user added no screenshots and disabled log uploads, there is no background attachment stage; keep the existing post-submission navigation behavior.
+- Closing the window does not cancel background uploads for an already-created ticket. The existing background-upload status notice continues to show progress, pause, and errors. If the window closes before ticket creation succeeds, cancel the creation request.
+- If ticket creation fails, do not close the window automatically; keep showing the existing error state so the user can edit the content and retry.
+- If attachment upload fails, do not reopen the submission window; use the existing background-job error and notice handling.
+- If the user explicitly cancels ticket creation, reset the submission state and show “Feedback submission canceled”; do not create an attachment-upload task. Ignore any later success response from the backend and do not restore the old submission job.
 
-## 状态与交互边界
+## State and Interaction Boundaries
 
 ```text
-新建反馈入口
+New feedback entry
     |
     v
-[全新提交表单, submissionJobId = null]
+[Fresh submission form, submissionJobId = null]
     |
-    | 创建工单成功，附件继续上传
+    | Ticket created successfully; attachments continue uploading
     v
-[后台任务 job-A + 表单快照 A] ----\
-                                  +--> 右下角卡片列表 --> 点击 A --> [进度弹窗 + 表单快照 A]
-[后台任务 job-B + 表单快照 B] ----/                    \-> 点击 B --> [进度弹窗 + 表单快照 B]
+[Background job job-A + form snapshot A] ----\
+                                             +--> Lower-right card list --> Click A --> [Progress dialog + form snapshot A]
+[Background job job-B + form snapshot B] ----/                         \-> Click B --> [Progress dialog + form snapshot B]
 
-再次点击“问题上报” -----------------------> [全新提交表单, submissionJobId = null]
+Click “Report a problem” again ----------------> [Fresh submission form, submissionJobId = null]
 ```
 
-- `openSubmit(draft)` 只表达“新建反馈”，必须清空 `submissionJobId`。
-- `openSubmissionJob(jobId)` 只表达“查看某个后台提交”，不得退化为“取最后一个活动任务”。
-- `FeedbackSubmissionJob.formDraft` 是每个任务独立、只读的提交瞬间快照；弹窗按 `jobId` 恢复这份快照，不读取其他任务或当前新建表单的状态。
-- 后台卡片列表订阅全局 job registry；任务之间不共享表单的 `submitting`、进度或取消状态。
-- 本功能是应用级本机反馈能力，不引入 workspace 状态，也不改变桌面 `continuous` 或手机远控 `replayable` 的消息链路。
+- `openSubmit(draft)` means “create new feedback” and must clear `submissionJobId`.
+- `openSubmissionJob(jobId)` means “view a specific background submission” and must not fall back to “the latest active task.”
+- `FeedbackSubmissionJob.formDraft` is a per-task, read-only snapshot captured at submission time. The dialog restores that snapshot by `jobId`; it does not read another task's state or the current new-feedback form.
+- The background card list subscribes to the global job registry. Tasks do not share the form's `submitting`, progress, or cancellation state.
+- This is an app-level local feedback capability. It does not introduce workspace state or change the desktop `continuous` or mobile remote-control `replayable` message paths.
 
-## 非目标
+## Non-goals
 
-- 不修改反馈后端 HTTP 协议、附件上传协议、截图选择和日志打包规则。
-- 不改变“我的反馈”列表和工单详情行为。
+- Do not change the feedback backend HTTP protocol, attachment-upload protocol, screenshot selection, or log packaging rules.
+- Do not change “My Feedback” list or ticket-detail behavior.

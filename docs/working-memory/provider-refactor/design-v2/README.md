@@ -1,52 +1,51 @@
 # Provider Refactor Design V2
 
-> 状态：现行设计入口
-> 基线：以本目录建立时的 Provider Refactor 分支实现和已裁决决策为准
-> 范围：Provider / Model 配置、解析、Registry、Model 创建、账号 Overlay、设置投影与执行边界
+> Status: Current design entry point
+> Baseline: Provider Refactor branch implementation and ruled decisions as of this directory's creation
+> Scope: Provider / Model configuration, resolution, Registry, Model creation, account overlay, settings projection, and execution boundaries
 
-## 为什么建立 V2
+## Why V2 Was Created
 
-Provider Refactor 经历了多轮设计、实现、实机反馈和边界修正。旧 `design/`、`steps/`、`research/`、
-`plan/` 与实施日志保留了完整过程，但其中同时存在：
+Provider Refactor went through multiple rounds of design, implementation, real-machine feedback, and boundary corrections. The old `design/`, `steps/`, `research/`,
+`plan/`, and implementation logs preserve the complete history, but they contain a mix of:
 
-- 已经落地的现行设计；
-- 被后续 Todo 明确取代的阶段性设计；
-- 只用于发现问题、从未成为设计的研究候选；
-- 已完成实现的历史记录；
-- 暂缓、草案或仍在执行的工作；
-- 与当前代码事实不一致的旧术语和旧 Schema。
+- Already-landed current design;
+- Stage-specific designs explicitly superseded by subsequent Todo items;
+- Research candidates created solely to surface issues, never adopted as design;
+- Completed implementation history;
+- Deferred drafts or ongoing work;
+- Legacy terminology and legacy Schema inconsistent with current code facts.
 
-本目录不再延续那种按迁移阶段累积上下文的写法，而是重新整理为两条线：
+This directory no longer accumulates context by migration phase. Instead, it reorganizes into two threads:
 
-1. [`design.md`](./design.md)：只写当前应被遵守的核心设计、原则和边界；
-2. [`evidence-and-contradictions.md`](./evidence-and-contradictions.md)：记录证据来源、历史矛盾、裁定结果、
-   staging 差异和未完成事项，供考证与审计。
+1. [`design.md`](./design.md): Records only the core design, principles, and boundaries that should currently be followed;
+2. [`evidence-and-contradictions.md`](./evidence-and-contradictions.md): Records evidence sources, historical contradictions, ruling results,
+   staging differences, and unfinished items, for verification and audit.
 
-## 权威顺序
+## Authority Order
 
-发生冲突时按以下顺序判断：
+When conflicts arise, apply the following priority:
 
-1. 最新的明确用户裁决和已经接受的后续设计；
-2. 当前领域 Schema、Resolver、Registry、ModelFactory 及其测试所证明的实现事实；
-3. 本目录的现行设计；
-4. 旧 `design/` 中尚未被后续决策或代码取代的内容；
-5. 已完成 Todo / Bugfix 的最终结论；
-6. Research、Draft、Delayed Todo、实施日志和历史计划。
+1. The latest explicit user rulings and subsequently accepted designs;
+2. Implementation facts demonstrated by the current domain Schema, Resolver, Registry, ModelFactory, and their tests;
+3. The current design in this directory;
+4. Content in the old `design/` that has not yet been superseded by subsequent decisions or code;
+5. Final conclusions from completed Todo / Bugfix items;
+6. Research, Draft, Delayed Todo, implementation logs, and historical plans.
 
-第二项只能证明“现在实现了什么”，不能推翻第一项。当实现与已裁决设计不一致时，应记录为实现漂移并修正实现，
-不能把偶然代码行为升级为设计。
+Item 2 can only prove "what is currently implemented"; it cannot override Item 1. When implementation diverges from a ruled design, record it as implementation drift and fix the implementation—do not elevate accidental code behavior into design.
 
-## 阅读方式
+## How to Read
 
-- 要理解 Provider Refactor 最终要解决什么、系统为何这样分层：读 [`design.md`](./design.md)。
-- 要判断某个旧字段、旧名词或旧 Todo 是否仍有效：查
-  [`evidence-and-contradictions.md`](./evidence-and-contradictions.md)。
-- 要复盘具体迁移过程、测试证据或历史事故：再回到上一级的 `steps/`、`research/` 和 `plan/`。
+- To understand what Provider Refactor ultimately solves and why the system is layered this way: read [`design.md`](./design.md).
+- To determine whether an old field, old term, or old Todo is still valid: check
+  [`evidence-and-contradictions.md`](./evidence-and-contradictions.md).
+- To review specific migration processes, test evidence, or historical incidents: return to the `steps/`, `research/`, and `plan/` directories at the parent level.
 
-## 维护规则
+## Maintenance Rules
 
-- 新的 Provider 核心设计决策先更新 `design.md`，再实现代码。
-- 旧材料与现行设计发生新冲突时，不篡改历史材料；在考证文档新增裁定记录。
-- 只有完成裁决并进入现行目标的内容才能写入 `design.md`。
-- Draft、Delayed、Research 或正在执行但尚未验证的实现，必须留在考证文档的未完成区。
-- 本目录不引入新的领域对象；“V2”只是文档整理版本，不是运行时版本、Config Schema 版本或迁移协议。
+- New Provider core design decisions update `design.md` first, then implement code.
+- When old materials conflict with the current design, do not alter historical materials; add ruling records to the evidence document instead.
+- Only content that has completed ruling and entered the current target scope may be written into `design.md`.
+- Draft, Delayed, Research, or implementations that are in progress but unverified must remain in the evidence document's unfinished section.
+- This directory does not introduce new domain objects; "V2" refers only to the documentation organization version, not a runtime version, Config Schema version, or migration protocol.

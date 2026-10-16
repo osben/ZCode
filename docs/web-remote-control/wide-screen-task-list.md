@@ -1,51 +1,42 @@
-# 宽屏 Web 远控任务列表
+# Wide-Screen Web Remote Control Task List
 
-## 背景
+## Background
 
-手机 `/remote` 窄屏已经有独立任务首页，使用 `listWorkspaces()` 返回的
-`WebRemoteControlWorkspaceListResult` 作为跨工作区任务事实源。宽屏 `/remote` 仍复用桌面
-sidebar 外壳，但左侧任务列表区域需要遵守同一远控事实源，否则用户在宽屏远控看到的任务、搜索、视图切换和归档入口会彼此不一致。
+The mobile `/remote` narrow screen already has an independent task home page, using `listWorkspaces()` returning `WebRemoteControlWorkspaceListResult` as the cross-workspace task fact source. The wide-screen `/remote` still reuses the desktop sidebar shell, but the left task list area needs to comply with the same remote control fact source; otherwise, the tasks, search, view switching, and archive entries seen by users in the wide-screen remote control would be inconsistent with each other.
 
-## 范围
+## Scope
 
-- 仅影响宽屏 Web remote control shell 的左侧任务列表区域。
-- 桌面端 sidebar 继续使用原有 `WorkspaceGroupedTasksSection`、`WorkspaceTimelineTasksSection`、
-  `WorkspaceArchivedTasksFlatSection`、`WorkspacePinnedTasksSection` 和 continuous 实时链路。
-- 不改变 relay、desktop main、host process、task realtime、snapshot、queue 或 owner command 语义。
-- 宽屏 Web remote 继续通过 shared-host attachment 访问已有 desktop host，不启动独立 runtime。
+- Only affects the left task list area of the wide-screen Web remote control shell.
+- The desktop sidebar continues to use the existing `WorkspaceGroupedTasksSection`, `WorkspaceTimelineTasksSection`, `WorkspaceArchivedTasksFlatSection`, `WorkspacePinnedTasksSection`, and the continuous real-time path.
+- Does not change relay, desktop main, host process, task realtime, snapshot, queue, or owner command semantics.
+- The wide-screen Web remote control continues to access the existing desktop host through shared-host attachment, without starting an independent runtime.
 
-## 行为
+## Behavior
 
-宽屏 Web remote 在任务工具栏内保留现有视图、排序、搜索和归档入口，但这些入口在远控模式下必须消费
-`listWorkspaces()` 返回的同一份任务索引：
+The wide-screen Web remote control retains the existing view, sorting, search, and archive entries within the task toolbar, but these entries must consume the same task index returned by `listWorkspaces()` in the remote control mode:
 
-1. `workspace` 视图按 desktop 返回的 workspace 顺序分组，只展示非置顶任务；置顶任务仅在独立置顶区展示，避免重复。
-2. `timeline` 视图跨所有可见 workspace 展示非置顶任务，并使用与桌面一致的两层排序：running 先于非 running，running 内按 `createdAt` 倒序稳定排列，非 running 再按用户选择的 `created` 或 `updated` 字段排序。运行层成员 = `displayStatus === "running"` 或 `hasBackgroundWork === true`（2026-09-09 追记：会话挂着后台 workflow run 时只推进 `updatedAt`、不改图标，不并入运行层就会随进度事件换位）。
-   任务行在标题下绘制与桌面一致的工作流运行行（`WebRemoteControlTaskTarget.workflowActivity`，2026-09-14 追记）：Workflow 图标 + 迷你轨道灯 + 当前 phase 名；结束的 run 行由远控端自己的已确认集合折叠，不依赖桌面 localStorage。
-3. 归档视图展示远控任务索引中的归档任务。归档任务仍按同一排序字段排序，并保留 workspace label，避免退回当前 bridge workspace。
-4. 搜索只过滤当前宽屏远控任务区里的任务和 workspace label，不打开桌面 Command Center；搜索词为空时恢复完整列表。
-5. `workspace` 视图的收起/展开全部只控制宽屏远控分组展开状态，不写入或复用桌面 sidebar 的展开状态。
-6. 切换排序、视图、搜索词或归档状态不得改变桌面端任务列表行为。
-7. 普通和置顶任务行在 hover 后展示置顶/取消置顶与归档入口，交互语义对齐桌面端侧栏：置顶直接切换 membership，归档先进入确认态，第二次点击才归档。
-8. 任务操作通过当前 shared-host bridge 可解析到的 `zcodeTaskService` 执行。本地 workspace 走 base services；远端 workspace 只有在已注册 remote session services 时才允许操作，避免把远端 `workspacePath` 误交给本机 host。
-9. 操作成功后宽屏远控本地任务索引立即按返回的 membership 更新，等待 desktop renderer 后续 task snapshot 同步收敛；失败时保留原索引并提示用户。
-10. 置顶、取消置顶、归档、取消归档属于 task list membership 变化。服务层必须广播明确的 membership reason，desktop renderer 收到后重新刷新对应 task list，不能把这类事件当作普通 `task_meta_changed` 增量保留 membership。
-11. Desktop renderer 把更新后的 Web remote task snapshot 同步给 desktop main 后，desktop main 只通过既有 app payload 通道通知已连接 Web remote 重新采用最新 `WebRemoteControlWorkspaceListResult`。relay 和 main 不新增 task 业务状态，只转发 renderer 已同步的任务索引快照。
+1. The `workspace` view is grouped by the workspace order returned by the desktop, only displaying unpinned tasks; pinned tasks are only displayed in the independent pinned section to avoid duplication.
+2. The `timeline` view displays unpinned tasks across all visible workspaces, using a two-layer sorting consistent with the desktop: running before non-running, running sorted stably by `createdAt` in descending order, non-running sorted by the user-selected `created` or `updated` fields. The running layer membership = `displayStatus === "running"` or `hasBackgroundWork === true` (2026-09-09 note: when the session has a background workflow run, only `updatedAt` advances, the icon does not change, and without joining the running layer, it moves with progress events). The task row draws a workflow run row consistent with the desktop below the title (`WebRemoteControlTaskTarget.workflowActivity`, 2026-09-14 note): Workflow icon + mini track light + current phase name; completed run rows are collapsed by the remote control's own confirmed collection, without depending on the desktop localStorage.
+3. The archive view displays archive tasks from the remote control task index. Archive tasks are still sorted by the same sorting field and retain the workspace label, avoiding falling back to the current bridge workspace.
+4. Search only filters tasks and workspace labels within the current wide-screen remote control task area, without opening the desktop Command Center; when the search term is empty, the full list is restored.
+5. Collapse/expand all in the `workspace` view only controls the wide-screen remote control grouping expansion state, without writing or reusing the desktop sidebar's expansion state.
+6. Switching sorting, views, search terms, or archive status must not change the desktop task list behavior.
+7. Hovering over normal and pinned task rows displays pin/unpin and archive entries; the interaction semantics align with the desktop sidebar: pinning directly toggles membership; archiving first enters the confirmation state, and only archives on the second click.
+8. Task operations are executed through the `zcodeTaskService` resolvable by the current shared-host bridge. Local workspaces go through base services; remote workspaces are only allowed operations when remote session services have been registered, avoiding incorrectly handing the remote `workspacePath` to the local host.
+9. After the operation succeeds, the wide-screen remote control local task index immediately updates according to the returned membership, waiting for the desktop renderer's subsequent task snapshot sync to converge; on failure, the original index is retained and the user is prompted.
+10. Pin, unpin, archive, and unarchive are task list membership changes. The service layer must broadcast explicit membership reasons; when the desktop renderer receives them, it re-refreshes the corresponding task list; these events cannot be treated as ordinary `task_meta_changed` incremental retention of membership.
+11. After the Desktop renderer synchronizes the updated Web remote task snapshot to the desktop main, the desktop main only notifies the connected Web remote to re-adopt the latest `WebRemoteControlWorkspaceListResult` through the existing app payload channel. The relay and main do not add new task business state; they only forward the task index snapshot already synchronized by the renderer.
 
-## 数据约定
+## Data Conventions
 
-`WebRemoteControlTaskTarget` 的 `pinned` 表示任务属于置顶分区；`archived` 表示任务属于归档分区。旧客户端可能没有
-`archived` 字段，缺省按普通任务处理。宽屏远控模型在 UI 层过滤这两个标记，不改变协议和 realtime 数据流。
+The `pinned` field of `WebRemoteControlTaskTarget` indicates that the task belongs to the pinned section; `archived` indicates that the task belongs to the archive section. Old clients may not have the `archived` field; the default is treated as a normal task. The wide-screen remote control model filters these two flags at the UI layer without changing the protocol and realtime data flow.
 
-宽屏远控的置顶/归档动作不新增 relay 业务协议，也不把 task 状态下沉到 desktop main。mobile Web 仍通过已经 attach
-的 host/service 调用任务服务；desktop main 只继续提供 `workspace-list-request` 的索引快照和 `rpc-frame` 透传。
-当 desktop renderer 由于 task list membership 变化调用 `syncWebRemoteControlTasks` 时，desktop main 可以发送
-`workspace-list-updated` app payload，把同一份 `buildWorkspaceListResult()` 快照推给 Web remote，避免 Web 端继续展示旧列表。
+The wide-screen remote control's pin/archive actions do not add relay business protocols, nor do they sink task state to the desktop main. The mobile Web still calls task services through the already-attached host/service; the desktop main continues to provide the index snapshot of `workspace-list-request` and `rpc-frame` passthrough. When the desktop renderer calls `syncWebRemoteControlTasks` due to task list membership changes, the desktop main can send a `workspace-list-updated` app payload, pushing the same `buildWorkspaceListResult()` snapshot to the Web remote control, avoiding the Web client continuing to display the old list.
 
-## 测试要求
+## Test Requirements
 
-- 单元测试覆盖排序字段切换、置顶去重、时间线跨工作区、归档跨工作区、搜索过滤、分组收起，以及操作后 task membership 更新。
-- 单元测试覆盖 `task_archived` / `task_unarchived` / `task_pinned` / `task_unpinned` 会触发跨端列表刷新，并覆盖 service 广播这些明确 reason。
-- 单元测试覆盖 desktop main 在 task snapshot membership 变化后推送 `workspace-list-updated`，Web payload schema 接受该消息。
-- 布局测试覆盖宽屏远控任务行渲染置顶和归档操作入口。
-- 运行 `pnpm typecheck` 和 `pnpm lint`。
+- Unit tests cover sorting field switching, pin deduplication, timeline cross-workspace, archive cross-workspace, search filtering, grouping collapse, and task membership updates after operations.
+- Unit tests cover `task_archived` / `task_unarchived` / `task_pinned` / `task_unpinned` triggering cross-end list refreshes, and cover the service broadcasting these explicit reasons.
+- Unit tests cover the desktop main pushing `workspace-list-updated` after task snapshot membership changes, and the Web payload schema accepting the message.
+- Layout tests cover wide-screen remote control task row rendering of pin and archive operation entries.
+- Run `pnpm typecheck` and `pnpm lint`.

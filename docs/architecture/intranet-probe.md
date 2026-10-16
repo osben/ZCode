@@ -1,38 +1,38 @@
-# 内网探测能力（外部服务版）
+# Intranet Probe Capability (External Service Version)
 
-## 目标
+## Goal
 
-提供独立、可复用的内网连通性探测能力。具体产品功能是否使用探测结果，由对应功能自行定义。
+Provide an independent, reusable capability for probing intranet connectivity. Each product feature decides for itself whether to use the probe result.
 
-## 方案
+## Design
 
-- 在内网机器启动一个轻量 HTTP 服务（默认 `10.0.0.100:3850`，可通过 `INTRANET_MACHINE_HOST` 覆盖）
-- 客户端调用 `systemService.probeIntranet(...)` 探测该服务
-- 服务返回固定 JSON：`{ ok: true, marker: "xxx" }`
-- 客户端校验：
-  - HTTP 状态 `2xx`
+- Start a lightweight HTTP service on the intranet machine (default `10.0.0.100:3850`, overridable through `INTRANET_MACHINE_HOST`).
+- The client probes this service by calling `systemService.probeIntranet(...)`.
+- The service returns fixed JSON: `{ ok: true, marker: "xxx" }`.
+- The client validates:
+  - HTTP status `2xx`
   - `ok === true`
-  - 如果配置了 `expectedMarker`，则 `marker` 必须匹配
+  - If `expectedMarker` is configured, `marker` must match.
 
-## 服务端（独立于本仓库）
+## Server (Maintained Outside This Repository)
 
-内网探测服务不跟随本项目代码维护，直接在内网机器上独立部署即可。
+The intranet probe service is not maintained with this project's code; deploy it independently on the intranet machine.
 
-默认探测路径：
+Default probe paths:
 
 - `GET /api/intranet/probe`
-- `POST /api/intranet/probe`（兼容，行为一致）
+- `POST /api/intranet/probe` (compatible endpoint with identical behavior)
 
-可选环境变量：
+Optional environment variables:
 
-- `PORT`（默认 `3850`）
-- `ZCODE_INTRANET_PROBE_PATH`（默认 `/api/intranet/probe`）
-- `ZCODE_INTRANET_PROBE_MARKER`（默认 `zcode-intranet`）
-- `ZCODE_INTRANET_PROBE_TOKEN`（可选，配置后客户端需带 `x-zcode-intranet-token`）
+- `PORT` (default `3850`)
+- `ZCODE_INTRANET_PROBE_PATH` (default `/api/intranet/probe`)
+- `ZCODE_INTRANET_PROBE_MARKER` (default `zcode-intranet`)
+- `ZCODE_INTRANET_PROBE_TOKEN` (optional; when configured, the client must send `x-zcode-intranet-token`)
 
-## 客户端
+## Client
 
-调用示例：
+Example call:
 
 ```ts
 const result = await services.systemService.probeIntranet({
@@ -41,20 +41,20 @@ const result = await services.systemService.probeIntranet({
       kind: "service",
       url: "http://10.0.0.100:3850/api/intranet/probe",
       expectedMarker: "zcode-intranet",
-      // token: "可选",
+      // token: "optional",
     },
   ],
 });
 
 if (result.isIntranet) {
-  // 当前网络可以访问目标内网服务
+  // The current network can reach the target intranet service.
 }
 ```
 
-### SSH 入口展示策略
+### SSH Entry Visibility
 
-UI 里的远程连接（SSH）入口始终展示。SSH 是否可用取决于目标机器、网络链路和凭据，不使用内网探测结果作为产品可见性门禁。
+The remote connection (SSH) entry is always shown in the UI. SSH availability depends on the target machine, network path, and credentials; intranet probe results are not used as a product visibility gate.
 
-## 兼容说明
+## Compatibility
 
-`probeIntranet` 仍保留旧的 TCP 目标探测（`host + port`），用于历史兼容或双轨过渡。
+`probeIntranet` still retains the legacy TCP target probe (`host + port`) for backward compatibility or a transitional dual-path setup.

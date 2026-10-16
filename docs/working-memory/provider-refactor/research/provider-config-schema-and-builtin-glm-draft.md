@@ -1,18 +1,18 @@
-# Provider Config Schema 与 Builtin GLM 草案
+# Provider Config Schema and Builtin GLM Draft
 
-> 状态：配置结构已进入 Design；本文保留 GLM API 事实与发布前核对项
+> Status: Config structure has entered Design; this document preserves GLM API facts and pre-release verification items
 >
-> 记录日期：2026-08-18
+> Record Date: 2026-08-18
 >
-> 适用范围：Provider Config、Model Config Rules、Account Access、GLM-5.2、GLM-5.3 与 GLM-5-Turbo
+> Scope: Provider Config, Model Config Rules, Account Access, GLM-5.2, GLM-5.3, and GLM-5-Turbo
 
-这份草案保存本轮讨论已经收敛的结构，以及仍需用代码和线上行为继续验证的部分。它用于避免后续讨论丢失上下文；实现和评审仍以 Design 中正式接受的结论为准。
+This draft saves the structures converged in this round of discussion, and the parts still needing code and online behavior verification. It is used to avoid losing context in subsequent discussions; implementation and reviews follow the formally accepted conclusions in Design.
 
-## 1. 当前收敛的整体形态
+## 1. Currently Converged Overall Shape
 
-Provider Registry 的静态事实由三层相同形态的 Provider Config Overlay 组成：
+The Provider Registry's static facts consist of three layers of the same-form Provider Config Overlays:
 
-~~~text
+```text
 Official Provider Config
         +
 Personal Provider Config
@@ -30,31 +30,31 @@ Provider Registry
         | ModelSelection
         v
 Model
-~~~
+```
 
-三层分别负责：
+Each layer is responsible for:
 
-- Official 保存产品管理的 Provider、模型成员、模型公共性质和协议配置。
-- Personal 保存用户创建的 Provider，以及对 Official Provider 的显式覆盖。
-- Account Access 根据当前账号、套餐和连接状态，发布当前可用的 Account Provider、模型子集与访问身份。
+- Official saves product-managed Providers, model members, model public properties, and protocol configurations.
+- Personal saves user-created Providers, and explicit overrides to Official Providers.
+- Account Access publishes currently available Account Providers, model subsets, and access identities based on the current account, plan, and connection state.
 
-Official 和 Personal 持久化。Account Access 是内存中的运行时 Overlay。登录 Token、Runtime API Key、一次性安全校验 Header 等请求鉴权材料不进入这三层，也不进入 Registry。
+Official and Personal are persistent. Account Access is an in-memory runtime Overlay. Request authentication materials like Login Tokens, Runtime API Keys, and one-time security verification Headers do not enter these three layers, nor the Registry.
 
-Provider 配置和模型配置是两套互补数据：
+Provider configs and model configs are two complementary data sets:
 
-~~~text
+```text
 Provider Config
-└─ 如何连接、如何取得访问资格、包含哪些 modelId
+└─ How to connect, how to obtain access资格, which modelIds to include
 
 Model Config Rules
-└─ modelId 对应的 Properties、Option Specs 和协议行为
-~~~
+└─ Properties, Option Specs, and protocol behavior for modelId
+```
 
-## 2. Provider Config Schema 草案
+## 2. Provider Config Schema Draft
 
-本轮将 Provider 的“访问资格”与“请求协议”拆成两个正交维度。它们在同一个 ProviderConfig 中聚合，但各自使用带判别字段的 Schema。
+This round splits a Provider's "access eligibility" and "request protocol" into two orthogonal dimensions. They aggregate in the same ProviderConfig but each uses Schemas with discriminant fields.
 
-~~~ts
+```ts
 type ProviderConfigMap = ConfigOverlayMap<ProviderId, ProviderConfig>;
 
 class ProviderConfig extends ConfigOverlay {
@@ -65,18 +65,16 @@ class ProviderConfig extends ConfigOverlay {
   models?: readonly ModelId[] | null;
   enabled?: boolean | null;
 }
-~~~
+```
 
-外层 ProviderConfigMap 的 key 是 providerId，因此 value 中不重复保存 providerId。所有字段保持 optional，使同一类型既能表达一层稀疏 Overlay，也能表达覆盖完成后的结果。字段缺失表示本层沿用前层值；null 表示本层明确清除该字段。
+The outer ProviderConfigMap's key is providerId, so values do not redundantly save providerId. All fields remain optional, enabling the same type to express either a sparse overlay layer or the post-override result. Missing fields mean inheriting from previous layers; null means this layer explicitly clears the field.
 
 ### 2.1 Access
 
-Access 描述“本次调用资格从哪里取得”。
+Access describes "where this call's eligibility comes from."
 
-~~~ts
-type ProviderAccessConfig =
-  | ApiKeyAccessConfig
-  | ZhipuAccountAccessConfig;
+```ts
+type ProviderAccessConfig = ApiKeyAccessConfig | ZhipuAccountAccessConfig;
 
 class ApiKeyAccessConfig extends ConfigOverlay {
   readonly type = "api-key";
@@ -88,42 +86,38 @@ class ZhipuAccountAccessConfig extends ConfigOverlay {
   readonly type = "zhipu-account";
   accessId?: string | null;
 }
+```
 
-~~~
+The current formal scope covers api-key and zhipu-account. Future vendor OAuth and other access methods will extend new Access branches when concrete needs arise.
 
-当前正式范围是 api-key 与 zhipu-account。未来其他厂商 OAuth 等访问方式在出现具体需求后扩展新的 Access 分支。
+apiKeyManagementUrl is the product information for the settings page to jump to the vendor's Key management page. It is explicitly provided by Provider Config, not inferred from baseURL.
 
-apiKeyManagementUrl 是设置页面跳转到厂商 Key 管理页面的产品信息。它由 Provider Config 明确提供，不根据 baseURL 推导。
-
-Zhipu Account 的 accessId 标识一条确定的账号连接，而不只标识 Plan 种类。同一账号刷新 Token、Runtime Key 或 Header 时保持稳定；切换账号时必须变化。Model 创建后固定 accessId；请求鉴权服务可以刷新该连接的凭据，但不会把正在运行的 Model 静默切换到另一个账号或另一条个人/团队连接。
+Zhipu Account's accessId identifies a specific account connection, not just a Plan type. It remains stable when the same account refreshes Tokens, Runtime Keys, or Headers; it must change when switching accounts. The accessId is fixed after Model creation; the request auth service can refresh credentials for that connection, but will not silently switch a running Model to another account or another personal/team connection.
 
 ### 2.2 API
 
-API 描述“请求发往哪里，并遵循哪一种公开协议”。
+API describes "where requests are sent and which public protocol they follow."
 
-~~~ts
-type ProviderApiType =
-  | "anthropic-messages"
-  | "openai-responses"
-  | "openai-chat-completions";
+```ts
+type ProviderApiType = "anthropic-messages" | "openai-responses" | "openai-chat-completions";
 
 class ProviderApiConfig extends ConfigOverlay {
   type?: ProviderApiType | null;
   baseURL?: string | null;
   headers?: Record<string, string> | null;
 }
-~~~
+```
 
-对外 Config 使用 `api.type`。Adapter 类型是执行实现细节，由 Model 构造链根据 API 配置选择，不进入用户配置。
+External Config uses `api.type`. Adapter types are implementation details chosen by the Model construction chain based on API configs, not entering user configs.
 
-当前只保留 Provider 级静态 Header。模型级 Header 与任意 model.options 不进入新配置契约。OpenAI-compatible streaming 请求的 include_usage 固定由 Adapter 打开，也不暴露为配置项。
+Currently only Provider-level static Headers are retained. Model-level Headers and arbitrary model.options do not enter the new config contract. OpenAI-compatible streaming request `include_usage` is fixed by the Adapter to open, and is also not exposed as a config item.
 
-### 2.3 完整性
+### 2.3 Completeness
 
-每层 Overlay 可以稀疏。覆盖完成后，Registry 只接收能够形成完整连接的 Provider：
+Each overlay layer can be sparse. After covering, the Registry only accepts Providers that form complete connections:
 
-~~~text
-所有 Provider
+```text
+All Providers
 ├─ access.type
 ├─ api.type
 ├─ api.baseURL
@@ -134,15 +128,15 @@ api-key access
 
 zhipu-account access
 └─ accessId
-~~~
+```
 
-完整性由 Config Class 递归检查。设置 Facade 使用同一份检查结果展示待补字段；Registry 过滤未完成配置，不再单独复制一套判断。
+Completeness is checked by Config Classes recursively. The Settings Facade uses the same check results to display fields needing completion; the Registry filters incomplete configs without copying a separate judgment.
 
 ## 3. Model Config Rules
 
-模型配置是一组有序规则。每条规则包含匹配条件和一个稀疏 ModelConfig。后面的命中规则继续覆盖前面的结果。
+Model configs are a set of ordered rules. Each rule contains match conditions and a sparse ModelConfig. Later hit rules continue to override earlier results.
 
-~~~ts
+```ts
 interface ModelConfigRule {
   providerMatch?: string;
   modelMatch: string;
@@ -155,13 +149,13 @@ class ModelConfig extends ConfigOverlay {
   optionSpecs?: ModelOptionSpecsConfig | null;
   apiAdapter?: ModelApiAdapterConfig | null;
 }
-~~~
+```
 
-providerMatch、modelMatch 和 apiMatch 使用相同的模式匹配语义。规则按顺序执行，后面的命中项继续 Overlay 前面的结果。
+providerMatch, modelMatch, and apiMatch use the same pattern matching semantics. Rules execute sequentially, with later hits continuing to Overlay earlier results.
 
-一份模型的通用字段和协议字段分别由不同规则贡献：
+A model's general fields and protocol fields are contributed by different rules:
 
-~~~text
+```text
 modelMatch = GLM-5.3
 └─ Properties + Option Specs
 
@@ -170,13 +164,13 @@ modelMatch = GLM-5.3, apiMatch = anthropic-messages
 
 modelMatch = GLM-5.3, apiMatch = openai-chat-completions
 └─ OpenAI Chat reasoning mapping + preserved thinking replay
-~~~
+```
 
 ### 3.1 Properties
 
-当前公共 Properties 至少包括：
+Current common Properties include at least:
 
-~~~ts
+```ts
 class ModelPropertiesConfig extends ConfigOverlay {
   contextWindow?: number | null;
   supportsImages?: boolean | null;
@@ -187,15 +181,15 @@ class ModelPropertiesConfig extends ConfigOverlay {
   supportsNativeWebSearch?: boolean | null;
   supportsMidConversationSystem?: boolean | null;
 }
-~~~
+```
 
-supportsNativeWebSearch 可以受到 Provider Endpoint 能力影响，因此通用模型规则可给出保守值，Builtin Provider 的精确规则再贡献最终值。supportsMidConversationSystem 对当前三个 GLM 模型按 true 记录。
+supportsNativeWebSearch can be affected by Provider Endpoint capabilities, so generic model rules can provide conservative values, and Builtin Provider exact rules contribute the final values. supportsMidConversationSystem is recorded as true for the current three GLM models.
 
-### 3.2 Option Specs 与 Options
+### 3.2 Option Specs and Options
 
-Option Specs 声明用户可选择的通用选项及缺省值。Options 保存某个 Model 实例实际绑定的选择。
+Option Specs declare user-selectable common options and defaults. Options save the actual selections bound to a Model instance.
 
-~~~ts
+```ts
 class ModelOptionSpecsConfig extends ConfigOverlay {
   reasoningLevel?: EnumOptionSpec | null;
   maxOutputTokens?: LimitOptionSpec | null;
@@ -205,15 +199,15 @@ interface ModelOptions {
   reasoningLevel?: string;
   maxOutputTokens?: number;
 }
-~~~
+```
 
-reasoningLevel 是用户选项。Provider 方言字段、preserveThinking 和 reasoningContentField 都不属于 ModelOptions。
+reasoningLevel is a user option. Provider dialect fields, preserveThinking, and reasoningContentField do not belong to ModelOptions.
 
 ### 3.3 API Adapter Config
 
-API Adapter Config 保存当前模型在某种公开 API 下的固定适配行为。
+API Adapter Config saves the fixed adaptation behavior of the current model under a specific public API.
 
-~~~ts
+```ts
 class ModelApiAdapterConfig extends ConfigOverlay {
   reasoningMapping?: ReasoningMapping | null;
   preserveThinking?: boolean | null;
@@ -222,34 +216,34 @@ class ModelApiAdapterConfig extends ConfigOverlay {
 
 type ReasoningMapping = Record<string, ReasoningParameters>;
 type ReasoningParameters = Record<string, unknown>;
-~~~
+```
 
-reasoningMapping 把通用 reasoningLevel 映射为该协议所需的参数。preserveThinking 和 reasoningContentField 只在确有该语义的协议中出现。
+reasoningMapping maps common reasoningLevel to protocol-required parameters. preserveThinking and reasoningContentField only appear in protocols that truly have that semantics.
 
-~~~text
+```text
 Model.options.reasoningLevel
         |
         v
 ModelApiAdapterConfig.reasoningMapping
         |
         v
-选中本次请求的协议参数
+Selected request parameters for this call
         |
         v
-Adapter 生成最终请求
-~~~
+Adapter generates final request
+```
 
-OpenAI Chat Compatible 的方言最复杂，因此 reasoningMapping 和 reasoning replay 主要在这一协议下发挥作用。Anthropic Messages 与 OpenAI Responses 应优先遵循各自公开协议的固定语义。
+OpenAI Chat Compatible dialects are the most complex, so reasoningMapping and reasoning replay primarily function under this protocol. Anthropic Messages and OpenAI Responses should prioritize following their respective public protocol's fixed semantics.
 
-## 4. Provider 类型示例
+## 4. Provider Type Examples
 
-下面的 JSON 只表达目标结构。字段内容来自当前讨论与现有代码，尚不是可直接发布的最终 Official Config。
+The following JSON expresses only target structures. Field content comes from current discussions and existing code, and is not yet a directly publishable final Official Config.
 
-### 4.1 普通 API Key Provider
+### 4.1 Ordinary API Key Provider
 
-Official 可以提供一个尚未连接的厂商入口，Personal 补入 API Key；用户也可以完全在 Personal 中创建 Provider。
+Official can provide an as-yet-unconnected vendor entry point, with Personal filling in API Keys; users can also create Providers entirely in Personal.
 
-~~~json
+```json
 {
   "builtin:zai": {
     "label": "Z.AI",
@@ -265,11 +259,11 @@ Official 可以提供一个尚未连接的厂商入口，Personal 补入 API Key
     "enabled": true
   }
 }
-~~~
+```
 
-Personal Overlay：
+Personal Overlay:
 
-~~~json
+```json
 {
   "builtin:zai": {
     "access": {
@@ -278,15 +272,15 @@ Personal Overlay：
     }
   }
 }
-~~~
+```
 
-BigModel API Key Provider 使用同样结构，当前 Anthropic Endpoint 为 https://open.bigmodel.cn/api/anthropic。
+BigModel API Key Providers use the same structure, with the current Anthropic Endpoint at https://open.bigmodel.cn/api/anthropic.
 
 ### 4.2 Start Plan
 
-Start Plan 的 Official Config 保存静态连接：
+Start Plan's Official Config saves static connections:
 
-~~~json
+```json
 {
   "builtin:zai-start-plan": {
     "label": "Z.AI Start Plan",
@@ -301,11 +295,11 @@ Start Plan 的 Official Config 保存静态连接：
     "enabled": true
   }
 }
-~~~
+```
 
-Account Access 根据登录和套餐结果生成同形 Overlay：
+Account Access generates same-form Overlays based on login and plan results:
 
-~~~json
+```json
 {
   "builtin:zai-start-plan": {
     "access": {
@@ -315,17 +309,17 @@ Account Access 根据登录和套餐结果生成同形 Overlay：
     "models": ["GLM-5.2", "GLM-5-Turbo"]
   }
 }
-~~~
+```
 
-这里的 models 是当前账号获准使用的子集。请求时使用的 ZCode JWT 和一次性安全校验 Header 由请求鉴权服务取得。
+The models here are the current account's permitted subset. ZCode JWTs and one-time security verification Headers used during requests are obtained by the request auth service.
 
-BigModel Start Plan 使用 providerId builtin:bigmodel-start-plan。它当前与 Z.AI Start Plan 共享 zcode-plan 请求语义；最终 Endpoint 和模型全集需要同远端 Official Config 再对齐。
+BigModel Start Plan uses providerId builtin:bigmodel-start-plan. It currently shares zcode-plan request semantics with Z.AI Start Plan; final Endpoints and the full model set need to be aligned with remote Official Configs.
 
 ### 4.3 Personal Coding Plan
 
-Coding Plan 继续使用 zhipu-account access：
+Coding Plans continue to use zhipu-account access:
 
-~~~json
+```json
 {
   "builtin:zai-coding-plan": {
     "label": "Z.AI Coding Plan",
@@ -352,57 +346,57 @@ Coding Plan 继续使用 zhipu-account access：
     "enabled": true
   }
 }
-~~~
+```
 
-Account Access 决定当前 Family 中真正发布的 Coding Plan Provider，并补入 accessId 和模型子集。请求鉴权服务再用 accessId 获取当前有效的 Runtime API Key。
+Account Access determines which Coding Plan Providers are truly published in the current Family, and fills in accessIds and model subsets. The request auth service then obtains the current valid Runtime API Key using accessId.
 
 ### 4.4 Team Plan
 
-Team Plan 当前可以复用 Coding Plan providerId。Account Access 使用不同 accessId 固定组织、项目和连接身份：
+Team Plans can currently reuse Coding Plan providerIds. Account Access uses different accessIds to fix organization, project, and connection identities:
 
-~~~text
+```text
 personal coding plan
 └─ zhipu-account:<account-id>:coding-plan:builtin:zai-coding-plan
 
 team plan
 └─ zhipu-account:<account-id>:team-plan:builtin:zai-coding-plan:<product>:<org>:<project>
-~~~
+```
 
-Provider Config 和 Model Config 不复制 Team Secret。请求鉴权服务根据 accessId 获取对应 Project Runtime Key。未来若产品决定同时发布 Personal 与 Team 两个可选连接，ModelSelection 是否需要携带连接身份将成为独立设计；M2 先保持每个 Provider Family 只发布当前生效连接。
+Provider Configs and Model Configs do not copy Team secrets. The request auth service obtains the corresponding Project Runtime Key based on accessId. If products decide to simultaneously publish Personal and Team optional connections in the future, whether ModelSelection needs to carry connection identity becomes independent design; M2 first maintains each Provider Family publishing only the current active connection.
 
-### 4.5 Temporary Provider
+### 4.5 Temporary Providers
 
-闲时任务等 execution-scoped 场景可以在 Submission 中附加一份临时 Provider Config。它不写入 Official、Personal 或常驻 Registry：
+Idle task and other execution-scoped scenarios can attach a temporary Provider Config in Submissions. It does not write to Official, Personal, or persistent Registries:
 
-~~~text
+```text
 Submission
 ├─ ModelSelection
 └─ Additional Provider Config
         |
         v
-本次执行的临时解析范围
+This execution's temporary resolution scope
         |
         v
 Model
-~~~
+```
 
-临时 Provider 使用相同 ProviderConfig、Model Config 和 Model 构造链。任务结束后，临时解析范围自然释放，不需要修改或恢复 Session 的持久模型选择。
+Temporary Providers use the same ProviderConfig, Model Config, and Model construction chain. After task completion, the temporary resolution scope naturally releases, without needing to modify or restore Session's persistent model selections.
 
-## 5. GLM 模型公共配置
+## 5. GLM Model Common Configurations
 
-以下属性是本轮暂定的 GLM 公共事实：
+The following attributes are GLM common facts provisionally set this round:
 
-| 模型 | Context | Max Output | Image/PDF/Video | Tool Call | Structured Output | MCS |
-| --- | ---: | ---: | --- | --- | --- | --- |
-| GLM-5.3 | 1,000,000 | 128,000 | false / false / false | true | true | true |
-| GLM-5.2 | 1,000,000 | 131,072 | false / false / false | true | true | true |
-| GLM-5-Turbo | 204,800 | 131,072 | false / false / false | true | true | true |
+| Model       |   Context | Max Output | Image/PDF/Video       | Tool Call | Structured Output | MCS  |
+| ----------- | --------: | ---------: | --------------------- | --------- | ----------------- | ---- |
+| GLM-5.3     | 1,000,000 |    128,000 | false / false / false | true      | true              | true |
+| GLM-5.2     | 1,000,000 |    131,072 | false / false / false | true      | true              | true |
+| GLM-5-Turbo |   204,800 |    131,072 | false / false / false | true      | true              | true |
 
-这些数值记录当前代码和讨论中的观察值。正式 Official Config 发布前，还需以线上 Provider 配置与实际模型服务为准核对大小写、Context 和 Output 数值。
+These values record observations from current code and discussions. Before final Official Config release, capitalization, Context, and Output values still need verification against online Provider configurations and actual model services.
 
-可以先用通用规则表达 Properties 和 Option Specs：
+General rules can first express Properties and Option Specs:
 
-~~~json
+```json
 [
   {
     "modelMatch": "GLM-5\\.3",
@@ -486,17 +480,17 @@ Model
     }
   }
 ]
-~~~
+```
 
-Z.AI、BigModel 和 zcode-plan 的 Builtin 精确规则可以把 supportsNativeWebSearch 覆盖为 true。这个字段表达最终 Provider + Model 组合的可执行性质。
+Z.AI, BigModel, and zcode-plan Builtin exact rules can override supportsNativeWebSearch to true. This field expresses the executable properties of the final Provider + Model combination.
 
-## 6. GLM 的 Anthropic Messages 配置
+## 6. GLM's Anthropic Messages Configuration
 
 ### 6.1 GLM-5.3
 
-GLM-5.3 使用 Anthropic 标准 adaptive thinking + effort，不发送 budget：
+GLM-5.3 uses standard Anthropic adaptive thinking + effort, not sending budget:
 
-~~~json
+```json
 {
   "modelMatch": "GLM-5\\.3",
   "apiMatch": "anthropic-messages",
@@ -519,13 +513,13 @@ GLM-5.3 使用 Anthropic 标准 adaptive thinking + effort，不发送 budget：
     }
   }
 }
-~~~
+```
 
 ### 6.2 GLM-5.2
 
-GLM-5.2 的 nothink 显式关闭 Thinking；其他档位使用 adaptive + effort：
+GLM-5.2's nothink explicitly disables Thinking; other tiers use adaptive + effort:
 
-~~~json
+```json
 {
   "modelMatch": "GLM-5\\.2",
   "apiMatch": "anthropic-messages",
@@ -547,13 +541,13 @@ GLM-5.2 的 nothink 显式关闭 Thinking；其他档位使用 adaptive + effort
     }
   }
 }
-~~~
+```
 
 ### 6.3 GLM-5-Turbo
 
-Turbo 暂时保留当前 fixed-budget 兼容行为。1024 来自现有 Anthropic fixed thinking 的最小预算兼容，不代表新的通用策略：
+Turbo currently preserves the fixed-budget compatibility behavior. 1024 comes from existing Anthropic fixed thinking's minimum budget compatibility and does not represent a new universal strategy:
 
-~~~json
+```json
 {
   "modelMatch": "GLM-5-Turbo",
   "apiMatch": "anthropic-messages",
@@ -573,17 +567,17 @@ Turbo 暂时保留当前 fixed-budget 兼容行为。1024 来自现有 Anthropic
     }
   }
 }
-~~~
+```
 
-本轮不把 Turbo 自动改成 adaptive + effort，也不把 1024 推广给 5.2 或 5.3。
+This round does not automatically change Turbo to adaptive + effort, nor does it spread 1024 to 5.2 or 5.3.
 
-## 7. GLM 的 OpenAI Chat 配置
+## 7. GLM's OpenAI Chat Configuration
 
-OpenAI Chat Compatible 允许厂商扩展请求与响应字段。GLM 的 thinking、reasoning effort 和 preserved thinking 因此由 `apiAdapter` 显式描述。
+OpenAI Chat Compatible allows vendor-request and response field extensions. GLM's thinking, reasoning effort, and preserved thinking are therefore explicitly described by `apiAdapter`.
 
-GLM-5.3 的示意规则：
+GLM-5.3 representative rule:
 
-~~~json
+```json
 {
   "modelMatch": "GLM-5\\.3",
   "apiMatch": "openai-chat-completions",
@@ -608,72 +602,72 @@ GLM-5.3 的示意规则：
     }
   }
 }
-~~~
+```
 
-GLM-5.2 同样使用固定的 replay 配置，nothink 档位将 thinking.type 设为 disabled。Turbo 继续保持现有 enable/disable 方言，正式参数表还需要结合线上行为再核对。
+GLM-5.2 also uses fixed replay configs, with nothink tier setting thinking.type to disabled. Turbo continues existing enable/disable dialects; formal parameter tables still need verification against online behavior.
 
-preserveThinking 是固定协议配置。它不出现在 Composer，也不由 Binding 任意修改：
+preserveThinking is a fixed protocol config. It does not appear in the Composer and is not freely modified by Binding:
 
-~~~text
+```text
 preserveThinking = true
         |
-        +---- 请求写入 clear_thinking = false
+        +---- Requests write clear_thinking = false
         |
-        +---- 响应读取 reasoning_content
+        +---- Responses read reasoning_content
         |
-        +---- Tool Loop 后续请求原样回放 reasoning_content
-~~~
+        +---- Tool Loop subsequent requests replay reasoning_content as-is
+```
 
-只有配置 clear_thinking=false 而没有完整回放，会导致后续 Tool Call 请求缺少模型要求的推理上下文。当前旧实现只为部分 DeepSeek/MiMo 模型按名称启用 reasoning_content 兼容；目标实现应由 Model API Adapter Config 驱动，退出模型名称硬编码。
+Having only clear_thinking=false without complete replay would cause subsequent Tool Call requests to lack model-required reasoning context. The current old implementation only enables reasoning_content compatibility by name for some DeepSeek/MiMo models; the target implementation should be driven by Model API Adapter Configs, exiting model name hardcoding.
 
 ## 8. OpenAI Responses
 
-OpenAI Responses 协议应遵循官方 reasoning item 与 effort 语义。GLM-5.2、GLM-5.3 和 Turbo 在 Z.AI/BigModel Responses Endpoint 上的精确支持范围尚未完成线上核对，因此本草案不填一份猜测性的 reasoningMapping。
+The OpenAI Responses protocol should follow official reasoning item and effort semantics. GLM-5.2, GLM-5.3, and Turbo's exact support scope on Z.AI/BigModel Responses Endpoints has not yet been verified online, so this draft does not fill in a speculative reasoningMapping.
 
-如果后续确认某个 GLM Responses Endpoint 完全遵循官方协议，对应规则只需保存其官方 effort 映射；preserveThinking 和 reasoningContentField 不应复制到 Responses 配置。
+If a GLM Responses Endpoint is later confirmed to fully follow the official protocol, corresponding rules only need to save its official effort mapping; preserveThinking and reasoningContentField should not be copied to Responses configs.
 
-## 9. Account Access 与请求鉴权边界
+## 9. Account Access and Request Authentication Boundaries
 
-三类 Account Provider 的动态材料不同：
+The three types of Account Providers have different dynamic materials:
 
-~~~text
+```text
 Start Plan
-├─ accessId 固定当前账号的 Start Plan 连接
-├─ Request Auth 取得 ZCode JWT
-└─ 每个 attempt 按需取得一次性安全校验 Header
+├─ accessId fixes current account's Start Plan connection
+├─ Request Auth obtains ZCode JWT
+└─ Obtain one-time security verification Header per attempt as needed
 
 Personal Coding Plan
-├─ accessId 固定当前账号的个人连接
-└─ Request Auth 取得当前 Runtime API Key
+├─ accessId fixes current account's personal connection
+└─ Request Auth obtains current Runtime API Key
 
 Team Plan
-├─ accessId 固定账号 / organization / project
-└─ Request Auth 取得当前 Project Runtime API Key
-~~~
+├─ accessId fixes account / organization / project
+└─ Request Auth obtains current Project Runtime API Key
+```
 
-Registry 只保存 Effective Provider Config 和最终模型配置。Model 保存创建时选中的 providerId、modelId、accessId、API 与 Options。每次请求可以取得更新后的同一连接凭据；凭据刷新不会修改 Model 身份。Request Auth 还要核对凭据所属账号与 accessId 一致，不能把旧 Model 与切换后的新账号凭据组合。
+The Registry only saves Effective Provider Configs and final model configs. Models save the selected providerId, modelId, accessId, API, and Options at creation time. Each request can obtain updated credentials for the same connection; credential refreshes do not modify Model identities. Request Auth also verifies that credential-owned accounts match accessId, and cannot combine old Models with post-switched new account credentials.
 
-## 10. 与现有代码的关系
+## 10. Relationship with Existing Code
 
-当前实现仍有多处散落事实：
+Current implementations still have scattered facts in multiple locations:
 
-- Builtin Provider ID 在 packages/shared/src/model-provider-types.ts。
-- Start Plan 与 Coding Plan 的 Endpoint fallback 在 packages/services/src/model-provider。
-- GLM reasoning 档位与 model-name 判断分散在 shared、services 和 CLI Adapter。
-- reasoning_content replay 仍由 apps/zcode-cli/packages/adapters/src/model/reasoning-content-compat.ts 的模型名称列表驱动。
-- Anthropic fixed budget 的兼容边界位于 apps/zcode-cli/packages/adapters/src/model/reasoning-policy.ts。
-- Native Web Search 与 Mid-conversation System 仍部分根据 Provider API、baseURL 和 modelId 推断。
+- Builtin Provider IDs are in packages/shared/src/model-provider-types.ts.
+- Start Plan and Coding Plan Endpoint fallbacks are in packages/services/src/model-provider.
+- GLM reasoning tiers and model-name judgments are scattered across shared, services, and CLI Adapters.
+- reasoning_content replay is still driven by model name lists in apps/zcode-cli/packages/adapters/src/model/reasoning-content-compat.ts.
+- Anthropic fixed budget compatibility boundaries are located in apps/zcode-cli/packages/adapters/src/model/reasoning-policy.ts.
+- Native Web Search and Mid-conversation System are still partially inferred based on Provider APIs, baseURL, and modelId.
 
-迁移时应先判断每条旧事实是否真实参与当前生产行为。真正生效的事实进入 Official Config 或 Adapter 固定协议逻辑；未生效的 models.dev/bundled catalog 字段不机械搬运。
+During migration, each old fact should first be judged for whether it truly participates in current production behavior. Truly effective facts enter Official Configs or Adapter fixed protocol logic; ineffective models.dev/bundled catalog fields are not mechanically copied.
 
-## 11. 发布 Official Config 前仍需确认
+## 11. Still Needing Confirmation Before Publishing Official Config
 
-以下问题仍保留为草案边界：
+The following issues remain as draft boundaries:
 
-1. GLM-5.3、GLM-5.2 和 Turbo 在 Official Config 中最终采用的大小写、Context、Max Output 与默认输出值。
-2. BigModel Start Plan 的最终 Endpoint、模型全集及与 Z.AI Start Plan 的关系。
-3. preserveThinking 是否对所有 GLM OpenAI Chat Provider 固定为 true，还是由特定 Builtin Provider 规则启用。
-4. GLM OpenAI Responses 的真实模型覆盖范围和精确 reasoning 参数。
-5. 未来非智谱 OAuth Access 的正式 Schema，以及是否复用同一个账号访问身份模型。
+1. Capitalization, Context, Max Output, and default output values ultimately adopted by GLM-5.3, GLM-5.2, and Turbo in Official Config.
+2. BigModel Start Plan's final Endpoint, full model set, and relationship with Z.AI Start Plan.
+3. Whether preserveThinking is fixed to true for all GLM OpenAI Chat Providers, or enabled by specific Builtin Provider rules.
+4. Real model coverage and exact reasoning parameters for GLM OpenAI Responses.
+5. Formal schemas for future non-Zhipu OAuth Access, and whether the same account access identity model is reused.
 
-这些问题不会推翻已经进入 Design 的主要分层：Provider Config 聚合 access 与 api，Model Config 聚合 properties、optionSpecs 与 apiAdapter，Account Access 使用同形 Overlay，动态请求鉴权留在请求期服务。
+These issues do not overturn the main layering that has entered Design: Provider Config aggregates access and api, Model Config aggregates properties, optionSpecs, and apiAdapter, Account Access uses same-form Overlays, and dynamic request authentication stays at the request-period service.

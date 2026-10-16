@@ -2165,7 +2165,7 @@ transport fixture 无稳定注入点，保留为确定性单元/集成证据，�
 
 ## SSC. 框选文字副屏会话覆盖
 
-本组对应主 catalog `SSC01-SSC32` 与
+本组对应主 catalog `SSC01-SSC34` 与
 `docs/ui/conversation-selection-side-chat.md`。`planned` E2E 必须先放入
 `manual-review/pending`，完成人工确认和 case-local replay fixture 后才能晋升为 `covered`。
 
@@ -2204,6 +2204,7 @@ transport fixture 无稳定注入点，保留为确定性单元/集成证据，�
 | SSC31 | planned      | `manual-review/pending/conversation-session-side-slash-arguments.test.ts` + bootstrap integration      | 父任务 running 时 `/btw 参数` 仍直接在 child startNow，父 active turn、queue/guide 不变；使用 controlled-stream，并断言 child 仍完成           |
 | SSC32 | covered-unit | `v4SlashCommands.test.ts`                                                                              | 附件或结构化 composer context 存在时不消费 App 命令，SessionPane 因此继续走主会话原有发送路径                                                  |
 | SSC33 | covered      | `conversation-session-side-chat-reminder.test.ts` + core fork/source unit                              | 同一 spec 的 MCS/non-MCS replay 均断言边界为问题前的 user system-reminder，恰好一次；source metadata、其他 system 消息、父历史与 UI 隔离均检查 |
+| SSC34 | pending      | `manual-review/pending/conversation-session-selection-side-chat.test.ts` + `pickerFocus.test.ts`       | 主 composer 和副屏 composer 同时挂载时，关闭模型 picker 后焦点回到打开它的 composer；副屏不把焦点抢回首个主 composer                           |
 
 SSC33 复用 SSC19/SSC28 的首轮发送路径：
 `conversation-session-side-chat-reminder.test.ts`，检查真实 provider 请求、

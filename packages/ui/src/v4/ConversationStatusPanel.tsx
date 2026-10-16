@@ -495,6 +495,7 @@ function GitStatusSection({
           gitSummary={gitSummary}
           activeTaskChangeSummary={activeTaskChangeSummary ?? null}
           onRefreshGit={onRefreshGit}
+          beforeSwitch={beforeSwitch}
           triggerLayout="status-row"
           className="w-full"
         />

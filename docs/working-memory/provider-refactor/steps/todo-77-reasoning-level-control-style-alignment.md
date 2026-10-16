@@ -1,47 +1,47 @@
-# Todo 77：推理档位控件样式统一
+# Todo77: Align the Reasoning-level Control Styling
 
-> 验证归属更新（2026-09-09）：本文残余欠测/失败/人工晋级统一转交 [Todo102](todo-102-verification-debt-closeout.md)，关闭在本文中的独立验证排期；历史证据保留，转交不代表测试通过。
+> Verification ownership update (2026-09-09): remaining untested/failed/manual-promotion items are transferred to [Todo102](todo-102-verification-debt-closeout.md). This closes the separate verification schedule here; historical evidence remains, and transfer does not mean a test passed.
 
-> 后续 Desktop 图形 E2E 欠测统一由 Todo 78 收口，本 Todo 不再单独排期。
+> Later, all outstanding Desktop graphical E2E verification was consolidated under Todo78; this Todo no longer has a separate schedule.
 
-> 2026-09-07 裁决补正：下文“不新增外部 Reasoning 容器”不代表最新产品要求。此前已确定新增“推理设置”和“高级设置”两个带标题容器，遗漏修复由 Todo 88 / R13 执行；本 Todo 的控件尺寸和居中要求仍有效。
+> Decision correction (2026-09-07): the statement below that no external Reasoning container would be added does not represent the latest product requirement. Two titled containers—“Reasoning settings” and “Advanced settings”—had already been approved. Todo88/R13 handles the omission; the control sizing and centering requirements in this Todo remain valid.
 
-> 状态：已完成（UI 单测、类型检查与 lint 通过；桌面图形 E2E 待 Mac 环境复跑）
+> Status: Complete (UI unit tests, typecheck, and lint passed; Desktop graphical E2E still needs rerun on Mac).
 >
-> 日期：2026-09-04
+> Date: 2026-09-04
 >
-> 关系：Todo 75 模型设置页 UI polish 的小范围视觉收尾。
+> Relationship: visual closeout for the model-settings-page UI polish in Todo75.
 
-## 问题
+## Problem
 
-模型能力选项使用共享 `Button` 的 `outline + lg` 样式；推理档位则由自定义 `div` 和原生 `button` 组成。目前两者的高度、圆角、背景和文字对齐规则不同：
+Model-capability options use the shared `Button` with `outline + lg`; reasoning levels instead use a custom `div` and native `button`. They currently differ in height, corner radius, background, and text alignment:
 
 ```text
-模型能力选项：h-8 / rounded-lg / 共享 Outline / 居中布局
-推理档位：    h-7 / rounded-md / bg-surface / 原生按钮默认排版
+Model capability option: h-8 / rounded-lg / shared Outline / centered layout
+Reasoning level:         h-7 / rounded-md / bg-surface / native button default layout
 ```
 
-这不是外部容器造成的。推理档位自身没有复用共享按钮的尺寸和对齐规则，因此在同一个模型编辑弹窗中显得更小、颜色不同，非编辑态文字也缺少明确的水平和垂直居中。
+The issue is not caused by an external container. The reasoning-level control does not reuse the shared button's sizing/alignment rules, so it looks smaller and uses a different color in the same model-edit dialog. In non-editing state, its text also lacks explicit horizontal and vertical centering.
 
-## 目标
+## Goals
 
-- 推理档位与模型能力选项使用一致的高度、圆角、默认边框和背景层级；
-- 非编辑态档位文字显式水平、垂直居中；
-- 编辑态、静态态和新增按钮切换时不发生高度跳动；
-- 保留推理档位的拖拽、点击编辑、删除、键盘操作、顺序和 Personal Override 边框语义；
-- 不把推理档位改成 checkbox，不改变 Reasoning 值、Mapping、保存和运行时行为。
+- Match the height, corner radius, default border, and background hierarchy of model-capability options.
+- Explicitly center non-editing reasoning-level text horizontally and vertically.
+- Avoid height jumps when switching between editing, static, and add-button states.
+- Preserve drag, click-to-edit, delete, keyboard interaction, order, and Personal Override border semantics for reasoning levels.
+- Do not change reasoning levels into checkboxes or change Reasoning values, Mapping, persistence, or runtime behavior.
 
-## 实施边界
+## Implementation Boundaries
 
-1. 优先复用共享 `Button` 的尺寸与颜色规则，避免在 Reasoning Editor 中复制第二套按钮体系。
-2. 推理档位仍允许在同一外壳内显示 Hover 删除按钮；若无法直接使用完整 `Button`，只抽取或复用必要的 `buttonVariants`，不改变 DOM 交互职责。
-3. 静态文字按钮使用 `inline-flex items-center justify-center`；编辑输入保持同高，并按内容在既有最小／最大宽度内伸缩。
-4. 新增按钮与档位外壳同高；Focus、Hover、拖拽和 disabled 状态继续使用设计系统语义色。
-5. 不新增外部 Reasoning 容器，不调整 Mapping、MFJS 或 Footer 布局。
+1. Prefer the shared `Button` sizing/color rules; do not copy a second button system into the Reasoning Editor.
+2. Continue allowing the hover-delete button inside the reasoning-level shell. If the complete `Button` cannot be used directly, extract/reuse only the necessary `buttonVariants` without changing DOM interaction responsibilities.
+3. Static text buttons use `inline-flex items-center justify-center`. Keep edit inputs the same height and let them size to content within the existing min/max widths.
+4. Make the add button the same height as the level shell. Keep focus, hover, drag, and disabled states on design-system semantic colors.
+5. Do not add an external Reasoning container or change Mapping, MFJS, or Footer layout.
 
-## 验证
+## Verification
 
-- 先补或更新 `ProviderModelReasoningLevelEditor` 单测，覆盖静态居中、统一尺寸、编辑态尺寸和删除按钮交互。
-- 更新模型设置 UI E2E，只验证可见结构、实际尺寸一致和编辑／拖拽行为，不绑定无必要的内部 class 名。
-- 验证中文／英文、深色／浅色以及窄窗口布局。
-- 执行相关 UI 单测、`pnpm typecheck`、`pnpm lint`；桌面图形 E2E 在 Mac 环境补跑。
+- First add/update `ProviderModelReasoningLevelEditor` unit tests for static centering, shared dimensions, edit-state dimensions, and delete-button interaction.
+- Update model-settings UI E2E to verify visible structure, actual matching dimensions, and editing/dragging behavior without binding to unnecessary internal class names.
+- Verify Chinese/English, light/dark themes, and narrow-window layout.
+- Run relevant UI tests, `pnpm typecheck`, and `pnpm lint`; rerun Desktop graphical E2E in a Mac environment.

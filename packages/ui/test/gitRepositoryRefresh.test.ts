@@ -1,7 +1,26 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { shouldRefreshLiveGitData } from "../src/hooks/useGitRepository.js";
+import {
+  matchesGitRepositoryTarget,
+  shouldRefreshLiveGitData,
+} from "../src/hooks/useGitRepository.js";
 
 describe("shouldRefreshLiveGitData", () => {
+  it("does not reuse repository state for a different execution path under the same identity", () => {
+    expect(
+      matchesGitRepositoryTarget(
+        { workspaceKey: "remote:ssh:host:/root", workspacePath: "/root/worktree-a" },
+        { workspaceKey: "remote:ssh:host:/root", workspacePath: "/root/worktree-b" },
+      ),
+    ).toBe(false);
+    expect(
+      matchesGitRepositoryTarget(
+        { workspaceKey: "remote:ssh:host:/root", workspacePath: "/root/worktree-a" },
+        { workspaceKey: "remote:ssh:host:/root", workspacePath: "/root/worktree-a" },
+      ),
+    ).toBe(true);
+  });
+
   it("refreshes on initial load and workspace changes", () => {
     expect(
       shouldRefreshLiveGitData(null, {
@@ -30,6 +49,25 @@ describe("shouldRefreshLiveGitData", () => {
           workspaceRpcEnabled: true,
         },
       ),
+    ).toBe(true);
+  });
+
+  it("clears the live refresh baseline while disabled so re-enabling fetches unchanged inputs", () => {
+    const source = readFileSync("packages/ui/src/hooks/useGitRepository.ts", "utf8");
+    const disabledBranch = source.slice(
+      source.indexOf("if (!enabled) {"),
+      source.indexOf("if (!workspaceRpcEnabled) {"),
+    );
+
+    expect(disabledBranch).toContain("lastLiveRefreshInputRef.current = null;");
+    expect(
+      shouldRefreshLiveGitData(null, {
+        workspacePath: "/repo-a",
+        workspaceKey: "/repo-a",
+        includeExtendedData: false,
+        refreshToken: 0,
+        workspaceRpcEnabled: true,
+      }),
     ).toBe(true);
   });
 

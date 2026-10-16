@@ -1,28 +1,28 @@
-# 03 Provider 模型成员、启停、可见性与 Registry 完备性收口
+# 03 Provider Model Members, Enable/Disable, Visibility, and Registry Completeness Closure
 
-> 状态：已完成
+> Status: Completed
 >
-> 历史说明：本 Todo 当时完成的 `builtinModelIds/modelIds` 与 Properties 完整性仍有效；Model
-> `enabled/visibility`、重复成员冲突和设置交互已由
-> [`Todo 21`](./todo-21-zcode-builtin-config-ownership-and-model-activation-order.md) 重新裁决。
+> Historical note: The `builtinModelIds/modelIds` and Properties completeness that this Todo completed at the time remain valid; Model
+> `enabled/visibility`, duplicate member conflicts, and settings interactions have been re-decided by
+> [`Todo 21`](./todo-21-zcode-builtin-config-ownership-and-model-activation-order.md).
 >
-> 日期：2026-08-24
+> Date: 2026-08-24
 >
-> 来源审查：[`../provider-implementation-architecture-conformance-review.md`](../provider-implementation-architecture-conformance-review.md)
+> Source review: [`../provider-implementation-architecture-conformance-review.md`](../provider-implementation-architecture-conformance-review.md)
 >
-> 目标设计：[`../design/registry/model-membership-and-enablement.md`](../design/registry/model-membership-and-enablement.md)、
+> Target design: [`../design/registry/model-membership-and-enablement.md`](../design/registry/model-membership-and-enablement.md)、
 > [`../design/registry/configuration.md`](../design/registry/configuration.md)、
 > [`../design/model/input-output-format.md`](../design/model/input-output-format.md)
 
-## 1. 目标
+## 1. Objective
 
-本任务收口 Provider Refactor 新实现中的三组同源问题：
+This task closes three groups of同源 (same-origin) issues in the Provider Refactor new implementation:
 
-1. 用 `builtinModelIds` 与 `modelIds` 分开表达管理模型和 Personal 模型成员，避免 Personal 保存的旧列表
-   遮蔽以后新增的 Built-in/Account 模型；
-2. 为 Model Config 增加 `enabled` 与 `visibility`，分别表达执行门禁和用户入口可见性；
-3. 在 Resolver 向 Registry 发布时关闭 Config 稀疏边界，让 Registry、Selection、ModelFactory 和 Runtime
-   只观察完整的模型事实。
+1. Use `builtinModelIds` and `modelIds` separately to express management models and Personal model members, preventing Personal-saved old lists
+   from obscuring subsequently added Built-in/Account models;
+2. Add `enabled` and `visibility` to Model Config, expressing execution gate and user entry visibility separately;
+3. Close Config sparse boundaries when Resolver publishes to Registry, so Registry, Selection, ModelFactory, and Runtime
+   only observe complete model facts.
 
 ```text
 ZCode Built-in Provider Config
@@ -61,13 +61,13 @@ Effective Built-in Provider Config          ZCode Built-in Model Config Rules
                                           Active Model.properties
 ```
 
-本任务不增加兼容 DTO、Runtime capability map、Renderer Overlay 或新的配置权威。
+This task does not add compatible DTO, Runtime capability map, Renderer Overlay, or new configuration authority.
 
-## 2. 已确认决策
+## 2. Confirmed Decisions
 
-### 2.1 模型成员字段
+### 2.1 Model Member Fields
 
-Provider Config 使用两个字段：
+Provider Config uses two fields:
 
 ```ts
 interface ProviderConfig {
@@ -76,59 +76,59 @@ interface ProviderConfig {
 }
 ```
 
-正常装配遵循以下心智模型：
+Normal assembly follows this mental model:
 
-| 配置来源                         | 通常维护的字段    | 语义                                       |
-| -------------------------------- | ----------------- | ------------------------------------------ |
-| ZCode Built-in Provider Config   | `builtinModelIds` | ZCode 声明的 Built-in 模型及顺序           |
-| Account Built-in Provider Config | `builtinModelIds` | 账号接口提供时覆盖 Built-in 模型集合       |
-| Personal Provider Config         | `modelIds`        | 用户添加、删除、重命名和排序 Personal 模型 |
+| Config Source                    | Field Normally Maintained | Semantics                                                |
+| -------------------------------- | ------------------------- | -------------------------------------------------------- |
+| ZCode Built-in Provider Config   | `builtinModelIds`         | ZCode declared Built-in models and order                 |
+| Account Built-in Provider Config | `builtinModelIds`         | Overrides Built-in model set when account API provides   |
+| Personal Provider Config         | `modelIds`                | User-added, deleted, renamed, and sorted Personal models |
 
-这是字段含义和代码维护原则，不是权限系统。本任务不建立 Source 专用 Provider Config 类型、严格 Source
-Schema、跨层字段拒绝逻辑或 Config Service 来源权限检查。
+This is field meaning and code maintenance principle, not a permission system. This task does not establish Source-specific Provider Config types, strict Source
+Schema, cross-layer field rejection logic, or Config Service source permission checks.
 
-Resolver 保留两个集合，并按 Built-in 在前、Personal 在后的顺序生成成员 Inventory。Personal-only Provider
-自然使用空的 `builtinModelIds`；设置页只修改 `modelIds`，不提供删除或重排 Built-in 成员的交互。
+Resolver keeps both sets and generates member Inventory in Built-in-first, Personal-last order. Personal-only Provider
+naturally uses empty `builtinModelIds`; the settings page only modifies `modelIds`, without providing delete or reorder Built-in member interactions.
 
-字段在 Config Overlay 中保持三态，在 Inventory 边界归一化：
+Fields maintain three-state in Config Overlay, normalized at Inventory boundary:
 
 ```text
-undefined = 本层不覆盖
-null      = 本层显式清空该来源集合
-array     = 本层提供成员和顺序
+undefined = this layer does not override
+null      = this layer explicitly clears that source set
+array     = this layer provides members and order
 
-最终缺失或 null -> Inventory 中的 []
+Final missing or null -> [] in Inventory
 ```
 
-因此空集合合法，不属于 Provider 配置不完整；Personal-only Provider 不必持久化无意义的
-`builtinModelIds: []`。Model ID 在写入边界 trim，空值非法，Registry 身份使用大小写敏感的精确字符串。
+Thus empty sets are legal, not indicating incomplete Provider config; Personal-only Providers need not persist meaningless
+`builtinModelIds: []`. Model IDs are trimmed at write boundary; empty values are illegal; Registry identity uses case-sensitive exact strings.
 
-当前分支的 Provider Config Schema 尚未发布，不存在内部 `models[]` 的 v1 → v2 兼容任务：
+The current branch's Provider Config Schema has not yet been published; there is no v1 → v2 compatible task for internal `models[]`:
 
-- 直接把当前领域 Schema、`official.json`、Personal 写入和测试 fixture 改成最终字段；
-- 不增加相邻 schema migration，不双读当前开发中的 `models[]`；
-- 已存在的重构前 legacy importer 直接输出最终字段；它不构成当前 Provider Config 的版本历史。
+- Directly change current domain Schema, `official.json`, Personal writes, and test fixtures to final fields;
+- Do not add adjacent schema migration; do not dual-read current development `models[]`;
+- Existing pre-refactor legacy importer directly outputs final fields; it does not constitute current Provider Config version history.
 
-### 2.2 同 ID 冲突
+### 2.2 Same ID Conflict
 
-同一个 Provider 的 `builtinModelIds` 与 `modelIds` 含有相同 ID 时形成 `id-conflict`：
+When the same Provider's `builtinModelIds` and `modelIds` contain the same ID, a `id-conflict` is formed:
 
-- 不静默删除 Personal 冲突，但执行身份采用 Built-in-wins；
-- Built-in X 继续解析、进入 Registry、Selection/fallback 和 ModelFactory；
-- 解析时只排除冲突 Personal X 所拥有的精确 Rule，其他通用 Personal Rules 继续参与；
-- Provider Settings 显示冲突，用户通过重命名 Personal 模型或删除 Personal 模型解决；
-- 已保存 Selection 指向 X 时继续解析为 Built-in X。
+- Do not silently delete Personal conflicts; execution identity uses Built-in-wins;
+- Built-in X continues parsing, enters Registry, Selection/fallback, and ModelFactory;
+- When parsing, only exclude precise Rules owned by conflicting Personal X; other general Personal Rules continue participating;
+- Provider Settings display conflicts; users resolve by renaming Personal models or deleting Personal models;
+- When saved Selection points to X, it continues resolving to Built-in X.
 
-普通模型选择器不展示特殊冲突诊断项，不为 Automation、Subagent、Repo Wiki 增加占位候选，也不扩张
-Selection Protocol 来承载 Settings 跳转信息。
+Normal model selectors do not display special conflict diagnostic items, do not add placeholder candidates for Automation, Subagent, or Repo Wiki, and do not expand
+Selection Protocol to carry Settings navigation information.
 
-单个集合内部重复 ID 形成 `duplicate-membership`：不静默去重，重复 ID 合并为一个 Settings 诊断项，
-修复前不解析、不选择、不执行；同 Provider 其他模型继续工作。成员重复和跨集合冲突都是 Model 级问题，
-不能进入 Provider 通用完整性 issues 后拖死整个 Provider。
+Single-set internal duplicate IDs form `duplicate-membership`: do not silently dedupe; duplicate IDs merge into one Settings diagnostic item,
+not parsed, not selected, not executed before fix; other models of the same Provider continue working. Member duplicates and cross-set conflicts are Model-level issues,
+and cannot enter Provider general integrity issues and drag down the entire Provider.
 
-### 2.3 Model `enabled` 与 `visibility`
+### 2.3 Model `enabled` and `visibility`
 
-Model Config 顶层增加稀疏 Overlay 字段：
+Sparse Overlay fields added to top-level Model Config:
 
 ```ts
 interface ModelConfig {
@@ -138,42 +138,42 @@ interface ModelConfig {
 }
 ```
 
-Built-in 通用 Rule 提供 `enabled=true`、`visibility="visible"` 完整默认值，Personal Rule 可以覆盖或恢复
-继承。Effective 两个字段都必须完整。
+Built-in general Rules provide complete default values `enabled=true`, `visibility="visible"`; Personal Rules can override or restore
+inherited. Effective both fields must be complete.
 
-`enabled=false` 表示模型被用户停用：
+`enabled=false` means the model is disabled by user:
 
-- Settings 仍显示并允许编辑、重新启用；停用期间不能测试；
-- 不进入选择候选、默认选择或 fallback；
-- 不进入 Registry 可执行索引，精确 ModelFactory 创建和内部任务不能绕过；
-- 已经创建的 Active Model 不因 Config 更新中途终止，后来创建的 Model 遵守新状态。
+- Settings still display and allow editing, re-enabling; cannot test during disabled state;
+- Does not enter selection candidates, default selection, or fallback;
+- Does not enter Registry executable index; exact ModelFactory creation and internal tasks cannot bypass;
+- Already created Active Model is not terminated mid-flight by Config update; subsequently created Models obey new state.
 
-Model `visibility` 与 Provider visibility 对称：只过滤用户 Settings/Selection Facade，不阻止完整、enabled
-模型进入 Registry 或被内部精确创建。成员关系、Provider/Model visibility、Provider/Model enabled、
-完整性和账号授权是不同基础事实，不能互相推导；`executable` / `selectable` 是 Resolver 派生结果。
+Model `visibility` is symmetrical with Provider visibility: only filters user Settings/Selection Facade, does not prevent complete, enabled
+models from entering Registry or being created exactly internally. Member relations, Provider/Model visibility, Provider/Model enabled,
+completeness, and account authorization are different basic facts; `executable` / `selectable` are Resolver-derived results.
 
-### 2.4 Settings 只提交稀疏 Personal Overlay
+### 2.4 Settings Only Submit Sparse Personal Overlay
 
-Settings View 返回 Effective 基线、Personal 显式配置、Resolver 计算的 Inventory、冲突和完整性问题。
-Renderer 只维护 Personal Draft，不复制 Overlay、成员组合或冲突算法，也不把 Effective Config 反向投影成
-Personal Config。
+Settings View returns Effective baseline, Personal explicit config, Resolver-computed Inventory, conflicts, and integrity issues.
+Renderer only maintains Personal Draft; does not copy Overlay, member combinations, or conflict algorithms; does not project Effective Config backward into
+Personal Config.
 
-删除正常设置链中的 `saveEffectiveProvider()` / Effective → Personal 反向投影；Legacy importer 可以在
-自己的读取边界使用一次性差异投影，不进入正式保存协议。
+Delete `saveEffectiveProvider()` / Effective → Personal reverse projection from normal settings chain; Legacy importer can
+use one-time difference projection at its own read boundary, not entering the formal save protocol.
 
-正常候选的 Renderer Draft 只复制稀疏 Personal Config；Effective Config 只是只读继承基线。用户首次修改
-某配置项时才物化该项，恢复默认删除 Personal 字段。冲突候选没有普通 Effective Draft，只提供只读
-Built-in 候选摘要、旧 Personal 精确配置和两个原子解决操作。
+Normal candidate Renderer Draft only copies sparse Personal Config; Effective Config is only read-only inheritance baseline. User modifies
+a config item for the first time before materializing that item; restoring defaults deletes Personal field. Conflict candidates have no normal Effective Draft; only provide read-only
+Built-in candidate summary, old Personal precise config, and two atomic resolution operations.
 
-## 3. Registry 完整类型边界
+## 3. Registry Complete Type Boundary
 
-### 3.1 稀疏只存在于配置输入
+### 3.1 Sparsity Exists Only in Config Input
 
 ```text
-稀疏 Model Config Rule
-├─ undefined = 本 Rule 不覆盖
-├─ null      = 本 Rule 显式清除
-└─ value     = 本 Rule 提供值
+Sparse Model Config Rule
+├─ undefined = this Rule does not override
+├─ null      = this Rule explicitly clears
+└─ value     = this Rule provides value
              |
              v
        resolve + validateComplete
@@ -182,26 +182,26 @@ Built-in 候选摘要、旧 Personal 精确配置和两个原子解决操作。
        |                        |
        v                        v
 Settings candidate       Registry publish
-允许不完整并带 issues     只接收完整类型
+allow incomplete with issues     only accepts complete types
 ```
 
-以下字段在 Registry 及下游必须完整：
+The following fields must be complete at Registry and downstream:
 
-- Model `enabled`；
-- Model `visibility`；
-- `contextWindow`；
-- `input_format` 的 Text/Image/Video/Audio/PDF boolean；
-- `output_format.support_text`；
-- `supportsToolCall`、`supportsJsonSchemaOutput`、`supportsNativeWebSearch`、
-  `supportsMidConversationSystem`；
-- `optionSpecs.maxOutputTokens`；
-- Reasoning Spec 存在时非空、default 在 values 中，且每个公开 level 有 Mapping；顺序与避免重复由配置发布者负责。
+- Model `enabled`;
+- Model `visibility`;
+- `contextWindow`;
+- `input_format` of Text/Image/Video/Audio/PDF boolean;
+- `output_format.support_text`;
+- `supportsToolCall`, `supportsJsonSchemaOutput`, `supportsNativeWebSearch`,
+  `supportsMidConversationSystem`;
+- `optionSpecs.maxOutputTokens`;
+- Reasoning Spec non-empty when present, default within values, and each public level has a Mapping; ordering and deduplication are the config publisher's responsibility.
 
-Reasoning Mapping 可以保留未出现在公开 values 中的 `disabled`、`off`、`nothink`、`none` 等执行映射。
+Reasoning Mapping can retain execution mappings `disabled`, `off`, `nothink`, `none` that do not appear in public values.
 
-### 3.2 Registry 类型
+### 3.2 Registry Types
 
-保留现有稀疏 `ProviderConfig`、`ModelConfig` 作为 Overlay 类型。新增的只是 Registry 发布类型：
+Retain existing sparse `ProviderConfig` and `ModelConfig` as Overlay types. The additions are only Registry publish types:
 
 ```ts
 interface RegistryProviderConfig extends ProviderConfig {
@@ -217,26 +217,26 @@ interface RegistryModelConfig extends ModelConfig {
 }
 ```
 
-它们不是新 Config Source、持久化 Document、Overlay 层或 Runtime DTO。`requireComplete` 成功后返回同一个
-Effective Config 对象，只收紧静态类型，不复制一份新的配置事实，也不额外增加深层 freeze。
+They are not new Config Source, persisted Document, Overlay layer, or Runtime DTO. `requireComplete` successfully returns the same
+Effective Config object, only tightening the static type without copying a new config fact, nor adding deep freeze.
 
-完整类型必须同时收紧序列化返回值。不能让继承的稀疏 `toJSON(): ModelConfigObject` 把 optional
-Properties 再泄漏给 Selection/Protocol；实现应覆盖完整返回类型或提供唯一 `toRegistryJSON()`，但不复制
-第二份配置权威。
+Complete types must tighten serialized return values as well. Do not let the inherited sparse `toJSON(): ModelConfig` leak optional
+Properties to Selection/Protocol again; implementation should override complete return type or provide unique `toRegistryJSON()`, without copying
+a second config authority.
 
-Provider Registry 发布 `enabled=true` 且完整的 Model，包括 hidden 和与 Personal 重名的 Built-in Model；
-Settings Resolution 保留 disabled、incomplete、duplicate 和暂停的 Personal conflict。Registry 后的消费者
-不能再观察 optional Properties 或 Option Specs。
+Provider Registry publishes `enabled=true` and complete Models, including hidden and Built-in Models with the same name as Personal;
+Settings Resolution retains disabled, incomplete, duplicate, and suspended Personal conflicts. Post-Registry consumers
+can no longer observe optional Properties or Option Specs.
 
-Provider 完整性只收紧执行所需事实：合法 Access 分支、API Type 和非空 Endpoint。`label`、`logoUrl`、
-`visibility`、Headers 等合法可选字段继续保留原语义；成员集合已经投影为 Registry `Provider.models`，执行
-消费者不重新读取成员字段决定成员资格。
+Provider integrity only tightens execution-required facts: legal Access branches, API Type, and non-null Endpoint. `label`, `logoUrl`,
+`visibility`, Headers, and other legal optional fields retain original semantics; member sets have already been projected as Registry `Provider.models`; execution
+consumers do not re-read member fields to decide membership.
 
-Todo 03 只按开工时已经存在的 Provider Access Schema 建立这条唯一完整性边界。Todo 07 引入结构化 Account
-Connection 时，在同一个 `CompleteProviderAccessConfig` / `requireComplete` 上加强 `zhipu-account`；本任务
-不提前实现 connection，也不宣称 Account Access 已经最终收口。
+Todo 03 only establishes this single integrity boundary based on the Provider Access Schema existing at the time of initiation. Todo 07 introduces structured Account
+Connection by strengthening `zhipu-account` on the same `CompleteProviderAccessConfig` / `requireComplete`. This task
+does not prematurely implement connection, nor claim Account Access is finally closed.
 
-### 3.3 Settings candidate 是分支契约
+### 3.3 Settings Candidate is a Branch Contract
 
 ```ts
 type ProviderModelSettingsItem =
@@ -270,13 +270,13 @@ type ProviderModelSettingsItem =
     };
 ```
 
-跨集合重名是 Built-in candidate 上的 `personalMembershipConflict`，Built-in 仍有真实 Effective Config；
-单集合重复才使用不可执行冲突分支。Provider/Model enabled、visibility、完整性和成员身份是基础事实，
-`executable` / `selectable` 是派生结果；UI 可以派生主标签，但领域层不压成唯一 `status`。
+Cross-set same-name conflicts use `personalMembershipConflict` on Built-in candidate; Built-in still has real Effective Config;
+single-set duplicates use the inexecutable conflict branch. Provider/Model enabled, visibility, completeness, and member identity are basic facts;
+`executable` / `selectable` are derived results; UI can derive primary labels, but the domain layer does not compress to a single `status`.
 
-### 3.4 下游删除的未知态
+### 3.4 Downstream Deleted Unknown States
 
-正式主链删除：
+Formal main chain deletes:
 
 ```ts
 properties?.input_format?.support_image ?? false;
@@ -286,181 +286,181 @@ properties?: ModelProperties;
 if (allPropertiesPresent) protocol.properties = properties;
 ```
 
-同时删除：
+Also deletes:
 
-- Bootstrap 的 `requireCompleteProperties()`、`requireCompleteOptionSpecs()` 和 Provider 必填字段重复证明；
-- Selection/Protocol 对完整 Properties 的静默省略；
-- Settings 从缺失 Effective Property 补 `true/false`；
-- Runtime capability map，以及按 Catalog、Provider 类型、Endpoint 或 modelId 推断能力的 fallback。
+- Bootstrap's `requireCompleteProperties()`, `requireCompleteOptionSpecs()`, and Provider required field duplicate proofs;
+- Selection/Protocol silent omission of complete Properties;
+- Settings fills `true/false` from missing Effective Property;
+- Runtime capability map, and capability fallback inferred by Catalog, Provider type, Endpoint, or modelId.
 
-一次性 legacy importer 可以解析任意旧 JSON，但只能迁移旧文件明确表达的事实；没有声明的能力不写
-Personal Override，继续由 Built-in Rule 补齐。Importer 不能使用迁移专用能力常量或按模型名、Provider、
-Endpoint 猜值。
+One-time legacy importer can parse any old JSON but can only migrate facts that old files explicitly express; undeclared capabilities do not write
+Personal Override, and continue to be filled by Built-in Rules. Importer cannot use migration-specific capability constants or infer values by model name, Provider,
+or Endpoint.
 
-## 4. Todo 02/03 分工
+## 4. Todo 02/03 Division of Labor
 
-Todo 03 负责业务 Provider Registry 的事实完整性：
+Todo 03 is responsible for business Provider Registry fact completeness:
 
-- 最终成员字段、Inventory、冲突和 Model `enabled` / `visibility`；
-- `RegistryProviderConfig` / `RegistryModelConfig`；
-- Resolver 发布门禁；
-- Settings、Selection、Protocol 和 ModelFactory 消费完整或诊断视图；
-- 删除 Bootstrap 对业务 Registry Config 的重复完整性证明；
-- 切断新 Provider/Model 主链对能力 fallback 的依赖。
+- Final member fields, Inventory, conflicts, and Model `enabled` / `visibility`;
+- `RegistryProviderConfig` / `RegistryModelConfig`;
+- Resolver publish gate;
+- Settings, Selection, Protocol, and ModelFactory consume complete or diagnostic views;
+- Delete Bootstrap duplicate completeness proof for business Registry Config;
+- Cut new Provider/Model main chain dependency on capability fallback.
 
-Todo 02 负责 Adapter 内旧执行 Registry 的物理退役：
+Todo 02 is responsible for physical retirement of old execution Registry inside Adapter:
 
-- 可变 Provider map 与 revision subscription；
-- `replaceRegistryConfig()`；
-- Adapter Registry 的默认 Provider、裸 Model ID fallback 和 Connection 反向查询；
-- Adapter 私有旧类型、资源和生命周期。
+- Mutable Provider map and revision subscription;
+- `replaceRegistryConfig()`;
+- Adapter Registry's default Provider, bare Model ID fallback, and Connection reverse query;
+- Adapter private old types, resources, and lifecycle.
 
-Todo 03 可以让旧 Adapter Registry 暂时继续存在，但它只能接收业务 Registry 已验证的完整事实。Todo 03
-不把 Todo 02 的旧 Registry 字段搬进新业务抽象。
+Todo 03 can let old Adapter Registry temporarily continue existing, but it can only receive complete facts verified by business Registry. Todo 03
+does not搬 (move) old Registry fields into new business abstraction.
 
-## 5. 实施范围
+## 5. Implementation Scope
 
-### Step A：Config 与成员 Inventory
+### Step A: Config and Member Inventory
 
-- 将当前 `models` 字段直接替换为 `builtinModelIds` / `modelIds`；
-- 更新 Official、Account、Personal 正常装配和 legacy importer 的最终输出；
-- 增加 Model Config `enabled` / `visibility`，由 Built-in 通用 Rule 补齐默认；
-- Resolver 在 Inventory 边界把缺失/null 集合归一化为空数组，组合成员并检测单集合重复和跨集合同 ID
-  冲突；Account 投影不提前去重；
-- 跨集合重名发布 Built-in 身份，并排除冲突 Personal 精确 Rule；单集合重复不进入 Registry。
+- Replace current `models` field directly with `builtinModelIds` / `modelIds`;
+- Update Official, Account, Personal normal assembly and legacy importer final output;
+- Add Model Config `enabled` / `visibility`, supplemented by Built-in general Rules;
+- Resolver normalizes missing/null sets to empty arrays at Inventory boundary, combines members, and detects single-set duplicates and cross-set same ID
+  conflicts; Account projection does not prematurely dedupe;
+- Cross-set same-name publishes Built-in identity, and excludes conflicting Personal precise Rules; single-set duplicates do not enter Registry.
 
-### Step B：完整类型与 Registry
+### Step B: Complete Types and Registry
 
-- 在 Provider 包定义 Registry 完整类型和唯一 `requireComplete` 边界；
-- 完整类型的 JSON/Protocol 序列化返回完整静态类型，不重新暴露稀疏 Config；
-- 保留 Settings diagnostics，Registry 接纳完整、启用的 Built-in/Personal 模型及 hidden 模型；
-- Registry/ModelFactory 精确创建、Selection 和 fallback 共享同一索引门禁；
-- 删除 Bootstrap 的重复证明、non-null fallback 和静默省略。
+- Define Registry complete types and unique `requireComplete` boundary in Provider package;
+- Complete types' JSON/Protocol serialization returns complete static types, does not re-expose sparse Config;
+- Retain Settings diagnostics; Registry accepts complete, enabled Built-in/Personal models and hidden models;
+- Registry/ModelFactory exact creation, Selection, and fallback share the same index gate;
+- Delete Bootstrap duplicate proof, non-null fallback, and silent omission.
 
-### Step C：Settings、Protocol 与 UI
+### Step C: Settings, Protocol, and UI
 
-- Settings View 在正常 Built-in candidate 上附加 Personal 重名冲突；单集合重复使用冲突分支；分别返回
-  Provider/Model enabled、visibility、issues 和派生门禁；
-- 删除 Effective → Personal 正常保存入口，保存接口直接提交稀疏 Personal Overlay；
-- `builtinModelIds` 在 UI 只读，`modelIds` 支持新增、删除、重命名和排序；
-- `renamePersonalModel()` 只按 Personal `modelIds` 判断所有权，并与精确 Rule 原子移动；新增
-  `deletePersonalModel()` 原子删除成员与其精确 Rule；
-- enabled 开关保存 Personal 精确 Rule，恢复默认删除该叶子；
-- Provider 页面保持 Built-in 运行状态和测试，配置编辑在冲突期只读，并提供 Personal 冲突解决；选择器
-  继续提供正常 Built-in，排除 disabled/hidden；
-- Connectivity Test 使用模型 `executable` 门禁，不能只检查 Settings 列表中是否存在 ID；
-- 正常 Protocol Model Option 的 input/output Properties 必填；
-- Settings Draft 从完整 Effective Properties 初始化，隐藏 PDF/Audio 原样保留。
+- Settings View attaches Personal same-name conflicts to normal Built-in candidates; single-set duplicates use conflict branch; returns
+  Provider/Model enabled, visibility, issues, and derived gates separately;
+- Delete normal save entry from Effective → Personal; save interface directly submits sparse Personal Overlay;
+- `builtinModelIds` is read-only in UI; `modelIds` supports adding, deleting, renaming, and sorting;
+- `renamePersonalModel()` only determines ownership by Personal `modelIds`, and atomically moves precise Rules; new
+  `deletePersonalModel()` atomically deletes members and their precise Rules;
+- enabled toggle saves Personal precise Rules; restoring defaults deletes that leaf;
+- Provider page maintains Built-in running state and testing; config editing is read-only during conflicts; provides Personal conflict resolution. Selector
+  continues providing normal Built-in, excludes disabled/hidden;
+- Connectivity Test uses model `executable` gate; cannot only check whether ID exists in Settings list;
+- Normal Protocol Model Option input/output Properties are required fields;
+- Settings Draft initialized from complete Effective Properties; hidden PDF/Audio retained as-is.
 
-### Step D：Runtime 主链清理
+### Step D: Runtime Main Chain Cleanup
 
-- Registry Model 到 ModelFactory 的 Properties 全程必填；
-- Active Model 原样持有完整 Properties；
-- 正常请求、Compact、Memory、Subagent、闲时和 Adapter 编码只读取 Active Model；
-- 删除新主链的 Catalog/runtime 能力合并和 `?? true/false`；
-- Video 仍同时受 Model Property 和 Adapter 编码能力约束；Audio 不因此获得未实现的编码入口；
-- Adapter 旧 Registry 的物理退役由同步实施的 Todo 02 完成。
+- Properties required throughout from Registry Model to ModelFactory;
+- Active Model holds complete Properties as-is;
+- Normal requests, Compact, Memory, Subagent, off-peak, and Adapter encoding only read Active Model;
+- Delete Catalog/runtime capability merge and `?? true/false` from new main chain;
+- Video still constrained by both Model Property and Adapter encoding capabilities; Audio does not gain unimplemented encoding entry from this;
+- Physical retirement of Adapter old Registry completed by concurrently implemented Todo 02.
 
-## 6. 测试先行
+## 6. Tests First
 
-### 6.1 Config 与 Inventory
+### 6.1 Config and Inventory
 
-1. Built-in/Account 更新 `builtinModelIds` 后，Personal `modelIds` 保持不变；
-2. Personal-only Provider 使用 `modelIds`，空 Built-in 集合正常工作；
-3. 两个集合保持各自顺序，最终 Inventory 为 Built-in 在前、Personal 在后；
-4. 单集合重复 ID 产生不可执行 `duplicate-membership`；双集合同 ID 发布 Built-in 并暂停 Personal；
-5. 当前未发布的 `models` 字段不被正式 Schema 双读；legacy importer 直接输出最终字段；
-6. Config JSON round-trip 保留空集合、null 和稀疏 Rule；Inventory 把最终缺失/null 集合归一化为 `[]`；
-7. Model ID trim 后精确、大小写敏感；Account 模型列表不静默去重。
+1. After Built-in/Account updates `builtinModelIds`, Personal `modelIds` remains unchanged;
+2. Personal-only Provider uses `modelIds`; empty Built-in set works normally;
+3. Both sets maintain their own order; final Inventory is Built-in first, Personal last;
+4. Single-set duplicate IDs produce inexecutable `duplicate-membership`; cross-set same IDs publish Built-in and suspend Personal;
+5. Currently unpublished `models` field is not dual-read by formal Schema; legacy importer directly outputs final fields;
+6. Config JSON round-trip preserves empty sets, null, and sparse Rules; Inventory normalizes final missing/null sets to `[]`;
+7. Model ID is precise and case-sensitive after trim; Account model lists are not silently deduped.
 
-不测试“某 Source 写入另一字段必须报错”，因为成员归属是正常代码维护原则，不是 Source 权限系统。
+Do not test "writing another field from a Source must error" because member ownership is normal code maintenance principle, not a Source permission system.
 
-### 6.2 Resolver、Registry、enabled 与 visibility
+### 6.2 Resolver, Registry, enabled, and visibility
 
-1. 双来源重名时 Built-in X 继续解析、选择和创建，冲突 Personal 精确 Rule 不参与；
-2. `enabled=false` 模型保留在 Settings，但不进入 Selection、fallback 或精确创建；
-3. 恢复默认后重新继承 Built-in `enabled` / `visibility`；hidden 可内部精确创建但不进入用户 Facade；
-4. Model 缺任一必填 Property/Option 时不进入 Registry；
-5. Provider 缺 Access/API/Endpoint 时不进入 Registry；
-6. Registry 公开类型静态表达完整 Config；Config 更新只影响后来创建的 Model；
-7. Reasoning Mapping 覆盖全部公开 level，并允许保留额外 disabled 映射。
+1. On dual-source same-name, Built-in X continues parsing, selecting, and creating; conflicting Personal precise Rules do not participate;
+2. `enabled=false` models remain in Settings but do not enter Selection, fallback, or exact creation;
+3. After restoring defaults, re-inherit Built-in `enabled` / `visibility`; hidden models can be created internally but do not enter user Facade;
+4. Models missing any required Property/Option do not enter Registry;
+5. Providers missing Access/API/Endpoint do not enter Registry;
+6. Registry public types express complete Config statically; Config updates only affect subsequently created Models;
+7. Reasoning Mapping covers all public levels, and allows retaining extra disabled mappings.
 
-### 6.3 Settings、Protocol 与 Runtime
+### 6.3 Settings, Protocol, and Runtime
 
-1. Settings 返回 candidate/conflict 分支和正交门禁事实，UI 派生 ready、disabled、incomplete、conflict，
-   并只提交稀疏 Personal Overlay；
-2. Built-in 不显示删除/拖动；重名时 Built-in 配置只读但可测试，冲突 Personal 可原子重命名或删除；
-3. Personal 冲突只在 Settings 解决，不形成普通候选；已有 X Selection 继续指向 Built-in X；
-4. enabled 自动保存、失败回滚、恢复默认；disabled/incomplete/duplicate 禁用测试，重名时测试 Built-in X；
-5. Protocol 正常候选始终携带完整 input/output Properties；
-6. UI 不为缺失能力补默认，PDF/Audio 隐藏字段在编辑后保留；
-7. 普通请求、Compact、Memory、Subagent、闲时模型均读取本轮 Active Model Properties；
-8. Image/PDF/Video 允许与拒绝保持一致，Audio 不误触发未实现编码。
+1. Settings returns candidate/conflict branches and orthogonal gate facts; UI derives ready, disabled, incomplete, conflict,
+   and only submits sparse Personal Overlay;
+2. Built-in does not display delete/drag; same-name Built-in config is read-only but testable; conflicting Personal can be atomically renamed or deleted;
+3. Personal conflicts resolved only in Settings, not forming normal candidates; existing X Selection continues pointing to Built-in X;
+4. enabled auto-saves, failure rollback, restore defaults; disabled/incomplete/duplicate disables testing; same-name tests Built-in X;
+5. Protocol normal candidates always carry complete input/output Properties;
+6. UI does not fill defaults for missing capabilities; PDF/Audio hidden fields retained after editing;
+7. Normal requests, Compact, Memory, Subagent, off-peak models all read this round's Active Model Properties;
+8. Image/PDF/Video allow/deny remain consistent; Audio does not trigger unimplemented encoding.
 
-Desktop、Web、手机共用同一 Settings/Selection Service；本任务不改变 remote workspace 配置同步产品能力，
-也不改变 continuous/replayable、队列、恢复或 workspace identity。
+Desktop, Web, and mobile share the same Settings/Selection Service; this task does not change remote workspace config sync product capabilities,
+nor change continuous/replayable, queue, recovery, or workspace identity.
 
-## 7. 非目标
+## 7. Non-Goals
 
-- Account availability 的 `unknown` 与 last-known-good；
-- 账号鉴权、Request Auth 和 Credential 生命周期；
-- Todo 07 的结构化 Account Connection，以及 `zhipu-account` 最终完整性加强；
-- Telemetry、ModelRef、ModelConnectionPort 清理；
-- remote workspace 配置同步产品能力；
-- `modelContextBudget.strategy`、队列和恢复；
-- Audio 内容块、附件入口或 Provider 编码实现。
+- Account availability `unknown` and last-known-good;
+- Account authentication, Request Auth, and Credential lifecycle;
+- Todo 07's structured Account Connection, and `zhipu-account` final integrity strengthening;
+- Telemetry, ModelRef, ModelConnectionPort cleanup;
+- remote workspace config sync product capabilities;
+- `modelContextBudget.strategy`, queue, and recovery;
+- Audio content blocks, attachment entry, or Provider encoding implementation.
 
-## 8. 完成条件
+## 8. Completion Conditions
 
-机械归零：
+Mechanical zero:
 
 ```text
-正式 Provider Config 中 models[]                                      = 0
-当前未发布 Provider Config 的 schema migration                         = 0
-Source 专用 Provider Config 类型/跨层权限校验                           = 0
-Effective/Registry Model 的 enabled optional                           = 0
-Effective/Registry Model 的 visibility optional                        = 0
-Registry/Selection/Protocol/Runtime 的格式能力 optional                 = 0
-正式执行链 support_* 的 ?? true / ?? false                              = 0
-Settings 从缺失 Effective Property 补默认值                             = 0
-Registry 后重复 requireCompleteProperties                              = 0
-Bootstrap 对 Registry Provider Config 重复 requiredString/字段校验       = 0
-Renderer 计算 Overlay、成员冲突或 Effective -> Personal                  = 0
-成员列表进入 Inventory 前静默 Set 去重                                  = 0
-Settings 为暂停的 Personal 冲突伪造第二份 Effective Model Config         = 0
-完整 Registry Config 序列化返回 optional Properties                     = 0
-普通模型选择器冲突诊断候选                                              = 0
-Legacy importer 为缺失能力补兼容常量或运行时推断                        = 0
+models[] in formal Provider Config                          = 0
+currently unpublished Provider Config schema migration         = 0
+Source-specific Provider Config types/cross-layer permission checks = 0
+Effective/Registry Model enabled optional                     = 0
+Effective/Registry Model visibility optional                  = 0
+Registry/Selection/Protocol/Runtime format capability optional = 0
+formal execution chain support_* ?? true / ?? false           = 0
+Settings fills defaults from missing Effective Property        = 0
+duplicate requireComplete post-Registry                       = 0
+Bootstrap duplicate requiredString/field validation on Registry Provider Config = 0
+Renderer computes Overlay, member conflicts, or Effective → Personal = 0
+member lists silently Set-deduped before entering Inventory   = 0
+Settings fakes second Effective Model Config for suspended Personal conflicts = 0
+complete Registry Config serialization returns optional Properties = 0
+normal model selector conflict diagnostic candidates          = 0
+Legacy importer fills compatible constants or runtime inference for missing capabilities = 0
 ```
 
-行为验收：
+Behavioral acceptance:
 
-- Built-in/Account 新增模型不被旧 Personal 成员列表遮蔽；
-- 用户可以管理 Personal 模型，并通过 Model `enabled` 停用 Built-in 模型；
-- 同 ID 重名时 Built-in 继续执行，冲突 Personal 精确 Rule 暂停且只在 Settings 解决；
-- 单集合重复只隔离对应 ID，不拖死 Provider；
-- Model visibility 与 Provider 对称，只影响用户 Facade，不改变 Registry 执行资格；
-- 稀疏只存在于 Rule、Personal Overlay 和 Settings draft/candidate；
+- Built-in/Account new models not obscured by old Personal member lists;
+- Users can manage Personal models and disable Built-in models via Model `enabled`;
+- On same-name ID conflicts, Built-in continues execution; conflicting Personal precise Rules are suspended and resolved only in Settings;
+- Single-set duplicates isolate only the corresponding ID and do not drag down the Provider;
+- Model visibility is symmetrical with Provider, only affecting user Facade, not changing Registry execution qualification;
+- Sparsity exists only in Rules, Personal Overlay, and Settings draft/candidate;
 
-## 9. 实现结果
+## 9. Implementation Result
 
-- Provider 成员已改为 `builtinModelIds` / `modelIds`，Account 只约束 Built-in 集合，Personal 只维护用户集合；
-- Resolver 已实现 source-aware Inventory：跨集合重名保留 Built-in 执行身份并暂停 Personal 精确 Rule，
-  单集合重复只隔离对应模型；
-- Model `enabled` / `visibility`、完整 Registry 类型和唯一完整性门禁已经落地；Registry 后的 Model、
-  Selection 与协议不再接受可选格式事实；
-- Settings 已改为直接编辑稀疏 Personal Overlay。Built-in 成员不能删除或调序；冲突 Personal 成员只能
-  原子重命名或删除；模型 enabled 可以覆盖并恢复继承；
-- Legacy importer 只迁移旧文件显式声明的成员、格式、限制和 reasoning 映射，不再按模型名、Provider 类型
-  或 Endpoint 推断能力；
-- Config 更新只影响后来创建的 Model，已创建 Model 继续持有创建时的完整静态事实。
-- Registry、Selection、ModelFactory 和 Runtime 只观察完整模型事实；
-- 已创建 Model 不被 Config 更新热改；
-- 同步实施的 Todo 02 已删除 Adapter Registry 抽象；Todo 03 没有把其字段或查询面复制进业务 Registry。
+- Provider members changed to `builtinModelIds` / `modelIds`; Account only constrains Built-in sets; Personal only maintains user sets;
+- Resolver implemented source-aware Inventory: cross-set same-name preserves Built-in execution identity and suspends Personal precise Rules,
+  single-set duplicates isolate corresponding models only;
+- Model `enabled` / `visibility`, complete Registry types, and single integrity gate have been landed; post-Registry Models,
+  Selection, and protocols no longer accept optional format facts;
+- Settings changed to directly edit sparse Personal Overlay. Built-in members cannot be deleted or reordered; conflicting Personal members can only
+  be atomically renamed or deleted; model enabled can override and restore inheritance;
+- Legacy importer only migrates members, formats, limits, and reasoning mappings that old files explicitly declare; no longer infers capabilities by model name, Provider type
+  or Endpoint;
+- Config updates only affect subsequently created Models; created Models continue holding complete static facts from creation time.
+- Registry, Selection, ModelFactory, and Runtime only observe complete model facts;
+- Created Models are not hot-swapped by Config updates;
+- Concurrently implemented Todo 02 has deleted Adapter Registry abstraction; Todo 03 has not copied its fields or query surface into business Registry.
 
-## 10. 验证
+## 10. Verification
 
-至少执行：
+At minimum, execute:
 
 ```bash
 pnpm test:unit:affected
@@ -470,6 +470,6 @@ pnpm fmt:check
 pnpm knip
 ```
 
-UI 改动还需执行 Provider Settings/Model Selection 相关 Desktop E2E，并验证手机 Web 响应式布局。使用
-`pnpm dep:refs` 与 `rg` 复核 optional capability、Catalog fallback、旧 `models[]` 和 Effective → Personal
-入口是否归零。若全量 `knip` 含仓库既有噪音，仍需独立记录本任务相关符号的审计结果。
+UI changes also require executing Provider Settings/Model Selection related Desktop E2E, and verifying mobile Web responsive layouts. Use
+`pnpm dep:refs` and `rg` to audit whether optional capability, Catalog fallback, old `models[]`, and Effective → Personal
+entries are zeroed. If full `knip` contains repository noise, still independently record audit results for this task's symbols.

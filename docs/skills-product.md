@@ -1,61 +1,61 @@
-# Skills 产品文档（对标 z-work）
+# Skills Product Specification (Inspired by z-work)
 
-## 1. 文档目的
+## 1. Purpose
 
-本文定义 ZCode 中 `Skills` 能力的产品设计，目标是复用并本地化同级 `z-work` 项目里已验证的技能体系，形成可实现、可运营、可扩展的技能产品方案。
+This document defines the product design for the `Skills` capability in ZCode. The goal is to reuse and localize the validated skill system from the related `z-work` project, producing a practical, operable, and extensible skills product.
 
-## 2. 背景与问题
+## 2. Background and Problems
 
-当前 Agent 在复杂任务中已具备大量能力，但存在三个核心问题：
+The Agent already has many capabilities for complex tasks, but three core problems remain:
 
-- 能力散落：用户不知道“现在能做什么”；
-- 经验不可复用：团队流程难以沉淀为可调用能力；
-- 上下文拥塞：所有说明一次性注入会增加 token 成本并降低稳定性。
+- Capabilities are scattered: users do not know what the Agent can do.
+- Experience is not reusable: team workflows are difficult to preserve as callable capabilities.
+- Context is congested: injecting all instructions at once increases token cost and reduces reliability.
 
-`Skills` 的核心价值是把“专业能力 + 流程 + 资源”打包成可发现、可按需激活的能力单元，减少提示词负担，提升任务完成率与一致性。
+The core value of `Skills` is to package “expertise + workflow + resources” into discoverable capability units that can be activated as needed, reducing prompt overhead and improving task completion and consistency.
 
-## 3. 产品目标
+## 3. Product Goals
 
-- 建立统一的技能发现与激活机制，支持按需加载；
-- 支持个人技能与团队技能共存，并具备明确优先级；
-- 让技能能够绑定脚本、模板、参考资料，形成完整工作流；
-- 在 UI 中提供低成本入口（如输入框 `$` 触发）与可管理面板；
-- 确保激活过程可审计、可授权、可回滚。
+- Establish a unified mechanism for discovering and activating skills, with on-demand loading.
+- Support personal and team skills together, with clear precedence.
+- Allow skills to include scripts, templates, and reference materials to form complete workflows.
+- Provide low-friction UI entry points (such as `$` in the input box) and a management panel.
+- Ensure activation is auditable, permissioned, and reversible.
 
-## 4. 非目标（当前阶段）
+## 4. Non-goals for This Phase
 
-- 不在 v1 实现跨平台在线技能市场；
-- 不在 v1 做复杂计费体系；
-- 不在 v1 自动执行高风险外部操作（默认仍需用户确认）。
+- No cross-platform online skills marketplace in v1.
+- No complex billing system in v1.
+- No automatic execution of high-risk external actions in v1; user confirmation remains the default.
 
-## 5. 目标用户与核心场景
+## 5. Target Users and Core Scenarios
 
-- **个人开发者**：安装并复用“代码审查 / 文档生成 / 发版检查”等技能；
-- **团队研发**：把团队 SOP 沉淀为共享技能目录；
-- **平台维护者**：通过技能治理能力（启用/禁用/版本）控制质量与风险。
+- **Individual developers:** install and reuse skills such as “code review,” “document generation,” and “release checks.”
+- **Engineering teams:** preserve team SOPs in a shared skills directory.
+- **Platform maintainers:** use skills governance (enable/disable/version) to control quality and risk.
 
-典型场景：
+Typical scenarios:
 
-- 新成员接手仓库后，通过技能快速执行标准流程；
-- 处理重复任务时，直接调用已有技能模板；
-- 复杂多步骤任务中，Agent 自动判断并激活匹配技能。
+- A new team member uses skills to follow standard workflows after joining a repository.
+- Users call an existing skill template for a repeated task.
+- The Agent identifies and activates a matching skill during a complex, multi-step task.
 
-## 6. 术语定义
+## 6. Terminology
 
-- **Skill**：一个以 `SKILL.md` 为核心的目录，包含元数据、执行说明与可选资源；
-- **Skill Catalog**：当前会话可见的技能清单；
-- **Skill Activation**：从“可见”进入“已加载并可执行”的过程；
-- **Skill Scope**：技能生效范围，包含 workspace 与 user 两级。
+- **Skill:** a directory centered on `SKILL.md` that contains metadata, execution instructions, and optional resources.
+- **Skill Catalog:** the list of skills visible to the current session.
+- **Skill Activation:** the process of moving from “visible” to “loaded and executable.”
+- **Skill Scope:** where a skill applies: workspace or user.
 
-## 7. 信息架构与目录约定
+## 7. Information Architecture and Directory Conventions
 
-参考 z-work，采用以下目录约定：
+Following z-work, use these directory conventions:
 
-- `workspace skills`：`<repo>/.agents/skills/`（兼容别名目录）
-- `user skills`：`~/.agents/skills/`
-- `extension skills`：由扩展包内置（后续版本）
+- `workspace skills`: `<repo>/.agents/skills/` (including compatible alias directories)
+- `user skills`: `~/.agents/skills/`
+- `extension skills`: bundled with extensions in a future version
 
-每个 skill 推荐结构：
+Recommended structure for each skill:
 
 ```text
 my-skill/
@@ -65,86 +65,85 @@ my-skill/
 └── assets/
 ```
 
-其中 `SKILL.md` 为必选项，至少包含：
+`SKILL.md` is required and must include at least:
 
-- `name`：技能唯一标识（建议与目录名一致）；
-- `description`：触发场景与能力描述（用于发现和匹配）；
-- `body`：激活后的执行规则、流程与边界约束。
+- `name`: unique skill identifier, preferably matching the directory name.
+- `description`: trigger scenarios and capability description, used for discovery and matching.
+- `body`: execution rules, workflow, and boundaries applied after activation.
 
-## 8. 技能发现与优先级
+## 8. Skill Discovery and Precedence
 
-会话启动时系统仅加载轻量元数据（name + description），不加载完整正文。
+At session startup, the system loads only lightweight metadata (`name` and `description`), not the full body.
 
-发现优先级：
+Discovery precedence:
 
 1. Workspace
 2. User
 3. Extension
 
-同名技能按高优先级覆盖低优先级，确保团队规则可覆盖个人默认能力。
+A skill with the same name at a higher precedence overrides the lower-precedence skill, allowing team rules to override personal defaults.
 
-## 9. 激活机制（核心流程）
+## 9. Activation Mechanism (Core Flow)
 
-1. 用户发起任务；
-2. Agent 根据任务语义匹配技能描述；
-3. 命中后发起激活请求（展示技能名称、用途、路径、权限范围）；
-4. 用户确认后加载 `SKILL.md` 正文及目录资源；
-5. 技能进入会话激活态，执行时优先遵循技能流程；
-6. 会话结束后激活态失效（下一次按需重新激活）。
+1. The user starts a task.
+2. The Agent matches the task's meaning against skill descriptions.
+3. On a match, the Agent requests activation and displays the skill name, purpose, path, and permission scope.
+4. After user confirmation, load the `SKILL.md` body and directory resources.
+5. The skill becomes active for the session, and its workflow takes precedence during execution.
+6. Activation ends with the session; activate again on demand in the next session.
 
-设计原则：
+Design principles:
 
-- **渐进披露**：先元数据，后正文；
-- **显式授权**：激活前给用户确认点；
-- **最小权限**：仅开放技能目录所需访问范围。
+- **Progressive disclosure:** metadata first, then the full body.
+- **Explicit authorization:** ask the user to confirm before activation.
+- **Least privilege:** grant access only to the skill directory's required scope.
 
-## 10. 交互设计（MVP）
+## 10. Interaction Design (MVP)
 
-### 10.1 输入入口
+### 10.1 Input Entry Point
 
-在聊天输入框中保留技能入口提示（如 `$ for skills` / `$ 使用技能`），降低学习成本。
+Keep a skills entry hint in the chat input (for example, `$ for skills` / `$`), reducing the learning curve.
 
-### 10.2 技能面板
+### 10.2 Skills Panel
 
-提供 `Skills` 面板，至少支持：
+Provide a `Skills` panel that supports at least:
 
-- 列表查看（名称、描述、来源、状态）；
-- 启用/禁用；
-- 作用域切换（workspace / user）；
-- 手动刷新发现结果。
+- Browsing a list (name, description, source, and status).
+- Enabling/disabling skills.
+- Switching scope (workspace / user).
+- Manually refreshing discovery results.
 
-### 10.3 命令入口（可选）
+### 10.3 Command Entry Point (Optional)
 
-保留命令式管理能力（对标 z-work 的 `/skills` 交互），用于高级用户批量操作。
+Keep command-based management (inspired by z-work's `/skills` interaction) for advanced users performing bulk operations.
 
-## 11. 安全与治理
+## 11. Security and Governance
 
-- 激活审计：记录技能名、来源、激活时间、发起任务；
-- 风险隔离：高风险技能需二次确认；
-- 版本治理：同名技能覆盖时展示来源与版本信息；
-- 回退策略：激活失败时自动降级到无技能模式，保障任务可继续。
+- Activation audit: record skill name, source, activation time, and initiating task.
+- Risk isolation: require a second confirmation for high-risk skills.
+- Version governance: when a same-name skill overrides another, display source and version information.
+- Fallback: if activation fails, fall back to running without the skill so the task can continue.
 
-## 12. 成功指标
+## 12. Success Metrics
 
-上线后重点观测：
+After launch, focus on:
 
-- `技能触发率`：有技能参与的任务占比；
-- `技能任务成功率`：激活技能后任务一次完成率；
-- `平均执行时长`：同类任务时间是否下降；
-- `重复操作减少率`：标准流程手工步骤减少情况；
-- `用户满意度`：对技能可用性与可控性的反馈。
+- `Skill activation rate`: share of tasks involving a skill.
+- `Skill task success rate`: one-pass completion rate after activating a skill.
+- `Average execution time`: whether time for similar tasks decreases.
+- `Reduction in repeated operations`: decrease in manual steps for standard workflows.
+- `User satisfaction`: feedback on skill usability and controllability.
 
-## 13. 里程碑建议
+## 13. Suggested Milestones
 
-- **M1（基础能力）**：目录发现、元数据注入、手动激活；
-- **M2（可管理）**：列表页 + 启用禁用 + 作用域管理；
-- **M3（智能化）**：自动匹配激活、激活审计、风险分级；
-- **M4（生态化）**：扩展来源、导入导出、团队模板市场化。
+- **M1 (Core capability):** directory discovery, metadata injection, manual activation.
+- **M2 (Manageability):** list page, enable/disable, scope management.
+- **M3 (Intelligence):** automatic matching and activation, activation audit, risk levels.
+- **M4 (Ecosystem):** extension sources, import/export, and a marketplace for team templates.
 
-## 14. 开放问题
+## 14. Open Questions
 
-- 技能冲突时是否支持“合并策略”而非简单覆盖；
-- 多会话并发下技能状态是否需要会话级隔离展示；
-- 远程模式下技能目录同步与权限策略如何定义；
-- 是否需要对技能执行效果做自动评估与排序。
-
+- Should conflicts support a merge strategy instead of simple override?
+- Should skill status be isolated and displayed per session when sessions run concurrently?
+- How should skill-directory synchronization and permissions work in remote mode?
+- Should skill execution results be evaluated and ranked automatically?

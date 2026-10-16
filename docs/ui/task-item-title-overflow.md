@@ -1,24 +1,24 @@
 # Task Item Title Overflow
 
-Workspace task item 和 timeline task item 的任务标题超出可用宽度时，不显示 `...` 省略号。
+When a task title in a workspace task item or timeline task item exceeds the available width, do not show an `...` ellipsis.
 
-实现规则：
+Implementation rules:
 
-- 标题保持单行展示，避免长标题把侧栏 task 列表撑高。
-- 只有浏览器真实排版结果满足 `scrollWidth > clientWidth` 时，才启用右侧渐隐 mask；完整可见的短标题不挂载 mask。
-- 标题或容器尺寸变化后重新测量：从未溢出变为溢出时添加 mask，从溢出恢复为完整可见时移除 mask。
-- 超出部分使用和 grouped task row 一致的右侧渐隐效果，保留文字连续性。
-- 鼠标 hover 到整个 task item 满 1 秒后，溢出标题切换为单向无缝走马灯：轨道内容为“完整标题 + 固定间距 + 标题副本”。鼠标在行内的时间、状态或操作区域上时也应保持滚动；等待期间或滚动期间离开整行，都应取消等待并立即恢复静止状态。
-- 走马灯移动一个“完整标题宽度 + 间距”后，标题副本恰好回到原标题起点；在这个画面停留 2 秒，再直接重置到起始帧并继续下一轮。因为两份文字相同，所以视觉上不反向、不跳变。
-- 走马灯速度按完整标题宽度计算，避免不同长度标题使用固定时长后速度差异过大；鼠标移出后立即恢复标题起始位置和右侧渐隐。
-- 静止状态只在标题右侧渐隐；走马灯开始移动后的 150ms 内恢复左侧渐隐，让文字从左侧离场、从右侧入场时都不会出现硬切边缘。
-- 第一份标题的尾部到达左边缘时，左侧渐隐立即消失，不在标题与副本之间的 24px 间距内做淡出过渡。副本进入、对齐及随后 2 秒停留期间只保留右侧渐隐，确保标题开头完整可见。循环重置后再随下一轮移动恢复左侧渐隐。
-- 标题副本必须设置 `aria-hidden`，避免辅助技术重复朗读任务名称。
-- `prefers-reduced-motion: reduce` 下禁用走马灯，只保留静态渐隐。
-- task 名称不渲染原生 `title` 属性，hover 时只使用走马灯展示完整内容，避免浏览器提示框遮挡标题。
-- 渐隐只作用在任务标题文本自身，不影响右侧时间、变更摘要、权限标签和 hover 操作按钮。
-- Workspace header task name 不使用此规则，保留原有 `truncate` / `...` 截断方案。
+- Keep the title on one line so long titles do not make the sidebar task list taller.
+- Enable a right-side fade mask only when the browser's actual layout measurement satisfies `scrollWidth > clientWidth`; do not mount a mask for a fully visible short title.
+- Remeasure when the title or container size changes: add the mask when the title starts overflowing, and remove it when the title becomes fully visible again.
+- Use the same right-side fade as the grouped task row for the overflowing portion, preserving text continuity.
+- After the pointer hovers over the entire task item for 1 second, switch an overflowing title to a one-way seamless marquee. The track contains “full title + fixed gap + title copy.” Scrolling should continue when the pointer is over the row's time, status, or action area. Leaving the entire row while waiting or scrolling cancels the wait and immediately restores the static state.
+- After the marquee moves by “full title width + gap,” the copied title returns exactly to the original title's starting point. Hold that frame for 2 seconds, then reset directly to the starting frame and continue the next cycle. Since both pieces of text are identical, the transition should not reverse or jump visually.
+- Calculate marquee speed from the full title width so titles of different lengths do not have drastically different speeds due to a fixed duration. When the pointer leaves, immediately restore the title to its starting position and show the right-side fade.
+- In the static state, fade only the right side. Within 150ms after the marquee starts moving, restore the left-side fade so text entering and leaving both edges does not end abruptly.
+- As the first title's tail reaches the left edge, immediately remove the left fade; do not fade across the 24px gap between the title and its copy. Keep only the right-side fade while the copy enters, aligns, and remains for 2 seconds, so the title's beginning stays fully visible. Restore the left fade as the next cycle begins moving.
+- Set `aria-hidden` on the copied title so assistive technology does not read the task name twice.
+- Disable the marquee under `prefers-reduced-motion: reduce`; retain only the static fade.
+- Do not render a native `title` attribute for task names. Use the marquee on hover to show the full content and avoid browser tooltips covering the title.
+- Apply the fade only to the task-title text itself. Do not affect the time, change summary, permission labels, or hover action buttons on the right.
+- Do not apply this rule to the workspace header task name; keep the existing `truncate` / `...` behavior.
 
-这个约束同时适用于桌面侧栏和手机 Web 远控任务列表，因为两端复用同一个 `TaskListItem` UI。
+This applies to both the desktop sidebar and mobile Web remote-control task list because both use the same `TaskListItem` UI.
 
-Grouped task row 复用同一套溢出测量与渐隐组件，避免默认列表、timeline 和 grouped view 出现不同的标题截断语义。
+The grouped task row reuses the same overflow measurement and fade component so the default list, timeline, and grouped view do not use different title-truncation semantics.

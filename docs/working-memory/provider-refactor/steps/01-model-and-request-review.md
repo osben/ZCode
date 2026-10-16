@@ -1,48 +1,48 @@
-# M1 全面复核
+# M1 Comprehensive Review
 
-> 状态：历史复核快照；当前阶段结论见 [`01-model-and-request.md`](./01-model-and-request.md)
+> Status: Historical review snapshot; current phase conclusions see [`01-model-and-request.md`](./01-model-and-request.md)
 >
-> 日期：2026-08-13
+> Date: 2026-08-13
 >
-> 实施目标：[`01-model-and-request.md`](./01-model-and-request.md)
+> Implementation target: [`01-model-and-request.md`](./01-model-and-request.md)
 >
-> 目标设计：[`../design/model/model.md`](../design/model/model.md)
+> Target design: [`../design/model/model.md`](../design/model/model.md)
 >
-> 实施事实：[`01-model-and-request-implementation-log.md`](./01-model-and-request-implementation-log.md)
+> Implementation facts: [`01-model-and-request-implementation-log.md`](./01-model-and-request-implementation-log.md)
 >
-> 后续裁决：Guide/“立即”已经确定为在当前 Loop 内生效，见 [`../design/interaction/interaction.md`](../design/interaction/interaction.md)。正文保留复核当时的未决状态。
+> Subsequent ruling: Guide/"immediate" was determined to take effect within the current Loop, see [`../design/interaction/interaction.md`](../design/interaction/interaction.md). The main text preserves the unresolved state at the time of review.
 >
-> 复核基线：M1 merge commit `84f12ba306`，最新 `staging` `bfc91c54a9`
+> Review baseline: M1 merge commit `84f12ba306`, latest `staging` `bfc91c54a9`
 
-## 结论
+## Conclusion
 
-M1 已经建立统一的 `Model` / `ModelRequest` 调用边界，主 Agent、Compact、Subagent、Title、Goal、Memory、模型型工具、Git、workspace generateText 和 Repo Wiki 的生产模型请求均已进入这条链路。生产代码扫描没有发现仍然绕过 Model、直接调用 OpenAI、Anthropic 或其他 Provider SDK 的业务客户端。
+M1 has established a unified `Model` / `ModelRequest` invocation boundary. Production model requests from main Agent, Compact, Subagent, Title, Goal, Memory, model-type tools, Git, workspace generateText, and Repo Wiki have all entered this path. Production code scanning found no business clients still bypassing Model and directly calling OpenAI, Anthropic, or other Provider SDKs.
 
-这次复核没有发现 P0 问题。这里的 P0 指会导致主模型调用在大范围环境中不可用、数据破坏或丢失、凭据泄露、安全边界失效，或者 Desktop、CLI、Remote 等主要入口同时失效的问题。目前没有相应证据。
+This review found no P0 issues. P0 here refers to issues that would cause main model invocation to become unavailable in large-scale environments, cause data destruction or loss, leak credentials, fail security boundaries, or simultaneously disable major entry points like Desktop, CLI, and Remote. There is currently no such evidence.
 
-最高优先级的问题是 Workflow Child 的生产装配没有携带正式 `modelFactory`。它仍然通过 Core 的兼容工厂创建 Model，破坏了“正式运行统一从 Model Factory 取得不可变 Model”的完成条件。这是一个作用域明确的 P1 收口缺口：可能使 Workflow 在同一 Loop 中受到 Registry 更新影响，但不会让普通 Agent 主链或整个产品不可用。
+The highest priority issue is that Workflow Child production assembly does not carry the formal `modelFactory`. It still creates Models through Core's compatibility factory, breaking the completion condition that "formal runs uniformly obtain immutable Models from Model Factory." This is a well-scoped P1 closure gap: it may cause Workflows to be affected by Registry updates within the same Loop, but will not disable ordinary Agent main chains or the entire product.
 
-因此，M1 更准确的状态是：
+Therefore, M1's more accurate status is:
 
 ```text
-公共调用边界        已完成
-生产调用入口迁移    已完成
-普通 Agent 生命周期 已完成
-生产装配机械收口    尚有 Workflow 缺口
-历史兼容入口退场    尚未完成
+Public invocation boundary     Completed
+Production call entry migration Completed
+Ordinary Agent lifecycle       Completed
+Production assembly closure    Still has Workflow gap
+Historical compatible entry    Not completed
 ```
 
-建议增加一个短周期的 M1.1 收口，不重新打开整个 M1，也不把这些问题混入 M2 Registry 设计。
+A short M1.1 closure is recommended, without reopening the entire M1 or mixing these issues into M2 Registry design.
 
-## 复核范围
+## Review Scope
 
-本次复核围绕四个问题展开：阶段目标是否完整落地、模型调用是否仍有旁路、迁移是否改变现有功能语义、以及新边界是否真正阻止旧设计继续扩散。
+This review revolves around four questions: whether phase goals are fully implemented, whether model calls still have side paths, whether migration changes existing functional semantics, and whether the new boundary truly prevents old designs from continuing to spread.
 
-检查覆盖了生产 `AgentRuntime` 的构造位置、`Model` 创建与调用位置、Model Properties 和 Options 的校验、动态 Header 刷新、Guide 的 Loop 内行为、Usage / Trace 归因以及 Repo Wiki 的迁移结果。最新 `staging` 合入的 CLI 变化集中在 Desktop presentation context，没有改变 M1 的 Model、Adapter 或 Workflow 装配结论。
+The check covers production `AgentRuntime` construction locations, `Model` creation and invocation points, Model Properties and Options validation, dynamic header refresh, Guide's Loop behavior, Usage / Trace attribution, and Repo Wiki migration results. CLI changes merged in the latest `staging` are concentrated in Desktop presentation context and do not change M1's Model, Adapter, or Workflow assembly conclusions.
 
-## P1：Workflow Child 没有进入正式 Model Factory
+## P1: Workflow Child Does Not Enter Formal Model Factory
 
-普通 Runtime 的装配链已经明确：
+The ordinary Runtime assembly chain is now clear:
 
 ```text
 createZCodeApp
@@ -54,16 +54,16 @@ Runtime Model Factory
 AgentRuntime
     |
     v
-Loop 持有不可变 Model
+Loop holds immutable Model
 ```
 
-Direct Expert Workflow 和 Script Workflow Child 则只向新的 `AgentRuntime` 注入 `modelAdapter`：
+Direct Expert Workflow and Script Workflow Children, however, only inject `modelAdapter` into the new `AgentRuntime`:
 
 ```text
-父 Agent Runtime
+Parent Agent Runtime
     |
-    +-- 普通 Subagent
-    |      └─ 继承或取得正式 Model Factory
+    +-- Ordinary Subagent
+    |      └─ Inherits or obtains formal Model Factory
     |
     +-- Direct Expert Workflow Child
     |      └─ modelAdapter -> Core Compatibility Model
@@ -72,142 +72,142 @@ Direct Expert Workflow 和 Script Workflow Child 则只向新的 `AgentRuntime` 
            └─ modelAdapter -> Core Compatibility Model
 ```
 
-对应代码位于：
+Corresponding code located in:
 
 - `apps/zcode-cli/packages/bootstrap/src/app/workflow-facade.ts`
 - `apps/zcode-cli/packages/bootstrap/src/app/script-workflow-child-runtime.ts`
 - `apps/zcode-cli/packages/core/src/runtime/methods/runtime-model.ts`
 
-兼容 Model 仍然满足 `Model.generateText()` / `streamText()` 的表面接口，所以常规模型调用扫描不会把它识别成旁路；差异发生在 Model 的形成过程。兼容路径使用宽松缺省值，并在 Adapter 调用时重新查询可变 Registry。只要 `providerId/modelId` 没变，API Key、Endpoint 或物理 Provider 对象的更新就可能影响正在运行的 Workflow Loop。
+The compatible Model still satisfies the surface interface of `Model.generateText()` / `streamText()`, so ordinary model call scanning will not identify it as a side path; the difference lies in how the Model is formed. The compatible path uses loose default values and re-queries the mutable Registry at Adapter invocation time. As long as `providerId/modelId` has not changed, API Key, Endpoint, or physical Provider object updates may affect a running Workflow Loop.
 
-这与 M1 的生命周期目标不一致：
+This is inconsistent with M1's lifecycle goal:
 
 ```text
-预期
-Loop 开始 -> 创建 Model A -> 所有 Step 使用 A -> Loop 结束
+Expected
+Loop start -> Create Model A -> All Steps use A -> Loop end
 
-Workflow 当前风险
-Loop 开始 -> Compatibility Model
-          -> Step 1 查询 Registry A
-          -> Registry 更新
-          -> Step 2 查询 Registry B
+Workflow current risk
+Loop start -> Compatibility Model
+          -> Step 1 queries Registry A
+          -> Registry updates
+          -> Step 2 queries Registry B
 ```
 
-需要让两类 Workflow Child 显式取得正式 Model Factory。测试应覆盖 Registry 在 Child Loop 运行期间变化时，模型身份、连接和绑定 Options 都保持稳定；Child 显式选择另一模型时，则从正式工厂创建新的 Model。
+Both types of Workflow Children need to explicitly obtain the formal Model Factory. Tests should cover scenarios where the Registry changes during the Child Loop: model identity, connection, and bound Options should remain stable; when a Child explicitly selects another model, a new Model is created from the formal factory.
 
-## P1：Property 的“未知”可能被解释为“不支持”
+## P1: "Unknown" Property May Be Interpreted as "Not Supported"
 
-M1 让 Model 在请求发出前统一校验图片、PDF、Tool Call 和 Structured Output。这一边界本身成立，但当前 Catalog 合并结果使用布尔值表达能力，部分未知事实会被填成 `false`。一旦这个值进入 Model Properties，请求就会被硬拒绝。
+M1 has Models uniformly validate images, PDFs, Tool Calls, and Structured Output before requests are sent. This boundary itself is valid, but the current Catalog merge result uses boolean values to express capabilities, and some unknown facts are filled as `false`. Once this value enters Model Properties, requests are hard-rejected.
 
 ```text
-Catalog 没有明确事实
+Catalog has no explicit fact
         |
         v
-合并结果填入 false
+Merge result filled with false
         |
         v
 Model Property = false
         |
         v
-请求在 Adapter 之前被拒绝
+Request rejected before Adapter
 ```
 
-风险最明显的场景是未被 Catalog 收录、但实际支持图片或 PDF 的自定义模型。旧链路可能把请求交给 Provider，新链路可能依据缺省 `false` 提前拒绝。Structured Output 也存在同样的建模问题；当前真正发送 JSON Schema 的 Memory Selector 位于默认关闭的 Semantic Recall 分支，因此它暂时不是线上 P0，但未来开启该分支前必须处理。
+The most obvious risk scenario is custom models not yet cataloged but actually supporting images or PDFs. The old chain might hand the request to the Provider, while the new chain might pre-reject based on the default `false`. Structured Output has the same modeling problem; currently, the Memory Selector that actually sends JSON Schema sits in a default-disabled Semantic Recall branch, so it is not currently an online P0, but must be handled before enabling that branch in the future.
 
-Tool Call 的默认值当前为 `true`，没有同样的缺省回归；显式配置为 `false` 时，Coding Agent 请求工具被拒绝符合声明语义。
+Tool Call's default is currently `true`, with no similar regression; explicitly configured as `false`, Coding Agent tool requests are correctly rejected per declared semantics.
 
-这里不适合简单删除统一校验。需要为每项 Property 分别确认事实来源和未知状态策略：哪些能力是进入 Registry 的硬前提，哪些可以在缺少事实时继续尝试，哪些需要三态表达。完成这项裁决前，不应继续增加新的硬校验字段。
+Simply removing unified validation is not appropriate here. Each Property needs a separately confirmed fact source and unknown state strategy: which capabilities are hard prerequisites for entering the Registry, which can still attempt when facts are missing, and which need three-state expression. Until this ruling is complete, no new hard validation fields should be added.
 
-## P2：Guide 的模型语义已经发生变化，但产品语义仍未裁决
+## P2: Guide's Model Semantics Have Changed, But Product Semantics Remains Undecided
 
-M1 固定了 Agent Loop 的 Model。Guide 则会在当前 Loop 中内联一条用户输入，不开启新 Loop。用户在发送 Guide 前选择模型 B 时，Session Selection 可以更新为 B，但当前 Loop 仍然持有 A：
+M1 fixed the Agent Loop's Model. The Guide, however, inlines a user input within the current Loop without starting a new one. When a user selects model B before sending a Guide, the Session Selection can update to B, but the current Loop still holds A:
 
 ```text
-Turn 开始，绑定 Model A
+Turn start, bound to Model A
         |
         v
-用户在 Composer 选择 Model B
+User selects Model B in Composer
         |
         v
-Guide 内联当前 Turn
+Guide inlines current Turn
         |
-        +-- 当前 Turn 继续使用 A
+        +-- Current Turn continues using A
         |
-        └-- 下一次新 Turn 使用 B
+        └-- Next new Turn uses B
 ```
 
-这符合“一个 Loop 内模型身份稳定”的 M1 规则，却可能不符合 Guide/“立即”的产品心智。如果产品最终要求 Guide 立即换模，就需要把它定义为当前 Loop 内一次显式的 Model 切换边界，同时更新当前执行的 Selection、Model、Usage 和“已切换模型”消息。该决定属于 Submission / Guide 专题；M1 不应通过恢复逐 Step 读取 Session 默认模型来解决。
+This conforms to M1's rule of "stable model identity within one Loop," but may not match the product mental model of Guide/"immediate." If the product ultimately requires Guide to switch models immediately, it needs to be defined as an explicit Model switch boundary within the current Loop, simultaneously updating the current Selection, Model, Usage, and "model switched" message. This decision belongs to the Submission / Guide topic; M1 should not resolve it by restoring per-Step reading of Session default models.
 
-它目前是局部、可预期的行为差异，不是 P0。
+It is currently a localized, expected behavioral difference, not a P0.
 
-## P2：动态 Header 刷新仍会重新取得完整 Provider 对象
+## P2: Dynamic Header Refresh Still Reacquires Full Provider Object
 
-Start Plan 等 Provider 需要在每个物理请求前刷新一次性 Header。当前 Adapter 在刷新后重新从 Registry resolve 同一个 `providerId/modelId`，并只检查模型身份没有改变：
+Start Plan and other Providers need to refresh one-time headers before each physical request. The current Adapter re-resolves the same `providerId/modelId` from the Registry after refresh, and only checks that model identity has not changed:
 
 ```text
-已绑定 Model A
+Bound Model A
     |
     v
-刷新一次性 Header
+Refresh one-time header
     |
     v
-重新 resolve providerId/modelId
+Re-resolve providerId/modelId
     |
-    +-- 身份相同：接受新的 Resolved Model
-    └-- 身份不同：报错
+    +-- Identity same: accept new Resolved Model
+    └-- Identity different: error
 ```
 
-这样可以保持现有 Plan 行为，但刷新范围比“只更新动态认证材料”更大。同一模型的 Endpoint、API Key 或 Provider 实例也可能随 Registry 更新进入当前 Loop。它延续了旧 Plan 链路的行为，并非 M1 新引入的普遍回归；从目标架构看，它仍然削弱了 Model 不可变性。
+This preserves existing Plan behavior, but the refresh scope is larger than "only update dynamic authentication material." The same model's Endpoint, API Key, or Provider instance may also enter the current Loop with Registry updates. It extends the behavior of the old Plan chain and is not a universally introduced regression by M1; from the target architecture perspective, it still weakens Model immutability.
 
-后续重构 Builtin Provider / Adapter 时，应把动态认证材料刷新与完整 Model/Connection 重新解析分开。当前阶段不适合顺手改变 Plan 的认证协议。
+When subsequently refactoring Builtin Provider / Adapter, separate dynamic authentication material refresh from full Model/Connection re-parsing. This phase is not the time to change Plan's authentication protocol.
 
-## P2：兼容入口仍然过于容易进入
+## P2: Compatible Entry Points Still Too Easy to Enter
 
-Core 当前接受 `modelFactory` 或 `modelAdapter`，缺少 Factory 时自动进入兼容 Model。该设计保证旧测试和嵌入调用继续运行，也使生产 Workflow 的装配遗漏无法被类型系统或启动检查发现。
+Core currently accepts `modelFactory` or `modelAdapter`, automatically entering compatible Models when no Factory is provided. This design ensures old tests and embedding calls continue running, but also prevents production Workflow assembly omissions from being discovered by the type system or startup checks.
 
-此外，少量 Core 能力仍以 `modelAdapter` 是否存在作为可用性判断，`AgentRuntimeDeps` 也保留 `modelConnectionPort`、Runtime limits 和 Provider Options 等迁移字段。当前正式 Runtime 同时拥有 Adapter 与 Factory，所以这些残留没有造成主链功能故障；它们会妨碍 M2 之后建立只依赖 Model 来源的 Runtime。
+Additionally, a small number of Core capabilities use the existence of `modelAdapter` as an availability check, and `AgentRuntimeDeps` also retains migration fields such as `modelConnectionPort`, Runtime limits, and Provider Options. The current formal Runtime has both Adapter and Factory, so these remnants do not cause main chain functional failures; they will impede M2 from establishing a Runtime that depends only on Model source.
 
-M1.1 应将生产装配与兼容装配分开：生产可执行 Runtime 必须提供正式 Model Factory；真正的 state-only Runtime 和测试兼容对象使用显式命名的构造路径。兼容入口保留多久可以另定，但不能再由缺少一个可选字段隐式触发。
+M1.1 should separate production and compatible assembly: production-executable Runtimes must provide a formal Model Factory; true state-only Runtimes and test-compatible objects use explicitly named construction paths. How long the compatible entry is retained can be separately determined, but it should no longer be implicitly triggered by the absence of an optional field.
 
-## 已确认没有形成旁路的部分
+## Parts Confirmed Not to Form Side Paths
 
-Repo Wiki 已删除自己的 Provider 客户端，通过 `workspace/generateText` 使用 CLI 内的 Model。截断恢复仍属于 Repo Wiki 业务策略，Model 只返回 `finishReason` 和 Usage。旧 app-server 缺少 `finishReason` 时明确失败，是已确认的兼容边界，不是本次复核新发现的回归。
+Repo Wiki has deleted its own Provider client and uses CLI-internal Models through `workspace/generateText`. Truncation recovery still belongs to Repo Wiki's business strategy; the Model only returns `finishReason` and Usage. When the old app-server lacks `finishReason`, explicit failure is a confirmed compatibility boundary, not a regression newly discovered by this review.
 
-主 Agent、普通 Subagent、Automatic / Micro / Reactive Compact、Title、Goal verifier、Project Memory、WebFetch / WebSearch、Git Commit Message 和 workspace generateText 都通过 Model 发起请求。Provider-specific reasoning 参数仍由 Adapter 路径转换，没有重新暴露给业务调用方。
+Main Agent, ordinary Subagent, Automatic / Micro / Reactive Compact, Title, Goal verifier, Project Memory, WebFetch / WebSearch, Git Commit Message, and workspace generateText all initiate requests through Model. Provider-specific reasoning parameters are still converted by the Adapter path and not re-exposed to business callers.
 
-Usage、Trace 和消息持久化已经使用实际执行 Model 归因。当前扫描没有发现请求完成后再读取 Composer 或可变 Session 默认模型来记录 Usage 的生产路径。
+Usage, Trace, and message persistence already attribute to the actual execution Model. Current scanning found no production paths that read Composer or mutable Session default models after request completion to record Usage.
 
-## P0 判断及置信边界
+## P0 Judgment and Confidence Boundaries
 
-目前没有确认的 P0。已发现的问题都有明确作用域：Workflow 装配只影响 Workflow Child；Property 缺省主要影响部分自定义多模态模型和默认关闭的 Semantic Recall；Guide 只影响当前 Turn 内联输入；动态 Header 风险只存在于需要请求前刷新认证材料的 Provider。
+No P0s have been confirmed. All discovered issues have clear scoping: Workflow assembly only affects Workflow Child; Property defaults primarily affect some custom multimodal models and default-disabled Semantic Recall; Guide only affects current Turn inline input; dynamic header risk only exists for Providers needing pre-request authentication material refresh.
 
-这不是“已经证明不存在任何 P0”。判断依据来自静态生产调用扫描、构造链检查、M1 合入前后的全量与重点测试记录，以及最新 staging 的增量复核。当前环境此前有少量测试因磁盘空间不足无法重跑，仓库也存在与 Provider 无关的既有失败，因此仍需通过 Workflow 与自定义多模态模型的定向测试提高置信度。
+This is not "proven that no P0s exist at all." The judgment is based on static production call scanning, construction chain checks, full and key test records before and after M1 merge, and incremental review of the latest staging. The current environment previously had some tests that could not be re-run due to insufficient disk space, and the repository also has pre-existing failures unrelated to Providers, so confidence still needs to be raised through targeted testing of Workflow and custom multimodal models.
 
-如果把严重度按当前证据排列：
+If severity is ranked by current evidence:
 
-| 等级 | 结论 | 影响 |
-| --- | --- | --- |
-| P0 | 未发现 | 没有大范围不可用、数据破坏或安全事故证据 |
-| P1 | Workflow Child 未使用正式 Factory | 可能在同一 Workflow Loop 中混入更新后的连接或配置 |
-| P1 | 未知 Property 被硬化为 `false` | 可能拒绝实际可工作的自定义图片/PDF模型 |
-| P2 | Guide 继续使用当前 Loop Model | 产品语义未裁决，影响局部交互 |
-| P2 | 动态 Header 刷新重取完整 Provider | 继承风险，影响特殊 Plan Provider 的不可变性 |
-| P2 | 兼容入口与旧依赖仍可进入生产装配 | 收口不彻底，增加后续迁移风险 |
+| Level | Conclusion                                                                | Impact                                                                             |
+| ----- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| P0    | Not found                                                                 | No evidence of large-scale unavailability, data destruction, or security incidents |
+| P1    | Workflow Child not using formal Factory                                   | May mix updated connections or configs within the same Workflow Loop               |
+| P1    | Unknown Properties hardened to `false`                                    | May reject actually working custom image/PDF models                                |
+| P2    | Guide continues using current Loop Model                                  | Product semantics undecided, affects local interaction                             |
+| P2    | Dynamic header refresh reacquires full Provider                           | Inherits risk, affects immutability of special Plan Providers                      |
+| P2    | Compatible entry and old dependencies can still enter production assembly | Incomplete closure, increases subsequent migration risk                            |
 
-## 建议的 M1.1 收口顺序
+## Recommended M1.1 Closure Order
 
-第一步修复 Workflow Child 的正式 Model Factory 装配，并建立生命周期测试。这是唯一已经确认进入生产功能的结构性缺口。
+The first step fixes Workflow Child's formal Model Factory assembly and establishes lifecycle tests. This is the only structurally confirmed gap entering production functionality.
 
-第二步逐项定义 Property 的未知状态策略，优先验证自定义图片/PDF模型；Semantic Recall 保持关闭，直到 Structured Output 的策略有测试保护。
+The second step defines unknown state strategies for each Property per item, prioritizing verification of custom image/PDF models; keep Semantic Recall disabled until Structured Output strategies have test protection.
 
-第三步把生产 Runtime 对 Model Factory 的要求变成机械约束，让兼容工厂只服务显式兼容场景。随后删除 Core 中以旧 Adapter 存在性判断模型能力的残留。
+The third step makes the production Runtime's Model Factory requirement a mechanical constraint, so the compatibility factory only serves explicit compatibility scenarios. Then delete Core remnants that judge model capabilities by old Adapter existence.
 
-Guide 和动态 Plan Header 分别留给 Submission 与 Builtin Provider 专题。它们需要明确产品/协议语义，不与 Workflow 收口混做。
+Guide and dynamic Plan Header are left for Submission and Builtin Provider topics separately. They need explicit product/protocol semantics and should not be combined with Workflow closure.
 
-M1.1 完成条件为：
+M1.1 completion conditions:
 
-- 所有会执行模型请求的生产 `AgentRuntime` 都显式取得正式 Model Factory。
-- Workflow Child 在 Registry 更新期间继续使用创建时的 Model 事实和连接。
-- 自定义模型的图片、PDF 和 Structured Output 不会因为“缺少事实”被误判为“不支持”。
-- 兼容 Model 的进入条件在代码中显式可见，并有测试证明正式装配不会落入该路径。
-- Guide 与动态 Header 的未决语义继续保留在对应后续专题，不以临时兜底改变行为。
+- All production `AgentRuntime`s that execute model requests explicitly obtain a formal Model Factory.
+- Workflow Children continue using the Model facts and connections from creation time during Registry updates.
+- Custom model images, PDFs, and Structured Output are not incorrectly judged as "not supported" due to "missing facts."
+- Compatible Model entry conditions are explicitly visible in code, with tests proving production assembly does not fall into this path.
+- Unresolved semantics of Guide and dynamic headers remain in their respective subsequent topics, without changing behavior through temporary fallbacks.

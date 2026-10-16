@@ -1,25 +1,24 @@
 # Task Realtime Sync
 
-> 状态：V4 wire v3 当前有效说明。
+> Status: V4 wire v3 current effective specification.
 >
-> 桌面和手机 attach 到同一个 host/service/CLI runtime，但连接、订阅和 delivery profile 相互隔离。
-> `TaskRealtimeBus` 继续承担 owner lease、stale-run 与跨 host 命令路由；它不保存第二份
-> conversation queue、projection 或 replayable 业务状态。
+> The desktop and mobile clients attach to the same host/service/CLI runtime, but connections, subscriptions, and delivery profiles are independently isolated.
+> `TaskRealtimeBus` continues to handle owner lease, stale-run, and cross-host command routing; it does not maintain a second copy of
+> conversation queue, projection, or replayable business state.
 
-本文描述 ZCode task/session 的实时订阅、snapshot/resync、跨端输入和断线恢复边界。
+This document describes the real-time subscription, snapshot/resync, cross-end input, and disconnection recovery boundaries for ZCode task/session.
 
-## 核心不变量
+## Core Invariants
 
-- 本地桌面与 SSH/WSL/Docker 桌面窗口固定为 `desktop-continuous`，走完整 direct continuous 数据流。
-- 手机 `/remote` 与 Web remote 固定为 `web-remote-replayable`，走 replayable gap/snapshot 恢复流。
-- `clientMode` 和 profile 由 host attachment 可信注入；UI-facing subscribe 不得选择或覆盖。
-- 每个 connection 有独立 subscription registry、buffer、fragment assembly 与 resync lifecycle。
-- 所有端已提交的 busy/running 输入按 CLI 串行 admission 顺序进入一个 `CommandInbox` FIFO。
-- relay/main 只做鉴权、配对、心跳、`rpc-frame`/app payload 与连接级流控信号透传。
-- owner/lease/stale-run 继续保证单 owner、阻塞请求和跨 host command 正确，但不拥有 conversation 事实。
+- Local desktop and SSH/WSL/Docker desktop windows are fixed as `desktop-continuous`, using the complete direct continuous data stream.
+- Mobile `/remote` and Web remote are fixed as `web-remote-replayable`, using the replayable gap/snapshot recovery stream.
+- `clientMode` and profile are trustedly injected by the host attachment; UI-facing subscribe must not select or override.
+- Each connection has an independent subscription registry, buffer, fragment assembly, and resync lifecycle.
+- All ends' submitted busy/running inputs enter a `CommandInbox` FIFO in CLI serial admission order.
+- The relay/main only handles authentication, pairing, heartbeat, `rpc-frame`/app payload, and connection-level flow control signal passthrough.
+- Owner/lease/stale-run continue to guarantee single owner, blocked requests, and cross-host command correctness, but do not own conversation facts.
 
-最终输入不变量：每条已提交输入必须且只能处于 `queue / guided row / transcript /
-explicit rejected|failed|discarded` 之一。
+Final input invariant: every submitted input must be in exactly one of `queue / guided row / transcript / explicit rejected|failed|discarded`.
 
 ## Process Model
 
@@ -39,104 +38,91 @@ Desktop attachment A                       Mobile /remote attachment B
                                       └─ CommandInbox FIFO
 ```
 
-手机只 attach 到目标桌面窗口唯一 Window Host 中已存在的 local/remote workspace scope；不能另起 Agent runtime、
-Host 或 SSH/WSL/Docker session。手机断线释放短生命周期 attachment，不销毁仍在运行的 Host/CLI。
+The mobile client only attaches to the local/remote workspace scope already existing in the single Window Host of the target desktop window; it cannot start a new Agent runtime,
+Host, or SSH/WSL/Docker session. The mobile disconnection releases short-lifecycle attachments without destroying the still-running Host/CLI.
 
-远程 workspace 链路必须贯穿 `workspaceIdentity` 和 `remoteSessionId`。身份 key 使用
-`workspaceIdentity?.trim() || workspacePath`；文件读写和进程 cwd 才使用 `workspacePath`。
+The remote workspace path must pass through `workspaceIdentity` and `remoteSessionId`. The identity key uses
+`workspaceIdentity?.trim() || workspacePath`; file reads/writes and process cwd use `workspacePath`.
 
-- relay 只做配对、心跳和 `data.payload` 透传，不解析 task、session、stream、permission 或 snapshot。
-- desktop main 只做 workspace bridge、MessagePort attachment、RPC frame 路由和 realtime bus 协调，不直接读写 task repo。
-- 手机重连释放的是短生命周期 `BridgeAttachment`，不能销毁仍在运行的 `HostEntry`、services 或 Agent runtime。
-- 只有真实关窗、app quit、update install 进入 Host shutdown barrier；最小化到托盘和手机 attachment 断开均不进入。
-- 本地 workspace 与远程 workspace 都 attach 到窗口唯一 Host；远程 scope 先由 `remoteSessionId + workspaceIdentity/workspaceKey` 定位 logical session，再由 Host registry 验证 path/identity。多个 SSH logical session 可以共享同一个窗口 Host 内的连接，但手机不能跨 logical session 访问另一个 workspace，也不能新建 SSH/WSL/Docker session。
-- 窗口 Host 在 `TaskRealtimeBus` 中只注册一个 `hostId`；owner/lease/session route 继续按 `workspaceKey + taskId` 隔离，session bind/detach 时重新派生 scope，不把 replayable 状态下沉到 main。
+- The relay only handles pairing, heartbeats, and `data.payload` passthrough; it does not parse tasks, sessions, streams, permissions, or snapshots.
+- The desktop main only handles workspace bridges, MessagePort attachments, RPC frame routing, and realtime bus coordination; it does not directly read/write task repos.
+- The mobile reconnection releases short-lifecycle `BridgeAttachment`; it cannot destroy still-running `HostEntry`, services, or Agent runtime.
+- Only real window closing, app quit, and update installation enter the Host shutdown barrier; minimizing to the tray and the mobile client disconnecting do not enter it.
+- Both local and remote workspaces attach to the single Host of the window; the remote scope is first located by `remoteSessionId + workspaceIdentity/workspaceKey`, then validated by the Host registry for path/identity. Multiple SSH logical sessions can share the same connection within a single window Host, but the mobile client cannot cross logical sessions to access another workspace, nor create new SSH/WSL/Docker sessions.
+- The window Host registers only one `hostId` in `TaskRealtimeBus`; owner/lease/session routing continues to isolate by `workspaceKey + taskId`; scope is re-derived on session bind/detach, without sinking the replayable state to main.
 
-## Trusted Connection And Owned Subscription
+## Trusted Connection and Owned Subscription
 
-host 为每个 attachment 分配独立 `connectionId`，并把可信连接上下文注入 V4 service facade：
+The host allocates an independent `connectionId` for each attachment and injects the trusted connection context into the V4 service facade:
 
-| attachment                   | trusted clientMode      | profile      |
-| ---------------------------- | ----------------------- | ------------ |
-| 本地/SSH/WSL/Docker 桌面窗口 | `desktop-continuous`    | `continuous` |
-| 手机 `/remote` / Web remote  | `web-remote-replayable` | `replayable` |
+| attachment                          | trusted clientMode      | profile      |
+| ----------------------------------- | ----------------------- | ------------ |
+| Local/SSH/WSL/Docker desktop window | `desktop-continuous`    | `continuous` |
+| Mobile `/remote` / Web remote       | `web-remote-replayable` | `replayable` |
 
-`hello/clientHello` 用于协商 wire v3、确认连接身份和记录稳定 `clientId`；客户端上报值不能覆盖 host
-注入的 connection/profile。registry 至少维护：
+`hello/clientHello` is used to negotiate wire v3, confirm the connection identity, and record a stable `clientId`; client-reported values cannot override the host-injected connection/profile. The registry maintains at least:
 
 ```text
 connectionId -> subscriptionId -> {topic, profile, state}
 subscriptionId -> owning attachment port
 ```
 
-按连接协商的能力与 `clientMode` 走同一条注入路径：host 在 `hello` 宣告 `workflowRunDeltas`，客户端只在
-host 宣告过时于 `clientHello` 声明，facade 再把结论注入该连接的 subscribe。它与 `clientMode`/`deliveryKind`
-正交——`continuous` 和 `replayable` 都可能是声明方或未声明方。未声明的订阅者（如版本守卫尚未把用户换到
-新 bundle 的旧手机页面）继续收整键 `workflowRuns`，并按旧的每 run 256 条界钳位，因此它的严格帧校验照常通过。
-钳位保留的是**还在动的那些**：状态不是 `completed` 的 actor 与尚未结算的 node 先留，余额按表序补最早的条目，
-输出仍按原表序（[presentation.md](../dynamic-workflow/presentation.md)「The run state the pane draws」）。
+Subscription negotiation capabilities and `clientMode` follow the same injection path: the host declares `workflowRunDeltas` in `hello`; the client only declares in `clientHello` when the host declares; the facade then injects the conclusion into that connection's subscribe. It is orthogonal to `clientMode`/`deliveryKind` — both `continuous` and `replayable` can be declarers or non-declarers. Non-declarers (such as old mobile pages whose version guard has not yet switched the user to the new bundle) continue to receive whole keys `workflowRuns`, clamped at 256 items per run by the old per-run boundary, so their strict frame validation continues to pass normally. The clamped boundary preserves **those still moving**: actors whose status is not `completed` and nodes that have not yet been settled are kept first; the balance is supplemented with the earliest entries in table order, and the output still follows the original table order ([presentation.md](../dynamic-workflow/presentation.md) "The run state the pane draws").
 
-同一 connection 重订阅同 topic 只替换自己的旧 subscription。CLI 下行 frame 只写给 owning port，
-禁止 workspace 广播再由手机按 subId 丢弃桌面帧。port 关闭时一次性 unsubscribe 该 connection 的所有
-subscription，并释放 buffer/assembly。一个慢手机 subscription 不能影响桌面或另一 pane。
+Re-subscribing to the same topic on the same connection only replaces its own old subscription. CLI downlink frames are written only to the owning port;
+workspace broadcasts followed by the mobile discarding desktop frames by subId are prohibited. When a port closes, all subscriptions for that connection are unsubscribed at once, and buffers/assembly are released. A slow mobile subscription cannot affect the desktop or another pane.
 
-## Buffer、Frame 与 Resync
+## Buffer, Frames, and Resync
 
-publisher 在 profile filter 与 coalesce 后计算每个 subscriber 的 buffer：
+The publisher calculates each subscriber's buffer after profile filtering and coalescing:
 
-- `<= 500 ops` 且 `<= 1 MiB`：正常 drain。
-- 任一上限超出：立即清空该 subscriber buffer、标记 resync，下一次只发送最新 snapshot。
-- 每个物理 JSON/RPC frame 连 envelope 必须 `<= 1 MiB`；超大 logical snapshot/resume 使用分片。
-- topic encoder 对 CLI NDJSON、Channel/Socket 与 mobile relay base64 outer JSON 的实际 envelope 取最大值，因此 desktop continuous 与 mobile replayable 均不会接收超 1 MiB topic notification。
-- fragment assembly 单帧上限 16 MiB / 1,024 片，每消费者最多 32 个并发、32 MiB staging、30s；每 subscription 的 `logicalFrameOrdinal` 严格单调，旧 ordinal replay 静默丢弃、同 ordinal 换 id 报冲突，fault/timeout 后保留 tombstone；缺片、冲突、checksum/schema 不符或超限时丢弃整个 assembly，禁止部分 apply。
-- publisher 使用 non-destructive reservation：全部 physical wires 被 transport 接受后才 commit 水位；中途失败重试相同 logical id/content，不会把新事件一并清掉。
+- `<= 500 ops` and `<= 1 MiB`: normal drain.
+- Either upper limit exceeded: immediately clear that subscriber's buffer, mark resync, send only the latest snapshot next.
+- Each physical JSON/RPC frame including the envelope must be `<= 1 MiB`; oversized logical snapshots/resumptions use sharding.
+- The topic encoder takes the maximum of the actual envelopes for CLI NDJSON, Channel/Socket, and mobile relay base64 outer JSON; therefore, both desktop continuous and mobile replayable never receive topic notifications exceeding 1 MiB.
+- Fragment assembly has a single-frame upper limit of 16 MiB / 1,024 pieces, with a maximum of 32 concurrent pieces, 32 MiB staging, and 30s per consumer; each subscription's `logicalFrameOrdinal` is strictly monotonically increasing; old ordinal replays are silently discarded, ordinal collision reports conflicts, tombstones are retained after faults/timeouts; missing pieces, collisions, checksum/schema mismatches, or overflow discard the entire assembly, prohibiting partial apply.
+- The publisher uses non-destructive reservations: all physical wires are committed to the water level only after being accepted by the transport; retries of the same logical id/content that fail mid-stream do not clear new events.
 
-`onSaturated/onDrained` 是连接级信号。手机链路可经 relay/main 透传到 owning attachment，但
-relay/main 不解释 topic、seq 或 snapshot。desktop main 只把 adapter edge 写成 owning MessagePort 的
-`connection-flow-v1` sideband；host scope 串行、去重后，以可信 `connectionId` 调
-`v4/connection/flow`。CLI saturated 时只跳过该 connection 的 reserve/flush，ingest 和 desktop
-continuous sibling 继续；drained 只恢复该 connection，closed 清 pause 并由 owned registry 退订。
+`onSaturated/onDrained` are connection-level signals. The mobile path can be passed through the relay/main to the owning attachment, but
+the relay/main does not interpret topics, sequences, or snapshots. The desktop main only writes the adapter edge as the owning MessagePort's
+`connection-flow-v1` sideband; after the host scope is serialized and deduplicated, it calls
+`v4/connection/flow` with the trusted `connectionId`. When the CLI is saturated, only skip the reserve/flush for that connection; ingestion and the desktop
+continuous sibling continue; drained only restores that connection; closed clears the pause and unsubscribes via the owned registry.
 
-客户端 apply 规则：
+Client apply rules:
 
-1. snapshot 完整 assembly 后整体替换，绝不 merge。
-2. `toSeq <= localSeq` 的迟到/重复 frame 静默丢弃。
-3. `fromSeq != localSeq` 时只发起一个 same-sub 的在途 `v4/conversation/resync`；owned registry
-   决定 topic/profile，客户端不能覆盖。
-4. recovery flight 持续到 logical frame 成功 apply；resume recovery 再次断档时在同一 flight
-   内升级一次 `forceSnapshot`，禁止在 ACK 时清 flight或无限 resume。
-5. attachment 重建或 CLI `logEpoch` 改变后，自动重订阅所有活跃 topic。
+1. Replace the entire snapshot as a whole after complete assembly; never merge.
+2. Late/duplicate frames with `toSeq <= localSeq` are silently discarded.
+3. When `fromSeq != localSeq`, initiate only one in-flight `v4/conversation/resync` of the same subscription; the owned registry
+   determines the topic/profile; the client cannot override.
+4. Recovery flights continue until the logical frame is successfully applied; resuming a gap once upgrades to `forceSnapshot` within the same flight; do not clear the flight at ACK or infinitely resume.
+5. After the attachment is rebuilt or the CLI `logEpoch` changes, automatically re-subscribe all active topics.
 
-subscribe ACK 的 `logEpoch` 仅是 admission metadata，不会创建 base；已有 projection 仅可在
-ACK=`resume` 且同 epoch 时保留，ACK=`snapshot` 会使它失效到完整 snapshot apply。无 valid base 的
-delta 不 apply，fault/overflow 必须 `base:null + forceSnapshot:true`；完整 online snapshot 仍可建 base。
-ACK 后 30s 没有完整 recovery logical frame 时 resume 升级一次 force，force 再超时则 UI 明确 ERROR、
-task-index topic-local fresh-subscribe。recovery apply 后同批 residual online gap 会启动 successor flight。
+The `logEpoch` in the subscribe ACK is only admission metadata and does not create a base; existing projections can only be retained when `ACK=resume` and the same epoch; `ACK=snapshot` invalidates it to a complete snapshot apply. Deltas without a valid base are not applied; faults/overflows must `base:null + forceSnapshot:true`; complete online snapshots can still build a base. If no complete recovery logical frame arrives within 30s after the ACK, the resume upgrades to a force once; if the force also times out, the UI clearly ERRORS and the task-index topic-local fresh-subscribes. After the recovery apply, the residual online gap in the same batch starts a successor flight.
 
-conversation、sessions-index 与 workspace-config 使用独立水位和 recovery flight；手机某一 topic
-的 gap/fault 不得暂停桌面 sibling 或清空健康的 index/config topic。runtime restart 只失效旧
-runtime/subscription，承载该 workspace scope 的 Local/Remote Host frame emitter 保持存活，让现有 listener 驱动 full
-re-subscribe；真正 workspace teardown 才释放 emitter。
+Conversations, sessions-index, and workspace-config use independent water levels and recovery flights; a gap/fault in one of the mobile's topics must not pause desktop siblings or clear healthy index/config topics. Runtime restarts only invalidate old
+runtime/subscriptions; the Local/Remote Host frame emitters carrying that workspace scope remain alive, allowing existing listeners to drive full
+re-subscribe; true workspace teardown releases the emitter.
 
-## Blocking Events And Owner Routing
+## Blocking Events and Owner Routing
 
-permission、elicitation、terminal 和 snapshot invalidation 会阻塞 runtime 或决定 UI 收口，必须通过
-owned subscription 对同 task 的在线连接可见，或触发 snapshot 对齐，不能被普通 owner-only 内容过滤吞掉。
+Permissions, elicitation, terminal, and snapshot invalidation block the runtime or determine the UI focus; they must be visible to online connections of the same task through the
+owned subscription, or trigger snapshot alignment; they cannot be swallowed by ordinary owner-only content filtering.
 
-需要路由给 runtime owner 的命令包括：
+Commands that need to be routed to the runtime owner include:
 
 - `stop_generation`
 - `respond_permission`
 - `respond_elicitation`
-- remote workspace / bot / proxy fallback 的 conversation command
+- Remote workspace / bot / proxy fallback conversation commands
 
-owner command 必须携带 `workspacePath`、可选 `workspaceIdentity`、`workspaceKey`、`taskId` 和当前
-`runId`。main 按 `workspaceKey + taskId` 找 lease 并拒绝 stale run。shared-host 主路径通常直接命中同一
-host manager，但不能因此删除 owner/lease；remote workspace proxy、跨 host owner、bot/proxy 和阻塞响应仍依赖它。
+Owner commands must carry `workspacePath`, optional `workspaceIdentity`, `workspaceKey`, `taskId`, and the current
+`runId`. The main finds the lease by `workspaceKey + taskId` and rejects stale runs. The shared-host main path usually directly hits the same
+host manager, but this does not justify removing owner/lease; remote workspace proxies, cross-host owners, bot/proxy, and blocked responses still depend on it.
 
 ## Canonical Input Queue
 
-V4 不再按端拆队列：
+V4 no longer splits queues by endpoint:
 
 ```text
 desktop send ─┐
@@ -148,31 +134,30 @@ mobile send ──┘                  |
                                   └─ explicit rejected/failed/discarded
 ```
 
-手机 V4 绕过 `IZCodeTaskService.enqueueTaskCommand` 的 host runtime command queue；桌面 accepted busy
-input 也不再留在 renderer-local queue。owner route 只负责把 command 送到正确 CLI，不改变 CLI admission
-顺序。每个 `ConversationInputIntent` 自包含保存 `sourceCommandId`、`queueItemId`、`clientId`、kind、原文、
-attachments、delivery、顺序和 steer/dispatch 状态。
+The mobile V4 bypasses the host runtime command queue of `IZCodeTaskService.enqueueTaskCommand`; desktop accepted busy
+inputs are no longer left in the renderer-local queue. The owner route only delivers the command to the correct CLI, without changing the CLI admission
+order. Each `ConversationInputIntent` self-containedly saves `sourceCommandId`, `queueItemId`, `clientId`, kind, original text,
+attachments, delivery, order, and steer/dispatch status.
 
-guide 不适用、带附件、compact/verifier busy 或 runtime steer reject 时，以原字段 fallback 普通 queue。
-empty、超限或 runtime reject 返回显式 `rejected/failed`；UI 保留文本与附件。`editQueueItem` 原地更新，
-保留 ID、位置、attachments 与来源 command。
+When guide is not applicable, with attachments, compact/verifier busy, or runtime steer rejects, fall back to the ordinary queue with the original fields. Empty, exceeded, or runtime rejected returns explicit `rejected/failed`; the UI retains text and attachments. `editQueueItem` updates in place,
+preserving the ID, position, attachments, and source command.
 
-`sendQueuedNow` 固定执行：
+`sendQueuedNow` always executes:
 
 ```text
 reserve(item) -> stop barrier -> start/promote(item) -> remove(item)
      |                                  |
-     └─ timeout/failure -> release ─────┘  # 原项原位保留
+     └─ timeout/failure -> release ─────┘  # the original item is retained in place
 ```
 
-多端或连续点击同一 item 只有一个 reservation owner。
+Multiple endpoints or consecutive clicks on the same item have only one reservation owner.
 
-## ACK 对账与进程重启
+## ACK Reconciliation and Process Restart
 
-QueueItem 出现后，UI 仍保留 24 小时 pending-command 记录，直到 transcript、取消、失败或 discarded。
-普通 text/goal 可保存可重发 payload；敏感 interaction 只保存 digest。
+After a QueueItem appears, the UI still retains the 24-hour pending-command record, until it enters the transcript, is cancelled, fails, or is discarded.
+Regular text/goal payloads can be saved and re-sent; sensitive interactions only save the digest.
 
-ACK 丢失或重连时，UI 调用 `commands/query`，每次最多 64 个 `{sessionId, commandId}`。CLI 查找顺序为：
+When the ACK is lost or reconnected, the UI calls `commands/query`, at most 64 `{sessionId, commandId}` at a time. The CLI lookup order is:
 
 ```text
 in-flight pinned -> live queue/guide pinned -> settled LRU (512/session)
@@ -183,39 +168,36 @@ in-flight pinned -> live queue/guide pinned -> settled LRU (512/session)
   -> unknown
 ```
 
-同 key 查询和执行 single-flight，避免异步查重窗口重复副作用。
+Queries and executions for the same key use single-flight, avoiding duplicate side effects from the async deduplication window.
 
-`commands/query` 与 execute 共用 `keyGate(sessionId|null, commandId)`；新命令再按固定顺序取得
-per-session admission gate。in-flight 与 live input 不参与 LRU 淘汰，只有 settled 命令可被淘汰并回源；
-同 session admission 串行，不同 session 可并行。持久化索引按 session 惰性构建、增量更新，并以
-`workspaceIdentity?.trim() || workspacePath` 隔离，禁止每次查询全量扫描 transcript。
+`commands/query` and execute share `keyGate(sessionId|null, commandId)`; new commands obtain the
+per-session admission gate in fixed order. In-flight and live inputs do not participate in LRU eviction; only settled commands can be evicted and sourced back; admissions for the same session are serial; different sessions can run in parallel. The persistent index is built lazily per session, updated incrementally, and isolated by
+`workspaceIdentity?.trim() || workspacePath`; full transcript scans are prohibited for each query.
 
-queue 只保证当前 CLI 进程内可靠。CLI restart 后未进入 transcript/终态的 admitted input 明确返回
-`fault.command.inputDiscardedOnRestart` 及持久 `delivery`；`queue/guide` 在旧 runtime 失效后静默结算，
-只有未进入 transcript 的 `startNow` 或 `unknown` 提示用户确认重发，绝不自动恢复或重放。普通网络断线
-仍从 replayable snapshot 恢复当前 runtime 的权威 queue；relay、main 和 host 不通过私有队列掩盖边界。
+Queues only guarantee reliability within the current CLI process. After the CLI restarts, admitted inputs that have not entered the transcript/terminal state explicitly return
+`fault.command.inputDiscardedOnRestart` and the persistent `delivery`; `queue/guide` silently settles after the old runtime is invalidated; only `startNow` or `unknown` that has not entered the transcript prompts the user to confirm re-sending; automatic recovery or replay is never attempted. Regular network disconnections
+still recover the current runtime's authoritative queue from the replayable snapshot; the relay, main, and host do not cover boundaries through private queues.
 
 ## Running Stable Fork
 
-primary turn、foreground subagent、goal continuation 或 goal verifier running 时，可以 fork 更早
-`completedSuccess` product turn 的最后一段 completed assistant；compact 仍是 operation lock。
+During the primary turn, foreground subagent, goal continuation, or goal verifier running, you can fork an earlier
+`completedSuccess` product turn's last completed assistant segment; compaction is still the operation lock.
 
-running fork 只复制稳定 transcript、fork 点配置和 fork 点前 goal 状态，不复制 queue、active/background
-work 或 continuation inbox，不 rewind 共享 workspace；父 session 原样继续运行。同一 `sourceCommandId`
-重试返回同一个 child。completed/idle 的既有 workspace checkpoint 行为本轮不扩大。
+The running fork only copies the stable transcript, fork-point configuration, and goal state before the fork point; it does not copy the queue, active/background
+work, or continuation inbox; it does not rewind the shared workspace; the parent session continues running as-is. Retrying the same `sourceCommandId` returns the same child. The existing workspace checkpoint behavior for completed/idle is not expanded this round.
 
 ## Current Implementation Boundaries
 
-关键落点：
+Key landing points:
 
-- `packages/desktop/src/main/webRemoteControlSharedHostAttachments.ts`：手机 attach 到已有 host。
-- `packages/desktop/src/host/windowRemoteConnectionRegistry.ts`：窗口内远端 connection/logical session 权威。
-- `packages/desktop/src/host/windowHostAttachmentRegistry.ts`：可信 clientMode 与 scoped attachment 生命周期。
-- `packages/desktop/src/main/taskRealtimeBus.ts`：owner lease、stale-run 和跨 host 路由。
-- `packages/shared/src/zcode-protocol-v4/`：V4 wire、topic、command 与 runtime schema。
-- `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/`：gateway、publisher、projection 与 CommandInbox。
-- `packages/services/src/zcode-agent/`：connection-scoped V4 service facade。
-- `packages/ui/src/v4/`：owned subscription client apply、pending-command 对账与 projection store。
+- `packages/desktop/src/main/webRemoteControlSharedHostAttachments.ts`: Mobile attaches to the existing host.
+- `packages/desktop/src/host/windowRemoteConnectionRegistry.ts`: The authority for remote connections/logical sessions within a window.
+- `packages/desktop/src/host/windowHostAttachmentRegistry.ts`: Trusted clientMode and scoped attachment lifecycle.
+- `packages/desktop/src/main/taskRealtimeBus.ts`: Owner lease, stale-run, and cross-host routing.
+- `packages/shared/src/zcode-protocol-v4/`: V4 wire, topics, commands, and runtime schemas.
+- `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/`: Gateway, publishers, projections, and CommandInbox.
+- `packages/services/src/zcode-agent/`: Connection-scoped V4 service facades.
+- `packages/ui/src/v4/`: Owned subscription client apply, pending-command reconciliation, and projection stores.
 
-relay/main 不得新增 session/task stream、queue、snapshot 或 fork 业务状态；这些状态必须能从 CLI
-projection/event log 与 command lookup 恢复。
+The relay/main must not add new session/task streams, queues, snapshots, or fork business state; these states must be recoverable from the CLI
+projection/event log and command lookups.
