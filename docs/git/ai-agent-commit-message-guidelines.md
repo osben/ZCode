@@ -39,7 +39,7 @@ docs(git): add ai agent commit message guidelines
 - `perf`: Performance optimization (no functional semantic change)
 - `refactor`: Refactoring (no new functionality, no bug fix)
 - `style`: Code style/formatting (does not affect code semantics)
-- `chore`: Miscellaneous maintenance (dependencies, architecture, non-functional cleanups)
+- `chore`: Miscellaneous maintenance (dependencies, scaffolding, non-functional cleanups)
 
 ## Title and Body Rules
 
