@@ -451,6 +451,7 @@ export const zcodeProtocolNotifications = {
   pluginOperationProgress: "plugins/operationProgress",
   processResourceSample: "process/resourceSample",
   processNetworkRequests: "process/networkRequests",
+  chatGptPlanUsageUpdated: "chatgpt-plan/usage-updated",
 } as const;
 
 /** Startup control plane is independent of the task stream; database identity must not carry paths or credentials. */
@@ -2491,6 +2492,14 @@ export const zcodeProviderRateLimitsSchema = z
   })
   .strict();
 export type ZCodeProviderRateLimits = z.infer<typeof zcodeProviderRateLimitsSchema>;
+export const zcodeChatGptPlanUsageUpdatedParamsSchema = z
+  .object({
+    eventId: z.string().min(1).max(256),
+    sessionId: z.string().min(1).max(256),
+    providerId: z.string().min(1).max(256),
+    usage: zcodeProviderRateLimitsSchema,
+  })
+  .strict();
 export const zcodeWorkspaceGenerateTextResultSchema = z
   .object({
     text: z.string(),
@@ -2514,6 +2523,7 @@ export const zcodeWorkspaceGenerateTextResultSchema = z
           .strict()
           .optional(),
         providerRateLimits: zcodeProviderRateLimitsSchema.optional(),
+        providerRateLimitProviderId: z.string().min(1).max(256).optional(),
       })
       .strict()
       .optional(),

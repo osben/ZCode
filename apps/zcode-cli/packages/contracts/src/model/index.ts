@@ -540,6 +540,8 @@ export interface ModelUsage {
    * every other provider keeps emitting usage without it.
    */
   providerRateLimits?: SiwcPlanUsageSnapshot;
+  /** Provider that produced providerRateLimits; binds usage to the response account across model changes. */
+  providerRateLimitProviderId?: string;
 }
 
 export interface ModelUsageSummary {

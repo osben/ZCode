@@ -13,7 +13,10 @@ function createHeadersFetch(headers: Record<string, string>): typeof fetch {
 
 describe("siwc-usage-capture", () => {
   it("captures the full primary + secondary triplets", async () => {
-    const capture: SiwcUsageCapture = { snapshot: null };
+    const capture: SiwcUsageCapture = {
+      providerId: "account:chatgpt-plan:a1b2c3d4e5f60718",
+      snapshot: null,
+    };
     const fetchFn = createSiwcUsageCaptureFetch(
       createHeadersFetch({
         "x-codex-primary-used-percent": "42.5",
@@ -106,8 +109,29 @@ describe("siwc-usage-capture", () => {
     ).toEqual({ primary: { usedPercent: 20 } });
   });
 
+  it("rejects empty percentages while preserving an explicit zero", () => {
+    expect(
+      readSiwcUsageSnapshotFromHeaders(
+        new Headers({ "x-codex-primary-used-percent": "" }),
+      ),
+    ).toBeNull();
+    expect(
+      readSiwcUsageSnapshotFromHeaders(
+        new Headers({ "x-codex-primary-used-percent": "   " }),
+      ),
+    ).toBeNull();
+    expect(
+      readSiwcUsageSnapshotFromHeaders(
+        new Headers({ "x-codex-primary-used-percent": "0" }),
+      ),
+    ).toEqual({ primary: { usedPercent: 0 } });
+  });
+
   it("keeps the latest snapshot across responses and leaves capture untouched without headers", async () => {
-    const capture: SiwcUsageCapture = { snapshot: null };
+    const capture: SiwcUsageCapture = {
+      providerId: "account:chatgpt-plan:a1b2c3d4e5f60718",
+      snapshot: null,
+    };
     let headers: Record<string, string> = { "x-codex-primary-used-percent": "10" };
     const fetchFn = createSiwcUsageCaptureFetch(
       async () => new Response("{}", { status: 200, headers }),
@@ -127,7 +151,10 @@ describe("siwc-usage-capture", () => {
   });
 
   it("attaches the captured snapshot to a finish event usage", () => {
-    const capture: SiwcUsageCapture = { snapshot: null };
+    const capture: SiwcUsageCapture = {
+      providerId: "account:chatgpt-plan:a1b2c3d4e5f60718",
+      snapshot: null,
+    };
     expect(attachSiwcUsageToFinishEvent({ type: "start" }, capture)).toEqual({ type: "start" });
 
     capture.snapshot = { primary: { usedPercent: 55 } };
@@ -138,12 +165,19 @@ describe("siwc-usage-capture", () => {
     expect(finish).toEqual({
       type: "finish",
       finishReason: "stop",
-      usage: { inputTokens: 5, providerRateLimits: { primary: { usedPercent: 55 } } },
+      usage: {
+        inputTokens: 5,
+        providerRateLimits: { primary: { usedPercent: 55 } },
+        providerRateLimitProviderId: capture.providerId,
+      },
     });
   });
 
   it("attaches the captured snapshot to a text result usage", () => {
-    const capture: SiwcUsageCapture = { snapshot: null };
+    const capture: SiwcUsageCapture = {
+      providerId: "account:chatgpt-plan:a1b2c3d4e5f60718",
+      snapshot: null,
+    };
     const untouched = { text: "hi", finishReason: "stop", usage: { totalTokens: 3 } };
     expect(attachSiwcUsageToTextResult(untouched, capture)).toBe(untouched);
 
@@ -151,7 +185,11 @@ describe("siwc-usage-capture", () => {
     expect(attachSiwcUsageToTextResult(untouched, capture)).toEqual({
       text: "hi",
       finishReason: "stop",
-      usage: { totalTokens: 3, providerRateLimits: { primary: { usedPercent: 1 } } },
+      usage: {
+        totalTokens: 3,
+        providerRateLimits: { primary: { usedPercent: 1 } },
+        providerRateLimitProviderId: capture.providerId,
+      },
     });
   });
 });

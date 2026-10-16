@@ -212,7 +212,9 @@ export class AiSdkModelExecution {
     // (runtime-header refresh) must not strand the latest usage snapshot on a discarded resolved
     // model, so every attempt of this binding writes the object the runner finally reads.
     const siwcUsageCapture: SiwcUsageCapture | undefined =
-      snapshot.providerConfig.access?.type === "chatgpt-account" ? { snapshot: null } : undefined;
+      snapshot.providerConfig.access?.type === "chatgpt-account"
+        ? { providerId: input.providerId, snapshot: null }
+        : undefined;
     return {
       // Construct only the base Model here without making a request; actual requests must go through
       // resolveRequest with complete options bound.

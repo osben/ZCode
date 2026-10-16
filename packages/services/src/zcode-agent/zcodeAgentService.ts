@@ -7,7 +7,7 @@ import { zcodeMcpUiSamplingResultSchema } from "@zcode/shared";
 import {
   isChatGptPlanAccountProviderId,
   parseChatGptPlanAccountProviderId,
-  zcodeProviderRateLimitsSchema,
+  zcodeChatGptPlanUsageUpdatedParamsSchema,
   type SiwcPlanUsageSnapshot,
 } from "@zcode/shared";
 import { MCP_APPS_SAMPLING_TRANSPORT_TIMEOUT_MS } from "@zcode/shared/mcp-apps";
@@ -2019,79 +2019,10 @@ export function createZCodeAgentService(
     if (!shouldDeliverLiveSessionEvent(workspace, normalizedEvent)) {
       return;
     }
-    if (
-      chatGptPlanUsageRecorder &&
-      normalizedEvent.type === "turn.completed" &&
-      turnCompletedCarriesProviderRateLimits(normalizedEvent)
-    ) {
-      // Best effort and asynchronous: recording usage must never block event delivery, and a
-      // missing runtime/snapshot simply skips the update (the next turn retries).
-      void recordChatGptPlanUsageFromTurnCompleted(workspace, normalizedEvent).catch(() => {
-        // Usage display is opportunistic and self-healing on the next turn; the failure is
-        // recoverable, so a warn suffices — no payload, snapshots must stay out of logs.
-        logger.warn(undefined, "ChatGPT plan usage recording skipped after a read failure", {
-          sessionId: normalizedEvent.sessionId,
-        });
-      });
-    }
     emitSessionEvent(workspace, normalizedEvent.sessionId, {
       type: "session.event",
       event: normalizedEvent,
     });
-  }
-
-  /** turn.completed usage is schema-free (z.unknown); detect the captured snapshot structurally. */
-  function turnCompletedCarriesProviderRateLimits(event: ZCodeSessionEvent): boolean {
-    const payload = asSessionEventRecord(event.payload);
-    const usage = asSessionEventRecord(payload?.usage);
-    return usage?.providerRateLimits !== undefined;
-  }
-
-  async function recordChatGptPlanUsageFromTurnCompleted(
-    workspace: ZCodeAgentWorkspaceTarget,
-    event: ZCodeSessionEvent,
-  ): Promise<void> {
-    const recorder = chatGptPlanUsageRecorder;
-    if (!recorder) return;
-    const payload = asSessionEventRecord(event.payload);
-    const parsed = zcodeProviderRateLimitsSchema.safeParse(
-      asSessionEventRecord(payload?.usage)?.providerRateLimits,
-    );
-    if (!parsed.success) return;
-    // Attribute the reading to the account that ran the turn: prefer the model recorded on the
-    // latest message (the exact provider of this turn), falling back to the session's current
-    // model. Only per-account ChatGPT provider ids carry usage, so other providers resolve null.
-    const client = await getReadOnlyClient(workspace, "existing-only");
-    const snapshot = await client.request(
-      zcodeProtocolMethods.sessionRead,
-      {
-        sessionId: event.sessionId,
-        messageLimit: 8,
-      },
-      zcodeSessionStateSnapshotSchema,
-    );
-    const selection =
-      resolveLatestMessageModelSelection(snapshot.messages) ?? snapshot.settings.model.current;
-    const accountKey = selection ? parseChatGptPlanAccountProviderId(selection.providerId) : null;
-    if (accountKey) {
-      recorder.recordUsage(accountKey, parsed.data);
-    }
-  }
-
-  function resolveLatestMessageModelSelection(
-    messages: readonly ZCodeSessionStateSnapshot["messages"][number][],
-  ) {
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-      const model = messages[index]?.info.model;
-      if (model) return model;
-    }
-    return undefined;
-  }
-
-  function asSessionEventRecord(value: unknown): Record<string, unknown> | undefined {
-    return typeof value === "object" && value !== null && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
-      : undefined;
   }
 
   function handleStateUpdated(
@@ -2225,6 +2156,25 @@ export function createZCodeAgentService(
                 message: issue.message,
                 path: issue.path.join("."),
               })),
+            });
+          }
+          return;
+        }
+
+        if (message.method === zcodeProtocolNotifications.chatGptPlanUsageUpdated) {
+          const parsed = zcodeChatGptPlanUsageUpdatedParamsSchema.safeParse(message.params);
+          const accountKey = parsed.success
+            ? parseChatGptPlanAccountProviderId(parsed.data.providerId)
+            : null;
+          if (parsed.success && accountKey) {
+            chatGptPlanUsageRecorder?.recordUsage(accountKey, parsed.data.usage);
+          } else if (!parsed.success) {
+            logger.warn(undefined, "Dropped invalid ChatGPT plan usage notification", {
+              issues: parsed.error.issues.map((issue) => ({
+                code: issue.code,
+                path: issue.path.join("."),
+              })),
+              workspaceKey: resolveWorkspaceKey(workspace),
             });
           }
           return;

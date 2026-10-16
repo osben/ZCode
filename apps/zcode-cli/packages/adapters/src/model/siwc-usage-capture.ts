@@ -10,6 +10,7 @@ type ProviderFetch = typeof globalThis.fetch;
  * runner after the request completes.
  */
 export interface SiwcUsageCapture {
+  readonly providerId: string;
   snapshot: SiwcPlanUsageSnapshot | null;
 }
 
@@ -68,7 +69,9 @@ function readUsageWindowFromHeaders(
 
 function parseFinitePercent(value: string | null): number | undefined {
   if (value === null) return undefined;
-  const parsed = Number(value.trim());
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const parsed = Number(trimmed);
   if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) return undefined;
   return parsed;
 }
@@ -88,7 +91,11 @@ function readNonEmptyTrimmed(value: string | null): string | undefined {
 /** Attach the latest captured snapshot (if any) to a completion usage object. */
 function withSiwcUsage(usage: ModelUsage, capture: SiwcUsageCapture): ModelUsage {
   return capture.snapshot
-    ? { ...usage, providerRateLimits: capture.snapshot }
+    ? {
+        ...usage,
+        providerRateLimits: capture.snapshot,
+        providerRateLimitProviderId: capture.providerId,
+      }
     : usage;
 }
 
