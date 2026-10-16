@@ -14,7 +14,7 @@ Oversized diff gives cropping hint
 
 ### 2. Patch Generation Failure Handling
 
-Unable to generate patch when gives unavailable hint
+When a patch cannot be generated, show an unavailable hint.
 
 ### 3. Empty State Handling - No Changes
 
