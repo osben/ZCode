@@ -79,7 +79,14 @@ function GroupedTaskRowComponent({
   activeTaskId: string | null;
   mobileActiveTaskKey?: string | null;
   workspaceLabel: string;
-  onSelectTask: (workspacePath: string, taskId: string, workspaceIdentity?: string) => void;
+  onSelectTask: (
+    workspacePath: string,
+    taskId: string,
+    workspaceIdentity?: string,
+    targetRemoteSessionId?: string,
+    expectedUnreadAt?: number,
+    options?: { readOnly?: boolean },
+  ) => void;
   onCloseTask: (task: ZCodeTaskMeta) => void;
   onOpenFileTree?: (task: ZCodeTaskMeta) => void;
   onMoveTaskToGroup: (task: ZCodeTaskMeta, groupId: string | null) => void;

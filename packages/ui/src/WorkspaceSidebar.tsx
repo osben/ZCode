@@ -303,6 +303,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
     targetWorkspaceIdentity?: string,
     targetRemoteSessionId?: string,
     expectedUnreadAt?: number,
+    options?: { readOnly?: boolean },
   ) => void;
   onStartDraftInWorkspace: (targetWorkspacePath: string, targetWorkspaceIdentity?: string) => void;
   onOpenCodeViewer?: (source: CodeViewerSource) => void;
@@ -357,6 +358,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
       taskId: string,
       targetWorkspaceIdentity?: string,
       expectedUnreadAt?: number,
+      options?: { readOnly?: boolean },
     ) => {
       // The Shell’s fourth argument is the remote-session route, so a task row’s unreadAt must not reuse that position.
       // Leave remoteSessionId explicitly empty for sidebar row selection, then pass the unread version shown to the user to the mark-read transaction.
@@ -366,6 +368,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
         targetWorkspaceIdentity,
         undefined,
         expectedUnreadAt,
+        options,
       );
     },
     [onSelectTask],

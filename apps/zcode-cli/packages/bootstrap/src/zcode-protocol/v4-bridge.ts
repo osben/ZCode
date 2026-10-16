@@ -195,10 +195,14 @@ async function persistPreparedWorktreeStatus(
   prepared: ZCodeProtocolPreparedWorktreeSession,
   status: "preparing" | "failed" | "cancelled" | "active",
   failureMessage?: string,
-  worktreePreparation?: Pick<ZCodeProtocolPreparedWorktreeSession, "branchName" | "targetPath" | "baseBranch">,
+  worktreePreparation?: Pick<
+    ZCodeProtocolPreparedWorktreeSession,
+    "branchName" | "targetPath" | "baseBranch"
+  >,
 ): Promise<void> {
   const store = context.deps.sessionStore;
-  if (!store?.saveSessionEntry) throw new Error("Worktree preparation requires session-entry storage");
+  if (!store?.saveSessionEntry)
+    throw new Error("Worktree preparation requires session-entry storage");
   const now = Date.now();
   await store.saveSessionEntry({
     id: `v4/worktree_preparation:${prepared.sessionId}`,
@@ -1443,27 +1447,31 @@ export function createConversationV4Gateway(
       //   workspace ref (workspaceKey = identity, with sessions-index topic / isolation unchanged).
       // The shared parser supports both legacy WSL and explicit user identities; other formats are
       // treated as local workspacePath.
-      const created = await createSessionRecordForV4(context, {
-        workspace: resolveWorkspaceRefFromId(workspaceId),
-        // A group task was already triggered by the first real request: persist the isolation
-        // grant first, then open tasks and configuration. Ordinary Desktop drafts stay deferred.
-        persistence: "deferred",
-        // Execution worktree: the record executes in the linked worktree while session identity
-        // and listing stay under the parent workspace above.
-        ...(executionWorktree ? { executionWorktree } : {}),
-        // MCP is runtime-creation configuration. v4 createSession must pass it through just like
-        // legacy session/create, or sessions created here will never start these tools.
-        mcpServers,
-        // The Off-Peak tool-surface flag is also runtime-creation configuration and must be included in the record at creation.
-        ...(offPeakToolEnabled === true ? { offPeakToolEnabled: true } : {}),
-        // The dynamic-workflow rollout gate is also runtime-creation configuration. v4 createSession
-        // must pass it through like legacy session/create, or headless sessions bypass the Host
-        // rollout check and use only the process default.
-        ...(dynamicWorkflowEnabled === true ? { dynamicWorkflowEnabled: true } : {}),
-        ...(dynamicWorkflowEnabled === true && dynamicWorkflowMode !== undefined
-          ? { dynamicWorkflowMode }
-          : {}),
-      }, preparedSessionId);
+      const created = await createSessionRecordForV4(
+        context,
+        {
+          workspace: resolveWorkspaceRefFromId(workspaceId),
+          // A group task was already triggered by the first real request: persist the isolation
+          // grant first, then open tasks and configuration. Ordinary Desktop drafts stay deferred.
+          persistence: "deferred",
+          // Execution worktree: the record executes in the linked worktree while session identity
+          // and listing stay under the parent workspace above.
+          ...(executionWorktree ? { executionWorktree } : {}),
+          // MCP is runtime-creation configuration. v4 createSession must pass it through just like
+          // legacy session/create, or sessions created here will never start these tools.
+          mcpServers,
+          // The Off-Peak tool-surface flag is also runtime-creation configuration and must be included in the record at creation.
+          ...(offPeakToolEnabled === true ? { offPeakToolEnabled: true } : {}),
+          // The dynamic-workflow rollout gate is also runtime-creation configuration. v4 createSession
+          // must pass it through like legacy session/create, or headless sessions bypass the Host
+          // rollout check and use only the process default.
+          ...(dynamicWorkflowEnabled === true ? { dynamicWorkflowEnabled: true } : {}),
+          ...(dynamicWorkflowEnabled === true && dynamicWorkflowMode !== undefined
+            ? { dynamicWorkflowMode }
+            : {}),
+        },
+        preparedSessionId,
+      );
       if (permissionScope) {
         const record = context.sessions.get(created.sessionId);
         if (!record) throw new Error("Group task runtime is unavailable");
@@ -1763,6 +1771,12 @@ export function createConversationV4Gateway(
   const childSessionFactsResolver = createChildSessionFactsResolver({
     store: () => context.deps.sessionStore,
     sessions: context.sessions,
+    getDetachedChildren: () => context.v4Gateway?.getDetachedChildSessionFacts() ?? [],
+    onRefresh: (parentKeys) => {
+      for (const parentKey of parentKeys) {
+        context.v4Gateway?.publishSessionIndexSummary(parentKey);
+      }
+    },
     logger: context.logger,
   });
   nativeExecutor = new V4CommandExecutor(coreHost);
@@ -1828,47 +1842,55 @@ export function createConversationV4Gateway(
       const [childCountFacts, childListFacts] = await childSessionFactsResolver.fetch(
         stored.map((session) => session.id),
       );
+      childSessionFactsResolver.seed(
+        stored.map((session) => session.id),
+        childCountFacts,
+        childListFacts,
+      );
       childSessionFactsResolver.noteParents(childCountFacts.keys());
-      return Promise.all(stored.map(async (session) => {
-        const childCounts = childCountFacts.get(String(session.id));
-        const childList = childListFacts.get(String(session.id)) ?? [];
-        const prepared = await restorePreparedWorktreeSession(context, String(session.id));
-        const isPreparing = Boolean(prepared && prepared.status !== "active");
-        const executionWorktreeMissing = session.executionDirectory
-          ? await isWorktreeDirectoryMissing(session.executionDirectory)
-          : false;
-        return {
-          sessionId: String(session.id),
-          workspaceId,
-          ...(session.parentID ? { parentSessionId: String(session.parentID) } : {}),
-          title:
-            isPreparing && prepared?.branchName
-              ? `Worktree ${prepared.branchName}`
-              : (session.title ?? ""),
-          titleSource: normalizeStoredTitleSource(session.titleSource),
-          phase: isPreparing ? ("draft" as const) : ("completedSuccess" as const),
-          sessionEnded: !isPreparing,
-          hasBackgroundWork: false,
-          lastActivityAt: session.time?.updated ?? 0,
-          createdAt: session.time?.created ?? 0,
-          // Execution-worktree sessions keep listing under the parent workspace; the badge and
-          // "open in IDE/folder" consumers need the worktree facts on the cold-seeded row too.
-          ...(session.executionDirectory
-            ? {
-                executionWorktree: {
-                  path: session.executionDirectory,
-                  ...(session.executionBranch ? { branchName: session.executionBranch } : {}),
-                },
-              }
-            : {}),
-          ...(childCounts?.sideChats ? { sideChatCount: childCounts.sideChats } : {}),
-          ...(childCounts?.subagents ? { subagentCount: childCounts.subagents } : {}),
-          ...(childList.length
-            ? { childSessions: childList.map((child) => toWireChildSession(child, false)) }
-            : {}),
-          ...(executionWorktreeMissing ? { executionWorktreeMissing: true } : {}),
-        };
-      }));
+      childSessionFactsResolver.noteParents(childListFacts.keys());
+      return Promise.all(
+        stored.map(async (session) => {
+          const childCounts = childCountFacts.get(String(session.id));
+          const childList = childListFacts.get(String(session.id)) ?? [];
+          const prepared = await restorePreparedWorktreeSession(context, String(session.id));
+          const isPreparing = Boolean(prepared && prepared.status !== "active");
+          const executionWorktreeMissing = session.executionDirectory
+            ? await isWorktreeDirectoryMissing(session.executionDirectory)
+            : false;
+          return {
+            sessionId: String(session.id),
+            workspaceId,
+            ...(session.parentID ? { parentSessionId: String(session.parentID) } : {}),
+            title:
+              isPreparing && prepared?.branchName
+                ? `Worktree ${prepared.branchName}`
+                : (session.title ?? ""),
+            titleSource: normalizeStoredTitleSource(session.titleSource),
+            phase: isPreparing ? ("draft" as const) : ("completedSuccess" as const),
+            sessionEnded: !isPreparing,
+            hasBackgroundWork: false,
+            lastActivityAt: session.time?.updated ?? 0,
+            createdAt: session.time?.created ?? 0,
+            // Execution-worktree sessions keep listing under the parent workspace; the badge and
+            // "open in IDE/folder" consumers need the worktree facts on the cold-seeded row too.
+            ...(session.executionDirectory
+              ? {
+                  executionWorktree: {
+                    path: session.executionDirectory,
+                    ...(session.executionBranch ? { branchName: session.executionBranch } : {}),
+                  },
+                }
+              : {}),
+            ...(childCounts?.sideChats ? { sideChatCount: childCounts.sideChats } : {}),
+            ...(childCounts?.subagents ? { subagentCount: childCounts.subagents } : {}),
+            ...(childList.length
+              ? { childSessions: childList.map((child) => toWireChildSession(child, false)) }
+              : {}),
+            ...(executionWorktreeMissing ? { executionWorktreeMissing: true } : {}),
+          };
+        }),
+      );
     } catch (error) {
       context.logger?.warn("sessions-index stored summaries failed", {
         error: error instanceof Error ? error.message : String(error),
@@ -2006,6 +2028,22 @@ export function createConversationV4Gateway(
       if (record && isTaskListSessionType(record.taskType)) return record.workspace.workspaceKey;
       return preparedWorktreeMap(context).get(sessionId)?.workspace.workspaceKey ?? null;
     },
+    getChildSessionParentId: (sessionId) => {
+      const record = context.sessions.get(sessionId);
+      if (
+        (record?.taskType === "selection_side_chat" || record?.taskType === "subagent_child") &&
+        record.parentSessionId
+      ) {
+        return String(record.parentSessionId);
+      }
+      return null;
+    },
+    onChildSessionActivity: (parentSessionId) => {
+      childSessionFactsResolver.invalidate([parentSessionId]);
+      // Update live running flags immediately; refreshed persisted totals/list are published by onRefresh.
+      context.v4Gateway?.publishSessionIndexSummary(parentSessionId);
+      void childSessionFactsResolver.refresh([parentSessionId]);
+    },
     getSessionIndexMeta: (sessionId) => {
       const record = context.sessions.get(sessionId);
       if (!record) {
@@ -2052,18 +2090,17 @@ export function createConversationV4Gateway(
         ...(prepared.failureMessage ? { failureMessage: prepared.failureMessage } : {}),
       };
     },
-    listWorkspaceSessionIds: (workspaceId) =>
-      [
-        ...[...context.sessions.values()]
+    listWorkspaceSessionIds: (workspaceId) => [
+      ...[...context.sessions.values()]
         .filter(
           (record) =>
             isTaskListSessionType(record.taskType) && record.workspace.workspaceKey === workspaceId,
         )
         .map((record) => record.app.sessionId),
-        ...[...preparedWorktreeMap(context).values()]
-          .filter((prepared) => prepared.workspace.workspaceKey === workspaceId)
-          .map((prepared) => String(prepared.sessionId)),
-      ],
+      ...[...preparedWorktreeMap(context).values()]
+        .filter((prepared) => prepared.workspace.workspaceKey === workspaceId)
+        .map((prepared) => String(prepared.sessionId)),
+    ],
     // Draft check: deferred means no first input has been sent (the first prompt turn promotes it to immediate).
     // Deferred sessions pre-created by the old workspace prepare must not appear as "new tasks" in the sidebar.
     isDraftSession: (sessionId) =>

@@ -45,6 +45,18 @@ describe("子代理冷恢复主列表隔离", () => {
     await parent.waitForDisplayed({ timeout: 30000 });
     await parent.click();
     await waitForV4AssistantMessageContaining(PARENT_DONE, 30000);
+    const childMarker = parent.$('[data-child-sessions-marker="true"]');
+    await childMarker.waitForDisplayed({ timeout: 30000 });
+    await childMarker.click();
+    const childRow = parent.$(`[data-child-session-id="${childId}"]`);
+    await childRow.waitForDisplayed({ timeout: 30000 });
+    await childRow.click();
+    await waitForV4Pane(
+      (state) => state.sessionId === childId,
+      "sidebar child selection did not open the child as the active session",
+      30000,
+    );
+    await assertChildIsolated(childId);
     await openChild();
     await assertChildIsolated(childId);
     expect(readChildId(parentId)).toBe(childId);

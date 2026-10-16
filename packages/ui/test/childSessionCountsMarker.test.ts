@@ -54,7 +54,10 @@ describe("child session counts marker (specs/sidebar-child-conversation-counts.m
   it("child rows reuse the group nesting rail, stop row propagation, and open sessions via onSelectTask", () => {
     expect(childRowsSource).toContain("ml-4 border-l border-border py-px pl-2");
     expect(childRowsSource).toContain(
-      "onSelectTask(task.workspacePath, sessionId, task.workspaceIdentity)",
+      "onSelectTask(task.workspacePath, sessionId, task.workspaceIdentity, undefined, undefined,",
+    );
+    expect(childRowsSource).toContain(
+      'openSession(child.sessionId, child.taskType === "subagent_child")',
     );
     // True totals minus the capped list drive the overflow row.
     expect(childRowsSource).toContain("taskList.childMoreLabel");

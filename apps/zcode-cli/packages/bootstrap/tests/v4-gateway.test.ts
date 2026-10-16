@@ -110,7 +110,12 @@ interface HostStub {
   sessions: Set<string>;
   preparationSeeds: Map<
     string,
-    { branchName: string; targetPath: string; baseBranch?: string; status: "preparing" | "failed" | "cancelled" }
+    {
+      branchName: string;
+      targetPath: string;
+      baseBranch?: string;
+      status: "preparing" | "failed" | "cancelled";
+    }
   >;
   executeImpl: (
     envelope: CommandEnvelope,
@@ -142,6 +147,8 @@ interface HostStub {
   resumeOutcome: "resumed" | "notFound";
   projectionTerminations: Array<{ sessionId: string; reasonCode: string }>;
   projectionEvents: Array<{ sessionId: string; event: SessionEvent }>;
+  childParentIds: Map<string, string>;
+  childActivity: Array<{ parentSessionId: string; childSessionId: string }>;
 }
 
 function makeHost(): HostStub {
@@ -177,6 +184,8 @@ function makeHost(): HostStub {
     resumeOutcome: "notFound",
     projectionTerminations: [],
     projectionEvents: [],
+    childParentIds: new Map(),
+    childActivity: [],
   };
 }
 
@@ -193,6 +202,10 @@ function makeGateway(host: HostStub): ConversationV4Gateway {
       emitConversationTelemetryFact: (fact) => host.telemetryFacts.push(fact),
       onTargetCompleted: (sessionId, event) => {
         host.projectionEvents.push({ sessionId, event });
+      },
+      getChildSessionParentId: (sessionId) => host.childParentIds.get(sessionId) ?? null,
+      onChildSessionActivity: (parentSessionId, childSessionId) => {
+        host.childActivity.push({ parentSessionId, childSessionId });
       },
       executeCommand: async (envelope, admission) => {
         host.executed.push(envelope);
@@ -4875,6 +4888,44 @@ describe("detached subagent child publisher 生命周期（session-idle-deactiva
       detachedLive: 0,
       detachedTerminal: 0,
     });
+  });
+
+  it("exposes detached child running state and notifies the parent when child events arrive", () => {
+    const host = makeHost();
+    const gateway = makeGateway(host);
+    const childLog = new EventLog("child-facts");
+    gateway.ingestDetachedLiveSession("child-facts", sessionCreated(childLog), "parent-facts");
+    expect(gateway.getDetachedChildSessionFacts()).toEqual([
+      { parentSessionId: "parent-facts", sessionId: "child-facts", running: false },
+    ]);
+
+    gateway.ingestDetachedLiveSession(
+      "child-facts",
+      childLog.push(
+        SessionEventType.TurnStarted,
+        { turnNumber: 1, input: "work" },
+        { turnId: "turn-1" },
+      ),
+      "parent-facts",
+    );
+    expect(gateway.getDetachedChildSessionFacts()[0]?.running).toBe(true);
+    gateway.ingestDetachedLiveSession("child-facts", childTurnComplete(childLog), "parent-facts");
+    expect(gateway.getDetachedChildSessionFacts()[0]?.running).toBe(false);
+    expect(host.childActivity).toEqual([
+      { parentSessionId: "parent-facts", childSessionId: "child-facts" },
+      { parentSessionId: "parent-facts", childSessionId: "child-facts" },
+      { parentSessionId: "parent-facts", childSessionId: "child-facts" },
+    ]);
+  });
+
+  it("notifies the parent for ordinary child records through the host lookup", () => {
+    const host = makeHost();
+    host.childParentIds.set("child-record", "parent-record");
+    const gateway = makeGateway(host);
+    gateway.ingest("child-record", sessionCreated(new EventLog("child-record")));
+    expect(host.childActivity).toEqual([
+      { parentSessionId: "parent-record", childSessionId: "child-record" },
+    ]);
   });
 
   it("child 已有自己的 record 时，父释放不碰它，交给 child 自己的生命周期", () => {

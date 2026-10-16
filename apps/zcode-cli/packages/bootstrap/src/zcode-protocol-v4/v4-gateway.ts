@@ -263,6 +263,10 @@ export interface V4GatewayHost {
    * If unimplemented (legacy host), disable the entire sessions-index path (no-op) without affecting conversation.
    */
   getSessionWorkspaceId?(sessionId: string): string | null;
+  /** Parent of an ordinary side-chat/subagent record; primary forks are excluded by the host. */
+  getChildSessionParentId?(sessionId: string): string | null;
+  /** Child activity refreshes the parent summary without changing its activity timestamp. */
+  onChildSessionActivity?(parentSessionId: string, childSessionId: string): void;
   /** sessions-index: list metadata for a session (createdAt/parent session/last activity time). */
   getSessionIndexMeta?(sessionId: string): SessionIndexMeta | null;
   /** Runtime-less Host-owned setup facts for a preparing session's initial conversation snapshot. */
@@ -643,6 +647,8 @@ export class ConversationV4Gateway {
   >();
   /** Live child with no separate bootstrap record, whose parent runtime continues forwarding raw events. */
   private readonly detachedLiveSessions = new Set<string>();
+  /** Detached subagents currently between TurnStarted and their terminal event. */
+  private readonly detachedRunningSessions = new Set<string>();
   /**
    * Parent-record ownership and terminal time for a detached subagent child. The child has no record
    * of its own, so the publisher can be released with the parent record or by a low-frequency tick
@@ -1107,6 +1113,7 @@ export class ConversationV4Gateway {
     }
     // Fan out to sessions-index defensively; no exception may interrupt the main conversation path.
     this.fanOutToIndex(sessionId, event);
+    this.notifyParentOfChildActivity(sessionId);
   }
 
   /**
@@ -1137,10 +1144,38 @@ export class ConversationV4Gateway {
     // grace period; clear the mark if the child starts another turn.
     if (event.type === SessionEventType.TurnComplete || event.type === SessionEventType.TurnError) {
       this.detachedTerminalAt.set(sessionId, Date.now());
+      this.detachedRunningSessions.delete(sessionId);
     } else if (event.type === SessionEventType.TurnStarted) {
       this.detachedTerminalAt.delete(sessionId);
+      this.detachedRunningSessions.add(sessionId);
     }
     this.ingest(sessionId, event);
+  }
+
+  /** Detached subagents have no host session record, so expose their gateway-owned lifecycle facts. */
+  getDetachedChildSessionFacts(): Array<{
+    parentSessionId: string;
+    sessionId: string;
+    running: boolean;
+  }> {
+    return [...this.detachedChildParent].map(([sessionId, parentSessionId]) => ({
+      parentSessionId,
+      sessionId,
+      running: this.detachedRunningSessions.has(sessionId),
+    }));
+  }
+
+  private notifyParentOfChildActivity(sessionId: string): void {
+    const parentSessionId =
+      this.detachedChildParent.get(sessionId) ??
+      this.host.getChildSessionParentId?.(sessionId) ??
+      null;
+    if (!parentSessionId || parentSessionId === sessionId) return;
+    try {
+      this.host.onChildSessionActivity?.(parentSessionId, sessionId);
+    } catch (error) {
+      this.host.onError?.("v4.sessionsIndex.childActivity", error);
+    }
   }
 
   /**
@@ -1217,6 +1252,11 @@ export class ConversationV4Gateway {
     } catch (error) {
       this.host.onError?.("v4.sessionsIndex.ingest", error);
     }
+  }
+
+  /** Re-derive a live parent summary after its child facts cache refreshes. */
+  publishSessionIndexSummary(sessionId: string): void {
+    this.publishCurrentSummaryToIndex(sessionId);
   }
 
   /** Session-list metadata (fallback when the host hook is absent: createdAt=0, lastActivityAt=now). */
@@ -2938,6 +2978,7 @@ export class ConversationV4Gateway {
     if (options.clearCommandInbox) this.inbox.clearSession(sessionId);
     this.telemetryNormalizer.clearSession(sessionId);
     this.detachedLiveSessions.delete(sessionId);
+    this.detachedRunningSessions.delete(sessionId);
     this.projectionFaultedSessions.delete(sessionId);
     // Clean up detached-child ownership: if this session is a child, remove it from the parent map;
     // if it is a parent, also release children without their own record.
@@ -2990,6 +3031,7 @@ export class ConversationV4Gateway {
     this.rawSequenceStates.clear();
     this.telemetryEventIds.clear();
     this.detachedLiveSessions.clear();
+    this.detachedRunningSessions.clear();
     this.detachedChildParent.clear();
     this.detachedChildrenByParent.clear();
     this.detachedTerminalAt.clear();

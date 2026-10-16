@@ -2,10 +2,9 @@
  * Child-conversation rows under a parent task row (spec: sidebar-child-conversation-counts.md):
  * the group nesting rail (ml-4 border-l pl-2) with one row per child — bot/message-circle glyph,
  * truncated title, spinner while running, relative time otherwise — plus the "+N more" overflow row.
- * Clicking a child opens that session as the active conversation through the row's regular
- * onSelectTask path (children are real sessions; v1 opens them in place rather than the side pane
- * or the unwired subagent drilldown). The overflow row opens the parent conversation, where the
- * full subagent history lives.
+ * Clicking a child opens that session through the row's regular onSelectTask path. Side chats stay
+ * writable; subagents open read-only because the Host rejects child input. The overflow row opens
+ * the parent conversation, where the full subagent history lives.
  */
 import { Bot, LoaderIcon, MessageCircle } from "lucide-react";
 import type { MouseEvent } from "react";
@@ -17,6 +16,9 @@ type SelectTaskHandler = (
   workspacePath: string,
   taskId: string,
   workspaceIdentity?: string,
+  targetRemoteSessionId?: string,
+  expectedUnreadAt?: number,
+  options?: { readOnly?: boolean },
 ) => void;
 
 export function TaskChildSessionRows({
@@ -33,18 +35,23 @@ export function TaskChildSessionRows({
     0,
     (task.sideChatCount ?? 0) + (task.subagentCount ?? 0) - listed.length,
   );
-  const openSession = (sessionId: string) => (event: MouseEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    onSelectTask(task.workspacePath, sessionId, task.workspaceIdentity);
-  };
+  const openSession =
+    (sessionId: string, readOnly = false) =>
+    (event: MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onSelectTask(task.workspacePath, sessionId, task.workspaceIdentity, undefined, undefined, {
+        readOnly,
+      });
+    };
   return (
     <div className="ml-4 border-l border-border py-px pl-2" data-child-sessions-list="true">
       {listed.map((child) => (
         <button
           key={child.sessionId}
+          data-child-session-id={child.sessionId}
           type="button"
-          onClick={openSession(child.sessionId)}
+          onClick={openSession(child.sessionId, child.taskType === "subagent_child")}
           aria-label={intl.formatMessage(
             {
               id:

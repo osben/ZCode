@@ -34,6 +34,12 @@ function createHarness(
   const clockMs = { value: 10_000 };
   const warnings: string[] = [];
   let shouldFail = false;
+  const detachedChildren: Array<{
+    parentSessionId: string;
+    sessionId: string;
+    running: boolean;
+  }> = [];
+  const onRefresh = vi.fn();
   const store = {
     countChildSessions: vi.fn(async () => {
       if (shouldFail) throw new Error("store down");
@@ -47,6 +53,8 @@ function createHarness(
   const resolver = createChildSessionFactsResolver({
     store: () => store,
     sessions,
+    getDetachedChildren: () => detachedChildren,
+    onRefresh,
     logger: { warn: (message: string) => warnings.push(message) },
     now: () => clockMs.value,
   });
@@ -62,6 +70,11 @@ function createHarness(
     },
     setChildren: (parentKey: string, ...items: ChildSessionInfo[]) => {
       children.set(parentKey, items);
+    },
+    detachedChildren,
+    onRefresh,
+    setCount: (parentKey: string, value: { sideChats: number; subagents: number }) => {
+      initialCounts.set(parentKey, value);
     },
   };
 }
@@ -171,6 +184,95 @@ describe("child session facts resolver", () => {
         },
       ],
     });
+  });
+
+  it("discovers idle side chats and counts detached running subagents without session records", async () => {
+    const harness = createHarness(new Map([["s-parent", { sideChats: 1, subagents: 1 }]]));
+    harness.sessions.set(
+      "child-chat",
+      record({
+        sessionId: "child-chat",
+        parentSessionId: "s-parent",
+        taskType: "selection_side_chat",
+        busy: false,
+      }),
+    );
+    harness.detachedChildren.push({
+      parentSessionId: "s-parent",
+      sessionId: "child-detached",
+      running: true,
+    });
+    expect(harness.resolver.resolve("s-parent")).toEqual({ runningSubagentCount: 1 });
+    await flushMicrotasks();
+    expect(harness.countCalls()).toBe(1);
+
+    harness.setChildren(
+      "s-parent",
+      { id: "child-chat", title: "Side chat", taskType: "selection_side_chat", lastActivityAt: 10 },
+      { id: "child-detached", title: "Subagent", taskType: "subagent_child", lastActivityAt: 20 },
+    );
+    harness.clockMs.value += 1_001;
+    harness.resolver.resolve("s-parent");
+    await flushMicrotasks();
+    expect(harness.resolver.resolve("s-parent")).toMatchObject({
+      childSessions: [
+        { sessionId: "child-chat", running: false },
+        { sessionId: "child-detached", running: true },
+      ],
+      runningSubagentCount: 1,
+    });
+  });
+
+  it("seeds cold facts into the live cache and refreshes only invalidated parents", async () => {
+    const harness = createHarness();
+    const counts = new Map([["s-parent", { sideChats: 2, subagents: 1 }]]);
+    const children = new Map<string, ChildSessionInfo[]>([
+      [
+        "s-parent",
+        [{ id: "child", title: "Child", taskType: "selection_side_chat", lastActivityAt: 5 }],
+      ],
+    ]);
+    harness.resolver.seed(["s-parent"], counts, children);
+    expect(harness.resolver.resolve("s-parent")).toEqual({
+      sideChatCount: 2,
+      subagentCount: 1,
+      childSessions: [
+        {
+          sessionId: "child",
+          title: "Child",
+          taskType: "selection_side_chat",
+          lastActivityAt: 5,
+          running: false,
+        },
+      ],
+    });
+    await flushMicrotasks();
+    expect(harness.countCalls()).toBe(0);
+
+    harness.setCount("s-parent", { sideChats: 3, subagents: 1 });
+    harness.clockMs.value += 1_001;
+    harness.resolver.invalidate(["s-parent"]);
+    await harness.resolver.refresh(["s-parent"]);
+    expect(harness.resolver.resolve("s-parent")).toMatchObject({ sideChatCount: 3 });
+    expect(harness.onRefresh).toHaveBeenCalledWith(["s-parent"]);
+    expect(harness.countCalls()).toBe(1);
+  });
+
+  it("keeps child-event invalidation store reads within the per-parent TTL", async () => {
+    const harness = createHarness(new Map([["s-parent", { sideChats: 1, subagents: 0 }]]));
+    harness.resolver.seed(
+      ["s-parent"],
+      new Map([["s-parent", { sideChats: 1, subagents: 0 }]]),
+      new Map(),
+    );
+    harness.resolver.invalidate(["s-parent"]);
+    await harness.resolver.refresh(["s-parent"]);
+    expect(harness.countCalls()).toBe(0);
+
+    harness.clockMs.value += 1_001;
+    harness.resolver.invalidate(["s-parent"]);
+    await harness.resolver.refresh(["s-parent"]);
+    expect(harness.countCalls()).toBe(1);
   });
 
   it("a failing store backs off a full TTL instead of retrying on every fan-out", async () => {

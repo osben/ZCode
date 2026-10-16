@@ -1718,6 +1718,20 @@ export const zcodeTaskMetaSchema = z.object({
   provider: legacyZCodeProviderSchema.optional(),
   migrationSource: zcodeTaskMigrationSourceSchema.optional(),
   forkedFromTaskId: nonEmptyStringSchema.optional(),
+  sideChatCount: z.number().int().nonnegative().optional(),
+  subagentCount: z.number().int().nonnegative().optional(),
+  runningSubagentCount: z.number().int().nonnegative().optional(),
+  childSessions: z
+    .array(
+      z.object({
+        sessionId: nonEmptyStringSchema,
+        title: z.string(),
+        taskType: z.enum(["selection_side_chat", "subagent_child"]),
+        lastActivityAt: z.number().int().nonnegative(),
+        running: z.boolean(),
+      }),
+    )
+    .optional(),
   // Cron automation identity is persisted with meta_json as the single source of truth and projected to
   // the tasks table's cron_automation_id index column on write, allowing sessions to be looked up by
   // automation. runId belongs to automation_runs/delivery metadata, not the task table.

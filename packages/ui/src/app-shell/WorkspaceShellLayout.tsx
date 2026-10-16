@@ -465,6 +465,7 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
     },
   );
   const [isWebRemoteControlTaskSwitching, setIsWebRemoteControlTaskSwitching] = useState(false);
+  const [readOnlySubagentSessionId, setReadOnlySubagentSessionId] = useState<string | null>(null);
   const [draftHeaderDropTargetController, setDraftHeaderDropTargetController] =
     useState<ConversationDropTargetController | null>(null);
   const fileTreeOpenRequestIdRef = useRef(0);
@@ -1215,7 +1216,9 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
       targetWorkspaceIdentity?: string,
       targetRemoteSessionId?: string,
       expectedUnreadAt?: number,
+      options?: { readOnly?: boolean },
     ) => {
+      if (options?.readOnly) setReadOnlySubagentSessionId(taskId);
       if (!isWebRemoteControlShell) {
         const workspaceResult = ensureTaskNavigationWorkspace({
           workspacePath: targetWorkspacePath,
@@ -1254,6 +1257,7 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
             : {}),
           ...(resolvedRemoteSessionId ? { remoteSessionId: resolvedRemoteSessionId } : {}),
           sessionId: taskId,
+          ...(options?.readOnly ? { readOnly: true } : {}),
         };
         selectWorkbenchSession(shellWorkbenchBinding, target);
       }
@@ -2158,7 +2162,12 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                   {/* Bugfix (2026-07-05, M3 acceptance): Match the desktop layout by binding activeTaskId instead of meta-derived activeSessionId, so a new v4 session does not remain a draft while the metadata cache is stale. */}
                   {/* Bug cause: Plan details were wired only to the desktop V4WorkspaceChatArea callback, so the mobile card showed a button that could not open the drawer. Both platforms must use the same renderer Side Pane entry. */}
                   <V4ChatPane
-                    readOnly={Boolean(workspaceReadOnlyReason)}
+                    readOnly={
+                      Boolean(workspaceReadOnlyReason) ||
+                      Boolean(
+                        readOnlySubagentSessionId && activeTaskId === readOnlySubagentSessionId,
+                      )
+                    }
                     workspacePath={workspaceAbsPath}
                     workspaceIdentity={workspaceIdentity}
                     isDesktop={isDesktop === true}
@@ -2640,7 +2649,13 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                                   M5⑤: The Desktop main area now hosts two split-pane layers (Layout/Focus); primary-pane
                                   binding semantics and the testid contract (paneId=workspace-main) remain unchanged. */}
                                   <V4WorkspaceChatArea
-                                    readOnly={Boolean(workspaceReadOnlyReason)}
+                                    readOnly={
+                                      Boolean(workspaceReadOnlyReason) ||
+                                      Boolean(
+                                        readOnlySubagentSessionId &&
+                                        activeTaskId === readOnlySubagentSessionId,
+                                      )
+                                    }
                                     foregroundEnabled={isWorkspaceVisible}
                                     workspacePath={workspaceAbsPath}
                                     workspaceIdentity={workspaceIdentity}

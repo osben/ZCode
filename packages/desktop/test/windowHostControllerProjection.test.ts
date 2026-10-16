@@ -83,6 +83,55 @@ describe("WindowHostControllerProjection", () => {
     expect(projection.getTasks()[0]).not.toHaveProperty("executionWorktreeMissing");
   });
 
+  it("replaces child facts from the live overlay and clears facts removed by a refresh", () => {
+    const projection = createWindowHostControllerProjection({ createId: () => "id-1" });
+    projection.registerSource({ scope: localScope, mutate: vi.fn() });
+    projection.replaceSourceSnapshot({
+      scope: localScope,
+      taskIndex: [
+        {
+          meta: {
+            ...taskMeta({ taskId: "parent" }),
+            sideChatCount: 1,
+            subagentCount: 1,
+            runningSubagentCount: 1,
+            childSessions: [
+              {
+                sessionId: "old-child",
+                title: "Old child",
+                taskType: "subagent_child",
+                lastActivityAt: 3,
+                running: true,
+              },
+            ],
+          },
+          membership: { pinned: false, archived: false, active: true },
+        },
+      ],
+      sessionsIndex: [
+        {
+          taskId: "parent",
+          sideChatCount: 1,
+          childSessions: [
+            {
+              sessionId: "new-child",
+              title: "New child",
+              taskType: "selection_side_chat",
+              lastActivityAt: 4,
+              running: false,
+            },
+          ],
+        },
+      ],
+    });
+    expect(projection.getTasks()[0]?.meta).toMatchObject({
+      sideChatCount: 1,
+      childSessions: [{ sessionId: "new-child" }],
+    });
+    expect(projection.getTasks()[0]?.meta.subagentCount).toBeUndefined();
+    expect(projection.getTasks()[0]?.meta.runningSubagentCount).toBeUndefined();
+  });
+
   it("没有 live overlay 时不把持久化 running/阻塞残留当作当前运行事实", () => {
     const projection = createWindowHostControllerProjection({ createId: () => "id-1" });
     projection.registerSource({ scope: localScope, mutate: vi.fn() });

@@ -1,9 +1,7 @@
 // Bridge-level resolver for sidebar child-conversation facts (spec: sidebar-child-conversation-counts.md §3).
-// The live sessions-index hook is synchronous, so store reads go through a small TTL cache that
-// refreshes asynchronously: a derive pass serves cached values and a refresh lands within the TTL
-// plus the next fan-out. Only parents known to have children are refreshed (cold seed ∪ live
-// registry scan), so plain workspaces cost nothing. Extracted from v4-bridge so the cache and
-// staleness rules get direct unit tests.
+// The live sessions-index hook is synchronous, so store reads refresh a per-parent TTL cache in the
+// background. Live lifecycle state comes from the owner of each runtime: session records for ordinary
+// children and the V4 gateway's detached-child registry for subagents without bootstrap records.
 import type { ChildSessionInfo, SessionId, SessionStorePort } from "@zcode/contracts";
 import type { SessionSummary } from "@zcode/shared/zcode-protocol-v4";
 import { SESSION_SUMMARY_CHILD_SESSIONS_MAX } from "@zcode/shared/zcode-protocol-v4";
@@ -15,15 +13,31 @@ interface ChildSessionFactsLogger {
   warn(message: string, data?: Record<string, unknown>): void;
 }
 
+export interface DetachedChildSessionFact {
+  parentSessionId: string;
+  sessionId: string;
+  running: boolean;
+}
+
 export interface ChildSessionFactsResolver {
-  /** Register parents that (may) have children; the cold seed calls this with its batch keys. */
+  /** Register parents that may have children; cold seed and live discovery call this. */
   noteParents(parentKeys: Iterable<string>): void;
-  /** Cold-path store reads for many parents (one query pair); no caching side effects. */
+  /** Cold-path store reads for many parents (one query pair). */
   fetch(
     parentIds: readonly SessionId[],
   ): Promise<
     [Map<string, { sideChats: number; subagents: number }>, Map<string, ChildSessionInfo[]>]
   >;
+  /** Seed the live cache before loaded-session summaries overlay the cold index snapshot. */
+  seed(
+    parentIds: readonly SessionId[],
+    counts: Map<string, { sideChats: number; subagents: number }>,
+    children: Map<string, ChildSessionInfo[]>,
+  ): void;
+  /** Invalidate affected parents and refresh their store facts, respecting the TTL. */
+  refresh(parentKeys: Iterable<string>): Promise<void>;
+  /** Mark parents stale after a child lifecycle event. */
+  invalidate(parentKeys: Iterable<string>): void;
   /** Live-path summary fragment for one parent; empty object when no facts are known. */
   resolve(sessionId: string): {
     sideChatCount?: number;
@@ -33,7 +47,7 @@ export interface ChildSessionFactsResolver {
   };
 }
 
-/** ChildSessionInfo → the wire summary shape; `running` comes from the live registry (false on the cold path). */
+/** ChildSessionInfo → the wire summary shape; `running` comes from the live runtime owners. */
 export function toWireChildSession(child: ChildSessionInfo, running: boolean) {
   return {
     sessionId: child.id,
@@ -44,12 +58,7 @@ export function toWireChildSession(child: ChildSessionInfo, running: boolean) {
   };
 }
 
-/**
- * A resident-but-idle child must not render the running spinner: finished sessions stay in the
- * registry until the residency pool reclaims them, so mere presence is not execution. The busy
- * predicate mirrors the pool's hasResidencyBlockingWork (session-residency.ts) — a turn in flight
- * or runtime-claimed blocking work.
- */
+/** Finished-but-resident children must not render the running spinner. */
 function isRecordBusy(record: ZCodeProtocolSessionRecord): boolean {
   return (
     record.activeAbortController !== undefined ||
@@ -61,60 +70,114 @@ function isRecordBusy(record: ZCodeProtocolSessionRecord): boolean {
 export function createChildSessionFactsResolver(deps: {
   store: () => SessionStorePort | undefined;
   sessions: Map<string, ZCodeProtocolSessionRecord>;
+  getDetachedChildren?: () => readonly DetachedChildSessionFact[];
+  onRefresh?: (parentKeys: readonly string[]) => void;
   logger?: ChildSessionFactsLogger;
   now?: () => number;
 }): ChildSessionFactsResolver {
   const now = deps.now ?? (() => Date.now());
-  const cache = {
-    at: 0,
-    counts: new Map<string, { sideChats: number; subagents: number }>(),
-    children: new Map<string, ChildSessionInfo[]>(),
-  };
+  const counts = new Map<string, { sideChats: number; subagents: number }>();
+  const children = new Map<string, ChildSessionInfo[]>();
+  const updatedAt = new Map<string, number>();
+  const generation = new Map<string, number>();
   const seenParentIds = new Set<string>();
-  let refreshing = false;
+  const requestedParentIds = new Set<string>();
+  let refreshInFlight: Promise<void> | null = null;
 
-  const liveSubagentChildCounts = (): Map<string, number> => {
-    const counts = new Map<string, number>();
+  const discoverLiveParents = (): Map<string, number> => {
+    const busySubagents = new Map<string, number>();
     for (const record of deps.sessions.values()) {
-      if (record.taskType !== "subagent_child" || !record.parentSessionId) continue;
-      // Count only busy children: finished-but-resident sessions must not keep the parent's
-      // running count alive (same predicate as the per-child running flag below).
-      if (!isRecordBusy(record)) continue;
-      const parentKey = String(record.parentSessionId);
-      counts.set(parentKey, (counts.get(parentKey) ?? 0) + 1);
+      if (
+        (record.taskType !== "subagent_child" && record.taskType !== "selection_side_chat") ||
+        !record.parentSessionId
+      ) {
+        continue;
+      }
+      const parentId = String(record.parentSessionId);
+      seenParentIds.add(parentId);
+      if (record.taskType === "subagent_child" && isRecordBusy(record)) {
+        busySubagents.set(parentId, (busySubagents.get(parentId) ?? 0) + 1);
+      }
     }
-    for (const parentKey of counts.keys()) seenParentIds.add(parentKey);
-    return counts;
+    for (const child of deps.getDetachedChildren?.() ?? []) {
+      if (!child.parentSessionId || !child.sessionId) continue;
+      seenParentIds.add(child.parentSessionId);
+      if (child.running) {
+        busySubagents.set(
+          child.parentSessionId,
+          (busySubagents.get(child.parentSessionId) ?? 0) + 1,
+        );
+      }
+    }
+    return busySubagents;
   };
 
-  const scheduleRefresh = () => {
+  const load = async (parentKeys: readonly string[]): Promise<void> => {
     const store = deps.store();
-    if (!store || refreshing || seenParentIds.size === 0) return;
-    if (now() - cache.at <= CHILD_SESSION_FACTS_TTL_MS) return;
-    refreshing = true;
-    const parentIds = [...seenParentIds] as SessionId[];
-    void Promise.all([
-      store.countChildSessions({ parentIds }),
-      store.listChildSessions({ parentIds, limitPerParent: SESSION_SUMMARY_CHILD_SESSIONS_MAX }),
-    ])
-      .then(([counts, children]) => {
-        cache.at = now();
-        cache.counts = counts;
-        cache.children = children;
-      })
-      .catch((error: unknown) => {
-        // Advance the TTL window on failure too: a persistently failing store must not turn every
-        // fan-out into an immediate retry + warn loop.
-        cache.at = now();
-        deps.logger?.warn("child session facts refresh failed", {
-          error: error instanceof Error ? error.message : String(error),
-          event: "zcode_protocol.v4.child_session_facts_failed",
-          module: "bootstrap.zcode_protocol",
-        });
-      })
-      .finally(() => {
-        refreshing = false;
+    if (!store || parentKeys.length === 0) return;
+    const tokens = new Map(parentKeys.map((key) => [key, generation.get(key) ?? 0]));
+    try {
+      const [nextCounts, nextChildren] = await Promise.all([
+        store.countChildSessions({ parentIds: parentKeys as SessionId[] }),
+        store.listChildSessions({
+          parentIds: parentKeys as SessionId[],
+          limitPerParent: SESSION_SUMMARY_CHILD_SESSIONS_MAX,
+        }),
+      ]);
+      const refreshedAt = now();
+      const refreshedParents: string[] = [];
+      for (const parentKey of parentKeys) {
+        if ((generation.get(parentKey) ?? 0) !== tokens.get(parentKey)) {
+          requestedParentIds.add(parentKey);
+          continue;
+        }
+        const count = nextCounts.get(parentKey);
+        if (count) counts.set(parentKey, count);
+        else counts.delete(parentKey);
+        const childList = nextChildren.get(parentKey);
+        if (childList?.length) children.set(parentKey, childList);
+        else children.delete(parentKey);
+        updatedAt.set(parentKey, refreshedAt);
+        refreshedParents.push(parentKey);
+      }
+      if (refreshedParents.length > 0) deps.onRefresh?.(refreshedParents);
+    } catch (error) {
+      const failedAt = now();
+      for (const parentKey of parentKeys) {
+        if ((generation.get(parentKey) ?? 0) === tokens.get(parentKey)) {
+          updatedAt.set(parentKey, failedAt);
+        } else {
+          requestedParentIds.add(parentKey);
+        }
+      }
+      deps.logger?.warn("child session facts refresh failed", {
+        error: error instanceof Error ? error.message : String(error),
+        event: "zcode_protocol.v4.child_session_facts_failed",
+        module: "bootstrap.zcode_protocol",
       });
+    }
+  };
+
+  const refresh = async (parentKeys: Iterable<string>): Promise<void> => {
+    for (const key of parentKeys) {
+      seenParentIds.add(key);
+      requestedParentIds.add(key);
+    }
+    if (refreshInFlight) {
+      await refreshInFlight;
+      if (requestedParentIds.size > 0) await refresh([]);
+      return;
+    }
+    const currentTime = now();
+    const targets = [...requestedParentIds].filter(
+      (key) => currentTime - (updatedAt.get(key) ?? 0) > CHILD_SESSION_FACTS_TTL_MS,
+    );
+    for (const key of targets) requestedParentIds.delete(key);
+    if (targets.length === 0) return;
+    refreshInFlight = load(targets);
+    await refreshInFlight;
+    refreshInFlight = null;
+    if (requestedParentIds.size > 0) await refresh([]);
   };
 
   return {
@@ -123,35 +186,62 @@ export function createChildSessionFactsResolver(deps: {
     },
     fetch(parentIds) {
       const store = deps.store();
-      if (!store) {
-        return Promise.resolve([new Map(), new Map()] as const);
-      }
+      if (!store) return Promise.resolve([new Map(), new Map()] as const);
       return Promise.all([
         store.countChildSessions({ parentIds }),
         store.listChildSessions({ parentIds, limitPerParent: SESSION_SUMMARY_CHILD_SESSIONS_MAX }),
       ]);
     },
+    seed(parentIds, nextCounts, nextChildren) {
+      const seededAt = now();
+      for (const parentId of parentIds) {
+        const key = String(parentId);
+        const count = nextCounts.get(key);
+        if (count) counts.set(key, count);
+        else counts.delete(key);
+        const childList = nextChildren.get(key);
+        if (childList?.length) children.set(key, childList);
+        else children.delete(key);
+        updatedAt.set(key, seededAt);
+        if (count || childList?.length) seenParentIds.add(key);
+      }
+    },
+    refresh,
+    invalidate(parentKeys) {
+      for (const key of parentKeys) {
+        seenParentIds.add(key);
+        const lastUpdatedAt = updatedAt.get(key);
+        if (lastUpdatedAt === undefined || now() - lastUpdatedAt > CHILD_SESSION_FACTS_TTL_MS) {
+          updatedAt.set(key, 0);
+          generation.set(key, (generation.get(key) ?? 0) + 1);
+        }
+        requestedParentIds.add(key);
+      }
+    },
     resolve(sessionId) {
-      const liveSubagents = liveSubagentChildCounts();
-      scheduleRefresh();
-      const counts = cache.counts.get(sessionId);
-      const children = cache.children.get(sessionId) ?? [];
+      const liveSubagents = discoverLiveParents();
+      void refresh(seenParentIds);
+      const count = counts.get(sessionId);
+      const childList = children.get(sessionId) ?? [];
+      const detachedById = new Map(
+        (deps.getDetachedChildren?.() ?? []).map((child) => [child.sessionId, child.running]),
+      );
       const runningSubagentCount = liveSubagents.get(sessionId) ?? 0;
       return {
-        ...(counts?.sideChats ? { sideChatCount: counts.sideChats } : {}),
-        ...(counts?.subagents ? { subagentCount: counts.subagents } : {}),
+        ...(count?.sideChats ? { sideChatCount: count.sideChats } : {}),
+        ...(count?.subagents ? { subagentCount: count.subagents } : {}),
         ...(runningSubagentCount > 0 ? { runningSubagentCount } : {}),
-        ...(children.length > 0
+        ...(childList.length > 0
           ? {
-              childSessions: children.map((child) => {
-                // Only subagent children can execute work; a side chat merely being open in a
-                // pane must not render the running spinner.
+              childSessions: childList.map((child) => {
                 const childRecord =
                   child.taskType === "subagent_child" ? deps.sessions.get(child.id) : undefined;
-                return toWireChildSession(
-                  child,
-                  childRecord !== undefined && isRecordBusy(childRecord),
-                );
+                const running =
+                  child.taskType === "subagent_child" &&
+                  (childRecord !== undefined
+                    ? isRecordBusy(childRecord)
+                    : (detachedById.get(child.id) ?? false));
+                return toWireChildSession(child, running);
               }),
             }
           : {}),
