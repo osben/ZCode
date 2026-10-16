@@ -4,13 +4,22 @@ import { Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  buildSiwcAccountCredentialKeys,
+  buildSiwcAccountProviderAuthSourceKey,
+  buildSiwcAccountProviderIdentityKey,
+  SIWC_LEGACY_CREDENTIAL_KEYS,
+} from "@zcode/shared";
 import type { ICredentialService } from "../src/credential/credential.js";
-import { SiwcAuthService } from "../src/oauth/siwc/siwcAuthService.js";
-import { SIWC_CREDENTIAL_KEYS, SIWC_ISSUER } from "../src/oauth/siwc/siwcOAuth.js";
+import { SiwcAuthService, createSiwcAccountKey } from "../src/oauth/siwc/siwcAuthService.js";
+import { SIWC_ISSUER } from "../src/oauth/siwc/siwcOAuth.js";
 
 const ISSUED_CLIENT_ID = "oaiapp_host_test_client";
 const FULL_SCOPE = "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct";
 const NOW_SECONDS = Math.floor(Date.now() / 1000);
+const SUB = "user-sub-host-1";
+const ACCOUNT_KEY = createSiwcAccountKey(SUB);
+const ACCOUNT_KEYS = buildSiwcAccountCredentialKeys(ACCOUNT_KEY);
 
 function createMemoryCredentialService(): ICredentialService & {
   dump(): Record<string, string>;
@@ -54,18 +63,18 @@ function createTestKey(): TestKey {
   };
 }
 
-function buildIdToken(key: TestKey, nonce: string): string {
+function buildIdToken(key: TestKey, nonce: string, sub: string = SUB): string {
   const header = Buffer.from(
     JSON.stringify({ alg: "RS256", typ: "JWT", kid: "host-test-key" }),
   ).toString("base64url");
   const payload = Buffer.from(
     JSON.stringify({
-      sub: "user-sub-host-1",
+      sub,
       iss: SIWC_ISSUER,
       aud: ISSUED_CLIENT_ID,
       exp: NOW_SECONDS + 600,
       nonce,
-      email: "user@example.com",
+      email: `${sub}@example.com`,
       name: "Host Test User",
     }),
   ).toString("base64url");
@@ -77,6 +86,7 @@ function createFakeAuthBackend(options: {
   key: TestKey;
   nonceRef: { value: string };
   scope?: string;
+  sub?: string;
   refresh?: () => { accessToken: string; refreshToken: string };
 }): { exchangeCalls: string[]; fetchFn: typeof fetch; refreshCalls: string[] } {
   const refreshCalls: string[] = [];
@@ -103,7 +113,7 @@ function createFakeAuthBackend(options: {
         return Response.json({
           access_token: "host-access-1",
           refresh_token: "host-refresh-1",
-          id_token: buildIdToken(options.key, options.nonceRef.value),
+          id_token: buildIdToken(options.key, options.nonceRef.value, options.sub ?? SUB),
           expires_in: 3600,
           scope: options.scope ?? FULL_SCOPE,
           earliest_refresh_at: NOW_SECONDS + 1800,
@@ -133,13 +143,18 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-async function createFixture(options: { scope?: string } = {}) {
+async function createFixture(options: { scope?: string; sub?: string } = {}) {
   const dir = await mkdtemp(join(tmpdir(), "siwc-host-"));
   tempDirs.push(dir);
   const credentials = createMemoryCredentialService();
   const key = createTestKey();
   const nonceRef = { value: "" };
-  const backend = createFakeAuthBackend({ key, nonceRef, ...options });
+  const backend = createFakeAuthBackend({
+    key,
+    nonceRef,
+    ...(options.scope === undefined ? {} : { scope: options.scope }),
+    ...(options.sub === undefined ? {} : { sub: options.sub }),
+  });
   const service = new SiwcAuthService(credentials, {
     configDir: dir,
     fetchFn: backend.fetchFn,
@@ -148,17 +163,20 @@ async function createFixture(options: { scope?: string } = {}) {
   return { backend, credentials, dir, key, nonceRef, service };
 }
 
-async function completeBrowserRedirect(start: {
-  authorizeUrl: string;
-  state: string;
-}): Promise<void> {
+async function runFullLogin(
+  fixture: Awaited<ReturnType<typeof createFixture>>,
+  options: { startOptions?: { reauthAccountKey?: string } } = {},
+) {
+  const start = await fixture.service.startLogin(options.startOptions ?? {});
   const url = new URL(start.authorizeUrl);
+  fixture.nonceRef.value = url.searchParams.get("nonce") ?? "";
   const redirect = new URL(url.searchParams.get("redirect_uri") ?? "");
   redirect.searchParams.set("state", start.state);
   redirect.searchParams.set("code", "host-auth-code");
   redirect.searchParams.set("client_id", ISSUED_CLIENT_ID);
   const response = await fetch(redirect);
   if (!response.ok) throw new Error(`loopback callback failed: ${response.status}`);
+  return { start, url };
 }
 
 async function completeBrowserError(
@@ -175,8 +193,8 @@ async function completeBrowserError(
   await fetch(redirect);
 }
 
-describe("SiwcAuthService (host side)", () => {
-  it("runs the full loopback login: PKCE URL, exchange, id-token verify, persistence", async () => {
+describe("SiwcAuthService (host side, multi-account)", () => {
+  it("runs the full loopback login: PKCE URL, exchange, id-token verify, per-account persistence", async () => {
     const fixture = await createFixture();
     const start = await fixture.service.startLogin();
     const url = new URL(start.authorizeUrl);
@@ -188,30 +206,101 @@ describe("SiwcAuthService (host side)", () => {
     fixture.nonceRef.value = url.searchParams.get("nonce") ?? "";
 
     await expect(fixture.service.pollLogin()).resolves.toBeNull();
-    await completeBrowserRedirect(start);
+    const redirect = new URL(url.searchParams.get("redirect_uri") ?? "");
+    redirect.searchParams.set("state", start.state);
+    redirect.searchParams.set("code", "host-auth-code");
+    redirect.searchParams.set("client_id", ISSUED_CLIENT_ID);
+    await fetch(redirect);
     const completion = await fixture.service.pollLogin();
     expect(completion).toMatchObject({
+      accountKey: ACCOUNT_KEY,
       newUser: true,
       planUsageEntitled: true,
       signedIn: true,
-      user: { displayName: "Host Test User", email: "user@example.com" },
+      user: { displayName: "Host Test User", email: "user-sub-host-1@example.com" },
     });
 
     const stored = fixture.credentials.dump();
-    expect(stored[SIWC_CREDENTIAL_KEYS.clientId]).toBe(ISSUED_CLIENT_ID);
-    expect(stored[SIWC_CREDENTIAL_KEYS.accessToken]).toBe("host-access-1");
-    expect(stored[SIWC_CREDENTIAL_KEYS.refreshToken]).toBe("host-refresh-1");
-    expect(stored["account-provider:account:chatgpt-plan:auth-source"]).toBe("oauth");
+    expect(stored[ACCOUNT_KEYS.clientId]).toBe(ISSUED_CLIENT_ID);
+    expect(stored[ACCOUNT_KEYS.accessToken]).toBe("host-access-1");
+    expect(stored[ACCOUNT_KEYS.refreshToken]).toBe("host-refresh-1");
+    expect(stored[buildSiwcAccountProviderAuthSourceKey(ACCOUNT_KEY)]).toBe("oauth");
+    expect(stored[buildSiwcAccountProviderIdentityKey(ACCOUNT_KEY)]).toBe(SUB);
 
     const status = await fixture.service.getStatus();
-    expect(status).toMatchObject({ signedIn: true, planUsageEntitled: true });
+    expect(status.accounts).toHaveLength(1);
+    expect(status.accounts[0]).toMatchObject({
+      accountKey: ACCOUNT_KEY,
+      signedIn: true,
+      planUsageEntitled: true,
+    });
+  });
+
+  it("adds a second account and keeps both slots independently", async () => {
+    const fixture = await createFixture();
+    await runFullLogin(fixture);
+    await fixture.service.pollLogin();
+
+    const secondFixture = await createFixture({ sub: "user-sub-host-2" });
+    // Reuse the SAME service/credentials so slots share the index.
+    const secondBackend = createFakeAuthBackend({
+      key: secondFixture.key,
+      nonceRef: secondFixture.nonceRef,
+      sub: "user-sub-host-2",
+    });
+    const service = new SiwcAuthService(fixture.credentials, {
+      configDir: fixture.dir,
+      fetchFn: secondBackend.fetchFn,
+      now: () => NOW_SECONDS * 1000,
+    });
+    const start = await service.startLogin();
+    fixture.nonceRef.value = secondFixture.nonceRef.value =
+      new URL(start.authorizeUrl).searchParams.get("nonce") ?? "";
+    // The second authorize URL must carry no hints even though an account is signed in.
+    const url = new URL(start.authorizeUrl);
+    expect(url.searchParams.get("client_id")).toBe("dynamic_agent_client");
+    expect(url.searchParams.get("id_token_hint")).toBeNull();
+    expect(url.searchParams.get("login_hint")).toBeNull();
+    const redirect = new URL(url.searchParams.get("redirect_uri") ?? "");
+    redirect.searchParams.set("state", start.state);
+    redirect.searchParams.set("code", "host-auth-code-2");
+    redirect.searchParams.set("client_id", ISSUED_CLIENT_ID);
+    await fetch(redirect);
+    const completion = await service.pollLogin();
+    const secondKey = createSiwcAccountKey("user-sub-host-2");
+    expect(completion).toMatchObject({ accountKey: secondKey, newUser: true });
+
+    const status = await service.getStatus();
+    expect(status.accounts.map((account) => account.accountKey).sort()).toEqual(
+      [ACCOUNT_KEY, secondKey].sort(),
+    );
+    // The first account's tokens survive the second login.
+    expect(fixture.credentials.dump()[ACCOUNT_KEYS.accessToken]).toBe("host-access-1");
+  });
+
+  it("re-auth mode sends the account's client id and hints", async () => {
+    const fixture = await createFixture();
+    await runFullLogin(fixture);
+    await fixture.service.pollLogin();
+
+    const start = await fixture.service.startLogin({ reauthAccountKey: ACCOUNT_KEY });
+    const url = new URL(start.authorizeUrl);
+    expect(url.searchParams.get("client_id")).toBe(ISSUED_CLIENT_ID);
+    expect(url.searchParams.get("id_token_hint")).toBeTypeOf("string");
+    expect(url.searchParams.get("login_hint")).toBe("user-sub-host-1@example.com");
+    expect(url.searchParams.get("agent_name_hint")).toBeNull();
+    await fixture.service.cancelLogin();
   });
 
   it("claims a completed login before exchanging its authorization code", async () => {
     const fixture = await createFixture();
     const start = await fixture.service.startLogin();
     fixture.nonceRef.value = new URL(start.authorizeUrl).searchParams.get("nonce") ?? "";
-    await completeBrowserRedirect(start);
+    const redirect = new URL(new URL(start.authorizeUrl).searchParams.get("redirect_uri") ?? "");
+    redirect.searchParams.set("state", start.state);
+    redirect.searchParams.set("code", "host-auth-code");
+    redirect.searchParams.set("client_id", ISSUED_CLIENT_ID);
+    await fetch(redirect);
 
     const [first, second] = await Promise.all([
       fixture.service.pollLogin(),
@@ -226,7 +315,11 @@ describe("SiwcAuthService (host side)", () => {
     const fixture = await createFixture();
     const start = await fixture.service.startLogin();
     fixture.nonceRef.value = new URL(start.authorizeUrl).searchParams.get("nonce") ?? "";
-    await completeBrowserRedirect(start);
+    const redirect = new URL(new URL(start.authorizeUrl).searchParams.get("redirect_uri") ?? "");
+    redirect.searchParams.set("state", start.state);
+    redirect.searchParams.set("code", "host-auth-code");
+    redirect.searchParams.set("client_id", ISSUED_CLIENT_ID);
+    await fetch(redirect);
     const closeOrder: string[] = [];
     const close = Server.prototype.close;
     const closeAllConnections = Server.prototype.closeAllConnections;
@@ -265,60 +358,97 @@ describe("SiwcAuthService (host side)", () => {
 
   it("reports identity-only sign-in when consent lacked the plan scope", async () => {
     const fixture = await createFixture({ scope: "openid profile email" });
-    const start = await fixture.service.startLogin();
-    fixture.nonceRef.value = new URL(start.authorizeUrl).searchParams.get("nonce") ?? "";
-    await completeBrowserRedirect(start);
+    await runFullLogin(fixture);
     const completion = await fixture.service.pollLogin();
     expect(completion?.planUsageEntitled).toBe(false);
     expect(completion?.signedIn).toBe(true);
   });
 
-  it("revokes and clears tokens on logout while retaining the client id", async () => {
+  it("revokes and clears only the requested account on logout", async () => {
     const fixture = await createFixture();
-    const start = await fixture.service.startLogin();
-    fixture.nonceRef.value = new URL(start.authorizeUrl).searchParams.get("nonce") ?? "";
-    await completeBrowserRedirect(start);
+    await runFullLogin(fixture);
+    await fixture.service.pollLogin();
+    const secondKey = createSiwcAccountKey("user-sub-host-2");
+    const secondKeys = buildSiwcAccountCredentialKeys(secondKey);
+    fixture.credentials.save(secondKeys.clientId, ISSUED_CLIENT_ID);
+    fixture.credentials.save(secondKeys.accessToken, "host-access-b");
+    fixture.credentials.save(secondKeys.refreshToken, "host-refresh-b");
+
+    const result = await fixture.service.logout(ACCOUNT_KEY);
+    expect(result).toEqual({ accountCount: 1, revoked: true, signedOut: true });
+    expect(fixture.backend.refreshCalls).toContain("revoke");
+    const stored = fixture.credentials.dump();
+    expect(stored[ACCOUNT_KEYS.clientId]).toBe(ISSUED_CLIENT_ID);
+    expect(stored[ACCOUNT_KEYS.accessToken]).toBeUndefined();
+    // The other account was not part of the index and is untouched by the slot cleanup.
+    expect(stored[secondKeys.accessToken]).toBe("host-access-b");
+  });
+
+  it("logout without a key revokes every signed-in account", async () => {
+    const fixture = await createFixture();
+    await runFullLogin(fixture);
     await fixture.service.pollLogin();
 
     const result = await fixture.service.logout();
-    expect(result).toEqual({ revoked: true, signedOut: true });
-    expect(fixture.backend.refreshCalls).toContain("revoke");
+    expect(result).toEqual({ accountCount: 1, revoked: true, signedOut: true });
+    const status = await fixture.service.getStatus();
+    expect(status.accounts).toHaveLength(0);
+  });
+
+  it("migrates legacy flat credentials into the account slot", async () => {
+    const fixture = await createFixture();
+    const legacy = SIWC_LEGACY_CREDENTIAL_KEYS;
+    fixture.credentials.save(legacy.clientId, ISSUED_CLIENT_ID);
+    fixture.credentials.save(legacy.accessToken, "legacy-access");
+    fixture.credentials.save(legacy.refreshToken, "legacy-refresh");
+    fixture.credentials.save(legacy.scopes, FULL_SCOPE);
+    fixture.credentials.save(
+      legacy.userInfo,
+      JSON.stringify({ sub: SUB, email: "legacy@example.com" }),
+    );
+    fixture.credentials.save(legacy.accessExpiresAt, String(NOW_SECONDS + 3600));
+
+    const status = await fixture.service.getStatus();
+    expect(status.accounts).toHaveLength(1);
+    expect(status.accounts[0]).toMatchObject({ accountKey: ACCOUNT_KEY, signedIn: true });
     const stored = fixture.credentials.dump();
-    expect(stored[SIWC_CREDENTIAL_KEYS.clientId]).toBe(ISSUED_CLIENT_ID);
-    expect(stored[SIWC_CREDENTIAL_KEYS.accessToken]).toBeUndefined();
-    expect(await fixture.service.getStatus()).toMatchObject({ signedIn: false });
+    expect(stored[ACCOUNT_KEYS.accessToken]).toBe("legacy-access");
+    expect(stored[legacy.accessToken]).toBeUndefined();
+    expect(stored[legacy.clientId]).toBeUndefined();
+    // The migrated token resolves through the standard per-account path.
+    expect(await fixture.service.resolveAccessToken(ACCOUNT_KEY)).toBe("legacy-access");
   });
 
   it("resolves a time-valid access token without refresh and rotates near expiry", async () => {
     const fixture = await createFixture();
-    fixture.credentials.save(SIWC_CREDENTIAL_KEYS.clientId, ISSUED_CLIENT_ID);
-    fixture.credentials.save(SIWC_CREDENTIAL_KEYS.accessToken, "host-access-1");
-    fixture.credentials.save(SIWC_CREDENTIAL_KEYS.refreshToken, "host-refresh-1");
-    fixture.credentials.save(SIWC_CREDENTIAL_KEYS.scopes, FULL_SCOPE);
-    fixture.credentials.save(SIWC_CREDENTIAL_KEYS.accessExpiresAt, String(NOW_SECONDS + 3600));
+    fixture.credentials.save(ACCOUNT_KEYS.clientId, ISSUED_CLIENT_ID);
+    fixture.credentials.save(ACCOUNT_KEYS.accessToken, "host-access-1");
+    fixture.credentials.save(ACCOUNT_KEYS.refreshToken, "host-refresh-1");
+    fixture.credentials.save(ACCOUNT_KEYS.scopes, FULL_SCOPE);
+    fixture.credentials.save(ACCOUNT_KEYS.accessExpiresAt, String(NOW_SECONDS + 3600));
 
-    expect(await fixture.service.resolveAccessToken()).toBe("host-access-1");
+    expect(await fixture.service.resolveAccessToken(ACCOUNT_KEY)).toBe("host-access-1");
     expect(fixture.backend.refreshCalls).not.toContain("host-refresh-1");
 
     // Expire the stored token; the resolver must refresh and persist rotation.
-    fixture.credentials.save(SIWC_CREDENTIAL_KEYS.accessExpiresAt, String(NOW_SECONDS - 10));
+    fixture.credentials.save(ACCOUNT_KEYS.accessExpiresAt, String(NOW_SECONDS - 10));
     fixture.credentials.writes.length = 0;
-    expect(await fixture.service.resolveAccessToken()).toBe("host-access-2");
+    expect(await fixture.service.resolveAccessToken(ACCOUNT_KEY)).toBe("host-access-2");
     expect(fixture.backend.refreshCalls).toContain("host-refresh-1");
     const stored = fixture.credentials.dump();
-    expect(stored[SIWC_CREDENTIAL_KEYS.accessToken]).toBe("host-access-2");
-    expect(stored[SIWC_CREDENTIAL_KEYS.refreshToken]).toBe("host-refresh-2");
+    expect(stored[ACCOUNT_KEYS.accessToken]).toBe("host-access-2");
+    expect(stored[ACCOUNT_KEYS.refreshToken]).toBe("host-refresh-2");
     expect(fixture.credentials.writes.slice(0, 2).map(([key]) => key)).toEqual([
-      SIWC_CREDENTIAL_KEYS.refreshToken,
-      SIWC_CREDENTIAL_KEYS.accessToken,
+      ACCOUNT_KEYS.refreshToken,
+      ACCOUNT_KEYS.accessToken,
     ]);
   });
 
-  it("cancels a pending login and reports not signed in afterwards", async () => {
+  it("cancels a pending login and reports no accounts afterwards", async () => {
     const fixture = await createFixture();
     await fixture.service.startLogin();
     await fixture.service.cancelLogin();
     await expect(fixture.service.pollLogin()).resolves.toBeNull();
-    expect(await fixture.service.getStatus()).toMatchObject({ signedIn: false });
+    expect((await fixture.service.getStatus()).accounts).toHaveLength(0);
   });
 });

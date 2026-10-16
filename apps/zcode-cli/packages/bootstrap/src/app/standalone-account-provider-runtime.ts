@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import {
   createCodingPlanApiKeyResolver,
   createSiwcAccessTokenResolver,
-  isSiwcPlanEntitled,
+  listSiwcPlanAccounts,
   SHARED_ZCODE_CREDENTIAL_KEYS,
   type SharedZCodeCredentialStore,
 } from "@zcode/adapters/auth";
@@ -10,6 +10,7 @@ import { createNodeHttpClientAdapter } from "@zcode/adapters/http";
 import { createConfig } from "@zcode/adapters/config";
 import type { ProviderRuntimeHeadersPort } from "@zcode/core";
 import {
+  createDerivedChatGptPlanConfigSource,
   ChatgptAccountAccessConfig,
   createAccountProviderConfigSnapshot,
   ProviderConfig,
@@ -17,14 +18,21 @@ import {
   ZhipuAccountAccessConfig,
   type AccountProviderConfigSnapshot,
   type ProviderConfigLayerSnapshot,
+  type ProviderConfigSnapshot,
+  type ProviderSource,
 } from "@zcode/provider";
 import {
   NodeZCodeBuiltinProviderConfigSource,
   ZCODE_BUILTIN_PROVIDER_CONFIG_FILE_ENV,
 } from "@zcode/provider-node";
-import { BUILTIN_MODEL_PROVIDER_IDS, type ProviderFamilyDomain } from "@zcode/shared";
+import {
+  BUILTIN_MODEL_PROVIDER_IDS,
+  buildChatGptPlanAccountProviderId,
+  isChatGptPlanAccountProviderId,
+  type ProviderFamilyDomain,
+} from "@zcode/shared";
 
-/** Builtin provider id of the ChatGPT plan (SIWC) account provider. */
+/** Builtin template provider id of the ChatGPT plan (SIWC) account provider family. */
 export const CHATGPT_PLAN_PROVIDER_ID = BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan;
 
 export interface StandaloneCodingPlanProvider {
@@ -97,10 +105,22 @@ async function readStandaloneCodingPlanCatalog(
 function readChatGptPlanProvider(
   providers: Pick<ProviderConfigLayerSnapshot, "providers">["providers"],
 ): StandaloneChatGptPlanProvider | undefined {
-  const provider = providers.get(CHATGPT_PLAN_PROVIDER_ID);
+  // With per-account derivation active the base template entry is replaced by derived
+  // entries; any chatgpt-account entry carries the same template config and model list.
+  const provider =
+    providers.get(CHATGPT_PLAN_PROVIDER_ID) ?? firstChatGptAccountProvider(providers);
   const modelId = provider?.builtinModelIds?.find((candidate) => candidate.trim())?.trim();
   if (!provider || provider.access?.type !== "chatgpt-account" || !modelId) return undefined;
   return { modelId, providerId: CHATGPT_PLAN_PROVIDER_ID };
+}
+
+function firstChatGptAccountProvider(
+  providers: Pick<ProviderConfigLayerSnapshot, "providers">["providers"],
+): ProviderConfig | undefined {
+  for (const [, provider] of providers.entries()) {
+    if (provider.access?.type === "chatgpt-account") return provider;
+  }
+  return undefined;
 }
 
 export async function resolveStandaloneCodingPlanProvider(
@@ -154,8 +174,14 @@ export function createStandaloneAccountIdentityFromSecret(secret: string): strin
   return `key-${createHash("sha256").update(normalized).digest("hex").slice(0, 24)}`;
 }
 
+/** Credential store capabilities the account snapshot needs: reads plus the legacy-key migration writes. */
+type StandaloneAccountCredentialStore = Pick<
+  SharedZCodeCredentialStore,
+  "loadMany" | "saveMany" | "deleteIfValues"
+>;
+
 export async function readStandaloneAccountProviderConfigSnapshot(
-  credentialStore: Pick<SharedZCodeCredentialStore, "loadMany">,
+  credentialStore: StandaloneAccountCredentialStore,
   env: Readonly<Record<string, string | undefined>>,
   config?: Pick<ProviderConfigLayerSnapshot, "revision" | "providers">,
 ): Promise<AccountProviderConfigSnapshot> {
@@ -215,22 +241,41 @@ export async function readStandaloneAccountProviderConfigSnapshot(
     }),
   );
   if (catalog.chatgptPlan) {
-    // Consent gating: the provider is entitled only with stored tokens AND the plan-usage
-    // scope; an identity-only sign-in stays visible-but-inert (entitled=false hides it from
-    // the regular registry until consent is granted).
-    const chatgptEntitled = await isSiwcPlanEntitled(credentialStore);
-    providers = providers.set(
-      catalog.chatgptPlan.providerId,
-      new ProviderConfig({
-        access: new ChatgptAccountAccessConfig({ entitled: chatgptEntitled }),
-      }),
-    );
+    // Consent gating per account: each signed-in slot is entitled only with stored tokens AND
+    // the plan-usage scope; an identity-only account stays visible-but-inert (entitled=false
+    // hides it from the regular registry until consent is granted).
+    const accounts = await listSiwcPlanAccounts(credentialStore);
+    for (const account of accounts) {
+      providers = providers.set(
+        buildChatGptPlanAccountProviderId(account.accountKey),
+        new ProviderConfig({
+          access: new ChatgptAccountAccessConfig({ entitled: account.entitled }),
+        }),
+      );
+    }
   }
   return createAccountProviderConfigSnapshot(catalog.zcodeBuiltinRevision, providers);
 }
 
+/**
+ * Config-source wrapper deriving per-account ChatGPT plan provider entries for the process
+ * registry (template rule + model rules cloned per signed-in account; base entry dropped).
+ */
+export function createStandaloneChatGptPlanConfigSourceWrapper(
+  credentialStore: Pick<SharedZCodeCredentialStore, "loadMany" | "saveMany" | "deleteIfValues">,
+): (source: ProviderSource<ProviderConfigSnapshot>) => ProviderSource<ProviderConfigSnapshot> {
+  return (source) =>
+    createDerivedChatGptPlanConfigSource(source, async () => {
+      const accounts = await listSiwcPlanAccounts(credentialStore);
+      return accounts.map((account) => ({
+        accountKey: account.accountKey,
+        providerName: account.email ?? account.name ?? account.accountKey,
+      }));
+    });
+}
+
 export async function hasStandaloneCodingPlanAccess(
-  credentialStore: Pick<SharedZCodeCredentialStore, "loadMany">,
+  credentialStore: StandaloneAccountCredentialStore,
   env: Readonly<Record<string, string | undefined>>,
 ): Promise<boolean> {
   return (await readStandaloneAccountProviderConfigSnapshot(credentialStore, env)).providers
@@ -287,7 +332,7 @@ export function createStandaloneProviderRuntimeHeadersPort(
     async refreshBeforeModelRequest(input) {
       input.abortSignal?.throwIfAborted();
       const providerId = input.providerId.trim();
-      if (providerId === CHATGPT_PLAN_PROVIDER_ID) {
+      if (isChatGptPlanAccountProviderId(providerId)) {
         const resolved = await siwcResolver.resolve({
           providerId,
           ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),

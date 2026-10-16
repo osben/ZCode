@@ -11,7 +11,10 @@
 
 import { decodeCustomModelValue } from "./custom-model-value.js";
 import { migrateLegacyModelProviderId } from "./legacy-model-provider-identity.js";
-import { isBuiltinModelProviderId } from "./model-provider-types.js";
+import {
+  isBuiltinModelProviderId,
+  isChatGptPlanAccountProviderId,
+} from "./model-provider-types.js";
 import { OFFICIAL_GLM_MODEL_IDS } from "./official-glm-model-id.js";
 
 /** Default per-field limit; ARMS truncates or rejects oversized fields, so truncate proactively to preserve the important prefix. */
@@ -183,7 +186,12 @@ export function resolveTelemetryProviderScope(
   if (!normalized) {
     return { providerId: "", providerScope: "unknown" };
   }
-  if (isBuiltinModelProviderId(normalized) || isLegacyBuiltinTelemetryProviderId(normalized)) {
+  // Per-account ChatGPT plan ids carry only a hex account key (no PII), so they stay unredacted.
+  if (
+    isBuiltinModelProviderId(normalized) ||
+    isLegacyBuiltinTelemetryProviderId(normalized) ||
+    isChatGptPlanAccountProviderId(normalized)
+  ) {
     return { providerId: normalized, providerScope: "builtin" };
   }
   return { providerId: "custom", providerScope: "custom" };

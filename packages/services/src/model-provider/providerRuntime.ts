@@ -27,12 +27,22 @@ import {
 
 export interface ProviderRuntimeOptions extends ProviderConfigRuntimeOptions {
   readonly accountSource?: RefreshableProviderSource<AccountProviderConfigSnapshot>;
+  readonly wrapConfigSource?: (
+    source: ProviderSource<ProviderConfigSnapshot>,
+  ) => ProviderSource<ProviderConfigSnapshot>;
   readonly testConnectivity?: ProviderSettingsConnectivityTester;
 }
 
 export interface ProviderRuntimeDependencies {
   readonly configRuntime: ProviderConfigRuntime;
   readonly accountSource?: RefreshableProviderSource<AccountProviderConfigSnapshot>;
+  /**
+   * Decorates the config source the Registry and Account layer observe (derived per-account
+   * ChatGPT plan providers). Mutations still go to the raw config service.
+   */
+  readonly wrapConfigSource?: (
+    source: ProviderSource<ProviderConfigSnapshot>,
+  ) => ProviderSource<ProviderConfigSnapshot>;
   readonly disposeAccountSource?: () => void;
   readonly testConnectivity?: ProviderSettingsConnectivityTester;
   readonly modelSelectionConfiguredDefaultSource?: ModelSelectionConfiguredDefaultSource;
@@ -62,6 +72,8 @@ export class EmptyAccountProviderConfigSource implements ProviderSource<AccountP
 /** Assemble a process-wide shared Provider Config, Registry, and Facade. */
 export class ProviderRuntime {
   readonly configService: ProviderConfigRuntime["configService"];
+  /** Config source the Registry and Account layer read (possibly derived); mutations use `configService`. */
+  readonly registryConfigSource: ProviderSource<ProviderConfigSnapshot>;
   readonly registryService: ProviderRegistryService;
   readonly providerSettings: IProviderSettingsService;
   readonly modelSelection: IModelSelectionService;
@@ -79,11 +91,14 @@ export class ProviderRuntime {
     this.#disposeModelSelectionConfiguredDefaultSource =
       dependencies.disposeModelSelectionConfiguredDefaultSource;
     this.configService = this.#configRuntime.configService;
+    this.registryConfigSource = dependencies.wrapConfigSource
+      ? dependencies.wrapConfigSource(this.configService)
+      : this.configService;
     const accountSource: RefreshableProviderSource<AccountProviderConfigSnapshot> =
-      dependencies.accountSource ?? new EmptyAccountProviderConfigSource(this.configService);
+      dependencies.accountSource ?? new EmptyAccountProviderConfigSource(this.registryConfigSource);
     this.#disposeBuiltinRecovery = this.#configRuntime.onDidCheckZCodeBuiltin(async () => {
       const [config, account] = await Promise.all([
-        this.configService.read(),
+        this.registryConfigSource.read(),
         accountSource.read(),
       ]);
       if (!this.#disposed && config.zcodeBuiltinRevision !== account.basedOnZCodeBuiltinRevision) {
@@ -91,7 +106,7 @@ export class ProviderRuntime {
       }
     });
     this.registryService = new ProviderRegistryService({
-      configSource: this.configService,
+      configSource: this.registryConfigSource,
       accountSource,
     });
     const mutations = createSettingsMutationTarget(
@@ -194,7 +209,7 @@ function createSettingsMutationTarget(
 }
 
 export function createProviderRuntime(options: ProviderRuntimeOptions): ProviderRuntime {
-  const { accountSource, testConnectivity, ...configRuntimeOptions } = options;
+  const { accountSource, testConnectivity, wrapConfigSource, ...configRuntimeOptions } = options;
   const configRuntime = createProviderConfigRuntime(configRuntimeOptions);
   const modelSelectionConfiguredDefaultSource = new NodeModelSelectionConfigRepository({
     personalRepository: configRuntime.personalRepository,
@@ -203,6 +218,7 @@ export function createProviderRuntime(options: ProviderRuntimeOptions): Provider
     configRuntime,
     accountSource,
     testConnectivity,
+    ...(wrapConfigSource ? { wrapConfigSource } : {}),
     modelSelectionConfiguredDefaultSource,
     disposeModelSelectionConfiguredDefaultSource: () =>
       modelSelectionConfiguredDefaultSource.dispose(),

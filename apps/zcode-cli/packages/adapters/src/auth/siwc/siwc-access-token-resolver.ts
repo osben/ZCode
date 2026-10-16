@@ -1,7 +1,13 @@
 import { createHash } from "node:crypto";
-import { join, dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { isZCodeFileLockTimeoutError } from "@zcode/shared";
 import { withFileLock } from "@zcode/shared/node";
+import {
+  buildSiwcAccountCredentialKeys,
+  buildSiwcAccountRefreshLockFileName,
+  parseChatGptPlanAccountProviderId,
+  type SiwcStoredAccountRecord,
+} from "@zcode/shared";
 import type { SharedZCodeCredentialStore } from "../shared-credentials.js";
 import {
   SIWC_TERMINAL_REFRESH_ERROR_CODES,
@@ -10,18 +16,7 @@ import {
   parseSiwcScopes,
   type SiwcTokenClient,
 } from "./index.js";
-
-/** Credential keys in the shared store; chatgpt is an independent identity domain. */
-export const SIWC_CREDENTIAL_KEYS = {
-  clientId: "oauth:chatgpt:client_id",
-  accessToken: "oauth:chatgpt:access_token",
-  refreshToken: "oauth:chatgpt:refresh_token",
-  idToken: "oauth:chatgpt:id_token",
-  userInfo: "oauth:chatgpt:user_info",
-  scopes: "oauth:chatgpt:scopes",
-  accessExpiresAt: "oauth:chatgpt:access_expires_at",
-  earliestRefreshAt: "oauth:chatgpt:earliest_refresh_at",
-} as const;
+import { migrateLegacySiwcCredentials } from "./siwc-account-store.js";
 
 const SIWC_REFRESH_LOCK_MAX_WAIT_MS = 45_000;
 /** Refresh this long before expiry (SIWC access tokens live 1 hour). */
@@ -41,6 +36,7 @@ export class SiwcReloginRequiredError extends Error {
 
 export interface SiwcAccessTokenResolverInput {
   readonly abortSignal?: AbortSignal;
+  /** Per-account ChatGPT plan provider id (`account:chatgpt-plan:<accountKey>`). */
   readonly providerId: string;
   /**
    * Force a refresh even when the stored token is still time-valid; set after the resource
@@ -55,6 +51,7 @@ export interface SiwcAccessTokenResolution {
 }
 
 export interface SiwcCredentialSnapshot {
+  readonly accountKey: string;
   readonly accessToken: string;
   readonly clientId: string;
   readonly refreshToken: string;
@@ -73,28 +70,31 @@ export interface SiwcAccessTokenResolverOptions {
   readonly now?: () => number;
 }
 
-/** Read the persisted SIWC credentials; null when not signed in. */
+/** Read the persisted SIWC credentials of one account; null when that account is signed out. */
 export async function loadSiwcCredentialSnapshot(
-  credentialStore: Pick<SharedZCodeCredentialStore, "loadMany">,
+  credentialStore: Pick<SharedZCodeCredentialStore, "loadMany" | "saveMany" | "deleteIfValues">,
+  accountKey: string,
 ): Promise<SiwcCredentialSnapshot | null> {
+  const keys = buildSiwcAccountCredentialKeys(accountKey);
   const values = await credentialStore.loadMany([
-    SIWC_CREDENTIAL_KEYS.clientId,
-    SIWC_CREDENTIAL_KEYS.accessToken,
-    SIWC_CREDENTIAL_KEYS.refreshToken,
-    SIWC_CREDENTIAL_KEYS.scopes,
-    SIWC_CREDENTIAL_KEYS.userInfo,
+    keys.clientId,
+    keys.accessToken,
+    keys.refreshToken,
+    keys.scopes,
+    keys.userInfo,
   ]);
-  const clientId = values[SIWC_CREDENTIAL_KEYS.clientId]?.trim();
-  const accessToken = values[SIWC_CREDENTIAL_KEYS.accessToken]?.trim();
-  const refreshToken = values[SIWC_CREDENTIAL_KEYS.refreshToken]?.trim();
-  const scopes = parseSiwcScopes(values[SIWC_CREDENTIAL_KEYS.scopes]);
+  const clientId = values[keys.clientId]?.trim();
+  const accessToken = values[keys.accessToken]?.trim();
+  const refreshToken = values[keys.refreshToken]?.trim();
+  const scopes = parseSiwcScopes(values[keys.scopes]);
   if (!accessToken || !refreshToken) return null;
   return {
+    accountKey,
     accessToken,
     clientId: clientId ?? "",
     refreshToken,
     scopes,
-    identity: readAccountSubject(values[SIWC_CREDENTIAL_KEYS.userInfo]) ?? clientId ?? "",
+    identity: readAccountSubject(values[keys.userInfo]) ?? clientId ?? "",
   };
 }
 
@@ -113,10 +113,25 @@ export function createSiwcAccountScope(input: {
     .digest("hex");
 }
 
+/** All signed-in accounts with their consent state; readers migrate legacy keys first. */
+export async function listSiwcPlanAccounts(
+  credentialStore: Pick<SharedZCodeCredentialStore, "loadMany" | "saveMany" | "deleteIfValues">,
+): Promise<readonly (SiwcStoredAccountRecord & { readonly entitled: boolean })[]> {
+  const records = await migrateLegacySiwcCredentials(credentialStore);
+  const result: (SiwcStoredAccountRecord & { readonly entitled: boolean })[] = [];
+  for (const record of records) {
+    const snapshot = await loadSiwcCredentialSnapshot(credentialStore, record.accountKey);
+    if (!snapshot) continue;
+    result.push({ ...record, entitled: isSiwcPlanUsageEntitled(snapshot.scopes) });
+  }
+  return result;
+}
+
 /**
  * Request-time SIWC token lifecycle owner: proactive refresh before expiry, cross-process
  * single-flight (rotation reuse is fatal), atomic rotation-aware persistence, and terminal
- * refresh failures clearing credentials into a structured re-sign-in state.
+ * refresh failures clearing that account's credentials into a structured re-sign-in state.
+ * All state is scoped to one account slot; accounts never share locks or tokens.
  */
 export function createSiwcAccessTokenResolver(options: SiwcAccessTokenResolverOptions): {
   resolve(input: SiwcAccessTokenResolverInput): Promise<SiwcAccessTokenResolution>;
@@ -129,9 +144,11 @@ export function createSiwcAccessTokenResolver(options: SiwcAccessTokenResolverOp
 
   async function resolveLocked(
     input: SiwcAccessTokenResolverInput,
+    accountKey: string,
   ): Promise<SiwcAccessTokenResolution> {
     input.abortSignal?.throwIfAborted();
-    let snapshot = await loadSiwcTokenState(options.credentialStore);
+    await migrateLegacySiwcCredentials(options.credentialStore);
+    let snapshot = await loadSiwcTokenState(options.credentialStore, accountKey);
     if (!snapshot) {
       throw new SiwcReloginRequiredError(
         "ChatGPT plan credentials are missing. Sign in with `zcode login chatgpt`.",
@@ -139,7 +156,7 @@ export function createSiwcAccessTokenResolver(options: SiwcAccessTokenResolverOp
       );
     }
     if (!input.forceRefresh && isAccessUsable(snapshot, now())) {
-      return toResolution(snapshot, input.providerId);
+      return toResolution(snapshot, input.providerId, accountKey);
     }
     if (!snapshot.clientId || !snapshot.refreshToken) {
       throw new SiwcReloginRequiredError(
@@ -154,24 +171,37 @@ export function createSiwcAccessTokenResolver(options: SiwcAccessTokenResolverOp
       snapshot.earliestRefreshAt != null &&
       now() / 1000 < snapshot.earliestRefreshAt
     ) {
-      if (snapshot.accessToken) return toResolution(snapshot, input.providerId);
+      if (snapshot.accessToken) return toResolution(snapshot, input.providerId, accountKey);
     }
-    snapshot = await refreshUnderLock(tokenClient, options, snapshot, now, input.abortSignal);
+    snapshot = await refreshUnderLock(
+      tokenClient,
+      options,
+      snapshot,
+      accountKey,
+      now,
+      input.abortSignal,
+    );
     if (!isAccessUsable(snapshot, now())) {
       throw new SiwcReloginRequiredError(
         "ChatGPT plan token refresh did not produce a usable access token. Sign in again with `zcode login chatgpt`.",
         { reason: "refresh_failed" },
       );
     }
-    return toResolution(snapshot, input.providerId);
+    return toResolution(snapshot, input.providerId, accountKey);
   }
 
   return {
     async resolve(input) {
-      const existing = inFlight.get(input.providerId);
+      const accountKey = parseChatGptPlanAccountProviderId(input.providerId);
+      if (!accountKey) {
+        throw new Error(
+          `Not a per-account ChatGPT plan provider id: ${input.providerId}. Sign in again.`,
+        );
+      }
+      const existing = inFlight.get(accountKey);
       if (existing) return existing;
-      const pending = resolveLocked(input).finally(() => inFlight.delete(input.providerId));
-      inFlight.set(input.providerId, pending);
+      const pending = resolveLocked(input, accountKey).finally(() => inFlight.delete(accountKey));
+      inFlight.set(accountKey, pending);
       return pending;
     },
   };
@@ -188,32 +218,37 @@ interface SiwcTokenState {
   earliestRefreshAt: number | null;
 }
 
+function siwcStateKeys(accountKey: string) {
+  return buildSiwcAccountCredentialKeys(accountKey);
+}
+
 async function loadSiwcTokenState(
-  credentialStore: Pick<SharedZCodeCredentialStore, "loadMany">,
+  credentialStore: Pick<SharedZCodeCredentialStore, "loadMany" | "saveMany" | "deleteIfValues">,
+  accountKey: string,
 ): Promise<SiwcTokenState | null> {
-  const keys = [
-    SIWC_CREDENTIAL_KEYS.accessToken,
-    SIWC_CREDENTIAL_KEYS.clientId,
-    SIWC_CREDENTIAL_KEYS.idToken,
-    SIWC_CREDENTIAL_KEYS.refreshToken,
-    SIWC_CREDENTIAL_KEYS.scopes,
-    SIWC_CREDENTIAL_KEYS.userInfo,
-    SIWC_CREDENTIAL_KEYS.accessExpiresAt,
-    SIWC_CREDENTIAL_KEYS.earliestRefreshAt,
-  ];
-  const values = await credentialStore.loadMany(keys);
-  const accessToken = values[SIWC_CREDENTIAL_KEYS.accessToken]?.trim() ?? null;
-  const refreshToken = values[SIWC_CREDENTIAL_KEYS.refreshToken]?.trim() ?? null;
+  const keys = siwcStateKeys(accountKey);
+  const values = await credentialStore.loadMany([
+    keys.accessToken,
+    keys.clientId,
+    keys.idToken,
+    keys.refreshToken,
+    keys.scopes,
+    keys.userInfo,
+    keys.accessExpiresAt,
+    keys.earliestRefreshAt,
+  ]);
+  const accessToken = values[keys.accessToken]?.trim() ?? null;
+  const refreshToken = values[keys.refreshToken]?.trim() ?? null;
   if (!accessToken && !refreshToken) return null;
   return {
     accessToken: accessToken || null,
-    clientId: values[SIWC_CREDENTIAL_KEYS.clientId]?.trim() || null,
-    idToken: values[SIWC_CREDENTIAL_KEYS.idToken]?.trim() || null,
+    clientId: values[keys.clientId]?.trim() || null,
+    idToken: values[keys.idToken]?.trim() || null,
     refreshToken,
-    scopes: values[SIWC_CREDENTIAL_KEYS.scopes] ?? null,
-    subject: readAccountSubject(values[SIWC_CREDENTIAL_KEYS.userInfo]),
-    accessExpiresAt: readEpoch(values[SIWC_CREDENTIAL_KEYS.accessExpiresAt]),
-    earliestRefreshAt: readEpoch(values[SIWC_CREDENTIAL_KEYS.earliestRefreshAt]),
+    scopes: values[keys.scopes] ?? null,
+    subject: readAccountSubject(values[keys.userInfo]),
+    accessExpiresAt: readEpoch(values[keys.accessExpiresAt]),
+    earliestRefreshAt: readEpoch(values[keys.earliestRefreshAt]),
   };
 }
 
@@ -233,44 +268,49 @@ function isAccessUsable(state: SiwcTokenState, nowMs: number): boolean {
   return nowMs / 1000 < state.accessExpiresAt - SIWC_PROACTIVE_REFRESH_MARGIN_SECONDS;
 }
 
-function toResolution(state: SiwcTokenState, providerId: string): SiwcAccessTokenResolution {
+function toResolution(
+  state: SiwcTokenState,
+  providerId: string,
+  accountKey: string,
+): SiwcAccessTokenResolution {
   if (!state.accessToken) throw new Error("SIWC access token expected to be present.");
   return {
     apiKey: state.accessToken,
     accountScope: createSiwcAccountScope({
       clientId: state.clientId ?? "",
       // Stability fallback for accounts without persisted user info.
-      subject: state.subject ?? state.clientId ?? "",
+      subject: state.subject ?? state.clientId ?? accountKey,
       providerId,
     }),
   };
 }
 
 /**
- * Refresh under a cross-process file lock. The lock file is separate from the credentials
- * file because the store locks the credentials file itself for read-modify-write.
+ * Refresh under a cross-process per-account file lock. The lock file is separate from the
+ * credentials file because the store locks the credentials file itself for read-modify-write.
  */
 async function refreshUnderLock(
   tokenClient: SiwcTokenClient,
   options: SiwcAccessTokenResolverOptions,
   observed: SiwcTokenState,
+  accountKey: string,
   now: () => number,
   abortSignal?: AbortSignal,
 ): Promise<SiwcTokenState> {
   const lockPath = join(
     dirname(options.credentialStore.filePath),
-    "siwc-chatgpt.refresh",
+    buildSiwcAccountRefreshLockFileName(accountKey),
   );
   try {
     return await withFileLock(
       lockPath,
-      () => refreshLocked(tokenClient, options, observed, now, abortSignal),
+      () => refreshLocked(tokenClient, options, observed, accountKey, now, abortSignal),
       { lockMaxWaitMs: SIWC_REFRESH_LOCK_MAX_WAIT_MS },
     );
   } catch (error) {
     if (!isZCodeFileLockTimeoutError(error)) throw error;
     // A lock timeout does not mean refresh failed; the winner may have rotated tokens.
-    const current = await loadSiwcTokenState(options.credentialStore);
+    const current = await loadSiwcTokenState(options.credentialStore, accountKey);
     if (current && isAccessUsable(current, now())) return current;
     throw error;
   }
@@ -280,11 +320,13 @@ async function refreshLocked(
   tokenClient: SiwcTokenClient,
   options: SiwcAccessTokenResolverOptions,
   observed: SiwcTokenState,
+  accountKey: string,
   now: () => number,
   abortSignal?: AbortSignal,
 ): Promise<SiwcTokenState> {
   const store = options.credentialStore;
-  const current = await loadSiwcTokenState(store);
+  const keys = siwcStateKeys(accountKey);
+  const current = await loadSiwcTokenState(store, accountKey);
   if (!current?.accessToken || !current.clientId || !current.refreshToken) {
     throw new SiwcReloginRequiredError(
       "ChatGPT plan credentials are missing. Sign in with `zcode login chatgpt`.",
@@ -304,19 +346,17 @@ async function refreshLocked(
     const expiresAt = Math.floor(now() / 1000) + (response.expiresInSeconds ?? 3600);
     const scopeValue = response.scope ?? current.scopes ?? undefined;
     await store.saveMany({
-      [SIWC_CREDENTIAL_KEYS.accessToken]: response.accessToken,
+      [keys.accessToken]: response.accessToken,
       // Rotation: the response's refresh token replaces the old one atomically.
-      ...(response.refreshToken
-        ? { [SIWC_CREDENTIAL_KEYS.refreshToken]: response.refreshToken }
-        : {}),
-      ...(response.idToken ? { [SIWC_CREDENTIAL_KEYS.idToken]: response.idToken } : {}),
-      ...(scopeValue ? { [SIWC_CREDENTIAL_KEYS.scopes]: scopeValue } : {}),
-      [SIWC_CREDENTIAL_KEYS.accessExpiresAt]: String(expiresAt),
+      ...(response.refreshToken ? { [keys.refreshToken]: response.refreshToken } : {}),
+      ...(response.idToken ? { [keys.idToken]: response.idToken } : {}),
+      ...(scopeValue ? { [keys.scopes]: scopeValue } : {}),
+      [keys.accessExpiresAt]: String(expiresAt),
       ...(response.earliestRefreshAt !== undefined
-        ? { [SIWC_CREDENTIAL_KEYS.earliestRefreshAt]: String(response.earliestRefreshAt) }
+        ? { [keys.earliestRefreshAt]: String(response.earliestRefreshAt) }
         : {}),
     });
-    const after = await loadSiwcTokenState(store);
+    const after = await loadSiwcTokenState(store, accountKey);
     if (!after?.accessToken) {
       throw new SiwcReloginRequiredError(
         "ChatGPT plan credentials disappeared during refresh. Sign in again.",
@@ -326,9 +366,9 @@ async function refreshLocked(
     return after;
   } catch (error) {
     if (isSiwcTerminalRefreshError(error)) {
-      // Terminal refresh failures clear tokens but retain the issued client id and account
-      // mapping for a smooth re-auth (same retention rule as logout).
-      await clearSiwcTokenCredentials(store);
+      // Terminal refresh failures clear that account's tokens but retain its issued client id
+      // and account mapping for a smooth re-auth (same retention rule as logout).
+      await clearSiwcTokenCredentials(store, accountKey);
       throw new SiwcReloginRequiredError(
         "ChatGPT plan sign-in has expired or been revoked. Sign in again with `zcode login chatgpt`.",
         { cause: error, reason: "terminal_refresh_failure" },
@@ -358,19 +398,21 @@ function readEpoch(value: string | null | undefined): number | null {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
-/** Clear SIWC token credentials; retains the issued client id and account mapping. */
+/** Clear one account's SIWC token credentials; retains its client id and account mapping. */
 export async function clearSiwcTokenCredentials(
-  credentialStore: Pick<SharedZCodeCredentialStore, "loadMany" | "deleteIfValues">,
+  credentialStore: Pick<SharedZCodeCredentialStore, "loadMany" | "saveMany" | "deleteIfValues">,
+  accountKey: string,
 ): Promise<void> {
-  const keys = [
-    SIWC_CREDENTIAL_KEYS.accessToken,
-    SIWC_CREDENTIAL_KEYS.refreshToken,
-    SIWC_CREDENTIAL_KEYS.idToken,
-    SIWC_CREDENTIAL_KEYS.scopes,
-    SIWC_CREDENTIAL_KEYS.accessExpiresAt,
-    SIWC_CREDENTIAL_KEYS.earliestRefreshAt,
+  const keys = siwcStateKeys(accountKey);
+  const tokenKeys = [
+    keys.accessToken,
+    keys.refreshToken,
+    keys.idToken,
+    keys.scopes,
+    keys.accessExpiresAt,
+    keys.earliestRefreshAt,
   ];
-  const current = await credentialStore.loadMany(keys);
+  const current = await credentialStore.loadMany(tokenKeys);
   await credentialStore.deleteIfValues(
     Object.fromEntries(
       Object.entries(current).flatMap(([key, value]) => (value === null ? [] : [[key, value]])),
@@ -378,10 +420,12 @@ export async function clearSiwcTokenCredentials(
   );
 }
 
-/** Entitlement gate: signed-in identity plus the plan-usage scope consent. */
+/** Entitlement gate for one account: signed-in identity plus the plan-usage scope consent. */
 export async function isSiwcPlanEntitled(
-  credentialStore: Pick<SharedZCodeCredentialStore, "loadMany">,
+  credentialStore: Pick<SharedZCodeCredentialStore, "loadMany" | "saveMany" | "deleteIfValues">,
+  accountKey: string,
 ): Promise<boolean> {
-  const snapshot = await loadSiwcCredentialSnapshot(credentialStore);
+  await migrateLegacySiwcCredentials(credentialStore);
+  const snapshot = await loadSiwcCredentialSnapshot(credentialStore, accountKey);
   return snapshot !== null && isSiwcPlanUsageEntitled(snapshot.scopes);
 }

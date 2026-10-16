@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   BUILTIN_MODEL_PROVIDER_IDS,
+  buildChatGptPlanAccountProviderId,
   zcodeProtocolMethods,
   zcodeProtocolNotifications,
   requiresRequestVerification,
@@ -98,6 +99,7 @@ async function setup(
         ...(rejectedProjectTokenFingerprint ? { rejectedProjectTokenFingerprint } : {}),
       },
     });
+  const chatgptAccountProviderId = buildChatGptPlanAccountProviderId("a1b2c3d4e5f60718");
   const fireChatgpt = (expectedAccountScope?: string, rejectedProjectTokenFingerprint?: string) =>
     receive?.({
       id: "protocol-1",
@@ -106,9 +108,9 @@ async function setup(
         requestId: target.requestId,
         sessionId: target.sessionId,
         workspace,
-        providerId: BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan,
+        providerId: chatgptAccountProviderId,
         modelSelection: {
-          providerId: BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan,
+          providerId: chatgptAccountProviderId,
           modelId: "gpt-6.1-sol",
         },
         reason: "model-request",
@@ -140,7 +142,7 @@ describe("Host 自动应答账号请求鉴权", () => {
       expect(resolve).toHaveBeenCalledWith({
         expectedAccountScope: undefined,
         forceRefresh: false,
-        providerId: BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan,
+        providerId: buildChatGptPlanAccountProviderId("a1b2c3d4e5f60718"),
       });
     } finally {
       service.disposeAll();

@@ -1,6 +1,9 @@
-import { BUILTIN_MODEL_PROVIDER_IDS } from "@zcode/shared";
+import { isChatGptPlanProviderId } from "@zcode/shared";
 
-/** The ChatGPT plan (official OpenAI SIWC) builtin subscription provider. */
+/**
+ * The ChatGPT plan (official OpenAI SIWC) subscription provider family: the builtin template
+ * id plus the runtime per-account entries (`account:chatgpt-plan:<accountKey>`).
+ */
 export function isChatGptPlanSubscriptionProviderId(providerId: string): boolean {
-  return providerId === BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan;
+  return isChatGptPlanProviderId(providerId);
 }

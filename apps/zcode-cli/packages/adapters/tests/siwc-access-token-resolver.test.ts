@@ -2,11 +2,19 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import {
+  buildChatGptPlanAccountProviderId,
+  buildSiwcAccountCredentialKeys,
+  SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY,
+  SIWC_LEGACY_CREDENTIAL_KEYS,
+} from "@zcode/shared";
 import { createSharedZCodeCredentialStore } from "../src/auth/shared-credentials.js";
 import {
   createSiwcAccessTokenResolver,
+  createSiwcAccountKey,
   isSiwcPlanEntitled,
-  SIWC_CREDENTIAL_KEYS,
+  listSiwcPlanAccounts,
+  migrateLegacySiwcCredentials,
   SiwcReloginRequiredError,
   type SiwcTokenClient,
   type SiwcTokenResponse,
@@ -25,19 +33,45 @@ async function createStore() {
   return createSharedZCodeCredentialStore({ baseDir: dir, env: TEST_ENV });
 }
 
-function seedTokens(
+const SUB_1 = "user-sub-1";
+const ACCOUNT_KEY_1 = createSiwcAccountKey(SUB_1);
+const PROVIDER_ID_1 = buildChatGptPlanAccountProviderId(ACCOUNT_KEY_1);
+const KEYS_1 = buildSiwcAccountCredentialKeys(ACCOUNT_KEY_1);
+const FULL_SCOPES =
+  "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct";
+
+async function seedAccount(
   store: ReturnType<typeof createSharedZCodeCredentialStore>,
-  input: { accessToken: string; expiresAt: number; refreshToken: string },
+  input: {
+    accountKey: string;
+    accessToken: string;
+    expiresAt: number;
+    refreshToken: string;
+    sub?: string;
+    email?: string;
+  },
 ): Promise<void> {
-  return store.saveMany({
-    [SIWC_CREDENTIAL_KEYS.clientId]: "oaiapp_issued",
-    [SIWC_CREDENTIAL_KEYS.accessToken]: input.accessToken,
-    [SIWC_CREDENTIAL_KEYS.refreshToken]: input.refreshToken,
-    [SIWC_CREDENTIAL_KEYS.scopes]:
-      "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct",
-    [SIWC_CREDENTIAL_KEYS.userInfo]: JSON.stringify({ sub: "user-sub-1", email: "u@example.com" }),
-    [SIWC_CREDENTIAL_KEYS.accessExpiresAt]: String(input.expiresAt),
+  const keys = buildSiwcAccountCredentialKeys(input.accountKey);
+  const sub = input.sub ?? SUB_1;
+  await store.saveMany({
+    [keys.clientId]: "oaiapp_issued",
+    [keys.accessToken]: input.accessToken,
+    [keys.refreshToken]: input.refreshToken,
+    [keys.scopes]: FULL_SCOPES,
+    [keys.userInfo]: JSON.stringify({
+      sub,
+      ...(input.email ? { email: input.email } : {}),
+    }),
+    [keys.accessExpiresAt]: String(input.expiresAt),
   });
+  const index = await store.load(SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY);
+  const records = index ? (JSON.parse(index) as unknown[]) : [];
+  const record = { accountKey: input.accountKey, sub, email: input.email ?? null, name: null, addedAt: "" };
+  const next = records.filter(
+    (entry) => (entry as { accountKey?: string }).accountKey !== input.accountKey,
+  );
+  next.push(record);
+  await store.save(SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY, JSON.stringify(next));
 }
 
 const NOW_SECONDS = 1_770_000_000;
@@ -61,10 +95,11 @@ function createFakeTokenClient(responses: SiwcTokenResponse[]) {
   return { refreshCalls, tokenClient };
 }
 
-describe("SIWC access token resolver", () => {
+describe("SIWC access token resolver (per-account)", () => {
   it("returns a usable token without refreshing", async () => {
     const store = await createStore();
-    await seedTokens(store, {
+    await seedAccount(store, {
+      accountKey: ACCOUNT_KEY_1,
       accessToken: "access-1",
       expiresAt: NOW_SECONDS + 3600,
       refreshToken: "refresh-1",
@@ -75,15 +110,29 @@ describe("SIWC access token resolver", () => {
       tokenClient,
       now: () => NOW_SECONDS * 1000,
     });
-    const resolved = await resolver.resolve({ providerId: "account:chatgpt-plan" });
+    const resolved = await resolver.resolve({ providerId: PROVIDER_ID_1 });
     expect(resolved.apiKey).toBe("access-1");
     expect(resolved.accountScope).toMatch(/^[0-9a-f]{64}$/u);
     expect(refreshCalls).toHaveLength(0);
   });
 
+  it("rejects provider ids that are not per-account entries", async () => {
+    const store = await createStore();
+    const { tokenClient } = createFakeTokenClient([]);
+    const resolver = createSiwcAccessTokenResolver({
+      credentialStore: store,
+      tokenClient,
+      now: () => NOW_SECONDS * 1000,
+    });
+    await expect(
+      resolver.resolve({ providerId: "account:chatgpt-plan" }),
+    ).rejects.toThrow(/per-account/u);
+  });
+
   it("refreshes near expiry with the issued client id and persists rotation atomically", async () => {
     const store = await createStore();
-    await seedTokens(store, {
+    await seedAccount(store, {
+      accountKey: ACCOUNT_KEY_1,
       accessToken: "access-1",
       expiresAt: NOW_SECONDS + 60,
       refreshToken: "refresh-1",
@@ -101,24 +150,25 @@ describe("SIWC access token resolver", () => {
       tokenClient,
       now: () => NOW_SECONDS * 1000,
     });
-    const resolved = await resolver.resolve({ providerId: "account:chatgpt-plan" });
+    const resolved = await resolver.resolve({ providerId: PROVIDER_ID_1 });
     expect(resolved.apiKey).toBe("access-2");
     expect(refreshCalls).toEqual([{ clientId: "oaiapp_issued", refreshToken: "refresh-1" }]);
     const after = await store.loadMany([
-      SIWC_CREDENTIAL_KEYS.accessToken,
-      SIWC_CREDENTIAL_KEYS.refreshToken,
-      SIWC_CREDENTIAL_KEYS.accessExpiresAt,
-      SIWC_CREDENTIAL_KEYS.earliestRefreshAt,
+      KEYS_1.accessToken,
+      KEYS_1.refreshToken,
+      KEYS_1.accessExpiresAt,
+      KEYS_1.earliestRefreshAt,
     ]);
-    expect(after[SIWC_CREDENTIAL_KEYS.accessToken]).toBe("access-2");
-    expect(after[SIWC_CREDENTIAL_KEYS.refreshToken]).toBe("refresh-2");
-    expect(after[SIWC_CREDENTIAL_KEYS.accessExpiresAt]).toBe(String(NOW_SECONDS + 3600));
-    expect(after[SIWC_CREDENTIAL_KEYS.earliestRefreshAt]).toBe(String(NOW_SECONDS + 1800));
+    expect(after[KEYS_1.accessToken]).toBe("access-2");
+    expect(after[KEYS_1.refreshToken]).toBe("refresh-2");
+    expect(after[KEYS_1.accessExpiresAt]).toBe(String(NOW_SECONDS + 3600));
+    expect(after[KEYS_1.earliestRefreshAt]).toBe(String(NOW_SECONDS + 1800));
   });
 
   it("coalesces concurrent resolves into a single refresh", async () => {
     const store = await createStore();
-    await seedTokens(store, {
+    await seedAccount(store, {
+      accountKey: ACCOUNT_KEY_1,
       accessToken: "access-1",
       expiresAt: NOW_SECONDS - 10,
       refreshToken: "refresh-1",
@@ -132,9 +182,9 @@ describe("SIWC access token resolver", () => {
       now: () => NOW_SECONDS * 1000,
     });
     const [a, b, c] = await Promise.all([
-      resolver.resolve({ providerId: "account:chatgpt-plan" }),
-      resolver.resolve({ providerId: "account:chatgpt-plan" }),
-      resolver.resolve({ providerId: "account:chatgpt-plan" }),
+      resolver.resolve({ providerId: PROVIDER_ID_1 }),
+      resolver.resolve({ providerId: PROVIDER_ID_1 }),
+      resolver.resolve({ providerId: PROVIDER_ID_1 }),
     ]);
     expect(a.apiKey).toBe("access-2");
     expect(b.apiKey).toBe("access-2");
@@ -142,12 +192,59 @@ describe("SIWC access token resolver", () => {
     expect(refreshCalls).toHaveLength(1);
   });
 
-  it("clears tokens but retains the client id on terminal refresh errors", async () => {
+  it("refreshes two accounts independently without cross-slot writes", async () => {
     const store = await createStore();
-    await seedTokens(store, {
-      accessToken: "access-1",
+    const accountKey2 = createSiwcAccountKey("user-sub-2");
+    const providerId2 = buildChatGptPlanAccountProviderId(accountKey2);
+    const keys2 = buildSiwcAccountCredentialKeys(accountKey2);
+    await seedAccount(store, {
+      accountKey: ACCOUNT_KEY_1,
+      accessToken: "access-a1",
+      expiresAt: NOW_SECONDS + 3600,
+      refreshToken: "refresh-a1",
+    });
+    await seedAccount(store, {
+      accountKey: accountKey2,
+      accessToken: "access-b1",
       expiresAt: NOW_SECONDS - 10,
-      refreshToken: "refresh-1",
+      refreshToken: "refresh-b1",
+      sub: "user-sub-2",
+      email: "b@example.com",
+    });
+    const { refreshCalls, tokenClient } = createFakeTokenClient([
+      { accessToken: "access-b2", refreshToken: "refresh-b2", expiresInSeconds: 3600 },
+    ]);
+    const resolver = createSiwcAccessTokenResolver({
+      credentialStore: store,
+      tokenClient,
+      now: () => NOW_SECONDS * 1000,
+    });
+    const resolvedB = await resolver.resolve({ providerId: providerId2 });
+    expect(resolvedB.apiKey).toBe("access-b2");
+    expect(refreshCalls).toEqual([{ clientId: "oaiapp_issued", refreshToken: "refresh-b1" }]);
+    const values = await store.loadMany([KEYS_1.accessToken, keys2.accessToken]);
+    // Account A untouched by account B's refresh.
+    expect(values[KEYS_1.accessToken]).toBe("access-a1");
+    expect(values[keys2.accessToken]).toBe("access-b2");
+  });
+
+  it("clears only the failing account's tokens on terminal refresh errors", async () => {
+    const store = await createStore();
+    const accountKey2 = createSiwcAccountKey("user-sub-2");
+    const providerId2 = buildChatGptPlanAccountProviderId(accountKey2);
+    const keys2 = buildSiwcAccountCredentialKeys(accountKey2);
+    await seedAccount(store, {
+      accountKey: ACCOUNT_KEY_1,
+      accessToken: "access-a1",
+      expiresAt: NOW_SECONDS + 3600,
+      refreshToken: "refresh-a1",
+    });
+    await seedAccount(store, {
+      accountKey: accountKey2,
+      accessToken: "access-b1",
+      expiresAt: NOW_SECONDS - 10,
+      refreshToken: "refresh-b1",
+      sub: "user-sub-2",
     });
     const tokenClient: SiwcTokenClient = {
       async exchangeCode() {
@@ -169,25 +266,30 @@ describe("SIWC access token resolver", () => {
       tokenClient,
       now: () => NOW_SECONDS * 1000,
     });
-    const error = await resolver
-      .resolve({ providerId: "account:chatgpt-plan" })
-      .catch((caught: unknown) => caught);
+    const error = await resolver.resolve({ providerId: providerId2 }).catch(
+      (caught: unknown) => caught,
+    );
     expect(error).toBeInstanceOf(SiwcReloginRequiredError);
     const after = await store.loadMany([
-      SIWC_CREDENTIAL_KEYS.clientId,
-      SIWC_CREDENTIAL_KEYS.accessToken,
-      SIWC_CREDENTIAL_KEYS.refreshToken,
-      SIWC_CREDENTIAL_KEYS.scopes,
+      KEYS_1.accessToken,
+      KEYS_1.refreshToken,
+      keys2.clientId,
+      keys2.accessToken,
+      keys2.refreshToken,
+      keys2.scopes,
     ]);
-    // Retention rule shared with logout: keep the issued client id, drop tokens.
-    expect(after[SIWC_CREDENTIAL_KEYS.clientId]).toBe("oaiapp_issued");
-    expect(after[SIWC_CREDENTIAL_KEYS.accessToken]).toBeNull();
-    expect(after[SIWC_CREDENTIAL_KEYS.refreshToken]).toBeNull();
-    expect(after[SIWC_CREDENTIAL_KEYS.scopes]).toBeNull();
-    expect(await isSiwcPlanEntitled(store)).toBe(false);
+    // Retention rule shared with logout: keep the issued client id, drop that account's tokens.
+    expect(after[KEYS_1.accessToken]).toBe("access-a1");
+    expect(after[KEYS_1.refreshToken]).toBe("refresh-a1");
+    expect(after[keys2.clientId]).toBe("oaiapp_issued");
+    expect(after[keys2.accessToken]).toBeNull();
+    expect(after[keys2.refreshToken]).toBeNull();
+    expect(after[keys2.scopes]).toBeNull();
+    expect(await isSiwcPlanEntitled(store, ACCOUNT_KEY_1)).toBe(true);
+    expect(await isSiwcPlanEntitled(store, accountKey2)).toBe(false);
   });
 
-  it("requires sign-in when no credentials exist", async () => {
+  it("requires sign-in when no credentials exist for the account", async () => {
     const store = await createStore();
     const { tokenClient } = createFakeTokenClient([]);
     const resolver = createSiwcAccessTokenResolver({
@@ -195,17 +297,91 @@ describe("SIWC access token resolver", () => {
       tokenClient,
       now: () => NOW_SECONDS * 1000,
     });
-    await expect(resolver.resolve({ providerId: "account:chatgpt-plan" })).rejects.toMatchObject({
+    await expect(resolver.resolve({ providerId: PROVIDER_ID_1 })).rejects.toMatchObject({
       name: "SiwcReloginRequiredError",
       reason: "not_signed_in",
     });
+  });
+
+  it("migrates legacy flat credentials into the account slot and deletes them", async () => {
+    const store = await createStore();
+    await store.saveMany({
+      [SIWC_LEGACY_CREDENTIAL_KEYS.clientId]: "oaiapp_legacy",
+      [SIWC_LEGACY_CREDENTIAL_KEYS.accessToken]: "access-legacy",
+      [SIWC_LEGACY_CREDENTIAL_KEYS.refreshToken]: "refresh-legacy",
+      [SIWC_LEGACY_CREDENTIAL_KEYS.scopes]: FULL_SCOPES,
+      [SIWC_LEGACY_CREDENTIAL_KEYS.userInfo]: JSON.stringify({
+        sub: SUB_1,
+        email: "u@example.com",
+      }),
+      [SIWC_LEGACY_CREDENTIAL_KEYS.accessExpiresAt]: String(NOW_SECONDS + 3600),
+    });
+    const records = await migrateLegacySiwcCredentials(store);
+    expect(records).toHaveLength(1);
+    expect(records[0]!.accountKey).toBe(ACCOUNT_KEY_1);
+    const keys = buildSiwcAccountCredentialKeys(ACCOUNT_KEY_1);
+    const migrated = await store.loadMany([keys.clientId, keys.accessToken, keys.refreshToken]);
+    expect(migrated[keys.clientId]).toBe("oaiapp_legacy");
+    expect(migrated[keys.accessToken]).toBe("access-legacy");
+    expect(migrated[keys.refreshToken]).toBe("refresh-legacy");
+    const legacy = await store.loadMany([
+      SIWC_LEGACY_CREDENTIAL_KEYS.clientId,
+      SIWC_LEGACY_CREDENTIAL_KEYS.accessToken,
+    ]);
+    expect(legacy[SIWC_LEGACY_CREDENTIAL_KEYS.clientId]).toBeNull();
+    expect(legacy[SIWC_LEGACY_CREDENTIAL_KEYS.accessToken]).toBeNull();
+    // Idempotent: a second migration is a no-op that keeps the same slot.
+    const again = await migrateLegacySiwcCredentials(store);
+    expect(again).toHaveLength(1);
+    // The migrated account resolves through the standard per-account path.
+    const { tokenClient } = createFakeTokenClient([]);
+    const resolver = createSiwcAccessTokenResolver({
+      credentialStore: store,
+      tokenClient,
+      now: () => NOW_SECONDS * 1000,
+    });
+    const resolved = await resolver.resolve({ providerId: PROVIDER_ID_1 });
+    expect(resolved.apiKey).toBe("access-legacy");
+  });
+
+  it("lists accounts with per-account consent state", async () => {
+    const store = await createStore();
+    const accountKey2 = createSiwcAccountKey("user-sub-2");
+    await seedAccount(store, {
+      accountKey: ACCOUNT_KEY_1,
+      accessToken: "access-a1",
+      expiresAt: NOW_SECONDS + 3600,
+      refreshToken: "refresh-a1",
+    });
+    const keys2 = buildSiwcAccountCredentialKeys(accountKey2);
+    await store.saveMany({
+      [keys2.clientId]: "oaiapp_issued",
+      [keys2.accessToken]: "access-b1",
+      [keys2.refreshToken]: "refresh-b1",
+      [keys2.scopes]: "openid profile email",
+      [keys2.userInfo]: JSON.stringify({ sub: "user-sub-2" }),
+      [keys2.accessExpiresAt]: String(NOW_SECONDS + 3600),
+    });
+    await store.save(
+      SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY,
+      JSON.stringify([
+        { accountKey: ACCOUNT_KEY_1, sub: SUB_1, email: "u@example.com", name: null, addedAt: "" },
+        { accountKey: accountKey2, sub: "user-sub-2", email: null, name: null, addedAt: "" },
+      ]),
+    );
+    const accounts = await listSiwcPlanAccounts(store);
+    expect(accounts).toHaveLength(2);
+    const byKey = new Map(accounts.map((account) => [account.accountKey, account]));
+    expect(byKey.get(ACCOUNT_KEY_1)!.entitled).toBe(true);
+    expect(byKey.get(accountKey2)!.entitled).toBe(false);
   });
 
   it("refreshes through the DEFAULT token client in production wiring (no injected client)", async () => {
     // Regression: refreshLocked previously ignored the defaulted client, so the production
     // construction (credential store only) could never refresh.
     const store = await createStore();
-    await seedTokens(store, {
+    await seedAccount(store, {
+      accountKey: ACCOUNT_KEY_1,
       accessToken: "access-1",
       expiresAt: NOW_SECONDS - 10,
       refreshToken: "refresh-1",
@@ -224,17 +400,18 @@ describe("SIWC access token resolver", () => {
       fetchFn,
       now: () => NOW_SECONDS * 1000,
     });
-    const resolved = await resolver.resolve({ providerId: "account:chatgpt-plan" });
+    const resolved = await resolver.resolve({ providerId: PROVIDER_ID_1 });
     expect(resolved.apiKey).toBe("access-2");
     expect(tokenRequests).toHaveLength(1);
     expect(tokenRequests[0]).toContain("grant_type=refresh_token");
     expect(tokenRequests[0]).toContain("client_id=oaiapp_issued");
-    expect(await store.load(SIWC_CREDENTIAL_KEYS.refreshToken)).toBe("refresh-2");
+    expect(await store.load(KEYS_1.refreshToken)).toBe("refresh-2");
   });
 
   it("keeps the account scope stable across token rotation (account-switch fingerprint only)", async () => {
     const store = await createStore();
-    await seedTokens(store, {
+    await seedAccount(store, {
+      accountKey: ACCOUNT_KEY_1,
       accessToken: "access-1",
       expiresAt: NOW_SECONDS + 3600,
       refreshToken: "refresh-1",
@@ -247,9 +424,9 @@ describe("SIWC access token resolver", () => {
       tokenClient,
       now: () => NOW_SECONDS * 1000,
     });
-    const before = await resolver.resolve({ providerId: "account:chatgpt-plan" });
+    const before = await resolver.resolve({ providerId: PROVIDER_ID_1 });
     // Simulate expiry + rotation.
-    await store.save(SIWC_CREDENTIAL_KEYS.accessExpiresAt, String(NOW_SECONDS + 60));
+    await store.save(KEYS_1.accessExpiresAt, String(NOW_SECONDS + 60));
     const { tokenClient: second } = createFakeTokenClient([
       { accessToken: "access-3", refreshToken: "refresh-3", expiresInSeconds: 3600 },
     ]);
@@ -258,14 +435,15 @@ describe("SIWC access token resolver", () => {
       tokenClient: second,
       now: () => NOW_SECONDS * 1000,
     });
-    const after = await resolverAfterRotation.resolve({ providerId: "account:chatgpt-plan" });
+    const after = await resolverAfterRotation.resolve({ providerId: PROVIDER_ID_1 });
     expect(after.apiKey).toBe("access-3");
     expect(after.accountScope).toBe(before.accountScope);
   });
 
   it("forceRefresh rotates even a time-valid token (401 retry must not resend it)", async () => {
     const store = await createStore();
-    await seedTokens(store, {
+    await seedAccount(store, {
+      accountKey: ACCOUNT_KEY_1,
       accessToken: "access-rejected",
       expiresAt: NOW_SECONDS + 3600,
       refreshToken: "refresh-1",
@@ -279,7 +457,7 @@ describe("SIWC access token resolver", () => {
       now: () => NOW_SECONDS * 1000,
     });
     const resolved = await resolver.resolve({
-      providerId: "account:chatgpt-plan",
+      providerId: PROVIDER_ID_1,
       forceRefresh: true,
     });
     expect(resolved.apiKey).toBe("access-fresh");
@@ -288,19 +466,20 @@ describe("SIWC access token resolver", () => {
 
   it("keeps the current token before earliest_refresh_at", async () => {
     const store = await createStore();
-    await seedTokens(store, {
+    await seedAccount(store, {
+      accountKey: ACCOUNT_KEY_1,
       accessToken: "access-1",
       expiresAt: NOW_SECONDS + 60,
       refreshToken: "refresh-1",
     });
-    await store.save(SIWC_CREDENTIAL_KEYS.earliestRefreshAt, String(NOW_SECONDS + 120));
+    await store.save(KEYS_1.earliestRefreshAt, String(NOW_SECONDS + 120));
     const { refreshCalls, tokenClient } = createFakeTokenClient([]);
     const resolver = createSiwcAccessTokenResolver({
       credentialStore: store,
       tokenClient,
       now: () => NOW_SECONDS * 1000,
     });
-    const resolved = await resolver.resolve({ providerId: "account:chatgpt-plan" });
+    const resolved = await resolver.resolve({ providerId: PROVIDER_ID_1 });
     expect(resolved.apiKey).toBe("access-1");
     expect(refreshCalls).toHaveLength(0);
   });

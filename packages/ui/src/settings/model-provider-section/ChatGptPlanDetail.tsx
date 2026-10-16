@@ -4,7 +4,7 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { usePlatform } from "@/hooks/usePlatform.js";
 import { useServices } from "@/hooks/useServices.js";
 import { logger } from "@/logger.js";
-import type { SiwcPlanStatus } from "@zcode/shared";
+import type { SiwcPlanAccountStatus, SiwcPlanAccountsStatus } from "@zcode/shared";
 import { Button } from "@/components/ui/button.js";
 import { Badge } from "@/components/ui/badge.js";
 import { ProviderLogo } from "./ProviderLogo.js";
@@ -17,38 +17,40 @@ const FIRST_RUN_MODAL_STORAGE_KEY = "zcode.chatgptPlan.firstRunModalShown";
 /**
  * ChatGPT plan detail page (official OpenAI SIWC token sharing).
  *
- * Self-contained on purpose: the ChatGPT plan is an identity domain independent of the
- * zai/bigmodel connection machinery, so login/status/logout ride the dedicated
- * IOAuthService SIWC methods instead of the coding-plan flow.
+ * Multi-account: lists every signed-in ChatGPT account with its consent state; "Continue with
+ * ChatGPT" adds another account (OpenAI shows its account chooser), "Re-connect" re-authorizes
+ * an identity-only account, and each row signs out independently. Self-contained on purpose:
+ * the ChatGPT plan is an identity domain independent of the zai/bigmodel connection machinery,
+ * so login/status/logout ride the dedicated IOAuthService SIWC methods.
  */
 export function ChatGptPlanDetail() {
   const { intl } = useZCodeIntl();
   const platform = usePlatform();
   const { oauthService } = useServices();
-  const [status, setStatus] = useState<SiwcPlanStatus | null>(null);
+  const [status, setStatus] = useState<SiwcPlanAccountsStatus | null>(null);
   const [loginPending, setLoginPending] = useState(false);
-  const [signOutPending, setSignOutPending] = useState(false);
+  const [signOutPending, setSignOutPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showFirstRunModal, setShowFirstRunModal] = useState(false);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const disposedRef = useRef(false);
 
+  const refreshStatus = useCallback(async () => {
+    const next = await oauthService.getChatGptPlanStatus();
+    if (!disposedRef.current) setStatus(next);
+  }, [oauthService]);
+
   useEffect(() => {
     disposedRef.current = false;
-    void oauthService
-      .getChatGptPlanStatus()
-      .then((next) => {
-        if (!disposedRef.current) setStatus(next);
-      })
-      .catch((caught: unknown) => {
-        logger.error("[ChatGptPlanDetail] status load failed", { error: caught });
-      });
+    void refreshStatus().catch((caught: unknown) => {
+      logger.error("[ChatGptPlanDetail] status load failed", { error: caught });
+    });
     return () => {
       disposedRef.current = true;
       if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
       pollTimerRef.current = null;
     };
-  }, [oauthService]);
+  }, [refreshStatus]);
 
   const stopPolling = useCallback(() => {
     if (pollTimerRef.current) {
@@ -57,81 +59,90 @@ export function ChatGptPlanDetail() {
     }
   }, []);
 
-  const startLogin = useCallback(async () => {
-    setError(null);
-    setLoginPending(true);
-    try {
-      const start = await oauthService.startChatGptPlanLogin();
-      await platform.openExternal(start.authorizeUrl);
-      if (disposedRef.current) return;
-      const deadline = Date.now() + LOGIN_TIMEOUT_MS;
-      stopPolling();
-      const poll = async () => {
+  const startLogin = useCallback(
+    async (options: { reauthAccountKey?: string } = {}) => {
+      setError(null);
+      setLoginPending(true);
+      try {
+        const start = await oauthService.startChatGptPlanLogin(
+          options.reauthAccountKey ? { reauthAccountKey: options.reauthAccountKey } : {},
+        );
+        await platform.openExternal(start.authorizeUrl);
         if (disposedRef.current) return;
-        try {
-          const completion = await oauthService.pollChatGptPlanLogin();
+        const deadline = Date.now() + LOGIN_TIMEOUT_MS;
+        stopPolling();
+        const poll = async () => {
           if (disposedRef.current) return;
-          if (!completion) {
-            if (Date.now() >= deadline) {
-              pollTimerRef.current = null;
-              setLoginPending(false);
-              setError(intl.formatMessage({ id: "settings.modelProvider.chatgpt.timeout" }));
+          try {
+            const completion = await oauthService.pollChatGptPlanLogin();
+            if (disposedRef.current) return;
+            if (!completion) {
+              if (Date.now() >= deadline) {
+                pollTimerRef.current = null;
+                setLoginPending(false);
+                setError(intl.formatMessage({ id: "settings.modelProvider.chatgpt.timeout" }));
+                return;
+              }
+              pollTimerRef.current = setTimeout(() => void poll(), LOGIN_POLL_INTERVAL_MS);
               return;
             }
-            pollTimerRef.current = setTimeout(() => void poll(), LOGIN_POLL_INTERVAL_MS);
-            return;
+            pollTimerRef.current = null;
+            setLoginPending(false);
+            await refreshStatus();
+            if (
+              completion.newUser &&
+              completion.planUsageEntitled &&
+              !localStorage.getItem(FIRST_RUN_MODAL_STORAGE_KEY)
+            ) {
+              localStorage.setItem(FIRST_RUN_MODAL_STORAGE_KEY, "1");
+              setShowFirstRunModal(true);
+            }
+          } catch (caught) {
+            if (disposedRef.current) return;
+            pollTimerRef.current = null;
+            setLoginPending(false);
+            setError(
+              caught instanceof Error
+                ? caught.message
+                : intl.formatMessage({ id: "settings.modelProvider.chatgpt.loginFailed" }),
+            );
           }
-          pollTimerRef.current = null;
-          setLoginPending(false);
-          setStatus({
-            signedIn: completion.signedIn,
-            planUsageEntitled: completion.planUsageEntitled,
-            user: completion.user,
-          });
-          if (
-            completion.newUser &&
-            completion.planUsageEntitled &&
-            !localStorage.getItem(FIRST_RUN_MODAL_STORAGE_KEY)
-          ) {
-            localStorage.setItem(FIRST_RUN_MODAL_STORAGE_KEY, "1");
-            setShowFirstRunModal(true);
-          }
-        } catch (caught) {
-          if (disposedRef.current) return;
-          pollTimerRef.current = null;
-          setLoginPending(false);
-          setError(
-            caught instanceof Error
-              ? caught.message
-              : intl.formatMessage({ id: "settings.modelProvider.chatgpt.loginFailed" }),
-          );
-        }
-      };
-      pollTimerRef.current = setTimeout(() => void poll(), LOGIN_POLL_INTERVAL_MS);
-    } catch (caught) {
-      if (disposedRef.current) return;
-      setLoginPending(false);
-      setError(
-        caught instanceof Error
-          ? caught.message
-          : intl.formatMessage({ id: "settings.modelProvider.chatgpt.loginFailed" }),
-      );
-    }
-  }, [intl, oauthService, platform, stopPolling]);
+        };
+        pollTimerRef.current = setTimeout(() => void poll(), LOGIN_POLL_INTERVAL_MS);
+      } catch (caught) {
+        if (disposedRef.current) return;
+        setLoginPending(false);
+        setError(
+          caught instanceof Error
+            ? caught.message
+            : intl.formatMessage({ id: "settings.modelProvider.chatgpt.loginFailed" }),
+        );
+      }
+    },
+    [intl, oauthService, platform, refreshStatus, stopPolling],
+  );
 
-  const signOut = useCallback(async () => {
-    setError(null);
-    setSignOutPending(true);
-    try {
-      await oauthService.logoutChatGptPlan();
-      const next = await oauthService.getChatGptPlanStatus();
-      if (!disposedRef.current) setStatus(next);
-    } catch (caught) {
-      if (!disposedRef.current) setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setSignOutPending(false);
-    }
-  }, [oauthService]);
+  const signOut = useCallback(
+    async (accountKey: string) => {
+      setError(null);
+      setSignOutPending(accountKey);
+      try {
+        await oauthService.logoutChatGptPlan(accountKey);
+        await refreshStatus();
+      } catch (caught) {
+        if (!disposedRef.current)
+          setError(caught instanceof Error ? caught.message : String(caught));
+      } finally {
+        setSignOutPending(null);
+      }
+    },
+    [oauthService, refreshStatus],
+  );
+
+  const accounts = status?.accounts ?? [];
+  const addAccountLabelId = accounts.length
+    ? "settings.modelProvider.chatgpt.addAccount"
+    : "settings.modelProvider.chatgpt.continueWithChatgpt";
 
   return (
     <div className="flex flex-col gap-4">
@@ -157,64 +168,42 @@ export function ChatGptPlanDetail() {
         </p>
       ) : null}
 
-      <div className="rounded-lg border border-border bg-card p-4">
-        {status?.signedIn ? (
-          <div className="flex flex-col gap-3">
-            <p className="text-ui-sm">
-              {intl.formatMessage(
-                { id: "settings.modelProvider.chatgpt.signedInAs" },
-                { name: status.user?.displayName ?? status.user?.subject ?? "" },
-              )}
-            </p>
-            {status.planUsageEntitled ? (
-              <p className="text-ui-sm text-muted-foreground">
-                {intl.formatMessage({ id: "settings.modelProvider.chatgpt.entitled" })}
-              </p>
-            ) : (
-              <p className="text-ui-sm text-muted-foreground">
-                {intl.formatMessage({ id: "settings.modelProvider.chatgpt.notEntitled" })}
-              </p>
-            )}
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                disabled={signOutPending}
-                onClick={() => void signOut()}
-              >
-                {signOutPending ? <Loader2Icon className="size-3.5 animate-spin" /> : null}
-                {intl.formatMessage({ id: "settings.modelProvider.chatgpt.signOut" })}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => void platform.openExternal(CHATGPT_USAGE_URL)}
-              >
-                {intl.formatMessage({ id: "settings.modelProvider.chatgpt.manageUsage" })}
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-3">
+        {accounts.map((account) => (
+          <AccountRow
+            key={account.accountKey}
+            account={account}
+            intl={intl}
+            signOutPending={signOutPending === account.accountKey}
+            onSignOut={() => void signOut(account.accountKey)}
+            onReconnect={() => void startLogin({ reauthAccountKey: account.accountKey })}
+            onManageUsage={() => void platform.openExternal(CHATGPT_USAGE_URL)}
+          />
+        ))}
+        {accounts.length === 0 ? (
+          <div className="rounded-lg border border-border bg-card p-4">
             <p className="text-ui-sm text-muted-foreground">
               {intl.formatMessage({ id: "settings.modelProvider.chatgpt.notSignedIn" })}
             </p>
-            <div>
-              <Button
-                type="button"
-                disabled={loginPending}
-                onClick={() => void startLogin()}
-                className="bg-black text-white hover:bg-black/85 dark:bg-white dark:text-black dark:hover:bg-white/85"
-              >
-                {loginPending
-                  ? intl.formatMessage({ id: "settings.modelProvider.chatgpt.waiting" })
-                  : intl.formatMessage({
-                      id: "settings.modelProvider.chatgpt.continueWithChatgpt",
-                    })}
-              </Button>
-            </div>
           </div>
-        )}
+        ) : null}
+        <div>
+          <Button
+            type="button"
+            disabled={loginPending}
+            onClick={() => void startLogin()}
+            className="bg-black text-white hover:bg-black/85 dark:bg-white dark:text-black dark:hover:bg-white/85"
+          >
+            {loginPending ? (
+              <Loader2Icon className="size-3.5 animate-spin" />
+            ) : (
+              <ProviderLogo logo={{ type: "builtin", key: "openai" }} className="size-4" />
+            )}
+            {loginPending
+              ? intl.formatMessage({ id: "settings.modelProvider.chatgpt.waiting" })
+              : intl.formatMessage({ id: addAccountLabelId })}
+          </Button>
+        </div>
       </div>
 
       {showFirstRunModal ? (
@@ -245,6 +234,61 @@ export function ChatGptPlanDetail() {
           </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+interface AccountRowProps {
+  readonly account: SiwcPlanAccountStatus;
+  readonly intl: ReturnType<typeof useZCodeIntl>["intl"];
+  readonly signOutPending: boolean;
+  readonly onSignOut: () => void;
+  readonly onReconnect: () => void;
+  readonly onManageUsage: () => void;
+}
+
+function AccountRow({
+  account,
+  intl,
+  signOutPending,
+  onSignOut,
+  onReconnect,
+  onManageUsage,
+}: AccountRowProps) {
+  const displayName = account.user?.email ?? account.user?.displayName ?? account.accountKey;
+  return (
+    <div className="rounded-lg border border-border bg-card p-4">
+      <div className="flex flex-col gap-3">
+        <p className="text-ui-sm">
+          {intl.formatMessage(
+            { id: "settings.modelProvider.chatgpt.signedInAs" },
+            { name: displayName },
+          )}
+        </p>
+        {account.planUsageEntitled ? (
+          <p className="text-ui-sm text-muted-foreground">
+            {intl.formatMessage({ id: "settings.modelProvider.chatgpt.entitled" })}
+          </p>
+        ) : (
+          <p className="text-ui-sm text-muted-foreground">
+            {intl.formatMessage({ id: "settings.modelProvider.chatgpt.notEntitled" })}
+          </p>
+        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" variant="outline" disabled={signOutPending} onClick={onSignOut}>
+            {signOutPending ? <Loader2Icon className="size-3.5 animate-spin" /> : null}
+            {intl.formatMessage({ id: "settings.modelProvider.chatgpt.signOut" })}
+          </Button>
+          {account.planUsageEntitled ? null : (
+            <Button type="button" variant="outline" onClick={onReconnect}>
+              {intl.formatMessage({ id: "settings.modelProvider.chatgpt.reconnect" })}
+            </Button>
+          )}
+          <Button type="button" variant="ghost" onClick={onManageUsage}>
+            {intl.formatMessage({ id: "settings.modelProvider.chatgpt.manageUsage" })}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

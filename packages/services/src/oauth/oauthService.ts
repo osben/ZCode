@@ -16,7 +16,7 @@ import {
   type OAuthUserProfile,
   type SiwcLoginCompletionResult,
   type SiwcLoginStart,
-  type SiwcPlanStatus,
+  type SiwcPlanAccountsStatus,
   type UserInfo,
   resolveJwtExpiration,
 } from "@zcode/shared";
@@ -1119,8 +1119,10 @@ export class OAuthService implements IOAuthService {
     this.clearPendingState();
   }
 
-  async startChatGptPlanLogin(): Promise<SiwcLoginStart> {
-    return this.siwcAuth.startLogin();
+  async startChatGptPlanLogin(
+    options: { reauthAccountKey?: string } = {},
+  ): Promise<SiwcLoginStart> {
+    return this.siwcAuth.startLogin(options);
   }
 
   async pollChatGptPlanLogin(): Promise<SiwcLoginCompletionResult | null> {
@@ -1137,12 +1139,14 @@ export class OAuthService implements IOAuthService {
     return result;
   }
 
-  async getChatGptPlanStatus(): Promise<SiwcPlanStatus> {
+  async getChatGptPlanStatus(): Promise<SiwcPlanAccountsStatus> {
     return this.siwcAuth.getStatus();
   }
 
-  async logoutChatGptPlan(): Promise<{ revoked: boolean; signedOut: boolean }> {
-    const result = await this.siwcAuth.logout();
+  async logoutChatGptPlan(
+    accountKey?: string,
+  ): Promise<{ accountCount: number; revoked: boolean; signedOut: boolean }> {
+    const result = await this.siwcAuth.logout(accountKey);
     if (result.signedOut) {
       // Same rationale as pollChatGptPlanLogin: tokens are already cleared locally, so the
       // overlay refresh must not block the sign-out result on slow plan backend queries.

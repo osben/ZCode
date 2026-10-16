@@ -26,6 +26,7 @@ import {
 } from "@zcode/adapters/auth";
 import { readLegacyCliPersonalProviderConfig } from "./legacy-cli-personal-provider-config-importer.js";
 import {
+  createStandaloneChatGptPlanConfigSourceWrapper,
   createStandaloneProviderRuntimeHeadersPort,
   readStandaloneAccountProviderConfigSnapshot,
 } from "./standalone-account-provider-runtime.js";
@@ -61,6 +62,9 @@ export async function startProcessProviderRegistryRuntime(
     : undefined;
   const runtime = new NodeProviderRegistryRuntime({
     ...paths,
+    ...(credentialStore
+      ? { wrapConfigSource: createStandaloneChatGptPlanConfigSourceWrapper(credentialStore) }
+      : {}),
     ...(bundledFile
       ? {
           zcodeBuiltinFilePath: bundledFile,
@@ -130,8 +134,10 @@ export async function startProcessProviderRegistryRuntime(
   });
   const disposeRecovery = standaloneAccount
     ? runtime.onDidCheckZCodeBuiltin(async () => {
+        // Read through the derived source: the account snapshot is based on the derived
+        // builtin revision, so comparing against the raw revision would loop forever.
         const [config, account] = await Promise.all([
-          runtime.configService.read(),
+          runtime.registryConfigSource.read(),
           standaloneAccount!.read(),
         ]);
         if (config.zcodeBuiltinRevision !== account.basedOnZCodeBuiltinRevision)

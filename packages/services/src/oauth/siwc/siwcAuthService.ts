@@ -8,10 +8,21 @@ import { withFileLock } from "@zcode/shared/node";
 import type { ICredentialService } from "../../credential/credential.js";
 import { createServiceLogger } from "../../logger/serviceLogger.js";
 import { getAppConfigDir } from "../../paths.js";
-import { CHATGPT_OAUTH_PROVIDER_ID } from "@zcode/shared";
+import {
+  buildChatGptPlanAccountProviderId,
+  buildSiwcAccountCredentialKeys,
+  buildSiwcAccountProviderAuthSourceKey,
+  buildSiwcAccountProviderIdentityKey,
+  buildSiwcAccountRefreshLockFileName,
+  SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY,
+  SIWC_LEGACY_CREDENTIAL_KEYS,
+  type SiwcPlanAccountStatus,
+  type SiwcPlanAccountsStatus,
+  type SiwcPlanUserSummary,
+  type SiwcStoredAccountRecord,
+} from "@zcode/shared";
 import {
   SIWC_CALLBACK_PATH,
-  SIWC_CREDENTIAL_KEYS,
   SIWC_TERMINAL_REFRESH_ERROR_CODES,
   buildSiwcAuthorizeUrl,
   createSiwcJwksVerifier,
@@ -31,6 +42,19 @@ const SIWC_LOGIN_TIMEOUT_MS = 5 * 60_000;
 const SIWC_REFRESH_LOCK_MAX_WAIT_MS = 45_000;
 const SIWC_PROACTIVE_REFRESH_MARGIN_SECONDS = 120;
 const REVOKE_RETRY_DELAYS_MS = [1_000, 3_000] as const;
+
+/**
+ * Stable per-account slot key: sha256(sub) prefix — no PII in ids, keys, or logs. Mirrors the
+ * CLI adapters implementation; both sides are pinned by identical test vectors.
+ */
+export function createSiwcAccountKey(sub: string): string {
+  const normalized = sub.trim();
+  if (!normalized) throw new Error("SIWC account subject is empty");
+  return createHash("sha256") // codeql[js/insufficient-password-hash] — slot id, not password storage
+    .update(normalized, "utf-8")
+    .digest("hex")
+    .slice(0, 16);
+}
 
 /** Stable per-host agent id (shared with the CLI: same file, plain text, not a secret). */
 async function resolveHostId(configDir: string): Promise<string> {
@@ -59,18 +83,6 @@ interface SiwcPendingLogin {
   completion: Promise<{ ok: true; value: SiwcLoginCompletion } | { ok: false; error: unknown }>;
 }
 
-export interface SiwcPlanUserSummary {
-  displayName: string;
-  email: string | null;
-  subject: string;
-}
-
-export interface SiwcPlanStatus {
-  planUsageEntitled: boolean;
-  signedIn: boolean;
-  user: SiwcPlanUserSummary | null;
-}
-
 interface SiwcLoginCompletion {
   claims: SiwcIdTokenClaims;
   /** Authorization code captured by the loopback redirect. */
@@ -89,9 +101,11 @@ export interface SiwcAuthServiceDependencies {
 /**
  * Host-side SIWC login/logout/status coordinator for the ChatGPT plan provider.
  *
- * Independent of the zai/bigmodel pending-state machine: the loopback listener lives in the
- * host process, credentials use the same `oauth:chatgpt:*` keys as the CLI (one shared
- * store, one identity domain; `oauth:active_provider` and `zcodejwttoken` are never touched).
+ * Multi-account: every signed-in ChatGPT account owns a credential slot
+ * (`oauth:chatgpt:<accountKey>:*`) plus an index record; a login adds or re-authorizes the
+ * slot derived from the verified `sub`, and logout or refresh failures touch only one
+ * account. Independent of the zai/bigmodel pending-state machine: the loopback listener
+ * lives in the host process; `oauth:active_provider` and `zcodejwttoken` are never touched.
  */
 export class SiwcAuthService {
   private pending: SiwcPendingLogin | null = null;
@@ -111,25 +125,30 @@ export class SiwcAuthService {
   private readonly configDir: string;
 
   /**
-   * Start a login: loopback listener + PKCE + authorize URL. The UI opens the URL in the
-   * system browser and polls `pollChatGptPlanLogin`. The returned URL is redacted for
-   * display; the browser needs the full URL, so both variants are provided.
+   * Start a login: loopback listener + PKCE + authorize URL. Default mode adds an account
+   * (fresh registration, no hints — OpenAI shows its account chooser); `reauthAccountKey`
+   * re-authorizes that account with its issued client id and hints. The UI opens the URL in
+   * the system browser and polls `pollLogin`. The returned URL is redacted for display; the
+   * browser needs the full URL, so both variants are provided.
    */
-  async startLogin(): Promise<{
+  async startLogin(options: { reauthAccountKey?: string } = {}): Promise<{
     authorizeUrl: string;
     displayAuthorizeUrl: string;
     state: string;
   }> {
     await this.cancelLogin();
     const hostId = await resolveHostId(this.configDir);
-    const stored = await this.readCredentialStrings(
-      SIWC_CREDENTIAL_KEYS.clientId,
-      SIWC_CREDENTIAL_KEYS.idToken,
-      SIWC_CREDENTIAL_KEYS.userInfo,
-    );
-    const issuedClientId = stored[SIWC_CREDENTIAL_KEYS.clientId] ?? undefined;
-    const idTokenHint = stored[SIWC_CREDENTIAL_KEYS.idToken] ?? undefined;
-    const loginHint = readLoginHint(stored[SIWC_CREDENTIAL_KEYS.userInfo]);
+    await this.migrateLegacyCredentials();
+    let issuedClientId: string | undefined;
+    let idTokenHint: string | undefined;
+    let loginHint: string | undefined;
+    if (options.reauthAccountKey) {
+      const keys = buildSiwcAccountCredentialKeys(options.reauthAccountKey);
+      const stored = await this.readCredentialStrings(keys.clientId, keys.idToken, keys.userInfo);
+      issuedClientId = stored[keys.clientId] ?? undefined;
+      idTokenHint = stored[keys.idToken] ?? undefined;
+      loginHint = readUserJsonField(stored[keys.userInfo], "email") ?? undefined;
+    }
 
     const pkce = createSiwcPkcePair();
     const state = createSiwcState();
@@ -173,7 +192,7 @@ export class SiwcAuthService {
   }
 
   /** null while the browser has not returned; the completion result once it has. */
-  async pollLogin(): Promise<null | (SiwcPlanStatus & { newUser: boolean })> {
+  async pollLogin(): Promise<null | (SiwcPlanAccountStatus & { newUser: boolean })> {
     const pending = this.pending;
     if (!pending) return null;
     // Poll semantics: return null while the redirect has not arrived (the completion
@@ -218,7 +237,7 @@ export class SiwcAuthService {
         { audience: effectiveClientId, nonce: pending.nonce },
       );
       const scopes = parseSiwcScopes(exchanged.scope);
-      await this.persistLogin({
+      const persist = await this.persistLogin({
         claims,
         clientId: effectiveClientId,
         exchanged: {
@@ -233,13 +252,15 @@ export class SiwcAuthService {
         },
       });
       log.info("ChatGPT plan sign-in completed", {
+        accountKey: persist.accountKey,
         entitled: isSiwcPlanUsageEntitled(scopes),
       });
       return {
+        accountKey: persist.accountKey,
+        newUser: persist.isNewAccount,
         signedIn: true,
         planUsageEntitled: isSiwcPlanUsageEntitled(scopes),
         user: toUserSummary(claims),
-        newUser: true,
       };
     } finally {
       await closeServer(pending.server);
@@ -254,129 +275,145 @@ export class SiwcAuthService {
     await closeServer(pending.server);
   }
 
-  async getStatus(): Promise<SiwcPlanStatus> {
-    const stored = await this.readCredentialStrings(
-      SIWC_CREDENTIAL_KEYS.accessToken,
-      SIWC_CREDENTIAL_KEYS.refreshToken,
-      SIWC_CREDENTIAL_KEYS.scopes,
-      SIWC_CREDENTIAL_KEYS.userInfo,
-    );
-    const accessToken = stored[SIWC_CREDENTIAL_KEYS.accessToken];
-    const refreshToken = stored[SIWC_CREDENTIAL_KEYS.refreshToken];
-    if (!accessToken && !refreshToken) {
-      return { signedIn: false, planUsageEntitled: false, user: null };
+  async getStatus(): Promise<SiwcPlanAccountsStatus> {
+    await this.migrateLegacyCredentials();
+    const accounts: SiwcPlanAccountStatus[] = [];
+    for (const record of await this.readAccountIndex()) {
+      const status = await this.readAccountStatus(record);
+      if (status) accounts.push(status);
     }
-    return {
-      signedIn: true,
-      planUsageEntitled: isSiwcPlanUsageEntitled(
-        parseSiwcScopes(stored[SIWC_CREDENTIAL_KEYS.scopes]),
-      ),
-      user: readUserSummary(stored[SIWC_CREDENTIAL_KEYS.userInfo]),
-    };
-  }
-
-  /** Revoke (best effort with backoff), then clear local tokens; retains the client id. */
-  async logout(): Promise<{ revoked: boolean; signedOut: boolean }> {
-    const stored = await this.readCredentialStrings(
-      SIWC_CREDENTIAL_KEYS.clientId,
-      SIWC_CREDENTIAL_KEYS.refreshToken,
-    );
-    const clientId = stored[SIWC_CREDENTIAL_KEYS.clientId];
-    const refreshToken = stored[SIWC_CREDENTIAL_KEYS.refreshToken];
-    if (!clientId || !refreshToken) {
-      return { revoked: false, signedOut: false };
-    }
-    const tokenClient = createSiwcTokenClient({ fetchFn: this.fetchFn });
-    let revoked = false;
-    for (let attempt = 0; attempt <= REVOKE_RETRY_DELAYS_MS.length && !revoked; attempt += 1) {
-      try {
-        await tokenClient.revoke({ clientId, refreshToken });
-        revoked = true;
-      } catch (error) {
-        if (error instanceof SiwcRevokeError && (error.httpStatus ?? 0) < 500) break;
-        if (attempt < REVOKE_RETRY_DELAYS_MS.length) {
-          await new Promise((resolve) => setTimeout(resolve, REVOKE_RETRY_DELAYS_MS[attempt]));
-        }
-      }
-    }
-    await this.clearTokenCredentials();
-    log.info("ChatGPT plan signed out", { revoked });
-    return { revoked, signedOut: true };
+    return { accounts };
   }
 
   /**
-   * Resolve a request-time access token (host answer for provider runtime headers):
-   * proactive refresh before expiry, cross-process single-flight via the SAME lock file the
-   * CLI resolver uses, rotation-aware persistence, terminal failures clear tokens.
+   * Revoke (best effort with backoff), then clear one account's local tokens; the client id
+   * is retained and other accounts are untouched. Omitting the key revokes every account.
    */
-  async resolveAccessToken(options: { forceRefresh?: boolean } = {}): Promise<string> {
-    const existing = this.inFlightToken.get(CHATGPT_OAUTH_PROVIDER_ID);
-    if (existing) return (await existing).accessToken;
-    const pending = this.resolveAccessTokenLocked(options.forceRefresh === true).finally(() =>
-      this.inFlightToken.delete(CHATGPT_OAUTH_PROVIDER_ID),
+  async logout(
+    accountKey?: string,
+  ): Promise<{ accountCount: number; revoked: boolean; signedOut: boolean }> {
+    await this.migrateLegacyCredentials();
+    const records = (await this.readAccountIndex()).filter((record) =>
+      accountKey ? record.accountKey === accountKey : true,
     );
-    this.inFlightToken.set(CHATGPT_OAUTH_PROVIDER_ID, pending);
+    if (records.length === 0) {
+      return { accountCount: 0, revoked: false, signedOut: false };
+    }
+    const tokenClient = createSiwcTokenClient({ fetchFn: this.fetchFn });
+    let allRevoked = true;
+    for (const record of records) {
+      const keys = buildSiwcAccountCredentialKeys(record.accountKey);
+      const stored = await this.readCredentialStrings(keys.clientId, keys.refreshToken);
+      const clientId = stored[keys.clientId];
+      const refreshToken = stored[keys.refreshToken];
+      if (!clientId || !refreshToken) {
+        await this.removeAccountRecord(record.accountKey);
+        continue;
+      }
+      let revoked = false;
+      for (let attempt = 0; attempt <= REVOKE_RETRY_DELAYS_MS.length && !revoked; attempt += 1) {
+        try {
+          await tokenClient.revoke({ clientId, refreshToken });
+          revoked = true;
+        } catch (error) {
+          if (error instanceof SiwcRevokeError && (error.httpStatus ?? 0) < 500) break;
+          if (attempt < REVOKE_RETRY_DELAYS_MS.length) {
+            await new Promise((resolve) => setTimeout(resolve, REVOKE_RETRY_DELAYS_MS[attempt]));
+          }
+        }
+      }
+      if (!revoked) allRevoked = false;
+      await this.clearTokenCredentials(record.accountKey);
+      await this.removeAccountRecord(record.accountKey);
+    }
+    log.info("ChatGPT plan signed out", {
+      accountCount: records.length,
+      revoked: allRevoked,
+    });
+    return { accountCount: records.length, revoked: allRevoked, signedOut: true };
+  }
+
+  /**
+   * Resolve a request-time access token for one account (host answer for provider runtime
+   * headers): proactive refresh before expiry, cross-process single-flight via the SAME
+   * per-account lock file the CLI resolver uses, rotation-aware persistence, terminal
+   * failures clear that account's tokens only.
+   */
+  async resolveAccessToken(
+    accountKey: string,
+    options: { forceRefresh?: boolean } = {},
+  ): Promise<string> {
+    const existing = this.inFlightToken.get(accountKey);
+    if (existing) return (await existing).accessToken;
+    const pending = this.resolveAccessTokenLocked(
+      accountKey,
+      options.forceRefresh === true,
+    ).finally(() => this.inFlightToken.delete(accountKey));
+    this.inFlightToken.set(accountKey, pending);
     return (await pending).accessToken;
   }
 
   /**
    * Stable account-scope fingerprint (account-switch detection), identical to the CLI
-   * resolver: hashes the issued client id and account subject, never the rotating token.
+   * resolver: hashes the per-account provider id, issued client id, and account subject —
+   * never the rotating token.
    */
-  async resolveAccountScope(): Promise<string> {
-    const stored = await this.readCredentialStrings(
-      SIWC_CREDENTIAL_KEYS.clientId,
-      SIWC_CREDENTIAL_KEYS.userInfo,
-    );
-    const clientId = stored[SIWC_CREDENTIAL_KEYS.clientId] ?? "";
-    let subject = clientId;
-    const rawUser = stored[SIWC_CREDENTIAL_KEYS.userInfo];
-    if (rawUser) {
-      try {
-        const parsed = JSON.parse(rawUser) as { sub?: unknown };
-        if (typeof parsed.sub === "string" && parsed.sub.trim()) subject = parsed.sub.trim();
-      } catch {
-        // Fall back to the client id for the fingerprint input.
-      }
-    }
+  async resolveAccountScope(accountKey: string): Promise<string> {
+    const keys = buildSiwcAccountCredentialKeys(accountKey);
+    const stored = await this.readCredentialStrings(keys.clientId, keys.userInfo);
+    const clientId = stored[keys.clientId] ?? "";
+    // Fingerprint input falls back to the client id when no user info is stored.
+    const subject = readUserJsonField(stored[keys.userInfo], "sub") ?? clientId;
+    const providerId = buildChatGptPlanAccountProviderId(accountKey);
     return createHash("sha256") // codeql[js/insufficient-password-hash]
-      .update(JSON.stringify([CHATGPT_OAUTH_PROVIDER_ID, "chatgpt", clientId, subject]))
+      .update(JSON.stringify([providerId, "chatgpt", clientId, subject]))
       .digest("hex");
   }
 
-  private async resolveAccessTokenLocked(forceRefresh: boolean): Promise<{ accessToken: string }> {
-    let state = await this.readTokenState();
+  private async resolveAccessTokenLocked(
+    accountKey: string,
+    forceRefresh: boolean,
+  ): Promise<{ accessToken: string }> {
+    await this.migrateLegacyCredentials();
+    let state = await this.readTokenState(accountKey);
     if (!state.accessToken && !state.refreshToken) {
       throw new Error("ChatGPT plan credentials are missing; sign in in Settings.");
     }
     if (!forceRefresh && state.accessToken && isAccessUsable(state, this.now())) {
       return { accessToken: state.accessToken };
     }
-    state = await this.refreshUnderLock(state);
+    state = await this.refreshUnderLock(accountKey, state);
     if (!state.accessToken || !isAccessUsable(state, this.now())) {
       throw new Error("ChatGPT plan token refresh did not produce a usable token; sign in again.");
     }
     return { accessToken: state.accessToken };
   }
 
-  private async refreshUnderLock(observed: SiwcTokenState): Promise<SiwcTokenState> {
-    // Same lock file as the CLI resolver: Desktop and CLI refreshes must serialize or the
-    // rotation reuse detector revokes the token family.
-    const lockPath = join(this.configDir, "siwc-chatgpt.refresh");
+  private async refreshUnderLock(
+    accountKey: string,
+    observed: SiwcTokenState,
+  ): Promise<SiwcTokenState> {
+    // Same per-account lock file as the CLI resolver: Desktop and CLI refreshes of one
+    // account must serialize or the rotation reuse detector revokes the token family.
+    const lockPath = join(this.configDir, buildSiwcAccountRefreshLockFileName(accountKey));
     try {
-      return await withFileLock(lockPath, () => this.refreshLocked(observed), {
+      return await withFileLock(lockPath, () => this.refreshLocked(accountKey, observed), {
         lockMaxWaitMs: SIWC_REFRESH_LOCK_MAX_WAIT_MS,
       });
     } catch (error) {
       if (!isZCodeFileLockTimeoutError(error)) throw error;
-      const current = await this.readTokenState();
+      const current = await this.readTokenState(accountKey);
       if (current.accessToken && isAccessUsable(current, this.now())) return current;
       throw error;
     }
   }
 
-  private async refreshLocked(observed: SiwcTokenState): Promise<SiwcTokenState> {
-    const current = await this.readTokenState();
+  private async refreshLocked(
+    accountKey: string,
+    observed: SiwcTokenState,
+  ): Promise<SiwcTokenState> {
+    const keys = buildSiwcAccountCredentialKeys(accountKey);
+    const current = await this.readTokenState(accountKey);
     if (!current.clientId || !current.refreshToken) {
       throw new Error("ChatGPT plan credentials are incomplete; sign in again.");
     }
@@ -393,20 +430,18 @@ export class SiwcAuthService {
         refreshToken: current.refreshToken,
       });
       await this.writeCredentials({
-        ...(response.refreshToken
-          ? { [SIWC_CREDENTIAL_KEYS.refreshToken]: response.refreshToken }
-          : {}),
-        [SIWC_CREDENTIAL_KEYS.accessToken]: response.accessToken,
-        ...(response.idToken ? { [SIWC_CREDENTIAL_KEYS.idToken]: response.idToken } : {}),
-        ...(response.scope ? { [SIWC_CREDENTIAL_KEYS.scopes]: response.scope } : {}),
-        [SIWC_CREDENTIAL_KEYS.accessExpiresAt]: String(
+        ...(response.refreshToken ? { [keys.refreshToken]: response.refreshToken } : {}),
+        [keys.accessToken]: response.accessToken,
+        ...(response.idToken ? { [keys.idToken]: response.idToken } : {}),
+        ...(response.scope ? { [keys.scopes]: response.scope } : {}),
+        [keys.accessExpiresAt]: String(
           Math.floor(this.now() / 1000) + (response.expiresInSeconds ?? 3600),
         ),
         ...(response.earliestRefreshAt !== undefined
-          ? { [SIWC_CREDENTIAL_KEYS.earliestRefreshAt]: String(response.earliestRefreshAt) }
+          ? { [keys.earliestRefreshAt]: String(response.earliestRefreshAt) }
           : {}),
       });
-      const after = await this.readTokenState();
+      const after = await this.readTokenState(accountKey);
       if (!after.accessToken) {
         throw new Error("ChatGPT plan credentials disappeared during refresh");
       }
@@ -417,7 +452,7 @@ export class SiwcAuthService {
           ? (error as { error?: unknown }).error
           : undefined;
       if (typeof code === "string" && SIWC_TERMINAL_REFRESH_ERROR_CODES.includes(code)) {
-        await this.clearTokenCredentials();
+        await this.clearTokenCredentials(accountKey);
         throw new Error("ChatGPT plan sign-in expired or was revoked; sign in again.");
       }
       throw error;
@@ -435,35 +470,47 @@ export class SiwcAuthService {
       accessExpiresAt: number;
       earliestRefreshAt?: number;
     };
-  }): Promise<void> {
+  }): Promise<{ accountKey: string; isNewAccount: boolean }> {
+    const accountKey = createSiwcAccountKey(input.claims.sub);
+    const keys = buildSiwcAccountCredentialKeys(accountKey);
+    const existing = (await this.readAccountIndex()).some(
+      (record) => record.accountKey === accountKey,
+    );
     await this.writeCredentials({
-      [SIWC_CREDENTIAL_KEYS.clientId]: input.clientId,
-      [SIWC_CREDENTIAL_KEYS.accessToken]: input.exchanged.accessToken,
+      [keys.clientId]: input.clientId,
+      [keys.accessToken]: input.exchanged.accessToken,
       ...(input.exchanged.refreshToken
-        ? { [SIWC_CREDENTIAL_KEYS.refreshToken]: input.exchanged.refreshToken }
+        ? { [keys.refreshToken]: input.exchanged.refreshToken }
         : {}),
-      ...(input.exchanged.idToken
-        ? { [SIWC_CREDENTIAL_KEYS.idToken]: input.exchanged.idToken }
-        : {}),
-      [SIWC_CREDENTIAL_KEYS.userInfo]: JSON.stringify(toStoredUser(input.claims)),
-      ...(input.exchanged.scopes ? { [SIWC_CREDENTIAL_KEYS.scopes]: input.exchanged.scopes } : {}),
-      [SIWC_CREDENTIAL_KEYS.accessExpiresAt]: String(input.exchanged.accessExpiresAt),
+      ...(input.exchanged.idToken ? { [keys.idToken]: input.exchanged.idToken } : {}),
+      [keys.userInfo]: JSON.stringify(toStoredUser(input.claims)),
+      ...(input.exchanged.scopes ? { [keys.scopes]: input.exchanged.scopes } : {}),
+      [keys.accessExpiresAt]: String(input.exchanged.accessExpiresAt),
       ...(input.exchanged.earliestRefreshAt !== undefined
-        ? { [SIWC_CREDENTIAL_KEYS.earliestRefreshAt]: String(input.exchanged.earliestRefreshAt) }
+        ? { [keys.earliestRefreshAt]: String(input.exchanged.earliestRefreshAt) }
         : {}),
-      [`account-provider:account:chatgpt-plan:identity`]: input.claims.sub,
-      [`account-provider:account:chatgpt-plan:auth-source`]: "oauth",
+      [buildSiwcAccountProviderIdentityKey(accountKey)]: input.claims.sub,
+      [buildSiwcAccountProviderAuthSourceKey(accountKey)]: "oauth",
     });
+    await this.upsertAccountRecord({
+      accountKey,
+      sub: input.claims.sub,
+      email: input.claims.email ?? null,
+      name: input.claims.name ?? null,
+      addedAt: new Date(this.now()).toISOString(),
+    });
+    return { accountKey, isNewAccount: !existing };
   }
 
-  private async clearTokenCredentials(): Promise<void> {
+  private async clearTokenCredentials(accountKey: string): Promise<void> {
+    const keys = buildSiwcAccountCredentialKeys(accountKey);
     for (const key of [
-      SIWC_CREDENTIAL_KEYS.accessToken,
-      SIWC_CREDENTIAL_KEYS.refreshToken,
-      SIWC_CREDENTIAL_KEYS.idToken,
-      SIWC_CREDENTIAL_KEYS.scopes,
-      SIWC_CREDENTIAL_KEYS.accessExpiresAt,
-      SIWC_CREDENTIAL_KEYS.earliestRefreshAt,
+      keys.accessToken,
+      keys.refreshToken,
+      keys.idToken,
+      keys.scopes,
+      keys.accessExpiresAt,
+      keys.earliestRefreshAt,
     ]) {
       await this.credentialService.delete(key);
     }
@@ -484,20 +531,161 @@ export class SiwcAuthService {
     return result;
   }
 
-  private async readTokenState(): Promise<SiwcTokenState> {
+  private async readTokenState(accountKey: string): Promise<SiwcTokenState> {
+    const keys = buildSiwcAccountCredentialKeys(accountKey);
     const stored = await this.readCredentialStrings(
-      SIWC_CREDENTIAL_KEYS.accessToken,
-      SIWC_CREDENTIAL_KEYS.clientId,
-      SIWC_CREDENTIAL_KEYS.refreshToken,
-      SIWC_CREDENTIAL_KEYS.accessExpiresAt,
+      keys.accessToken,
+      keys.clientId,
+      keys.refreshToken,
+      keys.accessExpiresAt,
     );
     return {
-      accessToken: stored[SIWC_CREDENTIAL_KEYS.accessToken] ?? null,
-      clientId: stored[SIWC_CREDENTIAL_KEYS.clientId] ?? null,
-      refreshToken: stored[SIWC_CREDENTIAL_KEYS.refreshToken] ?? null,
-      accessExpiresAt: readEpoch(stored[SIWC_CREDENTIAL_KEYS.accessExpiresAt] ?? null),
+      accessToken: stored[keys.accessToken] ?? null,
+      clientId: stored[keys.clientId] ?? null,
+      refreshToken: stored[keys.refreshToken] ?? null,
+      accessExpiresAt: readEpoch(stored[keys.accessExpiresAt] ?? null),
     };
   }
+
+  private async readAccountStatus(
+    record: SiwcStoredAccountRecord,
+  ): Promise<SiwcPlanAccountStatus | null> {
+    const keys = buildSiwcAccountCredentialKeys(record.accountKey);
+    const stored = await this.readCredentialStrings(
+      keys.accessToken,
+      keys.refreshToken,
+      keys.scopes,
+    );
+    if (!stored[keys.accessToken] && !stored[keys.refreshToken]) return null;
+    return {
+      accountKey: record.accountKey,
+      signedIn: true,
+      planUsageEntitled: isSiwcPlanUsageEntitled(parseSiwcScopes(stored[keys.scopes])),
+      user: {
+        displayName: record.name ?? record.email ?? record.sub,
+        email: record.email,
+        subject: record.sub,
+      },
+    };
+  }
+
+  private async readAccountIndex(): Promise<readonly SiwcStoredAccountRecord[]> {
+    const raw = await this.credentialService.load(SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY);
+    if (!raw?.trim()) return [];
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.flatMap((entry) => (isAccountRecord(entry) ? [entry] : []));
+    } catch {
+      return [];
+    }
+  }
+
+  private async writeAccountIndex(records: readonly SiwcStoredAccountRecord[]): Promise<void> {
+    await this.credentialService.save(SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY, JSON.stringify(records));
+  }
+
+  private async upsertAccountRecord(record: SiwcStoredAccountRecord): Promise<void> {
+    const existing = await this.readAccountIndex();
+    const next: SiwcStoredAccountRecord[] = [];
+    let replaced = false;
+    for (const item of existing) {
+      if (item.accountKey === record.accountKey) {
+        next.push({ ...record, addedAt: item.addedAt || record.addedAt });
+        replaced = true;
+      } else {
+        next.push(item);
+      }
+    }
+    if (!replaced) next.push(record);
+    await this.writeAccountIndex(next);
+  }
+
+  private async removeAccountRecord(accountKey: string): Promise<void> {
+    const next = (await this.readAccountIndex()).filter(
+      (record) => record.accountKey !== accountKey,
+    );
+    await this.writeAccountIndex(next);
+  }
+
+  /**
+   * One-time migration of the pre-multi-account flat credentials into the single legacy
+   * account's slot. Idempotent; absent legacy keys are a no-op. The CLI resolver migrates
+   * the same file independently — both sides copy identical values, so concurrent runs
+   * converge without coordination.
+   */
+  private async migrateLegacyCredentials(): Promise<void> {
+    const legacy = SIWC_LEGACY_CREDENTIAL_KEYS;
+    const flat = await this.readCredentialStrings(
+      legacy.clientId,
+      legacy.accessToken,
+      legacy.refreshToken,
+      legacy.idToken,
+      legacy.userInfo,
+      legacy.scopes,
+      legacy.accessExpiresAt,
+      legacy.earliestRefreshAt,
+      legacy.providerIdentity,
+      legacy.providerAuthSource,
+    );
+    if (!flat[legacy.clientId] && !flat[legacy.refreshToken] && !flat[legacy.userInfo]) return;
+    const rawUser = flat[legacy.userInfo] ?? null;
+    const sub = readUserJsonField(rawUser, "sub") ?? flat[legacy.clientId] ?? null;
+    if (!sub) return;
+    const accountKey = createSiwcAccountKey(sub);
+    const keys = buildSiwcAccountCredentialKeys(accountKey);
+    const entries: Record<string, string> = {};
+    const mapping: ReadonlyArray<readonly [string | null, string]> = [
+      [flat[legacy.clientId] ?? null, keys.clientId],
+      [flat[legacy.accessToken] ?? null, keys.accessToken],
+      [flat[legacy.refreshToken] ?? null, keys.refreshToken],
+      [flat[legacy.idToken] ?? null, keys.idToken],
+      [flat[legacy.userInfo] ?? null, keys.userInfo],
+      [flat[legacy.scopes] ?? null, keys.scopes],
+      [flat[legacy.accessExpiresAt] ?? null, keys.accessExpiresAt],
+      [flat[legacy.earliestRefreshAt] ?? null, keys.earliestRefreshAt],
+      [flat[legacy.providerIdentity] ?? null, buildSiwcAccountProviderIdentityKey(accountKey)],
+      [flat[legacy.providerAuthSource] ?? null, buildSiwcAccountProviderAuthSourceKey(accountKey)],
+    ];
+    for (const [value, key] of mapping) {
+      if (value !== null) entries[key] = value;
+    }
+    await this.writeCredentials(entries);
+    if (!(await this.readAccountIndex()).some((record) => record.accountKey === accountKey)) {
+      await this.upsertAccountRecord({
+        accountKey,
+        sub,
+        email: readUserJsonField(rawUser, "email"),
+        name: readUserJsonField(rawUser, "name"),
+        addedAt: new Date(this.now()).toISOString(),
+      });
+    }
+    for (const key of [
+      legacy.clientId,
+      legacy.accessToken,
+      legacy.refreshToken,
+      legacy.idToken,
+      legacy.userInfo,
+      legacy.scopes,
+      legacy.accessExpiresAt,
+      legacy.earliestRefreshAt,
+      legacy.providerIdentity,
+      legacy.providerAuthSource,
+    ]) {
+      await this.credentialService.delete(key);
+    }
+  }
+}
+
+function isAccountRecord(value: unknown): value is SiwcStoredAccountRecord {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Partial<SiwcStoredAccountRecord>;
+  return (
+    typeof candidate.accountKey === "string" &&
+    /^[a-f0-9]{16}$/.test(candidate.accountKey) &&
+    typeof candidate.sub === "string" &&
+    candidate.sub.trim() !== ""
+  );
 }
 
 interface SiwcTokenState {
@@ -536,33 +724,14 @@ function toUserSummary(claims: SiwcIdTokenClaims): SiwcPlanUserSummary {
   };
 }
 
-function readUserSummary(raw: string | null | undefined): SiwcPlanUserSummary | null {
-  if (!raw) return null;
+function readUserJsonField(userInfoRaw: string | null | undefined, field: string): string | null {
+  if (!userInfoRaw) return null;
   try {
-    const parsed = JSON.parse(raw) as { sub?: unknown; name?: unknown; email?: unknown };
-    if (typeof parsed.sub !== "string" || !parsed.sub.trim()) return null;
-    return {
-      subject: parsed.sub,
-      displayName:
-        (typeof parsed.name === "string" && parsed.name.trim()) ||
-        (typeof parsed.email === "string" && parsed.email) ||
-        parsed.sub,
-      email: typeof parsed.email === "string" ? parsed.email : null,
-    };
+    const parsed = JSON.parse(userInfoRaw) as Record<string, unknown>;
+    const value = parsed[field];
+    return typeof value === "string" && value.trim() ? value : null;
   } catch {
     return null;
-  }
-}
-
-function readLoginHint(userInfoRaw: string | null | undefined): string | undefined {
-  if (!userInfoRaw) return undefined;
-  try {
-    const parsed = JSON.parse(userInfoRaw) as { email?: unknown };
-    return typeof parsed.email === "string" && parsed.email.trim()
-      ? parsed.email.trim()
-      : undefined;
-  } catch {
-    return undefined;
   }
 }
 

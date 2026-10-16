@@ -4,14 +4,21 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { createSharedZCodeCredentialStore, SIWC_CREDENTIAL_KEYS } from "@zcode/adapters/auth";
-import type { SiwcTokenClient, SiwcTokenResponse } from "@zcode/adapters/auth";
 import {
-  CHATGPT_PLAN_PROVIDER_ID,
-  readStandaloneAccountProviderConfigSnapshot,
-  standaloneAccountAuthSourceCredentialKey,
-  standaloneAccountIdentityCredentialKey,
-} from "../src/app/standalone-account-provider-runtime.js";
+  createSharedZCodeCredentialStore,
+  createSiwcAccountKey,
+  listSiwcPlanAccounts,
+  type SiwcTokenClient,
+  type SiwcTokenResponse,
+} from "@zcode/adapters/auth";
+import {
+  buildChatGptPlanAccountProviderId,
+  buildSiwcAccountCredentialKeys,
+  buildSiwcAccountProviderAuthSourceKey,
+  buildSiwcAccountProviderIdentityKey,
+  SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY,
+} from "@zcode/shared";
+import { readStandaloneAccountProviderConfigSnapshot } from "../src/app/standalone-account-provider-runtime.js";
 import { loginChatGptPlan, logoutChatGptPlan } from "../src/auth-login-chatgpt.js";
 
 const TEST_ENV = {
@@ -25,6 +32,10 @@ const ISSUER = "https://auth.openai.com";
 const ISSUED_CLIENT_ID = "oaiapp_issued-client";
 const NOW_SECONDS = Math.floor(Date.now() / 1000);
 const FULL_SCOPE = "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct";
+const SUB = "user-sub-1";
+const ACCOUNT_KEY = createSiwcAccountKey(SUB);
+const ACCOUNT_PROVIDER_ID = buildChatGptPlanAccountProviderId(ACCOUNT_KEY);
+const ACCOUNT_KEYS = buildSiwcAccountCredentialKeys(ACCOUNT_KEY);
 
 interface TestKey {
   jwk: Record<string, unknown>;
@@ -44,19 +55,19 @@ function createTestKey(): TestKey {
   };
 }
 
-function buildIdToken(key: TestKey, nonce: string): string {
+function buildIdToken(key: TestKey, nonce: string, sub: string = SUB): string {
   const header = Buffer.from(
     JSON.stringify({ alg: "RS256", typ: "JWT", kid: "test-key" }),
   ).toString("base64url");
   const payload = Buffer.from(
     JSON.stringify({
-      sub: "user-sub-1",
+      sub,
       iss: ISSUER,
       aud: ISSUED_CLIENT_ID,
       exp: NOW_SECONDS + 600,
       iat: NOW_SECONDS,
       nonce,
-      email: "user@example.com",
+      email: `${sub}@example.com`,
       email_verified: true,
       name: "Test User",
     }),
@@ -84,6 +95,7 @@ function createFakeAuthFetch(key: TestKey): typeof fetch {
 interface FakeTokenClientOptions {
   readonly key: TestKey;
   readonly scope?: string;
+  readonly sub?: string;
   readonly revoke?: { calls: string[]; failFirst?: boolean };
   /** Populated by onAuthorizeUrl so the minted id token carries this attempt's nonce. */
   readonly nonceRef: { value: string };
@@ -97,7 +109,7 @@ function createFakeTokenClient(options: FakeTokenClientOptions) {
       const response: SiwcTokenResponse = {
         accessToken: "siwc-access-1",
         refreshToken: "siwc-refresh-1",
-        idToken: buildIdToken(options.key, options.nonceRef.value),
+        idToken: buildIdToken(options.key, options.nonceRef.value, options.sub),
         tokenType: "bearer",
         expiresInSeconds: 3600,
         scope: options.scope ?? FULL_SCOPE,
@@ -142,6 +154,7 @@ async function runLoginWithBrowserRedirect(options: {
   env?: Record<string, string | undefined>;
   key: TestKey;
   scope?: string;
+  sub?: string;
 }): Promise<ReturnType<typeof loginChatGptPlan>> {
   const env = options.env ?? TEST_ENV;
   const nonceRef = { value: "" };
@@ -149,6 +162,7 @@ async function runLoginWithBrowserRedirect(options: {
     key: options.key,
     nonceRef,
     ...(options.scope === undefined ? {} : { scope: options.scope }),
+    ...(options.sub === undefined ? {} : { sub: options.sub }),
   });
   const loginPromise = loginChatGptPlan({
     credentialStore: options.credentialStore,
@@ -182,42 +196,80 @@ async function runLoginWithBrowserRedirect(options: {
   return result;
 }
 
+async function seedAccountSlot(
+  store: ReturnType<typeof createSharedZCodeCredentialStore>,
+  input: { accountKey: string; sub: string },
+): Promise<void> {
+  const keys = buildSiwcAccountCredentialKeys(input.accountKey);
+  await store.saveMany({
+    [keys.clientId]: ISSUED_CLIENT_ID,
+    [keys.accessToken]: "siwc-access-1",
+    [keys.refreshToken]: "siwc-refresh-1",
+    [keys.scopes]: "openid chatgpt.tokens.use.direct",
+    [keys.userInfo]: JSON.stringify({ sub: input.sub, email: `${input.sub}@example.com` }),
+  });
+  const raw = await store.load(SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY);
+  const records = raw ? (JSON.parse(raw) as unknown[]) : [];
+  records.push({ accountKey: input.accountKey, sub: input.sub, email: null, name: null, addedAt: "" });
+  await store.save(SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY, JSON.stringify(records));
+}
+
 describe("ChatGPT plan login (SIWC)", () => {
-  it("signs in, verifies the id token, persists credentials, and selects the default model", async () => {
+  it("signs in, verifies the id token, persists per-account credentials, and selects the default model", async () => {
     const { credentialStore, dir } = await createWorkspace();
     const key = createTestKey();
     const result = await runLoginWithBrowserRedirect({ credentialStore, dir, key });
 
     expect(result.planUsageEntitled).toBe(true);
-    expect(result.user).toMatchObject({ sub: "user-sub-1", email: "user@example.com" });
-    expect(result.model).toBe(`${CHATGPT_PLAN_PROVIDER_ID}/gpt-6.1-sol`);
+    expect(result.user).toMatchObject({ sub: SUB, email: "user-sub-1@example.com" });
+    expect(result.accountKey).toBe(ACCOUNT_KEY);
+    expect(result.accountProviderId).toBe(ACCOUNT_PROVIDER_ID);
+    expect(result.model).toBe(`${ACCOUNT_PROVIDER_ID}/gpt-6.1-sol`);
     expect(result.providerId).toBe("chatgpt");
 
     const stored = await credentialStore.loadMany([
-      SIWC_CREDENTIAL_KEYS.clientId,
-      SIWC_CREDENTIAL_KEYS.accessToken,
-      SIWC_CREDENTIAL_KEYS.refreshToken,
-      SIWC_CREDENTIAL_KEYS.scopes,
-      SIWC_CREDENTIAL_KEYS.accessExpiresAt,
-      standaloneAccountIdentityCredentialKey(CHATGPT_PLAN_PROVIDER_ID),
-      standaloneAccountAuthSourceCredentialKey(CHATGPT_PLAN_PROVIDER_ID),
+      ACCOUNT_KEYS.clientId,
+      ACCOUNT_KEYS.accessToken,
+      ACCOUNT_KEYS.refreshToken,
+      ACCOUNT_KEYS.scopes,
+      ACCOUNT_KEYS.accessExpiresAt,
+      buildSiwcAccountProviderIdentityKey(ACCOUNT_KEY),
+      buildSiwcAccountProviderAuthSourceKey(ACCOUNT_KEY),
     ]);
-    expect(stored[SIWC_CREDENTIAL_KEYS.clientId]).toBe(ISSUED_CLIENT_ID);
-    expect(stored[SIWC_CREDENTIAL_KEYS.accessToken]).toBe("siwc-access-1");
-    expect(stored[SIWC_CREDENTIAL_KEYS.refreshToken]).toBe("siwc-refresh-1");
-    expect(stored[SIWC_CREDENTIAL_KEYS.scopes]).toBe(FULL_SCOPE);
-    expect(stored[standaloneAccountIdentityCredentialKey(CHATGPT_PLAN_PROVIDER_ID)]).toBe(
-      "user-sub-1",
-    );
-    expect(stored[standaloneAccountAuthSourceCredentialKey(CHATGPT_PLAN_PROVIDER_ID)]).toBe(
-      "oauth",
-    );
+    expect(stored[ACCOUNT_KEYS.clientId]).toBe(ISSUED_CLIENT_ID);
+    expect(stored[ACCOUNT_KEYS.accessToken]).toBe("siwc-access-1");
+    expect(stored[ACCOUNT_KEYS.refreshToken]).toBe("siwc-refresh-1");
+    expect(stored[ACCOUNT_KEYS.scopes]).toBe(FULL_SCOPE);
+    expect(stored[buildSiwcAccountProviderIdentityKey(ACCOUNT_KEY)]).toBe(SUB);
+    expect(stored[buildSiwcAccountProviderAuthSourceKey(ACCOUNT_KEY)]).toBe("oauth");
+
+    const accounts = await listSiwcPlanAccounts(credentialStore);
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]).toMatchObject({ accountKey: ACCOUNT_KEY, entitled: true });
 
     const config = JSON.parse(await readFile(join(dir, "provider_config.json"), "utf-8")) as {
       config?: { defaultModelSelection?: { providerId?: string; modelId?: string } };
     };
-    expect(config.config?.defaultModelSelection?.providerId).toBe(CHATGPT_PLAN_PROVIDER_ID);
+    expect(config.config?.defaultModelSelection?.providerId).toBe(ACCOUNT_PROVIDER_ID);
     expect(config.config?.defaultModelSelection?.modelId).toBe("gpt-6.1-sol");
+  });
+
+  it("adds a second account without hints and keeps both slots", async () => {
+    const { credentialStore, dir } = await createWorkspace();
+    const key = createTestKey();
+    await runLoginWithBrowserRedirect({ credentialStore, dir, key });
+
+    const secondSub = "user-sub-2";
+    const secondKey = createSiwcAccountKey(secondSub);
+    await runLoginWithBrowserRedirect({ credentialStore, dir, key, sub: secondSub });
+
+    const accounts = await listSiwcPlanAccounts(credentialStore);
+    expect(accounts.map((account) => account.accountKey).sort()).toEqual(
+      [ACCOUNT_KEY, secondKey].sort(),
+    );
+    // The first account's tokens are untouched by the second login.
+    const first = await credentialStore.load(ACCOUNT_KEYS.accessToken);
+    expect(first).toBe("siwc-access-1");
   });
 
   it("stores the host id beside an injected credential store even when env points elsewhere", async () => {
@@ -233,7 +285,9 @@ describe("ChatGPT plan login (SIWC)", () => {
       key,
     });
 
-    const hostId = (await readFile(join(dirname(credentialStore.filePath), "siwc-host-id.txt"), "utf8")).trim();
+    const hostId = (
+      await readFile(join(dirname(credentialStore.filePath), "siwc-host-id.txt"), "utf8")
+    ).trim();
     expect(hostId).toMatch(/^urn:uuid:/u);
   });
 
@@ -247,36 +301,23 @@ describe("ChatGPT plan login (SIWC)", () => {
       scope: "openid profile email",
     });
     expect(result.planUsageEntitled).toBe(false);
-    expect(
-      (await readStandaloneAccountProviderConfigSnapshot(credentialStore, TEST_ENV)).providers.get(
-        CHATGPT_PLAN_PROVIDER_ID,
-      )?.access?.entitled,
-    ).toBe(false);
+    const snapshot = await readStandaloneAccountProviderConfigSnapshot(credentialStore, TEST_ENV);
+    expect(snapshot.providers.get(ACCOUNT_PROVIDER_ID)?.access?.entitled).toBe(false);
   });
 
-  it("marks the provider entitled in the standalone account snapshot only with tokens and the plan scope", async () => {
+  it("marks the account entitled in the standalone account snapshot only with tokens and the plan scope", async () => {
     const { credentialStore } = await createWorkspace();
     const without = await readStandaloneAccountProviderConfigSnapshot(credentialStore, TEST_ENV);
-    expect(without.providers.get(CHATGPT_PLAN_PROVIDER_ID)?.access?.entitled).toBe(false);
+    expect(without.providers.get(ACCOUNT_PROVIDER_ID)).toBeUndefined();
 
-    await credentialStore.saveMany({
-      [SIWC_CREDENTIAL_KEYS.clientId]: ISSUED_CLIENT_ID,
-      [SIWC_CREDENTIAL_KEYS.accessToken]: "siwc-access-1",
-      [SIWC_CREDENTIAL_KEYS.refreshToken]: "siwc-refresh-1",
-      [SIWC_CREDENTIAL_KEYS.scopes]: "openid chatgpt.tokens.use.direct",
-    });
+    await seedAccountSlot(credentialStore, { accountKey: ACCOUNT_KEY, sub: SUB });
     const entitled = await readStandaloneAccountProviderConfigSnapshot(credentialStore, TEST_ENV);
-    expect(entitled.providers.get(CHATGPT_PLAN_PROVIDER_ID)?.access?.entitled).toBe(true);
+    expect(entitled.providers.get(ACCOUNT_PROVIDER_ID)?.access?.entitled).toBe(true);
   });
 
   it("revokes the refresh token before clearing tokens and retains the client id", async () => {
     const { credentialStore } = await createWorkspace();
-    await credentialStore.saveMany({
-      [SIWC_CREDENTIAL_KEYS.clientId]: ISSUED_CLIENT_ID,
-      [SIWC_CREDENTIAL_KEYS.accessToken]: "siwc-access-1",
-      [SIWC_CREDENTIAL_KEYS.refreshToken]: "siwc-refresh-1",
-      [SIWC_CREDENTIAL_KEYS.scopes]: "openid chatgpt.tokens.use.direct",
-    });
+    await seedAccountSlot(credentialStore, { accountKey: ACCOUNT_KEY, sub: SUB });
     const revoke = { calls: [] as string[], failFirst: true };
     const result = await logoutChatGptPlan({
       credentialStore,
@@ -286,16 +327,41 @@ describe("ChatGPT plan login (SIWC)", () => {
     });
     expect(result.signedOut).toBe(true);
     expect(result.revoked).toBe(true);
+    expect(result.accountCount).toBe(1);
     expect(revoke.calls).toHaveLength(2); // 503 then success
 
     const after = await credentialStore.loadMany([
-      SIWC_CREDENTIAL_KEYS.clientId,
-      SIWC_CREDENTIAL_KEYS.accessToken,
-      SIWC_CREDENTIAL_KEYS.refreshToken,
+      ACCOUNT_KEYS.clientId,
+      ACCOUNT_KEYS.accessToken,
+      ACCOUNT_KEYS.refreshToken,
     ]);
-    expect(after[SIWC_CREDENTIAL_KEYS.clientId]).toBe(ISSUED_CLIENT_ID);
-    expect(after[SIWC_CREDENTIAL_KEYS.accessToken]).toBeNull();
-    expect(after[SIWC_CREDENTIAL_KEYS.refreshToken]).toBeNull();
+    expect(after[ACCOUNT_KEYS.clientId]).toBe(ISSUED_CLIENT_ID);
+    expect(after[ACCOUNT_KEYS.accessToken]).toBeNull();
+    expect(after[ACCOUNT_KEYS.refreshToken]).toBeNull();
+    expect(await listSiwcPlanAccounts(credentialStore)).toHaveLength(0);
+  });
+
+  it("logout of one account keeps the other account's tokens", async () => {
+    const { credentialStore } = await createWorkspace();
+    const secondSub = "user-sub-2";
+    const secondKey = createSiwcAccountKey(secondSub);
+    const secondKeys = buildSiwcAccountCredentialKeys(secondKey);
+    await seedAccountSlot(credentialStore, { accountKey: ACCOUNT_KEY, sub: SUB });
+    await seedAccountSlot(credentialStore, { accountKey: secondKey, sub: secondSub });
+
+    const result = await logoutChatGptPlan({
+      credentialStore,
+      env: TEST_ENV,
+      tokenClient: createFakeTokenClient({ key: createTestKey(), nonceRef: { value: "" } })
+        .tokenClient,
+    });
+    expect(result.accountCount).toBe(2);
+    const after = await credentialStore.loadMany([
+      ACCOUNT_KEYS.accessToken,
+      secondKeys.accessToken,
+    ]);
+    expect(after[ACCOUNT_KEYS.accessToken]).toBeNull();
+    expect(after[secondKeys.accessToken]).toBeNull();
   });
 
   it("rejects with auth_timeout (no uncaught exception) when the browser never returns", async () => {
