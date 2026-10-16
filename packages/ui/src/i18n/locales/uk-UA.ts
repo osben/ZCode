@@ -6674,7 +6674,7 @@ const ukUA: Record<string, string> = {
   "taskList.cronTaskLabel": "Завдання за розкладом",
   "taskList.worktreeTaskLabel": "Worktree-сесія · {branch} · {directory}",
   "taskList.worktreeTaskLabelMissing":
-    "Каталог worktree відсутній; сесія працює в батьківському робочому просторі",
+    "Каталог worktree відсутній; файлові дії недоступні, доки його не буде відновлено",
   "taskList.worktreeTaskLabelNoBranch": "Worktree-сесія · {directory}",
   "taskList.offPeakTaskLabel": "Завдання в непіковий час",
   "taskList.workflowRun.ariaLabel": "Запуск робочого процесу {name}: {status}",

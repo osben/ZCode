@@ -51,7 +51,11 @@ describe("WindowHostControllerProjection", () => {
         },
       ],
       sessionsIndex: [
-        { taskId: "task-indexed", liveStatus: "waiting" },
+        {
+          taskId: "task-indexed",
+          liveStatus: "waiting",
+          executionWorktree: { path: "/work/demo/.worktrees/task", branchName: "feature/task" },
+        },
         { taskId: "session-only", liveStatus: "running" },
       ],
     });
@@ -60,6 +64,10 @@ describe("WindowHostControllerProjection", () => {
       expect.objectContaining({
         address: expect.objectContaining({ taskId: "task-indexed" }),
         liveStatus: "waiting",
+        executionWorktree: {
+          path: "/work/demo/.worktrees/task",
+          branchName: "feature/task",
+        },
       }),
     ]);
   });

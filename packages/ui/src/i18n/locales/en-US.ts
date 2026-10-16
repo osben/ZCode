@@ -7108,7 +7108,7 @@ const enUS: Record<string, string> = {
   "taskList.offPeakTaskLabel": "Idle-time task",
   "taskList.worktreeTaskLabel": "Worktree session · {branch} · {directory}",
   "taskList.worktreeTaskLabelMissing":
-    "Worktree directory is missing; the session runs in the parent workspace",
+    "Worktree directory is missing; filesystem actions are unavailable until it is restored",
   "taskList.worktreeTaskLabelNoBranch": "Worktree session · {directory}",
   "taskList.workflowRun.ariaLabel": "Workflow run {name}: {status}",
   "taskList.workflowRun.moreRuns": "+{count} more",

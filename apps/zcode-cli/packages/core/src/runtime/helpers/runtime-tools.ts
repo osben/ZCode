@@ -221,15 +221,20 @@ function createRuntimeToolExecutor(
         runtime.config.executionWorktree,
         metadata.sideEffectScope,
         metadata.name,
-      ).then((message) => {
-        if (message && runtime.config.executionWorktree) {
-          runtime.config.executionWorktree = {
-            ...runtime.config.executionWorktree,
-            missing: true,
-          };
-        }
-        return message;
-      }),
+        undefined,
+        (directoryExists) => {
+          const current = runtime.config.executionWorktree;
+          if (!current) return;
+          if (directoryExists) {
+            if (current.missing) {
+              const { missing: _missing, ...restored } = current;
+              runtime.config.executionWorktree = restored;
+            }
+          } else if (!current.missing) {
+            runtime.config.executionWorktree = { ...current, missing: true };
+          }
+        },
+      ),
     getWorkingDirectory: () => runtime.workingDirectory,
     setWorkingDirectory: runtime.setWorkingDirectory.bind(runtime),
     getWorkspaceRoot: () => runtime.workspaceRoot,

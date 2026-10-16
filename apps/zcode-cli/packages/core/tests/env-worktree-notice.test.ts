@@ -45,14 +45,14 @@ describe("execution worktree notice in the Environment section", () => {
     expect(content).not.toContain("(branch");
   });
 
-  it("missing worktree renders the fallback bullet naming the parent workspace", () => {
+  it("missing worktree explains filesystem actions are blocked until it is restored", () => {
     const content = buildEnvInfoSection(envInfo, undefined, {
       path: healthyFact.path,
       missing: true,
       workspacePath: "/workspace/project",
     }).content;
     expect(content).toContain(
-      "- Execution worktree: the requested worktree /workspace/project-worktrees/zcode-sleepy-capybara is missing; this session is running in the parent workspace /workspace/project instead.",
+      "- Execution worktree: the requested worktree /workspace/project-worktrees/zcode-sleepy-capybara is missing; filesystem and terminal actions are blocked until it is restored. The parent workspace is /workspace/project.",
     );
   });
 

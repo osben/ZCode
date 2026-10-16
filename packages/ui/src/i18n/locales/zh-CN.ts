@@ -2120,7 +2120,7 @@ const zhCN: Record<string, string> = {
   "taskList.cronTaskLabel": "定时任务",
   "taskList.offPeakTaskLabel": "闲时任务",
   "taskList.worktreeTaskLabel": "Worktree 会话 · {branch} · {directory}",
-  "taskList.worktreeTaskLabelMissing": "Worktree 目录已丢失；会话在父工作区中运行",
+  "taskList.worktreeTaskLabelMissing": "Worktree 目录不存在；恢复前无法执行文件操作",
   "taskList.worktreeTaskLabelNoBranch": "Worktree 会话 · {directory}",
   "taskList.workflowRun.ariaLabel": "工作流实例 {name}：{status}",
   "taskList.workflowRun.moreRuns": "+{count} 个实例",

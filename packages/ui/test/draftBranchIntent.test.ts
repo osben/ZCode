@@ -142,13 +142,16 @@ describe("applyDraftBranchIntentForSend (no silent git failures)", () => {
 
   it("same branch: proceeds with no switch call and clears the intent", async () => {
     useDraftBranchIntentStore.getState().setDraftBranchIntent(KEY, "main");
+    const guard = vi.fn(async () => false);
     const outcome = await applyDraftBranchIntentForSend({
       gitService,
+      guard,
       workspaceKey: KEY,
       workspacePath: KEY,
       branchName: "main",
     });
     expect(outcome).toEqual({ outcome: "proceed" });
+    expect(guard).not.toHaveBeenCalled();
     expect(switchBranch).not.toHaveBeenCalled();
     expect(intent()).toBeNull();
   });
@@ -170,7 +173,7 @@ describe("applyDraftBranchIntentForSend (no silent git failures)", () => {
     expect(intent()).toBeNull();
   });
 
-  it("guard cancellation: no git calls, intent preserved for a retry", async () => {
+  it("guard cancellation: reads current branch but skips switch, intent preserved for a retry", async () => {
     useDraftBranchIntentStore.getState().setDraftBranchIntent(KEY, "feature/x");
     const guard = vi.fn(async () => false);
     const outcome = await applyDraftBranchIntentForSend({
@@ -181,7 +184,7 @@ describe("applyDraftBranchIntentForSend (no silent git failures)", () => {
       branchName: "feature/x",
     });
     expect(outcome).toEqual({ outcome: "aborted", reason: "guard" });
-    expect(getLocalBranches).not.toHaveBeenCalled();
+    expect(getLocalBranches).toHaveBeenCalledWith({ workspacePath: KEY });
     expect(switchBranch).not.toHaveBeenCalled();
     expect(intent()).toBe("feature/x");
   });

@@ -94,6 +94,35 @@ describe("execution worktree sessions", () => {
     expect(isDirectory).toHaveBeenCalledTimes(1);
   });
 
+  it("clears the missing fact only after a workspace tool confirms the directory was restored", async () => {
+    const isDirectory = vi.fn(async () => true);
+    const onValidated = vi.fn();
+
+    await expect(
+      getMissingExecutionWorktreeToolError(
+        { path: "/workspace/project/.worktrees/task", missing: true },
+        "workspace",
+        "Read",
+        isDirectory,
+        onValidated,
+      ),
+    ).resolves.toBeUndefined();
+    expect(onValidated).toHaveBeenCalledWith(true);
+
+    onValidated.mockClear();
+    await expect(
+      getMissingExecutionWorktreeToolError(
+        { path: "/workspace/project/.worktrees/task", missing: true },
+        "network",
+        "WebSearch",
+        isDirectory,
+        onValidated,
+      ),
+    ).resolves.toBeUndefined();
+    expect(onValidated).not.toHaveBeenCalled();
+    expect(isDirectory).toHaveBeenCalledTimes(1);
+  });
+
   it("cold resume restores the execution worktree as working directory", async () => {
     const worktreePath = createTempWorktree();
     const session = buildSession({

@@ -27,22 +27,22 @@ Precedent: deepseek-harness deliberately pushes working-directory facts to the m
 
   Omit the `(branch ...)` clause when `branchName` is absent (cold-seeded rows).
 
-- Missing worktree (`missing: true`, session already fell back to the parent workspace per execution-worktree-missing-handling.md §2) — the bullet becomes:
+- Missing worktree (`missing: true`; the session retains its missing execution target and blocks workspace actions per execution-worktree-missing-handling.md §2) — the bullet becomes:
 
-  `- Execution worktree: the requested worktree <path> is missing; this session is running in the parent workspace <workspacePath> instead.`
+  `- Execution worktree: the requested worktree <path> is missing; filesystem and terminal actions are blocked until it is restored. The parent workspace is <workspacePath>.`
 
 - Plain sessions (no `executionWorktree`) → the section is byte-identical to today. This is a hard requirement: system-prompt formatting is pinned by contract tests (sentinel strings), and the shared prompt prefix must not shift for the majority non-worktree case.
 
 ## Why
 
-One line removes a whole class of agent mistakes (branch confusion, "where are my changes" answers) for the price of a config read. It also gives the fallback in execution-worktree-missing-handling.md a model-visible surface, so the agent can explain to the user why it is suddenly running in the parent workspace.
+One line removes a whole class of agent mistakes (branch confusion, "where are my changes" answers) for the price of a config read. It also makes the fail-closed state model-visible, so the agent can explain that history remains available while filesystem actions wait for worktree restoration.
 
 ## Acceptance scenarios
 
 1. Worktree session (healthy, with branch) → Environment section contains the execution-worktree bullet with parent path and branch.
 2. Worktree session without persisted branch (cold-seeded row) → bullet without the branch clause.
 3. Plain session → Environment section byte-identical to the current output (regression guard).
-4. Resume of a worktree session whose directory was deleted → bullet renders the missing-variant; the session cwd is the parent workspace.
+4. Resume of a worktree session whose directory was deleted → bullet renders the missing-variant; the session retains the missing execution target, and workspace actions remain blocked until restoration.
 5. Subagent spawned inside a worktree session → subagent environment block carries the same bullet.
 6. Subagent spawned inside a plain session → no bullet.
 7. No new git invocations during context build (the section build does no fs I/O for this line).

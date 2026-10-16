@@ -46,6 +46,7 @@ export interface WindowHostControllerSessionOverlay {
   titleSource?: "default" | "generated" | "custom";
   updatedAt?: number;
   pendingInteraction?: ZCodeTaskMeta["pendingInteraction"];
+  executionWorktree?: WindowHostControllerTaskRow["executionWorktree"];
   activity?: NonNullable<WindowHostControllerTaskRow["activity"]>;
 }
 
@@ -160,6 +161,7 @@ function buildSourceRows(source: ControllerSource): Map<string, WindowHostContro
       membership: membership.membership,
       sourceAvailability: source.sourceAvailability,
       liveStatus: overlay?.liveStatus ?? defaultLiveStatus(meta),
+      ...(overlay?.executionWorktree ? { executionWorktree: overlay.executionWorktree } : {}),
       ...(overlay?.activity ? { activity: overlay.activity } : {}),
       ...(membership.searchSnippets ? { searchSnippets: membership.searchSnippets } : {}),
     });

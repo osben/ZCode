@@ -125,7 +125,7 @@ export type DraftBranchIntentSendOutcome =
 
 /**
  * Apply the draft branch intent before the send dispatch (spec: composer-branch-switcher-semantics.md §1).
- * Guard first, then the same-branch check, then the switch. Every failure path aborts the send
+ * Same-branch check first, then guard before any actual switch. Every failure path aborts the send
  * AND keeps the intent in the store (retryable); the intent is cleared only on full success —
  * a git failure must never silently swallow either the switch or the user's draft.
  */
@@ -146,15 +146,19 @@ export async function applyDraftBranchIntentForSend({
   workspacePath: string;
   branchName: string;
 }): Promise<DraftBranchIntentSendOutcome> {
-  if (guard) {
-    const allowed = await guard({ workspaceKey, targetBranchName: branchName, scope: "checkout" });
-    if (!allowed) {
-      return { outcome: "aborted", reason: "guard" };
-    }
-  }
   try {
     const branches = await gitService.getLocalBranches({ workspacePath });
     if (branches.currentBranchName !== branchName) {
+      if (guard) {
+        const allowed = await guard({
+          workspaceKey,
+          targetBranchName: branchName,
+          scope: "checkout",
+        });
+        if (!allowed) {
+          return { outcome: "aborted", reason: "guard" };
+        }
+      }
       const result = await gitService.switchBranch({
         workspacePath,
         targetBranchName: branchName,

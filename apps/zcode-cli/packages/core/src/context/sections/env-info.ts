@@ -38,7 +38,7 @@ const UNKNOWN_GIT_STATUS = "(unknown)";
 export interface ExecutionWorktreeEnvFact {
   path: string;
   branchName?: string;
-  /** The worktree directory vanished; the session fell back to the parent workspace cwd. */
+  /** The worktree directory vanished; workspace and terminal actions are blocked until restoration. */
   missing?: boolean;
   /** Parent workspace reference (the session's listing identity). */
   workspacePath?: string;
@@ -46,10 +46,10 @@ export interface ExecutionWorktreeEnvFact {
 
 /** One-line worktree isolation notice shared by the main and subagent env sections (no list prefix). */
 export function formatExecutionWorktreeSentence(worktree: ExecutionWorktreeEnvFact): string | null {
-  // The parent reference is the point of the line; without it the isolation/fallback is unexplainable.
+  // The parent reference identifies the workspace without implying it is an execution fallback.
   if (!worktree.workspacePath) return null;
   if (worktree.missing) {
-    return `${EXECUTION_WORKTREE_LABEL}: the requested worktree ${worktree.path} is missing; this session is running in the parent workspace ${worktree.workspacePath} instead.`;
+    return `${EXECUTION_WORKTREE_LABEL}: the requested worktree ${worktree.path} is missing; filesystem and terminal actions are blocked until it is restored. The parent workspace is ${worktree.workspacePath}.`;
   }
   const branchClause = worktree.branchName ? ` (branch ${worktree.branchName})` : "";
   return `${EXECUTION_WORKTREE_LABEL}: this session runs in a linked git worktree of ${worktree.workspacePath}${branchClause}; file changes stay in the worktree until they are merged.`;

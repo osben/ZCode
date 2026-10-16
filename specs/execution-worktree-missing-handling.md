@@ -67,7 +67,7 @@ History survives worktree cleanup, so resume stays available. Filesystem work fa
 4. Same resume → the session row carries `executionWorktreeMissing: true` immediately (no refresh needed), and the user can ask questions about stored history.
 5. In a missing-worktree session, an agent file or terminal action returns a clear missing-worktree error and never executes in the parent workspace; deleting the directory during a run has the same result on the next action.
 6. Externally deleted worktree, no resume → next summary derivation (session event, gateway cold start, or index publisher construction) flips the badge to the missing state (color + tooltip); no realtime push required.
-7. Recreated worktree at the same path → next derivation returns the badge to normal (`executionWorktreeMissing` omitted/false).
+7. Recreated worktree at the same path → the next workspace-bound tool validation clears the runtime `missing` fact after confirming the directory is present; subsequent summary derivation returns the badge to normal (`executionWorktreeMissing` omitted/false). Non-workspace tools do not probe or change worktree health.
 8. Plain sessions (no worktree) → summaries byte-identical to before; badge rendering untouched.
 9. Old UI + new CLI (unknown `executionWorktreeMissing` field) and new UI + old CLI (field absent) → no parse errors (old parsers strip the unknown top-level key), badge shows the normal worktree state.
 10. Projection upsert equality: a summary whose only change is `missing` produces a delta (does not get conflated away).

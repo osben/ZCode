@@ -26,6 +26,7 @@ export async function getMissingExecutionWorktreeToolError(
       return false;
     }
   },
+  onValidated?: (isDirectory: boolean) => void,
 ): Promise<string | undefined> {
   if (!worktree) return undefined;
   const requiresWorkspace =
@@ -34,6 +35,8 @@ export async function getMissingExecutionWorktreeToolError(
     sideEffectScope === "system" ||
     (sideEffectScope === "none" && WORKSPACE_READ_TOOLS.has(toolName));
   if (!requiresWorkspace) return undefined;
-  if (await isDirectory(worktree.path)) return undefined;
+  const directoryExists = await isDirectory(worktree.path);
+  onValidated?.(directoryExists);
+  if (directoryExists) return undefined;
   return `Execution worktree is missing or unavailable: ${worktree.path}. Workspace and terminal actions are blocked until it is restored.`;
 }
