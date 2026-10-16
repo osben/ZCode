@@ -4,6 +4,10 @@
  * Sensitive information (such as appSecret) and provider default endpoint configuration
  * belong only in the provider modules under services, never in the shared layer.
  */
+import {
+  buildChatGptPlanAccountProviderId,
+  isChatGptPlanAccountKey,
+} from "./model-provider-types.js";
 
 /** Built-in BigModel provider ID. */
 export const BIGMODEL_PROVIDER_ID = "bigmodel" as const;
@@ -228,6 +232,106 @@ export interface SiwcLoginStart {
 }
 
 /** ChatGPT plan (SIWC) login poll result; null while the browser has not returned. */
-export interface SiwcLoginCompletionResult extends SiwcPlanStatus {
+export interface SiwcLoginCompletionResult extends SiwcPlanAccountStatus {
   newUser: boolean;
+}
+
+/**
+ * Multi-account SIWC credential key names. Pure string builders live here so the
+ * Desktop host service and the CLI resolver (deliberately duplicated SIWC stacks)
+ * cannot drift; both are pinned by mirrored tests.
+ */
+
+/** Credential index of signed-in ChatGPT plan accounts (JSON array, not a secret). */
+export const SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY = "oauth:chatgpt:accounts" as const;
+
+/** Per-account SIWC credential keys in the shared credential store. */
+export interface SiwcAccountCredentialKeys {
+  clientId: string;
+  accessToken: string;
+  refreshToken: string;
+  idToken: string;
+  userInfo: string;
+  scopes: string;
+  accessExpiresAt: string;
+  earliestRefreshAt: string;
+}
+
+function requireValidSiwcAccountKey(accountKey: string): string {
+  const normalized = accountKey.trim();
+  if (!isChatGptPlanAccountKey(normalized)) {
+    throw new Error(`Invalid ChatGPT plan account key: ${normalized}`);
+  }
+  return normalized;
+}
+
+/** Build the per-account SIWC credential key set (`oauth:chatgpt:<accountKey>:*`). */
+export function buildSiwcAccountCredentialKeys(accountKey: string): SiwcAccountCredentialKeys {
+  const key = requireValidSiwcAccountKey(accountKey);
+  return {
+    clientId: `oauth:chatgpt:${key}:client_id`,
+    accessToken: `oauth:chatgpt:${key}:access_token`,
+    refreshToken: `oauth:chatgpt:${key}:refresh_token`,
+    idToken: `oauth:chatgpt:${key}:id_token`,
+    userInfo: `oauth:chatgpt:${key}:user_info`,
+    scopes: `oauth:chatgpt:${key}:scopes`,
+    accessExpiresAt: `oauth:chatgpt:${key}:access_expires_at`,
+    earliestRefreshAt: `oauth:chatgpt:${key}:earliest_refresh_at`,
+  };
+}
+
+/** Account-provider identity key of one ChatGPT plan account slot. */
+export function buildSiwcAccountProviderIdentityKey(accountKey: string): string {
+  return `account-provider:${buildChatGptPlanAccountProviderId(accountKey)}:identity`;
+}
+
+/** Account-provider auth-source key of one ChatGPT plan account slot. */
+export function buildSiwcAccountProviderAuthSourceKey(accountKey: string): string {
+  return `account-provider:${buildChatGptPlanAccountProviderId(accountKey)}:auth-source`;
+}
+
+/** Cross-process refresh lock file name of one ChatGPT plan account (host and CLI must match). */
+export function buildSiwcAccountRefreshLockFileName(accountKey: string): string {
+  return `siwc-chatgpt.${requireValidSiwcAccountKey(accountKey)}.refresh`;
+}
+
+/**
+ * Cross-process lock guarding shared SIWC account-file mutations (legacy migration and the
+ * account-index read-merge-write). Host and CLI must use the same name; the lock file lives
+ * next to the shared credentials file in both processes.
+ */
+export const SIWC_ACCOUNTS_LOCK_FILE_NAME = "siwc-chatgpt.accounts" as const;
+
+/** Pre-multi-account flat credential keys; read-only input for the one-time migration. */
+export const SIWC_LEGACY_CREDENTIAL_KEYS = {
+  clientId: "oauth:chatgpt:client_id",
+  accessToken: "oauth:chatgpt:access_token",
+  refreshToken: "oauth:chatgpt:refresh_token",
+  idToken: "oauth:chatgpt:id_token",
+  userInfo: "oauth:chatgpt:user_info",
+  scopes: "oauth:chatgpt:scopes",
+  accessExpiresAt: "oauth:chatgpt:access_expires_at",
+  earliestRefreshAt: "oauth:chatgpt:earliest_refresh_at",
+  providerIdentity: "account-provider:account:chatgpt-plan:identity",
+  providerAuthSource: "account-provider:account:chatgpt-plan:auth-source",
+} as const;
+
+/** Signed-in account descriptor persisted in the account index (no secrets). */
+export interface SiwcStoredAccountRecord {
+  accountKey: string;
+  sub: string;
+  email: string | null;
+  name: string | null;
+  addedAt: string;
+}
+
+/** Connection status of one signed-in ChatGPT plan account (user is always present). */
+export interface SiwcPlanAccountStatus extends Omit<SiwcPlanStatus, "user"> {
+  accountKey: string;
+  user: SiwcPlanUserSummary;
+}
+
+/** Aggregate status across all signed-in ChatGPT plan accounts. */
+export interface SiwcPlanAccountsStatus {
+  accounts: readonly SiwcPlanAccountStatus[];
 }

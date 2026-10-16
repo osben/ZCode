@@ -3731,6 +3731,8 @@ const zhCN: Record<string, string> = {
   "settings.modelProvider.chatgpt.notEntitled":
     "已登录，但未开启套餐用量（授权缺少 ChatGPT 套餐权限）。请重新登录以授权。",
   "settings.modelProvider.chatgpt.signOut": "退出登录",
+  "settings.modelProvider.chatgpt.addAccount": "添加其他账号",
+  "settings.modelProvider.chatgpt.reconnect": "重新连接",
   "settings.modelProvider.chatgpt.manageUsage": "管理用量",
   "settings.modelProvider.chatgpt.firstRun.title": "你正在使用 ChatGPT 套餐",
   "settings.modelProvider.chatgpt.firstRun.body":

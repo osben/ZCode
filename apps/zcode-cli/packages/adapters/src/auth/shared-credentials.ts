@@ -287,8 +287,21 @@ export function resolveSharedZCodeCredentialsPath(
   }
 
   const env = options.env ?? process.env;
-  const baseDir = options.baseDir ?? env[ZCODE_DATA_BASE_DIR_ENV_KEY] ?? homedir();
+  const explicitBaseDir = options.baseDir?.trim() || env[ZCODE_DATA_BASE_DIR_ENV_KEY]?.trim();
+  const baseDir = explicitBaseDir || readBootstrapDataBaseDir() || homedir();
   return join(resolveUserPath(baseDir), ".zcode", "v2", "credentials.json");
+}
+
+function readBootstrapDataBaseDir(): string | null {
+  const settingsPath = join(homedir(), ".zcode", "v2", "setting.json");
+  try {
+    const value: unknown = JSON.parse(readFileSync(settingsPath, "utf-8"));
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+    const dataBaseDir = (value as { dataBaseDir?: unknown }).dataBaseDir;
+    return typeof dataBaseDir === "string" && dataBaseDir.trim() ? dataBaseDir.trim() : null;
+  } catch {
+    return null;
+  }
 }
 
 async function readRawCredentialRecord(filePath: string): Promise<Record<string, string>> {

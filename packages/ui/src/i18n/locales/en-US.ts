@@ -3965,6 +3965,8 @@ const enUS: Record<string, string> = {
   "settings.modelProvider.chatgpt.notEntitled":
     "Signed in, but plan usage is not enabled (consent lacked the ChatGPT plan scope). Sign in again to grant it.",
   "settings.modelProvider.chatgpt.signOut": "Sign out",
+  "settings.modelProvider.chatgpt.addAccount": "Add another account",
+  "settings.modelProvider.chatgpt.reconnect": "Re-connect",
   "settings.modelProvider.chatgpt.manageUsage": "Manage usage",
   "settings.modelProvider.chatgpt.firstRun.title": "You're using your ChatGPT plan",
   "settings.modelProvider.chatgpt.firstRun.body":

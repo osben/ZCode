@@ -3653,6 +3653,8 @@ const ukUA: Record<string, string> = {
   "settings.modelProvider.chatgpt.notEntitled":
     "Ви увійшли, але використання плану не увімкнено (згода не містить права плану ChatGPT). Увійдіть знову, щоб надати його.",
   "settings.modelProvider.chatgpt.signOut": "Вийти",
+  "settings.modelProvider.chatgpt.addAccount": "Додати ще один акаунт",
+  "settings.modelProvider.chatgpt.reconnect": "Повторно підключити",
   "settings.modelProvider.chatgpt.manageUsage": "Керувати використанням",
   "settings.modelProvider.chatgpt.firstRun.title": "Ви використовуєте свій план ChatGPT",
   "settings.modelProvider.chatgpt.firstRun.body":

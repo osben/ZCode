@@ -11,7 +11,11 @@
 
 import { decodeCustomModelValue } from "./custom-model-value.js";
 import { migrateLegacyModelProviderId } from "./legacy-model-provider-identity.js";
-import { isBuiltinModelProviderId } from "./model-provider-types.js";
+import {
+  BUILTIN_MODEL_PROVIDER_IDS,
+  isBuiltinModelProviderId,
+  isChatGptPlanAccountProviderId,
+} from "./model-provider-types.js";
 import { OFFICIAL_GLM_MODEL_IDS } from "./official-glm-model-id.js";
 
 /** Default per-field limit; ARMS truncates or rejects oversized fields, so truncate proactively to preserve the important prefix. */
@@ -182,6 +186,11 @@ export function resolveTelemetryProviderScope(
   const normalized = providerId?.trim();
   if (!normalized) {
     return { providerId: "", providerScope: "unknown" };
+  }
+  // Per-account ChatGPT plan ids are a stable per-user pseudonym (sha256(sub) prefix); report
+  // only the family id so telemetry cannot link events to one ChatGPT account.
+  if (isChatGptPlanAccountProviderId(normalized)) {
+    return { providerId: BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan, providerScope: "builtin" };
   }
   if (isBuiltinModelProviderId(normalized) || isLegacyBuiltinTelemetryProviderId(normalized)) {
     return { providerId: normalized, providerScope: "builtin" };

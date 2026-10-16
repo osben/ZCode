@@ -4,7 +4,7 @@ import {
   requestVerificationInteractionAvailable,
 } from "@zcode/shared";
 import { zcodeMcpUiSamplingResultSchema } from "@zcode/shared";
-import { BUILTIN_MODEL_PROVIDER_IDS } from "@zcode/shared";
+import { isChatGptPlanAccountProviderId } from "@zcode/shared";
 import { MCP_APPS_SAMPLING_TRANSPORT_TIMEOUT_MS } from "@zcode/shared/mcp-apps";
 import {
   channelReplyRequestSchema,
@@ -1398,7 +1398,7 @@ export function createZCodeAgentService(
   ): Promise<AccountRequestAuthMaterial | undefined> {
     // ChatGPT plan (SIWC) carries no zhipu-shaped accountAccess on the wire; the host
     // resolves it by provider id, mirroring the CLI standalone resolver semantics.
-    if (chatGptPlanRequestAuth && request.providerId === BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan) {
+    if (chatGptPlanRequestAuth && isChatGptPlanAccountProviderId(request.providerId)) {
       return chatGptPlanRequestAuth.resolve({
         expectedAccountScope: request.expectedAccountScope,
         forceRefresh: request.rejectedProjectTokenFingerprint !== undefined,
@@ -2555,8 +2555,7 @@ export function createZCodeAgentService(
           if (
             accountRequestAuthService &&
             ((accountAccess && !requiresRequestVerification(accountAccess)) ||
-              (chatGptPlanRequestAuth &&
-                parsed.data.providerId === BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan))
+              (chatGptPlanRequestAuth && isChatGptPlanAccountProviderId(parsed.data.providerId)))
           ) {
             // Account API Keys and Team Runtime Keys require no Renderer interaction. The Host automatically responds using the Account Access fixed by the Model
             // to avoid making background tasks and sessions without a pane depend on UI subscribers.

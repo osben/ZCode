@@ -108,6 +108,48 @@ describe("ChatGptPlanDetail", () => {
     expect(mocks.oauthService.pollChatGptPlanLogin).toHaveBeenCalledTimes(2);
   });
 
+  it("lists every signed-in account with per-account sign out", async () => {
+    mocks.oauthService.getChatGptPlanStatus.mockResolvedValue({
+      accounts: [
+        {
+          accountKey: "a1b2c3d4e5f60718",
+          signedIn: true,
+          planUsageEntitled: true,
+          user: { displayName: "Work", email: "work@example.com", subject: "sub-work" },
+        },
+        {
+          accountKey: "b1b2c3d4e5f60718",
+          signedIn: true,
+          planUsageEntitled: false,
+          user: { displayName: "Personal", email: "home@example.com", subject: "sub-home" },
+        },
+      ],
+    });
+    render(createElement(ChatGptPlanDetail));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // The intl mock returns raw ids, so account identity is asserted via row actions:
+    // two rows render, each with its own sign out, and only the identity-only row
+    // (planUsageEntitled=false) offers re-connect.
+    expect(
+      screen.getAllByRole("button", { name: "settings.modelProvider.chatgpt.signOut" }),
+    ).toHaveLength(2);
+    expect(
+      screen.getByRole("button", { name: "settings.modelProvider.chatgpt.reconnect" }),
+    ).toBeTruthy();
+
+    const signOutButtons = screen.getAllByRole("button", {
+      name: "settings.modelProvider.chatgpt.signOut",
+    });
+    await act(async () => {
+      fireEvent.click(signOutButtons[0]!);
+      await Promise.resolve();
+    });
+    expect(mocks.oauthService.logoutChatGptPlan).toHaveBeenCalledWith("a1b2c3d4e5f60718");
+  });
+
   it("gives the first-run dialog an accessible name", async () => {
     mocks.oauthService.pollChatGptPlanLogin.mockResolvedValue({
       signedIn: true,
