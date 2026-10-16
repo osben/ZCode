@@ -186,6 +186,8 @@ describe("V4 message pins", () => {
       ),
     );
 
+    expect(screen.getByRole("group", { name: "已固定消息" })).toBeTruthy();
+
     // 新固定在前。
     const chips = screen.getAllByTestId(/^v4-pinned-chip-\d+$/);
     expect(chips.map((chip) => chip.dataset.testid)).toEqual([
