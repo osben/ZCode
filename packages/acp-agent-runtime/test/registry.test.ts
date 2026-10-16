@@ -157,4 +157,22 @@ describe("agent definitions", () => {
     expect(isSafeVersionProbeArgs(["-e", "code"])).toBe(false);
     expect(isSafeVersionProbeArgs([])).toBe(false);
   });
+
+  it("declares fixed login and status arguments for the settings UI", () => {
+    for (const definition of ACP_AGENT_DEFINITIONS) {
+      expect(definition.loginArgs.length).toBeGreaterThan(0);
+      expect(definition.loginArgs.every((arg) => typeof arg === "string" && arg.length > 0)).toBe(
+        true,
+      );
+      if (definition.statusArgs !== undefined) {
+        expect(definition.statusArgs.length).toBeGreaterThan(0);
+        expect(
+          definition.statusArgs.every((arg) => typeof arg === "string" && arg.length > 0),
+        ).toBe(true);
+      }
+    }
+    expect(ACP_AGENT_DEFINITIONS.find((item) => item.agentId === "cursor")?.statusArgs).toEqual([
+      "status",
+    ]);
+  });
 });

@@ -47,6 +47,7 @@ import {
 } from "./runtime-helpers.js";
 import type {
   AcpAuthMethod,
+  AcpFrameObserver,
   AcpHostBridge,
   AcpLaunchOptions,
   AcpPermissionAnswer,
@@ -58,6 +59,12 @@ import type {
 export interface AcpSessionRuntimeOptions extends AcpLaunchOptions {
   readonly timeouts?: AcpTimeouts;
   readonly maxFrameBytes?: number;
+  /**
+   * Receives every raw NDJSON frame in both directions (handshake, prompts,
+   * cancels). Intended for diagnostics/UI debug panels; observer exceptions
+   * are swallowed. `text` may be truncated for oversized lines.
+   */
+  readonly onFrame?: AcpFrameObserver;
 }
 
 interface ActivePromptState {
@@ -206,6 +213,7 @@ export class AcpSessionRuntime extends EventEmitter {
       ...(this.options.maxFrameBytes !== undefined
         ? { maxFrameBytes: this.options.maxFrameBytes }
         : {}),
+      ...(this.options.onFrame !== undefined ? { onFrame: this.options.onFrame } : {}),
     });
     this.process = proc;
     this.generation += 1;

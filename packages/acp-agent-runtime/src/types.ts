@@ -32,6 +32,25 @@ export interface AcpTimeouts {
   readonly stallWarningMs?: number;
 }
 
+/**
+ * One raw NDJSON frame observed on the agent's stdio.
+ *
+ * `text` is the wire line as sent/received (trailing newline stripped);
+ * oversized lines are truncated and end with a `…[truncated N bytes]`
+ * marker. `at` is a `Date.now()` timestamp in milliseconds.
+ */
+export interface AcpFrameEvent {
+  readonly direction: "out" | "in";
+  readonly text: string;
+  readonly at: number;
+}
+
+/**
+ * Raw-frame observer passed to `AcpSessionRuntimeOptions.onFrame`.
+ * Observer exceptions are swallowed: debugging must never affect the session.
+ */
+export type AcpFrameObserver = (frame: AcpFrameEvent) => void;
+
 export type AcpRuntimeState = "starting" | "ready" | "prompting" | "stopped" | "failed";
 
 export interface AcpAuthMethod {

@@ -21,6 +21,10 @@ export interface AcpAgentDefinition {
   readonly versionArgs: readonly string[];
   /** Default CLI arguments that start the agent in ACP server mode. */
   readonly spawnArgs: readonly string[];
+  /** CLI arguments that start the interactive login flow from the settings UI. */
+  readonly loginArgs: readonly string[];
+  /** Fixed, non-interactive arguments that print auth status; omit when unsupported. */
+  readonly statusArgs?: readonly string[];
 }
 
 export const ACP_AGENT_DEFINITIONS: readonly AcpAgentDefinition[] = Object.freeze([
@@ -30,6 +34,8 @@ export const ACP_AGENT_DEFINITIONS: readonly AcpAgentDefinition[] = Object.freez
     binaries: ["opencode"],
     versionArgs: ["--version"],
     spawnArgs: ["acp"],
+    loginArgs: ["auth", "login"],
+    statusArgs: ["auth", "list"],
   },
   {
     agentId: "cursor",
@@ -39,6 +45,8 @@ export const ACP_AGENT_DEFINITIONS: readonly AcpAgentDefinition[] = Object.freez
     binaries: ["cursor-agent"],
     versionArgs: ["--version"],
     spawnArgs: ["acp"],
+    loginArgs: ["login"],
+    statusArgs: ["status"],
   },
 ]);
 
