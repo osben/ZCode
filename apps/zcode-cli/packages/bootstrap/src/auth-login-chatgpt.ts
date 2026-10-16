@@ -30,7 +30,9 @@ import {
   buildSiwcAccountCredentialKeys,
   buildSiwcAccountProviderAuthSourceKey,
   buildSiwcAccountProviderIdentityKey,
+  buildSiwcAccountRefreshLockFileName,
 } from "@zcode/shared";
+import { withFileLock } from "@zcode/shared/node";
 import type { EnvRecord } from "@zcode/adapters/model";
 import { ZCodeCliLoginError } from "./auth-login-contract.js";
 import { throwIfAborted, waitWithAbort } from "./auth-login-abort.js";
@@ -189,22 +191,37 @@ export async function loginChatGptPlan(
       const accountProviderId = buildChatGptPlanAccountProviderId(accountKey);
       const keys = buildSiwcAccountCredentialKeys(accountKey);
       try {
-        await credentialStore.saveMany({
-          [keys.clientId]: clientId,
-          [keys.accessToken]: exchanged.accessToken,
-          ...(exchanged.refreshToken ? { [keys.refreshToken]: exchanged.refreshToken } : {}),
-          ...(exchanged.idToken ? { [keys.idToken]: exchanged.idToken } : {}),
-          [keys.userInfo]: JSON.stringify(user),
-          ...(exchanged.scope ? { [keys.scopes]: exchanged.scope } : {}),
-          [keys.accessExpiresAt]: String(
-            Math.floor(now() / 1000) + (exchanged.expiresInSeconds ?? 3600),
-          ),
-          ...(exchanged.earliestRefreshAt !== undefined
-            ? { [keys.earliestRefreshAt]: String(exchanged.earliestRefreshAt) }
-            : {}),
-          [buildSiwcAccountProviderIdentityKey(accountKey)]: idToken.sub,
-          [buildSiwcAccountProviderAuthSourceKey(accountKey)]: "oauth",
-        });
+        // Slot replacement mirrors the host: under the per-account refresh lock (an in-flight
+        // refresh of the previous registration must not interleave), and the previous
+        // registration's optional token fields are DELETED when this exchange omits them —
+        // a same-subject re-login can issue a new client id without a refresh token, and a
+        // stale refresh token beside the new client id would send a mismatched pair.
+        await withFileLock(
+          join(dirname(credentialStore.filePath), buildSiwcAccountRefreshLockFileName(accountKey)),
+          async () => {
+            const entries: Record<string, string> = {
+              [keys.clientId]: clientId,
+              [keys.accessToken]: exchanged.accessToken,
+              ...(exchanged.refreshToken ? { [keys.refreshToken]: exchanged.refreshToken } : {}),
+              ...(exchanged.idToken ? { [keys.idToken]: exchanged.idToken } : {}),
+              [keys.userInfo]: JSON.stringify(user),
+              ...(exchanged.scope ? { [keys.scopes]: exchanged.scope } : {}),
+              [keys.accessExpiresAt]: String(
+                Math.floor(now() / 1000) + (exchanged.expiresInSeconds ?? 3600),
+              ),
+              ...(exchanged.earliestRefreshAt !== undefined
+                ? { [keys.earliestRefreshAt]: String(exchanged.earliestRefreshAt) }
+                : {}),
+              [buildSiwcAccountProviderIdentityKey(accountKey)]: idToken.sub,
+              [buildSiwcAccountProviderAuthSourceKey(accountKey)]: "oauth",
+            };
+            await credentialStore.saveMany(entries);
+            // Unwritten optional token fields are stale from the previous registration.
+            for (const key of [keys.refreshToken, keys.idToken, keys.scopes, keys.earliestRefreshAt]) {
+              if (entries[key] === undefined) await credentialStore.delete(key);
+            }
+          },
+        );
         await upsertSiwcAccountRecord(credentialStore, {
           accountKey,
           sub: idToken.sub,

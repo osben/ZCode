@@ -481,7 +481,49 @@ export class SiwcAuthService {
     const existing = (await this.readAccountIndex()).some(
       (record) => record.accountKey === accountKey,
     );
-    await this.writeCredentials({
+    // Slot replacement runs under the SAME per-account refresh lock as refreshUnderLock: an
+    // in-flight refresh of the previous registration must not interleave (read old pair,
+    // then overwrite the freshly saved tokens, or delete the new grant on a terminal error).
+    await withFileLock(
+      join(this.configDir, buildSiwcAccountRefreshLockFileName(accountKey)),
+      () => this.replaceAccountSlot(accountKey, input),
+      { lockMaxWaitMs: SIWC_REFRESH_LOCK_MAX_WAIT_MS },
+    );
+    await this.upsertAccountRecord({
+      accountKey,
+      sub: input.claims.sub,
+      email: input.claims.email ?? null,
+      name: input.claims.name ?? null,
+      addedAt: new Date(this.now()).toISOString(),
+    });
+    return { accountKey, isNewAccount: !existing };
+  }
+
+  /**
+   * Replace one account's slot with a fresh registration. The previous registration's
+   * optional token fields are DELETED when the new exchange omits them — a same-subject
+   * re-login can issue a new client id with no refresh token, and keeping the old client's
+   * refresh token next to the new client id would send a mismatched pair on the next
+   * refresh or revocation (and a terminal refresh error would clear the NEW grant).
+   * Caller holds the per-account refresh lock.
+   */
+  private async replaceAccountSlot(
+    accountKey: string,
+    input: {
+      claims: SiwcIdTokenClaims;
+      clientId: string;
+      exchanged: {
+        accessToken: string;
+        refreshToken?: string;
+        idToken?: string;
+        scopes?: string;
+        accessExpiresAt: number;
+        earliestRefreshAt?: number;
+      };
+    },
+  ): Promise<void> {
+    const keys = buildSiwcAccountCredentialKeys(accountKey);
+    const entries: Record<string, string> = {
       [keys.clientId]: input.clientId,
       [keys.accessToken]: input.exchanged.accessToken,
       ...(input.exchanged.refreshToken
@@ -496,15 +538,12 @@ export class SiwcAuthService {
         : {}),
       [buildSiwcAccountProviderIdentityKey(accountKey)]: input.claims.sub,
       [buildSiwcAccountProviderAuthSourceKey(accountKey)]: "oauth",
-    });
-    await this.upsertAccountRecord({
-      accountKey,
-      sub: input.claims.sub,
-      email: input.claims.email ?? null,
-      name: input.claims.name ?? null,
-      addedAt: new Date(this.now()).toISOString(),
-    });
-    return { accountKey, isNewAccount: !existing };
+    };
+    const staleKeys = [keys.refreshToken, keys.idToken, keys.scopes, keys.earliestRefreshAt].filter(
+      (key) => entries[key] === undefined,
+    );
+    await this.writeCredentials(entries);
+    for (const key of staleKeys) await this.credentialService.delete(key);
   }
 
   private async clearTokenCredentials(accountKey: string): Promise<void> {

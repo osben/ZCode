@@ -12,6 +12,7 @@ import {
   SIWC_LEGACY_CREDENTIAL_KEYS,
 } from "@zcode/shared";
 import type { ICredentialService } from "../src/credential/credential.js";
+import { withFileLock } from "@zcode/shared/node";
 import { SiwcAuthService, createSiwcAccountKey } from "../src/oauth/siwc/siwcAuthService.js";
 import { SIWC_ISSUER } from "../src/oauth/siwc/siwcOAuth.js";
 
@@ -64,7 +65,12 @@ function createTestKey(): TestKey {
   };
 }
 
-function buildIdToken(key: TestKey, nonce: string, sub: string = SUB): string {
+function buildIdToken(
+  key: TestKey,
+  nonce: string,
+  sub: string = SUB,
+  aud: string = ISSUED_CLIENT_ID,
+): string {
   const header = Buffer.from(
     JSON.stringify({ alg: "RS256", typ: "JWT", kid: "host-test-key" }),
   ).toString("base64url");
@@ -72,7 +78,7 @@ function buildIdToken(key: TestKey, nonce: string, sub: string = SUB): string {
     JSON.stringify({
       sub,
       iss: SIWC_ISSUER,
-      aud: ISSUED_CLIENT_ID,
+      aud,
       exp: NOW_SECONDS + 600,
       nonce,
       email: `${sub}@example.com`,
@@ -429,6 +435,83 @@ describe("SiwcAuthService (host side, multi-account)", () => {
     expect(stored[legacy.clientId]).toBeUndefined();
     // The migrated token resolves through the standard per-account path.
     expect(await fixture.service.resolveAccessToken(ACCOUNT_KEY)).toBe("legacy-access");
+  });
+
+  it("replaces the previous registration's bundle instead of merging it", async () => {
+    const fixture = await createFixture();
+    await runFullLogin(fixture);
+    await fixture.service.pollLogin();
+    // Same subject re-registered: fresh client id, access token, but NO refresh token.
+    const second = await createFixture();
+    const reauthBackend = createFakeAuthBackend({
+      key: second.key,
+      nonceRef: second.nonceRef,
+      refresh: undefined,
+    });
+    const service = new SiwcAuthService(fixture.credentials, {
+      configDir: fixture.dir,
+      fetchFn: async (input, init) => {
+        const url = String(input);
+        if (url.endsWith("/oauth/token")) {
+          const body = new URLSearchParams(String(init?.body ?? ""));
+          if (body.get("grant_type") === "authorization_code") {
+            // Fresh registration: new client id pair, access-only grant.
+            return Response.json({
+              access_token: "new-access",
+              id_token: buildIdToken(second.key, second.nonceRef.value, SUB, "oaiapp_new_client"),
+              expires_in: 3600,
+              scope: FULL_SCOPE,
+            });
+          }
+        }
+        return reauthBackend.fetchFn(input, init);
+      },
+      now: () => NOW_SECONDS * 1000,
+    });
+    const start = await service.startLogin();
+    second.nonceRef.value = new URL(start.authorizeUrl).searchParams.get("nonce") ?? "";
+    const redirect = new URL(new URL(start.authorizeUrl).searchParams.get("redirect_uri") ?? "");
+    redirect.searchParams.set("state", start.state);
+    redirect.searchParams.set("code", "reauth-code");
+    redirect.searchParams.set("client_id", "oaiapp_new_client");
+    await fetch(redirect);
+    const completion = await service.pollLogin();
+    expect(completion).toMatchObject({ accountKey: ACCOUNT_KEY, newUser: false });
+
+    const stored = fixture.credentials.dump();
+    expect(stored[ACCOUNT_KEYS.clientId]).toBe("oaiapp_new_client");
+    expect(stored[ACCOUNT_KEYS.accessToken]).toBe("new-access");
+    // The previous registration's refresh token must NOT survive next to the new client id.
+    expect(stored[ACCOUNT_KEYS.refreshToken]).toBeUndefined();
+  });
+
+  it("waits for an in-flight refresh lock before replacing the slot", async () => {
+    const fixture = await createFixture();
+    fixture.credentials.save(ACCOUNT_KEYS.clientId, ISSUED_CLIENT_ID);
+    fixture.credentials.save(ACCOUNT_KEYS.accessToken, "stale-access");
+    fixture.credentials.save(ACCOUNT_KEYS.refreshToken, "stale-refresh");
+
+    // Hold the per-account refresh lock the way an in-flight refresh would.
+    let releaseLock!: () => void;
+    const locked = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    const lockHeld = withFileLock(
+      join(fixture.dir, `siwc-chatgpt.${ACCOUNT_KEY}.refresh`),
+      () => locked,
+    );
+    const loginPromise = (async () => {
+      await runFullLogin(fixture);
+      return fixture.service.pollLogin();
+    })();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    // Login completed on the wire, but the slot must not be replaced while the lock is held.
+    expect(fixture.credentials.dump()[ACCOUNT_KEYS.accessToken]).toBe("stale-access");
+    releaseLock();
+    await lockHeld;
+    const completion = await loginPromise;
+    expect(completion).toMatchObject({ accountKey: ACCOUNT_KEY });
+    expect(fixture.credentials.dump()[ACCOUNT_KEYS.accessToken]).toBe("host-access-1");
   });
 
   it("completes an interrupted migration instead of losing the refresh token", async () => {

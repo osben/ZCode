@@ -55,7 +55,12 @@ function createTestKey(): TestKey {
   };
 }
 
-function buildIdToken(key: TestKey, nonce: string, sub: string = SUB): string {
+function buildIdToken(
+  key: TestKey,
+  nonce: string,
+  sub: string = SUB,
+  aud: string = ISSUED_CLIENT_ID,
+): string {
   const header = Buffer.from(
     JSON.stringify({ alg: "RS256", typ: "JWT", kid: "test-key" }),
   ).toString("base64url");
@@ -63,7 +68,7 @@ function buildIdToken(key: TestKey, nonce: string, sub: string = SUB): string {
     JSON.stringify({
       sub,
       iss: ISSUER,
-      aud: ISSUED_CLIENT_ID,
+      aud,
       exp: NOW_SECONDS + 600,
       iat: NOW_SECONDS,
       nonce,
@@ -270,6 +275,59 @@ describe("ChatGPT plan login (SIWC)", () => {
     // The first account's tokens are untouched by the second login.
     const first = await credentialStore.load(ACCOUNT_KEYS.accessToken);
     expect(first).toBe("siwc-access-1");
+  });
+
+  it("replaces the previous registration's bundle when the new grant has no refresh token", async () => {
+    const { credentialStore, dir } = await createWorkspace();
+    const key = createTestKey();
+    await runLoginWithBrowserRedirect({ credentialStore, dir, key });
+
+    // Same subject returns a fresh registration without a refresh token.
+    const nonceRef = { value: "" };
+    const tokenClient = {
+      async exchangeCode() {
+        return {
+          accessToken: "new-access",
+          idToken: buildIdToken(key, nonceRef.value, SUB, "oaiapp_new_client"),
+          tokenType: "bearer" as const,
+          expiresInSeconds: 3600,
+          scope: FULL_SCOPE,
+        };
+      },
+      async refresh() {
+        throw new Error("refresh not exercised");
+      },
+      async revoke() {
+        throw new Error("revoke not exercised");
+      },
+    };
+    await loginChatGptPlan({
+      credentialStore,
+      env: TEST_ENV,
+      noBrowser: true,
+      fetchFn: createFakeAuthFetch(key),
+      tokenClient: tokenClient as never,
+      now: () => NOW_SECONDS * 1000,
+      personalProviderConfigPath: join(dir, "provider_config2.json"),
+      onAuthorizeUrl: async (data) => {
+        const url = new URL(data.authorizeUrl);
+        nonceRef.value = url.searchParams.get("nonce") ?? "";
+        const redirect = new URL(url.searchParams.get("redirect_uri") ?? "");
+        redirect.searchParams.set("state", url.searchParams.get("state") ?? "");
+        redirect.searchParams.set("code", "reauth-code");
+        redirect.searchParams.set("client_id", "oaiapp_new_client");
+        await fetch(redirect);
+      },
+    });
+
+    const stored = await credentialStore.loadMany([
+      ACCOUNT_KEYS.clientId,
+      ACCOUNT_KEYS.accessToken,
+      ACCOUNT_KEYS.refreshToken,
+    ]);
+    expect(stored[ACCOUNT_KEYS.clientId]).toBe("oaiapp_new_client");
+    expect(stored[ACCOUNT_KEYS.accessToken]).toBe("new-access");
+    expect(stored[ACCOUNT_KEYS.refreshToken]).toBeNull();
   });
 
   it("stores the host id beside an injected credential store even when env points elsewhere", async () => {
