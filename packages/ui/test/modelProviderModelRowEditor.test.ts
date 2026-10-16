@@ -206,6 +206,40 @@ function createProvider(
 }
 
 describe("ProviderModelsSection compact model rows", () => {
+  it("preserves an open name draft during same-provider refresh while updating clean fields", () => {
+    const initial = createProvider();
+    const onSave = vi.fn();
+    const view = render(
+      createElement(InlineEditableProviderCard, { provider: initial, onSave, nameEditable: true }),
+    );
+    fireEvent.keyDown(screen.getByTestId("model-provider-actions-button"), { key: "Enter" });
+    fireEvent.click(screen.getByTestId(TID_MODEL_PROVIDER_NAME_EDIT_BUTTON));
+    const input = screen.getByTestId(TID_MODEL_PROVIDER_NAME_INPUT) as HTMLInputElement;
+    const draftName = input.value;
+
+    view.rerender(
+      createElement(InlineEditableProviderCard, {
+        provider: {
+          ...initial,
+          providerName: "Refreshed provider",
+          config: {
+            ...initial.config,
+            api: { ...initial.config.api!, baseUrl: "https://refreshed.example.com" },
+          },
+        },
+        onSave,
+        nameEditable: true,
+      }),
+    );
+
+    expect(screen.getByTestId(TID_MODEL_PROVIDER_NAME_INPUT)).toBe(input);
+    expect(input.value).toBe(draftName);
+    expect((screen.getByTestId(TID_MODEL_PROVIDER_BASE_URL_INPUT) as HTMLInputElement).value).toBe(
+      "https://refreshed.example.com",
+    );
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
   it.each(["individual-coding-plan", "team-coding-plan", "start-plan", "manual", "standard"])(
     "设置页共享视觉标判断，连接=%s",
     (mode) => {
