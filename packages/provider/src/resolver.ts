@@ -8,6 +8,8 @@ import type {
   completeProviderConfigDataSchema,
 } from "./config/provider-data-schema.js";
 import type { ConfigValidationIssue } from "./config-overlay.js";
+import { completeAcpProviderConfigDataSchema } from "./config/provider-data-schema.js";
+import { validateConfigSchema } from "./config/schema-validation.js";
 import {
   type ApiKeyAccessConfig,
   ModelConfig,
@@ -243,8 +245,9 @@ export class ProviderConfigResolver {
         config.access?.type === "chatgpt-account" ||
         (rule.enabled ?? true);
       const providerPath = ["providers", providerId];
-      // ACP providers have no HTTP endpoint; validate them against the api-less
-      // complete schema and keep them out of the execution Registry until the
+      // ACP providers have no HTTP endpoint; validate them against the same
+      // complete schema minus `api` (provider-level fields such as `group` are
+      // checked too) and keep them out of the execution Registry until the
       // agent execution path lands — a registered-but-unroutable provider would
       // be selectable in chat and fail on send.
       const acpAccess = isAcpAgentAccess(config.access) ? config.access : null;
@@ -252,7 +255,13 @@ export class ProviderConfigResolver {
         ? null
         : createRegistryProviderConfig(config, providerPath);
       const providerIssues: ConfigValidationIssue[] = acpAccess
-        ? [...acpAccess.validateComplete([...providerPath, "access"])]
+        ? [
+            ...validateConfigSchema(
+              completeAcpProviderConfigDataSchema,
+              config.toJSON(),
+              providerPath,
+            ),
+          ]
         : registryProviderResult!.ok
           ? []
           : [...registryProviderResult!.issues];

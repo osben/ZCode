@@ -81,34 +81,72 @@ const MAX_VERSION_LENGTH = 200;
 /** Only flags that ask a CLI to print its version are allowed in probes. */
 const SAFE_VERSION_PROBE_ARG = /^(-v|-V|--version|-version|version|--ver)$/;
 
-let detectionCache: {
+interface DetectionCacheEntry {
   readonly cachedAt: number;
   readonly entries: readonly AcpAgentDetection[];
-} | null = null;
+}
+
+/** Bounded cache: unrelated detection inputs must never share cached entries. */
+const DETECTION_CACHE_MAX_KEYS = 16;
+let detectionCache = new Map<string, DetectionCacheEntry>();
+let nextProbeIdentity = 1;
+const probeIdentities = new WeakMap<AcpVersionProbeRunner, number>();
+
+/**
+ * Cache key over every caller-supplied input that changes detection results:
+ * the searched PATH, extra path entries, the probe timeout, and the probe
+ * runner's identity (different runners must not reuse each other's versions).
+ * The injected clock only drives TTL bookkeeping and is not part of the key.
+ */
+function detectionCacheKey(options: DetectAcpAgentsOptions): string {
+  const env = options.env ?? process.env;
+  let probeId = 0;
+  if (options.runProbe) {
+    probeId = probeIdentities.get(options.runProbe) ?? 0;
+    if (probeId === 0) {
+      probeId = nextProbeIdentity++;
+      probeIdentities.set(options.runProbe, probeId);
+    }
+  }
+  return JSON.stringify([
+    env.PATH ?? "",
+    options.extraPathEntries ?? [],
+    options.probeTimeoutMs ?? null,
+    probeId,
+  ]);
+}
 
 export function isSafeVersionProbeArgs(args: readonly string[]): boolean {
   return args.length > 0 && args.every((arg) => SAFE_VERSION_PROBE_ARG.test(arg));
 }
 
-/** Detects all known agents; results are cached for `cacheTtlMs`. */
+/** Detects all known agents; results are cached per effective input set for `cacheTtlMs`. */
 export function detectAcpAgents(
   options: DetectAcpAgentsOptions = {},
 ): readonly AcpAgentDetection[] {
   const ttl = options.cacheTtlMs ?? DEFAULT_ACP_DETECTION_CACHE_TTL_MS;
   const now = options.now ?? Date.now;
-  if (ttl > 0 && detectionCache && now() - detectionCache.cachedAt < ttl) {
-    return detectionCache.entries;
+  const cacheKey = detectionCacheKey(options);
+  if (ttl > 0) {
+    const cached = detectionCache.get(cacheKey);
+    if (cached && now() - cached.cachedAt < ttl) return cached.entries;
   }
   const entries: AcpAgentDetection[] = ACP_AGENT_DEFINITIONS.map((definition) =>
     detectAgent(definition, options),
   );
   const frozen = Object.freeze(entries);
-  if (ttl > 0) detectionCache = Object.freeze({ cachedAt: now(), entries: frozen });
+  if (ttl > 0) {
+    if (detectionCache.size >= DETECTION_CACHE_MAX_KEYS && !detectionCache.has(cacheKey)) {
+      const oldest = detectionCache.keys().next().value;
+      if (oldest !== undefined) detectionCache.delete(oldest);
+    }
+    detectionCache.set(cacheKey, Object.freeze({ cachedAt: now(), entries: frozen }));
+  }
   return frozen;
 }
 
 export function refreshAcpAgentCache(): void {
-  detectionCache = null;
+  detectionCache = new Map();
 }
 
 function detectAgent(
@@ -125,6 +163,27 @@ function detectAgent(
   };
 }
 
+const DEFAULT_WINDOWS_PATH_EXTENSIONS = [".COM", ".EXE", ".BAT", ".CMD"];
+
+/**
+ * Windows resolves executables through PATHEXT, so `opencode`/`cursor-agent`
+ * must also be probed as `opencode.exe`, `opencode.cmd`, … . Exported for
+ * tests; other platforms probe the bare binary name only.
+ */
+export function buildBinaryCandidateNames(
+  binary: string,
+  pathext: string | undefined,
+  platform: NodeJS.Platform = process.platform,
+): readonly string[] {
+  if (platform !== "win32") return [binary];
+  const extensions = (pathext ?? "")
+    .split(";")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+  const effective = extensions.length > 0 ? extensions : DEFAULT_WINDOWS_PATH_EXTENSIONS;
+  return [binary, ...effective.map((extension) => `${binary}${extension.toLowerCase()}`)];
+}
+
 function resolveCommandOnPath(
   binaries: readonly string[],
   options: DetectAcpAgentsOptions,
@@ -138,8 +197,10 @@ function resolveCommandOnPath(
   for (const binary of binaries) {
     if (binary.includes("/") || binary.includes("\\")) continue;
     for (const entry of unique) {
-      const candidate = join(entry, binary);
-      if (isExecutableFile(candidate)) return candidate;
+      for (const name of buildBinaryCandidateNames(binary, env.PATHEXT)) {
+        const candidate = join(entry, name);
+        if (isExecutableFile(candidate)) return candidate;
+      }
     }
   }
   return null;

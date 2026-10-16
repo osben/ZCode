@@ -8,6 +8,7 @@ import {
   isSafeVersionProbeArgs,
   refreshAcpAgentCache,
 } from "../src/index.js";
+import { buildBinaryCandidateNames } from "../src/registry.js";
 
 const tempDirs: string[] = [];
 
@@ -124,6 +125,35 @@ describe("detectAcpAgents", () => {
 
     refreshAcpAgentCache();
     expect(detectAcpAgents(options()).find((r) => r.agentId === "cursor")?.installed).toBe(true);
+  });
+
+  it("isolates the cache between different detection inputs", () => {
+    const dirA = makeBinDir();
+    writeFakeBinary(dirA, "opencode", "#!/bin/sh\necho 'from-a'\n");
+    const dirB = makeBinDir();
+
+    const a = detectAcpAgents({ env: { PATH: dirA }, cacheTtlMs: 60_000 });
+    expect(a.find((result) => result.agentId === "opencode")?.installed).toBe(true);
+    // The cache is keyed by the effective inputs: another environment must not
+    // receive this entry within the TTL window.
+    const b = detectAcpAgents({ env: { PATH: dirB }, cacheTtlMs: 60_000 });
+    expect(b.find((result) => result.agentId === "opencode")?.installed).toBe(false);
+  });
+
+  it("builds Windows PATHEXT candidates for binary resolution", () => {
+    expect(buildBinaryCandidateNames("opencode", undefined, "darwin")).toEqual(["opencode"]);
+    expect(buildBinaryCandidateNames("opencode", ".EXE;.CMD", "win32")).toEqual([
+      "opencode",
+      "opencode.exe",
+      "opencode.cmd",
+    ]);
+    expect(buildBinaryCandidateNames("cursor-agent", "", "win32")).toEqual([
+      "cursor-agent",
+      "cursor-agent.com",
+      "cursor-agent.exe",
+      "cursor-agent.bat",
+      "cursor-agent.cmd",
+    ]);
   });
 
   it("uses the injected probe runner with the whitelisted arguments", () => {
