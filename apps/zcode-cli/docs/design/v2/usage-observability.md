@@ -10,8 +10,11 @@ Persist short-lived usage facts for `/usage` and local diagnostics. The data ans
 - Cache hit and cache creation token volume.
 - Error, retry, cancellation, and context-overflow rates.
 
-Usage observability is not a permanent billing ledger. Rows are retained for 30 days and may be
-pruned on startup or after writes.
+Usage observability is not a permanent billing ledger. Rows are retained for 30 days. Automatic
+pruning runs after usage writes at most once per hour per open database connection; the first write
+for a connection attempts pruning immediately. Expired rows can remain until a later write after
+that interval. A failed automatic prune does not advance the interval, so a later write retries it.
+An explicit `pruneUsage` call always prunes immediately.
 
 ## Source Of Truth
 
