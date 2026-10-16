@@ -54,7 +54,7 @@ Recall does not guess Provider thinking budgets in Core; the total output budget
 
 ## Extraction
 
-The Extraction Scheduler retains its existing bounded semantics: at most one running Snapshot and one latest pending Snapshot. The current implementation already holds a Model created at scheduling time within the Snapshot; switching to save the Turn's Active Model that produced the work does not increase the number of滞留 models, nor add new resource lifecycles.
+The Extraction Scheduler retains its existing bounded semantics: at most one running Snapshot and one latest pending Snapshot. The current implementation already holds a Model created at scheduling time within the Snapshot; switching to save the Turn's Active Model that produced the work does not increase the number of retained models, nor add new resource lifecycles.
 
 ```text
 Successful Turn
