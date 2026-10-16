@@ -117,6 +117,33 @@ describe("child session facts resolver", () => {
     expect(harness.countCalls()).toBe(2);
   });
 
+  it("does not requeue fresh parents when refresh publishes its result", async () => {
+    vi.useFakeTimers();
+    try {
+      const harness = createHarness(new Map([['s-parent', { sideChats: 1, subagents: 0 }]]));
+      harness.onRefresh.mockImplementation((parentKeys: string[]) => {
+        for (const parentKey of parentKeys) {
+          harness.resolver.resolve(parentKey);
+        }
+      });
+      harness.resolver.noteParents(["s-parent"]);
+      harness.resolver.resolve("s-parent");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(harness.countCalls()).toBe(1);
+      expect(harness.listCalls()).toBe(1);
+
+      for (let elapsed = 0; elapsed < 3; elapsed += 1) {
+        harness.clockMs.value += 1_001;
+        await vi.advanceTimersByTimeAsync(1_001);
+      }
+
+      expect(harness.countCalls()).toBe(1);
+      expect(harness.listCalls()).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("running facts come from busy registry children; resident-but-idle children never run", async () => {
     const harness = createHarness(new Map([["s-parent", { sideChats: 0, subagents: 2 }]]));
     // The registry scan discovers the parent (no cold seed) and counts only the busy subagent.

@@ -32,8 +32,7 @@ vi.mock("@/v4/WorkbenchPane.js", async () => {
 vi.mock("@/v4/WorkbenchSplitDivider.js", async () => {
   const React = await import("react");
   return {
-    WorkbenchSplitDivider: () =>
-      React.createElement("div", { "data-testid": "mock-divider" }),
+    WorkbenchSplitDivider: () => React.createElement("div", { "data-testid": "mock-divider" }),
   };
 });
 
@@ -153,23 +152,25 @@ function createGroupedWorkbenchState({
   const activeGroup = activeGroupId
     ? useWorkbenchGroupStore.getState().groups[activeGroupId]
     : null;
-  expect(activeGroup ? leafPaneIds(activeGroup.root) : []).toEqual([
-    V4_PRIMARY_PANE_ID,
-    "pane-1",
-  ]);
+  expect(activeGroup ? leafPaneIds(activeGroup.root) : []).toEqual([V4_PRIMARY_PANE_ID, "pane-1"]);
 }
 
 function renderWorkspace({
   onPaneActiveSessionChange = vi.fn(),
+  sessionId = "main-session",
+  readOnlySessionId = null,
 }: {
   onPaneActiveSessionChange?: (
     scope: { workspacePath: string; workspaceIdentity?: string },
     sessionId: string,
   ) => void;
+  sessionId?: string;
+  readOnlySessionId?: string | null;
 } = {}) {
   renderClient(
     createElement(V4WorkspaceChatArea, {
-      sessionId: "main-session",
+      sessionId,
+      readOnlySessionId,
       workspacePath: "/workspace",
       onPaneActiveSessionChange,
     }),
@@ -212,5 +213,37 @@ describe("V4WorkspaceChatArea pane active sync", () => {
     });
 
     expect(onPaneActiveSessionChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps a standalone read-only subagent primary pane read-only when focused and split", () => {
+    const { onPaneActiveSessionChange } = renderWorkspace({
+      sessionId: "child-session",
+      readOnlySessionId: "child-session",
+    });
+    const primaryPane = leafPaneCapture.props.find((props) => props.paneId === V4_PRIMARY_PANE_ID);
+    expect(primaryPane).toBeTruthy();
+
+    act(() => {
+      primaryPane!.onFocusRequest(V4_PRIMARY_PANE_ID);
+    });
+    expect(onPaneActiveSessionChange).not.toHaveBeenCalled();
+
+    act(() => {
+      primaryPane!.onDropSession?.(V4_PRIMARY_PANE_ID, "right", {
+        kind: "zcode/session",
+        workspacePath: "/workspace",
+        sessionId: "another-session",
+      });
+    });
+
+    const groupId = useWorkbenchGroupStore.getState().activeGroupId;
+    const group = groupId ? useWorkbenchGroupStore.getState().groups[groupId] : null;
+    expect(group?.primaryBinding).toEqual({
+      workspaceScope: { workspacePath: "/workspace" },
+      sessionId: "child-session",
+      readOnly: true,
+    });
+    expect(group?.panes["pane-1"]?.sessionId).toBe("another-session");
+    expect(group?.panes["pane-1"]?.readOnly).toBeUndefined();
   });
 });

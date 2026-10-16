@@ -1189,9 +1189,16 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
               ...(workspaceRemoteSessionId ? { remoteSessionId: workspaceRemoteSessionId } : {}),
             },
             sessionId: activeTaskId,
+            ...(activeTaskId === readOnlySubagentSessionId ? { readOnly: true } : {}),
           }
         : null,
-    [activeTaskId, workspaceAbsPath, workspaceIdentity, workspaceRemoteSessionId],
+    [
+      activeTaskId,
+      readOnlySubagentSessionId,
+      workspaceAbsPath,
+      workspaceIdentity,
+      workspaceRemoteSessionId,
+    ],
   );
   const handleCreateAutomationInChat = useCallback(
     (prompt: string, targetWorkspace?: { workspacePath: string; workspaceIdentity?: string }) => {

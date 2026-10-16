@@ -267,10 +267,20 @@ export function V4WorkspaceChatArea({
     }),
     [remoteSessionId, workspacePath, workspaceIdentity],
   );
-  const placementShellBinding = useMemo<WorkbenchSessionBinding | null>(
+  const primarySessionBinding = useMemo<WorkbenchSessionBinding | null>(
     () =>
-      primaryPaneSessionId ? { workspaceScope: shellScope, sessionId: primaryPaneSessionId } : null,
-    [primaryPaneSessionId, shellScope],
+      primaryPaneSessionId
+        ? {
+            workspaceScope: shellScope,
+            sessionId: primaryPaneSessionId,
+            ...(primaryPaneSessionId === readOnlySessionId ? { readOnly: true } : {}),
+          }
+        : null,
+    [primaryPaneSessionId, readOnlySessionId, shellScope],
+  );
+  const placementShellBinding = useMemo<WorkbenchSessionBinding | null>(
+    () => primarySessionBinding,
+    [primarySessionBinding],
   );
 
   const shell = useMemo<WorkbenchShellBinding>(
@@ -380,9 +390,7 @@ export function V4WorkspaceChatArea({
           return selectWorkbenchGroupPaneBinding(activeGroup, paneId);
         }
         if (paneId === V4_PRIMARY_PANE_ID) {
-          return primaryPaneSessionId
-            ? { workspaceScope: shellScope, sessionId: primaryPaneSessionId }
-            : null;
+          return primarySessionBinding;
         }
         const binding = paneBindings[paneId];
         return binding?.sessionId
@@ -393,7 +401,7 @@ export function V4WorkspaceChatArea({
             }
           : null;
       },
-    [activeGroup, paneBindings, primaryPaneSessionId, shellScope],
+    [activeGroup, paneBindings, primarySessionBinding],
   );
 
   const syncShellActiveSession = useCallback(
@@ -443,10 +451,7 @@ export function V4WorkspaceChatArea({
         // shell activeTaskId must return to a navigable session after closing rather than remaining on the closed session.
         syncShellActiveSession(nextActiveBinding);
       } else {
-        const nextActiveBinding =
-          focusedPaneId === paneId && primaryPaneSessionId
-            ? { workspaceScope: shellScope, sessionId: primaryPaneSessionId }
-            : null;
+        const nextActiveBinding = focusedPaneId === paneId ? primarySessionBinding : null;
         closePaneAction(paneId);
         syncShellActiveSession(nextActiveBinding);
       }
@@ -456,8 +461,7 @@ export function V4WorkspaceChatArea({
       closeGroupPaneAction,
       closePaneAction,
       focusedPaneId,
-      primaryPaneSessionId,
-      shellScope,
+      primarySessionBinding,
       syncShellActiveSession,
     ],
   );

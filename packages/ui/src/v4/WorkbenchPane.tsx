@@ -244,6 +244,8 @@ function PaneRestoredGuard({
           })
           .catch((error: unknown) => {
             // A failed lookup is not proof that a persisted session was deleted.
+            if (disposed) return;
+            settled = false;
             logger.warn("[workbench] restored subagent task type lookup failed", {
               error: error instanceof Error ? error.message : String(error),
               sessionId,

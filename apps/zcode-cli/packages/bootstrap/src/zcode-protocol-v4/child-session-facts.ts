@@ -285,7 +285,13 @@ export function createChildSessionFactsResolver(deps: {
     },
     resolve(sessionId) {
       const liveSubagents = discoverLiveParents();
-      void refresh(seenParentIds);
+      const staleParents = [...seenParentIds].filter((key) => {
+        const lastUpdatedAt = updatedAt.get(key);
+        return lastUpdatedAt === undefined || now() - lastUpdatedAt > CHILD_SESSION_FACTS_TTL_MS;
+      });
+      if (staleParents.length > 0) {
+        void refresh(staleParents);
+      }
       const count = counts.get(sessionId);
       const childList = children.get(sessionId) ?? [];
       const detachedById = new Map(
