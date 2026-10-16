@@ -44,8 +44,7 @@ export interface NodeHttpClientAdapterOptions {
 }
 
 export class NodeHttpClientAdapter implements HttpClientPort {
-  private tlsCaCertificates: Buffer | undefined;
-  private tlsCaLoaded = false;
+  private tlsCaCertificates: Promise<Buffer | undefined> | undefined;
 
   constructor(private readonly options: NodeHttpClientAdapterOptions = {}) {}
 
@@ -70,7 +69,7 @@ export class NodeHttpClientAdapter implements HttpClientPort {
       request.egressPolicy === "public"
         ? (this.options.dnsLookup ?? defaultPublicDnsLookup())
         : undefined;
-    const tlsCaCertificates = this.resolveTlsCaCertificates();
+    const tlsCaCertificates = await this.resolveTlsCaCertificates();
     const egress = buildEgressInfo(proxy, tlsCaCertificates);
     const abortController = new AbortController();
     const abortState = linkAbortSignals(options.signal, abortController);
@@ -129,15 +128,11 @@ export class NodeHttpClientAdapter implements HttpClientPort {
     }
   }
 
-  private resolveTlsCaCertificates(): Buffer | undefined {
-    if (!this.tlsCaLoaded) {
-      this.tlsCaCertificates = loadTlsCaCertificates({
-        caCertFile: this.options.caCertFile,
-        env: this.options.env,
-      });
-      this.tlsCaLoaded = true;
-    }
-    return this.tlsCaCertificates;
+  private resolveTlsCaCertificates(): Promise<Buffer | undefined> {
+    return (this.tlsCaCertificates ??= loadTlsCaCertificates({
+      caCertFile: this.options.caCertFile,
+      env: this.options.env,
+    }));
   }
 }
 

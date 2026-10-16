@@ -51,6 +51,15 @@ No Proxy 对以上代理来源都生效，支持 `*`、精确 host、host:port�
 - 无代理配置或命中显式 No Proxy 时继续使用原生 `fetch`。
 - 启用代理时通过 adapter 层统一 fetch 转发，保留响应流，避免破坏 streaming。
 - 当命中了自定义 CA 配置时，adapter 必须确保直连 HTTPS、HTTPS proxy 和 HTTP CONNECT 路径都使用同一份额外信任链。
+- 显式 CA 是附加信任：CLI network adapter 将 Node 的 `tls.rootCertificates` 与用户 PEM bundle 合并后传给 `ca`，不得只传用户 CA 而替换标准公共根。模型/provider/MCP fetch 与 `HttpClientPort` 共用这一加载逻辑；不改动全局 TLS defaults，也不关闭证书或 hostname 校验。未配置 CA 时保留原生默认行为。
+- CA 文件通过异步 IO 在 client 首次需要时加载；每个 client 只持有一个加载 Promise，并发请求复用它。读取失败必须使请求失败，不得降级为默认信任或忽略证书错误；配置变更仍需重建 client。顺序如下：
+
+  ```text
+  request → client-owned CA Promise → async PEM read → Node public roots + PEM
+                ↑ concurrent requests reuse it             ↓
+                                             direct / CONNECT / HTTPS proxy
+  ```
+
 - Desktop main 必须在创建首个窗口前把 Electron 网络策略独立应用到 `defaultSession` 与 `persist:zcode-embedded-browser`：设置页存在 `httpProxy` 时两个 Session 都使用 `session.setProxy({ mode: "fixed_servers", proxyRules, proxyBypassRules })`，其中 `proxyBypassRules` 来自 `httpProxyNoProxy`；留空时 `defaultSession` 使用 `mode: "direct"`，`persist:zcode-embedded-browser` 使用 `mode: "system"`，并在更新策略后关闭旧连接池。留空时不下发 `proxyBypassRules`——bypass 规则只对 `fixed_servers` 有意义，`system` 模式的例外列表由 OS 自己维护。两个 Session 中任意一个应用失败都不得阻止另一个继续配置；配置变更只保证下次应用启动生效，设置页必须提示用户重启。
 - Desktop Window Host 必须把其托管的 proxy-aware transport 作为 `RemoteAssetNetworkPort` 注入 desktop-attached remote 部署。manifest、组件归档和进度 `HEAD` 不得在 transport 缺失或失败时回退裸 `fetch`；standalone server 未注入该 port 时保持原有直连合同。
 - Chromium Session 的自定义 CA 不读取 `NODE_EXTRA_CA_CERTS`。仅当设置页存在 `httpProxyCaCertPath` 时，main 进程读取 PEM bundle，并分别用两个 Session 的 `setCertificateVerifyProc` 对链路中包含该 CA 的证书放行；留空时恢复 Chromium 默认校验。
@@ -72,6 +81,7 @@ No Proxy 对以上代理来源都生效，支持 `*`、精确 host、host:port�
 - `ZCODE_HTTP_PROXY` 能让模型请求经过本地 HTTP proxy。
 - `network.noProxy` 或 `ZCODE_NO_PROXY` 命中时模型请求绕过代理直连上游。
 - `ZCODE_HTTP_PROXY` 也能让 `WebFetch` 经过同一代理；`WebSearch` handler 内部模型请求会复用 provider 传输层代理。
+- 显式 CA 加载结果包含全部 Node 标准公共根及完整用户 PEM bundle；缺失文件明确失败，未配置时返回默认策略。两个 CLI HTTP client 通过直连、HTTP CONNECT 和 HTTPS proxy 信任配置的测试 CA，并继续拒绝未信任的自签名证书。
 - `ZCODE_AGENT_CA_CERT` 能让 `WebFetch` 信任自定义 CA；`WebSearch` handler 内部模型请求会复用 provider 证书策略。
 - `network.httpProxy` 或 `ZCODE_HTTP_PROXY` 能注入到 `ExecutionPort` 子进程环境，并补齐大小写代理变量。
 - `network.caCertFile`、`AppSettings.httpProxyCaCertPath` 或 `ZCODE_AGENT_CA_CERT` 能被补齐到 Node、curl、git、Python requests 常见变量。

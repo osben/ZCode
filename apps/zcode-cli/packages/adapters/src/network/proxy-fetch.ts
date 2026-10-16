@@ -32,15 +32,10 @@ export function createNetworkProxyFetch(options: NetworkProxyFetchOptions): Netw
     return directFetch;
   }
 
-  let tlsCaCertificates: Buffer | undefined;
-  let tlsCaCertificatesLoaded = false;
+  let tlsCaCertificates: Promise<Buffer | undefined> | undefined;
 
-  const getTlsCaCertificates = (): Buffer | undefined => {
-    if (!tlsCaCertificatesLoaded) {
-      tlsCaCertificates = loadTlsCaCertificates(options);
-      tlsCaCertificatesLoaded = true;
-    }
-    return tlsCaCertificates;
+  const getTlsCaCertificates = (): Promise<Buffer | undefined> => {
+    return (tlsCaCertificates ??= loadTlsCaCertificates(options));
   };
 
   return async (input, init) => {
@@ -57,7 +52,7 @@ export function createNetworkProxyFetch(options: NetworkProxyFetchOptions): Netw
 
     const request = await normalizeFetchRequest(input, init);
     return fetchWithAgent(request, {
-      ca: caCertFile ? getTlsCaCertificates() : undefined,
+      ca: caCertFile ? await getTlsCaCertificates() : undefined,
       proxyUrl,
     });
   };

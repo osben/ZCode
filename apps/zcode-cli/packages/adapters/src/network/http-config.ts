@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { rootCertificates } from "node:tls";
 import {
   ZCODE_AGENT_CA_CERT_ENV_KEY,
   ZCODE_HTTP_PROXY_ENV_KEY,
@@ -126,12 +127,16 @@ export function resolveTlsCaCertFile(options: NetworkTlsOptions): string | undef
   return undefined;
 }
 
-export function loadTlsCaCertificates(options: NetworkTlsOptions): Buffer | undefined {
+export async function loadTlsCaCertificates(
+  options: NetworkTlsOptions,
+): Promise<Buffer | undefined> {
   const caCertFile = resolveTlsCaCertFile(options);
   if (!caCertFile) {
     return undefined;
   }
-  return readFileSync(caCertFile);
+  const customCa = await readFile(caCertFile);
+  // Explicit tls.ca replaces Node's public roots, so custom trust must include them.
+  return Buffer.concat([Buffer.from(`${rootCertificates.join("\n")}\n`), customCa]);
 }
 
 function readExplicitNoProxyValue(options: NetworkProxyOptions): string | undefined {
