@@ -157,6 +157,18 @@ async function executeToolCallImpl(
     return result;
   }
 
+  const executionContextFailure = await deps.validateToolExecution?.(entry.metadata);
+  if (executionContextFailure) {
+    const error = createCoreError(CoreErrorType.ToolExecutionFailed, executionContextFailure, {
+      context: { toolName: canonicalToolCall.name },
+      recoverable: true,
+    });
+    const result = createErrorResult(canonicalToolCall, error);
+    await emitToolCallError(deps, canonicalToolCall.id, traceContext, turnId, error);
+    telemetry?.finishFailed("validation", "configuration", error);
+    return result;
+  }
+
   let lifetime: ReturnType<NonNullable<ToolEntry["retainExecution"]>> | undefined;
   try {
     lifetime = entry.retainExecution?.(canonicalToolCall.id);

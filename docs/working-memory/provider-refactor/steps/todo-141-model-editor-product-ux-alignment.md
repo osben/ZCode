@@ -11,14 +11,14 @@ Status: Complete (implemented and reviewed after renewed user authorization on 2
 
 ## Final Layout
 
-| Area | Content and order |
-| --- | --- |
-| Separate row below the title | Smart-configuration name, question mark, and toggle aligned horizontally to the left, with compact internal spacing from the product branch |
-| Default body | Model ID, context window, maximum output Tokens |
-| Advanced settings, collapsed by default | Input types, model capabilities, reasoning-configuration group |
-| Reasoning-configuration group | **Reasoning levels and reasoning-parameter mapping adjacent vertically in the same group**; do not separate them or add a card border |
-| Bottom left | Reset form: smaller, underlined text button |
-| Bottom right | Cancel and Save; Save is primary |
+| Area                                    | Content and order                                                                                                                           |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Separate row below the title            | Smart-configuration name, question mark, and toggle aligned horizontally to the left, with compact internal spacing from the product branch |
+| Default body                            | Model ID, context window, maximum output Tokens                                                                                             |
+| Advanced settings, collapsed by default | Input types, model capabilities, reasoning-configuration group                                                                              |
+| Reasoning-configuration group           | **Reasoning levels and reasoning-parameter mapping adjacent vertically in the same group**; do not separate them or add a card border       |
+| Bottom left                             | Reset form: smaller, underlined text button                                                                                                 |
+| Bottom right                            | Cancel and Save; Save is primary                                                                                                            |
 
 - Use “Reasoning levels” consistently and retain “from low to high.” This edits the ordered levels supported by the model, not the current session level. The English wording remains Reasoning levels.
 - Label the advanced entry “Advanced settings.”

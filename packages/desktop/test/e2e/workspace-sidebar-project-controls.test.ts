@@ -26,6 +26,84 @@ describe("workspace sidebar project controls E2E", () => {
     await clearAppData();
   });
 
+  it("WSPC-DRAG-01: opening the project menu cannot start a row drag", async function () {
+    this.timeout(120_000);
+    const workspacePaths = getPassiveAgentStartupWorkspacePaths(dirname(DEFAULT_WORKSPACE), 2);
+    const firstWorkspace = workspacePaths[0];
+    const secondWorkspace = workspacePaths[1];
+    if (!firstWorkspace || !secondWorkspace) throw new Error("drag E2E requires two workspaces");
+
+    await waitForWorkspaceApp(firstWorkspace, 30_000);
+    await waitForRestoredWorkspaceItems(workspacePaths, 30_000);
+    const orderBefore = await readWorkspaceOrder();
+    const sourceRowId = testId(TID_WORKSPACE_ITEM, firstWorkspace);
+    const targetRowId = testId(TID_WORKSPACE_ITEM, secondWorkspace);
+    await hoverTestIdByWebDriver(sourceRowId);
+
+    const attempt = await browser.execute(
+      (params) => {
+        const findTestId = (value: string) =>
+          Array.from(document.querySelectorAll<HTMLElement>("[data-testid]")).find(
+            (candidate) => candidate.dataset.testid === value,
+          );
+        const sourceRow = findTestId(params.sourceRowId);
+        const targetRow = findTestId(params.targetRowId);
+        const moreButton = Array.from(
+          sourceRow?.closest("li")?.querySelectorAll<HTMLButtonElement>("button") ?? [],
+        ).find((button) => button.getAttribute("aria-label") === "More");
+        if (!sourceRow || !targetRow || !moreButton) return false;
+
+        const sourceRect = moreButton.getBoundingClientRect();
+        const targetRect = targetRow.getBoundingClientRect();
+        const pointerId = 17;
+        moreButton.dispatchEvent(
+          new PointerEvent("pointerdown", {
+            bubbles: true,
+            cancelable: true,
+            button: 0,
+            pointerId,
+            pointerType: "mouse",
+            isPrimary: true,
+            clientX: sourceRect.left + sourceRect.width / 2,
+            clientY: sourceRect.top + sourceRect.height / 2,
+          }),
+        );
+        moreButton.click();
+        const menuOpened = moreButton.getAttribute("aria-expanded") === "true";
+        document.dispatchEvent(
+          new PointerEvent("pointermove", {
+            bubbles: true,
+            cancelable: true,
+            buttons: 1,
+            pointerId,
+            pointerType: "mouse",
+            isPrimary: true,
+            clientX: targetRect.left + targetRect.width / 2,
+            clientY: targetRect.top + targetRect.height / 2,
+          }),
+        );
+        document.dispatchEvent(
+          new PointerEvent("pointerup", {
+            bubbles: true,
+            cancelable: true,
+            button: 0,
+            pointerId,
+            pointerType: "mouse",
+            isPrimary: true,
+            clientX: targetRect.left + targetRect.width / 2,
+            clientY: targetRect.top + targetRect.height / 2,
+          }),
+        );
+        return menuOpened;
+      },
+      { sourceRowId, targetRowId },
+    );
+    expect(attempt).toBe(true);
+
+    const orderAfter = await readWorkspaceOrder();
+    expect(orderAfter).toEqual(orderBefore);
+  });
+
   it("WSPC-PINS-01: pins and unpins projects without mixing them into the manual order", async function () {
     this.timeout(120_000);
     const workspacePaths = getPassiveAgentStartupWorkspacePaths(
@@ -171,4 +249,13 @@ async function openWorkspaceMenu(workspacePath: string): Promise<void> {
       }, rowId),
     { timeout: 10_000, timeoutMsg: `Workspace menu did not open for ${workspacePath}` },
   );
+}
+
+async function readWorkspaceOrder(): Promise<string[]> {
+  return browser.execute((listId) => {
+    const list = document.querySelector(`[data-testid="${listId}"]`);
+    return Array.from(list?.querySelectorAll<HTMLElement>('[data-testid^="workspace-item-"]') ?? [])
+      .map((row) => row.dataset.testid)
+      .filter((testId): testId is string => Boolean(testId));
+  }, TID_WORKSPACE_LIST);
 }

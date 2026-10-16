@@ -141,7 +141,10 @@ function SuspendedBrowserSidePaneContent({
     // Info-level instrumentation: swapping the shell first unmounts <webview>; if CDP remains attached at that moment,
     // it opens a main-process use-after-free window. This log aligns the swap time with UnifiedBrowserView’s
     // unmount instrumentation to identify what destroyed the guest.
-    logger.info("[browser-use] tab 换挂起壳，suspend ready ack", { generation, tabId });
+    logger.info("[browser-use] tab 换挂起壳，suspend ready ack", {
+      generation,
+      tabId,
+    });
     void platform.browserViewSuspendReady?.({ tabId, generation }).catch((error) => {
       logger.debug("[browser-use] suspend ready ack 失败", {
         error: error instanceof Error ? error.message : String(error),
@@ -299,6 +302,7 @@ export function AnimatedSidePanePanel({
   activeTaskId,
   sidePaneOwnerId,
   gitState,
+  gitRepositoryWorkspacePath,
   activeGitSourceId,
   panelRef,
   panelElementRef,
@@ -369,6 +373,7 @@ export function AnimatedSidePanePanel({
   activeTaskId: string | null;
   sidePaneOwnerId: string | null;
   gitState: ReturnType<typeof import("@/hooks/useGitRepository.js").useGitRepository>;
+  gitRepositoryWorkspacePath: string;
   activeGitSourceId: GitChangeSourceId;
   panelRef: RefObject<PanelImperativeHandle | null>;
   panelElementRef: RefObject<HTMLDivElement | null>;
@@ -961,10 +966,18 @@ export function AnimatedSidePanePanel({
         }),
         planTitle: intl.formatMessage({ id: "planTool.panel.planTab" }),
         workflowRunTitle: intl.formatMessage({ id: "sidePane.workflowRun" }),
-        workflowDirectoryTitle: intl.formatMessage({ id: "sidePane.workflowDirectory" }),
-        workflowActorTitle: intl.formatMessage({ id: "sidePane.workflowActor" }),
-        workflowScriptTitle: intl.formatMessage({ id: "sidePane.workflowScript" }),
-        workflowArtifactTitle: intl.formatMessage({ id: "sidePane.workflowArtifact" }),
+        workflowDirectoryTitle: intl.formatMessage({
+          id: "sidePane.workflowDirectory",
+        }),
+        workflowActorTitle: intl.formatMessage({
+          id: "sidePane.workflowActor",
+        }),
+        workflowScriptTitle: intl.formatMessage({
+          id: "sidePane.workflowScript",
+        }),
+        workflowArtifactTitle: intl.formatMessage({
+          id: "sidePane.workflowArtifact",
+        }),
       }}
       onActivateTab={onActivateTab}
       onCloseTab={onCloseTab}
@@ -1264,7 +1277,10 @@ export function AnimatedSidePanePanel({
                           />
                         ) : tab.type === "code-viewer" ? (
                           <PreviewPane
-                            markdownSelectionTarget={{ sessionId: activeTaskId, workspaceKey }}
+                            markdownSelectionTarget={{
+                              sessionId: activeTaskId,
+                              workspaceKey,
+                            }}
                             source={tab.source}
                             onClose={onCloseCodeViewer}
                             workspacePath={workspaceAbsPath}
@@ -1288,7 +1304,7 @@ export function AnimatedSidePanePanel({
                           />
                         ) : tab.type === "git" ? (
                           <GitPane
-                            workspacePath={workspaceAbsPath}
+                            workspacePath={gitRepositoryWorkspacePath}
                             workspaceIdentity={workspaceIdentity}
                             workspaceRemoteSessionId={workspaceRemoteSessionId}
                             gitState={gitState}

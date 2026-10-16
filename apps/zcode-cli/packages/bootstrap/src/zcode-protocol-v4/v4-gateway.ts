@@ -211,10 +211,23 @@ interface BinaryReadCacheEntry {
   payload: Promise<{ bytes: Uint8Array; mediaType: string }>;
 }
 
+/** sessions-index metadata for one session: derived by the host, carried into summary derivation. */
+interface SessionIndexMeta {
+  createdAt: number;
+  lastActivityAt: number;
+  parentSessionId?: string;
+  /** Execution worktree facts from the runtime; present only for worktree sessions. */
+  executionWorktree?: { path: string; branchName?: string };
+  /** True when the worktree directory is absent on disk (host-side stat); drives the missing badge. */
+  executionWorktreeMissing?: boolean;
+}
+
 export interface V4GatewayHost {
   cliVersion?: string;
   /** Whether the session is active in the host registry (basis for the inbox's sessionNotFound decision). */
   sessionExists(sessionId: string): boolean;
+  /** Restore a persisted runtime-less preparation before subscribe decides between live and cold resume. */
+  restorePreparedSession?(sessionId: string): Promise<void>;
   /**
    * V4 cold-recovery hook. The gateway wraps runtime activation and projection hydration in the same
    * READY promise; the host only restores the record.
@@ -243,13 +256,11 @@ export interface V4GatewayHost {
    */
   getSessionWorkspaceId?(sessionId: string): string | null;
   /** sessions-index: list metadata for a session (createdAt/parent session/last activity time). */
-  getSessionIndexMeta?(sessionId: string): {
-    createdAt: number;
-    lastActivityAt: number;
-    parentSessionId?: string;
-    /** Execution worktree facts from the runtime; present only for worktree sessions. */
-    executionWorktree?: { path: string; branchName?: string };
-  } | null;
+  getSessionIndexMeta?(sessionId: string): SessionIndexMeta | null;
+  /** Runtime-less Host-owned setup facts for a preparing session's initial conversation snapshot. */
+  getSessionPreparationSeed?(
+    sessionId: string,
+  ): ConversationSnapshot["meta"]["worktreePreparation"] | null;
   /**
    * Config seed: current runtime truth for the session (model selection/reasoning depth/collaboration mode).
    * Do not hard-code empty projection values: the runtime startup default model, persisted project
@@ -682,6 +693,21 @@ export class ConversationV4Gateway {
     publisher.seedSharedContextImport(source);
     for (const [routeKey, state] of this.flushStates) {
       if (state.sessionId === sessionId) this.scheduleFlush(routeKey, state, publisher);
+    }
+  }
+
+  /** Publish the initial list/topic projection for a Host-reserved session identity. */
+  notifyPreparedSessionChanged(sessionId: string): void {
+    try {
+      const publisher = this.ensurePublisher(sessionId);
+      publisher.seedWorktreePreparation(this.host.getSessionPreparationSeed?.(sessionId));
+      publisher.requestSnapshotForSubscribers();
+      for (const [routeKey, state] of this.flushStates) {
+        if (state.sessionId === sessionId) this.scheduleFlush(routeKey, state, publisher);
+      }
+      this.publishCurrentSummaryToIndex(sessionId);
+    } catch (error) {
+      this.host.onError?.("v4.preparedSession.publish", error);
     }
   }
 
@@ -1186,18 +1212,14 @@ export class ConversationV4Gateway {
   }
 
   /** Session-list metadata (fallback when the host hook is absent: createdAt=0, lastActivityAt=now). */
-  private resolveIndexMeta(sessionId: string): {
-    createdAt: number;
-    lastActivityAt: number;
-    parentSessionId?: string;
-    executionWorktree?: { path: string; branchName?: string };
-  } {
+  private resolveIndexMeta(sessionId: string): SessionIndexMeta {
     const meta = this.host.getSessionIndexMeta?.(sessionId);
     return {
       createdAt: meta?.createdAt ?? 0,
       lastActivityAt: meta?.lastActivityAt ?? this.now(),
       ...(meta?.parentSessionId ? { parentSessionId: meta.parentSessionId } : {}),
       ...(meta?.executionWorktree ? { executionWorktree: meta.executionWorktree } : {}),
+      ...(meta?.executionWorktreeMissing ? { executionWorktreeMissing: true } : {}),
     };
   }
 
@@ -1455,6 +1477,7 @@ export class ConversationV4Gateway {
     if (sessionId === null) {
       throw new Error(`Unsupported topic: ${params.topic}`);
     }
+    await this.host.restorePreparedSession?.(sessionId);
     const isLiveConversation = this.hasLiveConversation(sessionId);
     this.host.onDebug?.(
       `subscribe conversation session=${sessionId} coldResume=${String(!isLiveConversation)}`,
@@ -1476,6 +1499,7 @@ export class ConversationV4Gateway {
             params.workspace,
           )
         : await this.hydratePublisher(sessionId);
+    publisher.seedWorktreePreparation(this.host.getSessionPreparationSeed?.(sessionId));
     const cliSessionRestoreMs = !isLiveConversation
       ? Math.max(0, Math.round(performance.now() - restoreStartedAt))
       : undefined;
@@ -2990,6 +3014,7 @@ export class ConversationV4Gateway {
       this.publishers.set(sessionId, publisher);
       // Config seed: inject runtime truth at creation (emits no delta and does not bump revision).
       this.seedPublisherConfig(sessionId, publisher);
+      publisher.seedWorktreePreparation(this.host.getSessionPreparationSeed?.(sessionId));
     }
     return publisher;
   }

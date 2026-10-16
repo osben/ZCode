@@ -1,0 +1,84 @@
+# Composer branch switcher semantics
+
+Status: §1 (draft branch intent) and §2 (guard) implemented 2026-10-15; §3 worktree-session Git targeting is implemented by per-path Git state; §4 decided (variant "Switch + branch rows") and implemented behind the renderer-local flag; ask-codex review adopted (Task/Base labels, dirty cues, HEAD-fallback disclosure, withdraw-not-disable).
+
+## Problem
+
+The branch picker shown in the draft composer header (`GitBranchSwitcher` in `WorkspaceShellLayout.tsx:1559`) performs an **immediate** `git switch --no-guess` on the shared workspace checkout (`useGitBranchSwitcher.ts:251` → `gitCliRepo.ts:1500`) while no chat exists yet. The picker reads as a setting for the future chat, but it mutates the working tree for everything in the workspace: other open sessions, and any agent mid-turn. There is also no guard against switching while tasks are active. Separately, a worktree session's status panel targets the parent workspace (`SessionPane.tsx:5671` → `ConversationStatusPanel`), so the worktree's own branch cannot be switched from the UI.
+
+Decided 2026-10-15 (user): draft branch selection becomes intent applied at send; switching with active tasks asks for confirmation with a list; worktree-session panel targeting is in scope; the unified destination control replaces the checkbox behind a default-on renderer-local flag (§4).
+
+## Contract
+
+### 1. Draft: branch selection is intent, applied at send
+
+- The draft header `GitBranchSwitcher` no longer issues git calls on selection. Picking a branch records a draft intent (the chosen `branchName`) reflected in the picker trigger, plus a menu-footer hint that it applies on send.
+- The intent lives beside the existing worktree draft intent (the `composerDraftWorktreeIntent` slot pattern; since specs/composer-worktree-setup-steps.md the slot is consumed as `beginCreation` at send, non-blocking). It is cleared with the draft; navigating away or clearing has no side effects. (Anchor amended 2026-10-15: the spec originally pointed at `interceptFirstSend`, replaced by the setup pipeline.)
+- On send without the worktree intent (checkout mode), read the current branch first. If it already matches the selected branch, proceed without a guard or switch. Otherwise run the guard (§2), then `gitService.switchBranch`, then session creation proceeds. A failed or cancelled switch aborts the send with the switch failure message: **no session is created**, draft text and intent are preserved, and commit-assist handling is not invoked. The guard considers every active task in the workspace, including tasks beyond the collapsed sidebar page.
+- While the "New worktree" checkbox intent is active (the intent slot is registered or a setup pipeline is running/ready for the workspace), the header picker is disabled with a hint ("the worktree form sets the branch") so the draft never holds two competing branch sources. The worktree flow itself is unchanged (created at send per the decided Variant B).
+
+### 2. Guard: confirm with the list of affected active tasks
+
+- "Active" = session phase `prewarming` or `running` (sessions-index phases, `packages/shared/src/zcode-protocol-v4/snapshot.ts:28`). Sessions bound to an `executionWorktree` are excluded from the checkout-switch list — a parent-checkout switch does not touch them.
+- The guard applies to: (a) the send-time checkout switch (§1), (b) a status-panel branch switch in a live session. It is a confirm dialog listing the affected active tasks by title ("Switching the branch changes the working tree for N running task(s): …"); cancel aborts the whole action.
+- The draft destination control's "Create and switch to new branch" action also runs the checkout guard before creating or switching the branch; cancelling performs neither operation.
+- Every branch-switch entry point for the same repository uses the same scoped guard, including the branch picker nested inside the Git commit dialog. Opening that dialog must not create an unguarded route around the status-panel confirmation.
+- "Affected" = tasks sharing the same checkout root: for a checkout switch, all non-worktree active tasks of the workspace; for a worktree-panel switch (§3), tasks bound to that worktree. A dialog with an empty list is skipped (nothing to confirm).
+- Data source: the Host's existing sessions-index summary is copied into the transient controller task overlay. The UI guard reads that overlay alongside activity; persisted task metadata remains unchanged. This adds a field to the existing controller frame, not a new RPC endpoint.
+- An empty list is authoritative only after the active-task query succeeded for the current workspace scopes and source generation. While loading or after a failed query, switching fails closed with retry guidance; unavailable data is never treated as “no affected tasks.”
+- Concurrent confirmation requests are serialized. Each keeps its own resolver until confirmed or cancelled; replacing one visible dialog cannot strand a send or branch action.
+
+### 3. Worktree session panel targets the worktree
+
+- Resolve the active session's `executionWorktree` from its scoped live sessions-index summary, the same source used by the sidebar badge. The persisted task-list cache is not authoritative for this field and may not contain it.
+- For a session with `executionWorktree`, the status-panel Git summary, dirty count, change summary, branch switcher, and Git actions all use a Git repository refresh keyed to `executionWorktree.path`; the workspace-level `gitState` datasets are never reused. Both the status panel and open Git Review follow that execution path's watcher and explicit refresh actions, with the same remote workspace identity/session routing. The parent-checkout watcher remains scoped to workspace-level state.
+- Git repository view state is scoped by both the workspace identity key and concrete `workspacePath`. A different execution path under the same remote workspace identity must render empty state until that path's Git refresh completes.
+- The status panel keeps a worktree disclosure row with the live branch (or detached-HEAD label) from that execution path's Git summary and the worktree directory from session metadata. The label updates after branch switches; it must not keep showing the creation-time branch. Switching branches and other Git actions use the execution path. The existing guard (§2) receives `scope: "worktree"` and that path, listing only active sessions bound to the same worktree. The parent workspace is never targeted by the session panel.
+- The workspace header path button (folder icon, `WorkspaceHeaderTitleSection` tooltip/popover) follows the same fact source: while the active session is bound to an `executionWorktree`, its context path shows the worktree directory (not the parent checkout) and its branch row/button label shows `executionWorktree.branchName` (falling back to the workspace git summary only for plain sessions or rows without a branch). The project display name in the tooltip title stays the workspace name — the button describes where the active chat executes, not a second workspace identity.
+- Draft queue lifecycle is owned by the composer: queueing clears the visible editor immediately; withdraw/unmount detaches the one queued send and restores its frozen content only if the editor revision has not changed. Attachments and references stay recoverable and are never dispatched twice. An in-flight Git create may finish and remain reusable as an orphaned worktree.
+
+### 4. Unified destination control (decided 2026-10-15: variant "Switch + branch rows")
+
+Replaces the header `GitBranchSwitcher` chip AND the `ChatEmptyWorktreeTaskToggle` checkbox behind a renderer-local feature flag (`localStorage` key `zcode.fork.composerDestinationControl`, **default on** — the new control ships visible; setting `"0"` renders the old pair untouched, so rollback is instant and per-device). New component: `v4/composer/ComposerDestinationControl.tsx`.
+
+- **Trigger chip**: project mode → the task branch (`intent ?? current`, "detached" for detached HEAD); worktree mode → violet `Worktree` (never the auto-generated name). Pipeline `creating` keeps the chip usable (it reflects state, does not block). The popover opens **upward** (`side="top"`) — it hangs under the app header.
+- **Popover row 1 — New worktree + switch**: the row is quiet at rest — 2026-10-15 the at-rest location note ("created in <dir> · from settings") and the dirty-tree note ("uncommitted changes stay in this project") were removed by user decision; the location still applies from settings, it is just not displayed. The sub shows pipeline states only: "Creating worktree…", "Ready → <path>", "Failed — send again to retry"; turning the switch OFF while creating = withdraw ("Withdrawing — worktree left on disk"), never disabled.
+- **Popover row 2 — Task branch / Base branch** (labels per ask-codex advice: project mode names the branch the checkout switches to; worktree mode names the base the worktree forks from): value = selected ?? current ("detached" for detached HEAD). The row is quiet at rest in both modes — 2026-10-15: the at-rest subs were removed by user decision ("current · applies on send", "switches on send" variants, "the worktree forks from it"); only the failed-list disclosure shows: "Couldn't load branches — base defaults to HEAD" (disclosed before send, ask-codex pitfall). The send-time confirm guard remains the authoritative check. Inline branch list in the same popover: search, current check + dirty count, and the base switcher's footer actions — "Create and switch to new branch…" (existing `GitBranchCreateDialog` + create-and-switch semantics, unchanged) and "View branch graph" (existing `GitGraphDialog`). **Worktree-occupied branches (2026-10-15):** a branch checked out in another worktree cannot be checked out here (git refuses), so every switch surface (`GitBranchSwitcher` and the destination list in project mode) renders it disabled with a "Checked out in <directory>" hint instead of failing on click/at send; in worktree BASE mode the branch stays selectable — a base only needs to exist. Occupancy comes from `git worktree list` via `useGitBranchSwitcher` (`worktreeOccupancy`, refreshed on open; failures degrade to the old behavior).
+- **Semantics**: switch ON registers the worktree intent in the existing slot (`beginCreation` with the selected base override — falling back to the workspace's **live** current branch from the git summary; HEAD only when no branch can be named, i.e. detached HEAD; a failed branch list no longer degrades the base to HEAD because the live summary still names the current branch); branch selection writes the existing `draftBranchIntent` store; the composer send path, guard (§2), and pipeline (composer-worktree-setup-steps.md) are unchanged consumers. Toggling the mode re-labels the same value (Task ↔ Base) instead of clearing it.
+- **Workspace isolation** (2026-10-15 fix): the control lives in the shell header and stays mounted across workspace tab switches, so all per-draft state derived from a workspace's git (cached branch list, base selection, list-failure flag, open popover/list views) resets when `workspaceKey` changes. Without this, the previous project's cached branch list survived the switch and its `currentBranchName` leaked into the next project's worktree creation as the base branch (live bug: "Base branch 'feat/Oct-15' was not found" in an unrelated project). The base fallback additionally reads the live git summary instead of the cached list, so a base can never name a branch the current repo does not have.
+- **Git repository visibility** (2026-10-15): project selection becomes active first; the composer then renders its Git destination management only after the shell's Git state belongs to that selected workspace identity and reports Git available plus a repository. Initial loading, unknown state, and non-Git projects do not render the controls. A previously confirmed repository stays rendered during a same-workspace refresh so queued worktree intent is retained; a late response for a previously selected workspace cannot satisfy the active workspace key check.
+- **Reuse**: `useGitBranchSwitcher` powers branches/create/graph machinery — the control simply never calls its `switchBranch` for list selections (intent instead).
+- Mockup (visual reference, variant 2): `~/.zcode/v2/visualizations/<session>/branch-destination-variants.html`.
+
+## Acceptance scenarios
+
+1. Draft: selecting a branch issues no git RPC while drafting; the picker reflects the choice.
+2. Draft send, branch unchanged → session created; no switch call.
+3. Draft send, different branch, no active tasks → switch runs, then the session is created on it.
+4. Draft send, different branch, a running task in the workspace → confirm lists it; cancel aborts everything; confirm switches, then creates.
+5. Switch failure (dirty-tree conflict path) → abort with the switch failure message; no commit-assist flow or session creation runs, and the draft text and intent remain intact.
+6. Worktree checkbox active → header picker disabled; the worktree form's branch is the only source (flow unchanged).
+7. Clearing the draft or switching conversations drops the intent with no side effects.
+8. Status panel of a checkout session with its own turn running → confirm lists it; confirm switches.
+9. Worktree session panel → shows the worktree's branch and dirty state; switching changes the worktree branch only; the parent workspace and its sessions are unaffected.
+10. Worktree-only workspace → checkout guard never fires (list empty ⇒ skipped).
+11. Remote workspace: same flows through the existing Host RPC surface; identity rules unchanged. The execution-worktree fact follows the matching workspace identity and remote session in the existing controller stream.
+12. Switching to a different project after the popover was used → the cached branch list, base selection, and open views are dropped; worktree creation in the new project resolves its base only from that project's branches (never a name carried over from the previous project's list).
+13. Selecting the already-current branch while another task is active → no confirmation appears, no switch runs, and the message proceeds.
+14. A branch switch while the current workspace task list is loading or has failed is rejected with retry guidance; a successfully loaded empty result allows the switch without confirmation.
+15. Two overlapping switch requests are shown one at a time, and confirming or cancelling each settles only that request.
+16. Editing a tracked file inside an active worktree refreshes its open Git Review state; parent-checkout summaries remain driven by the parent watcher.
+17. Creating and switching to a new draft branch while a task is active asks the checkout guard; cancellation creates no branch and performs no switch.
+18. Changing the Git target path while retaining a remote workspace identity immediately hides the previous path's summary and datasets until the new path refreshes.
+
+## Validation
+
+- `pnpm typecheck`, `pnpm lint`, `pnpm architecture:check --changed`.
+- Unit: intent slot lifecycle (set/clear/competes-with-worktree-intent); guard list computation (phases, worktree exclusion, same-checkout-root grouping); send ordering (switch-then-create, abort preserves draft); picker disabled state under worktree intent; panel path substitution for worktree sessions.
+- Manual: dialog copy/UX pass; a live check that a running agent in the same workspace pauses-safely across a confirmed switch (agent's next git call sees the new branch — expected, documented behavior).
+
+## Out of scope
+
+- GitPane and other workspace-level git widgets (their immediate-switch semantics are unchanged; §2 already guards the dangerous cases).
+- Copilot-style per-chat branch workspaces as a new workspace kind — worktree sessions already cover isolation.
+- New RPC endpoints or changes to persisted task metadata.

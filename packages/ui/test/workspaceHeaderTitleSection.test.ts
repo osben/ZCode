@@ -1,9 +1,20 @@
 import { createElement, type ReactNode } from "react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { TID_WORKSPACE_MORE_BUTTON, TID_WORKSPACE_PATH, TID_WORKSPACE_TITLE } from "@zcode/shared";
 
 const capturedGitBranchSwitcherProps = vi.hoisted(() => [] as Array<Record<string, unknown>>);
+const sessionsIndexItems = vi.hoisted(() => [] as Array<Record<string, unknown>>);
+
+vi.mock("@/v4/useWorkspaceSessionsIndexItems.js", () => ({
+  useWorkspaceSessionsIndexItems: () => ({
+    items: sessionsIndexItems,
+    sourceRevisionByScopeKey: {},
+    hydratingEndpointKeys: [],
+  }),
+}));
 
 vi.mock("lucide-react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("lucide-react")>();
@@ -260,6 +271,61 @@ describe("WorkspaceHeaderTitleSection", () => {
     expect(html.indexOf(`data-testid="${TID_WORKSPACE_PATH}"`)).toBeLessThan(
       html.indexOf(`data-testid="${TID_WORKSPACE_TITLE}"`),
     );
+  });
+
+  it("shows the worktree branch instead of the parent checkout branch for an execution-worktree session", async () => {
+    sessionsIndexItems.splice(0, sessionsIndexItems.length, {
+      taskId: "session-1",
+      executionWorktree: {
+        path: "/workspace/zcode-cli-worktrees/zcode-angry-meerkat",
+        branchName: "zcode/angry-meerkat",
+      },
+    });
+    const { WorkspaceHeaderTitleSection } = await import("@/WorkspaceHeaderSections.js");
+
+    const html = renderToStaticMarkup(
+      createElement(WorkspaceHeaderTitleSection, {
+        workspaceAbsPath: "/workspace/zcode-cli",
+        projectName: "zcode-cli",
+        activeTaskTitle: "hello",
+        activeTaskId: "task-1",
+        activeTraceId: "trace-1",
+        activeSessionId: "session-1",
+        activeTaskProvider: "glm",
+        gitSummary: {
+          isGitAvailable: true,
+          isRepository: true,
+          branchName: "feat/Oct-08",
+          headRefType: "branch",
+        },
+        gitDirtyFileCount: 0,
+        sessionLogPath: null,
+        nativeSessionLogProvider: null,
+        nativeSessionLogPath: null,
+        nativeSessionLogExists: false,
+        nativeSessionLogLoading: false,
+        providerWorkspaceConfigPath: null,
+        providerWorkspaceConfigExists: false,
+        providerWorkspaceConfigLoading: false,
+        workspaceHeaderState: { selectedProvider: "glm" },
+        selectedEditor: null,
+        onRefreshGit: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain('aria-label="zcode-cli · zcode/angry-meerkat"');
+    expect(html).not.toContain("feat/Oct-08");
+    sessionsIndexItems.splice(0, sessionsIndexItems.length);
+  });
+
+  it("scopes the context popover path to the execution worktree directory (source contract)", () => {
+    // The path row renders only inside the opened popover, so pin the wiring at the source level
+    // (same convention as the composer worktree queue contract tests).
+    const source = readFileSync(
+      resolve(process.cwd(), "packages/ui/src/WorkspaceHeaderSections.tsx"),
+      "utf8",
+    );
+    expect(source).toContain("workspacePath={sessionExecutionWorktree?.path ?? workspaceAbsPath}");
   });
 
   it("uses the SSH alias suffix format for remote workspace context", async () => {

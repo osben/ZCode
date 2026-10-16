@@ -23,12 +23,12 @@ Desktop and mobile Web share the filtering rules; mobile retains existing HTML-p
 
 ## Verification
 
-| Scenario | Assertion |
-| --- | --- |
-| Only a `visualize` HTML file | Visualization remains; HTML card and entire change summary disappear |
-| Mixed `visualize` and regular HTML/source files | Regular cards remain; counts and expanded list include only regular files |
-| Three reference forms, code examples, invalid/incomplete references, same filename in different directories | Exclude only the complete path of a valid reference |
-| Async detail request, late old response, terminal/undo-state change, read failure | Do not flash old source-file counts or use old details; preserve the existing entry point on failure |
-| 390px / desktop, light/dark themes, mobile compact mode | Filtering is consistent and regular files remain expandable |
+| Scenario                                                                                                    | Assertion                                                                                            |
+| ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Only a `visualize` HTML file                                                                                | Visualization remains; HTML card and entire change summary disappear                                 |
+| Mixed `visualize` and regular HTML/source files                                                             | Regular cards remain; counts and expanded list include only regular files                            |
+| Three reference forms, code examples, invalid/incomplete references, same filename in different directories | Exclude only the complete path of a valid reference                                                  |
+| Async detail request, late old response, terminal/undo-state change, read failure                           | Do not flash old source-file counts or use old details; preserve the existing entry point on failure |
+| 390px / desktop, light/dark themes, mobile compact mode                                                     | Filtering is consistent and regular files remain expandable                                          |
 
 Unit tests cover card candidates, asynchronous summary projection, and turn-end wiring. The existing `node packages/desktop/scripts/gen-ui-e2e.mjs` uses real Electron, the Gen UI sandbox, and the file-summary component to verify visibility and expansion. The fixture does not represent real SSH or mobile network-recovery verification.

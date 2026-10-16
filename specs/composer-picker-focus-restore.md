@@ -21,3 +21,7 @@ Side conversations (SelectionSideChat panes) and workbench split panes mount sev
 - On coarse-touch devices no focus restore happens after a picker closes.
 
 Regression coverage: `packages/ui/test/pickerFocus.test.ts`.
+
+The shared `ConfigSelect` uses the same scoped restore path when its caller supplies
+a composer trigger ref. Its settings/automation null-selector behavior is unchanged.
+Coverage includes a close handler with a side-composer trigger and a different global input.

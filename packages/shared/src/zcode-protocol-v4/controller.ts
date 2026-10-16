@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { zcodeTaskMetaSchema } from "../validation.js";
+import { zcodeExecutionWorktreeSchema } from "../zcode-protocol/index.js";
 import { pendingInteractionSummarySchema } from "./sessions-index.js";
 import { sessionWorkflowActivitySchema } from "./sessions-index-workflow-activity.js";
 import { sessionPhaseSchema } from "./snapshot.js";
@@ -100,6 +101,10 @@ export const windowHostControllerTaskRowSchema = z
       .strict(),
     sourceAvailability: z.enum(["online", "offline"]),
     liveStatus: z.enum(["idle", "running", "waiting", "completed", "error"]),
+    /** Live execution target from the Host sessions-index overlay; never persisted in task metadata. */
+    executionWorktree: zcodeExecutionWorktreeSchema.optional(),
+    /** Host-observed health for the live execution target; never persisted in task metadata. */
+    executionWorktreeMissing: z.boolean().optional(),
     activity: windowHostControllerTaskActivitySchema.optional(),
     searchSnippets: z.array(z.string()).optional(),
   })

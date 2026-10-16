@@ -5,6 +5,7 @@ import { conversationQuotesSchema } from "../conversationSelection.js";
 // Conversation rewind has no separate command (decision: it is the UI entry point for editUserQuery);
 // workspace-only file rollback uses applyFileRewind and does not truncate chat history.
 import { z } from "zod";
+import * as worktreePreparationCommand from "./worktree-preparation-command.js";
 import { conversationRowTargetSchema, timestampSchema } from "./core.js";
 import { attachmentRefSchema } from "./attachment-ref.js";
 import { v4ConversationFileRewindPreviewResultSchema } from "./transport.js";
@@ -54,6 +55,7 @@ export const commandPayloadSchemas = {
   // Without firstInput → empty session at phase=draft; with it → create turnHeader + userInput rows directly.
   createSession: z.object({
     workspaceId: z.string(),
+    ...worktreePreparationCommand.worktreePreparationCreateSessionFields,
     permissionScope: z.literal("session").optional(),
     firstInput: z
       .object({
@@ -80,6 +82,7 @@ export const commandPayloadSchemas = {
     // Gray-release mode is sent alongside the boolean (launch.md “On demand: activation”); older CLIs silently discard it via z.object.
     dynamicWorkflowMode: z.enum(DYNAMIC_WORKFLOW_MODES).optional(),
   }),
+  updateWorktreePreparation: worktreePreparationCommand.updateWorktreePreparationPayloadSchema,
   // Parent session is specified by envelope.sessionId; the server derives the full runtime config from the parent record.
   // If firstInput exists, start the first normal input as soon as the child is created; otherwise leave an empty side panel.
   createSelectionSideSession: z.object({
@@ -414,6 +417,7 @@ export const commandResultSchema = z.discriminatedUnion("type", [
       optionId: z.string().optional(),
     }),
   }),
+  worktreePreparationCommand.worktreePreparationUpdatedResultSchema,
   z.object({
     type: z.literal("applyFileRewind"),
     applied: z.boolean(),

@@ -46,6 +46,25 @@ describe("App quick pick command render stability", () => {
     expect(appSource).toContain("const taskFindDialogProps = useMemo<TaskFindDialogProps>");
     expect(appSource).toContain("taskFindDialogProps={taskFindDialogProps}");
   });
+
+  it("uses the active worktree for the general Git Review entry", () => {
+    expect(appSource).toMatch(
+      /const gitRepositoryWorkspacePath\s*=\s*[\s\S]*?resolvedActiveTaskMeta\?\.executionWorktree\?\.path\s*\?\?\s*workspaceAbsPath/u,
+    );
+  });
+
+  it("keeps workspace Git summaries separate from worktree-scoped Review data", () => {
+    expect(appSource).toMatch(
+      /const gitState = useGitRepository\(\{\s*workspacePath: workspaceAbsPath/u,
+    );
+    expect(appSource).toMatch(
+      /const worktreeGitReviewState = useGitRepository\(\{\s*workspacePath: gitRepositoryWorkspacePath,[\s\S]*?enabled: gitRepositoryWorkspacePath !== workspaceAbsPath,[\s\S]*?refreshToken: gitReviewRefreshVersion/u,
+    );
+    expect(appSource).toMatch(
+      /useGitAutoRefresh\(\{\s*workspacePath: gitRepositoryWorkspacePath,[\s\S]*?onRefreshGit: handleRefreshGitReview/u,
+    );
+    expect(appSource).toContain("gitReviewState={gitPaneState}");
+  });
 });
 
 describe("task query cache render subscription boundary", () => {

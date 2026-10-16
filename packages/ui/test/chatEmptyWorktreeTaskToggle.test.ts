@@ -1,14 +1,14 @@
 // @vitest-environment jsdom
 //
-// Empty-state "New worktree" checkbox tests (2026-10-13: checkbox-only, no mini-form):
+// Empty-state "New worktree" checkbox tests (specs/composer-worktree-setup-steps.md):
 // - gating: only Desktop local, non-remote/conversation main-tree / linked-worktree projects
 //   render the checkbox;
-// - intent switch: checking registers the first-send interception, unchecking unregisters it;
-// - send interception: gates (branches loading / custom location invalid / global storage
-//   unavailable) block the send with an inline error; createWorktree success → draft transfer
-//   request + App open contract; failure → no switch, inline error;
-//   target-path-exists → offers opening the existing worktree instead of a second directory
-//   (WT-04);
+// - intent switch: checking registers the setup intent, unchecking unregisters (and withdraws an
+//   in-flight pipeline);
+// - beginCreation: queue-time validation failures (custom location invalid / global storage
+//   unavailable) fail synchronously into the pipeline store; a still-loading branch list no longer
+//   blocks (base = HEAD + note); success → ready; rejection → failed; WT-04 target-path-exists →
+//   ready with the existing worktree in place (no draft transfer);
 // - the branch name is fully automatic (generated adjective-noun + effective prefix), asserted
 //   with a deterministic Math.random stub ("sleepy-capybara").
 // Test doubles stay isomorphic with commandCenterWorktreeDialog.test.ts (stable gitService ref).
@@ -22,15 +22,16 @@ import {
   canOfferChatEmptyWorktreeTask,
   isWorktreeCapableRepository,
 } from "@/ChatEmptyState.js";
-import {
-  type ComposerDraftWorktreeInterceptResult,
-  ComposerDraftWorktreeIntentContext,
-} from "@/v4/composer/composerDraftWorktreeIntent.js";
+import { ComposerDraftWorktreeIntentContext } from "@/v4/composer/composerDraftWorktreeIntent.js";
 import type { ComposerDraftWorktreeIntentSlot } from "@/v4/composer/composerDraftWorktreeIntent.js";
 import {
   clearV4ComposerDraftWorkspaceTransferRequest,
   consumeV4ComposerDraftWorkspaceTransferRequest,
 } from "@/v4/composer/composerDraftWorkspaceTransfer.js";
+import {
+  selectComposerWorktreePipeline,
+  useComposerWorktreePipelineStore,
+} from "@/store/composerWorktreePipelineStore.js";
 
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
@@ -112,10 +113,7 @@ function stubBranches() {
   });
 }
 
-function renderToggle(
-  { workspaceTabs = [LOCAL_TAB], isDesktop = true } = {},
-  onOpenWorktreeDraft = vi.fn(),
-) {
+function renderToggle({ workspaceTabs = [LOCAL_TAB], isDesktop = true } = {}) {
   const intentSlot: ComposerDraftWorktreeIntentSlot = { current: null };
   const utils = render(
     createElement(
@@ -126,11 +124,10 @@ function renderToggle(
         workspaceTabs,
         isDesktop,
         isWebRemoteControlShell: false,
-        onOpenWorktreeDraft,
       }),
     ),
   );
-  return { ...utils, intentSlot, onOpenWorktreeDraft };
+  return { ...utils, intentSlot };
 }
 
 async function openWorktreeForm(utils: ReturnType<typeof renderToggle>) {
@@ -254,7 +251,10 @@ describe("ChatEmptyWorktreeTaskToggle gating", () => {
   });
 });
 
-describe("ChatEmptyWorktreeTaskToggle intent + interception", () => {
+describe("ChatEmptyWorktreeTaskToggle intent + setup pipeline", () => {
+  // Host-reserved session identity stub: the real prepareSession lives in SessionPane.
+  const prepareSession = async () => "session-1";
+
   beforeEach(() => {
     stubRepository();
     stubBranches();
@@ -264,40 +264,23 @@ describe("ChatEmptyWorktreeTaskToggle intent + interception", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    useComposerWorktreePipelineStore.setState({ pipelineByWorkspaceKey: {} });
   });
 
-  it("registers the send intent on check and unregisters it on uncheck (no mini-form)", async () => {
+  it("registers the setup intent on check and unregisters it on uncheck (no mini-form)", async () => {
     const utils = renderToggle();
     await openWorktreeForm(utils);
-    // The mini-form is hidden (2026-10-13 review): only the checkbox row exists.
     expect(screen.queryByLabelText("commandCenter.worktree.branchName")).toBeNull();
 
     fireEvent.click(screen.getByRole("checkbox"));
     expect(utils.intentSlot.current).toBeNull();
   });
 
-  it("blocks the first send while the branch list is still loading", async () => {
-    getLocalBranches.mockReturnValue(new Promise(() => {}));
-    const utils = renderToggle();
-    await openWorktreeForm(utils);
-    const intent = utils.intentSlot.current!;
-
-    let result: ComposerDraftWorktreeInterceptResult | undefined;
-    await act(async () => {
-      result = await intent.interceptFirstSend();
-    });
-    expect(result?.action).toBe("cancel");
-    expect(createWorktree).not.toHaveBeenCalled();
-    expect(utils.onOpenWorktreeDraft).not.toHaveBeenCalled();
-    expect(screen.getByText("commandCenter.worktree.baseBranch.loading")).toBeTruthy();
-  });
-
-  it("retains the created worktree for retries until the first send is accepted", async () => {
-    mocks.settings = { worktreeBranchPrefix: "osben-" };
+  it("beginCreation queues a creating pipeline entry and starts the runner (no blocking await)", async () => {
     createWorktree.mockResolvedValue({
       ok: true,
-      worktreePath: "/dev/alpha-worktrees/osben-sleepy-capybara",
-      branchName: "osben-sleepy-capybara",
+      worktreePath: "/dev/alpha-worktrees/zcode-sleepy-capybara",
+      branchName: "zcode/sleepy-capybara",
       issues: [],
     } satisfies GitWorktreeCreateResult);
     const utils = renderToggle();
@@ -306,49 +289,69 @@ describe("ChatEmptyWorktreeTaskToggle intent + interception", () => {
     await act(async () => {});
     const intent = utils.intentSlot.current!;
 
-    let result: ComposerDraftWorktreeInterceptResult | undefined;
+    let result: { ok: boolean; sessionId?: string } | undefined;
     await act(async () => {
-      result = await intent.interceptFirstSend();
+      result = await intent.beginCreation("first prompt", prepareSession);
     });
-    // Proceed result: the composer continues the normal first send in THIS workspace and
-    // attaches executionWorktree, so the session runs in the worktree but stays listed here.
-    expect(result).toEqual({
-      action: "proceed",
-      executionWorktree: {
-        path: "/dev/alpha-worktrees/osben-sleepy-capybara",
-        branchName: "osben-sleepy-capybara",
-      },
-    });
-    // Generated <adjective>-<noun> + effective prefix, current branch as base, sibling target.
+    expect(result).toEqual({ ok: true, sessionId: "session-1" });
+    // Generated <adjective>-<noun> + default prefix, current branch as base, sibling target.
     expect(createWorktree).toHaveBeenCalledWith({
       workspacePath: WORKSPACE_PATH,
-      branchName: "osben-sleepy-capybara",
+      branchName: "zcode/sleepy-capybara",
       baseBranch: "main",
-      targetPath: "/dev/alpha-worktrees/osben-sleepy-capybara",
+      targetPath: "/dev/alpha-worktrees/zcode-sleepy-capybara",
+    });
+    const pipeline = selectComposerWorktreePipeline(
+      useComposerWorktreePipelineStore.getState(),
+      WORKSPACE_PATH,
+    );
+    expect(pipeline).toMatchObject({
+      status: "ready",
+      worktreePath: "/dev/alpha-worktrees/zcode-sleepy-capybara",
+      queuedPromptPreview: "first prompt",
     });
     // No workspace switch, no draft transfer: the session lives in the current project.
-    expect(utils.onOpenWorktreeDraft).not.toHaveBeenCalled();
     expect(
       consumeV4ComposerDraftWorkspaceTransferRequest({
         sourceWorkspacePath: WORKSPACE_PATH,
-        targetWorkspacePath: "/dev/alpha-worktrees/osben-sleepy-capybara",
+        targetWorkspacePath: "/dev/alpha-worktrees/zcode-sleepy-capybara",
       }),
     ).toBe(false);
-    const retainedIntent = utils.intentSlot.current!;
-    let retryResult: ComposerDraftWorktreeInterceptResult | undefined;
-    await act(async () => {
-      retryResult = await retainedIntent.interceptFirstSend();
-    });
-    expect(retryResult).toEqual(result);
-    expect(createWorktree).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      retainedIntent.onSendAccepted();
-    });
-    expect(utils.intentSlot.current).toBeNull();
   });
 
-  it("shows the inline issue and keeps the intent registered when creation is rejected", async () => {
+  it("a still-loading branch list no longer blocks: base defaults to HEAD with a note", async () => {
+    getLocalBranches.mockReturnValue(new Promise(() => {}));
+    createWorktree.mockResolvedValue({
+      ok: true,
+      worktreePath: "/dev/alpha-worktrees/zcode-sleepy-capybara",
+      branchName: "zcode/sleepy-capybara",
+      issues: [],
+    } satisfies GitWorktreeCreateResult);
+    const utils = renderToggle();
+    await openWorktreeForm(utils);
+    const intent = utils.intentSlot.current!;
+
+    let result: { ok: boolean; sessionId?: string } | undefined;
+    await act(async () => {
+      result = await intent.beginCreation("prompt", prepareSession);
+    });
+    expect(result).toEqual({ ok: true, sessionId: "session-1" });
+    // No baseBranch in the request: the server defaults to HEAD.
+    expect(createWorktree).toHaveBeenCalledWith({
+      workspacePath: WORKSPACE_PATH,
+      branchName: "zcode/sleepy-capybara",
+      targetPath: "/dev/alpha-worktrees/zcode-sleepy-capybara",
+    });
+    const pipeline = selectComposerWorktreePipeline(
+      useComposerWorktreePipelineStore.getState(),
+      WORKSPACE_PATH,
+    );
+    expect(pipeline?.params).toMatchObject({ baseFromHeadDefault: true });
+    // Settle the in-flight runner so the module-level promise map does not leak into the next test.
+    await act(async () => {});
+  });
+
+  it("creation rejection lands in the store as failed; the intent stays registered", async () => {
     createWorktree.mockResolvedValue({
       ok: false,
       worktreePath: null,
@@ -357,22 +360,21 @@ describe("ChatEmptyWorktreeTaskToggle intent + interception", () => {
     } satisfies GitWorktreeCreateResult);
     const utils = renderToggle();
     await openWorktreeForm(utils);
-    await waitFor(() => expect(getLocalBranches).toHaveBeenCalledTimes(1));
-    await act(async () => {});
     const intent = utils.intentSlot.current!;
 
-    let result: ComposerDraftWorktreeInterceptResult | undefined;
     await act(async () => {
-      result = await intent.interceptFirstSend();
+      await intent.beginCreation("prompt", prepareSession);
     });
-    expect(result?.action).toBe("cancel");
-    expect(screen.getByText("commandCenter.worktree.error.git-unavailable")).toBeTruthy();
-    expect(utils.onOpenWorktreeDraft).not.toHaveBeenCalled();
-    // No workspace switch: the intent stays registered; the composer keeps the text because the send was intercepted.
+    const pipeline = selectComposerWorktreePipeline(
+      useComposerWorktreePipelineStore.getState(),
+      WORKSPACE_PATH,
+    );
+    expect(pipeline?.status).toBe("failed");
+    expect(pipeline?.failureMessage).toBeTruthy();
     expect(utils.intentSlot.current).not.toBeNull();
   });
 
-  it("target-path-exists offers the existing worktree instead of a second directory (WT-04)", async () => {
+  it("target-path-exists consumes the existing worktree in place (WT-04, no draft transfer)", async () => {
     createWorktree.mockResolvedValue({
       ok: false,
       worktreePath: null,
@@ -397,48 +399,48 @@ describe("ChatEmptyWorktreeTaskToggle intent + interception", () => {
     });
     const utils = renderToggle();
     await openWorktreeForm(utils);
-    await waitFor(() => expect(getLocalBranches).toHaveBeenCalledTimes(1));
-    await act(async () => {});
     const intent = utils.intentSlot.current!;
 
-    let result: ComposerDraftWorktreeInterceptResult | undefined;
     await act(async () => {
-      result = await intent.interceptFirstSend();
+      await intent.beginCreation("prompt", prepareSession);
     });
-    expect(result?.action).toBe("cancel");
-    expect(
-      screen.getByText("commandCenter.worktree.error.target-path-exists.existing"),
-    ).toBeTruthy();
-
-    fireEvent.click(screen.getByRole("button", { name: "commandCenter.worktree.openExisting" }));
-    expect(utils.onOpenWorktreeDraft).toHaveBeenCalledWith(
-      "/dev/alpha-worktrees/zcode-sleepy-capybara",
+    const pipeline = selectComposerWorktreePipeline(
+      useComposerWorktreePipelineStore.getState(),
+      WORKSPACE_PATH,
     );
+    expect(pipeline).toMatchObject({
+      status: "ready",
+      existing: true,
+      worktreePath: "/dev/alpha-worktrees/zcode-sleepy-capybara",
+    });
     expect(createWorktree).toHaveBeenCalledTimes(1);
-    // The recovery entry also issues the transfer request: the user's draft text follows to the existing worktree.
+    // Unified recovery: no draft transfer request for the existing directory.
     expect(
       consumeV4ComposerDraftWorkspaceTransferRequest({
         sourceWorkspacePath: WORKSPACE_PATH,
         targetWorkspacePath: "/dev/alpha-worktrees/zcode-sleepy-capybara",
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
-  it("blocks the first send when the custom worktree location is invalid (WTS-01)", async () => {
+  it("beginCreation fails synchronously when the custom worktree location is invalid (WTS-01)", async () => {
     mocks.settings = { worktreeLocationMode: "custom" };
     const utils = renderToggle();
     await openWorktreeForm(utils);
-    await waitFor(() => expect(getLocalBranches).toHaveBeenCalledTimes(1));
-    await act(async () => {});
     const intent = utils.intentSlot.current!;
 
-    let result: ComposerDraftWorktreeInterceptResult | undefined;
+    let result: { ok: boolean; sessionId?: string } | undefined;
     await act(async () => {
-      result = await intent.interceptFirstSend();
+      result = await intent.beginCreation("prompt", prepareSession);
     });
-    expect(result?.action).toBe("cancel");
+    expect(result).toEqual({ ok: false });
     expect(createWorktree).not.toHaveBeenCalled();
-    expect(screen.getByText("commandCenter.worktree.error.custom-location-invalid")).toBeTruthy();
+    const pipeline = selectComposerWorktreePipeline(
+      useComposerWorktreePipelineStore.getState(),
+      WORKSPACE_PATH,
+    );
+    expect(pipeline?.status).toBe("failed");
+    expect(pipeline?.failureMessage).toBe("commandCenter.worktree.error.custom-location-invalid");
   });
 
   it("creates under the app worktrees dir in global mode", async () => {
@@ -459,16 +461,8 @@ describe("ChatEmptyWorktreeTaskToggle intent + interception", () => {
     await act(async () => {});
     const intent = utils.intentSlot.current!;
 
-    let result: ComposerDraftWorktreeInterceptResult | undefined;
     await act(async () => {
-      result = await intent.interceptFirstSend();
-    });
-    expect(result).toEqual({
-      action: "proceed",
-      executionWorktree: {
-        path: "/Users/dev/.zcode/worktrees/alpha/zcode-sleepy-capybara",
-        branchName: "zcode/sleepy-capybara",
-      },
+      await intent.beginCreation("prompt", prepareSession);
     });
     // The create request always uses the absolute path (global dir + repo + composed segment).
     expect(createWorktree).toHaveBeenCalledWith({
@@ -477,27 +471,66 @@ describe("ChatEmptyWorktreeTaskToggle intent + interception", () => {
       baseBranch: "main",
       targetPath: "/Users/dev/.zcode/worktrees/alpha/zcode-sleepy-capybara",
     });
-    expect(utils.onOpenWorktreeDraft).not.toHaveBeenCalled();
   });
 
-  it("blocks the first send when global storage is unavailable (non-desktop, Stage F)", async () => {
+  it("beginCreation fails synchronously when global storage is unavailable (Stage F)", async () => {
     mocks.settings = { worktreeLocationMode: "global" };
     const utils = renderToggle();
     await openWorktreeForm(utils);
-    await waitFor(() => expect(getLocalBranches).toHaveBeenCalledTimes(1));
-    await act(async () => {});
     const intent = utils.intentSlot.current!;
 
-    let result: ComposerDraftWorktreeInterceptResult | undefined;
+    let result: { ok: boolean; sessionId?: string } | undefined;
     await act(async () => {
-      result = await intent.interceptFirstSend();
+      result = await intent.beginCreation("prompt", prepareSession);
     });
-    expect(result?.action).toBe("cancel");
+    expect(result).toEqual({ ok: false });
     expect(mocks.getAppWorktreesDir).not.toHaveBeenCalled();
     expect(createWorktree).not.toHaveBeenCalled();
-    expect(utils.onOpenWorktreeDraft).not.toHaveBeenCalled();
+    const pipeline = selectComposerWorktreePipeline(
+      useComposerWorktreePipelineStore.getState(),
+      WORKSPACE_PATH,
+    );
+    expect(pipeline?.failureMessage).toBe(
+      "commandCenter.worktree.error.global-location-unavailable",
+    );
+  });
+
+  it("unchecking mid-creation withdraws: the result lands orphaned and reusable", async () => {
+    let resolveCreate: (value: GitWorktreeCreateResult) => void = () => {};
+    createWorktree.mockReturnValue(
+      new Promise<GitWorktreeCreateResult>((resolve) => {
+        resolveCreate = resolve;
+      }),
+    );
+    const utils = renderToggle();
+    await openWorktreeForm(utils);
+    const intent = utils.intentSlot.current!;
+    await act(async () => {
+      await intent.beginCreation("prompt", prepareSession);
+    });
     expect(
-      screen.getByText("commandCenter.worktree.error.global-location-unavailable"),
-    ).toBeTruthy();
+      selectComposerWorktreePipeline(useComposerWorktreePipelineStore.getState(), WORKSPACE_PATH)
+        ?.status,
+    ).toBe("creating");
+
+    // Uncheck while the git call is in flight: the queued send is withdrawn…
+    fireEvent.click(screen.getByRole("checkbox"));
+    expect(utils.intentSlot.current).toBeNull();
+    expect(
+      selectComposerWorktreePipeline(useComposerWorktreePipelineStore.getState(), WORKSPACE_PATH)
+        ?.orphaned,
+    ).toBe(true);
+    // …but the call finishes and the worktree is left on disk, marked ready+orphaned (reusable).
+    await act(async () => {
+      resolveCreate({
+        ok: true,
+        worktreePath: "/dev/alpha-worktrees/zcode-sleepy-capybara",
+        branchName: "zcode/sleepy-capybara",
+        issues: [],
+      });
+    });
+    expect(
+      selectComposerWorktreePipeline(useComposerWorktreePipelineStore.getState(), WORKSPACE_PATH),
+    ).toMatchObject({ status: "ready", orphaned: true });
   });
 });

@@ -19,6 +19,7 @@ import {
   type ZCodeWorkspaceRef,
 } from "@zcode/shared";
 import { createExternalTurnFaultError } from "@zcode/core";
+import { projectIdFromDirectory } from "../app/paths.js";
 import {
   V4_NOTIFICATIONS,
   conversationInputIntentSchema,
@@ -110,12 +111,118 @@ import {
   listSessionSubagents,
   registerForkedSession,
   readSessionContextUsage,
+  isWorktreeDirectoryMissing,
+  isWorktreeDirectoryMissingSync,
 } from "./server-operations.js";
 import type {
   ZCodeProtocolAgentServerContext,
+  ZCodeProtocolPreparedWorktreeSession,
   ZCodeProtocolSessionRecord,
 } from "./server-types.js";
 import { createProtocolLogger } from "./server-types.js";
+
+const PREPARED_WORKTREE_ENTRY_TYPE = "v4/worktree_preparation";
+
+function preparedWorktreeMap(context: ZCodeProtocolAgentServerContext) {
+  return (context.preparedWorktreeSessions ??= new Map());
+}
+
+function parsePreparedWorktreeEntry(data: unknown): {
+  branchName: string;
+  targetPath: string;
+  baseBranch?: string;
+  status: "preparing" | "failed" | "cancelled" | "active";
+  failureMessage?: string;
+} | null {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const value = data as Record<string, unknown>;
+  if (
+    typeof value.branchName !== "string" ||
+    typeof value.targetPath !== "string" ||
+    !["preparing", "failed", "cancelled", "active"].includes(String(value.status))
+  ) {
+    return null;
+  }
+  return {
+    branchName: value.branchName,
+    targetPath: value.targetPath,
+    ...(typeof value.baseBranch === "string" ? { baseBranch: value.baseBranch } : {}),
+    status: value.status as "preparing" | "failed" | "cancelled" | "active",
+    ...(typeof value.failureMessage === "string" ? { failureMessage: value.failureMessage } : {}),
+  };
+}
+
+async function restorePreparedWorktreeSession(
+  context: ZCodeProtocolAgentServerContext,
+  sessionId: string,
+): Promise<ZCodeProtocolPreparedWorktreeSession | null> {
+  const map = preparedWorktreeMap(context);
+  const resident = map.get(sessionId);
+  if (resident) return resident;
+  const store = context.deps.sessionStore;
+  if (!store?.getSession || !store.sessionEntries) return null;
+  const session = await store.getSession(sessionId as SessionId);
+  if (!session) return null;
+  const entries = await store.sessionEntries({
+    sessionID: sessionId as SessionId,
+    type: PREPARED_WORKTREE_ENTRY_TYPE,
+  });
+  const marker = entries.at(-1);
+  const parsed = parsePreparedWorktreeEntry(marker?.data);
+  if (!parsed || parsed.status === "active") return null;
+  const workspaceId = session.workspaceID ?? String(session.directory);
+  const restored = {
+    sessionId: sessionId as SessionId,
+    workspace: resolveWorkspaceRefFromId(workspaceId),
+    branchName: parsed.branchName,
+    targetPath: parsed.targetPath,
+    ...(parsed.baseBranch ? { baseBranch: parsed.baseBranch } : {}),
+    createdAt: session.time?.created ?? Date.now(),
+    updatedAt: session.time?.updated ?? Date.now(),
+    status: parsed.status,
+    ...(parsed.failureMessage ? { failureMessage: parsed.failureMessage } : {}),
+  };
+  map.set(sessionId, restored);
+  return restored;
+}
+
+async function persistPreparedWorktreeStatus(
+  context: ZCodeProtocolAgentServerContext,
+  prepared: ZCodeProtocolPreparedWorktreeSession,
+  status: "preparing" | "failed" | "cancelled" | "active",
+  failureMessage?: string,
+  worktreePreparation?: Pick<ZCodeProtocolPreparedWorktreeSession, "branchName" | "targetPath" | "baseBranch">,
+): Promise<void> {
+  const store = context.deps.sessionStore;
+  if (!store?.saveSessionEntry) throw new Error("Worktree preparation requires session-entry storage");
+  const now = Date.now();
+  await store.saveSessionEntry({
+    id: `v4/worktree_preparation:${prepared.sessionId}`,
+    sessionID: prepared.sessionId,
+    type: PREPARED_WORKTREE_ENTRY_TYPE,
+    time: { created: prepared.createdAt, updated: now },
+    data: {
+      branchName: worktreePreparation?.branchName ?? prepared.branchName,
+      targetPath: worktreePreparation?.targetPath ?? prepared.targetPath,
+      ...((worktreePreparation ? worktreePreparation.baseBranch : prepared.baseBranch)
+        ? { baseBranch: worktreePreparation?.baseBranch ?? prepared.baseBranch }
+        : {}),
+      status,
+      ...(failureMessage ? { failureMessage } : {}),
+    },
+  });
+  prepared.status = status;
+  prepared.updatedAt = now;
+  if (worktreePreparation) {
+    prepared.branchName = worktreePreparation.branchName;
+    prepared.targetPath = worktreePreparation.targetPath;
+    if (worktreePreparation.baseBranch) prepared.baseBranch = worktreePreparation.baseBranch;
+    else delete prepared.baseBranch;
+  }
+  if (failureMessage) prepared.failureMessage = failureMessage;
+  else delete prepared.failureMessage;
+  if (status === "active") preparedWorktreeMap(context).delete(String(prepared.sessionId));
+}
 
 function normalizeStoredTitleSource(
   source: string | undefined,
@@ -1256,6 +1363,19 @@ export function createConversationV4Gateway(
     afterLegacyStateMutation: async (record, reason) => {
       await afterStateMutation(context, record as ZCodeProtocolSessionRecord, reason);
       await autoDrainV4QueueIfReady(record as ZCodeProtocolSessionRecord);
+      const sessionId = String((record as ZCodeProtocolSessionRecord).app.sessionId);
+      const prepared = preparedWorktreeMap(context).get(sessionId);
+      if (prepared && (record as ZCodeProtocolSessionRecord).persistence === "immediate") {
+        try {
+          await persistPreparedWorktreeStatus(context, prepared, "active");
+          context.v4Gateway?.notifyPreparedSessionChanged(sessionId);
+        } catch (error) {
+          context.logger?.warn("Could not persist active worktree preparation", {
+            sessionId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
     },
     // deleteSession execution: inline the four steps from the old closeSession op (do not import the
     // old op; semantics match closeSession in server-operations.ts and can be absorbed into v4 when
@@ -1284,6 +1404,7 @@ export function createConversationV4Gateway(
     // native prompt turn) live in the native handler.
     createSessionRecord: async ({
       workspaceId,
+      preparedSessionId,
       mcpServers,
       executionWorktree,
       offPeakToolEnabled,
@@ -1293,6 +1414,22 @@ export function createConversationV4Gateway(
     }) => {
       if (permissionScope && !context.deps.sessionStore)
         throw new Error("Group task permission scope requires persistence");
+      if (preparedSessionId) {
+        const prepared = await restorePreparedWorktreeSession(context, preparedSessionId);
+        if (!prepared || prepared.status !== "preparing") {
+          throw new Error("Prepared worktree session is unavailable");
+        }
+        if (
+          prepared.workspace.workspaceKey !== workspaceId ||
+          !executionWorktree ||
+          executionWorktree.path !== prepared.targetPath ||
+          (executionWorktree.branchName && executionWorktree.branchName !== prepared.branchName)
+        ) {
+          throw new Error("Prepared worktree session does not match the requested workspace");
+        }
+        // A retry after a lost create ACK reuses the already materialized runtime under the same ID.
+        if (context.sessions.has(preparedSessionId)) return { sessionId: preparedSessionId };
+      }
       // workspaceId has two forms (Workspace Identity constraint):
       // - Local workspace = workspacePath (fallback when identity is omitted).
       // - Remote pane (split view across workspaces) = remote identity
@@ -1322,7 +1459,7 @@ export function createConversationV4Gateway(
         ...(dynamicWorkflowEnabled === true && dynamicWorkflowMode !== undefined
           ? { dynamicWorkflowMode }
           : {}),
-      });
+      }, preparedSessionId);
       if (permissionScope) {
         const record = context.sessions.get(created.sessionId);
         if (!record) throw new Error("Group task runtime is unavailable");
@@ -1337,6 +1474,68 @@ export function createConversationV4Gateway(
         record.persistence = "immediate";
       }
       return { sessionId: created.sessionId };
+    },
+    prepareWorktreeSession: async ({ workspaceId, branchName, targetPath, baseBranch }) => {
+      const store = context.deps.sessionStore;
+      if (!store?.saveSessionEntry || !store.deleteEmptySession) {
+        throw new Error("Worktree preparation requires session and session-entry storage");
+      }
+      const workspace = resolveWorkspaceRefFromId(workspaceId);
+      const sessionId = createSessionId();
+      const now = Date.now();
+      await store.createSession({
+        id: sessionId,
+        projectID: projectIdFromDirectory(workspace.workspacePath),
+        workspaceID: workspace.workspaceIdentity as WorkspaceId | undefined,
+        slug: String(sessionId).toLowerCase(),
+        directory: workspace.workspacePath,
+        path: workspace.workspacePath,
+        title: `Worktree ${branchName}`,
+        titleSource: "default",
+        version: context.deps.version ?? "0.0.0",
+        time: { created: now, updated: now },
+      });
+      const prepared = {
+        sessionId,
+        workspace,
+        branchName,
+        targetPath,
+        ...(baseBranch ? { baseBranch } : {}),
+        createdAt: now,
+        updatedAt: now,
+        status: "preparing" as const,
+      };
+      preparedWorktreeMap(context).set(String(sessionId), prepared);
+      try {
+        await persistPreparedWorktreeStatus(context, prepared, "preparing");
+      } catch (error) {
+        preparedWorktreeMap(context).delete(String(sessionId));
+        try {
+          await store.deleteEmptySession(sessionId);
+        } catch (cleanupError) {
+          context.logger?.warn("Could not remove an empty worktree preparation session", {
+            sessionId: String(sessionId),
+            error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+          });
+        }
+        throw error;
+      }
+      context.v4Gateway?.notifyPreparedSessionChanged(String(sessionId));
+      return { sessionId: String(sessionId) };
+    },
+    updateWorktreePreparation: async (sessionId, input) => {
+      const prepared = await restorePreparedWorktreeSession(context, sessionId);
+      if (!prepared || prepared.status === "active") {
+        throw new Error("Prepared worktree session is unavailable");
+      }
+      await persistPreparedWorktreeStatus(
+        context,
+        prepared,
+        input.status,
+        input.failureMessage,
+        input.worktreePreparation,
+      );
+      context.v4Gateway?.notifyPreparedSessionChanged(sessionId);
     },
     createSelectionSideSession: async (sessionId, options) => {
       const record = context.sessions.get(sessionId);
@@ -1617,28 +1816,43 @@ export function createConversationV4Gateway(
         taskTypes: [...TASK_LIST_SESSION_TYPES],
         workspaceID: parsedRemote ? (workspaceId as WorkspaceId) : null,
       });
-      return stored.map((session) => ({
-        sessionId: String(session.id),
-        workspaceId,
-        ...(session.parentID ? { parentSessionId: String(session.parentID) } : {}),
-        title: session.title ?? "",
-        titleSource: normalizeStoredTitleSource(session.titleSource),
-        phase: "completedSuccess" as const,
-        sessionEnded: true,
-        hasBackgroundWork: false,
-        lastActivityAt: session.time?.updated ?? 0,
-        createdAt: session.time?.created ?? 0,
-        // Execution-worktree sessions keep listing under the parent workspace; the badge and
-        // "open in IDE/folder" consumers need the worktree facts on the cold-seeded row too.
-        ...(session.executionDirectory
-          ? {
-              executionWorktree: {
-                path: session.executionDirectory,
-                ...(session.executionBranch ? { branchName: session.executionBranch } : {}),
-              },
-            }
-          : {}),
-      }));
+      // Execution-worktree health at cold-seed time: a single stat per worktree row in the CLI
+      // process (the machine that owns the path). The flag recomputes on every cold seed; live
+      // sessions re-derive it through getSessionIndexMeta on each summary fan-out.
+      const summaries = await Promise.all(
+        stored.map(async (session) => {
+          const prepared = await restorePreparedWorktreeSession(context, String(session.id));
+          const isPreparing = Boolean(prepared && prepared.status !== "active");
+          const preparingBranch = prepared?.branchName;
+          const executionWorktreeMissing = session.executionDirectory
+            ? await isWorktreeDirectoryMissing(session.executionDirectory)
+            : false;
+          return {
+            sessionId: String(session.id),
+            workspaceId,
+            ...(session.parentID ? { parentSessionId: String(session.parentID) } : {}),
+            title: isPreparing && preparingBranch ? `Worktree ${preparingBranch}` : (session.title ?? ""),
+            titleSource: normalizeStoredTitleSource(session.titleSource),
+            phase: isPreparing ? ("draft" as const) : ("completedSuccess" as const),
+            sessionEnded: !isPreparing,
+            hasBackgroundWork: false,
+            lastActivityAt: session.time?.updated ?? 0,
+            createdAt: session.time?.created ?? 0,
+            // Execution-worktree sessions keep listing under the parent workspace; the badge and
+            // "open in IDE/folder" consumers need the worktree facts on the cold-seeded row too.
+            ...(session.executionDirectory
+              ? {
+                  executionWorktree: {
+                    path: session.executionDirectory,
+                    ...(session.executionBranch ? { branchName: session.executionBranch } : {}),
+                  },
+                }
+              : {}),
+            ...(executionWorktreeMissing ? { executionWorktreeMissing: true } : {}),
+          };
+        }),
+      );
+      return summaries;
     } catch (error) {
       context.logger?.warn("sessions-index stored summaries failed", {
         error: error instanceof Error ? error.message : String(error),
@@ -1650,7 +1864,11 @@ export function createConversationV4Gateway(
   };
   return new ConversationV4Gateway({
     cliVersion: context.deps.version,
-    sessionExists: (sessionId) => context.sessions.has(sessionId),
+    sessionExists: (sessionId) =>
+      context.sessions.has(sessionId) || preparedWorktreeMap(context).has(sessionId),
+    restorePreparedSession: async (sessionId) => {
+      await restorePreparedWorktreeSession(context, sessionId);
+    },
     onDebug: (message) => log?.debug(message),
     onTargetCompleted: (sessionId) => {
       const record = context.sessions.get(sessionId);
@@ -1769,31 +1987,72 @@ export function createConversationV4Gateway(
     // ── sessions-index hooks (workspace buckets + cold-start store seed) ──────────
     getSessionWorkspaceId: (sessionId) => {
       const record = context.sessions.get(sessionId);
-      return !record || !isTaskListSessionType(record.taskType)
-        ? null
-        : record.workspace.workspaceKey;
+      if (record && isTaskListSessionType(record.taskType)) return record.workspace.workspaceKey;
+      return preparedWorktreeMap(context).get(sessionId)?.workspace.workspaceKey ?? null;
     },
     getSessionIndexMeta: (sessionId) => {
       const record = context.sessions.get(sessionId);
-      if (!record) return null;
+      if (!record) {
+        const prepared = preparedWorktreeMap(context).get(sessionId);
+        return prepared
+          ? { createdAt: prepared.createdAt, lastActivityAt: prepared.updatedAt }
+          : null;
+      }
       const executionWorktree = record.app.runtime.getExecutionWorktree();
+      // Worktree health at derive time: the runtime fact carries `missing` after the resume
+      // fallback; a statSync (the hook is synchronous) also catches out-of-band deletion between
+      // events so the badge converges on the next fan-out without a resume.
+      const executionWorktreeMissing =
+        executionWorktree !== undefined &&
+        (executionWorktree.missing === true ||
+          isWorktreeDirectoryMissingSync(executionWorktree.path));
       return {
         createdAt: record.createdAt,
         lastActivityAt: record.updatedAt,
         ...(record.parentSessionId ? { parentSessionId: String(record.parentSessionId) } : {}),
-        ...(executionWorktree ? { executionWorktree } : {}),
+        ...(executionWorktree
+          ? {
+              // Strip the runtime-only `missing` field: the nested wire shape is the strict
+              // create-params schema and must stay byte-compatible.
+              executionWorktree: {
+                path: executionWorktree.path,
+                ...(executionWorktree.branchName
+                  ? { branchName: executionWorktree.branchName }
+                  : {}),
+              },
+            }
+          : {}),
+        ...(executionWorktreeMissing ? { executionWorktreeMissing: true } : {}),
+      };
+    },
+    getSessionPreparationSeed: (sessionId) => {
+      const prepared = preparedWorktreeMap(context).get(sessionId);
+      if (!prepared || prepared.status === "active") return null;
+      return {
+        branchName: prepared.branchName,
+        targetPath: prepared.targetPath,
+        ...(prepared.baseBranch ? { baseBranch: prepared.baseBranch } : {}),
+        status: prepared.status,
+        ...(prepared.failureMessage ? { failureMessage: prepared.failureMessage } : {}),
       };
     },
     listWorkspaceSessionIds: (workspaceId) =>
-      [...context.sessions.values()]
+      [
+        ...[...context.sessions.values()]
         .filter(
           (record) =>
             isTaskListSessionType(record.taskType) && record.workspace.workspaceKey === workspaceId,
         )
         .map((record) => record.app.sessionId),
+        ...[...preparedWorktreeMap(context).values()]
+          .filter((prepared) => prepared.workspace.workspaceKey === workspaceId)
+          .map((prepared) => String(prepared.sessionId)),
+      ],
     // Draft check: deferred means no first input has been sent (the first prompt turn promotes it to immediate).
     // Deferred sessions pre-created by the old workspace prepare must not appear as "new tasks" in the sidebar.
-    isDraftSession: (sessionId) => context.sessions.get(sessionId)?.persistence === "deferred",
+    isDraftSession: (sessionId) =>
+      context.sessions.get(sessionId)?.persistence === "deferred" &&
+      !preparedWorktreeMap(context).has(sessionId),
     // ── workspace-config hook (seed configuration-directory subscription; live-session fast path, no temporary App) ──
     getWorkspaceConfig: (workspaceId) => buildLiveWorkspaceConfigStateV4(context, workspaceId),
     getStoredSessionSummaries: loadStoredSessionSummaries,

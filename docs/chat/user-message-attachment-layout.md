@@ -17,12 +17,12 @@ User message row (right-aligned)
 
 Display rules:
 
-| Attachments/context references | Visible prompt text | Result |
-| --- | --- | --- |
-| Present | Present | All attachments/references share one row; the bubble appears below |
-| Present | Absent | Show only the attachment area; do not render an empty conversation bubble |
-| Absent | Present | Show only the conversation bubble |
-| Absent | Absent | Do not render the conversation bubble |
+| Attachments/context references | Visible prompt text | Result                                                                    |
+| ------------------------------ | ------------------- | ------------------------------------------------------------------------- |
+| Present                        | Present             | All attachments/references share one row; the bubble appears below        |
+| Present                        | Absent              | Show only the attachment area; do not render an empty conversation bubble |
+| Absent                         | Present             | Show only the conversation bubble                                         |
+| Absent                         | Absent              | Do not render the conversation bubble                                     |
 
 Images and videos share the media-card row. First show them as `size-20` (80 CSS px) square cards with `rounded-xl`, interleaved in insertion order. Do not use a real border that participates in the box model; draw the border with a non-interactive `::after` overlay. The reference image is 2x, so do not use the screenshot's physical pixel size directly. For a video in the sent state, after the message row enters the virtual list's visible mount range, resolve the preview source against a stable row target: Desktop local first uses a local-path URL precisely authorized by Main; other platforms, or when the local path is unavailable, read a bounded video Blob. Show the first frame with `<video>` configured without controls, muted, and `playsInline`; fall back to a video icon if reading or decoding fails. Overlay a centered play badge on all grid video thumbnails using the shared preview component: circular, translucent black background, backdrop blur, and a white play icon. The overlay must not intercept card clicks. Images and videos belong to the same media gallery. Its navigation set includes only previewable media in the current user message, in attachment order. Clicking any item opens the gallery at that item's position; previous/next and left/right arrow keys cycle between images and videos. Images retain shared-preview zoom, drag, and download. Videos use native `controls + playsInline` and do not inherit image transforms. Non-media files and comment, webpage-element, PPT-element, and conversation-selection references appear in the next pill row, strictly ordered “file → comment → webpage element → PPT element → conversation reference.” Keep original insertion order within a type. Both rows use `flex-wrap`, naturally wrap when short of space, and remain right-aligned. Copy and Edit actions remain below all user-message content.
 

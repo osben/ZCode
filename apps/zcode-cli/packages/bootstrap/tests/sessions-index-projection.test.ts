@@ -149,6 +149,66 @@ describe("SessionsIndexProjection 黄金测试（L1）", () => {
     expect(parsed.success).toBe(true);
   });
 
+  it("execution worktree missing flag rides at the summary top level and only-flag changes produce deltas", () => {
+    const events = buildEvents("s-wt-missing", (push) => {
+      push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
+    });
+    const snapshot = projectionFor("s-wt-missing", events).getSnapshot();
+    const extra = {
+      workspaceId: "ws-1",
+      createdAt: 1000,
+      lastActivityAt: 2000,
+      executionWorktree: {
+        path: "/repo/../worktrees/zcode-sleepy-capybara",
+        branchName: "zcode/sleepy-capybara",
+      },
+      executionWorktreeMissing: true,
+    };
+    // Flag propagation: top-level only — the nested wire shape must stay free of runtime-only keys.
+    const summary = deriveSessionSummary(snapshot, extra);
+    expect(summary.executionWorktreeMissing).toBe(true);
+    expect(summary.executionWorktree).toEqual({
+      path: "/repo/../worktrees/zcode-sleepy-capybara",
+      branchName: "zcode/sleepy-capybara",
+    });
+
+    // Scenario 9 (conflation): a flip whose only change is the flag produces a delta; repeating
+    // the same flag does not, and absent ≈ false so a repeated healthy derive is a no-op.
+    const projection = new SessionsIndexProjection("ws-1", "epoch-1");
+    const healthyExtra = {
+      createdAt: 1000,
+      lastActivityAt: 2000,
+      executionWorktree: {
+        path: "/repo/../worktrees/zcode-sleepy-capybara",
+        branchName: "zcode/sleepy-capybara",
+      },
+    };
+    expect(projection.upsertFromConversation(snapshot, healthyExtra)).toHaveLength(1);
+    expect(projection.upsertFromConversation(snapshot, healthyExtra)).toHaveLength(0);
+    const missingDeltas = projection.upsertFromConversation(snapshot, {
+      ...healthyExtra,
+      executionWorktreeMissing: true,
+    });
+    expect(missingDeltas).toHaveLength(1);
+    expect(missingDeltas[0]).toMatchObject({
+      op: "session.upserted",
+      session: { sessionId: "s-wt-missing", executionWorktreeMissing: true },
+    });
+    expect(
+      projection.upsertFromConversation(snapshot, {
+        ...healthyExtra,
+        executionWorktreeMissing: true,
+      }),
+    ).toHaveLength(0);
+    const missingSnapshotParse = sessionsIndexSnapshotSchema.safeParse(projection.getSnapshot());
+    expect(missingSnapshotParse.success).toBe(true);
+    // Recreated worktree (flag omitted again) is a real health flip, not a no-op.
+    expect(projection.upsertFromConversation(snapshot, healthyExtra)).toHaveLength(1);
+    // The healthy state still satisfies the wire schema after clearing the flag.
+    const parsed = sessionsIndexSnapshotSchema.safeParse(projection.getSnapshot());
+    expect(parsed.success).toBe(true);
+  });
+
   it("hasBackgroundWork：有 running 后台任务时为 true", () => {
     const events = buildEvents("s2", (push) => {
       push(SessionEventType.SessionCreated, {

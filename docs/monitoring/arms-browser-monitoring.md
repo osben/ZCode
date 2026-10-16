@@ -40,8 +40,7 @@ Normalization rules:
 - When parameters contain `Error`时，继续优先上报该对象，保留 original stack。
 - Non-`Error` multi-parameter calls remove the first main logger common prefix (`main` / `renderer` etc. source), then concatenate
   strings and contexts by calling sequence.
-- Perform desensitization on object keys and common token text; recursive references must not cause collector to throw.
--最终 message max 2000 characters; only have common prefix, no business text时不产生 exception event.
+- Perform desensitization on object keys and common token text; recursive references must not cause collector to throw. -最终 message max 2000 characters; only have common prefix, no business text时不产生 exception event.
 - `clean-exit` / `killed` etc. controlled exit belongs to lifecycle information, use `info`；recoverable exceptions use
   `warn`；only confirmed crash、OOM、startup failure etc. use `error`。
 
@@ -56,16 +55,16 @@ both successful。
 
 ## Configuration (hardcoded)
 
-| Item                         | Location / Value                                                                                                         |
-|------------------------------|--------------------------------------------------------------------------------------------------------------------------|
-| Endpoint                     | `ZCODE_ARMS_RUM_ENDPOINT`（`packages/shared/src/env.ts`）                                                              |
-| Upload environment            | `mapZCodeEnvToArmsRumEnv(runtimeEnv)`：local development runtime always `local`；non-local runtime only `ZCODE_ENV=production` is `prod` |
-| `sessionConfig.sampleRate`   | `1`（100% session sampling）                                                                                             |
-| `autoInject`                 | `true`（SDK injects Browser SDK at `dom-ready`；勿 preload/renderer manual init）                                       |
-| `browserCollectors`          | `perf/webvitals/exception/whiteScreen/api/staticResource/click/longTask: true`（see `ARMS_BROWSER_COLLECTORS`）       |
-| `spaMode`                    | `false`（Electron single-page whole page load, not History SPA）                                                         |
-| `parseViewName`              | `file://` take html filename；http dev-server take pathname                                                              |
-| `tracing`                    | `arms_env=prod`时 `enable: true`、`sample: 0.1`（0.1%）；`arms_env=local`时 `sample: 1`                          |
+| Item                       | Location / Value                                                                                                                         |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Endpoint                   | `ZCODE_ARMS_RUM_ENDPOINT`（`packages/shared/src/env.ts`）                                                                                |
+| Upload environment         | `mapZCodeEnvToArmsRumEnv(runtimeEnv)`：local development runtime always `local`；non-local runtime only `ZCODE_ENV=production` is `prod` |
+| `sessionConfig.sampleRate` | `1`（100% session sampling）                                                                                                             |
+| `autoInject`               | `true`（SDK injects Browser SDK at `dom-ready`；勿 preload/renderer manual init）                                                        |
+| `browserCollectors`        | `perf/webvitals/exception/whiteScreen/api/staticResource/click/longTask: true`（see `ARMS_BROWSER_COLLECTORS`）                          |
+| `spaMode`                  | `false`（Electron single-page whole page load, not History SPA）                                                                         |
+| `parseViewName`            | `file://` take html filename；http dev-server take pathname                                                                              |
+| `tracing`                  | `arms_env=prod`时 `enable: true`、`sample: 0.1`（0.1%）；`arms_env=local`时 `sample: 1`                                                  |
 
 No `ZCODE_ARMS_*` environment variables.
 
@@ -73,12 +72,12 @@ No `ZCODE_ARMS_*` environment variables.
 
 Browser SDK's `longTask` collector will put LoAF / rAF attribution into `snapshots`。To facilitate SLS query and avoid high cardinality and path leakage， main process `appARMSBootstrap.beforeReport` only puts top attribution summary into same longTask's `properties`:
 
-| Field                    | Meaning                                                        |
-|------------------------|-----------------------------------------------------------------|
-| `loaf_script_count`     | `snapshots`中 attribution条数，最多 5。                         |
-| `loaf_top_duration_ms`  | top attribution duration ms。                                   |
-| `loaf_top_invoker_type` | `user-callback` / `event-listener` / `script` / `unknown`。   |
-| `loaf_top_share_pct`    | top attribution占 longTask `duration`百分比整数。             |
+| Field                   | Meaning                                                     |
+| ----------------------- | ----------------------------------------------------------- |
+| `loaf_script_count`     | `snapshots`中 attribution条数，最多 5。                     |
+| `loaf_top_duration_ms`  | top attribution duration ms。                               |
+| `loaf_top_invoker_type` | `user-callback` / `event-listener` / `script` / `unknown`。 |
+| `loaf_top_share_pct`    | top attribution占 longTask `duration`百分比整数。           |
 
 This enhancement does not add events、does not change sampling rate；`snapshots`缺失或解析失败时跳过。禁止把 original script name、URL、file path、selector、stack或源码片段写入 these properties。
 
@@ -141,14 +140,14 @@ carry free text fields时 must同步扩展 this section with该 implementation�
 
 ## Still No Data When Control Console
 
-| Phenomenon                                                                | Possible cause                                                                                         |
-|--------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------|
-| No `electron initialized` log                                      | `init`抛错（endpoint error、network pull remote config failure等）                                            |
-| Have initialized but no `beforeReport`                                  | Session not sampled（须 `sessionConfig.sampleRate: 1`）、or renderer process not produce events                                          |
+| Phenomenon                                                              | Possible cause                                                                                                        |
+| ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| No `electron initialized` log                                           | `init`抛错（endpoint error、network pull remote config failure等）                                                    |
+| Have initialized but no `beforeReport`                                  | Session not sampled（须 `sessionConfig.sampleRate: 1`）、or renderer process not produce events                       |
 | Have `beforeReport` but `perf=0`（have `view:webvitals`无 `view:perf`） | `autoInject` late than `load`，perf-collector未 `sendPerf`；main window `scheduleArmsBrowserPerfLoadNudge`补发 `load` |
-| Have `beforeReport` control console still no data                            | Control console environment filter to `prod`、region与 application inconsistent、intranet无法访问 `*.aliyuncs.com`         |
-| `[RUM] Invalid bundle received from renderer, dropped`              | SDK上report events[]；ARMS frame preload闭包绕过 ipc patch；须 preload同步 `patchArmsEventBridgeSend`           |
-| Renderer control console `[RUM] ArmsEventBridge is not available`            | 首窗 early than init完成（should already through `await armsInitPromise`修复）                                             |
+| Have `beforeReport` control console still no data                       | Control console environment filter to `prod`、region与 application inconsistent、intranet无法访问 `*.aliyuncs.com`    |
+| `[RUM] Invalid bundle received from renderer, dropped`                  | SDK上report events[]；ARMS frame preload闭包绕过 ipc patch；须 preload同步 `patchArmsEventBridgeSend`                 |
+| Renderer control console `[RUM] ArmsEventBridge is not available`       | 首窗 early than init完成（should already through `await armsInitPromise`修复）                                        |
 
 ## SourceMap
 

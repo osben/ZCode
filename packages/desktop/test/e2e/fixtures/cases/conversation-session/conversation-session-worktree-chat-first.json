@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "caseName": "conversation-session-worktree-chat-first",
+  "spec": "./test/e2e/conversation-session/conversation-session-worktree-chat-first.test.ts",
+  "providerFixtures": [
+    "./test/e2e/fixtures/upstream/common.json",
+    "./test/e2e/fixtures/upstream/conversation-session/conversation-session-worktree-chat-first.json"
+  ],
+  "fileFixtures": [],
+  "requests": [
+    {
+      "id": "worktree-chat-first-title",
+      "kind": "common",
+      "source": "synthetic",
+      "timingPolicy": "fast-text",
+      "syntheticReason": "Title generation is incidental; the scenario asserts chat presentation and first-message ordering."
+    },
+    {
+      "id": "worktree-chat-first-message",
+      "kind": "main",
+      "source": "synthetic",
+      "timingPolicy": "fast-text",
+      "syntheticReason": "The scenario needs a deterministic first-message response after worktree creation and session admission."
+    }
+  ]
+}

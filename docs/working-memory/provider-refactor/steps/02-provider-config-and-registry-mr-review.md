@@ -14,18 +14,18 @@ Initial issues came from the full static review; subsequent fixes all added corr
 
 ## Current Assessment
 
-| ID | Issue | Current Understanding | Status |
-| --- | --- | --- | --- |
-| R1 | Settings page once bidirectionally converted through old `ModelProviderConfig` | Renderer edit state now uses the same Source View as the formal Config; old Store fields and reverse conversion exit settings page | Resolved |
-| R2 | Creating a new custom Provider required an existing Settings View | New creation allows missing inheritance View and saves directly from the complete form Draft; editing an existing Provider continues to reuse the View | Fixed |
-| R3 | Account Access could enter Personal Config | Personal projection ignores the dynamic `accessId` injected by Account Overlay, maintaining the Official, Personal, Account three-layer fact boundary | Fixed |
-| R4 | `reasoningMapping` difference conflicts with the overall Overlay semantics | Save complete fields when Mapping changes, consistent with the full-coverage rule for normal value fields | Fixed |
-| R5 | Request auth refresh re-enters Registry | `Model` creation captures a static Provider execution snapshot at creation time; request auth only covers the API Key and Header for that snapshot | Fixed |
-| R6 | Logout and re-login could reuse an old Coding Plan Key | Capture account identity before OAuth cleanup and delete account-scoped Key; force refresh based on new Token on re-login | Fixed |
-| R7 | Settings save could overwrite concurrent Personal Config modifications | Effective save has moved into Repository's atomic `update()`, only modifying the target Provider and corresponding exact model rules within the lock | Fixed |
-| R8 | Account refresh failure could leave unconsumed pending reasons | Failed rounds release in-flight and will automatically continue consuming events that arrived during the wait; the previous successful snapshot remains | Fixed |
-| R9 | Connectivity test still calls old Probe parameters | Production "test connection" continues to be preserved; dedicated tests have migrated to the formal Provider/Model Config request shape | Fixed |
-| R10 | Remote Workspace once mixed remote model facts with local account service | Remote Host/Worker now use their own Config, Credential, Account Source, and Registry; Desktop no longer pushes Provider/Secret | Resolved; Provisioning Sync belongs to M7 |
+| ID  | Issue                                                                          | Current Understanding                                                                                                                                   | Status                                    |
+| --- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| R1  | Settings page once bidirectionally converted through old `ModelProviderConfig` | Renderer edit state now uses the same Source View as the formal Config; old Store fields and reverse conversion exit settings page                      | Resolved                                  |
+| R2  | Creating a new custom Provider required an existing Settings View              | New creation allows missing inheritance View and saves directly from the complete form Draft; editing an existing Provider continues to reuse the View  | Fixed                                     |
+| R3  | Account Access could enter Personal Config                                     | Personal projection ignores the dynamic `accessId` injected by Account Overlay, maintaining the Official, Personal, Account three-layer fact boundary   | Fixed                                     |
+| R4  | `reasoningMapping` difference conflicts with the overall Overlay semantics     | Save complete fields when Mapping changes, consistent with the full-coverage rule for normal value fields                                               | Fixed                                     |
+| R5  | Request auth refresh re-enters Registry                                        | `Model` creation captures a static Provider execution snapshot at creation time; request auth only covers the API Key and Header for that snapshot      | Fixed                                     |
+| R6  | Logout and re-login could reuse an old Coding Plan Key                         | Capture account identity before OAuth cleanup and delete account-scoped Key; force refresh based on new Token on re-login                               | Fixed                                     |
+| R7  | Settings save could overwrite concurrent Personal Config modifications         | Effective save has moved into Repository's atomic `update()`, only modifying the target Provider and corresponding exact model rules within the lock    | Fixed                                     |
+| R8  | Account refresh failure could leave unconsumed pending reasons                 | Failed rounds release in-flight and will automatically continue consuming events that arrived during the wait; the previous successful snapshot remains | Fixed                                     |
+| R9  | Connectivity test still calls old Probe parameters                             | Production "test connection" continues to be preserved; dedicated tests have migrated to the formal Provider/Model Config request shape                 | Fixed                                     |
+| R10 | Remote Workspace once mixed remote model facts with local account service      | Remote Host/Worker now use their own Config, Credential, Account Source, and Registry; Desktop no longer pushes Provider/Secret                         | Resolved; Provisioning Sync belongs to M7 |
 
 ## Settings Edit Chain
 

@@ -10,7 +10,7 @@
  *   4. validateInput 先跑——校验不过就不该再去解析。
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   HookEventName,
   SessionEventType,
@@ -78,6 +78,7 @@ async function runProbe(
   entry: ToolEntry,
   input: Record<string, unknown>,
   name: string,
+  validateToolExecution?: (metadata: ToolEntry["metadata"]) => Promise<string | undefined>,
 ): Promise<ProbeOutcome> {
   const sessionId = createSessionId(name);
   const turnId = createTurnId(name);
@@ -113,6 +114,7 @@ async function runProbe(
     turnId,
     traceContext,
     workingDirectory: "/probe/cwd",
+    validateToolExecution,
   });
 
   const result = await executor.execute(
@@ -131,6 +133,23 @@ async function runProbe(
 }
 
 describe("ToolEntry.resolveInput", () => {
+  it("rejects a workspace action before hooks, permission, and handler when the execution context is unavailable", async () => {
+    const handler = vi.fn(async (input) => ({ seen: input }));
+    const entry = probeEntry({ handler });
+    const validateToolExecution = vi.fn(async (metadata: ToolEntry["metadata"]) =>
+      metadata.sideEffectScope === "workspace" ? "Execution worktree is missing" : undefined,
+    );
+
+    const outcome = await runProbe(entry, { original: 1 }, "execution-context-guard", validateToolExecution);
+
+    expect(validateToolExecution).toHaveBeenCalledWith(entry.metadata);
+    expect(outcome.result.success).toBe(false);
+    expect(outcome.result.error?.message).toContain("Execution worktree is missing");
+    expect(outcome.hookInputs).toEqual([]);
+    expect(outcome.gateInputs).toEqual([]);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
   it("replaces the execution input for hooks, the gate payload and the handler alike", async () => {
     const entry = probeEntry({
       resolveInput: (input) => ({

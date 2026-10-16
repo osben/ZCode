@@ -69,6 +69,7 @@ interface GitActionMenuProps {
   activeTaskChangeSummary?: ZCodeTaskChangeSummary | null;
   commitMessageConversationContext?: GitCommitMessageConversationContext | null;
   onRefreshGit: () => void;
+  beforeSwitch?: (targetBranchName: string) => Promise<boolean>;
   className?: string;
   triggerIconOnly?: boolean;
   triggerLayout?: "header" | "status-row";
@@ -120,6 +121,7 @@ interface GitCommitDialogProps {
   includeUnstaged: boolean;
   pushEnabled: boolean;
   onRefreshGit: () => void;
+  beforeSwitch?: (targetBranchName: string) => Promise<boolean>;
   onOpenChange: (nextOpen: boolean) => void;
   onMessageChange: (nextValue: string) => void;
   onIncludeUnstagedChange: (nextValue: boolean) => void;
@@ -198,6 +200,7 @@ function GitCommitDialog({
   includeUnstaged,
   pushEnabled,
   onRefreshGit,
+  beforeSwitch,
   onOpenChange,
   onMessageChange,
   onIncludeUnstagedChange,
@@ -407,6 +410,7 @@ function GitCommitDialog({
                 gitSummary={state.summary}
                 dirtyFileCount={dirtyFileCount}
                 onRefreshGit={onRefreshGit}
+                beforeSwitch={beforeSwitch}
                 className="min-w-0 px-0 pt-0"
                 triggerClassName="h-7 max-w-64 justify-start rounded-lg px-1.5 text-foreground-subtle hover:bg-hover hover:text-foreground [&>span]:max-w-48"
                 popoverSide="bottom"
@@ -826,6 +830,7 @@ export function GitActionMenu({
   activeTaskChangeSummary = null,
   commitMessageConversationContext = null,
   onRefreshGit,
+  beforeSwitch,
   className,
   triggerIconOnly = false,
   triggerLayout = "header",
@@ -1361,6 +1366,7 @@ export function GitActionMenu({
         includeUnstaged={commitIncludeUnstaged}
         pushEnabled={pushEnabled}
         onRefreshGit={refreshCommitDialogAfterBranchChange}
+        beforeSwitch={beforeSwitch}
         onOpenChange={(nextOpen) => {
           if (!nextOpen) {
             closeCommitDialog();

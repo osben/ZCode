@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { PinIcon, XIcon } from "lucide-react";
+import { XIcon } from "lucide-react";
 import type {
   AssistantTextRow,
   ConversationRow,
@@ -55,15 +55,13 @@ export const ConversationPinnedBar = memo(function ConversationPinnedBar({
     <div
       data-testid={TID_V4_PINNED_BAR}
       data-v4-pinned-bar="true"
+      role="group"
+      aria-label={intl.formatMessage({ id: "chat.pinnedBar.title" })}
       className={cn(
         "flex shrink-0 items-center gap-1.5 overflow-x-auto px-4 py-1.5 @md/conversation:px-6",
         className,
       )}
     >
-      <PinIcon
-        className="size-3.5 shrink-0 text-foreground-subtlest"
-        aria-label={intl.formatMessage({ id: "chat.pinnedBar.title" })}
-      />
       {pinnedRows.map((row) => (
         <div
           key={`${row.rowId}:${row.entityId ?? ""}`}

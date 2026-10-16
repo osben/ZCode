@@ -13,6 +13,7 @@ import {
 import { isCronTask, isOffPeakTask, type ZCodeTaskMeta } from "@zcode/shared";
 import { TID_TASK_ARCHIVE, TID_TASK_ITEM, testId } from "@zcode/shared";
 import { Badge } from "@/components/ui/badge.js";
+import { WorktreeTaskMarker } from "@/components/WorktreeTaskMarker.js";
 import { Button } from "@/components/ui/button.js";
 import { cn } from "@/components/lib/utils.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
@@ -107,6 +108,8 @@ function areTaskListItemTaskFieldsEqual(left: ZCodeTaskMeta, right: ZCodeTaskMet
     left.unreadAt === right.unreadAt &&
     getTaskAutomationIdentity(left) === getTaskAutomationIdentity(right) &&
     left.status === right.status &&
+    areJsonFieldsEqual(left.executionWorktree, right.executionWorktree) &&
+    left.executionWorktreeMissing === right.executionWorktreeMissing &&
     areJsonFieldsEqual(left.pendingInteraction, right.pendingInteraction) &&
     areJsonFieldsEqual(getTaskListRowActivity(left), getTaskListRowActivity(right)) &&
     areJsonFieldsEqual(left.changeSummary, right.changeSummary)
@@ -695,6 +698,11 @@ export const MemoTaskItem = memo(function TaskListItem({
                           className="size-3.5 shrink-0"
                         />
                       ) : null}
+                      {task.executionWorktree ? (
+                        // Worktree-session marker, styled like the neighboring clock/moon meta
+                        // icons (specs/worktree-icon-visibility.md).
+                        <WorktreeTaskMarker task={task} />
+                      ) : null}
                       <span className="mr-1">{taskTimeLabel}</span>
                     </span>
                   ) : null}
@@ -787,6 +795,11 @@ export const MemoTaskItem = memo(function TaskListItem({
                         aria-label={intl.formatMessage({ id: "taskList.offPeakTaskLabel" })}
                         className="size-3.5 shrink-0"
                       />
+                    ) : null}
+                    {task.executionWorktree ? (
+                      // Worktree-session marker, styled like the neighboring clock/moon meta
+                      // icons (specs/worktree-icon-visibility.md).
+                      <WorktreeTaskMarker task={task} />
                     ) : null}
                     {taskTimeLabel}
                   </span>

@@ -18,6 +18,7 @@ const PERSONAL_PROVIDER_ONLY_SPEC_NAMES = new Set([
 // 鉴权失败并遮挡被测交互，因此与 Personal-only 场景一样保持无账号启动。
 const ACCOUNTLESS_FORK_SPEC_NAMES = new Set([
   "conversation-session-automation-cron-create.test.ts",
+  "conversation-session-worktree-chat-first.test.ts",
   "conversation-session-fork-merged-assistant.test.ts",
   "conversation-session-goal-run-cases.test.ts",
   // 引导布局回归只依赖本地回放 Provider；假账号会弹出登录过期提示，遮住职业引导。

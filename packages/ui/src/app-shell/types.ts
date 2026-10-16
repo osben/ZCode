@@ -202,6 +202,9 @@ export interface WorkspaceShellLayoutProps extends Omit<AppProps, "baseFeedbackS
   gitWorktreeChangeSummary: GitChangeSummary;
   activeGitSourceId: GitChangeSourceId;
   gitState: ReturnType<typeof import("@/hooks/useGitRepository.js").useGitRepository>;
+  gitReviewState: ReturnType<typeof import("@/hooks/useGitRepository.js").useGitRepository>;
+  handleRefreshGitReview: () => void;
+  gitRepositoryWorkspacePath: string;
   browserNavigationRequest: BrowserNavigationRequest | null;
   browserRestoreUrls: Record<string, string>;
   providerConfigFile: ReturnType<

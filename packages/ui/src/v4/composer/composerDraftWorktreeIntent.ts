@@ -1,15 +1,13 @@
 /**
- * Draft first-send interception intent for the empty-state "New worktree" checkbox
- * (review recommendation 6c; see
- * docs/superpowers/specs/2026-10-11-command-center-worktrees-themes-design.md).
+ * Draft setup intent for the empty-state "New worktree" checkbox
+ * (specs/composer-worktree-setup-steps.md; supersedes the review-6c first-send interception).
  *
  * Mechanism: while the checkbox (inside the draft empty-state header) is active it writes the
- * interceptor into the slot; ConversationComposer reads the slot before the draft's first send
- * and calls it. On success the interceptor reports proceed and the first send goes out normally
- * in the current workspace carrying executionWorktree, so the session runs in the worktree while
- * staying listed in the current project; on failure it reports cancel and the composer keeps the
- * draft text without sending. The slot is a stable object (created via useMemo): value changes do
- * not re-render consumers; form state stays in the component/hook — no global store.
+ * intent into the slot. On Send, ConversationComposer resolves and validates creation params,
+ * reserves the durable Host session, then starts the renderer Git pipeline and queues the send.
+ * Setup rows render from the store; the queued send dispatches when the pipeline turns ready. The
+ * slot is a stable object (created via useMemo): value changes do not re-render consumers;
+ * volatile inputs (branch list, settings) are read inside buildCreationParams at queue time.
  */
 import { createContext, useContext } from "react";
 
@@ -19,26 +17,32 @@ export interface ComposerExecutionWorktree {
   branchName: string;
 }
 
-export type ComposerDraftWorktreeInterceptResult =
-  | { action: "cancel" }
-  | { action: "proceed"; executionWorktree: ComposerExecutionWorktree };
+/** Queue-time begin result: ok means the pipeline entry exists (creating); not-ok means it failed validation (reason in the store). */
+export type ComposerWorktreeBeginResult = { ok: true; sessionId: string } | { ok: false };
+
+export interface ComposerWorktreePreparationParams {
+  workspaceKey: string;
+  branchName: string;
+  targetPath: string;
+  baseBranch?: string;
+}
 
 /**
- * First-send interception intent registered into the slot. `workspaceKey` follows the existing
- * identity rule (`workspaceIdentity?.trim() || workspacePath`) to pin the owning draft composer,
- * so split panes / other workspaces never trigger it by mistake.
+ * Setup intent registered into the slot. `workspaceKey` follows the existing identity rule
+ * (`workspaceIdentity?.trim() || workspacePath`) to pin the owning draft composer, so split panes /
+ * other workspaces never trigger it by mistake.
  */
 export interface ComposerDraftWorktreeIntent {
   workspaceKey: string;
   /**
-   * Intercept the first send: run validation and worktree creation. Returning cancel means the
-   * send was handled (inline error or the recovery path) and the composer must not send while
-   * keeping the draft text; returning proceed means the worktree was created and the composer
-   * continues the normal send, attaching executionWorktree to it (session stays in this project).
+   * Start the setup pipeline for this send: compute and validate creation params, reserve the Host
+   * session, write its session-scoped pipeline entry, and kick off Git creation. Returns before Git
+   * creation resolves; the composer queues its send and dispatches when the store turns ready.
    */
-  interceptFirstSend: () => Promise<ComposerDraftWorktreeInterceptResult>;
-  /** Clear a retained worktree intent after the first send is accepted. */
-  onSendAccepted: () => void;
+  beginCreation: (
+    queuedPromptPreview: string,
+    prepareSession: (params: ComposerWorktreePreparationParams) => Promise<string>,
+  ) => Promise<ComposerWorktreeBeginResult>;
 }
 
 /** 稳定的可变槽位：provider 创建一次，写入方（checkbox）与读取方（composer）共享。 */

@@ -68,6 +68,7 @@ export interface GitPaneSourceOption {
 
 export interface GitPaneRepositoryState {
   workspaceKey: string;
+  workspacePath: string;
   summary: GitRepositorySummary;
   identity: GitIdentity;
   placeholder: {
@@ -205,6 +206,7 @@ function createInitialState(
   const datasets = createEmptyDatasets();
   return {
     workspaceKey: options?.workspaceKey ?? workspacePath,
+    workspacePath,
     summary: createEmptySummary(workspacePath),
     identity: EMPTY_IDENTITY,
     placeholder: {
@@ -216,6 +218,13 @@ function createInitialState(
     sourceOptions: buildSourceOptions(datasets),
     datasets,
   };
+}
+
+export function matchesGitRepositoryTarget(
+  state: Pick<GitPaneRepositoryState, "workspaceKey" | "workspacePath">,
+  target: Pick<GitLiveDataRefreshInput, "workspaceKey" | "workspacePath">,
+): boolean {
+  return state.workspaceKey === target.workspaceKey && state.workspacePath === target.workspacePath;
 }
 
 function toPaneFileChange(
@@ -374,6 +383,7 @@ export function shouldRefreshLiveGitData(
 export function useGitRepository(options: {
   workspacePath: string;
   activeTaskId: string | null;
+  enabled?: boolean;
   includeExtendedData?: boolean;
   refreshToken?: string | number | boolean | null;
   remoteSessionId?: string | null;
@@ -382,6 +392,7 @@ export function useGitRepository(options: {
 }): GitPaneRepositoryState {
   const {
     workspacePath,
+    enabled = true,
     includeExtendedData = false,
     refreshToken = null,
     remoteSessionId: preferredRemoteSessionId = null,
@@ -421,6 +432,20 @@ export function useGitRepository(options: {
       workspaceRpcEnabled,
     };
 
+    if (!enabled) {
+      requestVersionRef.current += 1;
+      lastLiveRefreshInputRef.current = null;
+      setRepositoryState((current) =>
+        createInitialState(workspacePath, {
+          workspaceKey,
+          loading: false,
+          error: null,
+          revision: current.revision,
+        }),
+      );
+      return;
+    }
+
     if (!workspaceRpcEnabled) {
       requestVersionRef.current += 1;
       lastLiveRefreshInputRef.current = nextRefreshInput;
@@ -451,7 +476,7 @@ export function useGitRepository(options: {
     requestVersionRef.current = requestVersion;
 
     setRepositoryState((current) =>
-      current.workspaceKey === workspaceKey
+      matchesGitRepositoryTarget(current, nextRefreshInput)
         ? {
             ...current,
             loading: true,
@@ -489,6 +514,7 @@ export function useGitRepository(options: {
 
         setRepositoryState({
           workspaceKey,
+          workspacePath,
           summary,
           identity: identity ?? EMPTY_IDENTITY,
           placeholder: {
@@ -532,15 +558,18 @@ export function useGitRepository(options: {
     workspaceKey,
     workspacePath,
     workspaceRpcEnabled,
+    enabled,
   ]);
 
   return useMemo(() => {
     // useEffect clears old state only after the workspace-switch commit. During render, project an empty state by
-    // workspaceKey first so Git paths from the previous machine are not registered with the new remote fileWatcherService.
-    const currentRepositoryState =
-      repositoryState.workspaceKey === workspaceKey
-        ? repositoryState
-        : createInitialState(workspacePath, { workspaceKey });
+    // identity and path so Git data from a previous execution directory is never exposed for the new target.
+    const currentRepositoryState = matchesGitRepositoryTarget(repositoryState, {
+      workspaceKey,
+      workspacePath,
+    })
+      ? repositoryState
+      : createInitialState(workspacePath, { workspaceKey });
     const datasets = {
       ...currentRepositoryState.datasets,
     };

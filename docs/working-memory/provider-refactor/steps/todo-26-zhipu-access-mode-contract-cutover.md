@@ -155,11 +155,11 @@ Providers, write boundary mechanically rejects fixed Account Provider's Personal
 
 ### 3.3 Coding Plan, Start, and Off-Peak
 
-| Product Entry                               | Access Mode              | Static Behavior                                                     |
-| -------------------------------------- | ------------------------ | ------------------------------------------------------------ |
-| Z.ai / BigModel Start Plan             | `start-plan`             | Official release security validation material chain; does not enter V4                            |
-| Z.ai / BigModel Individual Coding Plan | `individual-coding-plan` | Current connection request auth; has V4 static admission                           |
-| Z.ai / BigModel Team Coding Plan       | `team-coding-plan`       | Current Team scope and request auth; has V4 static admission                 |
+| Product Entry                          | Access Mode              | Static Behavior                                                                          |
+| -------------------------------------- | ------------------------ | ---------------------------------------------------------------------------------------- |
+| Z.ai / BigModel Start Plan             | `start-plan`             | Official release security validation material chain; does not enter V4                   |
+| Z.ai / BigModel Individual Coding Plan | `individual-coding-plan` | Current connection request auth; has V4 static admission                                 |
+| Z.ai / BigModel Team Coding Plan       | `team-coding-plan`       | Current Team scope and request auth; has V4 static admission                             |
 | Z.ai / BigModel Idle Plan              | `off-peak`               | Execution-period JWT, Plan Key, Ticket, and Off-Peak failure protocol; does not enter V4 |
 
 Each Provider retains existing precise Provider ID, `group`, `visibility`, Endpoint, and model members. Fixed IDs continue for Provider identity,
@@ -169,10 +169,10 @@ ModelSelection, and task persistence, not used to guess Mode.
 
 ### 4.1 Source Schema Ownership
 
-| Source          | Access facts allowed to write                                                                       |
-| --------------- | --------------------------------------------------------------------------------------------------- |
-| ZCode Built-in  | Complete `type`; Zhipu Provider's complete `family + mode`; normal API Provider's Key management entry  |
-| Account Overlay | Not allowed to write or replace `access`                                                             |
+| Source          | Access facts allowed to write                                                                               |
+| --------------- | ----------------------------------------------------------------------------------------------------------- |
+| ZCode Built-in  | Complete `type`; Zhipu Provider's complete `family + mode`; normal API Provider's Key management entry      |
+| Account Overlay | Not allowed to write or replace `access`                                                                    |
 | Personal        | Only normal/Personal `api-key` Provider's API Key Access; fixed `account:*` does not allow writing `access` |
 
 Formal Schema must strictly reject source-violating fields. Settings page does not display Zhipu `family/mode` editor, nor expose official release security validation, V4, or Off-Peak as
@@ -274,18 +274,18 @@ Official release request security validation dynamic release switch and protocol
 
 ## 6. Account, Credential, and Authorization Boundaries
 
-| Status or Fact                            | Authoritative Owner                       | Enters Provider Config? |
-| ------------------------------------- | ------------------------------------- | ---------------------- |
-| Built-in `type/family/mode`           | ZCode Built-in Provider Config   | Yes                     |
-| Current account, login state, and current Family       | Current Environment Account Service | No                     |
-| Current plan connection                          | Account Connection Selection     | No                     |
-| Team product/org/project              | Account Connection Selection     | No                     |
-| Account identity and Credential Store physical Key  | Credential Service private implementation      | No                     |
-| Account `enabled` and Start model projection   | Account Overlay                  | Yes, corresponding fields only         |
-| Manually entered normal API Key                | Personal Provider Config         | Yes, `api-key` only       |
-| Account-provided API Key/JWT/Ticket/Headers | Account/Credential/Request Auth  | No                     |
-| V4 dynamic release switch                       | Remote Runtime Config              | No                     |
-| Final authorization result                          | Model server                       | No                     |
+| Status or Fact                                     | Authoritative Owner                       | Enters Provider Config?        |
+| -------------------------------------------------- | ----------------------------------------- | ------------------------------ |
+| Built-in `type/family/mode`                        | ZCode Built-in Provider Config            | Yes                            |
+| Current account, login state, and current Family   | Current Environment Account Service       | No                             |
+| Current plan connection                            | Account Connection Selection              | No                             |
+| Team product/org/project                           | Account Connection Selection              | No                             |
+| Account identity and Credential Store physical Key | Credential Service private implementation | No                             |
+| Account `enabled` and Start model projection       | Account Overlay                           | Yes, corresponding fields only |
+| Manually entered normal API Key                    | Personal Provider Config                  | Yes, `api-key` only            |
+| Account-provided API Key/JWT/Ticket/Headers        | Account/Credential/Request Auth           | No                             |
+| V4 dynamic release switch                          | Remote Runtime Config                     | No                             |
+| Final authorization result                         | Model server                              | No                             |
 
 Production public Config, Registry, Active Model, Protocol, and UI must not re-introduce `accessId`, `accountConnectionVersion`,
 `bindingId`, or account identity mirrors. Account/Credential Service can retain account isolation, LKG scope, physical Credential Key, and single-flight
@@ -330,14 +330,14 @@ replayable, Session/Task Queue, Snapshot, or recovery semantics.
 
 ## 8. UI Surface Matrix
 
-| User Scenario                     | Display/Draft Source                      | Submission or Run Owner                  | This Todo Behavior                                   | Must Isolate                     |
-| ---------------------------- | ---------------------------------- | --------------------------------- | ---------------------------------------------- | ---------------------------- |
-| Normal Provider settings           | Personal API Key Draft             | Provider Settings Service         | `zai-api/bigmodel-api` maintains normal API Key, no V4 | Does not enter Family Account process   |
-| Z.ai/BigModel Family API Key | Account Connection and credential state      | Account/Credential + Request Auth | Built-in Mode fixed to `api-key`, no hand-filled Key | Does not write Personal access         |
-| Start login and request             | Account Connection + security validation UI   | Account/Request Auth              | Only enters security validation by `mode=start-plan`            | Does not affect normal API Key           |
-| Individual/Team request         | Account Connection                 | Request Auth + Adapter            | Parses current Key by Mode, has V4 admission             | Does not freeze account or Team scope      |
-| Off-Peak creation and execution          | Fixed Provider Selection + current account | Off-Peak Service + Adapter        | Executes by `mode=off-peak`                        | Does not pollute normal Session Selection |
-| Usage/Entitlement            | Account/Subscription Service       | Usage Services                    | Does not reverse-deduce dynamic product state from Effective Access         | Does not change refresh and billing strategy         |
+| User Scenario                   | Display/Draft Source                        | Submission or Run Owner           | This Todo Behavior                                                  | Must Isolate                                 |
+| ------------------------------- | ------------------------------------------- | --------------------------------- | ------------------------------------------------------------------- | -------------------------------------------- |
+| Normal Provider settings        | Personal API Key Draft                      | Provider Settings Service         | `zai-api/bigmodel-api` maintains normal API Key, no V4              | Does not enter Family Account process        |
+| Z.ai/BigModel Family API Key    | Account Connection and credential state     | Account/Credential + Request Auth | Built-in Mode fixed to `api-key`, no hand-filled Key                | Does not write Personal access               |
+| Start login and request         | Account Connection + security validation UI | Account/Request Auth              | Only enters security validation by `mode=start-plan`                | Does not affect normal API Key               |
+| Individual/Team request         | Account Connection                          | Request Auth + Adapter            | Parses current Key by Mode, has V4 admission                        | Does not freeze account or Team scope        |
+| Off-Peak creation and execution | Fixed Provider Selection + current account  | Off-Peak Service + Adapter        | Executes by `mode=off-peak`                                         | Does not pollute normal Session Selection    |
+| Usage/Entitlement               | Account/Subscription Service                | Usage Services                    | Does not reverse-deduce dynamic product state from Effective Access | Does not change refresh and billing strategy |
 
 ## 9. Implementation Slices
 

@@ -122,6 +122,11 @@ describe("WindowHostControllerService", () => {
                       permissionCount: 0,
                       userInputCount: 1,
                     },
+                    executionWorktree: {
+                      path: "/work/demo/.worktrees/live",
+                      branchName: "feature/live",
+                    },
+                    executionWorktreeMissing: true,
                     lastActivityAt: 20,
                     createdAt: 1,
                   },
@@ -167,6 +172,11 @@ describe("WindowHostControllerService", () => {
         title: "正在运行",
         updatedAt: 20,
         liveStatus: "waiting",
+        executionWorktree: {
+          path: "/work/demo/.worktrees/live",
+          branchName: "feature/live",
+        },
+        executionWorktreeMissing: true,
         pendingInteraction: expect.objectContaining({ interactionId: "ask-1" }),
         activity: {
           phase: "running",
