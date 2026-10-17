@@ -6,6 +6,8 @@ import { atomicWritePrivateTextFile, withFileLock } from "@zcode/shared/node";
 const LOCK_FILE = ".consolidate-lock";
 const SUCCESS_FILE = ".consolidated-at";
 const MANUAL_COOLDOWN_MS = 60 * 60 * 1000;
+const RUNNING_LOCK_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const failedDreamLockTokens = new Map<string, string>();
 
 interface Marker {
   pid?: number;
@@ -63,11 +65,24 @@ export async function acquireDreamLock(input: {
   const now = input.nowMs ?? Date.now();
   return withFileLock(path, async () => {
     const prior = await readMarker(path);
+    for (const [token, failedPath] of failedDreamLockTokens) {
+      if (failedPath === path && prior?.marker.token !== token) failedDreamLockTokens.delete(token);
+    }
     if (prior) {
-      const fresh = now - prior.mtimeMs < MANUAL_COOLDOWN_MS;
-      if (prior.marker.status === "succeeded" ? fresh : isLive(prior.marker.pid)) return null;
+      const age = now - prior.mtimeMs;
+      const fresh = age < MANUAL_COOLDOWN_MS;
+      const restoreFailed =
+        prior.marker.token !== undefined && failedDreamLockTokens.has(prior.marker.token);
+      if (
+        !restoreFailed &&
+        (prior.marker.status === "succeeded"
+          ? fresh
+          : isLive(prior.marker.pid) && age < RUNNING_LOCK_MAX_AGE_MS)
+      ) {
+        return null;
+      }
       // A legacy writer may have created the file but not published its PID yet.
-      if (!prior.marker.pid && prior.raw.trim() !== "0" && fresh) return null;
+      if (!restoreFailed && !prior.marker.pid && prior.raw.trim() !== "0" && fresh) return null;
     }
     const token = randomUUID();
     await atomicWritePrivateTextFile(
@@ -75,6 +90,7 @@ export async function acquireDreamLock(input: {
       JSON.stringify({ pid: input.pid ?? process.pid, token, status: "running" }),
     );
     await utimes(path, now / 1000, now / 1000);
+    if (prior?.marker.token) failedDreamLockTokens.delete(prior.marker.token);
     return { token, prior };
   });
 }
@@ -84,16 +100,21 @@ export async function restoreDreamLockAfterFailure(input: {
   lease: DreamLockLease;
 }): Promise<void> {
   const path = join(input.memoryRoot, LOCK_FILE);
-  await withFileLock(path, async () => {
-    if ((await readMarker(path))?.marker.token !== input.lease.token) return;
-    if (!input.lease.prior) {
-      await unlink(path);
-      return;
-    }
-    // Restore the prior cursor as abandoned, never as a live owner of a failed attempt.
-    await atomicWritePrivateTextFile(path, "0");
-    await utimes(path, input.lease.prior.mtimeMs / 1000, input.lease.prior.mtimeMs / 1000);
-  });
+  try {
+    await withFileLock(path, async () => {
+      if ((await readMarker(path))?.marker.token !== input.lease.token) return;
+      if (!input.lease.prior) {
+        await unlink(path);
+        return;
+      }
+      // Restore the prior cursor as abandoned, never as a live owner of a failed attempt.
+      await atomicWritePrivateTextFile(path, "0");
+      await utimes(path, input.lease.prior.mtimeMs / 1000, input.lease.prior.mtimeMs / 1000);
+    });
+  } catch (error) {
+    failedDreamLockTokens.set(input.lease.token, path);
+    throw error;
+  }
 }
 
 export async function writeDreamConsolidatedAt(

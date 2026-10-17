@@ -124,12 +124,17 @@ describe("Dream consolidation lock", () => {
     expect(owners.filter(Boolean)).toHaveLength(1);
   });
 
-  it("does not reclaim a long-running live owner or let an old lease restore a new owner", async () => {
+  it("keeps a fresh live owner but reclaims an expired lease despite PID reuse", async () => {
     const root = await temporaryDirectory();
-    const lease = (await acquireDreamLock({ memoryRoot: root }))!;
+    const nowMs = Date.parse("2026-07-14T01:02:03.000Z");
+    const lease = (await acquireDreamLock({ memoryRoot: root, nowMs, pid: process.pid }))!;
     const path = join(root, ".consolidate-lock");
-    await utimes(path, 1, 1);
-    expect(await acquireDreamLock({ memoryRoot: root })).toBeNull();
+    await utimes(path, (nowMs - 24 * 60 * 60 * 1000) / 1000, (nowMs - 24 * 60 * 60 * 1000) / 1000);
+    expect(await acquireDreamLock({ memoryRoot: root, nowMs })).toBeNull();
+    const expiredMtime = nowMs - 8 * 24 * 60 * 60 * 1000;
+    await utimes(path, expiredMtime / 1000, expiredMtime / 1000);
+    const replacementLease = await acquireDreamLock({ memoryRoot: root, nowMs });
+    expect(replacementLease).not.toBeNull();
     const replacement = { pid: process.pid, token: "another-run-same-pid", status: "running" };
     await writeFile(path, JSON.stringify(replacement));
     await restoreDreamLockAfterFailure({ memoryRoot: root, lease });
