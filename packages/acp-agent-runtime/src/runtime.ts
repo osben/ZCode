@@ -311,6 +311,16 @@ export class AcpSessionRuntime extends EventEmitter {
           "session/new",
         ),
       );
+      if (
+        this.process !== proc ||
+        this.currentState === "failed" ||
+        this.currentState === "stopped"
+      ) {
+        // An exit or stream failure tore this generation down (the exit
+        // event is not part of raceSpawn) while the session/new response
+        // was in flight; never resurrect the dead session as "ready".
+        throw new AcpAgentDiedError("Agent terminated during the handshake");
+      }
       this.sessionId = session.sessionId;
       this.configOptions =
         (session as unknown as { configOptions?: unknown }).configOptions ?? null;
@@ -338,9 +348,13 @@ export class AcpSessionRuntime extends EventEmitter {
     request: RequestPermissionRequest,
     generation: number,
   ): Promise<RequestPermissionResponse> {
-    if (generation !== this.generation) {
-      // A buffered ask from a superseded process must never reach the host or
-      // the new session; answer it as cancelled.
+    if (
+      generation !== this.generation ||
+      this.currentState !== "prompting" ||
+      request.sessionId !== this.sessionId
+    ) {
+      // Stale (restarted), orphaned (torn down, out-of-turn) or
+      // foreign-session asks never reach the host; answer them as cancelled.
       return toPermissionResponse(request, CANCELLED_ANSWER);
     }
     const askBridge = this.bridge.requestPermission;
@@ -354,9 +368,9 @@ export class AcpSessionRuntime extends EventEmitter {
         askBridge(ask).catch(() => CANCELLED_ANSWER),
         deferred.promise,
       ]);
-      if (this.generation !== generation) {
-        // The runtime restarted while the host was deciding; never apply a
-        // stale decision to the new session.
+      if (this.generation !== generation || this.currentState !== "prompting") {
+        // The runtime restarted, stopped or settled while the host was
+        // deciding; never apply a stale decision.
         return toPermissionResponse(request, CANCELLED_ANSWER);
       }
       return toPermissionResponse(request, answer);

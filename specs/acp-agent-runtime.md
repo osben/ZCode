@@ -20,6 +20,9 @@ the mock-agent tests encode the contract below.
 - Permissions are answered by `kind` (`allow_once` / `allow_always` / `reject_once` /
   `reject_always`); an unavailable kind resolves to `cancelled`. Agents never see host-specific
   option ids.
+- A permission ask reaches the host only for the live turn — current generation and session while
+  `prompting`. Stale (restarted), orphaned (torn down or out-of-turn) and foreign-session asks are
+  answered `cancelled`: never surfaced, never implicitly allowed.
 - Environment: children inherit the parent env minus (a) privileged ZCode runtime keys via the
   shared sanitizer and (b) secret-named keys by segment. User capability sockets
   (`SSH_AUTH_SOCK`, `KRB5CCNAME`, `GPG_AGENT_INFO`, …) are intentionally inherited — the agent is
@@ -38,6 +41,9 @@ Owner: one `AcpSessionRuntime` per agent process.
   survives) marks the runtime `failed` (unless it is already `stopped`) BEFORE
   rejecting in-flight asks/prompts, so no rejected prompt can fall back to
   `ready` with a cleared connection; the next prompt then restarts.
+- A handshake result is committed only while its process is still current and the runtime has not
+  failed/stopped; an exit or stream failure racing the `session/new` response fails the handshake
+  instead of resurrecting the dead session as `ready`.
 - Teardown sequence: stdin EOF → `stopGraceMs` → SIGTERM (Windows: `taskkill /T`) →
   `killGraceMs` → SIGKILL (Windows: `taskkill /T /F`).
 - Frame observer (`onFrame`): raw NDJSON lines per direction in wire order; lines over 16 KiB are

@@ -48,7 +48,12 @@ const app = agent({ name: `mock-agent (${scenario})` })
           : [],
     };
   })
-  .onRequest(methods.agent.session.new, () => {
+  .onRequest(methods.agent.session.new, async () => {
+    if (scenario === "slow-new") {
+      // Leaves a deterministic window where the runtime can "die" (a poked
+      // exit handler) before the session/new response commits the handshake.
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
     if (scenario === "new-fails") throw new Error("session/new exploded");
     return { sessionId };
   })
