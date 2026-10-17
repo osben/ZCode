@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- Every row cell renders here so the shared grid template, cell set, and row menu stay in one file. */
 import { memo, useState } from "react";
 import {
   Archive,
@@ -111,14 +112,14 @@ function BranchCell({ row }: { row: SessionManagerRow }) {
   }
   if (row.task.executionWorktreeMissing) {
     return (
-      <span className="inline-flex min-w-0 items-center gap-1.5 font-mono text-ui-xs text-destructive">
+      <span className="flex min-w-0 items-center gap-1.5 font-mono text-ui-xs text-destructive">
         <GitBranch className="size-3 shrink-0" />
         {worktree.branchName ?? "missing"}
       </span>
     );
   }
   return (
-    <span className="inline-flex min-w-0 items-center gap-1.5 font-mono text-ui-xs text-foreground-subtle">
+    <span className="flex min-w-0 items-center gap-1.5 font-mono text-ui-xs text-foreground-subtle">
       <GitBranch className="size-3 shrink-0" />
       <span className="truncate">{worktree.branchName ?? worktree.path}</span>
     </span>
@@ -160,7 +161,7 @@ function NameCell({
     );
   }
   return (
-    <span className="truncate text-ui-base text-foreground" title={title}>
+    <span className="block truncate text-ui-base text-foreground" title={title}>
       {title}
     </span>
   );
@@ -272,7 +273,11 @@ export const SessionManagerRowView = memo(function SessionManagerRowView({
           </span>
         );
       case "model":
-        return <span className="truncate text-ui-sm text-foreground-subtle">{row.task.model}</span>;
+        return (
+          <span className="block truncate text-ui-sm text-foreground-subtle" title={row.task.model}>
+            {row.task.model}
+          </span>
+        );
       case "updated":
         return (
           <span className="text-ui-sm text-foreground-subtle">
@@ -291,7 +296,7 @@ export const SessionManagerRowView = memo(function SessionManagerRowView({
       case "path":
         return (
           <span
-            className="truncate font-mono text-ui-xs text-foreground-subtlest"
+            className="block truncate font-mono text-ui-xs text-foreground-subtlest"
             title={row.task.workspacePath}
           >
             {row.task.workspacePath}
@@ -312,9 +317,13 @@ export const SessionManagerRowView = memo(function SessionManagerRowView({
         row.offline && "opacity-55",
       )}
       onClick={(event) => {
-        if (event.target === event.currentTarget) {
-          onOpen(row);
+        // The cells fill the whole row, so a plain background-click guard would make every cell
+        // click dead. Open on any row click except the interactive controls inside it.
+        const target = event.target as HTMLElement | null;
+        if (target?.closest("button, input, textarea, a, select, label")) {
+          return;
         }
+        onOpen(row);
       }}
       onKeyDown={(event) => {
         if ((event.key === "Enter" || event.key === " ") && event.target === event.currentTarget) {

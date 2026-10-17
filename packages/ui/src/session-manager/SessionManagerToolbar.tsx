@@ -1,5 +1,5 @@
 import type { RefObject } from "react";
-import { ChevronDown, ChevronLeft, Folder, Search, SlidersHorizontal, Star, X } from "lucide-react";
+import { ChevronDown, Folder, Search, SlidersHorizontal, Star, X } from "lucide-react";
 import { cn } from "@/components/lib/utils.js";
 import { Button } from "@/components/ui/button.js";
 import {
@@ -12,7 +12,7 @@ import {
 import { Kbd } from "@/components/ui/kbd.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { getPathLeaf } from "@/lib/path.js";
-import type { SessionManagerScope } from "@/store/tabStore.js";
+import type { SessionManagerScope } from "./sessionManagerTypes.js";
 import { sessionManagerColumnLabelId } from "./sessionManagerColumns.js";
 import {
   SESSION_MANAGER_TOGGLEABLE_COLUMNS,
@@ -23,8 +23,6 @@ import {
 interface SessionManagerToolbarProps {
   scope: SessionManagerScope | undefined;
   onClearScope: () => void;
-  onBack: () => void;
-  canBack: boolean;
   search: string;
   onSearchChange: (value: string) => void;
   searchInputRef: RefObject<HTMLInputElement | null>;
@@ -90,21 +88,9 @@ export function SessionManagerToolbar(props: SessionManagerToolbarProps) {
 
   return (
     <div className="shrink-0 border-b border-border bg-header">
-      <div className="flex h-12 items-center gap-2 px-3">
-        {props.canBack ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label={intl.formatMessage({ id: "sessionManager.back" })}
-            onClick={props.onBack}
-          >
-            <ChevronLeft className="size-4" />
-          </Button>
-        ) : null}
-        <h1 className="text-ui-lg font-medium text-foreground">
-          {intl.formatMessage({ id: "sessionManager.title" })}
-        </h1>
+      {/* The section title and back control belong to the Settings shell; this row keeps only the
+          scope chip, search, and columns menu. */}
+      <div className="flex h-12 shrink-0 items-center gap-2 px-3">
         {props.scope ? (
           <span className="inline-flex h-6 items-center gap-1.5 rounded-md bg-accent px-2 text-ui-sm font-medium text-accent-foreground">
             <Folder className="size-3" />

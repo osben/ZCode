@@ -3,7 +3,6 @@ import { Archive, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
-import { isSessionManagerTab } from "@/store/tabStore.js";
 import { useTabStore } from "@/store/TabStoreProvider.js";
 import { TaskListLoadingHint } from "@/TaskListLoadingHint.js";
 import {
@@ -12,29 +11,34 @@ import {
   groupSessionManagerRows,
   sortSessionManagerRows,
   type SessionManagerRow,
-} from "./sessionManagerModel.js";
-import { SessionManagerDeleteDialog } from "./SessionManagerDeleteDialog.js";
-import { SessionManagerTable } from "./SessionManagerTable.js";
-import { SessionManagerToolbar } from "./SessionManagerToolbar.js";
-import type { SessionManagerViewState } from "./sessionManagerTypes.js";
+} from "@/session-manager/sessionManagerModel.js";
+import { SessionManagerDeleteDialog } from "@/session-manager/SessionManagerDeleteDialog.js";
+import { SessionManagerTable } from "@/session-manager/SessionManagerTable.js";
+import { SessionManagerToolbar } from "@/session-manager/SessionManagerToolbar.js";
+import type { SessionManagerViewState } from "@/session-manager/sessionManagerTypes.js";
 import {
   hasActiveSessionManagerFilters,
   persistSessionManagerViewState,
   readSessionManagerViewState,
   SESSION_MANAGER_DEFAULT_VIEW_STATE,
-} from "./sessionManagerViewState.js";
+} from "@/session-manager/sessionManagerViewState.js";
 import {
   useSessionManagerRowActions,
   useSessionManagerTaskLists,
   useSessionManagerUniverse,
-} from "./useSessionManagerTasks.js";
+} from "@/session-manager/useSessionManagerTasks.js";
+import type { SettingsSessionsScope } from "@/lib/settingsNavigation.js";
 
 const SEARCH_DEBOUNCE_MS = 250;
 
-export function SessionManagerLayer() {
+interface SessionsSettingsSectionProps {
+  /** Workspace scope carried by the settings navigation intent (project-menu entry). */
+  scope?: SettingsSessionsScope;
+  onClearScope: () => void;
+}
+
+export function SessionsSettingsSection({ scope, onClearScope }: SessionsSettingsSectionProps) {
   const { intl } = useZCodeIntl();
-  const scope = useTabStore((state) => state.tabs.find(isSessionManagerTab)?.scope);
-  const openSessionManagerTab = useTabStore((state) => state.openSessionManagerTab);
   const activeWorkspacePath = useTabStore((state) => state.activeWorkspacePath);
   const activeWorkspaceIdentity = useTabStore((state) => state.activeWorkspaceIdentity);
   const activateTabByPath = useTabStore((state) => state.activateTabByPath);
@@ -125,13 +129,6 @@ export function SessionManagerLayer() {
         .filter((row): row is SessionManagerRow => Boolean(row)),
     [liveSelectedKeys, rowsByKey],
   );
-
-  const handleBack = useCallback(() => {
-    activateTabByPath(
-      activeWorkspacePath ?? "",
-      activeWorkspaceIdentity ? { workspaceIdentity: activeWorkspaceIdentity } : undefined,
-    );
-  }, [activateTabByPath, activeWorkspaceIdentity, activeWorkspacePath]);
 
   const openRow = useCallback(
     (row: SessionManagerRow) => {
@@ -253,7 +250,7 @@ export function SessionManagerLayer() {
 
   return (
     <div
-      className="absolute inset-0 z-10 flex h-full flex-col bg-background"
+      className="relative flex h-[calc(100dvh-11rem)] min-h-0 flex-col"
       data-testid="session-manager"
       onKeyDown={(event) => {
         if (
@@ -269,9 +266,7 @@ export function SessionManagerLayer() {
     >
       <SessionManagerToolbar
         scope={scope}
-        onClearScope={() => openSessionManagerTab()}
-        onBack={handleBack}
-        canBack={Boolean(activeWorkspacePath)}
+        onClearScope={onClearScope}
         search={search}
         onSearchChange={setSearch}
         searchInputRef={searchInputRef}

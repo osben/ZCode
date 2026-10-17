@@ -189,6 +189,7 @@ vi.mock("@/lib/settingsNavigation.js", () => ({
   clearPendingSettingsPluginScopeKey: () => undefined,
   consumePendingSettingsModelProviderTarget: () => undefined,
   consumePendingSettingsUsageTab: () => undefined,
+  consumePendingSettingsSessionsScope: () => undefined,
   resolveSettingsSection: (section: string) => section,
   shouldFallbackSettingsUsageTabToApp: () => false,
   writeLastSettingsSectionPreference: vi.fn(),
