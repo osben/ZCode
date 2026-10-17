@@ -140,6 +140,26 @@ describe("detectAcpAgents", () => {
     expect(b.find((result) => result.agentId === "opencode")?.installed).toBe(false);
   });
 
+  it("does not share cached versions between different probe runners", () => {
+    const dir = makeBinDir();
+    writeFakeBinary(dir, "opencode", "#!/bin/sh\necho 'unused'\n");
+    const shared = () => ({ env: { PATH: dir }, cacheTtlMs: 60_000 });
+
+    const a = detectAcpAgents({
+      ...shared(),
+      runProbe: () => ({ status: 0, stdout: "opencode from-a\n", stderr: "" }),
+    }).find((result) => result.agentId === "opencode");
+    expect(a?.version).toBe("opencode from-a");
+
+    // The cache is keyed by the probe runner's identity: another runner with
+    // the same PATH must not reuse the first runner's version within the TTL.
+    const b = detectAcpAgents({
+      ...shared(),
+      runProbe: () => ({ status: 0, stdout: "opencode from-b\n", stderr: "" }),
+    }).find((result) => result.agentId === "opencode");
+    expect(b?.version).toBe("opencode from-b");
+  });
+
   it("builds Windows PATHEXT candidates for binary resolution", () => {
     expect(buildBinaryCandidateNames("opencode", undefined, "darwin")).toEqual(["opencode"]);
     expect(buildBinaryCandidateNames("opencode", ".EXE;.CMD", "win32")).toEqual([
