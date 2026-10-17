@@ -1,3 +1,4 @@
+/* oxlint-disable eslint(max-lines) -- Lifecycle state machine: teardown, restarts and generation guards share one state owner by design. */
 /**
  * AcpSessionRuntime — lifecycle owner for one external ACP agent process.
  *
@@ -42,6 +43,7 @@ import {
   CANCELLED_ANSWER,
   DEFAULT_TIMEOUTS,
   createDeferred,
+  isConnectionClosedError,
   normalizeAuthMethods,
   raceTimeout,
   sleep,
@@ -224,12 +226,14 @@ export class AcpSessionRuntime extends EventEmitter {
     });
     this.process = proc;
     this.generation += 1;
-    proc.child.once("exit", (code, signal) => this.handleExit(code, signal));
+    // Scope both callbacks to this process generation: a restart may start while the previous child is still exiting.
+    const generation = this.generation;
+    proc.child.once("exit", (code, signal) => this.handleExit(code, signal, generation));
     // A framing failure (e.g. an oversized frame) errors the SDK connection
     // while the child can stay alive; a stdout close has the same effect. Run
     // the same teardown as a child exit so the runtime never sits on a dead
     // connection in "ready".
-    proc.streamFailure.catch((error: Error) => this.handleStreamFailure(error));
+    proc.streamFailure.catch((error: Error) => this.handleStreamFailure(error, generation));
 
     const app = createClientApp({ name: `zcode-acp-agent-runtime (${launch.agentId})` })
       .onRequest(methods.client.session.requestPermission, (ctx) =>
@@ -336,7 +340,9 @@ export class AcpSessionRuntime extends EventEmitter {
     else this.ignoredUpdateCount += 1;
   }
 
-  private handleExit(code: number | null, signal: NodeJS.Signals | null): void {
+  private handleExit(code: number | null, signal: NodeJS.Signals | null, generation: number): void {
+    // A superseded process must not emit events or touch the current session.
+    if (generation !== this.generation) return;
     this.emitEvent({ type: "process_exit", code, signal });
     this.resolvePendingAsks(CANCELLED_ANSWER);
     this.clearStallTimer();
@@ -385,13 +391,14 @@ export class AcpSessionRuntime extends EventEmitter {
   }
 
   /** Entry point for `streamFailure`: framing errors and stdout closes. */
-  private handleStreamFailure(error: Error): void {
+  private handleStreamFailure(error: Error, generation: number): void {
+    if (generation !== this.generation) return;
     if (this.stopRequested || this.currentState === "stopped") return;
     if (this.currentState === "failed") return;
-    void this.teardownAfterStreamFailure(error);
+    void this.teardownAfterStreamFailure(error, generation);
   }
 
-  private async teardownAfterStreamFailure(error: Error): Promise<void> {
+  private async teardownAfterStreamFailure(error: Error, generation: number): Promise<void> {
     if (error instanceof AcpStreamClosedError) {
       // A plain EOF usually means the child is dying: give the exit handler a
       // short window so a real death is still reported as `AcpAgentDiedError`.
@@ -401,6 +408,8 @@ export class AcpSessionRuntime extends EventEmitter {
       }
       if (this.currentState === "failed" || this.currentState === "stopped") return;
     }
+    // A restart may have created a new generation during the grace window.
+    if (generation !== this.generation) return;
     await this.terminateProcess(error);
   }
 
@@ -473,13 +482,4 @@ export class AcpSessionRuntime extends EventEmitter {
   private emitEvent(event: AcpRuntimeEvent): void {
     this.emit("event", event);
   }
-}
-
-/**
- * The SDK v1 connection rejects pending requests with a plain "ACP connection
- * closed" error; the v2 surface uses `ConnectionClosedError` (not exported
- * from the main entry), so match it by name too.
- */
-function isConnectionClosedError(error: Error): boolean {
-  return /connection closed/i.test(error.message) || error.name === "ConnectionClosedError";
 }

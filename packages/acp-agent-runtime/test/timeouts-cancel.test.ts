@@ -163,4 +163,35 @@ describe("timeouts and cancellation", () => {
       await cleanupTempDir(cwd);
     }
   });
+
+  it("ignores exit and stream-failure callbacks from a superseded generation", async () => {
+    const cwd = await createTempDir();
+    const runtime = await startMockRuntime(cwd, "normal");
+    try {
+      const events = collectEvents(runtime);
+      // Poke the private handlers the way a late process event would: a
+      // restart bumps `generation`, so events carrying the old generation must
+      // be ignored (no stale process_exit, no teardown of the live session).
+      const internals = runtime as unknown as {
+        generation: number;
+        handleExit: (
+          code: number | null,
+          signal: NodeJS.Signals | null,
+          generation: number,
+        ) => void;
+        handleStreamFailure: (error: Error, generation: number) => void;
+      };
+      const staleGeneration = internals.generation - 1;
+      internals.handleExit(1, null, staleGeneration);
+      internals.handleStreamFailure(new Error("stale stream failure"), staleGeneration);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(events.some((event) => event.type === "process_exit")).toBe(false);
+      expect(runtime.state).toBe("ready");
+      const response = await runtime.prompt("still alive");
+      expect(response.stopReason).toBe("end_turn");
+    } finally {
+      await runtime.stop();
+      await cleanupTempDir(cwd);
+    }
+  });
 });

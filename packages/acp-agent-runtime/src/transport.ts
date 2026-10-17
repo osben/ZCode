@@ -189,9 +189,12 @@ export async function signalProcessTree(
 }
 
 function createStderrTail(stderr: NodeJS.ReadableStream, maxChars: number): () => string {
+  // Decode as UTF-8 at the stream level: decoding chunk-by-chunk can split a
+  // multibyte character across chunks and corrupt the tail (U+FFFD).
+  stderr.setEncoding("utf8");
   let tail = "";
-  stderr.on("data", (chunk: Buffer | string) => {
-    tail += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+  stderr.on("data", (chunk: string) => {
+    tail += chunk;
     if (tail.length > maxChars) tail = tail.slice(-maxChars);
   });
   return () => tail;

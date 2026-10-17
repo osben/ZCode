@@ -81,3 +81,12 @@ export function normalizeAuthMethods(init: InitializeResponse): readonly AcpAuth
   }
   return methods;
 }
+
+/**
+ * The SDK v1 connection rejects pending requests with a plain "ACP connection
+ * closed" error; the v2 surface uses `ConnectionClosedError` (not exported
+ * from the main entry), so match it by name too.
+ */
+export function isConnectionClosedError(error: Error): boolean {
+  return /connection closed/i.test(error.message) || error.name === "ConnectionClosedError";
+}

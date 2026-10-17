@@ -41,8 +41,10 @@ export function mockRuntimeOptions(
     command: process.execPath,
     args: [MOCK_AGENT_PATH, scenario],
     cwd,
-    timeouts: { ...DEFAULT_TEST_TIMEOUTS, ...overrides.timeouts },
     ...overrides,
+    // Merge after the spread: a partial `overrides.timeouts` must keep the
+    // test defaults for the fields it does not mention.
+    timeouts: { ...DEFAULT_TEST_TIMEOUTS, ...overrides.timeouts },
   };
 }
 
