@@ -3695,6 +3695,7 @@ const ukUA: Record<string, string> = {
   "settings.modelProvider.chatgpt.signOut": "Вийти",
   "settings.modelProvider.chatgpt.addAccount": "Додати ще один акаунт",
   "settings.modelProvider.chatgpt.reconnect": "Повторно підключити",
+  "settings.modelProvider.chatgpt.linkUsage": "Підключити ліміти",
   "settings.modelProvider.chatgpt.manageUsage": "Керувати використанням",
   "settings.modelProvider.chatgpt.firstRun.title": "Ви використовуєте свій план ChatGPT",
   "settings.modelProvider.chatgpt.firstRun.body":
@@ -4853,6 +4854,8 @@ const ukUA: Record<string, string> = {
   "chat.empty.worktree.newWorktree": "Новий worktree",
   "chat.empty.worktree.creating": "Створення worktree…",
   "worktreeSetup.reconcile.staleCreating": "Налаштування не завершено (з'єднання змінилося)",
+  "worktreeSetup.reconcile.markerSyncUnavailable":
+    "Налаштування завершилося в іншому каталозі worktree, і запис сесії не вдалося оновити",
   "git.branchSwitcher.appliesOnSend": "Застосується під час надсилання першого повідомлення",
   "git.branchSwitcher.worktreeIntentHint":
     "Гілку для цього завдання визначає налаштування worktree",
@@ -5101,13 +5104,21 @@ const ukUA: Record<string, string> = {
   "chat.summaryPanel.runningBackgroundTasksMiniValuePlural": "У фоні: {count}",
   "chat.summaryPanel.stopRunningBackgroundTask": "Зупинити фонове завдання",
   "chat.summaryPanel.openRunningSubagentSession": "Відкрити сеанс субагента",
+  "chat.composer.backgroundWorks.tooltipDream": "Відкрити впорядкування пам'яті",
+  "chat.composer.backgroundWorks.tooltipDreamResult":
+    "Переглянути останній результат впорядкування пам'яті",
+  "chat.statusPanel.dream": "Впорядкування пам'яті",
+  "chat.statusPanel.dream.running": "Виконується",
+  "chat.statusPanel.dream.resultPending": "Завершено",
+  "chat.statusPanel.dream.failed": "Помилка",
+  "chat.statusPanel.dream.cancelled": "Скасовано",
   "chat.composer.backgroundWorks.tooltipTerminal": "Відкрити запущені термінали",
   "chat.composer.backgroundWorks.tooltipAgent": "Відкрити запущених агентів",
   "chat.composer.backgroundWorks.tooltipWorkflow": "Відкрити запущені робочі процеси",
   "chat.composer.backgroundWorks.tooltipWorkflowDetails": "Відкрити деталі робочого процесу",
-  "chat.composer.backgroundWorks.tooltipMixed": "Відкрити запущені термінали й агентів",
+  "chat.composer.backgroundWorks.tooltipMixed": "Відкрити фонові завдання",
   "chat.composer.backgroundWorks.ariaLabel":
-    "Відкрити запущені фонові завдання: Bash — {bashCount}, робочі процеси — {workflowCount}, субагенти — {subagentCount}, усього — {count}",
+    "Відкрити запущені фонові завдання: впорядкування пам'яті — {dreamCount}, Bash — {bashCount}, робочі процеси — {workflowCount}, субагенти — {subagentCount}, усього — {count}",
   "chat.summaryPanel.goalIterationValue": "Ітерація {count}",
   "chat.summaryPanel.todoGoalIterationGroup": "Ітерація {count}",
   "chat.summaryPanel.todoSessionGroup": "Увесь сеанс",

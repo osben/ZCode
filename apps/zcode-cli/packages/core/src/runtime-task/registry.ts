@@ -9,11 +9,13 @@ import type { AgentOutput } from "@zcode/contracts";
 
 // Keep local_dynamic_workflow and local_workflow separate: the latter is the legacy `Workflow` tool (not cancellable),
 // while the former is a workflow run (cancellable through DynamicWorkflowRunPort.cancel). Combining the types would make cancellation dispatch ambiguous.
+// local_dream = /dream memory consolidation: in-process promise (no port), cancellable via the runtime-held AbortController.
 export type RuntimeTaskType =
   | "local_agent"
   | "local_bash"
   | "local_workflow"
   | "local_dynamic_workflow"
+  | "local_dream"
   | "monitor_mcp";
 
 export interface RuntimeTaskUsageSnapshot {

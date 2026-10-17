@@ -229,6 +229,7 @@ export function ComposerDestinationControl({
       beginCreation: (
         queuedPromptPreview: string,
         prepareSession: Parameters<ComposerDraftWorktreeIntent["beginCreation"]>[1],
+        syncPreparedWorktree: Parameters<ComposerDraftWorktreeIntent["beginCreation"]>[2],
       ): Promise<ComposerWorktreeBeginResult> =>
         beginWorktreePipelineCreation({
           gitService: baseServices.gitService,
@@ -240,6 +241,7 @@ export function ComposerDestinationControl({
           baseFromHeadDefault: headDefault,
           queuedPromptPreview,
           prepareSession,
+          ...(syncPreparedWorktree ? { syncPreparedWorktree } : {}),
           formatMessage: (id, values) => intl.formatMessage({ id }, values),
         }),
     };

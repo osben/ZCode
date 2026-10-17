@@ -46,6 +46,7 @@ import {
 import {
   setPendingSettingsPluginIntent,
   setPendingSettingsSection,
+  setPendingSettingsSectionIntent,
   type SettingsSectionId,
 } from "@/lib/settingsNavigation.js";
 import { runWorkspaceVisibleCommand } from "@/lib/workspaceVisibleCommand.js";
@@ -487,7 +488,6 @@ export function App({
     useBranchMergeStatusStore.getState().requestRefresh();
   }, [gitRepositoryWorkspacePath, handleRefreshGit, workspaceAbsPath]);
   const openSettingsTab = useTabStore((state) => state.openSettingsTab);
-  const openSessionManagerTab = useTabStore((state) => state.openSessionManagerTab);
   const gitState = useGitRepository({
     workspacePath: workspaceAbsPath,
     activeTaskId,
@@ -1199,7 +1199,11 @@ export function App({
           createTask: () => runVisibleWorkspaceCommand(() => handleCreateTaskIfWritable()),
           openWorkspace: () => runVisibleWorkspaceCommand(onOpenWorkspace),
           openSettings: openSettingsTab,
-          openSessionManager: () => openSessionManagerTab(),
+          openSessionManager: () => {
+            // Sessions management is a Settings section; the command opens it unscoped.
+            setPendingSettingsSectionIntent("sessions");
+            openSettingsTab();
+          },
           openSkillsSettings: () => {
             setPendingSettingsPluginIntent("skills");
             openSettingsTab();

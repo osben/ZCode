@@ -17,13 +17,6 @@ import {
 import { isSameWorkspaceTab } from "@/store/tabWorkspaceIdentity.js";
 
 export const SETTINGS_TAB_ID = "__settings__" satisfies TabId;
-export const SESSION_MANAGER_TAB_ID = "__sessions__" satisfies TabId;
-
-/** Workspace the sessions manager was opened for; omitted means the unscoped all-workspaces view. */
-export interface SessionManagerScope {
-  workspacePath: string;
-  workspaceIdentity?: string;
-}
 
 export type WorkspaceAvailability = "available" | "unavailable-local-directory";
 
@@ -31,14 +24,6 @@ export interface SettingsTabState {
   id: typeof SETTINGS_TAB_ID;
   kind: "settings";
   label: "settings";
-}
-
-/** Full-area sessions-manager surface; scope is navigation state and is not persisted with the window session. */
-export interface SessionManagerTabState {
-  id: typeof SESSION_MANAGER_TAB_ID;
-  kind: "session-manager";
-  label: "sessions";
-  scope?: SessionManagerScope;
 }
 
 export interface WorkspaceTabState extends TabState {
@@ -73,7 +58,7 @@ export interface RestorableWorkspaceTab {
   workspacePurpose?: WorkspacePurpose;
 }
 
-export type WindowTabState = WorkspaceTabState | SettingsTabState | SessionManagerTabState;
+export type WindowTabState = WorkspaceTabState | SettingsTabState;
 
 export function isWorkspaceTab(tab: WindowTabState): tab is WorkspaceTabState {
   return tab.kind === "workspace";
@@ -100,10 +85,6 @@ export function isWorkspaceReadOnly(
 
 export function isSettingsTab(tab: WindowTabState): tab is SettingsTabState {
   return tab.kind === "settings";
-}
-
-export function isSessionManagerTab(tab: WindowTabState): tab is SessionManagerTabState {
-  return tab.kind === "session-manager";
 }
 
 // ============================================================================
@@ -135,8 +116,6 @@ export interface TabStoreState {
   reorderWorkspaceTabs: (fromIndex: number, toIndex: number) => void;
   /** Open the Settings tab (unique within the window). */
   openSettingsTab: () => void;
-  /** Open the sessions-manager tab (unique within the window); a scope pre-filters it to one workspace. */
-  openSessionManagerTab: (scope?: SessionManagerScope) => void;
   /** Activate a tab by workspace path (used for cross-window focus); return whether one was found. */
   activateTabByPath: (path: string, options?: { workspaceIdentity?: string }) => boolean;
   /** Toggle whether a workspace is expanded. */
@@ -213,15 +192,6 @@ function createSettingsTab(): SettingsTabState {
     id: SETTINGS_TAB_ID,
     kind: "settings",
     label: "settings",
-  };
-}
-
-function createSessionManagerTab(scope?: SessionManagerScope): SessionManagerTabState {
-  return {
-    id: SESSION_MANAGER_TAB_ID,
-    kind: "session-manager",
-    label: "sessions",
-    ...(scope ? { scope } : {}),
   };
 }
 
@@ -525,28 +495,6 @@ export function createTabStore(storage: StorageLike | null | undefined = undefin
       set((state) => ({
         tabs: [...state.tabs, settingsTab],
         activeTabId: settingsTab.id,
-      }));
-    },
-
-    openSessionManagerTab: (scope) => {
-      const existing = get().tabs.find(isSessionManagerTab);
-      if (existing) {
-        // Re-activation replaces the scope (a scoped entry while the unscoped view is open narrows it; the unscoped command clears it).
-        set((state) => ({
-          tabs: state.tabs.map((tab) =>
-            isSessionManagerTab(tab)
-              ? { ...tab, ...(scope ? { scope } : { scope: undefined }) }
-              : tab,
-          ),
-          activeTabId: existing.id,
-        }));
-        return;
-      }
-
-      const sessionManagerTab = createSessionManagerTab(scope);
-      set((state) => ({
-        tabs: [...state.tabs, sessionManagerTab],
-        activeTabId: sessionManagerTab.id,
       }));
     },
 

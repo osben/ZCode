@@ -42,6 +42,7 @@ import {
 import { ModelProviderSectionDetail } from "./model-provider-section/Detail.js";
 import { ModelProviderSectionLayout } from "./model-provider-section/SectionLayout.js";
 import { AcpAgentsPanel } from "./model-provider-section/AcpAgentsPanel.js";
+import { isLocalDevelopmentRuntime } from "@/lib/devRuntime.js";
 import {
   acpProviderId,
   buildAcpAgentAccess,
@@ -1221,14 +1222,16 @@ export function ModelProviderSection({
 
   return (
     <div className="space-y-6">
-      <AcpAgentsPanel
-        enabledProviderIds={acpEnabledProviderIds}
-        providerAccessByAgentId={acpProviderInfo.accessByAgentId}
-        conflictAgentIds={acpProviderInfo.conflictAgentIds}
-        onEnableAgent={handleAcpEnableAgent}
-        onUpdateAgent={handleAcpUpdateAgent}
-        onDisableAgent={handleAcpDisableAgent}
-      />
+      {isLocalDevelopmentRuntime(platform) ? (
+        <AcpAgentsPanel
+          enabledProviderIds={acpEnabledProviderIds}
+          providerAccessByAgentId={acpProviderInfo.accessByAgentId}
+          conflictAgentIds={acpProviderInfo.conflictAgentIds}
+          onEnableAgent={handleAcpEnableAgent}
+          onUpdateAgent={handleAcpUpdateAgent}
+          onDisableAgent={handleAcpDisableAgent}
+        />
+      ) : null}
       <ModelProviderSectionLayout
         description={intl.formatMessage({ id: "settings.modelProviderDescription" })}
         refreshLabel={intl.formatMessage({ id: "settings.modelProvider.refresh" })}

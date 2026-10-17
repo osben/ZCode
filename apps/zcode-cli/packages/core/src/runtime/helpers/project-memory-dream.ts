@@ -1,7 +1,9 @@
 import { basename, join, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
 
-import type { ModelTextContentBlock } from "@zcode/contracts";
+import type { BackgroundTaskPayloadBase, ModelTextContentBlock } from "@zcode/contracts";
 import type { Model, ModelInputMessage, SessionInfo, TraceContext } from "../deps.js";
+import { SessionEventType, createChildTraceContext } from "../deps.js";
 import {
   systemReminderAttachmentEntry,
   type RuntimeAttachmentEntry,
@@ -15,9 +17,13 @@ import {
   restoreDreamLockAfterFailure,
   writeDreamConsolidatedAt,
 } from "../../memory/dream.js";
-import { runMemoryAgentLoop } from "../../memory/memory-agent-loop.js";
+import {
+  runMemoryAgentLoop,
+  type MemoryAgentLoopRequestUsage,
+} from "../../memory/memory-agent-loop.js";
 import { findLatestReadFileState } from "../../tool/read-file-state.js";
 import type { AgentRuntimeInternal } from "../internal.js";
+import { recordModelUsageFact } from "../methods/usage-observability.js";
 import {
   buildProjectMemoryAgentProviderMessages,
   captureProjectMemoryAgentContext,
@@ -87,11 +93,24 @@ export async function runProjectMemoryDream(
   await executeProjectMemoryDream(runtime, context, { mode: "auto" });
 }
 
-/** Manual `/dream` command path: every skip is a visible outcome instead of a silent return. */
-export async function runManualProjectMemoryDream(
+/** Registry description + first progress line for a background dream run. */
+const DREAM_BACKGROUND_TASK_DESCRIPTION = "Consolidating project memory…";
+
+/**
+ * Manual `/dream` launch result: synchronous skips stay visible in the launch turn; a started run
+ * detaches from the turn and settles through the runtime task registry + BackgroundTask* events.
+ * `completion` never rejects — it always resolves to the run outcome.
+ */
+export type ManualDreamLaunch =
+  | { status: "skipped"; reason: ProjectMemoryDreamSkipReason }
+  | { status: "started"; taskId: string; completion: Promise<ProjectMemoryDreamOutcome> };
+
+/** Manual `/dream` command path: every skip is a visible outcome, the run itself is detached. */
+export async function launchManualProjectMemoryDream(
   runtime: AgentRuntimeInternal,
-  input: { abortSignal?: AbortSignal; model?: Model; traceContext: TraceContext },
-): Promise<ProjectMemoryDreamOutcome> {
+  input: { model?: Model; traceContext: TraceContext },
+): Promise<ManualDreamLaunch> {
+  if (runtime.shuttingDown) throw new Error("Runtime is shutting down");
   const memoryRoot = resolveEnabledProjectMemoryRoot(runtime.config, runtime.workspaceRoot);
   if (!memoryRoot || !runtime.sessionStore || !runtime.fileSystemPort || !runtime.modelIoDir) {
     return { status: "skipped", reason: "memory-disabled" };
@@ -100,15 +119,241 @@ export async function runManualProjectMemoryDream(
     return { status: "skipped", reason: "remote-workspace" };
   }
 
+  if (runtime.backgroundDreamRuns.size > 0) return { status: "skipped", reason: "lock-held" };
   const context = captureProjectMemoryAgentContext(runtime, {
     memoryRoot,
     model: input.model,
     operation: "project_memory_dream",
     traceContext: input.traceContext,
   });
-  return executeProjectMemoryDream(runtime, context, {
-    abortSignal: input.abortSignal,
-    mode: "manual",
+  const slot = await acquireDreamRunSlot(runtime, context, { mode: "manual" });
+  if (slot.kind === "skip") {
+    return { status: "skipped", reason: slot.reason };
+  }
+
+  const taskId = `dream-${randomUUID()}`;
+  const controller = new AbortController();
+  let settle!: (outcome: ProjectMemoryDreamOutcome) => void;
+  const completion = new Promise<ProjectMemoryDreamOutcome>((resolve) => {
+    settle = resolve;
+  });
+  let eventChain = Promise.resolve();
+  let terminal = false;
+  let lastProgress = DREAM_BACKGROUND_TASK_DESCRIPTION;
+  const enqueue = (
+    type: DreamBackgroundEventType,
+    payload: Omit<BackgroundTaskPayloadBase, "taskId" | "taskKind">,
+  ): Promise<void> => {
+    eventChain = eventChain
+      .then(() =>
+        emitDreamBackgroundTaskEvent(runtime, type, {
+          taskId,
+          taskKind: "dream",
+          ...payload,
+        }),
+      )
+      .catch((error: unknown) => {
+        logDreamFailure(runtime, "Dream lifecycle event write failed", error);
+      });
+    return eventChain;
+  };
+  const requestCancel = (): Promise<void> => {
+    if (terminal || controller.signal.aborted) return eventChain;
+    controller.abort();
+    return enqueue(SessionEventType.BackgroundTaskUpdated, {
+      cancelRequestedAt: new Date(),
+      cancellable: false,
+      description: lastProgress,
+      status: "running",
+    });
+  };
+
+  try {
+    if (runtime.shuttingDown) throw new Error("Runtime is shutting down");
+    runtime.backgroundDreamRuns.set(taskId, { controller, completion, requestCancel });
+    runtime.runtimeTaskRegistry.register({
+      taskId,
+      agentId: taskId,
+      agentType: "dream",
+      description: DREAM_BACKGROUND_TASK_DESCRIPTION,
+      status: "running",
+      startedAt: new Date(),
+      isBackgrounded: true,
+      type: "local_dream",
+      parentSessionId: runtime.sessionId,
+      traceContext: context.traceContext,
+    });
+    await emitDreamBackgroundTaskEvent(runtime, SessionEventType.BackgroundTaskStarted, {
+      taskId,
+      taskKind: "dream",
+      cancellable: true,
+      description: DREAM_BACKGROUND_TASK_DESCRIPTION,
+      status: "running",
+    });
+  } catch (error) {
+    logDreamFailure(runtime, "Dream launch failed", error);
+    await enqueue(SessionEventType.BackgroundTaskCompleted, {
+      status: "failed",
+      cancellable: false,
+      description: "Dream failed to start",
+      completedAt: new Date(),
+    });
+    await restoreDreamSlot(runtime, context.memoryRoot, slot.priorMtimeMs);
+    runtime.backgroundDreamRuns.delete(taskId);
+    runtime.runtimeTaskRegistry.remove(taskId);
+    settle({ status: "failed", error });
+    throw error;
+  }
+
+  const run = async (): Promise<ProjectMemoryDreamOutcome> => {
+    let outcome: Exclude<ProjectMemoryDreamOutcome, { status: "skipped" }>;
+    let status: "completed" | "failed" | "cancelled" = "failed";
+    try {
+      const telemetry = runtime.agentTelemetry.detached({
+        causation: context.causation,
+        executionKind: "background",
+        operation: "project_memory_dream",
+        targetKind: "project_memory",
+        traceContext: context.traceContext,
+        trigger: "user",
+      });
+      outcome = await telemetry.run(() =>
+        runDreamConsolidation(runtime, context, {
+          abortSignal: controller.signal,
+          onActivity: (activity) => {
+            if (terminal || controller.signal.aborted || activity === lastProgress) return;
+            lastProgress = activity;
+            runtime.runtimeTaskRegistry.update(taskId, (task) => ({
+              ...task,
+              description: activity,
+            }));
+            void enqueue(SessionEventType.BackgroundTaskUpdated, {
+              cancellable: true,
+              description: activity,
+              status: "running",
+            });
+          },
+          priorMtimeMs: slot.priorMtimeMs,
+          transcriptSessionIds: slot.transcriptSessionIds,
+        }),
+      );
+      status =
+        outcome.status === "consolidated"
+          ? "completed"
+          : controller.signal.aborted
+            ? "cancelled"
+            : "failed";
+      if (outcome.status === "consolidated") telemetry.finishCompleted();
+      else if (status === "cancelled")
+        telemetry.finishCancelled(runtime.shuttingDown ? "shutdown" : "user");
+      else telemetry.finishFailed("execute", "internal", outcome.error);
+    } catch (error) {
+      logDreamFailure(runtime, "Dream background execution failed", error);
+      await restoreDreamSlot(runtime, context.memoryRoot, slot.priorMtimeMs);
+      outcome = { status: "failed", error };
+      status = controller.signal.aborted ? "cancelled" : "failed";
+    }
+    terminal = true;
+    try {
+      await enqueue(SessionEventType.BackgroundTaskCompleted, {
+        cancellable: false,
+        completedAt: new Date(),
+        description:
+          outcome.status === "consolidated"
+            ? dreamCompletedDescription(outcome.summary)
+            : status === "cancelled"
+              ? "Dream cancelled"
+              : "Dream failed",
+        status,
+      });
+      // The completion notification is the durable transcript carrier, the CLI TUI completion
+      // surface, and the delivery channel that clears the panel's resultPending entry. A
+      // user-initiated cancel needs no turn: they already saw the stop land.
+      if (status !== "cancelled") {
+        runtime.enqueueBackgroundTaskNotification({
+          originMeta: {
+            backgroundSource: "dream",
+            title: dreamNotificationTitle(outcome),
+            workId: taskId,
+          },
+          taskId,
+          text: dreamNotificationText(outcome),
+          traceContext: runtime.rootTraceContext,
+        });
+      }
+      return outcome;
+    } finally {
+      // Keep residency until all ordered event writes have settled.
+      runtime.runtimeTaskRegistry.update(taskId, (task) => ({
+        ...task,
+        completedAt: new Date(),
+        status,
+      }));
+      runtime.backgroundDreamRuns.delete(taskId);
+    }
+  };
+  // Attach both handlers immediately; callers never inherit a detached rejection.
+  void run().then(settle, (error: unknown) => {
+    logDreamFailure(runtime, "Dream settlement failed", error);
+    runtime.backgroundDreamRuns.delete(taskId);
+    runtime.runtimeTaskRegistry.update(taskId, (task) => ({
+      ...task,
+      status: "failed",
+      completedAt: new Date(),
+    }));
+    settle({ status: "failed", error });
+  });
+  return { status: "started", taskId, completion };
+}
+
+export interface BackgroundDreamRun {
+  controller: AbortController;
+  completion: Promise<ProjectMemoryDreamOutcome>;
+  requestCancel: () => Promise<void>;
+}
+
+/** Called before closing stores so cancellation can still persist its terminal event. */
+export async function drainBackgroundDreams(
+  this: AgentRuntimeInternal,
+  timeoutMs = 60_000,
+): Promise<void> {
+  const completions = [...this.backgroundDreamRuns.values()].map((run) => run.completion);
+  if (completions.length === 0) return;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      Promise.all(completions),
+      new Promise<void>((resolve) => {
+        timeout = setTimeout(() => {
+          this.logger?.warn("Dream shutdown drain timed out", {
+            event: "memory.dream.drain_timeout",
+          });
+          resolve();
+        }, timeoutMs);
+        timeout.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+async function restoreDreamSlot(
+  runtime: AgentRuntimeInternal,
+  memoryRoot: string,
+  priorMtimeMs: number,
+): Promise<void> {
+  try {
+    await restoreDreamLockAfterFailure({ memoryRoot, priorMtimeMs });
+  } catch (error) {
+    logDreamFailure(runtime, "Dream lock restore failed", error);
+  }
+}
+
+function logDreamFailure(runtime: AgentRuntimeInternal, message: string, error: unknown): void {
+  runtime.logger?.warn(message, {
+    event: "memory.dream.failed",
+    errorMessage: error instanceof Error ? error.message : String(error),
   });
 }
 
@@ -119,6 +364,123 @@ export function consumePendingProjectMemoryUpdate(
   if (!update) return undefined;
   runtime.pendingMemoryUpdate = undefined;
   return systemReminderAttachmentEntry("memory_update", formatProjectMemoryUpdate(update));
+}
+
+type DreamRunSlot =
+  | { kind: "skip"; reason: ProjectMemoryDreamSkipReason }
+  | { kind: "ready"; transcriptSessionIds: string[]; priorMtimeMs: number };
+
+/** Shared gate phase: timing (auto), transcript freshness, and lock acquisition. */
+async function acquireDreamRunSlot(
+  runtime: AgentRuntimeInternal,
+  context: ProjectMemoryAgentContext,
+  options: { mode: "auto" | "manual" },
+): Promise<DreamRunSlot> {
+  const nowMs = runtime.now().getTime();
+  const lastConsolidatedAtMs = await readDreamLastConsolidatedAt(context.memoryRoot);
+  if (options.mode === "auto") {
+    const timing = evaluateAutoDreamTiming({
+      lastConsolidatedAtMs,
+      lastScanAtMs: runtime.memoryDreamLastScanAtMs,
+      nowMs,
+    });
+    if (timing.decision === "skip") {
+      return { kind: "skip", reason: "auto-timing" };
+    }
+    runtime.memoryDreamLastScanAtMs = nowMs;
+  }
+  const sessions = selectProjectDreamSessions({
+    currentSessionId: runtime.sessionId,
+    sessions: await runtime.sessionStore!.listSessions(),
+    workspacePath: context.workspaceRoot,
+    workspaceIdentity: runtime.config.memory?.workspaceIdentity,
+  });
+  const transcriptSessionIds = await recentModelIoSessionIds(
+    runtime,
+    sessions,
+    context,
+    lastConsolidatedAtMs,
+  );
+  const minimumTranscriptSessions =
+    options.mode === "manual"
+      ? MANUAL_DREAM_MINIMUM_TRANSCRIPT_SESSIONS
+      : AUTO_DREAM_MINIMUM_TRANSCRIPT_SESSIONS;
+  if (transcriptSessionIds.length < minimumTranscriptSessions) {
+    return { kind: "skip", reason: "no-fresh-transcripts" };
+  }
+
+  const priorMtimeMs = await acquireDreamLock({ memoryRoot: context.memoryRoot, nowMs });
+  if (priorMtimeMs === null) {
+    return { kind: "skip", reason: "lock-held" };
+  }
+  return { kind: "ready", transcriptSessionIds, priorMtimeMs };
+}
+
+/** Shared run phase: prompt → Memory agent loop → usage facts → pending update → marker. */
+async function runDreamConsolidation(
+  runtime: AgentRuntimeInternal,
+  context: ProjectMemoryAgentContext,
+  input: {
+    abortSignal?: AbortSignal;
+    onActivity?: (activity: string) => void;
+    priorMtimeMs: number;
+    transcriptSessionIds: string[];
+  },
+): Promise<Exclude<ProjectMemoryDreamOutcome, { status: "skipped" }>> {
+  try {
+    const prompt = buildMemoryDreamPrompt({
+      memoryRoot: context.memoryRoot,
+      sessionIds: input.transcriptSessionIds,
+      transcriptRoot: runtime.modelIoDir!,
+    });
+    const providerMessages = buildProjectMemoryAgentProviderMessages(runtime, context, prompt);
+    const executor = createProjectMemoryAgentToolExecutor(runtime, context);
+    const touchedPaths = new Set<string>();
+
+    const loopResult = await runMemoryAgentLoop({
+      abortSignal: input.abortSignal,
+      executeTool: (toolCall, loopOptions) => {
+        collectDreamTouchedPaths(touchedPaths, {
+          rootDir: context.memoryRoot,
+          toolCall,
+          workingDirectory: context.workingDirectory,
+          workspaceRoot: context.workspaceRoot,
+        });
+        input.onActivity?.(describeDreamToolActivity(toolCall));
+        return executor.execute(toolCall, {
+          signal: loopOptions.abortSignal,
+          traceContext: context.traceContext,
+        });
+      },
+      onRequestStart: (index) => input.onActivity?.(`Model request ${index + 1}…`),
+      onRequestSettled: (request) => recordDreamModelUsageFact(runtime, context, request),
+      maxTurns: DREAM_MAX_TURNS,
+      messages: providerMessages,
+      model: context.model,
+      rootDir: context.memoryRoot,
+      tools: context.tools,
+      workingDirectory: context.workingDirectory,
+      workspaceRoot: context.workspaceRoot,
+    });
+    // Cancellation before this commit boundary must not stamp a successful consolidation.
+    input.abortSignal?.throwIfAborted();
+    await writeDreamConsolidatedAt(context.memoryRoot);
+
+    const paths = [...touchedPaths];
+    if (paths.length > 0) {
+      runtime.pendingMemoryUpdate = createProjectMemoryUpdate(runtime, paths);
+      invalidateProjectMemoryRecallPaths(runtime, paths);
+    }
+    return {
+      status: "consolidated",
+      summary: finalAssistantText(loopResult.messages) ?? memoryUpdateSummary(paths),
+      touchedPaths: paths,
+    };
+  } catch (error) {
+    logDreamFailure(runtime, "Dream consolidation failed", error);
+    await restoreDreamSlot(runtime, context.memoryRoot, input.priorMtimeMs);
+    return { status: "failed", error };
+  }
 }
 
 async function executeProjectMemoryDream(
@@ -135,120 +497,108 @@ async function executeProjectMemoryDream(
     trigger: options.mode === "manual" ? "user" : "scheduler",
   });
 
-  let outcome: ProjectMemoryDreamOutcome | undefined;
-  await telemetry.run(async () => {
-    let acquiredPriorMtimeMs: number | undefined;
-    try {
-      const nowMs = runtime.now().getTime();
-      const lastConsolidatedAtMs = await readDreamLastConsolidatedAt(context.memoryRoot);
-      if (options.mode === "auto") {
-        const timing = evaluateAutoDreamTiming({
-          lastConsolidatedAtMs,
-          lastScanAtMs: runtime.memoryDreamLastScanAtMs,
-          nowMs,
-        });
-        if (timing.decision === "skip") {
-          outcome = { status: "skipped", reason: "auto-timing" };
-          telemetry.setResultType("metadata");
-          telemetry.finishCompleted();
-          return;
-        }
-        runtime.memoryDreamLastScanAtMs = nowMs;
-      }
-      const sessions = selectProjectDreamSessions({
-        currentSessionId: runtime.sessionId,
-        sessions: await runtime.sessionStore!.listSessions(),
-        workspacePath: context.workspaceRoot,
-        workspaceIdentity: runtime.config.memory?.workspaceIdentity,
-      });
-      const transcriptSessionIds = await recentModelIoSessionIds(
-        runtime,
-        sessions,
-        context,
-        lastConsolidatedAtMs,
-      );
-      const minimumTranscriptSessions =
-        options.mode === "manual"
-          ? MANUAL_DREAM_MINIMUM_TRANSCRIPT_SESSIONS
-          : AUTO_DREAM_MINIMUM_TRANSCRIPT_SESSIONS;
-      if (transcriptSessionIds.length < minimumTranscriptSessions) {
-        outcome = { status: "skipped", reason: "no-fresh-transcripts" };
-        telemetry.setResultType("metadata");
-        telemetry.finishCompleted();
-        return;
-      }
-
-      const priorMtimeMs = await acquireDreamLock({ memoryRoot: context.memoryRoot, nowMs });
-      if (priorMtimeMs === null) {
-        outcome = { status: "skipped", reason: "lock-held" };
-        telemetry.setResultType("metadata");
-        telemetry.finishCompleted();
-        return;
-      }
-      acquiredPriorMtimeMs = priorMtimeMs;
-
-      const prompt = buildMemoryDreamPrompt({
-        memoryRoot: context.memoryRoot,
-        sessionIds: transcriptSessionIds,
-        transcriptRoot: runtime.modelIoDir!,
-      });
-      const providerMessages = buildProjectMemoryAgentProviderMessages(runtime, context, prompt);
-      const executor = createProjectMemoryAgentToolExecutor(runtime, context);
-      const touchedPaths = new Set<string>();
-
-      const loopResult = await runMemoryAgentLoop({
-        abortSignal: options.abortSignal,
-        executeTool: (toolCall, loopOptions) => {
-          collectDreamTouchedPaths(touchedPaths, {
-            rootDir: context.memoryRoot,
-            toolCall,
-            workingDirectory: context.workingDirectory,
-            workspaceRoot: context.workspaceRoot,
-          });
-          return executor.execute(toolCall, {
-            signal: loopOptions.abortSignal,
-            traceContext: context.traceContext,
-          });
-        },
-        maxTurns: DREAM_MAX_TURNS,
-        messages: providerMessages,
-        model: context.model,
-        rootDir: context.memoryRoot,
-        tools: context.tools,
-        workingDirectory: context.workingDirectory,
-        workspaceRoot: context.workspaceRoot,
-      });
-
-      const paths = [...touchedPaths];
-      if (paths.length > 0) {
-        runtime.pendingMemoryUpdate = createProjectMemoryUpdate(runtime, paths);
-        invalidateProjectMemoryRecallPaths(runtime, paths);
-      }
-      // Stamp completion only for runs that reached this point without throwing; the lock's own
-      // mtime starts at run start and survives crashes, so it cannot back "last successful dream".
-      await writeDreamConsolidatedAt(context.memoryRoot);
-      outcome = {
-        status: "consolidated",
-        summary: finalAssistantText(loopResult.messages) ?? memoryUpdateSummary(paths),
-        touchedPaths: paths,
-      };
+  return telemetry.run(async (): Promise<ProjectMemoryDreamOutcome> => {
+    const slot = await acquireDreamRunSlot(runtime, context, { mode: options.mode });
+    if (slot.kind === "skip") {
+      telemetry.setResultType("metadata");
       telemetry.finishCompleted();
-    } catch (error) {
-      telemetry.finishFailed("execute", "internal", error);
-      if (acquiredPriorMtimeMs !== undefined) {
-        try {
-          await restoreDreamLockAfterFailure({
-            memoryRoot: context.memoryRoot,
-            priorMtimeMs: acquiredPriorMtimeMs,
-          });
-        } catch {
-          // Dream 已失败；lock 恢复失败不改变前台 turn，也不追加第二套恢复机制。
-        }
-      }
-      outcome = { status: "failed", error };
+      return { status: "skipped", reason: slot.reason };
     }
+    const outcome = await runDreamConsolidation(runtime, context, {
+      abortSignal: options.abortSignal,
+      priorMtimeMs: slot.priorMtimeMs,
+      transcriptSessionIds: slot.transcriptSessionIds,
+    });
+    if (outcome.status === "failed") {
+      telemetry.finishFailed("execute", "internal", outcome.error);
+    } else {
+      telemetry.finishCompleted();
+    }
+    return outcome;
   });
-  return outcome ?? { status: "failed", error: new Error("Dream outcome was not produced") };
+}
+
+/**
+ * Out-of-turn BackgroundTask* append for the detached dream run. Uses rootTraceContext with an
+ * empty turnId (same reasoning as dynamic-workflow-run-progress.ts): the event belongs to the
+ * background run, not to whichever turn happens to be active when it is emitted.
+ */
+type DreamBackgroundEventType =
+  | typeof SessionEventType.BackgroundTaskStarted
+  | typeof SessionEventType.BackgroundTaskUpdated
+  | typeof SessionEventType.BackgroundTaskCompleted;
+
+async function emitDreamBackgroundTaskEvent(
+  runtime: AgentRuntimeInternal,
+  type: DreamBackgroundEventType,
+  payload: BackgroundTaskPayloadBase,
+): Promise<void> {
+  const traceContext = runtime.rootTraceContext;
+  await runtime.appendEvent(runtime.createEvent(type, payload, traceContext), traceContext);
+}
+
+/** One-line activity label surfaced as the backgroundWorks panel title while the run progresses. */
+function describeDreamToolActivity(toolCall: { name: string; input?: unknown }): string {
+  const input = toolCall.input;
+  if (!input || typeof input !== "object" || Array.isArray(input)) return toolCall.name;
+  const record = input as Record<string, unknown>;
+  const target = [record.file_path, record.command, record.pattern, record.path, record.query].find(
+    (value): value is string => typeof value === "string" && value.length > 0,
+  );
+  return target === undefined ? toolCall.name : `${toolCall.name} ${target}`.slice(0, 120);
+}
+
+/** Per-request `model_usage` facts for the dream loop (title-sidecar pattern, querySource "dream"). */
+async function recordDreamModelUsageFact(
+  runtime: AgentRuntimeInternal,
+  context: ProjectMemoryAgentContext,
+  request: MemoryAgentLoopRequestUsage,
+): Promise<void> {
+  await recordModelUsageFact(runtime, {
+    attemptIndex: request.index,
+    completedAt: request.completedAt,
+    error: request.error,
+    events: [],
+    model: context.model,
+    networkEventStartIndex: 0,
+    querySource: "dream",
+    result: request.result,
+    startedAt: request.startedAt,
+    status: request.status,
+    toolCallCount: request.result?.toolCalls?.length,
+    traceContext: createChildTraceContext(context.traceContext, {}),
+  });
+}
+
+/** First line of the agent summary, capped for the completed panel entry. */
+function dreamCompletedDescription(summary: string): string {
+  const firstLine = summary.split("\n", 1)[0] ?? "";
+  return firstLine.length > 0 ? firstLine.slice(0, 120) : "Dream completed";
+}
+
+/** One-line title for the background-result turn header (CLI-authored, not localized). */
+function dreamNotificationTitle(
+  outcome: Exclude<ProjectMemoryDreamOutcome, { status: "skipped" }>,
+): string {
+  return outcome.status === "consolidated"
+    ? `Dream: ${dreamCompletedDescription(outcome.summary)}`.slice(0, 120)
+    : "Dream failed";
+}
+
+/** Model-visible completion notice; the reply turn is the durable transcript row. */
+function dreamNotificationText(
+  outcome: Exclude<ProjectMemoryDreamOutcome, { status: "skipped" }>,
+): string {
+  if (outcome.status === "consolidated") {
+    const filesLine =
+      outcome.touchedPaths.length > 0
+        ? `\nFiles changed: ${outcome.touchedPaths.join(", ")}`
+        : "";
+    return `Background memory consolidation (dream) finished.\n${outcome.summary}${filesLine}`;
+  }
+  const message =
+    outcome.error instanceof Error ? outcome.error.message : String(outcome.error ?? "");
+  return `Background memory consolidation (dream) failed${message ? `: ${message}` : ""}.`;
 }
 
 /** Last non-empty assistant text from the Memory agent loop, or undefined when the loop ended without one. */

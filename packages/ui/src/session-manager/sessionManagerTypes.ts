@@ -1,6 +1,7 @@
-import type { SessionManagerScope } from "@/store/tabStore.js";
+import type { SettingsSessionsScope } from "@/lib/settingsNavigation.js";
 
-export type { SessionManagerScope };
+/** Workspace the sessions view was opened for; omitted means the unscoped all-workspaces view. */
+export type { SettingsSessionsScope as SessionManagerScope };
 
 export type SessionManagerStatusFilter = "active" | "archived" | "all";
 export type SessionManagerEnvironmentFilter = "all" | "local" | "worktree";

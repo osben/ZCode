@@ -319,8 +319,8 @@ export type WorkflowNotificationMeta =
 
 /** Display metadata for a standalone background-result turn; batches can reuse a representative task identity and synthesize a title instead of parsing notification text. */
 export interface BackgroundResultOriginMeta {
-  /** `workflow` is a dynamic-workflow run (workId ≡ runId) and reuses the full background-notification pipeline. */
-  backgroundSource: "bash" | "subagent" | "workflow";
+  /** `workflow` is a dynamic-workflow run (workId ≡ runId) and reuses the full background-notification pipeline; `dream` is the /dream memory-consolidation completion notification. */
+  backgroundSource: "bash" | "subagent" | "workflow" | "dream";
   workId: string;
   title: string;
   /** Present only on a single notification turn with backgroundSource === "workflow"; the sole data source for manifest rendering. */
@@ -982,8 +982,9 @@ export interface BackgroundTaskPayloadBase {
   toolCallId?: ToolCallId | string;
   toolName?: string;
   // "workflow" = workflow run (CreateWorkflow). Tracker behavior now dispatches through per-tool lifecycleProvider;
+  // "dream" = background memory consolidation launched by the /dream command (registry task, not a tool call).
   // taskKind only controls panel grouping and icon, so widening it is a display-only correction with no lifecycle change.
-  taskKind?: "bash" | "subagent" | "workflow";
+  taskKind?: "bash" | "subagent" | "workflow" | "dream";
   childSessionId?: SessionId | string;
   blocked?: boolean;
   blockedReason?: "interactive_prompt_detected" | "no_output_progress" | string;

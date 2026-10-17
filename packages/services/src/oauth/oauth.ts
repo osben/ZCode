@@ -95,6 +95,16 @@ export interface IOAuthService {
   logoutChatGptPlan(
     accountKey?: string,
   ): Promise<{ accountCount: number; revoked: boolean; signedOut: boolean }>;
+
+  /**
+   * Start the per-account "Link usage" codex-flavor grant (read-only usage probe; tokens never
+   * reach the inference path). The UI opens authorizeUrl externally and polls
+   * pollChatGptUsageLink. Fails when the account is not signed in.
+   */
+  startChatGptUsageLink(accountKey: string): Promise<SiwcLoginStart>;
+
+  /** Usage-link poll; null while the browser redirect has not arrived yet. */
+  pollChatGptUsageLink(): Promise<{ accountKey: string } | null>;
 }
 
 export const IOAuthService = createServiceDescriptor<IOAuthService>(ServiceChannels.OAuth);

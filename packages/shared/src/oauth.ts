@@ -346,8 +346,10 @@ export interface SiwcPlanUsageSnapshot {
 export interface SiwcPlanAccountStatus extends Omit<SiwcPlanStatus, "user"> {
   accountKey: string;
   user: SiwcPlanUserSummary;
-  /** Latest passively captured plan usage; absent until a response carried usage headers. */
+  /** Latest plan usage snapshot (usage probe or passive capture); absent until one exists. */
   usage?: SiwcPlanUsageSnapshot;
+  /** A codex-flavor usage grant is linked for this account (probe runs on status reads). */
+  usageLinked?: boolean;
 }
 
 /** Aggregate status across all signed-in ChatGPT plan accounts. */

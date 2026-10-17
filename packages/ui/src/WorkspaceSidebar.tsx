@@ -400,7 +400,6 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   const commandCenterShortcutLabel = useShortcutCommandLabel("openCommandCenter");
   const tabs = useTabStore((state) => state.tabs);
   const activateTab = useTabStore((state) => state.activateTab);
-  const openSessionManagerTab = useTabStore((state) => state.openSessionManagerTab);
   const closeTab = useTabStore((state) => state.closeTab);
   const openSettingsTab = useTabStore((state) => state.openSettingsTab);
   const expandedWorkspacePaths = useTabStore((state) => state.expandedWorkspacePaths);
@@ -506,9 +505,11 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   );
   const handleOpenSessionManagerFromSidebar = useCallback(
     (scope: { workspacePath: string; workspaceIdentity?: string }) => {
-      openSessionManagerTab(scope);
+      // Sessions management is a Settings section now; the project menu deep-links it scoped.
+      setPendingSettingsSectionIntent("sessions", { sessionsScope: scope });
+      openSettingsTab();
     },
-    [openSessionManagerTab],
+    [openSettingsTab],
   );
 
   const handleToggleWorkspacePinned = useCallback(

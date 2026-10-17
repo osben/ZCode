@@ -31,14 +31,14 @@ Session management today is scattered across per-workspace sidebar sections (pin
 
 ### 1. Hosting and entry points
 
-- The manager is a **unique full-area tab in the main window**, modeled on the Settings tab precedent: `SETTINGS_TAB_ID` singleton (`packages/ui/src/store/tabStore.ts:19`), `SettingsTabState` (`tabStore.ts:23-27`), find-or-create `openSettingsTab()` (`tabStore.ts:488-500`). Add `SESSION_MANAGER_TAB_ID = "__sessions__"` with `SessionManagerTabState { id, kind: "session-manager" }`, an `isSessionManagerTab` guard, and `openSessionManagerTab(scope?)`. Like Settings, the manager has **no tab-strip row**: both surfaces are store-level tabs that overlay the workspace shell and are closed through their own Back control or by activating another tab.
-- Persistence: tab persistence writes only workspace tabs — the default patch filters `isWorkspaceTab` (`packages/ui/src/hooks/useTabPersistence.ts:85-99`) and the desktop remote patch filters `kind === "workspace"` (`packages/ui/src/root/remoteWorkspaceSessionPersistence.ts:46`); restore rebuilds only workspace entries. The manager tab therefore never survives a window restart — same as Settings, no extra code needed.
-- Mounting follows the Settings overlay pattern: `Root.tsx` derives `isSessionManagerTabActive` next to `isSettingsTabActive` (`Root.tsx:510`); with a workspace open, `RootWorkspaceContent` keeps the workspace shell mounted-and-inert and overlays the manager (`RootWorkspaceContent.tsx:107-218` pattern); with no workspace open, Root renders the manager page standalone (the `!workspaceShellPath` branch at `Root.tsx:1266-1276`).
+- **The manager is a Settings section** (2026-10-17 redesign, replaces the store-level `__sessions__` tab): `sessions` in the `dataAndStats` group of the settings page. The settings shell owns the sidebar, back-to-workspace, breadcrumb, title, and window-chrome handling; the section renders scope chip, search, columns menu, filter bar, table, bulk bar, and delete dialog. The former standalone tab/layer machinery (singleton tab in `tabStore`, shell content-column mounting, its own back control and title-bar drag row) was removed because it kept producing placement/back-contract bugs.
+- Persistence: workspace-tab persistence is untouched (the manager is no longer a tab at all); the table view state keeps `zcode.sessionManager.view.v1` in localStorage (§5).
+- Navigation uses the settings intent mechanism (`packages/ui/src/lib/settingsNavigation.ts`): `setPendingSettingsSectionIntent("sessions", { sessionsScope })` + the same-window intent event, mirroring the plugin/usage intents.
 - Entries:
-  1. Project action menu (workspace `⋯` menu in the sidebar, `WorkspaceSidebarItem.tsx` — the Pin/Customize block) → **"Manage sessions"**: opens the tab with a **workspace scope** `{workspacePath, workspaceIdentity}` for that workspace identity (Copilot parity: its project menu navigates to `/recent` with `state: { repoFilter }`).
-  2. **Command Center / quick pick**: a `manage-sessions` command (`packages/ui/src/quickpick/quickPickCommands.ts` pattern) opens the tab unscoped.
-- Opening the tab again re-activates the existing instance and replaces its scope. Scope is navigation state carried on `SessionManagerTabState.scope` (reactively consumed by the layer; ephemeral — non-workspace tabs are never persisted, so a restart loses it, matching Settings semantics).
-- **Back** button in the surface header activates the previously active workspace tab — same handler contract as `handleBackFromSettings` (`packages/ui/src/root/useRootWorkspaceActions.ts:548-559`: `activateTabByPath(path, { workspaceIdentity })`, identity-preserving); hidden when no workspace tab exists.
+  1. Project action menu (workspace `⋯` menu in the sidebar, `WorkspaceSidebarItem.tsx`) → **"Manage sessions"**: sets the intent with a **workspace scope** `{workspacePath, workspaceIdentity}` and opens Settings on the sessions section (Copilot parity: its project menu navigates to `/recent` with `state: { repoFilter }`).
+  2. **Command Center / quick pick**: a `manage-sessions` command opens the section **unscoped**.
+- Opening the section again re-uses the live Settings page through the intent event and replaces the scope. Scope is ephemeral navigation state (sessionStorage intent consumed once, then section-local until cleared with the chip ✕) — it does not survive leaving Settings, matching the old tab-scope semantics.
+- **Back** to the workspace is the Settings sidebar's existing "Back to workspace" control — no dedicated back contract for the manager anymore.
 
 ### 2. Data flow (read-only, single owner)
 
@@ -56,9 +56,11 @@ Session management today is scattered across per-workspace sidebar sections (pin
 
 ### 3. Layout
 
-Three stacked regions inside the tab (header 48px, filter bar ~44px, table flex-1):
+Hosting frame (2026-10-17 redesign): the section renders inside the Settings content frame like every other section — the Settings shell provides the panel, title row, and window-chrome handling. The section-local header keeps the scope chip, search, and Columns menu; no title-bar drag row of its own.
 
-1. **Header** (`bg-header`, `border-b border-border`): Back chevron, title "Manage sessions", removable **scope chip** when workspace-scoped (folder icon + workspace name; ✕ clears the scope → unscoped view; not persisted), spacer, search input (~230px, `/` shortcut focus), Columns button (popover with per-column checkboxes, persisted).
+Three stacked regions inside the section (toolbar row, filter bar ~44px, table flex-1):
+
+1. **Toolbar row** (`bg-header`, `border-b border-border`): removable **scope chip** when workspace-scoped (folder icon + workspace name; ✕ clears the scope → unscoped view; not persisted), spacer, search input (~230px, `/` shortcut focus), Columns button (popover with per-column checkboxes, persisted). The "Manage sessions" title and Back control belong to the Settings shell, not this row.
 2. **Filter bar**: segmented dropdowns **Status** (Active/Archived/All; default Active), **Environment** (All/Local/Worktree; client-side on `executionWorktree` presence), **Type** (All/Session/Cron/Off-peak; client-side on `cronAutomationId`/`offPeakTaskId`), **Pinned** toggle chip (client-side `membership.pinned`; no-op under Status=Archived), **Reset filters** (appears when any filter deviates from default), right-aligned count "N sessions · X running" (running = liveStatus `running|waiting`).
 3. **Table**: grouped rows (§6), virtualized with `@tanstack/react-virtual` over the flattened group-header+row model; sticky thead (`bg-header`, 32px, `text-ui-xs text-foreground-subtle`); dense single-line rows (34px, `border-b border-border`), hover `bg-surface-hover`, selected `bg-selected`. Minimum table width ~1060px with horizontal scroll inside the content area below that.
 
@@ -102,7 +104,7 @@ One namespaced localStorage JSON key `zcode.sessionManager.view.v1` (per device,
 
 Context menu on the row / `⋯` button:
 
-- **Open** — activates the session through the standard select path (`activateTabByPath(path, {workspaceIdentity})` + task selection, the `useWorkspaceTaskNavigation` composition — `App.tsx:962-973`); the manager tab stays open in the store so its Back returns. Disabled for offline rows. Offered for archived rows too (opening history is read-only).
+- **Open** — activates the session through the standard select path (`activateTabByPath(path, {workspaceIdentity})` + task selection, the `useWorkspaceTaskNavigation` composition — `App.tsx:962-973`); Open navigates to the session's workspace — Settings stays open, and the user returns to it via the Settings shell's back control. Disabled for offline rows. Offered for archived rows too (opening history is read-only).
 - **Rename** — inline input replacing the Name cell; Enter/blur commits via `zcodeTaskService.renameTask`, Esc cancels; empty commits fall back to the untitled label. Allowed for running sessions (decision): rename rewrites the indexed title (`title_overridden`); a running session's auto-titling may overwrite a manual name on its next turn — accepted caveat, not worked around.
 - **Pin / Unpin** — `setTaskPinned` toggle.
 - _separator_
@@ -153,7 +155,7 @@ All user-facing strings under the `sessionManager.*` namespace in `en-US`, `zh-C
 
 ## Acceptance scenarios
 
-1. Project menu "Manage sessions" on workspace W opens the manager tab scoped to W (chip visible, Path column hidden); clearing the chip shows the universe grouped by workspace key; nothing view-related persists across app restart except §5 preferences.
+1. Project menu "Manage sessions" on workspace W opens Settings on the sessions section scoped to W (chip visible, Path column hidden); clearing the chip shows the universe grouped by workspace key; nothing view-related persists across app restart except §5 preferences.
 2. Status=Archived shows only archived rows with Restore in the menu; Restore returns the row to the Active view without reload.
 3. Deleting a running session (tombstone) removes the row immediately and it does not resurrect after restart; the CLI session directory still exists on disk.
 4. Bulk-selecting 3 rows of which 1 is pinned: dialog shows "Include 1 pinned session" unchecked; confirming deletes 2 rows and keeps the pinned row.
@@ -165,4 +167,4 @@ All user-facing strings under the `sessionManager.*` namespace in `en-US`, `zh-C
 
 - **Inline rename for running sessions** — allowed (§7); auto-title overwrite caveat accepted.
 - **Sorts** — default Updated desc; server sorts on Updated/Created, client sort on Name; no Status sort in v1.
-- **Hosting** — unique main-window tab (Settings precedent), no tab-strip row, not persisted (§1).
+- **Hosting** — `sessions` section in the `dataAndStats` group of the Settings page (2026-10-17 redesign), not a main-window tab; not persisted (§1).

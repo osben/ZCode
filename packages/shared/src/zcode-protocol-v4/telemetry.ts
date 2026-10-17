@@ -65,8 +65,9 @@ const turnStartedFactSchema = z
     kind: z.literal("turn.started"),
     executionKind: z.enum(["agent", "controlOnly"]).optional(),
     inputSource: zcodeSyntheticUserMessageSourceSchema.optional(),
-    // `workflow`: a separate turn triggered by a completion/question notification from a dynamic-workflow run.
-    backgroundSource: z.enum(["bash", "subagent", "workflow"]).optional(),
+    // `workflow`: a separate turn triggered by a completion/question notification from a dynamic-workflow run;
+    // `dream`: a separate turn triggered by the /dream memory-consolidation completion notification.
+    backgroundSource: z.enum(["bash", "subagent", "workflow", "dream"]).optional(),
     automationId: z.string().min(1).optional(),
     offPeakTaskId: z.string().min(1).optional(),
     offPeakRunType: z.enum(["init", "resume"]).optional(),

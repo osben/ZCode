@@ -27,6 +27,7 @@ import {
   ListChecksIcon,
   Maximize2Icon,
   Minimize2Icon,
+  MoonIcon,
   PauseIcon,
   PlayIcon,
   SquareIcon,
@@ -191,7 +192,7 @@ function formatDurationUnits(
 }
 
 function getBackgroundWorkElapsedMs(work: BackgroundWorkSummary, now: number) {
-  return Math.max(0, now - work.startedAt);
+  return Math.max(0, (work.endedAt ?? now) - work.startedAt);
 }
 
 function getLongestRunningWorkElapsedMs(works: readonly BackgroundWorkSummary[], now: number) {
@@ -239,6 +240,7 @@ type StatusSectionKind =
   | "goal"
   | "sessionPlans"
   | "plan"
+  | "dream"
   | "terminal"
   | "workflow"
   | "agent";
@@ -249,6 +251,7 @@ const STATUS_SECTION_SCROLL_POLICY = {
   sessionPlans: "max-h-48",
   // Six two-line Todos (6 × 52px) need about 20rem; beyond that, scroll only the process section.
   plan: "max-h-80",
+  dream: "max-h-48",
   terminal: "max-h-48",
   // Workflow rows are fixed at 56px, and the list shows three and a half rows (196px); the partial row signals that more are below.
   workflow: "max-h-[12.25rem]",
@@ -1100,6 +1103,56 @@ function RunningStatusItem({
   );
 }
 
+function DreamStatusSection({
+  work,
+  separated,
+  onCancel,
+}: {
+  work: BackgroundWorkSummary;
+  separated: boolean;
+  onCancel?: (workId: string) => void;
+}) {
+  const { intl } = useZCodeIntl();
+  const running = work.status === "running";
+  const now = useNowTicker(running);
+  const status = intl.formatMessage({ id: `chat.statusPanel.dream.${work.status}` });
+  return (
+    <StatusSection
+      section="dream"
+      title={intl.formatMessage({ id: "chat.statusPanel.dream" })}
+      defaultOpen
+      separated={separated}
+      trailing={() => <span>{status}</span>}
+    >
+      <ul>
+        <li
+          data-testid={testId(TID_V4_BACKGROUND_WORK_ITEM, work.workId)}
+          data-background-task-id={work.workId}
+          data-background-task-kind="dream"
+          data-status={work.status}
+          className="flex items-start gap-2 rounded-lg px-2 py-2"
+        >
+          <MoonIcon className="mt-0.5 size-4 shrink-0 text-[var(--color-foreground-subtle)]" />
+          <div className="min-w-0 flex-1 space-y-1.5">
+            <p className="line-clamp-2 text-ui-base leading-5">{work.title}</p>
+            <div className="flex items-center gap-2 text-ui-base text-[var(--color-foreground-subtle)]">
+              <span>
+                {formatBackgroundTaskElapsedLabel(
+                  getBackgroundWorkElapsedMs(work, now),
+                  intl.formatMessage,
+                )}
+              </span>
+              {running && work.cancellable !== false ? (
+                <RunningWorkCancelButton workId={work.workId} onCancel={onCancel} />
+              ) : null}
+            </div>
+          </div>
+        </li>
+      </ul>
+    </StatusSection>
+  );
+}
+
 function BackgroundWorkStatusSection({
   onOpenBackgroundBash,
   onCancelBackgroundWork,
@@ -1875,6 +1928,10 @@ function StatusSummaryRow({
   // does not duplicate that count.
   const summaryMetric = firstLiveRun ? (
     <WorkflowSummaryMetric run={firstLiveRun} others={model.runningWorkflowRuns.length - 1} />
+  ) : model.latestDreamWork ? (
+    <StatusSummaryMetric icon={<MoonIcon className="size-4 text-[var(--color-foreground)]" />}>
+      <span className="min-w-0 truncate">{model.latestDreamWork.title}</span>
+    </StatusSummaryMetric>
   ) : currentPlanItem ? (
     <StatusSummaryMetric
       icon={<ArrowRightIcon className="size-4 text-[var(--color-foreground)]" />}
@@ -2067,6 +2124,7 @@ function ConversationStatusPanelImpl({
   const canRenderGoal = Boolean(model.goal);
   const canRenderSessionPlans = Boolean(model.sessionPlans);
   const canRenderPlan = Boolean(model.plan);
+  const canRenderDream = Boolean(model.latestDreamWork);
   const canRenderTerminals = model.runningBashWorks.length > 0;
   // Ended runs also open the gate (same condition as canRenderAgents): after restart the active count is zero,
   // and gating only on it would hide the only entry to the run directory.
@@ -2137,8 +2195,10 @@ function ConversationStatusPanelImpl({
         data-running-background-count={
           model.runningBashWorks.length +
           model.runningSubagentWorks.length +
-          model.runningWorkflowRuns.length
+          model.runningWorkflowRuns.length +
+          (model.latestDreamWork?.status === "running" ? 1 : 0)
         }
+        data-running-dream-count={model.latestDreamWork?.status === "running" ? 1 : 0}
         data-running-terminal-count={model.runningBashWorks.length}
         data-running-agent-count={model.runningSubagentWorks.length}
         data-running-workflow-count={model.runningWorkflowRuns.length}
@@ -2259,6 +2319,13 @@ function ConversationStatusPanelImpl({
                 separated={canRenderGit || canRenderGoal || canRenderSessionPlans}
               />
             ) : null}
+            {model.latestDreamWork ? (
+              <DreamStatusSection
+                work={model.latestDreamWork}
+                onCancel={onCancelBackgroundWork}
+                separated={canRenderGit || canRenderGoal || canRenderSessionPlans || canRenderPlan}
+              />
+            ) : null}
             {canRenderTerminals ? (
               <BackgroundWorkStatusSection
                 onOpenBackgroundBash={onOpenBackgroundBash}
@@ -2267,7 +2334,13 @@ function ConversationStatusPanelImpl({
                 works={model.runningBashWorks}
                 open={terminalSectionOpen}
                 onOpenChange={onTerminalSectionOpenChange}
-                separated={canRenderGit || canRenderGoal || canRenderSessionPlans || canRenderPlan}
+                separated={
+                  canRenderGit ||
+                  canRenderGoal ||
+                  canRenderSessionPlans ||
+                  canRenderPlan ||
+                  canRenderDream
+                }
                 onCancelBackgroundWork={onCancelBackgroundWork}
               />
             ) : null}
@@ -2283,6 +2356,7 @@ function ConversationStatusPanelImpl({
                   canRenderGoal ||
                   canRenderSessionPlans ||
                   canRenderPlan ||
+                  canRenderDream ||
                   canRenderTerminals
                 }
                 parentSessionId={parentSessionId}
@@ -2304,6 +2378,7 @@ function ConversationStatusPanelImpl({
                   canRenderGoal ||
                   canRenderSessionPlans ||
                   canRenderPlan ||
+                  canRenderDream ||
                   canRenderTerminals ||
                   canRenderWorkflows
                 }

@@ -376,14 +376,16 @@ export type CommandStateSummary = z.infer<typeof commandStateSummarySchema>;
 
 export const backgroundWorkSummarySchema = z.object({
   workId: z.string(),
-  // workflow = workflow run (CreateWorkflow). **Skew cost of adding a closed-set value**:
+  // workflow = workflow run (CreateWorkflow); dream = background memory consolidation (/dream).
+  // **Skew cost of adding a closed-set value**:
   // when an older Desktop receives an unknown value, the entire state.updated patch fails to parse (an invalid value for a known key is an error, not stripped),
   // so the assembler rejects the whole frame. The resync snapshot carries the same value and fails too; there is no graceful fallback.
   // This is acceptable only when CLI and Desktop ship together.
-  kind: z.enum(["bash", "subagent", "workflow"]),
+  kind: z.enum(["bash", "subagent", "workflow", "dream"]),
   title: z.string(),
   // resultPending = completed, with the result waiting for foreground availability in the continuation inbox;
   // the entry disappears after delivery (the result becomes a userInput row with origin=backgroundResult).
+  // Dream is terminal here: it has no inbox delivery and the UI retains the latest result.
   status: z.enum(["running", "resultPending", "failed", "cancelled"]),
   startedAt: timestampSchema,
   endedAt: timestampSchema.optional(),

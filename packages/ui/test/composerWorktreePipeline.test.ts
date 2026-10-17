@@ -48,6 +48,18 @@ function currentPipeline(sessionId?: string) {
   );
 }
 
+function worktreeEntry(path: string, branchName = PARAMS.branchName) {
+  return {
+    path,
+    headCommitHash: "c",
+    branchName,
+    isMain: false,
+    isBare: false,
+    isDetached: false,
+    isCurrent: false,
+  };
+}
+
 beforeEach(() => {
   useComposerWorktreePipelineStore.setState({ pipelineByWorkspaceKey: {} });
 });
@@ -513,5 +525,234 @@ describe("reconcileCreatingComposerWorktreePipeline", () => {
       issues: [],
     });
     await runner;
+  });
+});
+
+describe("Host preparation sync before ready (strict activation stays intact)", () => {
+  const OTHER_PATH = "/dev/other-worktrees/zcode-sleepy-capybara";
+
+  function mockExistingWorktreeElsewhere() {
+    createWorktree.mockResolvedValue({
+      ok: false,
+      worktreePath: null,
+      branchName: null,
+      issues: [{ code: "target-path-exists", message: "target exists" }],
+    } satisfies GitWorktreeCreateResult);
+    listWorktrees.mockResolvedValue({
+      isGitAvailable: true,
+      isRepository: true,
+      worktrees: [worktreeEntry(OTHER_PATH)],
+    });
+  }
+
+  it("realigns the Host marker before ready when an existing worktree is reused at another path", async () => {
+    const syncPreparedWorktree = vi.fn().mockResolvedValue(undefined);
+    mockExistingWorktreeElsewhere();
+    seedCreating({ sessionId: "session-prepared-1" });
+
+    const outcome = await startComposerWorktreePipeline({
+      gitService,
+      workspaceKey: WORKSPACE_KEY,
+      sessionId: "session-prepared-1",
+      params: PARAMS,
+      formatMessage: (id: string) => id,
+      syncPreparedWorktree,
+    });
+
+    expect(outcome).toBe("ready");
+    expect(syncPreparedWorktree).toHaveBeenCalledWith({
+      workspaceKey: WORKSPACE_KEY,
+      sessionId: "session-prepared-1",
+      branchName: PARAMS.branchName,
+      targetPath: OTHER_PATH,
+      baseBranch: "main",
+    });
+    expect(currentPipeline()).toMatchObject({
+      status: "ready",
+      existing: true,
+      worktreePath: OTHER_PATH,
+    });
+  });
+
+  it("leaves the Host marker untouched when Git settles on the prepared target", async () => {
+    const syncPreparedWorktree = vi.fn().mockResolvedValue(undefined);
+    createWorktree.mockResolvedValue({
+      ok: true,
+      worktreePath: PARAMS.targetPath,
+      branchName: PARAMS.branchName,
+      issues: [],
+    } satisfies GitWorktreeCreateResult);
+    seedCreating({ sessionId: "session-prepared-1" });
+
+    const outcome = await startComposerWorktreePipeline({
+      gitService,
+      workspaceKey: WORKSPACE_KEY,
+      sessionId: "session-prepared-1",
+      params: PARAMS,
+      formatMessage: (id: string) => id,
+      syncPreparedWorktree,
+    });
+
+    expect(outcome).toBe("ready");
+    expect(syncPreparedWorktree).not.toHaveBeenCalled();
+  });
+
+  it("fails the attempt when the Host rejects the realigned path (no unactivatable ready)", async () => {
+    const syncPreparedWorktree = vi.fn().mockRejectedValue(new Error("host rejected"));
+    mockExistingWorktreeElsewhere();
+    seedCreating({ sessionId: "session-prepared-1" });
+
+    const outcome = await startComposerWorktreePipeline({
+      gitService,
+      workspaceKey: WORKSPACE_KEY,
+      sessionId: "session-prepared-1",
+      params: PARAMS,
+      formatMessage: (id: string) => id,
+      syncPreparedWorktree,
+    });
+
+    expect(outcome).toBe("failed");
+    expect(currentPipeline()).toMatchObject({ status: "failed", sessionId: "session-prepared-1" });
+  });
+
+  it("fails the attempt when Git settles elsewhere and marker sync is unavailable", async () => {
+    mockExistingWorktreeElsewhere();
+    seedCreating({ sessionId: "session-prepared-1" });
+
+    // No syncPreparedWorktree: the Host marker keeps the frozen target, so a differing Git path
+    // must fail the attempt instead of publishing a ready entry activation would reject.
+    const outcome = await startComposerWorktreePipeline({
+      gitService,
+      workspaceKey: WORKSPACE_KEY,
+      sessionId: "session-prepared-1",
+      params: PARAMS,
+      formatMessage: (id: string) => id,
+    });
+
+    expect(outcome).toBe("failed");
+    expect(currentPipeline()).toMatchObject({
+      status: "failed",
+      sessionId: "session-prepared-1",
+      failureMessage: "worktreeSetup.reconcile.markerSyncUnavailable",
+    });
+  });
+
+  it("realigns the Host marker during stale-creating reconcile before ready", async () => {
+    const syncPreparedWorktree = vi.fn().mockResolvedValue(undefined);
+    seedCreating({ sessionId: "session-prepared-1" });
+    listWorktrees.mockResolvedValue({
+      isGitAvailable: true,
+      isRepository: true,
+      worktrees: [worktreeEntry(OTHER_PATH)],
+    });
+
+    await reconcileCreatingComposerWorktreePipeline({
+      gitService,
+      workspaceKey: WORKSPACE_KEY,
+      sessionId: "session-prepared-1",
+      branchName: PARAMS.branchName,
+      formatMessage: (id: string) => id,
+      syncPreparedWorktree,
+    });
+
+    expect(syncPreparedWorktree).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: "session-prepared-1", targetPath: OTHER_PATH }),
+    );
+    expect(currentPipeline()).toMatchObject({
+      status: "ready",
+      existing: true,
+      worktreePath: OTHER_PATH,
+    });
+  });
+
+  it("fails stale-creating reconcile when the path differs and marker sync is unavailable", async () => {
+    seedCreating({ sessionId: "session-prepared-1" });
+    listWorktrees.mockResolvedValue({
+      isGitAvailable: true,
+      isRepository: true,
+      worktrees: [worktreeEntry(OTHER_PATH)],
+    });
+
+    await reconcileCreatingComposerWorktreePipeline({
+      gitService,
+      workspaceKey: WORKSPACE_KEY,
+      sessionId: "session-prepared-1",
+      branchName: PARAMS.branchName,
+      formatMessage: (id: string) => id,
+    });
+
+    expect(currentPipeline()).toMatchObject({
+      status: "failed",
+      sessionId: "session-prepared-1",
+      failureMessage: "worktreeSetup.reconcile.markerSyncUnavailable",
+    });
+  });
+
+  it("keeps the entry creating until the Host marker sync settles, then marks ready", async () => {
+    let releaseSync!: () => void;
+    const syncPreparedWorktree = vi
+      .fn()
+      .mockImplementation(() => new Promise<void>((resolve) => (releaseSync = resolve)));
+    mockExistingWorktreeElsewhere();
+    seedCreating({ sessionId: "session-prepared-1" });
+
+    let settled: "ready" | "failed" | undefined;
+    const attempt = startComposerWorktreePipeline({
+      gitService,
+      workspaceKey: WORKSPACE_KEY,
+      sessionId: "session-prepared-1",
+      params: PARAMS,
+      formatMessage: (id: string) => id,
+      syncPreparedWorktree,
+    }).then((outcome) => {
+      settled = outcome;
+      return outcome;
+    });
+
+    // The queued send dispatches the moment the entry turns ready; publishing ready before the
+    // Host marker settled would race the first send against a stale prepared targetPath.
+    await vi.waitFor(() => expect(syncPreparedWorktree).toHaveBeenCalledTimes(1));
+    expect(currentPipeline()).toMatchObject({ status: "creating" });
+    expect(settled).toBeUndefined();
+
+    releaseSync();
+    await expect(attempt).resolves.toBe("ready");
+    expect(currentPipeline()).toMatchObject({
+      status: "ready",
+      existing: true,
+      worktreePath: OTHER_PATH,
+    });
+  });
+
+  it("realigns the Host marker on retry when the reused worktree moved", async () => {
+    const syncPreparedWorktree = vi.fn().mockResolvedValue(undefined);
+    mockExistingWorktreeElsewhere();
+    seedCreating({ sessionId: "session-prepared-1", queuedPromptPreview: "frozen input" });
+    useComposerWorktreePipelineStore.getState().markFailed(WORKSPACE_KEY, "boom");
+    expect(currentPipeline()).toMatchObject({ status: "failed" });
+
+    const outcome = await retryComposerWorktreePipeline({
+      gitService,
+      workspaceKey: WORKSPACE_KEY,
+      formatMessage: (id: string) => id,
+      syncPreparedWorktree,
+    });
+
+    // Retry must carry the sync hook through: a WT-04 reuse at another path on the retried
+    // attempt is the exact scenario the realignment exists for.
+    expect(outcome).toBe("ready");
+    expect(syncPreparedWorktree).toHaveBeenCalledWith({
+      workspaceKey: WORKSPACE_KEY,
+      sessionId: "session-prepared-1",
+      branchName: PARAMS.branchName,
+      targetPath: OTHER_PATH,
+      baseBranch: "main",
+    });
+    expect(currentPipeline()).toMatchObject({
+      status: "ready",
+      existing: true,
+      worktreePath: OTHER_PATH,
+      queuedPromptPreview: "frozen input",
+    });
   });
 });

@@ -49,6 +49,23 @@ Owner: one `AcpSessionRuntime` per agent process.
 - Frame observer (`onFrame`): raw NDJSON lines per direction in wire order; lines over 16 KiB are
   truncated with a marker; observer exceptions are swallowed.
 
+## Dev-only visibility (stabilization gate)
+
+Until the feature is stabilized, ACP agents are visible only in local development runtimes:
+`platform.isLocalDevelopmentRuntime === true` (desktop dev; packaged apps are excluded) or
+`import.meta.env.DEV === true` (web dev server). The gate hides the whole surface, not just the
+entry point:
+
+- Settings → Model Providers does not render the ACP agents panel (detection, enable, edit, login,
+  test).
+- `acp:<agentId>` personal providers are filtered out of the view `useModelProviders` derives from
+  the provider settings service, so an agent enabled in development does not leak into provider
+  navigation, detail pages, or settings lists in packaged and production builds.
+- Existing configs stay on disk and keep resolving; the gate hides UI, it never migrates or deletes.
+
+Remove this section together with the gate (`isLocalDevelopmentRuntime` in
+`packages/ui/src/lib/devRuntime.ts` and the `useModelProviders` filter) when ACP ships publicly.
+
 ## Event ordering (runtime → host)
 
 - Handshake: `initialize` (protocol version checked) → `session/new` — before any prompt.

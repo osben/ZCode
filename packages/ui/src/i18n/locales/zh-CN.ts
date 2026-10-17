@@ -3773,6 +3773,7 @@ const zhCN: Record<string, string> = {
   "settings.modelProvider.chatgpt.signOut": "退出登录",
   "settings.modelProvider.chatgpt.addAccount": "添加其他账号",
   "settings.modelProvider.chatgpt.reconnect": "重新连接",
+  "settings.modelProvider.chatgpt.linkUsage": "关联用量",
   "settings.modelProvider.chatgpt.manageUsage": "管理用量",
   "settings.modelProvider.chatgpt.firstRun.title": "你正在使用 ChatGPT 套餐",
   "settings.modelProvider.chatgpt.firstRun.body":
@@ -4860,6 +4861,8 @@ const zhCN: Record<string, string> = {
   "chat.empty.worktree.newWorktree": "新建 worktree",
   "chat.empty.worktree.creating": "正在创建 worktree…",
   "worktreeSetup.reconcile.staleCreating": "设置未完成（连接已变化）",
+  "worktreeSetup.reconcile.markerSyncUnavailable":
+    "设置完成于不同的 worktree 路径，且无法更新会话记录",
   "git.branchSwitcher.appliesOnSend": "将在发送第一条消息时生效",
   "git.branchSwitcher.worktreeIntentHint": "该任务的分支由 worktree 设置决定",
   "branchSwitchGuard.title": "切换分支？",
@@ -5101,6 +5104,13 @@ const zhCN: Record<string, string> = {
   "chat.summaryPanel.runningBackgroundTasksMiniValuePlural": "{count} 后台",
   "chat.summaryPanel.stopRunningBackgroundTask": "停止运行中的后台任务",
   "chat.summaryPanel.openRunningSubagentSession": "打开子智能体会话",
+  "chat.composer.backgroundWorks.tooltipDream": "查看记忆整理进度",
+  "chat.composer.backgroundWorks.tooltipDreamResult": "查看上次记忆整理结果",
+  "chat.statusPanel.dream": "记忆整理",
+  "chat.statusPanel.dream.running": "运行中",
+  "chat.statusPanel.dream.resultPending": "已完成",
+  "chat.statusPanel.dream.failed": "失败",
+  "chat.statusPanel.dream.cancelled": "已取消",
   "chat.composer.backgroundWorks.tooltipTerminal": "运行中的终端",
   "chat.composer.backgroundWorks.tooltipAgent": "打开运行中的智能体",
   // After workflow split out of bash, the badge has three kinds:
@@ -5109,9 +5119,9 @@ const zhCN: Record<string, string> = {
   "chat.composer.backgroundWorks.tooltipWorkflow": "打开运行中的工作流",
   // When the only running workflow links straight to its detail page, the badge says so.
   "chat.composer.backgroundWorks.tooltipWorkflowDetails": "打开工作流详情",
-  "chat.composer.backgroundWorks.tooltipMixed": "打开运行中的终端与智能体",
+  "chat.composer.backgroundWorks.tooltipMixed": "查看后台任务",
   "chat.composer.backgroundWorks.ariaLabel":
-    "打开运行中的后台任务：Bash {bashCount} 个，工作流 {workflowCount} 个，子智能体 {subagentCount} 个，共 {count} 个",
+    "打开运行中的后台任务：记忆整理 {dreamCount} 个，Bash {bashCount} 个，工作流 {workflowCount} 个，子智能体 {subagentCount} 个，共 {count} 个",
   "chat.summaryPanel.goalIterationValue": "第 {count} 次迭代",
   "chat.summaryPanel.todoGoalIterationGroup": "第 {count} 轮迭代",
   "chat.summaryPanel.todoSessionGroup": "整个会话",

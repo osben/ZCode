@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, stat, utimes, writeFile as writeRealFile } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createModelId,
   createModelProviderId,
@@ -21,8 +21,10 @@ import {
   type ModelSelection,
   type SessionInfo,
   type SessionStorePort,
+  type SessionEvent,
 } from "@zcode/contracts";
 
+import type { AgentRuntimeInternal } from "../src/runtime/internal.js";
 import { resolveProjectMemoryRoot } from "../src/memory/project-root.js";
 import { createTestAgentRuntime } from "./test-agent-runtime.js";
 import {
@@ -256,7 +258,7 @@ describe("AgentRuntime Dream handler", () => {
     for (const context of dreamContexts) {
       expect(context).toMatchObject({
         modelRequestSessionType: "main",
-        metadata: { querySource: "project_memory_dream", skipTranscript: true },
+        metadata: { querySource: "project_memory_dream", skipTranscript: false },
       });
     }
 
@@ -335,7 +337,7 @@ describe("AgentRuntime Dream handler", () => {
 });
 
 describe("Manual /dream command", () => {
-  it("runs the dream from a command turn and reports the agent summary", async () => {
+  it("acknowledges launch and reports the agent summary through background completion", async () => {
     const cliStorageRoot = await temporaryDirectory();
     const modelIoDir = join(cliStorageRoot, "rollout");
     const memoryRoot = resolveProjectMemoryRoot({
@@ -403,9 +405,10 @@ describe("Manual /dream command", () => {
 
     const result = await runtime.executeTurn("/dream");
 
+    expect(result.response).toContain("Dream started in background");
+    await runtime.drainBackgroundDreams();
     expect(dreamTurn).toBe(2);
-    expect(result.response).toContain("Dream complete");
-    expect(result.response).toContain(factPath);
+    expect(runtime.hasRunningBackgroundTasks()).toBe(false);
     expect(fileSystemPort.files[factPath]).toBe("fact");
     const startedEvent = result.events.find((event) => event.type === "turn_started");
     expect(
@@ -419,7 +422,7 @@ describe("Manual /dream command", () => {
     expect(streamedText).toBe(result.response);
     const modelComplete = result.events.find((event) => event.type === "model_complete");
     expect(
-      (modelComplete?.payload as { querySource?: string; content?: string } | undefined),
+      modelComplete?.payload as { querySource?: string; content?: string } | undefined,
     ).toMatchObject({ content: result.response, querySource: "dream" });
     // A completed run stamps the success marker; the lock alone only marks the run start.
     await expect(stat(join(memoryRoot, ".consolidated-at"))).resolves.toBeTruthy();
@@ -473,13 +476,77 @@ describe("Manual /dream command", () => {
 
     const result = await runtime.executeTurn("/dream");
 
+    expect(result.response).toContain("Dream started in background");
+    await runtime.drainBackgroundDreams();
     expect(dreamTurn).toBe(1);
-    expect(result.response).toContain("Nothing worth keeping");
+  });
+
+  it("skips an immediate re-run after a successful dream while the consolidation lock is fresh", async () => {
+    const cliStorageRoot = await temporaryDirectory();
+    const modelIoDir = join(cliStorageRoot, "rollout");
+    const memoryRoot = resolveProjectMemoryRoot({
+      cliStorageRoot,
+      workspacePath: WORKSPACE_PATH,
+    });
+    const pastSessions = [session("manual-rerun", NOW)];
+    const transcriptPath = join(modelIoDir, `model-io-${pastSessions[0]!.id}.jsonl`);
+    const fileSystemPort = new MemoryFileSystem(
+      { [transcriptPath]: "{}\n" },
+      { [transcriptPath]: NOW + 1000 },
+    );
+    let dreamTurn = 0;
+    const runtime = createTestAgentRuntime(
+      createSessionId("manual-dream-rerun"),
+      {
+        memory: { cliStorageRoot, enabled: true, use: true },
+        mode: "yolo",
+        workingDirectory: WORKSPACE_PATH,
+      },
+      {
+        eventStore: createTestSessionEventStore(),
+        fileSystemPort,
+        modelFactory: createTestModelFactory({
+          async generateText(request, observation) {
+            const text = providerMessagesToText(request.messages);
+            if (!text.includes("# Dream: Memory Consolidation")) {
+              throw new Error(`unexpected non-dream model request: ${text.slice(0, 80)}`);
+            }
+            dreamTurn += 1;
+            return textResult(observation.model, "Nothing worth keeping");
+          },
+        }),
+        modelIoDir,
+        now: () => new Date(NOW),
+        sessionStore: createMemorySessionStore(pastSessions),
+        toolRegistry: createToolRegistry(),
+      },
+    );
+
+    const first = await runtime.executeTurn("/dream");
+    expect(first.response).toContain("Dream started in background");
+    await runtime.drainBackgroundDreams();
+    expect(dreamTurn).toBe(1);
+
+    // Stamp the successful run's lock onto the test clock so the transcript gate sees the
+    // session as fresh again; in production the same state arises for any transcript written
+    // right after a dream finished (lock mtime == last run start, always fresh for 1 h).
+    const lockPath = join(memoryRoot, ".consolidate-lock");
+    await utimes(lockPath, NOW / 1000, NOW / 1000);
+
+    const second = await runtime.executeTurn("/dream");
+
+    // Current cooldown design: a successful run deliberately keeps the lock for its freshness
+    // window, so an immediate manual re-run is skipped even though no dream is running anymore.
+    // Known wart, pinned here on purpose: the visible message claims a dream is still running.
+    expect(second.response).toBe(
+      "Dream skipped: another dream is already running for this workspace. Try again once it finishes.",
+    );
+    expect(dreamTurn).toBe(1);
+    expect(runtime.hasRunningBackgroundTasks()).toBe(false);
   });
 
   it("answers a usage error without model requests", async () => {
-    const { runtime, modelRequests } = await createSkipSetup({
-    });
+    const { runtime, modelRequests } = await createSkipSetup({});
 
     const result = await runtime.executeTurn("/dream now");
 
@@ -500,6 +567,14 @@ describe("Manual /dream command", () => {
     expect(result.response).toBe(
       "Dream skipped: project memory is not enabled for this workspace.",
     );
+  });
+
+  it("answers visibly for a remote workspace without starting a model request", async () => {
+    const { runtime, modelRequests } = await createSkipSetup({ remote: true });
+    const result = await runtime.executeTurn("/dream");
+    expect(result.response).toContain("Dream skipped:");
+    expect(result.response).toContain("unavailable for remote workspaces");
+    expect(modelRequests()).toBe(0);
   });
 
   it("answers visibly when the lock is held by a live pid", async () => {
@@ -531,6 +606,7 @@ describe("Manual /dream command", () => {
   });
 
   async function createSkipSetup(options: {
+    remote?: boolean;
     memoryEnabled?: boolean;
     seedLock?: { pid: number; mtimeMs: number };
     transcriptMtime?: number;
@@ -566,6 +642,7 @@ describe("Manual /dream command", () => {
         workingDirectory: WORKSPACE_PATH,
       },
       {
+        isRemoteWorkspace: () => options.remote ?? false,
         eventStore: createTestSessionEventStore(),
         fileSystemPort,
         modelFactory: createTestModelFactory({
@@ -582,6 +659,266 @@ describe("Manual /dream command", () => {
     );
     return { runtime, modelRequests: () => requests };
   }
+});
+
+describe("background Dream lifecycle", () => {
+  async function setup(options: { failSecond?: boolean; eventFailure?: string } = {}) {
+    const cliStorageRoot = await temporaryDirectory();
+    const modelIoDir = join(cliStorageRoot, "rollout");
+    const memoryRoot = resolveProjectMemoryRoot({ cliStorageRoot, workspacePath: WORKSPACE_PATH });
+    const transcript = join(modelIoDir, `model-io-${createSessionId("history")}.jsonl`);
+    const events: SessionEvent[] = [];
+    const facts: Record<string, unknown>[] = [];
+    const pending = deferred<void>();
+    const entered = deferred<void>();
+    let dreamCalls = 0;
+    const sessionStore = Object.assign(createMemorySessionStore([session("history", NOW)]), {
+      recordModelUsage: async (fact: Record<string, unknown>) => {
+        facts.push(fact);
+      },
+      upsertTurnUsage: async () => {},
+      upsertToolUsage: async () => {},
+      pruneUsage: async () => {},
+    });
+    const runtime = createTestAgentRuntime(
+      createSessionId("background-dream"),
+      {
+        workingDirectory: WORKSPACE_PATH,
+        mode: "yolo",
+        memory: { cliStorageRoot, enabled: true, use: true, extractionEnabled: false },
+      },
+      {
+        eventStore: createTestSessionEventStore(),
+        eventSink: {
+          onSessionEvent: async (event: SessionEvent) => {
+            events.push(event);
+          },
+        },
+        fileSystemPort: new MemoryFileSystem({ [transcript]: "{}\n" }, { [transcript]: NOW }),
+        modelIoDir,
+        sessionStore,
+        now: () => new Date(NOW),
+        toolRegistry: createToolRegistry(),
+        modelFactory: createTestModelFactory({
+          async generateText(request, observation) {
+            if (
+              !providerMessagesToText(request.messages).includes("# Dream: Memory Consolidation")
+            ) {
+              return textResult(observation.model, "foreground answer");
+            }
+            dreamCalls += 1;
+            if (options.failSecond && dreamCalls === 1) {
+              return {
+                ...textResult(observation.model, ""),
+                finishReason: "tool_calls",
+                toolCalls: [
+                  { id: "read", name: "Read", input: { file_path: join(memoryRoot, "MEMORY.md") } },
+                ],
+              };
+            }
+            entered.resolve();
+            await Promise.race([
+              pending.promise,
+              new Promise<void>((_, reject) => {
+                if (request.abortSignal?.aborted) reject(request.abortSignal.reason);
+                else
+                  request.abortSignal?.addEventListener(
+                    "abort",
+                    () => reject(request.abortSignal?.reason),
+                    { once: true },
+                  );
+              }),
+            ]);
+            if (options.failSecond) throw new Error("later request failed");
+            return textResult(observation.model, "Dream summary");
+          },
+        }),
+      },
+    );
+    const internal = runtime as unknown as AgentRuntimeInternal;
+    if (options.eventFailure) {
+      const append = internal.appendEvent.bind(internal);
+      vi.spyOn(internal, "appendEvent").mockImplementation(async (event, trace) => {
+        if (event.type === options.eventFailure) throw new Error("event store unavailable");
+        return append(event, trace);
+      });
+    }
+    return { runtime, internal, memoryRoot, events, facts, pending, entered };
+  }
+
+  it("acks before the model completes, accepts another turn and retains ordered completion", async () => {
+    const test = await setup();
+    try {
+      expect((await test.runtime.executeTurn("/dream")).response).toContain(
+        "started in background",
+      );
+      await test.entered.promise;
+      expect(test.runtime.hasRunningBackgroundTasks()).toBe(true);
+      expect((await test.runtime.executeTurn("/dream")).response).toContain("another dream");
+      expect((await test.runtime.executeTurn("foreground question")).response).toContain(
+        "foreground answer",
+      );
+      expect(test.facts.filter((fact) => fact.querySource === "dream")).toHaveLength(0);
+      test.pending.resolve();
+      await test.runtime.drainBackgroundDreams();
+      const lifecycle = test.events.filter((event) => event.type.startsWith("background_task_"));
+      expect(lifecycle.map((event) => event.type)).toEqual([
+        "background_task_started",
+        "background_task_updated",
+        "background_task_completed",
+      ]);
+      expect(lifecycle.every((event) => event.turnId === undefined)).toBe(true);
+      expect(lifecycle.at(-1)?.payload).toMatchObject({
+        status: "completed",
+        description: "Dream summary",
+      });
+      expect(test.runtime.hasRunningBackgroundTasks()).toBe(false);
+      expect(test.internal.backgroundDreamRuns.size).toBe(0);
+      expect(test.facts.filter((fact) => fact.querySource === "dream")).toMatchObject([
+        { status: "completed", inputTokens: 1, outputTokens: 1, finishReason: "stop" },
+      ]);
+      await expect(stat(join(test.memoryRoot, ".consolidated-at"))).resolves.toBeTruthy();
+    } finally {
+      test.runtime.beginShutdown();
+      test.pending.resolve();
+      await test.runtime.drainBackgroundDreams();
+    }
+  });
+
+  it.each(["cancel", "shutdown"])(
+    "%s aborts and drains without stamping success",
+    async (action) => {
+      const test = await setup();
+      await test.runtime.executeTurn("/dream");
+      await test.entered.promise;
+      const taskId = [...test.internal.backgroundDreamRuns.keys()][0]!;
+      if (action === "cancel")
+        expect((await test.runtime.cancelBackgroundTask(taskId)).cancelled).toBe(true);
+      else test.runtime.beginShutdown();
+      await test.runtime.drainBackgroundDreams();
+      expect(test.runtime.hasRunningBackgroundTasks()).toBe(false);
+      expect(test.internal.backgroundDreamRuns.size).toBe(0);
+      await expect(stat(join(test.memoryRoot, ".consolidate-lock"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await expect(stat(join(test.memoryRoot, ".consolidated-at"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      expect(test.events.at(-1)?.payload).toMatchObject({ status: "cancelled" });
+      expect(test.facts.filter((fact) => fact.querySource === "dream")).toMatchObject([
+        { status: "cancelled" },
+      ]);
+      if (action === "shutdown")
+        await expect(test.runtime.executeTurn("/dream")).rejects.toThrow("Dream failed");
+    },
+  );
+
+  it("preserves paid usage and restores the previous lock when a later request is cancelled", async () => {
+    const test = await setup({ failSecond: true });
+    const notify = vi.spyOn(test.runtime, "enqueueBackgroundTaskNotification");
+    const lock = join(test.memoryRoot, ".consolidate-lock");
+    await mkdir(test.memoryRoot, { recursive: true });
+    await writeRealFile(lock, "99999999");
+    await utimes(lock, (NOW - 1000) / 1000, (NOW - 1000) / 1000);
+    await test.runtime.executeTurn("/dream");
+    await test.entered.promise;
+    await test.runtime.cancelBackgroundTask([...test.internal.backgroundDreamRuns.keys()][0]!);
+    await test.runtime.drainBackgroundDreams();
+    expect(test.facts.filter((fact) => fact.querySource === "dream")).toMatchObject([
+      { status: "completed", inputTokens: 1 },
+      { status: "cancelled" },
+    ]);
+    expect((await stat(lock)).mtimeMs).toBeCloseTo(NOW - 1000, -1);
+    // The restored lock must read as abandoned (dead PID), not "owner mid-acquire": the very
+    // next /dream has to take the lock over instead of skipping with "already running".
+    expect(readFileSync(lock, "utf8")).toBe("0");
+    const secondLaunch = await test.runtime.executeTurn("/dream");
+    expect(secondLaunch.response).toContain("started in background");
+    await expect(stat(join(test.memoryRoot, ".consolidated-at"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    test.runtime.beginShutdown();
+    await test.runtime.drainBackgroundDreams();
+    expect(test.runtime.hasRunningBackgroundTasks()).toBe(false);
+    // A user-initiated stop must not wake the model with a completion turn.
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("preserves successful usage when a later request fails", async () => {
+    const test = await setup({ failSecond: true });
+    const notify = vi.spyOn(test.runtime, "enqueueBackgroundTaskNotification");
+    await test.runtime.executeTurn("/dream");
+    await test.entered.promise;
+    expect(test.facts.filter((fact) => fact.querySource === "dream")).toMatchObject([
+      { status: "completed", inputTokens: 1 },
+    ]);
+    test.pending.resolve();
+    await test.runtime.drainBackgroundDreams();
+    expect(test.facts.filter((fact) => fact.querySource === "dream")).toMatchObject([
+      { status: "completed", toolCallCount: 1 },
+      { status: "error", inputTokens: undefined },
+    ]);
+    expect(test.events.at(-1)?.payload).toMatchObject({ status: "failed" });
+    // Failed runs still notify: the failure turn is the durable, user-visible outcome record.
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(notify.mock.calls[0]?.[0]?.originMeta).toMatchObject({ backgroundSource: "dream" });
+    expect(notify.mock.calls[0]?.[0]?.originMeta?.title).toBe("Dream failed");
+    expect(notify.mock.calls[0]?.[0]?.text).toContain("failed");
+  });
+
+  it("enqueues a completion notification for the durable transcript turn", async () => {
+    const test = await setup();
+    const notify = vi.spyOn(test.runtime, "enqueueBackgroundTaskNotification");
+    await test.runtime.executeTurn("/dream");
+    await test.entered.promise;
+    test.pending.resolve();
+    await test.runtime.drainBackgroundDreams();
+    expect(notify).toHaveBeenCalledTimes(1);
+    const notification = notify.mock.calls[0]?.[0];
+    expect(notification?.originMeta).toMatchObject({
+      backgroundSource: "dream",
+      workId: expect.stringMatching(/^dream-/),
+    });
+    expect(notification?.originMeta?.title).toBe("Dream: Dream summary");
+    expect(notification?.text).toContain("Dream summary");
+    // The notification inherits the registry task's branchGeneration fencing via taskId.
+    expect(notification?.taskId).toBe(notification?.originMeta?.workId);
+  });
+
+  it.each(["background_task_started", "background_task_updated", "background_task_completed"])(
+    "cleans up when %s cannot be persisted",
+    async (eventFailure) => {
+      const test = await setup({ eventFailure });
+      if (eventFailure === "background_task_started")
+        await expect(test.runtime.executeTurn("/dream")).rejects.toThrow("Dream failed");
+      else await test.runtime.executeTurn("/dream");
+      if (eventFailure !== "background_task_started") {
+        await test.entered.promise;
+        test.pending.resolve();
+      }
+      await test.runtime.drainBackgroundDreams();
+      expect(test.runtime.hasRunningBackgroundTasks()).toBe(false);
+      expect(test.internal.backgroundDreamRuns.size).toBe(0);
+      if (eventFailure === "background_task_started") {
+        await expect(stat(join(test.memoryRoot, ".consolidate-lock"))).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+      }
+    },
+  );
+
+  it("restores the lock after registry registration fails", async () => {
+    const test = await setup();
+    vi.spyOn(test.internal.runtimeTaskRegistry, "register").mockImplementation(() => {
+      throw new Error("registration failed");
+    });
+    await expect(test.runtime.executeTurn("/dream")).rejects.toThrow("Dream failed");
+    expect(test.internal.backgroundDreamRuns.size).toBe(0);
+    expect(test.runtime.hasRunningBackgroundTasks()).toBe(false);
+    await expect(stat(join(test.memoryRoot, ".consolidate-lock"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
 });
 
 function session(

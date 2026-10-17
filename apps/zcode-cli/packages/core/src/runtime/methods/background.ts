@@ -15,10 +15,7 @@ import type {
   RuntimeBackgroundStopTarget,
   TypedRuntimeBackgroundStopTarget,
 } from "./background-stop-types.js";
-import type {
-  RuntimeTaskSnapshot,
-  RuntimeTaskType,
-} from "../../runtime-task/registry.js";
+import type { RuntimeTaskSnapshot, RuntimeTaskType } from "../../runtime-task/registry.js";
 import {
   hasRunningBackgroundRuntimeTask,
   isTerminalRuntimeTask,
@@ -124,6 +121,10 @@ export async function stopBackgroundTask(
       unsupportedBackgroundStopResult,
       options.initiator,
     );
+  }
+
+  if (target.taskType === "local_dream") {
+    return stopLocalDreamBackgroundTask.call(this, target);
   }
 
   return unsupportedBackgroundStopResult(target);
@@ -291,6 +292,32 @@ async function stopLocalBashBackgroundTask(
   };
 }
 
+async function stopLocalDreamBackgroundTask(
+  this: AgentRuntimeInternal,
+  target: TypedRuntimeBackgroundStopTarget,
+): Promise<RuntimeBackgroundStopResult> {
+  const run = this.backgroundDreamRuns.get(target.taskId);
+  if (!run) {
+    return {
+      ok: false,
+      reason: "background_task_not_found",
+      status: target.currentStatus ?? "lost",
+      taskId: target.taskId,
+      type: "local_dream",
+    };
+  }
+  await run.requestCancel();
+  // The detached dream run owns its terminal transition (registry update + BackgroundTaskCompleted
+  // with lock restore); stop only requests the abort.
+  return {
+    command: commandFromRuntimeTask(target.registryTask, target.existing),
+    ok: true,
+    status: "cancelled",
+    taskId: target.taskId,
+    type: "local_dream",
+  };
+}
+
 export async function cancelRunningRuntimeBackgroundTasks(
   this: AgentRuntimeInternal,
   input: { reason: "subagent_cancelled"; traceContext?: TraceContext },
@@ -299,9 +326,7 @@ export async function cancelRunningRuntimeBackgroundTasks(
   const traceContext = input.traceContext ?? this.rootTraceContext;
   const tasks = Object.values(this.runtimeTaskRegistry.all()).filter(
     (task) =>
-      task.type === "local_bash" &&
-      task.isBackgrounded === true &&
-      task.status === "running",
+      task.type === "local_bash" && task.isBackgrounded === true && task.status === "running",
   );
 
   for (const task of tasks) {
@@ -367,7 +392,7 @@ export function buildBackgroundTaskPayload(
     taskId,
     toolCallId: existing?.toolCallId,
     toolName: existing?.toolName,
-      // This constructor serves only local Bash stop/update; the subagent runner produces Agent terminal states.
+    // This constructor serves only local Bash stop/update; the subagent runner produces Agent terminal states.
     taskKind: "bash",
     blocked: existing?.blocked,
     blockedReason: existing?.blockedReason,
@@ -396,8 +421,7 @@ export function buildBackgroundTaskPayload(
 function backgroundInfoFromRuntimeTask(task: RuntimeTaskSnapshot): BackgroundTaskInfo {
   return {
     taskId: task.taskId,
-    toolCallId:
-      typeof task.parentToolCallId === "string" ? task.parentToolCallId : undefined,
+    toolCallId: typeof task.parentToolCallId === "string" ? task.parentToolCallId : undefined,
     toolName: toolNameFromRuntimeTaskType(task.type),
     cancellable: task.status === "running",
     command: commandFromRuntimeTask(task, undefined),
@@ -452,14 +476,14 @@ function toolNameFromRuntimeTaskType(type: RuntimeTaskType): string {
       return "Workflow";
     case "local_dynamic_workflow":
       return "CreateWorkflow";
+    case "local_dream":
+      return "Dream";
     case "monitor_mcp":
       return "Monitor";
   }
 }
 
-function isTerminalBackgroundTaskInfoStatus(
-  status: BackgroundTaskInfoStatus | undefined,
-): boolean {
+function isTerminalBackgroundTaskInfoStatus(status: BackgroundTaskInfoStatus | undefined): boolean {
   return Boolean(status && status !== "running");
 }
 

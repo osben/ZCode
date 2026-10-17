@@ -182,7 +182,7 @@ export interface BackgroundTaskInfo {
   taskId: string;
   toolCallId?: string;
   toolName?: string;
-  taskKind?: "bash" | "subagent" | "workflow";
+  taskKind?: "bash" | "subagent" | "workflow" | "dream";
   childSessionId?: string;
   blocked?: boolean;
   blockedReason?: string;

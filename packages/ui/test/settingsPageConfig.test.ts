@@ -59,7 +59,7 @@ describe("settingsPageConfig", () => {
       },
       {
         id: "dataAndStats",
-        sections: ["usage"],
+        sections: ["usage", "sessions"],
       },
     ]);
 
@@ -80,6 +80,7 @@ describe("settingsPageConfig", () => {
       "shortcuts",
       "voiceDictation",
       "usage",
+      "sessions",
     ]);
   });
 
@@ -104,7 +105,12 @@ describe("settingsPageConfig", () => {
       "shortcuts",
       "voiceDictation",
       "usage",
+      "sessions",
     ]);
+    const sessionsSection = settingsSections.find((section) => section.id === "sessions");
+    expect(sessionsSection?.titleId).toBe("sessionManager.title");
+    expect(enUS["sessionManager.title"]).toBeTruthy();
+    expect(zhCN["sessionManager.title"]).toBeTruthy();
   });
 
   it("Plugins 内容标题不再配置 beta 徽标", async () => {

@@ -7,7 +7,7 @@ import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
 import { buildWorkspaceServiceLookup } from "@/lib/workspaceServiceResolver.js";
 import { logger } from "@/logger.js";
 import { useRemoteWorkspaceSessionStore } from "@/store/remoteWorkspaceSessionStore.js";
-import { isWorkspaceTab, type SessionManagerScope } from "@/store/tabStore.js";
+import { isWorkspaceTab } from "@/store/tabStore.js";
 import { useTabStore } from "@/store/TabStoreProvider.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { applyTaskQueryCacheMutation } from "@/store/taskQueryCacheStore.js";
@@ -18,7 +18,7 @@ import {
   buildSessionManagerRows,
   type SessionManagerRow,
 } from "./sessionManagerModel.js";
-import type { SessionManagerStatusFilter } from "./sessionManagerTypes.js";
+import type { SessionManagerScope, SessionManagerStatusFilter } from "./sessionManagerTypes.js";
 
 export interface SessionManagerUniverseTab {
   workspacePath: string;

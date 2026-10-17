@@ -57,7 +57,7 @@ import type { AgentRuntimeHookMethods } from "./internal-hook-methods.js";
 import type { MemoryRecallState } from "../memory/recall/index.js";
 import type { ProjectMemoryRecallPrefetch } from "./helpers/project-memory-recall.js";
 import type { ProjectMemoryExtractionScheduler } from "./helpers/project-memory-extraction.js";
-import type { ProjectMemoryUpdate } from "./helpers/project-memory-dream.js";
+import type { BackgroundDreamRun, ProjectMemoryUpdate } from "./helpers/project-memory-dream.js";
 import type { RuntimeTelemetryFacade } from "../telemetry/runtime-telemetry.js";
 import type { WorkspaceHookRuntimeAdmissionPort } from "../hooks/workspace-hook-runtime-admission.js";
 
@@ -104,6 +104,8 @@ export interface AgentRuntimeInternal
   memoryExtractionScheduler?: ProjectMemoryExtractionScheduler;
   memoryDreamLastScanAtMs: number;
   pendingMemoryUpdate?: ProjectMemoryUpdate;
+  /** Live background /dream runs keyed by runtime-task id; the background stop dispatch aborts the controller. */
+  backgroundDreamRuns: Map<string, BackgroundDreamRun>;
   contextSourcePort?: ContextSourcePort;
   skillPort?: SkillPort;
   mcpPort?: McpPort;

@@ -35,9 +35,16 @@ export function ChatGptPlanDetail() {
   const [status, setStatus] = useState<SiwcPlanAccountsStatus | null>(null);
   const [loginPending, setLoginPending] = useState(false);
   const [signOutPending, setSignOutPending] = useState<string | null>(null);
+  const [usageLinkPending, setUsageLinkPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showFirstRunModal, setShowFirstRunModal] = useState(false);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // A new flow supersedes the old poll timer; this ref releases the old flow's pending UI too.
+  const activeFlowPendingRef = useRef<((active: boolean) => void) | null>(null);
+  // Every started flow takes a generation; a superseded flow must never touch the shared poll
+  // timer or pending state again (e.g. its openExternal resolving late would otherwise cancel
+  // the newer flow's poll and strand the newer flow's spinner forever).
+  const flowGenerationRef = useRef(0);
   const disposedRef = useRef(false);
 
   const refreshStatus = useCallback(async () => {
@@ -64,27 +71,38 @@ export function ChatGptPlanDetail() {
     }
   }, []);
 
-  const startLogin = useCallback(
-    async (options: { reauthAccountKey?: string } = {}) => {
+  // Shared open-browser-then-poll skeleton for SIWC grants (account login and usage link): the
+  // service starts the flow, the browser lands on the loopback callback, and the UI polls until
+  // the grant settles, times out, or fails.
+  const runBrowserGrantFlow = useCallback(
+    async <T extends unknown>(flow: {
+      start: () => Promise<{ authorizeUrl: string }>;
+      poll: () => Promise<T | null>;
+      setPending: (active: boolean) => void;
+      fallbackError: (caught: unknown) => string;
+      onSettled?: (completion: T) => void | Promise<void>;
+    }) => {
       setError(null);
-      setLoginPending(true);
+      const generation = ++flowGenerationRef.current;
+      activeFlowPendingRef.current?.(false);
+      activeFlowPendingRef.current = flow.setPending;
+      flow.setPending(true);
       try {
-        const start = await oauthService.startChatGptPlanLogin(
-          options.reauthAccountKey ? { reauthAccountKey: options.reauthAccountKey } : {},
-        );
+        const start = await flow.start();
+        if (disposedRef.current || flowGenerationRef.current !== generation) return;
         await platform.openExternal(start.authorizeUrl);
-        if (disposedRef.current) return;
+        if (disposedRef.current || flowGenerationRef.current !== generation) return;
         const deadline = Date.now() + LOGIN_TIMEOUT_MS;
         stopPolling();
         const poll = async () => {
-          if (disposedRef.current) return;
+          if (disposedRef.current || flowGenerationRef.current !== generation) return;
           try {
-            const completion = await oauthService.pollChatGptPlanLogin();
-            if (disposedRef.current) return;
+            const completion = await flow.poll();
+            if (disposedRef.current || flowGenerationRef.current !== generation) return;
             if (!completion) {
               if (Date.now() >= deadline) {
                 pollTimerRef.current = null;
-                setLoginPending(false);
+                flow.setPending(false);
                 setError(intl.formatMessage({ id: "settings.modelProvider.chatgpt.timeout" }));
                 return;
               }
@@ -92,43 +110,58 @@ export function ChatGptPlanDetail() {
               return;
             }
             pollTimerRef.current = null;
-            setLoginPending(false);
-            if (
-              completion.newUser &&
-              completion.planUsageEntitled &&
-              !localStorage.getItem(FIRST_RUN_MODAL_STORAGE_KEY)
-            ) {
-              localStorage.setItem(FIRST_RUN_MODAL_STORAGE_KEY, "1");
-              setShowFirstRunModal(true);
-            }
-            // The login itself has completed; a status refresh failure must not surface as
-            // a login error (the stored account simply appears after the next status read).
-            await refreshStatus().catch((refreshError: unknown) => {
-              logger.error("[ChatGptPlanDetail] status refresh failed", { error: refreshError });
-            });
+            flow.setPending(false);
+            await flow.onSettled?.(completion);
           } catch (caught) {
-            if (disposedRef.current) return;
+            // A superseded flow's late poll rejection must not surface as the newer flow's
+            // error banner nor clear the newer flow's poll timer.
+            if (disposedRef.current || flowGenerationRef.current !== generation) return;
             pollTimerRef.current = null;
-            setLoginPending(false);
-            setError(
-              caught instanceof Error
-                ? caught.message
-                : intl.formatMessage({ id: "settings.modelProvider.chatgpt.loginFailed" }),
-            );
+            flow.setPending(false);
+            setError(flow.fallbackError(caught));
           }
         };
         pollTimerRef.current = setTimeout(() => void poll(), LOGIN_POLL_INTERVAL_MS);
       } catch (caught) {
-        if (disposedRef.current) return;
-        setLoginPending(false);
-        setError(
+        if (disposedRef.current || flowGenerationRef.current !== generation) return;
+        flow.setPending(false);
+        setError(flow.fallbackError(caught));
+      }
+    },
+    [intl, platform, stopPolling],
+  );
+
+  const startLogin = useCallback(
+    async (options: { reauthAccountKey?: string } = {}) => {
+      await runBrowserGrantFlow({
+        start: () =>
+          oauthService.startChatGptPlanLogin(
+            options.reauthAccountKey ? { reauthAccountKey: options.reauthAccountKey } : {},
+          ),
+        poll: () => oauthService.pollChatGptPlanLogin(),
+        setPending: setLoginPending,
+        fallbackError: (caught) =>
           caught instanceof Error
             ? caught.message
             : intl.formatMessage({ id: "settings.modelProvider.chatgpt.loginFailed" }),
-        );
-      }
+        onSettled: async (completion) => {
+          if (
+            completion.newUser &&
+            completion.planUsageEntitled &&
+            !localStorage.getItem(FIRST_RUN_MODAL_STORAGE_KEY)
+          ) {
+            localStorage.setItem(FIRST_RUN_MODAL_STORAGE_KEY, "1");
+            setShowFirstRunModal(true);
+          }
+          // The login itself has completed; a status refresh failure must not surface as
+          // a login error (the stored account simply appears after the next status read).
+          await refreshStatus().catch((refreshError: unknown) => {
+            logger.error("[ChatGptPlanDetail] status refresh failed", { error: refreshError });
+          });
+        },
+      });
     },
-    [intl, oauthService, platform, refreshStatus, stopPolling],
+    [intl, oauthService, refreshStatus, runBrowserGrantFlow],
   );
 
   const signOut = useCallback(
@@ -146,6 +179,25 @@ export function ChatGptPlanDetail() {
       }
     },
     [oauthService, refreshStatus],
+  );
+
+  // Per-account "Link usage": one codex-flavor grant that unlocks the usage probe. Same
+  // open-browser-then-poll shape as login; without it the row simply shows no usage line.
+  const linkUsage = useCallback(
+    async (accountKey: string) => {
+      await runBrowserGrantFlow({
+        start: () => oauthService.startChatGptUsageLink(accountKey),
+        poll: () => oauthService.pollChatGptUsageLink(),
+        setPending: (active) => setUsageLinkPending(active ? accountKey : null),
+        fallbackError: (caught) => (caught instanceof Error ? caught.message : String(caught)),
+        onSettled: async () => {
+          await refreshStatus().catch((refreshError: unknown) => {
+            logger.error("[ChatGptPlanDetail] status refresh failed", { error: refreshError });
+          });
+        },
+      });
+    },
+    [oauthService, refreshStatus, runBrowserGrantFlow],
   );
 
   const accounts = status?.accounts ?? [];
@@ -186,8 +238,10 @@ export function ChatGptPlanDetail() {
             locale={locale}
             loginPending={loginPending}
             signOutPending={signOutPending === account.accountKey}
+            usageLinkPending={usageLinkPending === account.accountKey}
             onSignOut={() => void signOut(account.accountKey)}
             onReconnect={() => void startLogin({ reauthAccountKey: account.accountKey })}
+            onLinkUsage={() => void linkUsage(account.accountKey)}
             onManageUsage={() => void platform.openExternal(CHATGPT_USAGE_URL)}
           />
         ))}
@@ -256,8 +310,10 @@ interface AccountRowProps {
   /** Any login (add or reconnect) is in flight; only one pending login is allowed. */
   readonly loginPending: boolean;
   readonly signOutPending: boolean;
+  readonly usageLinkPending: boolean;
   readonly onSignOut: () => void;
   readonly onReconnect: () => void;
+  readonly onLinkUsage: () => void;
   readonly onManageUsage: () => void;
 }
 
@@ -267,8 +323,10 @@ function AccountRow({
   locale,
   loginPending,
   signOutPending,
+  usageLinkPending,
   onSignOut,
   onReconnect,
+  onLinkUsage,
   onManageUsage,
 }: AccountRowProps) {
   const displayName = account.user?.email ?? account.user?.displayName ?? account.accountKey;
@@ -300,6 +358,18 @@ function AccountRow({
             {signOutPending ? <Loader2Icon className="size-3.5 animate-spin" /> : null}
             {intl.formatMessage({ id: "settings.modelProvider.chatgpt.signOut" })}
           </Button>
+          {account.planUsageEntitled && !account.usageLinked ? (
+            <Button
+              type="button"
+              variant="outline"
+              disabled={usageLinkPending || loginPending}
+              onClick={onLinkUsage}
+              data-testid="chatgpt-plan-link-usage"
+            >
+              {usageLinkPending ? <Loader2Icon className="size-3.5 animate-spin" /> : null}
+              {intl.formatMessage({ id: "settings.modelProvider.chatgpt.linkUsage" })}
+            </Button>
+          ) : null}
           {account.planUsageEntitled ? null : (
             <Button type="button" variant="outline" disabled={loginPending} onClick={onReconnect}>
               {intl.formatMessage({ id: "settings.modelProvider.chatgpt.reconnect" })}

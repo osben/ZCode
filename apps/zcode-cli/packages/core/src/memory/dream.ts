@@ -1,4 +1,4 @@
-import { mkdir, readFile, stat, unlink, utimes, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, stat, unlink, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { ModelToolCall } from "@zcode/contracts";
@@ -12,6 +12,8 @@ const DREAM_LOCK_FILE = ".consolidate-lock";
 // back a "last successful consolidation" display.
 const DREAM_CONSOLIDATED_AT_FILE = ".consolidated-at";
 const DREAM_LOCK_FRESH_MS = 60 * 60 * 1000;
+/** Exclusive-create attempts before treating the lock as contended. */
+const DREAM_LOCK_ACQUIRE_ATTEMPTS = 2;
 const AUTO_DREAM_MINIMUM_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const AUTO_DREAM_SCAN_THROTTLE_MS = 10 * 60 * 1000;
 
@@ -55,49 +57,52 @@ export async function acquireDreamLock(input: {
   const lockPath = dreamLockPath(input.memoryRoot);
   const nowMs = input.nowMs ?? Date.now();
   const pid = input.pid ?? process.pid;
-  let priorMtimeMs: number | undefined;
-  let priorPid: number | undefined;
-
-  try {
-    const [lockStat, content] = await Promise.all([stat(lockPath), readFile(lockPath, "utf8")]);
-    priorMtimeMs = lockStat.mtimeMs;
-    const parsedPid = Number.parseInt(content.trim(), 10);
-    if (Number.isFinite(parsedPid)) priorPid = parsedPid;
-  } catch {
-    // 不存在或不可读都按无 owner 处理，后续 write-readback 决定所有权。
-  }
-
-  if (
-    priorMtimeMs !== undefined &&
-    nowMs - priorMtimeMs < DREAM_LOCK_FRESH_MS &&
-    priorPid !== undefined &&
-    isLiveProcess(priorPid)
-  ) {
-    return null;
-  }
 
   await mkdir(input.memoryRoot, { recursive: true });
-  await writeFile(lockPath, String(pid), "utf8");
-  let writtenPid: number;
-  try {
-    writtenPid = Number.parseInt((await readFile(lockPath, "utf8")).trim(), 10);
-  } catch {
-    return null;
+
+  // Mutual exclusion must come from an exclusive create (O_CREAT|O_EXCL), NOT from writing a PID
+  // and reading it back: two concurrent calls of one process write the same PID, so the read-back
+  // cannot distinguish them and both callers would believe they own the lock.
+  for (let attempt = 0; attempt < DREAM_LOCK_ACQUIRE_ATTEMPTS; attempt += 1) {
+    const prior = await readDreamLockState(lockPath);
+    if (prior && nowMs - prior.mtimeMs < DREAM_LOCK_FRESH_MS && isHeldLock(prior)) {
+      return null;
+    }
+    if (prior) await unlink(lockPath).catch(() => {});
+
+    try {
+      const handle = await open(lockPath, "wx");
+      try {
+        await handle.writeFile(String(pid), "utf8");
+      } finally {
+        await handle.close();
+      }
+      return prior?.mtimeMs ?? 0;
+    } catch (error) {
+      if (!isLockExistsError(error)) throw error;
+      // Lost the exclusive-create race against a concurrent owner; re-read and decide again.
+    }
   }
-  if (writtenPid !== pid) return null;
-  return priorMtimeMs ?? 0;
+  return null;
 }
 
 export async function restoreDreamLockAfterFailure(input: {
   memoryRoot: string;
   priorMtimeMs: number;
+  pid?: number;
 }): Promise<void> {
   const lockPath = dreamLockPath(input.memoryRoot);
+  const pid = input.pid ?? process.pid;
+  // A failed run must not touch a lock that another run has taken over since — deleting it here
+  // would tear down a live owner's lock and re-open the concurrent-consolidation window.
+  if ((await readDreamLockState(lockPath))?.pid !== pid) return;
   if (input.priorMtimeMs === 0) {
     await unlink(lockPath);
     return;
   }
-  await writeFile(lockPath, "", "utf8");
+  // An empty PID reads as "owner mid-acquire" (held); a restored lock must read as
+  // stale/abandoned so the next run can take it over. PID 0 is never a live process.
+  await writeFile(lockPath, "0", "utf8");
   const priorSeconds = input.priorMtimeMs / 1000;
   await utimes(lockPath, priorSeconds, priorSeconds);
 }
@@ -210,6 +215,39 @@ export function collectDreamTouchedPaths(
 
 function dreamLockPath(memoryRoot: string): string {
   return join(memoryRoot, DREAM_LOCK_FILE);
+}
+
+interface DreamLockState {
+  mtimeMs: number;
+  pid?: number;
+}
+
+/** Missing or unreadable lock reads as "no owner"; the exclusive create ultimately decides. */
+async function readDreamLockState(lockPath: string): Promise<DreamLockState | undefined> {
+  try {
+    const [lockStat, content] = await Promise.all([stat(lockPath), readFile(lockPath, "utf8")]);
+    const parsedPid = Number.parseInt(content.trim(), 10);
+    return Number.isFinite(parsedPid)
+      ? { mtimeMs: lockStat.mtimeMs, pid: parsedPid }
+      : { mtimeMs: lockStat.mtimeMs };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * A fresh lock is held unless its owner PID is known to be gone. An empty or unparsable PID counts
+ * as held, not stale: the file becomes visible at the exclusive create before its PID is written,
+ * so "no PID yet" means a concurrent owner is mid-acquire, not an abandoned lock.
+ */
+function isHeldLock(state: DreamLockState): boolean {
+  return state.pid === undefined || isLiveProcess(state.pid);
+}
+
+function isLockExistsError(error: unknown): boolean {
+  return (
+    typeof error === "object" && error !== null && (error as { code?: unknown }).code === "EEXIST"
+  );
 }
 
 function isLiveProcess(pid: number): boolean {

@@ -3,6 +3,8 @@ import { isAbsolute } from "node:path";
 import type {
   ModelInputMessage,
   ModelMessageContent,
+  ModelUsage,
+  ModelResult,
   Model,
   ModelReasoningContentBlock,
   ModelRequest,
@@ -23,8 +25,21 @@ import { auxiliaryModelOptions } from "../model/auxiliary-model-options.js";
 
 export type MemoryAgentModelRequest = ModelRequest;
 
+/** Per provider request timing + usage captured for callers that record usage facts (manual Dream). */
+export interface MemoryAgentLoopRequestUsage {
+  index: number;
+  completedAt: number;
+  durationMs: number;
+  startedAt: number;
+  status: "completed" | "error" | "cancelled";
+  result?: ModelResult;
+  error?: unknown;
+  usage?: ModelUsage;
+}
+
 export interface MemoryAgentLoopResult {
   messages: ModelInputMessage[];
+  requests: MemoryAgentLoopRequestUsage[];
   turns: number;
 }
 
@@ -42,6 +57,8 @@ const MEMORY_AGENT_READ_ONLY_TOOLS = new Set(["Read", "Grep", "Glob"]);
 
 export async function runMemoryAgentLoop(input: {
   abortSignal?: AbortSignal;
+  onRequestStart?: (index: number) => void;
+  onRequestSettled?: (request: MemoryAgentLoopRequestUsage) => Promise<void>;
   executeTool: (
     toolCall: ExecutableToolCall,
     options: { abortSignal?: AbortSignal },
@@ -55,6 +72,7 @@ export async function runMemoryAgentLoop(input: {
   workspaceRoot: string;
 }): Promise<MemoryAgentLoopResult> {
   const messages = input.messages.map(cloneModelMessage);
+  const requests: MemoryAgentLoopRequestUsage[] = [];
   let turns = 0;
 
   for (; turns < input.maxTurns; turns += 1) {
@@ -72,7 +90,36 @@ export async function runMemoryAgentLoop(input: {
       // The Memory agent's provider request must preserve Main's real tool catalog; execution permissions are narrowed only at the tool-use boundary.
       tools: input.tools as ModelToolContract[],
     };
-    const response = await input.model.generateText(request);
+    input.onRequestStart?.(turns);
+    const startedAt = Date.now();
+    let response: ModelResult;
+    try {
+      response = await input.model.generateText(request);
+    } catch (error) {
+      const completedAt = Date.now();
+      await input.onRequestSettled?.({
+        index: turns,
+        startedAt,
+        completedAt,
+        durationMs: completedAt - startedAt,
+        status: input.abortSignal?.aborted ? "cancelled" : "error",
+        error,
+      });
+      throw error;
+    }
+    const completedAt = Date.now();
+    const observation: MemoryAgentLoopRequestUsage = {
+      index: turns,
+      startedAt,
+      completedAt,
+      durationMs: completedAt - startedAt,
+      status: "completed",
+      result: response,
+      usage: response.usage,
+    };
+    requests.push(observation);
+    // Persist before abort checks and tools: a later failure must not erase paid requests.
+    await input.onRequestSettled?.(observation);
     input.abortSignal?.throwIfAborted();
 
     const toolCalls = response.toolCalls ?? [];
@@ -117,7 +164,7 @@ export async function runMemoryAgentLoop(input: {
     messages.push(...toolMessages);
   }
 
-  return { messages, turns };
+  return { messages, requests, turns };
 }
 
 export function evaluateMemoryAgentToolPolicy(
