@@ -2,7 +2,7 @@
 
 ## Background (current source facts)
 
-- This repository is a fork of `zai-org/ZCode` (origin=`osben/ZCode`). Upstream releases via the root `package.json` `version` + release-it with tags `v<version>`; the fork already carries upstream tags (e.g. `v3.14.3`, `v3.15.1`).
+- This repository is a fork of `zai-org/ZCode` (origin=`osben/ZCode`). Upstream releases via the root `package.json` `version` + release-it with tags `v<version>`; the fork already carries upstream tags (e.g. `v3.14.3`, `v3.15.3`). The root package version follows the upstream base used for the current build; it is now `3.15.3`, matching the inspected official ZCode.app.
 - Version injection chain: root `package.json` → per-bundler `define __ZCODE_VERSION__` (desktop tsup/vite, server, web) → `ZCODE_VERSION` in `packages/shared/src/version.ts`.
 - Version consumers fall into two groups:
   - **Outbound (wire)**: version strings visible to the z.ai / Zai backend — source headers (`User-Agent: ZCode/<v>`, `X-ZCode-App-Version`, see `packages/shared/src/zcode-source-headers.ts`), the `app_version` query param of the OAuth login URL (`configUtils.ts`; the website uses it to decide deep-link behavior), Start Plan billing and the coding-plan client/configs `app_version` query, the builtin provider CDN download `app_version` (`packages/provider-node/src/zcode-builtin-download.ts`), the OTel telemetry `app_version` attribute, and feedback device snapshots / log-archive headers.
@@ -11,10 +11,10 @@
 
 ## Product rules
 
-- Fork version format: `<upstream-base>-fork.<N>` (e.g. `3.15.1-fork.1`). `N` starts at 1 and increments within the same base; after syncing a new upstream version the base follows upstream and `N` restarts at 1.
+- Fork version format: `<upstream-base>-fork.<N>` (e.g. `3.15.3-fork.1`). `N` starts at 1 and increments within the same base; after syncing a new upstream version the base follows upstream and `N` restarts at 1.
 - **Upstream wire-version base invariant**: every version string sent to z.ai / Zai endpoints (headers, `app_version` query, telemetry `app_version`, feedback) carries the upstream base only (the `-fork.N` prerelease suffix is stripped). Local display and remote asset identity keep the full version.
   - Implementation: `packages/shared/src/version.ts` exports `stripZcodeForkVersionSuffix()` (strips strictly `-fork.N`; other prereleases such as the `0.0.0-dev` fallback pass through unchanged — dev builds must stay distinguishable to backend gating) and `ZCODE_UPSTREAM_BASE_VERSION`; headers are normalized centrally in `buildZCodeSourceHeadersFromContext`; query params / telemetry attribute / feedback reference the base directly. The CLI agent builds its own model-provider headers in `apps/zcode-cli/packages/bootstrap/src/model-config.ts` (`resolveAppVersionForHeaders`) and strips there as well; the builtin config cache paths keep the full version on purpose.
-  - Motivation: the backend gates behavior by version (e.g. the OAuth website disables auto deep link based on `app_version`); under semver `3.15.1-fork.1 < 3.15.1`, so a suffixed version can be misclassified as an older client.
+  - Motivation: the backend gates behavior by version (e.g. the OAuth website disables auto deep link based on `app_version`); under semver `3.15.3-fork.1 < 3.15.3`, so a suffixed version can be misclassified as an older client.
 - Release command: `pnpm release:fork` (`scripts/release-fork.mjs`):
   - Accepts only a root version in `X.Y.Z` or `X.Y.Z-fork.N` form; prerelease bases such as `X.Y.Z-rc.1` are rejected because they cannot produce a version in the supported fork format. Strips any existing `-fork.N` to get the base; scans local git tags `v<base>-fork.*` and takes the max of (highest tag `N`, root version `N`) + 1 so a manually bumped root version can never make the next number go backwards.
   - Invokes release-it with the explicit version and changelog plugins disabled (fork releases must not edit upstream `CHANGELOG.md` — it would conflict on every upstream sync); commit/tag/push behavior comes from the root `.release-it.json`.
