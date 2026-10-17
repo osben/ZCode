@@ -2,15 +2,18 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { gitService } = vi.hoisted(() => ({
+const { gitService, intlValue } = vi.hoisted(() => ({
   gitService: {
     getLocalBranches: vi.fn(async () => ({ branches: [] })),
     listWorktrees: vi.fn(async () => ({ worktrees: [] })),
   },
+  // A stable intl object: a fresh one per render changes loadBranches identity and re-runs the
+  // open-list effect on every render, looping forever once its promises resolve.
+  intlValue: { intl: { formatMessage: () => "" }, locale: "en" },
 }));
 vi.mock("@/hooks/useServices.js", () => ({ useServices: () => ({ gitService }) }));
 vi.mock("@/i18n/IntlProvider.js", () => ({
-  useZCodeIntl: () => ({ intl: { formatMessage: () => "" }, locale: "en" }),
+  useZCodeIntl: () => intlValue,
 }));
 
 import { useGitBranchSwitcher } from "@/hooks/useGitBranchSwitcher.js";
