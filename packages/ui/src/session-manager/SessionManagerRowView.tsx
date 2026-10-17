@@ -135,7 +135,7 @@ function NameCell({
   row: SessionManagerRow;
   intl: IntlInstance;
   renaming: boolean;
-  onRenameCommit: (title: string) => void;
+  onRenameCommit: (row: SessionManagerRow, title: string) => void;
   onRenameCancel: () => void;
 }) {
   const title = row.task.title || intl.formatMessage({ id: "taskList.untitled" });
@@ -146,11 +146,11 @@ function NameCell({
         defaultValue={row.task.titleOverridden ? row.task.title : title}
         className="h-6 w-full min-w-0 rounded-sm border border-input-border-focused bg-input px-1 text-ui-base text-foreground outline-none"
         aria-label={intl.formatMessage({ id: "sessionManager.rename.ariaLabel" })}
-        onBlur={(event) => onRenameCommit(event.currentTarget.value)}
+        onBlur={(event) => onRenameCommit(row, event.currentTarget.value)}
         onKeyDown={(event) => {
           if (event.key === "Enter") {
             event.preventDefault();
-            onRenameCommit(event.currentTarget.value);
+            onRenameCommit(row, event.currentTarget.value);
           } else if (event.key === "Escape") {
             event.preventDefault();
             onRenameCancel();
@@ -173,14 +173,14 @@ interface SessionManagerRowViewProps {
   renaming: boolean;
   canMutate: boolean;
   mutabilityReason?: string;
-  onStartRename: () => void;
-  onRenameCommit: (title: string) => void;
+  onStartRename: (row: SessionManagerRow) => void;
+  onRenameCommit: (row: SessionManagerRow, title: string) => void;
   onRenameCancel: () => void;
-  onToggleSelected: (selected: boolean) => void;
-  onTogglePinned: () => void;
-  onArchiveToggle: () => void;
-  onDelete: () => void;
-  onOpen: () => void;
+  onToggleSelected: (row: SessionManagerRow, selected: boolean) => void;
+  onTogglePinned: (row: SessionManagerRow) => void;
+  onArchiveToggle: (row: SessionManagerRow) => void;
+  onDelete: (row: SessionManagerRow) => void;
+  onOpen: (row: SessionManagerRow) => void;
 }
 
 export const SessionManagerRowView = memo(function SessionManagerRowView({
@@ -236,7 +236,7 @@ export const SessionManagerRowView = memo(function SessionManagerRowView({
             aria-pressed={row.pinned}
             onClick={(event) => {
               event.stopPropagation();
-              onTogglePinned();
+              onTogglePinned(row);
             }}
           >
             <Star className="size-3.5" fill={row.pinned ? "currentColor" : "none"} />
@@ -313,13 +313,13 @@ export const SessionManagerRowView = memo(function SessionManagerRowView({
       )}
       onClick={(event) => {
         if (event.target === event.currentTarget) {
-          onOpen();
+          onOpen(row);
         }
       }}
       onKeyDown={(event) => {
         if ((event.key === "Enter" || event.key === " ") && event.target === event.currentTarget) {
           event.preventDefault();
-          onOpen();
+          onOpen(row);
         }
       }}
     >
@@ -327,7 +327,7 @@ export const SessionManagerRowView = memo(function SessionManagerRowView({
         <Checkbox
           checked={selected}
           aria-label={intl.formatMessage({ id: "sessionManager.selectRow.ariaLabel" })}
-          onCheckedChange={(checked) => onToggleSelected(checked === true)}
+          onCheckedChange={(checked) => onToggleSelected(row, checked === true)}
           onClick={(event) => event.stopPropagation()}
         />
       </div>
@@ -350,15 +350,15 @@ export const SessionManagerRowView = memo(function SessionManagerRowView({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" onClick={(event) => event.stopPropagation()}>
-            <DropdownMenuItem onSelect={onOpen}>
+            <DropdownMenuItem onSelect={() => onOpen(row)}>
               <ExternalLink className="h-3.5 w-3.5" />
               {intl.formatMessage({ id: "sessionManager.open" })}
             </DropdownMenuItem>
-            <DropdownMenuItem disabled={!canMutate} onSelect={onStartRename}>
+            <DropdownMenuItem disabled={!canMutate} onSelect={() => onStartRename(row)}>
               <Pencil className="h-3.5 w-3.5" />
               {intl.formatMessage({ id: "sessionManager.rename" })}
             </DropdownMenuItem>
-            <DropdownMenuItem disabled={!canMutate} onSelect={onTogglePinned}>
+            <DropdownMenuItem disabled={!canMutate} onSelect={() => onTogglePinned(row)}>
               {row.pinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
               {intl.formatMessage({
                 id: row.pinned ? "sessionManager.unpin" : "sessionManager.pin",
@@ -381,7 +381,7 @@ export const SessionManagerRowView = memo(function SessionManagerRowView({
               {intl.formatMessage({ id: "sessionManager.copyPath" })}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem disabled={!canMutate} onSelect={onArchiveToggle}>
+            <DropdownMenuItem disabled={!canMutate} onSelect={() => onArchiveToggle(row)}>
               {row.archived ? (
                 <ArchiveRestore className="h-3.5 w-3.5" />
               ) : (
@@ -394,7 +394,7 @@ export const SessionManagerRowView = memo(function SessionManagerRowView({
             <DropdownMenuItem
               disabled={!canMutate}
               className="text-destructive focus:text-destructive"
-              onSelect={onDelete}
+              onSelect={() => onDelete(row)}
             >
               <Trash2 className="h-3.5 w-3.5" />
               {intl.formatMessage({ id: "sessionManager.delete" })}

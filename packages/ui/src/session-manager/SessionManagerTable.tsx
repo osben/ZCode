@@ -208,14 +208,14 @@ export function SessionManagerTable(props: SessionManagerTableProps) {
                   renaming={props.renamingKey === row.taskKey}
                   canMutate={props.canMutateRow(row)}
                   mutabilityReason={props.mutabilityReason}
-                  onStartRename={() => props.onStartRename(row)}
-                  onRenameCommit={(title) => props.onRenameCommit(row, title)}
+                  onStartRename={props.onStartRename}
+                  onRenameCommit={props.onRenameCommit}
                   onRenameCancel={props.onRenameCancel}
-                  onToggleSelected={(selected) => props.onToggleRowSelected(row, selected)}
-                  onTogglePinned={() => props.onToggleRowPinned(row)}
-                  onArchiveToggle={() => props.onArchiveToggle(row)}
-                  onDelete={() => props.onDeleteRow(row)}
-                  onOpen={() => props.onOpenRow(row)}
+                  onToggleSelected={props.onToggleRowSelected}
+                  onTogglePinned={props.onToggleRowPinned}
+                  onArchiveToggle={props.onArchiveToggle}
+                  onDelete={props.onDeleteRow}
+                  onOpen={props.onOpenRow}
                 />
               </div>
             );

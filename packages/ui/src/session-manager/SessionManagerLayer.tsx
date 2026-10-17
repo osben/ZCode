@@ -211,6 +211,21 @@ export function SessionManagerLayer() {
     [actions],
   );
 
+  const handleToggleRowPinned = useCallback(
+    (row: SessionManagerRow) => void actions.setPinned(row, !row.pinned),
+    [actions],
+  );
+  const handleArchiveToggleRow = useCallback(
+    (row: SessionManagerRow) => void actions.setArchived(row, !row.archived),
+    [actions],
+  );
+  const handleDeleteRow = useCallback((row: SessionManagerRow) => {
+    setDeleteDialogRows([row]);
+  }, []);
+  const handleStartRenameRow = useCallback((row: SessionManagerRow) => {
+    setRenamingKey(row.taskKey);
+  }, []);
+
   const confirmDelete = useCallback(
     async (rowsToDelete: readonly SessionManagerRow[]) => {
       setDeleteDialogRows(null);
@@ -311,11 +326,11 @@ export function SessionManagerLayer() {
           onToggleSelectAll={toggleSelectAll}
           onToggleGroupCollapsed={toggleGroupCollapsed}
           onToggleRowSelected={toggleRowSelected}
-          onToggleRowPinned={(row) => void actions.setPinned(row, !row.pinned)}
-          onArchiveToggle={(row) => void actions.setArchived(row, !row.archived)}
-          onDeleteRow={(row) => setDeleteDialogRows([row])}
+          onToggleRowPinned={handleToggleRowPinned}
+          onArchiveToggle={handleArchiveToggleRow}
+          onDeleteRow={handleDeleteRow}
           onOpenRow={openRow}
-          onStartRename={(row) => setRenamingKey(row.taskKey)}
+          onStartRename={handleStartRenameRow}
           onRenameCommit={(row, title) => void renameCommit(row, title)}
           onRenameCancel={() => setRenamingKey(null)}
         />
