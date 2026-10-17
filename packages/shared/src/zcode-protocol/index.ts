@@ -1530,7 +1530,8 @@ export const zcodeTurnStartedEventPayloadSchema = z
     intent: jsonObjectSchema.optional(),
     originMeta: jsonObjectSchema.optional(),
     // Runtime forwards the background wake source; the strict schema must declare it too, or the whole event is discarded.
-    backgroundSource: z.enum(["bash", "subagent"]).optional(),
+    // "dream" is the /dream memory-consolidation completion notification turn.
+    backgroundSource: z.enum(["bash", "subagent", "dream"]).optional(),
     attachments: z.array(jsonObjectSchema).optional(),
   })
   .strict();

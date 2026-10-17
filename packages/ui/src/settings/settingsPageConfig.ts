@@ -8,6 +8,7 @@ import {
   Palette,
   Sun,
   BarChart3,
+  History,
   Terminal,
   AlarmClock,
   Anchor,
@@ -189,6 +190,14 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     id: "usage",
     icon: BarChart3,
     titleId: "settings.usageTitle",
+    groupId: "dataAndStats",
+  },
+  // Manage sessions lives next to Usage: both are cross-workspace "data and statistics"
+  // management surfaces. The title reuses the sessionManager.* namespace the table already localizes.
+  {
+    id: "sessions",
+    icon: History,
+    titleId: "sessionManager.title",
     groupId: "dataAndStats",
   },
 ];

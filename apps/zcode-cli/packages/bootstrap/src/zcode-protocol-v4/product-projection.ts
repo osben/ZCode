@@ -457,6 +457,20 @@ type TurnModelBaseline =
   | { kind: "sourceLess" }
   | { kind: "known"; provider: string; model: string; thought: string };
 
+/** Event taskKind → panel work kind; new events carry the runtime's explicit taskKind. */
+const BACKGROUND_WORK_KIND_BY_TASK_KIND: Record<string, BackgroundWorkSummary["kind"]> = {
+  dream: "dream",
+  subagent: "subagent",
+  bash: "bash",
+  workflow: "workflow",
+};
+
+/** Legacy resolver kind → panel work kind; older events have no explicit taskKind. */
+const BACKGROUND_WORK_KIND_BY_LEGACY_KIND: Record<string, BackgroundWorkSummary["kind"]> = {
+  agent: "subagent",
+  bash: "bash",
+};
+
 export class ProductProjection {
   private snapshot: ConversationSnapshot;
   // Keep the reducer's rowId lookup synchronized with rows.window. Cold recovery previously scanned
@@ -4775,17 +4789,10 @@ export class ProductProjection {
     // equivalent because the legacy `Workflow` tool intentionally remains bash; they are different
     // things, and sharing a category would mix them in the panel.
     const kind: BackgroundWorkSummary["kind"] =
-      payload.taskKind === "subagent"
-        ? "subagent"
-        : payload.taskKind === "bash"
-          ? "bash"
-          : payload.taskKind === "workflow"
-            ? "workflow"
-            : legacyKind === "agent"
-              ? "subagent"
-              : legacyKind === "bash"
-                ? "bash"
-                : (existing?.kind ?? "bash");
+      BACKGROUND_WORK_KIND_BY_TASK_KIND[payload.taskKind ?? ""] ??
+      BACKGROUND_WORK_KIND_BY_LEGACY_KIND[legacyKind ?? ""] ??
+      existing?.kind ??
+      "bash";
     // Event statuses (running/completed/failed/timed_out/cancelled/spawn_error/lost)
     // → summary status（running/resultPending/failed/cancelled）。
     const rawStatus = payload.status ?? "running";

@@ -48,6 +48,18 @@ function currentPipeline(sessionId?: string) {
   );
 }
 
+function worktreeEntry(path: string, branchName = PARAMS.branchName) {
+  return {
+    path,
+    headCommitHash: "c",
+    branchName,
+    isMain: false,
+    isBare: false,
+    isDetached: false,
+    isCurrent: false,
+  };
+}
+
 beforeEach(() => {
   useComposerWorktreePipelineStore.setState({ pipelineByWorkspaceKey: {} });
 });
@@ -513,5 +525,121 @@ describe("reconcileCreatingComposerWorktreePipeline", () => {
       issues: [],
     });
     await runner;
+  });
+});
+
+describe("Host preparation sync before ready (strict activation stays intact)", () => {
+  const OTHER_PATH = "/dev/other-worktrees/zcode-sleepy-capybara";
+
+  function mockExistingWorktreeElsewhere() {
+    createWorktree.mockResolvedValue({
+      ok: false,
+      worktreePath: null,
+      branchName: null,
+      issues: [{ code: "target-path-exists", message: "target exists" }],
+    } satisfies GitWorktreeCreateResult);
+    listWorktrees.mockResolvedValue({
+      isGitAvailable: true,
+      isRepository: true,
+      worktrees: [worktreeEntry(OTHER_PATH)],
+    });
+  }
+
+  it("realigns the Host marker before ready when an existing worktree is reused at another path", async () => {
+    const syncPreparedWorktree = vi.fn().mockResolvedValue(undefined);
+    mockExistingWorktreeElsewhere();
+    seedCreating({ sessionId: "session-prepared-1" });
+
+    const outcome = await startComposerWorktreePipeline({
+      gitService,
+      workspaceKey: WORKSPACE_KEY,
+      sessionId: "session-prepared-1",
+      params: PARAMS,
+      formatMessage: (id: string) => id,
+      syncPreparedWorktree,
+    });
+
+    expect(outcome).toBe("ready");
+    expect(syncPreparedWorktree).toHaveBeenCalledWith({
+      workspaceKey: WORKSPACE_KEY,
+      sessionId: "session-prepared-1",
+      branchName: PARAMS.branchName,
+      targetPath: OTHER_PATH,
+      baseBranch: "main",
+    });
+    expect(currentPipeline()).toMatchObject({
+      status: "ready",
+      existing: true,
+      worktreePath: OTHER_PATH,
+    });
+  });
+
+  it("leaves the Host marker untouched when Git settles on the prepared target", async () => {
+    const syncPreparedWorktree = vi.fn().mockResolvedValue(undefined);
+    createWorktree.mockResolvedValue({
+      ok: true,
+      worktreePath: PARAMS.targetPath,
+      branchName: PARAMS.branchName,
+      issues: [],
+    } satisfies GitWorktreeCreateResult);
+    seedCreating({ sessionId: "session-prepared-1" });
+
+    const outcome = await startComposerWorktreePipeline({
+      gitService,
+      workspaceKey: WORKSPACE_KEY,
+      sessionId: "session-prepared-1",
+      params: PARAMS,
+      formatMessage: (id: string) => id,
+      syncPreparedWorktree,
+    });
+
+    expect(outcome).toBe("ready");
+    expect(syncPreparedWorktree).not.toHaveBeenCalled();
+  });
+
+  it("fails the attempt when the Host rejects the realigned path (no unactivatable ready)", async () => {
+    const syncPreparedWorktree = vi.fn().mockRejectedValue(new Error("host rejected"));
+    mockExistingWorktreeElsewhere();
+    seedCreating({ sessionId: "session-prepared-1" });
+
+    const outcome = await startComposerWorktreePipeline({
+      gitService,
+      workspaceKey: WORKSPACE_KEY,
+      sessionId: "session-prepared-1",
+      params: PARAMS,
+      formatMessage: (id: string) => id,
+      syncPreparedWorktree,
+    });
+
+    expect(outcome).toBe("failed");
+    expect(currentPipeline()).toMatchObject({ status: "failed", sessionId: "session-prepared-1" });
+  });
+
+  it("realigns the Host marker during stale-creating reconcile before ready", async () => {
+    const syncPreparedWorktree = vi.fn().mockResolvedValue(undefined);
+    seedCreating({ sessionId: "session-prepared-1" });
+    listWorktrees.mockResolvedValue({
+      isGitAvailable: true,
+      isRepository: true,
+      worktrees: [worktreeEntry(OTHER_PATH)],
+    });
+
+    await reconcileCreatingComposerWorktreePipeline({
+      gitService,
+      workspaceKey: WORKSPACE_KEY,
+      sessionId: "session-prepared-1",
+      branchName: PARAMS.branchName,
+      formatMessage: (id: string) => id,
+      syncPreparedWorktree,
+    });
+
+    expect(syncPreparedWorktree).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: "session-prepared-1", targetPath: OTHER_PATH }),
+    );
+    expect(currentPipeline()).toMatchObject({
+      status: "ready",
+      existing: true,
+      worktreePath: OTHER_PATH,
+    });
   });
 });

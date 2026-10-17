@@ -46,16 +46,10 @@ import { StoreProvider, useZCodeStore } from "@/store/StoreProvider.js";
 import { setMcpStorePlatform } from "@/store/mcpStore.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { TabStoreProvider, useTabStore, useTabStoreApi } from "@/store/TabStoreProvider.js";
-import {
-  isSettingsTab,
-  isSessionManagerTab,
-  isWorkspaceTab,
-  type WorkspaceTabState,
-} from "@/store/tabStore.js";
+import { isSettingsTab, isWorkspaceTab, type WorkspaceTabState } from "@/store/tabStore.js";
 import { logger } from "@/logger.js";
 import { RootShell } from "@/root/RootShell.js";
 import { RootWorkspaceContent } from "@/root/RootWorkspaceContent.js";
-import { SessionManagerLayer } from "@/session-manager/SessionManagerLayer.js";
 import { resolveRootWorkspaceShellTarget } from "@/root/rootWorkspaceShellTarget.js";
 import { OccupationOnboarding } from "@/onboarding/OccupationOnboarding.js";
 import { OnboardingDialog } from "@/onboarding/OnboardingDialog.js";
@@ -514,7 +508,6 @@ function RootInner({
   const activeTab = activeTabId ? (tabs.find((tab) => tab.id === activeTabId) ?? null) : null;
   const activeWorkspaceTab = activeTab && isWorkspaceTab(activeTab) ? activeTab : null;
   const isSettingsTabActive = activeTab ? isSettingsTab(activeTab) : false;
-  const isSessionManagerTabActive = activeTab ? isSessionManagerTab(activeTab) : false;
   const {
     workspaceShellPath,
     workspaceIdentity: workspaceShellIdentity,
@@ -997,7 +990,7 @@ function RootInner({
   const canEnterNativeThemeSyncSurface = Boolean(
     !isStartupRenderBlocked &&
     !welcomeScreenOpenReason &&
-    (workspaceShellPath || isSettingsTabActive || isSessionManagerTabActive),
+    (workspaceShellPath || isSettingsTabActive),
   );
 
   useEffect(() => {
@@ -1035,7 +1028,6 @@ function RootInner({
       isStartupProviderLoginEntryOpen ||
       workspaceShellPath ||
       isSettingsTabActive ||
-      isSessionManagerTabActive ||
       !allowOpenWorkspace ||
       didRequestFallbackWorkspaceRef.current
     ) {
@@ -1266,9 +1258,7 @@ function RootInner({
       {directoryBrowserDialog}
       <OccupationOnboarding
         showWindowControls={Boolean(isWindowsDesktop || (isDesktop && !isMacDesktop))}
-        showChildrenWhileLoading={
-          !workspaceShellPath && (isSettingsTabActive || isSessionManagerTabActive)
-        }
+        showChildrenWhileLoading={!workspaceShellPath && isSettingsTabActive}
         isMacDesktop={isMacDesktop}
         isWindowsDesktop={isWindowsDesktop}
       >
@@ -1283,15 +1273,6 @@ function RootInner({
             >
               <SettingsPage {...settingsLayerProps} />
             </ScopedErrorBoundary>
-          ) : isSessionManagerTabActive ? (
-            <ScopedErrorBoundary
-              scope="session-manager-page"
-              resetKeys={["session-manager-root"]}
-              variant="panel"
-              className="relative h-full"
-            >
-              <SessionManagerLayer />
-            </ScopedErrorBoundary>
           ) : null
         ) : (
           <RootWorkspaceContent
@@ -1302,7 +1283,6 @@ function RootInner({
             workspaceRemoteSessionId={workspaceShellRemoteSessionId}
             activeWorkspacePath={activeWorkspacePath}
             isSettingsTabActive={isSettingsTabActive}
-            isSessionManagerTabActive={isSessionManagerTabActive}
             handleConnectRemote={handleConnectRemote}
             handleSelectRemoteProject={handleSelectRemoteProject}
             handleCancelRemoteProject={handleCancelRemoteProject}

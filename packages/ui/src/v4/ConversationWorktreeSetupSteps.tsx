@@ -27,6 +27,7 @@ import {
   retryComposerWorktreePipeline,
   restoreComposerWorktreePipelineFromPreparation,
 } from "@/v4/composer/composerWorktreePipeline.js";
+import type { ComposerWorktreePreparationSync } from "@/v4/composer/composerDraftWorktreeIntent.js";
 
 /** Whether the workspace has a pipeline whose rows should replace the draft greeting. */
 export function useHasActiveWorktreeSetupPipeline(workspaceKey: string): boolean {
@@ -52,6 +53,7 @@ export function ConversationWorktreeSetupSteps({
   preparation,
   onRetryPreparation,
   onPreparationFailed,
+  onSyncPreparation,
 }: {
   workspacePath: string;
   workspaceIdentity?: string;
@@ -64,6 +66,8 @@ export function ConversationWorktreeSetupSteps({
   };
   onRetryPreparation: () => Promise<void>;
   onPreparationFailed: (sessionId: string, failureMessage: string) => Promise<void>;
+  /** Realign the Host preparation marker when reconciliation finds the worktree at another path. */
+  onSyncPreparation?: ComposerWorktreePreparationSync;
 }) {
   const { intl } = useZCodeIntl();
   const baseServices = useBaseWorkspaceServices();
@@ -85,6 +89,7 @@ export function ConversationWorktreeSetupSteps({
       sessionId,
       branchName: entry.params.branchName,
       formatMessage: (id, values) => intl.formatMessage({ id }, values),
+      ...(onSyncPreparation ? { syncPreparedWorktree: onSyncPreparation } : {}),
     }).then(async () => {
       const settled = selectComposerWorktreePipeline(
         useComposerWorktreePipelineStore.getState(),
@@ -95,7 +100,15 @@ export function ConversationWorktreeSetupSteps({
         await onPreparationFailed(sessionId, settled.failureMessage ?? "Worktree creation failed");
       }
     });
-  }, [baseServices.gitService, entry, intl, onPreparationFailed, sessionId, workspaceKey]);
+  }, [
+    baseServices.gitService,
+    entry,
+    intl,
+    onPreparationFailed,
+    onSyncPreparation,
+    sessionId,
+    workspaceKey,
+  ]);
 
   useEffect(() => {
     if (!entry && preparation.status !== "cancelled") {
@@ -210,6 +223,7 @@ export function ConversationWorktreeSetupSteps({
                           workspaceKey,
                           sessionId,
                           formatMessage: (id, values) => intl.formatMessage({ id }, values),
+                          ...(onSyncPreparation ? { syncPreparedWorktree: onSyncPreparation } : {}),
                         });
                         if (outcome === "failed") {
                           const failureMessage =

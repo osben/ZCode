@@ -10462,3 +10462,41 @@ describe("seedWorktreePreparation（Host 种子）", () => {
     expect(projection.getSnapshot().meta.worktreePreparation).toBeUndefined();
   });
 });
+
+describe("Dream background projection", () => {
+  it("preserves Dream kind, progress and terminal summary for live and replay clients", () => {
+    const log = new EventLog();
+    log.push(SessionEventType.BackgroundTaskStarted, {
+      taskId: "dream-1",
+      taskKind: "dream",
+      status: "running",
+      description: "Starting",
+      cancellable: true,
+    });
+    log.push(SessionEventType.BackgroundTaskUpdated, {
+      taskId: "dream-1",
+      taskKind: "dream",
+      status: "running",
+      description: "Model request 2…",
+      cancellable: true,
+    });
+    log.push(SessionEventType.BackgroundTaskCompleted, {
+      taskId: "dream-1",
+      taskKind: "dream",
+      status: "completed",
+      description: "Consolidated memory",
+      cancellable: false,
+    });
+    const { projection, snapshots } = runAll(log.events);
+    expect(snapshots[2]?.backgroundWorks).toMatchObject([
+      { kind: "dream", title: "Model request 2…", status: "running" },
+    ]);
+    expect(projection.getSnapshot().backgroundWorks).toMatchObject([
+      { kind: "dream", title: "Consolidated memory", status: "resultPending", cancellable: false },
+    ]);
+    expect(runAll(log.events).projection.getSnapshot().backgroundWorks).toEqual(
+      projection.getSnapshot().backgroundWorks,
+    );
+    expect(conversationSnapshotSchema.safeParse(projection.getSnapshot()).success).toBe(true);
+  });
+});

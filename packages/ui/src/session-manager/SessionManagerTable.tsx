@@ -1,13 +1,13 @@
 import { memo, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ChevronDown, ChevronRight, Folder } from "lucide-react";
+import { ChevronDown, ChevronRight, Folder, Star } from "lucide-react";
 import { cn } from "@/components/lib/utils.js";
 import { Checkbox } from "@/components/ui/checkbox.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import type { IntlInstance } from "@/i18n/createIntl.js";
 import {
   buildSessionManagerGridTemplate,
-  SESSION_MANAGER_MIN_TABLE_WIDTH,
+  buildSessionManagerMinTableWidth,
   sessionManagerColumnLabelId,
 } from "./sessionManagerColumns.js";
 import type { FlattenedSessionManagerRow, SessionManagerRow } from "./sessionManagerModel.js";
@@ -97,7 +97,7 @@ export function SessionManagerTable(props: SessionManagerTableProps) {
       aria-rowcount={props.flatRows.length + 1}
       className="relative min-h-0 flex-1 overflow-auto bg-background"
     >
-      <div style={{ minWidth: SESSION_MANAGER_MIN_TABLE_WIDTH }}>
+      <div style={{ minWidth: buildSessionManagerMinTableWidth(props.columns) }}>
         <div
           role="row"
           className="sticky top-0 z-10 grid h-8 items-center border-b border-border bg-header text-ui-xs"
@@ -118,7 +118,13 @@ export function SessionManagerTable(props: SessionManagerTableProps) {
           </div>
           {visibleColumns.map((column) => (
             <div key={column} role="columnheader" className="min-w-0 px-2">
-              {column === "name" || column === "updated" || column === "created" ? (
+              {column === "pinned" ? (
+                // The pinned column is 32px wide; a star header fits where the localized word cannot.
+                <Star
+                  className="size-3 text-foreground-subtlest"
+                  aria-label={intl.formatMessage({ id: sessionManagerColumnLabelId(column) })}
+                />
+              ) : column === "name" || column === "updated" || column === "created" ? (
                 <SortHeaderCell
                   column={column}
                   sortColumn={props.sortColumn}
@@ -171,11 +177,11 @@ export function SessionManagerTable(props: SessionManagerTableProps) {
                     )}
                   </button>
                   <Folder className="size-3.5 shrink-0 text-foreground-subtle" />
-                  <span className="text-ui-base font-medium text-foreground">
+                  <span className="shrink-0 text-ui-base font-medium text-foreground">
                     {item.group.label}
                   </span>
                   <span
-                    className="truncate font-mono text-ui-xs text-foreground-subtlest"
+                    className="min-w-0 truncate font-mono text-ui-xs text-foreground-subtlest"
                     title={item.group.workspacePath}
                   >
                     {item.group.workspacePath}

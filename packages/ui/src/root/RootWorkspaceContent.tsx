@@ -4,7 +4,6 @@ import { ScopedErrorBoundary } from "@/ErrorBoundary.js";
 import { ServiceProvider } from "@/hooks/useServices.js";
 import { logger } from "@/logger.js";
 import { WorkspaceSettingsLayer } from "@/root/WorkspaceSettingsLayer.js";
-import { SessionManagerLayer } from "@/session-manager/SessionManagerLayer.js";
 import type { AppProps } from "@/app-shell/types.js";
 import type { RootProps } from "@/root/types.js";
 import type { IFeedbackService, IServiceAccessor } from "@zcode/services";
@@ -20,7 +19,6 @@ interface RootWorkspaceContentProps {
   workspaceRemoteSessionId?: string;
   activeWorkspacePath: string | null;
   isSettingsTabActive: boolean;
-  isSessionManagerTabActive: boolean;
   handleConnectRemote: AppProps["onConnectRemote"];
   handleSelectRemoteProject: AppProps["onSelectRemoteProject"];
   handleCancelRemoteProject: AppProps["onCancelRemoteProject"];
@@ -63,7 +61,6 @@ export function RootWorkspaceContent({
   workspaceRemoteSessionId,
   activeWorkspacePath,
   isSettingsTabActive,
-  isSessionManagerTabActive,
   handleConnectRemote,
   handleSelectRemoteProject,
   handleCancelRemoteProject,
@@ -98,26 +95,27 @@ export function RootWorkspaceContent({
   windowsWindowControlsRightPaddingPx,
 }: RootWorkspaceContentProps) {
   const workspaceKey = workspaceIdentity?.trim() || workspaceShellPath;
-  // Settings and the sessions manager are both full-area overlays: the workspace shell stays
-  // mounted and inert under either one (same rationale as the settings-only bugfix comments below).
-  const overlaySurfaceActive = isSettingsTabActive || isSessionManagerTabActive;
+  // Settings covers the whole window with its own navigation sidebar, so the workspace surface is
+  // hidden and made inert under it (and conversation foreground telemetry treats the overlay as
+  // "chat not in front of the user"). Sessions management is a Settings section now and no longer
+  // overlays the workspace at all.
+  const isWorkspaceSurfaceHidden = isSettingsTabActive;
 
   useEffect(() => {
     logger.info("[RootWorkspaceContent] settings layer visibility changed", {
       isSettingsTabActive,
-      isSessionManagerTabActive,
       workspaceShellPath,
       workspaceHiddenByLayout: false,
     });
-  }, [isSessionManagerTabActive, isSettingsTabActive, workspaceShellPath]);
+  }, [isSettingsTabActive, workspaceShellPath]);
 
   return (
     <>
       <div
-        className={overlaySurfaceActive ? "h-full opacity-0 pointer-events-none" : "h-full"}
-        aria-hidden={overlaySurfaceActive}
-        data-root-workspace-surface={overlaySurfaceActive ? "inert" : "interactive"}
-        inert={overlaySurfaceActive ? true : undefined}
+        className={isWorkspaceSurfaceHidden ? "h-full opacity-0 pointer-events-none" : "h-full"}
+        aria-hidden={isWorkspaceSurfaceHidden}
+        data-root-workspace-surface={isWorkspaceSurfaceHidden ? "inert" : "interactive"}
+        inert={isWorkspaceSurfaceHidden ? true : undefined}
       >
         {/* Bugfix: Previously, a conditional branch replaced the entire App with the settings page, unmounting and rebuilding the whole main tree when settings closed.
             Local UI state in the chat area, terminal, and elsewhere was therefore treated as if the workspace had been entered again.
@@ -138,7 +136,7 @@ export function RootWorkspaceContent({
             steal focus from the settings form; mark the whole workspace inert while settings overlays it, then restore interaction when the user explicitly returns. */}
         <ConversationTelemetryWorkspaceAttachment
           enabled={isDesktop === true}
-          foregroundEnabled={!overlaySurfaceActive}
+          foregroundEnabled={!isWorkspaceSurfaceHidden}
           services={workspaceScopedServices}
           workspacePath={workspaceShellPath}
           workspaceIdentity={workspaceIdentity}
@@ -188,7 +186,7 @@ export function RootWorkspaceContent({
                 webRemoteControlTerminalTransportState={webRemoteControlTerminalTransportState}
                 allowRemoteWorkspace={allowRemoteWorkspace}
                 remoteWorkspaceSessions={remoteWorkspaceSessions}
-                isWorkspaceVisible={!overlaySurfaceActive}
+                isWorkspaceVisible={!isSettingsTabActive}
                 isDesktop={isDesktop}
                 isMacDesktop={isMacDesktop}
                 isWindowsDesktop={isWindowsDesktop}
@@ -221,17 +219,6 @@ export function RootWorkspaceContent({
             onLogout={handleLogout}
             user={user}
           />
-        </ScopedErrorBoundary>
-      ) : null}
-
-      {isSessionManagerTabActive ? (
-        <ScopedErrorBoundary
-          scope="session-manager-layer"
-          resetKeys={[workspaceKey, isSessionManagerTabActive]}
-          variant="panel"
-          className="absolute inset-0 z-10"
-        >
-          <SessionManagerLayer />
         </ScopedErrorBoundary>
       ) : null}
     </>

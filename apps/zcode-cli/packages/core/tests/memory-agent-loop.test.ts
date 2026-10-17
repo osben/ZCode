@@ -25,6 +25,67 @@ const modelSelection = {
 const memoryRoot = "/workspace/.memory";
 
 describe("runMemoryAgentLoop", () => {
+  it("reports requests before tools and preserves usage before a later failure", async () => {
+    const settled: unknown[] = [];
+    const starts: number[] = [];
+    const order: string[] = [];
+    let time = 100;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => time);
+    let calls = 0;
+    try {
+      await expect(
+        runMemoryAgentLoop({
+          executeTool: async () => {
+            order.push("tool");
+            time = 500;
+            return executionResult("read", "Read", "ok");
+          },
+          maxTurns: 3,
+          messages: [],
+          model: generateOnlyModel(async () => {
+            calls += 1;
+            time += calls === 1 ? 30 : 70;
+            if (calls === 2) throw new Error("provider failed");
+            return modelResult({ toolCalls: [{ id: "read", name: "Read", input: {} }] });
+          }),
+          onRequestStart: (index) => {
+            starts.push(index);
+          },
+          onRequestSettled: async (request) => {
+            settled.push(request);
+            order.push("usage");
+          },
+          rootDir: memoryRoot,
+          tools: [tool("Read", true, "none")],
+          workingDirectory: "/workspace",
+          workspaceRoot: "/workspace",
+        }),
+      ).rejects.toThrow("provider failed");
+      expect(starts).toEqual([0, 1]);
+      expect(order).toEqual(["usage", "tool", "usage"]);
+      expect(settled).toMatchObject([
+        {
+          index: 0,
+          startedAt: 100,
+          completedAt: 130,
+          durationMs: 30,
+          status: "completed",
+          result: { toolCalls: [{ name: "Read" }] },
+        },
+        {
+          index: 1,
+          startedAt: 500,
+          completedAt: 570,
+          durationMs: 70,
+          status: "error",
+          error: expect.any(Error),
+        },
+      ]);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it("preserves the frozen provider context and real tool catalog on every model turn", async () => {
     const initialMessages = Object.freeze([
       Object.freeze({ role: "system", content: "full system" }),
@@ -95,6 +156,11 @@ describe("runMemoryAgentLoop", () => {
       }),
     ]);
     expect(result.turns).toBe(5);
+    expect(result.requests).toHaveLength(5);
+    expect(result.requests.map((request) => request.index)).toEqual([0, 1, 2, 3, 4]);
+    expect(
+      result.requests.every((request) => request.status === "completed" && request.durationMs >= 0),
+    ).toBe(true);
     expect(result.messages.slice(-2)).toEqual([
       expect.objectContaining({ role: "assistant", content: "last turn" }),
       expect.objectContaining({ role: "tool", toolCallId: "write-last", isError: false }),

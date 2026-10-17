@@ -45,12 +45,14 @@ export function captureProjectMemoryAgentContext(
       selection: runtime.getSessionModelSelection(),
     });
   const model = withModelInvocationContext(baseModel, (request) => ({
-    // Extraction consumes the transcript; do not write its own request back to the same model-io directory,
-    // which would occupy rollout slots in the background path and feed back into later Extractions.
     metadata: {
       ...traceContextToLogContext(input.traceContext),
       querySource: input.operation,
-      skipTranscript: true,
+      // Extraction consumes the transcript; writing its own requests back to the same model-io
+      // directory would occupy rollout slots in the background path and feed back into later
+      // Extractions. Manual Dream is the exception: its model-io records are the data source for
+      // the Model Trajectory pane, so Dream requests must be recorded.
+      skipTranscript: input.operation !== "project_memory_dream",
     },
     modelCall: { operation: input.operation },
     refreshRuntimeHeadersBeforeAttempt: createRefreshRuntimeHeadersBeforeModelAttempt(runtime, {

@@ -101,6 +101,7 @@ export interface ConversationStatusPanelModel {
   goal: GoalState | null;
   sessionPlans: ConversationStatusPanelSessionPlansModel | null;
   plan: ConversationStatusPanelPlanModel | null;
+  latestDreamWork: BackgroundWorkSummary | null;
   runningBashWorks: BackgroundWorkSummary[];
   runningSubagentWorks: ConversationStatusPanelRunningSubagent[];
   runningWorkflowRuns: ConversationStatusPanelWorkflowRun[];
@@ -279,21 +280,38 @@ export function workflowRunWords(
   return { kind: "status", status: "running" };
 }
 
-/** Direct navigation from the composer badge: return an open intent only when the current conversation has exactly one active workflow run with a detail page. Otherwise return null so the badge can expand to a pill. No terminals/subagents: the badge is their only entry point and direct navigation would hide them. Exactly one workflow: choosing among multiple is the user’s decision. Require toolCallId: degraded rows (work exists but run is absent) and old-CLI runs have no detail page, just like non-clickable panel rows; use the pill so Stop remains available. The input is buildConversationStatusPanelModel’s output, so the badge and pill share the same runtime facts. */
+/** Direct navigation from the composer badge: return an open intent only when the current conversation has exactly one active workflow run with a detail page. Otherwise return null so the badge can expand to a pill. No terminals/subagents: the badge is their only entry point and direct navigation would hide them. A retained terminal Dream result must not block the shortcut either; only a running Dream does, because the badge then also stands for the live consolidation. Exactly one workflow: choosing among multiple is the user’s decision. Require toolCallId: degraded rows (work exists but run is absent) and old-CLI runs have no detail page, just like non-clickable panel rows; use the pill so Stop remains available. The input is buildConversationStatusPanelModel’s output, so the badge and pill share the same runtime facts. */
 export function resolveSoleRunningWorkflowRunTarget(
   model: Pick<
     ConversationStatusPanelModel,
-    "runningBashWorks" | "runningSubagentWorks" | "runningWorkflowRuns"
+    "runningBashWorks" | "runningSubagentWorks" | "runningWorkflowRuns" | "latestDreamWork"
   >,
 ): ConversationStatusPanelWorkflowRunTarget | null {
-  if (model.runningBashWorks.length > 0 || model.runningSubagentWorks.length > 0) return null;
+  if (
+    model.latestDreamWork?.status === "running" ||
+    model.runningBashWorks.length > 0 ||
+    model.runningSubagentWorks.length > 0
+  )
+    return null;
   if (model.runningWorkflowRuns.length !== 1) return null;
   return workflowRunOpenTarget(model.runningWorkflowRuns[0]!);
+}
+
+/** Derived from ordered lifecycle state, including the last terminal result; no UI-owned history. */
+export function getLatestDreamWork(
+  works: readonly BackgroundWorkSummary[],
+): BackgroundWorkSummary | null {
+  let latest: BackgroundWorkSummary | null = null;
+  for (const work of works) {
+    if (work.kind === "dream" && (!latest || work.startedAt >= latest.startedAt)) latest = work;
+  }
+  return latest;
 }
 
 export function buildConversationStatusPanelModel(
   input: BuildConversationStatusPanelModelInput,
 ): ConversationStatusPanelModel {
+  const latestDreamWork = getLatestDreamWork(input.backgroundWorks ?? []);
   const git = input.isOfficeMode ? null : buildGitModel(input);
   const goal = input.goal ?? null;
   const sessionPlans = buildSessionPlansModel(input.sessionPlans, input.workspacePath);
@@ -365,10 +383,12 @@ export function buildConversationStatusPanelModel(
     goal,
     sessionPlans,
     plan,
+    latestDreamWork,
     runningBashWorks,
     runningSubagentWorks,
     runningWorkflowRuns,
     hasContent: Boolean(
+      latestDreamWork ||
       git ||
       goal ||
       sessionPlans ||

@@ -115,9 +115,15 @@ draft persistence limitation.
 Existing worktrees reuse the same prepared session and activate in place; do not transfer the draft
 to a second workspace or create a second directory. Before retrying a non-active prepared session
 with different frozen parameters, update its Host marker to the new branch, target path, and base
-branch so activation validates against the same values Git used. A missing or failed branch list
-degrades to base=HEAD, with a visible note; it does not block Send. Invalid custom/global target
-locations remain synchronous failures before the session starts Git creation.
+branch so activation validates against the same values Git used. The same realignment applies when
+Git settles the branch worktree at a directory other than the frozen target (WT-04 reuse, or a
+recovery reconcile that finds the worktree elsewhere): update the Host marker's target path to the
+directory Git actually used before the entry turns ready, so the strict activation check
+(`executionWorktree.path === prepared.targetPath`) accepts the path being activated. If that update
+is rejected, settle the entry as a retryable failure instead of exposing a ready entry the Host will
+refuse to activate. A missing or failed branch list degrades to base=HEAD, with a visible note; it
+does not block Send. Invalid custom/global target locations remain synchronous failures before the
+session starts Git creation.
 
 The Command Center “New task in worktree” action remains its separate Start-driven flow and opens its
 own workspace. Its branch-name collision avoidance and shared `executeWorktreeCreation` request
@@ -158,7 +164,10 @@ early transcript persistence or a second accepted-input store.
    matches the current transcript sequence.
    If metadata changes while a subscribe/resync frame is awaiting ACK/outbox admission, preserve that
    reservation; after it commits, send the updated snapshot before any later deltas.
-8. Existing matching worktree activates in the same session without creating a second directory.
+8. Existing matching worktree activates in the same session without creating a second directory,
+   including when the found path differs from the originally requested target: the Host preparation
+   marker is realigned to the real path before activation, and a rejected realignment leaves a
+   retryable failure instead of a ready entry the Host refuses.
 9. Missing/failed branch list uses HEAD and notes the default; invalid destination fails before Git
    creation; the five-second delay remains unchanged.
 10. Plain sessions, palette Start, per-worktree Git Tools, sibling non-Git destination visibility,

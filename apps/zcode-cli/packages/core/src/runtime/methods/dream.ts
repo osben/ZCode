@@ -15,8 +15,8 @@ import type { ParsedDreamCommand } from "../helpers/commands.js";
 import type { TurnResult } from "../types.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import {
-  runManualProjectMemoryDream,
-  type ProjectMemoryDreamOutcome,
+  launchManualProjectMemoryDream,
+  type ProjectMemoryDreamSkipReason,
 } from "../helpers/project-memory-dream.js";
 import { recordTurnUsageFact } from "./usage-observability.js";
 
@@ -25,9 +25,10 @@ export const DREAM_COMMAND_USAGE_RESPONSE =
   "Usage: /dream — takes no arguments. Run /dream to consolidate project memory now.";
 
 /**
- * Manual `/dream` command turn, structured like `executeManualCompact`: the command text is
- * `model-only` in events and the Memory agent runs on the detached Memory path (no session usage
- * events — the TurnComplete usage summary is intentionally empty). The result text is additionally
+ * Manual `/dream` launch turn. The command text is `model-only` in events; synchronous gates and
+ * skips resolve inside this turn, while the Memory agent loop itself detaches into a background
+ * runtime task (registry + BackgroundTask* events → backgroundWorks panel). The turn therefore
+ * completes after admission without waiting for the background model. The ack/skip text is additionally
  * emitted as a ModelStreaming/ModelComplete sequence with a non-main `querySource`, because V4
  * clients do not render `TurnComplete.response`; without those events the summary and every skip
  * reason would be invisible on Desktop/mobile.
@@ -72,19 +73,15 @@ export async function executeManualDream(
 
     try {
       throwIfTurnAborted(abortSignal);
-      const outcome = command.ok
-        ? await runManualProjectMemoryDream(this, {
-            abortSignal,
+      const launch = command.ok
+        ? await launchManualProjectMemoryDream(this, {
             model: admittedModel,
             traceContext: turnTraceContext,
           })
         : { status: "usage-error" as const };
       throwIfTurnAborted(abortSignal);
 
-      if (outcome.status === "failed") {
-        throw outcome.error;
-      }
-      const response = formatDreamCommandResponse(outcome);
+      const response = formatDreamCommandResponse(launch);
       await emitDreamResponseEvents.call(this, response, turnTraceContext, events);
 
       const turnUsage = createModelUsageSummaryFromEvents(events);
@@ -138,7 +135,7 @@ export async function executeManualDream(
         coreError.type === CoreErrorType.TurnCancelled &&
         this.activeForegroundExecution?.preserveQueueAutoDrainOnCancel === true;
       if (coreError.type === CoreErrorType.TurnCancelled && !preserveQueueAutoDrainOnCancel) {
-        // Stopping the dream command follows ordinary Stop semantics: pause the queue again and close the outer FIFO resume window too.
+        // Stopping the dream launch turn follows ordinary Stop semantics: pause the queue again and close the outer FIFO resume window too.
         this.queueAutoDrain = false;
         this.queueExternalDrainActive = false;
       }
@@ -173,7 +170,7 @@ export async function executeManualDream(
 
 /**
  * Replay the command response as the same event shape a streaming assistant answer uses, so every
- * client (V4 projection, TUI) renders one assistant text row for the dream result or skip reason.
+ * client (V4 projection, TUI) renders one assistant text row for the dream ack or skip reason.
  */
 async function emitDreamResponseEvents(
   this: AgentRuntimeInternal,
@@ -212,14 +209,17 @@ async function emitDreamResponseEvents(
   events.push(modelCompleteEvent);
 }
 
-function formatDreamCommandResponse(
-  outcome: Exclude<ProjectMemoryDreamOutcome, { status: "failed" }> | { status: "usage-error" },
-): string {
-  if (outcome.status === "usage-error") {
+type DreamCommandResponseSource =
+  | { status: "usage-error" }
+  | { status: "skipped"; reason: ProjectMemoryDreamSkipReason }
+  | { status: "started" };
+
+function formatDreamCommandResponse(launch: DreamCommandResponseSource): string {
+  if (launch.status === "usage-error") {
     return DREAM_COMMAND_USAGE_RESPONSE;
   }
-  if (outcome.status === "skipped") {
-    switch (outcome.reason) {
+  if (launch.status === "skipped") {
+    switch (launch.reason) {
       case "memory-disabled":
         return "Dream skipped: project memory is not enabled for this workspace.";
       case "remote-workspace":
@@ -232,9 +232,5 @@ function formatDreamCommandResponse(
         return "Dream skipped.";
     }
   }
-  const filesLine =
-    outcome.touchedPaths.length > 0
-      ? `\n\nFiles changed: ${outcome.touchedPaths.join(", ")}`
-      : "";
-  return `${outcome.summary}${filesLine}`;
+  return "Dream started in background. You can keep chatting; view progress and results in background tasks.";
 }

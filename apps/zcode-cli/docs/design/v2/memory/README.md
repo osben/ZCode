@@ -680,15 +680,72 @@ bounded drain 等待取消收口
   builtin 命令 `/dream`：与 `/compact` 同级的 runtime turn 命令（见 `runtime/methods/turn.ts`
   的 dispatch），CLI TUI、Desktop composer 和 mobile 都以普通文本提交，由 Runtime 解析。
   `/dream` 不接受参数；带参数的输入按 usage 错误回复，不发起 model 请求。
-- `/dream` turn 与 compact 命令 turn 同构：`TurnStarted` 的 `inputVisibility: "model-only"`
-  （命令文本不渲染为 user bubble），不可 steer，`TurnComplete.response` 为 Dream 结果文本。
-  V4 客户端不渲染 `TurnComplete.response`，因此结果/skip 文本同时以一条
-  `ModelStreaming`（text_start/delta/end）+ `ModelComplete`（非 main 的
-  `querySource: "dream"`）序列发出，投影为一个 assistant 文本行；非 main querySource 保证
-  该事件不覆盖 session context watermark。Memory agent 继承 turn admission 冻结的模型
-  （与 compact 同一冻结语义），失败/取消路径同样记录 turn usage fact。Dream 的 model 请求走
-  detached Memory agent 路径，不产生 session usage events，因此该 turn 的 usage summary 为
-  零值；这是已知且接受的语义，不另建 usage 通道。
+- `/dream` 是「快速 launch turn + detached 后台任务」：命令 turn 只执行同步 gate、lock 获取、
+  后台任务登记与 ack，随即完成，不阻塞会话输入。launch turn 与 compact 命令 turn 同构：
+  `TurnStarted` 的 `inputVisibility: "model-only"`（命令文本不渲染为 user bubble），不可
+  steer。ack/skip 文本以一条 `ModelStreaming`（text_start/delta/end）+ `ModelComplete`
+  （非 main 的 `querySource: "dream"`）序列发出，投影为一个 assistant 文本行；非 main
+  querySource 保证该事件不覆盖 session context watermark。skip（memory 未启用 / remote /
+  lock 被占用 / 无新 transcript）仍在 launch turn 内同步判定，以同一 ack 文本可见。
+- Dream 的 Memory agent 循环在 turn 之外 detached 运行：不占用 active turn 槽位，运行期间
+  用户可继续正常对话。运行状态经 `BackgroundTaskStarted/Updated/Completed` 事件进入
+  backgroundWorks 面板（composer 徽标 + 状态面板，kind 为 `dream`，cancellable：stop 分支
+  abort 任务），进度以 description 更新并按内容变化节流。事件以 rootTraceContext、空
+  turnId 追加（与 dynamic workflow run progress 同一先例），不归属任何 turn，也不复用
+  ModelStreaming 通道——v4 的 streaming 行是 session 级单槽位，后台进度会破坏并发的前台
+  回答。
+- 完成时 enqueue 一条 task-notification（`backgroundSource: "dream"`，workId ≡ registry
+  taskId，title 为一行结果摘要；completed 与 failed 通知，用户主动 cancel 不通知）。通知
+  turn 走既有 background notification 管线：持久化 model-only synthetic notice，并以一次
+  简短 Main turn 呈现结果。它同时承担三件事：Dream 结果的 durable transcript 载体（应用
+  重载后可见）、CLI TUI 的完成表面，以及 backgroundWorks 面板 resultPending 条目的
+  delivery 通道。该 turn 即「下一次 Main turn」，自然消费 7.3 的 `memory_update`
+  reminder；shuttingDown 或 branch 回退时按既有 fencing 丢弃通知。
+- Memory agent 继承 launch turn admission 冻结的模型（与 compact 同一冻结语义），失败/取消
+  路径同样记录 launch turn 的 turn usage fact。Dream 的 model 请求逐条记录 `model_usage`
+  fact（`querySource: "dream"`，与 title sidecar 同一模式），并写入本 session 的 model-io
+  transcript（`skipTranscript` 仅对 Dream 关闭；Extraction 保持跳过，避免其请求反馈进后续
+  Extraction 的 corpus）。因此 Model Trajectory 面板与 App Usage 对 Dream 请求可见；launch
+  turn 自身的 usage summary 保持零值——真实用量记录在 model_usage 与 model-io 中，不在
+  turn 维度重复记账。
+- Runtime is the single owner of each manual Dream controller, completion promise, and ordered
+  lifecycle event queue. Admission checks shutdown both before and after acquiring the workspace
+  lock. Failed registration/Started writes restore the lock and settle/remove the registry entry.
+  Progress, cancellation requests, and completion use the same queue; event-write failures are
+  logged without skipping cleanup. Registry residency ends only after terminal-event settlement.
+- Shutdown refuses new launches, aborts live Dream runs, and drains their completion promises
+  before closing session resources, with the existing 60-second close deadline. Cancellation
+  before the success-marker commit restores the lock and does not stamp success; completed file
+  writes are not rolled back. The success-marker write is the commit boundary.
+- Every provider request reports start and settlement. Its usage fact is written immediately,
+  with actual request start/end, finish reason, tool count, and completed/error/cancelled status;
+  earlier successful requests survive later failure or cancellation. Unknown usage stays absent.
+- The UI derives the latest Dream from ordered backgroundWorks, retaining its progress or terminal
+  summary until the next launch in that session (including snapshot/replay). Terminal Dream work
+  keeps a panel entry without increasing the running count and has no Stop action. Running Dream
+  disables workflow-only direct navigation. Completion enqueues one task-notification turn
+  (see above): the resultPending panel entry is delivered through it, and the durable transcript
+  row plus the CLI TUI surface come from that turn, not from extra replay events.
+
+```mermaid
+sequenceDiagram
+  participant User
+  participant Runtime
+  participant Dream
+  participant Projection
+  User->>Runtime: /dream
+  Runtime->>Runtime: gates, lock, registry residency
+  Runtime->>Projection: Started (root trace, no turnId)
+  Runtime->>Dream: detached run
+  Runtime-->>User: ack + TurnComplete
+  User->>Runtime: next foreground turn
+  Dream->>Projection: ordered request/tool progress
+  Dream->>Runtime: per-request usage; success / failure / abort
+  Runtime->>Projection: terminal event
+  Runtime->>Runtime: registry terminal + controller cleanup
+  Note over Runtime,Projection: Desktop continuous and mobile replay use the same events
+```
+
 - 自动触发（scheduler）仍不接入：等待产品侧确定 project transcript 隔离形态后再接线，
   接线前 handler 的 auto 入口保持未使用。
 - 手动模式 gate（soft mode）：绕过 24 小时最小间隔与 10 分钟 scan throttle；要求当前
@@ -704,8 +761,11 @@ bounded drain 等待取消收口
 project session 归属由 SessionStore 的 workspace identity 判断。model-io writer 与 Dream 使用
 同一个从 `storage.dir` 派生的 `modelIoDir`（development 为 `debug`，其他环境为 `rollout`）；
 Dream 只引用已选 durable sessions 对应的现有 transcript/model-io，不建设第二套 transcript DB，
-也不 fallback 扫描固定的 `~/.zcode/cli/debug|rollout`。当前 `modelIoDir` 仍是 ZCode 产品级目录，
-因此在 project transcript 隔离方案确定前不得把 handler 接回自动 turn 链路。
+也不 fallback 扫描固定的 `~/.zcode/cli/debug|rollout`。Dream 自身的请求现在也会写入 model-io
+（见上），因此历史 Dream session 的 transcript 会进入后续 Dream 的候选 corpus；手动触发下这是
+可接受的有限噪声（排除仅覆盖发起 session），接入 auto 触发前必须重新评估该反馈面。当前
+`modelIoDir` 仍是 ZCode 产品级目录，因此在 project transcript 隔离方案确定前不得把 handler
+接回自动 turn 链路。
 
 ### 7.2 Lock 与运行
 
@@ -714,22 +774,26 @@ Dream handler gate
   |
   v
 read <memoryRoot>/.consolidate-lock
-  +-- mtime < 1h 且 PID 存活 --------------------------> skip
-  `-- 可接管
+  +-- mtime < 1h 且（PID 未知或存活）-----------------> skip
+  `-- 可接管（mtime >= 1h，或 PID 已不存在）
         |
-        | write current PID + read-back ownership
+        | 独占创建（O_CREAT|O_EXCL）写入 current PID
         v
 full Main context + real tools + exact Dream prompt
         |
         | restricted execution policy，最多 50 turns
         v
 success ------------------------------------> 保留新 lock mtime；写 <memoryRoot>/.consolidated-at
-error/abort ---------------------------> 首次 lock 删除；旧 lock 恢复空内容和原 mtime；不写 marker
+error/abort ---------------------------> 仅当 lock 仍属本进程时恢复：首次 lock 删除；旧 lock 恢复空内容和原 mtime；不写 marker
 ```
 
 `.consolidated-at` 只在 Dream run 未抛错完成时写入（mtime 即完成时间）。lock 的 mtime 标记的是
 run 开始（进行中与崩溃的尝试都会接管/留下 lock），因此「上次成功整理」只能读 marker，不能读
-lock；Settings viewer 的 `lastDreamConsolidatedAt`（见 3.3）以 marker 为唯一来源。
+lock；Settings viewer 的 `lastDreamConsolidatedAt`（见 3.3）以 marker 为唯一来源。lock 的互斥来自
+独占创建（`O_CREAT|O_EXCL`），不来自写入后回读内容：同一进程的两个并发调用会写入相同 PID，回读
+无法区分它们。恢复只在 lock 仍属于本进程时执行，避免删除已被别的运行接管的 lock。run 在后台
+任务内执行：用户经 backgroundWorks 面板发起的 stop 等价于 abort，走同一条 lock 恢复路径，
+不写 marker；CLI 进程退出后残留的 lock 按既有 1h/PID 规则被下一次运行接管。
 
 Dream 复用 Extraction 的执行策略，最大 50 个 model turns；第 50 次响应中的 tool calls 仍执行。
 prompt 固定执行 orient、signal、consolidate、prune/index 四个阶段，并要求最终 `MEMORY.md`
@@ -758,7 +822,8 @@ next Main attachment collection
 ```
 
 只有 Dream 产生 `memory_update`。foreground 写入和 Extraction 不产生该 attachment。即使承载
-update 的下一次 provider 请求失败，也不重新注入。
+update 的下一次 provider 请求失败，也不重新注入。「下一次 Main turn」通常是 Dream 完成时的
+task-notification turn（见 7.1）；用户先于通知发送的普通输入同样是合法消费者，先到先消费。
 
 ## 8. Custom Agent Persistent Memory
 
@@ -873,9 +938,9 @@ ZCode 当前没有的工具也属于明确的 tool-inventory 差异；不得为�
 | Recall semantic branch | 无 pointer/index；branch-aware lifecycle 覆盖 prefetch、完整 tool batch 后 consume、recursive scan、selector schema、order/duplicate、正文限制、stale 与 61,440 gate；不增加 Runtime override                                                                                                                          |
 | Extraction             | success/error/abort；direct write；独立 3-word block；cursor；同边界 snapshot；Rewind 后不取消；running+latest；第 5 turn；header refresh；session close 拒绝新调度、丢弃 pending、abort running 并有界 drain                                                                                                           |
 | Headless Extraction    | `-p/--prompt` 与 `--target` 注入内部 `extractionEnabled=false`；Main prompt/index/Recall 保持；不读取 Extraction snapshot、不创建 scheduler、不发 Extraction 请求、不推进 cursor、不写 Memory 文件；TUI/app-server 默认行为不变                                                                                      |
-| Dream                  | `/dream` 手动命令：TurnStarted model-only、TurnComplete 携带结果/skip 文本、soft gate（绕过 24h/10m、≥1 新 transcript）、带参数 usage 错误、memory 未启用/remote/lock 占用/无新活动的可见 skip、不产生 usage events；auto 入口仍未接线，auto gate（24h/5 transcripts/10m）保持原样；lock；第 50 turn；filesTouched；one-shot memory_update |
+| Dream                  | `/dream` 手动命令：快速 launch turn（TurnStarted model-only、ack/skip 文本、soft gate 绕过 24h/10m、≥1 新 transcript、带参数 usage 错误、memory 未启用/remote/lock 占用/无新活动的可见 skip）；detached 后台任务（`BackgroundTaskStarted/Updated/Completed`、kind `dream`、cancellable、不阻塞输入）；完成 task-notification（`backgroundSource: "dream"`，completed/failed 通知、cancel 不通知、durable transcript + TUI 表面 + resultPending delivery、branch fencing 丢弃）；逐请求 `model_usage` fact（`querySource: "dream"`）与 model-io transcript（Dream 不再 skip，Extraction 仍跳过）；auto 入口仍未接线，auto gate（24h/5 transcripts/10m）保持原样；lock；第 50 turn；filesTouched；one-shot memory_update |
 | Custom agent           | exact enum；三 scope；agent key；empty/truncated index；Write/Edit augmentation；Read intentional diff；disallowedTools                                                                                                                                                                                                |
-| Settings viewer        | 默认关闭不发 catalog 请求；Desktop 本地 profile catalog；空目录过滤；稳定排序；symlink/traversal 拒绝；workspace 切换；虚拟 `MEMORY.md` 父节点；缺失 index；原始正文；5 MiB 单文件预览上限；英文事实数量单复数；显式刷新；查看不发模型请求、不写文件；catalog 附带可选 `lastDreamConsolidatedAt`（lock mtime，缺失省略）仅供展示；Web Remote / Mobile 只展示本地查看提示且 catalog 零调用                                                                  |
+| Settings viewer        | 默认关闭不发 catalog 请求；Desktop 本地 profile catalog；空目录过滤；稳定排序；symlink/traversal 拒绝；workspace 切换；虚拟 `MEMORY.md` 父节点；缺失 index；原始正文；5 MiB 单文件预览上限；英文事实数量单复数；显式刷新；查看不发模型请求、不写文件；catalog 附带可选 `lastDreamConsolidatedAt`（`.consolidated-at` mtime，缺失省略）仅供展示；Web Remote / Mobile 只展示本地查看提示且 catalog 零调用                                                                  |
 | 上下游                 | generateText structured output；stream 不变；Settings 只经 runtime-preference 布尔值进入 Agent；viewer 仅经 Desktop 本地 Host Memory service 读取本地磁盘；desktop continuous/mobile replayable 不传 Memory 正文；remote background 不启动                                                                                |
 
 每个实现 Phase 必须先更新本文或对应 fixture，再补失败测试、实现最小行为、运行聚焦测试并做
@@ -929,9 +994,11 @@ trajectory、文件结果和断言摘要。断言使用稳定文本 marker 和�
 
 以下组合不扩展为新的黑盒 E2E：
 
-- Dream 当前没有产品触发入口；继续由 handler/runtime integration test 覆盖 gate、lock、50-turn、
-  filesTouched 和 one-shot `memory_update`，由 adapter test 覆盖最终 provider body。不得为测试
-  新增 `/dream`、auto Dream 或内部协议入口。
+- `/dream` uses the ordinary composer command in a pending Desktop E2E case for progress, concurrent
+  foreground input, retained completion and cancellation. Focused runtime integration tests cover
+  gate、lock、50-turn、filesTouched、后台任务生命周期（Started/Updated/Completed、cancel、
+  lock 恢复）和 one-shot `memory_update`，由 adapter test 覆盖最终 provider body。不得为测试
+  新增 auto Dream 或内部协议入口。
 - 三种 custom-agent scope、task type、root/symlink/截断/并发/错误的完整等价类继续由 focused
   tests 覆盖；E2E 只选择一条代表路径证明真实组合。
 - Anthropic Messages 的逐字段 wire contract 继续由本地 Messages endpoint adapter test 覆盖；
@@ -962,7 +1029,7 @@ E2E 覆盖，不再复制一条只能间接推断取消结果的 WDIO case。
 - 自定义 `memory.rootDir`，以及旧 MVP 数据迁移、删除或双读。
 - `memory.write`、read-only Memory 或 capability status。
 - Read 工具补齐或 Read 特殊授权。
-- CLI/Desktop/mobile `/dream`、`/memory` 命令或 Agent Memory 正文/后台状态协议。
+- `/memory` 命令或 Agent Memory 正文/后台状态协议（`/dream` 已交付，见 7.1）。
 - 公开 `--no-memory` flag、完整关闭 Main Memory/Recall/custom-agent Memory，或远端重新开启
   headless Extraction 的 rollout gate。
 - Settings viewer 中的编辑、删除、搜索、导出、远端 Host 聚合、custom-agent Memory

@@ -218,8 +218,6 @@ vi.mock("@/store/TabStoreProvider.js", () => ({
 
 vi.mock("@/store/tabStore.js", () => ({
   isSettingsTab: (tab: { type?: string } | null | undefined) => tab?.type === "settings",
-  isSessionManagerTab: (tab: { type?: string } | null | undefined) =>
-    tab?.type === "session-manager",
   isWorkspaceTab: (tab: { type?: string } | null | undefined) => tab?.type === "workspace",
 }));
 

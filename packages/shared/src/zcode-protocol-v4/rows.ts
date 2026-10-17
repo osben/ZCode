@@ -131,8 +131,8 @@ export const userInputRowSchema = z.object({
   ]),
   originMeta: z
     .object({
-      // Same value set as backgroundResultOriginMetaSchema (including "workflow" for workflow runs).
-      backgroundSource: z.enum(["bash", "subagent", "workflow"]).optional(),
+      // Same value set as backgroundResultOriginMetaSchema (including "workflow" for workflow runs and "dream" for /dream consolidation).
+      backgroundSource: z.enum(["bash", "subagent", "workflow", "dream"]).optional(),
       workId: z.string().optional(),
       senderSessionId: z.string().optional(),
       senderLabel: z.string().optional(),

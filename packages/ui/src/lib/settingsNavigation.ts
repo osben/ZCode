@@ -15,6 +15,7 @@ export type SettingsSectionId =
   | "skill"
   | "plugins"
   | "usage"
+  | "sessions"
   | "subagents"
   | "commands"
   | "hooks"
@@ -28,12 +29,17 @@ export type SettingsSectionId =
 export type SettingsUsageTabTarget = "app" | "codingPlan";
 export type SettingsPluginTabTarget = "plugins" | "mcps" | "skills" | "commands";
 export type SettingsPluginNavigationOrigin = "plugin-store";
+export interface SettingsSessionsScope {
+  workspacePath: string;
+  workspaceIdentity?: string;
+}
 
 const SETTINGS_SECTION_INTENT_KEY = "zcode-settings-section-intent",
   SETTINGS_USAGE_TAB_INTENT_KEY = "zcode-settings-usage-tab-intent",
   SETTINGS_PLUGIN_TAB_INTENT_KEY = "zcode-settings-plugin-tab-intent",
   SETTINGS_PLUGIN_ORIGIN_INTENT_KEY = "zcode-settings-plugin-origin-intent",
-  SETTINGS_PLUGIN_SCOPE_KEY_INTENT_KEY = "zcode-settings-plugin-scope-key-intent";
+  SETTINGS_PLUGIN_SCOPE_KEY_INTENT_KEY = "zcode-settings-plugin-scope-key-intent",
+  SETTINGS_SESSIONS_SCOPE_INTENT_KEY = "zcode-settings-sessions-scope-intent";
 const SETTINGS_MODEL_PROVIDER_ID_INTENT_KEY = "zcode-settings-model-provider-id-intent";
 const SETTINGS_SECTION_INTENT_EVENT = "zcode:settings-section-intent",
   SETTINGS_LAST_SECTION_STORAGE_KEY = "zcode-settings-last-section";
@@ -55,6 +61,7 @@ export interface SettingsSectionIntentEventDetail {
   pluginScopeKey?: string;
   usageTab?: SettingsUsageTabTarget;
   modelProviderId?: string;
+  sessionsScope?: SettingsSessionsScope;
 }
 
 export interface SettingsModelProviderTarget {
@@ -76,6 +83,7 @@ function isSettingsSectionId(value: string): value is SettingsSectionId {
     value === "skill" ||
     value === "plugins" ||
     value === "usage" ||
+    value === "sessions" ||
     value === "subagents" ||
     value === "commands" ||
     value === "hooks" ||
@@ -227,6 +235,7 @@ export function setPendingSettingsSectionIntent(
     pluginScopeKey?: string;
     modelProviderId?: string;
     usageTab?: SettingsUsageTabTarget;
+    sessionsScope?: SettingsSessionsScope;
   } = {},
 ): void {
   if (typeof window === "undefined") {
@@ -259,6 +268,17 @@ export function setPendingSettingsSectionIntent(
     } else {
       window.sessionStorage.removeItem(SETTINGS_MODEL_PROVIDER_ID_INTENT_KEY);
     }
+    if (options.sessionsScope?.workspacePath.trim()) {
+      window.sessionStorage.setItem(
+        SETTINGS_SESSIONS_SCOPE_INTENT_KEY,
+        JSON.stringify({
+          workspacePath: options.sessionsScope.workspacePath,
+          workspaceIdentity: options.sessionsScope.workspaceIdentity,
+        }),
+      );
+    } else {
+      window.sessionStorage.removeItem(SETTINGS_SESSIONS_SCOPE_INTENT_KEY);
+    }
   } catch {
     // Ignore browser storage failures; they do not affect the main flow.
   }
@@ -274,6 +294,9 @@ export function setPendingSettingsSectionIntent(
         pluginScopeKey: options.pluginScopeKey?.trim() || undefined,
         usageTab: options.usageTab,
         modelProviderId: options.modelProviderId,
+        sessionsScope: options.sessionsScope?.workspacePath.trim()
+          ? options.sessionsScope
+          : undefined,
       },
     }),
   );
@@ -291,6 +314,7 @@ function clearPendingSettingsSectionIntent(): void {
     window.sessionStorage.removeItem(SETTINGS_PLUGIN_TAB_INTENT_KEY);
     window.sessionStorage.removeItem(SETTINGS_PLUGIN_ORIGIN_INTENT_KEY);
     window.sessionStorage.removeItem(SETTINGS_PLUGIN_SCOPE_KEY_INTENT_KEY);
+    window.sessionStorage.removeItem(SETTINGS_SESSIONS_SCOPE_INTENT_KEY);
   } catch {
     // Ignore browser storage failures; they do not affect the main flow.
   }
@@ -394,6 +418,37 @@ export function consumePendingSettingsUsageTab(): SettingsUsageTabTarget | undef
     return raw === "app" || raw === "codingPlan" ? raw : undefined;
   } catch {
     // Ignore browser storage failures; they do not affect the main flow.
+    return undefined;
+  }
+}
+
+export function consumePendingSettingsSessionsScope(): SettingsSessionsScope | undefined {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+
+  try {
+    const raw = window.sessionStorage.getItem(SETTINGS_SESSIONS_SCOPE_INTENT_KEY);
+    window.sessionStorage.removeItem(SETTINGS_SESSIONS_SCOPE_INTENT_KEY);
+    if (!raw) {
+      return undefined;
+    }
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      typeof (parsed as SettingsSessionsScope).workspacePath === "string" &&
+      (parsed as SettingsSessionsScope).workspacePath.trim()
+    ) {
+      const scope = parsed as SettingsSessionsScope;
+      return {
+        workspacePath: scope.workspacePath,
+        workspaceIdentity: scope.workspaceIdentity?.trim() || undefined,
+      };
+    }
+    return undefined;
+  } catch {
+    // Ignore storage/JSON failures; an unparsable scope degrades to the unscoped view.
     return undefined;
   }
 }

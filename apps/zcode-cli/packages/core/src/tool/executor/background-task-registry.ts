@@ -241,6 +241,8 @@ function defaultRuntimeTaskDescription(taskType: RuntimeTaskType): string {
       return "Dynamic workflow run";
     case "local_agent":
       return "Agent background task";
+    case "local_dream":
+      return "Dream memory consolidation";
     case "monitor_mcp":
       return "Monitor background task";
   }

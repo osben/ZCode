@@ -155,6 +155,7 @@ import {
   useComposerDraftWorktreeIntentSlot,
   type ComposerExecutionWorktree,
   type ComposerWorktreePreparationParams,
+  type ComposerWorktreePreparationSync,
 } from "@/v4/composer/composerDraftWorktreeIntent.js";
 import {
   selectComposerWorktreePipeline,
@@ -482,6 +483,11 @@ export interface ConversationComposerProps {
   ) => Promise<ConversationComposerSendResult | void>;
   /** Reserve/open the Host-owned session before the worktree Git operation begins. */
   onPrepareWorktreeSession?: (params: ComposerWorktreePreparationParams) => Promise<string>;
+  /**
+   * Realign the Host preparation marker when Git settles the worktree at a directory other than the
+   * frozen target, so the strict activation check accepts the path the composer sends.
+   */
+  onSyncWorktreePreparation?: ComposerWorktreePreparationSync;
   onWorktreePreparationFailed?: (sessionId: string, failureMessage: string) => Promise<void>;
   /** Pass the current input text to the parent (editUserQuery uses composer text as newText). */
   onTextChange?: (text: string) => void;
@@ -589,6 +595,7 @@ function ConversationComposerImpl({
   readPlanIdentitySnapshot,
   onSendText,
   onPrepareWorktreeSession,
+  onSyncWorktreePreparation,
   onWorktreePreparationFailed,
   onTextChange,
   onDraftStateChange,
@@ -2008,7 +2015,11 @@ function ConversationComposerImpl({
           sessionId,
         );
         if (!preparedSessionIdForSend || currentPipeline?.status !== "creating") {
-          const begin = await worktreeIntent.beginCreation(trimmed, onPrepareWorktreeSession);
+          const begin = await worktreeIntent.beginCreation(
+            trimmed,
+            onPrepareWorktreeSession,
+            onSyncWorktreePreparation,
+          );
           if (!begin.ok) {
             setWorktreeQueued(false);
             restoreSubmittedDraft();
@@ -2061,6 +2072,7 @@ function ConversationComposerImpl({
       modelSelectionView,
       intl,
       onPrepareWorktreeSession,
+      onSyncWorktreePreparation,
       onSendText,
       pendingShareContext,
       provider,

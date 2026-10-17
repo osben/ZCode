@@ -5,6 +5,8 @@ import type { ProviderSettingsView } from "@zcode/services";
 import { useServices } from "@/hooks/useServices.js";
 import { logger } from "@/logger.js";
 import { useProviderSettingsServiceView } from "@/hooks/useProviderSettingsView.js";
+import { isLocalDevelopmentRuntime } from "@/lib/devRuntime.js";
+import { useOptionalPlatform } from "@/hooks/usePlatform.js";
 import {
   projectProviderSettingsViewToFormProviders,
   resolveProviderSettingsFormProviders,
@@ -26,9 +28,22 @@ export function useModelProviders(target: {
   connectivityUnavailableMessage?: string;
 }) {
   const { providerSettingsService } = useServices();
+  // Optional on purpose: bare hook tests render without a PlatformProvider; the gate then
+  // rides on the build mode alone (`import.meta.env.DEV`).
+  const platform = useOptionalPlatform();
   const providerSettingsRead = useProviderSettingsServiceView(providerSettingsService);
-  const providerSettingsView =
-    providerSettingsRead.state.status === "ready" ? providerSettingsRead.state.view : null;
+  // Stabilization gate (specs/acp-agent-runtime.md "Dev-only visibility"): outside development
+  // runtimes the whole ACP surface is hidden, so an agent enabled in dev must not leak into
+  // provider lists, navigation, or detail views as the `acp:<agentId>` personal provider.
+  const providerSettingsView = useMemo(() => {
+    const view =
+      providerSettingsRead.state.status === "ready" ? providerSettingsRead.state.view : null;
+    if (!view || isLocalDevelopmentRuntime(platform ?? {})) return view;
+    return {
+      ...view,
+      providers: view.providers.filter((provider) => !provider.providerId.startsWith("acp:")),
+    };
+  }, [providerSettingsRead.state, platform]);
   const effectiveModelProviders = useMemo(
     () =>
       resolveProviderSettingsFormProviders({

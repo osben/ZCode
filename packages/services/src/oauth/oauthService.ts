@@ -1161,6 +1161,14 @@ export class OAuthService implements IOAuthService {
     return result;
   }
 
+  async startChatGptUsageLink(accountKey: string): Promise<SiwcLoginStart> {
+    return this.siwcAuth.startUsageLink(accountKey);
+  }
+
+  async pollChatGptUsageLink(): Promise<{ accountKey: string } | null> {
+    return this.siwcAuth.pollUsageLink();
+  }
+
   private clearPendingState(): void {
     if (!this.pendingState) {
       return;

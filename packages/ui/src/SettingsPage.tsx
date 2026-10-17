@@ -51,9 +51,11 @@ import {
   consumePendingSettingsPluginScopeKey,
   consumePendingSettingsPluginTab,
   consumePendingSettingsModelProviderTarget,
+  consumePendingSettingsSessionsScope,
   consumePendingSettingsUsageTab,
   resolveSettingsSection,
   shouldFallbackSettingsUsageTabToApp,
+  type SettingsSessionsScope,
   writeLastSettingsSectionPreference,
   type SettingsModelProviderTarget,
 } from "@/lib/settingsNavigation.js";
@@ -67,6 +69,7 @@ import { ModelProviderSection } from "@/settings/ModelProviderSection.js";
 import { useCodingPlanUpgradeDialog } from "@/settings/CodingPlanUpgradeDialogProvider.js";
 import { useEnterpriseCodingPlanProducts } from "@/settings/model-provider-section/useEnterpriseCodingPlanProducts.js";
 import { UsageStatsSection, type UsageStatsSectionTab } from "@/settings/UsageStatsSection.js";
+import { SessionsSettingsSection } from "@/settings/SessionsSettingsSection.js";
 import {
   buildCodingPlanUsageSources,
   type CodingPlanUsageSource,
@@ -521,6 +524,10 @@ export function SettingsPage({
     const pendingTab = consumePendingSettingsUsageTab();
     return pendingTab === "codingPlan" ? "codingPlan" : (pendingTab ?? "app");
   });
+  // Workspace scope for the sessions section (project-menu entry); ephemeral, like the old tab scope.
+  const [sessionsScope, setSessionsScope] = useState<SettingsSessionsScope | undefined>(() =>
+    consumePendingSettingsSessionsScope(),
+  );
   const usagePersonalCodingPlanSources = useMemo(() => {
     const sources: CodingPlanUsageSource[] = [];
     if (
@@ -897,6 +904,11 @@ export function SettingsPage({
           setSettingsSectionNavigationVersion((version) => version + 1);
           if (section === "usage" && detail?.usageTab) {
             setUsageActiveTab(detail.usageTab);
+          }
+          if (section === "sessions") {
+            // The event carries the scope directly (sessionStorage was cleared by the listener);
+            // an unscoped intent clears a previously applied workspace chip.
+            setSessionsScope(detail?.sessionsScope);
           }
           if (resolveSettingsSection(section) === "plugin" && detail?.pluginTab) {
             setPluginTab(detail.pluginTab);
@@ -1815,7 +1827,11 @@ export function SettingsPage({
                   <main className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
                     <div
                       className={cn(
-                        SETTINGS_FRAME_CONTENT_CLASSNAME,
+                        // The sessions table is wider than the shared reading column; give the
+                        // section the full panel width instead of the max-w-4xl cap.
+                        activeSection === "sessions"
+                          ? "w-full px-4 pb-8 pt-0 lg:px-6"
+                          : SETTINGS_FRAME_CONTENT_CLASSNAME,
                         "flex flex-col gap-8",
                         isMacDesktop && "pt-0",
                         // isWindowsDesktop && "pt-12",
@@ -2144,6 +2160,11 @@ export function SettingsPage({
                             selectedCodingPlanSource={selectedUsageCodingPlanSource}
                             workspaceIdentity={activeWorkspaceIdentity}
                             workspacePath={activeWorkspacePath ?? undefined}
+                          />
+                        ) : activeSection === "sessions" ? (
+                          <SessionsSettingsSection
+                            scope={sessionsScope}
+                            onClearScope={() => setSessionsScope(undefined)}
                           />
                         ) : activeSection === "subagents" ? (
                           <SubagentsSection

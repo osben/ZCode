@@ -21,6 +21,7 @@ import {
 import type {
   ComposerWorktreeBeginResult,
   ComposerWorktreePreparationParams,
+  ComposerWorktreePreparationSync,
 } from "@/v4/composer/composerDraftWorktreeIntent.js";
 import {
   useComposerWorktreePipelineStore,
@@ -56,12 +57,14 @@ export function startComposerWorktreePipeline({
   sessionId,
   params,
   formatMessage,
+  syncPreparedWorktree,
 }: {
   gitService: WorktreeCreationGitService;
   workspaceKey: string;
   sessionId?: string;
   params: ComposerWorktreeCreationParams;
   formatMessage: (id: string, values?: Record<string, string>) => string;
+  syncPreparedWorktree?: ComposerWorktreePreparationSync;
 }): Promise<"ready" | "failed"> {
   const runKey = pipelineRunKey(workspaceKey, sessionId);
   const inFlight = inFlightByPipelineKey.get(runKey);
@@ -73,6 +76,35 @@ export function startComposerWorktreePipeline({
   )?.attemptId;
 
   const attempt = (async (): Promise<"ready" | "failed"> => {
+    // Host activation strictly requires executionWorktree.path === prepared.targetPath. Git may have
+    // settled the branch worktree at a different directory (existing WT-04 reuse or a recovered
+    // worktree), so align the Host marker before the entry turns ready; a rejected sync fails this
+    // attempt instead of exposing an unactivatable ready state.
+    const settleReady = async (worktreePath: string, existing: boolean): Promise<void> => {
+      if (worktreePath !== params.targetPath) {
+        if (sessionId && syncPreparedWorktree) {
+          await syncPreparedWorktree({
+            workspaceKey,
+            sessionId,
+            branchName: params.branchName,
+            targetPath: worktreePath,
+            ...(params.baseBranch ? { baseBranch: params.baseBranch } : {}),
+          });
+        } else {
+          // No prepared session to realign: activation will reject this path. Log it so a future
+          // caller that forgets to thread the capability is diagnosable instead of silently ready.
+          logger.warn("[WorktreePipeline] worktree path differs from the prepared target", {
+            workspaceKey,
+            branchName: params.branchName,
+            targetPath: params.targetPath,
+            worktreePath,
+          });
+        }
+      }
+      useComposerWorktreePipelineStore
+        .getState()
+        .markReady(workspaceKey, worktreePath, existing, sessionId, attemptId);
+    };
     try {
       const outcome = await executeWorktreeCreation({
         gitService,
@@ -82,14 +114,13 @@ export function startComposerWorktreePipeline({
         targetPath: params.targetPath,
         formatMessage,
       });
-      const pipelineStore = useComposerWorktreePipelineStore.getState();
       if (outcome.kind === "created") {
         logger.info("[WorktreePipeline] worktree created", {
           workspaceKey,
           branchName: params.branchName,
           targetPath: outcome.worktreePath,
         });
-        pipelineStore.markReady(workspaceKey, outcome.worktreePath, false, sessionId, attemptId);
+        await settleReady(outcome.worktreePath, false);
         return "ready";
       }
       if (outcome.kind === "existing-worktree") {
@@ -99,7 +130,7 @@ export function startComposerWorktreePipeline({
           branchName: params.branchName,
           targetPath: outcome.worktreePath,
         });
-        pipelineStore.markReady(workspaceKey, outcome.worktreePath, true, sessionId, attemptId);
+        await settleReady(outcome.worktreePath, true);
         return "ready";
       }
       if (outcome.errorDetail !== null) {
@@ -115,7 +146,9 @@ export function startComposerWorktreePipeline({
           issues: outcome.issueCodes,
         });
       }
-      pipelineStore.markFailed(workspaceKey, outcome.message, sessionId, attemptId);
+      useComposerWorktreePipelineStore
+        .getState()
+        .markFailed(workspaceKey, outcome.message, sessionId, attemptId);
       return "failed";
     } catch (error) {
       logger.warn("[WorktreePipeline] creation orchestration threw", {
@@ -151,6 +184,7 @@ export function beginWorktreePipelineCreation({
   baseFromHeadDefault,
   queuedPromptPreview,
   prepareSession,
+  syncPreparedWorktree,
   formatMessage,
 }: {
   gitService: WorktreeCreationGitService;
@@ -162,6 +196,7 @@ export function beginWorktreePipelineCreation({
   baseFromHeadDefault: boolean;
   queuedPromptPreview: string;
   prepareSession: (params: ComposerWorktreePreparationParams) => Promise<string>;
+  syncPreparedWorktree?: ComposerWorktreePreparationSync;
   formatMessage: (id: string, values?: Record<string, string>) => string;
 }): Promise<ComposerWorktreeBeginResult> {
   const inFlight = beginInFlightByWorkspaceKey.get(workspaceKey);
@@ -228,6 +263,7 @@ export function beginWorktreePipelineCreation({
       sessionId,
       params,
       formatMessage,
+      ...(syncPreparedWorktree ? { syncPreparedWorktree } : {}),
     });
     return { ok: true, sessionId } as const;
   })();
@@ -298,11 +334,13 @@ export function retryComposerWorktreePipeline({
   workspaceKey,
   sessionId,
   formatMessage,
+  syncPreparedWorktree,
 }: {
   gitService: WorktreeCreationGitService;
   workspaceKey: string;
   sessionId?: string;
   formatMessage: (id: string, values?: Record<string, string>) => string;
+  syncPreparedWorktree?: ComposerWorktreePreparationSync;
 }): Promise<"ready" | "failed"> {
   const store = useComposerWorktreePipelineStore.getState();
   const entry = selectComposerWorktreePipeline(store, workspaceKey, sessionId);
@@ -323,6 +361,7 @@ export function retryComposerWorktreePipeline({
     sessionId: entry.sessionId,
     params: entry.params,
     formatMessage,
+    ...(syncPreparedWorktree ? { syncPreparedWorktree } : {}),
   });
 }
 
@@ -337,12 +376,14 @@ export async function reconcileCreatingComposerWorktreePipeline({
   sessionId,
   branchName,
   formatMessage,
+  syncPreparedWorktree,
 }: {
   gitService: WorktreeCreationGitService;
   workspaceKey: string;
   sessionId?: string;
   branchName: string;
   formatMessage: (id: string, values?: Record<string, string>) => string;
+  syncPreparedWorktree?: ComposerWorktreePreparationSync;
 }): Promise<void> {
   if (isComposerWorktreePipelineInFlight(workspaceKey, sessionId)) return;
   const store = useComposerWorktreePipelineStore.getState();
@@ -356,6 +397,17 @@ export async function reconcileCreatingComposerWorktreePipeline({
     });
     const existing = findWorktreeForBranch(list.worktrees, branchName);
     if (existing) {
+      // The recovered worktree may sit at a path other than the frozen target; realign the Host
+      // marker first so the strict activation check can accept the path the renderer will send.
+      if (existing.path !== entry.params.targetPath && ownerSessionId && syncPreparedWorktree) {
+        await syncPreparedWorktree({
+          workspaceKey,
+          sessionId: ownerSessionId,
+          branchName: entry.params.branchName,
+          targetPath: existing.path,
+          ...(entry.params.baseBranch ? { baseBranch: entry.params.baseBranch } : {}),
+        });
+      }
       store.markReady(workspaceKey, existing.path, true, ownerSessionId, attemptId);
     } else {
       store.markFailed(
@@ -366,7 +418,7 @@ export async function reconcileCreatingComposerWorktreePipeline({
       );
     }
   } catch (error) {
-    logger.warn("[WorktreePipeline] stale-creating reconcile list failed", {
+    logger.warn("[WorktreePipeline] stale-creating reconcile failed", {
       workspaceKey,
       error: getErrorMessage(error),
     });

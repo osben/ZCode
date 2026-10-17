@@ -59,7 +59,7 @@ describe("settingsPageConfig", () => {
       },
       {
         id: "dataAndStats",
-        sections: ["usage"],
+        sections: ["usage", "sessions"],
       },
     ]);
 
@@ -80,6 +80,7 @@ describe("settingsPageConfig", () => {
       "shortcuts",
       "voiceDictation",
       "usage",
+      "sessions",
     ]);
   });
 
@@ -104,6 +105,7 @@ describe("settingsPageConfig", () => {
       "shortcuts",
       "voiceDictation",
       "usage",
+      "sessions",
     ]);
   });
 
