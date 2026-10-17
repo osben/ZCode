@@ -816,6 +816,7 @@ export function SettingsPage({
     return [...names];
   }, [sharedSettings?.recentProjects, workspaceTabs]);
   const memoryEnabled = sharedSettings?.memoryEnabled === true;
+  const memoryIndexAsContext = sharedSettings?.memoryIndexAsContext === true;
   const nativeSearchEnhancementsEnabled = sharedSettings?.nativeSearchEnhancementsEnabled !== false;
   const askUserQuestionAutoResolutionEnabled =
     sharedSettings?.askUserQuestionAutoResolutionEnabled !== false;
@@ -1100,6 +1101,23 @@ export function SettingsPage({
             .catch((cause: unknown) => {
               console.warn("[settings] 回写引导记录失败", String(cause));
             });
+        },
+        completed: {
+          resultSource: "shared_settings",
+          stateAfter: enabled ? "enabled" : "disabled",
+        },
+      });
+    },
+    [updateSharedSettings],
+  );
+  const handleMemoryIndexAsContextChange = useCallback(
+    async (enabled: boolean) => {
+      await runSettingsActionAsync({
+        featureId: "settings.memory",
+        action: "toggle_memory_index_as_context",
+        trigger: "switch",
+        operation: async () => {
+          await updateSharedSettings({ memoryIndexAsContext: enabled });
         },
         completed: {
           resultSource: "shared_settings",
@@ -2046,8 +2064,10 @@ export function SettingsPage({
                             {/* The memory catalog always uses the local Host so a remote workspace does not read local machine data by mistake. */}
                             <MemorySettingsSection
                               memoryEnabled={memoryEnabled}
+                              memoryIndexAsContext={memoryIndexAsContext}
                               memoryService={localHostServices.memoryService}
                               onMemoryEnabledChange={handleMemoryEnabledChange}
+                              onMemoryIndexAsContextChange={handleMemoryIndexAsContextChange}
                               projectMemoryViewerAvailable={Boolean(isDesktop)}
                               workspaceDisplayNames={memoryWorkspaceDisplayNames}
                             />

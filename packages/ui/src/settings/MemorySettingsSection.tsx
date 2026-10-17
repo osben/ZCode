@@ -48,14 +48,18 @@ function getErrorMessage(error: unknown): string {
 
 export function MemorySettingsSection({
   memoryEnabled,
+  memoryIndexAsContext,
   memoryService,
   onMemoryEnabledChange,
+  onMemoryIndexAsContextChange,
   projectMemoryViewerAvailable,
   workspaceDisplayNames = [],
 }: {
   memoryEnabled: boolean;
+  memoryIndexAsContext: boolean;
   memoryService: MemoryCatalogService;
   onMemoryEnabledChange: (enabled: boolean) => Promise<void>;
+  onMemoryIndexAsContextChange: (enabled: boolean) => Promise<void>;
   projectMemoryViewerAvailable: boolean;
   workspaceDisplayNames?: readonly string[];
 }) {
@@ -173,6 +177,26 @@ export function MemorySettingsSection({
               data-testid={TID_SETTINGS_MEMORY_SWITCH}
               onCheckedChange={(checked) => {
                 void onMemoryEnabledChange(checked);
+              }}
+            />
+          }
+        />
+        <SettingsRow
+          label={intl.formatMessage({
+            id: "settings.memory.indexAsContext",
+          })}
+          description={intl.formatMessage({
+            id: "settings.memory.indexAsContextDescription",
+          })}
+          control={
+            <Switch
+              aria-label={intl.formatMessage({
+                id: "settings.memory.indexAsContext",
+              })}
+              checked={memoryIndexAsContext}
+              data-testid={TID_SETTINGS_MEMORY_SWITCH}
+              onCheckedChange={(checked) => {
+                void onMemoryIndexAsContextChange(checked);
               }}
             />
           }

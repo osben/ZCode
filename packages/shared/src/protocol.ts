@@ -379,6 +379,9 @@ export interface AppSettings {
   nativeSearchEnhancementsEnabled?: boolean;
   /** Whether Memory is enabled in newly created or cold-restored Sessions; disabled by default. */
   memoryEnabled?: boolean;
+  /** Inject the project memory index as a standalone background-context block instead of inside
+   *  the "# agentsMd" instruction banner. Fork-only: stored in fork-settings.json. Default false. */
+  memoryIndexAsContext?: boolean;
   onboardingOccupation?:
     | "office"
     | "developer"

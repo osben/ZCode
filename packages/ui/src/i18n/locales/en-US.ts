@@ -2594,6 +2594,9 @@ const enUS: Record<string, string> = {
     "Use enhanced Find and Grep in new sessions and sessions restored after an app restart. Active sessions keep their current setting; Find remains unchanged on Windows.",
   "settings.memory": "Memory",
   "settings.memory.workspaceMemory": "Workspace Memory",
+  "settings.memory.indexAsContext": "Inject memory as background context",
+  "settings.memory.indexAsContextDescription":
+    "By default the memory index is injected together with workspace instructions and can compete with them. When enabled, memory is clearly marked as background context: safer for stale notes and injected content, but it may be followed slightly less strictly.",
   "settings.memoryDescription":
     "Save and reuse long-term context in workspaces. Applies to new sessions and may increase model requests and token costs.",
   "settings.worktrees.title": "Worktrees",
