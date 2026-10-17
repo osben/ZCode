@@ -72,15 +72,15 @@ afterEach(async () => {
 });
 
 describe("memoryService Project Memory catalog", () => {
-  it("reports lastDreamConsolidatedAt from the dream lock mtime and omits it without a lock", async () => {
+  it("reports lastDreamConsolidatedAt from the success marker mtime and omits it without one", async () => {
     const dreamAt = new Date("2026-03-01T06:00:00.000Z");
     await writeMemoryFile("dreamed-project-1111111111111111", "MEMORY.md", "index");
-    const lockPath = join(
+    const markerPath = join(
       workspaceMemoryRoot("dreamed-project-1111111111111111"),
-      ".consolidate-lock",
+      ".consolidated-at",
     );
-    await writeFile(lockPath, String(process.pid), "utf8");
-    await utimes(lockPath, dreamAt, dreamAt);
+    await writeFile(markerPath, "", "utf8");
+    await utimes(markerPath, dreamAt, dreamAt);
     await writeMemoryFile("never-dreamed-project-2222222222222222", "MEMORY.md", "index");
 
     const workspaces = await createMemoryService().listProjectMemories();

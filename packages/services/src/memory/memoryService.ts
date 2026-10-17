@@ -22,7 +22,10 @@ import { readProjectMemoryIndexLineCount } from "#src/memory/projectMemoryIndexC
 
 const PROJECT_MEMORY_INDEX_FILE_NAME = "MEMORY.md";
 const PROJECT_MEMORY_DIRECTORY_NAME = "memory";
-const PROJECT_MEMORY_DREAM_LOCK_FILE_NAME = ".consolidate-lock";
+// Success marker written by the runtime only after a Dream run completes (see
+// writeDreamConsolidatedAt in apps/zcode-cli/packages/core/src/memory/dream.ts). The lock file's
+// mtime marks a run start and survives crashes, so it must not back this display value.
+const PROJECT_MEMORY_DREAM_CONSOLIDATED_AT_FILE_NAME = ".consolidated-at";
 const PROJECT_KEY_SUFFIX_PATTERN = /^(.*)-[a-f0-9]{16}$/i;
 
 function isNotFoundError(error: unknown): boolean {
@@ -135,14 +138,17 @@ function compareProjectMemoryFiles(
 }
 
 /**
- * Last successful Dream consolidation time, read from the runtime's lock file mtime
- * (DREAM_LOCK_FILE in apps/zcode-cli/packages/core/src/memory/dream.ts). Missing lock → undefined.
+ * Completion time of the last successful Dream run, read from the runtime success-marker mtime
+ * (writeDreamConsolidatedAt in apps/zcode-cli/packages/core/src/memory/dream.ts). Missing marker →
+ * undefined.
  */
 async function readLastDreamConsolidatedAt(memoryRoot: string): Promise<number | undefined> {
   try {
-    const lockStat = await lstat(join(memoryRoot, PROJECT_MEMORY_DREAM_LOCK_FILE_NAME));
-    if (!lockStat.isFile() || lockStat.isSymbolicLink()) return undefined;
-    return lockStat.mtimeMs;
+    const markerStat = await lstat(
+      join(memoryRoot, PROJECT_MEMORY_DREAM_CONSOLIDATED_AT_FILE_NAME),
+    );
+    if (!markerStat.isFile() || markerStat.isSymbolicLink()) return undefined;
+    return markerStat.mtimeMs;
   } catch (error) {
     if (isNotFoundError(error)) return undefined;
     throw error;

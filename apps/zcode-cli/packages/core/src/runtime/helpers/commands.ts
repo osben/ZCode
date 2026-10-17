@@ -22,7 +22,9 @@ export function parseDreamCommand(input: string): ParsedDreamCommand | null {
   if (trimmed === "/dream") {
     return { ok: true };
   }
-  if (trimmed.startsWith("/dream ") || trimmed.startsWith("/dream\t")) {
+  // General whitespace: a multiline composer can submit "/dream\n…" and it must stay a usage
+  // error, while "/dreamer" must keep falling through to other command/prompt handling.
+  if (/^\/dream\s/.test(trimmed)) {
     return { ok: false, reason: "usage" };
   }
   return null;

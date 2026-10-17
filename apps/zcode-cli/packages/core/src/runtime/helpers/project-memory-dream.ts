@@ -1,7 +1,7 @@
 import { basename, join, resolve } from "node:path";
 
 import type { ModelTextContentBlock } from "@zcode/contracts";
-import type { ModelInputMessage, SessionInfo, TraceContext } from "../deps.js";
+import type { Model, ModelInputMessage, SessionInfo, TraceContext } from "../deps.js";
 import {
   systemReminderAttachmentEntry,
   type RuntimeAttachmentEntry,
@@ -13,6 +13,7 @@ import {
   evaluateAutoDreamTiming,
   readDreamLastConsolidatedAt,
   restoreDreamLockAfterFailure,
+  writeDreamConsolidatedAt,
 } from "../../memory/dream.js";
 import { runMemoryAgentLoop } from "../../memory/memory-agent-loop.js";
 import { findLatestReadFileState } from "../../tool/read-file-state.js";
@@ -89,7 +90,7 @@ export async function runProjectMemoryDream(
 /** Manual `/dream` command path: every skip is a visible outcome instead of a silent return. */
 export async function runManualProjectMemoryDream(
   runtime: AgentRuntimeInternal,
-  input: { abortSignal?: AbortSignal; traceContext: TraceContext },
+  input: { abortSignal?: AbortSignal; model?: Model; traceContext: TraceContext },
 ): Promise<ProjectMemoryDreamOutcome> {
   const memoryRoot = resolveEnabledProjectMemoryRoot(runtime.config, runtime.workspaceRoot);
   if (!memoryRoot || !runtime.sessionStore || !runtime.fileSystemPort || !runtime.modelIoDir) {
@@ -101,6 +102,7 @@ export async function runManualProjectMemoryDream(
 
   const context = captureProjectMemoryAgentContext(runtime, {
     memoryRoot,
+    model: input.model,
     operation: "project_memory_dream",
     traceContext: input.traceContext,
   });
@@ -222,6 +224,9 @@ async function executeProjectMemoryDream(
         runtime.pendingMemoryUpdate = createProjectMemoryUpdate(runtime, paths);
         invalidateProjectMemoryRecallPaths(runtime, paths);
       }
+      // Stamp completion only for runs that reached this point without throwing; the lock's own
+      // mtime starts at run start and survives crashes, so it cannot back "last successful dream".
+      await writeDreamConsolidatedAt(context.memoryRoot);
       outcome = {
         status: "consolidated",
         summary: finalAssistantText(loopResult.messages) ?? memoryUpdateSummary(paths),

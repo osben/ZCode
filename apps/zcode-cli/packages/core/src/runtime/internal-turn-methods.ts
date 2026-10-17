@@ -113,6 +113,7 @@ export interface AgentRuntimeTurnMethods {
     turnTraceContext: TraceContext,
     abortSignal?: AbortSignal,
     inputId?: string,
+    model?: Model,
   ): Promise<TurnResult>;
   executeRewindCommand(
     input: string,

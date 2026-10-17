@@ -282,6 +282,9 @@ export async function executeTurnCommand(
           turnTraceContext,
           turnAbortSignal,
           options?.inputId,
+          // Same admission freeze as compact: the Memory agent must run on the model selected
+          // before any await, not on whatever the session switched to during initialization.
+          admittedModel,
         );
       }
       if (rewindCommand !== null) {

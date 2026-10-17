@@ -119,6 +119,7 @@ describe("Dream command parsing", () => {
     expect(parseDreamCommand("  /dream  ")).toEqual({ ok: true });
     expect(parseDreamCommand("/dream now")).toEqual({ ok: false, reason: "usage" });
     expect(parseDreamCommand("/dream\t now")).toEqual({ ok: false, reason: "usage" });
+    expect(parseDreamCommand("/dream\nnow")).toEqual({ ok: false, reason: "usage" });
     expect(parseDreamCommand("/dreamer")).toBeNull();
     expect(parseDreamCommand("/compact")).toBeNull();
     expect(parseDreamCommand("dream")).toBeNull();

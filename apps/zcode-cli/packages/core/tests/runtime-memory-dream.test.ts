@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { mkdir, mkdtemp, rm, utimes, writeFile as writeRealFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, utimes, writeFile as writeRealFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -411,6 +411,18 @@ describe("Manual /dream command", () => {
     expect(
       (startedEvent?.payload as { inputVisibility?: string } | undefined)?.inputVisibility,
     ).toBe("model-only");
+    // V4 clients do not render TurnComplete.response; the result must also be a streaming sequence.
+    const streamedText = result.events
+      .filter((event) => event.type === "model_streaming")
+      .map((event) => (event.payload as { delta?: string }).delta ?? "")
+      .join("");
+    expect(streamedText).toBe(result.response);
+    const modelComplete = result.events.find((event) => event.type === "model_complete");
+    expect(
+      (modelComplete?.payload as { querySource?: string; content?: string } | undefined),
+    ).toMatchObject({ content: result.response, querySource: "dream" });
+    // A completed run stamps the success marker; the lock alone only marks the run start.
+    await expect(stat(join(memoryRoot, ".consolidated-at"))).resolves.toBeTruthy();
   });
 
   it("bypasses the 24 hour gate and runs with a single fresh transcript", async () => {

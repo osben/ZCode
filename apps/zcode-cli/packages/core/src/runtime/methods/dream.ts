@@ -5,7 +5,7 @@ import {
   runWithContextAsync,
   traceContextToLogContext,
 } from "../deps.js";
-import type { SessionEvent, TraceContext, TurnId } from "../deps.js";
+import type { Model, SessionEvent, TraceContext, TurnId } from "../deps.js";
 import {
   throwIfTurnAborted,
   createTurnFailureError,
@@ -20,11 +20,17 @@ import {
 } from "../helpers/project-memory-dream.js";
 import { recordTurnUsageFact } from "./usage-observability.js";
 
+/** Single source for the /dream usage reply; the CLI command-center reuses it for local answers. */
+export const DREAM_COMMAND_USAGE_RESPONSE =
+  "Usage: /dream — takes no arguments. Run /dream to consolidate project memory now.";
+
 /**
  * Manual `/dream` command turn, structured like `executeManualCompact`: the command text is
- * `model-only` in events, the Memory agent runs on the detached Memory path (no session usage
- * events — the TurnComplete usage summary is intentionally empty), and the final assistant text
- * becomes the turn response.
+ * `model-only` in events and the Memory agent runs on the detached Memory path (no session usage
+ * events — the TurnComplete usage summary is intentionally empty). The result text is additionally
+ * emitted as a ModelStreaming/ModelComplete sequence with a non-main `querySource`, because V4
+ * clients do not render `TurnComplete.response`; without those events the summary and every skip
+ * reason would be invisible on Desktop/mobile.
  */
 export async function executeManualDream(
   this: AgentRuntimeInternal,
@@ -34,6 +40,7 @@ export async function executeManualDream(
   turnTraceContext: TraceContext,
   abortSignal?: AbortSignal,
   inputId?: string,
+  admittedModel?: Model,
 ): Promise<TurnResult> {
   const events: SessionEvent[] = [];
   const startedAt = Date.now();
@@ -68,6 +75,7 @@ export async function executeManualDream(
       const outcome = command.ok
         ? await runManualProjectMemoryDream(this, {
             abortSignal,
+            model: admittedModel,
             traceContext: turnTraceContext,
           })
         : { status: "usage-error" as const };
@@ -77,6 +85,7 @@ export async function executeManualDream(
         throw outcome.error;
       }
       const response = formatDreamCommandResponse(outcome);
+      await emitDreamResponseEvents.call(this, response, turnTraceContext, events);
 
       const turnUsage = createModelUsageSummaryFromEvents(events);
       const completeEvent = this.createEvent(
@@ -145,6 +154,15 @@ export async function executeManualDream(
         logLabel: "Dream",
         preserveQueueAutoDrainOnCancel,
       });
+      await recordTurnUsageFact(this, {
+        completedAt: Date.now(),
+        error: coreError,
+        events,
+        startedAt,
+        status: coreError.type === CoreErrorType.TurnCancelled ? "cancelled" : "error",
+        traceContext: turnTraceContext,
+        turnId,
+      });
 
       throw coreError;
     }
@@ -153,11 +171,52 @@ export async function executeManualDream(
   });
 }
 
+/**
+ * Replay the command response as the same event shape a streaming assistant answer uses, so every
+ * client (V4 projection, TUI) renders one assistant text row for the dream result or skip reason.
+ */
+async function emitDreamResponseEvents(
+  this: AgentRuntimeInternal,
+  response: string,
+  turnTraceContext: TraceContext,
+  events: SessionEvent[],
+): Promise<void> {
+  await this.emitModelStreamingEvent(
+    { delta: "", done: false, kind: "text_start" },
+    turnTraceContext,
+    events,
+  );
+  await this.emitModelStreamingEvent(
+    { delta: response, done: false, kind: "text_delta" },
+    turnTraceContext,
+    events,
+  );
+  await this.emitModelStreamingEvent(
+    { delta: "", done: true, kind: "text_end" },
+    turnTraceContext,
+    events,
+  );
+  const modelCompleteEvent = this.createEvent(
+    SessionEventType.ModelComplete,
+    {
+      content: response,
+      // Non-main querySource keeps the projection from treating this as the session context watermark.
+      querySource: "dream",
+      stopReason: "stop",
+      toolCallCount: 0,
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+    },
+    turnTraceContext,
+  );
+  await this.appendEvent(modelCompleteEvent, turnTraceContext);
+  events.push(modelCompleteEvent);
+}
+
 function formatDreamCommandResponse(
   outcome: Exclude<ProjectMemoryDreamOutcome, { status: "failed" }> | { status: "usage-error" },
 ): string {
   if (outcome.status === "usage-error") {
-    return "Usage: /dream — takes no arguments. Run /dream to consolidate project memory now.";
+    return DREAM_COMMAND_USAGE_RESPONSE;
   }
   if (outcome.status === "skipped") {
     switch (outcome.reason) {

@@ -209,10 +209,11 @@ Web Remote / Mobile -> Memory 开关 + 本地桌面端查看提示
   viewer 的注入预算提示）；正文仅在用户选中文件后按需读取，并保持原始
   Markdown 和 frontmatter 不变。单文件预览上限为 5 MiB（5 × 1024 × 1024 bytes）；超过上限
   时拒绝读取并在正文区域展示本地化的预览上限提示，不截断、不返回部分内容。
-- catalog 为每个 workspace 附带可选的 `lastDreamConsolidatedAt`：`<memoryRoot>/.consolidate-lock`
-  的 mtime（文件不存在时省略该字段）。它是只读的展示性元数据，用于 viewer 中“上次整理时间”
-  的展示；Host/Renderer 不据它发起 Dream、不写 lock，也不把它当作 lock 所有权判断（lock 语义
-  只属于 Runtime Dream handler，见 7.2）。
+- catalog 为每个 workspace 附带可选的 `lastDreamConsolidatedAt`：`<memoryRoot>/.consolidated-at`
+  成功标记的 mtime（文件不存在时省略该字段）。它是只读的展示性元数据，用于 viewer 中“上次整理时间”
+  的展示；Host/Renderer 不据它发起 Dream、不写 marker，也不把它当作 lock 所有权判断（lock 语义
+  只属于 Runtime Dream handler，见 7.2）。进行中的 run 不写 marker，因此不会把未完成的整理
+  显示为已完成。
 - 正文读取必须通过单次调用内的只读稳定句柄完成，并在打开后复检路径 containment 与文件身份；
   不获取文件所有权、不加锁，也不阻塞 Main、Extraction 或 Dream 的原子更新。并发更新优先成功，
   当前预览只允许返回更新前的完整快照或“文件已变化”错误，句柄始终在调用结束时关闭。文件已变化
@@ -646,8 +647,13 @@ bounded drain 等待取消收口
   `/dream` 不接受参数；带参数的输入按 usage 错误回复，不发起 model 请求。
 - `/dream` turn 与 compact 命令 turn 同构：`TurnStarted` 的 `inputVisibility: "model-only"`
   （命令文本不渲染为 user bubble），不可 steer，`TurnComplete.response` 为 Dream 结果文本。
-  Dream 的 model 请求走 detached Memory agent 路径，不产生 session usage events，因此该
-  turn 的 usage summary 为空；这是已知且接受的语义，不另建 usage 通道。
+  V4 客户端不渲染 `TurnComplete.response`，因此结果/skip 文本同时以一条
+  `ModelStreaming`（text_start/delta/end）+ `ModelComplete`（非 main 的
+  `querySource: "dream"`）序列发出，投影为一个 assistant 文本行；非 main querySource 保证
+  该事件不覆盖 session context watermark。Memory agent 继承 turn admission 冻结的模型
+  （与 compact 同一冻结语义），失败/取消路径同样记录 turn usage fact。Dream 的 model 请求走
+  detached Memory agent 路径，不产生 session usage events，因此该 turn 的 usage summary 为
+  零值；这是已知且接受的语义，不另建 usage 通道。
 - 自动触发（scheduler）仍不接入：等待产品侧确定 project transcript 隔离形态后再接线，
   接线前 handler 的 auto 入口保持未使用。
 - 手动模式 gate（soft mode）：绕过 24 小时最小间隔与 10 分钟 scan throttle；要求当前
@@ -682,9 +688,13 @@ full Main context + real tools + exact Dream prompt
         |
         | restricted execution policy，最多 50 turns
         v
-success ------------------------------------> 保留新 lock mtime
-error/abort ---------------------------> 首次 lock 删除；旧 lock 恢复空内容和原 mtime
+success ------------------------------------> 保留新 lock mtime；写 <memoryRoot>/.consolidated-at
+error/abort ---------------------------> 首次 lock 删除；旧 lock 恢复空内容和原 mtime；不写 marker
 ```
+
+`.consolidated-at` 只在 Dream run 未抛错完成时写入（mtime 即完成时间）。lock 的 mtime 标记的是
+run 开始（进行中与崩溃的尝试都会接管/留下 lock），因此「上次成功整理」只能读 marker，不能读
+lock；Settings viewer 的 `lastDreamConsolidatedAt`（见 3.3）以 marker 为唯一来源。
 
 Dream 复用 Extraction 的执行策略，最大 50 个 model turns；第 50 次响应中的 tool calls 仍执行。
 prompt 固定执行 orient、signal、consolidate、prune/index 四个阶段，并要求最终 `MEMORY.md`
