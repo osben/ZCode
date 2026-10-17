@@ -566,9 +566,16 @@ export class AcpSessionRuntime extends EventEmitter {
           windowsCleanupDeadlineAtMs: deadline,
         }
       : {};
-    const snapshot = proc
-      ? await captureProcessTreeSnapshotAsync(proc.child, ownership)
-      : undefined;
+    // After Node reaps the root, its PID may already belong to an unrelated process. The POSIX
+    // snapshot looks the root up by bare PID, so only capture it while the child is unreaped;
+    // the terminator then falls back to the owned process group. Windows filters by lifetime.
+    const rootReaped = proc
+      ? proc.child.exitCode !== null || proc.child.signalCode !== null
+      : false;
+    const snapshot =
+      proc && (process.platform === "win32" || !rootReaped)
+        ? await captureProcessTreeSnapshotAsync(proc.child, ownership)
+        : undefined;
     try {
       this.connection?.close();
     } catch {
