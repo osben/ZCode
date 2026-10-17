@@ -48,4 +48,36 @@ describe("useGitBranchSwitcher worktree occupancy", () => {
     });
     expect(result.current.worktreeOccupancy.size).toBe(0);
   });
+
+  it("uses the injected git service and resets state when that target changes at the same path", async () => {
+    const makeService = () => ({
+      getLocalBranches: vi.fn(async () => ({ branches: [] })),
+      listWorktrees: vi.fn(),
+    });
+    const first = makeService();
+    first.listWorktrees.mockResolvedValue({
+      worktrees: [{ branchName: "feat", isCurrent: false, path: "/repo/.worktrees/feat" }],
+    });
+    const second = makeService();
+    second.listWorktrees.mockImplementation(() => new Promise(() => {}));
+    const { result, rerender } = renderHook(
+      ({ service }) =>
+        useGitBranchSwitcher({
+          gitService: service as never,
+          workspacePath: "/repo",
+          currentBranchName: "main",
+          headRefType: "branch",
+          onRefreshGit: vi.fn(),
+        }),
+      { initialProps: { service: first } },
+    );
+    await act(async () => result.current.setOpen(true));
+    expect(first.listWorktrees).toHaveBeenCalledWith({ workspacePath: "/repo" });
+    expect(gitService.listWorktrees).not.toHaveBeenCalled();
+    expect(result.current.worktreeOccupancy.size).toBe(1);
+
+    await act(async () => rerender({ service: second }));
+    expect(result.current.open).toBe(false);
+    expect(result.current.worktreeOccupancy.size).toBe(0);
+  });
 });

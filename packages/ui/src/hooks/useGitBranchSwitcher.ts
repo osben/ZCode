@@ -94,6 +94,9 @@ export function useGitBranchSwitcher({
     }
   }, [gitService, intl, workspacePath]);
 
+  // Remote workspaces on different hosts can share the same path, so the Git target service is
+  // part of the reset key; otherwise branch, occupancy, and switch-assist state from the previous
+  // host survive and a retried commit/switch would run against the new host.
   useEffect(() => {
     setOpen(false);
     setCreateDialogOpen(false);
@@ -101,7 +104,7 @@ export function useGitBranchSwitcher({
     setBranchesResult(null);
     setWorktreeOccupancy(new Map());
     resetSwitchAssistState();
-  }, [resetSwitchAssistState, workspacePath]);
+  }, [gitService, resetSwitchAssistState, workspacePath]);
 
   const openRef = useRef(open);
   openRef.current = open;
