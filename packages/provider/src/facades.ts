@@ -312,7 +312,7 @@ export class ProviderSettingsFacade {
     return this.#mutateWithResult("create-provider", (target) =>
       target.createPersonalProvider({
         ...(input?.templateId ? { templateId: input.templateId } : {}),
-        ...(input?.providerId ? { providerId: input.providerId } : {}),
+        ...(input?.providerId !== undefined ? { providerId: input.providerId } : {}),
         ...(input?.providerName ? { providerName: input.providerName } : {}),
         ...(input?.locale ? { locale: input.locale } : {}),
         ...(input?.initialConfig
