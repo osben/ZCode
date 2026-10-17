@@ -29,6 +29,7 @@ export function AcpAgentFrames({
       <ul className="mt-2 max-h-64 space-y-1 overflow-auto font-mono text-xs leading-5">
         {frames.map((frame, index) => (
           <li key={index} className="whitespace-pre-wrap break-all">
+            <span className="sr-only">{frame.direction} </span>
             <span aria-hidden="true" className="text-foreground-subtle">
               {frame.direction === "out" ? "→ " : "← "}
             </span>
