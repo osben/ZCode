@@ -2,7 +2,7 @@
  * One ACP agent card in Model Settings: status, activation, command/args/env
  * form, roundtrip test with raw frames, and login/status affordances.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AcpAgentLoginResult,
   AcpAgentStatusReport,
@@ -21,10 +21,13 @@ import { logger } from "@/logger.js";
 import { AcpAgentFrames } from "./AcpAgentFrames.js";
 import {
   defaultAcpAgentFormValues,
+  formatAcpEnvLines,
   joinAcpArgs,
   parseAcpEnvLines,
   splitAcpArgs,
+  acpProviderId,
   type AcpAgentFormValues,
+  type AcpSavedAccess,
 } from "./acpAgentConfig.js";
 
 type BusyKind = "enable" | "save" | "disable" | "test" | null;
@@ -38,12 +41,18 @@ interface AcpAgentStatusState {
 export function AcpAgentCard({
   agent,
   enabled,
+  conflict,
+  savedAccess,
   onEnable,
   onUpdate,
   onDisable,
 }: {
   agent: AcpAgentSummary;
   enabled: boolean;
+  /** Another personal provider already uses the `acp:<agentId>` id. */
+  conflict: boolean;
+  /** Saved access of an existing ACP provider (form prefill). */
+  savedAccess?: AcpSavedAccess;
   onEnable: (form: AcpAgentFormValues) => Promise<void>;
   onUpdate: (form: AcpAgentFormValues) => Promise<void>;
   onDisable: () => Promise<void>;
@@ -57,9 +66,13 @@ export function AcpAgentCard({
   );
 
   const defaults = defaultAcpAgentFormValues(agent);
-  const [command, setCommand] = useState(defaults.command);
-  const [argsText, setArgsText] = useState(joinAcpArgs(defaults.args));
-  const [envText, setEnvText] = useState("");
+  const [command, setCommand] = useState(() => savedAccess?.command ?? defaults.command);
+  const [argsText, setArgsText] = useState(() => joinAcpArgs(savedAccess?.args ?? defaults.args));
+  const [envText, setEnvText] = useState(() => formatAcpEnvLines(savedAccess?.env ?? {}));
+  // Status/login must follow the executable the user configured, so read the
+  // latest command without re-running the mount-time status probe per keystroke.
+  const commandRef = useRef(command);
+  commandRef.current = command;
   const [busy, setBusy] = useState<BusyKind>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<AcpAgentTestResult | null>(null);
@@ -81,7 +94,11 @@ export function AcpAgentCard({
   const loadStatus = useCallback(async () => {
     setStatus({ loading: true });
     try {
-      const report = await providerSettingsService.getAcpAgentStatus({ agentId: agent.agentId });
+      const configured = commandRef.current.trim();
+      const report = await providerSettingsService.getAcpAgentStatus({
+        agentId: agent.agentId,
+        ...(configured.length > 0 ? { command: configured } : {}),
+      });
       setStatus({ loading: false, report });
     } catch (error) {
       logger.warn("[AcpAgentCard] login status check failed", error);
@@ -137,7 +154,11 @@ export function AcpAgentCard({
     setLoginBusy(true);
     setActionError(null);
     try {
-      const result = await providerSettingsService.startAcpAgentLogin({ agentId: agent.agentId });
+      const configured = commandRef.current.trim();
+      const result = await providerSettingsService.startAcpAgentLogin({
+        agentId: agent.agentId,
+        ...(configured.length > 0 ? { command: configured } : {}),
+      });
       setLoginResult(result);
     } catch (error) {
       logger.warn("[AcpAgentCard] login failed", error);
@@ -227,7 +248,7 @@ export function AcpAgentCard({
             <Button
               type="button"
               size="sm"
-              disabled={busy !== null || command.trim().length === 0}
+              disabled={busy !== null || command.trim().length === 0 || conflict}
               onClick={() => void runAction("enable", () => onEnable(currentForm()))}
             >
               {busy === "enable" ? <Spinner className="me-1 size-3" /> : null}
@@ -236,6 +257,12 @@ export function AcpAgentCard({
           )}
         </div>
       </div>
+
+      {conflict ? (
+        <p className="mt-2 text-ui-sm text-destructive">
+          {t("conflict", { providerId: acpProviderId(agent.agentId) })}
+        </p>
+      ) : null}
 
       <div className="mt-3 flex flex-wrap items-center gap-2 text-ui-sm text-foreground-subtle">
         <span>{t("loginStatus")}:</span>

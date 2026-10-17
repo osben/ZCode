@@ -47,6 +47,7 @@ import {
   buildAcpAgentAccess,
   buildAcpPseudoModelConfig,
   type AcpAgentFormValues,
+  type AcpSavedAccess,
 } from "./model-provider-section/acpAgentConfig.js";
 import type { AcpAgentSummary } from "@zcode/services";
 import { ProviderTemplatePicker } from "./model-provider-section/ProviderTemplatePicker.js";
@@ -1086,13 +1087,30 @@ export function ModelProviderSection({
     [testModelConnectivity],
   );
 
-  const acpEnabledProviderIds = useMemo<ReadonlySet<string>>(() => {
-    const ids = new Set<string>();
+  const acpProviderInfo = useMemo(() => {
+    const accessByAgentId = new Map<string, AcpSavedAccess>();
+    const conflictAgentIds = new Set<string>();
+    const enabledProviderIds = new Set<string>();
     for (const provider of providerSettingsView?.providers ?? []) {
-      if (provider.providerId.startsWith("acp:") && provider.enabled) ids.add(provider.providerId);
+      if (!provider.providerId.startsWith("acp:")) continue;
+      const agentId = provider.providerId.slice("acp:".length);
+      const access = provider.effectiveConfig.access;
+      if (access?.type !== "acp-agent") {
+        // The stable id is taken by a provider that is not ACP-managed: never
+        // edit or delete it from this section.
+        conflictAgentIds.add(agentId);
+        continue;
+      }
+      accessByAgentId.set(agentId, {
+        command: access.command ?? "",
+        args: access.args ?? [],
+        env: access.env ?? {},
+      });
+      if (provider.enabled) enabledProviderIds.add(provider.providerId);
     }
-    return ids;
+    return { accessByAgentId, conflictAgentIds, enabledProviderIds };
   }, [providerSettingsView]);
+  const acpEnabledProviderIds = acpProviderInfo.enabledProviderIds;
 
   // ACP agents become personal providers (`acp:<agentId>`) holding one
   // synthetic model (modelId = agentId); the model config mirrors the shape
@@ -1100,11 +1118,32 @@ export function ModelProviderSection({
   const handleAcpEnableAgent = useCallback(
     async (agent: AcpAgentSummary, form: AcpAgentFormValues) => {
       const providerId = acpProviderId(agent.agentId);
-      await createPersonalProvider({
-        providerId,
-        providerName: `${agent.displayName} (ACP)`,
-        initialConfig: { access: buildAcpAgentAccess(agent, form) },
-      });
+      const existing = providerSettingsView?.providers.find(
+        (provider) => provider.providerId === providerId,
+      );
+      if (existing && existing.effectiveConfig.access?.type !== "acp-agent") {
+        throw new Error(
+          intl.formatMessage({ id: "settings.modelProvider.acp.conflict" }, { providerId }),
+        );
+      }
+      const access = buildAcpAgentAccess(agent, form);
+      if (!existing) {
+        await createPersonalProvider({
+          providerId,
+          providerName: `${agent.displayName} (ACP)`,
+          initialConfig: { access },
+        });
+      } else {
+        // Re-enable in place: the stable id already exists (general-switch
+        // disable or an interrupted activation), so never create it again.
+        await providerSettingsService.savePersonalProviderOverlay(
+          providerId,
+          { access },
+          { enabled: true },
+        );
+      }
+      const hasModel = existing?.models.some((model) => model.modelId === agent.agentId) ?? false;
+      if (hasModel) return;
       try {
         await addPersonalModel(
           providerId,
@@ -1113,29 +1152,54 @@ export function ModelProviderSection({
           false,
         );
       } catch (error) {
-        // Keep activation atomic: a provider without its model would linger as an
-        // unusable entry, so roll it back before surfacing the failure.
-        await deleteProvider(providerId).catch(() => {});
+        if (!existing) {
+          // Best effort: a provider without its model is unusable; a retry
+          // reconciles an interrupted activation in place.
+          await deleteProvider(providerId).catch(() => {});
+        }
         throw error;
       }
     },
-    [createPersonalProvider, addPersonalModel, deleteProvider],
+    [
+      providerSettingsView,
+      intl,
+      createPersonalProvider,
+      providerSettingsService,
+      addPersonalModel,
+      deleteProvider,
+    ],
   );
 
   const handleAcpUpdateAgent = useCallback(
     async (agent: AcpAgentSummary, form: AcpAgentFormValues) => {
-      await providerSettingsService.savePersonalProviderOverlay(acpProviderId(agent.agentId), {
+      const providerId = acpProviderId(agent.agentId);
+      const existing = providerSettingsView?.providers.find(
+        (provider) => provider.providerId === providerId,
+      );
+      if (!existing || existing.effectiveConfig.access?.type !== "acp-agent") {
+        throw new Error(
+          intl.formatMessage({ id: "settings.modelProvider.acp.conflict" }, { providerId }),
+        );
+      }
+      await providerSettingsService.savePersonalProviderOverlay(providerId, {
         access: buildAcpAgentAccess(agent, form),
       });
     },
-    [providerSettingsService],
+    [providerSettingsView, intl, providerSettingsService],
   );
 
   const handleAcpDisableAgent = useCallback(
     async (agent: AcpAgentSummary) => {
-      await deleteProvider(acpProviderId(agent.agentId));
+      const providerId = acpProviderId(agent.agentId);
+      const existing = providerSettingsView?.providers.find(
+        (provider) => provider.providerId === providerId,
+      );
+      // Ownership check: only delete a provider this section manages — a
+      // same-id provider with another access type is not ours to remove.
+      if (!existing || existing.effectiveConfig.access?.type !== "acp-agent") return;
+      await deleteProvider(providerId);
     },
-    [deleteProvider],
+    [providerSettingsView, deleteProvider],
   );
 
   // On a slow first load, returning null left the entire model provider page blank,
@@ -1159,6 +1223,8 @@ export function ModelProviderSection({
     <div className="space-y-6">
       <AcpAgentsPanel
         enabledProviderIds={acpEnabledProviderIds}
+        providerAccessByAgentId={acpProviderInfo.accessByAgentId}
+        conflictAgentIds={acpProviderInfo.conflictAgentIds}
         onEnableAgent={handleAcpEnableAgent}
         onUpdateAgent={handleAcpUpdateAgent}
         onDisableAgent={handleAcpDisableAgent}

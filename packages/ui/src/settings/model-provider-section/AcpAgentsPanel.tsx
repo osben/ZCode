@@ -6,20 +6,24 @@
 import { useCallback, useEffect, useState } from "react";
 import type { AcpAgentSummary } from "@zcode/services";
 import { Button } from "@/components/ui/button.js";
+import { Spinner } from "@/components/ui/spinner.js";
 import { useServices } from "@/hooks/useServices.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
 import { AcpAgentCard } from "./AcpAgentCard.js";
-import { acpProviderId, type AcpAgentFormValues } from "./acpAgentConfig.js";
+import { acpProviderId, type AcpAgentFormValues, type AcpSavedAccess } from "./acpAgentConfig.js";
 
 interface AcpDetectionState {
   readonly status: "loading" | "ready" | "error";
   readonly agents: readonly AcpAgentSummary[];
+  readonly refreshing: boolean;
   readonly error?: string;
 }
 
 export interface AcpAgentsPanelProps {
   enabledProviderIds: ReadonlySet<string>;
+  providerAccessByAgentId: ReadonlyMap<string, AcpSavedAccess>;
+  conflictAgentIds: ReadonlySet<string>;
   onEnableAgent: (agent: AcpAgentSummary, form: AcpAgentFormValues) => Promise<void>;
   onUpdateAgent: (agent: AcpAgentSummary, form: AcpAgentFormValues) => Promise<void>;
   onDisableAgent: (agent: AcpAgentSummary) => Promise<void>;
@@ -27,6 +31,8 @@ export interface AcpAgentsPanelProps {
 
 export function AcpAgentsPanel({
   enabledProviderIds,
+  providerAccessByAgentId,
+  conflictAgentIds,
   onEnableAgent,
   onUpdateAgent,
   onDisableAgent,
@@ -36,30 +42,32 @@ export function AcpAgentsPanel({
   const [detection, setDetection] = useState<AcpDetectionState>({
     status: "loading",
     agents: [],
+    refreshing: false,
   });
 
   const load = useCallback(
     async (refresh: boolean) => {
-      setDetection({ status: "loading", agents: [] });
+      // Keep the current cards mounted while a rescan runs: unmounting them
+      // would discard unsaved command/args/env edits.
+      setDetection((previous) => ({
+        status: previous.agents.length === 0 ? "loading" : "ready",
+        agents: previous.agents,
+        refreshing: true,
+      }));
       try {
         const result = await providerSettingsService.detectAcpAgents(
           refresh ? { refresh: true } : undefined,
         );
-        if (!result.supported) {
-          setDetection({ status: "ready", agents: [] });
-          return;
-        }
-        setDetection({
-          status: "ready",
-          agents: result.agents.filter((agent) => agent.installed),
-        });
+        const agents = result.supported ? result.agents.filter((agent) => agent.installed) : [];
+        setDetection({ status: "ready", agents, refreshing: false });
       } catch (error) {
         logger.warn("[AcpAgentsPanel] ACP agent detection failed", error);
-        setDetection({
-          status: "error",
-          agents: [],
+        setDetection((previous) => ({
+          status: previous.agents.length === 0 ? "error" : "ready",
+          agents: previous.agents,
+          refreshing: false,
           error: error instanceof Error ? error.message : String(error),
-        });
+        }));
       }
     },
     [providerSettingsService],
@@ -98,8 +106,18 @@ export function AcpAgentsPanel({
           <p className="text-ui-sm text-foreground-subtle">
             {intl.formatMessage({ id: "settings.modelProvider.acp.description" })}
           </p>
+          <p className="text-ui-sm text-foreground-subtle">
+            {intl.formatMessage({ id: "settings.modelProvider.acp.chatPending" })}
+          </p>
         </div>
-        <Button type="button" size="sm" variant="ghost" onClick={() => void load(true)}>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          disabled={detection.refreshing}
+          onClick={() => void load(true)}
+        >
+          {detection.refreshing ? <Spinner className="me-1 size-3" /> : null}
           {intl.formatMessage({ id: "settings.modelProvider.acp.rescan" })}
         </Button>
       </div>
@@ -109,6 +127,8 @@ export function AcpAgentsPanel({
             key={agent.agentId}
             agent={agent}
             enabled={enabledProviderIds.has(acpProviderId(agent.agentId))}
+            conflict={conflictAgentIds.has(agent.agentId)}
+            savedAccess={providerAccessByAgentId.get(agent.agentId)}
             onEnable={(form) => onEnableAgent(agent, form)}
             onUpdate={(form) => onUpdateAgent(agent, form)}
             onDisable={() => onDisableAgent(agent)}

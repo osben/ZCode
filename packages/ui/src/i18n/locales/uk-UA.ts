@@ -2970,6 +2970,10 @@ const ukUA: Record<string, string> = {
   "settings.modelProvider.acp.loginManual": "Виконайте цю команду у своєму терміналі:",
   "settings.modelProvider.acp.copy": "Копіювати",
   "settings.modelProvider.acp.copied": "Скопійовано",
+  "settings.modelProvider.acp.chatPending":
+    "Підтримка ACP-агентів у чаті з'явиться в наступному релізі; увімкнені агенти поки недоступні в чаті.",
+  "settings.modelProvider.acp.conflict":
+    "Інший провайдер уже використовує ID {providerId}. Перейменуйте або видаліть його, щоб увімкнути цього агента.",
   "settings.modelProvider.templatePickerTitle": "Додати провайдера",
   "settings.modelProvider.templateGroup.zhipu": "Zhipu",
   "settings.modelProvider.templateGroup.other": "Інші",

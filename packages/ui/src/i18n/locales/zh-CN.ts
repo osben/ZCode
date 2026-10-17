@@ -3101,6 +3101,10 @@ const zhCN: Record<string, string> = {
   "settings.modelProvider.acp.loginManual": "请在终端中运行以下命令：",
   "settings.modelProvider.acp.copy": "复制",
   "settings.modelProvider.acp.copied": "已复制",
+  "settings.modelProvider.acp.chatPending":
+    "ACP 代理的对话支持将在后续版本中提供；当前已启用的代理暂不可在对话中使用。",
+  "settings.modelProvider.acp.conflict":
+    "另一个供应商已占用 ID {providerId}。请重命名或删除它后再启用此代理。",
   "settings.modelProvider.templatePickerTitle": "添加供应商",
   "settings.modelProvider.templateGroup.zhipu": "智谱",
   "settings.modelProvider.templateGroup.other": "其他",

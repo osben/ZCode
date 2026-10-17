@@ -3296,6 +3296,10 @@ const enUS: Record<string, string> = {
   "settings.modelProvider.acp.loginManual": "Run this command in your terminal:",
   "settings.modelProvider.acp.copy": "Copy",
   "settings.modelProvider.acp.copied": "Copied",
+  "settings.modelProvider.acp.chatPending":
+    "Chat support for ACP agents is coming in a follow-up release; enabled agents stay unavailable in chat for now.",
+  "settings.modelProvider.acp.conflict":
+    "Another provider already uses the ID {providerId}. Rename or remove it to enable this agent.",
   "settings.modelProvider.templatePickerTitle": "Add provider",
   "settings.modelProvider.templateGroup.zhipu": "Zhipu",
   "settings.modelProvider.templateGroup.other": "Other",

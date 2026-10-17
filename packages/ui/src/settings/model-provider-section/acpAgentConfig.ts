@@ -21,6 +21,13 @@ export interface AcpAgentFormValues {
   readonly env: Readonly<Record<string, string>>;
 }
 
+/** Access values of an enabled `acp:<agentId>` provider (form prefill). */
+export interface AcpSavedAccess {
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly env: Readonly<Record<string, string>>;
+}
+
 export function defaultAcpAgentFormValues(agent: AcpAgentSummary): AcpAgentFormValues {
   return {
     command: agent.commandPath ?? "",
@@ -29,8 +36,48 @@ export function defaultAcpAgentFormValues(agent: AcpAgentSummary): AcpAgentFormV
   };
 }
 
+/**
+ * Splits the arguments field with shell-like quoting: quoted whitespace stays
+ * inside one argument and quote characters are removed (a lone empty quoted
+ * string yields an empty argument).
+ */
 export function splitAcpArgs(text: string): string[] {
-  return text.trim().length === 0 ? [] : text.trim().split(/\s+/);
+  const args: string[] = [];
+  let current = "";
+  let hasContent = false;
+  let quote: "'" | '"' | null = null;
+  const push = (): void => {
+    if (hasContent || current.length > 0) args.push(current);
+    current = "";
+    hasContent = false;
+  };
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index]!;
+    if (quote !== null) {
+      if (char === quote) quote = null;
+      else current += char;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      hasContent = true;
+      continue;
+    }
+    if (char === "\\" && index + 1 < text.length) {
+      current += text[index + 1];
+      index += 1;
+      hasContent = true;
+      continue;
+    }
+    if (/\s/.test(char)) {
+      push();
+      continue;
+    }
+    current += char;
+    hasContent = true;
+  }
+  push();
+  return args;
 }
 
 export function joinAcpArgs(args: readonly string[]): string {
@@ -76,13 +123,14 @@ export function buildAcpAgentAccess(
   form: AcpAgentFormValues,
 ): AcpAgentAccessConfigObject {
   const command = form.command.trim().length > 0 ? form.command.trim() : (agent.commandPath ?? "");
-  const envEntries = Object.entries(form.env);
+  // Always send the env map, including an empty one: overlay merging treats a
+  // missing field as "unchanged", so clearing every row must be explicit.
   return {
     type: "acp-agent",
     agentId: agent.agentId,
     command,
     args: [...form.args],
-    ...(envEntries.length > 0 ? { env: Object.fromEntries(envEntries) } : {}),
+    env: Object.fromEntries(Object.entries(form.env)),
   };
 }
 

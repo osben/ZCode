@@ -35,6 +35,14 @@ describe("acpAgentConfig", () => {
     expect(joinAcpArgs(["a", "b"])).toBe("a b");
   });
 
+  it("keeps quoted whitespace inside one argument", () => {
+    expect(splitAcpArgs('a "b c"')).toEqual(["a", "b c"]);
+    expect(splitAcpArgs("--name='John Doe'")).toEqual(["--name=John Doe"]);
+    expect(splitAcpArgs('one "two three" four')).toEqual(["one", "two three", "four"]);
+    expect(splitAcpArgs("a\\ b")).toEqual(["a b"]);
+    expect(splitAcpArgs('""')).toEqual([""]);
+  });
+
   it("parses env lines and reports invalid ones", () => {
     const parsed = parseAcpEnvLines("TOKEN=abc\n# comment\nBAD LINE\n1BAD=x\nEMPTY=");
     expect(parsed.env).toEqual({ TOKEN: "abc", EMPTY: "" });
@@ -42,12 +50,13 @@ describe("acpAgentConfig", () => {
     expect(formatAcpEnvLines({ A: "1", B: "2" })).toBe("A=1\nB=2");
   });
 
-  it("builds the access config with fallbacks and omits empty env", () => {
+  it("builds the access config with fallbacks and always includes env", () => {
     expect(buildAcpAgentAccess(AGENT, { command: "  ", args: ["acp"], env: {} })).toEqual({
       type: "acp-agent",
       agentId: "opencode",
       command: AGENT.commandPath,
       args: ["acp"],
+      env: {},
     });
     expect(
       buildAcpAgentAccess(AGENT, {

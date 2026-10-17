@@ -246,8 +246,14 @@ export class ProviderConfigService implements ProviderSource<ProviderConfigSnaps
     let createdProviderId: ProviderId | undefined;
     await this.#updatePersonal((current) => {
       const occupied = new Set([...zcodeBuiltin.providers.keys(), ...current.providers.keys()]);
-      const requestedProviderId = input.providerId?.trim();
-      if (requestedProviderId) {
+      const requestedProviderId =
+        input.providerId === undefined ? undefined : input.providerId.trim();
+      if (requestedProviderId !== undefined) {
+        // An explicitly supplied id must be valid — never fall back to a
+        // generated id for callers that asked for a specific one.
+        if (requestedProviderId.length === 0) {
+          throw new Error(`Provider ID must not be empty: ${JSON.stringify(input.providerId)}`);
+        }
         if (occupied.has(requestedProviderId)) {
           throw new Error(`Provider ID is already in use: ${requestedProviderId}`);
         }
@@ -255,9 +261,10 @@ export class ProviderConfigService implements ProviderSource<ProviderConfigSnaps
           throw new Error(`Provider ID must not contain whitespace: ${input.providerId}`);
         }
       }
-      const providerId = requestedProviderId
-        ? requestedProviderId
-        : nextPersonalProviderId(occupied, templateId);
+      const providerId =
+        requestedProviderId !== undefined
+          ? requestedProviderId
+          : nextPersonalProviderId(occupied, templateId);
       createdProviderId = providerId;
       const effectiveProviders = resolvePersonalProviderBaselines(zcodeBuiltin, current.providers);
       const label = nextPersonalProviderLabel(
