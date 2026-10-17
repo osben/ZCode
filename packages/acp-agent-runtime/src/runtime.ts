@@ -185,25 +185,39 @@ export class AcpSessionRuntime extends EventEmitter {
   async cancel(): Promise<void> {
     const connection = this.connection;
     const sessionId = this.sessionId;
-    if (!connection || !sessionId || !this.activePrompt) return;
+    const active = this.activePrompt;
+    const generation = this.generation;
+    if (!connection || !sessionId || !active) return;
     // One deadline bounds the whole cancel: a notify write can stay pending
     // forever when a live child stops reading stdin (backpressured pipe), and
     // a closed connection rejects. Escalate on either instead of hanging.
     const deadline = Date.now() + this.timeouts.cancelGraceMs;
-    const notified = await raceTimeout(
+    // `raceTimeout` maps any settlement to `true`, so race the notify directly
+    // to keep `false` on a timeout or a rejected write.
+    const notified = await new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => resolve(false), this.timeouts.cancelGraceMs);
+      timer.unref?.();
       connection.agent.notify(methods.agent.session.cancel, { sessionId }).then(
-        () => true,
-        () => false,
-      ),
-      this.timeouts.cancelGraceMs,
-    );
+        () => {
+          clearTimeout(timer);
+          resolve(true);
+        },
+        () => {
+          clearTimeout(timer);
+          resolve(false);
+        },
+      );
+    });
+    // The cancelled prompt settled (or was replaced) while the notify raced;
+    // never escalate against a newer prompt or a restarted runtime.
+    if (this.activePrompt !== active || this.generation !== generation) return;
     if (!notified) {
       await this.terminateProcess(
         new AcpCancelledError("Cancel notification failed or did not flush"),
       );
       return;
     }
-    const settled = await this.waitForPromptSettle(deadline - Date.now());
+    const settled = await this.waitForPromptSettle(deadline - Date.now(), active);
     if (!settled) {
       await this.terminateProcess(new AcpCancelledError("Prompt did not settle after cancel"));
     }
@@ -466,13 +480,14 @@ export class AcpSessionRuntime extends EventEmitter {
     this.pendingAsks.clear();
   }
 
-  private async waitForPromptSettle(ms: number): Promise<boolean> {
+  /** Waits until `watched` is no longer the active prompt (settled or replaced). */
+  private async waitForPromptSettle(ms: number, watched: ActivePromptState): Promise<boolean> {
     const deadline = Date.now() + ms;
     while (Date.now() < deadline) {
-      if (!this.activePrompt) return true;
+      if (this.activePrompt !== watched) return true;
       await sleep(Math.min(50, Math.max(1, deadline - Date.now())));
     }
-    return this.activePrompt === undefined;
+    return this.activePrompt !== watched;
   }
 
   private async terminateProcess(reason: Error): Promise<void> {

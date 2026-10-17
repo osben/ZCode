@@ -160,6 +160,59 @@ describe("timeouts and cancellation", () => {
     }
   });
 
+  it("escalates cancel when the cancel notification is rejected", async () => {
+    const cwd = await createTempDir();
+    const runtime = await startMockRuntime(cwd, "silent", {}, { timeouts: { cancelGraceMs: 400 } });
+    try {
+      // The SDK rejects a notification when its write fails (closed pipe).
+      const internals = runtime as unknown as {
+        connection: { agent: { notify: () => Promise<void> } };
+      };
+      internals.connection.agent.notify = () =>
+        Promise.reject(new Error("write EPIPE on session/cancel"));
+      const inFlight = runtime.prompt("stuck task");
+      void inFlight.catch(() => {});
+      await waitFor(() => runtime.state === "prompting", 3_000);
+      const startedAt = Date.now();
+      await runtime.cancel();
+      await expect(inFlight).rejects.toMatchObject({ code: "ACP_CANCELLED" });
+      expect(runtime.state).toBe("failed");
+      expect(Date.now() - startedAt).toBeLessThan(2_000);
+    } finally {
+      await runtime.stop();
+      await cleanupTempDir(cwd);
+    }
+  });
+
+  it("does not escalate a stalled cancel against a replacement prompt", async () => {
+    const cwd = await createTempDir();
+    const runtime = await startMockRuntime(cwd, "silent", {}, { timeouts: { cancelGraceMs: 400 } });
+    try {
+      const internals = runtime as unknown as {
+        connection: { agent: { notify: () => Promise<void> } };
+        activePrompt: { reject?: (reason?: unknown) => void };
+      };
+      internals.connection.agent.notify = () => new Promise(() => {});
+      const first = runtime.prompt("original task");
+      void first.catch(() => {});
+      await waitFor(() => runtime.state === "prompting", 3_000);
+      const cancelInFlight = runtime.cancel();
+      // The cancelled prompt settles (or is replaced) while the notify is
+      // stalled and a new turn starts: the stalled cancel must not kill it.
+      internals.activePrompt.reject?.(new Error("original settled elsewhere"));
+      await first.catch(() => {});
+      const replacement = runtime.prompt("replacement task");
+      void replacement.catch(() => {});
+      await cancelInFlight;
+      expect(runtime.state).toBe("prompting");
+      await runtime.stop();
+      await expect(replacement).rejects.toMatchObject({ code: "ACP_CANCELLED" });
+    } finally {
+      await runtime.stop();
+      await cleanupTempDir(cwd);
+    }
+  });
+
   it("marks the runtime failed after cancel escalation and restarts on the next prompt", async () => {
     const cwd = await createTempDir();
     const asks: AcpPermissionAsk[] = [];
