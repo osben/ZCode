@@ -172,6 +172,7 @@ export type InputRouting = z.infer<typeof inputRoutingSchema>;
 
 // ── meta (session-level metadata: title and runtime-less setup state). ──
 export const worktreePreparationStateSchema = z.object({
+  attemptId: z.string().min(1).optional(),
   branchName: z.string(),
   targetPath: z.string(),
   baseBranch: z.string().optional(),

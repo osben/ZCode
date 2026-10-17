@@ -69,6 +69,31 @@ export function readComposerAttachmentScope(scopeKey: string): ComposerAttachmen
   return useComposerAttachmentUploadStore.getState().scopes[scopeKey] ?? [];
 }
 
+/** One atomic ownership transfer; File/object URLs are moved, never copied or re-created. */
+export function moveComposerAttachmentScopeItems(
+  source: string,
+  target: string,
+  ids: readonly string[],
+): void {
+  if (source === target) return;
+  const selected = new Set(ids);
+  useComposerAttachmentUploadStore.setState((state) => {
+    const owned = (state.scopes[source] ?? []).filter((item) => selected.has(item.id));
+    const remaining = (state.scopes[source] ?? []).filter((item) => !selected.has(item.id));
+    const scopes = {
+      ...state.scopes,
+      [target]: [
+        ...(state.scopes[target] ?? []).filter((item) => !selected.has(item.id)),
+        ...owned,
+      ],
+    };
+    if (remaining.length) scopes[source] = remaining;
+    else delete scopes[source];
+    if (!scopes[target]?.length) delete scopes[target];
+    return { scopes };
+  });
+}
+
 export function updateComposerAttachmentScope(
   scopeKey: string,
   update: (current: ComposerAttachmentUploadItem[]) => ComposerAttachmentUploadItem[],

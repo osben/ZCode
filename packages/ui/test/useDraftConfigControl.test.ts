@@ -177,6 +177,9 @@ function installMinimalDom() {
       removeItem: (key: string) => storage.delete(key),
     },
     addEventListener: () => {},
+    // composerDraftStore broadcasts draft changes through a window event; the minimal DOM has no
+    // listeners, so a plain no-op dispatch keeps persistence working in these tests.
+    dispatchEvent: () => true,
     document: documentMock,
     HTMLIFrameElement: function HTMLIFrameElement() {},
     HTMLElement: function HTMLElement() {},

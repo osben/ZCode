@@ -53,6 +53,62 @@
           "text": "upstream-e2e-ok"
         }
       }
+    },
+    {
+      "id": "worktree-chat-second-message",
+      "description": "Deterministic second-turn response: the message sent during the first response belongs to the already-active session.",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "The second send during the first response is ordinary session input; the scenario needs a deterministic second-turn response."
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "lastUserMessageIncludes": ["E2E_WORKTREE_CHAT_SECOND_"],
+        "bodyIncludes": ["E2E_WORKTREE_CHAT_SECOND_", "upstream-e2e-ok"],
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
+      },
+      "response": {
+        "statusCode": 200,
+        "statusMessage": "OK",
+        "text": {
+          "id": "upstream-e2e-worktree-chat-second-message",
+          "inputTokens": 128,
+          "outputTokens": 12,
+          "text": "upstream-e2e-ok"
+        }
+      }
+    },
+    {
+      "id": "worktree-recovered-message",
+      "description": "Explicit recovery activates the reopened prepared session under its original id.",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "The navigation case must admit the recovered message only after an explicit restore and send."
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "lastUserMessageIncludes": ["E2E_WORKTREE_DETACHED_SUBMISSION"],
+        "bodyIncludes": ["E2E_WORKTREE_DETACHED_SUBMISSION", "upstream-e2e-ok"],
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
+      },
+      "response": {
+        "statusCode": 200,
+        "statusMessage": "OK",
+        "text": {
+          "id": "upstream-e2e-worktree-recovered-message",
+          "inputTokens": 128,
+          "outputTokens": 12,
+          "text": "upstream-e2e-ok"
+        }
+      }
     }
   ]
 }

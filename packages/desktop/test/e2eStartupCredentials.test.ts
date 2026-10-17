@@ -75,7 +75,7 @@ describe("desktop e2e startup credentials", () => {
     ).toEqual({});
   });
 
-  it("普通 spec 保留 OAuth 展示态但不注入会触发失效广播的 zcode JWT", () => {
+  it("普通 spec 不播种会触发真实控制面 401 的 zai OAuth 身份", () => {
     expect(
       createE2EStartupCredentialSeed({
         specs: [
@@ -86,9 +86,6 @@ describe("desktop e2e startup credentials", () => {
       }),
     ).toEqual({
       auth_token: "fake-auth-token",
-      "oauth:active_provider": "zai",
-      "oauth:zai:access_token": "fake-access-token",
-      "oauth:zai:user_info": "{}",
     });
   });
 

@@ -3,7 +3,7 @@ import { zcodeTaskMetaSchema } from "../validation.js";
 import { zcodeExecutionWorktreeSchema } from "../zcode-protocol/index.js";
 import { pendingInteractionSummarySchema } from "./sessions-index.js";
 import { sessionWorkflowActivitySchema } from "./sessions-index-workflow-activity.js";
-import { sessionPhaseSchema } from "./snapshot.js";
+import { sessionPhaseSchema, worktreePreparationStateSchema } from "./snapshot.js";
 import { subscribeAckSchema } from "./transport.js";
 
 export const CONTROLLER_WORKSPACES_TOPIC = "controller/workspaces" as const;
@@ -105,6 +105,12 @@ export const windowHostControllerTaskRowSchema = z
     executionWorktree: zcodeExecutionWorktreeSchema.optional(),
     /** Host-observed health for the live execution target; never persisted in task metadata. */
     executionWorktreeMissing: z.boolean().optional(),
+    /**
+     * Host-owned worktree preparation for a not-yet-active session (runtime-less prepared
+     * identity). Deletion guards treat a non-cancelled preparation as using its target path and
+     * branch; never persisted in task metadata.
+     */
+    worktreePreparation: worktreePreparationStateSchema.optional(),
     activity: windowHostControllerTaskActivitySchema.optional(),
     searchSnippets: z.array(z.string()).optional(),
   })

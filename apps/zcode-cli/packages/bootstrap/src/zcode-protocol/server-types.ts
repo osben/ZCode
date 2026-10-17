@@ -123,6 +123,7 @@ export interface ZCodeProtocolSessionRecord {
 
 /** Host-owned session identity reserved while a worktree is being created; it has no app/runtime. */
 export interface ZCodeProtocolPreparedWorktreeSession {
+  attemptId?: string;
   sessionId: SessionId;
   workspace: ZCodeWorkspaceRef;
   branchName: string;

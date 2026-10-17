@@ -64,6 +64,23 @@ export function createE2EStartupCredentialSeed(
   // 合并时遗漏了普通 E2E 的 JWT 隔离：假的 JWT 会访问真实套餐接口并弹出登录失效提示。
   // 保留 OAuth 展示态；只有认证专项、本地 mock 的领取与响应式用例需要 JWT。
   if (!requiresZCodeJwt) delete restoredOAuthCredentials.zcodejwttoken;
+  // Zai restore without a zcodejwttoken is already signed-out, so the seeded fake zai OAuth adds
+  // no visible state; it only sends "oauth:zai:access_token" to the real control plane
+  // (getCustomerInfo / enterprise pricing), whose 401 triggers the conditional logout and the
+  // blocking "Your session has expired" dialog. Drop the zai identity for generic specs; the
+  // accountless login fallback in the conversation shell helpers builds the real API-key state.
+  // BigModel specs keep their own identity (restore works without a JWT and their workers mock
+  // the bigmodel business endpoints), and the JWT-special specs above keep theirs by design.
+  if (!requiresZCodeJwt) {
+    const seedsBigModelIdentity = Boolean(restoredOAuthCredentials["oauth:bigmodel:access_token"]);
+    delete restoredOAuthCredentials["oauth:zai:access_token"];
+    delete restoredOAuthCredentials["oauth:zai:user_info"];
+    delete restoredOAuthCredentials.zcodejwttoken;
+    // BigModel workers keep their own active provider; generic workers had only the zai identity.
+    if (!seedsBigModelIdentity) {
+      delete restoredOAuthCredentials["oauth:active_provider"];
+    }
+  }
   return {
     auth_token: options.legacyAuthToken,
     ...restoredOAuthCredentials,

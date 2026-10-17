@@ -673,10 +673,24 @@ export function createZCodeTaskIndexSyncer(
   ): void {
     state.summaries.set(next.sessionId, next);
     // Drafts are in-memory only: do not persist them or add them to task-index SQLite.
-    if (next.phase === "draft") {
+    if (next.phase === "draft" && !next.worktreePreparation) {
       return;
     }
     const target = sessionTargetFrom(state.target, next.sessionId);
+    if (next.worktreePreparation) {
+      if (!previous?.worktreePreparation) {
+        const meta = buildBaselineMetaFromSummary(state.target, next);
+        void taskIndexRepo
+          .seedTaskMetaIfMissing(meta)
+          .then(() => {
+            emitWorkspaceTaskListChanged(broadcastTargetFrom(target), meta, "task_meta_changed");
+          })
+          .catch((error) =>
+            logger.warn(undefined, "Could not index prepared worktree session", error),
+          );
+      }
+      return;
+    }
     const becameVisibleTask = previous === undefined || previous.phase === "draft";
     // A terminal transition means the baseline actually observed non-terminal → terminal. Do not replay terminal events for sessions with no baseline
     // (cold-recovery hydration or historical sessions first seen after gap fallback). Active sessions always enter the baseline as running/prewarming
@@ -708,7 +722,9 @@ export function createZCodeTaskIndexSyncer(
     state: WorkspaceIngestState,
     summaries: Iterable<SessionSummary>,
   ): Promise<void> {
-    const candidates = [...summaries].filter((summary) => summary.phase !== "draft");
+    const candidates = [...summaries].filter(
+      (summary) => summary.phase !== "draft" || summary.worktreePreparation !== undefined,
+    );
     if (candidates.length === 0) return;
     // The pure V4 UI does not pass through zcodeSessionService.initializeWorkspace. If the first frame is silently treated as an existing SQLite baseline,
     // a new remote database remains empty forever. Perform only atomic insert-if-missing here: do not broadcast, replay historical terminal events, or overwrite existing product-shell state.

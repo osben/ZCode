@@ -14,6 +14,7 @@ import type {
   GitWorktreeListResult,
   GitWorktreePruneResult,
   GitWorktreeRemoveResult,
+  GitWorktreeVerifyResult,
   GitWorkspaceRepositoryInfo,
 } from "@zcode/shared";
 
@@ -89,6 +90,7 @@ export interface GitCliRepo {
   listLocalBranches(workspacePath: string): Promise<GitLocalBranchListResult>;
   listWorktrees(workspacePath: string): Promise<GitWorktreeListResult>;
   resolveWorktreePathIdentities(paths: string[]): Promise<string[]>;
+  verifyWorktreeUsable(workspacePath: string, targetPath: string): Promise<GitWorktreeVerifyResult>;
   createWorktree(
     workspacePath: string,
     branchName: string,

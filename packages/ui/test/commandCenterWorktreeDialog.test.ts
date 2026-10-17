@@ -85,6 +85,7 @@ const stableGitService = {
   resolveWorktreePathIdentities,
   getLocalBranches,
   getWorkspaceRepositoryInfo,
+  verifyWorktreeUsable: vi.fn(async () => ({ ok: true })),
 };
 
 vi.mock("@/hooks/useWorkspaceServices.js", () => ({

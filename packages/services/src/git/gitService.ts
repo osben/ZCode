@@ -1,3 +1,5 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type {
   GitBranchComparison,
   GitBranchMergeStatus,
@@ -206,6 +208,9 @@ export function createGitService(options?: {
   }
 
   return {
+    async getWorktreeStorageInfo(_params) {
+      return { globalWorktreesDir: join(homedir(), ".zcode", "worktrees") };
+    },
     async getRepositorySummary(params) {
       const status = await repo.getStatus(params.workspacePath);
       return status.summary;
@@ -257,6 +262,10 @@ export function createGitService(options?: {
 
     async resolveWorktreePathIdentities(params) {
       return await repo.resolveWorktreePathIdentities(params.paths);
+    },
+
+    async verifyWorktreeUsable(params) {
+      return await repo.verifyWorktreeUsable(params.workspacePath, params.targetPath);
     },
 
     async createWorktree(params) {

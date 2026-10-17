@@ -70,99 +70,148 @@ async function createSession(
   ) {
     throw new V4InputAdmissionRejectedError("proto.invalidPayload", "input must not be empty");
   }
-  const { sessionId } = await host.createSessionRecord({
-    workspaceId: payload.workspaceId,
-    ...(payload.preparedSessionId ? { preparedSessionId: payload.preparedSessionId } : {}),
-    ...(payload.permissionScope ? { permissionScope: payload.permissionScope } : {}),
-    mcpServers: payload.mcpServers,
-    ...(payload.executionWorktree ? { executionWorktree: payload.executionWorktree } : {}),
-    offPeakToolEnabled: payload.offPeakToolEnabled,
-    dynamicWorkflowEnabled: payload.dynamicWorkflowEnabled,
-    dynamicWorkflowMode: payload.dynamicWorkflowMode,
-  });
-  // Consume createSession.config: apply and emit events for draft UI selections (model/reasoning
-  // depth/mode) before the first send so the first turn uses the chosen config. This must precede
-  // firstInput. Ordinary configs keep the existing warn downgrade; Guarded is an explicit
-  // authorization choice and must not silently fall back to default-mode execution on failure.
-  if (payload.config) {
-    const record = requireRecord(host, sessionId);
-    try {
-      await applyRequestedSessionConfig(host, record, payload.config);
-    } catch (error) {
-      if (payload.config.mode === "guarded" || payload.firstInput?.mode === "guarded") {
-        // Cause: the old catch swallowed the mode-application failure and still submitted the first turn, so Guarded silently degraded.
-        try {
-          await host.closeSession?.(sessionId);
-        } catch (closeError) {
-          host.logger?.warn?.("v4 guarded draft cleanup failed", { sessionId, closeError });
+  const runActivation = async (): Promise<CommandResult | undefined> => {
+    const { sessionId, preparedActivation } = await host.createSessionRecord!({
+      workspaceId: payload.workspaceId,
+      ...(payload.preparedSessionId ? { preparedSessionId: payload.preparedSessionId } : {}),
+      ...(payload.expectedAttemptId ? { expectedAttemptId: payload.expectedAttemptId } : {}),
+      ...(payload.permissionScope ? { permissionScope: payload.permissionScope } : {}),
+      mcpServers: payload.mcpServers,
+      ...(payload.executionWorktree ? { executionWorktree: payload.executionWorktree } : {}),
+      offPeakToolEnabled: payload.offPeakToolEnabled,
+      dynamicWorkflowEnabled: payload.dynamicWorkflowEnabled,
+      dynamicWorkflowMode: payload.dynamicWorkflowMode,
+    });
+    if (preparedActivation === "already-active") {
+      // A completed activation's durable receipt: the same session is returned without re-applying
+      // startup configuration or admitting the frozen first input a second time.
+      return { type: "createSession", sessionId };
+    }
+    if (preparedActivation === "input-admitted") {
+      // The frozen input already reached Core durably; only the completion receipt may be missing.
+      await completePreparedActivation(host, sessionId);
+      return { type: "createSession", sessionId };
+    }
+    // Consume createSession.config: apply and emit events for draft UI selections (model/reasoning
+    // depth/mode) before the first send so the first turn uses the chosen config. This must precede
+    // firstInput. Ordinary configs keep the existing warn downgrade; Guarded is an explicit
+    // authorization choice and must not silently fall back to default-mode execution on failure.
+    if (payload.config) {
+      const record = requireRecord(host, sessionId);
+      try {
+        await applyRequestedSessionConfig(host, record, payload.config);
+      } catch (error) {
+        if (payload.config.mode === "guarded" || payload.firstInput?.mode === "guarded") {
+          // Cause: the old catch swallowed the mode-application failure and still submitted the first turn, so Guarded silently degraded.
+          try {
+            await host.closeSession?.(sessionId);
+          } catch (closeError) {
+            host.logger?.warn?.("v4 guarded draft cleanup failed", { sessionId, closeError });
+          }
+          throw error;
+        }
+        host.logger?.warn?.(
+          "v4 createSession config apply failed; session keeps runtime defaults",
+          {
+            error: error instanceof Error ? error.message : String(error),
+            sessionId,
+          },
+        );
+      }
+    }
+    let firstInput:
+      | {
+          delivery: "startNow" | "queue" | "guide";
+          inputId: string;
+          messageId?: string;
+        }
+      | undefined;
+    if (payload.firstInput) {
+      // Attachment command surface: send firstInput.attachments (AttachmentRef -> TurnAttachment) with the first input.
+      const record = requireRecord(host, sessionId);
+      const admission = commandAdmissionOf(envelope);
+      const durableAdmission =
+        (await host.admitInputCommand?.(envelope, sessionId, admission)) ?? null;
+      try {
+        const attachments = await mapAttachmentRefsToTurnAttachments(
+          record.app,
+          payload.firstInput.attachments,
+        );
+        const intent = inputIntentMetadata(envelope, {
+          text: payload.firstInput.text,
+          requestedDelivery: "startNow",
+          attachmentRefs: payload.firstInput.attachments,
+          ...resolveSubmittedExecutionState(record, payload.firstInput),
+        });
+        const started = await startPromptTurn(host, record, {
+          content: payload.firstInput.text,
+          inputId: envelope.commandId,
+          intent,
+          ...(attachments ? { attachments } : {}),
+        });
+        firstInput = {
+          delivery: started.admission.kind === "queued" ? "queue" : "startNow",
+          inputId: envelope.commandId,
+          ...(started.messageId ? { messageId: started.messageId } : {}),
+        };
+      } catch (error) {
+        if (durableAdmission) {
+          try {
+            await host.cancelInputCommand?.(
+              sessionId,
+              admission.queueItemId,
+              "fault.command.inputRejected",
+            );
+          } catch (cancelError) {
+            // A cancellation-ledger failure must not replace the actual first-send failure. Otherwise the
+            // client receives the wrong failure reason, while admission can still finalize as discarded during
+            // restart reconciliation and will not be misclassified as successful.
+            host.logger?.warn?.("v4 createSession first input cancellation failed", {
+              cancelError: cancelError instanceof Error ? cancelError.message : String(cancelError),
+              inputError: error instanceof Error ? error.message : String(error),
+              queueItemId: admission.queueItemId,
+              sessionId,
+            });
+          }
         }
         throw error;
       }
-      host.logger?.warn?.("v4 createSession config apply failed; session keeps runtime defaults", {
-        error: error instanceof Error ? error.message : String(error),
-        sessionId,
-      });
     }
-  }
-  let firstInput:
-    | {
-        delivery: "startNow" | "queue" | "guide";
-        inputId: string;
-        messageId?: string;
-      }
-    | undefined;
-  if (payload.firstInput) {
-    // Attachment command surface: send firstInput.attachments (AttachmentRef -> TurnAttachment) with the first input.
-    const record = requireRecord(host, sessionId);
-    const admission = commandAdmissionOf(envelope);
-    const durableAdmission =
-      (await host.admitInputCommand?.(envelope, sessionId, admission)) ?? null;
-    try {
-      const attachments = await mapAttachmentRefsToTurnAttachments(
-        record.app,
-        payload.firstInput.attachments,
-      );
-      const intent = inputIntentMetadata(envelope, {
-        text: payload.firstInput.text,
-        requestedDelivery: "startNow",
-        attachmentRefs: payload.firstInput.attachments,
-        ...resolveSubmittedExecutionState(record, payload.firstInput),
-      });
-      const started = await startPromptTurn(host, record, {
-        content: payload.firstInput.text,
-        inputId: envelope.commandId,
-        intent,
-        ...(attachments ? { attachments } : {}),
-      });
-      firstInput = {
-        delivery: started.admission.kind === "queued" ? "queue" : "startNow",
-        inputId: envelope.commandId,
-        ...(started.messageId ? { messageId: started.messageId } : {}),
-      };
-    } catch (error) {
-      if (durableAdmission) {
-        try {
-          await host.cancelInputCommand?.(
-            sessionId,
-            admission.queueItemId,
-            "fault.command.inputRejected",
-          );
-        } catch (cancelError) {
-          // A cancellation-ledger failure must not replace the actual first-send failure. Otherwise the
-          // client receives the wrong failure reason, while admission can still finalize as discarded during
-          // restart reconciliation and will not be misclassified as successful.
-          host.logger?.warn?.("v4 createSession first input cancellation failed", {
-            cancelError: cancelError instanceof Error ? cancelError.message : String(cancelError),
-            inputError: error instanceof Error ? error.message : String(error),
-            queueItemId: admission.queueItemId,
-            sessionId,
-          });
-        }
-      }
-      throw error;
+    // Complete the preparation at the first input's admission boundary — before the model response
+    // finishes — so the conversation snapshot and sessions-index stop carrying the preparation
+    // marker and later sends target the active session through ordinary queue/guide routing.
+    if (payload.preparedSessionId) {
+      await completePreparedActivation(host, sessionId);
     }
+    return { type: "createSession", sessionId, ...(firstInput ? { input: firstInput } : {}) };
+  };
+  if (payload.preparedSessionId && host.withPreparedWorktreeActivation) {
+    // Hold the per-session preparation lock across materialization, config, first-input admission,
+    // and completion so a concurrent retry cannot observe a half-activated session and re-send the
+    // frozen input under a new command id.
+    return host.withPreparedWorktreeActivation(payload.preparedSessionId, runActivation);
   }
-  return { type: "createSession", sessionId, ...(firstInput ? { input: firstInput } : {}) };
+  return runActivation();
+}
+
+/**
+ * Best-effort completion of a prepared-session activation. Core has already admitted the input at
+ * this point, so a receipt-write failure must not fail the ACK; the next repeat activation heals
+ * the receipt through the "input-admitted" outcome.
+ */
+async function completePreparedActivation(
+  host: V4CommandCoreHost,
+  sessionId: string,
+): Promise<void> {
+  if (!host.completePreparedWorktreeActivation) return;
+  try {
+    await host.completePreparedWorktreeActivation(sessionId);
+  } catch (error) {
+    host.logger?.warn?.("v4 createSession prepared activation completion failed", {
+      sessionId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 /**

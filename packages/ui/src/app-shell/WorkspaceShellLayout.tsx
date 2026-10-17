@@ -1642,6 +1642,7 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
           canRenderGitDestinationControl &&
           destinationControlEnabled ? (
           <ComposerDestinationControl
+            remoteSessionId={workspaceRemoteSessionId ?? undefined}
             workspacePath={workspaceAbsPath}
             {...(workspaceIdentity ? { workspaceIdentity } : {})}
             gitSummary={gitState.summary}

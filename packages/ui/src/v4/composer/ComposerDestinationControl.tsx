@@ -31,9 +31,8 @@ import { GitGraphDialog } from "@/git-graph/GitGraphDialog.js";
 import { useGitBranchSwitcher } from "@/hooks/useGitBranchSwitcher.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { matchesGitBranchSearch } from "@/git-branch-switcher/display.js";
-import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
+import { useWorkspaceServicesResolution } from "@/hooks/useWorkspaceServices.js";
 import { useSettings } from "@/hooks/useSettingService.js";
-import { useOptionalPlatform } from "@/hooks/usePlatform.js";
 import { logger } from "@/logger.js";
 import { getErrorMessage } from "@/lib/errorMessage.js";
 import { composeBranchName, resolveWorktreeLocation } from "@/command-center/worktreeTaskFlow.js";
@@ -73,6 +72,7 @@ export function readComposerDestinationControlEnabled(): boolean {
 interface ComposerDestinationControlProps {
   workspacePath: string;
   workspaceIdentity?: string;
+  remoteSessionId?: string;
   gitSummary: GitRepositorySummary;
   dirtyFileCount: number;
   onRefreshGit: () => void;
@@ -82,15 +82,20 @@ interface ComposerDestinationControlProps {
 export function ComposerDestinationControl({
   workspacePath,
   workspaceIdentity,
+  remoteSessionId,
   gitSummary,
   dirtyFileCount,
   onRefreshGit,
   compactForRemoteControl = false,
 }: ComposerDestinationControlProps) {
   const { intl } = useZCodeIntl();
-  const baseServices = useBaseWorkspaceServices();
+  const resolution = useWorkspaceServicesResolution(
+    workspacePath,
+    remoteSessionId,
+    workspaceIdentity,
+  );
+  const baseServices = resolution.services;
   const { settings } = useSettings();
-  const platform = useOptionalPlatform();
   const branchSwitchGuard = useBranchSwitchGuard();
   const workspaceKey = resolveWorkspaceKey({ workspacePath, workspaceIdentity });
   const intentSlot = useComposerDraftWorktreeIntentSlot();
@@ -121,7 +126,8 @@ export function ComposerDestinationControl({
     setBaseBranch(null);
     setBranchesResult(null);
     setBranchListFailed(false);
-  }, [workspaceKey, workspacePath]);
+    setAppWorktreesDir(null);
+  }, [workspaceKey, workspacePath, resolution.remoteSessionId, baseServices.gitService]);
 
   // List selections remain draft intent. The create dialog keeps its immediate create-and-switch
   // action, but confirms before it mutates the shared checkout.
@@ -160,13 +166,12 @@ export function ComposerDestinationControl({
       ),
     [settings, workspacePath, appWorktreesDir],
   );
-  const getAppWorktreesDir = platform?.getAppWorktreesDir;
   useEffect(() => {
-    if (effectiveLocation.mode !== "global" || typeof getAppWorktreesDir !== "function") return;
+    if (effectiveLocation.mode !== "global" || !resolution.rpcReady) return;
     let cancelled = false;
-    getAppWorktreesDir().then(
-      (dir) => {
-        if (!cancelled) setAppWorktreesDir(dir.trim() || null);
+    baseServices.gitService.getWorktreeStorageInfo({ workspacePath }).then(
+      ({ globalWorktreesDir }) => {
+        if (!cancelled) setAppWorktreesDir(globalWorktreesDir?.trim() || null);
       },
       () => {
         if (!cancelled) setAppWorktreesDir(null);
@@ -175,11 +180,11 @@ export function ComposerDestinationControl({
     return () => {
       cancelled = true;
     };
-  }, [effectiveLocation.mode, getAppWorktreesDir]);
+  }, [effectiveLocation.mode, baseServices.gitService, workspacePath, resolution.rpcReady]);
 
   // Branch list loads on first popover open; failure is disclosed (base defaults to HEAD).
   useEffect(() => {
-    if (!open || branchesResult !== null || branchListFailed) return;
+    if (!resolution.rpcReady || !open || branchesResult !== null || branchListFailed) return;
     let cancelled = false;
     baseServices.gitService.getLocalBranches({ workspacePath }).then(
       (result) => {
@@ -204,7 +209,14 @@ export function ComposerDestinationControl({
     return () => {
       cancelled = true;
     };
-  }, [baseServices.gitService, branchListFailed, branchesResult, open, workspacePath]);
+  }, [
+    baseServices.gitService,
+    branchListFailed,
+    branchesResult,
+    open,
+    workspacePath,
+    resolution.rpcReady,
+  ]);
 
   const computeWorktreeBranchName = useCallback(() => {
     const branchNameSet = new Set(branchesResult?.branches.map((branch) => branch.name) ?? []);
@@ -230,6 +242,7 @@ export function ComposerDestinationControl({
         queuedPromptPreview: string,
         prepareSession: Parameters<ComposerDraftWorktreeIntent["beginCreation"]>[1],
         syncPreparedWorktree: Parameters<ComposerDraftWorktreeIntent["beginCreation"]>[2],
+        submissionId?: string,
       ): Promise<ComposerWorktreeBeginResult> =>
         beginWorktreePipelineCreation({
           gitService: baseServices.gitService,
@@ -240,6 +253,7 @@ export function ComposerDestinationControl({
           ...(resolvedBase ? { baseBranch: resolvedBase } : {}),
           baseFromHeadDefault: headDefault,
           queuedPromptPreview,
+          submissionId,
           prepareSession,
           ...(syncPreparedWorktree ? { syncPreparedWorktree } : {}),
           formatMessage: (id, values) => intl.formatMessage({ id }, values),
@@ -315,6 +329,12 @@ export function ComposerDestinationControl({
           <Button
             type="button"
             variant="ghost"
+            disabled={!resolution.rpcReady}
+            title={
+              !resolution.rpcReady
+                ? intl.formatMessage({ id: "worktreeSetup.connectionUnavailable" })
+                : undefined
+            }
             aria-label={intl.formatMessage({ id: "destination.trigger.ariaLabel" })}
             className={cn(
               "min-w-0 rounded-full text-ui-base/relaxed",

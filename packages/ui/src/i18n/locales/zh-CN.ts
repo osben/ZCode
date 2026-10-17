@@ -1,6 +1,18 @@
 import { requestSecurityMessagesZhCN } from "@/request-security-edition/messages.js";
 /** 中文翻译 */
 const zhCN: Record<string, string> = {
+  "sessionManager.openUnavailable": "会话工作区不可用。请重新连接或打开项目后重试。",
+  "sessionManager.pinnedArchived": "置顶筛选不适用于归档会话。",
+  "composerRecovery.title": "未发送的消息已保存",
+  "composerRecovery.storageUnavailable":
+    "无法保存恢复状态。消息尚未发送；请释放浏览器存储空间后重试。",
+  "worktreeSetup.connectionUnavailable": "请重新连接此工作区的 Host，以继续准备工作树。",
+  "worktreeSetup.created": "工作树已创建",
+  "composerRecovery.editorOccupied": "请先发送或清空当前草稿再恢复。",
+  "composerRecovery.reattach": "请重新附加缺失文件，或明确移除它们。",
+  "composerRecovery.restore": "恢复",
+  "composerRecovery.removeMissing": "移除缺失文件",
+  "composerRecovery.dismiss": "丢弃已保存的消息",
   "startPlan.recommendation.subagentDescription":
     "你的体验套餐中，{model} 仍有可用额度，是否将此子智能体的模型切换到体验套餐？",
   "startPlan.recommendation.preferenceSaveFailed": "未能保存“不再提示”，本次仍按你的选择继续。",
@@ -637,6 +649,8 @@ const zhCN: Record<string, string> = {
   "commandCenter.worktree.error.target-path-exists": "目标路径已存在。",
   "commandCenter.worktree.error.target-path-exists.existing":
     "分支 {branchName} 的 worktree 已存在于 {path}。",
+  "commandCenter.worktree.error.worktreeMissing":
+    "分支 {branchName} 在 {path} 的已注册 worktree 缺失或不可用。恢复或清理后重试。",
   "commandCenter.worktree.error.not-a-repository": "该项目不是 Git 仓库。",
   "commandCenter.worktree.error.git-unavailable": "当前环境不可用 Git。",
   "commandCenter.worktree.error.custom-location-invalid":
@@ -4861,6 +4875,8 @@ const zhCN: Record<string, string> = {
   "chat.empty.worktree.newWorktree": "新建 worktree",
   "chat.empty.worktree.creating": "正在创建 worktree…",
   "worktreeSetup.reconcile.staleCreating": "设置未完成（连接已变化）",
+  "worktreeSetup.reconcile.worktreeMissing":
+    "{branchName} 在 {path} 的已注册 worktree 缺失或不可用。",
   "worktreeSetup.reconcile.markerSyncUnavailable":
     "设置完成于不同的 worktree 路径，且无法更新会话记录",
   "git.branchSwitcher.appliesOnSend": "将在发送第一条消息时生效",

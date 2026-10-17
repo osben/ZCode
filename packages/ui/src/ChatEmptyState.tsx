@@ -742,6 +742,7 @@ export function ChatEmptyWorktreeTaskToggle({
       queuedPromptPreview: string,
       prepareSession: (params: ComposerWorktreePreparationParams) => Promise<string>,
       syncPreparedWorktree?: ComposerWorktreePreparationSync,
+      submissionId?: string,
     ): Promise<ComposerWorktreeBeginResult> => {
       // Validation, target path, and the runner kickoff live in the shared begin helper; only the
       // name generation and base resolution are this entry's own.
@@ -755,6 +756,7 @@ export function ChatEmptyWorktreeTaskToggle({
         ...(effectiveBaseBranch && hasBranchList ? { baseBranch: effectiveBaseBranch } : {}),
         baseFromHeadDefault: !hasBranchList,
         queuedPromptPreview,
+        submissionId,
         prepareSession,
         ...(syncPreparedWorktree ? { syncPreparedWorktree } : {}),
         formatMessage: (id, values) => intl.formatMessage({ id }, values),

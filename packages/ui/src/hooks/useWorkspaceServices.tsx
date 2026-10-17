@@ -7,7 +7,7 @@ import {
   type RemoteWorkspaceSession,
 } from "@/store/remoteWorkspaceSessionStore.js";
 import { useResolvedRemoteWorkspaceSessionId } from "@/hooks/useResolvedRemoteWorkspaceSessionId.js";
-import { useTabStore } from "@/store/TabStoreProvider.js";
+import { useOptionalTabStore } from "@/store/TabStoreProvider.js";
 import { isWorkspaceTab } from "@/store/tabStore.js";
 import { REMOTE_WORKSPACE_DISCONNECTED_ERROR_CODE } from "@/lib/remoteWorkspaceServiceError.js";
 
@@ -153,20 +153,20 @@ export interface WorkspaceServicesResolution {
   rpcReady: boolean;
 }
 
-export function useWorkspaceServicesResolution(
+export function useOptionalWorkspaceServicesResolution(
   workspacePath: string | null | undefined,
   preferredRemoteSessionId?: string | null,
   workspaceIdentity?: string | null,
   remoteTarget?: unknown,
-): WorkspaceServicesResolution {
-  const currentContextServices = useServices();
+): WorkspaceServicesResolution | null {
+  const currentContextServices = useOptionalServices();
   const resolvedRemoteSessionId = useResolvedRemoteWorkspaceSessionId(
     workspacePath,
     preferredRemoteSessionId,
     workspaceIdentity,
     remoteTarget,
   );
-  const isRemoteTarget = useTabStore((state) =>
+  const isRemoteTarget = useOptionalTabStore((state) =>
     resolveWorkspaceServiceIsRemoteTarget({
       workspacePath,
       workspaceIdentity,
@@ -183,13 +183,15 @@ export function useWorkspaceServicesResolution(
     }),
   );
   const resolvedServices = useRemoteWorkspaceSessionStore((state) =>
-    resolveWorkspaceServicesForTarget({
-      currentContextServices,
-      resolvedRemoteSessionId,
-      baseServices: state.baseServices,
-      sessionsById: state.sessionsById,
-      isRemoteTarget,
-    }),
+    currentContextServices
+      ? resolveWorkspaceServicesForTarget({
+          currentContextServices,
+          resolvedRemoteSessionId,
+          baseServices: state.baseServices,
+          sessionsById: state.sessionsById,
+          isRemoteTarget,
+        })
+      : null,
   );
   const connectionKind = isRemoteTarget
     ? resolvedRemoteSessionId
@@ -203,15 +205,34 @@ export function useWorkspaceServicesResolution(
   // During reconnect startup, having only tab metadata before real remote services are registered is the remote-waiting state.
   // Callers must pause workspace RPCs; keep the disconnected proxy only as a final boundary guard and do not treat the expected wait as a retryable failure.
   return useMemo(
-    () => ({
-      services: resolvedServices,
-      remoteSessionId: resolvedRemoteSessionId,
-      isRemoteTarget,
-      connectionKind,
-      rpcReady: connectionKind !== "remote-waiting",
-    }),
+    () =>
+      resolvedServices
+        ? {
+            services: resolvedServices,
+            remoteSessionId: resolvedRemoteSessionId,
+            isRemoteTarget,
+            connectionKind,
+            rpcReady: connectionKind !== "remote-waiting",
+          }
+        : null,
     [connectionKind, isRemoteTarget, resolvedRemoteSessionId, resolvedServices],
   );
+}
+
+export function useWorkspaceServicesResolution(
+  workspacePath: string | null | undefined,
+  preferredRemoteSessionId?: string | null,
+  workspaceIdentity?: string | null,
+  remoteTarget?: unknown,
+): WorkspaceServicesResolution {
+  const resolution = useOptionalWorkspaceServicesResolution(
+    workspacePath,
+    preferredRemoteSessionId,
+    workspaceIdentity,
+    remoteTarget,
+  );
+  if (!resolution) throw new Error("Workspace services are unavailable");
+  return resolution;
 }
 
 export function useWorkspaceServices(

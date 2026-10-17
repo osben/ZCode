@@ -358,6 +358,185 @@ describe("v4 原生 createSession", () => {
       ),
     ).rejects.toThrow(/createSessionRecord/);
   });
+
+  it("带 firstInput 的 prepared 激活：admission 边界即完成准备，且整体持有 per-session 锁", async () => {
+    const app = makeApp({ sendInput: vi.fn().mockResolvedValue({ kind: "accepted" }) });
+    const record = makeRecord({ app, persistence: "deferred" });
+    const createSessionRecord = vi.fn().mockResolvedValue({
+      sessionId: "s1",
+      preparedActivation: "materialized",
+    });
+    const withPreparedWorktreeActivation = vi.fn(
+      async <T,>(_sessionId: string, body: () => Promise<T>) => body(),
+    );
+    const completePreparedWorktreeActivation = vi.fn().mockResolvedValue(undefined);
+    const host = makeHost(record, {
+      createSessionRecord,
+      withPreparedWorktreeActivation,
+      completePreparedWorktreeActivation,
+    });
+
+    const result = await new V4CommandExecutor(host).execute(
+      envelope(
+        "createSession",
+        {
+          workspaceId: "/w",
+          preparedSessionId: "s1",
+          expectedAttemptId: "att-1",
+          firstInput: { text: "frozen" },
+        },
+        "s1",
+      ),
+    );
+    expect(result).toEqual({
+      type: "createSession",
+      sessionId: "s1",
+      input: { delivery: "startNow", inputId: "cmd-1" },
+    });
+    expect(withPreparedWorktreeActivation).toHaveBeenCalledWith("s1", expect.any(Function));
+    // 完成时机 = Core admission 之后、ACK 返回之前，而非首个 turn 终态。
+    expect(app.sendInput).toHaveBeenCalledTimes(1);
+    expect(completePreparedWorktreeActivation).toHaveBeenCalledWith("s1");
+    expect(completePreparedWorktreeActivation.mock.invocationCallOrder[0]).toBeGreaterThan(
+      app.sendInput.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("preparedActivation=already-active：不重复应用启动配置、不二次 admit 冻结输入", async () => {
+    const getSessionModelSelection = vi.fn(() => null);
+    const app = makeApp({
+      sendInput: vi.fn(),
+      runtime: { getSessionModelSelection },
+    });
+    const record = makeRecord({ app });
+    const createSessionRecord = vi.fn().mockResolvedValue({
+      sessionId: "s1",
+      preparedActivation: "already-active",
+    });
+    const completePreparedWorktreeActivation = vi.fn();
+    const host = makeHost(record, {
+      createSessionRecord,
+      completePreparedWorktreeActivation,
+    });
+
+    const result = await new V4CommandExecutor(host).execute(
+      envelope(
+        "createSession",
+        {
+          workspaceId: "/w",
+          preparedSessionId: "s1",
+          expectedAttemptId: "att-1",
+          executionWorktree: { path: "/wt", branchName: "b" },
+          config: { modelSelection: { providerId: "p", modelId: "m" } },
+          firstInput: { text: "frozen" },
+        },
+        "s1",
+      ),
+    );
+    expect(result).toEqual({ type: "createSession", sessionId: "s1" });
+    expect(getSessionModelSelection).not.toHaveBeenCalled();
+    expect(app.sendInput).not.toHaveBeenCalled();
+    expect(completePreparedWorktreeActivation).not.toHaveBeenCalled();
+  });
+
+  it("preparedActivation=input-admitted：不换新 command id 重发，仅补完成 receipt", async () => {
+    const getSessionModelSelection = vi.fn(() => null);
+    const app = makeApp({
+      sendInput: vi.fn(),
+      runtime: { getSessionModelSelection },
+    });
+    const record = makeRecord({ app });
+    const createSessionRecord = vi.fn().mockResolvedValue({
+      sessionId: "s1",
+      preparedActivation: "input-admitted",
+    });
+    const completePreparedWorktreeActivation = vi.fn().mockResolvedValue(undefined);
+    const host = makeHost(record, {
+      createSessionRecord,
+      completePreparedWorktreeActivation,
+    });
+
+    const result = await new V4CommandExecutor(host).execute(
+      envelope(
+        "createSession",
+        {
+          workspaceId: "/w",
+          preparedSessionId: "s1",
+          expectedAttemptId: "att-1",
+          firstInput: { text: "frozen" },
+        },
+        "s1",
+      ),
+    );
+    expect(result).toEqual({ type: "createSession", sessionId: "s1" });
+    expect(app.sendInput).not.toHaveBeenCalled();
+    expect(completePreparedWorktreeActivation).toHaveBeenCalledWith("s1");
+  });
+
+  it("preparedActivation=input-pending：恢复性重试恰好 admit 一次冻结输入", async () => {
+    const app = makeApp({ sendInput: vi.fn().mockResolvedValue({ kind: "accepted" }) });
+    const record = makeRecord({ app, persistence: "deferred" });
+    const createSessionRecord = vi.fn().mockResolvedValue({
+      sessionId: "s1",
+      preparedActivation: "input-pending",
+    });
+    const completePreparedWorktreeActivation = vi.fn().mockResolvedValue(undefined);
+    const host = makeHost(record, {
+      createSessionRecord,
+      completePreparedWorktreeActivation,
+    });
+
+    const result = await new V4CommandExecutor(host).execute(
+      envelope(
+        "createSession",
+        {
+          workspaceId: "/w",
+          preparedSessionId: "s1",
+          expectedAttemptId: "att-1",
+          firstInput: { text: "frozen" },
+        },
+        "s1",
+      ),
+    );
+    expect(result).toEqual({
+      type: "createSession",
+      sessionId: "s1",
+      input: { delivery: "startNow", inputId: "cmd-1" },
+    });
+    expect(app.sendInput).toHaveBeenCalledTimes(1);
+    expect(completePreparedWorktreeActivation).toHaveBeenCalledWith("s1");
+  });
+
+  it("完成 receipt 写入失败不拖垮 ACK：告警并保留 admitted 状态供下次重复激活愈合", async () => {
+    const app = makeApp({ sendInput: vi.fn().mockResolvedValue({ kind: "accepted" }) });
+    const record = makeRecord({ app, persistence: "deferred" });
+    const warn = vi.fn();
+    const host = makeHost(record, {
+      createSessionRecord: vi.fn().mockResolvedValue({
+        sessionId: "s1",
+        preparedActivation: "materialized",
+      }),
+      completePreparedWorktreeActivation: vi.fn().mockRejectedValue(new Error("store offline")),
+      logger: { warn },
+    });
+
+    const result = await new V4CommandExecutor(host).execute(
+      envelope(
+        "createSession",
+        {
+          workspaceId: "/w",
+          preparedSessionId: "s1",
+          firstInput: { text: "frozen" },
+        },
+        "s1",
+      ),
+    );
+    expect(result).toMatchObject({ type: "createSession", sessionId: "s1" });
+    expect(warn).toHaveBeenCalledWith(
+      "v4 createSession prepared activation completion failed",
+      expect.objectContaining({ sessionId: "s1" }),
+    );
+  });
 });
 
 describe("supports 分流", () => {

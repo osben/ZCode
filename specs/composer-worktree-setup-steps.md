@@ -49,8 +49,14 @@ Renderer                  V4 Host / session store        Git service       Agent
    |                                | materialize same ID with |----------------->|
    |                                | executionWorktree=path   |                  |
    |                                | accept first input once  |----------------->|
+   |                                | complete preparation at   |                  |
+   |                                | admission; publish conv + |                  |
+   |                                | sessions-index            |                  |
    |<----- normal session events ---|                         |                  |
 ```
+
+Sends that arrive while the first response is still running follow the ordinary queue/guide
+rules of the already-active session; they never restart preparation or reserve another session.
 
 When Git settles the branch at a path other than the prepared target, readiness goes through the
 marker sync row above: the renderer updates the Host marker to the real path and awaits acceptance
@@ -67,6 +73,31 @@ runtime creation, or own an accepted-input queue. The Host activation operation 
 session ID and preparation token: duplicate activation returns the existing result and cannot admit
 the first input twice. Runtime creation is gated on a validated, existing worktree directory.
 
+Preparation completes at the admission boundary of the first frozen input. Once Core admits that
+input (accepted or queued), the Host persists `active`, evicts its in-memory preparation, and
+republishes the conversation snapshot and sessions-index immediately — before the model response
+finishes. Turn-completion callbacks are not the activation trigger, and deferred-to-immediate
+persistence promotion is not evidence of admission. If activation fails before admission, the
+preparation entry stays `preparing` with its session identity, so the frozen submission remains
+recoverable and one retry can admit it exactly once.
+
+The durable preparation entry reaching `active` for a given attempt is the receipt of a completed
+activation. A repeat activation with the same session, attempt, workspace, and worktree returns the
+existing session without creating a second runtime, re-applying startup configuration, or admitting
+the first input again — including after a Host restart while no runtime is live. A different
+workspace, a mismatched path or branch, or a stale attempt is rejected. When the durable admission
+result of the original activation is unknown, callers reconcile through the existing command
+receipts (command inbox and the session-input ledger); the Host never re-sends the frozen input
+under a new command id.
+
+Host preparation updates are authoritative even when a renderer pipeline entry already exists. A
+newer Host attempt replaces the renderer's stale attempt for that session only; Host cancellation
+stops local delivery (the queued submission is restored while its recovery record is kept); a late
+Git result for a replaced or cancelled attempt cannot restore `ready`. For the same attempt, a
+locally settled `ready` stays visible until the Host reports a terminal state for that attempt.
+Snapshot-driven restore never starts Git creation by itself, and a consumed or discarded entry is
+never resurrected from stale metadata.
+
 ### Preparation states
 
 ```text
@@ -79,20 +110,29 @@ absent → preparing → ready → active
 - `preparing` has a stable session ID, parent workspace identity, preparation token, branch and
   target metadata, but no runtime and no accepted user message.
 - `ready` records the resolved worktree path and whether an existing worktree was reused.
-- `active` means the runtime was constructed with that path and the first input was admitted once.
+- `active` means the runtime was constructed with that path and the first input was admitted once;
+  the state is recorded at that input's admission boundary, before its turn completes.
 - `failed` preserves the same session identity and a recoverable error. Retry reuses the session ID
   and preparation token rules; it does not create another session.
-- `cancelled` drops the frozen submission and safely restores it to the editor if its revision has
-  not changed. It does not delete a worktree that Git may have finished creating.
+- `cancelled` detaches delivery and retains a recovery record per submission. Recovery is explicit
+  and available only with an empty editor; newer text is never merged or overwritten. It does not delete a worktree that Git may have finished creating.
 
 The preparation marker and state must survive Host restart/reconnect sufficiently to render a
 recoverable preparation session. If the Host restarts while Git may still be running, recovery checks
 the target worktree by branch/path and settles to `ready` or `failed`; it never starts a runtime until
-the path is validated. The renderer stores the frozen text/editor draft in a local recovery scope
-keyed to the prepared session, restores it into that session's editable draft after reload, and must
-not resubmit automatically after a reconnect unless Host activation confirms that the first input was
-not admitted. Attachments backed by in-memory `File` objects remain subject to the existing composer
-draft persistence limitation.
+the path is validated. The renderer stores the frozen submission in a local recovery scope keyed to
+the prepared session and submission id and offers an explicit recovery card after reload. It never
+resubmits automatically after reconnect. Until reservation returns an ID, recovery remains visible
+in the original draft scope; transferring it to the session is a single storage write.
+
+The recovery record is a typed snapshot of the entire frozen submission — text, editor state, the
+attachment manifest, and the contexts actually included in it: conversation quotes, code comments,
+web-element, PPTX and plugin contexts, plus shared context. Restore re-establishes exactly that
+submission: restored contexts replace the target scope's contexts and never merge with a newer
+draft's contexts, and the emptiness check for restore (and for send gating) considers text, context
+chips, and attachments together. Records written before the context snapshot existed remain
+readable; ephemeral resources that no longer exist require explicit reattachment or removal, like
+missing in-memory `File` sources.
 
 ### Submission and editor behavior
 
@@ -109,20 +149,33 @@ draft persistence limitation.
   then admits that submission exactly once. The normal authoritative user row appears before model
   output. Telemetry and TTFT start when the input enters the real runtime, so setup wait is excluded
   from send latency.
-- On failure or cancellation, restore frozen text, attachments, and references only when the editor
-  revision still matches the frozen revision. Never overwrite newer text. A failed session retains
-  its setup error and Retry action.
-- Navigation away, tab unmount, and reconnect detach the renderer-local callback, restore the frozen
-  draft, and keep Host-owned preparation running. Returning to the session ID resumes the same
+- On failure or cancellation, retain frozen text and the attachment manifest in a separate recovery
+  record. Restore requires an empty editor and never overwrites newer text. A failed session retains
+  its setup error and Retry action. Retry/Discard carry the expected attempt and cannot overlap;
+  terminal local state follows the Host ACK for that attempt.
+- Navigation away, tab unmount, and reconnect detach the renderer-local callback, save the frozen
+  recovery record, and keep Host-owned preparation running. Returning to the session ID resumes the same
   progress state. Explicit Cancel is the only user action that abandons the queued submission.
 - Attachments-only submissions follow the same lifecycle without a text preview.
 - The attachment IDs in a queued submission are frozen at queue time; attachments added while Git
   setup runs remain in the next draft and are not sent with the queued message.
 
+### Timeline presentation
+
+Worktree preparation is timeline context, not an empty-state greeting: render it in the timeline's
+persistent header slot above the message history so the creation status remains at the top after the
+first user or assistant row appears. Once Host activation clears the preparation marker, keep a
+compact created-worktree row in that same position from the live session-index execution-worktree
+fact. Present these rows as restrained tool activity with a clear status icon, branch/path detail,
+and consistent message-column alignment.
+
 ### Existing worktree and branch-list behavior
 
 Existing worktrees reuse the same prepared session and activate in place; do not transfer the draft
-to a second workspace or create a second directory. Before retrying a non-active prepared session
+to a second workspace or create a second directory. Branch occupation reuses the same path: when
+`branch-in-other-worktree` reports the branch checked out elsewhere and the requested target is
+absent, the creation flow resolves that registered worktree and adopts it, exactly like the
+`target-path-exists` case, instead of failing. Before retrying a non-active prepared session
 with different frozen parameters, update its Host marker to the new branch, target path, and base
 branch so activation validates against the same values Git used. The same realignment applies when
 Git settles the branch worktree at a directory other than the frozen target (WT-04 reuse, or a
@@ -134,9 +187,21 @@ refuse to activate. A missing or failed branch list degrades to base=HEAD, with 
 does not block Send. Invalid custom/global target locations remain synchronous failures before the
 session starts Git creation.
 
+Before any entry turns `ready` — or is offered as an existing worktree — the real directory and its
+Git binding are verified through the Git service of the target Host. A stale registration whose
+directory was removed, or a directory that is not a usable worktree checkout, settles as a
+recoverable failure; the flow never prunes registrations, deletes branches, or creates a second
+directory on its own.
+
 The Command Center “New task in worktree” action remains its separate Start-driven flow and opens its
 own workspace. Its branch-name collision avoidance and shared `executeWorktreeCreation` request
 semantics remain intact.
+
+Command Center worktree deletion treats a prepared, not-yet-cancelled session (preparing or failed)
+as using its target path and branch: the controller row projection carries the preparation fact as
+an optional typed field, the deletion guard re-checks protection immediately before both normal and
+forced removal, and force-confirming a dirty directory never bypasses the guard for a worktree a
+prepared session still owns. These projections are in-memory only; no new setting keys persist them.
 
 ### Persistence boundary
 
@@ -159,7 +224,9 @@ early transcript persistence or a second accepted-input store.
    panes continue to describe the parent checkout, including when both sessions are split onscreen.
 5. Repeated activation, duplicate Send, navigation, remount, and reconnect do not create another
    session, runtime, worktree, or first-input admission. The per-workspace idempotency guard is
-   acquired before awaiting Host session reservation, so concurrent composers join one reservation.
+   acquired before awaiting Host session reservation, so concurrent composers with different
+   submission IDs in one workspace join one reservation; the winning submission ID remains in
+   recovery metadata.
 6. Failure and explicit Cancel preserve the session ID and safely restore frozen editor content,
    attachments, and references without replacing newer edits.
 7. Restart during preparation recovers the same session ID, reconstructs renderer pipeline state
@@ -174,10 +241,13 @@ early transcript persistence or a second accepted-input store.
    If metadata changes while a subscribe/resync frame is awaiting ACK/outbox admission, preserve that
    reservation; after it commits, send the updated snapshot before any later deltas.
 8. Existing matching worktree activates in the same session without creating a second directory,
-   including when the found path differs from the originally requested target: the Host preparation
+   including when the found path differs from the originally requested target — including the
+   occupied-branch case where the requested target is absent: the Host preparation
    marker is realigned to the real path before activation, and a rejected realignment — or marker
    synchronization being unavailable for that prepared session — leaves a retryable failure instead
-   of a ready entry the Host refuses.
+   of a ready entry the Host refuses. A stale Git registration whose directory is gone is a
+   recoverable failure, never a ready entry; only `ENOENT` and `ENOTDIR` mean a missing path, while
+   other filesystem errors propagate to the caller.
 9. Missing/failed branch list uses HEAD and notes the default; invalid destination fails before Git
    creation; the five-second delay remains unchanged.
 10. Plain sessions, palette Start, per-worktree Git Tools, sibling non-Git destination visibility,
@@ -189,16 +259,70 @@ early transcript persistence or a second accepted-input store.
 12. Two prepared sessions in one workspace keep independent pipeline entries: restoring an older
     failed session while a newer creation is running does not replace it, and only the matching
     session/attempt can settle its asynchronous result.
+13. While the first response is still running, a second Send targets the already-active session
+    through the ordinary queue/guide rules: preparation is already complete (conversation snapshot
+    and sessions-index no longer carry the preparation marker), exactly one runtime exists, and no
+    second reservation is attempted.
+14. Repeat activation of the same session and attempt — including from a fresh Host process after
+    restart — returns the existing session, creates no second runtime, and admits the frozen input
+    at most once. A different workspace, a mismatched path or branch, or a stale attempt is
+    rejected without side effects; an unknown original admission result is resolved through
+    command reconciliation, never by re-sending the input under a new command id.
+15. Navigating from draft A to chat B before the reservation ACK keeps B active and untouched: the
+    late ACK still stores prepared session A and its recovery record, but does not switch the
+    active chat, promote or overwrite B's draft, or move B's attachments. Submission ownership
+    reflects only committed workspace/scope changes: an abandoned render cannot advance its epoch
+    or invalidate a pending ACK, and a committed owner change advances the epoch once.
+16. Deleting a worktree owned by a prepared, not-yet-cancelled session is refused in Command
+    Center, including the force-confirmation path; cancelling the preparation releases the guard.
 
 ## Validation
 
-- Add a Host/runtime integration regression with a deferred Git promise. It must observe a real
-  session ID and conversation subscription before resolving Git; then prove the same ID materializes
-  one runtime at the worktree cwd and admits one first input.
-- Cover Host restart/reconnect, activation idempotency, failed/cancelled preparation, plain-session
-  regression, and existing-worktree reuse at the owning boundaries.
+- Add a Host/runtime integration regression with a deferred Git promise and a controllably deferred
+  first model response. It must observe a real session ID and conversation subscription before
+  resolving Git; then prove the same ID materializes one runtime at the worktree cwd, admits one
+  first input, and completes preparation while the first response is still held — with the second
+  message routed through the ordinary queue/guide.
+- Cover Host restart/reconnect, activation idempotency (including durable `active` receipts and
+  cold Hosts), failed/cancelled preparation, plain-session regression, and existing-worktree reuse
+  at the owning boundaries.
+- Renderer regressions for the composer use mounted component tests that assert actions and
+  outcomes — late reservation ACK after navigation, restore of the full frozen submission including
+  contexts, authoritative preparation updates over existing pipeline entries — rather than
+  source-string checks.
 - Update the pending desktop E2E candidate to assert real identity before setup completes, and keep
   it in manual-review/pending until the repository's fixture review/promotion process is satisfied.
 - Run root typecheck, lint, architecture check, targeted tests, desktop E2E typecheck, and fixture
   validation. Report live E2E execution separately if it is not safe to run alongside the user's
   active development server.
+
+## Reliability revision (2026-10-17)
+
+The persisted marker and sessions-index summary carry the same optional attempt id. Preparing,
+failed and cancelled worktree sessions remain listable while ordinary uncommitted drafts stay
+hidden. The Host serializes attempt checks with marker writes and activation. Reopening a prepared
+session can retry and activate that identity without the original empty-state intent control.
+Recovery records and attachment ownership are scoped by session and submission id; multiple
+failed submissions cannot overwrite each other. See review-reliability-fixes.md for the test matrix.
+
+## Lifecycle completion revision (2026-10-17)
+
+Six decisions closed by the worktree lifecycle review:
+
+1. Preparation turns `active` at the admission boundary of the first frozen input, published to the
+   conversation snapshot and sessions-index immediately; turn completion is no longer the trigger
+   and persistence promotion is not admission evidence.
+2. Activation is idempotent against the durable `active` receipt of the same attempt, including on
+   a cold Host; unknown admission results reconcile through existing command receipts and the
+   frozen input is never re-sent under a new command id.
+3. Renderer pipeline entries accept authoritative Host preparation updates even when an entry
+   already exists: newer attempts replace stale ones for the same session only, cancellation stops
+   delivery, late Git results cannot restore `ready`, and same-attempt local `ready` survives until
+   a terminal Host state.
+4. Recovery records snapshot the full frozen submission — contexts included — and restore
+   re-establishes exactly that submission without merging newer drafts.
+5. Command Center deletion protects worktrees of prepared, not-yet-cancelled sessions and
+   re-checks the guard immediately before normal and forced removal.
+6. Occupied branches and `target-path-exists` both reuse an existing registered worktree, but only
+   after the real directory and its Git binding are verified on the target Host; stale
+   registrations fail recoverably without pruning.

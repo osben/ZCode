@@ -14,6 +14,7 @@ import {
 import {
   persistV4ComposerDraft,
   readV4ComposerDraft,
+  readV4WorktreeRecoveryDrafts,
   V4_DRAFT_SCOPE_ROOT,
   type V4ComposerDraft,
 } from "@/v4/composer/composerDraftStore.js";
@@ -301,8 +302,7 @@ function renderComposerElement(
   submissionReady = true,
 ) {
   const scopeId = sessionId ?? V4_DRAFT_SCOPE_ROOT;
-  let ownedDraft =
-    composerDraft ??
+  let ownedDraft = composerDraft ??
     readV4ComposerDraft("/workspace", undefined, scopeId) ?? {
       text: "",
       updatedAt: 0,
@@ -376,6 +376,35 @@ afterEach(() => {
 });
 
 describe("ConversationComposer prompt history", () => {
+  it("does not restore a delayed failed send into another session", async () => {
+    let rejectSend!: (error: Error) => void;
+    const onSendText = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectSend = reject;
+        }),
+    );
+    const { root, rerenderSession } = renderComposer(onSendText);
+    await act(async () => {
+      (chatPromptEditorProps.at(-1)!.onSubmit as (text: string) => boolean)("message A");
+      await flushAsyncWork();
+    });
+    expect(onSendText).toHaveBeenCalledTimes(1);
+    rerenderSession("session-b");
+    await act(async () => {
+      (chatPromptEditorProps.at(-1)!.onChange as (text: string) => void)("draft B");
+    });
+    await act(async () => {
+      rejectSend(new Error("delayed failure"));
+      await flushAsyncWork();
+    });
+    expect(readV4ComposerDraft("/workspace", undefined, "session-b")?.text).toBe("draft B");
+    expect(readV4WorktreeRecoveryDrafts("/workspace", undefined, "__draft__")[0]?.draft.text).toBe(
+      "message A",
+    );
+    await act(async () => root.unmount());
+  });
+
   it("真实编辑器文本变更会推进草稿 revision，保护迟到的推荐 Prompt", async () => {
     const { root } = renderComposer(vi.fn(async () => {}));
     const revisionBefore = getComposerDraftRevision("/workspace");
@@ -596,7 +625,10 @@ describe("ConversationComposer prompt history", () => {
   it("迟到的发送成功不能清除等待期间产生的新正文", async () => {
     let resolveSend!: () => void;
     const onSendText = vi.fn(
-      () => new Promise<void>((resolve) => { resolveSend = resolve; }),
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSend = resolve;
+        }),
     );
     const { root } = renderComposer(onSendText);
     const submit = chatPromptEditorProps.at(-1)!.onSubmit as (text: string) => boolean;

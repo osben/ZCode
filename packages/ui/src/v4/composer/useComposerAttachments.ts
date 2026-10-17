@@ -2,6 +2,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "@/components/ui/toast.js";
 import { nanoid } from "nanoid";
+import {
+  captureComposerAttachmentSubmission,
+  type ComposerAttachmentSubmission,
+} from "./composerAttachmentSubmission.js";
 import type { AttachmentRef } from "@zcode/shared/zcode-protocol-v4";
 import { WORKSPACE_FILE_DRAG_MIME } from "@/lib/workspaceFileDrag.js";
 import {
@@ -78,6 +82,10 @@ interface UploadQueueEntry {
 }
 
 export interface ComposerAttachmentsApi {
+  captureSubmission: (
+    attachmentIds: readonly string[],
+    sourceScope?: string,
+  ) => ComposerAttachmentSubmission;
   attachments: ComposerAttachmentUploadItem[];
   attachmentError: string | null;
   hasAttachments: boolean;
@@ -1108,6 +1116,11 @@ export function useComposerAttachments(
 
   return useMemo(
     () => ({
+      captureSubmission: (ids: readonly string[], sourceScope?: string) => {
+        const target = targetsRef.current.get(scopeKey);
+        if (!target) throw new Error("Attachment target is unavailable");
+        return captureComposerAttachmentSubmission(sourceScope ?? scopeKey, ids, target);
+      },
       attachments,
       attachmentError,
       composerDragKind,
@@ -1133,6 +1146,7 @@ export function useComposerAttachments(
       setAttachmentError,
     }),
     [
+      scopeKey,
       addAttachmentFiles,
       attachmentError,
       adoptSentAttachments,

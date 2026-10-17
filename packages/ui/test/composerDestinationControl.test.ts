@@ -154,11 +154,15 @@ describe("workspace isolation (source contract)", () => {
 
   it("resets cached branch state when the workspace changes (live bug: previous project's branch became the next project's worktree base)", () => {
     // The shell header stays mounted across workspace tabs; the reset keyed by workspaceKey is
-    // what drops the previous project's cached branch list, base pick, and open views.
+    // what drops the previous project's cached branch list, base pick, and open views. The
+    // dependency array also covers the remote target and its git service, which are part of the
+    // same workspace identity.
     expect(source).toContain("setBaseBranch(null);");
     expect(source).toContain("setBranchesResult(null);");
     expect(source).toContain("setBranchListFailed(false);");
-    expect(source).toContain("}, [workspaceKey, workspacePath]);");
+    expect(source).toContain(
+      "}, [workspaceKey, workspacePath, resolution.remoteSessionId, baseServices.gitService]);",
+    );
   });
 
   it("derives the automatic base from the live git summary, never the cached branch list", () => {

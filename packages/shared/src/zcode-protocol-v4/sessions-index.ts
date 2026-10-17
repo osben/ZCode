@@ -30,6 +30,8 @@ export type PendingInteractionSummary = z.infer<typeof pendingInteractionSummary
 export const SESSION_SUMMARY_CHILD_SESSIONS_MAX = 8;
 
 export const sessionSummarySchema = z.object({
+  /** Durable runtime-less sessions remain listable before their first input. */
+  worktreePreparation: sessionMetaStateSchema.shape.worktreePreparation,
   sessionId: z.string(),
   workspaceId: z.string(),
   // Fork tree.
