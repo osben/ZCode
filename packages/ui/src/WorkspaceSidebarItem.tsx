@@ -68,7 +68,6 @@ import {
   selectWorkspaceDisplayEntry,
   useWorkspaceDisplayStore,
 } from "@/store/workspaceDisplayStore.js";
-import { useTabStore } from "@/store/TabStoreProvider.js";
 import { WORKSPACE_ICON_COLOR_CLASS } from "@/lib/workspaceDisplayColors.js";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
 import {
@@ -162,6 +161,7 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
   isWebRemoteControl = false,
   isPinned = false,
   onToggleWorkspacePinned,
+  onOpenSessionManager,
   onShowMoreTasks,
   reconnectingRemoteWorkspaceKeys,
   remoteWorkspaceErrorByWorkspaceKey,
@@ -198,6 +198,7 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
   isWebRemoteControl?: boolean;
   isPinned?: boolean;
   onToggleWorkspacePinned?: (pinned: boolean) => void;
+  onOpenSessionManager?: (scope: { workspacePath: string; workspaceIdentity?: string }) => void;
   onShowMoreTasks: () => void;
   reconnectingRemoteWorkspaceKeys: string[];
   remoteWorkspaceErrorByWorkspaceKey: Record<string, string>;
@@ -267,7 +268,6 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
     selectWorkspaceDisplayEntry(state, tab.workspacePath, tab.workspaceIdentity),
   );
   const [customizeDialogOpen, setCustomizeDialogOpen] = useState(false);
-  const openSessionManagerTab = useTabStore((state) => state.openSessionManagerTab);
   const workspaceDisplayLabel = workspaceDisplayEntry?.displayName?.trim() || workspaceSidebarLabel;
   const workspaceIconColorClass = workspaceDisplayEntry?.color
     ? WORKSPACE_ICON_COLOR_CLASS[workspaceDisplayEntry.color]
@@ -1050,8 +1050,9 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             data-testid="workspace-manage-sessions"
+                            disabled={!onOpenSessionManager}
                             onSelect={() =>
-                              openSessionManagerTab({
+                              onOpenSessionManager?.({
                                 workspacePath: tab.workspacePath,
                                 ...(tab.workspaceIdentity
                                   ? { workspaceIdentity: tab.workspaceIdentity }

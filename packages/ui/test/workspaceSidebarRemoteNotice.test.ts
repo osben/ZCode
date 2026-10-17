@@ -49,6 +49,7 @@ vi.mock("lucide-react", () => {
     LoaderCircle: createIcon("loader"),
     RefreshCwIcon: createIcon("refresh"),
     MessageCirclePlus: createIcon("message-circle-plus"),
+    MessageSquare: createIcon("message-square"),
     UploadCloud: createIcon("upload-cloud"),
     XIcon: createIcon("x"),
   };

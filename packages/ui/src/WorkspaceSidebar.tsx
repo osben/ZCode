@@ -400,6 +400,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   const commandCenterShortcutLabel = useShortcutCommandLabel("openCommandCenter");
   const tabs = useTabStore((state) => state.tabs);
   const activateTab = useTabStore((state) => state.activateTab);
+  const openSessionManagerTab = useTabStore((state) => state.openSessionManagerTab);
   const closeTab = useTabStore((state) => state.closeTab);
   const openSettingsTab = useTabStore((state) => state.openSettingsTab);
   const expandedWorkspacePaths = useTabStore((state) => state.expandedWorkspacePaths);
@@ -503,6 +504,13 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
     () => orderWorkspaceTabsByPinned(projectWorkspaceTabs, pinnedProjectTabIds),
     [pinnedProjectTabIds, projectWorkspaceTabs],
   );
+  const handleOpenSessionManagerFromSidebar = useCallback(
+    (scope: { workspacePath: string; workspaceIdentity?: string }) => {
+      openSessionManagerTab(scope);
+    },
+    [openSessionManagerTab],
+  );
+
   const handleToggleWorkspacePinned = useCallback(
     (workspaceKey: string, pinned: boolean) => {
       if (!pinnedWorkspaceKeysLoaded) return;
@@ -1958,6 +1966,9 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
                                                 pinnedWorkspaceKeysLoaded
                                                   ? handleToggleWorkspacePinned
                                                   : undefined
+                                              }
+                                              onOpenSessionManager={
+                                                handleOpenSessionManagerFromSidebar
                                               }
                                               onShowMoreWorkspaceTasks={
                                                 handleShowMoreWorkspaceTasks
