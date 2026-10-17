@@ -33,6 +33,12 @@ export interface ProjectMemoryWorkspaceSummary {
   label: string;
   updatedAt: number;
   files: ProjectMemoryFileSummary[];
+  /**
+   * mtime of `<memoryRoot>/.consolidate-lock` — the last successful Dream consolidation time
+   * (see DREAM_LOCK_FILE in apps/zcode-cli/packages/core/src/memory/dream.ts). Absent when the
+   * workspace has never run a Dream. Display-only metadata; lock ownership stays with the runtime.
+   */
+  lastDreamConsolidatedAt?: number;
 }
 
 export interface IMemoryService {

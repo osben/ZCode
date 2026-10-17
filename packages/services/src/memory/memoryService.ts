@@ -22,6 +22,7 @@ import { readProjectMemoryIndexLineCount } from "#src/memory/projectMemoryIndexC
 
 const PROJECT_MEMORY_INDEX_FILE_NAME = "MEMORY.md";
 const PROJECT_MEMORY_DIRECTORY_NAME = "memory";
+const PROJECT_MEMORY_DREAM_LOCK_FILE_NAME = ".consolidate-lock";
 const PROJECT_KEY_SUFFIX_PATTERN = /^(.*)-[a-f0-9]{16}$/i;
 
 function isNotFoundError(error: unknown): boolean {
@@ -131,6 +132,21 @@ function compareProjectMemoryFiles(
     return left.kind === "index" ? -1 : 1;
   }
   return left.name.localeCompare(right.name, "en");
+}
+
+/**
+ * Last successful Dream consolidation time, read from the runtime's lock file mtime
+ * (DREAM_LOCK_FILE in apps/zcode-cli/packages/core/src/memory/dream.ts). Missing lock → undefined.
+ */
+async function readLastDreamConsolidatedAt(memoryRoot: string): Promise<number | undefined> {
+  try {
+    const lockStat = await lstat(join(memoryRoot, PROJECT_MEMORY_DREAM_LOCK_FILE_NAME));
+    if (!lockStat.isFile() || lockStat.isSymbolicLink()) return undefined;
+    return lockStat.mtimeMs;
+  } catch (error) {
+    if (isNotFoundError(error)) return undefined;
+    throw error;
+  }
 }
 
 function resolveUserHomeDir(): string {
@@ -347,11 +363,13 @@ export function createMemoryService(): IMemoryService {
       }
 
       files.sort(compareProjectMemoryFiles);
+      const lastDreamConsolidatedAt = await readLastDreamConsolidatedAt(memoryRoot);
       workspaces.push({
         id: workspaceId,
         label: resolveWorkspaceLabel(workspaceId),
         updatedAt: Math.max(...files.map((file) => file.updatedAt)),
         files,
+        ...(lastDreamConsolidatedAt === undefined ? {} : { lastDreamConsolidatedAt }),
       });
     }
 

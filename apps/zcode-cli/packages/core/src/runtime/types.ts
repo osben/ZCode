@@ -802,7 +802,9 @@ export interface ExecuteToolsResult {
   events: SessionEvent[];
 }
 
-export type ActiveTurnKind = "regular" | "compact" | "rewind";
+export type ActiveTurnKind = "regular" | "compact" | "dream" | "rewind";
+
+export type { ParsedDreamCommand } from "./helpers/commands.js";
 
 export const INLINE_TEXT_ATTACHMENT_MAX_BYTES = 64 * 1024;
 

@@ -2647,6 +2647,7 @@ const enUS: Record<string, string> = {
   "settings.memory.viewer.itemCount.other": "{count} items",
   "settings.memory.viewer.memoryCount.one": "{count} memory",
   "settings.memory.viewer.memoryCount.other": "{count} memories",
+  "settings.memory.viewer.lastDream": "Last dream: {time}",
   "settings.memory.viewer.updated.justNow": "Just now",
   "settings.memory.viewer.updated.minutesAgo": "{count} min ago",
   "settings.memory.viewer.updated.today": "Today {time}",

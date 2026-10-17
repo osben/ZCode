@@ -209,6 +209,10 @@ Web Remote / Mobile -> Memory 开关 + 本地桌面端查看提示
   viewer 的注入预算提示）；正文仅在用户选中文件后按需读取，并保持原始
   Markdown 和 frontmatter 不变。单文件预览上限为 5 MiB（5 × 1024 × 1024 bytes）；超过上限
   时拒绝读取并在正文区域展示本地化的预览上限提示，不截断、不返回部分内容。
+- catalog 为每个 workspace 附带可选的 `lastDreamConsolidatedAt`：`<memoryRoot>/.consolidate-lock`
+  的 mtime（文件不存在时省略该字段）。它是只读的展示性元数据，用于 viewer 中“上次整理时间”
+  的展示；Host/Renderer 不据它发起 Dream、不写 lock，也不把它当作 lock 所有权判断（lock 语义
+  只属于 Runtime Dream handler，见 7.2）。
 - 正文读取必须通过单次调用内的只读稳定句柄完成，并在打开后复检路径 containment 与文件身份；
   不获取文件所有权、不加锁，也不阻塞 Main、Extraction 或 Dream 的原子更新。并发更新优先成功，
   当前预览只允许返回更新前的完整快照或“文件已变化”错误，句柄始终在调用结束时关闭。文件已变化
@@ -636,13 +640,23 @@ bounded drain 等待取消收口
 
 ### 7.1 触发
 
-- 当前产品链路不自动触发 Dream，成功 Main turn 只调度 Extraction。builtin command registry
-  没有 `/dream`，ZCode CLI、Desktop、mobile 和 shared protocol 也不新增命令入口。
-- Dream handler、lock、prompt、受限执行和 `memory_update` 保留，等待产品侧确定 project
-  transcript 隔离形态后再接入触发点；本轮不增加临时入口或替代命令。
-- handler 内保留 gate 语义：每 10 分钟最多扫描一次；距上次成功 Dream 至少
-  24 小时；当前 project 至少有 5 个排除当前 session、实际 transcript 文件 mtime 晚于上次
-  consolidation 的 Main-equivalent sessions。
+- 当前产品链路不自动触发 Dream，成功 Main turn 只调度 Extraction。产品触发入口是手动
+  builtin 命令 `/dream`：与 `/compact` 同级的 runtime turn 命令（见 `runtime/methods/turn.ts`
+  的 dispatch），CLI TUI、Desktop composer 和 mobile 都以普通文本提交，由 Runtime 解析。
+  `/dream` 不接受参数；带参数的输入按 usage 错误回复，不发起 model 请求。
+- `/dream` turn 与 compact 命令 turn 同构：`TurnStarted` 的 `inputVisibility: "model-only"`
+  （命令文本不渲染为 user bubble），不可 steer，`TurnComplete.response` 为 Dream 结果文本。
+  Dream 的 model 请求走 detached Memory agent 路径，不产生 session usage events，因此该
+  turn 的 usage summary 为空；这是已知且接受的语义，不另建 usage 通道。
+- 自动触发（scheduler）仍不接入：等待产品侧确定 project transcript 隔离形态后再接线，
+  接线前 handler 的 auto 入口保持未使用。
+- 手动模式 gate（soft mode）：绕过 24 小时最小间隔与 10 分钟 scan throttle；要求当前
+  project 至少有 1 个排除当前 session、实际 transcript 文件 mtime 晚于上次 consolidation
+  的 Main-equivalent session；lock 语义不变（见 7.2）。每个 skip 都以可见的 TurnComplete
+  文本回复原因（memory 未启用 / remote workspace / lock 被存活 PID 持有 / 无新 transcript
+  活动），不静默退出。
+- auto 模式 gate 语义保留原样：每 10 分钟最多扫描一次；距上次成功 Dream 至少 24 小时；
+  至少 5 个符合上述新鲜度条件的 Main-equivalent sessions。
 - gate 和 prompt 使用同一组实际 transcript session id，不使用 SessionStore `updated` 时间替代
   transcript mtime。
 
@@ -813,9 +827,9 @@ ZCode 当前没有的工具也属于明确的 tool-inventory 差异；不得为�
 | Recall semantic branch | 无 pointer/index；branch-aware lifecycle 覆盖 prefetch、完整 tool batch 后 consume、recursive scan、selector schema、order/duplicate、正文限制、stale 与 61,440 gate；不增加 Runtime override                                                                                                                          |
 | Extraction             | success/error/abort；direct write；独立 3-word block；cursor；同边界 snapshot；Rewind 后不取消；running+latest；第 5 turn；header refresh；session close 拒绝新调度、丢弃 pending、abort running 并有界 drain                                                                                                           |
 | Headless Extraction    | `-p/--prompt` 与 `--target` 注入内部 `extractionEnabled=false`；Main prompt/index/Recall 保持；不读取 Extraction snapshot、不创建 scheduler、不发 Extraction 请求、不推进 cursor、不写 Memory 文件；TUI/app-server 默认行为不变                                                                                      |
-| Dream                  | 无 active trigger；handler 的 24h/5 transcript mtimes/10m gate；lock；第 50 turn；filesTouched；one-shot memory_update；`/dream` 为 Unknown command                                                                                                                                                                    |
+| Dream                  | `/dream` 手动命令：TurnStarted model-only、TurnComplete 携带结果/skip 文本、soft gate（绕过 24h/10m、≥1 新 transcript）、带参数 usage 错误、memory 未启用/remote/lock 占用/无新活动的可见 skip、不产生 usage events；auto 入口仍未接线，auto gate（24h/5 transcripts/10m）保持原样；lock；第 50 turn；filesTouched；one-shot memory_update |
 | Custom agent           | exact enum；三 scope；agent key；empty/truncated index；Write/Edit augmentation；Read intentional diff；disallowedTools                                                                                                                                                                                                |
-| Settings viewer        | 默认关闭不发 catalog 请求；Desktop 本地 profile catalog；空目录过滤；稳定排序；symlink/traversal 拒绝；workspace 切换；虚拟 `MEMORY.md` 父节点；缺失 index；原始正文；5 MiB 单文件预览上限；英文事实数量单复数；显式刷新；查看不发模型请求、不写文件；Web Remote / Mobile 只展示本地查看提示且 catalog 零调用                                                                  |
+| Settings viewer        | 默认关闭不发 catalog 请求；Desktop 本地 profile catalog；空目录过滤；稳定排序；symlink/traversal 拒绝；workspace 切换；虚拟 `MEMORY.md` 父节点；缺失 index；原始正文；5 MiB 单文件预览上限；英文事实数量单复数；显式刷新；查看不发模型请求、不写文件；catalog 附带可选 `lastDreamConsolidatedAt`（lock mtime，缺失省略）仅供展示；Web Remote / Mobile 只展示本地查看提示且 catalog 零调用                                                                  |
 | 上下游                 | generateText structured output；stream 不变；Settings 只经 runtime-preference 布尔值进入 Agent；viewer 仅经 Desktop 本地 Host Memory service 读取本地磁盘；desktop continuous/mobile replayable 不传 Memory 正文；remote background 不启动                                                                                |
 
 每个实现 Phase 必须先更新本文或对应 fixture，再补失败测试、实现最小行为、运行聚焦测试并做

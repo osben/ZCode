@@ -121,6 +121,32 @@ export function formatMemoryUpdatedAt({
   );
 }
 
+/** Header label for the workspace's last Dream consolidation time (absent → undefined). */
+export function formatMemoryLastDreamLabel({
+  formatMessage,
+  locale,
+  lastDreamConsolidatedAt,
+  now,
+}: {
+  formatMessage: IntlInstance["formatMessage"];
+  lastDreamConsolidatedAt: number | undefined;
+  locale: Locale;
+  now: number;
+}): string | undefined {
+  if (lastDreamConsolidatedAt === undefined) return undefined;
+  return formatMessage(
+    { id: "settings.memory.viewer.lastDream" },
+    {
+      time: formatMemoryUpdatedAt({
+        formatMessage,
+        locale,
+        now,
+        updatedAt: lastDreamConsolidatedAt,
+      }),
+    },
+  );
+}
+
 /**
  * Day-bucket header label for Memory file grouping: Today / Yesterday / locale date (no time).
  * Uses the same local-day math as formatMemoryUpdatedAt.

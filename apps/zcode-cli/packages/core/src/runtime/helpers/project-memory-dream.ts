@@ -1,6 +1,7 @@
 import { basename, join, resolve } from "node:path";
 
-import type { SessionInfo, TraceContext } from "../deps.js";
+import type { ModelTextContentBlock } from "@zcode/contracts";
+import type { ModelInputMessage, SessionInfo, TraceContext } from "../deps.js";
 import {
   systemReminderAttachmentEntry,
   type RuntimeAttachmentEntry,
@@ -25,8 +26,23 @@ import {
 import { invalidateProjectMemoryRecallPaths } from "./project-memory-recall.js";
 import { isMainMemoryTaskType, resolveEnabledProjectMemoryRoot } from "./project-memory.js";
 
-const DREAM_MINIMUM_TRANSCRIPT_SESSIONS = 5;
+const AUTO_DREAM_MINIMUM_TRANSCRIPT_SESSIONS = 5;
+const MANUAL_DREAM_MINIMUM_TRANSCRIPT_SESSIONS = 1;
 const DREAM_MAX_TURNS = 50;
+
+export type ProjectMemoryDreamSkipReason =
+  | "memory-disabled"
+  | "remote-workspace"
+  | "lock-held"
+  | "no-fresh-transcripts"
+  /** Auto-mode only: the 24h minimum interval or the 10-minute scan throttle closed the window. */
+  | "auto-timing";
+
+export type ProjectMemoryDreamOutcome =
+  | { status: "consolidated"; summary: string; touchedPaths: readonly string[] }
+  | { status: "skipped"; reason: ProjectMemoryDreamSkipReason }
+  | { status: "failed"; error: unknown };
+
 export interface ProjectMemoryUpdate {
   inContextPaths: string[];
   paths: string[];
@@ -67,7 +83,31 @@ export async function runProjectMemoryDream(
     operation: "project_memory_dream",
     traceContext: input.traceContext,
   });
-  await executeProjectMemoryDream(runtime, context);
+  await executeProjectMemoryDream(runtime, context, { mode: "auto" });
+}
+
+/** Manual `/dream` command path: every skip is a visible outcome instead of a silent return. */
+export async function runManualProjectMemoryDream(
+  runtime: AgentRuntimeInternal,
+  input: { abortSignal?: AbortSignal; traceContext: TraceContext },
+): Promise<ProjectMemoryDreamOutcome> {
+  const memoryRoot = resolveEnabledProjectMemoryRoot(runtime.config, runtime.workspaceRoot);
+  if (!memoryRoot || !runtime.sessionStore || !runtime.fileSystemPort || !runtime.modelIoDir) {
+    return { status: "skipped", reason: "memory-disabled" };
+  }
+  if (runtime.isRemoteWorkspace()) {
+    return { status: "skipped", reason: "remote-workspace" };
+  }
+
+  const context = captureProjectMemoryAgentContext(runtime, {
+    memoryRoot,
+    operation: "project_memory_dream",
+    traceContext: input.traceContext,
+  });
+  return executeProjectMemoryDream(runtime, context, {
+    abortSignal: input.abortSignal,
+    mode: "manual",
+  });
 }
 
 export function consumePendingProjectMemoryUpdate(
@@ -82,33 +122,37 @@ export function consumePendingProjectMemoryUpdate(
 async function executeProjectMemoryDream(
   runtime: AgentRuntimeInternal,
   context: ProjectMemoryAgentContext,
-): Promise<void> {
+  options: { abortSignal?: AbortSignal; mode: "auto" | "manual" },
+): Promise<ProjectMemoryDreamOutcome> {
   const telemetry = runtime.agentTelemetry.detached({
     causation: context.causation,
     executionKind: "background",
     operation: "project_memory_dream",
     targetKind: "project_memory",
     traceContext: context.traceContext,
-    trigger: "scheduler",
+    trigger: options.mode === "manual" ? "user" : "scheduler",
   });
 
+  let outcome: ProjectMemoryDreamOutcome | undefined;
   await telemetry.run(async () => {
     let acquiredPriorMtimeMs: number | undefined;
     try {
       const nowMs = runtime.now().getTime();
       const lastConsolidatedAtMs = await readDreamLastConsolidatedAt(context.memoryRoot);
-      const timing = evaluateAutoDreamTiming({
-        lastConsolidatedAtMs,
-        lastScanAtMs: runtime.memoryDreamLastScanAtMs,
-        nowMs,
-      });
-      if (timing.decision === "skip") {
-        telemetry.setResultType("metadata");
-        telemetry.finishCompleted();
-        return;
+      if (options.mode === "auto") {
+        const timing = evaluateAutoDreamTiming({
+          lastConsolidatedAtMs,
+          lastScanAtMs: runtime.memoryDreamLastScanAtMs,
+          nowMs,
+        });
+        if (timing.decision === "skip") {
+          outcome = { status: "skipped", reason: "auto-timing" };
+          telemetry.setResultType("metadata");
+          telemetry.finishCompleted();
+          return;
+        }
+        runtime.memoryDreamLastScanAtMs = nowMs;
       }
-
-      runtime.memoryDreamLastScanAtMs = nowMs;
       const sessions = selectProjectDreamSessions({
         currentSessionId: runtime.sessionId,
         sessions: await runtime.sessionStore!.listSessions(),
@@ -121,7 +165,12 @@ async function executeProjectMemoryDream(
         context,
         lastConsolidatedAtMs,
       );
-      if (transcriptSessionIds.length < DREAM_MINIMUM_TRANSCRIPT_SESSIONS) {
+      const minimumTranscriptSessions =
+        options.mode === "manual"
+          ? MANUAL_DREAM_MINIMUM_TRANSCRIPT_SESSIONS
+          : AUTO_DREAM_MINIMUM_TRANSCRIPT_SESSIONS;
+      if (transcriptSessionIds.length < minimumTranscriptSessions) {
+        outcome = { status: "skipped", reason: "no-fresh-transcripts" };
         telemetry.setResultType("metadata");
         telemetry.finishCompleted();
         return;
@@ -129,6 +178,7 @@ async function executeProjectMemoryDream(
 
       const priorMtimeMs = await acquireDreamLock({ memoryRoot: context.memoryRoot, nowMs });
       if (priorMtimeMs === null) {
+        outcome = { status: "skipped", reason: "lock-held" };
         telemetry.setResultType("metadata");
         telemetry.finishCompleted();
         return;
@@ -144,8 +194,9 @@ async function executeProjectMemoryDream(
       const executor = createProjectMemoryAgentToolExecutor(runtime, context);
       const touchedPaths = new Set<string>();
 
-      await runMemoryAgentLoop({
-        executeTool: (toolCall, options) => {
+      const loopResult = await runMemoryAgentLoop({
+        abortSignal: options.abortSignal,
+        executeTool: (toolCall, loopOptions) => {
           collectDreamTouchedPaths(touchedPaths, {
             rootDir: context.memoryRoot,
             toolCall,
@@ -153,7 +204,7 @@ async function executeProjectMemoryDream(
             workspaceRoot: context.workspaceRoot,
           });
           return executor.execute(toolCall, {
-            signal: options.abortSignal,
+            signal: loopOptions.abortSignal,
             traceContext: context.traceContext,
           });
         },
@@ -171,6 +222,11 @@ async function executeProjectMemoryDream(
         runtime.pendingMemoryUpdate = createProjectMemoryUpdate(runtime, paths);
         invalidateProjectMemoryRecallPaths(runtime, paths);
       }
+      outcome = {
+        status: "consolidated",
+        summary: finalAssistantText(loopResult.messages) ?? memoryUpdateSummary(paths),
+        touchedPaths: paths,
+      };
       telemetry.finishCompleted();
     } catch (error) {
       telemetry.finishFailed("execute", "internal", error);
@@ -184,8 +240,28 @@ async function executeProjectMemoryDream(
           // Dream 已失败；lock 恢复失败不改变前台 turn，也不追加第二套恢复机制。
         }
       }
+      outcome = { status: "failed", error };
     }
   });
+  return outcome ?? { status: "failed", error: new Error("Dream outcome was not produced") };
+}
+
+/** Last non-empty assistant text from the Memory agent loop, or undefined when the loop ended without one. */
+function finalAssistantText(messages: readonly ModelInputMessage[]): string | undefined {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!message || message.role !== "assistant") continue;
+    const text =
+      typeof message.content === "string"
+        ? message.content
+        : message.content
+            .filter((block): block is ModelTextContentBlock => block.type === "text")
+            .map((block) => block.text)
+            .join("");
+    const trimmed = text.trim();
+    if (trimmed.length > 0) return trimmed;
+  }
+  return undefined;
 }
 
 async function recentModelIoSessionIds(
@@ -230,8 +306,13 @@ function createProjectMemoryUpdate(
     inContextPaths,
     paths,
     source: "dream",
-    summary: `consolidated ${paths.length} memory file${paths.length === 1 ? "" : "s"}`,
+    summary: memoryUpdateSummary(paths),
   };
+}
+
+/** Wording is pinned by the frozen memory-update fixture; keep it byte-identical. */
+function memoryUpdateSummary(paths: readonly string[]): string {
+  return `consolidated ${paths.length} memory file${paths.length === 1 ? "" : "s"}`;
 }
 
 function formatProjectMemoryUpdate(update: ProjectMemoryUpdate): string {

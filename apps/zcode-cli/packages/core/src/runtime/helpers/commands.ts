@@ -14,6 +14,20 @@ export function parseCompactCommand(input: string): string | undefined | null {
   return null;
 }
 
+export type ParsedDreamCommand = { ok: true } | { ok: false; reason: "usage" };
+
+/** `/dream` takes no arguments; anything after the command name is a usage error, not a prompt. */
+export function parseDreamCommand(input: string): ParsedDreamCommand | null {
+  const trimmed = input.trim();
+  if (trimmed === "/dream") {
+    return { ok: true };
+  }
+  if (trimmed.startsWith("/dream ") || trimmed.startsWith("/dream\t")) {
+    return { ok: false, reason: "usage" };
+  }
+  return null;
+}
+
 export function parseRewindCommand(input: string): ParsedRewindCommand | null {
   const trimmed = input.trim();
   if (trimmed === "/fork") {

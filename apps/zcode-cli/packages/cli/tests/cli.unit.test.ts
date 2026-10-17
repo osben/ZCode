@@ -2531,6 +2531,12 @@ test("parses built-in slash commands outside the TUI", () => {
     rawName: "compact",
     type: "known",
   });
+  assert.deepEqual(parseSlashCommand("/dream"), {
+    args: "",
+    name: "dream",
+    rawName: "dream",
+    type: "known",
+  });
   assert.deepEqual(parseSlashCommand("/expert migrate auth"), {
     args: "migrate auth",
     name: "expert",
@@ -2702,6 +2708,7 @@ test("command center returns slash help without creating an app", async () => {
   assert.match(allCommands.response, /Slash commands:/);
   assert.match(allCommands.response, /\/help \[command\]/);
   assert.match(allCommands.response, /\/compact \[instructions\]/);
+  assert.match(allCommands.response, /\/dream: Consolidate project memory now\./);
   assert.match(allCommands.response, /\/init \[notes\]/);
   assert.match(allCommands.response, /\/workflow \[what the workflow should accomplish\]/);
   assert.match(allCommands.response, /\/expert \[status\|resume\|stop\|<task>\]/);
