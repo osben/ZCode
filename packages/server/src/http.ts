@@ -133,24 +133,37 @@ function setupChannelServer(
   }
   services.exposeOnChannelServer(server, overrides);
   const taskService = services.getOptional(IZCodeTaskService);
-  // Standalone Web uses the same list contract as Desktop, but has no window Host
-  // to register it. Keep this projection and its passive observers socket-owned.
-  const controller =
+  const needsStandaloneController =
     clientMode === "web-remote-replayable" &&
     taskService &&
-    !services.getOptional(IWindowControllerService)
-      ? createWindowHostControllerRuntime({
-          createId: randomUUID,
-          resolveSource: (scope) => ({
-            scope: { kind: "local", ...scope },
-            taskService,
-            agentService,
-            sourceAvailability: "online",
-          }),
-          onSourceError: (_scope, operation, error) =>
-            log("[standalone-controller]", operation, error),
+    !services.getOptional(IWindowControllerService);
+  // This private Host observer is independent of the browser's terminal handshake
+  // and route. Never publish its trusted facade as a client-accessible channel.
+  const controllerConnectionScope =
+    needsStandaloneController && agentService
+      ? createZCodeAgentConnectionScope(agentService, {
+          connectionId: `server-controller-${randomUUID()}`,
+          clientMode: "desktop-continuous",
+          role: "trusted-host-relay",
         })
       : undefined;
+  // Standalone Web uses the same list contract as Desktop, but has no window Host
+  // to register it. Keep this projection and its passive observers socket-owned.
+  const controller = needsStandaloneController
+    ? createWindowHostControllerRuntime({
+        createId: randomUUID,
+        maxSources: 64,
+        maxConcurrentSourceRefreshes: 4,
+        resolveSource: (scope) => ({
+          scope: { kind: "local", ...scope },
+          taskService,
+          agentService: controllerConnectionScope?.service,
+          sourceAvailability: "online",
+        }),
+        onSourceError: (_scope, operation, error) =>
+          log("[standalone-controller]", operation, error),
+      })
+    : undefined;
   if (controller) {
     server.registerChannel(
       IWindowControllerService.channelName,
@@ -159,6 +172,9 @@ function setupChannelServer(
   }
   socket.onClose(() => {
     controller?.dispose();
+    void controllerConnectionScope
+      ?.dispose()
+      .catch((error) => log("[standalone-controller] dispose failed", error));
     peer?.dispose();
     reverseClient?.dispose();
     void connectionScope?.dispose();

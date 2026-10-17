@@ -33,6 +33,47 @@ existing-only. Browser conversation delivery stays `web-remote-replayable`;
 Desktop retains `desktop-continuous`. Mobile relay and disconnected home-only
 services do not change.
 
+## Review hardening
+
+HTTP authentication protects the WebSocket upgrade. `hello` / `clientHello`
+negotiates terminal protocol capabilities, not workspace authorization; the task
+service already exposes the authenticated server's workspace index before that
+handshake. Passive Controller metadata reads must remain independent of terminal
+startup. The Controller uses its own server-created Agent connection facade and
+unique connection ID, rather than the raw Agent or the browser's terminal route.
+That internal facade is never exposed as an RPC channel. It preserves
+`existing-only` and owns its subscriptions and frame routing until socket close.
+
+```text
+authenticated /ws socket
+  -> browser terminal facade: hello/clientHello, replayable conversation
+  -> private Controller facade: unique socket route, passive metadata only
+       -> bounded tasks-index reads + independent sessions-index startup
+close -> terminal fence -> dispose observers and both facades
+       -> pending callbacks/ACKs cannot re-register ownership
+```
+
+Each standalone socket accepts at most 64 distinct source identities during its
+lifetime and runs at most four source reads concurrently. An oversized request
+is rejected before any observers are registered, including a request that exceeds
+the remaining lifetime allowance. Duplicate identities do not consume extra
+slots. Desktop has no new source limit.
+
+A pending Agent subscribe never blocks persisted task rows. Activity arrives
+through subsequent Controller frames. First-read errors reject when no selected
+source has a trusted snapshot; an existing successful snapshot (including remote
+replacement history) remains available on later refresh failure. A disposed
+runtime rejects new operations and pending event callbacks cannot revive it.
+
+The public runtime export has an explicit Node condition and no browser/default
+target. Tests cover browser rejection and Node resolution.
+
+Regression scenarios added before implementation: two sockets receive distinct
+trusted Agent routes; closing one keeps the other's frames current; an event
+queued behind a deferred read cannot reattach after close; an unresolved subscribe
+does not delay persisted rows; failed cold reads reject and recover on retry;
+excess cumulative scopes perform no source IO; queued reads never exceed four.
+
 ## Acceptance and regression scenarios
 
 1. Start an isolated standalone server with existing regular, pinned and archived
