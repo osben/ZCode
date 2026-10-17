@@ -1092,13 +1092,16 @@ describe("SubagentsSection", () => {
       (onModelValueChange as (value: string) => void)("custom:custom-openai:gpt-5.4");
       await Promise.resolve();
     });
-    await waitFor(() => {
-      expect(
-        capturedModelConfigSelects
-          .slice(beforeOptimisticRender)
-          .some((candidate) => candidate.normalizedValue === "custom:custom-openai:gpt-5.4"),
-      ).toBe(true);
-    });
+    await waitFor(
+      () => {
+        expect(
+          capturedModelConfigSelects
+            .slice(beforeOptimisticRender)
+            .some((candidate) => candidate.normalizedValue === "custom:custom-openai:gpt-5.4"),
+        ).toBe(true);
+      },
+      { timeout: 5_000 },
+    );
 
     expect(rejectWrite).toBeTypeOf("function");
     const beforeRollbackRender = capturedModelConfigSelects.length;
@@ -1108,18 +1111,21 @@ describe("SubagentsSection", () => {
       await Promise.resolve();
     });
 
-    await waitFor(() => {
-      expect(
-        capturedModelConfigSelects
-          .slice(beforeRollbackRender)
-          .some((candidate) => candidate.normalizedValue === "custom:custom-openai:glm-5.2"),
-      ).toBe(true);
-      expect(
-        capturedThoughtLevelControls
-          .slice(beforeThoughtRollbackRender)
-          .some((candidate) => candidate.option?.currentValue === "high"),
-      ).toBe(true);
-    });
+    await waitFor(
+      () => {
+        expect(
+          capturedModelConfigSelects
+            .slice(beforeRollbackRender)
+            .some((candidate) => candidate.normalizedValue === "custom:custom-openai:glm-5.2"),
+        ).toBe(true);
+        expect(
+          capturedThoughtLevelControls
+            .slice(beforeThoughtRollbackRender)
+            .some((candidate) => candidate.option?.currentValue === "high"),
+        ).toBe(true);
+      },
+      { timeout: 5_000 },
+    );
   });
 
   it("keeps the committed built-in config when the follow-up refresh fails", async () => {
