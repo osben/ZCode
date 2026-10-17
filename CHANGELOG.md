@@ -29,7 +29,7 @@ Based on upstream v3.15.1, with the v3.15.2 auth fix and the v3.15.3 auto-update
 - Review pane: group changed files by directory, with a toggle back to the flat list.
 - ChatGPT Plan: connect multiple ChatGPT accounts in parallel and track each account's usage windows.
 - Manual `/dream` command that consolidates project memory on demand; Settings shows the last run time.
-- ACP agents: run external ACP-compatible agent CLIs as providers, with detection, login, and a raw-frame test in Model Settings. Development builds only while the feature stabilizes.
+- ACP agents: run external ACP-compatible agent CLIs as providers, with detection, login, and a raw-frame test in Model Settings. Available only in local development runtimes while the feature stabilizes.
 - Release pipeline for the fork with `-fork.N` versions and production-backend release builds.
 - Pre-commit hook that formats and lints staged files.
 

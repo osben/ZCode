@@ -104,7 +104,7 @@ interface WhamResponse {
 }
 
 interface FakeBackendOptions {
-  key: TestKey;
+  key?: TestKey;
   idTokenEmail?: string;
   whamResponses?: WhamResponse[];
   exchangeRefreshToken?: { accessToken: string; refreshToken: string };
@@ -115,7 +115,7 @@ interface FakeBackendOptions {
  * Fake backend: OIDC discovery + JWKS (shared with SIWC), the codex /oauth/token endpoint,
  * the (unpinned) revoke endpoint, and a scripted wham/usage queue.
  */
-function createFakeBackend(options: FakeBackendOptions) {
+function createFakeBackend(options: FakeBackendOptions & { key: TestKey }) {
   const state = {
     exchangeCodes: [] as string[],
     refreshCalls: [] as string[],
@@ -123,7 +123,7 @@ function createFakeBackend(options: FakeBackendOptions) {
     revokedTokens: [] as string[],
     whamCalls: 0,
     whamHeaders: [] as Array<{ authorization: string; userAgent: string; accountId: string }>,
-    authorizationBodies: [] as Record<string, string>,
+    authorizationBodies: [] as Array<Record<string, string>>,
   };
   const fetchFn: typeof fetch = async (input, init) => {
     const url = String(input);
@@ -198,7 +198,8 @@ async function createService(options: FakeBackendOptions & { seedAccount?: boole
   tempDirs.push(dir);
   const credentials = createMemoryCredentialService();
   const key = options.key ?? createTestKey();
-  const backend = createFakeBackend({ key, ...options });
+  // key last: createFakeBackend requires it, and an explicitly-passed undefined must not override.
+  const backend = createFakeBackend({ ...options, key });
   const service = new SiwcAuthService(credentials, {
     configDir: dir,
     fetchFn: backend.fetchFn,

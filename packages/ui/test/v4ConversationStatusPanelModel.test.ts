@@ -705,6 +705,30 @@ describe("resolveSoleRunningWorkflowRunTarget", () => {
     expect(resolveSoleRunningWorkflowRunTarget(withSubagent)).toBeNull();
   });
 
+  it("keeps the shortcut for a retained terminal Dream result and blocks it only while Dream runs", () => {
+    const withTerminalDream = buildConversationStatusPanelModel({
+      backgroundWorks: [
+        backgroundWork({ workId: "dream-1", kind: "dream", status: "resultPending" }),
+        workflowWork,
+      ],
+      workflowRuns: [workflowRun()],
+    });
+    expect(resolveSoleRunningWorkflowRunTarget(withTerminalDream)).toEqual({
+      runId: "dwfrun-1",
+      toolCallId: "tool-wf-1",
+      workflowName: "发布前检查",
+    });
+
+    const withRunningDream = buildConversationStatusPanelModel({
+      backgroundWorks: [
+        backgroundWork({ workId: "dream-1", kind: "dream", status: "running" }),
+        workflowWork,
+      ],
+      workflowRuns: [workflowRun()],
+    });
+    expect(resolveSoleRunningWorkflowRunTarget(withRunningDream)).toBeNull();
+  });
+
   it("returns null for two workflow runs and for a sole run without a tool call id", () => {
     const two = buildConversationStatusPanelModel({
       backgroundWorks: [workflowWork, backgroundWork({ workId: "dwfrun-2", kind: "workflow" })],
