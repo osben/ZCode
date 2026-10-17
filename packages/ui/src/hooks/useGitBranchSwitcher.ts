@@ -1,3 +1,4 @@
+import type { IGitService } from "@zcode/services";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   GitBranchMutationResult,
@@ -26,6 +27,7 @@ import { logger } from "@/logger.js";
 import { worktreeDirectoryNameOf } from "@/components/WorktreeTaskMarker.js";
 
 interface UseGitBranchSwitcherOptions {
+  gitService?: IGitService;
   workspacePath: string;
   // gitSummary is the source of truth for HEAD (updated by the file watcher). Its current
   // branch/HEAD values are used to discard potentially stale local branch snapshots when HEAD changes.
@@ -35,12 +37,14 @@ interface UseGitBranchSwitcherOptions {
 }
 
 export function useGitBranchSwitcher({
+  gitService: targetGitService,
   workspacePath,
   currentBranchName,
   headRefType,
   onRefreshGit,
 }: UseGitBranchSwitcherOptions) {
-  const { gitService } = useServices();
+  const contextServices = useServices();
+  const gitService = targetGitService ?? contextServices.gitService;
   const { intl, locale } = useZCodeIntl();
   const numberFormatter = new Intl.NumberFormat(locale);
   const [open, setOpen] = useState(false);

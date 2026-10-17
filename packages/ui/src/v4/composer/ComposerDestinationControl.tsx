@@ -132,6 +132,7 @@ export function ComposerDestinationControl({
   // List selections remain draft intent. The create dialog keeps its immediate create-and-switch
   // action, but confirms before it mutates the shared checkout.
   const switcher = useGitBranchSwitcher({
+    gitService: baseServices.gitService,
     workspacePath,
     currentBranchName: gitSummary.branchName,
     headRefType: gitSummary.headRefType,
