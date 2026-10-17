@@ -5,7 +5,8 @@
  * `prompt()` streams `session/update` events through `on("event", ...)` and
  * resolves when the turn stops. One active prompt per session; `cancel()` is
  * a bounded `session/cancel` with kill escalation; unexpected process death
- * moves the runtime to `failed` and the next `prompt()` restarts it.
+ * or a fatal transport failure (oversized frame, closed stream) moves the
+ * runtime to `failed` and the next `prompt()` restarts it.
  */
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
@@ -22,6 +23,7 @@ import {
   type RequestPermissionRequest,
   type RequestPermissionResponse,
   type SessionNotification,
+  MessageTooLargeError,
 } from "@agentclientprotocol/sdk";
 import {
   AcpAgentDiedError,
@@ -29,6 +31,7 @@ import {
   AcpProtocolVersionError,
   AcpRuntimeError,
   AcpStateError,
+  AcpStreamClosedError,
 } from "./errors.js";
 import { readTextFileViaBridge, writeTextFileViaBridge } from "./fs.js";
 import { buildChildEnv, validateLaunchOptions } from "./launch.js";
@@ -47,6 +50,7 @@ import {
 } from "./runtime-helpers.js";
 import type {
   AcpAuthMethod,
+  AcpFrameObserver,
   AcpHostBridge,
   AcpLaunchOptions,
   AcpPermissionAnswer,
@@ -55,9 +59,19 @@ import type {
   AcpTimeouts,
 } from "./types.js";
 
+/** How long a closed stream/connection waits for the child's exit event
+ * before the failure is classified as a dead connection with a live child. */
+const DEATH_GRACE_MS = 1_000;
+
 export interface AcpSessionRuntimeOptions extends AcpLaunchOptions {
   readonly timeouts?: AcpTimeouts;
   readonly maxFrameBytes?: number;
+  /**
+   * Raw NDJSON wire observer: called once per line, per direction, in wire
+   * order. Lines over 16 KiB are truncated with a marker and observer
+   * exceptions are swallowed (see `AcpRawFrame`).
+   */
+  readonly onFrame?: AcpFrameObserver;
 }
 
 interface ActivePromptState {
@@ -206,10 +220,16 @@ export class AcpSessionRuntime extends EventEmitter {
       ...(this.options.maxFrameBytes !== undefined
         ? { maxFrameBytes: this.options.maxFrameBytes }
         : {}),
+      ...(this.options.onFrame !== undefined ? { onFrame: this.options.onFrame } : {}),
     });
     this.process = proc;
     this.generation += 1;
     proc.child.once("exit", (code, signal) => this.handleExit(code, signal));
+    // A framing failure (e.g. an oversized frame) errors the SDK connection
+    // while the child can stay alive; a stdout close has the same effect. Run
+    // the same teardown as a child exit so the runtime never sits on a dead
+    // connection in "ready".
+    proc.streamFailure.catch((error: Error) => this.handleStreamFailure(error));
 
     const app = createClientApp({ name: `zcode-acp-agent-runtime (${launch.agentId})` })
       .onRequest(methods.client.session.requestPermission, (ctx) =>
@@ -267,8 +287,9 @@ export class AcpSessionRuntime extends EventEmitter {
   }
 
   private raceSpawn<T>(operation: Promise<T>): Promise<T> {
-    const failure = this.process?.spawnFailure;
-    return failure ? Promise.race([operation, failure]) : operation;
+    const proc = this.process;
+    if (!proc) return operation;
+    return Promise.race([operation, proc.spawnFailure, proc.streamFailure]);
   }
 
   private assertProtocolVersion(init: InitializeResponse): void {
@@ -331,12 +352,17 @@ export class AcpSessionRuntime extends EventEmitter {
   /**
    * Normalizes "connection closed" rejections into `AcpAgentDiedError` when
    * the process actually died; intentional stops keep the original error.
+   * Fatal transport failures (`MessageTooLargeError`, a closed connection
+   * whose child survives) tear the process down before returning, so
+   * `prompt()`'s `finally` cannot restore "ready" on a dead connection.
    */
   private async normalizePromptError(error: unknown): Promise<unknown> {
     if (error instanceof AcpRuntimeError) return error;
     if (this.currentState === "stopped") return error;
-    if (error instanceof Error && /connection closed/i.test(error.message)) {
-      const deadline = Date.now() + 1_000;
+    const framingError = error instanceof MessageTooLargeError;
+    const closedError = !framingError && error instanceof Error && isConnectionClosedError(error);
+    if (closedError) {
+      const deadline = Date.now() + DEATH_GRACE_MS;
       while (Date.now() < deadline && this.currentState !== "failed") {
         await sleep(10);
       }
@@ -344,7 +370,38 @@ export class AcpSessionRuntime extends EventEmitter {
         return new AcpAgentDiedError("Agent process died during the prompt", { cause: error });
       }
     }
+    if (
+      this.currentState === "prompting" &&
+      (framingError || closedError || this.connection?.signal.aborted === true)
+    ) {
+      // The SDK connection is unusable while the child may still be alive:
+      // mark the runtime failed and kill the process so the next prompt
+      // restarts instead of reusing the dead connection.
+      await this.terminateProcess(
+        error instanceof Error ? error : new Error(`ACP transport failure: ${String(error)}`),
+      );
+    }
     return error;
+  }
+
+  /** Entry point for `streamFailure`: framing errors and stdout closes. */
+  private handleStreamFailure(error: Error): void {
+    if (this.stopRequested || this.currentState === "stopped") return;
+    if (this.currentState === "failed") return;
+    void this.teardownAfterStreamFailure(error);
+  }
+
+  private async teardownAfterStreamFailure(error: Error): Promise<void> {
+    if (error instanceof AcpStreamClosedError) {
+      // A plain EOF usually means the child is dying: give the exit handler a
+      // short window so a real death is still reported as `AcpAgentDiedError`.
+      const deadline = Date.now() + DEATH_GRACE_MS;
+      while (Date.now() < deadline && this.currentState !== "failed") {
+        await sleep(10);
+      }
+      if (this.currentState === "failed" || this.currentState === "stopped") return;
+    }
+    await this.terminateProcess(error);
   }
 
   private resetStallTimer(active: ActivePromptState | undefined): void {
@@ -416,4 +473,13 @@ export class AcpSessionRuntime extends EventEmitter {
   private emitEvent(event: AcpRuntimeEvent): void {
     this.emit("event", event);
   }
+}
+
+/**
+ * The SDK v1 connection rejects pending requests with a plain "ACP connection
+ * closed" error; the v2 surface uses `ConnectionClosedError` (not exported
+ * from the main entry), so match it by name too.
+ */
+function isConnectionClosedError(error: Error): boolean {
+  return /connection closed/i.test(error.message) || error.name === "ConnectionClosedError";
 }

@@ -82,11 +82,21 @@ describe("timeouts and cancellation", () => {
     }
   });
 
-  it("fails the prompt with MessageTooLargeError when a frame exceeds the limit", async () => {
+  it("marks the runtime failed after an oversized frame and restarts on the next prompt", async () => {
     const cwd = await createTempDir();
     const runtime = await startMockRuntime(cwd, "big", {}, { maxFrameBytes: 64 * 1024 });
     try {
+      const events = collectEvents(runtime);
       await expect(runtime.prompt("big output")).rejects.toThrowError(/exceeds|too large/i);
+      // Regression: the framing error leaves the SDK connection unusable while
+      // the mock child stays alive. The runtime must not fall back to "ready"
+      // on the dead connection — it tears down (killing the surviving child)
+      // and the next prompt restarts the agent instead of reusing it.
+      await waitFor(() => runtime.state === "failed", 3_000);
+      await waitFor(() => events.some((event) => event.type === "process_exit"), 3_000);
+      const second = await runtime.prompt("again");
+      expect(second.stopReason).toBe("end_turn");
+      expect(runtime.state).toBe("ready");
     } finally {
       await runtime.stop();
       await cleanupTempDir(cwd);

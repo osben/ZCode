@@ -33,9 +33,11 @@ Owner: one `AcpSessionRuntime` per agent process.
 
 - States: `starting` → `ready` ⇄ `prompting`; terminal per process: `failed` or `stopped`.
 - A prompt issued while `failed` transparently restarts the process and session.
-- Teardown (`stop`, escalated cancel, handshake failure) marks the runtime `failed` (unless it is
-  already `stopped`) BEFORE rejecting in-flight asks/prompts, so no rejected prompt can fall back
-  to `ready` with a cleared connection; the next prompt then restarts.
+- Teardown (`stop`, escalated cancel, handshake failure, fatal transport
+  failure — an oversized frame or a closed stdout, even when the child process
+  survives) marks the runtime `failed` (unless it is already `stopped`) BEFORE
+  rejecting in-flight asks/prompts, so no rejected prompt can fall back to
+  `ready` with a cleared connection; the next prompt then restarts.
 - Teardown sequence: stdin EOF → `stopGraceMs` → SIGTERM (Windows: `taskkill /T`) →
   `killGraceMs` → SIGKILL (Windows: `taskkill /T /F`).
 - Frame observer (`onFrame`): raw NDJSON lines per direction in wire order; lines over 16 KiB are

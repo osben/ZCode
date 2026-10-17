@@ -117,6 +117,29 @@ export interface AcpFsBridge {
   writeFile(path: string, content: string): Promise<void>;
 }
 
+/** Direction of a raw NDJSON frame observed on the wire. */
+export type AcpFrameDirection = "inbound" | "outbound";
+
+/** One raw NDJSON line observed at the transport boundary. */
+export interface AcpRawFrame {
+  readonly direction: AcpFrameDirection;
+  /**
+   * The line without its trailing LF. Lines over 16 KiB are truncated to
+   * their first 16 KiB (cut at a UTF-8 boundary) plus the marker
+   * `"…[truncated]"`.
+   */
+  readonly text: string;
+  /** True when the line exceeded the 16 KiB observer cap and `text` is truncated. */
+  readonly truncated: boolean;
+}
+
+/**
+ * Observer for raw NDJSON wire traffic. Called once per line, per direction,
+ * in wire order; observer exceptions are swallowed and never affect the
+ * runtime.
+ */
+export type AcpFrameObserver = (frame: AcpRawFrame) => void;
+
 /** Host callbacks the runtime uses to talk back to the application. */
 export interface AcpHostBridge {
   /**
