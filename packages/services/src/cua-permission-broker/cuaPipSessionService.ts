@@ -133,6 +133,15 @@ export function createCuaPipSessionService(options: {
     });
   };
 
+  const closesPendingTurn = (
+    event: PipSessionEvent,
+    pending: { event: PipSessionEvent; turnId: string },
+  ): boolean =>
+    (event.kind === "turn-ended" || event.kind === "session-closed") &&
+    ("turnId" in event
+      ? pending.turnId === event.turnId
+      : pending.event.sessionId === event.sessionId);
+
   const cancelReplayRetry = () => {
     if (replayTimer !== null) {
       clearTimeout(replayTimer);
@@ -249,11 +258,8 @@ export function createCuaPipSessionService(options: {
               replayDeadline = Date.now() + REPLAY_DEADLINE_MS;
               scheduleReplayRetry();
             } else if (
-              (event.kind === "turn-ended" || event.kind === "session-closed") &&
               pendingTurnStarted !== null &&
-              ("turnId" in event
-                ? pendingTurnStarted.turnId === event.turnId
-                : pendingTurnStarted.event.sessionId === event.sessionId)
+              closesPendingTurn(event, pendingTurnStarted)
             ) {
               pendingTurnStarted = null;
               cancelReplayRetry();
@@ -300,9 +306,12 @@ export function createCuaPipSessionService(options: {
               reason: replayed.reason,
             });
           } catch (error) {
-            // Keep retrying the opening event while still delivering the current event.
-            pendingTurnStarted = replay;
-            scheduleReplayRetry();
+            // Keep retrying the opening event while still delivering the current event, unless the
+            // current event ends that turn or closes that session: a later replay would reopen it.
+            if (!closesPendingTurn(event, replay)) {
+              pendingTurnStarted = replay;
+              scheduleReplayRetry();
+            }
             reportDeliveryFailed(
               replay.event,
               error,
