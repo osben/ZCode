@@ -96,13 +96,6 @@ async function readTestIdText(currentTestId: string): Promise<string | null> {
   }, currentTestId);
 }
 
-/**
- * End-to-end "list → detail → edit metadata → delete" for the saved-workflows hub (docs/dynamic-workflow/launch.md).
- *
- * Only touches the UI + `.zcode/workflows/` in the project directory: no prompt is sent and no model replay is
- * required, so it is deterministic. The "run via conversation" cases are filed separately under conversation-session/
- * (they need a replay provider).
- */
 // Assertions read literal zh-CN dialog text while the runner machine defaults to en-US, so pin
 // the locale through the real settings file and reload, matching the feishu specs' convention.
 async function ensureZhCnLocale() {
@@ -110,6 +103,13 @@ async function ensureZhCnLocale() {
   await browser.refresh();
 }
 
+/**
+ * End-to-end "list → detail → edit metadata → delete" for the saved-workflows hub (docs/dynamic-workflow/launch.md).
+ *
+ * Only touches the UI + `.zcode/workflows/` in the project directory: no prompt is sent and no model replay is
+ * required, so it is deterministic. The "run via conversation" cases are filed separately under conversation-session/
+ * (they need a replay provider).
+ */
 describe("已保存工作流中枢 E2E", () => {
   before(async () => {
     await ensureZhCnLocale();
