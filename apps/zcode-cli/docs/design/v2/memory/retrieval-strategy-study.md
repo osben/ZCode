@@ -131,8 +131,18 @@ Stage 1 (small, independent value, v4.1 amendments) — current status:
 2. Done (PR #107): the memory block moved out of the `# agentsMd` OVERRIDE banner into its own
    `# Project Memory (background context)` section with a frozen informational footer
    (PI-Desktop framing), behind the opt-in `memoryIndexAsContext` fork setting.
-3. Pending: verify/set `supportsJsonSchemaOutput` for the models we ship in the catalog (prereq
-   for any recall work).
+3. Done (audit, 2026-10-16): `supportsJsonSchemaOutput` verified against the live provider
+   config and the materialization path. Result: **no shipped model declares the flag.** The
+   user-level provider config (`provider_config.json` model rules) carries only
+   `contextWindow` / `inputFormat`; the overlay schema
+   (`packages/provider/src/config/model-config.ts`) treats the flag as optional and absent
+   means unset, so `model.properties.supportsJsonSchemaOutput` is falsy at runtime and the
+   semantic-recall selector gate (`project-memory-recall.ts`) silently skips recall for every
+   model. The memory E2E fixtures only pass because they set the flag to `true` by hand.
+   Consequence for Stage 2: before enabling semantic-recall, official model seeds must declare
+   `supportsJsonSchemaOutput: true` for models that support structured output (coding-plan GLM
+   and ChatGPT-plan models do), or the selector gate needs a defined fallback — either way it
+   is a Stage 2 spec item, not a runtime change in this PR.
 
 Stage 2 (v5 spec): hybrid tiered anchor + semantic-recall (Option C), with Dream wired as
 the consolidation/single-writer stage. Acceptance criteria to define in the spec:
