@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { Emitter } from "@zcode/rpc";
 import type { IZCodeTaskService } from "@zcode/services";
 import type { ZCodeTaskMeta, ZCodeWorkspaceEvent } from "@zcode/shared";
-import { createWindowHostControllerRuntime } from "@desktop/host/windowHostControllerService.js";
+import { createWindowHostControllerRuntime } from "@zcode/services/window-controller";
 import {
   collectArchivedTaskDeletion,
   deleteArchivedTaskSelection,

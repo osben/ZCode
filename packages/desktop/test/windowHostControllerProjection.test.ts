@@ -4,7 +4,7 @@ import {
   CONTROLLER_TASKS_INDEX_TOPIC,
   CONTROLLER_WORKSPACES_TOPIC,
 } from "@zcode/shared/zcode-protocol-v4";
-import { createWindowHostControllerProjection } from "../src/host/windowHostControllerProjection.js";
+import { createWindowHostControllerProjection } from "@zcode/services/window-controller";
 
 function taskMeta(params: {
   taskId: string;
