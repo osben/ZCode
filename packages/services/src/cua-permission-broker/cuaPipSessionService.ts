@@ -92,6 +92,28 @@ export function createCuaPipSessionService(options: {
   const REPLAY_RETRY_MS = 250;
   const REPLAY_DEADLINE_MS = 30_000;
   let replayDeadline = 0;
+  /**
+   * Skip-streak aggregation for delivery-skip logging. Focus events fire on every window-focus change, so a Helper
+   * without credentials spammed one warn per event (554 warns/day, log triage 2026-10-15). While skips continue for
+   * the same reason, only the first skip logs at warn, repeats go to debug with a running total, and delivery
+   * recovery emits a single warn carrying the aggregate. Replay behavior is not affected.
+   */
+  let skipStreak: {
+    reason: "credentials-unavailable" | "transport-disabled";
+    dropped: number;
+  } | null = null;
+
+  // Any successful send ends the streak, including the retry-timer replay of a deferred
+  // turn-started: transport recovered there too, so a later skip must start a new warn
+  // streak instead of continuing the previous debug-only streak.
+  const reportDeliveryRecovered = (): void => {
+    if (skipStreak === null) return;
+    logger.warn(undefined, "[cua-pip-session] event delivery recovered", {
+      skipReason: skipStreak.reason,
+      skippedEvents: skipStreak.dropped,
+    });
+    skipStreak = null;
+  };
 
   const cancelReplayRetry = () => {
     if (replayTimer !== null) {
@@ -173,6 +195,7 @@ export function createCuaPipSessionService(options: {
             applied: result.applied,
             reason: result.reason,
           });
+          reportDeliveryRecovered();
         } catch (error) {
           logger.warn(undefined, "[cua-pip-session] replay of deferred turn-started failed", {
             ...eventLogContext(replay.event),
@@ -214,11 +237,22 @@ export function createCuaPipSessionService(options: {
               cancelReplayRetry();
             }
             // Bug diagnosis: when the Helper was running but credential handoff failed, turn-started used to be silently dropped, leaving PiP
-            // permanently on the previous completed turn. Lifecycle events are constant per turn, so production warnings do not create per-frame disk writes.
-            logger.warn(undefined, "[cua-pip-session] event delivery skipped", {
-              ...eventLogContext(event),
-              skipReason: resolution.skipReason,
-            });
+            // permanently on the previous completed turn. The first skip of a streak stays at warn so a real outage remains visible; repeats are
+            // demoted to debug (see skipStreak) and a recovery warn reports the aggregated count.
+            if (skipStreak !== null && skipStreak.reason === resolution.skipReason) {
+              skipStreak.dropped += 1;
+              logger.debug(undefined, "[cua-pip-session] event delivery skipped", {
+                ...eventLogContext(event),
+                skipReason: resolution.skipReason,
+                droppedTotal: skipStreak.dropped,
+              });
+            } else {
+              skipStreak = { reason: resolution.skipReason, dropped: 1 };
+              logger.warn(undefined, "[cua-pip-session] event delivery skipped", {
+                ...eventLogContext(event),
+                skipReason: resolution.skipReason,
+              });
+            }
           } else {
             // service-disabled / service-disposed used to return silently,
             // making "no PiP event was sent" indistinguishable in logs from "sent but rejected"—troubleshooting had to infer four silent early returns in the delivery path.
@@ -252,6 +286,7 @@ export function createCuaPipSessionService(options: {
           }
         }
         const result = await resolution.client.send(event);
+        reportDeliveryRecovered();
         // Bug diagnosis: PiP group switching crosses Main, Host, and broker processes; if successful and idempotently rejected ACKs are logged only at
         // debug, packaged builds cannot distinguish an unsent turn-started from stale-sequence/turn-mismatch.
         // These are low-frequency lifecycle logs and contain no screenshots, tokens, or prompts, so they are safe to keep in production.
