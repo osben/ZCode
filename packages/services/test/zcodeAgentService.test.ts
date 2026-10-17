@@ -2441,6 +2441,68 @@ describe("createZCodeAgentService", () => {
     }
   });
 
+  it("records ChatGPT usage from the typed sideband without reading the current session model", async () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "zcode-agent-siwc-usage-live-"));
+    createdDirs.push(workspacePath);
+    const scriptPath = join(workspacePath, "siwc-usage-agent.cjs");
+    writeFileSync(
+      scriptPath,
+      `
+let buf = "";
+function send(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
+process.stdin.on("data", (chunk) => {
+  buf += chunk.toString("utf8");
+  let idx;
+  while ((idx = buf.indexOf("\\n")) >= 0) {
+    const line = buf.slice(0, idx);
+    buf = buf.slice(idx + 1);
+    if (!line.trim()) continue;
+    let msg;
+    try { msg = JSON.parse(line); } catch { continue; }
+    if (msg.method === "session/subscribe" && msg.id !== undefined) {
+      send({ id: msg.id, result: { sessionId: msg.params.sessionId, eventSeq: 0, events: [] } });
+      setTimeout(() => send({
+        method: "chatgpt-plan/usage-updated",
+        params: {
+          eventId: "evt-siwc-usage",
+          sessionId: msg.params.sessionId,
+          providerId: "account:chatgpt-plan:a1b2c3d4e5f60718",
+          usage: { primary: { usedPercent: 12 } },
+        },
+      }), 0);
+    }
+  }
+});
+`,
+    );
+    const recordUsage = vi.fn();
+    const service = createReadyZCodeAgentService({
+      commandResolver: () => ({ command: process.execPath, args: [scriptPath] }),
+      chatGptPlanUsageRecorder: { recordUsage },
+    });
+    const subscription = service.onDynamicSessionEvent({
+      workspacePath,
+      sessionId: "sess-siwc-usage",
+      deliveryKind: "desktop-continuous",
+      includeSnapshot: false,
+    })(() => {});
+
+    try {
+      await vi.waitFor(
+        () => {
+          expect(recordUsage).toHaveBeenCalledWith("a1b2c3d4e5f60718", {
+            primary: { usedPercent: 12 },
+          });
+        },
+        { timeout: 5_000, interval: 50 },
+      );
+      expect(recordUsage).toHaveBeenCalledOnce();
+    } finally {
+      subscription.dispose();
+      await service.disposeAllAndWait();
+    }
+  });
+
   it("clears CUA state when the runtime becomes unavailable without a restart", async () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "zcode-agent-cua-runtime-exit-"));
     createdDirs.push(workspacePath);

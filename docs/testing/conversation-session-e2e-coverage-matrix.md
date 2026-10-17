@@ -2689,6 +2689,7 @@ SendMessage 工具的 summary schema 是必填且至少一字符；无 summary �
   查询失败和失效订阅代际；只清理列表投影，不删除 Agent 数据。
 - UI 回归候选：`packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-subagent-sidebar-isolation.test.ts`。
   真实 Agent 派发后重启 CLI，从父 Agent 行重开 child；验证正文、只读和左侧列表隔离。
+  候选扩展：从父行展开 child list 并点选 subagent 行，断言 child 成为主 pane 且 composer 仍隐藏。
   pending，2026-09-14 macOS arm64 Electron replay 已通过（run `desktop-e2e-20260914034735663-p56835-db7659fd635127a8`），
   待人工 review 后转正。手机 UI drawer 保持现有交互，本轮协议模式验证不等价于手机浏览器 E2E。
 - 验证结果：新增协议回归 10/10、相关 services 回归 162/162 通过；root/Bootstrap/E2E typecheck 通过。

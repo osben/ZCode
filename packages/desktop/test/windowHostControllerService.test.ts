@@ -127,6 +127,18 @@ describe("WindowHostControllerService", () => {
                       branchName: "feature/live",
                     },
                     executionWorktreeMissing: true,
+                    sideChatCount: 1,
+                    subagentCount: 2,
+                    runningSubagentCount: 1,
+                    childSessions: [
+                      {
+                        sessionId: "child-1",
+                        title: "Subagent",
+                        taskType: "subagent_child",
+                        lastActivityAt: 18,
+                        running: true,
+                      },
+                    ],
                     lastActivityAt: 20,
                     createdAt: 1,
                   },
@@ -177,6 +189,18 @@ describe("WindowHostControllerService", () => {
           branchName: "feature/live",
         },
         executionWorktreeMissing: true,
+        sideChatCount: 1,
+        subagentCount: 2,
+        runningSubagentCount: 1,
+        childSessions: [
+          {
+            sessionId: "child-1",
+            title: "Subagent",
+            taskType: "subagent_child",
+            lastActivityAt: 18,
+            running: true,
+          },
+        ],
         pendingInteraction: expect.objectContaining({ interactionId: "ask-1" }),
         activity: {
           phase: "running",

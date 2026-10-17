@@ -72,6 +72,8 @@ export interface V4WorkspaceChatAreaProps {
   /** Prompt-template telemetry currently covers Desktop only; Web/mobile remote control keeps the UI behavior but does not emit this event. */
   isDesktop?: boolean;
   readOnly?: boolean;
+  readOnlySessionId?: string | null;
+  selectionSideChatSessionId?: string | null;
   /** False when an overlay such as Settings is open; hidden panes must not consume one-time Composer requests. */
   foregroundEnabled?: boolean;
   remoteSessionId?: string;
@@ -106,7 +108,11 @@ export interface V4WorkspaceChatAreaProps {
     executionWorkspacePath?: string,
     executionSessionId?: string,
   ) => void;
-  onPaneActiveSessionChange?: (scope: PaneWorkspaceScope, sessionId: string) => void;
+  onPaneActiveSessionChange?: (
+    scope: PaneWorkspaceScope,
+    sessionId: string,
+    capabilities?: { selectionSideChat?: boolean },
+  ) => void;
   onOpenBrowserUrl?: (url: string) => void;
   onOpenAutomationsMain?: OpenAutomationsMain;
   onOpenCodeViewer?: (source: CodeViewerSource) => void;
@@ -148,6 +154,8 @@ export function V4WorkspaceChatArea({
   workspaceIdentity,
   isDesktop = false,
   readOnly = false,
+  readOnlySessionId = null,
+  selectionSideChatSessionId = null,
   foregroundEnabled = true,
   remoteSessionId,
   compactForRemoteControl = false,
@@ -265,10 +273,23 @@ export function V4WorkspaceChatArea({
     }),
     [remoteSessionId, workspacePath, workspaceIdentity],
   );
-  const placementShellBinding = useMemo<WorkbenchSessionBinding | null>(
+  const primarySessionBinding = useMemo<WorkbenchSessionBinding | null>(
     () =>
-      primaryPaneSessionId ? { workspaceScope: shellScope, sessionId: primaryPaneSessionId } : null,
-    [primaryPaneSessionId, shellScope],
+      primaryPaneSessionId
+        ? {
+            workspaceScope: shellScope,
+            sessionId: primaryPaneSessionId,
+            ...(primaryPaneSessionId === readOnlySessionId ? { readOnly: true } : {}),
+            ...(primaryPaneSessionId === selectionSideChatSessionId
+              ? { selectionSideChat: true }
+              : {}),
+          }
+        : null,
+    [primaryPaneSessionId, readOnlySessionId, selectionSideChatSessionId, shellScope],
+  );
+  const placementShellBinding = useMemo<WorkbenchSessionBinding | null>(
+    () => primarySessionBinding,
+    [primarySessionBinding],
   );
 
   const shell = useMemo<WorkbenchShellBinding>(
@@ -278,6 +299,8 @@ export function V4WorkspaceChatArea({
       ...(remoteSessionId ? { remoteSessionId } : {}),
       isDesktop,
       compactForRemoteControl,
+      readOnlySessionId,
+      selectionSideChatSessionId,
       readOnly,
       sessionId: primaryPaneSessionId,
       // primaryPaneSessionId is deliberately cleared when the active task is taken over by split panes;
@@ -327,6 +350,7 @@ export function V4WorkspaceChatArea({
       remoteSessionId,
       isDesktop,
       compactForRemoteControl,
+      readOnlySessionId,
       readOnly,
       primaryPaneSessionId,
       activeSelectionSideChatSessionId,
@@ -376,9 +400,7 @@ export function V4WorkspaceChatArea({
           return selectWorkbenchGroupPaneBinding(activeGroup, paneId);
         }
         if (paneId === V4_PRIMARY_PANE_ID) {
-          return primaryPaneSessionId
-            ? { workspaceScope: shellScope, sessionId: primaryPaneSessionId }
-            : null;
+          return primarySessionBinding;
         }
         const binding = paneBindings[paneId];
         return binding?.sessionId
@@ -386,10 +408,11 @@ export function V4WorkspaceChatArea({
               workspaceScope: binding.workspaceScope,
               sessionId: binding.sessionId,
               ...(binding.readOnly ? { readOnly: true } : {}),
+              ...(binding.selectionSideChat ? { selectionSideChat: true } : {}),
             }
           : null;
       },
-    [activeGroup, paneBindings, primaryPaneSessionId, shellScope],
+    [activeGroup, paneBindings, primarySessionBinding],
   );
 
   const syncShellActiveSession = useCallback(
@@ -399,7 +422,13 @@ export function V4WorkspaceChatArea({
       }
       // A read-only subagent pane is an observation view inside the workbench, not a left-side
       // task-navigation target. Writing back shell activeTaskId would incorrectly move the sidebar highlight/optimistic task to the child.
-      onPaneActiveSessionChange?.(binding.workspaceScope, binding.sessionId);
+      if (binding.selectionSideChat) {
+        onPaneActiveSessionChange?.(binding.workspaceScope, binding.sessionId, {
+          selectionSideChat: true,
+        });
+      } else {
+        onPaneActiveSessionChange?.(binding.workspaceScope, binding.sessionId);
+      }
     },
     [onPaneActiveSessionChange],
   );
@@ -439,10 +468,7 @@ export function V4WorkspaceChatArea({
         // shell activeTaskId must return to a navigable session after closing rather than remaining on the closed session.
         syncShellActiveSession(nextActiveBinding);
       } else {
-        const nextActiveBinding =
-          focusedPaneId === paneId && primaryPaneSessionId
-            ? { workspaceScope: shellScope, sessionId: primaryPaneSessionId }
-            : null;
+        const nextActiveBinding = focusedPaneId === paneId ? primarySessionBinding : null;
         closePaneAction(paneId);
         syncShellActiveSession(nextActiveBinding);
       }
@@ -452,8 +478,7 @@ export function V4WorkspaceChatArea({
       closeGroupPaneAction,
       closePaneAction,
       focusedPaneId,
-      primaryPaneSessionId,
-      shellScope,
+      primarySessionBinding,
       syncShellActiveSession,
     ],
   );

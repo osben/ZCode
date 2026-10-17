@@ -1,10 +1,7 @@
 import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import type {
-  GitRepositorySummary,
-  ZCodeTaskChangeSummary,
-} from "@zcode/shared";
+import type { GitRepositorySummary, ZCodeTaskChangeSummary } from "@zcode/shared";
 import { V4ChatPane } from "@/v4/V4ChatPane.js";
 import { V4_PRIMARY_PANE_ID } from "@/v4/paneLayoutStore.js";
 import type { WorkbenchShellBinding } from "@/v4/WorkbenchPane.js";
@@ -36,9 +33,7 @@ vi.mock("@/v4/V4ConversationContext.js", async () => {
   };
 });
 
-function gitSummary(
-  overrides: Partial<GitRepositorySummary> = {},
-): GitRepositorySummary {
+function gitSummary(overrides: Partial<GitRepositorySummary> = {}): GitRepositorySummary {
   return {
     workspacePath: "/repo",
     repoRoot: "/repo",
@@ -57,6 +52,49 @@ function gitSummary(
 }
 
 describe("v4 workspace status panel wiring", () => {
+  it("limits sidebar subagent read-only intent to the pane bound to that session", () => {
+    sessionPaneCapture.props = [];
+    const shell = {
+      workspacePath: "/repo",
+      workspaceIdentity: "local:/repo",
+      sessionId: "sess-child",
+      readOnlySessionId: "sess-child",
+    } as unknown as WorkbenchShellBinding;
+    const common = {
+      rect: { left: "0%", top: "0%", width: "50%", height: "100%" },
+      focused: true,
+      showFocusIndicator: true,
+      canSplit: true,
+      shellWorkspaceKey: "local:/repo",
+      shell,
+      onFocusRequest: vi.fn(),
+      onSplit: vi.fn(),
+      onClosePane: vi.fn(),
+      onConfirmRestoredSession: vi.fn(),
+      onBindSession: vi.fn(),
+    };
+
+    renderToStaticMarkup(
+      createElement(WorkbenchLeafPane, {
+        ...common,
+        paneId: V4_PRIMARY_PANE_ID,
+        binding: null,
+      }),
+    );
+    renderToStaticMarkup(
+      createElement(WorkbenchLeafPane, {
+        ...common,
+        paneId: "pane-writable",
+        binding: {
+          workspaceScope: { workspacePath: "/repo", workspaceIdentity: "local:/repo" },
+          sessionId: "sess-writable",
+        },
+      }),
+    );
+
+    expect(sessionPaneCapture.props.map((props) => props.readOnly)).toEqual([true, false]);
+  });
+
   it("passes shell git status props from the primary workbench pane to SessionPane", () => {
     sessionPaneCapture.props = [];
     const git = gitSummary();

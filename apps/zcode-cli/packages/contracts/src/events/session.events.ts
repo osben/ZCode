@@ -1294,6 +1294,30 @@ export function createModelUsageSummaryFromEvents(
   return createModelUsageSummary(usages);
 }
 
+/**
+ * Latest ChatGPT plan (SIWC) usage reading carried by this turn's model_complete events.
+ * Keep provider id beside its snapshot so model switches and queued turns cannot attribute
+ * the reading using a later session selection.
+ */
+export function latestProviderRateLimitReadingFromEvents(
+  events: readonly SessionEvent[],
+): { providerId: string; usage: NonNullable<ModelUsage["providerRateLimits"]> } | undefined {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event?.type !== SessionEventType.ModelComplete) continue;
+    const usage = (event.payload as Partial<ModelCompletePayload>).usage as
+      | ModelUsage
+      | undefined;
+    if (usage?.providerRateLimits && usage.providerRateLimitProviderId) {
+      return {
+        providerId: usage.providerRateLimitProviderId,
+        usage: usage.providerRateLimits,
+      };
+    }
+  }
+  return undefined;
+}
+
 export type SessionEventPayload =
   | SessionCreatedPayload
   | SessionResumedPayload

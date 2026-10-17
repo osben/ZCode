@@ -14,6 +14,7 @@ import {
   type ProviderFamilyDomain,
   type ZCodeAccountAccess,
   type ZCodeProviderAccountAccess,
+  parseChatGptPlanAccountProviderId,
 } from "@zcode/shared";
 import type {
   CodingPlanAvailabilityProvider,
@@ -43,8 +44,11 @@ export type AccountProviderFamilyAvailabilityResolver = (
 ) => Promise<Partial<Record<string, CodingPlanAvailabilityResult>>>;
 
 export interface AccountProviderConnectionResolverOptions {
-  /** ChatGPT plan (SIWC) entitlement source; absent disables the chatgpt overlay. */
-  loadChatGptPlanEntitlement?: () => Promise<"entitled" | "identity-only" | "signed-out">;
+  /**
+   * ChatGPT plan (SIWC) entitlement source, keyed by accountKey (per signed-in account);
+   * an absent key or an absent source disables the chatgpt overlay (signed-out).
+   */
+  loadChatGptPlanEntitlement?: () => Promise<ReadonlyMap<string, "entitled" | "identity-only">>;
   readonly readSettings: () => Promise<AccountProviderConnectionSettings>;
   readonly loadCodingPlanApiKey: (
     providerId: string,
@@ -162,9 +166,13 @@ export function createAccountProviderConnectionResolver(
 
     const connections: AccountProviderConnectionResult[] = [];
     if (options.loadChatGptPlanEntitlement) {
-      const chatgptStatus = await options.loadChatGptPlanEntitlement().catch(() => "signed-out");
+      const chatgptStatuses = await options
+        .loadChatGptPlanEntitlement()
+        .catch(() => new Map<string, "entitled" | "identity-only">());
       for (const [providerId, config] of configuredProviders.entries()) {
         if (config.access?.type !== "chatgpt-account") continue;
+        const accountKey = parseChatGptPlanAccountProviderId(providerId);
+        const chatgptStatus = accountKey ? chatgptStatuses.get(accountKey) : undefined;
         connections.push(
           chatgptStatus === "entitled"
             ? { providerId, status: "available", current: true }

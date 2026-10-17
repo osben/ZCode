@@ -4,8 +4,14 @@ import enUS from "../src/i18n/locales/en-US.js";
 import ukUA from "../src/i18n/locales/uk-UA.js";
 import zhCN from "../src/i18n/locales/zh-CN.js";
 
-// Keys present in en but missing from zh: an exact allowlist; stale entries also fail the test.
-const EN_ONLY_KEYS = ["settings.memory.viewer.disabled"];
+// Keys present in en but missing from zh: the settings key is an existing locale exception;
+// English needs a singular form for these plural families while Chinese uses only `.other`.
+const EN_ONLY_KEYS = [
+  "settings.memory.viewer.disabled",
+  "taskList.childSideChatsCount.one",
+  "taskList.childSubagentsCount.one",
+  "taskList.childSubagentsRunningCount.one",
+];
 
 const PLURAL_CATEGORIES = ["zero", "one", "two", "few", "many", "other"];
 

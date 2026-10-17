@@ -11,6 +11,7 @@ import {
   createModelUsageSummaryFromEvents,
   createMessageId,
   createTurnId,
+  latestProviderRateLimitReadingFromEvents,
   runWithContextAsync,
   traceContextToLogContext,
   TurnMachineImpl,
@@ -670,6 +671,16 @@ export async function executeTurnCommand(
         turnMachine = loopState.turnMachine;
 
         const turnUsage = createModelUsageSummaryFromEvents(events);
+        // ChatGPT plan (SIWC) usage windows ride the completion usage so the host can record the
+        // latest per-account snapshot without extra network calls; absent for every other provider.
+        const providerRateLimitReading = latestProviderRateLimitReadingFromEvents(events);
+        const turnUsagePayload = providerRateLimitReading
+          ? {
+              ...(turnUsage ?? {}),
+              providerRateLimits: providerRateLimitReading.usage,
+              providerRateLimitProviderId: providerRateLimitReading.providerId,
+            }
+          : turnUsage;
         // Settle goal usage/active-run first, then persist the exact goal/verifier boundary. TurnComplete may expose the final
         // assistant fork in the projection/UI only after both have been persisted.
         await this.accountTargetTurnCompletion({
@@ -699,7 +710,7 @@ export async function executeTurnCommand(
           {
             response: loopState.modelResponse,
             tokenCount: loopState.tokenCount,
-            usage: turnUsage,
+            usage: turnUsagePayload,
             toolCallCount: loopState.toolCallCount,
             historyRoundCount: loopState.historyRoundCount,
             duration: Date.now() - turnMachine.state.startedAt.getTime(),

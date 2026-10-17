@@ -30,6 +30,49 @@ export function isBuiltinModelProviderId(id: string): id is BuiltinModelProvider
   );
 }
 
+/**
+ * Prefix of runtime-derived per-account ChatGPT plan provider ids
+ * (`account:chatgpt-plan:<accountKey>`). The base builtin id stays in the catalog
+ * only as the template rule; the registry publishes per-account entries.
+ */
+export const CHATGPT_PLAN_ACCOUNT_PROVIDER_ID_PREFIX =
+  `${BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan}:` as const;
+
+/** accountKey segment: 16 lowercase hex chars (sha256(sub) prefix — no PII in ids or logs). */
+export function isChatGptPlanAccountKey(accountKey: string): boolean {
+  return /^[a-f0-9]{16}$/.test(accountKey.trim());
+}
+
+/** Runtime provider id of one signed-in ChatGPT plan account. */
+export function buildChatGptPlanAccountProviderId(accountKey: string): string {
+  const normalized = accountKey.trim();
+  if (!isChatGptPlanAccountKey(normalized)) {
+    throw new Error(`Invalid ChatGPT plan account key: ${normalized}`);
+  }
+  return `${CHATGPT_PLAN_ACCOUNT_PROVIDER_ID_PREFIX}${normalized}`;
+}
+
+/** Parse a per-account ChatGPT plan provider id back to its account key; null for any other id. */
+export function parseChatGptPlanAccountProviderId(providerId: string): string | null {
+  const normalized = providerId.trim();
+  if (!normalized.startsWith(CHATGPT_PLAN_ACCOUNT_PROVIDER_ID_PREFIX)) return null;
+  const accountKey = normalized.slice(CHATGPT_PLAN_ACCOUNT_PROVIDER_ID_PREFIX.length);
+  return isChatGptPlanAccountKey(accountKey) ? accountKey : null;
+}
+
+/** Whether the id is a runtime per-account ChatGPT plan provider entry. */
+export function isChatGptPlanAccountProviderId(providerId: string): boolean {
+  return parseChatGptPlanAccountProviderId(providerId) !== null;
+}
+
+/** Whether the id belongs to the ChatGPT plan provider (base template id or a per-account entry). */
+export function isChatGptPlanProviderId(providerId: string): boolean {
+  return (
+    providerId === BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan ||
+    isChatGptPlanAccountProviderId(providerId)
+  );
+}
+
 export function isZaiCodingPlanProviderId(id: string): boolean {
   return (
     id === BUILTIN_MODEL_PROVIDER_IDS.zaiIndividualCodingPlan ||

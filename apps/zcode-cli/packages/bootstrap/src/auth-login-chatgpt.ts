@@ -3,6 +3,7 @@ import {
   SIWC_CALLBACK_PATH,
   buildSiwcAuthorizeUrl,
   clearSiwcTokenCredentials,
+  createSiwcAccountKey,
   createSiwcJwksVerifier,
   createSiwcPkcePair,
   createSiwcState,
@@ -10,10 +11,12 @@ import {
   createSiwcTokenClient,
   createSharedZCodeCredentialStore,
   isSiwcPlanUsageEntitled,
+  migrateLegacySiwcCredentials,
   openUrlInBrowser,
   parseSiwcScopes,
+  removeSiwcAccountRecord,
   resolveSiwcHostId,
-  SIWC_CREDENTIAL_KEYS,
+  upsertSiwcAccountRecord,
   createLocalhostOAuthCallbackServer,
   SiwcOAuthError,
   SiwcRevokeError,
@@ -22,6 +25,14 @@ import {
   type SiwcIdTokenPayload,
   type SiwcTokenClient,
 } from "@zcode/adapters";
+import {
+  buildChatGptPlanAccountProviderId,
+  buildSiwcAccountCredentialKeys,
+  buildSiwcAccountProviderAuthSourceKey,
+  buildSiwcAccountProviderIdentityKey,
+  buildSiwcAccountRefreshLockFileName,
+} from "@zcode/shared";
+import { withFileLock } from "@zcode/shared/node";
 import type { EnvRecord } from "@zcode/adapters/model";
 import { ZCodeCliLoginError } from "./auth-login-contract.js";
 import { throwIfAborted, waitWithAbort } from "./auth-login-abort.js";
@@ -34,12 +45,7 @@ import {
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { readLegacyCliPersonalProviderConfig } from "./app/legacy-cli-personal-provider-config-importer.js";
-import {
-  CHATGPT_PLAN_PROVIDER_ID,
-  resolveStandaloneChatGptPlanProvider,
-  standaloneAccountAuthSourceCredentialKey,
-  standaloneAccountIdentityCredentialKey,
-} from "./app/standalone-account-provider-runtime.js";
+import { resolveStandaloneChatGptPlanProvider } from "./app/standalone-account-provider-runtime.js";
 
 const DEFAULT_LOGIN_TIMEOUT_MS = 5 * 60_000;
 const REVOKE_RETRY_DELAYS_MS = [1_000, 3_000] as const;
@@ -68,6 +74,10 @@ export interface LoginChatGptPlanOptions {
 }
 
 export interface LoginChatGptPlanResult {
+  /** Slot key of the signed-in account (sha256(sub) prefix). */
+  readonly accountKey: string;
+  /** Per-account model provider id (`account:chatgpt-plan:<accountKey>`). */
+  readonly accountProviderId: string;
   readonly browser?: BrowserOpenResult;
   readonly configPath: string;
   readonly credentialsPath: string;
@@ -86,8 +96,10 @@ export interface LogoutChatGptPlanOptions {
 }
 
 export interface LogoutChatGptPlanResult {
+  /** Number of signed-in accounts the logout loop processed. */
+  readonly accountCount: number;
   readonly credentialsPath: string;
-  /** False when the revocation endpoint could not confirm; local tokens are cleared either way. */
+  /** False when any revocation endpoint could not confirm; local tokens are cleared either way. */
   readonly revoked: boolean;
   readonly signedOut: boolean;
 }
@@ -120,14 +132,10 @@ export async function loginChatGptPlan(
     const hostId = await resolveSiwcHostId({
       filePath: join(dirname(credentialStore.filePath), "siwc-host-id.txt"),
     });
-    const previous = await credentialStore.loadMany([
-      SIWC_CREDENTIAL_KEYS.clientId,
-      SIWC_CREDENTIAL_KEYS.idToken,
-      SIWC_CREDENTIAL_KEYS.userInfo,
-    ]);
-    const issuedClientId = previous[SIWC_CREDENTIAL_KEYS.clientId]?.trim() || undefined;
-    const idTokenHint = previous[SIWC_CREDENTIAL_KEYS.idToken]?.trim() || undefined;
-    const loginHint = readLoginHint(previous[SIWC_CREDENTIAL_KEYS.userInfo]);
+    // Add-account semantics: migrate any legacy flat credentials, then authorize WITHOUT
+    // id_token_hint/login_hint so OpenAI offers the account chooser. Whichever account the
+    // browser returns is added (new sub) or re-authorized (known sub, slot fully rewritten).
+    await migrateLegacySiwcCredentials(credentialStore);
 
     const pkce = createSiwcPkcePair();
     const state = createSiwcState();
@@ -143,7 +151,6 @@ export async function loginChatGptPlan(
         nonce,
         codeChallenge: pkce.codeChallenge,
         extAgentHostId: hostId.hostId,
-        ...(issuedClientId ? { issuedClientId, idTokenHint, loginHint } : {}),
       });
       await options.onAuthorizeUrl?.({ authorizeUrl });
       throwIfAborted(signal);
@@ -153,8 +160,15 @@ export async function loginChatGptPlan(
       if (browser) await options.onBrowserOpen?.(browser);
 
       const callback = await waitWithAbort(callbackServer.waitForCallback(), signal);
-      const callbackClientId = callback.clientId?.trim() || undefined;
-      const clientId = resolveEffectiveClientId(issuedClientId, callbackClientId);
+      // Add-account mode registers fresh, so the issued client id always comes from the
+      // callback redirect.
+      const clientId = callback.clientId?.trim();
+      if (!clientId) {
+        throw new ZCodeCliLoginError(
+          "auth_failed",
+          "ChatGPT plan sign-in did not issue a client id. Please retry login.",
+        );
+      }
       throwIfAborted(signal);
 
       const exchanged = await tokenClient.exchangeCode({
@@ -173,25 +187,51 @@ export async function loginChatGptPlan(
         ...(idToken.name ? { name: idToken.name } : {}),
         ...(idToken.picture ? { picture: idToken.picture } : {}),
       };
+      const accountKey = createSiwcAccountKey(idToken.sub);
+      const accountProviderId = buildChatGptPlanAccountProviderId(accountKey);
+      const keys = buildSiwcAccountCredentialKeys(accountKey);
       try {
-        await credentialStore.saveMany({
-          [SIWC_CREDENTIAL_KEYS.clientId]: clientId,
-          [SIWC_CREDENTIAL_KEYS.accessToken]: exchanged.accessToken,
-          ...(exchanged.refreshToken
-            ? { [SIWC_CREDENTIAL_KEYS.refreshToken]: exchanged.refreshToken }
-            : {}),
-          ...(exchanged.idToken ? { [SIWC_CREDENTIAL_KEYS.idToken]: exchanged.idToken } : {}),
-          [SIWC_CREDENTIAL_KEYS.userInfo]: JSON.stringify(user),
-          ...(exchanged.scope ? { [SIWC_CREDENTIAL_KEYS.scopes]: exchanged.scope } : {}),
-          [SIWC_CREDENTIAL_KEYS.accessExpiresAt]: String(
-            Math.floor(now() / 1000) + (exchanged.expiresInSeconds ?? 3600),
-          ),
-          ...(exchanged.earliestRefreshAt !== undefined
-            ? { [SIWC_CREDENTIAL_KEYS.earliestRefreshAt]: String(exchanged.earliestRefreshAt) }
-            : {}),
-          [standaloneAccountIdentityCredentialKey(CHATGPT_PLAN_PROVIDER_ID)]: idToken.sub,
-          [standaloneAccountAuthSourceCredentialKey(CHATGPT_PLAN_PROVIDER_ID)]: "oauth",
-        });
+        // Slot replacement mirrors the host: under the per-account refresh lock (an in-flight
+        // refresh of the previous registration must not interleave), and the previous
+        // registration's optional token fields are DELETED when this exchange omits them —
+        // a same-subject re-login can issue a new client id without a refresh token, and a
+        // stale refresh token beside the new client id would send a mismatched pair.
+        // The index upsert commits inside the same critical section so slot and index become
+        // visible together: the migration takes the same lock order (refresh → accounts), and
+        // an index record committed after the refresh lock was released could lose the race to it.
+        await withFileLock(
+          join(dirname(credentialStore.filePath), buildSiwcAccountRefreshLockFileName(accountKey)),
+          async () => {
+            const entries: Record<string, string> = {
+              [keys.clientId]: clientId,
+              [keys.accessToken]: exchanged.accessToken,
+              ...(exchanged.refreshToken ? { [keys.refreshToken]: exchanged.refreshToken } : {}),
+              ...(exchanged.idToken ? { [keys.idToken]: exchanged.idToken } : {}),
+              [keys.userInfo]: JSON.stringify(user),
+              ...(exchanged.scope ? { [keys.scopes]: exchanged.scope } : {}),
+              [keys.accessExpiresAt]: String(
+                Math.floor(now() / 1000) + (exchanged.expiresInSeconds ?? 3600),
+              ),
+              ...(exchanged.earliestRefreshAt !== undefined
+                ? { [keys.earliestRefreshAt]: String(exchanged.earliestRefreshAt) }
+                : {}),
+              [buildSiwcAccountProviderIdentityKey(accountKey)]: idToken.sub,
+              [buildSiwcAccountProviderAuthSourceKey(accountKey)]: "oauth",
+            };
+            await credentialStore.saveMany(entries);
+            // Unwritten optional token fields are stale from the previous registration.
+            for (const key of [keys.refreshToken, keys.idToken, keys.scopes, keys.earliestRefreshAt]) {
+              if (entries[key] === undefined) await credentialStore.delete(key);
+            }
+            await upsertSiwcAccountRecord(credentialStore, {
+              accountKey,
+              sub: idToken.sub,
+              email: user.email ?? null,
+              name: user.name ?? null,
+              addedAt: new Date(now()).toISOString(),
+            });
+          },
+        );
       } catch (error) {
         throw new ZCodeCliLoginError(
           "credential_write_failed",
@@ -203,7 +243,7 @@ export async function loginChatGptPlan(
       let configPatch: { mainModel: string; path: string };
       try {
         configPatch = await persistStandaloneChatGptPlanConnection({
-          accountIdentity: idToken.sub,
+          accountProviderId,
           credentialStore,
           env,
           personalProviderConfigPath: options.personalProviderConfigPath,
@@ -217,9 +257,12 @@ export async function loginChatGptPlan(
       }
       return {
         ...(browser ? { browser } : {}),
+        accountKey,
+        accountProviderId,
         configPath: configPatch.path,
         credentialsPath: credentialStore.filePath,
         model: configPatch.mainModel,
+        /** False when consent lacked chatgpt.tokens.use.direct: identity-only sign-in, no inference. */
         planUsageEntitled: isSiwcPlanUsageEntitled(scopes),
         providerId: CHATGPT_PROVIDER_ID,
         user,
@@ -241,7 +284,13 @@ export async function loginChatGptPlan(
   }
 }
 
-/** Revoke the refresh token (best effort with backoff), then clear local SIWC tokens. */
+/**
+ * Revoke every signed-in ChatGPT plan account (best effort with backoff), then clear each
+ * account's local tokens. CLI logout is all-accounts by design: predictable and matching the
+ * "logged out from the ChatGPT plan" command semantics. Each account's read → revoke →
+ * clear → remove transaction holds that account's per-account refresh lock, so a concurrent
+ * refresh or login cannot write a rotated token after the clear.
+ */
 export async function logoutChatGptPlan(
   options: LogoutChatGptPlanOptions = {},
 ): Promise<LogoutChatGptPlanResult> {
@@ -250,50 +299,78 @@ export async function logoutChatGptPlan(
   const tokenClient =
     options.tokenClient ??
     createSiwcTokenClient(options.fetchFn ? { fetchFn: options.fetchFn } : {});
-  const current = await credentialStore.loadMany([
-    SIWC_CREDENTIAL_KEYS.clientId,
-    SIWC_CREDENTIAL_KEYS.refreshToken,
-  ]);
-  const clientId = current[SIWC_CREDENTIAL_KEYS.clientId]?.trim();
-  const refreshToken = current[SIWC_CREDENTIAL_KEYS.refreshToken]?.trim();
-  if (!clientId || !refreshToken) {
-    return { credentialsPath: credentialStore.filePath, revoked: false, signedOut: false };
+  const accounts = await migrateLegacySiwcCredentials(credentialStore);
+  if (accounts.length === 0) {
+    return { accountCount: 0, credentialsPath: credentialStore.filePath, revoked: false, signedOut: false };
   }
-  let revoked = false;
+  let allRevoked = true;
   let lastError: unknown;
-  for (let attempt = 0; attempt <= REVOKE_RETRY_DELAYS_MS.length; attempt += 1) {
-    if (attempt > 0) await delay(REVOKE_RETRY_DELAYS_MS[attempt - 1]!);
-    try {
-      await tokenClient.revoke({ clientId, refreshToken });
-      revoked = true;
-      lastError = undefined;
-      break;
-    } catch (error) {
-      lastError = error;
-      // Already-invalid tokens answer empty 200; 4xx means the token is gone for good.
-      if (error instanceof SiwcRevokeError && (error.httpStatus ?? 0) < 500) break;
-    }
+  for (const account of accounts) {
+    // Hold the account's per-account refresh lock across read → revoke → clear → remove: a
+    // concurrent refresh or login must not write a rotated token after the clear (live
+    // credentials after sign-out) or race the index removal. Index removal takes the accounts
+    // lock nested, keeping the shared refresh → accounts order.
+    await withFileLock(
+      join(
+        dirname(credentialStore.filePath),
+        buildSiwcAccountRefreshLockFileName(account.accountKey),
+      ),
+      async () => {
+        const keys = buildSiwcAccountCredentialKeys(account.accountKey);
+        const current = await credentialStore.loadMany([keys.clientId, keys.refreshToken]);
+        const clientId = current[keys.clientId]?.trim();
+        const refreshToken = current[keys.refreshToken]?.trim();
+        if (clientId && refreshToken) {
+          let revoked = false;
+          for (let attempt = 0; attempt <= REVOKE_RETRY_DELAYS_MS.length; attempt += 1) {
+            if (attempt > 0) await delay(REVOKE_RETRY_DELAYS_MS[attempt - 1]!);
+            try {
+              await tokenClient.revoke({ clientId, refreshToken });
+              revoked = true;
+              lastError = undefined;
+              break;
+            } catch (error) {
+              lastError = error;
+              // Already-invalid tokens answer empty 200; 4xx means the token is gone for good.
+              if (error instanceof SiwcRevokeError && (error.httpStatus ?? 0) < 500) break;
+            }
+          }
+          if (!revoked) allRevoked = false;
+        } else {
+          // No revocation was attempted for an incomplete slot; the aggregate must not report
+          // a successful revocation.
+          allRevoked = false;
+        }
+        // Local tokens and the index record are cleared even when revocation could not be
+        // confirmed; only the issued client id stays in the slot.
+        await clearSiwcTokenCredentials(credentialStore, account.accountKey);
+        await removeSiwcAccountRecord(credentialStore, account.accountKey);
+      },
+    );
   }
-  // Local tokens are cleared even when revocation could not be confirmed; the client id and
-  // account mapping are retained so a future sign-in reuses the registered client.
-  await clearSiwcTokenCredentials(credentialStore);
-  if (!revoked && lastError !== undefined && env.ZCODE_DEBUG?.trim()) {
+  if (!allRevoked && lastError !== undefined && env.ZCODE_DEBUG?.trim()) {
     console.warn(
       `ChatGPT plan token revocation could not be confirmed; local tokens were cleared. (${
         lastError instanceof Error ? lastError.message : String(lastError)
       })`,
     );
   }
-  return { credentialsPath: credentialStore.filePath, revoked, signedOut: true };
+  return {
+    accountCount: accounts.length,
+    credentialsPath: credentialStore.filePath,
+    revoked: allRevoked,
+    signedOut: true,
+  };
 }
 
 async function persistStandaloneChatGptPlanConnection(input: {
-  readonly accountIdentity: string;
+  readonly accountProviderId: string;
   readonly credentialStore: SharedZCodeCredentialStore;
   readonly env: EnvRecord;
   readonly personalProviderConfigPath?: string;
 }): Promise<{ mainModel: string; path: string }> {
   const configured = await resolveStandaloneChatGptPlanProvider(input.env);
+  const providerId = input.accountProviderId;
   const path =
     input.personalProviderConfigPath ??
     input.env[ZCODE_PERSONAL_PROVIDER_CONFIG_FILE_ENV]?.trim() ??
@@ -306,48 +383,14 @@ async function persistStandaloneChatGptPlanConnection(input: {
   const repository = new NodeModelSelectionConfigRepository({ personalRepository });
   try {
     await repository.saveConfiguredDefault({
-      providerId: configured.providerId,
+      providerId,
       modelId: configured.modelId,
     });
   } finally {
     repository.dispose();
     personalRepository.dispose();
   }
-  return { mainModel: `${configured.providerId}/${configured.modelId}`, path };
-}
-
-function readLoginHint(userInfoRaw: string | null): string | undefined {
-  if (!userInfoRaw) return undefined;
-  try {
-    const parsed = JSON.parse(userInfoRaw) as { email?: unknown };
-    return typeof parsed.email === "string" && parsed.email.trim()
-      ? parsed.email.trim()
-      : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function resolveEffectiveClientId(
-  issuedClientId: string | undefined,
-  callbackClientId: string | undefined,
-): string {
-  if (issuedClientId && callbackClientId && issuedClientId !== callbackClientId) {
-    // A different client id on a re-auth callback means the registration was replaced; keeping
-    // the stale one would break exchange and refresh.
-    throw new ZCodeCliLoginError(
-      "auth_failed",
-      "ChatGPT plan returned an unexpected client id. Please retry login.",
-    );
-  }
-  const clientId = callbackClientId ?? issuedClientId;
-  if (!clientId) {
-    throw new ZCodeCliLoginError(
-      "auth_failed",
-      "ChatGPT plan sign-in did not issue a client id. Please retry login.",
-    );
-  }
-  return clientId;
+  return { mainModel: `${providerId}/${configured.modelId}`, path };
 }
 
 async function verifyIdToken(

@@ -16,6 +16,8 @@ import { encodeJson } from "../json.js";
 
 const USAGE_RETENTION_DAYS = 30;
 const USAGE_RETENTION_MS = USAGE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+const USAGE_PRUNE_INTERVAL_MS = 60 * 60 * 1000;
+const lastAutomaticUsagePruneAt = new WeakMap<DatabaseSync, number>();
 
 export async function recordModelUsage(db: DatabaseSync, input: ModelUsageRecord): Promise<void> {
   const computedTotalTokens =
@@ -160,7 +162,7 @@ export async function recordModelUsage(db: DatabaseSync, input: ModelUsageRecord
     encodeJson(input.rawUsage),
     encodeJson(input.providerMetadata),
   );
-  await pruneUsage(db);
+  await pruneUsageIfDue(db);
 }
 
 export async function upsertTurnUsage(db: DatabaseSync, input: TurnUsageRecord): Promise<void> {
@@ -253,7 +255,7 @@ export async function upsertTurnUsage(db: DatabaseSync, input: TurnUsageRecord):
     input.errorType ?? null,
     input.errorCode ?? null,
   );
-  await pruneUsage(db);
+  await pruneUsageIfDue(db);
 }
 
 export async function upsertToolUsage(db: DatabaseSync, input: ToolUsageRecord): Promise<void> {
@@ -329,7 +331,27 @@ export async function upsertToolUsage(db: DatabaseSync, input: ToolUsageRecord):
         error_message = coalesce(excluded.error_message, tool_usage.error_message)
       `,
   ).run(...toolUsageValues(input));
-  await pruneUsage(db);
+  await pruneUsageIfDue(db);
+}
+
+async function pruneUsageIfDue(db: DatabaseSync): Promise<void> {
+  const now = Date.now();
+  const lastPrunedAt = lastAutomaticUsagePruneAt.get(db);
+  if (
+    lastPrunedAt !== undefined &&
+    now >= lastPrunedAt &&
+    now - lastPrunedAt < USAGE_PRUNE_INTERVAL_MS
+  ) {
+    return;
+  }
+
+  lastAutomaticUsagePruneAt.set(db, now);
+  try {
+    await pruneUsage(db);
+  } catch (error) {
+    lastAutomaticUsagePruneAt.delete(db);
+    throw error;
+  }
 }
 
 export async function pruneUsage(

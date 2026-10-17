@@ -47,6 +47,9 @@ export const SortableWorkspaceSidebarItem = memo(function SortableWorkspaceSideb
     targetWorkspacePath: string,
     taskId: string,
     targetWorkspaceIdentity?: string,
+    targetRemoteSessionId?: string,
+    expectedUnreadAt?: number,
+    options?: { readOnly?: boolean },
   ) => void;
   onStartDraftInWorkspace: (targetWorkspacePath: string, targetWorkspaceIdentity?: string) => void;
   taskItems: ZCodeTaskMeta[];

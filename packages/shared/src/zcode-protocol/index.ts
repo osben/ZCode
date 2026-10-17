@@ -451,6 +451,7 @@ export const zcodeProtocolNotifications = {
   pluginOperationProgress: "plugins/operationProgress",
   processResourceSample: "process/resourceSample",
   processNetworkRequests: "process/networkRequests",
+  chatGptPlanUsageUpdated: "chatgpt-plan/usage-updated",
 } as const;
 
 /** Startup control plane is independent of the task stream; database identity must not carry paths or credentials. */
@@ -2471,6 +2472,34 @@ export const zcodeWorkspaceGenerateTextParamsSchema = z
   .refine((value) => value.prompt !== undefined || value.messages !== undefined, {
     message: "prompt 或 messages 至少需要提供一个",
   });
+const zcodeProviderRateLimitWindowSchema = z
+  .object({
+    usedPercent: z.number().min(0).max(100),
+    windowMinutes: z.number().int().positive().optional(),
+    resetsAt: z.string().optional(),
+  })
+  .strict();
+/**
+ * ChatGPT plan (SIWC) usage windows passively captured from model response headers
+ * (`x-codex-primary-*` / `x-codex-secondary-*`). Additive optional member of usage payloads;
+ * `resetsAt` is the RFC3339 string verbatim. Exported so host-side consumers validate the
+ * same shape the protocol carries.
+ */
+export const zcodeProviderRateLimitsSchema = z
+  .object({
+    primary: zcodeProviderRateLimitWindowSchema,
+    secondary: zcodeProviderRateLimitWindowSchema.optional(),
+  })
+  .strict();
+export type ZCodeProviderRateLimits = z.infer<typeof zcodeProviderRateLimitsSchema>;
+export const zcodeChatGptPlanUsageUpdatedParamsSchema = z
+  .object({
+    eventId: z.string().min(1).max(256),
+    sessionId: z.string().min(1).max(256),
+    providerId: z.string().min(1).max(256),
+    usage: zcodeProviderRateLimitsSchema,
+  })
+  .strict();
 export const zcodeWorkspaceGenerateTextResultSchema = z
   .object({
     text: z.string(),
@@ -2493,6 +2522,8 @@ export const zcodeWorkspaceGenerateTextResultSchema = z
           })
           .strict()
           .optional(),
+        providerRateLimits: zcodeProviderRateLimitsSchema.optional(),
+        providerRateLimitProviderId: z.string().min(1).max(256).optional(),
       })
       .strict()
       .optional(),
