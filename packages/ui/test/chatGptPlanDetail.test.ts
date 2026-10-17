@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
     startChatGptPlanLogin: vi.fn(),
     pollChatGptPlanLogin: vi.fn(),
     logoutChatGptPlan: vi.fn(),
+    startChatGptUsageLink: vi.fn(),
+    pollChatGptUsageLink: vi.fn(),
   },
   platform: { openExternal: vi.fn() },
 }));
@@ -35,6 +37,7 @@ beforeEach(() => {
   mocks.oauthService.startChatGptPlanLogin.mockResolvedValue({ authorizeUrl: "https://auth.test" });
   mocks.oauthService.pollChatGptPlanLogin.mockReset();
   mocks.oauthService.logoutChatGptPlan.mockResolvedValue(undefined);
+  mocks.oauthService.pollChatGptUsageLink.mockReset();
   mocks.platform.openExternal.mockResolvedValue(undefined);
 });
 
@@ -242,5 +245,67 @@ describe("ChatGptPlanDetail", () => {
     expect(
       screen.getByRole("dialog", { name: "settings.modelProvider.chatgpt.firstRun.title" }),
     ).toBeTruthy();
+  });
+
+  it("links usage for an entitled account without a linked grant and refreshes status", async () => {
+    mocks.oauthService.getChatGptPlanStatus
+      .mockResolvedValueOnce({
+        accounts: [
+          {
+            accountKey: "a1b2c3d4e5f60718",
+            signedIn: true,
+            planUsageEntitled: true,
+            user: { displayName: "Work", email: "work@example.com", subject: "sub-work" },
+          },
+        ],
+      })
+      .mockResolvedValue({
+        accounts: [
+          {
+            accountKey: "a1b2c3d4e5f60718",
+            signedIn: true,
+            planUsageEntitled: true,
+            user: { displayName: "Work", email: "work@example.com", subject: "sub-work" },
+            usageLinked: true,
+            usage: {
+              primary: { usedPercent: 17, windowMinutes: 300, resetsAt: "2026-10-17T10:00:00Z" },
+            },
+          },
+        ],
+      });
+    mocks.oauthService.startChatGptUsageLink.mockResolvedValue({
+      authorizeUrl: "https://auth.test/oauth/authorize",
+      displayAuthorizeUrl: "https://auth.test/oauth/authorize",
+      state: "s",
+    });
+    let resolvePoll!: (value: { accountKey: string }) => void;
+    mocks.oauthService.pollChatGptUsageLink.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePoll = resolve;
+        }),
+    );
+    render(createElement(ChatGptPlanDetail));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("chatgpt-plan-link-usage")).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("chatgpt-plan-link-usage"));
+      await Promise.resolve();
+    });
+    expect(mocks.oauthService.startChatGptUsageLink).toHaveBeenCalledWith("a1b2c3d4e5f60718");
+    expect(mocks.platform.openExternal).toHaveBeenCalledWith("https://auth.test/oauth/authorize");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_500);
+    });
+    await act(async () => {
+      resolvePoll({ accountKey: "a1b2c3d4e5f60718" });
+      await Promise.resolve();
+    });
+    expect(screen.queryByTestId("chatgpt-plan-link-usage")).toBeNull();
+    expect(screen.getByTestId("chatgpt-plan-usage")).toBeTruthy();
   });
 });

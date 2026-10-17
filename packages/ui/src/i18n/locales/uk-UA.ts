@@ -3695,6 +3695,7 @@ const ukUA: Record<string, string> = {
   "settings.modelProvider.chatgpt.signOut": "Вийти",
   "settings.modelProvider.chatgpt.addAccount": "Додати ще один акаунт",
   "settings.modelProvider.chatgpt.reconnect": "Повторно підключити",
+  "settings.modelProvider.chatgpt.linkUsage": "Підключити ліміти",
   "settings.modelProvider.chatgpt.manageUsage": "Керувати використанням",
   "settings.modelProvider.chatgpt.firstRun.title": "Ви використовуєте свій план ChatGPT",
   "settings.modelProvider.chatgpt.firstRun.body":

@@ -4007,6 +4007,7 @@ const enUS: Record<string, string> = {
   "settings.modelProvider.chatgpt.signOut": "Sign out",
   "settings.modelProvider.chatgpt.addAccount": "Add another account",
   "settings.modelProvider.chatgpt.reconnect": "Re-connect",
+  "settings.modelProvider.chatgpt.linkUsage": "Link usage",
   "settings.modelProvider.chatgpt.manageUsage": "Manage usage",
   "settings.modelProvider.chatgpt.firstRun.title": "You're using your ChatGPT plan",
   "settings.modelProvider.chatgpt.firstRun.body":

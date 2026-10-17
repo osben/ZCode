@@ -366,7 +366,7 @@ export function createSiwcJwksVerifier(
   return {
     async verify(
       idToken: string,
-      input: { audience: string; nonce: string },
+      input: { audience: string; nonce?: string },
     ): Promise<SiwcIdTokenClaims> {
       const segments = idToken.split(".");
       if (segments.length !== 3 || segments.some((segment) => !segment)) {
@@ -395,7 +395,10 @@ export function createSiwcJwksVerifier(
       if (typeof payload.exp !== "number" || payload.exp <= (options.now ?? Date.now)() / 1000) {
         throw new Error("SIWC id token has expired");
       }
-      if (payload.nonce !== input.nonce) throw new Error("SIWC id token nonce mismatch");
+      // The codex-flavor id token carries no nonce (the authorize request does not send one),
+      // so the check applies only when the caller expects one (SIWC logins always do).
+      if (input.nonce !== undefined && payload.nonce !== input.nonce)
+        throw new Error("SIWC id token nonce mismatch");
       if (typeof payload.sub !== "string" || !payload.sub.trim()) {
         throw new Error("SIWC id token has no subject");
       }
