@@ -164,13 +164,18 @@ function detectAgent(
   };
 }
 
-const DEFAULT_WINDOWS_PATH_EXTENSIONS = [".COM", ".EXE", ".BAT", ".CMD"];
-
+const DEFAULT_WINDOWS_PATH_EXTENSIONS = [".com", ".exe"];
 /**
- * Windows resolves executables through PATHEXT, so `opencode`/`cursor-agent`
- * must also be probed as `opencode.exe`, `opencode.cmd`, … . Exported for
- * tests; other platforms probe the bare binary name only.
+ * Node launches detected agents with `shell: false`, and Windows
+ * command-script shims (`.bat`/`.cmd`, the only form an npm global install
+ * provides) cannot be executed that way — `spawn` rejects them with EINVAL
+ * (CVE-2024-27980 hardening). Only extensions CreateProcess can run directly
+ * are probed, so a script-only install is reported as not installed instead
+ * of being detected with an unusable `commandPath`. Exported for tests;
+ * other platforms probe the bare binary name only.
  */
+const WINDOWS_EXECUTABLE_EXTENSIONS = new Set([".com", ".exe"]);
+
 export function buildBinaryCandidateNames(
   binary: string,
   pathext: string | undefined,
@@ -179,10 +184,12 @@ export function buildBinaryCandidateNames(
   if (platform !== "win32") return [binary];
   const extensions = (pathext ?? "")
     .split(";")
-    .map((value) => value.trim())
+    .map((value) => value.trim().toLowerCase())
     .filter((value) => value.length > 0);
   const effective = extensions.length > 0 ? extensions : DEFAULT_WINDOWS_PATH_EXTENSIONS;
-  return [binary, ...effective.map((extension) => `${binary}${extension.toLowerCase()}`)];
+  return effective
+    .filter((extension) => WINDOWS_EXECUTABLE_EXTENSIONS.has(extension))
+    .map((extension) => `${binary}${extension}`);
 }
 
 function resolveCommandOnPath(

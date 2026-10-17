@@ -160,20 +160,16 @@ describe("detectAcpAgents", () => {
     expect(b?.version).toBe("opencode from-b");
   });
 
-  it("builds Windows PATHEXT candidates for binary resolution", () => {
+  it("builds Windows candidates from executable PATHEXT extensions only", () => {
     expect(buildBinaryCandidateNames("opencode", undefined, "darwin")).toEqual(["opencode"]);
-    expect(buildBinaryCandidateNames("opencode", ".EXE;.CMD", "win32")).toEqual([
-      "opencode",
-      "opencode.exe",
-      "opencode.cmd",
-    ]);
+    // Script shims (.bat/.cmd) and the bare extension-less name cannot be
+    // launched with `shell: false`, so only real executables are probed.
+    expect(buildBinaryCandidateNames("opencode", ".EXE;.CMD", "win32")).toEqual(["opencode.exe"]);
     expect(buildBinaryCandidateNames("cursor-agent", "", "win32")).toEqual([
-      "cursor-agent",
       "cursor-agent.com",
       "cursor-agent.exe",
-      "cursor-agent.bat",
-      "cursor-agent.cmd",
     ]);
+    expect(buildBinaryCandidateNames("opencode", ".BAT;.CMD", "win32")).toEqual([]);
   });
 
   it("uses the injected probe runner with the whitelisted arguments", () => {
