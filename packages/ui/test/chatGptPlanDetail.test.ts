@@ -354,4 +354,63 @@ describe("ChatGptPlanDetail", () => {
     expect(mocks.oauthService.startChatGptPlanLogin).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId("chatgpt-plan-link-usage").querySelector("svg")).toBeNull();
   });
+
+  it("a superseded grant flow cannot cancel the newer flow's poll", async () => {
+    mocks.oauthService.getChatGptPlanStatus.mockResolvedValue({
+      accounts: [
+        {
+          accountKey: "a1b2c3d4e5f60718",
+          signedIn: true,
+          planUsageEntitled: true,
+          user: { displayName: "Work", email: "work@example.com", subject: "sub-work" },
+        },
+      ],
+    });
+    mocks.oauthService.startChatGptUsageLink.mockResolvedValue({
+      authorizeUrl: "https://auth.test/codex",
+      displayAuthorizeUrl: "https://auth.test/codex",
+      state: "u",
+    });
+    // Flow A (usage link) stalls inside openExternal; the login flow must supersede it entirely.
+    let releaseUsageOpen!: () => void;
+    mocks.platform.openExternal.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseUsageOpen = resolve;
+        }),
+    );
+    render(createElement(ChatGptPlanDetail));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("chatgpt-plan-link-usage"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(mocks.platform.openExternal).toHaveBeenCalledWith("https://auth.test/codex");
+
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "settings.modelProvider.chatgpt.addAccount" }),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(mocks.platform.openExternal).toHaveBeenCalledWith("https://auth.test");
+
+    // Flow A's browser window finally opens after the login flow took over: it must stop at the
+    // generation check instead of cancelling the login poll timer and scheduling its own.
+    await act(async () => {
+      releaseUsageOpen();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_500);
+    });
+    expect(mocks.oauthService.pollChatGptPlanLogin).toHaveBeenCalled();
+    expect(mocks.oauthService.pollChatGptUsageLink).not.toHaveBeenCalled();
+  });
 });

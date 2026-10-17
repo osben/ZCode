@@ -4861,6 +4861,8 @@ const zhCN: Record<string, string> = {
   "chat.empty.worktree.newWorktree": "新建 worktree",
   "chat.empty.worktree.creating": "正在创建 worktree…",
   "worktreeSetup.reconcile.staleCreating": "设置未完成（连接已变化）",
+  "worktreeSetup.reconcile.markerSyncUnavailable":
+    "设置完成于不同的 worktree 路径，且无法更新会话记录",
   "git.branchSwitcher.appliesOnSend": "将在发送第一条消息时生效",
   "git.branchSwitcher.worktreeIntentHint": "该任务的分支由 worktree 设置决定",
   "branchSwitchGuard.title": "切换分支？",

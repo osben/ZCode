@@ -41,6 +41,10 @@ export function ChatGptPlanDetail() {
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // A new flow supersedes the old poll timer; this ref releases the old flow's pending UI too.
   const activeFlowPendingRef = useRef<((active: boolean) => void) | null>(null);
+  // Every started flow takes a generation; a superseded flow must never touch the shared poll
+  // timer or pending state again (e.g. its openExternal resolving late would otherwise cancel
+  // the newer flow's poll and strand the newer flow's spinner forever).
+  const flowGenerationRef = useRef(0);
   const disposedRef = useRef(false);
 
   const refreshStatus = useCallback(async () => {
@@ -79,20 +83,22 @@ export function ChatGptPlanDetail() {
       onSettled?: (completion: T) => void | Promise<void>;
     }) => {
       setError(null);
+      const generation = ++flowGenerationRef.current;
       activeFlowPendingRef.current?.(false);
       activeFlowPendingRef.current = flow.setPending;
       flow.setPending(true);
       try {
         const start = await flow.start();
+        if (disposedRef.current || flowGenerationRef.current !== generation) return;
         await platform.openExternal(start.authorizeUrl);
-        if (disposedRef.current) return;
+        if (disposedRef.current || flowGenerationRef.current !== generation) return;
         const deadline = Date.now() + LOGIN_TIMEOUT_MS;
         stopPolling();
         const poll = async () => {
-          if (disposedRef.current) return;
+          if (disposedRef.current || flowGenerationRef.current !== generation) return;
           try {
             const completion = await flow.poll();
-            if (disposedRef.current) return;
+            if (disposedRef.current || flowGenerationRef.current !== generation) return;
             if (!completion) {
               if (Date.now() >= deadline) {
                 pollTimerRef.current = null;

@@ -76,34 +76,28 @@ export function startComposerWorktreePipeline({
   )?.attemptId;
 
   const attempt = (async (): Promise<"ready" | "failed"> => {
-    // Host activation strictly requires executionWorktree.path === prepared.targetPath. Git may have
-    // settled the branch worktree at a different directory (existing WT-04 reuse or a recovered
-    // worktree), so align the Host marker before the entry turns ready; a rejected sync fails this
-    // attempt instead of exposing an unactivatable ready state.
-    const settleReady = async (worktreePath: string, existing: boolean): Promise<void> => {
-      if (worktreePath !== params.targetPath) {
-        if (sessionId && syncPreparedWorktree) {
-          await syncPreparedWorktree({
-            workspaceKey,
-            sessionId,
-            branchName: params.branchName,
-            targetPath: worktreePath,
-            ...(params.baseBranch ? { baseBranch: params.baseBranch } : {}),
-          });
-        } else {
-          // No prepared session to realign: activation will reject this path. Log it so a future
-          // caller that forgets to thread the capability is diagnosable instead of silently ready.
-          logger.warn("[WorktreePipeline] worktree path differs from the prepared target", {
-            workspaceKey,
-            branchName: params.branchName,
-            targetPath: params.targetPath,
-            worktreePath,
-          });
-        }
-      }
+    // Host activation strictly requires executionWorktree.path === prepared.targetPath, so align
+    // the Host marker with the path Git settled on before the entry turns ready.
+    const settleReady = async (
+      worktreePath: string,
+      existing: boolean,
+    ): Promise<"ready" | "failed"> => {
+      const aligned = await realignWorktreePreparationOrFail({
+        workspaceKey,
+        sessionId,
+        attemptId,
+        branchName: params.branchName,
+        targetPath: params.targetPath,
+        ...(params.baseBranch ? { baseBranch: params.baseBranch } : {}),
+        worktreePath,
+        formatMessage,
+        ...(syncPreparedWorktree ? { syncPreparedWorktree } : {}),
+      });
+      if (!aligned) return "failed";
       useComposerWorktreePipelineStore
         .getState()
         .markReady(workspaceKey, worktreePath, existing, sessionId, attemptId);
+      return "ready";
     };
     try {
       const outcome = await executeWorktreeCreation({
@@ -120,8 +114,7 @@ export function startComposerWorktreePipeline({
           branchName: params.branchName,
           targetPath: outcome.worktreePath,
         });
-        await settleReady(outcome.worktreePath, false);
-        return "ready";
+        return await settleReady(outcome.worktreePath, false);
       }
       if (outcome.kind === "existing-worktree") {
         // WT-04 unified: consume the existing directory in place (no draft transfer, no second one).
@@ -130,8 +123,7 @@ export function startComposerWorktreePipeline({
           branchName: params.branchName,
           targetPath: outcome.worktreePath,
         });
-        await settleReady(outcome.worktreePath, true);
-        return "ready";
+        return await settleReady(outcome.worktreePath, true);
       }
       if (outcome.errorDetail !== null) {
         logger.warn("[WorktreePipeline] worktree create request failed", {
@@ -399,14 +391,35 @@ export async function reconcileCreatingComposerWorktreePipeline({
     if (existing) {
       // The recovered worktree may sit at a path other than the frozen target; realign the Host
       // marker first so the strict activation check can accept the path the renderer will send.
-      if (existing.path !== entry.params.targetPath && ownerSessionId && syncPreparedWorktree) {
-        await syncPreparedWorktree({
-          workspaceKey,
-          sessionId: ownerSessionId,
-          branchName: entry.params.branchName,
-          targetPath: existing.path,
-          ...(entry.params.baseBranch ? { baseBranch: entry.params.baseBranch } : {}),
-        });
+      // Without a session to realign, a differing path would publish an unactivatable ready
+      // entry — fail instead, exactly like the runner does.
+      if (existing.path !== entry.params.targetPath) {
+        if (ownerSessionId && syncPreparedWorktree) {
+          await syncPreparedWorktree({
+            workspaceKey,
+            sessionId: ownerSessionId,
+            branchName: entry.params.branchName,
+            targetPath: existing.path,
+            ...(entry.params.baseBranch ? { baseBranch: entry.params.baseBranch } : {}),
+          });
+        } else {
+          logger.warn(
+            "[WorktreePipeline] reconcile found a differing path but marker sync is unavailable",
+            {
+              workspaceKey,
+              branchName,
+              targetPath: entry.params.targetPath,
+              worktreePath: existing.path,
+            },
+          );
+          store.markFailed(
+            workspaceKey,
+            formatMessage("worktreeSetup.reconcile.markerSyncUnavailable"),
+            ownerSessionId,
+            attemptId,
+          );
+          return;
+        }
       }
       store.markReady(workspaceKey, existing.path, true, ownerSessionId, attemptId);
     } else {

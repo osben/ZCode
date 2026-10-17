@@ -42,12 +42,21 @@ Renderer                  V4 Host / session store        Git service       Agent
    |                                | start worktree -------->| (5s delay kept)  |
    | render progress in timeline   |                         |                  |
    |                                |<------ ready(path) ------|                  |
+   | syncPreparedSession(path) ---->| update marker when path |                  |
+   |   (only when path differs)    | differs; await acceptance|                  |
+   |<---- sync accepted/rejected --|                         |                  |
    | activatePreparedSession ----->| validate preparation     |                  |
    |                                | materialize same ID with |----------------->|
    |                                | executionWorktree=path   |                  |
    |                                | accept first input once  |----------------->|
    |<----- normal session events ---|                         |                  |
 ```
+
+When Git settles the branch at a path other than the prepared target, readiness goes through the
+marker sync row above: the renderer updates the Host marker to the real path and awaits acceptance
+before the entry turns ready. A rejected sync — or marker synchronization being unavailable for
+that prepared session — fails the attempt with a retryable failure instead of publishing a ready
+entry the Host would refuse to activate.
 
 Every asynchronous pipeline completion carries the prepared session and attempt identity it started
 for. Restoring or retrying an older preparation cannot replace another session's active pipeline, and
@@ -166,8 +175,9 @@ early transcript persistence or a second accepted-input store.
    reservation; after it commits, send the updated snapshot before any later deltas.
 8. Existing matching worktree activates in the same session without creating a second directory,
    including when the found path differs from the originally requested target: the Host preparation
-   marker is realigned to the real path before activation, and a rejected realignment leaves a
-   retryable failure instead of a ready entry the Host refuses.
+   marker is realigned to the real path before activation, and a rejected realignment — or marker
+   synchronization being unavailable for that prepared session — leaves a retryable failure instead
+   of a ready entry the Host refuses.
 9. Missing/failed branch list uses HEAD and notes the default; invalid destination fails before Git
    creation; the five-second delay remains unchanged.
 10. Plain sessions, palette Start, per-worktree Git Tools, sibling non-Git destination visibility,

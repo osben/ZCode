@@ -615,6 +615,28 @@ describe("Host preparation sync before ready (strict activation stays intact)", 
     expect(currentPipeline()).toMatchObject({ status: "failed", sessionId: "session-prepared-1" });
   });
 
+  it("fails the attempt when Git settles elsewhere and marker sync is unavailable", async () => {
+    mockExistingWorktreeElsewhere();
+    seedCreating({ sessionId: "session-prepared-1" });
+
+    // No syncPreparedWorktree: the Host marker keeps the frozen target, so a differing Git path
+    // must fail the attempt instead of publishing a ready entry activation would reject.
+    const outcome = await startComposerWorktreePipeline({
+      gitService,
+      workspaceKey: WORKSPACE_KEY,
+      sessionId: "session-prepared-1",
+      params: PARAMS,
+      formatMessage: (id: string) => id,
+    });
+
+    expect(outcome).toBe("failed");
+    expect(currentPipeline()).toMatchObject({
+      status: "failed",
+      sessionId: "session-prepared-1",
+      failureMessage: "worktreeSetup.reconcile.markerSyncUnavailable",
+    });
+  });
+
   it("realigns the Host marker during stale-creating reconcile before ready", async () => {
     const syncPreparedWorktree = vi.fn().mockResolvedValue(undefined);
     seedCreating({ sessionId: "session-prepared-1" });
@@ -640,6 +662,29 @@ describe("Host preparation sync before ready (strict activation stays intact)", 
       status: "ready",
       existing: true,
       worktreePath: OTHER_PATH,
+    });
+  });
+
+  it("fails stale-creating reconcile when the path differs and marker sync is unavailable", async () => {
+    seedCreating({ sessionId: "session-prepared-1" });
+    listWorktrees.mockResolvedValue({
+      isGitAvailable: true,
+      isRepository: true,
+      worktrees: [worktreeEntry(OTHER_PATH)],
+    });
+
+    await reconcileCreatingComposerWorktreePipeline({
+      gitService,
+      workspaceKey: WORKSPACE_KEY,
+      sessionId: "session-prepared-1",
+      branchName: PARAMS.branchName,
+      formatMessage: (id: string) => id,
+    });
+
+    expect(currentPipeline()).toMatchObject({
+      status: "failed",
+      sessionId: "session-prepared-1",
+      failureMessage: "worktreeSetup.reconcile.markerSyncUnavailable",
     });
   });
 });

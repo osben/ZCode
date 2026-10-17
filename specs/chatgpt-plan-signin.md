@@ -449,10 +449,13 @@ true`, `codex_cli_simplified_flow=true`, `originator=codex_cli_rs`, and
     `getChatGptPlanStatus` for accounts that have a codex slot (throttled to
     at most one probe per account per 60 s), and lazily refreshed when the
     access token is inside 24 h of `exp` (or on probe 401, once). A terminal
-    refresh failure — HTTP 4xx other than 408/429 (revoked, expired, or reused
-    refresh token) — clears that account's codex slot under the held refresh
-    lock, so `usageLinked` returns false and the user can link usage again;
-    transient statuses and transport errors leave the slot untouched. The mapped
+    refresh failure — the token endpoint's OAuth `error` code is in
+    `SIWC_TERMINAL_REFRESH_ERROR_CODES` (revoked, expired, or reused refresh
+    token; the same set the SIWC refresh path uses) — clears that account's
+    codex slot under the held refresh lock, so `usageLinked` returns false and
+    the user can link usage again; non-terminal codes (for example
+    `invalid_request`, `invalid_client`) and transport errors leave the slot
+    untouched. The mapped
     snapshot replaces the in-memory `usageByAccount` entry for that account.
   - **Mapping** → `SiwcPlanUsageSnapshot`: `used_percent` → `usedPercent`
     (finite 0–100 required per window), `limit_window_seconds / 60` →

@@ -4854,6 +4854,8 @@ const ukUA: Record<string, string> = {
   "chat.empty.worktree.newWorktree": "Новий worktree",
   "chat.empty.worktree.creating": "Створення worktree…",
   "worktreeSetup.reconcile.staleCreating": "Налаштування не завершено (з'єднання змінилося)",
+  "worktreeSetup.reconcile.markerSyncUnavailable":
+    "Налаштування завершилося в іншому каталозі worktree, і запис сесії не вдалося оновити",
   "git.branchSwitcher.appliesOnSend": "Застосується під час надсилання першого повідомлення",
   "git.branchSwitcher.worktreeIntentHint":
     "Гілку для цього завдання визначає налаштування worktree",

@@ -9,4 +9,8 @@ The desktop WebDriverIO runner must be able to create a WebDriver session under 
 - Under Node.js `26.11.1`, WebDriverIO sends a session-creation request to a local HTTP endpoint and accepts a valid WebDriver session response.
 - The same smoke reproduction continues to work under Node.js `24` for the supported local workaround.
 - The WebDriverIO package family resolves to compatible v9 releases, including the upstream Node.js 26 request-header fix.
-- Helpers that gate on `waitForClickable` keep working under v9 semantics: an element must be inside the viewport and unobscured, so helpers scroll targets into view (for example the occupation-onboarding Skip button) instead of relying on the v8 displayed+enabled-only check.
+- Helpers that gate on `waitForClickable` scroll targets into view before waiting (for example the
+  occupation-onboarding Skip button, which can sit below the fold on the 1200x800 e2e window).
+  This is a repository-level workaround: WDIO's `isClickable` — in v8 and v9 alike — already
+  requires the element to be inside the viewport and unobscured and attempts its own scroll, not a
+  v8→v9 semantic change.

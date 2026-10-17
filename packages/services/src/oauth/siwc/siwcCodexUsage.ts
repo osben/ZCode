@@ -11,6 +11,7 @@ import {
   createSiwcPkcePair,
   createSiwcState,
   redactSiwcAuthorizeUrl,
+  SIWC_TERMINAL_REFRESH_ERROR_CODES,
   SiwcOAuthError,
 } from "./siwcOAuth.js";
 import {
@@ -39,6 +40,17 @@ const SIWC_CODEX_REFRESH_LOCK_MAX_WAIT_MS = 45_000;
 const SIWC_CODEX_PROACTIVE_REFRESH_MARGIN_SECONDS = 24 * 60 * 60;
 const USAGE_PROBE_THROTTLE_MS = 60_000;
 const USAGE_PROBE_TIMEOUT_MS = 10_000;
+
+/** The token endpoint's JSON body rides in SiwcOAuthError.cause; its `error` code decides terminality. */
+function readOAuthErrorCode(error: SiwcOAuthError): string | null {
+  const detail = error.cause instanceof Error ? error.cause.message : "";
+  try {
+    const parsed = JSON.parse(detail) as { error?: unknown };
+    return typeof parsed.error === "string" ? parsed.error : null;
+  } catch {
+    return null;
+  }
+}
 
 export interface SiwcCodexUsageDependencies {
   /** Overrides the credential/config directory (tests); defaults to the app config dir. */
@@ -367,17 +379,14 @@ export class SiwcCodexUsageService {
         try {
           next = await this.tokenClient.refresh({ refreshToken });
         } catch (error) {
-          // A terminal 4xx (revoked/expired/reused refresh token) can never succeed on retry;
-          // clearing the slot under the held lock lets the user link usage again instead of
-          // keeping a permanently failing grant that pins usageLinked=true. Transient statuses
-          // (408/429/5xx) and transport errors rethrow untouched.
+          // A terminal OAuth error code (revoked/expired/reused refresh token — the same set the
+          // SIWC refresh path uses) can never succeed on retry; clearing the slot under the held
+          // lock lets the user link usage again instead of keeping a permanently failing grant
+          // that pins usageLinked=true. Non-terminal codes (for example invalid_request) and
+          // transport errors rethrow untouched.
           if (
             error instanceof SiwcOAuthError &&
-            error.httpStatus !== undefined &&
-            error.httpStatus >= 400 &&
-            error.httpStatus < 500 &&
-            error.httpStatus !== 408 &&
-            error.httpStatus !== 429
+            SIWC_TERMINAL_REFRESH_ERROR_CODES.includes(readOAuthErrorCode(error) ?? "")
           ) {
             for (const key of [
               keys.accessToken,

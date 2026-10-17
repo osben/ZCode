@@ -109,6 +109,7 @@ interface FakeBackendOptions {
   whamResponses?: WhamResponse[];
   exchangeRefreshToken?: { accessToken: string; refreshToken: string };
   refreshStatus?: number;
+  refreshError?: string;
 }
 
 /**
@@ -155,7 +156,10 @@ function createFakeBackend(options: FakeBackendOptions & { key: TestKey }) {
         state.refreshCalls.push(body.refresh_token ?? "");
         if (options.refreshStatus !== undefined && options.refreshStatus !== 200) {
           return Response.json(
-            { error: "invalid_grant", error_description: "refresh token revoked" },
+            {
+              error: options.refreshError ?? "invalid_grant",
+              error_description: "refresh token rejected",
+            },
             { status: options.refreshStatus },
           );
         }
@@ -355,13 +359,34 @@ describe("SiwcCodexUsageService", () => {
   });
 
   it("keeps the codex slot when a refresh fails transiently (429)", async () => {
-    const { backend, credentials, service } = await createService({ refreshStatus: 429 });
+    const { backend, credentials, service } = await createService({
+      refreshStatus: 429,
+      // 429 is throttling; its body must not carry a terminal code or the slot would clear.
+      refreshError: "temporarily_unavailable",
+    });
     await credentials.save(CODEX_KEYS.accessToken, "codex-access-stale");
     await credentials.save(CODEX_KEYS.refreshToken, "codex-refresh-stale");
     await credentials.save(CODEX_KEYS.accessExpiresAt, String(NOW_SECONDS + 3600));
 
     const status = await service.getStatus();
     expect(backend.state.refreshCalls).toEqual(["codex-refresh-stale"]);
+    expect(credentials.dump()[CODEX_KEYS.refreshToken]).toBe("codex-refresh-stale");
+    expect(status.accounts[0]?.usageLinked).toBe(true);
+  });
+
+  it("keeps the codex slot when a 4xx carries a non-terminal OAuth code (invalid_request)", async () => {
+    const { credentials, service } = await createService({
+      refreshStatus: 400,
+      refreshError: "invalid_request",
+    });
+    await credentials.save(CODEX_KEYS.accessToken, "codex-access-stale");
+    await credentials.save(CODEX_KEYS.refreshToken, "codex-refresh-stale");
+    await credentials.save(CODEX_KEYS.accessExpiresAt, String(NOW_SECONDS + 3600));
+
+    // Terminality follows the OAuth error code, not the HTTP status: invalid_request is a client
+    // bug, not a revoked grant. The probe swallows the failure at debug level and the slot
+    // survives for the next refresh.
+    const status = await service.getStatus();
     expect(credentials.dump()[CODEX_KEYS.refreshToken]).toBe("codex-refresh-stale");
     expect(status.accounts[0]?.usageLinked).toBe(true);
   });

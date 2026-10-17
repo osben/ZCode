@@ -5165,6 +5165,8 @@ const enUS: Record<string, string> = {
   "chat.empty.worktree.newWorktree": "New worktree",
   "chat.empty.worktree.creating": "Creating worktree…",
   "worktreeSetup.reconcile.staleCreating": "Setup did not complete (connection changed)",
+  "worktreeSetup.reconcile.markerSyncUnavailable":
+    "Setup finished at a different worktree path and the session record could not be updated",
   "git.branchSwitcher.appliesOnSend": "Applies when you send the first message",
   "git.branchSwitcher.worktreeIntentHint": "The worktree setup sets the branch for this task",
   "branchSwitchGuard.title": "Switch branch?",
