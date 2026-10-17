@@ -2,6 +2,9 @@ import { Lexer } from "marked";
 
 const MEMORY_INDEX_LINE_LIMIT = 200;
 const MEMORY_INDEX_CHARACTER_LIMIT = 25_000;
+// Newest index entries are appended at the end, so over the limits the kept budget is biased
+// toward the tail instead of silently dropping them.
+const ELISION_HEAD_SHARE = 0.3;
 const LEADING_FRONTMATTER_PATTERN = /^---\s*\n[\s\S]*?---\s*\n?/u;
 const HTML_COMMENT_PATTERN = /<!--[\s\S]*?-->/gu;
 
@@ -21,12 +24,7 @@ export function formatMemoryIndexContent(content: string): string {
   const characterTruncated = characterCount > MEMORY_INDEX_CHARACTER_LIMIT;
   if (!lineTruncated && !characterTruncated) return trimmed;
 
-  let truncated = lineTruncated ? lines.slice(0, MEMORY_INDEX_LINE_LIMIT).join("\n") : trimmed;
-  if (truncated.length > MEMORY_INDEX_CHARACTER_LIMIT) {
-    const finalNewline = truncated.lastIndexOf("\n", MEMORY_INDEX_CHARACTER_LIMIT);
-    truncated = truncated.slice(0, finalNewline > 0 ? finalNewline : MEMORY_INDEX_CHARACTER_LIMIT);
-  }
-
+  const kept = elideIndexMiddle(lines, characterTruncated);
   const sizeDescription =
     characterTruncated && !lineTruncated
       ? `${formatBytes(characterCount)} (limit: ${formatBytes(MEMORY_INDEX_CHARACTER_LIMIT)}) — index entries are too long`
@@ -34,7 +32,54 @@ export function formatMemoryIndexContent(content: string): string {
         ? `${lineCount} lines (limit: ${MEMORY_INDEX_LINE_LIMIT})`
         : `${lineCount} lines and ${formatBytes(characterCount)}`;
 
-  return `${truncated}\n\n> WARNING: MEMORY.md is ${sizeDescription}. Only part of it was loaded. Keep index entries to one line under ~200 chars; move detail into topic files.`;
+  return `${kept}\n\n> WARNING: MEMORY.md is ${sizeDescription}. Only part of it was loaded. Keep index entries to one line under ~200 chars; move detail into topic files.`;
+}
+
+function elideIndexMiddle(lines: string[], characterTruncated: boolean): string {
+  const marker = elisionMarker(characterTruncated);
+  if (!characterTruncated) {
+    const headLines = Math.floor(MEMORY_INDEX_LINE_LIMIT * ELISION_HEAD_SHARE);
+    const tailLines = MEMORY_INDEX_LINE_LIMIT - headLines;
+    return `${lines.slice(0, headLines).join("\n")}\n\n${marker}\n\n${lines.slice(-tailLines).join("\n")}`;
+  }
+
+  // Reserve the marker plus its two "\n\n" joins so the kept text stays within the cap.
+  const budget = MEMORY_INDEX_CHARACTER_LIMIT - marker.length - 4;
+  const headBudget = Math.floor(budget * ELISION_HEAD_SHARE);
+  const head = takeHeadLines(lines, headBudget);
+  const tail = takeTailLines(lines, budget - head.length);
+  return `${head}\n\n${marker}\n\n${tail}`;
+}
+
+function elisionMarker(characterTruncated: boolean): string {
+  return characterTruncated
+    ? `…[MEMORY.md is over the ${formatBytes(MEMORY_INDEX_CHARACTER_LIMIT)} cap; its middle is omitted]…`
+    : `…[MEMORY.md is over the ${MEMORY_INDEX_LINE_LIMIT}-line cap; its middle is omitted]…`;
+}
+
+function takeHeadLines(lines: readonly string[], maxChars: number): string {
+  const kept: string[] = [];
+  let length = 0;
+  for (const line of lines) {
+    const nextLength = length + line.length + (kept.length > 0 ? 1 : 0);
+    if (nextLength > maxChars) break;
+    kept.push(line);
+    length = nextLength;
+  }
+  return kept.join("\n");
+}
+
+function takeTailLines(lines: readonly string[], maxChars: number): string {
+  const kept: string[] = [];
+  let length = 0;
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index]!;
+    const nextLength = length + line.length + (kept.length > 0 ? 1 : 0);
+    if (nextLength > maxChars) break;
+    kept.unshift(line);
+    length = nextLength;
+  }
+  return kept.join("\n");
 }
 
 function formatBytes(value: number): string {

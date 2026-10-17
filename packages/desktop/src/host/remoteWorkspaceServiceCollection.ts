@@ -328,6 +328,7 @@ export function createRemoteWorkspaceServiceCollection(params: {
                 settings.askUserQuestionAutoResolutionEnabled !== false,
               nativeSearchEnhancementsEnabled: settings.nativeSearchEnhancementsEnabled !== false,
               memoryEnabled: settings.memoryEnabled === true,
+              memoryIndexAsContext: settings.memoryIndexAsContext === true,
               modelContextBudgetStrategy,
               // Keep the same scope boundary as the local Host; the first execution in a remote workspace must not wait for client config again.
               ...(request.scope === "user-execution" && settings.integratedTerminalShell

@@ -2331,6 +2331,7 @@ export function createLocalServices(options: {
                 settings.askUserQuestionAutoResolutionEnabled !== false,
               nativeSearchEnhancementsEnabled: settings.nativeSearchEnhancementsEnabled !== false,
               memoryEnabled: settings.memoryEnabled === true,
+              memoryIndexAsContext: settings.memoryIndexAsContext === true,
               modelContextBudgetStrategy,
               // user-execution consumes only Shell. The shared default policy is a compatibility
               // placeholder for the unified result schema and does not override the strategy fixed

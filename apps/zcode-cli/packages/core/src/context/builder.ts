@@ -203,6 +203,7 @@ export class ContextBuilder {
       userInstructions: this.config.userInstructions,
       memoryIndexContent: this.config.memoryIndexContent,
       memoryRoot: this.config.memoryRoot,
+      memoryIndexAsContext: this.config.memoryIndexAsContext,
     });
     if (requestUserContextSection) {
       sections.push(requestUserContextSection);

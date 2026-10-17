@@ -85,6 +85,7 @@ export interface ZCodeProtocolSessionRecord {
   app: ZCodeApp;
   subagentRuntimeConfigEnabled?: boolean;
   memoryEnabled: boolean;
+  memoryIndexAsContext: boolean;
   nativeSearchEnhancementsEnabled: boolean;
   modelContextBudgetStrategy: ZCodeModelContextBudgetStrategy;
   createdAt: number;

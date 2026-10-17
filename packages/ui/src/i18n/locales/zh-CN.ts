@@ -2454,6 +2454,9 @@ const zhCN: Record<string, string> = {
     "在新建会话或应用重启后恢复的会话中使用增强 Find 和 Grep。当前会话保持现有设置；Windows 的 Find 保持不变。",
   "settings.memory": "记忆",
   "settings.memory.workspaceMemory": "工作区记忆",
+  "settings.memory.indexAsContext": "以背景上下文形式注入记忆",
+  "settings.memory.indexAsContextDescription":
+    "默认情况下，记忆索引会与工作区指令一起注入，可能与指令竞争优先级。启用后，记忆会被明确标记为背景上下文：对过时内容和注入内容更安全，但遵循严格度可能略低。",
   "settings.memoryDescription":
     "在工作区中保存并复用长期上下文，新会话生效。开启后可能增加模型调用和 Token 成本。",
   "settings.worktrees.title": "Worktrees",

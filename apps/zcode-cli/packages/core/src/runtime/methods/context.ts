@@ -167,6 +167,7 @@ export function createContextBuilderFromSnapshot(
     projectContext: snapshot.projectContext,
     memoryIndexContent: options.memoryIndexContent,
     memoryRoot,
+    memoryIndexAsContext: this.config.memory?.indexAsContext === true,
     skills: this.skillLoadOutcome,
     agentProfiles: this.config.subagents?.profiles,
     embeddedSearchEnabled: resolveRuntimeEmbeddedSearchEnabled(this),
