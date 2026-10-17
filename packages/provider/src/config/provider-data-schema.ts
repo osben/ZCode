@@ -73,11 +73,36 @@ export const chatgptAccountAccessDataSchema = z
     type: completeChatgptAccountAccessDataSchema.shape.type,
   })
   .strict();
+/**
+ * External ACP agent provider access: a local agent process (opencode,
+ * cursor-agent, …) driven over JSON-RPC stdio instead of an HTTP endpoint.
+ * Providers with this access do not require an `api` section.
+ */
+const acpAgentEnvKeySchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
+export const completeAcpAgentAccessDataSchema = z
+  .object({
+    type: z.literal("acp-agent"),
+    agentId: z.string().min(1),
+    command: nonBlankRequiredString,
+    args: z.array(z.string()).readonly(),
+    env: z.record(acpAgentEnvKeySchema, z.string()).readonly().nullable().optional(),
+  })
+  .strict();
+export const acpAgentAccessDataSchema = z
+  .object({
+    ...sparseShape(completeAcpAgentAccessDataSchema.shape),
+    type: completeAcpAgentAccessDataSchema.shape.type,
+  })
+  .strict();
 export const providerAccessDataSchema = z.discriminatedUnion("type", [
   apiKeyAccessDataSchema,
   zhipuAccountAccessDataSchema,
   chatgptAccountAccessDataSchema,
+  acpAgentAccessDataSchema,
 ]);
+// Registry-complete access deliberately excludes ACP: `serializeRegistryProviderAccess`
+// treats every non-account access as API-key, so a complete ACP config must never pass
+// this union. ACP validation uses `completeAcpProviderConfigDataSchema` below.
 export const completeProviderAccessDataSchema = z.discriminatedUnion("type", [
   completeApiKeyAccessDataSchema,
   completeZhipuAccountAccessDataSchema,
@@ -120,6 +145,16 @@ export const completeProviderConfigDataSchema = providerConfigDataSchema.extend(
   access: completeProviderAccessDataSchema,
   api: completeProviderApiDataSchema,
 });
+
+/**
+ * Complete Personal-provider shape for ACP agents: the registry-complete schema
+ * minus the HTTP `api` section (agents have no endpoint) and with the complete
+ * ACP access. Used for Settings validation only — Registry entries stay
+ * API-key/account-only.
+ */
+export const completeAcpProviderConfigDataSchema = completeProviderConfigDataSchema
+  .omit({ api: true })
+  .extend({ access: completeAcpAgentAccessDataSchema });
 
 export const providerTemplateNameMapDataSchema = z
   .object({

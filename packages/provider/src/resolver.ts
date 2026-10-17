@@ -8,10 +8,13 @@ import type {
   completeProviderConfigDataSchema,
 } from "./config/provider-data-schema.js";
 import type { ConfigValidationIssue } from "./config-overlay.js";
+import { completeAcpProviderConfigDataSchema } from "./config/provider-data-schema.js";
+import { validateConfigSchema } from "./config/schema-validation.js";
 import {
   type ApiKeyAccessConfig,
   ModelConfig,
   ModelConfigRules,
+  isAcpAgentAccess,
   type ZhipuAccountAccessConfig,
   type ChatgptAccountAccessConfig,
   type ModelId,
@@ -242,10 +245,26 @@ export class ProviderConfigResolver {
         config.access?.type === "chatgpt-account" ||
         (rule.enabled ?? true);
       const providerPath = ["providers", providerId];
-      const registryProviderResult = createRegistryProviderConfig(config, providerPath);
-      const providerIssues: ConfigValidationIssue[] = registryProviderResult.ok
-        ? []
-        : [...registryProviderResult.issues];
+      // ACP providers have no HTTP endpoint; validate them against the same
+      // complete schema minus `api` (provider-level fields such as `group` are
+      // checked too) and keep them out of the execution Registry until the
+      // agent execution path lands — a registered-but-unroutable provider would
+      // be selectable in chat and fail on send.
+      const acpAccess = isAcpAgentAccess(config.access) ? config.access : null;
+      const registryProviderResult = acpAccess
+        ? null
+        : createRegistryProviderConfig(config, providerPath);
+      const providerIssues: ConfigValidationIssue[] = acpAccess
+        ? [
+            ...validateConfigSchema(
+              completeAcpProviderConfigDataSchema,
+              config.toJSON(),
+              providerPath,
+            ),
+          ]
+        : registryProviderResult!.ok
+          ? []
+          : [...registryProviderResult!.issues];
       const templateId = rule.templateId ?? undefined;
       const templateConfig = templateId ? providerTemplates?.get(templateId)?.config : undefined;
       if (templateId && !templateConfig) {
@@ -299,7 +318,10 @@ export class ProviderConfigResolver {
         const modelIssues = registryModelResult.ok ? [] : registryModelResult.issues;
         issues.push(...modelIssues);
         const modelEnabled = modelConfig.enabled === true;
-        const executable = providerExecutable && modelEnabled && modelIssues.length === 0;
+        // ACP models stay non-executable until the chat execution path exists;
+        // Settings must not advertise a selectable model that cannot run yet.
+        const executable =
+          providerExecutable && modelEnabled && modelIssues.length === 0 && acpAccess === null;
         const selectable = executable && config.visibility !== "hidden";
         return Object.freeze({
           kind: "candidate",
@@ -329,7 +351,7 @@ export class ProviderConfigResolver {
       });
       resolvedProviders.push(resolvedProvider);
 
-      if (!registryProviderResult.ok || providerIssues.length > 0) {
+      if (!registryProviderResult || !registryProviderResult.ok || providerIssues.length > 0) {
         continue;
       }
       const validModels = models

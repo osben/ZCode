@@ -5,6 +5,7 @@ import {
   completeApiKeyAccessDataSchema,
   completeZhipuAccountAccessDataSchema,
   completeChatgptAccountAccessDataSchema,
+  completeAcpAgentAccessDataSchema,
   completeProviderApiDataSchema,
   completeProviderConfigDataSchema,
   type providerApiTypeDataSchema,
@@ -15,6 +16,7 @@ import {
   type apiKeyAccessDataSchema,
   type zhipuAccountAccessDataSchema,
   type chatgptAccountAccessDataSchema,
+  type acpAgentAccessDataSchema,
   type providerAccessDataSchema,
   type providerApiDataSchema,
   type providerConfigDataSchema,
@@ -148,10 +150,63 @@ export class ChatgptAccountAccessConfig extends ConfigOverlay<ChatgptAccountAcce
   }
 }
 
+export type AcpAgentAccessConfigInput = Omit<AcpAgentAccessConfigObject, "type" | "args"> & {
+  readonly args?: readonly string[] | null;
+};
+
+export type AcpAgentAccessConfigObject = Readonly<z.infer<typeof acpAgentAccessDataSchema>>;
+
+/**
+ * External ACP agent access: the runtime spawns `command args` locally and
+ * speaks the Agent Client Protocol over JSON-RPC stdio.
+ */
+export class AcpAgentAccessConfig extends ConfigOverlay<AcpAgentAccessConfig> {
+  readonly type = "acp-agent" as const;
+  readonly agentId?: AcpAgentAccessConfigInput["agentId"];
+  readonly command?: AcpAgentAccessConfigInput["command"];
+  readonly args?: readonly string[] | null;
+  readonly env?: Readonly<Record<string, string>> | null;
+
+  constructor(input: AcpAgentAccessConfigInput = {}) {
+    super();
+    this.agentId = input.agentId;
+    this.command = input.command;
+    this.args = input.args == null ? input.args : Object.freeze([...input.args]);
+    this.env = input.env ? Object.freeze({ ...input.env }) : input.env;
+    Object.freeze(this);
+  }
+
+  overlay(next: AcpAgentAccessConfig): AcpAgentAccessConfig {
+    return new AcpAgentAccessConfig({
+      agentId: this.overlayValue(this.agentId, next.agentId),
+      command: this.overlayValue(this.command, next.command),
+      args: this.overlayValue(this.args, next.args),
+      env: this.overlayValue(this.env, next.env),
+    });
+  }
+
+  validateComplete(path: readonly string[] = []): readonly ConfigValidationIssue[] {
+    return validateConfigSchema(completeAcpAgentAccessDataSchema, this.toJSON(), path);
+  }
+
+  toJSON(): AcpAgentAccessConfigObject {
+    return {
+      type: this.type,
+      ...objectWithoutUndefined({
+        agentId: this.agentId,
+        command: this.command,
+        args: this.args,
+        env: this.env,
+      }),
+    };
+  }
+}
+
 export type ProviderAccessConfig =
   | ApiKeyAccessConfig
   | ZhipuAccountAccessConfig
-  | ChatgptAccountAccessConfig;
+  | ChatgptAccountAccessConfig
+  | AcpAgentAccessConfig;
 
 export type ProviderAccessConfigObject = Readonly<z.infer<typeof providerAccessDataSchema>>;
 
@@ -160,6 +215,13 @@ export function isApiKeyAccess<T extends { readonly type: string }>(
   access: T | null | undefined,
 ): access is Extract<T, { readonly type: ApiKeyAccessConfigObject["type"] }> {
   return access?.type === "api-key" || access?.type === "zhipu-coding-plan-api-key";
+}
+
+/** Shared capability check for providers backed by a local ACP agent process. */
+export function isAcpAgentAccess<T extends { readonly type: string }>(
+  access: T | null | undefined,
+): access is Extract<T, { readonly type: "acp-agent" }> {
+  return access?.type === "acp-agent";
 }
 
 export type ProviderVisibility = z.infer<typeof providerVisibilityDataSchema>;
@@ -547,6 +609,8 @@ function overlayProviderAccess(
       return current.overlay(next as ZhipuAccountAccessConfig);
     case "chatgpt-account":
       return current.overlay(next as ChatgptAccountAccessConfig);
+    case "acp-agent":
+      return current.overlay(next as AcpAgentAccessConfig);
   }
 }
 
