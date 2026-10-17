@@ -17,8 +17,9 @@ export interface GitPaneFileRow {
 export type GitPaneRow = GitPaneDirectoryRow | GitPaneFileRow;
 
 export function getChangeDirectory(change: GitPaneFileChange): string {
-  const separatorIndex = change.workspaceRelativePath.lastIndexOf("/");
-  return separatorIndex === -1 ? "" : change.workspaceRelativePath.slice(0, separatorIndex);
+  const normalizedPath = change.workspaceRelativePath.replace(/\/+$/, "");
+  const separatorIndex = normalizedPath.lastIndexOf("/");
+  return separatorIndex === -1 ? "" : normalizedPath.slice(0, separatorIndex);
 }
 
 interface DirectoryRun {
