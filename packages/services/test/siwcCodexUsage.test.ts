@@ -279,6 +279,21 @@ describe("SiwcCodexUsageService", () => {
     expect((await service.getStatus()).accounts).toHaveLength(0);
   });
 
+  it("closes the loopback listener when cancelling cannot update the lifecycle epoch", async () => {
+    const { service, credentials } = await createService();
+    const start = await service.startUsageLink(ACCOUNT_KEY);
+    const redirect = new URL(new URL(start.authorizeUrl).searchParams.get("redirect_uri")!);
+    const load = credentials.load.bind(credentials);
+    credentials.load = async (key) => {
+      if (key.endsWith(":usage-epoch")) throw new Error("credential store unavailable");
+      return load(key);
+    };
+    await expect(service.startUsageLink(ACCOUNT_KEY)).rejects.toThrow(
+      /credential store unavailable/,
+    );
+    await expect(fetch(redirect)).rejects.toThrow();
+  });
+
   it("discards a delayed usage snapshot after logout and signing in to the same account", async () => {
     let release!: () => void;
     let started!: () => void;

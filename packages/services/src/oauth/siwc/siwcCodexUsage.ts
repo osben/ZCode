@@ -166,7 +166,16 @@ export class SiwcCodexUsageService {
       isSettled: loopback.isSettled,
       server: loopback.server,
       callbackUrl: loopback.callbackUrl,
-      timeout: setTimeout(() => void this.cancelLink(), SIWC_CODEX_LOGIN_TIMEOUT_MS),
+      // cancelLink now awaits the cross-process lifecycle lock and can reject; a bare `void`
+      // would surface as an unhandled rejection in the host process.
+      timeout: setTimeout(() => {
+        this.cancelLink().catch((error: unknown) => {
+          log.warn("ChatGPT plan usage link timeout cleanup failed", {
+            accountKey: normalized,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      }, SIWC_CODEX_LOGIN_TIMEOUT_MS),
       completion: loopback.completion.then(
         (value) => ({ ok: true as const, value }),
         (error: unknown) => ({ ok: false as const, error }),
@@ -257,11 +266,16 @@ export class SiwcCodexUsageService {
     this.exchanging = null;
     if (!pending) return;
     clearTimeout(pending.timeout);
-    await this.lifecycle.withLock(pending.accountKey, async () => {
-      if ((await this.lifecycle.readEpoch(pending.accountKey)) === pending.epoch)
-        await this.lifecycle.invalidate(pending.accountKey);
-    });
-    await closeCodexLoopbackServer(pending.server);
+    try {
+      await this.lifecycle.withLock(pending.accountKey, async () => {
+        if ((await this.lifecycle.readEpoch(pending.accountKey)) === pending.epoch)
+          await this.lifecycle.invalidate(pending.accountKey);
+      });
+    } finally {
+      // The pending link is already detached; a lock or store failure must not leave the fixed
+      // callback port bound, or every later link attempt fails to listen.
+      await closeCodexLoopbackServer(pending.server);
+    }
   }
 
   /**
