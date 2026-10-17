@@ -1239,20 +1239,26 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
       // A stale `git worktree list` registration can outlive a directory removed by hand. Verify
       // the real directory and its Git link before any reuse; read-only (never prunes).
       const normalizedTargetPath = resolve(targetPath);
+      const isMissingPathError = (error: unknown) =>
+        error instanceof Error &&
+        "code" in error &&
+        (error.code === "ENOENT" || error.code === "ENOTDIR");
       try {
         const directory = await stat(normalizedTargetPath);
         if (!directory.isDirectory()) {
           return { ok: false, reason: "missing-directory" };
         }
-      } catch {
-        return { ok: false, reason: "missing-directory" };
+      } catch (error) {
+        if (isMissingPathError(error)) return { ok: false, reason: "missing-directory" };
+        throw error;
       }
       try {
         // A linked worktree has a `.git` file pointing at the main repository's worktrees
         // directory; a full checkout has a `.git` directory. Either proves the Git binding.
         await stat(join(normalizedTargetPath, ".git"));
-      } catch {
-        return { ok: false, reason: "missing-git-link" };
+      } catch (error) {
+        if (isMissingPathError(error)) return { ok: false, reason: "missing-git-link" };
+        throw error;
       }
       return { ok: true };
     },

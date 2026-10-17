@@ -224,7 +224,9 @@ early transcript persistence or a second accepted-input store.
    panes continue to describe the parent checkout, including when both sessions are split onscreen.
 5. Repeated activation, duplicate Send, navigation, remount, and reconnect do not create another
    session, runtime, worktree, or first-input admission. The per-workspace idempotency guard is
-   acquired before awaiting Host session reservation, so concurrent composers join one reservation.
+   acquired before awaiting Host session reservation, so concurrent composers with different
+   submission IDs in one workspace join one reservation; the winning submission ID remains in
+   recovery metadata.
 6. Failure and explicit Cancel preserve the session ID and safely restore frozen editor content,
    attachments, and references without replacing newer edits.
 7. Restart during preparation recovers the same session ID, reconstructs renderer pipeline state
@@ -244,7 +246,8 @@ early transcript persistence or a second accepted-input store.
    marker is realigned to the real path before activation, and a rejected realignment — or marker
    synchronization being unavailable for that prepared session — leaves a retryable failure instead
    of a ready entry the Host refuses. A stale Git registration whose directory is gone is a
-   recoverable failure, never a ready entry.
+   recoverable failure, never a ready entry; only `ENOENT` and `ENOTDIR` mean a missing path, while
+   other filesystem errors propagate to the caller.
 9. Missing/failed branch list uses HEAD and notes the default; invalid destination fails before Git
    creation; the five-second delay remains unchanged.
 10. Plain sessions, palette Start, per-worktree Git Tools, sibling non-Git destination visibility,
@@ -267,7 +270,9 @@ early transcript persistence or a second accepted-input store.
     command reconciliation, never by re-sending the input under a new command id.
 15. Navigating from draft A to chat B before the reservation ACK keeps B active and untouched: the
     late ACK still stores prepared session A and its recovery record, but does not switch the
-    active chat, promote or overwrite B's draft, or move B's attachments.
+    active chat, promote or overwrite B's draft, or move B's attachments. Submission ownership
+    reflects only committed workspace/scope changes: an abandoned render cannot advance its epoch
+    or invalidate a pending ACK, and a committed owner change advances the epoch once.
 16. Deleting a worktree owned by a prepared, not-yet-cancelled session is refused in Command
     Center, including the force-confirmation path; cancelling the preparation releases the guard.
 

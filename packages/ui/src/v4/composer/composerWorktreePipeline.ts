@@ -4,9 +4,9 @@ import { nanoid } from "nanoid";
  * Runner for the composer worktree setup pipeline (spec: specs/composer-worktree-setup-steps.md).
  *
  * Wraps the shared executeWorktreeCreation orchestration (request shape, issue→message mapping,
- * WT-04 recovery) and writes the outcome into composerWorktreePipelineStore. Idempotent per
- * workspace and prepared session: starts/retries for that session reuse the same promise. The store
- * is the UI-facing state machine; this module owns the async side effects.
+ * WT-04 recovery) and writes the outcome into composerWorktreePipelineStore. Reservation is
+ * idempotent per workspace, and starts/retries for a prepared session reuse the same promise. The
+ * store is the UI-facing state machine; this module owns the async side effects.
  */
 import { getErrorMessage } from "@/lib/errorMessage.js";
 import { logger } from "@/logger.js";
@@ -219,18 +219,14 @@ export function beginWorktreePipelineCreation({
   submissionId?: string;
   formatMessage: (id: string, values?: Record<string, string>) => string;
 }): Promise<ComposerWorktreeBeginResult> {
-  const reservationKey = `${workspaceKey}\0${submissionId ?? "legacy"}`;
+  const reservationKey = workspaceKey;
   const inFlight = beginInFlightByWorkspaceKey.get(reservationKey);
   if (inFlight) return inFlight;
   const existing = selectComposerWorktreePipeline(
     useComposerWorktreePipelineStore.getState(),
     workspaceKey,
   );
-  if (
-    existing?.sessionId &&
-    (!submissionId || existing.params?.submissionId === submissionId) &&
-    (existing.status === "creating" || existing.status === "ready")
-  ) {
+  if (existing?.sessionId && (existing.status === "creating" || existing.status === "ready")) {
     return Promise.resolve({ ok: true, sessionId: existing.sessionId });
   }
 

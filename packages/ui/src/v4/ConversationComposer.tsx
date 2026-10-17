@@ -20,6 +20,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -646,16 +647,15 @@ function ConversationComposerImpl({
   const draftScopeId = sessionId ?? V4_DRAFT_SCOPE_ROOT;
   const workspaceKey = workspaceIdentity?.trim() || workspacePath;
   const renderedOwnerRef = useRef({ workspaceKey, scopeId: draftScopeId, epoch: 0 });
-  if (
-    renderedOwnerRef.current.workspaceKey !== workspaceKey ||
-    renderedOwnerRef.current.scopeId !== draftScopeId
-  ) {
+  useLayoutEffect(() => {
+    const currentOwner = renderedOwnerRef.current;
+    if (currentOwner.workspaceKey === workspaceKey && currentOwner.scopeId === draftScopeId) return;
     renderedOwnerRef.current = {
       workspaceKey,
       scopeId: draftScopeId,
-      epoch: renderedOwnerRef.current.epoch + 1,
+      epoch: currentOwner.epoch + 1,
     };
-  }
+  }, [workspaceKey, draftScopeId]);
   const reservingWorktreeRef = useRef<{ epoch: number; id: string } | null>(null);
   const queuedSubmissionIdRef = useRef<string | null>(null);
   const composerAliveRef = useRef(true);

@@ -526,7 +526,7 @@ describe("startComposerWorktreePipeline runner", () => {
     await vi.waitFor(() => expect(currentPipeline()?.status).toBe("ready"));
   });
 
-  it("joins concurrent session reservations for the same workspace", async () => {
+  it("joins concurrent reservations by workspace and keeps submission IDs in recovery metadata", async () => {
     let resolvePreparation: (sessionId: string) => void = () => {};
     const prepareSession = vi.fn(
       () => new Promise<string>((resolve) => (resolvePreparation = resolve)),
@@ -553,11 +553,18 @@ describe("startComposerWorktreePipeline runner", () => {
       baseBranch: PARAMS.baseBranch,
       baseFromHeadDefault: false,
       queuedPromptPreview: "frozen input",
+      submissionId: "submission-1",
       prepareSession,
       formatMessage: (id: string) => id,
     };
     const first = beginWorktreePipelineCreation(input);
-    const second = beginWorktreePipelineCreation(input);
+    const secondPrepareSession = vi.fn();
+    const second = beginWorktreePipelineCreation({
+      ...input,
+      queuedPromptPreview: "a concurrent submission",
+      submissionId: "submission-2",
+      prepareSession: secondPrepareSession,
+    });
 
     expect(second).toBe(first);
     expect(prepareSession).toHaveBeenCalledTimes(1);
@@ -567,6 +574,19 @@ describe("startComposerWorktreePipeline runner", () => {
       sessionId: "session-prepared-1",
     });
     await vi.waitFor(() => expect(currentPipeline()?.status).toBe("ready"));
+    expect(createWorktree).toHaveBeenCalledTimes(1);
+    expect(currentPipeline()?.params?.submissionId).toBe("submission-1");
+
+    const laterPrepareSession = vi.fn();
+    await expect(
+      beginWorktreePipelineCreation({
+        ...input,
+        submissionId: "submission-3",
+        prepareSession: laterPrepareSession,
+      }),
+    ).resolves.toEqual({ ok: true, sessionId: "session-prepared-1" });
+    expect(laterPrepareSession).not.toHaveBeenCalled();
+    expect(secondPrepareSession).not.toHaveBeenCalled();
     expect(createWorktree).toHaveBeenCalledTimes(1);
   });
 

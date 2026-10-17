@@ -1,13 +1,13 @@
 /** Український переклад */
 const ukUA: Record<string, string> = {
   "sessionManager.openUnavailable":
-    "Робочий простір сесії недоступний. Відновіть з’єднання або відкрийте проєкт.",
+    "Робочий простір сесії недоступний. Відновіть з'єднання або відкрийте проєкт і повторіть спробу.",
   "sessionManager.pinnedArchived": "Закріплення не фільтрує архівні сесії.",
   "composerRecovery.title": "Ненадіслане повідомлення збережено",
   "composerRecovery.storageUnavailable":
     "Не вдалося зберегти стан відновлення. Повідомлення не надіслано; звільніть сховище браузера та повторіть спробу.",
   "worktreeSetup.connectionUnavailable":
-    "Відновіть з’єднання з Host цього проєкту, щоб продовжити підготовку worktree.",
+    "Відновіть з'єднання з Host цього проєкту, щоб продовжити підготовку worktree.",
   "worktreeSetup.created": "Worktree створено",
   "composerRecovery.editorOccupied": "Надішліть або очистьте поточну чернетку перед відновленням.",
   "composerRecovery.reattach": "Прикріпіть відсутні файли знову або явно видаліть їх.",

@@ -1,4 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
+import * as fsPromises from "node:fs/promises";
 import {
   existsSync,
   mkdirSync,
@@ -21,6 +22,11 @@ import type {
 } from "../src/git/providers/gitCommandProvider.js";
 import { createGitService } from "../src/git/gitService.js";
 import { createGitCliRepo } from "../src/git/repo/gitCliRepo.js";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, stat: vi.fn(actual.stat) };
+});
 
 const tempDirs: string[] = [];
 
@@ -1025,5 +1031,37 @@ describe("gitCliRepo verifyWorktreeUsable", () => {
 
     // Read-only: no git command runs (no prune, no branch deletion).
     expect(commandProvider.run).not.toHaveBeenCalled();
+  });
+
+  it("propagates unexpected errors while checking the target directory", async () => {
+    const dir = makeTempDir("zcode-git-verify-denied-directory-");
+    const error = Object.assign(new Error("permission denied"), { code: "EACCES" });
+    vi.mocked(fsPromises.stat).mockRejectedValueOnce(error);
+    const repo = createGitCliRepo({ commandProvider: createMockCommandProvider().commandProvider });
+
+    await expect(repo.verifyWorktreeUsable("/repo", dir)).rejects.toBe(error);
+  });
+
+  it("classifies ENOTDIR as a missing target directory", async () => {
+    const dir = makeTempDir("zcode-git-verify-not-directory-");
+    vi.mocked(fsPromises.stat).mockRejectedValueOnce(
+      Object.assign(new Error("not a directory"), { code: "ENOTDIR" }),
+    );
+    const repo = createGitCliRepo({ commandProvider: createMockCommandProvider().commandProvider });
+
+    await expect(repo.verifyWorktreeUsable("/repo", dir)).resolves.toEqual({
+      ok: false,
+      reason: "missing-directory",
+    });
+  });
+
+  it("propagates unexpected errors while checking the Git link", async () => {
+    const dir = makeTempDir("zcode-git-verify-denied-link-");
+    const error = Object.assign(new Error("permission denied"), { code: "EPERM" });
+    const directoryStat = await fsPromises.stat(dir);
+    vi.mocked(fsPromises.stat).mockResolvedValueOnce(directoryStat).mockRejectedValueOnce(error);
+    const repo = createGitCliRepo({ commandProvider: createMockCommandProvider().commandProvider });
+
+    await expect(repo.verifyWorktreeUsable("/repo", dir)).rejects.toBe(error);
   });
 });

@@ -133,7 +133,6 @@ export function ComposerDestinationControl({
   // action, but confirms before it mutates the shared checkout.
   const switcher = useGitBranchSwitcher({
     workspacePath,
-    gitService: baseServices.gitService,
     currentBranchName: gitSummary.branchName,
     headRefType: gitSummary.headRefType,
     onRefreshGit,
