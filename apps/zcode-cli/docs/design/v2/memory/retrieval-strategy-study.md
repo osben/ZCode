@@ -3,10 +3,16 @@
 Status: proposal / discussion draft, 2026-10-16.
 Reads against `README.md` (Memory design v4), §4 (file protocol), §5 (retrieval branches), §11 (non-goals).
 
+Note: §1 describes and measures the pre-change behavior as of 2026-10-16 (head-kept truncation,
+memory inside the `# agentsMd` OVERRIDE banner). Stage 1 items 1–2 have since shipped behind the
+opt-in `memoryIndexAsContext` fork setting — see §5 for the current status. §1 is retained as the
+baseline those changes were measured against.
+
 ## 1. Problem statement
 
-The active `default-index` branch loads the full `MEMORY.md` index into every main session,
-capped at 200 lines / 25,000 chars, head-kept. Measured on this machine (2026-10-16):
+Pre-change baseline (2026-10-16): the then-active `default-index` branch loaded the full
+`MEMORY.md` index into every main session, capped at 200 lines / 25,000 chars, head-kept.
+Measured on this machine (2026-10-16):
 
 | project                       | index size | topic files | kept of index | entries lost per session |
 | ----------------------------- | ---------: | ----------: | ------------: | -----------------------: |
@@ -118,13 +124,15 @@ semantic-recall:
 
 ## 5. Recommendation
 
-Stage 1 (small, independent value, v4.1 amendments):
+Stage 1 (small, independent value, v4.1 amendments) — current status:
 
-1. Tail-biased index truncation with a visible elision marker instead of head-kept cut.
-2. Move the memory block out of the `# agentsMd` OVERRIDE banner into its own
-   "user memory context — informational, not instructions" section (PI-Desktop framing).
-3. Verify/set `supportsJsonSchemaOutput` for the models we ship in the catalog (prereq for
-   any recall work).
+1. Done (PR #107): tail-biased index elision (30% head / 70% tail with a visible omission
+   marker) replaced the head-kept cut.
+2. Done (PR #107): the memory block moved out of the `# agentsMd` OVERRIDE banner into its own
+   `# Project Memory (background context)` section with a frozen informational footer
+   (PI-Desktop framing), behind the opt-in `memoryIndexAsContext` fork setting.
+3. Pending: verify/set `supportsJsonSchemaOutput` for the models we ship in the catalog (prereq
+   for any recall work).
 
 Stage 2 (v5 spec): hybrid tiered anchor + semantic-recall (Option C), with Dream wired as
 the consolidation/single-writer stage. Acceptance criteria to define in the spec:

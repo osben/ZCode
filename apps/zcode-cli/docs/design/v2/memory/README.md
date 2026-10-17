@@ -138,7 +138,9 @@ Desktop/Web Settings 另提供 fork-only app setting `memoryIndexAsContext`（�
 - `false`（默认）时沿用既有聚合结构：索引与 AGENTS instructions 一起处于 `# agentsMd`
   聚合块内，渲染判定与 §4 原行为完全一致（含"仅 Memory 也渲染聚合标题"）。
 - `true` 时 `# agentsMd` 聚合标题只围绕非空 instruction source 渲染；`MEMORY.md` 以独立
-  background-context source 渲染并追加冻结的 framing 尾句，自身不再触发聚合标题。
+  background-context source 渲染：先渲染同级冻结标题 `# Project Memory (background context)`
+  （同时存在 instruction source 时该标题负责关闭 `# agentsMd` section；仅 Memory 存在时不渲染
+  `# agentsMd`），再渲染 source 行与索引内容并追加冻结的 framing 尾句，自身不再触发聚合标题。
   该模式通过 `session/requestRuntimePreferences` 的 `memoryIndexAsContext` boolean（缺省解析为
   `false`）下发，在根 Runtime materialization 时冻结，继承、热切换与 remote 语义与
   `memoryEnabled` 一致。Motivation：模型写入的 Memory 不应天然携带 instruction OVERRIDE
@@ -332,10 +334,14 @@ Contents of <MEMORY_ROOT>/MEMORY.md (user's auto-memory, persists across convers
 ```
 
 `memoryIndexAsContext=true` 时，`# agentsMd` 聚合标题只围绕非空 instruction source 渲染；
-`MEMORY.md` 以独立 background-context source 渲染，自身不再触发聚合标题，并在相同行之后追加
-冻结的 framing 尾句：
+`MEMORY.md` 以独立 background-context source 渲染，自身不再触发聚合标题。该 source 以同级
+冻结标题 `# Project Memory (background context)` 开始：同时存在 instruction source 时
+`# agentsMd` section 在该标题处结束，Memory 不会留在 OVERRIDE banner 之下；仅 Memory 存在时
+不渲染 `# agentsMd`。source 行之后追加冻结的 framing 尾句：
 
 ```text
+# Project Memory (background context)
+
 Contents of <MEMORY_ROOT>/MEMORY.md (user's auto-memory, persists across conversations):
 
 <index content>
@@ -837,7 +843,7 @@ ZCode 当前没有的工具也属于明确的 tool-inventory 差异；不得为�
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Config/root            | Settings 默认/持久化；新建/cold resume 重读；active/child 继承；enabled/use；local/remote identity；resume 重算；旧 root 不读取；mkdir failure                                                                                                                                                                         |
 | Retrieval branch       | `false -> default-index`、`true -> semantic-recall`；pointer/index 与 Selector/Recall 两组互斥；原始 boolean 只定义一次                                                                                                                                                                                                |
-| Main prompt/index      | 两种 Main prompt exact fixture；default 分支非空 `MEMORY.md` 的 exact request user-context source（`memoryIndexAsContext` 两种形态各一份 fixture）；gate-off 保持旧聚合渲染判定，gate-on 聚合标题只围绕 instruction source 且 Memory source 携带冻结 framing 尾句；leading frontmatter/顶层 HTML comment 清理；缺失/空/不可读不注入；semantic 分支在读取前跳过；200 行/25,000 字符 head/tail elision；磁盘原文 read-state 与 partial 标记；同 session 冻结、新 session 重读；四种 Main task；三种 child 排除 |
+| Main prompt/index      | 两种 Main prompt exact fixture；default 分支非空 `MEMORY.md` 的 exact request user-context source（`memoryIndexAsContext` 两种形态各一份 fixture）；gate-off 保持旧聚合渲染判定，gate-on 聚合标题只围绕 instruction source 且 Memory source 以 `# Project Memory (background context)` 同级标题渲染并携带冻结 framing 尾句；leading frontmatter/顶层 HTML comment 清理；缺失/空/不可读不注入；semantic 分支在读取前跳过；200 行/25,000 字符 head/tail elision；磁盘原文 read-state 与 partial 标记；同 session 冻结、新 session 重读；四种 Main task；三种 child 排除 |
 | Permission/file write  | root containment；小写 `.md`；敏感 segment；Write/Edit allow/deny；缺失 originSessionId 时同时补入 `node_type: memory`，已有非空 origin 的文件原样保留；Bash 不变                                                                                                                                                      |
 | Recall default branch  | 保留 pointer/index；Main turn 不扫描、不发 Selector、不注入 `relevant_memory`                                                                                                                                                                                                                                          |
 | Recall semantic branch | 无 pointer/index；branch-aware lifecycle 覆盖 prefetch、完整 tool batch 后 consume、recursive scan、selector schema、order/duplicate、正文限制、stale 与 61,440 gate；不增加 Runtime override                                                                                                                          |
@@ -864,8 +870,8 @@ focused tests；它证明这些规则已经在真实 Runtime 链路中正确组�
    `MEMORY.md` pointer 文案；session 初始化时非空 `MEMORY.md` 还会以冻结的 exact request
    user-context source 进入首条 user message，并在该 session 后续 Main request 中保持。该非空
    source 自身即使没有 AGENTS.md，在 `memoryIndexAsContext=false`（默认）时也会使聚合块渲染一次
-   `# agentsMd`；`true` 时该 source 以独立 background-context 形态渲染并携带冻结 framing 尾句，
-   不渲染聚合标题。
+   `# agentsMd`；`true` 时该 source 以 `# Project Memory (background context)` 同级标题的独立
+   background-context 形态渲染并携带冻结 framing 尾句，不渲染聚合标题。
 2. Memory-enabled Main turn 不发 Selector provider request，也不注入 `relevant_memory`；索引消费
    不依赖 Selector。
 3. 后续无 direct Memory write 的成功 Main turn 会 fire-and-forget Extraction；正常完成证据在测试中

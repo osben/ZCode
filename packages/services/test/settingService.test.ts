@@ -1115,6 +1115,22 @@ describe("fork settings sidecar", () => {
     });
   });
 
+  it("persists memoryIndexAsContext through the fork patch schema", async () => {
+    // The key must be part of forkAppSettingsPatchSchema: zod strips unknown keys silently, so a
+    // missing entry here would make the Settings toggle never reach the sidecar file.
+    const home = makeTempHome();
+    const service = await createSettingServiceInHome(home);
+
+    await service.update({ memoryIndexAsContext: true });
+
+    expect(readJsonFile(forkSettingsFile(home)).memoryIndexAsContext).toBe(true);
+    expect(readJsonFile(settingsFile(home))).not.toHaveProperty("memoryIndexAsContext");
+    await expect(service.get()).resolves.toMatchObject({ memoryIndexAsContext: true });
+
+    await service.update({ memoryIndexAsContext: false });
+    expect(readJsonFile(forkSettingsFile(home)).memoryIndexAsContext).toBe(false);
+  });
+
   it("keeps fork settings when a foreign writer rewrites setting.json without them", async () => {
     const home = makeTempHome();
     const service = await createSettingServiceInHome(home);

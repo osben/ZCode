@@ -78,6 +78,7 @@ export const forkAppSettingsPatchSchema = z.object({
   worktreeCustomLocationPath: nonEmptyStringSchema.optional(),
   worktreeBranchPrefix: nonEmptyStringSchema.optional(),
   worktreeProjectOverrides: z.record(z.string(), worktreeProjectOverrideSchema).optional(),
+  memoryIndexAsContext: z.boolean().optional(),
 });
 
 /**
