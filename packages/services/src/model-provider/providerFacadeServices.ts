@@ -81,9 +81,13 @@ export interface IProviderSettingsService {
   /** Run a full ACP roundtrip (spawn → initialize → session/new → prompt) and return the raw frames. */
   testAcpAgent(input: AcpAgentTestInput): Promise<AcpAgentTestResult>;
   /** Best-effort login status for an agent CLI; `supported: false` when unknown. */
-  getAcpAgentStatus(input: { readonly agentId: string }): Promise<AcpAgentStatusReport>;
+  getAcpAgentStatus(
+    input: Parameters<ProviderSettingsAcpAgentsBridge["status"]>[0],
+  ): Promise<AcpAgentStatusReport>;
   /** Open the user's terminal with the agent's login command. */
-  startAcpAgentLogin(input: { readonly agentId: string }): Promise<AcpAgentLoginResult>;
+  startAcpAgentLogin(
+    input: Parameters<ProviderSettingsAcpAgentsBridge["startLogin"]>[0],
+  ): Promise<AcpAgentLoginResult>;
 }
 
 export const IProviderSettingsService = createServiceDescriptor<IProviderSettingsService>(
