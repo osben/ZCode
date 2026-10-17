@@ -121,6 +121,16 @@ export function AcpAgentsPanel({
           {intl.formatMessage({ id: "settings.modelProvider.acp.rescan" })}
         </Button>
       </div>
+      {/* A failed rescan keeps the previously detected cards visible; the
+          error would otherwise be invisible in the "ready" branch. */}
+      {detection.error ? (
+        <p className="border-b border-border px-4 py-2 text-ui-sm text-destructive">
+          {intl.formatMessage(
+            { id: "settings.modelProvider.acp.scanFailed" },
+            { message: detection.error },
+          )}
+        </p>
+      ) : null}
       <div className="grid gap-3 p-4">
         {detection.agents.map((agent) => (
           <AcpAgentCard

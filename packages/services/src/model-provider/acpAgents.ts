@@ -152,11 +152,14 @@ export function createAcpAgentsBridge(
       // Runtime frames use the wire vocabulary ("inbound"/"outbound", no
       // timestamp); map them onto the contract's test-report frame shape.
       const onFrame = (frame: AcpRawFrame): void => {
-        if (frames.length >= MAX_TEST_FRAMES || capturedBytes >= MAX_TEST_FRAME_BYTES) {
+        // MAX_TEST_FRAME_BYTES is a byte bound; `text.length` counts UTF-16
+        // code units, so measure actual UTF-8 bytes (CJK is up to 3x larger).
+        const frameBytes = Buffer.byteLength(frame.text, "utf8");
+        if (frames.length >= MAX_TEST_FRAMES || capturedBytes + frameBytes > MAX_TEST_FRAME_BYTES) {
           framesDropped += 1;
           return;
         }
-        capturedBytes += frame.text.length;
+        capturedBytes += frameBytes;
         frames.push({
           direction: frame.direction === "inbound" ? "in" : "out",
           text: frame.text,
@@ -305,9 +308,9 @@ function defaultRunCommand(
       const suffix = timedOut ? `\n[timed out after ${timeoutMs}ms]` : "";
       resolve({ exitCode, output: `${output.trim()}${suffix}`.trim() });
     };
-    const append = (chunk: Buffer): void => {
+    const append = (chunk: string): void => {
       if (output.length >= MAX_STATUS_OUTPUT_CHARS) return;
-      output += chunk.toString("utf8");
+      output += chunk;
       if (output.length > MAX_STATUS_OUTPUT_CHARS)
         output = output.slice(0, MAX_STATUS_OUTPUT_CHARS);
     };
@@ -330,10 +333,14 @@ function defaultRunCommand(
       killCommandTree(child);
       finish(null);
     }, timeoutMs);
+    // String decoding via setEncoding keeps a multibyte character that is
+    // split across two chunks intact (per-chunk toString would corrupt it).
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
     child.stdout?.on("data", append);
     child.stderr?.on("data", append);
     child.once("error", (error: Error) => {
-      append(Buffer.from(error.message, "utf8"));
+      append(error.message);
       finish(null);
     });
     child.once("close", (code) => finish(code));

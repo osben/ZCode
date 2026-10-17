@@ -35,6 +35,21 @@ describe("acpAgentConfig", () => {
     expect(joinAcpArgs(["a", "b"])).toBe("a b");
   });
 
+  it("round-trips arguments through join and split", () => {
+    const cases = [
+      ["--config"],
+      ["--config", "/tmp/Agent Config"],
+      ["--name=John Doe"],
+      ['say "hi"'],
+      ["back\\slash", "with space"],
+      [""],
+      ["", "trailing"],
+    ];
+    for (const args of cases) {
+      expect(splitAcpArgs(joinAcpArgs(args))).toEqual(args);
+    }
+  });
+
   it("keeps quoted whitespace inside one argument", () => {
     expect(splitAcpArgs('a "b c"')).toEqual(["a", "b c"]);
     expect(splitAcpArgs("--name='John Doe'")).toEqual(["--name=John Doe"]);
@@ -48,6 +63,12 @@ describe("acpAgentConfig", () => {
     expect(parsed.env).toEqual({ TOKEN: "abc", EMPTY: "" });
     expect(parsed.invalidLines).toEqual(["BAD LINE", "1BAD=x"]);
     expect(formatAcpEnvLines({ A: "1", B: "2" })).toBe("A=1\nB=2");
+  });
+
+  it("preserves surrounding whitespace in env values", () => {
+    // An unchanged form must not rewrite a saved value.
+    expect(parseAcpEnvLines("TOKEN= abc ").env).toEqual({ TOKEN: " abc " });
+    expect(parseAcpEnvLines("  KEY = value  ").env).toEqual({ KEY: " value  " });
   });
 
   it("builds the access config with fallbacks and always includes env", () => {

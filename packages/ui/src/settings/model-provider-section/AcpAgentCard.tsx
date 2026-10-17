@@ -69,6 +69,31 @@ export function AcpAgentCard({
   const [command, setCommand] = useState(() => savedAccess?.command ?? defaults.command);
   const [argsText, setArgsText] = useState(() => joinAcpArgs(savedAccess?.args ?? defaults.args));
   const [envText, setEnvText] = useState(() => formatAcpEnvLines(savedAccess?.env ?? {}));
+  // The provider settings view (carrying `savedAccess`) can arrive after this
+  // card mounted with detection defaults. Seed the form from the first
+  // defined `savedAccess` unless the user already edited a field, so "Save
+  // changes" never persists defaults over the saved command/args/env.
+  const [formEdited, setFormEdited] = useState(false);
+  const [savedAccessSeeded, setSavedAccessSeeded] = useState(savedAccess !== undefined);
+  useEffect(() => {
+    if (formEdited || savedAccessSeeded || savedAccess === undefined) return;
+    setSavedAccessSeeded(true);
+    setCommand(savedAccess.command);
+    setArgsText(joinAcpArgs(savedAccess.args));
+    setEnvText(formatAcpEnvLines(savedAccess.env));
+  }, [formEdited, savedAccessSeeded, savedAccess]);
+  const editCommand: typeof setCommand = (value) => {
+    setFormEdited(true);
+    setCommand(value);
+  };
+  const editArgsText: typeof setArgsText = (value) => {
+    setFormEdited(true);
+    setArgsText(value);
+  };
+  const editEnvText: typeof setEnvText = (value) => {
+    setFormEdited(true);
+    setEnvText(value);
+  };
   // Status/login must follow the executable the user configured, so read the
   // latest command without re-running the mount-time status probe per keystroke.
   const commandRef = useRef(command);
@@ -331,7 +356,7 @@ export function AcpAgentCard({
               id={`acp-command-${agent.agentId}`}
               value={command}
               spellCheck={false}
-              onChange={(event) => setCommand(event.target.value)}
+              onChange={(event) => editCommand(event.target.value)}
             />
           </div>
           <div className="grid gap-1.5">
@@ -340,7 +365,7 @@ export function AcpAgentCard({
               id={`acp-args-${agent.agentId}`}
               value={argsText}
               spellCheck={false}
-              onChange={(event) => setArgsText(event.target.value)}
+              onChange={(event) => editArgsText(event.target.value)}
             />
           </div>
           <div className="grid gap-1.5">
@@ -351,7 +376,7 @@ export function AcpAgentCard({
               value={envText}
               spellCheck={false}
               className="font-mono text-xs"
-              onChange={(event) => setEnvText(event.target.value)}
+              onChange={(event) => editEnvText(event.target.value)}
             />
             {envParse.invalidLines.length > 0 ? (
               <p className="text-ui-sm text-destructive">

@@ -54,6 +54,18 @@ export function splitAcpArgs(text: string): string[] {
   for (let index = 0; index < text.length; index += 1) {
     const char = text[index]!;
     if (quote !== null) {
+      // Inside quotes only the quote character and the backslash itself are
+      // escapable (matches what joinAcpArgs emits); other backslashes stay
+      // literal so Windows paths survive unchanged.
+      if (
+        char === "\\" &&
+        index + 1 < text.length &&
+        (text[index + 1] === quote || text[index + 1] === "\\")
+      ) {
+        current += text[index + 1];
+        index += 1;
+        continue;
+      }
       if (char === quote) quote = null;
       else current += char;
       continue;
@@ -80,8 +92,21 @@ export function splitAcpArgs(text: string): string[] {
   return args;
 }
 
+/**
+ * Serializes arguments so {@link splitAcpArgs} round-trips them exactly:
+ * whitespace, quotes, and backslashes are quoted/escaped, and an empty
+ * argument becomes a lone `""`. Without this, a saved argument containing
+ * whitespace (e.g. `John Doe`) silently splits into two arguments when the
+ * form remounts.
+ */
 export function joinAcpArgs(args: readonly string[]): string {
-  return args.join(" ");
+  return args.map(quoteAcpArg).join(" ");
+}
+
+function quoteAcpArg(arg: string): string {
+  if (arg.length === 0) return '""';
+  if (!/[\s"'\\]/.test(arg)) return arg;
+  return `"${arg.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }
 
 /** Parses `KEY=VALUE` lines; invalid lines are reported instead of silently dropped. */
@@ -94,17 +119,20 @@ export function parseAcpEnvLines(text: string): {
   for (const rawLine of text.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (line.length === 0 || line.startsWith("#")) continue;
-    const separator = line.indexOf("=");
+    // The separator and key are trimmed for validation, but the value is
+    // taken verbatim from the raw line: an unchanged form must not rewrite a
+    // saved value like `" abc "` into `"abc"`.
+    const separator = rawLine.indexOf("=");
     if (separator <= 0) {
       invalidLines.push(line);
       continue;
     }
-    const key = line.slice(0, separator).trim();
+    const key = rawLine.slice(0, separator).trim();
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
       invalidLines.push(line);
       continue;
     }
-    env[key] = line.slice(separator + 1).trim();
+    env[key] = rawLine.slice(separator + 1);
   }
   return { env, invalidLines };
 }
