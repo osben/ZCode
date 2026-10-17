@@ -23,8 +23,13 @@ Based on upstream v3.15.1, with the v3.15.2 auth fix and the v3.15.3 auto-update
 - Memory viewer v2 in Settings: file types and descriptions, inline previews, an index budget chip, folder access.
 - Themes: 10 accent palettes with tinted surfaces, a terminal WebGL toggle, and a theme picker in the Command Center.
 - Ukrainian localization (uk-UA).
-- Sidebar: merged-branch badge, task hover cards, and the Model trajectory tab in the launcher.
+- Sidebar: merged-branch badge, task hover cards, child conversations with running subagents, and the Model trajectory tab in the launcher.
 - Live tok/s in session status rows.
+- Sessions manager: a full-screen table to search, filter, and bulk archive or delete sessions across a project's workspaces.
+- Review pane: group changed files by directory, with a toggle back to the flat list.
+- ChatGPT Plan: connect multiple ChatGPT accounts in parallel and track each account's usage windows.
+- Manual `/dream` command that consolidates project memory on demand; Settings shows the last run time.
+- ACP agents: run external ACP-compatible agent CLIs as providers, with detection, login, and a raw-frame test in Model Settings. Development builds only while the feature stabilizes.
 - Release pipeline for the fork with `-fork.N` versions and production-backend release builds.
 - Pre-commit hook that formats and lints staged files.
 
@@ -40,12 +45,18 @@ Based on upstream v3.15.1, with the v3.15.2 auth fix and the v3.15.3 auto-update
 - `.text` files no longer break the file icon in packaged apps.
 - Gen UI vendor assets keep exact bytes on Windows checkouts.
 - Session databases from before the fork still load.
+- Web client: task lists from a standalone server load again.
+- Custom TLS certificates no longer disable trust for public CAs.
+- Git: session rows no longer show misleading merge indicators.
+- Side chats no longer steal focus from the main composer when pickers open.
 
 ### Changed
 
 - CI: parallel test jobs with a V8 compile cache, Node 26 and Ubuntu 26 runners, CodeQL fixes. PR checks went from about 12 to about 9 minutes.
 - Dependency updates: React 19.3, vitest 4.1.7, and safe batch updates.
 - AGENTS.md, code comments, and specs translated to English.
+- Memory index: tail-biased elision keeps the injected index small, with opt-in background-context framing.
+- Performance: the CLI materializes its Bash command registry on demand and amortizes usage-retention pruning.
 
 ### Upstream
 
