@@ -204,6 +204,10 @@ export const resolveBuildAliases = ({
     rootDirectory,
     "../../packages/shared/src/request-security-edition/index.ts",
   ),
+  "@zcode/shared/model-provider-types": resolve(
+    rootDirectory,
+    "../../packages/shared/src/model-provider-types.ts",
+  ),
   "@zcode/shared": resolve(rootDirectory, "../../packages/shared/src/index.ts"),
   "@zcode/core": resolve(cliDirectory, "../core/dist/index.js"),
 });
