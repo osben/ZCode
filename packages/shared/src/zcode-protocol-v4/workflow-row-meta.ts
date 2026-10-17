@@ -99,9 +99,10 @@ export const workflowNotificationMetaSchema = z.discriminatedUnion("kind", [
 export type WorkflowNotificationMeta = z.infer<typeof workflowNotificationMetaSchema>;
 
 export const backgroundResultOriginMetaSchema = z.object({
-  // Keep these three values in sync with BackgroundResultOriginMeta in contracts.
-  // "workflow" is a dynamic-workflow run (workId equals runId) and reuses the full background-notification pipeline.
-  backgroundSource: z.enum(["bash", "subagent", "workflow"]),
+  // Keep these values in sync with BackgroundResultOriginMeta in contracts.
+  // "workflow" is a dynamic-workflow run (workId equals runId) and reuses the full background-notification pipeline;
+  // "dream" is the /dream memory-consolidation completion notification (workId equals the registry taskId).
+  backgroundSource: z.enum(["bash", "subagent", "workflow", "dream"]),
   workId: z.string().min(1),
   title: z.string().min(1),
   // Present only on a single notification turn with backgroundSource === "workflow". Zod strips

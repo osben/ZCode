@@ -1124,6 +1124,7 @@ const BACKGROUND_RESULT_TITLE_SOURCES: ReadonlySet<string> = new Set([
   "bash",
   "subagent",
   "workflow",
+  "dream",
 ]);
 
 function resolveBackgroundResultTitle(unit: ConversationTurnRenderUnit): string | undefined {

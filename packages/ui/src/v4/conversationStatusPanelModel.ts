@@ -101,6 +101,7 @@ export interface ConversationStatusPanelModel {
   goal: GoalState | null;
   sessionPlans: ConversationStatusPanelSessionPlansModel | null;
   plan: ConversationStatusPanelPlanModel | null;
+  latestDreamWork: BackgroundWorkSummary | null;
   runningBashWorks: BackgroundWorkSummary[];
   runningSubagentWorks: ConversationStatusPanelRunningSubagent[];
   runningWorkflowRuns: ConversationStatusPanelWorkflowRun[];
@@ -283,17 +284,34 @@ export function workflowRunWords(
 export function resolveSoleRunningWorkflowRunTarget(
   model: Pick<
     ConversationStatusPanelModel,
-    "runningBashWorks" | "runningSubagentWorks" | "runningWorkflowRuns"
+    "runningBashWorks" | "runningSubagentWorks" | "runningWorkflowRuns" | "latestDreamWork"
   >,
 ): ConversationStatusPanelWorkflowRunTarget | null {
-  if (model.runningBashWorks.length > 0 || model.runningSubagentWorks.length > 0) return null;
+  if (
+    model.latestDreamWork ||
+    model.runningBashWorks.length > 0 ||
+    model.runningSubagentWorks.length > 0
+  )
+    return null;
   if (model.runningWorkflowRuns.length !== 1) return null;
   return workflowRunOpenTarget(model.runningWorkflowRuns[0]!);
+}
+
+/** Derived from ordered lifecycle state, including the last terminal result; no UI-owned history. */
+export function getLatestDreamWork(
+  works: readonly BackgroundWorkSummary[],
+): BackgroundWorkSummary | null {
+  let latest: BackgroundWorkSummary | null = null;
+  for (const work of works) {
+    if (work.kind === "dream" && (!latest || work.startedAt >= latest.startedAt)) latest = work;
+  }
+  return latest;
 }
 
 export function buildConversationStatusPanelModel(
   input: BuildConversationStatusPanelModelInput,
 ): ConversationStatusPanelModel {
+  const latestDreamWork = getLatestDreamWork(input.backgroundWorks ?? []);
   const git = input.isOfficeMode ? null : buildGitModel(input);
   const goal = input.goal ?? null;
   const sessionPlans = buildSessionPlansModel(input.sessionPlans, input.workspacePath);
@@ -365,10 +383,12 @@ export function buildConversationStatusPanelModel(
     goal,
     sessionPlans,
     plan,
+    latestDreamWork,
     runningBashWorks,
     runningSubagentWorks,
     runningWorkflowRuns,
     hasContent: Boolean(
+      latestDreamWork ||
       git ||
       goal ||
       sessionPlans ||

@@ -130,6 +130,7 @@ import {
 import { executeTurn, executeTurnCommand } from "./turn.js";
 import { admitPrompt } from "./prompt-admission.js";
 import { executeManualCompact } from "./compact.js";
+import { drainBackgroundDreams } from "../helpers/project-memory-dream.js";
 import { executeManualDream } from "./dream.js";
 import { autoCompactIfNeeded } from "./compact.js";
 import { microcompactIfNeeded } from "./microcompact.js";
@@ -394,5 +395,6 @@ export function installAgentRuntimeMethods(ctor: AgentRuntimeConstructor): void 
   proto.generateWorkspaceText = generateWorkspaceText;
   proto.sampleModel = sampleModel;
   proto.drainMemoryExtractions = drainMemoryExtractions;
+  proto.drainBackgroundDreams = drainBackgroundDreams;
   proto.isProjectMemoryEnabled = isProjectMemoryEnabled;
 }

@@ -26,6 +26,7 @@ type ModelUsageQuerySource =
   | string;
 
 interface RecordModelUsageInput {
+  completedAt?: number;
   assistantMessageId?: MessageId;
   attemptIndex?: number;
   error?: unknown;
@@ -59,7 +60,7 @@ export async function recordModelUsageFact(
   const usageStore = usageStoreFor(runtime);
   if (!usageStore) return;
 
-  const completedAt = Date.now();
+  const completedAt = input.completedAt ?? Date.now();
   const usage = input.result?.usage;
   const networkEvents = modelNetworkEvents(input.events.slice(input.networkEventStartIndex));
   const retryCount = networkEvents.filter((event) => event.type === "model_retry_scheduled").length;

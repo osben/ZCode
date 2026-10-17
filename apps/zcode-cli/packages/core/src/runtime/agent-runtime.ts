@@ -134,7 +134,7 @@ import type { MemoryRecallState } from "../memory/recall/index.js";
 import type { ChildClientPortsContext, ClientFacingPorts } from "./helpers/child-client-ports.js";
 import type { ProjectMemoryRecallPrefetch } from "./helpers/project-memory-recall.js";
 import type { ProjectMemoryExtractionScheduler } from "./helpers/project-memory-extraction.js";
-import type { ProjectMemoryUpdate } from "./helpers/project-memory-dream.js";
+import type { BackgroundDreamRun, ProjectMemoryUpdate } from "./helpers/project-memory-dream.js";
 import { projectPersistentAgentMemoryTools } from "../subagent/persistent-memory.js";
 import { RuntimeTelemetryFacade } from "../telemetry/runtime-telemetry.js";
 import type { WorkspaceHookRuntimeAdmissionPort } from "../hooks/workspace-hook-runtime-admission.js";
@@ -185,6 +185,7 @@ export class AgentRuntime {
   private memoryExtractionScheduler?: ProjectMemoryExtractionScheduler;
   private memoryDreamLastScanAtMs = 0;
   private pendingMemoryUpdate?: ProjectMemoryUpdate;
+  private backgroundDreamRuns = new Map<string, BackgroundDreamRun>();
   private contextSourcePort?: ContextSourcePort;
   private skillPort?: SkillPort;
   private mcpPort?: McpPort;
@@ -372,6 +373,7 @@ export class AgentRuntime {
     // The process remains alive after one session closes, so stop this runtime's
     // Extraction first rather than merely abandoning the wait after a timeout.
     this.memoryExtractionScheduler?.shutdown();
+    for (const run of this.backgroundDreamRuns.values()) run.controller.abort();
   }
 }
 
@@ -735,6 +737,7 @@ export interface AgentRuntime {
   isProjectMemoryEnabled(): boolean;
   /** Wait up to 60 seconds by default; null waits for all scheduled extractions without a drain deadline. */
   drainMemoryExtractions(timeoutMs?: number | null): Promise<void>;
+  drainBackgroundDreams(timeoutMs?: number): Promise<void>;
 }
 
 installAgentRuntimeMethods(AgentRuntime);

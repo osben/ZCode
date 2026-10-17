@@ -291,7 +291,10 @@ export function createSessionFacade(deps: CreateSessionFacadeDeps): SessionFacad
         // The close entry point first blocks new scheduling and cancels in-flight Memory Extraction,
         // then waits for cancellation to settle.
         deps.runtime.beginShutdown();
-        await deps.runtime.drainMemoryExtractions(60_000);
+        await Promise.all([
+          deps.runtime.drainMemoryExtractions(60_000),
+          deps.runtime.drainBackgroundDreams(60_000),
+        ]);
         // This App owns the engine, so closing must stop it explicitly.
         // The placement satisfies two constraints: **after** beginShutdown, terminal notifications
         // emitted during settlement are dropped (background-notifications.ts does not enqueue while

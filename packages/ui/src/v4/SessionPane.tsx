@@ -4932,7 +4932,8 @@ export function SessionPane({
   const runningBackgroundWorkCount =
     statusPanelModel.runningBashWorks.length +
     statusPanelModel.runningSubagentWorks.length +
-    statusPanelModel.runningWorkflowRuns.length;
+    statusPanelModel.runningWorkflowRuns.length +
+    (statusPanelModel.latestDreamWork?.status === "running" ? 1 : 0);
   const runningTerminalCount = statusPanelModel.runningBashWorks.length;
   const runningAgentCount = statusPanelModel.runningSubagentWorks.length;
   const runningWorkflowCount = statusPanelModel.runningWorkflowRuns.length;
@@ -4964,12 +4965,15 @@ export function SessionPane({
   // Composer badge shortcut: when the only running item is a workflow run with a details page,
   // clicking the badge opens its side tab directly without changing the capsule. Use the same model as the capsule;
   // do not shortcut when the host has not supplied onOpenWorkflowRun (the panel row is also not clickable then).
+  // Retained Dream results keep the same panel entry after the running count reaches zero.
+  const canOpenBackgroundWorks =
+    runningBackgroundWorkCount > 0 || Boolean(statusPanelModel.latestDreamWork);
   const soleRunningWorkflowRunTarget = useMemo(
     () => (onOpenWorkflowRun ? resolveSoleRunningWorkflowRunTarget(statusPanelModel) : null),
     [onOpenWorkflowRun, statusPanelModel],
   );
   const handleOpenRunningBackgroundWorks = useCallback(() => {
-    if (runningBackgroundWorkCount === 0) return;
+    if (!canOpenBackgroundWorks) return;
     if (soleRunningWorkflowRunTarget) {
       // Reuse the panel row's handler; there is no second open path.
       handleOpenWorkflowRunFromPanel(soleRunningWorkflowRunTarget);
@@ -4985,7 +4989,7 @@ export function SessionPane({
     handleOpenWorkflowRunFromPanel,
     handleSummaryPanelVariantChange,
     runningAgentCount,
-    runningBackgroundWorkCount,
+    canOpenBackgroundWorks,
     runningTerminalCount,
     runningWorkflowCount,
     soleRunningWorkflowRunTarget,
@@ -5541,7 +5545,7 @@ export function SessionPane({
       onSelectThought={handleSelectThought}
       onSwitchMode={handleSwitchMode}
       onOpenRunningBackgroundWorks={
-        sessionId && runningBackgroundWorkCount > 0 ? handleOpenRunningBackgroundWorks : undefined
+        sessionId && canOpenBackgroundWorks ? handleOpenRunningBackgroundWorks : undefined
       }
       backgroundWorkOpenTarget={soleRunningWorkflowRunTarget ? "workflow-run" : "panel"}
       // After the parent turn ends, the subagents.running directory projection may briefly lag behind backgroundWorks

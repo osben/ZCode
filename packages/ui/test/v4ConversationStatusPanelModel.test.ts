@@ -762,3 +762,27 @@ describe("通用模式 Git 投影", () => {
     expect(JSON.stringify(input)).toBe(original);
   });
 });
+
+describe("latest Dream panel state", () => {
+  it("retains only the newest Dream, including terminal results", () => {
+    const latest = backgroundWork({
+      workId: "new",
+      kind: "dream",
+      status: "resultPending",
+      startedAt: 20,
+    });
+    const model = buildConversationStatusPanelModel({
+      backgroundWorks: [backgroundWork({ workId: "old", kind: "dream", startedAt: 10 }), latest],
+    });
+    expect(model.latestDreamWork).toEqual(latest);
+    expect(model.runningBashWorks).toEqual([]);
+    expect(model.hasContent).toBe(true);
+  });
+  it("keeps the panel entry when Dream coexists with a workflow", () => {
+    const model = buildConversationStatusPanelModel({
+      backgroundWorks: [backgroundWork({ kind: "dream" })],
+      workflowRuns: [workflowRun()],
+    });
+    expect(resolveSoleRunningWorkflowRunTarget(model)).toBeNull();
+  });
+});
