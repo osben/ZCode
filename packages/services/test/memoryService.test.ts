@@ -72,6 +72,29 @@ afterEach(async () => {
 });
 
 describe("memoryService Project Memory catalog", () => {
+  it("reports lastDreamConsolidatedAt from the success marker mtime and omits it without one", async () => {
+    const dreamAt = new Date("2026-03-01T06:00:00.000Z");
+    await writeMemoryFile("dreamed-project-1111111111111111", "MEMORY.md", "index");
+    const markerPath = join(
+      workspaceMemoryRoot("dreamed-project-1111111111111111"),
+      ".consolidated-at",
+    );
+    await writeFile(markerPath, "", "utf8");
+    await utimes(markerPath, dreamAt, dreamAt);
+    await writeMemoryFile("never-dreamed-project-2222222222222222", "MEMORY.md", "index");
+
+    const workspaces = await createMemoryService().listProjectMemories();
+
+    const dreamed = workspaces.find(
+      (workspace) => workspace.id === "dreamed-project-1111111111111111",
+    );
+    const neverDreamed = workspaces.find(
+      (workspace) => workspace.id === "never-dreamed-project-2222222222222222",
+    );
+    expect(dreamed?.lastDreamConsolidatedAt).toBe(dreamAt.getTime());
+    expect(neverDreamed?.lastDreamConsolidatedAt).toBeUndefined();
+  });
+
   it("缺少 Project Memory 根目录时返回空 catalog", async () => {
     const service = createMemoryService();
 

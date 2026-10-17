@@ -3,6 +3,7 @@ import {
   MutableAccountProviderConfigSource,
   createFailClosedAccountProviderConfigSnapshot,
   type AccountProviderConfigSnapshot,
+  type ProviderConfigSnapshot,
   type ProviderSource,
 } from "@zcode/provider";
 import {
@@ -13,13 +14,23 @@ import {
 export interface NodeProviderRegistryRuntimeOptions extends NodeProviderConfigRuntimeOptions {
   readonly accountSource?: ProviderSource<AccountProviderConfigSnapshot>;
   readonly createAccountSource?: (
-    configService: NodeProviderConfigRuntime["configService"],
+    configSource: ProviderSource<ProviderConfigSnapshot>,
   ) => ProviderSource<AccountProviderConfigSnapshot>;
+  /**
+   * Decorate the config source the Registry and Account layer observe (e.g. derived
+   * per-account ChatGPT plan providers). Mutations still go to the raw config service,
+   * which stays exposed as `configService`.
+   */
+  readonly wrapConfigSource?: (
+    source: ProviderSource<ProviderConfigSnapshot>,
+  ) => ProviderSource<ProviderConfigSnapshot>;
 }
 
 /** Shared Config + Registry lifecycle within one Node.js process. */
 export class NodeProviderRegistryRuntime {
   readonly configService: NodeProviderConfigRuntime["configService"];
+  /** Config source the Registry and Account layer read (possibly derived); mutations use `configService`. */
+  readonly registryConfigSource: ProviderSource<ProviderConfigSnapshot>;
   readonly registryService: ProviderRegistryService;
   readonly #configRuntime: NodeProviderConfigRuntime;
   readonly #accountSource: ProviderSource<AccountProviderConfigSnapshot>;
@@ -28,12 +39,15 @@ export class NodeProviderRegistryRuntime {
   constructor(options: NodeProviderRegistryRuntimeOptions) {
     this.#configRuntime = new NodeProviderConfigRuntime(options);
     this.configService = this.#configRuntime.configService;
+    this.registryConfigSource = options.wrapConfigSource
+      ? options.wrapConfigSource(this.configService)
+      : this.configService;
     this.#accountSource =
-      options.createAccountSource?.(this.configService) ??
+      options.createAccountSource?.(this.registryConfigSource) ??
       options.accountSource ??
       new MutableAccountProviderConfigSource();
     this.registryService = new ProviderRegistryService({
-      configSource: this.configService,
+      configSource: this.registryConfigSource,
       accountSource: this.#accountSource,
     });
   }
@@ -45,7 +59,7 @@ export class NodeProviderRegistryRuntime {
       const account = await this.#accountSource.read();
       if (account.basedOnZCodeBuiltinRevision === "uninitialized") {
         this.#accountSource.replace(
-          createFailClosedAccountProviderConfigSnapshot(await this.configService.read()),
+          createFailClosedAccountProviderConfigSnapshot(await this.registryConfigSource.read()),
           "initial-fail-closed",
         );
       }

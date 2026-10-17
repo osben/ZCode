@@ -48,6 +48,10 @@ import { isAccountAccess } from "./account-access-mode.js";
 import { createModel, type ModelExecutionRequest } from "./model.js";
 import { refreshOffPeakRequestAuth } from "./off-peak-request-auth.js";
 import { aggregateModelStreamToTextResult } from "./stream-to-text-result.js";
+import {
+  attachSiwcUsageToFinishEvent,
+  attachSiwcUsageToTextResult,
+} from "./siwc-usage-capture.js";
 
 export type { AiSdkModelRetryOptions } from "./retry-policy.js";
 export type {
@@ -339,7 +343,11 @@ export class AiSdkModelAdapter {
       runtime: this.runtime,
       statusSink: this.statusSink,
       modelIoFullRetentionEnabled: this.modelIoFullRetentionEnabled,
-    });
+    }).then((result) =>
+      // The final attempt's response headers were captured into the binding-shared object;
+      // attach the freshest snapshot (if any) to the result usage for turn-completion transport.
+      resolved.siwcUsageCapture ? attachSiwcUsageToTextResult(result, resolved.siwcUsageCapture) : result,
+    );
   }
 
   private async *streamTextWithResolved(
@@ -348,7 +356,7 @@ export class AiSdkModelAdapter {
     resolveModel: () => ResolvedAiSdkModel,
   ): AsyncGenerator<ModelStreamEvent> {
     const projectedRequest = projectRequestHistory(request, resolved);
-    yield* runStreamText({
+    const stream = runStreamText({
       debugDir: this.debugDir,
       env: this.env,
       logger: this.logger,
@@ -362,6 +370,15 @@ export class AiSdkModelAdapter {
       streamIdleTimeoutMs: this.streamIdleTimeoutMs,
       modelIoFullRetentionEnabled: this.modelIoFullRetentionEnabled,
     });
+    if (!resolved.siwcUsageCapture) {
+      yield* stream;
+      return;
+    }
+    // Only the finish event carries usage out of the stream; patch it after the stream settled
+    // so the snapshot reflects the final attempt's response headers.
+    for await (const event of stream) {
+      yield attachSiwcUsageToFinishEvent(event, resolved.siwcUsageCapture);
+    }
   }
 }
 

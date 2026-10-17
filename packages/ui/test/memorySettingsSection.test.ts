@@ -195,6 +195,8 @@ function renderSection(
   const onMemoryEnabledChange = vi.fn(async () => {});
   render(
     createElement(MemorySettingsSection, {
+      memoryIndexAsContext: false,
+      onMemoryIndexAsContextChange: vi.fn(async () => {}),
       memoryEnabled,
       memoryService,
       onMemoryEnabledChange,
@@ -323,8 +325,10 @@ describe("MemorySettingsSection", () => {
     render(
       createElement(MemorySettingsSection, {
         memoryEnabled: true,
+        memoryIndexAsContext: false,
         memoryService,
         onMemoryEnabledChange: vi.fn(async () => {}),
+        onMemoryIndexAsContextChange: vi.fn(async () => {}),
         projectMemoryViewerAvailable: false,
       }),
     );

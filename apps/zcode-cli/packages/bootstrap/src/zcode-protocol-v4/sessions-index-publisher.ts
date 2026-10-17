@@ -84,6 +84,14 @@ export class SessionsIndexPublisher {
     return this.record(this.projection.upsertFromConversation(snapshot, extra));
   }
 
+  /** Refresh child-owned fields on an existing summary while preserving its activity and transcript projection. */
+  updateChildFacts(
+    sessionId: string,
+    facts: Parameters<SessionsIndexProjection["updateChildFacts"]>[1],
+  ): boolean {
+    return this.record(this.projection.updateChildFacts(sessionId, facts));
+  }
+
 /** Remove a session and account for its remove delta. Return whether it changed. */
   removeSession(sessionId: string): boolean {
     return this.record(this.projection.remove(sessionId));

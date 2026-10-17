@@ -3,7 +3,7 @@ import { createGenUiService } from "./gen-ui/node.js";
 import { channelReplyHostRequestSchema, channelReplyResultSchema } from "@zcode/shared";
 /* eslint-disable max-lines -- Host-process service registration and startup wiring must stay together so dependency injection order remains easy to trace. */
 // Node.js service implementations — NOT safe to import in browser code
-import { randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -16,9 +16,17 @@ import { getAppConfigDir as resolveAppConfigDir } from "./paths.js";
 import { createVoiceDictationService, IVoiceDictationService } from "./voice-dictation/index.js";
 import {
   buildLocalMediaPreviewUrl,
+  parseChatGptPlanAccountProviderId,
   type DynamicWorkflowMode,
   type ProviderProvisioningTrigger,
 } from "@zcode/shared";
+
+// Stable only for this process: revisions are cache keys, and a per-process random HMAC key
+// keeps account identifiers and display names out of logged configRevision values. It keys
+// ONLY the process-local top-level derived `revision`; `zcodeBuiltinRevision`, the cross-process
+// contract carried by account snapshots (`basedOnZCodeBuiltinRevision`), stays raw on every
+// side and never embeds this fingerprint.
+const chatGptPlanRevisionKey = randomBytes(32);
 
 export * from "./voice-dictation/index.js";
 export {
@@ -417,6 +425,11 @@ import {
   createProviderRuntimeFromConfigRuntime,
   type ProviderRuntime,
 } from "./model-provider/providerRuntime.js";
+import {
+  createDerivedChatGptPlanConfigSource,
+  type ProviderConfigSnapshot,
+  type ProviderSource,
+} from "@zcode/provider";
 import {
   IModelSelectionService,
   IProviderSettingsService,
@@ -1384,8 +1397,9 @@ export function createLocalServices(options: {
     const oauthProviderId = family === "zai" ? ZAI_PROVIDER_ID : BIGMODEL_PROVIDER_ID;
     return (await oauthCredentialRepo.loadUserProfile(oauthProviderId))?.id ?? null;
   };
-  // ChatGPT plan (SIWC) host-side request auth: local credentials only; the stable scope
-  // fingerprint matches the CLI resolver (issued client id + account subject).
+  // ChatGPT plan (SIWC) host-side request auth: local credentials only, routed per account
+  // (providerId → accountKey → that account's slot); the stable scope fingerprint matches the
+  // CLI resolver (per-account provider id + issued client id + subject).
   const siwcAuthService = new SiwcAuthService(credentialService);
   const chatGptPlanRequestAuth = {
     async resolve(input: {
@@ -1393,16 +1407,42 @@ export function createLocalServices(options: {
       forceRefresh: boolean;
       providerId: string;
     }): Promise<{ accountScope?: string; apiKey: string }> {
-      const apiKey = await siwcAuthService.resolveAccessToken({
+      const accountKey = parseChatGptPlanAccountProviderId(input.providerId);
+      if (!accountKey) {
+        throw new Error(`siwc_account_not_found: ${input.providerId}`);
+      }
+      const apiKey = await siwcAuthService.resolveAccessToken(accountKey, {
         forceRefresh: input.forceRefresh,
       });
-      const accountScope = await siwcAuthService.resolveAccountScope();
+      const accountScope = await siwcAuthService.resolveAccountScope(accountKey);
       if (input.expectedAccountScope !== undefined && input.expectedAccountScope !== accountScope) {
         throw new Error("siwc_account_scope_invalidated");
       }
       return { apiKey, ...(accountScope ? { accountScope } : {}) };
     },
   };
+  // Derived per-account ChatGPT plan provider entries (template rule + model rules cloned per
+  // signed-in account; base entry dropped). One wrapper instance feeds both the Registry
+  // config source and the Account Provider config source so their revisions stay consistent.
+  const chatGptPlanConfigSourceWrapper = (
+    source: ProviderSource<ProviderConfigSnapshot>,
+  ): ProviderSource<ProviderConfigSnapshot> =>
+    createDerivedChatGptPlanConfigSource(source, async () => {
+      const status = await siwcAuthService.getStatus();
+      return status.accounts.map((account) => {
+        const providerName = account.user.email ?? account.user.displayName ?? account.accountKey;
+        return {
+          accountKey: account.accountKey,
+          providerName,
+          // Key the account+presentation fingerprint so neither account keys nor email/name
+          // values can be recovered from the logged registry revision.
+          revisionKey: createHmac("sha256", chatGptPlanRevisionKey)
+            .update(JSON.stringify([account.accountKey, providerName]), "utf-8")
+            .digest("hex")
+            .slice(0, 32),
+        };
+      });
+    });
   const accountRequestAuthService = createAccountRequestAuthService(
     createAccountProviderRequestAuthService({
       resolveCurrentAccountAccess: (access) =>
@@ -1485,12 +1525,15 @@ export function createLocalServices(options: {
     readLegacyProviders: () => readLegacyZCodeConfigProviders(),
   });
   const accountProviderConfigSource = createAccountProviderConfigSource({
-    configSource: providerConfigRuntime.configService,
+    configSource: chatGptPlanConfigSourceWrapper(providerConfigRuntime.configService),
     readSettings: readAccountProviderSettings,
     loadChatGptPlanEntitlement: async () => {
       const status = await siwcAuthService.getStatus();
-      if (!status.signedIn) return "signed-out";
-      return status.planUsageEntitled ? "entitled" : "identity-only";
+      const statuses = new Map<string, "entitled" | "identity-only">();
+      for (const account of status.accounts) {
+        statuses.set(account.accountKey, account.planUsageEntitled ? "entitled" : "identity-only");
+      }
+      return statuses;
     },
     async loadCodingPlanApiKey(providerId, family, accountIdentity, forceRefresh) {
       if (isStartPlanModelProviderId(providerId)) return null;
@@ -1551,6 +1594,7 @@ export function createLocalServices(options: {
     | undefined;
   const providerRuntime = createProviderRuntimeFromConfigRuntime({
     configRuntime: providerConfigRuntime,
+    wrapConfigSource: chatGptPlanConfigSourceWrapper,
     accountSource: accountProviderConfigSource,
     modelSelectionConfiguredDefaultSource,
     disposeModelSelectionConfiguredDefaultSource: () =>
@@ -2088,6 +2132,7 @@ export function createLocalServices(options: {
       : {}),
     accountRequestAuthService,
     chatGptPlanRequestAuth,
+    chatGptPlanUsageRecorder: siwcAuthService,
     ...(modelSelectionReadinessSource ? { modelSelectionReadinessSource } : {}),
     authorizeLocalMediaPreviewPath: options?.authorizeLocalMediaPreviewPath,
     ...offPeakToolWiring,
@@ -2288,6 +2333,7 @@ export function createLocalServices(options: {
                 settings.askUserQuestionAutoResolutionEnabled !== false,
               nativeSearchEnhancementsEnabled: settings.nativeSearchEnhancementsEnabled !== false,
               memoryEnabled: settings.memoryEnabled === true,
+              memoryIndexAsContext: settings.memoryIndexAsContext === true,
               modelContextBudgetStrategy,
               // user-execution consumes only Shell. The shared default policy is a compatibility
               // placeholder for the unified result schema and does not override the strategy fixed
@@ -2376,6 +2422,7 @@ export function createLocalServices(options: {
   });
   const oauthService = createOAuthService(credentialService, {
     apiClient,
+    siwcAuthService,
     onProviderLogout: handleOAuthProviderLogout,
     onChatGptPlanSessionChange: async () => {
       // ChatGPT plan login/logout changes account entitlements; refresh the account

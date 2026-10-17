@@ -975,6 +975,47 @@ describe("ZCodeProtocolAgentServer", () => {
     expect(warn).toHaveBeenCalledTimes(1);
   });
 
+  it("sends ChatGPT usage to the host without a legacy delivery subscription", () => {
+    const notify = vi.fn();
+    const ingest = vi.fn();
+    const record = {
+      app: { sessionId: "sess_siwc_v4" },
+      updatedAt: 1_700,
+      workspace,
+    } as unknown as Parameters<typeof onSessionEvent>[1];
+    const context = {
+      notify,
+      v4Gateway: { ingest },
+    } as unknown as Parameters<typeof onSessionEvent>[0];
+    const event = {
+      id: "evt_siwc_v4" as SessionEvent["id"],
+      payload: {
+        usage: {
+          providerRateLimits: { primary: { usedPercent: 12 } },
+          providerRateLimitProviderId: "account:chatgpt-plan:a1b2c3d4e5f60718",
+        },
+      },
+      sequenceNumber: 1,
+      sessionId: "sess_siwc_v4" as SessionId,
+      timestamp: new Date(1_800),
+      traceId: "trace_siwc_v4" as SessionEvent["traceId"],
+      type: SessionEventType.TurnComplete,
+    } as unknown as SessionEvent;
+
+    onSessionEvent(context, record, event);
+
+    expect(ingest).toHaveBeenCalledWith("sess_siwc_v4", event);
+    expect(notify).toHaveBeenCalledWith({
+      method: "chatgpt-plan/usage-updated",
+      params: {
+        eventId: "evt_siwc_v4",
+        sessionId: "sess_siwc_v4",
+        providerId: "account:chatgpt-plan:a1b2c3d4e5f60718",
+        usage: { primary: { usedPercent: 12 } },
+      },
+    });
+  });
+
   it("promotes a deferred record to immediate once the runtime reports the session persisted", () => {
     // 2026-09-14, real machine: a session launched directly from the hub has its row written by the runtime (controlOnly
     // startup turn, no first message), so the record stays deferred and sessions-index treats it as a draft and skips it —

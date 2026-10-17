@@ -1,4 +1,5 @@
 export * from "./siwc-access-token-resolver.js";
+export * from "./siwc-account-store.js";
 export * from "./siwc-authorize-url.js";
 export * from "./siwc-constants.js";
 export * from "./siwc-host-id.js";

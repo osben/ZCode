@@ -18,7 +18,10 @@ vi.mock("@/hooks/useServices.js", () => ({
 }));
 vi.mock("@/hooks/usePlatform.js", () => ({ usePlatform: () => mocks.platform }));
 vi.mock("@/i18n/IntlProvider.js", () => ({
-  useZCodeIntl: () => ({ intl: { formatMessage: ({ id }: { id: string }) => id } }),
+  useZCodeIntl: () => ({
+    intl: { formatMessage: ({ id }: { id: string }) => id },
+    locale: "en-US",
+  }),
 }));
 
 import { ChatGptPlanDetail } from "../src/settings/model-provider-section/ChatGptPlanDetail.js";
@@ -106,6 +109,113 @@ describe("ChatGptPlanDetail", () => {
       await vi.advanceTimersByTimeAsync(10_000);
     });
     expect(mocks.oauthService.pollChatGptPlanLogin).toHaveBeenCalledTimes(2);
+  });
+
+  it("lists every signed-in account with per-account sign out", async () => {
+    mocks.oauthService.getChatGptPlanStatus.mockResolvedValue({
+      accounts: [
+        {
+          accountKey: "a1b2c3d4e5f60718",
+          signedIn: true,
+          planUsageEntitled: true,
+          user: { displayName: "Work", email: "work@example.com", subject: "sub-work" },
+        },
+        {
+          accountKey: "b1b2c3d4e5f60718",
+          signedIn: true,
+          planUsageEntitled: false,
+          user: { displayName: "Personal", email: "home@example.com", subject: "sub-home" },
+        },
+      ],
+    });
+    render(createElement(ChatGptPlanDetail));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // The intl mock returns raw ids, so account identity is asserted via row actions:
+    // two rows render, each with its own sign out, and only the identity-only row
+    // (planUsageEntitled=false) offers re-connect.
+    expect(
+      screen.getAllByRole("button", { name: "settings.modelProvider.chatgpt.signOut" }),
+    ).toHaveLength(2);
+    expect(
+      screen.getByRole("button", { name: "settings.modelProvider.chatgpt.reconnect" }),
+    ).toBeTruthy();
+
+    const signOutButtons = screen.getAllByRole("button", {
+      name: "settings.modelProvider.chatgpt.signOut",
+    });
+    await act(async () => {
+      fireEvent.click(signOutButtons[0]!);
+      await Promise.resolve();
+    });
+    expect(mocks.oauthService.logoutChatGptPlan).toHaveBeenCalledWith("a1b2c3d4e5f60718");
+  });
+
+  it("renders the passively captured usage line only for accounts that reported one", async () => {
+    mocks.oauthService.getChatGptPlanStatus.mockResolvedValue({
+      accounts: [
+        {
+          accountKey: "a1b2c3d4e5f60718",
+          signedIn: true,
+          planUsageEntitled: true,
+          user: { displayName: "Work", email: "work@example.com", subject: "sub-work" },
+          usage: {
+            primary: {
+              usedPercent: 42.5,
+              windowMinutes: 300,
+              resetsAt: "2026-10-15T18:00:00Z",
+            },
+            secondary: { usedPercent: 7 },
+          },
+        },
+        {
+          accountKey: "b1b2c3d4e5f60718",
+          signedIn: true,
+          planUsageEntitled: true,
+          user: { displayName: "Personal", email: "home@example.com", subject: "sub-home" },
+        },
+      ],
+    });
+    render(createElement(ChatGptPlanDetail));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const usageLines = screen.getAllByTestId("chatgpt-plan-usage");
+    expect(usageLines).toHaveLength(1);
+    // The intl mock returns raw ids, so the segments prove which parts rendered: primary,
+    // the reset time, and the weekly window — in that order.
+    expect(usageLines[0]?.textContent).toBe(
+      [
+        "settings.modelProvider.chatgpt.usage.primary",
+        "settings.modelProvider.chatgpt.usage.primaryReset",
+        "settings.modelProvider.chatgpt.usage.weekly",
+      ].join(" · "),
+    );
+  });
+
+  it("omits the reset segment when resetsAt is absent or unparseable", async () => {
+    mocks.oauthService.getChatGptPlanStatus.mockResolvedValue({
+      accounts: [
+        {
+          accountKey: "a1b2c3d4e5f60718",
+          signedIn: true,
+          planUsageEntitled: true,
+          user: { displayName: "Work", email: "work@example.com", subject: "sub-work" },
+          usage: { primary: { usedPercent: 13 } },
+        },
+      ],
+    });
+    render(createElement(ChatGptPlanDetail));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("chatgpt-plan-usage")?.textContent).toBe(
+      "settings.modelProvider.chatgpt.usage.primary",
+    );
   });
 
   it("gives the first-run dialog an accessible name", async () => {

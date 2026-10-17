@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, utimes, writeFile as writeRealFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -332,6 +332,256 @@ describe("AgentRuntime Dream handler", () => {
 
     expect(dreamRequests).toBe(0);
   });
+});
+
+describe("Manual /dream command", () => {
+  it("runs the dream from a command turn and reports the agent summary", async () => {
+    const cliStorageRoot = await temporaryDirectory();
+    const modelIoDir = join(cliStorageRoot, "rollout");
+    const memoryRoot = resolveProjectMemoryRoot({
+      cliStorageRoot,
+      workspacePath: WORKSPACE_PATH,
+    });
+    const factPath = join(memoryRoot, "release-tagging-policy.md");
+    const pastSessions = Array.from({ length: 5 }, (_, index) =>
+      session(`manual-${index + 1}`, NOW - index),
+    );
+    const fileSystemPort = new MemoryFileSystem(
+      Object.fromEntries(
+        pastSessions.map((pastSession) => [
+          join(modelIoDir, `model-io-${pastSession.id}.jsonl`),
+          "{}\n",
+        ]),
+      ),
+      Object.fromEntries(
+        pastSessions.map((pastSession) => [
+          join(modelIoDir, `model-io-${pastSession.id}.jsonl`),
+          NOW,
+        ]),
+      ),
+    );
+    let dreamTurn = 0;
+    const runtime = createTestAgentRuntime(
+      createSessionId("manual-dream"),
+      {
+        memory: { cliStorageRoot, enabled: true, use: true },
+        mode: "yolo",
+        workingDirectory: WORKSPACE_PATH,
+      },
+      {
+        eventStore: createTestSessionEventStore(),
+        fileSystemPort,
+        modelFactory: createTestModelFactory({
+          async generateText(request, observation) {
+            const text = providerMessagesToText(request.messages);
+            if (!text.includes("# Dream: Memory Consolidation")) {
+              throw new Error(`unexpected non-dream model request: ${text.slice(0, 80)}`);
+            }
+            dreamTurn += 1;
+            if (dreamTurn === 1) {
+              return {
+                ...textResult(observation.model, ""),
+                finishReason: "tool_calls",
+                toolCalls: [
+                  {
+                    id: "write-fact",
+                    name: "Write",
+                    input: { file_path: factPath, content: "fact" },
+                  },
+                ],
+              };
+            }
+            return textResult(observation.model, "Dream complete");
+          },
+        }),
+        modelIoDir,
+        now: () => new Date(NOW),
+        sessionStore: createMemorySessionStore(pastSessions),
+        toolRegistry: createToolRegistry(),
+      },
+    );
+
+    const result = await runtime.executeTurn("/dream");
+
+    expect(dreamTurn).toBe(2);
+    expect(result.response).toContain("Dream complete");
+    expect(result.response).toContain(factPath);
+    expect(fileSystemPort.files[factPath]).toBe("fact");
+    const startedEvent = result.events.find((event) => event.type === "turn_started");
+    expect(
+      (startedEvent?.payload as { inputVisibility?: string } | undefined)?.inputVisibility,
+    ).toBe("model-only");
+    // V4 clients do not render TurnComplete.response; the result must also be a streaming sequence.
+    const streamedText = result.events
+      .filter((event) => event.type === "model_streaming")
+      .map((event) => (event.payload as { delta?: string }).delta ?? "")
+      .join("");
+    expect(streamedText).toBe(result.response);
+    const modelComplete = result.events.find((event) => event.type === "model_complete");
+    expect(
+      (modelComplete?.payload as { querySource?: string; content?: string } | undefined),
+    ).toMatchObject({ content: result.response, querySource: "dream" });
+    // A completed run stamps the success marker; the lock alone only marks the run start.
+    await expect(stat(join(memoryRoot, ".consolidated-at"))).resolves.toBeTruthy();
+  });
+
+  it("bypasses the 24 hour gate and runs with a single fresh transcript", async () => {
+    const cliStorageRoot = await temporaryDirectory();
+    const modelIoDir = join(cliStorageRoot, "rollout");
+    const memoryRoot = resolveProjectMemoryRoot({
+      cliStorageRoot,
+      workspacePath: WORKSPACE_PATH,
+    });
+    // A recent lock (mtime just before NOW) would make the auto gate skip for the next 24 hours;
+    // its dead PID lets the manual run take the lock over.
+    await mkdir(memoryRoot, { recursive: true });
+    const lockPath = join(memoryRoot, ".consolidate-lock");
+    await writeRealFile(lockPath, "99999999", "utf8");
+    await utimes(lockPath, (NOW - 1000) / 1000, (NOW - 1000) / 1000);
+    const pastSessions = [session("manual-single", NOW)];
+    const fileSystemPort = new MemoryFileSystem(
+      { [join(modelIoDir, `model-io-${pastSessions[0]!.id}.jsonl`)]: "{}\n" },
+      { [join(modelIoDir, `model-io-${pastSessions[0]!.id}.jsonl`)]: NOW },
+    );
+    let dreamTurn = 0;
+    const runtime = createTestAgentRuntime(
+      createSessionId("manual-dream-single"),
+      {
+        memory: { cliStorageRoot, enabled: true, use: true },
+        mode: "yolo",
+        workingDirectory: WORKSPACE_PATH,
+      },
+      {
+        eventStore: createTestSessionEventStore(),
+        fileSystemPort,
+        modelFactory: createTestModelFactory({
+          async generateText(request, observation) {
+            const text = providerMessagesToText(request.messages);
+            if (!text.includes("# Dream: Memory Consolidation")) {
+              throw new Error(`unexpected non-dream model request: ${text.slice(0, 80)}`);
+            }
+            dreamTurn += 1;
+            return textResult(observation.model, "Nothing worth keeping");
+          },
+        }),
+        modelIoDir,
+        now: () => new Date(NOW),
+        sessionStore: createMemorySessionStore(pastSessions),
+        toolRegistry: createToolRegistry(),
+      },
+    );
+
+    const result = await runtime.executeTurn("/dream");
+
+    expect(dreamTurn).toBe(1);
+    expect(result.response).toContain("Nothing worth keeping");
+  });
+
+  it("answers a usage error without model requests", async () => {
+    const { runtime, modelRequests } = await createSkipSetup({
+    });
+
+    const result = await runtime.executeTurn("/dream now");
+
+    expect(modelRequests()).toBe(0);
+    expect(result.response).toBe(
+      "Usage: /dream — takes no arguments. Run /dream to consolidate project memory now.",
+    );
+  });
+
+  it("answers visibly when memory is disabled", async () => {
+    const { runtime, modelRequests } = await createSkipSetup({
+      memoryEnabled: false,
+    });
+
+    const result = await runtime.executeTurn("/dream");
+
+    expect(modelRequests()).toBe(0);
+    expect(result.response).toBe(
+      "Dream skipped: project memory is not enabled for this workspace.",
+    );
+  });
+
+  it("answers visibly when the lock is held by a live pid", async () => {
+    const { runtime, modelRequests } = await createSkipSetup({
+      seedLock: { pid: process.pid, mtimeMs: NOW },
+      transcriptMtime: NOW + 1000,
+    });
+
+    const result = await runtime.executeTurn("/dream");
+
+    expect(modelRequests()).toBe(0);
+    expect(result.response).toBe(
+      "Dream skipped: another dream is already running for this workspace. Try again once it finishes.",
+    );
+  });
+
+  it("answers visibly when no transcript is newer than the last consolidation", async () => {
+    const { runtime, modelRequests } = await createSkipSetup({
+      transcriptMtime: 0,
+      seedLock: { pid: 99999999, mtimeMs: NOW - 2000 },
+    });
+
+    const result = await runtime.executeTurn("/dream");
+
+    expect(modelRequests()).toBe(0);
+    expect(result.response).toBe(
+      "Dream skipped: no new session activity since the last dream — nothing to consolidate yet.",
+    );
+  });
+
+  async function createSkipSetup(options: {
+    memoryEnabled?: boolean;
+    seedLock?: { pid: number; mtimeMs: number };
+    transcriptMtime?: number;
+  }): Promise<{ runtime: ReturnType<typeof createTestAgentRuntime>; modelRequests: () => number }> {
+    const cliStorageRoot = await temporaryDirectory();
+    const modelIoDir = join(cliStorageRoot, "rollout");
+    const memoryRoot = resolveProjectMemoryRoot({
+      cliStorageRoot,
+      workspacePath: WORKSPACE_PATH,
+    });
+    if (options.seedLock) {
+      await mkdir(memoryRoot, { recursive: true });
+      const lockPath = join(memoryRoot, ".consolidate-lock");
+      await writeRealFile(lockPath, String(options.seedLock.pid), "utf8");
+      await utimes(lockPath, options.seedLock.mtimeMs / 1000, options.seedLock.mtimeMs / 1000);
+    }
+    const pastSessions = [session("skip", NOW)];
+    const transcriptPath = join(modelIoDir, `model-io-${pastSessions[0]!.id}.jsonl`);
+    const fileSystemPort = new MemoryFileSystem(
+      { [transcriptPath]: "{}\n" },
+      { [transcriptPath]: options.transcriptMtime ?? NOW },
+    );
+    let requests = 0;
+    const runtime = createTestAgentRuntime(
+      createSessionId("manual-dream-skip"),
+      {
+        memory: {
+          cliStorageRoot,
+          enabled: options.memoryEnabled ?? true,
+          use: true,
+        },
+        mode: "yolo",
+        workingDirectory: WORKSPACE_PATH,
+      },
+      {
+        eventStore: createTestSessionEventStore(),
+        fileSystemPort,
+        modelFactory: createTestModelFactory({
+          async generateText(_request, observation) {
+            requests += 1;
+            return textResult(observation.model, "unexpected");
+          },
+        }),
+        modelIoDir,
+        now: () => new Date(NOW),
+        sessionStore: createMemorySessionStore(pastSessions),
+        toolRegistry: createToolRegistry(),
+      },
+    );
+    return { runtime, modelRequests: () => requests };
+  }
 });
 
 function session(

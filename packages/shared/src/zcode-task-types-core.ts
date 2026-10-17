@@ -273,6 +273,16 @@ export interface ZCodeTaskPendingInteraction {
   autoResolution?: ZCodeTaskInteractionAutoResolution;
 }
 
+/** One child conversation (side chat or subagent) listed under its parent task row. */
+export interface ZCodeTaskChildSession {
+  sessionId: string;
+  title: string;
+  taskType: "selection_side_chat" | "subagent_child";
+  lastActivityAt: number;
+  /** True while the child's runtime is alive in the CLI host (subagents executing work). */
+  running: boolean;
+}
+
 export interface ZCodeTaskMeta {
   /** UI taskId matches the ZCode agent sessionId, for list selection, log correlation, and session recovery. */
   taskId: string;
@@ -361,9 +371,16 @@ export interface ZCodeTaskMeta {
    */
   executionWorktree?: { path: string; branchName?: string };
   /**
-   * True when the execution worktree directory is absent on disk (the session falls back to the
-   * parent workspace). Mirrors the sessions-index sessionSummary field; absent means healthy.
+   * Sidebar child-conversation facts (spec: sidebar-child-conversation-counts.md): true totals so
+   * the row icons never lie when childSessions is capped. Mirrors the sessions-index fields;
+   * absent for sessions without children.
    */
+  sideChatCount?: number;
+  subagentCount?: number;
+  runningSubagentCount?: number;
+  childSessions?: ZCodeTaskChildSession[];
+
+  /** True when the execution worktree directory is absent on disk. */
   executionWorktreeMissing?: boolean;
   /** zcode-cli /goal session target; null means it was explicitly cleared. */
   target?: ZCodeTaskGoal | null;

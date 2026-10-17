@@ -81,6 +81,37 @@ describe("buildTaskListResult", () => {
     expect(healthy.items[0]?.executionWorktreeMissing).toBeUndefined();
   });
 
+  it("joins child-conversation facts from live summaries and clears stale task-index facts", () => {
+    const liveFacts = {
+      sideChatCount: 2,
+      subagentCount: 1,
+      runningSubagentCount: 1,
+      childSessions: [
+        {
+          sessionId: "child-live",
+          title: "Live child",
+          taskType: "subagent_child" as const,
+          lastActivityAt: 12,
+          running: true,
+        },
+      ],
+    };
+    const withFacts = build("active", {
+      taskIndexItems: [task("t1", { sideChatCount: 1, childSessions: [] })],
+      sessions: [task("t1", liveFacts)],
+    });
+    expect(withFacts.items[0]).toMatchObject(liveFacts);
+
+    const cleared = build("active", {
+      taskIndexItems: [task("t1", liveFacts)],
+      sessions: [task("t1")],
+    });
+    expect(cleared.items[0]?.sideChatCount).toBeUndefined();
+    expect(cleared.items[0]?.subagentCount).toBeUndefined();
+    expect(cleared.items[0]?.runningSubagentCount).toBeUndefined();
+    expect(cleared.items[0]?.childSessions).toBeUndefined();
+  });
+
   it("deleted tombstone 优先于所有 kind，普通 archived 对照仍只在归档列表", () => {
     const extra = {
       pinnedIds: new Set(["t2"]),

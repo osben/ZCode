@@ -38,6 +38,8 @@ import {
   zcodeAutomationCheckTaskBindingResultSchema,
   zcodeAutomationUpdateParamsSchema,
   zcodeAutomationProtocolSchema,
+  zcodeProviderRateLimitsSchema,
+  zcodeWorkspaceGenerateTextResultSchema,
 } from "../src/zcode-protocol/index.js";
 import {
   APP_RUNTIME_PREFERENCES_CHANGED_BROADCAST_CHANNEL,
@@ -2936,6 +2938,70 @@ describe("v4 workflowLaunch rows (direct-launch)", () => {
         ...retune,
         amend: { ...retune.amend, predecessorRunId: null },
       }).success,
+    ).toBe(false);
+  });
+});
+
+describe("provider rate limits (ChatGPT plan usage transport)", () => {
+  const legacyResult = {
+    text: "ok",
+    selection: model,
+    finishReason: "stop",
+    usage: { inputTokens: 3, outputTokens: 256, totalTokens: 259 },
+  };
+
+  it("keeps accepting pre-usage generateText results (additive field)", () => {
+    expect(zcodeWorkspaceGenerateTextResultSchema.parse(legacyResult)).toEqual(legacyResult);
+    expect(
+      zcodeWorkspaceGenerateTextResultSchema.safeParse({ ...legacyResult, usage: undefined })
+        .success,
+    ).toBe(true);
+  });
+
+  it("accepts results carrying providerRateLimits", () => {
+    const withUsage = {
+      ...legacyResult,
+      usage: {
+        ...legacyResult.usage,
+        providerRateLimits: {
+          primary: {
+            usedPercent: 42.5,
+            windowMinutes: 300,
+            resetsAt: "2026-10-15T18:00:00Z",
+          },
+          secondary: { usedPercent: 7 },
+        },
+      },
+    };
+    expect(zcodeWorkspaceGenerateTextResultSchema.parse(withUsage)).toEqual(withUsage);
+  });
+
+  it("validates the window shape strictly", () => {
+    expect(zcodeProviderRateLimitsSchema.safeParse({}).success).toBe(false);
+    // primary is required; secondary-only is not a snapshot.
+    expect(
+      zcodeProviderRateLimitsSchema.safeParse({ primary: undefined, secondary: { usedPercent: 1 } })
+        .success,
+    ).toBe(false);
+    // usedPercent bounds.
+    expect(zcodeProviderRateLimitsSchema.safeParse({ primary: { usedPercent: 140 } }).success).toBe(
+      false,
+    );
+    expect(zcodeProviderRateLimitsSchema.safeParse({ primary: { usedPercent: -1 } }).success).toBe(
+      false,
+    );
+    // window-minutes is a positive integer; resetsAt stays a string.
+    expect(
+      zcodeProviderRateLimitsSchema.safeParse({ primary: { usedPercent: 1, windowMinutes: 0 } })
+        .success,
+    ).toBe(false);
+    expect(
+      zcodeProviderRateLimitsSchema.safeParse({ primary: { usedPercent: 1, resetsAt: 42 } })
+        .success,
+    ).toBe(false);
+    // Unknown members are rejected (strict).
+    expect(
+      zcodeProviderRateLimitsSchema.safeParse({ primary: { usedPercent: 1, extra: true } }).success,
     ).toBe(false);
   });
 });

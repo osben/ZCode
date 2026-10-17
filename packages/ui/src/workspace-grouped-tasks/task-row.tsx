@@ -1,3 +1,9 @@
+import { ChildSessionCountsMarker } from "@/components/ChildSessionCountsMarker.js";
+import {
+  isChildSessionsExpanded,
+  persistChildSessionsExpanded,
+} from "@/lib/childSessionExpansionPreference.js";
+import { TaskChildSessionRows } from "@/workspace-grouped-tasks/task-child-sessions.js";
 /* eslint-disable max-lines -- Grouped rows support both drag overlays and regular interactions, so state badges must share the same rendering semantics. */
 import { memo, useState } from "react";
 import type { KeyboardEvent, MouseEvent } from "react";
@@ -45,7 +51,6 @@ function GroupedTaskRowComponent({
   activeWorkspaceIdentity,
   activeTaskId,
   mobileActiveTaskKey,
-  workspaceLabel,
   onSelectTask,
   onCloseTask,
   onOpenFileTree,
@@ -68,7 +73,14 @@ function GroupedTaskRowComponent({
   activeTaskId: string | null;
   mobileActiveTaskKey?: string | null;
   workspaceLabel: string;
-  onSelectTask: (workspacePath: string, taskId: string, workspaceIdentity?: string) => void;
+  onSelectTask: (
+    workspacePath: string,
+    taskId: string,
+    workspaceIdentity?: string,
+    targetRemoteSessionId?: string,
+    expectedUnreadAt?: number,
+    options?: { readOnly?: boolean; selectionSideChat?: boolean },
+  ) => void;
   onCloseTask: (task: ZCodeTaskMeta) => void;
   onOpenFileTree?: (task: ZCodeTaskMeta) => void;
   onMoveTaskToGroup: (task: ZCodeTaskMeta, groupId: string | null) => void;
@@ -139,6 +151,7 @@ function GroupedTaskRowComponent({
           // list so the brand color's meaning does not drift across themes.
           "bg-sky-500 dark:bg-sky-400"
         : null;
+  const hasLeadingStatus = leadingIndicator === "loading" || statusDotClassName !== null;
   const canShowHoverActions = !dragOverlay;
   // Workflow-run row: grouped rows also place it below the title;
   // the drag overlay is display-only and does not attach confirmation side effects or click actions.
@@ -207,7 +220,10 @@ function GroupedTaskRowComponent({
               <LoaderIcon className="size-3.5 animate-spin text-foreground-subtle" />
             ) : statusDotClassName ? (
               <span aria-hidden="true" className="flex size-4 shrink-0 items-center justify-center">
-                <span className={cn("size-1.5 rounded-full", statusDotClassName)} />
+                <span
+                  data-unread-indicator={leadingIndicator === "unread" ? "true" : undefined}
+                  className={cn("size-1.5 rounded-full", statusDotClassName)}
+                />
               </span>
             ) : null}
             {!hasPendingInteraction && isTaskCron ? (
@@ -228,6 +244,9 @@ function GroupedTaskRowComponent({
               // Worktree-session marker, styled like the neighboring clock/moon meta icons (the
               // shared component owns glyph, colors, and the branch+directory tooltip).
               <WorktreeTaskMarker task={task} />
+            ) : null}
+            {!hasPendingInteraction ? (
+              <ChildSessionCountsMarker task={task} expanded={false} />
             ) : null}
             {!hasPendingInteraction ? <span className="mr-1">{taskTimeLabel}</span> : null}
           </span>
@@ -269,6 +288,16 @@ function GroupedTaskRowComponent({
   });
   const handleSelect = () => {
     onSelectTask(task.workspacePath, task.taskId, task.workspaceIdentity);
+  };
+  // Child-conversation list expansion is per-parent and per-device (localStorage); the marker
+  // doubles as the expander, so no row-level chrome is added (spec: sidebar-child-conversation-counts.md).
+  const [childSessionsExpanded, setChildSessionsExpanded] = useState(() =>
+    isChildSessionsExpanded(task.taskId),
+  );
+  const handleToggleChildSessions = () => {
+    const next = !childSessionsExpanded;
+    persistChildSessionsExpanded(task.taskId, next);
+    setChildSessionsExpanded(next);
   };
   const handleCloseTask = (event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
@@ -400,16 +429,19 @@ function GroupedTaskRowComponent({
               {taskAttentionDisplay}
             </Badge>
           ) : null}
-          {!shouldSuppressTaskMetadata ? (
+          {!shouldSuppressTaskMetadata || hasLeadingStatus ? (
             <span className="flex shrink-0 items-center gap-1">
-              {leadingIndicator === "loading" ? (
+              {hasLeadingStatus && leadingIndicator === "loading" ? (
                 <LoaderIcon className="size-3.5 animate-spin text-foreground-subtle" />
-              ) : statusDotClassName ? (
+              ) : hasLeadingStatus && statusDotClassName ? (
                 <span
                   aria-hidden="true"
                   className="flex size-4 shrink-0 items-center justify-center"
                 >
-                  <span className={cn("size-1.5 rounded-full", statusDotClassName)} />
+                  <span
+                    data-unread-indicator={leadingIndicator === "unread" ? "true" : undefined}
+                    className={cn("size-1.5 rounded-full", statusDotClassName)}
+                  />
                 </span>
               ) : null}
               {!hasPendingInteraction && isTaskCron ? (
@@ -432,8 +464,20 @@ function GroupedTaskRowComponent({
                 // shared component owns glyph, colors, and the branch+directory tooltip).
                 <WorktreeTaskMarker task={task} />
               ) : null}
+
               {!hasPendingInteraction ? <span className="mr-1">{taskTimeLabel}</span> : null}
             </span>
+          ) : null}
+          {!hasPendingInteraction ? (
+            // Deliberately OUTSIDE the hover-suppressed metadata span above: the marker doubles as
+            // the child-list expander, so it must stay mounted and clickable while hover/focus swap
+            // the neighboring metadata for the hover-action cluster (mouseenter would otherwise
+            // unmount it before the click lands).
+            <ChildSessionCountsMarker
+              task={task}
+              expanded={childSessionsExpanded}
+              onToggle={handleToggleChildSessions}
+            />
           ) : null}
           {shouldMountHoverActions ? (
             <span className="flex shrink-0 items-center gap-0.5">
@@ -468,6 +512,9 @@ function GroupedTaskRowComponent({
         </span>
       </span>
       {workflowRunLinesNode}
+      {childSessionsExpanded ? (
+        <TaskChildSessionRows task={task} onSelectTask={onSelectTask} />
+      ) : null}
     </div>
   );
 
@@ -485,11 +532,9 @@ function GroupedTaskRowComponent({
             </TooltipTrigger>
             <TaskSidebarHoverCard
               task={task}
-              workspaceLabel={workspaceLabel}
               attentionLabel={taskAttentionDisplay}
               activity={taskActivity}
               intl={intl}
-              isRemote={Boolean(task.workspaceIdentity?.trim())}
             />
           </Tooltip>
         </TooltipProvider>

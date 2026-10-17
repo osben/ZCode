@@ -414,6 +414,49 @@ describe("TaskListItem hover action rendering", () => {
     });
   });
 
+  it("restores a mobile-active task's run-state indicator when hover actions replace the phone marker", async () => {
+    const { MemoTaskItem } = await import("@/TaskListItem.js");
+    const container = installMinimalDom();
+    const root: Root = createRoot(container);
+    leadingIndicatorState.value = "unread";
+
+    act(() => {
+      root.render(
+        createElement(MemoTaskItem, {
+          intl: stableIntl,
+          isActive: false,
+          isArchiveConfirming: false,
+          isMobileActive: true,
+          isPinned: false,
+          onArchiveTask: vi.fn(),
+          onArchiveTaskInline: vi.fn(),
+          onCancelArchiveConfirm: vi.fn(),
+          onMarkTaskAsUnread: vi.fn(),
+          onSelectTask: vi.fn(),
+          onStartRenameTask: vi.fn(),
+          onTogglePinTask: vi.fn(),
+          task: createTask(),
+          workspacePath: "/workspace",
+        }),
+      );
+    });
+
+    const row = findByAttribute(container, "data-task-item-key");
+    const unreadIndicator = findByAttribute(container, "data-unread-indicator");
+    expect(row).not.toBeNull();
+    expect(unreadIndicator?.parentNode?.__attrs.get("class")).toContain("invisible");
+
+    act(() => {
+      row?.dispatchEvent({ bubbles: true, relatedTarget: null, type: "mouseover" });
+    });
+
+    expect(unreadIndicator?.parentNode?.__attrs.get("class")).not.toContain("invisible");
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
   it("keeps default rows in the compact layout without idle dots", async () => {
     const { MemoTaskItem } = await import("@/TaskListItem.js");
     const container = installMinimalDom();

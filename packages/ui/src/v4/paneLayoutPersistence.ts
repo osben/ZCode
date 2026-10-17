@@ -30,6 +30,8 @@ interface PersistedScopeV2 {
 interface PersistedBindingV2 {
   workspaceScope: PersistedScopeV2;
   sessionId: string | null;
+  readOnly?: boolean;
+  selectionSideChat?: boolean;
 }
 
 type PersistedNodeV2 =
@@ -149,6 +151,10 @@ export function sanitizePersistedPaneLayout(raw: unknown): PaneLayoutSnapshot | 
     panes[paneId] = {
       workspaceScope: scope,
       sessionId,
+      ...((rawBinding as Partial<PersistedBindingV2>).readOnly === true ? { readOnly: true } : {}),
+      ...((rawBinding as Partial<PersistedBindingV2>).selectionSideChat === true
+        ? { selectionSideChat: true }
+        : {}),
       ...(sessionId !== null ? { restoredUnvalidated: true as const } : {}),
     };
   }
@@ -262,6 +268,8 @@ export function persistPaneLayout(snapshot: PaneLayoutSnapshot): void {
           : {}),
       },
       sessionId: binding.sessionId,
+      ...(binding.readOnly ? { readOnly: true } : {}),
+      ...(binding.selectionSideChat ? { selectionSideChat: true } : {}),
     };
   }
   const payload: PersistedPaneLayoutV2 = {

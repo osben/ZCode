@@ -6,7 +6,7 @@ import type {
   OAuthStartResponse,
   SiwcLoginCompletionResult,
   SiwcLoginStart,
-  SiwcPlanStatus,
+  SiwcPlanAccountsStatus,
   UserInfo,
 } from "@zcode/shared";
 import { ServiceChannels } from "@zcode/shared";
@@ -75,19 +75,26 @@ export interface IOAuthService {
   cancelPending(provider?: OAuthProviderId): Promise<void>;
 
   /**
-   * ChatGPT plan (official OpenAI SIWC): start the loopback+PKCE login. Independent of the
-   * zai/bigmodel flow; the UI opens authorizeUrl externally and polls pollChatGptPlanLogin.
+   * ChatGPT plan (official OpenAI SIWC): start the loopback+PKCE login. Default adds an
+   * account (no hints — OpenAI shows the account chooser); `reauthAccountKey` re-authorizes
+   * that account. Independent of the zai/bigmodel flow; the UI opens authorizeUrl externally
+   * and polls pollChatGptPlanLogin.
    */
-  startChatGptPlanLogin(): Promise<SiwcLoginStart>;
+  startChatGptPlanLogin(options?: { reauthAccountKey?: string }): Promise<SiwcLoginStart>;
 
   /** ChatGPT plan login poll; null while the browser redirect has not arrived yet. */
   pollChatGptPlanLogin(): Promise<SiwcLoginCompletionResult | null>;
 
-  /** Current ChatGPT plan connection status (signed-in state and plan-usage consent). */
-  getChatGptPlanStatus(): Promise<SiwcPlanStatus>;
+  /** ChatGPT plan connection status per signed-in account (signed-in state and consent). */
+  getChatGptPlanStatus(): Promise<SiwcPlanAccountsStatus>;
 
-  /** Revoke the ChatGPT plan refresh token and clear local tokens (retains the client id). */
-  logoutChatGptPlan(): Promise<{ revoked: boolean; signedOut: boolean }>;
+  /**
+   * Revoke one account's ChatGPT plan refresh token and clear its local tokens (retains its
+   * client id; other accounts untouched). Omitting the key signs out every account.
+   */
+  logoutChatGptPlan(
+    accountKey?: string,
+  ): Promise<{ accountCount: number; revoked: boolean; signedOut: boolean }>;
 }
 
 export const IOAuthService = createServiceDescriptor<IOAuthService>(ServiceChannels.OAuth);

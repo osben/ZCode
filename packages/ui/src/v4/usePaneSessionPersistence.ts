@@ -14,18 +14,57 @@ function storageKey(workspaceKey: string): string {
   return `${STORAGE_PREFIX}${workspaceKey}`;
 }
 
-export function readPersistedPaneSession(workspaceKey: string): string | null {
+export interface PersistedPaneSession {
+  sessionId: string;
+  readOnly?: boolean;
+  selectionSideChat?: boolean;
+}
+
+export function readPersistedPaneSession(workspaceKey: string): PersistedPaneSession | null {
   try {
-    return localStorage.getItem(storageKey(workspaceKey));
+    const value = localStorage.getItem(storageKey(workspaceKey));
+    if (!value) return null;
+    try {
+      const parsed: unknown = JSON.parse(value);
+      if (
+        typeof parsed === "object" &&
+        parsed !== null &&
+        "sessionId" in parsed &&
+        typeof parsed.sessionId === "string" &&
+        parsed.sessionId.length > 0
+      ) {
+        return {
+          sessionId: parsed.sessionId,
+          ...("readOnly" in parsed && parsed.readOnly === true ? { readOnly: true } : {}),
+          ...("selectionSideChat" in parsed && parsed.selectionSideChat === true
+            ? { selectionSideChat: true }
+            : {}),
+        };
+      }
+    } catch {
+      // Previous versions stored the session ID as a plain string.
+    }
+    return { sessionId: value };
   } catch {
     return null;
   }
 }
 
-export function persistPaneSession(workspaceKey: string, sessionId: string | null): void {
+export function persistPaneSession(
+  workspaceKey: string,
+  sessionId: string | null,
+  capabilities: { readOnly?: boolean; selectionSideChat?: boolean } = {},
+): void {
   try {
     if (sessionId) {
-      localStorage.setItem(storageKey(workspaceKey), sessionId);
+      localStorage.setItem(
+        storageKey(workspaceKey),
+        JSON.stringify({
+          sessionId,
+          ...(capabilities.readOnly ? { readOnly: true } : {}),
+          ...(capabilities.selectionSideChat ? { selectionSideChat: true } : {}),
+        }),
+      );
     } else {
       localStorage.removeItem(storageKey(workspaceKey));
     }
@@ -42,7 +81,12 @@ export interface UsePaneSessionPersistenceParams {
   /** Mobile /remote does not consume local recovery state for desktop panes. */
   enabled?: boolean;
   /** Recovery entry point: use the same selection path as a task-list click so side effects (such as unread cleanup) remain consistent. */
-  selectSession: (sessionId: string) => void;
+  selectSession: (
+    sessionId: string,
+    capabilities?: Pick<PersistedPaneSession, "readOnly" | "selectionSideChat">,
+  ) => void;
+  activeReadOnly?: boolean;
+  activeSelectionSideChat?: boolean;
 }
 
 export function shouldRestorePersistedPaneSession(params: {
@@ -70,6 +114,8 @@ export function usePaneSessionPersistence({
   draftFocusVersion,
   enabled = true,
   selectSession,
+  activeReadOnly = false,
+  activeSelectionSideChat = false,
 }: UsePaneSessionPersistenceParams): void {
   const restoredKeysRef = useRef<Set<string>>(new Set());
   // Only the first workspace after reload may consume a pane binding from before refresh; opening other
@@ -77,7 +123,7 @@ export function usePaneSessionPersistence({
   const rendererReloadRestoreAvailableRef = useRef(isRendererReloadNavigation());
   const pendingRestoreRef = useRef<{
     workspaceKey: string;
-    sessionId: string;
+    binding: PersistedPaneSession;
   } | null>(null);
   const selectSessionRef = useRef(selectSession);
   selectSessionRef.current = selectSession;
@@ -105,8 +151,8 @@ export function usePaneSessionPersistence({
     }
     const stored = readPersistedPaneSession(workspaceKey);
     if (stored) {
-      pendingRestoreRef.current = { workspaceKey, sessionId: stored };
-      selectSessionRef.current(stored);
+      pendingRestoreRef.current = { workspaceKey, binding: stored };
+      selectSessionRef.current(stored.sessionId, stored);
     }
     // Deliberately omit activeSessionId/draftFocusVersion from dependencies: recovery uses only the first-mount moment for the workspace;
     // explicit creation and selection changes afterward use the persistence effect below.
@@ -126,6 +172,9 @@ export function usePaneSessionPersistence({
       // read null from before recovery. Wait until selection is actually restored before writing, avoiding deletion of the reload recovery key.
       pendingRestoreRef.current = null;
     }
-    persistPaneSession(workspaceKey, activeSessionId);
-  }, [activeSessionId, enabled, workspaceKey]);
+    persistPaneSession(workspaceKey, activeSessionId, {
+      readOnly: activeReadOnly,
+      selectionSideChat: activeSelectionSideChat,
+    });
+  }, [activeReadOnly, activeSelectionSideChat, activeSessionId, enabled, workspaceKey]);
 }

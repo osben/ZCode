@@ -127,4 +127,26 @@ describe("buildChildEnv", () => {
     expect(env.EDITOR).toBeUndefined();
     expect(env.PATH).toBe("/usr/bin");
   });
+
+  it("keeps user capability sockets by design and supports the per-launch opt-out", () => {
+    const parent: NodeJS.ProcessEnv = {
+      PATH: "/usr/bin",
+      SSH_AUTH_SOCK: "/tmp/ssh-agent.sock",
+      KRB5CCNAME: "FILE:/tmp/krb5cc",
+      GPG_AGENT_INFO: "/tmp/gpg-agent:0:1",
+    };
+    const env = buildChildEnv(parent);
+    // Parity with ZCode's own runtime tooling: the agent is expected to use
+    // git/ssh, gpg and Kerberos facilities for the tasks the user assigns.
+    expect(env.SSH_AUTH_SOCK).toBe("/tmp/ssh-agent.sock");
+    expect(env.KRB5CCNAME).toBe("FILE:/tmp/krb5cc");
+    expect(env.GPG_AGENT_INFO).toBe("/tmp/gpg-agent:0:1");
+    const lean = buildChildEnv(parent, {
+      SSH_AUTH_SOCK: undefined,
+      GPG_AGENT_INFO: undefined,
+    });
+    expect("SSH_AUTH_SOCK" in lean).toBe(false);
+    expect("GPG_AGENT_INFO" in lean).toBe(false);
+    expect(lean.KRB5CCNAME).toBe("FILE:/tmp/krb5cc");
+  });
 });

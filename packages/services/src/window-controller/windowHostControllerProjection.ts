@@ -1,7 +1,7 @@
 /* eslint-disable max-lines -- Projection state, V4 frames, and offline replacement belong to one consistency boundary. */
 import { isDeepStrictEqual } from "node:util";
 import type { ZCodeTaskMeta } from "@zcode/shared";
-import type { ZCodeArchivedTaskDeletionResult } from "@zcode/services";
+import type { ZCodeArchivedTaskDeletionResult } from "../session/zcodeTaskService.js";
 import {
   CONTROLLER_TASKS_INDEX_TOPIC,
   CONTROLLER_WORKSPACES_TOPIC,
@@ -48,6 +48,10 @@ export interface WindowHostControllerSessionOverlay {
   pendingInteraction?: ZCodeTaskMeta["pendingInteraction"];
   executionWorktree?: WindowHostControllerTaskRow["executionWorktree"];
   executionWorktreeMissing?: WindowHostControllerTaskRow["executionWorktreeMissing"];
+  sideChatCount?: ZCodeTaskMeta["sideChatCount"];
+  subagentCount?: ZCodeTaskMeta["subagentCount"];
+  runningSubagentCount?: ZCodeTaskMeta["runningSubagentCount"];
+  childSessions?: ZCodeTaskMeta["childSessions"];
   activity?: NonNullable<WindowHostControllerTaskRow["activity"]>;
 }
 
@@ -152,6 +156,10 @@ function buildSourceRows(source: ControllerSource): Map<string, WindowHostContro
           ...(overlay.titleSource === "custom" ? { titleOverridden: true } : {}),
           ...(overlay.updatedAt != null ? { updatedAt: overlay.updatedAt } : {}),
           ...(overlay.activity ? { status: statusFromActivity(overlay.activity) } : {}),
+          sideChatCount: overlay.sideChatCount,
+          subagentCount: overlay.subagentCount,
+          runningSubagentCount: overlay.runningSubagentCount,
+          childSessions: overlay.childSessions,
           pendingInteraction: overlay.pendingInteraction,
         }
       : membership.meta;

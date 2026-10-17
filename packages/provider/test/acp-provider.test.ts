@@ -9,6 +9,7 @@ import {
   ProviderConfigMap,
   ProviderConfigResolver,
 } from "../src/index.js";
+import { createRegistryProviderConfig } from "../src/resolver.js";
 
 const OPENCODE_ACCESS = {
   type: "acp-agent" as const,
@@ -183,5 +184,51 @@ describe("acp provider resolution", () => {
       true,
     );
     expect(provider?.models[0]?.executable).toBe(false);
+  });
+
+  it("reports provider-level issues for an ACP provider without a group", () => {
+    const personalProviders = new ProviderConfigMap([
+      [
+        "acp:opencode",
+        parseProviderConfig({ access: OPENCODE_ACCESS, personalModelIds: ["opencode"] }),
+      ],
+    ]);
+    const personalModels = parsePersonalModelConfigRules({
+      providerModelRules: [
+        { providerId: "acp:opencode", modelId: "opencode", config: PSEUDO_MODEL_CONFIG },
+      ],
+      manualProviderModelRules: [],
+    });
+    const resolution = new ProviderConfigResolver().resolve({
+      zcodeBuiltinProviders: ProviderConfigMap.empty(),
+      personalProviders,
+      zcodeBuiltinModelRules: ModelConfigRules.empty(),
+      personalModels,
+      accountProviders: ProviderConfigMap.empty(),
+    });
+    const provider = resolution.resolvedProviders.find(
+      (item) => item.providerId === "acp:opencode",
+    );
+    expect(provider).toBeDefined();
+    // The ACP branch validates the whole provider (api-less complete schema),
+    // so a missing `group` is surfaced instead of silently passing.
+    expect(provider?.providerIssues.some((issue) => issue.path.join(".").includes("group"))).toBe(
+      true,
+    );
+    expect(provider?.models[0]?.executable).toBe(false);
+  });
+
+  it("keeps complete ACP configs out of the registry-complete schema", () => {
+    const config = parseProviderConfig({
+      group: "standard-personal",
+      access: OPENCODE_ACCESS,
+      personalModelIds: ["opencode"],
+      api: { type: "anthropic-messages", baseUrl: "https://api.example/v1" },
+    });
+    const result = createRegistryProviderConfig(config);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.issues.some((issue) => issue.path.join(".").includes("access"))).toBe(true);
+    }
   });
 });

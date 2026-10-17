@@ -5,6 +5,7 @@ export type AcpRuntimeErrorCode =
   | "ACP_HANDSHAKE_FAILED"
   | "ACP_PROTOCOL_VERSION"
   | "ACP_AGENT_DIED"
+  | "ACP_STREAM_CLOSED"
   | "ACP_TIMEOUT"
   | "ACP_CANCELLED"
   | "ACP_STATE";
@@ -54,6 +55,16 @@ export class AcpProtocolVersionError extends AcpRuntimeError {
 export class AcpAgentDiedError extends AcpRuntimeError {
   constructor(message: string, options?: ErrorOptions) {
     super("ACP_AGENT_DIED", message, options);
+  }
+}
+
+/**
+ * The agent's output stream ended without the process being observed to exit;
+ * the SDK connection is unusable even though the child may still be alive.
+ */
+export class AcpStreamClosedError extends AcpRuntimeError {
+  constructor(message: string, options?: ErrorOptions) {
+    super("ACP_STREAM_CLOSED", message, options);
   }
 }
 

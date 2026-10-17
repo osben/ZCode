@@ -139,46 +139,49 @@ describe("detectAcpAgents", () => {
     );
   });
 
-  it("isolates the cache between different detection inputs", async () => {
+  it("isolates the cache between different detection inputs", () => {
     const dirA = makeBinDir();
     writeFakeBinary(dirA, "opencode", "#!/bin/sh\necho 'from-a'\n");
     const dirB = makeBinDir();
 
-    const a = await detectAcpAgents({ env: { PATH: dirA }, cacheTtlMs: 60_000 });
+    const a = detectAcpAgents({ env: { PATH: dirA }, cacheTtlMs: 60_000 });
     expect(a.find((result) => result.agentId === "opencode")?.installed).toBe(true);
     // The cache is keyed by the effective inputs: another environment must not
     // receive this entry within the TTL window.
-    const b = await detectAcpAgents({ env: { PATH: dirB }, cacheTtlMs: 60_000 });
+    const b = detectAcpAgents({ env: { PATH: dirB }, cacheTtlMs: 60_000 });
     expect(b.find((result) => result.agentId === "opencode")?.installed).toBe(false);
   });
 
-  it("builds Windows PATHEXT candidates for binary resolution", () => {
-    expect(buildBinaryCandidateNames("opencode", undefined, "darwin")).toEqual(["opencode"]);
-    expect(buildBinaryCandidateNames("opencode", ".EXE;.CMD", "win32")).toEqual([
-      "opencode",
-      "opencode.exe",
-      "opencode.cmd",
-    ]);
-    expect(buildBinaryCandidateNames("cursor-agent", "", "win32")).toEqual([
-      "cursor-agent",
-      "cursor-agent.com",
-      "cursor-agent.exe",
-      "cursor-agent.bat",
-      "cursor-agent.cmd",
-    ]);
-  });
-
-  it("accepts an asynchronous probe runner", async () => {
+  it("does not share cached versions between different probe runners", () => {
     const dir = makeBinDir();
     writeFakeBinary(dir, "opencode", "#!/bin/sh\necho 'unused'\n");
-    const opencode = (
-      await detectAcpAgents({
-        env: { PATH: dir },
-        cacheTtlMs: 0,
-        runProbe: async () => ({ status: 0, stdout: "opencode vAsync\n", stderr: "" }),
-      })
-    ).find((result) => result.agentId === "opencode");
-    expect(opencode?.version).toBe("opencode vAsync");
+    const shared = () => ({ env: { PATH: dir }, cacheTtlMs: 60_000 });
+
+    const a = detectAcpAgents({
+      ...shared(),
+      runProbe: () => ({ status: 0, stdout: "opencode from-a\n", stderr: "" }),
+    }).find((result) => result.agentId === "opencode");
+    expect(a?.version).toBe("opencode from-a");
+
+    // The cache is keyed by the probe runner's identity: another runner with
+    // the same PATH must not reuse the first runner's version within the TTL.
+    const b = detectAcpAgents({
+      ...shared(),
+      runProbe: () => ({ status: 0, stdout: "opencode from-b\n", stderr: "" }),
+    }).find((result) => result.agentId === "opencode");
+    expect(b?.version).toBe("opencode from-b");
+  });
+
+  it("builds Windows candidates from executable PATHEXT extensions only", () => {
+    expect(buildBinaryCandidateNames("opencode", undefined, "darwin")).toEqual(["opencode"]);
+    // Script shims (.bat/.cmd) and the bare extension-less name cannot be
+    // launched with `shell: false`, so only real executables are probed.
+    expect(buildBinaryCandidateNames("opencode", ".EXE;.CMD", "win32")).toEqual(["opencode.exe"]);
+    expect(buildBinaryCandidateNames("cursor-agent", "", "win32")).toEqual([
+      "cursor-agent.com",
+      "cursor-agent.exe",
+    ]);
+    expect(buildBinaryCandidateNames("opencode", ".BAT;.CMD", "win32")).toEqual([]);
   });
 
   it("uses the injected probe runner with the whitelisted arguments", async () => {

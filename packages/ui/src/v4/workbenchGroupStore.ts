@@ -32,6 +32,8 @@ export interface WorkbenchSessionBinding {
   readonly sessionId: string;
   /** Child sessions opened inline from a subagent row are read-only and do not render composer/input. */
   readonly readOnly?: boolean;
+  /** Side-chat child panes keep their composer but suppress restricted mutation controls. */
+  readonly selectionSideChat?: boolean;
   /** Restored from persistence but not yet validated against the current scope's sessions-index; exists only in memory. */
   readonly restoredUnvalidated?: boolean;
 }
@@ -105,6 +107,7 @@ function paneBinding(binding: WorkbenchSessionBinding): PaneBinding {
     workspaceScope: binding.workspaceScope,
     sessionId: binding.sessionId,
     ...(binding.readOnly ? { readOnly: true } : {}),
+    ...(binding.selectionSideChat ? { selectionSideChat: true } : {}),
     ...(binding.restoredUnvalidated ? { restoredUnvalidated: true } : {}),
   };
 }
@@ -115,6 +118,7 @@ function workbenchBinding(binding: PaneBinding): WorkbenchSessionBinding | null 
         workspaceScope: binding.workspaceScope,
         sessionId: binding.sessionId,
         ...(binding.readOnly ? { readOnly: true } : {}),
+        ...(binding.selectionSideChat ? { selectionSideChat: true } : {}),
         ...(binding.restoredUnvalidated ? { restoredUnvalidated: true } : {}),
       }
     : null;
@@ -425,7 +429,23 @@ function focusSessionInSnapshot(
   if (!paneId) {
     return state;
   }
-  const focused = focusWorkbenchGroupPane(group, paneId);
+  const focusedGroup = focusWorkbenchGroupPane(group, paneId);
+  let focused = focusedGroup;
+  if (binding.readOnly) {
+    if (paneId === V4_PRIMARY_PANE_ID) {
+      focused = {
+        ...focusedGroup,
+        primaryBinding: { ...focusedGroup.primaryBinding, readOnly: true },
+      };
+    } else {
+      const paneBinding = focusedGroup.panes[paneId];
+      if (!paneBinding) return state;
+      focused = {
+        ...focusedGroup,
+        panes: { ...focusedGroup.panes, [paneId]: { ...paneBinding, readOnly: true } },
+      };
+    }
+  }
   return replaceGroup(
     {
       ...state,
@@ -451,6 +471,7 @@ function bindPaneSessionInSnapshot(
     workspaceScope: binding.workspaceScope,
     sessionId,
     ...(binding.readOnly ? { readOnly: true } : {}),
+    ...(binding.selectionSideChat ? { selectionSideChat: true } : {}),
   };
   const nextKey = bindingSessionKey(nextBinding);
   const existingGroupId = state.sessionIndex[nextKey];
@@ -530,17 +551,13 @@ function sanitizeBinding(value: unknown): WorkbenchSessionBinding | null {
   if (!isRecord(value) || typeof value.sessionId !== "string") {
     return null;
   }
-  if (value.readOnly === true) {
-    // Migration note: historical readOnly bindings came only from “open subagent in split view.” Child-session details have moved to
-    // right-side tabs, so discard old groups containing that binding during restore to avoid occupying the 4-pane workbench after upgrade;
-    // ordinary session bindings have no readOnly marker and are unaffected.
-    return null;
-  }
   const workspaceScope = sanitizeWorkspaceScope(value.workspaceScope);
   return workspaceScope
     ? {
         workspaceScope,
         sessionId: value.sessionId,
+        ...(value.readOnly === true ? { readOnly: true } : {}),
+        ...(value.selectionSideChat === true ? { selectionSideChat: true } : {}),
         // Group restoration used to bypass paneLayout's sessions-index guard, leaving deleted
         // sessions as permanent empty panes; restored bindings must explicitly enter a pending-validation state.
         restoredUnvalidated: true,

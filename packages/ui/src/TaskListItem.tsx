@@ -468,30 +468,12 @@ export const MemoTaskItem = memo(function TaskListItem({
   // to avoid showing a button that gives no feedback. Local tasks do not depend on an open tab and can still open by path directly.
   const canOpenFileTree =
     Boolean(onOpenFileTree) && (!task.workspaceIdentity?.trim() || Boolean(remoteSessionId));
-  const fileTreeActionNode =
-    canOpenFileTree &&
-    !workspaceActionsDisabled &&
-    !hasPendingInteraction &&
-    (shouldMountWorkspaceTaskActions || isMobileActive) ? (
-      <span className="inline-flex shrink-0">
-        {/* Bugfix：The Pinned file-tree button had custom hover styling and a tooltip, making it visually inconsistent with the same action in Grouped tasks.
-            Reuse the shared action to align bg-hover, sizing, and pointer behavior. */}
-        <TaskRowActionButton
-          label={intl.formatMessage({ id: "git.action.showTree" })}
-          onClick={handleOpenFileTree}
-          showTooltip
-        >
-          <ListTree className="size-3.5" />
-        </TaskRowActionButton>
-      </span>
-    ) : null;
-  const taskActionGroupNode =
-    fileTreeActionNode || archiveActionNode ? (
-      <span data-task-row-actions="true" className="flex shrink-0 items-center gap-0.5">
-        {fileTreeActionNode}
-        {archiveActionNode}
-      </span>
-    ) : null;
+  const hasLeadingStatus = leadingIndicator !== "none";
+  const shouldRenderPinActionOnLeft =
+    showPinAction &&
+    (showPinnedState || (shouldSuppressWorkspaceTaskMetadata && !hasLeadingStatus));
+  const shouldRenderPinActionOnRight =
+    showPinAction && shouldSuppressWorkspaceTaskMetadata && hasLeadingStatus;
   const pinActionButton = (
     <Button
       type="button"
@@ -511,10 +493,31 @@ export const MemoTaskItem = memo(function TaskListItem({
       <Pin className="size-4" />
     </Button>
   );
-  // hover:none keeps the right-side task actions visible; if it also takes over the leading slot,
-  // Pin permanently replaces error, unread, and loading states on touch devices.
-  const shouldRenderPinAction =
-    showPinAction && (showPinnedState || shouldSuppressWorkspaceTaskMetadata);
+  const fileTreeActionNode =
+    canOpenFileTree &&
+    !workspaceActionsDisabled &&
+    !hasPendingInteraction &&
+    (shouldMountWorkspaceTaskActions || isMobileActive) ? (
+      <span className="inline-flex shrink-0">
+        {/* Bugfix：The Pinned file-tree button had custom hover styling and a tooltip, making it visually inconsistent with the same action in Grouped tasks.
+            Reuse the shared action to align bg-hover, sizing, and pointer behavior. */}
+        <TaskRowActionButton
+          label={intl.formatMessage({ id: "git.action.showTree" })}
+          onClick={handleOpenFileTree}
+          showTooltip
+        >
+          <ListTree className="size-3.5" />
+        </TaskRowActionButton>
+      </span>
+    ) : null;
+  const taskActionGroupNode =
+    fileTreeActionNode || archiveActionNode || shouldRenderPinActionOnRight ? (
+      <span data-task-row-actions="true" className="flex shrink-0 items-center gap-0.5">
+        {fileTreeActionNode}
+        {archiveActionNode}
+        {shouldRenderPinActionOnRight ? pinActionButton : null}
+      </span>
+    ) : null;
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -573,8 +576,8 @@ export const MemoTaskItem = memo(function TaskListItem({
               aria-hidden="true"
               className={cn(
                 "flex size-4 items-center justify-center transition-opacity",
-                shouldRenderPinAction && "hidden",
-                isMobileActive && "invisible",
+                shouldRenderPinActionOnLeft && "hidden",
+                isMobileActive && !shouldSuppressWorkspaceTaskMetadata && "invisible",
               )}
             >
               {leadingIndicator === "error" ? (
@@ -593,7 +596,7 @@ export const MemoTaskItem = memo(function TaskListItem({
                 <span data-idle-indicator="true" className="h-1.5 w-1.5 rounded-full bg-border" />
               ) : null}
             </span>
-            {shouldRenderPinAction ? (
+            {shouldRenderPinActionOnLeft ? (
               <ControlHintTooltip
                 title={
                   workspaceActionsDisabledReason ??
@@ -804,11 +807,9 @@ export const MemoTaskItem = memo(function TaskListItem({
       </TooltipTrigger>
       <TaskSidebarHoverCard
         task={task}
-        workspaceLabel={workspaceLabel}
         attentionLabel={taskAttentionDisplay}
         activity={taskActivity}
         intl={intl}
-        isRemote={isRemoteTask}
       />
     </Tooltip>
   );

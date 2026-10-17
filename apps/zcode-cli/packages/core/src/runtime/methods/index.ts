@@ -130,6 +130,7 @@ import {
 import { executeTurn, executeTurnCommand } from "./turn.js";
 import { admitPrompt } from "./prompt-admission.js";
 import { executeManualCompact } from "./compact.js";
+import { executeManualDream } from "./dream.js";
 import { autoCompactIfNeeded } from "./compact.js";
 import { microcompactIfNeeded } from "./microcompact.js";
 import { reactiveCompactAfterContextExceeded } from "./compact.js";
@@ -335,6 +336,7 @@ export function installAgentRuntimeMethods(ctor: AgentRuntimeConstructor): void 
   proto.admitPrompt = admitPrompt;
   proto.executeTurnCommand = executeTurnCommand;
   proto.executeManualCompact = executeManualCompact;
+  proto.executeManualDream = executeManualDream;
   proto.autoCompactIfNeeded = autoCompactIfNeeded;
   proto.microcompactIfNeeded = microcompactIfNeeded;
   proto.reactiveCompactAfterContextExceeded = reactiveCompactAfterContextExceeded;

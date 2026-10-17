@@ -333,6 +333,9 @@ export interface MemoryRuntimeConfig {
   enabled?: boolean;
   /** Whether to schedule automatic Extraction after a successful Main turn; defaults to true. */
   extractionEnabled?: boolean;
+  /** Render the MEMORY.md index as a standalone background-context block instead of inside the
+   *  "# agentsMd" instruction banner; defaults to false. Fork-only app setting memoryIndexAsContext. */
+  indexAsContext?: boolean;
   storageRoot?: string;
   use?: boolean;
   workspaceIdentity?: string;
@@ -802,7 +805,9 @@ export interface ExecuteToolsResult {
   events: SessionEvent[];
 }
 
-export type ActiveTurnKind = "regular" | "compact" | "rewind";
+export type ActiveTurnKind = "regular" | "compact" | "dream" | "rewind";
+
+export type { ParsedDreamCommand } from "./helpers/commands.js";
 
 export const INLINE_TEXT_ATTACHMENT_MAX_BYTES = 64 * 1024;
 

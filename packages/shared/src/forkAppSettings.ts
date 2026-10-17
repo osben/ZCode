@@ -18,6 +18,7 @@ export const FORK_SETTING_KEYS = [
   "worktreeCustomLocationPath",
   "worktreeBranchPrefix",
   "worktreeProjectOverrides",
+  "memoryIndexAsContext",
 ] as const satisfies readonly (keyof AppSettings)[];
 
 export type ForkSettingKey = (typeof FORK_SETTING_KEYS)[number];
@@ -58,6 +59,7 @@ export const forkAppSettingsStoredSchema = z.object({
     .record(z.string(), worktreeProjectOverrideSchema)
     .optional()
     .catch(undefined),
+  memoryIndexAsContext: z.boolean().optional().catch(undefined),
 });
 
 export type ForkAppSettingsStored = z.infer<typeof forkAppSettingsStoredSchema>;
@@ -76,6 +78,7 @@ export const forkAppSettingsPatchSchema = z.object({
   worktreeCustomLocationPath: nonEmptyStringSchema.optional(),
   worktreeBranchPrefix: nonEmptyStringSchema.optional(),
   worktreeProjectOverrides: z.record(z.string(), worktreeProjectOverrideSchema).optional(),
+  memoryIndexAsContext: z.boolean().optional(),
 });
 
 /**

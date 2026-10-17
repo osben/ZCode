@@ -18,6 +18,7 @@ import type { ICredentialService } from "../src/credential/credential.js";
 import type { OAuthProviderAdapter } from "../src/oauth/providers/index.js";
 import { OAuthService } from "../src/oauth/oauthService.js";
 import { OAuthCredentialRepo } from "../src/oauth/repo/oauthCredentialRepo.js";
+import { SiwcAuthService } from "../src/oauth/siwc/siwcAuthService.js";
 
 import { AccountProviderApiKeyResolver } from "../src/model-provider/accountProviderApiKeyResolver.js";
 import { createAccountProjectTokenClient } from "../src/model-provider/accountProjectTokenClient.js";
@@ -190,6 +191,21 @@ afterEach(() => {
 });
 
 describe("oauthService", () => {
+  it("uses the shared SIWC auth service for status and logout", async () => {
+    const siwcAuthService = new SiwcAuthService(credentialServiceStub, { env: cleanProcessEnv });
+    const getStatus = vi.spyOn(siwcAuthService, "getStatus").mockResolvedValue({ accounts: [] });
+    const logout = vi
+      .spyOn(siwcAuthService, "logout")
+      .mockResolvedValue({ accountCount: 1, revoked: true, signedOut: true });
+    const service = createBigModelService({ siwcAuthService });
+
+    await expect(service.getChatGptPlanStatus()).resolves.toEqual({ accounts: [] });
+    await service.logoutChatGptPlan("a1b2c3d4e5f60718");
+
+    expect(getStatus).toHaveBeenCalledOnce();
+    expect(logout).toHaveBeenCalledWith("a1b2c3d4e5f60718");
+  });
+
   it("logs detached ChatGPT Plan refresh failures as messages, not trace IDs", async () => {
     const service = createBigModelService({
       onChatGptPlanSessionChange: async () => {

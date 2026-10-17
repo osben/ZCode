@@ -11,6 +11,7 @@
     "./node-repl-browser-broker": "./src/browser-use/nodeReplBroker.ts",
     "./process-diagnostic": "./src/process-diagnostic.ts",
     "./model-selection": "./src/model-selection.ts",
+    "./model-provider-types": "./src/model-provider-types.ts",
     "./account-provider-state": "./src/account-provider-state.ts",
     "./model-config": "./src/model-config.ts",
     "./config-schema": "./src/config-schema.ts",

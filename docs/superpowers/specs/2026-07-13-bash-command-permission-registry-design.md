@@ -87,6 +87,38 @@ Fig package文件。
 内置 policy 补齐 wrapper specs、递归限制和 depth overrides，包括 `git push`、
 `docker`、`kubectl`、`aws`、`az`、`gcloud` 等不能仅靠通用 spec 深度推导的 action 边界。
 
+### Lazy materialization
+
+The generated module owns one synchronous cache per module instance. It embeds each
+root tuple as JSON text and exposes the existing readonly `BASH_COMMAND_REGISTRY`
+record through enumerable getters. Importing the module, enumerating keys, and
+checking `Object.hasOwn` must not construct command trees. Reading a root parses only
+that root and replaces its getter with the cached tuple; repeated reads return the
+same object. No runtime file reads, dynamic imports, timers, or Fig dependency are
+introduced. Unknown commands, aliases, tuple contents, key order, source hash, and
+permission/telemetry semantics remain identical.
+
+```text
+module import -> generated record owns unmaterialized root getters
+telemetry     -> hasOwn(record, executable) -> public-name membership only
+policy lookup -> record[executable] -> parse that root -> cache tuple -> resolve prefix
+next lookup   -> cached tuple
+```
+
+Acceptance evidence includes deterministic generator output and `--check`, the full
+707-root tuple digest from the eager baseline, all static command/subcommand aliases
+through permission suggestions and allow/ask/deny evaluation, and a test proving an
+untouched root stays lazy after another root is read. Existing unsafe/compound,
+readonly, wrapper, and telemetry privacy tests continue to apply. This changes no UI
+interaction or protocol behavior.
+
+The profiling gate, fixed before measuring, requires at least 5% and 10 ms lower
+median fresh-process CLI startup, with no more than 20 ms higher p95 first Bash call.
+Compare alternating baseline/candidate processes on the same Node version and build
+settings, using three warmups and 40 measured pairs with the OS file cache warm.
+Record both normal CLI and minified desktop-agent results; isolate user shell startup
+cost with a controlled Bash executable as well as reporting the default shell.
+
 ### Prefix resolver
 
 resolver 复用 `unbash` AST，不对 raw string 做 shell token 猜测：

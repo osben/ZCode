@@ -540,6 +540,7 @@ describe("remote workspace host service wiring", () => {
               askUserQuestionAutoResolutionEnabled: false,
               nativeSearchEnhancementsEnabled: false,
               memoryEnabled: false,
+              memoryIndexAsContext: false,
               modelContextBudgetStrategy: "preflight-v1",
             },
           },
@@ -564,6 +565,7 @@ describe("remote workspace host service wiring", () => {
               askUserQuestionAutoResolutionEnabled: false,
               nativeSearchEnhancementsEnabled: false,
               memoryEnabled: false,
+              memoryIndexAsContext: false,
               modelContextBudgetStrategy: "preflight-v1",
               integratedTerminalShell: {
                 mode: "shell",
@@ -607,6 +609,7 @@ describe("remote workspace host service wiring", () => {
         askUserQuestionAutoResolutionEnabled: false,
         nativeSearchEnhancementsEnabled: false,
         memoryEnabled: false,
+        memoryIndexAsContext: false,
       });
       remoteServices.runtimePreferencesEmitter.fire({
         requestId: "request-closed-transport",
@@ -631,6 +634,7 @@ describe("remote workspace host service wiring", () => {
             askUserQuestionAutoResolutionEnabled: false,
             nativeSearchEnhancementsEnabled: false,
             memoryEnabled: false,
+            memoryIndexAsContext: false,
             modelContextBudgetStrategy: "preflight-v1",
           },
         },

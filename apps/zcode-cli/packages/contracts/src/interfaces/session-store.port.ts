@@ -1111,6 +1111,18 @@ export interface LocalSettingStorePort {
   }): CollaborationMode | Promise<CollaborationMode>;
 }
 
+/**
+ * Bounded child-session fact for sidebar child lists (specs/sidebar-child-conversation-counts.md).
+ * Only selection_side_chat and subagent_child children are listed; workflow children stay owned by
+ * workflowActivity and forks are not children for this purpose.
+ */
+export interface ChildSessionInfo {
+  id: SessionId;
+  title: string;
+  taskType: Extract<SessionTaskType, "selection_side_chat" | "subagent_child">;
+  lastActivityAt: number;
+}
+
 export interface SessionStorePort {
   createSession(input: CreateSessionInput): Promise<SessionInfo>;
   /** Remove a session row only when it has no messages, entries, or admitted input records. */
@@ -1127,6 +1139,22 @@ export interface SessionStorePort {
   updateSession(input: UpdateSessionInput): Promise<SessionInfo>;
   getSession(sessionID: SessionId): Promise<SessionInfo | null>;
   listSessions(input?: ListSessionsInput): Promise<SessionInfo[]>;
+  /**
+   * Grouped child counts for sidebar rows: one count per (parent, kind) over non-archived
+   * selection_side_chat / subagent_child children. Counts are true totals even when the
+   * corresponding listChildSessions result is capped.
+   */
+  countChildSessions(input: {
+    parentIds: readonly SessionId[];
+  }): Promise<Map<string, { sideChats: number; subagents: number }>>;
+  /**
+   * Latest non-archived child sessions per parent, newest first, capped at limitPerParent;
+   * same task-type scope as countChildSessions. Parents with no children are omitted.
+   */
+  listChildSessions(input: {
+    parentIds: readonly SessionId[];
+    limitPerParent: number;
+  }): Promise<Map<string, ChildSessionInfo[]>>;
   /**
    * Backfill workspace identity for an old remote session using the host task-index allowlist.
    * Implementations must validate id, directory, and workspace_id is null together, and must not

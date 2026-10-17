@@ -52,6 +52,8 @@ import {
   ZCODE_SESSION_RUNTIME_PREFERENCES_REQUEST_TIMEOUT_MS,
   zcodeProtocolErrorCodes,
   zcodeProtocolMethods,
+  zcodeProtocolNotifications,
+  zcodeChatGptPlanUsageUpdatedParamsSchema,
   zcodeSessionCancelBackgroundTaskParamsSchema,
   zcodeSessionCompactParamsSchema,
   zcodeSessionCloseParamsSchema,
@@ -165,6 +167,7 @@ type ZCodeSessionRecordParams = (
 interface SessionStartupPreferences {
   subagentRuntimeConfigEnabled?: boolean;
   memoryEnabled: boolean;
+  memoryIndexAsContext: boolean;
   modelContextBudgetStrategy: ZCodeModelContextBudgetStrategy;
   nativeSearchEnhancementsEnabled: boolean;
   resolveInitialBashShellSelection: () => Promise<ExecutionShellSelection | undefined>;
@@ -3099,6 +3102,7 @@ export function onSessionEvent(
   record: ZCodeProtocolSessionRecord,
   event: SessionEvent,
 ): void {
+  sendChatGptPlanUsageUpdated(context, event);
   const computerUseOperationEvent = mapComputerUseOperationEvent(event);
   if (computerUseOperationEvent) {
     try {
@@ -3198,6 +3202,36 @@ export function onSessionEvent(
 
   resetLiveProtocolStreamingDeltaBatch(context, record, record.deliveryKind);
   sendProtocolSessionEvent(context, record, event, record.deliveryKind);
+}
+
+/** Forward captured usage independently of legacy deliveryKind so V4-only sessions are covered. */
+function sendChatGptPlanUsageUpdated(
+  context: ZCodeProtocolAgentServerContext,
+  event: SessionEvent,
+): void {
+  if (event.type !== SessionEventType.TurnComplete) return;
+  const payload = asRecord(event.payload);
+  const usage = asRecord(payload.usage);
+  const parsed = zcodeChatGptPlanUsageUpdatedParamsSchema.safeParse({
+    eventId: String(event.id),
+    sessionId: String(event.sessionId),
+    providerId: usage.providerRateLimitProviderId,
+    usage: usage.providerRateLimits,
+  });
+  if (!parsed.success) return;
+  try {
+    context.notify({
+      method: zcodeProtocolNotifications.chatGptPlanUsageUpdated,
+      params: parsed.data,
+    });
+  } catch (error) {
+    context.logger?.warn("ChatGPT plan usage notification failed", {
+      error: error instanceof Error ? error.message : String(error),
+      event: "zcode_protocol.chatgpt-plan.usage-updated.failed",
+      eventId: parsed.data.eventId,
+      sessionId: parsed.data.sessionId,
+    });
+  }
 }
 
 function flushLiveProtocolStreamingDeltaBatch(
@@ -3344,6 +3378,7 @@ async function requestSessionRuntimePreferences(
       return {
         askUserQuestionAutoResolutionEnabled: true,
         memoryEnabled: false,
+        memoryIndexAsContext: false,
         modelContextBudgetStrategy: DEFAULT_ZCODE_MODEL_CONTEXT_BUDGET_STRATEGY,
         nativeSearchEnhancementsEnabled: true,
       };
@@ -3362,6 +3397,7 @@ async function resolveSessionStartupPreferences(
     const inheritedShellSelection = source.parent.app.runtime.getSessionShellSelection();
     return {
       memoryEnabled: source.parent.memoryEnabled,
+      memoryIndexAsContext: source.parent.memoryIndexAsContext,
       subagentRuntimeConfigEnabled: source.parent.subagentRuntimeConfigEnabled,
       modelContextBudgetStrategy: DEFAULT_ZCODE_MODEL_CONTEXT_BUDGET_STRATEGY,
       nativeSearchEnhancementsEnabled: source.parent.nativeSearchEnhancementsEnabled,
@@ -3383,6 +3419,7 @@ async function resolveSessionStartupPreferences(
   return {
     subagentRuntimeConfigEnabled: runtimePreferences.subagentRuntimeConfigEnabled,
     memoryEnabled: runtimePreferences.memoryEnabled,
+    memoryIndexAsContext: runtimePreferences.memoryIndexAsContext,
     modelContextBudgetStrategy: DEFAULT_ZCODE_MODEL_CONTEXT_BUDGET_STRATEGY,
     nativeSearchEnhancementsEnabled: runtimePreferences.nativeSearchEnhancementsEnabled,
     resolveInitialBashShellSelection: async () => {
@@ -3535,6 +3572,9 @@ async function createRecord(
       toolDisallowlist: resolveSessionToolDenylist(params, workspace),
       nativeSearchEnhancementsEnabled: startupPreferences.nativeSearchEnhancementsEnabled,
       modelContextBudgetStrategy: startupPreferences.modelContextBudgetStrategy,
+      // memoryIndexAsContext only chooses the index rendering, so write it before the master-switch
+      // override below: when Memory is disabled, { enabled: false } must win over { indexAsContext }.
+      ...(startupPreferences.memoryIndexAsContext ? { memory: { indexAsContext: true } } : {}),
       // Memory Settings is a master switch in addition to existing CLI features.memory/use. Write an
       // override only when disabled so the enabled value does not override a user's existing CLI disablement.
       ...(startupPreferences.memoryEnabled ? {} : { memory: { enabled: false } }),
@@ -3625,6 +3665,7 @@ async function createRecord(
     createdAt: now,
     eventStore,
     memoryEnabled: startupPreferences.memoryEnabled,
+    memoryIndexAsContext: startupPreferences.memoryIndexAsContext,
     subagentRuntimeConfigEnabled: startupPreferences.subagentRuntimeConfigEnabled,
     modelContextBudgetStrategy: startupPreferences.modelContextBudgetStrategy,
     nativeSearchEnhancementsEnabled: startupPreferences.nativeSearchEnhancementsEnabled,

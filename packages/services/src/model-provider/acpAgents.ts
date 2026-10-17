@@ -18,6 +18,7 @@ import {
   detectAcpAgents,
   refreshAcpAgentCache,
   type AcpAgentDefinition,
+  type AcpRawFrame,
   type AcpSessionRuntimeOptions,
 } from "@zcode/acp-agent-runtime";
 import type {
@@ -148,13 +149,19 @@ export function createAcpAgentsBridge(
       const frames: AcpFrameEvent[] = [];
       let framesDropped = 0;
       let capturedBytes = 0;
-      const onFrame = (frame: AcpFrameEvent): void => {
+      // Runtime frames use the wire vocabulary ("inbound"/"outbound", no
+      // timestamp); map them onto the contract's test-report frame shape.
+      const onFrame = (frame: AcpRawFrame): void => {
         if (frames.length >= MAX_TEST_FRAMES || capturedBytes >= MAX_TEST_FRAME_BYTES) {
           framesDropped += 1;
           return;
         }
         capturedBytes += frame.text.length;
-        frames.push(frame);
+        frames.push({
+          direction: frame.direction === "inbound" ? "in" : "out",
+          text: frame.text,
+          at: Date.now(),
+        });
       };
 
       const sandbox = await makeSandboxDir();

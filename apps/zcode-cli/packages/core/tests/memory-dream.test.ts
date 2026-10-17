@@ -12,6 +12,7 @@ import {
   evaluateAutoDreamTiming,
   restoreDreamLockAfterFailure,
 } from "../src/memory/dream.js";
+import { parseDreamCommand } from "../src/runtime/helpers/commands.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -109,6 +110,20 @@ describe("Dream consolidation lock", () => {
     await restoreDreamLockAfterFailure({ memoryRoot: root, priorMtimeMs: priorMtime! });
     expect(await readFile(lockPath, "utf8")).toBe("");
     expect((await stat(lockPath)).mtimeMs).toBeCloseTo(oldMtime, -1);
+  });
+});
+
+describe("Dream command parsing", () => {
+  it("accepts the exact command and rejects arguments as a usage error", () => {
+    expect(parseDreamCommand("/dream")).toEqual({ ok: true });
+    expect(parseDreamCommand("  /dream  ")).toEqual({ ok: true });
+    expect(parseDreamCommand("/dream now")).toEqual({ ok: false, reason: "usage" });
+    expect(parseDreamCommand("/dream\t now")).toEqual({ ok: false, reason: "usage" });
+    expect(parseDreamCommand("/dream\nnow")).toEqual({ ok: false, reason: "usage" });
+    expect(parseDreamCommand("/dreamer")).toBeNull();
+    expect(parseDreamCommand("/compact")).toBeNull();
+    expect(parseDreamCommand("dream")).toBeNull();
+    expect(parseDreamCommand("")).toBeNull();
   });
 });
 

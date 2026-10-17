@@ -465,6 +465,9 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
     },
   );
   const [isWebRemoteControlTaskSwitching, setIsWebRemoteControlTaskSwitching] = useState(false);
+  const [childSessionCapabilityByWorkspace, setChildSessionCapabilityByWorkspace] = useState<
+    Record<string, { sessionId: string; kind: "subagent_child" | "selection_side_chat" }>
+  >({});
   const [draftHeaderDropTargetController, setDraftHeaderDropTargetController] =
     useState<ConversationDropTargetController | null>(null);
   const fileTreeOpenRequestIdRef = useRef(0);
@@ -494,7 +497,26 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
     activeSessionId: activeTaskId,
     draftFocusVersion: workspaceShellZCodeState.draftFocusVersion,
     enabled: !isWebRemoteControlShell,
-    selectSession: (sessionId) => handleSelectTask(workspaceAbsPath, sessionId, workspaceIdentity),
+    activeReadOnly:
+      childSessionCapabilityByWorkspace[workspaceKey]?.sessionId === activeTaskId &&
+      childSessionCapabilityByWorkspace[workspaceKey]?.kind === "subagent_child",
+    activeSelectionSideChat:
+      childSessionCapabilityByWorkspace[workspaceKey]?.sessionId === activeTaskId &&
+      childSessionCapabilityByWorkspace[workspaceKey]?.kind === "selection_side_chat",
+    selectSession: (sessionId, capabilities) => {
+      const kind = capabilities?.readOnly
+        ? "subagent_child"
+        : capabilities?.selectionSideChat
+          ? "selection_side_chat"
+          : null;
+      setChildSessionCapabilityByWorkspace((current) => {
+        const next = { ...current };
+        if (kind) next[workspaceKey] = { sessionId, kind };
+        else delete next[workspaceKey];
+        return next;
+      });
+      handleSelectTask(workspaceAbsPath, sessionId, workspaceIdentity);
+    },
   });
   const workspaceShellRef = useRef<HTMLDivElement | null>(null);
   const workspaceSidebarPanelElementRef = useRef<HTMLDivElement | null>(null);
@@ -1188,9 +1210,24 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
               ...(workspaceRemoteSessionId ? { remoteSessionId: workspaceRemoteSessionId } : {}),
             },
             sessionId: activeTaskId,
+            ...(childSessionCapabilityByWorkspace[workspaceKey]?.sessionId === activeTaskId &&
+            childSessionCapabilityByWorkspace[workspaceKey]?.kind === "subagent_child"
+              ? { readOnly: true }
+              : {}),
+            ...(childSessionCapabilityByWorkspace[workspaceKey]?.sessionId === activeTaskId &&
+            childSessionCapabilityByWorkspace[workspaceKey]?.kind === "selection_side_chat"
+              ? { selectionSideChat: true }
+              : {}),
           }
         : null,
-    [activeTaskId, workspaceAbsPath, workspaceIdentity, workspaceRemoteSessionId],
+    [
+      activeTaskId,
+      childSessionCapabilityByWorkspace,
+      workspaceKey,
+      workspaceAbsPath,
+      workspaceIdentity,
+      workspaceRemoteSessionId,
+    ],
   );
   const handleCreateAutomationInChat = useCallback(
     (prompt: string, targetWorkspace?: { workspacePath: string; workspaceIdentity?: string }) => {
@@ -1215,7 +1252,20 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
       targetWorkspaceIdentity?: string,
       targetRemoteSessionId?: string,
       expectedUnreadAt?: number,
+      options?: { readOnly?: boolean; selectionSideChat?: boolean },
     ) => {
+      const childKind = options?.readOnly
+        ? "subagent_child"
+        : options?.selectionSideChat
+          ? "selection_side_chat"
+          : null;
+      const targetWorkspaceKey = targetWorkspaceIdentity?.trim() || targetWorkspacePath;
+      setChildSessionCapabilityByWorkspace((current) => {
+        const next = { ...current };
+        if (childKind) next[targetWorkspaceKey] = { sessionId: taskId, kind: childKind };
+        else delete next[targetWorkspaceKey];
+        return next;
+      });
       if (!isWebRemoteControlShell) {
         const workspaceResult = ensureTaskNavigationWorkspace({
           workspacePath: targetWorkspacePath,
@@ -1254,6 +1304,7 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
             : {}),
           ...(resolvedRemoteSessionId ? { remoteSessionId: resolvedRemoteSessionId } : {}),
           sessionId: taskId,
+          ...(options?.readOnly ? { readOnly: true } : {}),
         };
         selectWorkbenchSession(shellWorkbenchBinding, target);
       }
@@ -1415,12 +1466,15 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
         remoteSessionId?: string;
       },
       sessionId: string,
+      capabilities?: { selectionSideChat?: boolean },
     ) => {
       handleSelectTaskInChat(
         scope.workspacePath,
         sessionId,
         scope.workspaceIdentity,
         scope.remoteSessionId,
+        undefined,
+        capabilities,
       );
     },
     [handleSelectTaskInChat],
@@ -2158,7 +2212,19 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                   {/* Bugfix (2026-07-05, M3 acceptance): Match the desktop layout by binding activeTaskId instead of meta-derived activeSessionId, so a new v4 session does not remain a draft while the metadata cache is stale. */}
                   {/* Bug cause: Plan details were wired only to the desktop V4WorkspaceChatArea callback, so the mobile card showed a button that could not open the drawer. Both platforms must use the same renderer Side Pane entry. */}
                   <V4ChatPane
-                    readOnly={Boolean(workspaceReadOnlyReason)}
+                    readOnly={
+                      Boolean(workspaceReadOnlyReason) ||
+                      Boolean(
+                        childSessionCapabilityByWorkspace[workspaceKey]?.sessionId ===
+                          activeTaskId &&
+                        childSessionCapabilityByWorkspace[workspaceKey]?.kind === "subagent_child",
+                      )
+                    }
+                    selectionSideChat={
+                      childSessionCapabilityByWorkspace[workspaceKey]?.sessionId === activeTaskId &&
+                      childSessionCapabilityByWorkspace[workspaceKey]?.kind ===
+                        "selection_side_chat"
+                    }
                     workspacePath={workspaceAbsPath}
                     workspaceIdentity={workspaceIdentity}
                     isDesktop={isDesktop === true}
@@ -2641,6 +2707,18 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                                   binding semantics and the testid contract (paneId=workspace-main) remain unchanged. */}
                                   <V4WorkspaceChatArea
                                     readOnly={Boolean(workspaceReadOnlyReason)}
+                                    readOnlySessionId={
+                                      childSessionCapabilityByWorkspace[workspaceKey]?.kind ===
+                                      "subagent_child"
+                                        ? childSessionCapabilityByWorkspace[workspaceKey].sessionId
+                                        : null
+                                    }
+                                    selectionSideChatSessionId={
+                                      childSessionCapabilityByWorkspace[workspaceKey]?.kind ===
+                                      "selection_side_chat"
+                                        ? childSessionCapabilityByWorkspace[workspaceKey].sessionId
+                                        : null
+                                    }
                                     foregroundEnabled={isWorkspaceVisible}
                                     workspacePath={workspaceAbsPath}
                                     workspaceIdentity={workspaceIdentity}

@@ -9,14 +9,16 @@ import type {
 import { matchesTaskListMembershipKind } from "@zcode/shared/zcode-protocol-v4";
 import type {
   IWindowControllerService,
-  IZCodeAgentService,
-  IZCodeTaskService,
   WindowHostControllerFrame,
   WindowHostControllerTaskListItem,
   WindowHostControllerTaskListResult,
+} from "./windowController.js";
+import type { IZCodeAgentService } from "../zcode-agent/zcodeAgent.js";
+import type { IZCodeTaskService } from "../session/zcodeTaskService.js";
+import type {
   ZCodeTaskListQuery,
   ZCodeTaskListWorkspaceScope,
-} from "@zcode/services";
+} from "../session/zcodeTaskListTypes.js";
 import {
   createWindowHostControllerProjection,
   type WindowHostControllerMutation,
@@ -102,6 +104,12 @@ function sessionOverlay(
     ...(summary.executionWorktreeMissing !== undefined
       ? { executionWorktreeMissing: summary.executionWorktreeMissing }
       : {}),
+    ...(summary.sideChatCount !== undefined ? { sideChatCount: summary.sideChatCount } : {}),
+    ...(summary.subagentCount !== undefined ? { subagentCount: summary.subagentCount } : {}),
+    ...(summary.runningSubagentCount !== undefined
+      ? { runningSubagentCount: summary.runningSubagentCount }
+      : {}),
+    ...(summary.childSessions !== undefined ? { childSessions: summary.childSessions } : {}),
     ...(summary.pendingInteraction
       ? {
           pendingInteraction: {
@@ -141,6 +149,8 @@ function liveStatusFromMeta(meta: ZCodeTaskMeta): WindowHostControllerTaskRow["l
 export function createWindowHostControllerRuntime(options: {
   createId: () => string;
   resolveSource: (scope: ZCodeTaskListWorkspaceScope) => ResolvedWindowHostControllerSource | null;
+  maxSources?: number;
+  maxConcurrentSourceRefreshes?: number;
   onSourceError?: (
     scope: WindowHostControllerSourceScope,
     operation: "refresh" | "search",
@@ -164,6 +174,13 @@ export function createWindowHostControllerRuntime(options: {
     { agentService: IZCodeAgentService; observer: WindowHostSessionsIndexObserver }
   >();
   const pendingReplacementByNextSourceKey = new Map<string, WindowHostControllerSourceScope>();
+  let disposed = false;
+  let activeSourceReads = 0;
+  const sourceReadWaiters: Array<() => void> = [];
+
+  function assertOpen(): void {
+    if (disposed) throw new Error("Controller runtime is disposed");
+  }
 
   function forgetRegisteredSource(scope: WindowHostControllerSourceScope): void {
     const key = sourceKey(scope);
@@ -294,8 +311,12 @@ export function createWindowHostControllerRuntime(options: {
   }
 
   function registerResolvedSource(resolved: ResolvedWindowHostControllerSource): void {
+    assertOpen();
     const key = sourceKey(resolved.scope);
     if (!registeredScopes.has(key)) {
+      if (options.maxSources !== undefined && registeredScopes.size >= options.maxSources) {
+        throw new Error("Controller source limit exceeded");
+      }
       registeredScopes.set(key, resolved.scope);
       projection.registerSource({
         scope: resolved.scope,
@@ -332,9 +353,12 @@ export function createWindowHostControllerRuntime(options: {
           const inFlight = sourceRefreshFlights.get(key)?.promise;
           void (async () => {
             await inFlight?.catch(() => {});
+            if (disposed) return;
             const current = resolveCurrentSource(resolved.scope);
             if (current) await refreshSource(current, true);
-          })().catch(() => {});
+          })().catch((error) => {
+            if (!disposed) options.onSourceError?.(resolved.scope, "refresh", error);
+          });
         }),
       );
     }
@@ -401,14 +425,21 @@ export function createWindowHostControllerRuntime(options: {
       return;
     }
     const key = sourceKey(resolved.scope);
-    await ensureSourceSessionObserver(resolved)?.start();
+    // Persisted rows must not wait for the Agent. Its independent observer publishes
+    // live activity through Controller deltas when subscription startup finishes.
+    void ensureSourceSessionObserver(resolved)
+      ?.start()
+      .catch((error) => {
+        if (!disposed) options.onSourceError?.(resolved.scope, "refresh", error);
+      });
     if (!force && sourceSnapshotTaskServices.get(key) === resolved.taskService) return;
     const existing = sourceRefreshFlights.get(key);
     if (existing?.taskService === resolved.taskService) return existing.promise;
     const generation = (sourceRefreshGenerations.get(key) ?? 0) + 1;
     sourceRefreshGenerations.set(key, generation);
     const promise = (async () => {
-      const taskIndex = await readSourceTaskIndex(resolved);
+      const taskIndex = await readSourceTaskIndexBounded(resolved);
+      assertOpen();
       if (sourceRefreshGenerations.get(key) !== generation) {
         throw new Error("Controller source refresh generation 已失效");
       }
@@ -434,6 +465,24 @@ export function createWindowHostControllerRuntime(options: {
       if (sourceRefreshFlights.get(key)?.promise === promise) {
         sourceRefreshFlights.delete(key);
       }
+    }
+  }
+
+  async function readSourceTaskIndexBounded(resolved: ResolvedWindowHostControllerSource) {
+    const limit = options.maxConcurrentSourceRefreshes ?? Infinity;
+    if (activeSourceReads >= limit) {
+      await new Promise<void>((resolve) => sourceReadWaiters.push(resolve));
+    } else {
+      activeSourceReads += 1;
+    }
+    try {
+      assertOpen();
+      return await readSourceTaskIndex(resolved);
+    } finally {
+      // Transfer the reserved slot directly so a new request cannot overtake a waiter.
+      const next = sourceReadWaiters.shift();
+      if (next) next();
+      else activeSourceReads -= 1;
     }
   }
 
@@ -470,23 +519,56 @@ export function createWindowHostControllerRuntime(options: {
       }
       resolved.set(sourceKey(source.scope), source);
     }
+    if (
+      options.maxSources !== undefined &&
+      new Set([...registeredScopes.keys(), ...resolved.keys()]).size > options.maxSources
+    ) {
+      throw new Error("Controller source limit exceeded");
+    }
     return Array.from(resolved.values());
   }
 
   async function listTaskList(
     query: ZCodeTaskListQuery,
   ): Promise<WindowHostControllerTaskListResult> {
+    assertOpen();
     const resolvedSources = resolveQuerySources(query.workspaceScopes);
+    const refreshErrors: unknown[] = [];
     await Promise.all(
       resolvedSources.map(async (source) => {
         try {
           await refreshSource(source);
         } catch (error) {
+          refreshErrors.push(error);
           // A transient read failure in one remote source must not clear trusted projections from local or other remote sources.
-          options.onSourceError?.(source.scope, "refresh", error);
+          if (!disposed) options.onSourceError?.(source.scope, "refresh", error);
         }
       }),
     );
+    assertOpen();
+    // Keep trusted local/remote history on a partial refresh failure, but do not
+    // acknowledge an uninitialized projection as a successfully empty list.
+    if (
+      refreshErrors.length > 0 &&
+      !resolvedSources.some((source) => {
+        const key = sourceKey(source.scope);
+        return (
+          sourceSnapshotTaskServices.has(key) ||
+          pendingReplacementByNextSourceKey.has(key) ||
+          projection
+            .getTasks()
+            .some(
+              (row) =>
+                row.address.workspacePath === source.scope.workspacePath &&
+                row.address.workspaceIdentity === source.scope.workspaceIdentity &&
+                row.address.remoteSessionId ===
+                  (source.scope.kind === "remote" ? source.scope.remoteSessionId : undefined),
+            )
+        );
+      })
+    ) {
+      throw refreshErrors[0];
+    }
 
     const search = query.search?.trim();
     let items: WindowHostControllerTaskListItem[];
@@ -538,7 +620,7 @@ export function createWindowHostControllerRuntime(options: {
                 };
               });
             } catch (error) {
-              options.onSourceError?.(source.scope, "search", error);
+              if (!disposed) options.onSourceError?.(source.scope, "search", error);
               return [];
             }
           }),
@@ -658,6 +740,7 @@ export function createWindowHostControllerRuntime(options: {
         );
       },
       async subscribeControllerV4(params: ControllerSubscribeParams) {
+        assertOpen();
         const subscription = projection.subscribe({
           topic: params.topic,
           onFrame: (frame) => frameEmitter.fire(frame),
@@ -666,6 +749,7 @@ export function createWindowHostControllerRuntime(options: {
         return { ack: subscription.ack };
       },
       async resyncControllerV4(params) {
+        assertOpen();
         return { ack: projection.resync(params.subscriptionId) };
       },
       async unsubscribeControllerV4(params) {
@@ -792,6 +876,8 @@ export function createWindowHostControllerRuntime(options: {
       }
     },
     dispose(): void {
+      if (disposed) return;
+      disposed = true;
       service.dispose();
       for (const scope of registeredScopes.values()) {
         projection.removeSource(scope);

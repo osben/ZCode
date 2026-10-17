@@ -76,14 +76,18 @@ gray-zone reuse of Codex CLI credentials: nothing in this feature touches
 
 - OAuth provider id constant: `chatgpt` (`CHATGPT_PROVIDER_ID`). Model provider
   family: `chatgpt`. Builtin account provider id: `account:chatgpt-plan`
-  (label "ChatGPT Plan", models like `gpt-6.1-sol`).
+  (label "ChatGPT Plan", models like `gpt-6.1-sol`) — this base id remains in
+  the builtin catalog ONLY as the template rule; at runtime the registry
+  exposes per-account entries `account:chatgpt-plan:<accountKey>` (see
+  "Multi-account profiles").
 - New access-type member `chatgpt-account` in the provider access union. It must
   not trigger endpoint routing to the zcode gateway, zhipu PAT resolution, or
   zhipu header stripping.
 - ChatGPT is a SEPARATE identity domain from zai/bigmodel: signing in never
   writes `zcodejwttoken` or `oauth:active_provider`, and zai/bigmodel
   exclusivity logic must not fire on it (and vice versa).
-- The provider family is hidden until the user signs in (mirrors zai/bigmodel).
+- The provider family is hidden until the user signs in (mirrors zai/bigmodel);
+  per-account entries appear/disappear with the signed-in account set.
 
 ### Login (OAuth 2.0 Authorization Code + PKCE, dynamic client registration)
 
@@ -103,7 +107,10 @@ chatgpt.tokens.use.direct`,
     `agent_name_hint=ZCode`; re-auth of a known account: reuse the account's
     issued `client_id` and the host id, omit `agent_name_hint`, send the
     retained `id_token` as `id_token_hint` (may be expired) and optionally the
-    saved email as `login_hint`.
+    saved email as `login_hint`. When OTHER accounts are already signed in, the
+    add-account flow deliberately sends NO `id_token_hint` / `login_hint` (the
+    account picker then comes from OpenAI); hints are per-account slot data,
+    never global.
 - The loopback callback on first registration carries the issued real
   `client_id` (looks like `oaiapp_...`) as a query param — capture and persist
   it. All later OAuth calls (exchange, refresh, re-auth, revoke) use the issued
@@ -146,13 +153,15 @@ chatgpt.tokens.use.direct`,
   always store the latest replacement atomically when the credential store
   supports batch writes. The host credential service exposes sequential saves,
   so it must save the replacement refresh token before the access token.
-- Refreshes are serialized across processes via a dedicated file lock
-  (single-flight, imitating `mcp/oauth-refresh.ts`). Concurrent refresh =
-  `refresh_token_reused` = fatal → forced re-auth.
+- Refreshes are serialized across processes via a dedicated per-account file
+  lock `siwc-chatgpt.<accountKey>.refresh` (single-flight, imitating
+  `mcp/oauth-refresh.ts`). Concurrent refresh of the SAME account =
+  `refresh_token_reused` = fatal → forced re-auth; different accounts refresh
+  independently and in parallel.
 - Terminal refresh errors (`invalid_grant`, `invalid_refresh_token`,
   `token_expired`, `refresh_token_expired`, `refresh_token_invalidated`,
-  `refresh_token_reused`) clear chatgpt credentials and surface a structured
-  "re-sign-in" state.
+  `refresh_token_reused`) clear ONLY that account's credentials and surface a
+  structured "re-sign-in" state for it; other accounts are untouched.
 - The resolver returns `{ apiKey: <raw SIWC access token>, accountScope }`;
   existing `applyModelRequestAuth` turns it into the Bearer header. Raw token
   semantics on both CLI and Desktop (no conversion).
@@ -165,23 +174,100 @@ chatgpt.tokens.use.direct`,
   success (even for already-invalid tokens). Retry 5xx/network with backoff; if
   revocation cannot be confirmed, clear local tokens and inform the user.
 - Retain the account→client_id mapping and host id after logout for future
-  sign-ins.
+  sign-ins. Logout is per account (see "Multi-account profiles"); it never
+  touches other accounts' registrations.
 
 ### Storage
 
-Same store, same encryption (`~/.zcode/v2/credentials.json`):
+Same store, same encryption (`~/.zcode/v2/credentials.json`), keyed per account
+(`accountKey = sha256(sub).slice(0,16)` hex — no PII in keys, ids, or logs):
 
-- `oauth:chatgpt:client_id` (issued client id)
-- `oauth:chatgpt:access_token` (raw SIWC access token)
-- `oauth:chatgpt:refresh_token`
-- `oauth:chatgpt:id_token`
-- `oauth:chatgpt:user_info`
-- `oauth:chatgpt:scopes`
-- `account-provider:chatgpt-plan:identity`
-- `account-provider:chatgpt-plan:auth-source` = `oauth`
+- `oauth:chatgpt:accounts` — index, JSON array
+  `[{accountKey, sub, email, name, addedAt}]` (not a secret)
+- Per account (`<K>` = accountKey):
+  - `oauth:chatgpt:<K>:client_id` (issued client id — per registration)
+  - `oauth:chatgpt:<K>:access_token` (raw SIWC access token)
+  - `oauth:chatgpt:<K>:refresh_token`
+  - `oauth:chatgpt:<K>:id_token`
+  - `oauth:chatgpt:<K>:user_info`
+  - `oauth:chatgpt:<K>:scopes`
+  - `oauth:chatgpt:<K>:access_expires_at`, `oauth:chatgpt:<K>:earliest_refresh_at`
+  - `account-provider:account:chatgpt-plan:<K>:identity` (= sub)
+  - `account-provider:account:chatgpt-plan:<K>:auth-source` = `oauth`
+- Legacy pre-multi-account flat keys (`oauth:chatgpt:client_id`, …) are
+  migrated once — idempotently, under the credential store file lock — into the
+  slot of the (single) legacy account, then removed.
+- The migration checks its legacy trigger keys before taking the cross-process
+  accounts lock; when migration is needed, it re-reads all legacy values while
+  holding the lock. Normal token resolution with no legacy credentials does not
+  take that lock.
+- Key-name builders live in `@zcode/shared` (pure string functions) so the
+  host service and the CLI resolver cannot drift; the refresh lock file is
+  `siwc-chatgpt.<K>.refresh` (per account, same name on host and CLI).
+- If `ZCODE_DATA_BASE_DIR` is unset, the standalone CLI reads the Desktop
+  bootstrap setting under the default home directory and uses its configured
+  `dataBaseDir`, keeping the credentials file and account locks shared.
 
 Host id: persisted once at `~/.zcode/v2/siwc-host-id.txt` (0600, plain text;
-not a secret). Format: `urn:uuid:` URI.
+not a secret). Format: `urn:uuid:` URI. One host id serves ALL account
+registrations (per official profiles guidance).
+
+### Multi-account profiles (parallel accounts, per-session binding)
+
+Official basis: OpenAI's profiles-and-sessions guidance — the app "needs to
+manage multiple account registrations so users can choose an existing ChatGPT
+account or add another"; each registration keeps its own client id and
+credentials (even for the same email); switching accounts does not sign out
+other saved accounts; logout ends only that account's renewable session.
+
+- **Account identity**: `accountKey = sha256(sub).slice(0,16)` (hex). Display
+  label = email (or name fallback); the email never enters the provider id.
+- **Provider entries**: the runtime registry derives one provider entry per
+  signed-in account — id `account:chatgpt-plan:<accountKey>`, config cloned
+  from the builtin catalog template rule (api `openai-responses` @
+  `https://api.openai.com/v1`, the template's model list),
+  `providerName` = the account's email, `access.type = chatgpt-account`. The
+  catalog's `builtinProviderModelRules` for `account:chatgpt-plan` are cloned
+  per entry as well (exact providerId match, `model-config.ts`) so models keep
+  `enabled` / `contextWindow`. The base entry id itself is NOT published; with
+  zero accounts the family is hidden. Sessions or defaults still referencing
+  the base id resolve to `selectionIssue` → the user re-picks (accepted
+  breakage, user decision).
+- **Derivation sites** (single owner each): the Desktop host config-source
+  wrapper (`packages/services/src/node.ts`, composed over
+  `providerConfigRuntime.configService`) and the CLI standalone runtime
+  (`standalone-account-provider-runtime.ts`). Both enumerate the signed-in
+  account set from the credential store; a change in the set bumps the
+  registry revision (picker and sessions refresh through the existing
+  `onDidChange` / `onChatGptPlanSessionChange` paths).
+- Derived registry revisions contain only process-keyed fingerprints of each
+  account key and display label. Fingerprints remain stable within the process
+  and change when the set or display label changes; raw account keys and labels
+  never appear in revision strings or their logs.
+- **Session binding**: each conversation stores `ModelSelection
+{providerId, modelId}` — picking an account's entry binds the session to
+  that account. The existing `expectedAccountScope` (sha256 of clientId+sub)
+  pinning keeps protecting a session from silently running on another account;
+  scope mismatch remains a hard error (`siwc_account_scope_invalidated`).
+- **Entitlement is per account**: consent (the `chatgpt.tokens.use.direct`
+  grant) is evaluated per account slot; an identity-only account shows its
+  entry disabled with the "plan not enabled" state, while other accounts stay
+  usable.
+- **Login modes**: `startLogin({reauthAccountKey?})` — add-account (default):
+  fresh registration (`dynamic_agent_client` + `agent_name_hint`, no hints);
+  re-auth: that account's `client_id` + `id_token_hint`/`login_hint`. The
+  completed login persists into the slot derived from the verified `sub`:
+  a new sub adds an account, a known sub replaces only that account's token
+  family. One pending login at a time (unchanged).
+- **Logout**: per account — revoke that account's refresh token, clear its
+  slot and index entry; other accounts and their client ids are retained.
+  CLI `zcode logout` revokes ALL chatgpt accounts (simple, predictable);
+  Desktop signs out per account row.
+- **Telemetry**: per-account provider ids contain only a hash — safe to keep
+  unredacted (extend the builtin allowlist in `telemetryRedaction.ts`).
+- **Identification on the wire is unchanged**: no protocol schema changes;
+  per-account ids are ordinary provider ids flowing through the existing
+  `ModelSelection` / provider-runtime-headers surfaces.
 
 Never log or expose tokens, codes, or account ids in plain text; redact
 authorize/token URLs containing `id_token_hint` from logs. Protected local
@@ -281,6 +367,44 @@ request id.
 - Plus plans have a 5-hour usage window shared across ALL apps using the plan
   (including ChatGPT itself). On plan-limit errors the UI shows "Manage usage"
   linking `https://chatgpt.com/settings/usage`.
+- **Passive usage-window capture**: OpenAI reports plan usage on model RESPONSE
+  headers (`x-codex-primary-used-percent`, `x-codex-primary-window-minutes`,
+  `x-codex-primary-reset-at`, and the `x-codex-secondary-*` weekly triplet).
+  ZCode captures them passively — only from responses to requests it already
+  sends — and ONLY on `chatgpt-account` providers. There are NO fallback
+  endpoints and NO extra network calls to learn usage.
+- **Capture rules**: `used-percent` is required per window (tolerant numeric
+  parse; missing, whitespace-only, or garbage skips that window; the explicit
+  string `0` remains valid); `window-minutes` and `reset-at`
+  are optional (`reset-at` is an RFC3339 string kept verbatim, never parsed into
+  local clock math on the agent side). A snapshot requires the primary (5h)
+  window; a secondary-only reading is ignored. When no headers are present the
+  feature is simply absent: SIWC preview tokens may not carry them (live
+  verification pending), and the UI shows nothing in that case.
+- **Transport** (additive; old payloads must keep validating): the adapter fetch
+  chain stores the latest snapshot and the bound provider id in a per-bound-model
+  mutable capture (same threading pattern as `RawRequestBodyCapture`); the runner
+  attaches them to the turn-completion usage payload as `providerRateLimits` and
+  `providerRateLimitProviderId` (shape:
+  `{primary: {usedPercent, windowMinutes?, resetsAt?}, secondary?}`). The CLI
+  emits a typed host notification from the durable completion event, independent
+  of legacy `session/event` delivery subscriptions, so V4-only conversations also
+  record usage. The host attributes the snapshot only from the carried provider id,
+  never by reading the session's current model after completion. The
+  `workspace/generateText` result usage schema gained the same strict optional
+  fields.
+- **Host state**: the host `SiwcAuthService` keeps the LATEST snapshot per
+  accountKey in an in-memory Map (never persisted, never logged; snapshots
+  contain no tokens and no PII). OAuth status/logout and usage recording share
+  the same service instance, so Settings reads recorded usage and logout clears
+  that account's cached snapshot.
+- **Display**: the Settings → ChatGPT Plan account row shows, when a snapshot
+  exists, `5h window: {percent}%` (+ ` · resets {time}` when `resetsAt` is
+  present and parseable) and `Weekly: {percent}%` for the secondary window.
+  The model picker badge deliberately does NOT show usage: the in-memory host
+  state has no change-notification channel to the renderer, so a picker badge
+  would render stale percentages in a high-visibility surface. Revisit only
+  with a usage-updated event.
 
 ### Branding (Phase 2, Desktop UI)
 
@@ -330,7 +454,10 @@ chatgpt`, token resolver, compat fetch, provider family + builtin catalog,
   resolution via `interaction/requestProviderRuntimeHeaders` semantics; loopback
   listener in the host process — the `zcode://` deep link is unusable). Web
   (packages/web) OAuth stays out of scope.
-- Phase 3: dynamic catalog, multi-account profiles, telemetry polish.
+- Phase 3 (CURRENT): multi-account profiles (parallel per-account provider
+  entries, per-session binding, per-account login/logout/entitlement — see
+  "Multi-account profiles"). Deferred from the original Phase 3 scope: dynamic
+  catalog refresh, telemetry polish.
 
 ## State Owners and Event Order
 
@@ -375,6 +502,18 @@ sequenceDiagram
   fields, no system-role items, Bearer = access token, zstd compression over
   1 MiB), resolver refresh single-flight, entitlement gating, runner retry on
   `subscription_sharing_invalid_user`.
+- Multi-account units (no network): flat→per-account key migration
+  (idempotent, under lock); account index upsert/removal; per-account refresh
+  lock isolation (parallel accounts, single-flight per account); add-account
+  vs re-auth authorize-URL shaping (hints present/absent); per-account
+  terminal-failure clearing leaves other accounts intact; registry derivation
+  clones provider entries AND `builtinProviderModelRules` and bumps revision
+  on account-set/presentation change without logging identifiers (Desktop
+  wrapper + CLI standalone runtime); no account lock on token resolution without
+  legacy trigger keys; account
+  entitlement map; prefix predicates (`isChatGptPlanAccountProviderId`) at all
+  former exact-equality sites; picker renders per-account groups
+  (email label).
 - Commands (run from repo root unless noted):
   - `pnpm --dir apps/zcode-cli/packages/adapters exec vitest run tests/<file>`
     (per-package vitest)

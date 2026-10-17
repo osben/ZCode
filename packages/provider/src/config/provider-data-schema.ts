@@ -100,11 +100,13 @@ export const providerAccessDataSchema = z.discriminatedUnion("type", [
   chatgptAccountAccessDataSchema,
   acpAgentAccessDataSchema,
 ]);
+// Registry-complete access deliberately excludes ACP: `serializeRegistryProviderAccess`
+// treats every non-account access as API-key, so a complete ACP config must never pass
+// this union. ACP validation uses `completeAcpProviderConfigDataSchema` below.
 export const completeProviderAccessDataSchema = z.discriminatedUnion("type", [
   completeApiKeyAccessDataSchema,
   completeZhipuAccountAccessDataSchema,
   completeChatgptAccountAccessDataSchema,
-  completeAcpAgentAccessDataSchema,
 ]);
 
 export const completeProviderApiDataSchema = z
@@ -143,6 +145,16 @@ export const completeProviderConfigDataSchema = providerConfigDataSchema.extend(
   access: completeProviderAccessDataSchema,
   api: completeProviderApiDataSchema,
 });
+
+/**
+ * Complete Personal-provider shape for ACP agents: the registry-complete schema
+ * minus the HTTP `api` section (agents have no endpoint) and with the complete
+ * ACP access. Used for Settings validation only — Registry entries stay
+ * API-key/account-only.
+ */
+export const completeAcpProviderConfigDataSchema = completeProviderConfigDataSchema
+  .omit({ api: true })
+  .extend({ access: completeAcpAgentAccessDataSchema });
 
 export const providerTemplateNameMapDataSchema = z
   .object({

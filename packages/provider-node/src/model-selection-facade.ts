@@ -1,7 +1,7 @@
 import { ModelSelectionFacade, type ProviderRegistryFacadeSource } from "@zcode/provider";
 import {
-  BUILTIN_MODEL_PROVIDER_IDS,
   isBuiltinModelProviderId,
+  isChatGptPlanProviderId,
   isStartPlanModelProviderId,
   OFF_PEAK_PROVIDER_IDS,
 } from "@zcode/shared";
@@ -16,7 +16,7 @@ export function createNodeModelSelectionFacade(
     (providerId) => {
       // Start is resolved by its real ID; it must not participate in paid-connection uniqueness checks or be mapped to a paid quota.
       if (isStartPlanModelProviderId(providerId)) return "ordinary";
-      if (providerId === BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan) return "chatgpt-plan";
+      if (isChatGptPlanProviderId(providerId)) return "chatgpt-plan";
       if (isBuiltinModelProviderId(providerId)) return "account-plan";
       if (Object.values(OFF_PEAK_PROVIDER_IDS).some((id) => id === providerId))
         return "account-offpeak";

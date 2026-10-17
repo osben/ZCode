@@ -48,7 +48,12 @@ const app = agent({ name: `mock-agent (${scenario})` })
           : [],
     };
   })
-  .onRequest(methods.agent.session.new, () => {
+  .onRequest(methods.agent.session.new, async () => {
+    if (scenario === "slow-new") {
+      // Leaves a deterministic window where the runtime can "die" (a poked
+      // exit handler) before the session/new response commits the handshake.
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
     if (scenario === "new-fails") throw new Error("session/new exploded");
     return { sessionId };
   })
@@ -171,10 +176,20 @@ const app = agent({ name: `mock-agent (${scenario})` })
         return stop("end_turn");
       }
       case "big": {
-        await notify({
-          sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: "x".repeat(200_000) },
-        });
+        // Only the explicit "big" prompt trips the frame limit; any other
+        // prompt answers normally, so tests can exercise the restart after a
+        // framing failure on the same scenario.
+        const askedBig = ctx.params.prompt.some(
+          (block) => block.type === "text" && block.text.includes("big"),
+        );
+        if (askedBig) {
+          await notify({
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "x".repeat(200_000) },
+          });
+          return stop("end_turn");
+        }
+        await notify(msgChunk("small"));
         return stop("end_turn");
       }
       default: {

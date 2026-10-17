@@ -7,9 +7,19 @@ import { analyzeBashCommand } from "../tool/handlers/bash-command-parser.js";
 import { resolveContainedMemoryFilePath } from "./memory-file-path.js";
 
 const DREAM_LOCK_FILE = ".consolidate-lock";
+// Written only after a Dream run finishes without throwing. The lock's mtime marks a run START
+// (it is taken over by in-progress and crashed attempts too), so only this marker's mtime can
+// back a "last successful consolidation" display.
+const DREAM_CONSOLIDATED_AT_FILE = ".consolidated-at";
 const DREAM_LOCK_FRESH_MS = 60 * 60 * 1000;
 const AUTO_DREAM_MINIMUM_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const AUTO_DREAM_SCAN_THROTTLE_MS = 10 * 60 * 1000;
+
+/** Stamp the memory root with the completion time of a successful Dream run. */
+export async function writeDreamConsolidatedAt(memoryRoot: string): Promise<void> {
+  await mkdir(memoryRoot, { recursive: true });
+  await writeFile(join(memoryRoot, DREAM_CONSOLIDATED_AT_FILE), "", "utf8");
+}
 
 export type AutoDreamTimingDecision =
   | { decision: "scan" }

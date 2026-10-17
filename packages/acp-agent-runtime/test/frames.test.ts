@@ -1,56 +1,71 @@
 /**
- * Raw frame observer coverage: frames are captured in both directions for the
- * whole handshake and prompt, observer failures never break the session, and
- * oversized lines are truncated with a marker.
+ * Frame observer contract (specs/acp-agent-runtime.md): raw NDJSON lines per
+ * direction in wire order, 16 KiB truncation with a marker, observer
+ * isolation.
  */
 import { describe, expect, it } from "vitest";
-import type { AcpFrameEvent } from "../src/index.js";
+import type { AcpRawFrame } from "../src/index.js";
+import { FRAME_OBSERVER_MAX_BYTES, FRAME_OBSERVER_TRUNCATION_MARKER } from "../src/transport.js";
 import { cleanupTempDir, createTempDir, startMockRuntime } from "./helpers.js";
 
-function parseFrameText(frame: AcpFrameEvent): Record<string, unknown> | null {
-  try {
-    const parsed: unknown = JSON.parse(frame.text);
-    return typeof parsed === "object" && parsed !== null
-      ? (parsed as Record<string, unknown>)
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-describe("raw frame observer", () => {
-  it("captures outbound and inbound frames for the handshake and prompt", async () => {
+describe("onFrame observer", () => {
+  it("captures raw NDJSON lines in both directions in wire order", async () => {
     const cwd = await createTempDir();
-    const frames: AcpFrameEvent[] = [];
+    const frames: AcpRawFrame[] = [];
     const runtime = await startMockRuntime(
       cwd,
-      "normal",
+      "echo",
       {},
-      { onFrame: (frame) => frames.push(frame) },
+      {
+        onFrame: (frame) => frames.push(frame),
+      },
     );
     try {
-      const response = await runtime.prompt("hi");
+      const response = await runtime.prompt("hello");
       expect(response.stopReason).toBe("end_turn");
+      const outbound = frames.filter((frame) => frame.direction === "outbound");
+      const inbound = frames.filter((frame) => frame.direction === "inbound");
+      // Handshake and prompt request, in wire order.
+      const initIdx = outbound.findIndex((frame) => frame.text.includes('"initialize"'));
+      const newIdx = outbound.findIndex((frame) => frame.text.includes('"session/new"'));
+      const promptIdx = outbound.findIndex((frame) => frame.text.includes('"session/prompt"'));
+      expect(initIdx).toBeGreaterThanOrEqual(0);
+      expect(newIdx).toBeGreaterThan(initIdx);
+      expect(promptIdx).toBeGreaterThan(newIdx);
+      expect(outbound.some((frame) => frame.text.includes("hello"))).toBe(true);
+      // Initialize response, session/update notification, prompt response.
+      expect(inbound.some((frame) => frame.text.includes('"protocolVersion"'))).toBe(true);
+      expect(inbound.some((frame) => frame.text.includes('"agent_message_chunk"'))).toBe(true);
+      expect(inbound.some((frame) => frame.text.includes('"end_turn"'))).toBe(true);
+      expect(frames.every((frame) => !frame.truncated)).toBe(true);
+    } finally {
+      await runtime.stop();
+      await cleanupTempDir(cwd);
+    }
+  });
 
-      const outMethods = frames
-        .filter((frame) => frame.direction === "out")
-        .map((frame) => parseFrameText(frame)?.method);
-      expect(outMethods).toContain("initialize");
-      expect(outMethods).toContain("session/new");
-      expect(outMethods).toContain("session/prompt");
-
-      const inboundText = frames
-        .filter((frame) => frame.direction === "in")
-        .map((frame) => frame.text)
-        .join("\n");
-      expect(inboundText).toContain("mock-session");
-      expect(inboundText).toContain("hello");
-
-      for (const frame of frames) {
-        expect(Number.isFinite(frame.at)).toBe(true);
-      }
-      for (const frame of frames.filter((frame) => frame.direction === "out")) {
-        expect(parseFrameText(frame)).not.toBeNull();
+  it("truncates observed lines over 16 KiB with a marker in both directions", async () => {
+    const cwd = await createTempDir();
+    const frames: AcpRawFrame[] = [];
+    const runtime = await startMockRuntime(
+      cwd,
+      "echo",
+      {},
+      {
+        onFrame: (frame) => frames.push(frame),
+      },
+    );
+    try {
+      await runtime.prompt("x".repeat(40_000));
+      // The prompt request (outbound) and the echo notification (inbound) both
+      // exceed the observer cap and must be truncated to it, marker appended.
+      for (const direction of ["outbound", "inbound"] as const) {
+        const truncated = frames.find((frame) => frame.truncated && frame.direction === direction);
+        expect(truncated, direction).toBeDefined();
+        expect(truncated?.text.endsWith(FRAME_OBSERVER_TRUNCATION_MARKER)).toBe(true);
+        expect(truncated?.text.length).toBe(
+          FRAME_OBSERVER_MAX_BYTES + FRAME_OBSERVER_TRUNCATION_MARKER.length,
+        );
       }
     } finally {
       await runtime.stop();
@@ -58,52 +73,27 @@ describe("raw frame observer", () => {
     }
   });
 
-  it("keeps the session healthy when the observer throws", async () => {
+  it("keeps the runtime working when the observer throws on every frame", async () => {
     const cwd = await createTempDir();
     let observed = 0;
     const runtime = await startMockRuntime(
       cwd,
-      "normal",
+      "echo",
       {},
       {
         onFrame: () => {
           observed += 1;
-          throw new Error("observer exploded");
+          throw new Error("observer boom");
         },
       },
     );
     try {
-      const response = await runtime.prompt("still works");
-      expect(response.stopReason).toBe("end_turn");
+      const first = await runtime.prompt("hello");
+      expect(first.stopReason).toBe("end_turn");
+      const second = await runtime.prompt("again");
+      expect(second.stopReason).toBe("end_turn");
       expect(observed).toBeGreaterThan(0);
-    } finally {
-      await runtime.stop();
-      await cleanupTempDir(cwd);
-    }
-  });
-
-  it("truncates oversized inbound frames with a marker", async () => {
-    const cwd = await createTempDir();
-    const frames: AcpFrameEvent[] = [];
-    const runtime = await startMockRuntime(
-      cwd,
-      "big",
-      {},
-      { onFrame: (frame) => frames.push(frame) },
-    );
-    try {
-      const response = await runtime.prompt("big one");
-      expect(response.stopReason).toBe("end_turn");
-      const truncated = frames.filter((frame) => frame.text.includes("[truncated"));
-      expect(truncated.length).toBeGreaterThan(0);
-      expect(truncated.every((frame) => frame.direction === "in")).toBe(true);
-      for (const frame of truncated) {
-        expect(frame.text.length).toBeLessThan(24_000);
-        expect(frame.text.endsWith("bytes]")).toBe(true);
-      }
-      // The untruncated parts of the oversized frame stay valid JSON prefixes:
-      // the first kept chunk must start a JSON object.
-      expect(truncated[0]?.text.startsWith("{")).toBe(true);
+      expect(runtime.state).toBe("ready");
     } finally {
       await runtime.stop();
       await cleanupTempDir(cwd);

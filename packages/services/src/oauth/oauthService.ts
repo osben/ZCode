@@ -16,7 +16,7 @@ import {
   type OAuthUserProfile,
   type SiwcLoginCompletionResult,
   type SiwcLoginStart,
-  type SiwcPlanStatus,
+  type SiwcPlanAccountsStatus,
   type UserInfo,
   resolveJwtExpiration,
 } from "@zcode/shared";
@@ -72,6 +72,8 @@ interface OAuthFlowEnvelope {
 interface OAuthServiceDependencies {
   adapters?: OAuthProviderAdapter[];
   apiClient?: ApiClient;
+  /** Shared with the Host's request-auth and usage-recording paths when composed by createLocalServices. */
+  siwcAuthService?: SiwcAuthService;
   now?: () => number;
   env?: NodeJS.ProcessEnv;
   onProviderLogout?: (provider: OAuthProviderId, accountIdentity?: string | null) => Promise<void>;
@@ -173,10 +175,12 @@ export class OAuthService implements IOAuthService {
     });
     // ChatGPT plan (SIWC) is an independent identity domain: it never touches the zai/bigmodel
     // pending-state machine, `oauth:active_provider`, or `zcodejwttoken`.
-    this.siwcAuth = new SiwcAuthService(credentialService, {
-      env: this.env,
-      ...(dependencies.now ? { now: dependencies.now } : {}),
-    });
+    this.siwcAuth =
+      dependencies.siwcAuthService ??
+      new SiwcAuthService(credentialService, {
+        env: this.env,
+        ...(dependencies.now ? { now: dependencies.now } : {}),
+      });
   }
 
   async getProviders(): Promise<OAuthProviderMeta[]> {
@@ -1119,8 +1123,10 @@ export class OAuthService implements IOAuthService {
     this.clearPendingState();
   }
 
-  async startChatGptPlanLogin(): Promise<SiwcLoginStart> {
-    return this.siwcAuth.startLogin();
+  async startChatGptPlanLogin(
+    options: { reauthAccountKey?: string } = {},
+  ): Promise<SiwcLoginStart> {
+    return this.siwcAuth.startLogin(options);
   }
 
   async pollChatGptPlanLogin(): Promise<SiwcLoginCompletionResult | null> {
@@ -1137,12 +1143,14 @@ export class OAuthService implements IOAuthService {
     return result;
   }
 
-  async getChatGptPlanStatus(): Promise<SiwcPlanStatus> {
+  async getChatGptPlanStatus(): Promise<SiwcPlanAccountsStatus> {
     return this.siwcAuth.getStatus();
   }
 
-  async logoutChatGptPlan(): Promise<{ revoked: boolean; signedOut: boolean }> {
-    const result = await this.siwcAuth.logout();
+  async logoutChatGptPlan(
+    accountKey?: string,
+  ): Promise<{ accountCount: number; revoked: boolean; signedOut: boolean }> {
+    const result = await this.siwcAuth.logout(accountKey);
     if (result.signedOut) {
       // Same rationale as pollChatGptPlanLogin: tokens are already cleared locally, so the
       // overlay refresh must not block the sign-out result on slow plan backend queries.

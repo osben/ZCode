@@ -11,6 +11,7 @@ import {
   createModelUsageSummaryFromEvents,
   createMessageId,
   createTurnId,
+  latestProviderRateLimitReadingFromEvents,
   runWithContextAsync,
   traceContextToLogContext,
   TurnMachineImpl,
@@ -27,6 +28,7 @@ import type {
 } from "../deps.js";
 import {
   parseCompactCommand,
+  parseDreamCommand,
   parseRewindCommand,
   createTurnAbortScope,
   throwIfTurnAborted,
@@ -114,6 +116,7 @@ export async function executeTurnCommand(
   const admittedModelSelection = options?.intent?.modelSelection ?? this.getSessionModelSelection();
   const admittedOutputStyle = this.config.outputStyle;
   const compactInstructions = parseCompactCommand(input);
+  const dreamCommand = parseDreamCommand(input);
   const rewindCommand = parseRewindCommand(input);
   const turnId = startReservation?.turnId ?? createTurnId();
   const queryId = options?.queryId ?? (options?.inputId as QueryId | undefined) ?? createQueryId();
@@ -269,6 +272,19 @@ export async function executeTurnCommand(
           turnAbortSignal,
           options?.inputId,
           compactModel,
+        );
+      }
+      if (dreamCommand !== null) {
+        return this.executeManualDream(
+          input,
+          dreamCommand,
+          turnId,
+          turnTraceContext,
+          turnAbortSignal,
+          options?.inputId,
+          // Same admission freeze as compact: the Memory agent must run on the model selected
+          // before any await, not on whatever the session switched to during initialization.
+          admittedModel,
         );
       }
       if (rewindCommand !== null) {
@@ -670,6 +686,16 @@ export async function executeTurnCommand(
         turnMachine = loopState.turnMachine;
 
         const turnUsage = createModelUsageSummaryFromEvents(events);
+        // ChatGPT plan (SIWC) usage windows ride the completion usage so the host can record the
+        // latest per-account snapshot without extra network calls; absent for every other provider.
+        const providerRateLimitReading = latestProviderRateLimitReadingFromEvents(events);
+        const turnUsagePayload = providerRateLimitReading
+          ? {
+              ...(turnUsage ?? {}),
+              providerRateLimits: providerRateLimitReading.usage,
+              providerRateLimitProviderId: providerRateLimitReading.providerId,
+            }
+          : turnUsage;
         // Settle goal usage/active-run first, then persist the exact goal/verifier boundary. TurnComplete may expose the final
         // assistant fork in the projection/UI only after both have been persisted.
         await this.accountTargetTurnCompletion({
@@ -699,7 +725,7 @@ export async function executeTurnCommand(
           {
             response: loopState.modelResponse,
             tokenCount: loopState.tokenCount,
-            usage: turnUsage,
+            usage: turnUsagePayload,
             toolCallCount: loopState.toolCallCount,
             historyRoundCount: loopState.historyRoundCount,
             duration: Date.now() - turnMachine.state.startedAt.getTime(),

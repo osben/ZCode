@@ -6,6 +6,15 @@
  * sanitizer predicate, and secret-named variables are scrubbed by segment
  * (see `SECRET_NAME_RE`). Configuration passed explicitly via
  * `AcpLaunchOptions.env` always wins and may re-introduce any name.
+ *
+ * User capability variables (SSH_AUTH_SOCK, KRB5CCNAME, GPG_AGENT_INFO, …)
+ * are intentionally inherited: the agent runs unsandboxed as the user with
+ * full file access, so stripping the sockets would not create a boundary but
+ * would break git/ssh, gpg and Kerberos workflows — parity with ZCode's own
+ * runtime tooling (see the inherited login-shell env key patterns in
+ * packages/services/src/runtime-tools/runtimeCommandEnv.ts). Callers that
+ * want a leaner environment delete them per launch (for example
+ * `env: { SSH_AUTH_SOCK: undefined }`).
  */
 import { isAbsolute } from "node:path";
 import { shouldSanitizeZCodeRuntimeEnvKey } from "@zcode/shared/runtime-env";
