@@ -186,8 +186,24 @@ export class AcpSessionRuntime extends EventEmitter {
     const connection = this.connection;
     const sessionId = this.sessionId;
     if (!connection || !sessionId || !this.activePrompt) return;
-    await connection.agent.notify(methods.agent.session.cancel, { sessionId });
-    const settled = await this.waitForPromptSettle(this.timeouts.cancelGraceMs);
+    // One deadline bounds the whole cancel: a notify write can stay pending
+    // forever when a live child stops reading stdin (backpressured pipe), and
+    // a closed connection rejects. Escalate on either instead of hanging.
+    const deadline = Date.now() + this.timeouts.cancelGraceMs;
+    const notified = await raceTimeout(
+      connection.agent.notify(methods.agent.session.cancel, { sessionId }).then(
+        () => true,
+        () => false,
+      ),
+      this.timeouts.cancelGraceMs,
+    );
+    if (!notified) {
+      await this.terminateProcess(
+        new AcpCancelledError("Cancel notification failed or did not flush"),
+      );
+      return;
+    }
+    const settled = await this.waitForPromptSettle(deadline - Date.now());
     if (!settled) {
       await this.terminateProcess(new AcpCancelledError("Prompt did not settle after cancel"));
     }
@@ -237,9 +253,11 @@ export class AcpSessionRuntime extends EventEmitter {
 
     const app = createClientApp({ name: `zcode-acp-agent-runtime (${launch.agentId})` })
       .onRequest(methods.client.session.requestPermission, (ctx) =>
-        this.handlePermissionRequest(ctx.params),
+        this.handlePermissionRequest(ctx.params, generation),
       )
-      .onNotification(methods.client.session.update, (ctx) => this.handleSessionUpdate(ctx.params));
+      .onNotification(methods.client.session.update, (ctx) =>
+        this.handleSessionUpdate(ctx.params, generation),
+      );
     const fsBridge = this.bridge.fs;
     if (fsBridge) {
       app.onRequest(methods.client.fs.readTextFile, (ctx) =>
@@ -304,8 +322,13 @@ export class AcpSessionRuntime extends EventEmitter {
 
   private async handlePermissionRequest(
     request: RequestPermissionRequest,
+    generation: number,
   ): Promise<RequestPermissionResponse> {
-    const generation = this.generation;
+    if (generation !== this.generation) {
+      // A buffered ask from a superseded process must never reach the host or
+      // the new session; answer it as cancelled.
+      return toPermissionResponse(request, CANCELLED_ANSWER);
+    }
     const askBridge = this.bridge.requestPermission;
     if (!askBridge) return toPermissionResponse(request, CANCELLED_ANSWER);
     const requestId = `${generation}:${request.toolCall.toolCallId}:${randomUUID()}`;
@@ -328,7 +351,13 @@ export class AcpSessionRuntime extends EventEmitter {
     }
   }
 
-  private handleSessionUpdate(notification: SessionNotification): void {
+  private handleSessionUpdate(notification: SessionNotification, generation: number): void {
+    if (generation !== this.generation) {
+      // Buffered update from a superseded process: counted, never surfaced,
+      // even when its sessionId collides with the new session's.
+      this.ignoredUpdateCount += 1;
+      return;
+    }
     if (notification.sessionId !== this.sessionId) {
       // Updates for other sessions (sub-agents, stale sessions) are counted, not surfaced.
       this.ignoredUpdateCount += 1;

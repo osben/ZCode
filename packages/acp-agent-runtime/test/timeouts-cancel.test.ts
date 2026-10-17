@@ -1,4 +1,9 @@
 import { describe, expect, it } from "vitest";
+import type {
+  RequestPermissionRequest,
+  RequestPermissionResponse,
+  SessionNotification,
+} from "@agentclientprotocol/sdk";
 import type { AcpPermissionAsk } from "../src/index.js";
 import {
   cleanupTempDir,
@@ -131,6 +136,30 @@ describe("timeouts and cancellation", () => {
     }
   });
 
+  it("escalates cancel to a kill when the cancel notification never flushes", async () => {
+    const cwd = await createTempDir();
+    const runtime = await startMockRuntime(cwd, "silent", {}, { timeouts: { cancelGraceMs: 400 } });
+    try {
+      // A live child that stopped reading stdin backpressures the notify
+      // write forever; pin the SDK notify to reproduce that exact stall.
+      const internals = runtime as unknown as {
+        connection: { agent: { notify: () => Promise<void> } };
+      };
+      internals.connection.agent.notify = () => new Promise(() => {});
+      const inFlight = runtime.prompt("stuck task");
+      void inFlight.catch(() => {});
+      await waitFor(() => runtime.state === "prompting", 3_000);
+      const startedAt = Date.now();
+      await runtime.cancel();
+      await expect(inFlight).rejects.toMatchObject({ code: "ACP_CANCELLED" });
+      expect(runtime.state).toBe("failed");
+      expect(Date.now() - startedAt).toBeLessThan(6_000);
+    } finally {
+      await runtime.stop();
+      await cleanupTempDir(cwd);
+    }
+  });
+
   it("marks the runtime failed after cancel escalation and restarts on the next prompt", async () => {
     const cwd = await createTempDir();
     const asks: AcpPermissionAsk[] = [];
@@ -187,6 +216,69 @@ describe("timeouts and cancellation", () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(events.some((event) => event.type === "process_exit")).toBe(false);
       expect(runtime.state).toBe("ready");
+      const response = await runtime.prompt("still alive");
+      expect(response.stopReason).toBe("end_turn");
+    } finally {
+      await runtime.stop();
+      await cleanupTempDir(cwd);
+    }
+  });
+
+  it("ignores stale connection callbacks from a superseded generation", async () => {
+    const cwd = await createTempDir();
+    const asks: AcpPermissionAsk[] = [];
+    const runtime = await startMockRuntime(cwd, "normal", {
+      requestPermission: (ask) => {
+        asks.push(ask);
+        return new Promise(() => {});
+      },
+    });
+    try {
+      const events = collectEvents(runtime);
+      const sessionId = runtime.acpSessionId;
+      expect(sessionId).toBe("mock-session");
+      // A restart replaces the process and bumps `generation`, but the old
+      // connection can still deliver buffered frames: stale updates must be
+      // counted (never surfaced, even on a sessionId collision) and stale
+      // permission asks must be answered cancelled without reaching the host.
+      const internals = runtime as unknown as {
+        generation: number;
+        handleSessionUpdate: (notification: SessionNotification, generation: number) => void;
+        handlePermissionRequest: (
+          request: RequestPermissionRequest,
+          generation: number,
+        ) => Promise<RequestPermissionResponse>;
+      };
+      const staleGeneration = internals.generation - 1;
+      const update: SessionNotification = {
+        sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId: "m1",
+          content: { type: "text", text: "stale" },
+        },
+      };
+      const ignoredBefore = runtime.ignoredUpdates;
+      internals.handleSessionUpdate(update, staleGeneration);
+      expect(runtime.ignoredUpdates).toBe(ignoredBefore + 1);
+      expect(events.some((event) => event.type === "message_chunk")).toBe(false);
+      const staleAsk: RequestPermissionRequest = {
+        sessionId,
+        toolCall: {
+          toolCallId: "tc-stale",
+          title: "Stale ask",
+          kind: "execute",
+          status: "pending",
+          content: [],
+        },
+        options: [{ optionId: "allow-once", name: "Allow once", kind: "allow_once" }],
+      };
+      const staleAnswer = await internals.handlePermissionRequest(staleAsk, staleGeneration);
+      expect(asks).toHaveLength(0);
+      expect(staleAnswer.outcome.outcome).toBe("cancelled");
+      // The live generation still surfaces the same traffic.
+      internals.handleSessionUpdate(update, internals.generation);
+      expect(events.some((event) => event.type === "message_chunk")).toBe(true);
       const response = await runtime.prompt("still alive");
       expect(response.stopReason).toBe("end_turn");
     } finally {
