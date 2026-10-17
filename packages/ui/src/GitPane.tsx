@@ -5,7 +5,7 @@ import type { GitChangeSourceId, GitDiffResult } from "@zcode/shared";
 import { TID_GIT_PANE } from "@zcode/shared";
 import { cn } from "@/components/lib/utils.js";
 import { Button } from "@/components/ui/button.js";
-import { FileTextIcon, RefreshCw } from "lucide-react";
+import { FileTextIcon, FolderTreeIcon, ListIcon, RefreshCw } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -26,7 +26,18 @@ import {
   getSourceMessageId,
 } from "@/GitPane/helpers.js";
 import { GitPaneChangeCard } from "@/GitPaneChangeCard.js";
+import {
+  buildGitPaneRows,
+  getGitPaneRowIndexByPath,
+  type GitPaneRow,
+} from "@/GitPane/directoryRowModel.js";
+import { GitPaneDirectoryHeader } from "@/GitPane/GitPaneDirectoryHeader.js";
 import { getFileChangeFindState } from "@/GitPane/fileChangeFindSearch.js";
+import {
+  readGitPaneFileListLayout,
+  writeGitPaneFileListLayout,
+  type GitPaneFileListLayout,
+} from "@/lib/gitPaneFileListLayoutPreference.js";
 import { logger } from "@/logger.js";
 import { useZCodeStore } from "@/store/StoreProvider.js";
 import { resolveTheme } from "@/useTheme.js";
@@ -38,6 +49,7 @@ interface GitDiffLoadState {
 }
 
 const GIT_PANE_CHANGE_ROW_ESTIMATE_PX = 32;
+const GIT_PANE_DIRECTORY_ROW_ESTIMATE_PX = 28;
 const GIT_PANE_CHANGE_ROW_OVERSCAN = 14;
 
 export function GitPane({
@@ -90,6 +102,9 @@ export function GitPane({
   });
   const resolvedTheme = resolveTheme(theme);
   const [expandedPath, setExpandedPath] = useState<string | null>(null);
+  const [fileListLayout, setFileListLayout] = useState<GitPaneFileListLayout>(() =>
+    readGitPaneFileListLayout(),
+  );
   const [diffStateByKey, setDiffStateByKey] = useState<Record<string, GitDiffLoadState>>({});
   const diffGenerationRef = useRef(0);
   const pendingDiffKeysRef = useRef(new Set<string>());
@@ -103,6 +118,18 @@ export function GitPane({
     () => currentDataset.sections.flatMap((section) => section.changes),
     [currentDataset],
   );
+  const paneRows = useMemo<GitPaneRow[]>(
+    () =>
+      fileListLayout === "directory"
+        ? buildGitPaneRows(currentChanges)
+        : currentChanges.map((change) => ({ kind: "file", change })),
+    [currentChanges, fileListLayout],
+  );
+  const rowIndexByPath = useMemo(() => getGitPaneRowIndexByPath(paneRows), [paneRows]);
+  const handleSetFileListLayout = useCallback((layout: GitPaneFileListLayout) => {
+    setFileListLayout(layout);
+    writeGitPaneFileListLayout(layout);
+  }, []);
   const normalizedFileChangeFindQuery = fileChangeFindQuery.trim();
 
   const emptyStateCopy = useMemo(() => {
@@ -300,13 +327,21 @@ export function GitPane({
   );
   const activeFileChangeFindMatch = fileChangeFindState.activeMatch;
   const changeRowVirtualizer = useVirtualizer({
-    count: currentChanges.length,
+    count: paneRows.length,
     getItemKey: (index) => {
-      const change = currentChanges[index];
-      return change ? `${currentDataset.id}:${change.path}` : `${currentDataset.id}:${index}`;
+      const row = paneRows[index];
+      if (!row) {
+        return `${currentDataset.id}:${index}`;
+      }
+      return row.kind === "file"
+        ? `${currentDataset.id}:file:${row.change.path}`
+        : `${currentDataset.id}:dir:${row.runIndex}:${row.directory}`;
     },
     getScrollElement: () => changeListScrollRef.current,
-    estimateSize: () => GIT_PANE_CHANGE_ROW_ESTIMATE_PX,
+    estimateSize: (index) =>
+      paneRows[index]?.kind === "directory"
+        ? GIT_PANE_DIRECTORY_ROW_ESTIMATE_PX
+        : GIT_PANE_CHANGE_ROW_ESTIMATE_PX,
     overscan: GIT_PANE_CHANGE_ROW_OVERSCAN,
   });
   const virtualChangeRows = changeRowVirtualizer.getVirtualItems();
@@ -366,10 +401,8 @@ export function GitPane({
       return;
     }
 
-    const activeMatchIndex = currentChanges.findIndex(
-      (change) => change.path === activeFileChangeFindMatch.path,
-    );
-    if (activeMatchIndex < 0) {
+    const activeMatchIndex = rowIndexByPath.get(activeFileChangeFindMatch.path);
+    if (activeMatchIndex === undefined) {
       return;
     }
 
@@ -377,7 +410,7 @@ export function GitPane({
   }, [
     activeFileChangeFindMatch,
     changeRowVirtualizer,
-    currentChanges,
+    rowIndexByPath,
     fileChangeFindNavigationRequestId,
   ]);
 
@@ -464,6 +497,38 @@ export function GitPane({
         </Select>
 
         <div className="flex items-center gap-2">
+          {currentChanges.length > 0 ? (
+            <div
+              className="flex items-center gap-0.5 rounded-md border border-border p-0.5"
+              role="group"
+              aria-label={intl.formatMessage({ id: "git.fileListLayout.toggleLabel" })}
+            >
+              <Button
+                type="button"
+                variant={fileListLayout === "directory" ? "secondary" : "ghost"}
+                size="icon-sm"
+                aria-pressed={fileListLayout === "directory"}
+                aria-label={intl.formatMessage({ id: "git.fileListLayout.directory" })}
+                title={intl.formatMessage({ id: "git.fileListLayout.directory" })}
+                disabled={gitState.loading}
+                onClick={() => handleSetFileListLayout("directory")}
+              >
+                <FolderTreeIcon />
+              </Button>
+              <Button
+                type="button"
+                variant={fileListLayout === "flat" ? "secondary" : "ghost"}
+                size="icon-sm"
+                aria-pressed={fileListLayout === "flat"}
+                aria-label={intl.formatMessage({ id: "git.fileListLayout.flat" })}
+                title={intl.formatMessage({ id: "git.fileListLayout.flat" })}
+                disabled={gitState.loading}
+                onClick={() => handleSetFileListLayout("flat")}
+              >
+                <ListIcon />
+              </Button>
+            </div>
+          ) : null}
           <Button
             type="button"
             variant="ghost"
@@ -485,11 +550,27 @@ export function GitPane({
               style={{ height: `${changeRowVirtualizer.getTotalSize()}px` }}
             >
               {virtualChangeRows.map((virtualRow) => {
-                const change = currentChanges[virtualRow.index];
-                if (!change) {
+                const row = paneRows[virtualRow.index];
+                if (!row) {
                   return null;
                 }
 
+                if (row.kind === "directory") {
+                  return (
+                    <div
+                      key={virtualRow.key}
+                      ref={changeRowVirtualizer.measureElement}
+                      className="absolute left-0 w-full min-w-0"
+                      data-git-pane-directory-virtual-row
+                      data-index={virtualRow.index}
+                      style={{ top: `${virtualRow.start}px` }}
+                    >
+                      <GitPaneDirectoryHeader row={row} />
+                    </div>
+                  );
+                }
+
+                const change = row.change;
                 const isExpanded = expandedPath === change.path;
                 const diffCacheKey = getDiffCacheKey(currentDataset.id, change.path);
                 const cachedDiffState = diffStateByKey[diffCacheKey];
@@ -510,6 +591,7 @@ export function GitPane({
                   >
                     <GitPaneChangeCard
                       change={change}
+                      hideDirectoryPart={fileListLayout === "directory"}
                       contextMenuLabels={contextMenuLabels}
                       diffState={diffState}
                       isDiffLoading={isDiffLoading}
