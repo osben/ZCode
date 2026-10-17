@@ -8,7 +8,7 @@
  * the host's runtime environment, which the services assembly has already
  * enriched with the user's login-shell PATH.
  */
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -101,7 +101,12 @@ export function createAcpAgentsBridge(
   const resolveCommandPath = async (
     agentId: string,
     definition: AcpAgentDefinition | undefined,
+    override?: string,
   ): Promise<string> => {
+    // A provider enabled with a custom executable must use that executable for
+    // status/login too, not the detected default installation.
+    const explicit = override?.trim();
+    if (explicit) return explicit;
     const detected = await detectAgents({ refresh: false });
     const commandPath = detected.find((agent) => agent.agentId === agentId)?.commandPath ?? null;
     return commandPath ?? definition?.binaries[0] ?? "";
@@ -153,6 +158,10 @@ export function createAcpAgentsBridge(
       };
 
       const sandbox = await makeSandboxDir();
+      // Isolation note: the sandbox directory is only the session cwd. The
+      // agent runs as the user like any enabled agent (no OS-level sandbox),
+      // and the test does not advertise ACP fs capabilities, so tool access
+      // stays minimal; the prompt additionally asks not to touch files.
       let runtime: AcpTestRuntime | null = null;
       let stderrTail: string | undefined;
       let error: { message: string } | undefined;
@@ -226,7 +235,7 @@ export function createAcpAgentsBridge(
       if (!definition.statusArgs || definition.statusArgs.length === 0) {
         return { supported: false };
       }
-      const commandPath = await resolveCommandPath(input.agentId, definition);
+      const commandPath = await resolveCommandPath(input.agentId, definition, input.command);
       const result = await runCommand(commandPath, definition.statusArgs, STATUS_TIMEOUT_MS);
       return { supported: true, exitCode: result.exitCode, output: result.output };
     },
@@ -240,8 +249,8 @@ export function createAcpAgentsBridge(
           error: `No login flow is known for ${input.agentId}`,
         };
       }
-      const commandPath = await resolveCommandPath(input.agentId, definition);
-      const commandLine = [quoteShellArg(commandPath), ...definition.loginArgs].join(" ");
+      const commandPath = await resolveCommandPath(input.agentId, definition, input.command);
+      const commandLine = formatLoginCommand(commandPath, definition.loginArgs);
       const result = await openTerminal(commandLine);
       return {
         opened: result.opened,
@@ -256,7 +265,7 @@ async function defaultDetectAgents(input: {
   readonly refresh: boolean;
 }): Promise<readonly AcpAgentSummary[]> {
   if (input.refresh) refreshAcpAgentCache();
-  const detections = detectAcpAgents();
+  const detections = await detectAcpAgents();
   return detections.map((detection) => {
     const definition = ACP_AGENT_DEFINITIONS.find((entry) => entry.agentId === detection.agentId);
     return {
@@ -281,10 +290,11 @@ function defaultRunCommand(
     let output = "";
     let settled = false;
     let timedOut = false;
+    let timer: NodeJS.Timeout | undefined;
     const finish = (exitCode: number | null): void => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       const suffix = timedOut ? `\n[timed out after ${timeoutMs}ms]` : "";
       resolve({ exitCode, output: `${output.trim()}${suffix}`.trim() });
     };
@@ -296,18 +306,22 @@ function defaultRunCommand(
     };
     let child: ChildProcess;
     try {
-      child = spawn(command, [...args], { stdio: ["ignore", "pipe", "pipe"], shell: false });
+      child = spawn(command, [...args], {
+        stdio: ["ignore", "pipe", "pipe"],
+        shell: false,
+        detached: process.platform !== "win32",
+      });
     } catch (error) {
       resolve({ exitCode: null, output: error instanceof Error ? error.message : String(error) });
       return;
     }
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
       timedOut = true;
-      try {
-        child.kill("SIGKILL");
-      } catch {
-        // Already gone.
-      }
+      // Descendants may inherit the pipes and keep them open after the direct
+      // child dies; terminate the tree and settle now instead of waiting for
+      // a `close` that may never come.
+      killCommandTree(child);
+      finish(null);
     }, timeoutMs);
     child.stdout?.on("data", append);
     child.stderr?.on("data", append);
@@ -319,6 +333,34 @@ function defaultRunCommand(
   });
 }
 
+/** Best-effort termination of a command and its descendants. */
+function killCommandTree(child: ChildProcess): void {
+  const pid = child.pid;
+  if (process.platform === "win32" && pid !== undefined) {
+    try {
+      spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], {
+        stdio: "ignore",
+        windowsHide: true,
+        timeout: 2_000,
+      });
+    } catch {
+      // Fall through to the direct-child signal.
+    }
+  } else if (pid !== undefined) {
+    try {
+      process.kill(-pid, "SIGKILL");
+      return;
+    } catch {
+      // Not a group leader (spawn failed before detaching).
+    }
+  }
+  try {
+    child.kill("SIGKILL");
+  } catch {
+    // Already gone.
+  }
+}
+
 async function defaultOpenTerminal(
   commandLine: string,
 ): Promise<{ opened: boolean; error?: string }> {
@@ -328,10 +370,16 @@ async function defaultOpenTerminal(
   try {
     const dir = await mkdtemp(join(tmpdir(), "zcode-acp-login-"));
     const scriptPath = join(dir, "login.command");
+    // The banner uses a quoted heredoc: the command prints literally, so `$()`
+    // or backticks in a path cannot execute while printing. The script removes
+    // its temporary directory after the login command finishes.
     const script = [
       "#!/bin/sh",
-      `echo "[ZCode] Running: ${escapeForEcho(commandLine)}"`,
+      "cat <<'ZCODE_ACP_LOGIN_BANNER'",
+      `[ZCode] Running: ${commandLine}`,
+      "ZCODE_ACP_LOGIN_BANNER",
       commandLine,
+      'rm -rf "$(dirname "$0")"',
       "",
     ].join("\n");
     await writeFile(scriptPath, script, "utf8");
@@ -362,12 +410,33 @@ async function defaultOpenTerminal(
   }
 }
 
-/** Quotes as a single shell argument when plain-safe characters are not sufficient. */
+/** Quotes as a single POSIX-shell argument when plain-safe characters are not sufficient. */
 function quoteShellArg(value: string): string {
   if (value.length > 0 && /^[A-Za-z0-9_@%+=:,./-]+$/.test(value)) return value;
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-function escapeForEcho(value: string): string {
-  return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+function quotePowerShellArg(value: string): string {
+  if (value.length > 0 && /^[A-Za-z0-9_@%+=:,./-]+$/.test(value)) return value;
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+/**
+ * Builds the manual-login command line for the user's shell: POSIX gets
+ * single-quoted arguments; PowerShell (Windows fallback) needs the call
+ * operator before a quoted executable path.
+ */
+export function formatLoginCommand(
+  commandPath: string,
+  loginArgs: readonly string[],
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (platform === "win32") {
+    return [
+      "&",
+      quotePowerShellArg(commandPath),
+      ...loginArgs.map((arg) => quotePowerShellArg(arg)),
+    ].join(" ");
+  }
+  return [quoteShellArg(commandPath), ...loginArgs.map((arg) => quoteShellArg(arg))].join(" ");
 }

@@ -71,6 +71,18 @@ export interface AcpAgentLoginResult {
 export interface ProviderSettingsAcpAgentsBridge {
   detect(input?: { readonly refresh?: boolean }): Promise<AcpAgentDetectionResult>;
   test(input: AcpAgentTestInput): Promise<AcpAgentTestResult>;
-  status(input: { readonly agentId: string }): Promise<AcpAgentStatusReport>;
-  startLogin(input: { readonly agentId: string }): Promise<AcpAgentLoginResult>;
+  status(input: AcpAgentStatusInput): Promise<AcpAgentStatusReport>;
+  startLogin(input: AcpAgentLoginInput): Promise<AcpAgentLoginResult>;
+}
+
+export interface AcpAgentStatusInput {
+  readonly agentId: string;
+  /** Configured executable override (the enabled provider's saved command). */
+  readonly command?: string;
+}
+
+export interface AcpAgentLoginInput {
+  readonly agentId: string;
+  /** Configured executable override (the enabled provider's saved command). */
+  readonly command?: string;
 }

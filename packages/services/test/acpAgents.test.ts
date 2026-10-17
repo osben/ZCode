@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import {
   createAcpAgentsBridge,
+  formatLoginCommand,
   type AcpAgentSummary,
   type AcpAgentsBridgeDependencies,
 } from "../src/model-provider/acpAgents.js";
@@ -135,5 +136,37 @@ describe("ACP agents bridge", () => {
     expect(openTerminal).toHaveBeenCalledWith(
       "'/Applications/Cursor Agent/bin/cursor-agent' login",
     );
+  });
+
+  it("uses the configured command override for status and login", async () => {
+    const runCommand = vi.fn(async () => ({ exitCode: 0, output: "ok" }));
+    const openTerminal = vi.fn(async () => ({ opened: true }));
+    const bridge = createAcpAgentsBridge({
+      detectAgents: vi.fn(async () => [mockSummary()]),
+      runCommand,
+      openTerminal,
+    });
+
+    await bridge.status({ agentId: "opencode", command: "/custom/opencode" });
+    expect(runCommand).toHaveBeenCalledWith(
+      "/custom/opencode",
+      ["auth", "list"],
+      expect.any(Number),
+    );
+
+    await bridge.startLogin({ agentId: "opencode", command: "/custom/opencode" });
+    expect(openTerminal).toHaveBeenCalledWith("/custom/opencode auth login");
+  });
+
+  it("formats manual login commands per platform", () => {
+    expect(formatLoginCommand("/usr/local/bin/opencode", ["auth", "login"], "darwin")).toBe(
+      "/usr/local/bin/opencode auth login",
+    );
+    expect(
+      formatLoginCommand("/Applications/Cursor Agent/bin/cursor-agent", ["login"], "darwin"),
+    ).toBe("'/Applications/Cursor Agent/bin/cursor-agent' login");
+    expect(
+      formatLoginCommand("C:\\Program Files\\Opencode\\opencode.exe", ["auth", "login"], "win32"),
+    ).toBe("& 'C:\\Program Files\\Opencode\\opencode.exe' auth login");
   });
 });

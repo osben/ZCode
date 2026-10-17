@@ -4,11 +4,11 @@
  * Long-lived GUI processes usually lack the user's login-shell PATH, so this
  * module never reads `process.env` implicitly: the host captures the
  * login-shell environment and passes it (plus extra path entries) through
- * options. Probes are injectable for deterministic tests, and version probes
- * only ever use the fixed, whitelisted argument sets declared in
- * `ACP_AGENT_DEFINITIONS`.
+ * options. Probes are injectable and asynchronous (the host event loop must
+ * not block on a hung CLI), and version probes only ever use the fixed,
+ * whitelisted argument sets declared in `ACP_AGENT_DEFINITIONS`.
  */
-import { spawnSync } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { accessSync, constants, statSync } from "node:fs";
 import { delimiter, join } from "node:path";
 
@@ -68,7 +68,7 @@ export type AcpVersionProbeRunner = (
   commandPath: string,
   args: readonly string[],
   timeoutMs: number,
-) => AcpVersionProbeResult;
+) => AcpVersionProbeResult | Promise<AcpVersionProbeResult>;
 
 export interface DetectAcpAgentsOptions {
   /** Environment whose PATH is searched; defaults to `process.env`. */
@@ -86,51 +86,116 @@ export const DEFAULT_ACP_PROBE_TIMEOUT_MS = 5_000;
 export const DEFAULT_ACP_DETECTION_CACHE_TTL_MS = 60_000;
 
 const MAX_VERSION_LENGTH = 200;
+/** Cap per probe stream so a chatty CLI cannot exhaust host memory. */
+const MAX_PROBE_OUTPUT_CHARS = 1024 * 1024;
 /** Only flags that ask a CLI to print its version are allowed in probes. */
 const SAFE_VERSION_PROBE_ARG = /^(-v|-V|--version|-version|version|--ver)$/;
 
-let detectionCache: {
+interface DetectionCacheEntry {
   readonly cachedAt: number;
   readonly entries: readonly AcpAgentDetection[];
-} | null = null;
+}
+
+/** Bounded cache: unrelated detection inputs must never share cached entries. */
+const DETECTION_CACHE_MAX_KEYS = 16;
+let detectionCache = new Map<string, DetectionCacheEntry>();
+let nextProbeIdentity = 1;
+const probeIdentities = new WeakMap<AcpVersionProbeRunner, number>();
+
+/**
+ * Cache key over every caller-supplied input that changes detection results:
+ * the searched PATH, extra path entries, the probe timeout, and the probe
+ * runner's identity (different runners must not reuse each other's versions).
+ * The injected clock only drives TTL bookkeeping and is not part of the key.
+ */
+function detectionCacheKey(options: DetectAcpAgentsOptions): string {
+  const env = options.env ?? process.env;
+  let probeId = 0;
+  if (options.runProbe) {
+    probeId = probeIdentities.get(options.runProbe) ?? 0;
+    if (probeId === 0) {
+      probeId = nextProbeIdentity++;
+      probeIdentities.set(options.runProbe, probeId);
+    }
+  }
+  return JSON.stringify([
+    env.PATH ?? "",
+    options.extraPathEntries ?? [],
+    options.probeTimeoutMs ?? null,
+    probeId,
+  ]);
+}
 
 export function isSafeVersionProbeArgs(args: readonly string[]): boolean {
   return args.length > 0 && args.every((arg) => SAFE_VERSION_PROBE_ARG.test(arg));
 }
 
-/** Detects all known agents; results are cached for `cacheTtlMs`. */
-export function detectAcpAgents(
+/**
+ * Detects all known agents; results are cached per effective input set for
+ * `cacheTtlMs`. Asynchronous by design: probes must not block the host event
+ * loop when an installed CLI hangs on `--version`.
+ */
+export async function detectAcpAgents(
   options: DetectAcpAgentsOptions = {},
-): readonly AcpAgentDetection[] {
+): Promise<readonly AcpAgentDetection[]> {
   const ttl = options.cacheTtlMs ?? DEFAULT_ACP_DETECTION_CACHE_TTL_MS;
   const now = options.now ?? Date.now;
-  if (ttl > 0 && detectionCache && now() - detectionCache.cachedAt < ttl) {
-    return detectionCache.entries;
+  const cacheKey = detectionCacheKey(options);
+  if (ttl > 0) {
+    const cached = detectionCache.get(cacheKey);
+    if (cached && now() - cached.cachedAt < ttl) return cached.entries;
   }
-  const entries: AcpAgentDetection[] = ACP_AGENT_DEFINITIONS.map((definition) =>
-    detectAgent(definition, options),
+  const entries = await Promise.all(
+    ACP_AGENT_DEFINITIONS.map((definition) => detectAgent(definition, options)),
   );
-  const frozen = Object.freeze(entries);
-  if (ttl > 0) detectionCache = Object.freeze({ cachedAt: now(), entries: frozen });
+  const frozen: readonly AcpAgentDetection[] = Object.freeze(entries);
+  if (ttl > 0) {
+    if (detectionCache.size >= DETECTION_CACHE_MAX_KEYS && !detectionCache.has(cacheKey)) {
+      const oldest = detectionCache.keys().next().value;
+      if (oldest !== undefined) detectionCache.delete(oldest);
+    }
+    detectionCache.set(cacheKey, Object.freeze({ cachedAt: now(), entries: frozen }));
+  }
   return frozen;
 }
 
 export function refreshAcpAgentCache(): void {
-  detectionCache = null;
+  detectionCache = new Map();
 }
 
-function detectAgent(
+async function detectAgent(
   definition: AcpAgentDefinition,
   options: DetectAcpAgentsOptions,
-): AcpAgentDetection {
+): Promise<AcpAgentDetection> {
   const commandPath = resolveCommandOnPath(definition.binaries, options);
   return {
     agentId: definition.agentId,
     displayName: definition.displayName,
     installed: commandPath !== null,
     commandPath,
-    version: commandPath === null ? null : probeVersion(definition, commandPath, options),
+    version: commandPath === null ? null : await probeVersion(definition, commandPath, options),
   };
+}
+
+const DEFAULT_WINDOWS_PATH_EXTENSIONS = [".COM", ".EXE", ".BAT", ".CMD"];
+
+/**
+ * Windows resolves executables through PATHEXT, so `opencode`/`cursor-agent`
+ * must also be probed as `opencode.exe`, `opencode.cmd`, … . Exported for
+ * tests; other platforms probe the bare binary name only.
+ */
+export function buildBinaryCandidateNames(
+  binary: string,
+  pathext: string | undefined,
+  platform: NodeJS.Platform = process.platform,
+): readonly string[] {
+  if (platform !== "win32") return [binary];
+  const extensions = (pathext ?? "")
+    .split(";")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+  const effective = extensions.length > 0 ? extensions : DEFAULT_WINDOWS_PATH_EXTENSIONS;
+  return [binary, ...effective.map((extension) => `${binary}${extension.toLowerCase()}`)];
 }
 
 function resolveCommandOnPath(
@@ -146,8 +211,10 @@ function resolveCommandOnPath(
   for (const binary of binaries) {
     if (binary.includes("/") || binary.includes("\\")) continue;
     for (const entry of unique) {
-      const candidate = join(entry, binary);
-      if (isExecutableFile(candidate)) return candidate;
+      for (const name of buildBinaryCandidateNames(binary, env.PATHEXT)) {
+        const candidate = join(entry, name);
+        if (isExecutableFile(candidate)) return candidate;
+      }
     }
   }
   return null;
@@ -163,15 +230,15 @@ function isExecutableFile(path: string): boolean {
   }
 }
 
-function probeVersion(
+async function probeVersion(
   definition: AcpAgentDefinition,
   commandPath: string,
   options: DetectAcpAgentsOptions,
-): string | null {
+): Promise<string | null> {
   if (!isSafeVersionProbeArgs(definition.versionArgs)) return null;
   const runProbe = options.runProbe ?? defaultRunProbe;
   try {
-    const result = runProbe(
+    const result = await runProbe(
       commandPath,
       definition.versionArgs,
       options.probeTimeoutMs ?? DEFAULT_ACP_PROBE_TIMEOUT_MS,
@@ -194,17 +261,43 @@ function defaultRunProbe(
   commandPath: string,
   args: readonly string[],
   timeoutMs: number,
-): AcpVersionProbeResult {
-  const result = spawnSync(commandPath, [...args], {
-    encoding: "utf8",
-    timeout: timeoutMs,
-    windowsHide: true,
-    maxBuffer: 1024 * 1024,
-    stdio: ["ignore", "pipe", "pipe"],
+): Promise<AcpVersionProbeResult> {
+  return new Promise<AcpVersionProbeResult>((resolve) => {
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    let timer: NodeJS.Timeout | undefined;
+    const finish = (status: number | null): void => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve({ status, stdout, stderr });
+    };
+    let child: ChildProcess;
+    try {
+      child = spawn(commandPath, [...args], {
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      });
+    } catch {
+      resolve({ status: null, stdout: "", stderr: "" });
+      return;
+    }
+    timer = setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // Already gone.
+      }
+      finish(null);
+    }, timeoutMs);
+    child.stdout?.on("data", (chunk: Buffer) => {
+      if (stdout.length < MAX_PROBE_OUTPUT_CHARS) stdout += chunk.toString("utf8");
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      if (stderr.length < MAX_PROBE_OUTPUT_CHARS) stderr += chunk.toString("utf8");
+    });
+    child.once("error", () => finish(null));
+    child.once("close", (code) => finish(code));
   });
-  return {
-    status: result.status,
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-  };
 }
