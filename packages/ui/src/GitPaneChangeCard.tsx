@@ -24,6 +24,7 @@ export function GitPaneChangeCard({
   diffState,
   isDiffLoading,
   isExpanded,
+  hideDirectoryPart = false,
   canRevealInFileManager,
   codePreviewSettings,
   resolvedTheme,
@@ -43,6 +44,8 @@ export function GitPaneChangeCard({
   diffState: GitDiffResult | null;
   isDiffLoading: boolean;
   isExpanded: boolean;
+  // Grouped mode shows the directory in the row above, so the card header renders the basename only.
+  hideDirectoryPart?: boolean;
   canRevealInFileManager: boolean;
   codePreviewSettings: CodePreviewSettings;
   resolvedTheme: ResolvedTheme;
@@ -102,7 +105,7 @@ export function GitPaneChangeCard({
                 <FileDisplayInline
                   path={change.workspaceRelativePath}
                   options={{
-                    showFilePath: true,
+                    showFilePath: !hideDirectoryPart,
                     className: "inline-flex min-w-0 max-w-full items-center gap-2",
                     fileNameClassName: "truncate text-ui-base text-foreground",
                     filePathClassName: "truncate text-ui-base text-foreground-subtlest",
