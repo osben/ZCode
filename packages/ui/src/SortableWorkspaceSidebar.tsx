@@ -30,6 +30,7 @@ export const SortableWorkspaceSidebarItem = memo(function SortableWorkspaceSideb
   workspaceKey,
   isPinned = false,
   onToggleWorkspacePinned,
+  onOpenSessionManager,
   onShowMoreWorkspaceTasks,
   reconnectingRemoteWorkspaceKeys,
   remoteWorkspaceErrorByWorkspaceKey,
@@ -62,6 +63,7 @@ export const SortableWorkspaceSidebarItem = memo(function SortableWorkspaceSideb
   workspaceKey: string;
   isPinned?: boolean;
   onToggleWorkspacePinned?: (workspaceKey: string, pinned: boolean) => void;
+  onOpenSessionManager?: (scope: { workspacePath: string; workspaceIdentity?: string }) => void;
   onShowMoreWorkspaceTasks: (workspaceKey: string) => void;
   reconnectingRemoteWorkspaceKeys: string[];
   remoteWorkspaceErrorByWorkspaceKey: Record<string, string>;
@@ -139,6 +141,7 @@ export const SortableWorkspaceSidebarItem = memo(function SortableWorkspaceSideb
       isWebRemoteControl={isWebRemoteControl}
       isPinned={isPinned}
       onToggleWorkspacePinned={onToggleWorkspacePinned ? handleTogglePinned : undefined}
+      onOpenSessionManager={onOpenSessionManager}
       onShowMoreTasks={handleShowMoreTasks}
       reconnectingRemoteWorkspaceKeys={reconnectingRemoteWorkspaceKeys}
       remoteWorkspaceErrorByWorkspaceKey={remoteWorkspaceErrorByWorkspaceKey}

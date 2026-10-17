@@ -25,6 +25,7 @@ import {
   PinOff,
   RefreshCwIcon,
   MessageCirclePlus,
+  MessageSquare,
   Pin,
   Settings2,
   XIcon,
@@ -160,6 +161,7 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
   isWebRemoteControl = false,
   isPinned = false,
   onToggleWorkspacePinned,
+  onOpenSessionManager,
   onShowMoreTasks,
   reconnectingRemoteWorkspaceKeys,
   remoteWorkspaceErrorByWorkspaceKey,
@@ -196,6 +198,7 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
   isWebRemoteControl?: boolean;
   isPinned?: boolean;
   onToggleWorkspacePinned?: (pinned: boolean) => void;
+  onOpenSessionManager?: (scope: { workspacePath: string; workspaceIdentity?: string }) => void;
   onShowMoreTasks: () => void;
   reconnectingRemoteWorkspaceKeys: string[];
   remoteWorkspaceErrorByWorkspaceKey: Record<string, string>;
@@ -1044,6 +1047,21 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
                           >
                             <Settings2 className="h-3.5 w-3.5" />
                             {intl.formatMessage({ id: "workspaceSidebar.customize" })}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            data-testid="workspace-manage-sessions"
+                            disabled={!onOpenSessionManager}
+                            onSelect={() =>
+                              onOpenSessionManager?.({
+                                workspacePath: tab.workspacePath,
+                                ...(tab.workspaceIdentity
+                                  ? { workspaceIdentity: tab.workspaceIdentity }
+                                  : {}),
+                              })
+                            }
+                          >
+                            <MessageSquare className="h-3.5 w-3.5" />
+                            {intl.formatMessage({ id: "sessionManager.openFromProjectMenu" })}
                           </DropdownMenuItem>
                           {workspaceGitHubUrl ? (
                             <DropdownMenuItem

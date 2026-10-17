@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- One flat command catalog keeps quick pick, Command Center, and their keywords together; splitting it would scatter the registry the dialog consumes. */
 import type { ResolvedTheme, Theme } from "@/useTheme.js";
 import { THEME_PALETTES, type ThemePalette } from "@/lib/themePalettes.js";
 import { THEME_MODE_OPTIONS, THEME_PALETTE_KEYWORDS } from "@/quickpick/quickPickThemeOptions.js";
@@ -95,6 +96,7 @@ interface QuickPickCommandHandlers {
   createTask: () => void;
   openWorkspace: () => void;
   openSettings: () => void;
+  openSessionManager: () => void;
   openSkillsSettings: () => void;
   openMcpSettings: () => void;
   switchTheme: () => void;
@@ -212,6 +214,14 @@ export function createQuickPickCommands({
       icon: "settings",
       keywords: ["settings", "preferences", "配置", "设置"],
       run: handlers.openSettings,
+    },
+    {
+      id: "manage-sessions",
+      sectionId: "suggested",
+      titleId: "quickPick.command.manageSessions",
+      icon: "message",
+      keywords: ["sessions", "manage", "archive", "recent", "会话", "管理", "归档"],
+      run: handlers.openSessionManager,
     },
     {
       id: "toggle-sidebar",
