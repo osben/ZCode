@@ -2,6 +2,7 @@ import { mkdtemp, readFile, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
+import { spawn, type ChildProcess } from "node:child_process";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -74,17 +75,77 @@ describe("auto Dream timing gate", () => {
 });
 
 describe("Dream consolidation lock", () => {
+  it("serializes abandoned-lock takeover across two live processes", async () => {
+    const root = await temporaryDirectory();
+    await writeFile(join(root, ".consolidate-lock"), "0");
+    const children: ChildProcess[] = [];
+    const exits: Promise<void>[] = [];
+    const contender = () =>
+      new Promise<boolean>((resolve, reject) => {
+        const code = `import { acquireDreamLock } from ${JSON.stringify(new URL("../src/memory/dream-lock.ts", import.meta.url).href)};
+        const lease = await acquireDreamLock({ memoryRoot: ${JSON.stringify(root)} });
+        process.stdout.write(JSON.stringify(Boolean(lease))+'\\n');
+        await new Promise(r=>{ process.stdin.once('end',r); process.stdin.resume(); });`;
+        const child = spawn(
+          process.execPath,
+          ["--import", "tsx", "--input-type=module", "-e", code],
+          { stdio: ["pipe", "pipe", "pipe"] },
+        );
+        children.push(child);
+        exits.push(new Promise<void>((done) => child.once("exit", () => done())));
+        let output = "";
+        child.stdout!.on("data", (chunk) => {
+          output += String(chunk);
+          if (output.includes("\n")) resolve(JSON.parse(output.trim()) as boolean);
+        });
+        child.once("error", reject);
+        child.once("exit", (status) => {
+          if (!output) reject(new Error(`Dream contender exited before acquiring: ${status}`));
+        });
+      });
+    try {
+      expect((await Promise.all([contender(), contender()])).filter(Boolean)).toHaveLength(1);
+    } finally {
+      for (const child of children) child.stdin?.end();
+      const timer = setTimeout(() => {
+        for (const child of children) child.kill("SIGKILL");
+      }, 2000);
+      await Promise.all(exits);
+      clearTimeout(timer);
+    }
+  }, 10000);
+  it("grants an abandoned lock to only one concurrent caller of the same process", async () => {
+    const root = await temporaryDirectory();
+    await writeFile(join(root, ".consolidate-lock"), "0");
+    const owners = await Promise.all([
+      acquireDreamLock({ memoryRoot: root }),
+      acquireDreamLock({ memoryRoot: root }),
+    ]);
+    expect(owners.filter(Boolean)).toHaveLength(1);
+  });
+
+  it("does not reclaim a long-running live owner or let an old lease restore a new owner", async () => {
+    const root = await temporaryDirectory();
+    const lease = (await acquireDreamLock({ memoryRoot: root }))!;
+    const path = join(root, ".consolidate-lock");
+    await utimes(path, 1, 1);
+    expect(await acquireDreamLock({ memoryRoot: root })).toBeNull();
+    const replacement = { pid: process.pid, token: "another-run-same-pid", status: "running" };
+    await writeFile(path, JSON.stringify(replacement));
+    await restoreDreamLockAfterFailure({ memoryRoot: root, lease });
+    expect(JSON.parse(await readFile(path, "utf8"))).toEqual(replacement);
+  });
   it("acquires a missing lock and removes it when the run fails", async () => {
     const root = await temporaryDirectory();
 
     const priorMtime = await acquireDreamLock({ memoryRoot: root, pid: process.pid });
 
-    expect(priorMtime).toBe(0);
-    expect((await readFile(join(root, ".consolidate-lock"), "utf8")).trim()).toBe(
-      String(process.pid),
+    expect(priorMtime?.prior).toBeNull();
+    expect(JSON.parse(await readFile(join(root, ".consolidate-lock"), "utf8")).pid).toBe(
+      process.pid,
     );
 
-    await restoreDreamLockAfterFailure({ memoryRoot: root, priorMtimeMs: priorMtime! });
+    await restoreDreamLockAfterFailure({ memoryRoot: root, lease: priorMtime! });
     await expect(stat(join(root, ".consolidate-lock"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -106,8 +167,8 @@ describe("Dream consolidation lock", () => {
     ]);
 
     expect(results.filter((value) => value !== null)).toHaveLength(1);
-    expect((await readFile(join(root, ".consolidate-lock"), "utf8")).trim()).toBe(
-      String(process.pid),
+    expect(JSON.parse(await readFile(join(root, ".consolidate-lock"), "utf8")).pid).toBe(
+      process.pid,
     );
   });
 
@@ -118,7 +179,7 @@ describe("Dream consolidation lock", () => {
     // Another run takes over the abandoned lock between the failure and the restore.
     await writeFile(lockPath, "424242", "utf8");
 
-    await restoreDreamLockAfterFailure({ memoryRoot: root, priorMtimeMs: priorMtime! });
+    await restoreDreamLockAfterFailure({ memoryRoot: root, lease: priorMtime! });
 
     expect((await readFile(lockPath, "utf8")).trim()).toBe("424242");
   });
@@ -131,15 +192,16 @@ describe("Dream consolidation lock", () => {
     await utimes(lockPath, oldMtime / 1000, oldMtime / 1000);
 
     const priorMtime = await acquireDreamLock({ memoryRoot: root, pid: process.pid });
-    expect(priorMtime).toBe(oldMtime);
+    expect(priorMtime?.prior?.mtimeMs).toBe(oldMtime);
 
-    await restoreDreamLockAfterFailure({ memoryRoot: root, priorMtimeMs: priorMtime! });
+    await restoreDreamLockAfterFailure({ memoryRoot: root, lease: priorMtime! });
     // PID 0 reads as a dead owner, so the restored lock is take-over-able instead of held.
     expect(await readFile(lockPath, "utf8")).toBe("0");
     expect((await stat(lockPath)).mtimeMs).toBeCloseTo(oldMtime, -1);
-    expect(await acquireDreamLock({ memoryRoot: root, nowMs: oldMtime + 1000, pid: 11111 })).toBe(
-      oldMtime,
-    );
+    expect(
+      (await acquireDreamLock({ memoryRoot: root, nowMs: oldMtime + 1000, pid: 11111 }))?.prior
+        ?.mtimeMs,
+    ).toBeCloseTo(oldMtime, -1);
   });
 });
 
