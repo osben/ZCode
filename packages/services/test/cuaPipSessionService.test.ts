@@ -9,6 +9,7 @@ import {
 
 function createFakeClient(): PipSessionClient {
   return {
+    enabled: true,
     connect: vi.fn(async () => {}),
     send: vi.fn(async () => ({ applied: true })),
     close: vi.fn(),
@@ -24,11 +25,14 @@ function createFakeLogger(): ServiceLogger {
   };
 }
 
-function focusChanged(revision: number): PipSessionEvent {
+type FocusEvent = Extract<PipSessionEvent, { kind: "focus-changed" }>;
+type LifecycleEvent = Exclude<PipSessionEvent, FocusEvent>;
+
+function focusChanged(revision: number): FocusEvent {
   return { kind: "focus-changed", sessionId: null, revision, sourceWindowId: "window-1" };
 }
 
-function turnStarted(turnId: string): PipSessionEvent {
+function turnStarted(turnId: string): LifecycleEvent {
   return { kind: "turn-started", sessionId: "session-1", turnId, sequenceNumber: 1 };
 }
 
@@ -136,6 +140,42 @@ describe("createCuaPipSessionService delivery-skip logging", () => {
       "[cua-pip-session] event delivery recovered",
       { skipReason: "credentials-unavailable", skippedEvents: 2 },
     );
+  });
+
+  it("ends the skip streak after a successful timer-driven replay without another publish", async () => {
+    const logger = createFakeLogger();
+    const client = createFakeClient();
+    let credentials: CuaPipPresentationCredentials | undefined;
+    const service = createTestService({
+      logger,
+      client,
+      resolveCredentials: async () => credentials,
+    });
+    disposers.push(() => service.dispose());
+
+    credentials = undefined;
+    await service.publishLifecycle(turnStarted("turn-1"));
+
+    credentials = { socketPath: "/tmp/helper.sock" };
+    // No further publish: the replay retry timer must deliver the staged event and recover the streak on its own.
+    await vi.waitFor(() => {
+      expect(logger.warn).toHaveBeenCalledWith(
+        undefined,
+        "[cua-pip-session] event delivery recovered",
+        { skipReason: "credentials-unavailable", skippedEvents: 1 },
+      );
+    });
+    expect(client.send).toHaveBeenCalledWith(turnStarted("turn-1"));
+
+    // The streak ended with the replay, so the next skip warns again instead of continuing at debug.
+    credentials = undefined;
+    await service.publishFocus(focusChanged(1));
+    expect(logger.warn).toHaveBeenCalledWith(
+      undefined,
+      "[cua-pip-session] event delivery skipped",
+      expect.objectContaining({ kind: "focus-changed", skipReason: "credentials-unavailable" }),
+    );
+    expect(logger.debug).not.toHaveBeenCalled();
   });
 
   it("still stages and replays a deferred turn-started when credentials return", async () => {

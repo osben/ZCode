@@ -103,6 +103,18 @@ export function createCuaPipSessionService(options: {
     dropped: number;
   } | null = null;
 
+  // Any successful send ends the streak, including the retry-timer replay of a deferred
+  // turn-started: transport recovered there too, so a later skip must start a new warn
+  // streak instead of continuing the previous debug-only streak.
+  const reportDeliveryRecovered = (): void => {
+    if (skipStreak === null) return;
+    logger.warn(undefined, "[cua-pip-session] event delivery recovered", {
+      skipReason: skipStreak.reason,
+      skippedEvents: skipStreak.dropped,
+    });
+    skipStreak = null;
+  };
+
   const cancelReplayRetry = () => {
     if (replayTimer !== null) {
       clearTimeout(replayTimer);
@@ -183,6 +195,7 @@ export function createCuaPipSessionService(options: {
             applied: result.applied,
             reason: result.reason,
           });
+          reportDeliveryRecovered();
         } catch (error) {
           logger.warn(undefined, "[cua-pip-session] replay of deferred turn-started failed", {
             ...eventLogContext(replay.event),
@@ -273,13 +286,7 @@ export function createCuaPipSessionService(options: {
           }
         }
         const result = await resolution.client.send(event);
-        if (skipStreak !== null) {
-          logger.warn(undefined, "[cua-pip-session] event delivery recovered", {
-            skipReason: skipStreak.reason,
-            skippedEvents: skipStreak.dropped,
-          });
-          skipStreak = null;
-        }
+        reportDeliveryRecovered();
         // Bug diagnosis: PiP group switching crosses Main, Host, and broker processes; if successful and idempotently rejected ACKs are logged only at
         // debug, packaged builds cannot distinguish an unsent turn-started from stale-sequence/turn-mismatch.
         // These are low-frequency lifecycle logs and contain no screenshots, tokens, or prompts, so they are safe to keep in production.
