@@ -2130,6 +2130,7 @@ export function createLocalServices(options: {
       : {}),
     accountRequestAuthService,
     chatGptPlanRequestAuth,
+    chatGptPlanUsageRecorder: siwcAuthService,
     ...(modelSelectionReadinessSource ? { modelSelectionReadinessSource } : {}),
     authorizeLocalMediaPreviewPath: options?.authorizeLocalMediaPreviewPath,
     ...offPeakToolWiring,
@@ -2418,6 +2419,7 @@ export function createLocalServices(options: {
   });
   const oauthService = createOAuthService(credentialService, {
     apiClient,
+    siwcAuthService,
     onProviderLogout: handleOAuthProviderLogout,
     onChatGptPlanSessionChange: async () => {
       // ChatGPT plan login/logout changes account entitlements; refresh the account

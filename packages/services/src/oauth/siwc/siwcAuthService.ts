@@ -20,6 +20,7 @@ import {
   SIWC_LEGACY_CREDENTIAL_KEYS,
   type SiwcPlanAccountStatus,
   type SiwcPlanAccountsStatus,
+  type SiwcPlanUsageSnapshot,
   type SiwcPlanUserSummary,
   type SiwcStoredAccountRecord,
 } from "@zcode/shared";
@@ -114,6 +115,8 @@ export class SiwcAuthService {
   private readonly now: () => number;
   private readonly fetchFn: typeof globalThis.fetch;
   private readonly inFlightToken = new Map<string, Promise<{ accessToken: string }>>();
+  /** Latest passively captured plan usage per account; in-memory only, never persisted. */
+  private readonly usageByAccount = new Map<string, SiwcPlanUsageSnapshot>();
 
   constructor(
     private readonly credentialService: ICredentialService,
@@ -288,6 +291,19 @@ export class SiwcAuthService {
   }
 
   /**
+   * Record the latest passively captured plan-usage snapshot of one account (transported by
+   * turn-completion usage). In-memory host state only: no persistence, no logging — snapshots
+   * hold percentages and reset timestamps, never tokens. Malformed account keys are ignored;
+   * entries of signed-out accounts are dropped by logout and never surfaced while the account
+   * is absent from the index.
+   */
+  recordUsage(accountKey: string, snapshot: SiwcPlanUsageSnapshot): void {
+    const normalized = accountKey.trim();
+    if (!isChatGptPlanAccountKey(normalized) || !snapshot?.primary) return;
+    this.usageByAccount.set(normalized, snapshot);
+  }
+
+  /**
    * Revoke (best effort with backoff), then clear one account's local tokens; the client id
    * is retained and other accounts are untouched. Omitting the key revokes every account.
    * Each account's read → revoke → clear → remove transaction holds that account's
@@ -326,6 +342,7 @@ export class SiwcAuthService {
             allRevoked = false;
             await this.clearTokenCredentials(record.accountKey);
             await this.removeAccountRecord(record.accountKey);
+            this.usageByAccount.delete(record.accountKey);
             return;
           }
           let revoked = false;
@@ -349,6 +366,7 @@ export class SiwcAuthService {
           if (!revoked) allRevoked = false;
           await this.clearTokenCredentials(record.accountKey);
           await this.removeAccountRecord(record.accountKey);
+          this.usageByAccount.delete(record.accountKey);
         },
         { lockMaxWaitMs: SIWC_REFRESH_LOCK_MAX_WAIT_MS },
       );
@@ -628,6 +646,7 @@ export class SiwcAuthService {
       keys.scopes,
     );
     if (!stored[keys.accessToken] && !stored[keys.refreshToken]) return null;
+    const usage = this.usageByAccount.get(record.accountKey);
     return {
       accountKey: record.accountKey,
       signedIn: true,
@@ -637,6 +656,7 @@ export class SiwcAuthService {
         email: record.email,
         subject: record.sub,
       },
+      ...(usage ? { usage } : {}),
     };
   }
 

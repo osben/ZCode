@@ -72,6 +72,8 @@ interface OAuthFlowEnvelope {
 interface OAuthServiceDependencies {
   adapters?: OAuthProviderAdapter[];
   apiClient?: ApiClient;
+  /** Shared with the Host's request-auth and usage-recording paths when composed by createLocalServices. */
+  siwcAuthService?: SiwcAuthService;
   now?: () => number;
   env?: NodeJS.ProcessEnv;
   onProviderLogout?: (provider: OAuthProviderId, accountIdentity?: string | null) => Promise<void>;
@@ -173,10 +175,12 @@ export class OAuthService implements IOAuthService {
     });
     // ChatGPT plan (SIWC) is an independent identity domain: it never touches the zai/bigmodel
     // pending-state machine, `oauth:active_provider`, or `zcodejwttoken`.
-    this.siwcAuth = new SiwcAuthService(credentialService, {
-      env: this.env,
-      ...(dependencies.now ? { now: dependencies.now } : {}),
-    });
+    this.siwcAuth =
+      dependencies.siwcAuthService ??
+      new SiwcAuthService(credentialService, {
+        env: this.env,
+        ...(dependencies.now ? { now: dependencies.now } : {}),
+      });
   }
 
   async getProviders(): Promise<OAuthProviderMeta[]> {

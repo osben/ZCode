@@ -4,7 +4,12 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { usePlatform } from "@/hooks/usePlatform.js";
 import { useServices } from "@/hooks/useServices.js";
 import { logger } from "@/logger.js";
-import type { SiwcPlanAccountStatus, SiwcPlanAccountsStatus } from "@zcode/shared";
+import type {
+  Locale,
+  SiwcPlanAccountStatus,
+  SiwcPlanAccountsStatus,
+  SiwcPlanUsageSnapshot,
+} from "@zcode/shared";
 import { Button } from "@/components/ui/button.js";
 import { Badge } from "@/components/ui/badge.js";
 import { ProviderLogo } from "./ProviderLogo.js";
@@ -24,7 +29,7 @@ const FIRST_RUN_MODAL_STORAGE_KEY = "zcode.chatgptPlan.firstRunModalShown";
  * so login/status/logout ride the dedicated IOAuthService SIWC methods.
  */
 export function ChatGptPlanDetail() {
-  const { intl } = useZCodeIntl();
+  const { intl, locale } = useZCodeIntl();
   const platform = usePlatform();
   const { oauthService } = useServices();
   const [status, setStatus] = useState<SiwcPlanAccountsStatus | null>(null);
@@ -178,6 +183,7 @@ export function ChatGptPlanDetail() {
             key={account.accountKey}
             account={account}
             intl={intl}
+            locale={locale}
             loginPending={loginPending}
             signOutPending={signOutPending === account.accountKey}
             onSignOut={() => void signOut(account.accountKey)}
@@ -246,6 +252,7 @@ export function ChatGptPlanDetail() {
 interface AccountRowProps {
   readonly account: SiwcPlanAccountStatus;
   readonly intl: ReturnType<typeof useZCodeIntl>["intl"];
+  readonly locale: Locale;
   /** Any login (add or reconnect) is in flight; only one pending login is allowed. */
   readonly loginPending: boolean;
   readonly signOutPending: boolean;
@@ -257,6 +264,7 @@ interface AccountRowProps {
 function AccountRow({
   account,
   intl,
+  locale,
   loginPending,
   signOutPending,
   onSignOut,
@@ -282,6 +290,11 @@ function AccountRow({
             {intl.formatMessage({ id: "settings.modelProvider.chatgpt.notEntitled" })}
           </p>
         )}
+        {account.usage ? (
+          <p className="text-ui-sm text-muted-foreground" data-testid="chatgpt-plan-usage">
+            {formatPlanUsageLine(account.usage, intl, locale)}
+          </p>
+        ) : null}
         <div className="flex flex-wrap items-center gap-2">
           <Button type="button" variant="outline" disabled={signOutPending} onClick={onSignOut}>
             {signOutPending ? <Loader2Icon className="size-3.5 animate-spin" /> : null}
@@ -299,4 +312,42 @@ function AccountRow({
       </div>
     </div>
   );
+}
+
+/**
+ * Plan usage line: "5h window: {percent}% · resets {time} · Weekly: {percent}%" — every segment
+ * beyond the primary percentage is shown only when the captured snapshot reports it, so accounts
+ * without usage headers (SIWC preview tokens) render no line at all.
+ */
+function formatPlanUsageLine(
+  usage: SiwcPlanUsageSnapshot,
+  intl: ReturnType<typeof useZCodeIntl>["intl"],
+  locale: Locale,
+): string {
+  const parts = [
+    intl.formatMessage(
+      { id: "settings.modelProvider.chatgpt.usage.primary" },
+      { percent: usage.primary.usedPercent },
+    ),
+  ];
+  const resetsAtMs = Date.parse(usage.primary.resetsAt ?? "");
+  if (Number.isFinite(resetsAtMs)) {
+    const time = new Intl.DateTimeFormat(locale, {
+      hour: "2-digit",
+      hourCycle: "h23",
+      minute: "2-digit",
+    }).format(resetsAtMs);
+    parts.push(
+      intl.formatMessage({ id: "settings.modelProvider.chatgpt.usage.primaryReset" }, { time }),
+    );
+  }
+  if (usage.secondary) {
+    parts.push(
+      intl.formatMessage(
+        { id: "settings.modelProvider.chatgpt.usage.weekly" },
+        { percent: usage.secondary.usedPercent },
+      ),
+    );
+  }
+  return parts.join(" · ");
 }

@@ -325,10 +325,29 @@ export interface SiwcStoredAccountRecord {
   addedAt: string;
 }
 
+/**
+ * One ChatGPT plan usage window (5-hour primary or weekly secondary) captured
+ * passively from model response headers. `resetsAt` is the RFC3339 string kept
+ * verbatim from the `x-codex-*-reset-at` header.
+ */
+export interface SiwcPlanUsageWindow {
+  usedPercent: number;
+  windowMinutes?: number;
+  resetsAt?: string;
+}
+
+/** Latest ChatGPT plan usage snapshot of one account (primary 5h window; weekly secondary when reported). */
+export interface SiwcPlanUsageSnapshot {
+  primary: SiwcPlanUsageWindow;
+  secondary?: SiwcPlanUsageWindow;
+}
+
 /** Connection status of one signed-in ChatGPT plan account (user is always present). */
 export interface SiwcPlanAccountStatus extends Omit<SiwcPlanStatus, "user"> {
   accountKey: string;
   user: SiwcPlanUserSummary;
+  /** Latest passively captured plan usage; absent until a response carried usage headers. */
+  usage?: SiwcPlanUsageSnapshot;
 }
 
 /** Aggregate status across all signed-in ChatGPT plan accounts. */

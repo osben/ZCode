@@ -4,7 +4,12 @@ import {
   requestVerificationInteractionAvailable,
 } from "@zcode/shared";
 import { zcodeMcpUiSamplingResultSchema } from "@zcode/shared";
-import { isChatGptPlanAccountProviderId } from "@zcode/shared";
+import {
+  isChatGptPlanAccountProviderId,
+  parseChatGptPlanAccountProviderId,
+  zcodeChatGptPlanUsageUpdatedParamsSchema,
+  type SiwcPlanUsageSnapshot,
+} from "@zcode/shared";
 import { MCP_APPS_SAMPLING_TRANSPORT_TIMEOUT_MS } from "@zcode/shared/mcp-apps";
 import {
   channelReplyRequestSchema,
@@ -965,6 +970,14 @@ interface CreateZCodeAgentServiceOptions extends Omit<
       providerId: string;
     }): Promise<{ accountScope?: string; apiKey: string }>;
   };
+  /**
+   * ChatGPT plan (SIWC) usage recorder owned by the host: receives passively captured plan
+   * usage windows from turn-completion usage payloads and keeps the latest snapshot per
+   * account in memory. Injected by the desktop host; omitted in pure CLI setups.
+   */
+  chatGptPlanUsageRecorder?: {
+    recordUsage(accountKey: string, snapshot: SiwcPlanUsageSnapshot): void;
+  };
   /** Desktop Host asks Main to register the exact local video path authorized for the Agent. */
   authorizeLocalMediaPreviewPath?: (path: string) => Promise<string>;
   modelSelectionReadinessSource?: ModelSelectionReadinessSource;
@@ -1336,6 +1349,7 @@ export function createZCodeAgentService(
   const sessionTraceIdBySessionKey = new Map<string, TraceId>();
   const accountRequestAuthService = options?.accountRequestAuthService;
   const chatGptPlanRequestAuth = options?.chatGptPlanRequestAuth;
+  const chatGptPlanUsageRecorder = options?.chatGptPlanUsageRecorder;
   const accountProviderConfigSource = options?.accountProviderConfigSource;
   const modelSelectionReadinessSource = options?.modelSelectionReadinessSource;
   const sessionRuntimePreferencesAuthority = options?.sessionRuntimePreferencesAuthority ?? "local";
@@ -2142,6 +2156,25 @@ export function createZCodeAgentService(
                 message: issue.message,
                 path: issue.path.join("."),
               })),
+            });
+          }
+          return;
+        }
+
+        if (message.method === zcodeProtocolNotifications.chatGptPlanUsageUpdated) {
+          const parsed = zcodeChatGptPlanUsageUpdatedParamsSchema.safeParse(message.params);
+          const accountKey = parsed.success
+            ? parseChatGptPlanAccountProviderId(parsed.data.providerId)
+            : null;
+          if (parsed.success && accountKey) {
+            chatGptPlanUsageRecorder?.recordUsage(accountKey, parsed.data.usage);
+          } else if (!parsed.success) {
+            logger.warn(undefined, "Dropped invalid ChatGPT plan usage notification", {
+              issues: parsed.error.issues.map((issue) => ({
+                code: issue.code,
+                path: issue.path.join("."),
+              })),
+              workspaceKey: resolveWorkspaceKey(workspace),
             });
           }
           return;

@@ -52,6 +52,8 @@ import {
   ZCODE_SESSION_RUNTIME_PREFERENCES_REQUEST_TIMEOUT_MS,
   zcodeProtocolErrorCodes,
   zcodeProtocolMethods,
+  zcodeProtocolNotifications,
+  zcodeChatGptPlanUsageUpdatedParamsSchema,
   zcodeSessionCancelBackgroundTaskParamsSchema,
   zcodeSessionCompactParamsSchema,
   zcodeSessionCloseParamsSchema,
@@ -3099,6 +3101,7 @@ export function onSessionEvent(
   record: ZCodeProtocolSessionRecord,
   event: SessionEvent,
 ): void {
+  sendChatGptPlanUsageUpdated(context, event);
   const computerUseOperationEvent = mapComputerUseOperationEvent(event);
   if (computerUseOperationEvent) {
     try {
@@ -3198,6 +3201,36 @@ export function onSessionEvent(
 
   resetLiveProtocolStreamingDeltaBatch(context, record, record.deliveryKind);
   sendProtocolSessionEvent(context, record, event, record.deliveryKind);
+}
+
+/** Forward captured usage independently of legacy deliveryKind so V4-only sessions are covered. */
+function sendChatGptPlanUsageUpdated(
+  context: ZCodeProtocolAgentServerContext,
+  event: SessionEvent,
+): void {
+  if (event.type !== SessionEventType.TurnComplete) return;
+  const payload = asRecord(event.payload);
+  const usage = asRecord(payload.usage);
+  const parsed = zcodeChatGptPlanUsageUpdatedParamsSchema.safeParse({
+    eventId: String(event.id),
+    sessionId: String(event.sessionId),
+    providerId: usage.providerRateLimitProviderId,
+    usage: usage.providerRateLimits,
+  });
+  if (!parsed.success) return;
+  try {
+    context.notify({
+      method: zcodeProtocolNotifications.chatGptPlanUsageUpdated,
+      params: parsed.data,
+    });
+  } catch (error) {
+    context.logger?.warn("ChatGPT plan usage notification failed", {
+      error: error instanceof Error ? error.message : String(error),
+      event: "zcode_protocol.chatgpt-plan.usage-updated.failed",
+      eventId: parsed.data.eventId,
+      sessionId: parsed.data.sessionId,
+    });
+  }
 }
 
 function flushLiveProtocolStreamingDeltaBatch(

@@ -367,6 +367,44 @@ request id.
 - Plus plans have a 5-hour usage window shared across ALL apps using the plan
   (including ChatGPT itself). On plan-limit errors the UI shows "Manage usage"
   linking `https://chatgpt.com/settings/usage`.
+- **Passive usage-window capture**: OpenAI reports plan usage on model RESPONSE
+  headers (`x-codex-primary-used-percent`, `x-codex-primary-window-minutes`,
+  `x-codex-primary-reset-at`, and the `x-codex-secondary-*` weekly triplet).
+  ZCode captures them passively — only from responses to requests it already
+  sends — and ONLY on `chatgpt-account` providers. There are NO fallback
+  endpoints and NO extra network calls to learn usage.
+- **Capture rules**: `used-percent` is required per window (tolerant numeric
+  parse; missing, whitespace-only, or garbage skips that window; the explicit
+  string `0` remains valid); `window-minutes` and `reset-at`
+  are optional (`reset-at` is an RFC3339 string kept verbatim, never parsed into
+  local clock math on the agent side). A snapshot requires the primary (5h)
+  window; a secondary-only reading is ignored. When no headers are present the
+  feature is simply absent: SIWC preview tokens may not carry them (live
+  verification pending), and the UI shows nothing in that case.
+- **Transport** (additive; old payloads must keep validating): the adapter fetch
+  chain stores the latest snapshot and the bound provider id in a per-bound-model
+  mutable capture (same threading pattern as `RawRequestBodyCapture`); the runner
+  attaches them to the turn-completion usage payload as `providerRateLimits` and
+  `providerRateLimitProviderId` (shape:
+  `{primary: {usedPercent, windowMinutes?, resetsAt?}, secondary?}`). The CLI
+  emits a typed host notification from the durable completion event, independent
+  of legacy `session/event` delivery subscriptions, so V4-only conversations also
+  record usage. The host attributes the snapshot only from the carried provider id,
+  never by reading the session's current model after completion. The
+  `workspace/generateText` result usage schema gained the same strict optional
+  fields.
+- **Host state**: the host `SiwcAuthService` keeps the LATEST snapshot per
+  accountKey in an in-memory Map (never persisted, never logged; snapshots
+  contain no tokens and no PII). OAuth status/logout and usage recording share
+  the same service instance, so Settings reads recorded usage and logout clears
+  that account's cached snapshot.
+- **Display**: the Settings → ChatGPT Plan account row shows, when a snapshot
+  exists, `5h window: {percent}%` (+ ` · resets {time}` when `resetsAt` is
+  present and parseable) and `Weekly: {percent}%` for the secondary window.
+  The model picker badge deliberately does NOT show usage: the in-memory host
+  state has no change-notification channel to the renderer, so a picker badge
+  would render stale percentages in a high-visibility surface. Revisit only
+  with a usage-updated event.
 
 ### Branding (Phase 2, Desktop UI)
 

@@ -438,6 +438,44 @@ describe("SiwcAuthService (host side, multi-account)", () => {
     expect(await fixture.service.resolveAccessToken(ACCOUNT_KEY)).toBe("legacy-access");
   });
 
+  it("records passively captured usage per account and surfaces it in getStatus", async () => {
+    const fixture = await createFixture();
+    fixture.credentials.save(
+      SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY,
+      JSON.stringify([{ accountKey: ACCOUNT_KEY, sub: SUB, email: null, name: null, addedAt: "" }]),
+    );
+    fixture.credentials.save(ACCOUNT_KEYS.accessToken, "host-access-1");
+    fixture.credentials.save(ACCOUNT_KEYS.scopes, FULL_SCOPE);
+
+    // Before any turn carried usage headers, no usage is reported.
+    expect((await fixture.service.getStatus()).accounts[0]?.usage).toBeUndefined();
+
+    const snapshot = {
+      primary: { usedPercent: 42.5, windowMinutes: 300, resetsAt: "2026-10-15T18:00:00Z" },
+      secondary: { usedPercent: 7 },
+    };
+    fixture.service.recordUsage(ACCOUNT_KEY, snapshot);
+    expect((await fixture.service.getStatus()).accounts[0]?.usage).toEqual(snapshot);
+
+    // Unknown or malformed account keys are ignored, never stored.
+    fixture.service.recordUsage("not-an-account-key", snapshot);
+    fixture.service.recordUsage("", snapshot);
+    const status = await fixture.service.getStatus();
+    expect(status.accounts).toHaveLength(1);
+    expect(status.accounts[0]?.usage).toEqual(snapshot);
+
+    // Logout drops the account's in-memory usage with it.
+    fixture.credentials.save(ACCOUNT_KEYS.clientId, ISSUED_CLIENT_ID);
+    fixture.credentials.save(ACCOUNT_KEYS.refreshToken, "host-refresh-1");
+    await fixture.service.logout(ACCOUNT_KEY);
+    expect((await fixture.service.getStatus()).accounts).toHaveLength(0);
+    // A stale post-logout event stores nothing visible while the account is gone: usage is
+    // only surfaced for accounts present in the index.
+    fixture.service.recordUsage(ACCOUNT_KEY, snapshot);
+    const afterLogout = await fixture.service.getStatus();
+    expect(afterLogout.accounts).toHaveLength(0);
+  });
+
   it("replaces the previous registration's bundle instead of merging it", async () => {
     const fixture = await createFixture();
     await runFullLogin(fixture);
