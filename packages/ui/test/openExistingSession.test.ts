@@ -71,6 +71,29 @@ describe("sessions Settings navigation", () => {
     expect(result.current.tabs.getState().activeWorkspacePath).toBe("/closed");
   });
 
+  it("activates the local tab, not a remote tab sharing the same path, for a local session", async () => {
+    const { wrapper } = setup();
+    const { result } = renderHook(
+      () => ({ open: useOpenExistingSession(), tabs: useTabStoreApi() }),
+      { wrapper },
+    );
+    let localTabId = "";
+    act(() => {
+      localTabId = result.current.tabs.getState().addTab("/same");
+      result.current.tabs.getState().addTab("/same", {
+        workspaceIdentity: "remote:a:/same",
+        remoteSessionId: "a",
+      });
+      result.current.tabs.getState().openSettingsTab();
+    });
+    await act(() => result.current.open({ workspacePath: "/same", taskId: "local-task" }));
+    expect(result.current.tabs.getState().activeTabId).toBe(localTabId);
+    expect(result.current.tabs.getState().activeWorkspaceIdentity).toBeNull();
+    expect(useZCodeSessionStore.getState().getWorkspaceState("/same").activeTaskId).toBe(
+      "local-task",
+    );
+  });
+
   it("keeps Settings active when the directory is unavailable and never probes a remote path locally", async () => {
     const stat = vi.fn(async () => {
       throw new Error("unavailable directory");
