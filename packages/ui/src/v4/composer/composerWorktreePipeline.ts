@@ -76,24 +76,36 @@ export function startComposerWorktreePipeline({
   )?.attemptId;
 
   const attempt = (async (): Promise<"ready" | "failed"> => {
-    // Host activation strictly requires executionWorktree.path === prepared.targetPath, so align
-    // the Host marker with the path Git settled on before the entry turns ready.
+    // Host activation strictly requires executionWorktree.path === prepared.targetPath. Git may
+    // settle the branch worktree elsewhere (WT-04 reuse or a recovered worktree), so align the Host
+    // marker before the entry turns ready; a missing or rejected sync fails the attempt instead of
+    // publishing an unactivatable ready state.
     const settleReady = async (
       worktreePath: string,
       existing: boolean,
     ): Promise<"ready" | "failed"> => {
-      const aligned = await realignWorktreePreparationOrFail({
-        workspaceKey,
-        sessionId,
-        attemptId,
-        branchName: params.branchName,
-        targetPath: params.targetPath,
-        ...(params.baseBranch ? { baseBranch: params.baseBranch } : {}),
-        worktreePath,
-        formatMessage,
-        ...(syncPreparedWorktree ? { syncPreparedWorktree } : {}),
-      });
-      if (!aligned) return "failed";
+      if (worktreePath !== params.targetPath) {
+        if (sessionId && syncPreparedWorktree) {
+          await syncPreparedWorktree({
+            workspaceKey,
+            sessionId,
+            branchName: params.branchName,
+            targetPath: worktreePath,
+            ...(params.baseBranch ? { baseBranch: params.baseBranch } : {}),
+          });
+        } else {
+          logger.warn("[WorktreePipeline] no marker sync; path differs");
+          useComposerWorktreePipelineStore
+            .getState()
+            .markFailed(
+              workspaceKey,
+              formatMessage("worktreeSetup.reconcile.markerSyncUnavailable"),
+              sessionId,
+              attemptId,
+            );
+          return "failed";
+        }
+      }
       useComposerWorktreePipelineStore
         .getState()
         .markReady(workspaceKey, worktreePath, existing, sessionId, attemptId);
@@ -389,10 +401,8 @@ export async function reconcileCreatingComposerWorktreePipeline({
     });
     const existing = findWorktreeForBranch(list.worktrees, branchName);
     if (existing) {
-      // The recovered worktree may sit at a path other than the frozen target; realign the Host
-      // marker first so the strict activation check can accept the path the renderer will send.
-      // Without a session to realign, a differing path would publish an unactivatable ready
-      // entry — fail instead, exactly like the runner does.
+      // The recovered worktree may sit elsewhere than the frozen target; realign the Host marker
+      // before the strict activation check, and fail the entry when there is no way to realign.
       if (existing.path !== entry.params.targetPath) {
         if (ownerSessionId && syncPreparedWorktree) {
           await syncPreparedWorktree({
@@ -403,15 +413,7 @@ export async function reconcileCreatingComposerWorktreePipeline({
             ...(entry.params.baseBranch ? { baseBranch: entry.params.baseBranch } : {}),
           });
         } else {
-          logger.warn(
-            "[WorktreePipeline] reconcile found a differing path but marker sync is unavailable",
-            {
-              workspaceKey,
-              branchName,
-              targetPath: entry.params.targetPath,
-              worktreePath: existing.path,
-            },
-          );
+          logger.warn("[WorktreePipeline] reconcile: no marker sync; path differs");
           store.markFailed(
             workspaceKey,
             formatMessage("worktreeSetup.reconcile.markerSyncUnavailable"),
