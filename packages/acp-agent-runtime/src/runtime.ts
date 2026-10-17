@@ -95,6 +95,8 @@ export class AcpSessionRuntime extends EventEmitter {
   private authMethods: readonly AcpAuthMethod[] = [];
   private configOptions: unknown = null;
   private generation = 0;
+  /** Last generation whose process exit was handled outside an explicit stop; written only by `handleExit`. */
+  private exitedGeneration = 0;
   private activePrompt: ActivePromptState | undefined;
   private readonly pendingAsks = new Map<string, Deferred<AcpPermissionAnswer>>();
   private stopRequested = false;
@@ -343,8 +345,16 @@ export class AcpSessionRuntime extends EventEmitter {
       this.currentState = this.stopRequested ? "stopped" : "ready";
     } catch (error) {
       this.currentState = this.stopRequested ? "stopped" : "failed";
+      // handleExit tears the connection down, so an in-flight handshake request usually rejects
+      // with a transport error before the commit guard above runs; report the death instead.
+      const failure =
+        this.exitedGeneration === generation &&
+        !this.stopRequested &&
+        !(error instanceof AcpAgentDiedError)
+          ? new AcpAgentDiedError("Agent terminated during the handshake", { cause: error })
+          : error;
       await this.terminateProcess(new AcpCancelledError("Handshake failed"));
-      throw error;
+      throw failure;
     }
   }
 
@@ -421,6 +431,7 @@ export class AcpSessionRuntime extends EventEmitter {
     this.clearStallTimer();
     if (this.stopRequested || this.currentState === "stopped") return;
     this.currentState = "failed";
+    this.exitedGeneration = generation;
     const died = new AcpAgentDiedError(
       `Agent process exited (code=${String(code)}, signal=${String(signal)})`,
     );

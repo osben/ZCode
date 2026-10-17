@@ -93,10 +93,11 @@ describe("AcpSessionRuntime lifecycle", () => {
       internals.handleExit(7, null, internals.generation);
       expect(runtime.state).toBe("failed");
       const restarting = runtime.restart();
-      // restart()'s synchronous prefix has already spawned generation 2,
-      // whose slow session/new response is still in flight. The child "dies"
-      // before that response can commit the handshake — the commit must not
-      // resurrect the dead generation as "ready".
+      // restart() first finishes cleaning generation 1, then spawns generation
+      // 2, whose slow session/new response stays in flight for 150ms. The
+      // child "dies" before that response can commit the handshake — the
+      // handshake must reject instead of resurrecting the dead generation.
+      await waitFor(() => internals.generation === 2, 5_000);
       internals.handleExit(0, null, 2);
       await expect(restarting).rejects.toMatchObject({ code: "ACP_AGENT_DIED" });
       expect(runtime.state).toBe("failed");
