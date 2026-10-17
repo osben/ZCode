@@ -21,6 +21,8 @@ export const FRAME_OBSERVER_MAX_BYTES = 16 * 1024;
 export const FRAME_OBSERVER_TRUNCATION_MARKER = "…[truncated]";
 
 export interface SpawnedAcpProcess {
+  readonly ownedProcessStartedAtMs: number;
+  readonly resolveOwnedProcessExitedAtMs: () => number | undefined;
   readonly child: ChildProcess;
   readonly stream: Stream;
   /** Rejects when the child fails to spawn (e.g. ENOENT); consumed by racing handshake steps. */
@@ -49,6 +51,8 @@ export interface SpawnAcpProcessInput {
 }
 
 export function spawnAcpProcess(input: SpawnAcpProcessInput): SpawnedAcpProcess {
+  const ownedProcessStartedAtMs = Date.now();
+  let ownedProcessExitedAtMs: number | undefined;
   let child: ChildProcess;
   try {
     child = spawn(input.command, [...input.args], {
@@ -78,7 +82,10 @@ export function spawnAcpProcess(input: SpawnAcpProcessInput): SpawnedAcpProcess 
   spawnFailure.catch(() => {});
 
   const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
-    child.once("exit", (code, signal) => resolve({ code, signal }));
+    child.once("exit", (code, signal) => {
+      ownedProcessExitedAtMs = Date.now();
+      resolve({ code, signal });
+    });
     child.once("close", () => resolve({ code: child.exitCode, signal: child.signalCode }));
     // A failed spawn emits `error` (usually without an `exit`); resolve so
     // teardown never waits on a process that never started.
@@ -100,6 +107,8 @@ export function spawnAcpProcess(input: SpawnAcpProcessInput): SpawnedAcpProcess 
   const guarded = guardStreamFailure(framed);
 
   return {
+    ownedProcessStartedAtMs,
+    resolveOwnedProcessExitedAtMs: () => ownedProcessExitedAtMs,
     child,
     stream: guarded.stream,
     spawnFailure,

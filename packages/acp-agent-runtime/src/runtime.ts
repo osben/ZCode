@@ -1,3 +1,4 @@
+import { captureProcessTreeSnapshotAsync, terminateProcessTreeAndWait } from "@zcode/shared/node";
 /* oxlint-disable eslint(max-lines) -- Lifecycle state machine: teardown, restarts and generation guards share one state owner by design. */
 /**
  * AcpSessionRuntime — lifecycle owner for one external ACP agent process.
@@ -37,7 +38,7 @@ import {
 import { readTextFileViaBridge, writeTextFileViaBridge } from "./fs.js";
 import { buildChildEnv, validateLaunchOptions } from "./launch.js";
 import { buildPermissionAsk, toPermissionResponse } from "./permissions.js";
-import { signalProcessTree, spawnAcpProcess, type SpawnedAcpProcess } from "./transport.js";
+import { spawnAcpProcess, type SpawnedAcpProcess } from "./transport.js";
 import { mapSessionUpdate } from "./updates.js";
 import {
   CANCELLED_ANSWER,
@@ -83,6 +84,8 @@ interface ActivePromptState {
 }
 
 export class AcpSessionRuntime extends EventEmitter {
+  private termination: Promise<void> | undefined;
+  private restarting: Promise<void> | undefined;
   private readonly options: AcpSessionRuntimeOptions;
   private readonly bridge: AcpHostBridge;
   private readonly timeouts: Required<AcpTimeouts>;
@@ -225,7 +228,7 @@ export class AcpSessionRuntime extends EventEmitter {
 
   /** Gracefully stops the runtime; safe to call multiple times. */
   async stop(): Promise<void> {
-    if (this.currentState === "stopped") return;
+    if (this.currentState === "stopped") return this.termination;
     this.stopRequested = true;
     this.currentState = "stopped";
     this.resolvePendingAsks(CANCELLED_ANSWER);
@@ -234,11 +237,24 @@ export class AcpSessionRuntime extends EventEmitter {
   }
 
   /** Re-launches the agent and a fresh session after an unexpected death. */
-  async restart(): Promise<void> {
-    if (this.currentState !== "failed") return;
+  restart(): Promise<void> {
+    if (this.restarting) return this.restarting;
+    if (this.currentState !== "failed") return Promise.resolve();
     this.stopRequested = false;
-    this.currentState = "starting";
-    await this.connect();
+    const pending = (async () => {
+      if (this.process || this.termination) {
+        await this.terminateProcess(
+          new AcpCancelledError("Cleaning the previous agent before restart"),
+        );
+      }
+      if (this.stopRequested) return;
+      this.currentState = "starting";
+      await this.connect();
+    })().finally(() => {
+      if (this.restarting === pending) this.restarting = undefined;
+    });
+    this.restarting = pending;
+    return pending;
   }
 
   private async connect(): Promise<void> {
@@ -405,11 +421,11 @@ export class AcpSessionRuntime extends EventEmitter {
     this.clearStallTimer();
     if (this.stopRequested || this.currentState === "stopped") return;
     this.currentState = "failed";
-    this.activePrompt?.reject?.(
-      new AcpAgentDiedError(
-        `Agent process exited (code=${String(code)}, signal=${String(signal)})`,
-      ),
+    const died = new AcpAgentDiedError(
+      `Agent process exited (code=${String(code)}, signal=${String(signal)})`,
     );
+    this.activePrompt?.reject?.(died);
+    void this.terminateProcess(died).catch((error: unknown) => this.reportCleanupFailure(error));
   }
 
   /**
@@ -452,7 +468,16 @@ export class AcpSessionRuntime extends EventEmitter {
     if (generation !== this.generation) return;
     if (this.stopRequested || this.currentState === "stopped") return;
     if (this.currentState === "failed") return;
-    void this.teardownAfterStreamFailure(error, generation);
+    void this.teardownAfterStreamFailure(error, generation).catch((cleanupError: unknown) =>
+      this.reportCleanupFailure(cleanupError),
+    );
+  }
+
+  private reportCleanupFailure(error: unknown): void {
+    this.emitEvent({
+      type: "process_cleanup_failed",
+      message: error instanceof Error ? error.message : String(error),
+    });
   }
 
   private async teardownAfterStreamFailure(error: Error, generation: number): Promise<void> {
@@ -504,7 +529,24 @@ export class AcpSessionRuntime extends EventEmitter {
     return this.activePrompt !== watched;
   }
 
-  private async terminateProcess(reason: Error): Promise<void> {
+  private terminateProcess(reason: Error): Promise<void> {
+    if (this.termination) return this.termination;
+    const owned = this.process;
+    const pending = this.terminateOwnedProcess(reason)
+      .catch((error: unknown) => {
+        // Failed inspection/cleanup must retain ownership so another stop can retry safely.
+        this.process ??= owned;
+        this.currentState = "failed";
+        throw error;
+      })
+      .finally(() => {
+        if (this.termination === pending) this.termination = undefined;
+      });
+    this.termination = pending;
+    return pending;
+  }
+
+  private async terminateOwnedProcess(reason: Error): Promise<void> {
     // The session is unusable from here on: mark the runtime failed (unless an
     // explicit stop already did) BEFORE rejecting the in-flight prompt, so the
     // prompt's `finally` cannot flip a torn-down runtime back to "ready" — a
@@ -515,6 +557,18 @@ export class AcpSessionRuntime extends EventEmitter {
     const active = this.activePrompt;
     this.activePrompt = undefined;
     active?.reject?.(reason);
+    const deadline = Date.now() + this.timeouts.stopGraceMs + this.timeouts.killGraceMs + 2500;
+    const ownership = proc
+      ? {
+          ...(process.platform === "win32" ? {} : { ownedProcessGroupId: proc.child.pid }),
+          ownedProcessStartedAtMs: proc.ownedProcessStartedAtMs,
+          resolveOwnedProcessExitedAtMs: proc.resolveOwnedProcessExitedAtMs,
+          windowsCleanupDeadlineAtMs: deadline,
+        }
+      : {};
+    const snapshot = proc
+      ? await captureProcessTreeSnapshotAsync(proc.child, ownership)
+      : undefined;
     try {
       this.connection?.close();
     } catch {
@@ -528,13 +582,19 @@ export class AcpSessionRuntime extends EventEmitter {
     } catch {
       // stdin may already be closed.
     }
-    const exitedEarly = await raceTimeout(proc.exited, this.timeouts.stopGraceMs);
-    if (exitedEarly) return;
-    await signalProcessTree(proc.child, "SIGTERM");
-    const exitedAfterTerm = await raceTimeout(proc.exited, this.timeouts.killGraceMs);
-    if (exitedAfterTerm) return;
-    await signalProcessTree(proc.child, "SIGKILL");
-    await proc.exited.catch(() => {});
+    await raceTimeout(proc.exited, this.timeouts.stopGraceMs);
+    const result = await terminateProcessTreeAndWait(proc.child, {
+      ...ownership,
+      ...(snapshot ? { snapshot } : {}),
+      forceAfterMs: this.timeouts.killGraceMs,
+      waitAfterForceMs: 500,
+      windowsTaskkillTimeoutMs: 2000,
+    });
+    if (result.remainingPids.length > 0) {
+      this.process = proc;
+      this.currentState = "failed";
+      throw new AcpStateError(`ACP process cleanup incomplete: ${result.remainingPids.join(", ")}`);
+    }
   }
 
   private emitEvent(event: AcpRuntimeEvent): void {

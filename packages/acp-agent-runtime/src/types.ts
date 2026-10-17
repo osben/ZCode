@@ -73,6 +73,7 @@ export type AcpRuntimeEvent =
   | { readonly type: "auth_required"; readonly methods: readonly AcpAuthMethod[] }
   | { readonly type: "stopped"; readonly reason: StopReason; readonly usage?: unknown }
   | { readonly type: "stalled"; readonly silentMs: number }
+  | { readonly type: "process_cleanup_failed"; readonly message: string }
   | {
       readonly type: "process_exit";
       readonly code: number | null;
