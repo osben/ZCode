@@ -513,7 +513,7 @@ export const zcodeSessionRuntimeStateSchema = z
     stateRevision: z.number().int().nonnegative(),
     deliveryKind: zcodeDeliveryKindSchema.optional(),
     activeTurnId: nonEmptyString.optional(),
-    activeTurnKind: z.enum(["regular", "compact", "rewind"]).optional(),
+    activeTurnKind: z.enum(["regular", "compact", "dream", "rewind"]).optional(),
     pendingRequestIds: z.array(nonEmptyString),
     apiRetry: zcodeSessionApiRetryStatusSchema.nullable().optional(),
     contextUsage: zcodeSessionContextUsageSchema.optional(),

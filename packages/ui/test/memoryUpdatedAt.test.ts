@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { IntlInstance } from "@/i18n/IntlProvider.js";
-import { formatMemoryDayGroupLabel, formatMemoryUpdatedAt } from "@/settings/memoryUpdatedAt.js";
+import {
+  formatMemoryDayGroupLabel,
+  formatMemoryLastDreamLabel,
+  formatMemoryUpdatedAt,
+} from "@/settings/memoryUpdatedAt.js";
 
 const messages: Record<string, string> = {
   "settings.memory.viewer.updated.justNow": "刚刚",
@@ -14,6 +18,7 @@ const messages: Record<string, string> = {
   "settings.memory.viewer.updated.dateYearMonthDay": "{year} 年 {month} 月 {day} 日",
   "settings.memory.viewer.group.today": "今天",
   "settings.memory.viewer.group.yesterday": "昨天",
+  "settings.memory.viewer.lastDream": "上次整理：{time}",
 };
 
 const formatMessage: IntlInstance["formatMessage"] = ({ id }, values) => {
@@ -75,5 +80,25 @@ describe("formatMemoryDayGroupLabel", () => {
 
   it("formats group date labels without time", () => {
     expect(label(new Date(2026, 7, 3, 9, 5))).not.toContain("09:05");
+  });
+});
+
+describe("formatMemoryLastDreamLabel", () => {
+  function label(lastDreamConsolidatedAt: number | undefined): string | undefined {
+    return formatMemoryLastDreamLabel({
+      formatMessage,
+      lastDreamConsolidatedAt,
+      locale: "zh-CN",
+      now,
+    });
+  }
+
+  it("interpolates the shared updated-time formatter into the last-dream message", () => {
+    expect(label(new Date(2026, 7, 7, 22, 31, 31).getTime())).toBe("上次整理：刚刚");
+    expect(label(new Date(2026, 7, 7, 22, 2).getTime())).toBe("上次整理：今天 22:02");
+  });
+
+  it("returns undefined without a completed dream", () => {
+    expect(label(undefined)).toBeUndefined();
   });
 });

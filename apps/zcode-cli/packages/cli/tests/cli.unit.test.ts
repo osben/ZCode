@@ -2531,6 +2531,12 @@ test("parses built-in slash commands outside the TUI", () => {
     rawName: "compact",
     type: "known",
   });
+  assert.deepEqual(parseSlashCommand("/dream"), {
+    args: "",
+    name: "dream",
+    rawName: "dream",
+    type: "known",
+  });
   assert.deepEqual(parseSlashCommand("/expert migrate auth"), {
     args: "migrate auth",
     name: "expert",
@@ -2702,6 +2708,7 @@ test("command center returns slash help without creating an app", async () => {
   assert.match(allCommands.response, /Slash commands:/);
   assert.match(allCommands.response, /\/help \[command\]/);
   assert.match(allCommands.response, /\/compact \[instructions\]/);
+  assert.match(allCommands.response, /\/dream: Consolidate project memory now\./);
   assert.match(allCommands.response, /\/init \[notes\]/);
   assert.match(allCommands.response, /\/workflow \[what the workflow should accomplish\]/);
   assert.match(allCommands.response, /\/expert \[status\|resume\|stop\|<task>\]/);
@@ -3305,6 +3312,62 @@ test("command center dispatches init through the active app", async () => {
   assert.equal(submitted, "/init include repo scripts");
   assert.equal(result.response, "Initialized");
   assert.equal(result.traceId, "trace-init");
+});
+
+test("command center dispatches dream through the active app as a prompt", async () => {
+  // Without an explicit branch /dream falls into the resume fallback and never reaches the
+  // runtime's command turn (same failure mode documented on /init and /workflow).
+  let submitted = "";
+  const submitPrompt = createCommandCenter({
+    getApp: async () =>
+      ({
+        sessionId: "sess_active",
+        traceId: "trace-active",
+        resume: async () => {
+          throw new Error("resume should not run");
+        },
+        submitPrompt: async (prompt: string) => {
+          submitted = prompt;
+          return {
+            response: "Dream complete",
+            traceId: "trace-dream",
+          };
+        },
+      }) as never,
+    resumeApp: async () => {
+      throw new Error("resume should not run");
+    },
+  });
+
+  const result = await submitPrompt("/dream", {
+    abortSignal: new AbortController().signal,
+  });
+
+  assert.equal(submitted, "/dream");
+  assert.equal(result.response, "Dream complete");
+  assert.equal(result.traceId, "trace-dream");
+});
+
+test("command center answers dream usage errors without creating an app", async () => {
+  const submitPrompt = createCommandCenter({
+    getApp: async () => {
+      throw new Error("app should not be created");
+    },
+    getMode: () => "build",
+    resumeApp: async () => {
+      throw new Error("resume should not run");
+    },
+  });
+
+  const result = await submitPrompt("/dream now", {
+    abortSignal: new AbortController().signal,
+  });
+
+  assert.equal(result.mode, "build");
+  assert.equal(
+    result.response,
+    "Usage: /dream — takes no arguments. Run /dream to consolidate project memory now.",
+  );
 });
 
 test("command center dispatches workflow through the active app as a prompt", async () => {

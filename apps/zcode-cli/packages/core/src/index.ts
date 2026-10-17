@@ -141,6 +141,8 @@ export type { PermissionConfig } from "./permission/index.js";
 export { AgentRuntime } from "./runtime.js";
 export { createExternalTurnFaultError } from "./runtime/helpers/turn-errors.js";
 export { repairPersistedRemoteSessionPaths } from "./runtime/helpers/persisted-remote-session-path-repair.js";
+// Shared with the CLI command-center so local usage replies match the runtime's wording.
+export { DREAM_COMMAND_USAGE_RESPONSE } from "./runtime/methods/dream.js";
 // Clone a transcript by value into another session. The second consumer besides fork is DWF amend-resume
 // transcript truncation (bootstrap's workflow-actor-transcript.ts): both perform the same operation—continue with local IDs in the new session,
 // remapping parentID and anchors embedded in parts. Export this instead of duplicating it because symptoms of a missed remap

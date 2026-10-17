@@ -2336,6 +2336,7 @@ const ukUA: Record<string, string> = {
   "settings.memory.viewer.memoryCount.few": "{count} записи пам'яті",
   "settings.memory.viewer.memoryCount.many": "{count} записів пам'яті",
   "settings.memory.viewer.memoryCount.other": "{count} запису пам'яті",
+  "settings.memory.viewer.lastDream": "Останній dream: {time}",
   "settings.memory.viewer.updated.justNow": "Щойно",
   "settings.memory.viewer.updated.minutesAgo": "{count} хв тому",
   "settings.memory.viewer.updated.today": "Сьогодні {time}",

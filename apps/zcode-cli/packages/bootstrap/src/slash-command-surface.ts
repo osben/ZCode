@@ -11,6 +11,7 @@ export const APP_PROTOCOL_VISIBLE_BUILTIN_SLASH_COMMAND_NAMES = [
   "workflow",
   "compact",
   "init",
+  "dream",
 ] as const;
 
 /** Commands used only by the App Composer; do not add them to the CLI TUI/help surface. */

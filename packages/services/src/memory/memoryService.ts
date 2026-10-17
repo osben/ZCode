@@ -22,6 +22,10 @@ import { readProjectMemoryIndexLineCount } from "#src/memory/projectMemoryIndexC
 
 const PROJECT_MEMORY_INDEX_FILE_NAME = "MEMORY.md";
 const PROJECT_MEMORY_DIRECTORY_NAME = "memory";
+// Success marker written by the runtime only after a Dream run completes (see
+// writeDreamConsolidatedAt in apps/zcode-cli/packages/core/src/memory/dream.ts). The lock file's
+// mtime marks a run start and survives crashes, so it must not back this display value.
+const PROJECT_MEMORY_DREAM_CONSOLIDATED_AT_FILE_NAME = ".consolidated-at";
 const PROJECT_KEY_SUFFIX_PATTERN = /^(.*)-[a-f0-9]{16}$/i;
 
 function isNotFoundError(error: unknown): boolean {
@@ -131,6 +135,24 @@ function compareProjectMemoryFiles(
     return left.kind === "index" ? -1 : 1;
   }
   return left.name.localeCompare(right.name, "en");
+}
+
+/**
+ * Completion time of the last successful Dream run, read from the runtime success-marker mtime
+ * (writeDreamConsolidatedAt in apps/zcode-cli/packages/core/src/memory/dream.ts). Missing marker →
+ * undefined.
+ */
+async function readLastDreamConsolidatedAt(memoryRoot: string): Promise<number | undefined> {
+  try {
+    const markerStat = await lstat(
+      join(memoryRoot, PROJECT_MEMORY_DREAM_CONSOLIDATED_AT_FILE_NAME),
+    );
+    if (!markerStat.isFile() || markerStat.isSymbolicLink()) return undefined;
+    return markerStat.mtimeMs;
+  } catch (error) {
+    if (isNotFoundError(error)) return undefined;
+    throw error;
+  }
 }
 
 function resolveUserHomeDir(): string {
@@ -347,11 +369,13 @@ export function createMemoryService(): IMemoryService {
       }
 
       files.sort(compareProjectMemoryFiles);
+      const lastDreamConsolidatedAt = await readLastDreamConsolidatedAt(memoryRoot);
       workspaces.push({
         id: workspaceId,
         label: resolveWorkspaceLabel(workspaceId),
         updatedAt: Math.max(...files.map((file) => file.updatedAt)),
         files,
+        ...(lastDreamConsolidatedAt === undefined ? {} : { lastDreamConsolidatedAt }),
       });
     }
 

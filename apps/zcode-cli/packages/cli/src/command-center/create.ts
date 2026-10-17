@@ -1,5 +1,6 @@
 import type { TuiSubmitPrompt } from "@zcode/tui";
 import { redactSiwcAuthorizeUrl } from "@zcode/adapters";
+import { DREAM_COMMAND_USAGE_RESPONSE } from "@zcode/core";
 import {
   formatAvailableCommandNames,
   listCustomCommandsForHelp,
@@ -233,6 +234,19 @@ export function createCommandCenter(deps: CommandCenterDeps): TuiSubmitPrompt {
         const app = await deps.getApp();
         const prompt = command.args ? `/compact ${command.args}` : "/compact";
         return attachCurrentSessionMetadata(await app.submitPrompt(prompt, options), deps, app);
+      }
+
+      if (command.name === "dream") {
+        // Like compact: submit the raw text so the runtime's /dream command turn runs. Arguments
+        // are a usage error the runtime would also report — answer locally without creating an app.
+        if (command.args) {
+          return {
+            mode: deps.getMode?.(),
+            response: DREAM_COMMAND_USAGE_RESPONSE,
+          };
+        }
+        const app = await deps.getApp();
+        return attachCurrentSessionMetadata(await app.submitPrompt("/dream", options), deps, app);
       }
 
       if (command.name === "init") {

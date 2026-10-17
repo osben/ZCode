@@ -41,7 +41,11 @@ import {
   MemoryFileAccordionItem,
   type MemoryPreviewRecord,
 } from "@/settings/MemorySettingsFileAccordion.js";
-import { formatMemoryDayGroupLabel, startOfLocalDay } from "@/settings/memoryUpdatedAt.js";
+import {
+  formatMemoryDayGroupLabel,
+  formatMemoryLastDreamLabel,
+  startOfLocalDay,
+} from "@/settings/memoryUpdatedAt.js";
 
 export type MemoryViewerLoadingState = "idle" | "loading" | "ready" | "error";
 
@@ -110,6 +114,11 @@ export function MemorySettingsViewer({
 
   const formatMemoryCount = (count: number) =>
     intl.formatPlural({ id: "settings.memory.viewer.memoryCount" }, count);
+  const timeFormatContext = { formatMessage: intl.formatMessage, locale, now };
+  const lastDreamLabel = formatMemoryLastDreamLabel({
+    ...timeFormatContext,
+    lastDreamConsolidatedAt: selectedWorkspace?.lastDreamConsolidatedAt,
+  });
   const normalizedSearchQuery = searchQuery.trim().toLocaleLowerCase();
   const visibleFiles = useMemo(
     () =>
@@ -140,9 +149,7 @@ export function MemorySettingsViewer({
       .map(([dayStart, files]) => ({
         dayStart,
         label: formatMemoryDayGroupLabel({
-          formatMessage: intl.formatMessage,
-          locale,
-          now,
+          ...timeFormatContext,
           updatedAt: dayStart,
         }),
         files: [...files].sort((left, right) => right.updatedAt - left.updatedAt),
@@ -329,6 +336,11 @@ export function MemorySettingsViewer({
           >
             {formatMemoryCount(selectedWorkspace.files.length)}
           </span>
+          {lastDreamLabel ? (
+            <span className="shrink-0 border-l border-border pl-3 text-ui-sm text-foreground-subtle">
+              {lastDreamLabel}
+            </span>
+          ) : null}
         </div>
         <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
           <DropdownMenu>

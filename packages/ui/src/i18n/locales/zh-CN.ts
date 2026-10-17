@@ -2507,6 +2507,7 @@ const zhCN: Record<string, string> = {
   "settings.memory.viewer.itemCount.other": "{count} 条",
   "settings.memory.viewer.memoryCount.one": "{count} 条记忆",
   "settings.memory.viewer.memoryCount.other": "{count} 条记忆",
+  "settings.memory.viewer.lastDream": "上次整理：{time}",
   "settings.memory.viewer.updated.justNow": "刚刚",
   "settings.memory.viewer.updated.minutesAgo": "{count} 分钟前",
   "settings.memory.viewer.updated.today": "今天 {time}",
