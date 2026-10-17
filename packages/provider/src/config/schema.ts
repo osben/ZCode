@@ -8,6 +8,7 @@ import {
 import { ModelConfig, ModelConfigRules } from "./model-config.js";
 import {
   ApiKeyAccessConfig,
+  AcpAgentAccessConfig,
   ChatgptAccountAccessConfig,
   ProviderApiConfig,
   ProviderConfig,
@@ -163,7 +164,9 @@ function createProviderConfig(config: z.infer<typeof providerConfigDataSchema>):
           ? new ZhipuAccountAccessConfig(config.access)
           : config.access.type === "chatgpt-account"
             ? new ChatgptAccountAccessConfig(config.access)
-            : new ApiKeyAccessConfig(config.access),
+            : config.access.type === "acp-agent"
+              ? new AcpAgentAccessConfig(config.access)
+              : new ApiKeyAccessConfig(config.access),
     api: config.api == null ? config.api : new ProviderApiConfig(config.api),
   });
 }
