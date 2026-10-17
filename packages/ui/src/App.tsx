@@ -487,6 +487,7 @@ export function App({
     useBranchMergeStatusStore.getState().requestRefresh();
   }, [gitRepositoryWorkspacePath, handleRefreshGit, workspaceAbsPath]);
   const openSettingsTab = useTabStore((state) => state.openSettingsTab);
+  const openSessionManagerTab = useTabStore((state) => state.openSessionManagerTab);
   const gitState = useGitRepository({
     workspacePath: workspaceAbsPath,
     activeTaskId,
@@ -1198,6 +1199,7 @@ export function App({
           createTask: () => runVisibleWorkspaceCommand(() => handleCreateTaskIfWritable()),
           openWorkspace: () => runVisibleWorkspaceCommand(onOpenWorkspace),
           openSettings: openSettingsTab,
+          openSessionManager: () => openSessionManagerTab(),
           openSkillsSettings: () => {
             setPendingSettingsPluginIntent("skills");
             openSettingsTab();

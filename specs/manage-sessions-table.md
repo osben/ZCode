@@ -37,7 +37,7 @@ Session management today is scattered across per-workspace sidebar sections (pin
 - Entries:
   1. Project action menu (workspace `⋯` menu in the sidebar, `WorkspaceSidebarItem.tsx` — the Pin/Customize block) → **"Manage sessions"**: opens the tab with a **workspace scope** `{workspacePath, workspaceIdentity}` for that workspace identity (Copilot parity: its project menu navigates to `/recent` with `state: { repoFilter }`).
   2. **Command Center / quick pick**: a `manage-sessions` command (`packages/ui/src/quickpick/quickPickCommands.ts` pattern) opens the tab unscoped.
-- Opening the tab again re-activates the existing instance and replaces its scope. Scope lives in the layer's navigation state, not the store: `openSessionManagerTab(scope?)` records the requested scope in a module-level ref consumed by the layer on activation (ephemeral; a restart loses it, matching Settings semantics).
+- Opening the tab again re-activates the existing instance and replaces its scope. Scope is navigation state carried on `SessionManagerTabState.scope` (reactively consumed by the layer; ephemeral — non-workspace tabs are never persisted, so a restart loses it, matching Settings semantics).
 - **Back** button in the surface header activates the previously active workspace tab — same handler contract as `handleBackFromSettings` (`packages/ui/src/root/useRootWorkspaceActions.ts:548-559`: `activateTabByPath(path, { workspaceIdentity })`, identity-preserving); hidden when no workspace tab exists.
 
 ### 2. Data flow (read-only, single owner)

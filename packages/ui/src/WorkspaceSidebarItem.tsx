@@ -25,6 +25,7 @@ import {
   PinOff,
   RefreshCwIcon,
   MessageCirclePlus,
+  MessageSquare,
   Pin,
   Settings2,
   XIcon,
@@ -67,6 +68,7 @@ import {
   selectWorkspaceDisplayEntry,
   useWorkspaceDisplayStore,
 } from "@/store/workspaceDisplayStore.js";
+import { useTabStore } from "@/store/TabStoreProvider.js";
 import { WORKSPACE_ICON_COLOR_CLASS } from "@/lib/workspaceDisplayColors.js";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
 import {
@@ -265,6 +267,7 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
     selectWorkspaceDisplayEntry(state, tab.workspacePath, tab.workspaceIdentity),
   );
   const [customizeDialogOpen, setCustomizeDialogOpen] = useState(false);
+  const openSessionManagerTab = useTabStore((state) => state.openSessionManagerTab);
   const workspaceDisplayLabel = workspaceDisplayEntry?.displayName?.trim() || workspaceSidebarLabel;
   const workspaceIconColorClass = workspaceDisplayEntry?.color
     ? WORKSPACE_ICON_COLOR_CLASS[workspaceDisplayEntry.color]
@@ -1044,6 +1047,20 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
                           >
                             <Settings2 className="h-3.5 w-3.5" />
                             {intl.formatMessage({ id: "workspaceSidebar.customize" })}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            data-testid="workspace-manage-sessions"
+                            onSelect={() =>
+                              openSessionManagerTab({
+                                workspacePath: tab.workspacePath,
+                                ...(tab.workspaceIdentity
+                                  ? { workspaceIdentity: tab.workspaceIdentity }
+                                  : {}),
+                              })
+                            }
+                          >
+                            <MessageSquare className="h-3.5 w-3.5" />
+                            {intl.formatMessage({ id: "sessionManager.openFromProjectMenu" })}
                           </DropdownMenuItem>
                           {workspaceGitHubUrl ? (
                             <DropdownMenuItem
