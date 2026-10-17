@@ -1,4 +1,9 @@
+import {
+  refreshSiwcCodexAccessToken,
+  SIWC_CODEX_REFRESH_LOCK_MAX_WAIT_MS,
+} from "./siwcCodexRefresh.js";
 import { join } from "node:path";
+import { SiwcUsageLifecycle } from "./siwcUsageLifecycle.js";
 import type { Server } from "node:http";
 import type { SiwcPlanUsageSnapshot } from "@zcode/shared";
 import { isChatGptPlanAccountKey } from "@zcode/shared";
@@ -11,7 +16,6 @@ import {
   createSiwcPkcePair,
   createSiwcState,
   redactSiwcAuthorizeUrl,
-  SIWC_TERMINAL_REFRESH_ERROR_CODES,
   SiwcOAuthError,
 } from "./siwcOAuth.js";
 import {
@@ -28,29 +32,16 @@ import {
   readCodexAccountId,
   readCodexProfileEmail,
   readUsageSnapshotFromWhamPayload,
-  type SiwcCodexTokenSet,
 } from "./siwcCodexWire.js";
 import { closeCodexLoopbackServer, listenForCodexCallback } from "./siwcCodexLoopback.js";
 
 const log = createServiceLogger("siwcCodexUsage");
 
 const SIWC_CODEX_LOGIN_TIMEOUT_MS = 5 * 60_000;
-const SIWC_CODEX_REFRESH_LOCK_MAX_WAIT_MS = 45_000;
 /** Proactive refresh margin: codex access tokens live ~10 days; refresh a day before expiry. */
 const SIWC_CODEX_PROACTIVE_REFRESH_MARGIN_SECONDS = 24 * 60 * 60;
 const USAGE_PROBE_THROTTLE_MS = 60_000;
 const USAGE_PROBE_TIMEOUT_MS = 10_000;
-
-/** The token endpoint's JSON body rides in SiwcOAuthError.cause; its `error` code decides terminality. */
-function readOAuthErrorCode(error: SiwcOAuthError): string | null {
-  const detail = error.cause instanceof Error ? error.cause.message : "";
-  try {
-    const parsed = JSON.parse(detail) as { error?: unknown };
-    return typeof parsed.error === "string" ? parsed.error : null;
-  } catch {
-    return null;
-  }
-}
 
 export interface SiwcCodexUsageDependencies {
   /** Overrides the credential/config directory (tests); defaults to the app config dir. */
@@ -62,6 +53,7 @@ export interface SiwcCodexUsageDependencies {
 }
 
 interface PendingUsageLink {
+  epoch: string;
   state: string;
   codeVerifier: string;
   accountKey: string;
@@ -81,6 +73,7 @@ interface PendingUsageLink {
  * tokens never reach the inference path — SIWC remains the only model credential.
  */
 export class SiwcCodexUsageService {
+  private readonly lifecycle: SiwcUsageLifecycle;
   private readonly configDir: string;
   private readonly callbackPort: number;
   private readonly now: () => number;
@@ -88,6 +81,7 @@ export class SiwcCodexUsageService {
   private readonly tokenClient: ReturnType<typeof createSiwcCodexTokenClient>;
   private readonly jwksVerifier: ReturnType<typeof createSiwcJwksVerifier>;
   private pending: PendingUsageLink | null = null;
+  private exchanging: PendingUsageLink | null = null;
   private readonly lastProbeAt = new Map<string, number>();
 
   constructor(
@@ -97,6 +91,7 @@ export class SiwcCodexUsageService {
     },
   ) {
     this.configDir = dependencies.configDir ?? getAppConfigDir();
+    this.lifecycle = new SiwcUsageLifecycle(credentialService, this.configDir);
     this.callbackPort = dependencies.callbackPort ?? SIWC_CODEX_CALLBACK_PORT;
     this.now = dependencies.now ?? Date.now;
     this.fetchFn = dependencies.fetchFn ?? globalThis.fetch.bind(globalThis);
@@ -146,6 +141,14 @@ export class SiwcCodexUsageService {
     }
 
     const pkce = createSiwcPkcePair();
+    const epoch = await this.lifecycle.withLock(normalized, async () => {
+      if (
+        !(await this.lifecycle.isCurrent(normalized, await this.lifecycle.readEpoch(normalized)))
+      ) {
+        throw new Error("Usage account is signed out");
+      }
+      return this.lifecycle.invalidate(normalized);
+    });
     const state = createSiwcState();
     const loopback = await listenForCodexCallback(state, this.callbackPort);
     const authorizeUrl = buildSiwcCodexAuthorizeUrl({
@@ -155,6 +158,7 @@ export class SiwcCodexUsageService {
       state,
     });
     this.pending = {
+      epoch,
       state,
       codeVerifier: pkce.codeVerifier,
       accountKey: normalized,
@@ -178,6 +182,7 @@ export class SiwcCodexUsageService {
     if (!pending.isSettled()) return null;
     if (this.pending !== pending) return null;
     this.pending = null;
+    this.exchanging = pending;
     clearTimeout(pending.timeout);
     try {
       const result = await pending.completion;
@@ -209,37 +214,53 @@ export class SiwcCodexUsageService {
             "A different ChatGPT account was authorized for usage. Retry and pick the account shown in settings.",
         });
       }
+      const verifiedIdToken = exchanged.idToken;
       const keys = buildSiwcCodexCredentialKeys(pending.accountKey);
       const accountId = readCodexAccountId(exchanged.idToken);
       const nowSeconds = Math.floor(this.now() / 1000);
       // Refresh rotation safety: persist the replacement refresh token before the access token.
-      await this.writeCredentials({
-        ...(exchanged.refreshToken ? { [keys.refreshToken]: exchanged.refreshToken } : {}),
-        [keys.accessToken]: exchanged.accessToken,
-        [keys.idToken]: exchanged.idToken,
-        ...(accountId ? { [keys.accountId]: accountId } : {}),
-        [keys.accessExpiresAt]: String(
-          nowSeconds + (exchanged.expiresInSeconds ?? 10 * 24 * 60 * 60),
-        ),
-        ...(exchanged.earliestRefreshAt !== undefined
-          ? { [keys.earliestRefreshAt]: String(exchanged.earliestRefreshAt) }
-          : {}),
+      const committed = await this.lifecycle.withLock(pending.accountKey, async () => {
+        if (!(await this.lifecycle.isCurrent(pending.accountKey, pending.epoch))) return false;
+        await this.writeCredentials({
+          ...(exchanged.refreshToken ? { [keys.refreshToken]: exchanged.refreshToken } : {}),
+          [keys.accessToken]: exchanged.accessToken,
+          [keys.idToken]: verifiedIdToken,
+          ...(accountId ? { [keys.accountId]: accountId } : {}),
+          [keys.accessExpiresAt]: String(
+            nowSeconds + (exchanged.expiresInSeconds ?? 10 * 24 * 60 * 60),
+          ),
+          ...(exchanged.earliestRefreshAt !== undefined
+            ? { [keys.earliestRefreshAt]: String(exchanged.earliestRefreshAt) }
+            : {}),
+        });
+        return true;
       });
+      if (!committed) {
+        if (exchanged.refreshToken)
+          await this.tokenClient.revoke({ refreshToken: exchanged.refreshToken });
+        throw new Error("Usage link was superseded or the account signed out");
+      }
       log.info("ChatGPT plan usage grant linked", { accountKey: pending.accountKey });
       // Probe right away so the next status read already carries usage data.
       this.lastProbeAt.delete(pending.accountKey);
       await this.probeAccount(pending.accountKey);
       return { accountKey: pending.accountKey };
     } finally {
+      if (this.exchanging === pending) this.exchanging = null;
       await closeCodexLoopbackServer(pending.server);
     }
   }
 
   async cancelLink(): Promise<void> {
-    const pending = this.pending;
+    const pending = this.pending ?? this.exchanging;
     this.pending = null;
+    this.exchanging = null;
     if (!pending) return;
     clearTimeout(pending.timeout);
+    await this.lifecycle.withLock(pending.accountKey, async () => {
+      if ((await this.lifecycle.readEpoch(pending.accountKey)) === pending.epoch)
+        await this.lifecycle.invalidate(pending.accountKey);
+    });
     await closeCodexLoopbackServer(pending.server);
   }
 
@@ -265,10 +286,12 @@ export class SiwcCodexUsageService {
    * into a slot the user just signed out of.
    */
   async clearAccount(accountKey: string): Promise<void> {
-    if (this.pending?.accountKey === accountKey) await this.cancelLink();
+    if (this.pending?.accountKey === accountKey || this.exchanging?.accountKey === accountKey)
+      await this.cancelLink();
     await withFileLock(
       join(this.configDir, buildSiwcCodexRefreshLockFileName(accountKey)),
       async () => {
+        await this.lifecycle.invalidate(accountKey);
         const keys = buildSiwcCodexCredentialKeys(accountKey);
         const stored = await this.readCredentialStrings(keys.refreshToken);
         const refreshToken = stored[keys.refreshToken];
@@ -293,6 +316,7 @@ export class SiwcCodexUsageService {
 
   private async probeAccount(accountKey: string): Promise<void> {
     try {
+      const epoch = await this.lifecycle.readEpoch(accountKey);
       let accessToken = await this.ensureUsableAccessToken(accountKey);
       if (!accessToken) return;
       let payload = await this.fetchUsagePayload(accountKey, accessToken);
@@ -310,7 +334,10 @@ export class SiwcCodexUsageService {
         log.debug("ChatGPT plan usage probe returned no usable windows", { accountKey });
         return;
       }
-      this.dependencies.onSnapshot(accountKey, snapshot);
+      await this.lifecycle.withLock(accountKey, async () => {
+        if (await this.lifecycle.isCurrent(accountKey, epoch))
+          this.dependencies.onSnapshot(accountKey, snapshot);
+      });
     } catch (error) {
       log.debug("ChatGPT plan usage probe failed", {
         accountKey,
@@ -367,57 +394,18 @@ export class SiwcCodexUsageService {
    * Cross-process single-flight refresh (the file lock also queues in-process callers).
    * Persists the rotated refresh token before the access token.
    */
-  private async refreshAccessToken(accountKey: string): Promise<string | null> {
-    return withFileLock(
-      join(this.configDir, buildSiwcCodexRefreshLockFileName(accountKey)),
-      async () => {
-        const keys = buildSiwcCodexCredentialKeys(accountKey);
-        const stored = await this.readCredentialStrings(keys.refreshToken);
-        const refreshToken = stored[keys.refreshToken];
-        if (!refreshToken) return null;
-        let next: SiwcCodexTokenSet;
-        try {
-          next = await this.tokenClient.refresh({ refreshToken });
-        } catch (error) {
-          // A terminal OAuth error code (revoked/expired/reused refresh token — the same set the
-          // SIWC refresh path uses) can never succeed on retry; clearing the slot under the held
-          // lock lets the user link usage again instead of keeping a permanently failing grant
-          // that pins usageLinked=true. Non-terminal codes (for example invalid_request) and
-          // transport errors rethrow untouched.
-          if (
-            error instanceof SiwcOAuthError &&
-            SIWC_TERMINAL_REFRESH_ERROR_CODES.includes(readOAuthErrorCode(error) ?? "")
-          ) {
-            for (const key of [
-              keys.accessToken,
-              keys.refreshToken,
-              keys.idToken,
-              keys.accountId,
-              keys.accessExpiresAt,
-              keys.earliestRefreshAt,
-            ]) {
-              await this.credentialService.delete(key);
-            }
-            this.lastProbeAt.delete(accountKey);
-            return null;
-          }
-          throw error;
-        }
-        await this.writeCredentials({
-          ...(next.refreshToken ? { [keys.refreshToken]: next.refreshToken } : {}),
-          [keys.accessToken]: next.accessToken,
-          ...(next.idToken ? { [keys.idToken]: next.idToken } : {}),
-          [keys.accessExpiresAt]: String(
-            Math.floor(this.now() / 1000) + (next.expiresInSeconds ?? 10 * 24 * 60 * 60),
-          ),
-          ...(next.earliestRefreshAt !== undefined
-            ? { [keys.earliestRefreshAt]: String(next.earliestRefreshAt) }
-            : {}),
-        });
-        return next.accessToken;
+  private refreshAccessToken(accountKey: string): Promise<string | null> {
+    return refreshSiwcCodexAccessToken(accountKey, {
+      configDir: this.configDir,
+      tokenClient: this.tokenClient,
+      credentialService: this.credentialService,
+      readCredentials: (...keys) => this.readCredentialStrings(...keys),
+      writeCredentials: (entries) => this.writeCredentials(entries),
+      now: this.now,
+      onCleared: () => {
+        this.lastProbeAt.delete(accountKey);
       },
-      { lockMaxWaitMs: SIWC_CODEX_REFRESH_LOCK_MAX_WAIT_MS },
-    );
+    });
   }
 
   private async writeCredentials(entries: Record<string, string>): Promise<void> {

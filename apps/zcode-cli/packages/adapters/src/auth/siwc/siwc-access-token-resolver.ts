@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { isZCodeFileLockTimeoutError } from "@zcode/shared";
-import { withFileLock } from "@zcode/shared/node";
+import { withFileLock, RefreshSingleflight } from "@zcode/shared/node";
 import {
   buildSiwcAccountCredentialKeys,
   buildSiwcAccountRefreshLockFileName,
@@ -158,11 +158,12 @@ export function createSiwcAccessTokenResolver(options: SiwcAccessTokenResolverOp
   const tokenClient =
     options.tokenClient ??
     createSiwcTokenClient({ ...(options.fetchFn ? { fetchFn: options.fetchFn } : {}) });
-  const inFlight = new Map<string, Promise<SiwcAccessTokenResolution>>();
+  const inFlight = new RefreshSingleflight<SiwcAccessTokenResolution>();
 
   async function resolveLocked(
     input: SiwcAccessTokenResolverInput,
     accountKey: string,
+    markRefreshed: () => void,
   ): Promise<SiwcAccessTokenResolution> {
     input.abortSignal?.throwIfAborted();
     await migrateLegacySiwcCredentials(options.credentialStore);
@@ -191,6 +192,7 @@ export function createSiwcAccessTokenResolver(options: SiwcAccessTokenResolverOp
     ) {
       if (snapshot.accessToken) return toResolution(snapshot, input.providerId, accountKey);
     }
+    markRefreshed();
     snapshot = await refreshUnderLock(
       tokenClient,
       options,
@@ -216,11 +218,12 @@ export function createSiwcAccessTokenResolver(options: SiwcAccessTokenResolverOp
           `Not a per-account ChatGPT plan provider id: ${input.providerId}. Sign in again.`,
         );
       }
-      const existing = inFlight.get(accountKey);
-      if (existing) return existing;
-      const pending = resolveLocked(input, accountKey).finally(() => inFlight.delete(accountKey));
-      inFlight.set(accountKey, pending);
-      return pending;
+      return inFlight.resolve(
+        accountKey,
+        input.forceRefresh === true,
+        (mark) => resolveLocked({ ...input, abortSignal: undefined }, accountKey, mark),
+        input.abortSignal,
+      );
     },
   };
 }

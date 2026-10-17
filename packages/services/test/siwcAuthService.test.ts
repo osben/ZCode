@@ -639,6 +639,26 @@ describe("SiwcAuthService (host side, multi-account)", () => {
     expect(fixture.credentials.dump()[ACCOUNT_KEYS.accessToken]).toBe("legacy-access");
   });
 
+  it("performs one forced refresh after an overlapping cached Host read", async () => {
+    const fixture = await createFixture();
+    await fixture.credentials.save(ACCOUNT_KEYS.clientId, ISSUED_CLIENT_ID);
+    await fixture.credentials.save(ACCOUNT_KEYS.accessToken, "host-access-1");
+    await fixture.credentials.save(ACCOUNT_KEYS.refreshToken, "host-refresh-1");
+    await fixture.credentials.save(ACCOUNT_KEYS.scopes, FULL_SCOPE);
+    await fixture.credentials.save(ACCOUNT_KEYS.accessExpiresAt, String(NOW_SECONDS + 3600));
+    const normal = fixture.service.resolveAccessToken(ACCOUNT_KEY);
+    const forced = fixture.service.resolveAccessToken(ACCOUNT_KEY, { forceRefresh: true });
+    const secondForced = fixture.service.resolveAccessToken(ACCOUNT_KEY, { forceRefresh: true });
+    expect(await Promise.all([normal, forced, secondForced])).toEqual([
+      "host-access-1",
+      "host-access-2",
+      "host-access-2",
+    ]);
+    expect(fixture.backend.refreshCalls.filter((token) => token === "host-refresh-1")).toHaveLength(
+      1,
+    );
+  });
+
   it("resolves a time-valid access token without refresh and rotates near expiry", async () => {
     const fixture = await createFixture();
     fixture.credentials.save(ACCOUNT_KEYS.clientId, ISSUED_CLIENT_ID);

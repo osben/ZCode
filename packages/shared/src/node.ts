@@ -34,3 +34,4 @@ export {
   type NodeSelfResourceSampler,
   type NodeSelfResourceSamplerOptions,
 } from "./node/nodeSelfResourceTelemetry.js";
+export { RefreshSingleflight } from "./node/refreshSingleflight.js";

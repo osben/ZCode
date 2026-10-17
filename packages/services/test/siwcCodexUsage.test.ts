@@ -104,6 +104,10 @@ interface WhamResponse {
 }
 
 interface FakeBackendOptions {
+  whamGate?: Promise<void>;
+  whamStarted?: () => void;
+  exchangeGate?: Promise<void>;
+  exchangeStarted?: () => void;
   key?: TestKey;
   idTokenEmail?: string;
   whamResponses?: WhamResponse[];
@@ -148,6 +152,8 @@ function createFakeBackend(options: FakeBackendOptions & { key: TestKey }) {
       const body = Object.fromEntries(new URLSearchParams(String(init?.body ?? "")));
       if (body.grant_type === "authorization_code") {
         state.exchangeCodes.push(body.code ?? "");
+        options.exchangeStarted?.();
+        await options.exchangeGate;
         state.authorizationBodies.push(body);
         return Response.json({
           access_token: "codex-access-1",
@@ -185,6 +191,8 @@ function createFakeBackend(options: FakeBackendOptions & { key: TestKey }) {
       if (options.whamFetchThrows) throw new Error("network down");
       const index = Math.min(state.whamCalls, (options.whamResponses?.length ?? 1) - 1);
       state.whamCalls += 1;
+      options.whamStarted?.();
+      await options.whamGate;
       state.whamHeaders.push({
         authorization: String(new Headers(init?.headers).get("authorization") ?? ""),
         userAgent: String(new Headers(init?.headers).get("user-agent") ?? ""),
@@ -241,6 +249,67 @@ async function createService(options: FakeBackendOptions & { seedAccount?: boole
 }
 
 describe("SiwcCodexUsageService", () => {
+  it("does not revive a usage grant when logout wins a delayed link", async () => {
+    let release!: () => void;
+    let started!: () => void;
+    const exchangeGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const exchangeStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const { service, credentials, backend } = await createService({
+      exchangeGate,
+      exchangeStarted: started,
+    });
+    const start = await service.startUsageLink(ACCOUNT_KEY);
+    const redirect = new URL(new URL(start.authorizeUrl).searchParams.get("redirect_uri")!);
+    redirect.searchParams.set("state", start.state);
+    redirect.searchParams.set("code", "delayed-test-code");
+    await fetch(redirect);
+    const link = service.pollUsageLink();
+    const rejected = expect(link).rejects.toThrow(/superseded|signed out/);
+    await exchangeStarted;
+    await service.logout(ACCOUNT_KEY);
+    release();
+    await rejected;
+    expect(credentials.dump()[CODEX_KEYS.accessToken]).toBeUndefined();
+    expect(credentials.dump()[CODEX_KEYS.refreshToken]).toBeUndefined();
+    expect(backend.state.revokedTokens).toContain("codex-refresh-1");
+    expect((await service.getStatus()).accounts).toHaveLength(0);
+  });
+
+  it("discards a delayed usage snapshot after logout and signing in to the same account", async () => {
+    let release!: () => void;
+    let started!: () => void;
+    const whamGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const whamStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const { service, credentials } = await createService({ whamGate, whamStarted: started });
+    await credentials.save(CODEX_KEYS.accessToken, "codex-access-1");
+    await credentials.save(CODEX_KEYS.refreshToken, "codex-refresh-1");
+    await credentials.save(CODEX_KEYS.accessExpiresAt, String(NOW_SECONDS + 3600));
+    const oldStatus = service.getStatus();
+    await whamStarted;
+    await service.logout(ACCOUNT_KEY);
+    const slotKeys = buildSiwcAccountCredentialKeys(ACCOUNT_KEY);
+    await credentials.save(slotKeys.accessToken, "siwc-new-login");
+    await credentials.save(slotKeys.userInfo, JSON.stringify({ sub: SUB, email: ACCOUNT_EMAIL }));
+    await credentials.save(
+      SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY,
+      JSON.stringify([{ accountKey: ACCOUNT_KEY, sub: SUB, email: ACCOUNT_EMAIL, addedAt: "new" }]),
+    );
+    release();
+    await oldStatus;
+    const current = await service.getStatus();
+    expect(current.accounts).toHaveLength(1);
+    expect(current.accounts[0]?.usage).toBeUndefined();
+    expect(credentials.dump()[CODEX_KEYS.accessToken]).toBeUndefined();
+  });
+
   it("shapes the codex authorize URL with the pinned client, prompt=login, and login_hint", async () => {
     const { service } = await createService();
     const start = await service.startUsageLink(ACCOUNT_KEY);

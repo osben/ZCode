@@ -4,7 +4,7 @@ import { createServer, type Server } from "node:http";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { isZCodeFileLockTimeoutError } from "@zcode/shared";
-import { withFileLock } from "@zcode/shared/node";
+import { withFileLock, RefreshSingleflight } from "@zcode/shared/node";
 import type { ICredentialService } from "../../credential/credential.js";
 import { createServiceLogger } from "../../logger/serviceLogger.js";
 import { getAppConfigDir } from "../../paths.js";
@@ -117,7 +117,7 @@ export class SiwcAuthService {
   private pending: SiwcPendingLogin | null = null;
   private readonly now: () => number;
   private readonly fetchFn: typeof globalThis.fetch;
-  private readonly inFlightToken = new Map<string, Promise<{ accessToken: string }>>();
+  private readonly inFlightToken = new RefreshSingleflight<{ accessToken: string }>();
   /** Latest passively captured plan usage per account; in-memory only, never persisted. */
   private readonly usageByAccount = new Map<string, SiwcPlanUsageSnapshot>();
 
@@ -421,14 +421,11 @@ export class SiwcAuthService {
     accountKey: string,
     options: { forceRefresh?: boolean } = {},
   ): Promise<string> {
-    const existing = this.inFlightToken.get(accountKey);
-    if (existing) return (await existing).accessToken;
-    const pending = this.resolveAccessTokenLocked(
-      accountKey,
-      options.forceRefresh === true,
-    ).finally(() => this.inFlightToken.delete(accountKey));
-    this.inFlightToken.set(accountKey, pending);
-    return (await pending).accessToken;
+    return (
+      await this.inFlightToken.resolve(accountKey, options.forceRefresh === true, (mark) =>
+        this.resolveAccessTokenLocked(accountKey, options.forceRefresh === true, mark),
+      )
+    ).accessToken;
   }
 
   /**
@@ -451,6 +448,7 @@ export class SiwcAuthService {
   private async resolveAccessTokenLocked(
     accountKey: string,
     forceRefresh: boolean,
+    markRefreshed: () => void,
   ): Promise<{ accessToken: string }> {
     await this.migrateLegacyCredentials();
     let state = await this.readTokenState(accountKey);
@@ -460,6 +458,7 @@ export class SiwcAuthService {
     if (!forceRefresh && state.accessToken && isAccessUsable(state, this.now())) {
       return { accessToken: state.accessToken };
     }
+    markRefreshed();
     state = await this.refreshUnderLock(accountKey, state);
     if (!state.accessToken || !isAccessUsable(state, this.now())) {
       throw new Error("ChatGPT plan token refresh did not produce a usable token; sign in again.");
