@@ -24,6 +24,7 @@ import {
   type ModelSelectionConfiguredDefaultSource,
   type ProviderSettingsConnectivityTester,
 } from "./providerFacadeServices.js";
+import type { ProviderSettingsAcpAgentsBridge } from "./acpAgentsContract.js";
 
 export interface ProviderRuntimeOptions extends ProviderConfigRuntimeOptions {
   readonly accountSource?: RefreshableProviderSource<AccountProviderConfigSnapshot>;
@@ -31,6 +32,7 @@ export interface ProviderRuntimeOptions extends ProviderConfigRuntimeOptions {
     source: ProviderSource<ProviderConfigSnapshot>,
   ) => ProviderSource<ProviderConfigSnapshot>;
   readonly testConnectivity?: ProviderSettingsConnectivityTester;
+  readonly acpAgents?: ProviderSettingsAcpAgentsBridge;
 }
 
 export interface ProviderRuntimeDependencies {
@@ -45,6 +47,7 @@ export interface ProviderRuntimeDependencies {
   ) => ProviderSource<ProviderConfigSnapshot>;
   readonly disposeAccountSource?: () => void;
   readonly testConnectivity?: ProviderSettingsConnectivityTester;
+  readonly acpAgents?: ProviderSettingsAcpAgentsBridge;
   readonly modelSelectionConfiguredDefaultSource?: ModelSelectionConfiguredDefaultSource;
   readonly disposeModelSelectionConfiguredDefaultSource?: () => void;
 }
@@ -120,6 +123,7 @@ export class ProviderRuntime {
       settingsFacade,
       ensureReady,
       dependencies.testConnectivity,
+      dependencies.acpAgents,
     );
     this.#modelSelectionRuntime = createModelSelectionService(
       createNodeModelSelectionFacade(this.registryService),
@@ -209,7 +213,8 @@ function createSettingsMutationTarget(
 }
 
 export function createProviderRuntime(options: ProviderRuntimeOptions): ProviderRuntime {
-  const { accountSource, testConnectivity, wrapConfigSource, ...configRuntimeOptions } = options;
+  const { accountSource, testConnectivity, wrapConfigSource, acpAgents, ...configRuntimeOptions } =
+    options;
   const configRuntime = createProviderConfigRuntime(configRuntimeOptions);
   const modelSelectionConfiguredDefaultSource = new NodeModelSelectionConfigRepository({
     personalRepository: configRuntime.personalRepository,
@@ -219,6 +224,7 @@ export function createProviderRuntime(options: ProviderRuntimeOptions): Provider
     accountSource,
     testConnectivity,
     ...(wrapConfigSource ? { wrapConfigSource } : {}),
+    ...(acpAgents ? { acpAgents } : {}),
     modelSelectionConfiguredDefaultSource,
     disposeModelSelectionConfiguredDefaultSource: () =>
       modelSelectionConfiguredDefaultSource.dispose(),

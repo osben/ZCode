@@ -48,6 +48,7 @@ export interface ProviderRegistryFacadeSource {
 export interface ProviderSettingsMutationTarget {
   createPersonalProvider(input?: {
     readonly templateId?: ProviderTemplateId;
+    readonly providerId?: ProviderId;
     readonly providerName?: string;
     readonly locale?: ProviderTemplateLocale;
     readonly initialConfig?: ProviderConfig;
@@ -303,6 +304,7 @@ export class ProviderSettingsFacade {
 
   createPersonalProvider(input?: {
     readonly templateId?: ProviderTemplateId;
+    readonly providerId?: ProviderId;
     readonly providerName?: string;
     readonly locale?: ProviderTemplateLocale;
     readonly initialConfig?: ProviderConfigObject;
@@ -310,6 +312,7 @@ export class ProviderSettingsFacade {
     return this.#mutateWithResult("create-provider", (target) =>
       target.createPersonalProvider({
         ...(input?.templateId ? { templateId: input.templateId } : {}),
+        ...(input?.providerId !== undefined ? { providerId: input.providerId } : {}),
         ...(input?.providerName ? { providerName: input.providerName } : {}),
         ...(input?.locale ? { locale: input.locale } : {}),
         ...(input?.initialConfig

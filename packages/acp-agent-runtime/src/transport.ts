@@ -12,6 +12,8 @@ import type { AcpFrameDirection, AcpFrameObserver, AcpRawFrame } from "./types.j
 
 export const DEFAULT_MAX_FRAME_BYTES = 2 * 1024 * 1024;
 export const DEFAULT_STDERR_TAIL_CHARS = 64 * 1024;
+/** Longest NDJSON line (in bytes) a frame observer receives before truncation. */
+export const DEFAULT_MAX_OBSERVED_FRAME_CHARS = 16 * 1024;
 
 /** Observed raw frames above this size are truncated (spec: 16 KiB cap). */
 export const FRAME_OBSERVER_MAX_BYTES = 16 * 1024;

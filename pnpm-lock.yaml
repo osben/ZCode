@@ -1289,6 +1289,9 @@ importers:
       '@larksuiteoapi/node-sdk':
         specifier: 1.75.0
         version: 1.75.0
+      '@zcode/acp-agent-runtime':
+        specifier: workspace:*
+        version: link:../acp-agent-runtime
       '@zcode/provider':
         specifier: workspace:*
         version: link:../provider

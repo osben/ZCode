@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  AcpAgentAccessConfig,
   ModelConfig,
   ModelConfigRules,
   ModelOptionSpecsConfig,
@@ -819,6 +820,49 @@ describe("ProviderConfigService", () => {
       modelOrder: [],
     });
     expect(personal.current.providerOrder).toEqual(["new-provider", "new-provider-3"]);
+  });
+
+  it("creates a personal provider with an explicit provider id and rejects duplicates", async () => {
+    const zcodeBuiltin = new MutableSource(layerSnapshot("zcodeBuiltin-1"));
+    const personal = new MemoryPersonalRepository(layerSnapshot("personal-1"));
+    const service = new ProviderConfigService({
+      zcodeBuiltinSource: zcodeBuiltin,
+      personalRepository: personal,
+    });
+
+    const created = await service.createPersonalProvider({
+      providerId: "acp:opencode",
+      providerName: "opencode (ACP)",
+      initialConfig: new ProviderConfig({
+        access: new AcpAgentAccessConfig({
+          agentId: "opencode",
+          command: "opencode",
+          args: ["acp"],
+        }),
+      }),
+    });
+
+    expect(created.providerId).toBe("acp:opencode");
+    expect(personal.current.providers.getRule("acp:opencode")?.providerName).toBe("opencode (ACP)");
+    expect(personal.current.providers.get("acp:opencode")?.toJSON()).toMatchObject({
+      group: "standard-personal",
+      access: { type: "acp-agent", agentId: "opencode", command: "opencode", args: ["acp"] },
+    });
+
+    await expect(service.createPersonalProvider({ providerId: "acp:opencode" })).rejects.toThrow();
+  });
+
+  it("rejects an explicitly supplied invalid provider id instead of generating one", async () => {
+    const zcodeBuiltin = new MutableSource(layerSnapshot("zcodeBuiltin-1"));
+    const personal = new MemoryPersonalRepository(layerSnapshot("personal-1"));
+    const service = new ProviderConfigService({
+      zcodeBuiltinSource: zcodeBuiltin,
+      personalRepository: personal,
+    });
+
+    await expect(service.createPersonalProvider({ providerId: "   " })).rejects.toThrow();
+    await expect(service.createPersonalProvider({ providerId: "bad id" })).rejects.toThrow();
+    expect(personal.current.providers.keys()).toEqual([]);
   });
 
   it("使用调用方提供的 Template 名称种子并在原子创建中去重", async () => {

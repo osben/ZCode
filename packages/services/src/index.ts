@@ -9,6 +9,15 @@ export {
   type ProviderSettingsProviderView,
   type ProviderSettingsView,
 } from "./model-provider/providerFacadeServices.js";
+export type {
+  AcpAgentDetectionResult,
+  AcpAgentLoginResult,
+  AcpAgentStatusReport,
+  AcpAgentSummary,
+  AcpAgentTestInput,
+  AcpAgentTestResult,
+  AcpFrameEvent,
+} from "./model-provider/acpAgentsContract.js";
 export {
   createAccountRequestAuthService,
   type IAccountRequestAuthService,
