@@ -110,9 +110,9 @@ function detectionCacheKey(options: DetectAcpAgentsOptions): string {
   }
   return JSON.stringify([
     env.PATH ?? "",
+    env.PATHEXT ?? "",
     options.extraPathEntries ?? [],
     options.probeTimeoutMs ?? null,
-    probeId,
   ]);
 }
 
