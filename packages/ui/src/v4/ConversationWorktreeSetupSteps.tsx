@@ -1,20 +1,21 @@
 /**
  * Pre-session worktree setup rows (specs/composer-worktree-setup-steps.md). Rendered from the
- * pipeline store in the draft empty-state slot while a pipeline exists for the active workspace:
- * creating → ready/existing/failed steps, the queued prompt preview, the orphan note, and
- * Retry/Discard on failure. Rows disappear when the pipeline settles (consumed/discarded) and the
- * regular draft greeting takes the slot back.
+ * Host preparation state in the timeline header while the session is preparing, plus pipeline
+ * details for creating → ready/existing/failed steps. After activation, the session-index
+ * worktree fact keeps a compact created-worktree notice in the same first-in-history position.
  *
  * Reconcile: on mount, a `creating` entry with no live runner in this process (remote reconnect /
  * stale state) is settled via listWorktrees + branch lookup (ready with the found path, else failed).
  */
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, GitBranch, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
 import { cn } from "@/components/lib/utils.js";
 import { getErrorMessage } from "@/lib/errorMessage.js";
+import { logger } from "@/logger.js";
+import { toast } from "@/components/ui/toast.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
+import { useWorkspaceServicesResolution } from "@/hooks/useWorkspaceServices.js";
 import { resolveWorkspaceKey } from "@zcode/shared";
 import {
   selectComposerWorktreePipeline,
@@ -46,31 +47,79 @@ function stepGlyphClassName(entry: ComposerWorktreePipelineEntry): string {
   return "text-foreground-subtle";
 }
 
+const setupCardClassName =
+  "mx-4 my-3 flex w-auto max-w-2xl flex-col items-start gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-ui-sm text-foreground";
+
+/** Persistent first-in-history summary after Host activation clears the preparation marker. */
+export function ConversationWorktreeCreatedNotice({
+  branchName,
+  path,
+}: {
+  branchName?: string;
+  path: string;
+}) {
+  const { intl } = useZCodeIntl();
+
+  return (
+    <div
+      data-worktree-created="true"
+      className="mx-4 my-3 flex w-auto max-w-2xl items-start gap-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-ui-sm text-foreground"
+      role="status"
+    >
+      <Check className="mt-0.5 size-3.5 shrink-0 text-success" />
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <span className="font-medium">{intl.formatMessage({ id: "worktreeSetup.created" })}</span>
+        {branchName ? (
+          <span className="text-ui-caption text-foreground-subtle">{branchName}</span>
+        ) : null}
+        <span className="break-all text-ui-caption text-foreground-subtle">{path}</span>
+      </div>
+    </div>
+  );
+}
+
 export function ConversationWorktreeSetupSteps({
   workspacePath,
   workspaceIdentity,
+  remoteSessionId,
   sessionId,
   preparation,
   onRetryPreparation,
+  onCancelPreparation,
   onPreparationFailed,
   onSyncPreparation,
 }: {
   workspacePath: string;
   workspaceIdentity?: string;
+  remoteSessionId?: string;
   sessionId: string;
   preparation: {
     branchName: string;
     targetPath: string;
+    baseBranch?: string;
     status: "preparing" | "failed" | "cancelled";
     failureMessage?: string;
+    attemptId?: string;
   };
-  onRetryPreparation: () => Promise<void>;
-  onPreparationFailed: (sessionId: string, failureMessage: string) => Promise<void>;
+  onRetryPreparation: (expectedAttemptId?: string) => Promise<string | void>;
+  onCancelPreparation?: (expectedAttemptId?: string) => Promise<void>;
+  onPreparationFailed: (
+    sessionId: string,
+    failureMessage: string,
+    attemptId?: string,
+  ) => Promise<void>;
   /** Realign the Host preparation marker when reconciliation finds the worktree at another path. */
   onSyncPreparation?: ComposerWorktreePreparationSync;
 }) {
   const { intl } = useZCodeIntl();
-  const baseServices = useBaseWorkspaceServices();
+  const actionInFlight = useRef(false);
+  const [actionPending, setActionPending] = useState(false);
+  const resolution = useWorkspaceServicesResolution(
+    workspacePath,
+    remoteSessionId,
+    workspaceIdentity,
+  );
+  const baseServices = resolution.services;
   const workspaceKey = resolveWorkspaceKey({
     workspacePath,
     workspaceIdentity,
@@ -81,7 +130,7 @@ export function ConversationWorktreeSetupSteps({
   const entry = pipelineEntry?.sessionId === sessionId ? pipelineEntry : null;
 
   const settleStaleCreating = useCallback(() => {
-    if (!entry || entry.status !== "creating" || !entry.params) return;
+    if (!resolution.rpcReady || !entry || entry.status !== "creating" || !entry.params) return;
     if (isComposerWorktreePipelineInFlight(workspaceKey, sessionId)) return;
     void reconcileCreatingComposerWorktreePipeline({
       gitService: baseServices.gitService,
@@ -90,17 +139,31 @@ export function ConversationWorktreeSetupSteps({
       branchName: entry.params.branchName,
       formatMessage: (id, values) => intl.formatMessage({ id }, values),
       ...(onSyncPreparation ? { syncPreparedWorktree: onSyncPreparation } : {}),
-    }).then(async () => {
-      const settled = selectComposerWorktreePipeline(
-        useComposerWorktreePipelineStore.getState(),
-        workspaceKey,
-        sessionId,
-      );
-      if (settled?.sessionId === sessionId && settled.status === "failed") {
-        await onPreparationFailed(sessionId, settled.failureMessage ?? "Worktree creation failed");
-      }
-    });
+    })
+      .then(async () => {
+        const settled = selectComposerWorktreePipeline(
+          useComposerWorktreePipelineStore.getState(),
+          workspaceKey,
+          sessionId,
+        );
+        if (
+          settled?.sessionId === sessionId &&
+          settled.attemptId === entry.attemptId &&
+          settled.status === "failed"
+        ) {
+          await onPreparationFailed(
+            sessionId,
+            settled.failureMessage ?? "Worktree creation failed",
+            settled.params?.attemptId,
+          );
+        }
+      })
+      .catch((error: unknown) => {
+        logger.warn("[WorktreePipeline] Could not persist reconciliation failure", error);
+        toast(getErrorMessage(error));
+      });
   }, [
+    resolution.rpcReady,
     baseServices.gitService,
     entry,
     intl,
@@ -111,15 +174,15 @@ export function ConversationWorktreeSetupSteps({
   ]);
 
   useEffect(() => {
-    if (!entry && preparation.status !== "cancelled") {
-      restoreComposerWorktreePipelineFromPreparation({
-        workspaceKey,
-        workspacePath,
-        sessionId,
-        preparation,
-      });
-      return;
-    }
+    // Authoritative Host preparation reconciliation: creates the missing renderer entry and also
+    // replaces a stale local attempt, fails it for the same attempt, or discards it on Host
+    // cancellation. Never resurrects consumed/discarded entries and never starts Git itself.
+    restoreComposerWorktreePipelineFromPreparation({
+      workspaceKey,
+      workspacePath,
+      sessionId,
+      preparation,
+    });
     settleStaleCreating();
   }, [
     baseServices.gitService,
@@ -138,7 +201,7 @@ export function ConversationWorktreeSetupSteps({
       <div
         data-worktree-setup-steps="true"
         data-worktree-session-id={sessionId}
-        className="flex w-full max-w-2xl items-center gap-2 px-4 text-ui-sm text-foreground"
+        className={cn(setupCardClassName, "flex-row")}
         role="status"
       >
         <Loader2 className="size-3.5 shrink-0 animate-spin text-foreground-subtle" />
@@ -153,7 +216,7 @@ export function ConversationWorktreeSetupSteps({
       <div
         data-worktree-setup-steps="true"
         data-worktree-session-id={sessionId}
-        className="w-full max-w-2xl px-4 text-ui-sm text-destructive"
+        className={cn(setupCardClassName, "text-destructive")}
         role="alert"
       >
         {intl.formatMessage(
@@ -171,10 +234,10 @@ export function ConversationWorktreeSetupSteps({
   }
 
   return (
-    <div
-      data-worktree-setup-steps="true"
-      className="flex w-full max-w-2xl flex-col items-start gap-2 px-4 text-ui-sm text-foreground"
-    >
+    <div data-worktree-setup-steps="true" className={setupCardClassName}>
+      {!resolution.rpcReady ? (
+        <p role="status">{intl.formatMessage({ id: "worktreeSetup.connectionUnavailable" })}</p>
+      ) : null}
       {entry.status === "creating" ? (
         <div className="flex items-center gap-2" role="status">
           <Loader2 className={cn("size-3.5 shrink-0 animate-spin", stepGlyphClassName(entry))} />
@@ -214,11 +277,25 @@ export function ConversationWorktreeSetupSteps({
                 <Button
                   variant="outline"
                   size="sm"
+                  disabled={!resolution.rpcReady || actionPending}
                   onClick={() => {
+                    if (actionInFlight.current) return;
+                    actionInFlight.current = true;
+                    setActionPending(true);
                     void (async () => {
+                      let ownerAttemptId = entry.attemptId;
                       try {
-                        await onRetryPreparation();
+                        const attemptId = await onRetryPreparation(entry.params?.attemptId);
+                        const current = selectComposerWorktreePipeline(
+                          useComposerWorktreePipelineStore.getState(),
+                          workspaceKey,
+                          sessionId,
+                        );
+                        if (current?.attemptId !== ownerAttemptId || current.status !== "failed")
+                          return;
+                        ownerAttemptId = attemptId || ownerAttemptId;
                         const outcome = await retryComposerWorktreePipeline({
+                          ...(attemptId ? { attemptId } : {}),
                           gitService: baseServices.gitService,
                           workspaceKey,
                           sessionId,
@@ -226,18 +303,32 @@ export function ConversationWorktreeSetupSteps({
                           ...(onSyncPreparation ? { syncPreparedWorktree: onSyncPreparation } : {}),
                         });
                         if (outcome === "failed") {
-                          const failureMessage =
-                            selectComposerWorktreePipeline(
-                              useComposerWorktreePipelineStore.getState(),
-                              workspaceKey,
-                              sessionId,
-                            )?.failureMessage ?? "Worktree creation failed";
-                          await onPreparationFailed(sessionId, failureMessage);
+                          const failed = selectComposerWorktreePipeline(
+                            useComposerWorktreePipelineStore.getState(),
+                            workspaceKey,
+                            sessionId,
+                          );
+                          if (failed?.attemptId !== ownerAttemptId || failed.status !== "failed")
+                            return;
+                          await onPreparationFailed(
+                            sessionId,
+                            failed.failureMessage ?? "Worktree creation failed",
+                            failed.params?.attemptId,
+                          );
                         }
                       } catch (error) {
                         useComposerWorktreePipelineStore
                           .getState()
-                          .markFailed(workspaceKey, getErrorMessage(error), sessionId);
+                          .markFailed(
+                            workspaceKey,
+                            getErrorMessage(error),
+                            sessionId,
+                            ownerAttemptId,
+                          );
+                        toast(getErrorMessage(error));
+                      } finally {
+                        actionInFlight.current = false;
+                        setActionPending(false);
                       }
                     })();
                   }}
@@ -247,8 +338,34 @@ export function ConversationWorktreeSetupSteps({
                 <Button
                   variant="outline"
                   size="sm"
+                  disabled={!resolution.rpcReady || actionPending}
                   onClick={() => {
-                    useComposerWorktreePipelineStore.getState().discard(workspaceKey, sessionId);
+                    if (actionInFlight.current) return;
+                    actionInFlight.current = true;
+                    setActionPending(true);
+                    void (async () => {
+                      try {
+                        if (!onCancelPreparation)
+                          throw new Error("Preparation cancellation is unavailable");
+                        await onCancelPreparation(entry.params?.attemptId);
+                        useComposerWorktreePipelineStore
+                          .getState()
+                          .discard(workspaceKey, sessionId, entry.attemptId);
+                      } catch (error) {
+                        useComposerWorktreePipelineStore
+                          .getState()
+                          .markFailed(
+                            workspaceKey,
+                            getErrorMessage(error),
+                            sessionId,
+                            entry.attemptId,
+                          );
+                        toast(getErrorMessage(error));
+                      } finally {
+                        actionInFlight.current = false;
+                        setActionPending(false);
+                      }
+                    })();
                   }}
                 >
                   {intl.formatMessage({ id: "worktreeSetup.discard" })}

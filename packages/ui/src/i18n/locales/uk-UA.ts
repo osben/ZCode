@@ -1,5 +1,19 @@
 /** Український переклад */
 const ukUA: Record<string, string> = {
+  "sessionManager.openUnavailable":
+    "Робочий простір сесії недоступний. Відновіть з’єднання або відкрийте проєкт.",
+  "sessionManager.pinnedArchived": "Закріплення не фільтрує архівні сесії.",
+  "composerRecovery.title": "Ненадіслане повідомлення збережено",
+  "composerRecovery.storageUnavailable":
+    "Не вдалося зберегти стан відновлення. Повідомлення не надіслано; звільніть сховище браузера та повторіть спробу.",
+  "worktreeSetup.connectionUnavailable":
+    "Відновіть з’єднання з Host цього проєкту, щоб продовжити підготовку worktree.",
+  "worktreeSetup.created": "Worktree створено",
+  "composerRecovery.editorOccupied": "Надішліть або очистьте поточну чернетку перед відновленням.",
+  "composerRecovery.reattach": "Прикріпіть відсутні файли знову або явно видаліть їх.",
+  "composerRecovery.restore": "Відновити",
+  "composerRecovery.removeMissing": "Видалити відсутні файли",
+  "composerRecovery.dismiss": "Видалити збережене повідомлення",
   "startPlan.recommendation.subagentDescription":
     "У вашому Start Plan є доступна квота для {model}. Перемкнути модель цього субагента на Start Plan?",
   "startPlan.recommendation.preferenceSaveFailed":
@@ -590,6 +604,8 @@ const ukUA: Record<string, string> = {
   "commandCenter.worktree.error.target-path-exists": "Цільовий шлях уже існує.",
   "commandCenter.worktree.error.target-path-exists.existing":
     "Worktree для гілки «{branchName}» уже існує: {path}.",
+  "commandCenter.worktree.error.worktreeMissing":
+    "Зареєстрований worktree для «{branchName}» у {path} відсутній або непридатний. Повторіть після відновлення або очищення.",
   "commandCenter.worktree.error.not-a-repository": "Цей проєкт не є Git-репозиторієм.",
   "commandCenter.worktree.error.git-unavailable": "Git недоступний у цьому середовищі.",
   "commandCenter.worktree.error.custom-location-invalid":
@@ -4854,6 +4870,8 @@ const ukUA: Record<string, string> = {
   "chat.empty.worktree.newWorktree": "Новий worktree",
   "chat.empty.worktree.creating": "Створення worktree…",
   "worktreeSetup.reconcile.staleCreating": "Налаштування не завершено (з'єднання змінилося)",
+  "worktreeSetup.reconcile.worktreeMissing":
+    "Зареєстрований worktree для {branchName} у {path} відсутній або непридатний.",
   "worktreeSetup.reconcile.markerSyncUnavailable":
     "Налаштування завершилося в іншому каталозі worktree, і запис сесії не вдалося оновити",
   "git.branchSwitcher.appliesOnSend": "Застосується під час надсилання першого повідомлення",

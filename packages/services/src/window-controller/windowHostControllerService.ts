@@ -104,6 +104,7 @@ function sessionOverlay(
     ...(summary.executionWorktreeMissing !== undefined
       ? { executionWorktreeMissing: summary.executionWorktreeMissing }
       : {}),
+    ...(summary.worktreePreparation ? { worktreePreparation: summary.worktreePreparation } : {}),
     ...(summary.sideChatCount !== undefined ? { sideChatCount: summary.sideChatCount } : {}),
     ...(summary.subagentCount !== undefined ? { subagentCount: summary.subagentCount } : {}),
     ...(summary.runningSubagentCount !== undefined
@@ -669,6 +670,7 @@ export function createWindowHostControllerRuntime(options: {
           ...(row.executionWorktreeMissing !== undefined
             ? { executionWorktreeMissing: row.executionWorktreeMissing }
             : {}),
+          ...(row.worktreePreparation ? { worktreePreparation: row.worktreePreparation } : {}),
           ...(row.activity ? { activity: row.activity } : {}),
           ...(row.searchSnippets ? { searchSnippets: row.searchSnippets } : {}),
         }));

@@ -18,6 +18,8 @@ export type ComposerWorktreePipelineStatus =
 
 /** Creation facts frozen at queue time; Retry re-runs with exactly these. */
 export interface ComposerWorktreeCreationParams {
+  submissionId?: string;
+  attemptId?: string;
   workspacePath: string;
   branchName: string;
   targetPath: string;
@@ -76,8 +78,8 @@ interface ComposerWorktreePipelineState {
     attemptId?: string,
   ) => void;
   /** Terminal success: the queued/re-committed send was accepted into a session. */
-  consume: (workspaceKey: string, sessionId?: string) => void;
-  discard: (workspaceKey: string, sessionId?: string) => void;
+  consume: (workspaceKey: string, sessionId?: string, attemptId?: string) => void;
+  discard: (workspaceKey: string, sessionId?: string, attemptId?: string) => void;
   /** Queue-time validation failure: no creation params, no Retry — fix the cause (settings/location) and send again. */
   markValidationFailed: (workspaceKey: string, failureMessage: string) => void;
   /** Withdraw the queued send; the in-flight result lands with an orphan note. */
@@ -118,6 +120,8 @@ function patchEntry(
   const current = workspace.entriesBySessionKey[key];
   if (
     !current ||
+    current.status === "discarded" ||
+    current.status === "consumed" ||
     (sessionId && current.sessionId !== sessionId) ||
     (attemptId && current.attemptId !== attemptId)
   ) {
@@ -140,7 +144,7 @@ function patchEntry(
 export const useComposerWorktreePipelineStore = create<ComposerWorktreePipelineState>((set) => ({
   pipelineByWorkspaceKey: {},
   startPipeline: (workspaceKey, entry, { activate = true } = {}) => {
-    const attemptId = `worktree-attempt-${++nextAttemptId}`;
+    const attemptId = entry.params?.attemptId ?? `worktree-attempt-${++nextAttemptId}`;
     set((state) => {
       const workspace = state.pipelineByWorkspaceKey[workspaceKey] ?? {
         activeSessionKey: null,
@@ -204,17 +208,17 @@ export const useComposerWorktreePipelineStore = create<ComposerWorktreePipelineS
         },
       };
     }),
-  consume: (workspaceKey, sessionId) =>
+  consume: (workspaceKey, sessionId, attemptId) =>
     set((state) =>
-      patchEntry(state, workspaceKey, sessionId, undefined, {
+      patchEntry(state, workspaceKey, sessionId, attemptId, {
         status: "consumed",
         queuedPromptPreview: undefined,
         orphaned: undefined,
       }),
     ),
-  discard: (workspaceKey, sessionId) =>
+  discard: (workspaceKey, sessionId, attemptId) =>
     set((state) =>
-      patchEntry(state, workspaceKey, sessionId, undefined, {
+      patchEntry(state, workspaceKey, sessionId, attemptId, {
         status: "discarded",
         queuedPromptPreview: undefined,
       }),

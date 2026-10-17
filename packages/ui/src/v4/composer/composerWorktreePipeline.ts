@@ -1,3 +1,5 @@
+/* eslint-disable max-lines */
+import { nanoid } from "nanoid";
 /**
  * Runner for the composer worktree setup pipeline (spec: specs/composer-worktree-setup-steps.md).
  *
@@ -32,8 +34,8 @@ import {
 const inFlightByPipelineKey = new Map<string, Promise<"ready" | "failed">>();
 const beginInFlightByWorkspaceKey = new Map<string, Promise<ComposerWorktreeBeginResult>>();
 
-function pipelineRunKey(workspaceKey: string, sessionId?: string): string {
-  return `${workspaceKey}\0${sessionId ?? "unscoped"}`;
+function pipelineRunKey(workspaceKey: string, sessionId?: string, attemptId?: string): string {
+  return `${workspaceKey}\0${sessionId ?? "unscoped"}\0${attemptId ?? "legacy"}`;
 }
 
 /** Whether a creation attempt is currently running for the workspace (used by the stale reconcile). */
@@ -42,7 +44,9 @@ export function isComposerWorktreePipelineInFlight(
   sessionId?: string,
 ): boolean {
   return sessionId
-    ? inFlightByPipelineKey.has(pipelineRunKey(workspaceKey, sessionId))
+    ? [...inFlightByPipelineKey.keys()].some((key) =>
+        key.startsWith(`${workspaceKey}\0${sessionId}\0`),
+      )
     : [...inFlightByPipelineKey.keys()].some((key) => key.startsWith(`${workspaceKey}\0`));
 }
 
@@ -66,14 +70,16 @@ export function startComposerWorktreePipeline({
   formatMessage: (id: string, values?: Record<string, string>) => string;
   syncPreparedWorktree?: ComposerWorktreePreparationSync;
 }): Promise<"ready" | "failed"> {
-  const runKey = pipelineRunKey(workspaceKey, sessionId);
+  const attemptId =
+    params.attemptId ??
+    selectComposerWorktreePipeline(
+      useComposerWorktreePipelineStore.getState(),
+      workspaceKey,
+      sessionId,
+    )?.attemptId;
+  const runKey = pipelineRunKey(workspaceKey, sessionId, attemptId);
   const inFlight = inFlightByPipelineKey.get(runKey);
   if (inFlight) return inFlight;
-  const attemptId = selectComposerWorktreePipeline(
-    useComposerWorktreePipelineStore.getState(),
-    workspaceKey,
-    sessionId,
-  )?.attemptId;
 
   const attempt = (async (): Promise<"ready" | "failed"> => {
     // Host activation strictly requires executionWorktree.path === prepared.targetPath. Git may
@@ -84,11 +90,19 @@ export function startComposerWorktreePipeline({
       worktreePath: string,
       existing: boolean,
     ): Promise<"ready" | "failed"> => {
+      const current = selectComposerWorktreePipeline(
+        useComposerWorktreePipelineStore.getState(),
+        workspaceKey,
+        sessionId,
+      );
+      if (!current || current.attemptId !== attemptId || current.status !== "creating")
+        return "failed";
       if (worktreePath !== params.targetPath) {
         if (sessionId && syncPreparedWorktree) {
           await syncPreparedWorktree({
             workspaceKey,
             sessionId,
+            ...(params.attemptId ? { attemptId: params.attemptId } : {}),
             branchName: params.branchName,
             targetPath: worktreePath,
             ...(params.baseBranch ? { baseBranch: params.baseBranch } : {}),
@@ -189,6 +203,7 @@ export function beginWorktreePipelineCreation({
   queuedPromptPreview,
   prepareSession,
   syncPreparedWorktree,
+  submissionId,
   formatMessage,
 }: {
   gitService: WorktreeCreationGitService;
@@ -201,15 +216,21 @@ export function beginWorktreePipelineCreation({
   queuedPromptPreview: string;
   prepareSession: (params: ComposerWorktreePreparationParams) => Promise<string>;
   syncPreparedWorktree?: ComposerWorktreePreparationSync;
+  submissionId?: string;
   formatMessage: (id: string, values?: Record<string, string>) => string;
 }): Promise<ComposerWorktreeBeginResult> {
-  const inFlight = beginInFlightByWorkspaceKey.get(workspaceKey);
+  const reservationKey = `${workspaceKey}\0${submissionId ?? "legacy"}`;
+  const inFlight = beginInFlightByWorkspaceKey.get(reservationKey);
   if (inFlight) return inFlight;
   const existing = selectComposerWorktreePipeline(
     useComposerWorktreePipelineStore.getState(),
     workspaceKey,
   );
-  if (existing?.sessionId && (existing.status === "creating" || existing.status === "ready")) {
+  if (
+    existing?.sessionId &&
+    (!submissionId || existing.params?.submissionId === submissionId) &&
+    (existing.status === "creating" || existing.status === "ready")
+  ) {
     return Promise.resolve({ ok: true, sessionId: existing.sessionId });
   }
 
@@ -233,7 +254,10 @@ export function beginWorktreePipelineCreation({
     if (!targetPath) {
       return failWith("commandCenter.worktree.error.target-path-invalid");
     }
+    const attemptId = nanoid();
     const params = {
+      ...(submissionId ? { submissionId } : {}),
+      attemptId,
       workspacePath,
       branchName,
       targetPath,
@@ -243,6 +267,7 @@ export function beginWorktreePipelineCreation({
     let sessionId: string;
     try {
       sessionId = await prepareSession({
+        attemptId,
         workspaceKey,
         branchName,
         targetPath,
@@ -271,10 +296,10 @@ export function beginWorktreePipelineCreation({
     });
     return { ok: true, sessionId } as const;
   })();
-  beginInFlightByWorkspaceKey.set(workspaceKey, attempt);
+  beginInFlightByWorkspaceKey.set(reservationKey, attempt);
   const clearInFlight = () => {
-    if (beginInFlightByWorkspaceKey.get(workspaceKey) === attempt) {
-      beginInFlightByWorkspaceKey.delete(workspaceKey);
+    if (beginInFlightByWorkspaceKey.get(reservationKey) === attempt) {
+      beginInFlightByWorkspaceKey.delete(reservationKey);
     }
   };
   void attempt.then(clearInFlight, clearInFlight);
@@ -282,52 +307,7 @@ export function beginWorktreePipelineCreation({
 }
 
 /** Rebuild renderer-only setup state from the durable Host preparation marker after a reload. */
-export function restoreComposerWorktreePipelineFromPreparation({
-  workspaceKey,
-  workspacePath,
-  sessionId,
-  preparation,
-}: {
-  workspaceKey: string;
-  workspacePath: string;
-  sessionId: string;
-  preparation: {
-    branchName: string;
-    targetPath: string;
-    baseBranch?: string;
-    status: "preparing" | "failed" | "cancelled";
-    failureMessage?: string;
-  };
-}): void {
-  if (preparation.status === "cancelled") return;
-  const current = selectComposerWorktreePipeline(
-    useComposerWorktreePipelineStore.getState(),
-    workspaceKey,
-    sessionId,
-  );
-  if (current) return;
-  useComposerWorktreePipelineStore.getState().startPipeline(
-    workspaceKey,
-    {
-      status: preparation.status === "preparing" ? "creating" : "failed",
-      sessionId,
-      params: {
-        workspacePath,
-        branchName: preparation.branchName,
-        targetPath: preparation.targetPath,
-        ...(preparation.baseBranch ? { baseBranch: preparation.baseBranch } : {}),
-        baseFromHeadDefault: !preparation.baseBranch,
-      },
-      createdAt: Date.now(),
-      ...(preparation.status === "failed"
-        ? {
-            failureMessage: preparation.failureMessage ?? "Worktree creation failed",
-          }
-        : {}),
-    },
-    { activate: false },
-  );
-}
+export { restoreComposerWorktreePipelineFromPreparation } from "./composerWorktreePreparationRestore.js";
 
 /**
  * Retry a failed pipeline with its frozen params. No-op unless the entry is failed.
@@ -337,12 +317,14 @@ export function retryComposerWorktreePipeline({
   gitService,
   workspaceKey,
   sessionId,
+  attemptId,
   formatMessage,
   syncPreparedWorktree,
 }: {
   gitService: WorktreeCreationGitService;
   workspaceKey: string;
   sessionId?: string;
+  attemptId?: string;
   formatMessage: (id: string, values?: Record<string, string>) => string;
   syncPreparedWorktree?: ComposerWorktreePreparationSync;
 }): Promise<"ready" | "failed"> {
@@ -351,10 +333,11 @@ export function retryComposerWorktreePipeline({
   if (!entry || entry.status !== "failed" || !entry.params) {
     return Promise.resolve("failed");
   }
+  const params = { ...entry.params, ...(attemptId ? { attemptId } : {}) };
   store.startPipeline(workspaceKey, {
     status: "creating",
     ...(entry.sessionId ? { sessionId: entry.sessionId } : {}),
-    params: entry.params,
+    params,
     createdAt: Date.now(),
     ...(entry.queuedPromptPreview ? { queuedPromptPreview: entry.queuedPromptPreview } : {}),
     ...(entry.orphaned ? { orphaned: true } : {}),
@@ -363,7 +346,7 @@ export function retryComposerWorktreePipeline({
     gitService,
     workspaceKey,
     sessionId: entry.sessionId,
-    params: entry.params,
+    params,
     formatMessage,
     ...(syncPreparedWorktree ? { syncPreparedWorktree } : {}),
   });
@@ -394,13 +377,47 @@ export async function reconcileCreatingComposerWorktreePipeline({
   const entry = selectComposerWorktreePipeline(store, workspaceKey, sessionId);
   if (!entry || entry.status !== "creating" || !entry.params) return;
   const attemptId = entry.attemptId;
+  const isCurrent = () => {
+    const current = selectComposerWorktreePipeline(
+      useComposerWorktreePipelineStore.getState(),
+      workspaceKey,
+      sessionId,
+    );
+    return current?.attemptId === attemptId && current.status === "creating";
+  };
   const ownerSessionId = entry.sessionId;
   try {
     const list = await gitService.listWorktrees({
       workspacePath: entry.params.workspacePath,
     });
+    if (!isCurrent()) return;
     const existing = findWorktreeForBranch(list.worktrees, branchName);
     if (existing) {
+      // The registration may be stale (directory removed by hand): verify the real directory and
+      // its Git link on the target Host before the entry can turn ready.
+      const verification = await gitService.verifyWorktreeUsable({
+        workspacePath: entry.params.workspacePath,
+        targetPath: existing.path,
+      });
+      if (!isCurrent()) return;
+      if (!verification.ok) {
+        logger.warn("[WorktreePipeline] reconcile: registered worktree is not usable", {
+          workspaceKey,
+          branchName,
+          path: existing.path,
+          reason: verification.reason,
+        });
+        store.markFailed(
+          workspaceKey,
+          formatMessage("worktreeSetup.reconcile.worktreeMissing", {
+            branchName,
+            path: existing.path,
+          }),
+          ownerSessionId,
+          attemptId,
+        );
+        return;
+      }
       // The recovered worktree may sit elsewhere than the frozen target; realign the Host marker
       // before the strict activation check, and fail the entry when there is no way to realign.
       if (existing.path !== entry.params.targetPath) {
@@ -408,6 +425,7 @@ export async function reconcileCreatingComposerWorktreePipeline({
           await syncPreparedWorktree({
             workspaceKey,
             sessionId: ownerSessionId,
+            ...(entry.params.attemptId ? { attemptId: entry.params.attemptId } : {}),
             branchName: entry.params.branchName,
             targetPath: existing.path,
             ...(entry.params.baseBranch ? { baseBranch: entry.params.baseBranch } : {}),

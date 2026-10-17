@@ -25,6 +25,7 @@ export interface ComposerWorktreePreparationParams {
   branchName: string;
   targetPath: string;
   baseBranch?: string;
+  attemptId?: string;
 }
 
 /**
@@ -39,6 +40,7 @@ export interface ComposerWorktreePreparationSyncParams {
   branchName: string;
   targetPath: string;
   baseBranch?: string;
+  attemptId?: string;
 }
 
 export type ComposerWorktreePreparationSync = (
@@ -63,6 +65,7 @@ export interface ComposerDraftWorktreeIntent {
     queuedPromptPreview: string,
     prepareSession: (params: ComposerWorktreePreparationParams) => Promise<string>,
     syncPreparedWorktree?: ComposerWorktreePreparationSync,
+    submissionId?: string,
   ) => Promise<ComposerWorktreeBeginResult>;
 }
 

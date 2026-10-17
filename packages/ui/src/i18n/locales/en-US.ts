@@ -1,6 +1,20 @@
 import { requestSecurityMessagesEnUS } from "@/request-security-edition/messages.js";
 /** English translations */
 const enUS: Record<string, string> = {
+  "sessionManager.openUnavailable":
+    "The session workspace is unavailable. Reconnect or open the project and retry.",
+  "sessionManager.pinnedArchived": "Pinned does not filter archived sessions.",
+  "composerRecovery.title": "Unsent message saved",
+  "composerRecovery.storageUnavailable":
+    "Recovery state could not be saved. The message has not been sent; free browser storage and try again.",
+  "worktreeSetup.connectionUnavailable":
+    "Reconnect to this workspace's Host to continue worktree setup.",
+  "worktreeSetup.created": "Worktree created",
+  "composerRecovery.editorOccupied": "Send or clear the current draft before restoring.",
+  "composerRecovery.reattach": "Reattach the listed missing files, or explicitly remove them.",
+  "composerRecovery.restore": "Restore",
+  "composerRecovery.removeMissing": "Remove missing files",
+  "composerRecovery.dismiss": "Dismiss saved message",
   "startPlan.recommendation.subagentDescription":
     "Your Start Plan has quota available for {model}. Switch this subagent’s model to the Start Plan?",
   "startPlan.recommendation.preferenceSaveFailed":
@@ -695,6 +709,8 @@ const enUS: Record<string, string> = {
   "commandCenter.worktree.error.target-path-exists": "The target path already exists.",
   "commandCenter.worktree.error.target-path-exists.existing":
     "A worktree for “{branchName}” already exists at {path}.",
+  "commandCenter.worktree.error.worktreeMissing":
+    "The registered worktree for “{branchName}” at {path} is missing or not usable. Retry after restoring or pruning it.",
   "commandCenter.worktree.error.not-a-repository": "This project is not a Git repository.",
   "commandCenter.worktree.error.git-unavailable": "Git is not available in this environment.",
   "commandCenter.worktree.error.custom-location-invalid":
@@ -5165,6 +5181,8 @@ const enUS: Record<string, string> = {
   "chat.empty.worktree.newWorktree": "New worktree",
   "chat.empty.worktree.creating": "Creating worktree…",
   "worktreeSetup.reconcile.staleCreating": "Setup did not complete (connection changed)",
+  "worktreeSetup.reconcile.worktreeMissing":
+    "The registered worktree for {branchName} at {path} is missing or not usable.",
   "worktreeSetup.reconcile.markerSyncUnavailable":
     "Setup finished at a different worktree path and the session record could not be updated",
   "git.branchSwitcher.appliesOnSend": "Applies when you send the first message",

@@ -1,3 +1,7 @@
+import {
+  selectComposerWorktreePipeline,
+  useComposerWorktreePipelineStore,
+} from "@/store/composerWorktreePipelineStore.js";
 import { resolveSelectionSideInheritedModel } from "@/lib/selectionSideInheritedModel.js";
 import { useStartPlanRecommendation } from "@/hooks/useStartPlanRecommendation.js";
 import type { SessionCreateSource } from "@zcode/shared";
@@ -180,7 +184,10 @@ import type {
   ComposerWorktreePreparationParams,
   ComposerWorktreePreparationSyncParams,
 } from "@/v4/composer/composerDraftWorktreeIntent.js";
-import { ConversationWorktreeSetupSteps } from "@/v4/ConversationWorktreeSetupSteps.js";
+import {
+  ConversationWorktreeCreatedNotice,
+  ConversationWorktreeSetupSteps,
+} from "@/v4/ConversationWorktreeSetupSteps.js";
 import { ConversationDraftSuggestedPromptsContainer } from "@/v4/ConversationDraftSuggestedPromptsContainer.js";
 import { ConversationHeader, type PaneWorkspaceBadge } from "@/v4/ConversationHeader.js";
 import { ConversationQueuePanel } from "@/v4/ConversationQueuePanel.js";
@@ -2128,13 +2135,21 @@ export function SessionPane({
   const updateWorktreePreparationMarker = useCallback(
     async (
       targetSessionId: string,
-      preparation: { branchName: string; targetPath: string; baseBranch?: string },
+      preparation: {
+        branchName: string;
+        targetPath: string;
+        baseBranch?: string;
+        attemptId?: string;
+      },
+      expectedAttemptId = preparation.attemptId,
     ): Promise<void> => {
       const ack = await dispatchCommand(
         "updateWorktreePreparation",
         {
           status: "preparing",
+          expectedAttemptId,
           worktreePreparation: {
+            ...(preparation.attemptId ? { attemptId: preparation.attemptId } : {}),
             branchName: preparation.branchName,
             targetPath: preparation.targetPath,
             ...(preparation.baseBranch ? { baseBranch: preparation.baseBranch } : {}),
@@ -2150,16 +2165,30 @@ export function SessionPane({
   );
 
   const prepareWorktreeSession = useCallback(
-    async ({ branchName, targetPath, baseBranch }: ComposerWorktreePreparationParams) => {
+    async (
+      { branchName, targetPath, baseBranch, attemptId }: ComposerWorktreePreparationParams,
+      options?: { shouldActivate: () => boolean },
+    ) => {
       const existingSessionId = sessionIdRef.current;
       const existingPreparation = snapshotRef.current?.meta.worktreePreparation;
       if (existingSessionId && existingPreparation) {
-        if (existingPreparation.status !== "preparing") {
-          await updateWorktreePreparationMarker(existingSessionId, {
-            branchName,
-            targetPath,
-            ...(baseBranch ? { baseBranch } : {}),
-          });
+        const currentAttemptId =
+          selectComposerWorktreePipeline(
+            useComposerWorktreePipelineStore.getState(),
+            workspaceKey,
+            existingSessionId,
+          )?.params?.attemptId ?? existingPreparation.attemptId;
+        if (existingPreparation.status !== "preparing" || attemptId !== currentAttemptId) {
+          await updateWorktreePreparationMarker(
+            existingSessionId,
+            {
+              attemptId,
+              branchName,
+              targetPath,
+              ...(baseBranch ? { baseBranch } : {}),
+            },
+            currentAttemptId,
+          );
         }
         return existingSessionId;
       }
@@ -2170,7 +2199,12 @@ export function SessionPane({
         "createSession",
         {
           workspaceId: workspaceKey,
-          worktreePreparation: { branchName, targetPath },
+          worktreePreparation: {
+            branchName,
+            targetPath,
+            ...(baseBranch ? { baseBranch } : {}),
+            ...(attemptId ? { attemptId } : {}),
+          },
         },
         null,
         undefined,
@@ -2184,7 +2218,9 @@ export function SessionPane({
         throw new Error(ack.reasonCode ?? "Worktree session preparation was rejected");
       }
       const createdSessionId = ack.result.sessionId;
-      handleDraftSessionCreated(createdSessionId, groupedDraftTask, createSource);
+      if (!options || options.shouldActivate()) {
+        handleDraftSessionCreated(createdSessionId, groupedDraftTask, createSource);
+      }
       return createdSessionId;
     },
     [
@@ -2203,8 +2239,10 @@ export function SessionPane({
       branchName,
       targetPath,
       baseBranch,
+      attemptId,
     }: ComposerWorktreePreparationSyncParams) =>
       updateWorktreePreparationMarker(preparedSessionId, {
+        attemptId,
         branchName,
         targetPath,
         ...(baseBranch ? { baseBranch } : {}),
@@ -2215,25 +2253,72 @@ export function SessionPane({
   // Persist a failed creation into the Host-owned preparation record so recovery/reconnect
   // renders the recoverable failure (and Retry reuses the same session) instead of spinning.
   const handleWorktreePreparationFailed = useCallback(
-    (failedSessionId: string, failureMessage: string) =>
+    (failedSessionId: string, failureMessage: string, attemptId?: string) =>
       dispatchCommand(
         "updateWorktreePreparation",
-        { status: "failed", failureMessage },
+        { status: "failed", failureMessage, expectedAttemptId: attemptId },
         failedSessionId,
-      ).then(() => undefined),
+      ).then((ack) => {
+        if (ack.status !== "accepted")
+          throw new Error(ack.reasonCode ?? "Preparation failure update rejected");
+      }),
     [dispatchCommand],
   );
-  const handleWorktreePreparationRetry = useCallback(async () => {
-    if (!sessionId) throw new Error("Worktree preparation session is unavailable");
-    const ack = await dispatchCommand(
-      "updateWorktreePreparation",
-      { status: "preparing" },
-      sessionId,
-    );
-    if (ack.status !== "accepted") {
-      throw new Error(ack.reasonCode ?? "Worktree preparation retry was rejected");
-    }
-  }, [dispatchCommand, sessionId]);
+  const handleWorktreePreparationRetry = useCallback(
+    async (expectedAttemptId?: string) => {
+      if (!sessionId) throw new Error("Worktree preparation session is unavailable");
+      const preparation = snapshotRef.current?.meta.worktreePreparation;
+      if (!preparation) throw new Error("Preparation is unavailable");
+      const pipeline = selectComposerWorktreePipeline(
+        useComposerWorktreePipelineStore.getState(),
+        workspaceKey,
+        sessionId,
+      );
+      const frozen = pipeline?.params;
+      const attemptId = crypto.randomUUID();
+      const ack = await dispatchCommand(
+        "updateWorktreePreparation",
+        {
+          status: "preparing",
+          expectedAttemptId: expectedAttemptId ?? frozen?.attemptId ?? preparation.attemptId,
+          worktreePreparation: {
+            branchName: frozen?.branchName ?? preparation.branchName,
+            targetPath: frozen?.targetPath ?? preparation.targetPath,
+            baseBranch: frozen?.baseBranch ?? preparation.baseBranch,
+            attemptId,
+          },
+        },
+        sessionId,
+      );
+      if (ack.status !== "accepted") {
+        throw new Error(ack.reasonCode ?? "Worktree preparation retry was rejected");
+      }
+      return attemptId;
+    },
+    [dispatchCommand, sessionId, workspaceKey],
+  );
+
+  const handleWorktreePreparationCancel = useCallback(
+    async (expectedAttemptId?: string) => {
+      if (!sessionId) throw new Error("Preparation is unavailable");
+      const attemptId =
+        expectedAttemptId ??
+        selectComposerWorktreePipeline(
+          useComposerWorktreePipelineStore.getState(),
+          workspaceKey,
+          sessionId,
+        )?.params?.attemptId ??
+        snapshotRef.current?.meta.worktreePreparation?.attemptId;
+      const ack = await dispatchCommand(
+        "updateWorktreePreparation",
+        { status: "cancelled", expectedAttemptId: attemptId },
+        sessionId,
+      );
+      if (ack.status !== "accepted")
+        throw new Error(ack.reasonCode ?? "Preparation cancellation rejected");
+    },
+    [dispatchCommand, sessionId, workspaceKey],
+  );
 
   const handleFetchFileChanges = useCallback(
     (target: ConversationRowTarget, options: ConversationFileChangesRequestOptions) => {
@@ -3604,7 +3689,12 @@ export function SessionPane({
             workspaceId: workspaceKey,
             ...draftConfigPayload,
             ...(executionWorktree ? { executionWorktree } : {}),
-            ...(options?.preparedSessionId ? { preparedSessionId: options.preparedSessionId } : {}),
+            ...(options?.preparedSessionId
+              ? {
+                  preparedSessionId: options.preparedSessionId,
+                  expectedAttemptId: options.preparedAttemptId,
+                }
+              : {}),
           },
           null,
         );
@@ -3630,7 +3720,7 @@ export function SessionPane({
         );
         return;
       }
-      if (!sessionId) {
+      if (!sessionId || options?.preparedSessionId) {
         // Draft attachments were pre-uploaded in Composer and bound to the prewarm session.
         // Submit only ready refs here; do not start uploads from the send click.
         const prewarm = prewarmBindingRef.current;
@@ -3717,7 +3807,12 @@ export function SessionPane({
             workspaceId: workspaceKey,
             ...draftConfigPayload,
             ...(executionWorktree ? { executionWorktree } : {}),
-            ...(options?.preparedSessionId ? { preparedSessionId: options.preparedSessionId } : {}),
+            ...(options?.preparedSessionId
+              ? {
+                  preparedSessionId: options.preparedSessionId,
+                  expectedAttemptId: options.preparedAttemptId,
+                }
+              : {}),
           },
           null,
         );
@@ -5785,7 +5880,7 @@ export function SessionPane({
     <PluginUiSessionProvider
       workspacePath={workspacePath}
       workspaceIdentity={workspaceIdentity}
-      remoteSessionId={remoteSessionId}
+      remoteSessionId={remoteSessionId ?? undefined}
       sessionId={sessionId}
       readOnly={readOnly}
       sendText={dispatchSendText}
@@ -5796,7 +5891,7 @@ export function SessionPane({
         <ExecutionWorktreeGitAutoRefresh
           workspacePath={executionGitPath}
           workspaceIdentity={workspaceIdentity}
-          remoteSessionId={remoteSessionId}
+          remoteSessionId={remoteSessionId ?? undefined}
           gitSummary={worktreeGitState.summary}
           gitSummaryWorkspaceKey={worktreeGitState.workspaceKey}
           enabled={focused}
@@ -5981,7 +6076,7 @@ export function SessionPane({
           ) : (
             <SessionPluginReferenceIconBoundary
               enabled={pluginReferenceIconsEnabled}
-              remoteSessionId={remoteSessionId}
+              remoteSessionId={remoteSessionId ?? undefined}
               sessionId={sessionId}
               workspaceIdentity={workspaceIdentity}
               workspacePath={workspacePath}
@@ -6039,40 +6134,60 @@ export function SessionPane({
                     view: shareDraft?.view,
                   })}
                   headerSlot={
-                    // unsupportedRowCount must also open this gate: when this build skips every row
-                    // in the copy, rows is empty, but the read-only block must remain to show
-                    // “Update ZCode required” instead of disappearing entirely.
-                    importedShare &&
-                    (importedShare.rows.length > 0 || importedShare.unsupportedRowCount > 0) ? (
-                      <ConversationShareImportNotice
-                        rows={importedShare.rows}
-                        unsupportedRowCount={importedShare.unsupportedRowCount}
-                        artifactNames={importedShareArtifactNames}
-                        artifactWorkspaceRelativePaths={importedShareArtifactWorkspaceRelativePaths}
-                        workspacePath={workspacePath}
-                        {...(workspaceIdentity ? { workspaceIdentity } : {})}
-                        {...(remoteSessionId ? { workspaceRemoteSessionId: remoteSessionId } : {})}
-                        locale={locale}
-                        theme={theme}
-                        codePreviewSettings={codePreviewSettings}
-                        onOpenShareUrl={onOpenBrowserUrl ? handleOpenImportedShareUrl : undefined}
-                        onOpenFileLink={onOpenFileLink}
-                        onOpenCodeViewer={onOpenCodeViewer}
-                      />
+                    (!isDraft &&
+                      (snapshot?.meta.worktreePreparation || sessionExecutionWorktree)) ||
+                    (importedShare &&
+                      (importedShare.rows.length > 0 || importedShare.unsupportedRowCount > 0)) ? (
+                      <>
+                        {!isDraft && snapshot?.meta.worktreePreparation ? (
+                          <ConversationWorktreeSetupSteps
+                            workspacePath={workspacePath}
+                            {...(workspaceIdentity ? { workspaceIdentity } : {})}
+                            sessionId={sessionId!}
+                            preparation={snapshot.meta.worktreePreparation}
+                            remoteSessionId={remoteSessionId ?? undefined}
+                            onRetryPreparation={handleWorktreePreparationRetry}
+                            onCancelPreparation={handleWorktreePreparationCancel}
+                            onPreparationFailed={handleWorktreePreparationFailed}
+                            onSyncPreparation={syncWorktreePreparation}
+                          />
+                        ) : !isDraft && sessionExecutionWorktree ? (
+                          <ConversationWorktreeCreatedNotice
+                            branchName={sessionExecutionWorktree.branchName}
+                            path={sessionExecutionWorktree.path}
+                          />
+                        ) : null}
+                        {/* unsupportedRowCount must also open this gate: if every row is skipped,
+                            the read-only notice still needs to show “Update ZCode required”. */}
+                        {importedShare &&
+                        (importedShare.rows.length > 0 || importedShare.unsupportedRowCount > 0) ? (
+                          <ConversationShareImportNotice
+                            rows={importedShare.rows}
+                            unsupportedRowCount={importedShare.unsupportedRowCount}
+                            artifactNames={importedShareArtifactNames}
+                            artifactWorkspaceRelativePaths={
+                              importedShareArtifactWorkspaceRelativePaths
+                            }
+                            workspacePath={workspacePath}
+                            {...(workspaceIdentity ? { workspaceIdentity } : {})}
+                            {...(remoteSessionId
+                              ? { workspaceRemoteSessionId: remoteSessionId }
+                              : {})}
+                            locale={locale}
+                            theme={theme}
+                            codePreviewSettings={codePreviewSettings}
+                            onOpenShareUrl={
+                              onOpenBrowserUrl ? handleOpenImportedShareUrl : undefined
+                            }
+                            onOpenFileLink={onOpenFileLink}
+                            onOpenCodeViewer={onOpenCodeViewer}
+                          />
+                        ) : null}
+                      </>
                     ) : null
                   }
                   emptyState={
-                    !isDraft && snapshot?.meta.worktreePreparation ? (
-                      <ConversationWorktreeSetupSteps
-                        workspacePath={workspacePath}
-                        {...(workspaceIdentity ? { workspaceIdentity } : {})}
-                        sessionId={sessionId!}
-                        preparation={snapshot.meta.worktreePreparation}
-                        onRetryPreparation={handleWorktreePreparationRetry}
-                        onPreparationFailed={handleWorktreePreparationFailed}
-                        onSyncPreparation={syncWorktreePreparation}
-                      />
-                    ) : isDraft ? (
+                    isDraft ? (
                       <div data-testid={TID_CHAT_EMPTY} className="w-full">
                         <ConversationDraftEmptyState
                           compactForRemoteControl={compactForRemoteControl}

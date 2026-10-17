@@ -33,6 +33,8 @@ import type {
   GitWorktreePathIdentityRequest,
   GitWorktreePruneResult,
   GitWorktreeRemoveResult,
+  GitWorktreeVerifyRequest,
+  GitWorktreeVerifyResult,
   GitFileChange,
   GitSwitchBranchRequest,
 } from "@zcode/shared";
@@ -40,6 +42,10 @@ import { ServiceChannels } from "@zcode/shared";
 import { createServiceDescriptor } from "../descriptors.js";
 
 export interface IGitService {
+  /** Directory belongs to this executing Host, including remote Hosts. */
+  getWorktreeStorageInfo(
+    params: GitRepositoryRequest,
+  ): Promise<{ globalWorktreesDir: string | null }>;
   getRepositorySummary(params: GitRepositoryRequest): Promise<GitRepositorySummary>;
   getWorkspaceRepositoryInfo(params: GitRepositoryRequest): Promise<GitWorkspaceRepositoryInfo>;
   getRepositoryRemotes(params: GitRepositoryRequest): Promise<GitRepositoryRemotesResult>;
@@ -49,6 +55,8 @@ export interface IGitService {
   createBranchAndSwitch(params: GitCreateBranchRequest): Promise<GitBranchMutationResult>;
   listWorktrees(params: GitRepositoryRequest): Promise<GitWorktreeListResult>;
   resolveWorktreePathIdentities(params: GitWorktreePathIdentityRequest): Promise<string[]>;
+  /** Verify a registered worktree's real directory and Git link on this Host; read-only. */
+  verifyWorktreeUsable(params: GitWorktreeVerifyRequest): Promise<GitWorktreeVerifyResult>;
   createWorktree(params: GitCreateWorktreeRequest): Promise<GitWorktreeCreateResult>;
   removeWorktree(params: GitRemoveWorktreeRequest): Promise<GitWorktreeRemoveResult>;
   pruneWorktrees(params: GitRepositoryRequest): Promise<GitWorktreePruneResult>;

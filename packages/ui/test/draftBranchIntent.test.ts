@@ -108,9 +108,9 @@ describe("ConversationComposer send-time branch resolution (source contract)", (
 
   it("delegates to the resolver before the send dispatch; failures abort without claiming the draft", () => {
     const helperIndex = source.indexOf("await applyDraftBranchIntentForSend({");
-    const runSendIndex = source.indexOf(
-      "await runSend(executionWorktree, preparedSessionIdForSend);",
-    );
+    // Every dispatch site (immediate ready-pipeline send and the final plain send) must follow
+    // the resolver textually; match the call prefix so signature changes do not rot the contract.
+    const runSendIndex = source.indexOf("await runSend(", helperIndex);
     expect(helperIndex).toBeGreaterThan(-1);
     expect(runSendIndex).toBeGreaterThan(helperIndex);
     // Abort paths return before runSend; only "proceed" reaches the dispatch.
@@ -245,7 +245,8 @@ describe("beginWorktreePipelineCreation validation (no silent worktree misfires)
   const KEY = "/dev/alpha";
   const createWorktree = vi.fn();
   const listWorktrees = vi.fn();
-  const gitService = { createWorktree, listWorktrees };
+  const verifyWorktreeUsable = vi.fn(async () => ({ ok: true }));
+  const gitService = { createWorktree, listWorktrees, verifyWorktreeUsable };
   const formatMessage = (id: string) => id;
   const prepareSession = async () => "session-1";
   const baseInput = {

@@ -227,6 +227,35 @@ afterEach(async () => {
 });
 
 describe("useComposerAttachments eager upload", () => {
+  it("moves only submitted attachments and keeps the frozen handle usable after scope changes", async () => {
+    mocks.service = createTransferService().service;
+    const probe = renderProbe({
+      attachmentSessionId: null,
+      scopeId: "__draft__",
+      localDesktop: true,
+    });
+    await addPaths(["/workspace/submitted.txt"]);
+    const id = latestApi!.attachments[0]!.id;
+    const handle = latestApi!.captureSubmission([id]);
+    mocks.platform.selectFiles.mockResolvedValueOnce(["/workspace/next.txt"]);
+    await act(async () => latestApi!.openAttachmentPicker());
+    act(() => handle.moveToScope("/workspace\0prepared-session"));
+    expect(latestApi!.attachments.map((item) => item.filename)).toEqual(["next.txt"]);
+    probe.rerender({
+      attachmentSessionId: "prepared-session",
+      scopeId: "prepared-session",
+      localDesktop: true,
+    });
+    expect(latestApi!.attachments.map((item) => item.filename)).toEqual(["submitted.txt"]);
+    expect(await handle.prepareForSend()).toHaveLength(1);
+    await handle.adoptSentAttachments();
+    act(() => handle.clearAttachments());
+    expect(latestApi!.attachments).toHaveLength(0);
+    probe.rerender({ attachmentSessionId: null, scopeId: "__draft__", localDesktop: true });
+    expect(latestApi!.attachments.map((item) => item.filename)).toEqual(["next.txt"]);
+    act(() => probe.root.unmount());
+  });
+
   it("满 8 个后每次粘贴都提示，且点击添加不再打开文件选择器", async () => {
     mocks.service = createTransferService().service;
     const { root } = renderProbe({

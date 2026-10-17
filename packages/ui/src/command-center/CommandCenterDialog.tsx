@@ -101,7 +101,10 @@ import {
   type WorktreeTaskDestination,
   type WorktreeTaskProject,
 } from "@/command-center/worktreeTaskFlow.js";
-import { isWorktreeProtected } from "@/command-center/worktreeProtection.js";
+import {
+  isWorktreeProtected,
+  isWorktreeRemovalBlockedNow,
+} from "@/command-center/worktreeProtection.js";
 import { generateWorktreeBranchName } from "@/command-center/worktreeNameGenerator.js";
 import { executeWorktreeCreation } from "@/command-center/worktreeCreation.js";
 
@@ -740,17 +743,25 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
   );
   const activeSessionWorktreePaths = useMemo(
     () =>
-      worktreeProtectionTaskList.items.flatMap((task) =>
-        task.executionWorktree?.path ? [task.executionWorktree.path] : [],
-      ),
+      worktreeProtectionTaskList.items.flatMap((task) => [
+        ...(task.executionWorktree?.path ? [task.executionWorktree.path] : []),
+        // A prepared, not-yet-cancelled session owns its target worktree even before a runtime
+        // exists (a directory may already be on disk while the frozen input waits).
+        ...(task.worktreePreparation && task.worktreePreparation.status !== "cancelled"
+          ? [task.worktreePreparation.targetPath]
+          : []),
+      ]),
     [worktreeProtectionTaskList.items],
   );
   const activeSessionWorktreeBranches = useMemo(
     () =>
       new Set(
-        worktreeProtectionTaskList.items.flatMap((task) =>
-          task.executionWorktree?.branchName ? [task.executionWorktree.branchName] : [],
-        ),
+        worktreeProtectionTaskList.items.flatMap((task) => [
+          ...(task.executionWorktree?.branchName ? [task.executionWorktree.branchName] : []),
+          ...(task.worktreePreparation && task.worktreePreparation.status !== "cancelled"
+            ? [task.worktreePreparation.branchName]
+            : []),
+        ]),
       ),
     [worktreeProtectionTaskList.items],
   );
@@ -1393,6 +1404,25 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
       if (!project || worktreeRemoveBusyPath) {
         return;
       }
+      // Re-check protection at click time for both the normal and the force path: the rendered
+      // guard may be stale after a prepared session's worktree fact or the task list changed, and
+      // the dirty-directory force confirmation must never bypass the in-use guard.
+      const worktreeInUseNow = isWorktreeRemovalBlockedNow({
+        targetPath,
+        targetBranch:
+          worktreeListResult?.worktrees.find((entry) => entry.path === targetPath)?.branchName ??
+          null,
+        targetIdentity: canonicalWorktreePathByPath?.get(targetPath),
+        canonicalIdentityOf: (path) => canonicalWorktreePathByPath?.get(path),
+        tasks: worktreeProtectionTaskList.items,
+      });
+      if (worktreeInUseNow) {
+        setWorktreeForceConfirmPath(null);
+        setWorktreePruneMessage(
+          intl.formatMessage({ id: "commandCenter.worktree.existingWorktrees.openBadge" }),
+        );
+        return;
+      }
       setWorktreeRemoveBusyPath(targetPath);
       setWorktreePruneMessage(null);
       try {
@@ -1439,7 +1469,15 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
         setWorktreeRemoveBusyPath(null);
       }
     },
-    [baseServices.gitService, intl, worktreeProject, worktreeRemoveBusyPath],
+    [
+      baseServices.gitService,
+      canonicalWorktreePathByPath,
+      intl,
+      worktreeListResult,
+      worktreeProject,
+      worktreeProtectionTaskList.items,
+      worktreeRemoveBusyPath,
+    ],
   );
 
   // Phase 2 (2026-10-13): prune stale administrative records (directories removed by hand).

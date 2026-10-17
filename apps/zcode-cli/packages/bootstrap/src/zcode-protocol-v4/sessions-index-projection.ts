@@ -87,10 +87,17 @@ export function deriveSessionSummary(
         }
       : undefined;
   return {
+    ...(snapshot.meta.worktreePreparation
+      ? { worktreePreparation: snapshot.meta.worktreePreparation }
+      : {}),
     sessionId: snapshot.sessionId,
     workspaceId: extra.workspaceId,
     ...(extra.parentSessionId ? { parentSessionId: extra.parentSessionId } : {}),
-    title: snapshot.meta.title,
+    title:
+      snapshot.meta.title ||
+      (snapshot.meta.worktreePreparation
+        ? `Worktree ${snapshot.meta.worktreePreparation.branchName}`
+        : ""),
     titleSource: snapshot.meta.titleSource,
     phase: snapshot.control.phase,
     // Pass control.sessionEnded through unchanged (it becomes true after a successful turn settles and does not mean the session was deleted).
@@ -130,6 +137,12 @@ function summariesEqual(a: SessionSummary, b: SessionSummary): boolean {
     a.title === b.title &&
     a.titleSource === b.titleSource &&
     a.phase === b.phase &&
+    a.worktreePreparation?.attemptId === b.worktreePreparation?.attemptId &&
+    a.worktreePreparation?.status === b.worktreePreparation?.status &&
+    a.worktreePreparation?.branchName === b.worktreePreparation?.branchName &&
+    a.worktreePreparation?.targetPath === b.worktreePreparation?.targetPath &&
+    a.worktreePreparation?.baseBranch === b.worktreePreparation?.baseBranch &&
+    a.worktreePreparation?.failureMessage === b.worktreePreparation?.failureMessage &&
     a.sessionEnded === b.sessionEnded &&
     a.hasBackgroundWork === b.hasBackgroundWork &&
     // Conflation must never discard phase changes, settlement, or changes to running-subagent counts. Node-only changes compare equal here

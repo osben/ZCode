@@ -7,7 +7,11 @@
  * Unlike the pure functions in worktreeTaskFlow, this module calls gitService and logs; both
  * gitService and message formatting are injected so the two entry points (palette, empty-state) share one semantics.
  */
-import type { GitWorktreeCreateResult, GitWorktreeListResult } from "@zcode/shared";
+import type {
+  GitWorktreeCreateResult,
+  GitWorktreeListResult,
+  GitWorktreeVerifyResult,
+} from "@zcode/shared";
 import { getErrorMessage } from "@/lib/errorMessage.js";
 import { logger } from "@/logger.js";
 import {
@@ -24,6 +28,11 @@ export interface WorktreeCreationGitService {
     targetPath: string;
   }): Promise<GitWorktreeCreateResult>;
   listWorktrees(params: { workspacePath: string }): Promise<GitWorktreeListResult>;
+  /** Verify the registered worktree's real directory on the target Host before reuse. */
+  verifyWorktreeUsable(params: {
+    workspacePath: string;
+    targetPath: string;
+  }): Promise<GitWorktreeVerifyResult>;
 }
 
 /** Result of one worktree-creation attempt, shared by the palette Start and the empty-state send interception. */
@@ -92,12 +101,38 @@ export async function executeWorktreeCreation({
   }
 
   const issue = result.issues[0];
-  if (issue?.code === "target-path-exists") {
-    // WT-04: when the target directory already exists, look up existing worktrees first — if the branch has one, offer opening it instead of creating a second directory.
+  if (issue?.code === "target-path-exists" || issue?.code === "branch-in-other-worktree") {
+    // Reuse instead of a second directory: the target already exists, or the branch is checked
+    // out elsewhere while the requested target is absent. Both resolve through the same
+    // registered-worktree lookup for the branch.
     try {
       const list = await gitService.listWorktrees({ workspacePath });
       const existing = findWorktreeForBranch(list.worktrees, branchName);
       if (existing) {
+        // `git worktree list` can keep a stale registration after the directory was removed by
+        // hand; verify the real directory and its Git link on the target Host before reuse. A
+        // stale or inaccessible directory is a recoverable failure — never prune or delete here.
+        const verification = await gitService.verifyWorktreeUsable({
+          workspacePath,
+          targetPath: existing.path,
+        });
+        if (!verification.ok) {
+          logger.warn("[WorktreeTask] registered worktree is not usable on the target Host", {
+            workspacePath,
+            branchName,
+            path: existing.path,
+            reason: verification.reason,
+          });
+          return {
+            kind: "failed",
+            message: formatMessage("commandCenter.worktree.error.worktreeMissing", {
+              branchName,
+              path: existing.path,
+            }),
+            issueCodes: [issue.code],
+            errorDetail: null,
+          };
+        }
         return {
           kind: "existing-worktree",
           worktreePath: existing.path,
@@ -108,9 +143,10 @@ export async function executeWorktreeCreation({
         };
       }
     } catch (error) {
-      logger.warn("[WorktreeTask] target-path-exists worktree list lookup failed", {
+      logger.warn("[WorktreeTask] existing worktree lookup failed", {
         workspacePath,
         branchName,
+        issueCode: issue.code,
         error: getErrorMessage(error),
       });
     }

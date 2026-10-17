@@ -1,0 +1,134 @@
+import { logger } from "@/logger.js";
+import {
+  moveComposerAttachmentScopeItems,
+  useComposerAttachmentUploadStore,
+} from "@/store/composerAttachmentUploadStore.js";
+import { useSyncExternalStore } from "react";
+import { Button } from "@/components/ui/button.js";
+import { toast } from "@/components/ui/toast.js";
+import { getErrorMessage } from "@/lib/errorMessage.js";
+import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import {
+  clearV4ComposerDraft,
+  readV4WorktreeRecoveryDrafts,
+  persistV4ComposerDraft,
+  subscribeV4ComposerDrafts,
+  getV4ComposerDraftVersion,
+  type V4ComposerDraft,
+} from "./composerDraftStore.js";
+
+export function ComposerWorktreeRecovery({
+  workspacePath,
+  workspaceIdentity,
+  scopeId,
+  editorEmpty,
+  attachments,
+  onRestore,
+  onDiscardAttachments,
+}: {
+  workspacePath: string;
+  workspaceIdentity?: string;
+  scopeId: string;
+  editorEmpty: boolean;
+  attachments: readonly { id: string; filename: string }[];
+  onRestore: (draft: V4ComposerDraft) => void;
+  onDiscardAttachments: (ids: string[], scope: string) => Promise<void>;
+}) {
+  const { intl } = useZCodeIntl();
+  useSyncExternalStore(
+    subscribeV4ComposerDrafts,
+    () => getV4ComposerDraftVersion(workspacePath, workspaceIdentity),
+    () => null,
+  );
+  const saved = readV4WorktreeRecoveryDrafts(workspacePath, workspaceIdentity, scopeId)[0];
+  const recoveryScope = saved?.scope ?? "";
+  const draft = saved?.draft;
+  const recoveryFiles = useComposerAttachmentUploadStore(
+    (state) => state.scopes[`${workspaceIdentity?.trim() || workspacePath}\0${recoveryScope}`],
+  );
+  if (!draft) return null;
+  const missing = (draft.recoveryAttachments ?? []).filter(
+    (file) =>
+      ![...attachments, ...(recoveryFiles ?? [])].some(
+        (item) => item.id === file.id || item.filename === file.filename,
+      ),
+  );
+  const occupied =
+    !editorEmpty ||
+    attachments.some(
+      (item) =>
+        !(draft.recoveryAttachments ?? []).some(
+          (file) =>
+            file.id === item.id ||
+            (file.filename === item.filename &&
+              !(recoveryFiles ?? []).some((owned) => owned.id === file.id)),
+        ),
+    );
+  return (
+    <div
+      data-testid="composer-worktree-recovery"
+      className="m-2 rounded-md border border-border p-3 text-ui-sm"
+    >
+      <p>{intl.formatMessage({ id: "composerRecovery.title" })}</p>
+      <p className="line-clamp-3 whitespace-pre-wrap text-foreground-subtle">{draft.text}</p>
+      {(draft.recoveryAttachments ?? []).map((file) => (
+        <span className="mr-2" key={file.id}>
+          {file.filename}
+        </span>
+      ))}
+      {occupied ? <p>{intl.formatMessage({ id: "composerRecovery.editorOccupied" })}</p> : null}
+      {missing.length ? <p>{intl.formatMessage({ id: "composerRecovery.reattach" })}</p> : null}
+      <div className="mt-2 flex gap-2">
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={occupied || missing.length > 0}
+          onClick={() => {
+            moveComposerAttachmentScopeItems(
+              `${workspaceIdentity?.trim() || workspacePath}\0${recoveryScope}`,
+              `${workspaceIdentity?.trim() || workspacePath}\0${scopeId}`,
+              (recoveryFiles ?? []).map((item) => item.id),
+            );
+            onRestore(draft);
+            clearV4ComposerDraft(workspacePath, workspaceIdentity, recoveryScope);
+          }}
+        >
+          {intl.formatMessage({ id: "composerRecovery.restore" })}
+        </Button>
+        {missing.length ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() =>
+              persistV4ComposerDraft(workspacePath, workspaceIdentity, recoveryScope, {
+                ...draft,
+                recoveryAttachments: (draft.recoveryAttachments ?? []).filter(
+                  (file) => !missing.includes(file),
+                ),
+              })
+            }
+          >
+            {intl.formatMessage({ id: "composerRecovery.removeMissing" })}
+          </Button>
+        ) : null}
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            void onDiscardAttachments(
+              (draft.recoveryAttachments ?? []).map((item) => item.id),
+              recoveryScope,
+            )
+              .then(() => clearV4ComposerDraft(workspacePath, workspaceIdentity, recoveryScope))
+              .catch((error: unknown) => {
+                logger.warn("[composer-recovery] Could not discard attachments", error);
+                toast(getErrorMessage(error));
+              });
+          }}
+        >
+          {intl.formatMessage({ id: "composerRecovery.dismiss" })}
+        </Button>
+      </div>
+    </div>
+  );
+}

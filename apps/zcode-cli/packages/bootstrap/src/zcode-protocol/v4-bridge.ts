@@ -1,3 +1,8 @@
+import { worktreePreparationStateSchema } from "@zcode/shared/zcode-protocol-v4";
+import {
+  assertWorktreePreparationMutation,
+  serializePreparedWorktreeMutation,
+} from "./worktree-preparation-guard.js";
 import {
   createChildSessionFactsResolver,
   toWireChildSession,
@@ -135,6 +140,7 @@ function parsePreparedWorktreeEntry(data: unknown): {
   branchName: string;
   targetPath: string;
   baseBranch?: string;
+  attemptId?: string;
   status: "preparing" | "failed" | "cancelled" | "active";
   failureMessage?: string;
 } | null {
@@ -148,6 +154,7 @@ function parsePreparedWorktreeEntry(data: unknown): {
     return null;
   }
   return {
+    ...(typeof value.attemptId === "string" ? { attemptId: value.attemptId } : {}),
     branchName: value.branchName,
     targetPath: value.targetPath,
     ...(typeof value.baseBranch === "string" ? { baseBranch: value.baseBranch } : {}),
@@ -156,7 +163,12 @@ function parsePreparedWorktreeEntry(data: unknown): {
   };
 }
 
-async function restorePreparedWorktreeSession(
+/**
+ * Load the durable preparation for a session in any status (including `active`), preferring the
+ * in-memory registry. Unlike restorePreparedWorktreeSession this never hides an `active` receipt:
+ * repeat activation reads it to return the existing identity without re-materializing.
+ */
+async function loadStoredPreparedWorktreeSession(
   context: ZCodeProtocolAgentServerContext,
   sessionId: string,
 ): Promise<ZCodeProtocolPreparedWorktreeSession | null> {
@@ -173,11 +185,12 @@ async function restorePreparedWorktreeSession(
   });
   const marker = entries.at(-1);
   const parsed = parsePreparedWorktreeEntry(marker?.data);
-  if (!parsed || parsed.status === "active") return null;
+  if (!parsed) return null;
   const workspaceId = session.workspaceID ?? String(session.directory);
   const restored = {
     sessionId: sessionId as SessionId,
     workspace: resolveWorkspaceRefFromId(workspaceId),
+    ...(parsed.attemptId ? { attemptId: parsed.attemptId } : {}),
     branchName: parsed.branchName,
     targetPath: parsed.targetPath,
     ...(parsed.baseBranch ? { baseBranch: parsed.baseBranch } : {}),
@@ -186,8 +199,34 @@ async function restorePreparedWorktreeSession(
     status: parsed.status,
     ...(parsed.failureMessage ? { failureMessage: parsed.failureMessage } : {}),
   };
-  map.set(sessionId, restored);
+  if (parsed.status !== "active") map.set(sessionId, restored);
   return restored;
+}
+
+async function restorePreparedWorktreeSession(
+  context: ZCodeProtocolAgentServerContext,
+  sessionId: string,
+): Promise<ZCodeProtocolPreparedWorktreeSession | null> {
+  const loaded = await loadStoredPreparedWorktreeSession(context, sessionId);
+  return loaded && loaded.status !== "active" ? loaded : null;
+}
+
+/**
+ * Durable admission evidence for a prepared session: a session_input ledger row that was admitted
+ * or promoted (not cancelled, discarded, or failed). Read only on the reactivation path, where
+ * re-sending the frozen input under a new command id must be impossible unless no admission ever
+ * durably happened. Without a readable ledger the result is conservatively "admitted".
+ */
+async function sessionHasAdmittedInput(
+  context: ZCodeProtocolAgentServerContext,
+  sessionId: string,
+): Promise<boolean> {
+  const store = context.deps.sessionStore;
+  if (!store?.listSessionInputs) return true;
+  const inputs = await store.listSessionInputs({ sessionID: sessionId as SessionId });
+  return inputs.some(
+    (input) => input.status === "admitted" || input.status === "promoted",
+  );
 }
 
 async function persistPreparedWorktreeStatus(
@@ -197,7 +236,7 @@ async function persistPreparedWorktreeStatus(
   failureMessage?: string,
   worktreePreparation?: Pick<
     ZCodeProtocolPreparedWorktreeSession,
-    "branchName" | "targetPath" | "baseBranch"
+    "branchName" | "targetPath" | "baseBranch" | "attemptId"
   >,
 ): Promise<void> {
   const store = context.deps.sessionStore;
@@ -210,6 +249,9 @@ async function persistPreparedWorktreeStatus(
     type: PREPARED_WORKTREE_ENTRY_TYPE,
     time: { created: prepared.createdAt, updated: now },
     data: {
+      ...(worktreePreparation?.attemptId || prepared.attemptId
+        ? { attemptId: worktreePreparation?.attemptId ?? prepared.attemptId }
+        : {}),
       branchName: worktreePreparation?.branchName ?? prepared.branchName,
       targetPath: worktreePreparation?.targetPath ?? prepared.targetPath,
       ...((worktreePreparation ? worktreePreparation.baseBranch : prepared.baseBranch)
@@ -222,6 +264,7 @@ async function persistPreparedWorktreeStatus(
   prepared.status = status;
   prepared.updatedAt = now;
   if (worktreePreparation) {
+    if (worktreePreparation.attemptId) prepared.attemptId = worktreePreparation.attemptId;
     prepared.branchName = worktreePreparation.branchName;
     prepared.targetPath = worktreePreparation.targetPath;
     if (worktreePreparation.baseBranch) prepared.baseBranch = worktreePreparation.baseBranch;
@@ -1371,19 +1414,6 @@ export function createConversationV4Gateway(
     afterLegacyStateMutation: async (record, reason) => {
       await afterStateMutation(context, record as ZCodeProtocolSessionRecord, reason);
       await autoDrainV4QueueIfReady(record as ZCodeProtocolSessionRecord);
-      const sessionId = String((record as ZCodeProtocolSessionRecord).app.sessionId);
-      const prepared = preparedWorktreeMap(context).get(sessionId);
-      if (prepared && (record as ZCodeProtocolSessionRecord).persistence === "immediate") {
-        try {
-          await persistPreparedWorktreeStatus(context, prepared, "active");
-          context.v4Gateway?.notifyPreparedSessionChanged(sessionId);
-        } catch (error) {
-          context.logger?.warn("Could not persist active worktree preparation", {
-            sessionId,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }
     },
     // deleteSession execution: inline the four steps from the old closeSession op (do not import the
     // old op; semantics match closeSession in server-operations.ts and can be absorbed into v4 when
@@ -1413,81 +1443,112 @@ export function createConversationV4Gateway(
     createSessionRecord: async ({
       workspaceId,
       preparedSessionId,
+      expectedAttemptId,
       mcpServers,
       executionWorktree,
       offPeakToolEnabled,
       dynamicWorkflowEnabled,
       dynamicWorkflowMode,
       permissionScope,
+    }) =>
+      serializePreparedWorktreeMutation(context, preparedSessionId, async () => {
+        if (permissionScope && !context.deps.sessionStore)
+          throw new Error("Group task permission scope requires persistence");
+        if (preparedSessionId) {
+          const prepared = await loadStoredPreparedWorktreeSession(context, preparedSessionId);
+          if (
+            !prepared ||
+            (prepared.status !== "preparing" && prepared.status !== "active") ||
+            (prepared.attemptId && prepared.attemptId !== expectedAttemptId)
+          ) {
+            throw new Error("Prepared worktree session is unavailable");
+          }
+          if (
+            prepared.workspace.workspaceKey !== workspaceId ||
+            !executionWorktree ||
+            executionWorktree.path !== prepared.targetPath ||
+            (executionWorktree.branchName && executionWorktree.branchName !== prepared.branchName)
+          ) {
+            throw new Error("Prepared worktree session does not match the requested workspace");
+          }
+          if (prepared.status === "active") {
+            // The durable active entry is the receipt of a completed activation: return the
+            // existing identity without a second runtime, re-applied startup configuration, or a
+            // second first-input admission — including on a cold Host with no live runtime.
+            return { sessionId: preparedSessionId, preparedActivation: "already-active" };
+          }
+          if (context.sessions.has(preparedSessionId)) {
+            // The runtime exists but the durable receipt is not settled. A durable admitted input
+            // row means the frozen input already reached Core (an activation whose completion did
+            // not persist): never re-send it under a new command id. Without such a row the
+            // earlier attempt failed before admission, so exactly one retry may admit it.
+            return {
+              sessionId: preparedSessionId,
+              preparedActivation: (await sessionHasAdmittedInput(context, preparedSessionId))
+                ? "input-admitted"
+                : "input-pending",
+            };
+          }
+        }
+        // workspaceId has two forms (Workspace Identity constraint):
+        // - Local workspace = workspacePath (fallback when identity is omitted).
+        // - Remote pane (split view across workspaces) = remote identity
+        //   (remote:ssh/wsl/docker:...:<path>, created by UI buildRemoteWorkspaceIdentity).
+        //   Use the shared parser to recover the real workspacePath for workingDirectory. The CLI
+        //   already runs on the remote machine, so path is local there; preserve identity in the
+        //   workspace ref (workspaceKey = identity, with sessions-index topic / isolation unchanged).
+        // The shared parser supports both legacy WSL and explicit user identities; other formats are
+        // treated as local workspacePath.
+        const created = await createSessionRecordForV4(
+          context,
+          {
+            workspace: resolveWorkspaceRefFromId(workspaceId),
+            // A group task was already triggered by the first real request: persist the isolation
+            // grant first, then open tasks and configuration. Ordinary Desktop drafts stay deferred.
+            persistence: "deferred",
+            // Execution worktree: the record executes in the linked worktree while session identity
+            // and listing stay under the parent workspace above.
+            ...(executionWorktree ? { executionWorktree } : {}),
+            // MCP is runtime-creation configuration. v4 createSession must pass it through just like
+            // legacy session/create, or sessions created here will never start these tools.
+            mcpServers,
+            // The Off-Peak tool-surface flag is also runtime-creation configuration and must be included in the record at creation.
+            ...(offPeakToolEnabled === true ? { offPeakToolEnabled: true } : {}),
+            // The dynamic-workflow rollout gate is also runtime-creation configuration. v4 createSession
+            // must pass it through like legacy session/create, or headless sessions bypass the Host
+            // rollout check and use only the process default.
+            ...(dynamicWorkflowEnabled === true ? { dynamicWorkflowEnabled: true } : {}),
+            ...(dynamicWorkflowEnabled === true && dynamicWorkflowMode !== undefined
+              ? { dynamicWorkflowMode }
+              : {}),
+          },
+          preparedSessionId,
+        );
+        if (permissionScope) {
+          const record = context.sessions.get(created.sessionId);
+          if (!record) throw new Error("Group task runtime is unavailable");
+          await record.app.runtime.ensureSessionPersistedForExternalActivity("", {
+            traceContext: record.traceContext,
+          });
+          await context.deps.sessionStore!.updateSession({
+            id: created.sessionId as SessionId,
+            permission: { version: 1, scope: "session", mode: "build" },
+          });
+          await record.app.runtime.setExecutionState({ mode: "build" }, record.traceContext);
+          record.persistence = "immediate";
+        }
+        return {
+          sessionId: created.sessionId,
+          ...(preparedSessionId ? { preparedActivation: "materialized" as const } : {}),
+        };
+      }),
+    prepareWorktreeSession: async ({
+      workspaceId,
+      branchName,
+      targetPath,
+      baseBranch,
+      attemptId,
     }) => {
-      if (permissionScope && !context.deps.sessionStore)
-        throw new Error("Group task permission scope requires persistence");
-      if (preparedSessionId) {
-        const prepared = await restorePreparedWorktreeSession(context, preparedSessionId);
-        if (!prepared || prepared.status !== "preparing") {
-          throw new Error("Prepared worktree session is unavailable");
-        }
-        if (
-          prepared.workspace.workspaceKey !== workspaceId ||
-          !executionWorktree ||
-          executionWorktree.path !== prepared.targetPath ||
-          (executionWorktree.branchName && executionWorktree.branchName !== prepared.branchName)
-        ) {
-          throw new Error("Prepared worktree session does not match the requested workspace");
-        }
-        // A retry after a lost create ACK reuses the already materialized runtime under the same ID.
-        if (context.sessions.has(preparedSessionId)) return { sessionId: preparedSessionId };
-      }
-      // workspaceId has two forms (Workspace Identity constraint):
-      // - Local workspace = workspacePath (fallback when identity is omitted).
-      // - Remote pane (split view across workspaces) = remote identity
-      //   (remote:ssh/wsl/docker:...:<path>, created by UI buildRemoteWorkspaceIdentity).
-      //   Use the shared parser to recover the real workspacePath for workingDirectory. The CLI
-      //   already runs on the remote machine, so path is local there; preserve identity in the
-      //   workspace ref (workspaceKey = identity, with sessions-index topic / isolation unchanged).
-      // The shared parser supports both legacy WSL and explicit user identities; other formats are
-      // treated as local workspacePath.
-      const created = await createSessionRecordForV4(
-        context,
-        {
-          workspace: resolveWorkspaceRefFromId(workspaceId),
-          // A group task was already triggered by the first real request: persist the isolation
-          // grant first, then open tasks and configuration. Ordinary Desktop drafts stay deferred.
-          persistence: "deferred",
-          // Execution worktree: the record executes in the linked worktree while session identity
-          // and listing stay under the parent workspace above.
-          ...(executionWorktree ? { executionWorktree } : {}),
-          // MCP is runtime-creation configuration. v4 createSession must pass it through just like
-          // legacy session/create, or sessions created here will never start these tools.
-          mcpServers,
-          // The Off-Peak tool-surface flag is also runtime-creation configuration and must be included in the record at creation.
-          ...(offPeakToolEnabled === true ? { offPeakToolEnabled: true } : {}),
-          // The dynamic-workflow rollout gate is also runtime-creation configuration. v4 createSession
-          // must pass it through like legacy session/create, or headless sessions bypass the Host
-          // rollout check and use only the process default.
-          ...(dynamicWorkflowEnabled === true ? { dynamicWorkflowEnabled: true } : {}),
-          ...(dynamicWorkflowEnabled === true && dynamicWorkflowMode !== undefined
-            ? { dynamicWorkflowMode }
-            : {}),
-        },
-        preparedSessionId,
-      );
-      if (permissionScope) {
-        const record = context.sessions.get(created.sessionId);
-        if (!record) throw new Error("Group task runtime is unavailable");
-        await record.app.runtime.ensureSessionPersistedForExternalActivity("", {
-          traceContext: record.traceContext,
-        });
-        await context.deps.sessionStore!.updateSession({
-          id: created.sessionId as SessionId,
-          permission: { version: 1, scope: "session", mode: "build" },
-        });
-        await record.app.runtime.setExecutionState({ mode: "build" }, record.traceContext);
-        record.persistence = "immediate";
-      }
-      return { sessionId: created.sessionId };
-    },
-    prepareWorktreeSession: async ({ workspaceId, branchName, targetPath, baseBranch }) => {
       const store = context.deps.sessionStore;
       if (!store?.saveSessionEntry || !store.deleteEmptySession) {
         throw new Error("Worktree preparation requires session and session-entry storage");
@@ -1510,6 +1571,7 @@ export function createConversationV4Gateway(
       const prepared = {
         sessionId,
         workspace,
+        ...(attemptId ? { attemptId } : {}),
         branchName,
         targetPath,
         ...(baseBranch ? { baseBranch } : {}),
@@ -1535,20 +1597,36 @@ export function createConversationV4Gateway(
       context.v4Gateway?.notifyPreparedSessionChanged(String(sessionId));
       return { sessionId: String(sessionId) };
     },
-    updateWorktreePreparation: async (sessionId, input) => {
-      const prepared = await restorePreparedWorktreeSession(context, sessionId);
-      if (!prepared || prepared.status === "active") {
-        throw new Error("Prepared worktree session is unavailable");
-      }
-      await persistPreparedWorktreeStatus(
-        context,
-        prepared,
-        input.status,
-        input.failureMessage,
-        input.worktreePreparation,
-      );
-      context.v4Gateway?.notifyPreparedSessionChanged(sessionId);
-    },
+    updateWorktreePreparation: async (sessionId, input) =>
+      serializePreparedWorktreeMutation(context, sessionId, async () => {
+        const prepared = await restorePreparedWorktreeSession(context, sessionId);
+        if (
+          !prepared ||
+          context.sessions.has(sessionId) ||
+          prepared.status === "active" ||
+          (prepared.attemptId && prepared.attemptId !== input.expectedAttemptId)
+        ) {
+          throw new Error("Prepared worktree session is unavailable");
+        }
+        assertWorktreePreparationMutation(prepared, input);
+        await persistPreparedWorktreeStatus(
+          context,
+          prepared,
+          input.status,
+          input.failureMessage,
+          input.worktreePreparation,
+        );
+        context.v4Gateway?.notifyPreparedSessionChanged(sessionId);
+      }),
+    withPreparedWorktreeActivation: <T>(sessionId: string, body: () => Promise<T>) =>
+      serializePreparedWorktreeMutation(context, sessionId, body),
+    completePreparedWorktreeActivation: async (sessionId) =>
+      serializePreparedWorktreeMutation(context, sessionId, async () => {
+        const prepared = await loadStoredPreparedWorktreeSession(context, sessionId);
+        if (!prepared || prepared.status !== "preparing") return;
+        await persistPreparedWorktreeStatus(context, prepared, "active");
+        context.v4Gateway?.notifyPreparedSessionChanged(sessionId);
+      }),
     createSelectionSideSession: async (sessionId, options) => {
       const record = context.sessions.get(sessionId);
       if (!record) throw new Error("proto.sessionNotFound");
@@ -1869,6 +1947,9 @@ export function createConversationV4Gateway(
               isPreparing && prepared?.branchName
                 ? `Worktree ${prepared.branchName}`
                 : (session.title ?? ""),
+            ...(isPreparing && prepared
+              ? { worktreePreparation: worktreePreparationStateSchema.parse(prepared) }
+              : {}),
             titleSource: normalizeStoredTitleSource(session.titleSource),
             phase: isPreparing ? ("draft" as const) : ("completedSuccess" as const),
             sessionEnded: !isPreparing,
@@ -2092,6 +2173,7 @@ export function createConversationV4Gateway(
         branchName: prepared.branchName,
         targetPath: prepared.targetPath,
         ...(prepared.baseBranch ? { baseBranch: prepared.baseBranch } : {}),
+        ...(prepared.attemptId ? { attemptId: prepared.attemptId } : {}),
         status: prepared.status,
         ...(prepared.failureMessage ? { failureMessage: prepared.failureMessage } : {}),
       };

@@ -200,6 +200,19 @@ export interface GitWorktreeListResult {
   worktrees: GitWorktreeEntry[];
 }
 
+export interface GitWorktreeVerifyRequest extends GitRepositoryRequest {
+  /** Registered worktree path whose real directory should be verified on this Host. */
+  targetPath: string;
+}
+
+/**
+ * Real-directory verification for a registered worktree: `git worktree list` can keep a stale
+ * registration after the directory was removed by hand. Read-only; never prunes or deletes.
+ */
+export type GitWorktreeVerifyResult =
+  | { ok: true }
+  | { ok: false; reason: "missing-directory" | "missing-git-link" };
+
 /** Invalid-branch-name / branch-already-exists / target-branch-not-found / branch-in-other-worktree / unknown reuse the literals of GitBranchMutationIssueCode; the rest are worktree-specific. */
 export type GitWorktreeMutationIssueCode =
   | "invalid-branch-name"

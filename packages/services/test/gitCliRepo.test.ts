@@ -998,3 +998,32 @@ describeIfGit("gitCliRepo getRepositoryRemotes", () => {
     GIT_INTEGRATION_TEST_TIMEOUT_MS,
   );
 });
+
+describe("gitCliRepo verifyWorktreeUsable", () => {
+  it("accepts a real directory with a Git link and rejects stale registrations read-only", async () => {
+    const { commandProvider } = createMockCommandProvider();
+    const repo = createGitCliRepo({ commandProvider });
+
+    // Linked worktree shape: directory with a `.git` file pointing at the main repository.
+    const usable = makeTempDir("zcode-git-verify-ok-");
+    writeFileSync(join(usable, ".git"), "gitdir: /repo/.git/worktrees/feature\n");
+    await expect(repo.verifyWorktreeUsable("/repo", usable)).resolves.toEqual({ ok: true });
+
+    // Registration whose directory was removed by hand.
+    const missing = join(makeTempDir("zcode-git-verify-parent-"), "gone");
+    await expect(repo.verifyWorktreeUsable("/repo", missing)).resolves.toEqual({
+      ok: false,
+      reason: "missing-directory",
+    });
+
+    // Directory exists but is not a Git checkout (no Git binding).
+    const plain = makeTempDir("zcode-git-verify-plain-");
+    await expect(repo.verifyWorktreeUsable("/repo", plain)).resolves.toEqual({
+      ok: false,
+      reason: "missing-git-link",
+    });
+
+    // Read-only: no git command runs (no prune, no branch deletion).
+    expect(commandProvider.run).not.toHaveBeenCalled();
+  });
+});

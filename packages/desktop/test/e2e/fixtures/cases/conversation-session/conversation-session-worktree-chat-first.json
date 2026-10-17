@@ -21,6 +21,20 @@
       "source": "synthetic",
       "timingPolicy": "fast-text",
       "syntheticReason": "The scenario needs a deterministic first-message response after worktree creation and session admission."
+    },
+    {
+      "id": "worktree-chat-second-message",
+      "kind": "main",
+      "source": "synthetic",
+      "timingPolicy": "fast-text",
+      "syntheticReason": "The second send during the first response is ordinary session input; the scenario needs a deterministic second-turn response."
+    },
+    {
+      "id": "worktree-recovered-message",
+      "kind": "main",
+      "timingPolicy": "fast-text",
+      "source": "synthetic",
+      "syntheticReason": "The navigation case must admit the recovered message only after an explicit restore and send."
     }
   ]
 }

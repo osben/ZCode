@@ -12,8 +12,31 @@ import { logger } from "@/logger.js";
 import { modelSelectionSchema, type ModelSelection } from "@zcode/shared";
 import { submissionModeSchema, type SubmissionMode } from "@zcode/shared/zcode-protocol-v4";
 import type { ComposerMentionPrefill } from "@/store/zcodeSessionStoreTypes.js";
+import type { ConversationSelectionReference } from "@/lib/conversationSelectionReference.js";
+import type { CodeCommentComposerAttachment } from "@/lib/codeCommentContext.js";
+import type { PptxElementReference } from "@/lib/pptxElementReference.js";
+import type { WebElementContextComposerAttachment } from "@/lib/webElementContext.js";
+import type { PluginUiModelContext } from "@/plugin-ui/domain/pluginUiModelContext.js";
+
+/**
+ * Typed snapshot of the contexts actually included in a frozen submission. Recovery records carry
+ * it so Restore re-establishes exactly that submission after navigation or reload; the next
+ * draft's contexts are replaced, never merged. Records written before this field existed remain
+ * readable without it.
+ */
+export interface V4ComposerRecoveryContexts {
+  conversationQuotes?: ConversationSelectionReference[];
+  codeComments?: CodeCommentComposerAttachment[];
+  webElements?: WebElementContextComposerAttachment[];
+  pptxElements?: PptxElementReference[];
+  pluginUiContexts?: PluginUiModelContext[];
+}
 
 export interface V4ComposerDraft {
+  /** Manifest only; browser File objects remain owned by the attachment store. */
+  recoveryAttachments?: { id: string; filename: string }[];
+  /** Contexts actually included in the frozen submission (recovery records only). */
+  recoveryContexts?: V4ComposerRecoveryContexts;
   text: string;
   editorStateJson?: string;
   mention?: ComposerMentionPrefill;
@@ -38,11 +61,49 @@ const STORAGE_KEY_PREFIX = "zcode-v4-composer-drafts:v1:";
 export const V4_DRAFT_SCOPE_ROOT = "__draft__";
 export const V4_WORKTREE_RECOVERY_PENDING_SCOPE = "__worktree_recovery_pending__";
 
-export function getV4WorktreeRecoveryScope(sessionId: string): string {
-  return `__worktree_recovery__:${sessionId}`;
+export function getV4WorktreeRecoveryScope(sessionId: string, submissionId?: string): string {
+  return submissionId
+    ? `__worktree_recovery_v2__:${encodeURIComponent(sessionId)}:${submissionId}`
+    : `__worktree_recovery__:${sessionId}`;
+}
+
+export function readV4WorktreeRecoveryDrafts(
+  path: string,
+  identity: string | undefined,
+  sessionId: string,
+) {
+  const prefix = `__worktree_recovery_v2__:${encodeURIComponent(sessionId)}:`;
+  const legacy = getV4WorktreeRecoveryScope(sessionId);
+  return Object.entries(readDraftFile(getV4ComposerDraftStorageKey(path, identity)).scopes)
+    .filter(
+      ([scope]) =>
+        scope === legacy ||
+        scope.startsWith(prefix) ||
+        (sessionId === V4_DRAFT_SCOPE_ROOT &&
+          (scope === V4_WORKTREE_RECOVERY_PENDING_SCOPE ||
+            scope.startsWith(`${V4_WORKTREE_RECOVERY_PENDING_SCOPE}:`))),
+    )
+    .sort((a, b) => a[1].updatedAt - b[1].updatedAt)
+    .map(([scope, draft]) => ({ scope, draft }));
 }
 
 const warnedStorageKeys = new Set<string>();
+const DRAFT_CHANGE_EVENT = "zcode:v4-composer-draft-change";
+export function subscribeV4ComposerDrafts(listener: () => void) {
+  window.addEventListener(DRAFT_CHANGE_EVENT, listener);
+  window.addEventListener("storage", listener);
+  return () => {
+    window.removeEventListener(DRAFT_CHANGE_EVENT, listener);
+    window.removeEventListener("storage", listener);
+  };
+}
+export function getV4ComposerDraftVersion(path: string, identity?: string) {
+  try {
+    return getStorage()?.getItem(getV4ComposerDraftStorageKey(path, identity)) ?? null;
+  } catch {
+    return null;
+  }
+}
 
 function warnStorageFailure(key: string, error: unknown) {
   if (warnedStorageKeys.has(key)) return;
@@ -123,8 +184,18 @@ function readDraft(value: unknown): V4ComposerDraft | null {
     ["files", "skills", "commands", "subagents", "whiteboards", "sessions", "plugins"].includes(
       String(mention.category),
     );
+  const recoveryContexts = readRecoveryContexts(value.recoveryContexts);
   return {
     text: value.text,
+    ...(recoveryContexts ? { recoveryContexts } : {}),
+    ...(Array.isArray(value.recoveryAttachments)
+      ? {
+          recoveryAttachments: value.recoveryAttachments.filter(
+            (item): item is { id: string; filename: string } =>
+              isRecord(item) && typeof item.id === "string" && typeof item.filename === "string",
+          ),
+        }
+      : {}),
     ...(typeof value.editorStateJson === "string"
       ? { editorStateJson: value.editorStateJson }
       : {}),
@@ -150,6 +221,48 @@ function readDraft(value: unknown): V4ComposerDraft | null {
   };
 }
 
+/**
+ * Tolerant read of the recovery context snapshot: keep plain-object items only. The restore-time
+ * dispatchers validate each context shape themselves, so a newer record read by an older build
+ * degrades to restoring fewer contexts instead of failing the whole draft.
+ */
+function readRecoveryContexts(value: unknown): V4ComposerRecoveryContexts | undefined {
+  if (!isRecord(value)) return undefined;
+  const ofObjects = (list: unknown): unknown[] | undefined => {
+    if (!Array.isArray(list)) return undefined;
+    const items = list.filter((item) => isRecord(item));
+    return items.length > 0 ? items : undefined;
+  };
+  const conversationQuotes = ofObjects(value.conversationQuotes);
+  const codeComments = ofObjects(value.codeComments);
+  const webElements = ofObjects(value.webElements);
+  const pptxElements = ofObjects(value.pptxElements);
+  const pluginUiContexts = ofObjects(value.pluginUiContexts);
+  if (!conversationQuotes && !codeComments && !webElements && !pptxElements && !pluginUiContexts) {
+    return undefined;
+  }
+  return {
+    ...(conversationQuotes
+      ? { conversationQuotes: conversationQuotes as ConversationSelectionReference[] }
+      : {}),
+    ...(codeComments ? { codeComments: codeComments as CodeCommentComposerAttachment[] } : {}),
+    ...(webElements ? { webElements: webElements as WebElementContextComposerAttachment[] } : {}),
+    ...(pptxElements ? { pptxElements: pptxElements as PptxElementReference[] } : {}),
+    ...(pluginUiContexts ? { pluginUiContexts: pluginUiContexts as PluginUiModelContext[] } : {}),
+  };
+}
+
+function hasRecoveryContexts(contexts: V4ComposerRecoveryContexts | undefined): boolean {
+  return Boolean(
+    contexts &&
+    (contexts.conversationQuotes?.length ||
+      contexts.codeComments?.length ||
+      contexts.webElements?.length ||
+      contexts.pptxElements?.length ||
+      contexts.pluginUiContexts?.length),
+  );
+}
+
 function writeDraftFile(key: string, file: V4DraftFile) {
   const storage = getStorage();
   if (!storage) {
@@ -158,9 +271,11 @@ function writeDraftFile(key: string, file: V4DraftFile) {
   try {
     if (Object.keys(file.scopes).length === 0) {
       storage.removeItem(key);
+      window.dispatchEvent(new Event(DRAFT_CHANGE_EVENT));
       return true;
     }
     storage.setItem(key, JSON.stringify(file));
+    window.dispatchEvent(new Event(DRAFT_CHANGE_EVENT));
     warnedStorageKeys.delete(key);
     return true;
   } catch (error) {
@@ -197,7 +312,9 @@ export function persistV4ComposerDraft(
     !draft.mention &&
     !draft.mode &&
     !draft.modelSelection &&
-    !draft.initializeFromNewTask
+    !draft.initializeFromNewTask &&
+    !draft.recoveryAttachments?.length &&
+    !hasRecoveryContexts(draft.recoveryContexts)
   ) {
     delete file.scopes[scopeId];
   } else {
@@ -217,5 +334,22 @@ export function clearV4ComposerDraft(
     return true;
   }
   delete file.scopes[scopeId];
+  return writeDraftFile(key, file);
+}
+
+/** Transfer one recovery record without temporarily duplicating its storage footprint. */
+export function moveV4ComposerDraft(
+  workspacePath: string,
+  workspaceIdentity: string | undefined,
+  source: string,
+  target: string,
+): boolean {
+  const key = getV4ComposerDraftStorageKey(workspacePath, workspaceIdentity);
+  const file = readDraftFile(key);
+  const draft = file.scopes[source];
+  if (!draft) return false;
+  if (source === target) return true;
+  file.scopes[target] = draft;
+  delete file.scopes[source];
   return writeDraftFile(key, file);
 }

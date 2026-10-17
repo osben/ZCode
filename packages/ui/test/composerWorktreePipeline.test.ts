@@ -18,9 +18,12 @@ import {
   startComposerWorktreePipeline,
 } from "@/v4/composer/composerWorktreePipeline.js";
 
+import { restartPreparedWorktreeCreation } from "@/v4/composer/restartPreparedWorktreeCreation.js";
+
 const createWorktree = vi.fn();
 const listWorktrees = vi.fn();
-const gitService = { createWorktree, listWorktrees };
+const verifyWorktreeUsable = vi.fn(async () => ({ ok: true }));
+const gitService = { createWorktree, listWorktrees, verifyWorktreeUsable };
 
 const WORKSPACE_KEY = "/dev/alpha";
 const PARAMS = {
@@ -70,6 +73,22 @@ afterEach(() => {
 });
 
 describe("composerWorktreePipelineStore state machine", () => {
+  it("does not resurrect a discarded or consumed attempt", () => {
+    for (const terminal of ["discard", "consume"] as const) {
+      seedCreating({ sessionId: "terminal-session" });
+      const attemptId = currentPipeline("terminal-session")!.attemptId;
+      useComposerWorktreePipelineStore.getState()[terminal](WORKSPACE_KEY, "terminal-session");
+      useComposerWorktreePipelineStore
+        .getState()
+        .markReady(WORKSPACE_KEY, PARAMS.targetPath, false, "terminal-session", attemptId);
+      useComposerWorktreePipelineStore
+        .getState()
+        .markFailed(WORKSPACE_KEY, "late error", "terminal-session", attemptId);
+      expect(currentPipeline("terminal-session")?.status).toBe(
+        terminal === "discard" ? "discarded" : "consumed",
+      );
+    }
+  });
   it("keeps the prepared session identity through setup and admission", () => {
     const store = useComposerWorktreePipelineStore.getState();
     seedCreating({ sessionId: "session-prepared-1" });
@@ -262,6 +281,178 @@ describe("startComposerWorktreePipeline runner", () => {
       params: { branchName: PARAMS.branchName },
     });
     expect(currentPipeline()).toMatchObject({ sessionId: "session-b", status: "ready" });
+  });
+
+  it("replaces a stale renderer attempt when the Host reports a newer attempt for the same session", () => {
+    seedCreating({
+      sessionId: "session-prepared-1",
+      status: "failed",
+      params: { ...PARAMS, attemptId: "attempt-old" },
+      failureMessage: "stale local failure",
+      queuedPromptPreview: "queued prompt",
+    });
+
+    restoreComposerWorktreePipelineFromPreparation({
+      workspaceKey: WORKSPACE_KEY,
+      workspacePath: WORKSPACE_KEY,
+      sessionId: "session-prepared-1",
+      preparation: {
+        status: "preparing",
+        branchName: PARAMS.branchName,
+        targetPath: PARAMS.targetPath,
+        baseBranch: "main",
+        attemptId: "attempt-new",
+      },
+    });
+
+    expect(currentPipeline("session-prepared-1")).toMatchObject({
+      status: "creating",
+      sessionId: "session-prepared-1",
+      params: { ...PARAMS, attemptId: "attempt-new" },
+      queuedPromptPreview: "queued prompt",
+    });
+    // Another session's entry is untouched by the attempt replacement.
+    useComposerWorktreePipelineStore.getState().startPipeline(WORKSPACE_KEY, {
+      status: "ready",
+      sessionId: "session-other",
+      params: { ...PARAMS, attemptId: "attempt-other" },
+      worktreePath: PARAMS.targetPath,
+      createdAt: 3,
+    });
+    restoreComposerWorktreePipelineFromPreparation({
+      workspaceKey: WORKSPACE_KEY,
+      workspacePath: WORKSPACE_KEY,
+      sessionId: "session-prepared-1",
+      preparation: {
+        status: "preparing",
+        branchName: PARAMS.branchName,
+        targetPath: PARAMS.targetPath,
+        attemptId: "attempt-newer",
+      },
+    });
+    expect(currentPipeline("session-other")).toMatchObject({
+      status: "ready",
+      params: { attemptId: "attempt-other" },
+    });
+  });
+
+  it("keeps a same-attempt local ready while the Host still reports preparing", () => {
+    seedCreating({
+      sessionId: "session-prepared-1",
+      status: "ready",
+      params: { ...PARAMS, attemptId: "attempt-1" },
+      worktreePath: PARAMS.targetPath,
+    });
+
+    restoreComposerWorktreePipelineFromPreparation({
+      workspaceKey: WORKSPACE_KEY,
+      workspacePath: WORKSPACE_KEY,
+      sessionId: "session-prepared-1",
+      preparation: {
+        status: "preparing",
+        branchName: PARAMS.branchName,
+        targetPath: PARAMS.targetPath,
+        attemptId: "attempt-1",
+      },
+    });
+
+    expect(currentPipeline("session-prepared-1")).toMatchObject({
+      status: "ready",
+      worktreePath: PARAMS.targetPath,
+    });
+
+    // A terminal Host failure for the same attempt wins over the optimistic local ready.
+    restoreComposerWorktreePipelineFromPreparation({
+      workspaceKey: WORKSPACE_KEY,
+      workspacePath: WORKSPACE_KEY,
+      sessionId: "session-prepared-1",
+      preparation: {
+        status: "failed",
+        branchName: PARAMS.branchName,
+        targetPath: PARAMS.targetPath,
+        attemptId: "attempt-1",
+        failureMessage: "Host reported failure",
+      },
+    });
+    expect(currentPipeline("session-prepared-1")).toMatchObject({
+      status: "failed",
+      failureMessage: "Host reported failure",
+    });
+  });
+
+  it("discards a live entry on Host cancellation and a late Git success cannot restore ready", async () => {
+    let resolveCreate: (value: GitWorktreeCreateResult) => void = () => {};
+    createWorktree.mockReturnValue(
+      new Promise<GitWorktreeCreateResult>((resolve) => {
+        resolveCreate = resolve;
+      }),
+    );
+    const store = useComposerWorktreePipelineStore.getState();
+    store.startPipeline(WORKSPACE_KEY, {
+      status: "creating",
+      sessionId: "session-cancelled",
+      params: { ...PARAMS, attemptId: "attempt-1" },
+      queuedPromptPreview: "queued prompt",
+      createdAt: 1,
+    });
+    const attemptId = currentPipeline("session-cancelled")!.attemptId;
+    const running = startComposerWorktreePipeline({
+      gitService,
+      workspaceKey: WORKSPACE_KEY,
+      sessionId: "session-cancelled",
+      params: { ...PARAMS, attemptId },
+      formatMessage: (id: string) => id,
+    });
+
+    restoreComposerWorktreePipelineFromPreparation({
+      workspaceKey: WORKSPACE_KEY,
+      workspacePath: WORKSPACE_KEY,
+      sessionId: "session-cancelled",
+      preparation: {
+        status: "cancelled",
+        branchName: PARAMS.branchName,
+        targetPath: PARAMS.targetPath,
+        attemptId: "attempt-1",
+      },
+    });
+    expect(currentPipeline("session-cancelled")).toMatchObject({
+      status: "discarded",
+      queuedPromptPreview: undefined,
+    });
+
+    resolveCreate({
+      ok: true,
+      worktreePath: PARAMS.targetPath,
+      branchName: PARAMS.branchName,
+      issues: [],
+    });
+    await running;
+    expect(currentPipeline("session-cancelled")?.status).toBe("discarded");
+  });
+
+  it("never resurrects a consumed or discarded entry from a stale Host preparation", () => {
+    for (const terminal of ["consumed", "discarded"] as const) {
+      useComposerWorktreePipelineStore.getState().startPipeline(WORKSPACE_KEY, {
+        status: terminal,
+        sessionId: "session-terminal",
+        params: { ...PARAMS, attemptId: "attempt-1" },
+        createdAt: 1,
+      });
+      for (const status of ["preparing", "failed", "cancelled"] as const) {
+        restoreComposerWorktreePipelineFromPreparation({
+          workspaceKey: WORKSPACE_KEY,
+          workspacePath: WORKSPACE_KEY,
+          sessionId: "session-terminal",
+          preparation: {
+            status,
+            branchName: PARAMS.branchName,
+            targetPath: PARAMS.targetPath,
+            attemptId: "attempt-1",
+          },
+        });
+      }
+      expect(currentPipeline("session-terminal")?.status).toBe(terminal);
+    }
   });
 
   it("waits for Host identity before starting Git and retains that ID in the pipeline", async () => {
@@ -637,6 +828,150 @@ describe("Host preparation sync before ready (strict activation stays intact)", 
     });
   });
 
+  it("reuses an occupied branch's registered worktree when the requested target is absent", async () => {
+    const syncPreparedWorktree = vi.fn().mockResolvedValue(undefined);
+    createWorktree.mockResolvedValue({
+      ok: false,
+      worktreePath: null,
+      branchName: null,
+      issues: [{ code: "branch-in-other-worktree", message: "branch checked out elsewhere" }],
+    } satisfies GitWorktreeCreateResult);
+    listWorktrees.mockResolvedValue({
+      isGitAvailable: true,
+      isRepository: true,
+      worktrees: [worktreeEntry(OTHER_PATH)],
+    });
+    seedCreating({ sessionId: "session-prepared-1" });
+
+    const outcome = await startComposerWorktreePipeline({
+      gitService,
+      workspaceKey: WORKSPACE_KEY,
+      sessionId: "session-prepared-1",
+      params: PARAMS,
+      formatMessage: (id: string) => id,
+      syncPreparedWorktree,
+    });
+
+    expect(verifyWorktreeUsable).toHaveBeenCalledWith({
+      workspacePath: WORKSPACE_KEY,
+      targetPath: OTHER_PATH,
+    });
+    expect(syncPreparedWorktree).toHaveBeenCalledWith(
+      expect.objectContaining({ targetPath: OTHER_PATH }),
+    );
+    expect(outcome).toBe("ready");
+    expect(currentPipeline("session-prepared-1")).toMatchObject({
+      status: "ready",
+      existing: true,
+      worktreePath: OTHER_PATH,
+    });
+  });
+
+  it("fails recoverably when the registered worktree's directory is gone (stale registration)", async () => {
+    mockExistingWorktreeElsewhere();
+    verifyWorktreeUsable.mockResolvedValueOnce({ ok: false, reason: "missing-directory" });
+    seedCreating({ sessionId: "session-prepared-1" });
+
+    const outcome = await startComposerWorktreePipeline({
+      gitService,
+      workspaceKey: WORKSPACE_KEY,
+      sessionId: "session-prepared-1",
+      params: PARAMS,
+      formatMessage: (id: string) => id,
+    });
+
+    expect(outcome).toBe("failed");
+    expect(currentPipeline("session-prepared-1")).toMatchObject({
+      status: "failed",
+      failureMessage: "commandCenter.worktree.error.worktreeMissing",
+    });
+    // Never a second directory and never an automatic prune.
+    expect(createWorktree).toHaveBeenCalledTimes(1);
+    expect(listWorktrees).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails stale-creating reconcile when the registered directory is gone instead of turning ready", async () => {
+    seedCreating({ sessionId: "session-prepared-1" });
+    listWorktrees.mockResolvedValue({
+      isGitAvailable: true,
+      isRepository: true,
+      worktrees: [worktreeEntry(OTHER_PATH)],
+    });
+    verifyWorktreeUsable.mockResolvedValueOnce({ ok: false, reason: "missing-git-link" });
+
+    await reconcileCreatingComposerWorktreePipeline({
+      gitService,
+      workspaceKey: WORKSPACE_KEY,
+      sessionId: "session-prepared-1",
+      branchName: PARAMS.branchName,
+      formatMessage: (id: string) => id,
+    });
+
+    expect(currentPipeline("session-prepared-1")).toMatchObject({
+      status: "failed",
+      failureMessage: "worktreeSetup.reconcile.worktreeMissing",
+    });
+  });
+
+  it("isolates identical paths across different workspace hosts", async () => {
+    // Same branch/target paths, different workspace identities (e.g. local + remote Host): the
+    // per-workspace pipeline entries and Git requests stay independent.
+    const createA = vi.fn().mockResolvedValue({
+      ok: true,
+      worktreePath: PARAMS.targetPath,
+      branchName: PARAMS.branchName,
+      issues: [],
+    } satisfies GitWorktreeCreateResult);
+    const createB = vi.fn().mockImplementation(async () => {
+      throw new Error("remote host git unavailable");
+    });
+    useComposerWorktreePipelineStore.getState().startPipeline(WORKSPACE_KEY, {
+      status: "creating",
+      sessionId: "session-a",
+      params: PARAMS,
+      createdAt: 1,
+    });
+    useComposerWorktreePipelineStore.getState().startPipeline("remote\0/dev/alpha", {
+      status: "creating",
+      sessionId: "session-a",
+      params: { ...PARAMS, workspacePath: "/dev/alpha" },
+      createdAt: 2,
+    });
+    const outcomeA = await startComposerWorktreePipeline({
+      gitService: { ...gitService, createWorktree: createA },
+      workspaceKey: WORKSPACE_KEY,
+      sessionId: "session-a",
+      params: PARAMS,
+      formatMessage: (id: string) => id,
+    });
+    const outcomeB = await startComposerWorktreePipeline({
+      gitService: { ...gitService, createWorktree: createB },
+      workspaceKey: "remote\0/dev/alpha",
+      sessionId: "session-a",
+      params: { ...PARAMS, workspacePath: "/dev/alpha" },
+      formatMessage: (id: string) => id,
+    });
+
+    expect(outcomeA).toBe("ready");
+    expect(outcomeB).toBe("failed");
+    expect(createA).toHaveBeenCalledTimes(1);
+    expect(createB).toHaveBeenCalledTimes(1);
+    expect(
+      selectComposerWorktreePipeline(
+        useComposerWorktreePipelineStore.getState(),
+        WORKSPACE_KEY,
+        "session-a",
+      ),
+    ).toMatchObject({ status: "ready", worktreePath: PARAMS.targetPath });
+    expect(
+      selectComposerWorktreePipeline(
+        useComposerWorktreePipelineStore.getState(),
+        "remote\0/dev/alpha",
+        "session-a",
+      ),
+    ).toMatchObject({ status: "failed" });
+  });
+
   it("realigns the Host marker during stale-creating reconcile before ready", async () => {
     const syncPreparedWorktree = vi.fn().mockResolvedValue(undefined);
     seedCreating({ sessionId: "session-prepared-1" });
@@ -753,6 +1088,85 @@ describe("Host preparation sync before ready (strict activation stays intact)", 
       existing: true,
       worktreePath: OTHER_PATH,
       queuedPromptPreview: "frozen input",
+    });
+  });
+});
+
+describe("reopened preparation attempts", () => {
+  it("restores the selected base and creates a fresh attempt for the same session", async () => {
+    createWorktree.mockResolvedValue({
+      ok: true,
+      worktreePath: PARAMS.targetPath,
+      branchName: PARAMS.branchName,
+      issues: [],
+    });
+    const prepareSession = vi.fn(async (_params: { attemptId?: string }) => "reopened-session");
+    await expect(
+      restartPreparedWorktreeCreation({
+        workspaceKey: WORKSPACE_KEY,
+        workspacePath: WORKSPACE_KEY,
+        sessionId: "reopened-session",
+        preparation: { ...PARAMS, status: "cancelled", attemptId: "old-attempt" },
+        gitService,
+        prepareSession,
+        formatMessage: (id) => id,
+      }),
+    ).resolves.toEqual({ ok: true, sessionId: "reopened-session" });
+    expect(prepareSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseBranch: "main",
+        targetPath: PARAMS.targetPath,
+        attemptId: expect.any(String),
+      }),
+    );
+    expect(prepareSession.mock.calls[0]?.[0].attemptId).not.toBe("old-attempt");
+    await vi.waitFor(() => expect(currentPipeline("reopened-session")?.status).toBe("ready"));
+    expect(createWorktree).toHaveBeenCalledWith(expect.objectContaining({ baseBranch: "main" }));
+  });
+
+  it("does not join an old Git runner after an explicit Retry of the same session", async () => {
+    let finishOld!: (value: GitWorktreeCreateResult) => void;
+    createWorktree.mockReturnValueOnce(
+      new Promise<GitWorktreeCreateResult>((resolve) => {
+        finishOld = resolve;
+      }),
+    );
+    seedCreating({ sessionId: "same-session", params: { ...PARAMS, attemptId: "old" } });
+    const old = startComposerWorktreePipeline({
+      gitService,
+      workspaceKey: WORKSPACE_KEY,
+      sessionId: "same-session",
+      params: { ...PARAMS, attemptId: "old" },
+      formatMessage: (id) => id,
+    });
+    await vi.waitFor(() => expect(createWorktree).toHaveBeenCalledTimes(1));
+    createWorktree.mockResolvedValue({
+      ok: true,
+      worktreePath: PARAMS.targetPath,
+      branchName: PARAMS.branchName,
+      issues: [],
+    });
+    const store = useComposerWorktreePipelineStore.getState();
+    store.startPipeline(WORKSPACE_KEY, {
+      sessionId: "same-session",
+      status: "creating",
+      params: { ...PARAMS, attemptId: "new" },
+      createdAt: Date.now(),
+    });
+    await startComposerWorktreePipeline({
+      gitService,
+      workspaceKey: WORKSPACE_KEY,
+      sessionId: "same-session",
+      params: { ...PARAMS, attemptId: "new" },
+      formatMessage: (id) => id,
+    });
+    expect(createWorktree).toHaveBeenCalledTimes(2);
+    expect(currentPipeline("same-session")?.status).toBe("ready");
+    finishOld({ ok: false, issues: [] });
+    await old;
+    expect(currentPipeline("same-session")).toMatchObject({
+      status: "ready",
+      params: { attemptId: "new" },
     });
   });
 });
