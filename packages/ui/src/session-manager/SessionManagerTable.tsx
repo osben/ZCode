@@ -8,6 +8,7 @@ import type { IntlInstance } from "@/i18n/createIntl.js";
 import {
   buildSessionManagerGridTemplate,
   buildSessionManagerMinTableWidth,
+  SESSION_MANAGER_SORTABLE_COLUMNS,
   sessionManagerColumnLabelId,
 } from "./sessionManagerColumns.js";
 import type { FlattenedSessionManagerRow, SessionManagerRow } from "./sessionManagerModel.js";
@@ -124,7 +125,7 @@ export function SessionManagerTable(props: SessionManagerTableProps) {
                   className="size-3 text-foreground-subtlest"
                   aria-label={intl.formatMessage({ id: sessionManagerColumnLabelId(column) })}
                 />
-              ) : column === "name" || column === "updated" || column === "created" ? (
+              ) : SESSION_MANAGER_SORTABLE_COLUMNS.includes(column) ? (
                 <SortHeaderCell
                   column={column}
                   sortColumn={props.sortColumn}

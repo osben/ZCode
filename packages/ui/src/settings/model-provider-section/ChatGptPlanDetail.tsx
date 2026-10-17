@@ -113,7 +113,9 @@ export function ChatGptPlanDetail() {
             flow.setPending(false);
             await flow.onSettled?.(completion);
           } catch (caught) {
-            if (disposedRef.current) return;
+            // A superseded flow's late poll rejection must not surface as the newer flow's
+            // error banner nor clear the newer flow's poll timer.
+            if (disposedRef.current || flowGenerationRef.current !== generation) return;
             pollTimerRef.current = null;
             flow.setPending(false);
             setError(flow.fallbackError(caught));
@@ -121,7 +123,7 @@ export function ChatGptPlanDetail() {
         };
         pollTimerRef.current = setTimeout(() => void poll(), LOGIN_POLL_INTERVAL_MS);
       } catch (caught) {
-        if (disposedRef.current) return;
+        if (disposedRef.current || flowGenerationRef.current !== generation) return;
         flow.setPending(false);
         setError(flow.fallbackError(caught));
       }

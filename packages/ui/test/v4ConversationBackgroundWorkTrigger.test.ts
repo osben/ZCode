@@ -215,11 +215,32 @@ describe("Dream background badge", () => {
     });
     const running = await renderTrigger([backgroundWork({ kind: "dream" })]);
     expect(running).toContain('data-background-dream-count="1"');
-    expect(running).toContain("tooltipDream");
+    // Exact attribute match: "tooltipDream" is a substring of "tooltipDreamResult", so a
+    // toContain("tooltipDream") assertion would not distinguish the two branches.
+    expect(running).toContain('data-tooltip="chat.composer.backgroundWorks.tooltipDream"');
     const finished = await renderTrigger([
       backgroundWork({ kind: "dream", status: "resultPending" }),
     ]);
     expect(finished).toContain('data-background-total-count="0"');
-    expect(finished).toContain("tooltipDreamResult");
+    expect(finished).toContain('data-tooltip="chat.composer.backgroundWorks.tooltipDreamResult"');
+    // With zero running work the count interpolation is meaningless; the accessible name must
+    // fall back to the result tooltip instead.
+    expect(finished).toContain('aria-label="chat.composer.backgroundWorks.tooltipDreamResult"');
+    // Compact layout shows a lone moon icon (not the activity icon + total) at zero.
+    expect(finished).toContain('data-composer-background-layout="compact"');
+    const compactSpan =
+      /data-composer-background-layout="compact"[^>]*>((?:(?!<\/span>).)*)<\/span>/s.exec(finished);
+    expect(compactSpan?.[1]).toContain("lucide-moon");
+    expect(compactSpan?.[1]).not.toContain("lucide-activity");
+  });
+
+  it("uses the mixed tooltip when Dream runs alongside other background work", async () => {
+    const html = await renderTrigger([
+      backgroundWork({ kind: "dream" }),
+      backgroundWork({ workId: "bash-1" }),
+    ]);
+    expect(html).toContain('data-background-dream-count="1"');
+    expect(html).toContain('data-background-bash-count="1"');
+    expect(html).toContain('data-tooltip="chat.composer.backgroundWorks.tooltipMixed"');
   });
 });

@@ -107,9 +107,13 @@ interface FakeBackendOptions {
   key?: TestKey;
   idTokenEmail?: string;
   whamResponses?: WhamResponse[];
+  whamFetchThrows?: boolean;
+  exchangeExpiresInSeconds?: number;
+  refreshExpiresInSeconds?: number;
   exchangeRefreshToken?: { accessToken: string; refreshToken: string };
   refreshStatus?: number;
   refreshError?: string;
+  refreshRawBody?: string;
 }
 
 /**
@@ -149,12 +153,15 @@ function createFakeBackend(options: FakeBackendOptions & { key: TestKey }) {
           access_token: "codex-access-1",
           refresh_token: "codex-refresh-1",
           id_token: buildCodexIdToken(options.key, options.idTokenEmail ?? ACCOUNT_EMAIL),
-          expires_in: 10 * 24 * 60 * 60,
+          expires_in: options.exchangeExpiresInSeconds ?? 10 * 24 * 60 * 60,
         });
       }
       if (body.grant_type === "refresh_token") {
         state.refreshCalls.push(body.refresh_token ?? "");
         if (options.refreshStatus !== undefined && options.refreshStatus !== 200) {
+          if (options.refreshRawBody !== undefined) {
+            return new Response(options.refreshRawBody, { status: options.refreshStatus });
+          }
           return Response.json(
             {
               error: options.refreshError ?? "invalid_grant",
@@ -170,11 +177,12 @@ function createFakeBackend(options: FakeBackendOptions & { key: TestKey }) {
         return Response.json({
           access_token: next.accessToken,
           refresh_token: next.refreshToken,
-          expires_in: 10 * 24 * 60 * 60,
+          expires_in: options.refreshExpiresInSeconds ?? 10 * 24 * 60 * 60,
         });
       }
     }
     if (url.endsWith("/wham/usage")) {
+      if (options.whamFetchThrows) throw new Error("network down");
       const index = Math.min(state.whamCalls, (options.whamResponses?.length ?? 1) - 1);
       state.whamCalls += 1;
       state.whamHeaders.push({
@@ -389,6 +397,114 @@ describe("SiwcCodexUsageService", () => {
     const status = await service.getStatus();
     expect(credentials.dump()[CODEX_KEYS.refreshToken]).toBe("codex-refresh-stale");
     expect(status.accounts[0]?.usageLinked).toBe(true);
+  });
+
+  it("clears the codex slot when a 5xx refresh carries a terminal OAuth code in its body", async () => {
+    const { credentials, service } = await createService({
+      refreshStatus: 500,
+      refreshError: "invalid_grant",
+    });
+    await credentials.save(CODEX_KEYS.accessToken, "codex-access-stale");
+    await credentials.save(CODEX_KEYS.refreshToken, "codex-refresh-stale");
+    await credentials.save(CODEX_KEYS.accessExpiresAt, String(NOW_SECONDS + 3600));
+
+    // Pins the code-based terminality rule: the revoked-grant code decides, even over a 5xx
+    // status that would normally read as transient.
+    const status = await service.getStatus();
+    expect(credentials.dump()[CODEX_KEYS.refreshToken]).toBeUndefined();
+    expect(status.accounts[0]?.usageLinked).toBeUndefined();
+  });
+
+  it("keeps the codex slot when a rejected refresh returns a non-JSON body", async () => {
+    const { credentials, service } = await createService({
+      refreshStatus: 400,
+      refreshRawBody: "",
+    });
+    await credentials.save(CODEX_KEYS.accessToken, "codex-access-stale");
+    await credentials.save(CODEX_KEYS.refreshToken, "codex-refresh-stale");
+    await credentials.save(CODEX_KEYS.accessExpiresAt, String(NOW_SECONDS + 3600));
+
+    // No OAuth error code can be parsed from an empty body, so terminality cannot be decided;
+    // the probe swallows the failure and the slot survives for the next attempt.
+    const status = await service.getStatus();
+    expect(credentials.dump()[CODEX_KEYS.refreshToken]).toBe("codex-refresh-stale");
+    expect(status.accounts[0]?.usageLinked).toBe(true);
+    expect(status.accounts[0]?.usage).toBeUndefined();
+  });
+
+  it("keeps the codex slot and stays silent when the usage probe fails without a 401", async () => {
+    const { backend, credentials, service } = await createService({
+      whamResponses: [{ status: 500 }],
+    });
+    await credentials.save(CODEX_KEYS.accessToken, "codex-access-live");
+    await credentials.save(CODEX_KEYS.refreshToken, "codex-refresh-live");
+    await credentials.save(CODEX_KEYS.accessExpiresAt, String(NOW_SECONDS + 5 * 24 * 60 * 60));
+
+    const status = await service.getStatus();
+    expect(backend.state.whamCalls).toBe(1);
+    // A non-401 probe failure must not trigger a refresh nor surface an error.
+    expect(backend.state.refreshCalls).toEqual([]);
+    expect(status.accounts[0]?.usageLinked).toBe(true);
+    expect(status.accounts[0]?.usage).toBeUndefined();
+  });
+
+  it("keeps the codex slot when the usage probe throws a transport error", async () => {
+    const { backend, credentials, service } = await createService({ whamFetchThrows: true });
+    await credentials.save(CODEX_KEYS.accessToken, "codex-access-live");
+    await credentials.save(CODEX_KEYS.refreshToken, "codex-refresh-live");
+    await credentials.save(CODEX_KEYS.accessExpiresAt, String(NOW_SECONDS + 5 * 24 * 60 * 60));
+
+    // Documented contract: usage data is best-effort display state — a network failure resolves
+    // the status read with the slot intact and no usage, never rejects.
+    const status = await service.getStatus();
+    expect(backend.state.whamCalls).toBe(0);
+    expect(status.accounts[0]?.usageLinked).toBe(true);
+    expect(status.accounts[0]?.usage).toBeUndefined();
+  });
+
+  it("gives up after one refresh when the retried probe is still unauthorized", async () => {
+    const { backend, credentials, service } = await createService({
+      whamResponses: [{ status: 401 }, { status: 401 }, { status: 401 }],
+    });
+    await credentials.save(CODEX_KEYS.accessToken, "codex-access-live");
+    await credentials.save(CODEX_KEYS.refreshToken, "codex-refresh-live");
+    await credentials.save(CODEX_KEYS.accessExpiresAt, String(NOW_SECONDS + 5 * 24 * 60 * 60));
+
+    const status = await service.getStatus();
+    // Exactly one refresh+retry: a second 401 must not loop further refreshes.
+    expect(backend.state.refreshCalls).toEqual(["codex-refresh-live"]);
+    expect(backend.state.whamCalls).toBe(2);
+    expect(credentials.dump()[CODEX_KEYS.refreshToken]).toBe("codex-refresh-2");
+    expect(status.accounts[0]?.usageLinked).toBe(true);
+    expect(status.accounts[0]?.usage).toBeUndefined();
+  });
+
+  it("persists the server-provided expires_in on link instead of the default lifetime", async () => {
+    // 20 days: far from the hardcoded 10-day default, yet outside the 24 h proactive-refresh
+    // margin so the immediate post-link probe cannot rotate the expiry away.
+    const exchangeExpiresInSeconds = 20 * 24 * 60 * 60;
+    const { credentials, service } = await createService({ exchangeExpiresInSeconds });
+    const start = await service.startUsageLink(ACCOUNT_KEY);
+    const redirect = new URL(new URL(start.authorizeUrl).searchParams.get("redirect_uri")!);
+    redirect.searchParams.set("state", start.state);
+    redirect.searchParams.set("code", "codex-auth-code");
+    await fetch(redirect);
+    await service.pollUsageLink();
+
+    // A mis-parsed expires_in would silently fall back to the hardcoded 10-day default.
+    expect(Number(credentials.dump()[CODEX_KEYS.accessExpiresAt])).toBe(
+      NOW_SECONDS + exchangeExpiresInSeconds,
+    );
+  });
+
+  it("persists the server-provided expires_in on refresh instead of the default lifetime", async () => {
+    const { credentials, service } = await createService({ refreshExpiresInSeconds: 7200 });
+    await credentials.save(CODEX_KEYS.accessToken, "codex-access-stale");
+    await credentials.save(CODEX_KEYS.refreshToken, "codex-refresh-stale");
+    await credentials.save(CODEX_KEYS.accessExpiresAt, String(NOW_SECONDS + 3600));
+
+    await service.getStatus();
+    expect(Number(credentials.dump()[CODEX_KEYS.accessExpiresAt])).toBe(NOW_SECONDS + 7200);
   });
 
   it("clears the codex slot on logout (best-effort revoke, keys removed)", async () => {

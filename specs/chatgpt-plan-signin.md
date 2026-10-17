@@ -516,6 +516,12 @@ true`, `codex_cli_simplified_flow=true`, `originator=codex_cli_rs`, and
   in ChatGPT settings; dismissible; shown ONCE.
 - Login status polling is serialized: schedule the next poll only after the
   current poll settles, and ignore completions after the settings view unmounts.
+- Starting a new grant flow (login or per-account usage link) supersedes any
+  in-flight one. A superseded flow must never touch the shared poll timer,
+  pending flag, or error banner again — on BOTH its resolve and reject paths:
+  a late `openExternal`/`start`/`poll` settlement (success or failure) is
+  dropped at a generation check instead of cancelling the newer flow's timer
+  or surfacing a stale error banner.
 - Active indicator: **"Using ChatGPT plan"** with logo, near the
   composer/model selector.
 - Usage-limit state: **"Manage usage"** primary (no "Buy app credits" — we do

@@ -803,10 +803,16 @@ describe("latest Dream panel state", () => {
     expect(model.hasContent).toBe(true);
   });
   it("keeps the panel entry when Dream coexists with a workflow", () => {
+    const dream = backgroundWork({ kind: "dream" });
     const model = buildConversationStatusPanelModel({
-      backgroundWorks: [backgroundWork({ kind: "dream" })],
+      backgroundWorks: [dream],
       workflowRuns: [workflowRun()],
     });
+    expect(model.latestDreamWork).toEqual(dream);
+    expect(model.runningWorkflowRuns.length).toBe(1);
+    expect(model.hasContent).toBe(true);
+    // A sole running workflow target would open the workflow shortcut while a Dream occupies
+    // the panel; the running Dream must suppress that shortcut.
     expect(resolveSoleRunningWorkflowRunTarget(model)).toBeNull();
   });
 });

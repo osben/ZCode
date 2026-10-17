@@ -1046,6 +1046,82 @@ describe("AiSdkModelAdapter", () => {
     },
   );
 
+  it.each([true, false])(
+    "respects memory transcript exclusion on streams (skipTranscript=%s)",
+    async (skipTranscript) => {
+      const debugDir = await mkdtemp(join(tmpdir(), "zcode-model-io-stream-skip-transcript-"));
+      const runtime: AiSdkModelRuntime = {
+        generateText() {
+          throw new Error("not used");
+        },
+        streamText() {
+          return {
+            fullStream: stream([
+              { type: "start" },
+              { type: "finish", finishReason: "stop", totalUsage: usage(1, 1) },
+            ]),
+            finishReason: Promise.resolve("stop"),
+            totalUsage: Promise.resolve(usage(1, 1)),
+            usage: Promise.resolve(usage(1, 1)),
+            toolCalls: Promise.resolve([]),
+            toolResults: Promise.resolve([]),
+            sources: Promise.resolve([]),
+            providerMetadata: Promise.resolve(undefined),
+            request: Promise.resolve({
+              body: { messages: [{ role: "user", content: "consolidate memory" }], model: "model-a" },
+            }),
+            response: Promise.resolve({
+              body: { id: "provider-response", output: [] },
+              headers: { "x-request-id": "req_1" },
+            }),
+          } as never;
+        },
+      };
+      const adapter = new AiSdkModelAdapter({
+        debugDir,
+        env: { ZCODE_RUNTIME_ENV: "development" },
+        registry: registry(),
+        runtime,
+      });
+
+      try {
+        for await (const _event of executeAdapterStreamText(adapter, {
+          metadata: {
+            sessionId: "sess_stream_background_memory",
+            skipTranscript,
+            querySource: skipTranscript ? "project_memory_extract" : "project_memory_dream",
+            traceId: "trace_stream_background_memory",
+          },
+          providerId: "test" as never,
+          modelId: "model-a" as never,
+          messages: [{ role: "user", content: "consolidate memory" }],
+        })) {
+          // Drain the stream so aggregate promises resolve and model-io settles.
+        }
+
+        // The generate path already honors skipTranscript; the stream path must match or the
+        // transcript feedback loop the flag breaks would return on streamed memory runs.
+        if (skipTranscript) expect(await readdir(debugDir)).toEqual([]);
+        else {
+          const lines = (
+            await readFile(join(debugDir, "model-io-sess_stream_background_memory.jsonl"), "utf8")
+          )
+            .trim()
+            .split("\n")
+            .map((line) => JSON.parse(line));
+          expect(lines).toMatchObject([
+            {
+              querySource: "project_memory_dream",
+              sessionId: "sess_stream_background_memory",
+            },
+          ]);
+        }
+      } finally {
+        await rm(debugDir, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("reuses normalized native-null tool input in generateText model-io", async () => {
     const debugDir = await mkdtemp(join(tmpdir(), "zcode-model-io-generate-null-tool-"));
     const logs: CapturedLog[] = [];

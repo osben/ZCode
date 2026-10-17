@@ -481,6 +481,70 @@ describe("Manual /dream command", () => {
     expect(dreamTurn).toBe(1);
   });
 
+  it("skips an immediate re-run after a successful dream while the consolidation lock is fresh", async () => {
+    const cliStorageRoot = await temporaryDirectory();
+    const modelIoDir = join(cliStorageRoot, "rollout");
+    const memoryRoot = resolveProjectMemoryRoot({
+      cliStorageRoot,
+      workspacePath: WORKSPACE_PATH,
+    });
+    const pastSessions = [session("manual-rerun", NOW)];
+    const transcriptPath = join(modelIoDir, `model-io-${pastSessions[0]!.id}.jsonl`);
+    const fileSystemPort = new MemoryFileSystem(
+      { [transcriptPath]: "{}\n" },
+      { [transcriptPath]: NOW + 1000 },
+    );
+    let dreamTurn = 0;
+    const runtime = createTestAgentRuntime(
+      createSessionId("manual-dream-rerun"),
+      {
+        memory: { cliStorageRoot, enabled: true, use: true },
+        mode: "yolo",
+        workingDirectory: WORKSPACE_PATH,
+      },
+      {
+        eventStore: createTestSessionEventStore(),
+        fileSystemPort,
+        modelFactory: createTestModelFactory({
+          async generateText(request, observation) {
+            const text = providerMessagesToText(request.messages);
+            if (!text.includes("# Dream: Memory Consolidation")) {
+              throw new Error(`unexpected non-dream model request: ${text.slice(0, 80)}`);
+            }
+            dreamTurn += 1;
+            return textResult(observation.model, "Nothing worth keeping");
+          },
+        }),
+        modelIoDir,
+        now: () => new Date(NOW),
+        sessionStore: createMemorySessionStore(pastSessions),
+        toolRegistry: createToolRegistry(),
+      },
+    );
+
+    const first = await runtime.executeTurn("/dream");
+    expect(first.response).toContain("Dream started in background");
+    await runtime.drainBackgroundDreams();
+    expect(dreamTurn).toBe(1);
+
+    // Stamp the successful run's lock onto the test clock so the transcript gate sees the
+    // session as fresh again; in production the same state arises for any transcript written
+    // right after a dream finished (lock mtime == last run start, always fresh for 1 h).
+    const lockPath = join(memoryRoot, ".consolidate-lock");
+    await utimes(lockPath, NOW / 1000, NOW / 1000);
+
+    const second = await runtime.executeTurn("/dream");
+
+    // Current cooldown design: a successful run deliberately keeps the lock for its freshness
+    // window, so an immediate manual re-run is skipped even though no dream is running anymore.
+    // Known wart, pinned here on purpose: the visible message claims a dream is still running.
+    expect(second.response).toBe(
+      "Dream skipped: another dream is already running for this workspace. Try again once it finishes.",
+    );
+    expect(dreamTurn).toBe(1);
+    expect(runtime.hasRunningBackgroundTasks()).toBe(false);
+  });
+
   it("answers a usage error without model requests", async () => {
     const { runtime, modelRequests } = await createSkipSetup({});
 

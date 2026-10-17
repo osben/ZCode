@@ -119,7 +119,11 @@ export async function* runStreamText(input: {
     resolved: input.resolved,
     transport: ModelTransportKindValue.Sse,
   });
-  const recordModelIO = shouldRecordModelIO(input.env);
+  // Mirrors the generate path: a skipTranscript request (memory extraction/dream) must not
+  // write model-io even in dev envs, or the transcript feedback loop the flag exists to break
+  // comes back on the streaming path.
+  const recordModelIO =
+    input.request.metadata?.skipTranscript !== true && shouldRecordModelIO(input.env);
   const isDev = isDevelopmentModelIOEnv(input.env);
   let requestMessages = input.request.messages;
   let signatureRepairAttempted = false;
