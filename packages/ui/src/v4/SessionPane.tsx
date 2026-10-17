@@ -176,7 +176,10 @@ import {
 import type { ConversationDropTargetController } from "@/v4/composer/conversationDropTarget.js";
 import { shouldIgnoreEscapeForStopGeneration } from "@/v4/composer/escapeStop.js";
 import { ConversationDraftEmptyState } from "@/v4/ConversationDraftEmptyState.js";
-import type { ComposerWorktreePreparationParams } from "@/v4/composer/composerDraftWorktreeIntent.js";
+import type {
+  ComposerWorktreePreparationParams,
+  ComposerWorktreePreparationSyncParams,
+} from "@/v4/composer/composerDraftWorktreeIntent.js";
 import { ConversationWorktreeSetupSteps } from "@/v4/ConversationWorktreeSetupSteps.js";
 import { ConversationDraftSuggestedPromptsContainer } from "@/v4/ConversationDraftSuggestedPromptsContainer.js";
 import { ConversationHeader, type PaneWorkspaceBadge } from "@/v4/ConversationHeader.js";
@@ -2120,27 +2123,43 @@ export function SessionPane({
   );
   dispatchCommandRef.current = dispatchCommand;
 
+  // Session-scoped update of the Host preparation marker (branch/target/base). Reused by the
+  // queue-time reservation and by the worktree-path reconcile that keeps activation strict.
+  const updateWorktreePreparationMarker = useCallback(
+    async (
+      targetSessionId: string,
+      preparation: { branchName: string; targetPath: string; baseBranch?: string },
+    ): Promise<void> => {
+      const ack = await dispatchCommand(
+        "updateWorktreePreparation",
+        {
+          status: "preparing",
+          worktreePreparation: {
+            branchName: preparation.branchName,
+            targetPath: preparation.targetPath,
+            ...(preparation.baseBranch ? { baseBranch: preparation.baseBranch } : {}),
+          },
+        },
+        targetSessionId,
+      );
+      if (ack.status !== "accepted") {
+        throw new Error(ack.reasonCode ?? "Worktree preparation update was rejected");
+      }
+    },
+    [dispatchCommand],
+  );
+
   const prepareWorktreeSession = useCallback(
     async ({ branchName, targetPath, baseBranch }: ComposerWorktreePreparationParams) => {
       const existingSessionId = sessionIdRef.current;
       const existingPreparation = snapshotRef.current?.meta.worktreePreparation;
       if (existingSessionId && existingPreparation) {
         if (existingPreparation.status !== "preparing") {
-          const resetAck = await dispatchCommand(
-            "updateWorktreePreparation",
-            {
-              status: "preparing",
-              worktreePreparation: {
-                branchName,
-                targetPath,
-                ...(baseBranch ? { baseBranch } : {}),
-              },
-            },
-            existingSessionId,
-          );
-          if (resetAck.status !== "accepted") {
-            throw new Error(resetAck.reasonCode ?? "Worktree preparation retry was rejected");
-          }
+          await updateWorktreePreparationMarker(existingSessionId, {
+            branchName,
+            targetPath,
+            ...(baseBranch ? { baseBranch } : {}),
+          });
         }
         return existingSessionId;
       }
@@ -2168,7 +2187,29 @@ export function SessionPane({
       handleDraftSessionCreated(createdSessionId, groupedDraftTask, createSource);
       return createdSessionId;
     },
-    [dispatchCommand, handleDraftSessionCreated, workspaceIdentity, workspaceKey, workspacePath],
+    [
+      dispatchCommand,
+      handleDraftSessionCreated,
+      updateWorktreePreparationMarker,
+      workspaceIdentity,
+      workspaceKey,
+      workspacePath,
+    ],
+  );
+
+  const syncWorktreePreparation = useCallback(
+    ({
+      sessionId: preparedSessionId,
+      branchName,
+      targetPath,
+      baseBranch,
+    }: ComposerWorktreePreparationSyncParams) =>
+      updateWorktreePreparationMarker(preparedSessionId, {
+        branchName,
+        targetPath,
+        ...(baseBranch ? { baseBranch } : {}),
+      }),
+    [updateWorktreePreparationMarker],
   );
 
   // Persist a failed creation into the Host-owned preparation record so recovery/reconnect
@@ -5533,6 +5574,7 @@ export function SessionPane({
       readPlanIdentitySnapshot={readPlanIdentitySnapshot}
       onSendText={handleSendText}
       onPrepareWorktreeSession={prepareWorktreeSession}
+      onSyncWorktreePreparation={syncWorktreePreparation}
       onWorktreePreparationFailed={handleWorktreePreparationFailed}
       highspeedCard={activeHighspeedCard}
       highspeedActivationCardId={highspeedActivationCardId}
@@ -6028,6 +6070,7 @@ export function SessionPane({
                         preparation={snapshot.meta.worktreePreparation}
                         onRetryPreparation={handleWorktreePreparationRetry}
                         onPreparationFailed={handleWorktreePreparationFailed}
+                        onSyncPreparation={syncWorktreePreparation}
                       />
                     ) : isDraft ? (
                       <div data-testid={TID_CHAT_EMPTY} className="w-full">

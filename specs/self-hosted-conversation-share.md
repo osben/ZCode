@@ -78,7 +78,10 @@ They are now specified explicitly.
    by "all unconfirmed".
 4. **Artifact bytes.** Preview/continuation responses carry per-artifact URLs. The server
    serves them as signed, unguessable, **expiring** GET URLs with `X-Robots-Tag: noindex,
-nofollow` and no auth header (the importer uses bare `fetch`).
+nofollow` and no auth header (the importer uses bare `fetch`). Artifact URLs expire **no
+   later than their parent share** — the server clamps the signature validity to the share's
+   remaining TTL — and the artifact route rejects requests for expired shares with the same
+   not-found error even before the cleanup sweep prunes the blobs.
 5. **Anti-indexing.** `X-Robots-Tag: noindex, nofollow` on every response.
 6. **Access modes.** `linkViewer`/`linkEditor` behave as today; "import and continue" is a
    local import — after preview + continuation + artifact downloads the server is out of the
@@ -158,7 +161,8 @@ mount `VOLUME`), one replica with a persistent volume behind HTTPS — third Rai
 7. Share older than 1 day returns not-found and is physically pruned; unconfirmed preparations
    older than 24h are GC'd while a slow in-flight publish survives.
 8. Missing/wrong publish token rejected (timing-safe compare); misses rate-limited; artifact
-   URLs expire; no enumeration endpoint; codes and preparation ids are 128-bit, codes stored
+   URLs expire no later than their parent share and the artifact route rejects expired shares
+   pre-sweep; no enumeration endpoint; codes and preparation ids are 128-bit, codes stored
    hashed; upload-time cap enforcement verified.
 9. `pnpm typecheck`, `pnpm lint`, architecture check pass; unit tests cover token gate,
    credential-boundary assertion, TTL prune, preparation GC-by-age, hashing, capability

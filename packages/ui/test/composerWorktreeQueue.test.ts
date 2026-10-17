@@ -12,7 +12,9 @@ const source = readFileSync(
 describe("ConversationComposer worktree setup queue (source contract)", () => {
   it("prepares the real Host session before starting Git", () => {
     expect(source).not.toContain("interceptFirstSend");
-    expect(source).toContain("worktreeIntent.beginCreation(trimmed, onPrepareWorktreeSession)");
+    expect(source).toContain("const begin = await worktreeIntent.beginCreation(");
+    expect(source).toContain("onPrepareWorktreeSession,");
+    expect(source).toContain("onSyncWorktreePreparation,");
     expect(source).toContain("preparedSessionIdForSend = begin.sessionId;");
     // The queued send is stashed with its restore callback, not awaited: no pending state during
     // creation, and the draft is claimed at queue time so the composer frees immediately.
@@ -81,6 +83,8 @@ describe("ConversationComposer worktree setup queue (source contract)", () => {
     );
     expect(shell).not.toContain("provisionalWorktreeChat");
     expect(sessionPane).toContain("onPrepareWorktreeSession={prepareWorktreeSession}");
+    expect(sessionPane).toContain("onSyncWorktreePreparation={syncWorktreePreparation}");
+    expect(sessionPane).toContain("onSyncPreparation={syncWorktreePreparation}");
     // Creation failures persist into the Host-owned preparation record (recovery renders the
     // failure; Retry reuses the same session) instead of staying "preparing" forever.
     expect(sessionPane).toContain("onWorktreePreparationFailed={handleWorktreePreparationFailed}");
@@ -148,9 +152,7 @@ describe("ConversationComposer worktree setup queue (source contract)", () => {
     expect(recordSendClickIndex).toBeGreaterThan(runSendIndex);
     expect(localTtftStartIndex).toBeGreaterThan(runSendIndex);
     // The queue branch itself performs no user-action or telemetry call before returning.
-    const queueBranchIndex = source.indexOf(
-      "const begin = await worktreeIntent.beginCreation(trimmed, onPrepareWorktreeSession);",
-    );
+    const queueBranchIndex = source.indexOf("const begin = await worktreeIntent.beginCreation(");
     const runSendCallIndex = source.indexOf(
       "await runSend(executionWorktree, preparedSessionIdForSend);",
     );

@@ -28,6 +28,24 @@ export interface ComposerWorktreePreparationParams {
 }
 
 /**
+ * Reconcile the Host preparation marker with the directory Git actually used. Host activation keeps
+ * its strict check (`executionWorktree.path === prepared.targetPath`); a reused or recovered
+ * worktree may live at a path other than the frozen target, so the renderer must align the prepared
+ * target before activation instead of sending a path the Host will reject.
+ */
+export interface ComposerWorktreePreparationSyncParams {
+  workspaceKey: string;
+  sessionId: string;
+  branchName: string;
+  targetPath: string;
+  baseBranch?: string;
+}
+
+export type ComposerWorktreePreparationSync = (
+  params: ComposerWorktreePreparationSyncParams,
+) => Promise<void>;
+
+/**
  * Setup intent registered into the slot. `workspaceKey` follows the existing identity rule
  * (`workspaceIdentity?.trim() || workspacePath`) to pin the owning draft composer, so split panes /
  * other workspaces never trigger it by mistake.
@@ -38,10 +56,13 @@ export interface ComposerDraftWorktreeIntent {
    * Start the setup pipeline for this send: compute and validate creation params, reserve the Host
    * session, write its session-scoped pipeline entry, and kick off Git creation. Returns before Git
    * creation resolves; the composer queues its send and dispatches when the store turns ready.
+   * `syncPreparedWorktree` realigns the Host preparation marker when Git settles on a directory other
+   * than the frozen target (existing/recovered worktree), so activation stays strict.
    */
   beginCreation: (
     queuedPromptPreview: string,
     prepareSession: (params: ComposerWorktreePreparationParams) => Promise<string>,
+    syncPreparedWorktree?: ComposerWorktreePreparationSync,
   ) => Promise<ComposerWorktreeBeginResult>;
 }
 

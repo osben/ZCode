@@ -100,7 +100,9 @@ export async function restoreDreamLockAfterFailure(input: {
     await unlink(lockPath);
     return;
   }
-  await writeFile(lockPath, "", "utf8");
+  // An empty PID reads as "owner mid-acquire" (held); a restored lock must read as
+  // stale/abandoned so the next run can take it over. PID 0 is never a live process.
+  await writeFile(lockPath, "0", "utf8");
   const priorSeconds = input.priorMtimeMs / 1000;
   await utimes(lockPath, priorSeconds, priorSeconds);
 }

@@ -39,6 +39,8 @@ export function ChatGptPlanDetail() {
   const [error, setError] = useState<string | null>(null);
   const [showFirstRunModal, setShowFirstRunModal] = useState(false);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // A new flow supersedes the old poll timer; this ref releases the old flow's pending UI too.
+  const activeFlowPendingRef = useRef<((active: boolean) => void) | null>(null);
   const disposedRef = useRef(false);
 
   const refreshStatus = useCallback(async () => {
@@ -77,6 +79,8 @@ export function ChatGptPlanDetail() {
       onSettled?: (completion: T) => void | Promise<void>;
     }) => {
       setError(null);
+      activeFlowPendingRef.current?.(false);
+      activeFlowPendingRef.current = flow.setPending;
       flow.setPending(true);
       try {
         const start = await flow.start();

@@ -432,9 +432,10 @@ true`, `codex_cli_simplified_flow=true`, `originator=codex_cli_rs`, and
     is NOT comparable with the SIWC slot sub (per-registration pseudonymous).
     The grant is bound to a slot by email: the codex id_token's
     `https://api.openai.com/profile.email` must equal the slot's stored
-    account email; on mismatch the grant is rejected (clear the partial state,
-    surface "wrong account signed in"). Send `login_hint=<slot email>` to
-    prefill the right account.
+    account email; on mismatch the just-exchanged grant is revoked
+    best-effort (nothing was persisted, so any existing link in the slot
+    survives) and the UI surfaces "wrong account signed in". Send
+    `login_hint=<slot email>` to prefill the right account.
   - **Storage** (same credential store, per accountKey `<K>`):
     `oauth:chatgpt-codex:<K>:access_token`, `:refresh_token`, `:id_token`,
     `:account_id`, `:access_expires_at`, optional `:earliest_refresh_at`. No client_id key
@@ -447,7 +448,11 @@ true`, `codex_cli_simplified_flow=true`, `originator=codex_cli_rs`, and
   - **Probe execution**: fired host-side when Settings reads
     `getChatGptPlanStatus` for accounts that have a codex slot (throttled to
     at most one probe per account per 60 s), and lazily refreshed when the
-    access token is inside 24 h of `exp` (or on probe 401, once). The mapped
+    access token is inside 24 h of `exp` (or on probe 401, once). A terminal
+    refresh failure — HTTP 4xx other than 408/429 (revoked, expired, or reused
+    refresh token) — clears that account's codex slot under the held refresh
+    lock, so `usageLinked` returns false and the user can link usage again;
+    transient statuses and transport errors leave the slot untouched. The mapped
     snapshot replaces the in-memory `usageByAccount` entry for that account.
   - **Mapping** → `SiwcPlanUsageSnapshot`: `used_percent` → `usedPercent`
     (finite 0–100 required per window), `limit_window_seconds / 60` →

@@ -104,7 +104,7 @@ One namespaced localStorage JSON key `zcode.sessionManager.view.v1` (per device,
 
 Context menu on the row / `⋯` button:
 
-- **Open** — activates the session through the standard select path (`activateTabByPath(path, {workspaceIdentity})` + task selection, the `useWorkspaceTaskNavigation` composition — `App.tsx:962-973`); the manager tab stays open in the store so its Back returns. Disabled for offline rows. Offered for archived rows too (opening history is read-only).
+- **Open** — activates the session through the standard select path (`activateTabByPath(path, {workspaceIdentity})` + task selection, the `useWorkspaceTaskNavigation` composition — `App.tsx:962-973`); Open navigates to the session's workspace — Settings stays open, and the user returns to it via the Settings shell's back control. Disabled for offline rows. Offered for archived rows too (opening history is read-only).
 - **Rename** — inline input replacing the Name cell; Enter/blur commits via `zcodeTaskService.renameTask`, Esc cancels; empty commits fall back to the untitled label. Allowed for running sessions (decision): rename rewrites the indexed title (`title_overridden`); a running session's auto-titling may overwrite a manual name on its next turn — accepted caveat, not worked around.
 - **Pin / Unpin** — `setTaskPinned` toggle.
 - _separator_
@@ -155,7 +155,7 @@ All user-facing strings under the `sessionManager.*` namespace in `en-US`, `zh-C
 
 ## Acceptance scenarios
 
-1. Project menu "Manage sessions" on workspace W opens the manager tab scoped to W (chip visible, Path column hidden); clearing the chip shows the universe grouped by workspace key; nothing view-related persists across app restart except §5 preferences.
+1. Project menu "Manage sessions" on workspace W opens Settings on the sessions section scoped to W (chip visible, Path column hidden); clearing the chip shows the universe grouped by workspace key; nothing view-related persists across app restart except §5 preferences.
 2. Status=Archived shows only archived rows with Restore in the menu; Restore returns the row to the Active view without reload.
 3. Deleting a running session (tombstone) removes the row immediately and it does not resurrect after restart; the CLI session directory still exists on disk.
 4. Bulk-selecting 3 rows of which 1 is pinned: dialog shows "Include 1 pinned session" unchecked; confirming deletes 2 rows and keeps the pinned row.
@@ -167,4 +167,4 @@ All user-facing strings under the `sessionManager.*` namespace in `en-US`, `zh-C
 
 - **Inline rename for running sessions** — allowed (§7); auto-title overwrite caveat accepted.
 - **Sorts** — default Updated desc; server sorts on Updated/Created, client sort on Name; no Status sort in v1.
-- **Hosting** — unique main-window tab (Settings precedent), no tab-strip row, not persisted (§1).
+- **Hosting** — `sessions` section in the `dataAndStats` group of the Settings page (2026-10-17 redesign), not a main-window tab; not persisted (§1).

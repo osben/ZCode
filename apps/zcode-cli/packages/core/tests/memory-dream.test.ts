@@ -123,7 +123,7 @@ describe("Dream consolidation lock", () => {
     expect((await readFile(lockPath, "utf8")).trim()).toBe("424242");
   });
 
-  it("takes a stale lock and restores empty content with its original mtime after failure", async () => {
+  it("takes a stale lock and restores dead-pid content with its original mtime after failure", async () => {
     const root = await temporaryDirectory();
     const lockPath = join(root, ".consolidate-lock");
     const oldMtime = Date.parse("2026-07-14T01:02:03.000Z");
@@ -134,8 +134,12 @@ describe("Dream consolidation lock", () => {
     expect(priorMtime).toBe(oldMtime);
 
     await restoreDreamLockAfterFailure({ memoryRoot: root, priorMtimeMs: priorMtime! });
-    expect(await readFile(lockPath, "utf8")).toBe("");
+    // PID 0 reads as a dead owner, so the restored lock is take-over-able instead of held.
+    expect(await readFile(lockPath, "utf8")).toBe("0");
     expect((await stat(lockPath)).mtimeMs).toBeCloseTo(oldMtime, -1);
+    expect(await acquireDreamLock({ memoryRoot: root, nowMs: oldMtime + 1000, pid: 11111 })).toBe(
+      oldMtime,
+    );
   });
 });
 

@@ -5,7 +5,10 @@ import {
   SESSION_MANAGER_CHECKBOX_COLUMN_WIDTH,
   SESSION_MANAGER_MENU_COLUMN_WIDTH,
 } from "@/session-manager/sessionManagerColumns.js";
-import { SESSION_MANAGER_TOGGLEABLE_COLUMNS } from "@/session-manager/sessionManagerTypes.js";
+import {
+  SESSION_MANAGER_TOGGLEABLE_COLUMNS,
+  type SessionManagerToggleableColumn,
+} from "@/session-manager/sessionManagerTypes.js";
 
 function templateMinimumPx(template: string): number {
   const tracks = template.match(/minmax\(\d+px,\s*[0-9.]+fr\)|\d+px/g) ?? [];
@@ -17,7 +20,7 @@ function templateMinimumPx(template: string): number {
 
 describe("sessionManagerColumns", () => {
   it("derives the min table width from the same column minimums as the grid template", () => {
-    const columnSets: ReadonlyArray<readonly string[]> = [
+    const columnSets: ReadonlyArray<readonly SessionManagerToggleableColumn[]> = [
       [],
       ["name"],
       ["name", "model", "updated"],

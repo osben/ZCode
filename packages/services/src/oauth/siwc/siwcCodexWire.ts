@@ -21,6 +21,8 @@ export const SIWC_CODEX_CALLBACK_PORT = 1455;
 const SIWC_CODEX_SCOPES = "openid profile email offline_access";
 /** The codex client's user agent; wham/usage sits behind Cloudflare and rejects bare clients. */
 export const SIWC_CODEX_USER_AGENT = "codex_cli_rs";
+/** Bounded token/revoke requests: a stalled auth.openai.com must not hang status reads or logout. */
+const SIWC_CODEX_REQUEST_TIMEOUT_MS = 15_000;
 
 /** Per-account codex-flavor credential keys in the shared credential store. */
 export interface SiwcCodexCredentialKeys {
@@ -100,6 +102,7 @@ export function createSiwcCodexTokenClient(options: { fetchFn?: typeof globalThi
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams(body).toString(),
+      signal: AbortSignal.timeout(SIWC_CODEX_REQUEST_TIMEOUT_MS),
     });
     if (!response.ok) {
       const detail = await response.text().catch(() => "");
@@ -165,6 +168,7 @@ export function createSiwcCodexTokenClient(options: { fetchFn?: typeof globalThi
             token_type_hint: "refresh_token",
             client_id: SIWC_CODEX_CLIENT_ID,
           }).toString(),
+          signal: AbortSignal.timeout(SIWC_CODEX_REQUEST_TIMEOUT_MS),
         });
         return response.ok;
       } catch {

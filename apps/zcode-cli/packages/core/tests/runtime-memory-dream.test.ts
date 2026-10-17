@@ -765,10 +765,17 @@ describe("background Dream lifecycle", () => {
       { status: "cancelled" },
     ]);
     expect((await stat(lock)).mtimeMs).toBeCloseTo(NOW - 1000, -1);
-    expect(readFileSync(lock, "utf8")).toBe("");
+    // The restored lock must read as abandoned (dead PID), not "owner mid-acquire": the very
+    // next /dream has to take the lock over instead of skipping with "already running".
+    expect(readFileSync(lock, "utf8")).toBe("0");
+    const secondLaunch = await test.runtime.executeTurn("/dream");
+    expect(secondLaunch.response).toContain("started in background");
     await expect(stat(join(test.memoryRoot, ".consolidated-at"))).rejects.toMatchObject({
       code: "ENOENT",
     });
+    test.runtime.beginShutdown();
+    await test.runtime.drainBackgroundDreams();
+    expect(test.runtime.hasRunningBackgroundTasks()).toBe(false);
     // A user-initiated stop must not wake the model with a completion turn.
     expect(notify).not.toHaveBeenCalled();
   });

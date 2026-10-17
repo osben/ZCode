@@ -108,6 +108,7 @@ interface FakeBackendOptions {
   idTokenEmail?: string;
   whamResponses?: WhamResponse[];
   exchangeRefreshToken?: { accessToken: string; refreshToken: string };
+  refreshStatus?: number;
 }
 
 /**
@@ -119,6 +120,7 @@ function createFakeBackend(options: FakeBackendOptions) {
     exchangeCodes: [] as string[],
     refreshCalls: [] as string[],
     revokeCalls: 0,
+    revokedTokens: [] as string[],
     whamCalls: 0,
     whamHeaders: [] as Array<{ authorization: string; userAgent: string; accountId: string }>,
     authorizationBodies: [] as Record<string, string>,
@@ -133,6 +135,8 @@ function createFakeBackend(options: FakeBackendOptions) {
     }
     if (url.endsWith("/oauth/revoke")) {
       state.revokeCalls += 1;
+      const body = Object.fromEntries(new URLSearchParams(String(init?.body ?? "")));
+      state.revokedTokens.push(body.token ?? "");
       return new Response(null, { status: 200 });
     }
     if (url.endsWith("/oauth/token")) {
@@ -149,6 +153,12 @@ function createFakeBackend(options: FakeBackendOptions) {
       }
       if (body.grant_type === "refresh_token") {
         state.refreshCalls.push(body.refresh_token ?? "");
+        if (options.refreshStatus !== undefined && options.refreshStatus !== 200) {
+          return Response.json(
+            { error: "invalid_grant", error_description: "refresh token revoked" },
+            { status: options.refreshStatus },
+          );
+        }
         const next = options.exchangeRefreshToken ?? {
           accessToken: "codex-access-2",
           refreshToken: "codex-refresh-2",
@@ -273,10 +283,14 @@ describe("SiwcCodexUsageService", () => {
     expect(backend.state.whamHeaders[0]?.accountId).toBe("acct_test_routing");
   });
 
-  it("rejects and clears the grant when a different account authorized", async () => {
-    const { credentials, service } = await createService({
+  it("revokes only the just-exchanged grant on mismatch and keeps the pre-linked slot", async () => {
+    const { backend, credentials, service } = await createService({
       idTokenEmail: "someone-else@example.com",
     });
+    // Pre-linked codex slot: a wrong-account authorization (stale UI or non-UI caller) must
+    // revoke the new grant at OpenAI without destroying the existing link.
+    await credentials.save(CODEX_KEYS.accessToken, "codex-access-existing");
+    await credentials.save(CODEX_KEYS.refreshToken, "codex-refresh-existing");
     const start = await service.startUsageLink(ACCOUNT_KEY);
     const redirect = new URL(new URL(start.authorizeUrl).searchParams.get("redirect_uri")!);
     redirect.searchParams.set("state", start.state);
@@ -284,9 +298,10 @@ describe("SiwcCodexUsageService", () => {
     await fetch(redirect);
 
     await expect(service.pollUsageLink()).rejects.toThrow(/different ChatGPT account/i);
+    expect(backend.state.revokedTokens).toEqual(["codex-refresh-1"]);
     const dump = credentials.dump();
-    expect(dump[CODEX_KEYS.accessToken]).toBeUndefined();
-    expect(dump[CODEX_KEYS.refreshToken]).toBeUndefined();
+    expect(dump[CODEX_KEYS.accessToken]).toBe("codex-access-existing");
+    expect(dump[CODEX_KEYS.refreshToken]).toBe("codex-refresh-existing");
   });
 
   it("probes lazily on status reads with the proactive refresh and throttles repeats", async () => {
@@ -321,6 +336,33 @@ describe("SiwcCodexUsageService", () => {
     expect(backend.state.refreshCalls).toEqual(["codex-refresh-live"]);
     expect(backend.state.whamCalls).toBe(2);
     expect(status.accounts[0]?.usage?.primary.usedPercent).toBe(17);
+  });
+
+  it("clears the codex slot when a refresh is terminally rejected so usage can be linked again", async () => {
+    const { backend, credentials, service } = await createService({ refreshStatus: 400 });
+    await credentials.save(CODEX_KEYS.accessToken, "codex-access-stale");
+    await credentials.save(CODEX_KEYS.refreshToken, "codex-refresh-stale");
+    await credentials.save(CODEX_KEYS.accessExpiresAt, String(NOW_SECONDS + 3600));
+
+    const status = await service.getStatus();
+    expect(backend.state.refreshCalls).toEqual(["codex-refresh-stale"]);
+    const dump = credentials.dump();
+    expect(dump[CODEX_KEYS.accessToken]).toBeUndefined();
+    expect(dump[CODEX_KEYS.refreshToken]).toBeUndefined();
+    expect(dump[CODEX_KEYS.accessExpiresAt]).toBeUndefined();
+    expect(status.accounts[0]?.usageLinked).toBeUndefined();
+  });
+
+  it("keeps the codex slot when a refresh fails transiently (429)", async () => {
+    const { backend, credentials, service } = await createService({ refreshStatus: 429 });
+    await credentials.save(CODEX_KEYS.accessToken, "codex-access-stale");
+    await credentials.save(CODEX_KEYS.refreshToken, "codex-refresh-stale");
+    await credentials.save(CODEX_KEYS.accessExpiresAt, String(NOW_SECONDS + 3600));
+
+    const status = await service.getStatus();
+    expect(backend.state.refreshCalls).toEqual(["codex-refresh-stale"]);
+    expect(credentials.dump()[CODEX_KEYS.refreshToken]).toBe("codex-refresh-stale");
+    expect(status.accounts[0]?.usageLinked).toBe(true);
   });
 
   it("clears the codex slot on logout (best-effort revoke, keys removed)", async () => {

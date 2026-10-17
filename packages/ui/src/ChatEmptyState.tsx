@@ -52,6 +52,7 @@ import {
   useComposerDraftWorktreeIntentSlot,
   type ComposerDraftWorktreeIntent,
   type ComposerWorktreePreparationParams,
+  type ComposerWorktreePreparationSync,
   type ComposerWorktreeBeginResult,
 } from "@/v4/composer/composerDraftWorktreeIntent.js";
 import { beginWorktreePipelineCreation } from "@/v4/composer/composerWorktreePipeline.js";
@@ -740,6 +741,7 @@ export function ChatEmptyWorktreeTaskToggle({
     (
       queuedPromptPreview: string,
       prepareSession: (params: ComposerWorktreePreparationParams) => Promise<string>,
+      syncPreparedWorktree?: ComposerWorktreePreparationSync,
     ): Promise<ComposerWorktreeBeginResult> => {
       // Validation, target path, and the runner kickoff live in the shared begin helper; only the
       // name generation and base resolution are this entry's own.
@@ -754,6 +756,7 @@ export function ChatEmptyWorktreeTaskToggle({
         baseFromHeadDefault: !hasBranchList,
         queuedPromptPreview,
         prepareSession,
+        ...(syncPreparedWorktree ? { syncPreparedWorktree } : {}),
         formatMessage: (id, values) => intl.formatMessage({ id }, values),
       });
     },

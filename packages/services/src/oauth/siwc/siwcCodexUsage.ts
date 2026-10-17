@@ -27,6 +27,7 @@ import {
   readCodexAccountId,
   readCodexProfileEmail,
   readUsageSnapshotFromWhamPayload,
+  type SiwcCodexTokenSet,
 } from "./siwcCodexWire.js";
 import { closeCodexLoopbackServer, listenForCodexCallback } from "./siwcCodexLoopback.js";
 
@@ -183,9 +184,13 @@ export class SiwcCodexUsageService {
       await this.jwksVerifier.verify(exchanged.idToken, { audience: SIWC_CODEX_CLIENT_ID });
       const email = readCodexProfileEmail(exchanged.idToken);
       if (!email || email.toLowerCase() !== pending.expectedEmail) {
-        // Wrong account authorized for this slot: drop the partial grant so nothing half-linked
-        // survives, and surface a structured error the UI can show.
-        await this.clearAccount(pending.accountKey);
+        // Wrong account authorized: revoke the just-issued grant — nothing was persisted yet, so
+        // the slot (and any existing link in it) must survive untouched.
+        if (exchanged.refreshToken) {
+          await this.tokenClient
+            .revoke({ refreshToken: exchanged.refreshToken })
+            .catch(() => undefined);
+        }
         throw new SiwcOAuthError({
           error: "codex_usage_account_mismatch",
           errorDescription:
@@ -242,26 +247,36 @@ export class SiwcCodexUsageService {
     );
   }
 
-  /** Best-effort revoke + clear one account's codex-flavor slot (logout / account mismatch). */
+  /**
+   * Best-effort revoke + clear one account's codex-flavor slot (logout).
+   * Runs under the codex refresh lock: a concurrent refresh must not re-persist live tokens
+   * into a slot the user just signed out of.
+   */
   async clearAccount(accountKey: string): Promise<void> {
     if (this.pending?.accountKey === accountKey) await this.cancelLink();
-    const keys = buildSiwcCodexCredentialKeys(accountKey);
-    const stored = await this.readCredentialStrings(keys.refreshToken);
-    const refreshToken = stored[keys.refreshToken];
-    if (refreshToken) {
-      await this.tokenClient.revoke({ refreshToken });
-    }
-    for (const key of [
-      keys.accessToken,
-      keys.refreshToken,
-      keys.idToken,
-      keys.accountId,
-      keys.accessExpiresAt,
-      keys.earliestRefreshAt,
-    ]) {
-      await this.credentialService.delete(key);
-    }
-    this.lastProbeAt.delete(accountKey);
+    await withFileLock(
+      join(this.configDir, buildSiwcCodexRefreshLockFileName(accountKey)),
+      async () => {
+        const keys = buildSiwcCodexCredentialKeys(accountKey);
+        const stored = await this.readCredentialStrings(keys.refreshToken);
+        const refreshToken = stored[keys.refreshToken];
+        if (refreshToken) {
+          await this.tokenClient.revoke({ refreshToken });
+        }
+        for (const key of [
+          keys.accessToken,
+          keys.refreshToken,
+          keys.idToken,
+          keys.accountId,
+          keys.accessExpiresAt,
+          keys.earliestRefreshAt,
+        ]) {
+          await this.credentialService.delete(key);
+        }
+        this.lastProbeAt.delete(accountKey);
+      },
+      { lockMaxWaitMs: SIWC_CODEX_REFRESH_LOCK_MAX_WAIT_MS },
+    );
   }
 
   private async probeAccount(accountKey: string): Promise<void> {
@@ -348,7 +363,37 @@ export class SiwcCodexUsageService {
         const stored = await this.readCredentialStrings(keys.refreshToken);
         const refreshToken = stored[keys.refreshToken];
         if (!refreshToken) return null;
-        const next = await this.tokenClient.refresh({ refreshToken });
+        let next: SiwcCodexTokenSet;
+        try {
+          next = await this.tokenClient.refresh({ refreshToken });
+        } catch (error) {
+          // A terminal 4xx (revoked/expired/reused refresh token) can never succeed on retry;
+          // clearing the slot under the held lock lets the user link usage again instead of
+          // keeping a permanently failing grant that pins usageLinked=true. Transient statuses
+          // (408/429/5xx) and transport errors rethrow untouched.
+          if (
+            error instanceof SiwcOAuthError &&
+            error.httpStatus !== undefined &&
+            error.httpStatus >= 400 &&
+            error.httpStatus < 500 &&
+            error.httpStatus !== 408 &&
+            error.httpStatus !== 429
+          ) {
+            for (const key of [
+              keys.accessToken,
+              keys.refreshToken,
+              keys.idToken,
+              keys.accountId,
+              keys.accessExpiresAt,
+              keys.earliestRefreshAt,
+            ]) {
+              await this.credentialService.delete(key);
+            }
+            this.lastProbeAt.delete(accountKey);
+            return null;
+          }
+          throw error;
+        }
         await this.writeCredentials({
           ...(next.refreshToken ? { [keys.refreshToken]: next.refreshToken } : {}),
           [keys.accessToken]: next.accessToken,
