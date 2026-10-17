@@ -1020,6 +1020,20 @@ export async function waitForWorkspaceApp(workspacePath: string, timeout = 10000
           await dismissOccupationOnboarding();
           return false;
         }
+        if (state === "pending") {
+          // Full-area views (Automations, Settings) unmount the session pane while the sidebar
+          // still lists the open workspace tab; switch back through the real sidebar control so
+          // the readiness probe observes the workspace again instead of timing out.
+          const switchedBack = await browser.execute((workspaceItemTestId: string) => {
+            const item = Array.from(document.querySelectorAll<HTMLElement>("[data-testid]")).find(
+              (element) => element.dataset.testid === workspaceItemTestId,
+            );
+            if (!item) return false;
+            item.click();
+            return true;
+          }, probeParams.workspaceItemTestId);
+          if (switchedBack) return false;
+        }
         return state === "ready";
       },
       {

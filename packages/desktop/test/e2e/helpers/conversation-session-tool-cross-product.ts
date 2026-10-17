@@ -1,6 +1,7 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { resolveE2ERuntimePath } from "./e2e-runtime-paths.js";
+import { switchV4Mode } from "./v4-conversation.js";
 
 export const TOOL_CROSS_PRODUCT_ROOT = resolveE2ERuntimePath(
   "conversation-session-tool-cross-product",
@@ -97,37 +98,14 @@ export async function ensureToolCrossProductFullAccessMode() {
   if (await isFullAccessModeSelected()) {
     return;
   }
-  // Bug root cause: in a long suite the previous mode selector may still be open; clicking the trigger
-  // again closes the menu, and later steps then deterministically report "Full access not found". Only open the selector
-  // when there is currently no visible target item, avoiding the toggle race.
-  if (!(await hasVisibleFullAccessModeItem())) {
-    await clickModeTrigger();
-  }
-  await clickFullAccessModeItem();
+  // The old aria-label trigger path left the wait's condition body without a single completed
+  // evaluation under WDIO v9 and reported "not-started" for every case. Reuse the canonical
+  // testid-based composer mode switch (same path as switchV4Mode callers) instead.
+  await switchV4Mode("yolo");
   await browser.waitUntil(async () => isFullAccessModeSelected(), {
     timeout: 30000,
     timeoutMsg: "工具叉乘 e2e 没有切换到 Full access/yolo mode",
   });
-}
-
-async function hasVisibleFullAccessModeItem(): Promise<boolean> {
-  const normalizeText = (value: string | null | undefined) =>
-    (value ?? "").replace(/\u00a0/g, " ").trim();
-  const items = await browser.$$('[data-slot="select-item"],[role="option"]');
-  for (const item of items) {
-    if (!(await item.isDisplayed()) || !(await item.isEnabled())) {
-      continue;
-    }
-    const value = await item.getAttribute("data-value");
-    const text = normalizeText(await item.getText());
-    if (
-      value === "yolo" ||
-      ["Full access", "完全访问", "Yolo", "全自动模式"].some((expected) => text.includes(expected))
-    ) {
-      return true;
-    }
-  }
-  return false;
 }
 
 export async function respondToToolCrossProductBlockers() {
@@ -272,70 +250,6 @@ async function isFullAccessModeSelected() {
   };
 
   return result.yolo;
-}
-
-async function clickModeTrigger() {
-  let latestReason = "not-started";
-  await browser.waitUntil(
-    async () => {
-      const triggers = await browser.$$(
-        'button[aria-label="Switch mode"],button[aria-label="切换模式"]',
-      );
-      for (const trigger of triggers) {
-        if (!(await trigger.isDisplayed()) || !(await trigger.isEnabled())) {
-          continue;
-        }
-        // Bug root cause: the old helper used a renderer click, which in a long suite hits a hidden stale trigger;
-        // the menu looks open but the current task is unchanged. Use real WebDriver clicks only on currently visible controls.
-        await trigger.click();
-        return true;
-      }
-      latestReason = (await triggers.length) === 0 ? "missing" : "not-interactable";
-      return false;
-    },
-    {
-      timeout: 15000,
-      timeoutMsg: `没有打开 mode 选择器: ${latestReason}`,
-    },
-  );
-}
-
-async function clickFullAccessModeItem() {
-  let latestReason = "not-started";
-  await browser.waitUntil(
-    async () => {
-      const normalizeText = (value: string | null | undefined) =>
-        (value ?? "").replace(/\u00a0/g, " ").trim();
-      const items = await browser.$$('[data-slot="select-item"],[role="option"]');
-      const visibleTexts: string[] = [];
-      for (const item of items) {
-        if (!(await item.isDisplayed()) || !(await item.isEnabled())) {
-          continue;
-        }
-        const value = await item.getAttribute("data-value");
-        const text = normalizeText(await item.getText());
-        visibleTexts.push(text);
-        if (
-          value === "yolo" ||
-          ["Full access", "完全访问", "Yolo", "全自动模式"].some((expected) =>
-            text.includes(expected),
-          )
-        ) {
-          // Bug root cause: the old helper did not filter by visibility and could click a hidden item left behind by an unmounted menu;
-          // click the currently visible item via WebDriver to stay on the same path as a user choosing Full access.
-          await item.click();
-          return true;
-        }
-      }
-      latestReason =
-        (await items.length) === 0 ? "missing" : `missing; visibleItems=${visibleTexts.join("|")}`;
-      return false;
-    },
-    {
-      timeout: 15000,
-      timeoutMsg: `没有点击 Full access/yolo mode: ${latestReason}`,
-    },
-  );
 }
 
 interface ConfigOptionLike {

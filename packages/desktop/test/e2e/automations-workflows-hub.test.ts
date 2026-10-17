@@ -37,6 +37,7 @@ import {
   clearAppData,
   clickTestIdByDom,
   clickTestIdByWebDriver,
+  seedSettings,
   setInputValueByTestIdDom,
   waitForTestIdByDom,
 } from "./helpers/desktop-app.js";
@@ -102,8 +103,16 @@ async function readTestIdText(currentTestId: string): Promise<string | null> {
  * required, so it is deterministic. The "run via conversation" cases are filed separately under conversation-session/
  * (they need a replay provider).
  */
+// Assertions read literal zh-CN dialog text while the runner machine defaults to en-US, so pin
+// the locale through the real settings file and reload, matching the feishu specs' convention.
+async function ensureZhCnLocale() {
+  await seedSettings({ locale: "zh-CN", localePreference: "zh-CN" });
+  await browser.refresh();
+}
+
 describe("已保存工作流中枢 E2E", () => {
   before(async () => {
+    await ensureZhCnLocale();
     await mkdir(WORKFLOWS_DIR, { recursive: true });
     await writeFile(WORKFLOW_FILE, SEED, "utf-8");
   });
@@ -247,6 +256,7 @@ const GLOBAL_SEED = [
 
 describe("全局工作流中枢 E2E", () => {
   before(async () => {
+    await ensureZhCnLocale();
     await mkdir(GLOBAL_WORKFLOWS_DIR, { recursive: true });
     await writeFile(GLOBAL_WORKFLOW_FILE, GLOBAL_SEED, "utf-8");
   });
@@ -536,6 +546,7 @@ async function readTimelineText(): Promise<string> {
 
 describe("直接启动 E2E", () => {
   before(async () => {
+    await ensureZhCnLocale();
     await mkdir(WORKFLOWS_DIR, { recursive: true });
     await writeFile(LAUNCH_OK_FILE, LAUNCH_OK_SEED, "utf-8");
     await writeFile(LAUNCH_FAIL_FILE, LAUNCH_FAIL_SEED, "utf-8");
