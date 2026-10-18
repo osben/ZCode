@@ -1364,7 +1364,7 @@ const ukUA: Record<string, string> = {
   "git.actionMenu.commitDialog.error.requestFailed": "Не вдалося створити коміт: {error}",
   "git.actionMenu.commitDialog.error.pushAfterCommitFailed":
     "Коміт створено, але push не виконано: {error}",
-  "git.actionMenu.commitDialog.detachedWarning.title": "Створити коміт на від’єднаному HEAD?",
+  "git.actionMenu.commitDialog.detachedWarning.title": "Створити коміт на від'єднаному HEAD?",
   "git.actionMenu.commitDialog.detachedWarning.description":
     "HEAD не на гілці, тож цей коміт не належатиме жодній гілці й може загубитися після перемикання гілок. Щоб зберегти його, спершу створіть гілку або перейдіть на неї.",
   "git.actionMenu.commitDialog.detachedWarning.confirm": "Усе одно створити коміт",
