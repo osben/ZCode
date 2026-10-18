@@ -117,25 +117,29 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     [voiceDictationService],
   );
 
+  /** Aborts capture and returns the UI to idle; the mute is released silently (cancellation paths stay quiet per spec). */
+  const abortRecording = useCallback(() => {
+    recorder.cancel();
+    void recordingAudio.releaseSystemMute();
+    setLevel(0);
+    setPreview(null);
+    updatePhase("idle");
+  }, [recorder, recordingAudio, updatePhase]);
+
   const failStream = useCallback(
     (streamId: string, error: unknown) => {
       if (streamIdRef.current !== streamId) return;
       streamErrorRef.current = error;
       streamIdRef.current = null;
       streamBacklogRef.current = [];
-      recorder.cancel();
-      // Recording aborted: release the mute silently (cancellation paths stay quiet per spec).
-      void recordingAudio.releaseSystemMute();
-      setLevel(0);
-      setPreview(null);
-      updatePhase("idle");
+      abortRecording();
       logger.warn("voice dictation streaming failed", {
         error: error instanceof Error ? error.message : String(error),
       });
       toast(intl.formatMessage({ id: "voiceDictation.transcribeFailed" }));
       cancelServiceStream(streamId);
     },
-    [cancelServiceStream, intl, recorder, recordingAudio, updatePhase],
+    [abortRecording, cancelServiceStream, intl],
   );
 
   const flushStreamBacklog = useCallback(
@@ -299,6 +303,16 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     voiceDictationService,
   ]);
 
+  /** Invalidates the current start, aborts capture, and releases the Host stream once its queue drains. */
+  const tearDownRecording = useCallback(() => {
+    startGenerationRef.current += 1;
+    abortRecording();
+    const streamId = streamIdRef.current;
+    streamIdRef.current = null;
+    streamBacklogRef.current = [];
+    if (streamId) cancelStreamAfterQueue(streamId);
+  }, [abortRecording, cancelStreamAfterQueue]);
+
   /**
    * Abandons loading or recording without transcribing or inserting anything (window blur, Escape,
    * the feedback panel's Cancel button). Silent by design: no stop chime, the mute is released.
@@ -312,17 +326,8 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
       return;
     }
     if (phaseRef.current !== "loading" && !recorder.isRecording) return;
-    startGenerationRef.current += 1;
-    recorder.cancel();
-    void recordingAudio.releaseSystemMute();
-    setLevel(0);
-    setPreview(null);
-    updatePhase("idle");
-    const streamId = streamIdRef.current;
-    streamIdRef.current = null;
-    streamBacklogRef.current = [];
-    if (streamId) cancelStreamAfterQueue(streamId);
-  }, [cancelStreamAfterQueue, recorder, recordingAudio, updatePhase]);
+    tearDownRecording();
+  }, [recorder, tearDownRecording, updatePhase]);
 
   const stop = useCallback(async (): Promise<void> => {
     // When released quickly after a press, recording may still be waiting for microphone
@@ -330,10 +335,14 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     // Released while the model is still loading: capture only just began, so the hold time below
     // would read as ~0 ms even though the user held the key for seconds.
     const releasedWhileLoading = phaseRef.current === "loading";
-    await startPromiseRef.current;
-    startPromiseRef.current = null;
-    if (!recorder.isRecording) return;
+    // Tie this stop to the start it releases: if that start was cancelled (Escape) and replaced while
+    // we waited, the release belongs to a recording that no longer exists and must not touch the new one.
+    const startPromise = startPromiseRef.current;
     const generation = startGenerationRef.current;
+    await startPromise;
+    if (generation !== startGenerationRef.current) return;
+    if (startPromiseRef.current === startPromise) startPromiseRef.current = null;
+    if (!recorder.isRecording) return;
     const durationMs = Date.now() - startedAtRef.current;
     const samples = recorder.stop();
     setLevel(0);
@@ -454,18 +463,8 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     cancel,
   );
 
-  useEffect(
-    () => () => {
-      startGenerationRef.current += 1;
-      recorder.cancel();
-      void recordingAudio.releaseSystemMute();
-      const streamId = streamIdRef.current;
-      streamIdRef.current = null;
-      streamBacklogRef.current = [];
-      if (streamId) cancelStreamAfterQueue(streamId);
-    },
-    [cancelStreamAfterQueue, recorder, recordingAudio],
-  );
+  // Never leave a capture or a stream lease behind when the owning composer disappears.
+  useEffect(() => tearDownRecording, [tearDownRecording]);
 
   return { phase, level, preview, start, stop, cancel, toggle };
 }

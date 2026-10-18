@@ -590,6 +590,18 @@ describe("VoiceDictationSection post-processing", () => {
     await waitFor(() => expect(control.getAttribute("aria-checked")).toBe("true"));
   });
 
+  it("reverts the toggle on screen when saving fails", async () => {
+    h.updateSettings.mockRejectedValueOnce(new Error("disk full"));
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+    const control = await toggle();
+    await waitFor(() => expect(control.hasAttribute("disabled")).toBe(false));
+
+    fireEvent.click(control);
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("voiceDictation.saveFailed"));
+    // The failed write clears the overlay; the switch must show the persisted value again.
+    await waitFor(() => expect(control.getAttribute("aria-checked")).toBe("false"));
+  });
+
   it("treats a Host without the availability method as unavailable", async () => {
     h.voiceDictationService.getPostProcessAvailability.mockRejectedValue(
       new Error("Method not found: getPostProcessAvailability"),

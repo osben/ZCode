@@ -230,6 +230,8 @@ function DesktopVoiceDictationSection() {
         // is the last in-flight write so later edits re-read the persisted state.
         if (pendingVoiceWritesRef.current === 1) {
           optimisticVoiceRef.current = null;
+          // Re-render so controls fall back to the persisted value instead of the failed edit.
+          setOptimisticTick((tick) => tick + 1);
         }
         return;
       } finally {

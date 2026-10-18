@@ -709,6 +709,43 @@ describe("useVoiceDictation concurrent starts", () => {
     expect(mocks.recorder?.isRecording).toBe(true);
   });
 
+  it("does not let a release that belonged to a cancelled start stop its replacement", async () => {
+    let finishLoad!: (id: string) => void;
+    mocks.service!.beginStream!.mockImplementationOnce(
+      () => new Promise<string>((resolve) => (finishLoad = resolve)),
+    );
+    const onTranscript = vi.fn();
+    const hook = renderHook(() =>
+      useVoiceDictation({ enabled: true, onTranscript, scopeRef: { current: null } }),
+    );
+
+    let first!: Promise<void>;
+    let release!: Promise<void>;
+    act(() => {
+      first = hook.result.current.start();
+    });
+    await waitFor(() => expect(mocks.service!.beginStream).toHaveBeenCalledTimes(1));
+    // Push-to-talk released while the model is still loading, then Escape, then a new key press.
+    act(() => {
+      release = hook.result.current.stop();
+    });
+    act(() => hook.result.current.cancel());
+    await act(async () => hook.result.current.start());
+    await waitFor(() => expect(hook.result.current.phase).toBe("recording"));
+
+    await act(async () => {
+      finishLoad("stale-stream");
+      await first;
+      await release;
+    });
+
+    // The stale release must neither stop nor discard the replacement recording.
+    expect(hook.result.current.phase).toBe("recording");
+    expect(mocks.recorder?.isRecording).toBe(true);
+    expect(onTranscript).not.toHaveBeenCalled();
+    expect(toast).not.toHaveBeenCalled();
+  });
+
   it("ignores a new start while a cancelled start is still waiting for microphone permission", async () => {
     let grantPermission!: () => void;
     mocks.recorderStartGate = new Promise<void>((resolve) => (grantPermission = resolve));
