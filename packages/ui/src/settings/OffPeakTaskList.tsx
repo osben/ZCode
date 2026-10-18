@@ -204,9 +204,7 @@ export function OffPeakTaskList({
               // An inset surface shadow does not convey a Card outline and creates a color mismatch with home-page cards across light/dark themes.
               "group relative flex h-full min-h-0 cursor-pointer gap-3 overflow-hidden rounded-[10px] border border-card-border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-input-border-focused",
               // Keep completed cards muted overall, but still show a hover background to indicate the card is clickable and its more menu is usable.
-              task.status === "completed"
-                ? "opacity-60 hover:bg-surface-hover"
-                : "hover:bg-surface-hover",
+              task.status === "completed" ? "opacity-60 hover:bg-hover" : "hover:bg-hover",
             )}
           >
             <div className="flex h-full min-w-0 flex-1 flex-col gap-3">
