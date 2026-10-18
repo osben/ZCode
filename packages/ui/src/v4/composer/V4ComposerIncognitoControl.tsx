@@ -27,11 +27,13 @@ import {
 export const TID_V4_COMPOSER_INCOGNITO_TRIGGER = "v4-composer-incognito-trigger";
 export const TID_V4_COMPOSER_INCOGNITO_TOGGLE = "v4-composer-incognito-toggle";
 export const TID_V4_COMPOSER_INCOGNITO_MARKER = "v4-composer-incognito-marker";
+export const TID_V4_COMPOSER_INCOGNITO_OFF = "v4-composer-incognito-off";
 
 /**
  * Draft-only incognito toggle (specs/incognito-session.md "Composer toggle"): the menu turns the
- * mode on from the Settings defaults and lets the user opt capabilities back in for this session;
- * while active the trigger carries the «Incognito» label (not color-only) next to a turn-off button.
+ * mode on from the Settings defaults and lets the user opt capabilities back in for this session.
+ * While active the control is a chip with the «Incognito» label (not color-only) whose turn-off
+ * button is revealed inline on hover/focus, following the project chip in ChatEmptyState.
  */
 
 /** Visible checkbox for a menu row; the row itself stays the menuitemcheckbox. */
@@ -101,10 +103,36 @@ export const V4ComposerIncognitoControl = memo(function V4ComposerIncognitoContr
   }, []);
   const active = capabilities !== null;
   const toggleLabel = intl.formatMessage({ id: "chat.incognito.toggle" });
-  const removeLabel = intl.formatMessage({ id: "chat.incognito.removeMarker" });
+  const removeLabel = intl.formatMessage({ id: "chat.incognito.turnOff" });
+
+  const showOffButton = active && !disabled;
 
   return (
-    <>
+    <div
+      data-testid={active ? TID_V4_COMPOSER_INCOGNITO_MARKER : undefined}
+      // Compact mode (specs/incognito-session.md "Composer toggle") collapses this wrapper, which hides the label and the turn-off overlay.
+      data-composer-collapse-priority="1"
+      className={cn(
+        "group/incognito-chip relative flex shrink-0 items-center rounded-full",
+        active && "bg-incognito/10 hover:bg-incognito/15 focus-within:bg-incognito/15",
+      )}
+    >
+      {active ? (
+        <ControlHintTooltip title={removeLabel}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            disabled={disabled}
+            onClick={() => deactivate(workspaceKey)}
+            aria-label={removeLabel}
+            data-testid={TID_V4_COMPOSER_INCOGNITO_OFF}
+            className="pointer-events-none absolute left-1 top-1/2 z-10 -translate-y-1/2 rounded-full text-foreground-subtle opacity-0 transition-opacity group-hover/incognito-chip:pointer-events-auto group-hover/incognito-chip:opacity-100 group-focus-within/incognito-chip:pointer-events-auto group-focus-within/incognito-chip:opacity-100 group-data-[composer-compact=true]/incognito-chip:hidden"
+          >
+            <XIcon className="size-3.5" />
+          </Button>
+        </ControlHintTooltip>
+      ) : null}
       <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
         {/* The hint must stay closed while the menu is open, or its layer dismisses the menu. */}
         <ControlHintTooltip title={toggleLabel} open={menuOpen ? false : undefined}>
@@ -117,17 +145,22 @@ export const V4ComposerIncognitoControl = memo(function V4ComposerIncognitoContr
               aria-label={toggleLabel}
               aria-pressed={active}
               data-testid={TID_V4_COMPOSER_INCOGNITO_TRIGGER}
-              data-composer-collapse-priority="1"
               className={cn(
-                "group/incognito h-7 rounded-lg",
+                "h-7",
                 active
-                  ? "gap-1 px-2 text-ui-base text-incognito hover:text-incognito data-[composer-compact=true]:w-7 data-[composer-compact=true]:px-0"
-                  : "w-7 px-0",
+                  ? "gap-1 rounded-full bg-transparent px-2 text-ui-base text-incognito hover:bg-transparent hover:text-incognito group-data-[composer-compact=true]/incognito-chip:w-7 group-data-[composer-compact=true]/incognito-chip:px-0"
+                  : "w-7 rounded-lg px-0",
               )}
             >
-              <VenetianMask className="size-4" />
+              <VenetianMask
+                className={cn(
+                  "size-4",
+                  showOffButton &&
+                    "transition-opacity group-hover/incognito-chip:opacity-0 group-focus-within/incognito-chip:opacity-0 group-data-[composer-compact=true]/incognito-chip:!opacity-100",
+                )}
+              />
               {active ? (
-                <span className="inline group-data-[composer-compact=true]/incognito:hidden">
+                <span className="inline group-data-[composer-compact=true]/incognito-chip:hidden">
                   {intl.formatMessage({ id: "chat.incognito.marker" })}
                 </span>
               ) : null}
@@ -204,24 +237,6 @@ export const V4ComposerIncognitoControl = memo(function V4ComposerIncognitoContr
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-      {active ? (
-        <span data-testid={TID_V4_COMPOSER_INCOGNITO_MARKER} className="flex items-center">
-          <ControlHintTooltip title={removeLabel}>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              disabled={disabled}
-              data-composer-collapse-priority="2"
-              onClick={() => deactivate(workspaceKey)}
-              aria-label={removeLabel}
-              className="h-7 w-7 rounded-lg px-0 text-foreground-subtle"
-            >
-              <XIcon className="size-4" />
-            </Button>
-          </ControlHintTooltip>
-        </span>
-      ) : null}
-    </>
+    </div>
   );
 });

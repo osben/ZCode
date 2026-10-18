@@ -7925,7 +7925,7 @@ const zhCN: Record<string, string> = {
   "chat.incognito.toggle": "无痕会话",
   "chat.incognito.toggleDescription": "下一个会话默认不加载额外能力（可在新会话中重新开启）",
   "chat.incognito.marker": "无痕",
-  "chat.incognito.removeMarker": "关闭无痕模式",
+  "chat.incognito.turnOff": "关闭无痕模式",
   "chat.incognito.includeHeading": "本次会话包含",
   "chat.incognito.settingsLink": "无痕设置…",
   "chat.incognito.unsupported": "当前 Agent 版本无法启动无痕会话。请更新应用或远程 Agent 后重试。",
