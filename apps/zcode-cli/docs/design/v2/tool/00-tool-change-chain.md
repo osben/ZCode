@@ -1,5 +1,11 @@
 # Tool Change Chain Spec
 
+## Edit 拒绝 notebook 的文案不再指向 NotebookEdit（2026-10-17）
+
+仓库内不存在 NotebookEdit 工具，旧文案让模型调用一个不可用的工具。Edit 对 `.ipynb` 仍以错误码 `5`
+拒绝，只改模型可见文案：说明没有 notebook 编辑工具，必要时读取后用 Write 重写 notebook JSON。
+schema、权限、执行与 UI/V4 投影不变；回归见 `packages/core/tests/edit-tool-contract.test.ts`。
+
 ## 只读 Bash 按输入并发调度（2026-10-17）
 
 `scheduleTools` 不再只读静态 metadata：每个 tool call 的 `readOnly`、`destructive`、`concurrentSafe`、
