@@ -1106,6 +1106,15 @@ describe("dynamic workflow run service — 请求的并发上界", () => {
     await settle(harness, inherited.runId);
   });
 
+  it("defaultConcurrency() 与默认并发的唯一实现同值（必须与缺省落库的那个数对得上）", () => {
+    const harness = makeHarness({ availableParallelism: TEN_CORES });
+    expect(typeof harness.service.defaultConcurrency).toBe("function");
+    expect(harness.service.defaultConcurrency!()).toBe(
+      resolveWorkflowDefaultConcurrency(TEN_CORES),
+    );
+    expect(harness.service.defaultConcurrency!()).toBe(DEFAULT_OF_TEN_CORES);
+  });
+
   it("快照只在不等于默认并发时带 maxConcurrency（高于、低于都带）", async () => {
     const harness = makeHarness({ availableParallelism: TEN_CORES });
     const limited = await submitWithLimit(harness, "snapshot-limited", 2);
@@ -5074,6 +5083,22 @@ describe("dynamic workflow run service — getRunDetail 组合", () => {
     });
   });
 
+  it("running 的 run 既无 result 也无 error", async () => {
+    await withSqliteJournal(async (journal) => {
+      const harness = makeHarness({ journal });
+      preloadRun(journal, {
+        cwd: projectCwd,
+        parentSessionId: createSessionId("sibling-session"),
+        runId: "dwfrun-running",
+        status: "running",
+      });
+
+      const detail = await introspectionOf(harness).getRunDetail("dwfrun-running");
+      expect("result" in detail!).toBe(false);
+      expect("error" in detail!).toBe(false);
+    });
+  });
+
   it("completed：内存终态的产物原样交出（不序列化）", async () => {
     await withSqliteJournal(async (journal) => {
       const harness = makeHarness({
@@ -5108,6 +5133,15 @@ describe("dynamic workflow run service — getRunDetail 组合", () => {
 
       const detail = await introspectionOf(harness).getRunDetail("dwfrun-result-json");
       expect(detail?.result).toEqual({ report: "final answer", steps: 3 });
+    });
+  });
+
+  it("completed 但产物是 undefined → result 整字段缺席", async () => {
+    await withSqliteJournal(async (journal) => {
+      const harness = makeHarness({ journal });
+      preloadRun(journal, { cwd: projectCwd, runId: "dwfrun-void", status: "completed" });
+
+      expect("result" in (await introspectionOf(harness).getRunDetail("dwfrun-void"))!).toBe(false);
     });
   });
 
