@@ -602,6 +602,46 @@ describe("AiSdkModelAdapter", () => {
     });
   });
 
+  it("uses Effective Model Config instead of a provider allowlist for native web_search", async () => {
+    let captured: AiSdkGenerateTextOptions | undefined;
+    const runtime: AiSdkModelRuntime = {
+      async generateText(options) {
+        captured = options;
+        return {
+          text: "done",
+          finishReason: "stop",
+          usage: usage(1, 2),
+          totalUsage: usage(1, 2),
+        } as never;
+      },
+      streamText() {
+        throw new Error("not used");
+      },
+    };
+    const adapter = new AiSdkModelAdapter({
+      runtime,
+      registry: new TestProviderConfigFixture({
+        providers: {
+          minimax: {
+            kind: "anthropic",
+            apiKey: "test-key",
+            baseURL: "https://api.minimaxi.com/anthropic",
+          },
+        },
+      }),
+    });
+
+    await executeAdapterGenerateText(adapter, {
+      providerId: "minimax" as never,
+      modelId: "MiniMax-M2.7" as never,
+      properties: createTestModelProperties({}, { supportsNativeWebSearch: true }),
+      messages: [{ role: "user", content: "Ping" }],
+      tools: [createInternalProviderNativeWebSearchContract()],
+    });
+
+    expect(Object.keys(captured?.tools ?? {})).toEqual(["web_search"]);
+  });
+
   it("keeps internal web_search for allowlisted Anthropic-compatible side requests", async () => {
     let captured: AiSdkGenerateTextOptions | undefined;
     const runtime: AiSdkModelRuntime = {
@@ -796,6 +836,52 @@ describe("AiSdkModelAdapter", () => {
       ]);
     },
   );
+
+  it("adds request attribution headers to generateText requests", async () => {
+    let captured: AiSdkGenerateTextOptions | undefined;
+    const runtime: AiSdkModelRuntime = {
+      async generateText(options) {
+        captured = options;
+        return {
+          text: "done",
+          finishReason: "stop",
+          usage: usage(1, 2),
+          totalUsage: usage(1, 2),
+        } as never;
+      },
+      streamText() {
+        throw new Error("not used");
+      },
+    };
+    const adapter = new AiSdkModelAdapter({
+      runtime,
+      registry: registry(),
+    });
+
+    await executeAdapterGenerateText(adapter, {
+      modelRequestSessionType: "main",
+      metadata: {
+        parentSpanId: "parent_span_generate",
+        queryId: "query_generate",
+        requestId: "model_req_generate",
+        sessionId: "sess_generate",
+        spanId: "span_generate",
+        traceId: "trace_generate",
+        turnId: "turn_generate",
+      },
+      providerId: "test" as never,
+      modelId: "model-a" as never,
+      messages: [{ role: "user", content: "Ping" }],
+    });
+
+    expect(captured?.headers).toEqual({
+      "x-query-id": "generate",
+      "x-request-id": "model_req_generate",
+      "x-session-id": "generate",
+      "x-zcode-session-type": "main",
+      "x-zcode-trace-id": "trace_generate",
+    });
+  });
 
   it("writes raw AI SDK request and response bodies in development mode", async () => {
     const debugDir = await mkdtemp(join(tmpdir(), "zcode-model-io-"));
