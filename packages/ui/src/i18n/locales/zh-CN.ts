@@ -651,7 +651,8 @@ const zhCN: Record<string, string> = {
   "commandCenter.worktree.prune.done": "已清理 {count} 条失效的 worktree 记录。",
   "commandCenter.worktree.error.invalid-branch-name": "“{branchName}”不是有效的分支名。",
   "commandCenter.worktree.error.branch-already-exists": "分支 {branchName} 已存在。",
-  "commandCenter.worktree.error.target-branch-not-found": "未找到基准分支 {branchName}。",
+  "commandCenter.worktree.error.target-branch-not-found":
+    "未找到基准分支 {branchName}。没有任何提交的仓库还没有分支，请先创建第一个提交再使用 worktree。",
   "commandCenter.worktree.error.branch-in-other-worktree":
     "分支 {branchName} 已在另一个 worktree 中检出，请换一个分支名。",
   "commandCenter.worktree.error.target-path-invalid": "计算出的目标路径无效。",
@@ -670,6 +671,7 @@ const zhCN: Record<string, string> = {
   "commandCenter.worktree.error.worktree-dirty": "worktree 包含已修改或未跟踪的文件。",
   "commandCenter.worktree.error.worktree-locked": "worktree 已被 Git 锁定。",
   "commandCenter.worktree.error.unknown": "无法创建 worktree。",
+  "commandCenter.worktree.error.unknownWithDetail": "无法创建 worktree：{detail}",
   "commandCenter.worktree.error.requestFailed": "Git 请求失败：{error}",
   "confirmDialog.taskDeleteTitle": "删除这个任务？",
   "confirmDialog.taskDeleteDescription": "任务“{taskTitle}”会从当前工作区移除，现有记录无法恢复。",
@@ -1432,6 +1434,10 @@ const zhCN: Record<string, string> = {
   "git.actionMenu.commitDialog.error.generateFailed": "生成提交消息失败，请重试或手动填写。",
   "git.actionMenu.commitDialog.error.requestFailed": "提交失败：{error}",
   "git.actionMenu.commitDialog.error.pushAfterCommitFailed": "已提交，但推送失败：{error}",
+  "git.actionMenu.commitDialog.detachedWarning.title": "在游离 HEAD 上提交？",
+  "git.actionMenu.commitDialog.detachedWarning.description":
+    "HEAD 不在任何分支上，此提交不会属于任何分支，切换分支后可能丢失。如需保留，请先创建或切换到一个分支。",
+  "git.actionMenu.commitDialog.detachedWarning.confirm": "仍然提交",
   "git.actionMenu.commitDialog.toast.success": "已提交当前更改",
   "git.actionMenu.commitDialog.toast.commitAndPushSuccess": "已提交并推送当前更改",
   "git.actionMenu.pushDialog.title": "推送更改",

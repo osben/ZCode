@@ -1,6 +1,35 @@
 # BUG-GWT-005: после Retry в recovery подготовка зависает в ready — замороженное сообщение не допускается в сессию автоматически
 
-- Status: PARTIALLY FIXED (wave 2, 2026-10-18): renderer path fixed — continuation moved to a store-level registry surviving view promotion (regression: unmount+remount test, 38/38); live RT3: Retry now queues the frozen message (sendConversationCommandV4) and the view opens the ready session. REMAINING: the queue never drains into a turn for the freshly-prepared session (0 prepareTurn in 260s; manual Send drains in 350ms) — runtime-side CommandInbox admission follow-up needed.
+- Status: FIXED (wave 3, 2026-10-18), verified live on a production QA build of the fix branch (RT4-C5): Retry → `git.createWorktree` +146 ms → `createSession{preparedSessionId}` +206 ms → `highspeed-card.prepareTurn` +556 ms → `sendText` +572 ms with no user action; recovery card and "Queued message" cleared; agent wrote `live6.txt` in the worktree of the same session.
+- Previous status (wave 2): PARTIALLY FIXED — continuation moved to a store-level registry surviving view promotion; the remaining "runtime CommandInbox" localization turned out to be wrong (see Wave 3 below).
+
+## Wave 3 (2026-10-18): real cause — stale Host seed rolls Retry back
+
+**The CommandInbox localization was disproven.** Evidence from the RT3-C5 host log and code:
+
+- The `sendConversationCommandV4` at Retry+0 ms is `updateWorktreePreparation{status:"preparing"}` from `SessionPane.handleWorktreePreparationRetry`, not an enqueued message. After `git.createWorktree`/`ensureWorktreeExclusion` the auto path made **no** Host call (no `createSession`, no `sendText`), so nothing ever reached the CommandInbox. "Queued message" is a renderer-only timeline label (`entry.queuedPromptPreview`). `prepareTurn` is a renderer highspeed side-call inside the send path, and `taskBus.leases` is an Electron-main metric, not CommandInbox state.
+- Production renderer logging is a no-op, so the live path was traced with CDP conditional breakpoints in the minified bundle (`$QA_ROOT/evidence/RT4-C5-cdp-logpoints-before-fix.log`). Queued-send effect runs after Retry:
+  1. `creating`, attempt B (retry) — continuation armed, rebinds to B;
+  2. **`failed`, attempt A (the old attempt)** — continuation still armed;
+  3. `creating`, attempt B — continuation **released**;
+  4. `ready`, attempt B — nothing to dispatch.
+
+Confirmed cause:
+
+- `packages/ui/src/v4/ConversationWorktreeSetupSteps.tsx` (Host reconcile effect, deps include `entry`) re-runs when Retry's `startPipeline(creating, B)` changes the entry, but its `preparation` prop is still the stale Host seed `{failed, A}`: the Host accepted the retry before its snapshot reached the renderer.
+- `packages/ui/src/v4/composer/composerWorktreePreparationRestore.ts` treated any `hostAttempt !== entryAttempt` as a "newer Host generation" and replaced the entry with `failed(A)`.
+- `packages/ui/src/v4/ConversationComposer.tsx` queued-send effect: attempt mismatch + status `failed` → `detachQueued()` + `restore()` — the armed continuation is released permanently, so the later `ready(B)` admits nothing and the recovery record stays (MINOR-1).
+
+Fix: attempt ids are opaque, so "newer" is decided by supersession. The pipeline store's `startPipeline` is the single owner: replacing a session's entry with another attempt (Retry, `restartPreparedWorktreeCreation` on Send in a failed prepared session, a newer Host attempt) records the replaced attempt in `entry.supersededAttemptIds`; restore ignores a Host seed carrying a superseded attempt; a genuinely newer Host attempt still replaces the entry and inherits the superseded set.
+
+Known residual (pre-existing, not observed live): if the Host snapshot `preparing(B)` arrives before the Retry acknowledgement, restore adopts B as `creating`, the Retry handler's `status !== "failed"` guard returns before Git starts, and the stale-creating reconcile settles the attempt as failed. Spec: `specs/composer-worktree-setup-steps.md` (supersession paragraph + event diagram, acceptance scenario 17).
+
+Tests (`packages/ui/test/composerWorktreePipeline.test.ts`):
+
+- `BUG-GWT-005: the stale Host failed seed for the retried attempt cannot roll back Retry and strand the frozen submission (RT4-C5 live path)` — mounted `ConversationComposer` + real `ConversationWorktreeSetupSteps`, real Retry button, stale `{failed, A}` seed, Host seed updated afterwards.
+- `BUG-GWT-005: ignores a Host seed for an attempt the renderer already superseded, but still yields to a newer Host attempt` — restore-level rule.
+- `BUG-GWT-005: a prepared-session restart is not rolled back by the stale Host failed seed` — same race through the restart path.
+- Red without the fix (source swapped to HEAD): mounted test `expected "vi.fn()" to be called 1 times, but got 0 times`; store trace `creating B → failed A → creating B (released) → failed B`, identical to the live CDP trace. Green with the fix: 42/42 in the file (all three BUG-005 tests red with the store rule removed); 50 worktree/composer/command-center files, 467 tests green.
 
 - Severity: S3 (обход есть — ручной Restore → Send в той же сессии; но нарушен контракт спеки о допуске замороженной отправки после ready)
 - Кейсы: C5 (основной, FAIL)

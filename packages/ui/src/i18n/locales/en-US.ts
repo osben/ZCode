@@ -712,7 +712,7 @@ const enUS: Record<string, string> = {
   "commandCenter.worktree.error.invalid-branch-name": "“{branchName}” is not a valid branch name.",
   "commandCenter.worktree.error.branch-already-exists": "Branch “{branchName}” already exists.",
   "commandCenter.worktree.error.target-branch-not-found":
-    "Base branch “{branchName}” was not found.",
+    "Base branch “{branchName}” was not found. A repository without commits has no branches yet; create the first commit before using a worktree.",
   "commandCenter.worktree.error.branch-in-other-worktree":
     "Branch “{branchName}” is already checked out in another worktree. Choose a different branch name.",
   "commandCenter.worktree.error.target-path-invalid": "The computed target path is invalid.",
@@ -732,6 +732,7 @@ const enUS: Record<string, string> = {
   "commandCenter.worktree.error.worktree-dirty": "The worktree has modified or untracked files.",
   "commandCenter.worktree.error.worktree-locked": "The worktree is locked by Git.",
   "commandCenter.worktree.error.unknown": "Could not create the worktree.",
+  "commandCenter.worktree.error.unknownWithDetail": "Could not create the worktree: {detail}",
   "commandCenter.worktree.error.requestFailed": "Git request failed: {error}",
   "confirmDialog.taskDeleteTitle": "Delete this task?",
   "confirmDialog.taskDeleteDescription":
@@ -1544,6 +1545,10 @@ const enUS: Record<string, string> = {
     "Commit message generation failed. Try again or enter one manually.",
   "git.actionMenu.commitDialog.error.requestFailed": "Commit failed: {error}",
   "git.actionMenu.commitDialog.error.pushAfterCommitFailed": "Committed, but push failed: {error}",
+  "git.actionMenu.commitDialog.detachedWarning.title": "Commit on a detached HEAD?",
+  "git.actionMenu.commitDialog.detachedWarning.description":
+    "HEAD is not on a branch, so this commit will not belong to any branch and can be lost after you switch branches. Create or switch to a branch first to keep it.",
+  "git.actionMenu.commitDialog.detachedWarning.confirm": "Commit anyway",
   "git.actionMenu.commitDialog.toast.success": "Committed the current changes",
   "git.actionMenu.commitDialog.toast.commitAndPushSuccess":
     "Committed and pushed the current changes",
