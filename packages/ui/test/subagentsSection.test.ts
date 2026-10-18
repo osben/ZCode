@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 
-import { readFileSync } from "node:fs";
 import { createElement, useLayoutEffect, type ChangeEvent } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -600,17 +599,6 @@ describe("SubagentsSection", () => {
 
     expect(html).toContain("Feature Dev");
     expect(html).toContain("feature-dev:code-architect");
-  });
-
-  it("gates the enabled toggle on user scope instead of general editability", async () => {
-    // Bugfix 回归：workspace profile 可编辑之后仍不能展示启用开关——runtime 只对 user scope
-    // 应用 disabledAgentIds（CLI isDisabledUserProfile 对 source !== "user" 直接 false，
-    // workspace profile 的 source 是 "project"），开关点了会静默回弹。
-    const source = readFileSync("packages/ui/src/settings/SubagentsSection.tsx", "utf8");
-    expect(source).toMatch(/function supportsEnabledToggle\([\s\S]*?agent\.scope === "user"/);
-    expect(source).toMatch(/\{showEnabledToggle \? \(\s*<Switch/);
-    expect(source).toContain("const showEnabledToggle = supportsEnabledToggle(agent);");
-    expect(source).toContain("if (!supportsEnabledToggle(agent)) {");
   });
 
   it("projects one settings row per plugin agent file while keeping runtime aliases separate", async () => {

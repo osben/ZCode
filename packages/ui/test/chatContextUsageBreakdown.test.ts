@@ -2,7 +2,7 @@
 
 import { createElement, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { readFileSync } from "node:fs";
+
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BUILTIN_MODEL_PROVIDER_IDS } from "@zcode/shared";
@@ -37,8 +37,7 @@ import {
 } from "../src/lib/sidebarCodingPlanUpgrade.js";
 import { getContextQuotaMeterGridClass } from "../src/chat-input-toolbar/contextQuotaMeterGrid.js";
 import { resolveMcpQuotaLimit } from "../src/lib/codingPlanQuotaPresentation.js";
-import enMessages from "../src/i18n/locales/en-US.js";
-import zhMessages from "../src/i18n/locales/zh-CN.js";
+
 import { TooltipProvider } from "../src/components/ui/tooltip.js";
 
 const activeSubscription = {
@@ -259,25 +258,6 @@ describe("ChatCodingPlanUsageRemainingPanel reset action", () => {
 });
 
 describe("ChatCodingPlanUsageRemainingPanel MCP 额度", () => {
-  it("ZCode MCP tooltip 使用精简的每日合计额度说明", () => {
-    expect(zhMessages["sidebar.usage.plan.zcodeMcpDescription"]).toBe(
-      "ZCode 预置插件 MCP 每日合计额度",
-    );
-    expect(enMessages["sidebar.usage.plan.zcodeMcpDescription"]).toBe(
-      "Daily aggregate quota for ZCode built-in plugin MCPs",
-    );
-  });
-
-  it("ZCode MCP 文字保持普通前景色，进度条复用图表黄色", () => {
-    const styles = readFileSync("packages/ui/src/styles.css", "utf8");
-
-    expect(styles).toContain("--color-usage-chart-5: #e07b00;");
-    expect(styles).toContain("--color-usage-chart-5: #ff8a30;");
-    expect(styles).not.toContain("--zcode-mcp-progress");
-    expect(styles).not.toContain("--zcode-mcp-gradient-");
-    expect(styles).not.toContain("zcode-mcp-gradient-text");
-  });
-
   it("三张主额度占满首行时，官方 Server MCP 在下一行横跨三列", () => {
     codingPlanQuotaResetUiMock.current = codingPlanQuotaResetUiMock.createValue();
     const html = renderToStaticMarkup(

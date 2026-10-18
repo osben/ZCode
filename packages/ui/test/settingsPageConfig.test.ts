@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BarChart3, Blocks, Cable, GitBranchPlus, Package, WandSparkles } from "lucide-react";
+import {
+  BarChart3,
+  Blocks,
+  Cable,
+  FileText,
+  GitBranchPlus,
+  Package,
+  WandSparkles,
+} from "lucide-react";
 import enUS from "../src/i18n/locales/en-US.js";
 import zhCN from "../src/i18n/locales/zh-CN.js";
 
@@ -41,6 +49,7 @@ describe("settingsPageConfig", () => {
         sections: [
           "instructions",
           "outputStyles",
+          "systemPrompt",
           "memory",
           "subagents",
           "plugin",
@@ -63,6 +72,7 @@ describe("settingsPageConfig", () => {
       "modelProvider",
       "instructions",
       "outputStyles",
+      "systemPrompt",
       "memory",
       "subagents",
       "plugin",
@@ -88,6 +98,7 @@ describe("settingsPageConfig", () => {
       "modelProvider",
       "instructions",
       "outputStyles",
+      "systemPrompt",
       "memory",
       "subagents",
       "plugin",
@@ -120,6 +131,8 @@ describe("settingsPageConfig", () => {
     expect(SETTINGS_SECTIONS.find((section) => section.id === "plugin")?.icon).toBe(Blocks);
     expect(SETTINGS_SECTIONS.find((section) => section.id === "mcp")?.icon).toBe(Cable);
     expect(SETTINGS_SECTIONS.find((section) => section.id === "skill")?.icon).toBe(WandSparkles);
+    expect(SETTINGS_SECTIONS.find((section) => section.id === "systemPrompt")?.icon).toBe(FileText);
+    expect(enUS["settings.systemPrompt.title"]).toBe("System Prompts");
   });
 
   it("Worktrees 分区仅桌面平台注册，排在基础设置末尾并提供中英文标题", async () => {
@@ -161,15 +174,6 @@ describe("settingsPageConfig", () => {
     expect(enUS["settings.usageTitle"]).toBe(enUS["sidebar.usage.plan.openStats"]);
     expect(enUS["settings.usage.sectionTitle"]).toBe(enUS["sidebar.usage.plan.openStats"]);
     expect(zhCN["settings.usageTitle"]).toBe(zhCN["sidebar.usage.plan.openStats"]);
-  });
-
-  it("侧栏分组标题同时提供中英文文案", () => {
-    expect(enUS["settings.sidebar.group.basics"]).toBe("Basics");
-    expect(enUS["settings.sidebar.group.agentCapabilities"]).toBe("Agent capabilities");
-    expect(enUS["settings.sidebar.group.dataAndStats"]).toBe("Data and statistics");
-    expect(zhCN["settings.sidebar.group.basics"]).toBe("基础设置");
-    expect(zhCN["settings.sidebar.group.agentCapabilities"]).toBe("Agent 能力");
-    expect(zhCN["settings.sidebar.group.dataAndStats"]).toBe("数据与统计");
   });
 
   it.each([

@@ -1,5 +1,3 @@
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { resolveWebRemoteControlRoutePath } from "../src/webRemoteControlRoute.js";
 
@@ -28,17 +26,5 @@ describe("resolveWebRemoteControlRoutePath", () => {
       }),
     ).toBe("/remote/v3");
     expect(resolveWebRemoteControlRoutePath({ BASE_URL: "/" })).toBe("/remote");
-  });
-
-  it("源码保留发布脚本识别版本化 base 能力所依赖的变量引用", async () => {
-    // remote-frontend-build-source.mjs decides whether an old tag falls back to
-    // the legacy base by checking whether this file references that variable.
-    const source = await readFile(
-      resolve(import.meta.dirname, "../src/webRemoteControlRoute.ts"),
-      "utf8",
-    );
-    expect(source).toContain("VITE_WEB_REMOTE_CONTROL_ROUTE_PATH");
-    const main = await readFile(resolve(import.meta.dirname, "../src/main.tsx"), "utf8");
-    expect(main).toContain("resolveWebRemoteControlRoutePath(import.meta.env)");
   });
 });

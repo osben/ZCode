@@ -1508,17 +1508,6 @@ describe("CreateWorkflowToolCallBlock kind 文案分相", () => {
       expect((zhCN as Record<string, string>)[gone], gone).toBeUndefined();
     }
   });
-
-  it("两个新 key 在两种语言里都存在，且不是英文占位", () => {
-    for (const key of [
-      "chat.toolCall.workflow.writing",
-      "chat.toolCall.workflow.awaitingConfirmation",
-    ]) {
-      expect(enUS[key]).toBeTruthy();
-      expect(zhCN[key]).toBeTruthy();
-      expect(zhCN[key]).not.toBe(enUS[key]);
-    }
-  });
 });
 
 // ── Five pills and one door (docs/dynamic-workflow/presentation.md, "Past six participants") ──

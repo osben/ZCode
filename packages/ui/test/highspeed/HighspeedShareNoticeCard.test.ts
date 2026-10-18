@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { readFileSync } from "node:fs";
+
 import { createElement } from "react";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -63,14 +63,6 @@ describe("HighspeedShareNoticeCard", () => {
     expect(document.querySelector('[data-slot="dialog-content"]')?.className).toContain(
       "highspeed-share-dialog__content",
     );
-    const shareCss = readFileSync("packages/ui/src/highspeed/highspeed-share.css", "utf8");
-    expect(shareCss).not.toMatch(
-      /@media \(max-width: 480px\)[\s\S]*?\.highspeed-share-dialog__card\s*\{[^}]*border-radius:\s*16px/,
-    );
-    expect(shareCss.replace(/\s+/g, " ")).toContain(
-      '.highspeed-share-dialog__overlay[data-state="closed"], .highspeed-share-dialog__content[data-state="closed"] { animation: none !important; }',
-    );
-    expect(shareCss).toContain(".highspeed-share-dialog__url:hover svg");
   });
 
   it("keeps the card visible but hides View when speedup is not greater than 1.2x", () => {

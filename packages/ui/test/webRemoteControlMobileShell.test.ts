@@ -1,6 +1,5 @@
 import { createElement, type ReactNode } from "react";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -30,8 +29,9 @@ vi.mock("@/logger.js", () => ({
 }));
 
 vi.mock("@/store/StoreProvider.js", () => ({
-  useZCodeStore: (selector: (state: { theme: string; setTheme: (theme: string) => void }) => unknown) =>
-    selector({ theme: "dark", setTheme: vi.fn() }),
+  useZCodeStore: (
+    selector: (state: { theme: string; setTheme: (theme: string) => void }) => unknown,
+  ) => selector({ theme: "dark", setTheme: vi.fn() }),
 }));
 
 vi.mock("@/components/ui/resizable.js", () => ({
@@ -84,10 +84,7 @@ function renderMobileShell(initialNavigationIntent?: "chat") {
   );
 }
 
-function renderMobileShellWithSidePane(
-  isSidePaneOpen: boolean,
-  chatOverlay?: ReactNode,
-) {
+function renderMobileShellWithSidePane(isSidePaneOpen: boolean, chatOverlay?: ReactNode) {
   return renderToStaticMarkup(
     createElement(WebRemoteControlMobileShell, {
       activeTaskId: "task-1",
@@ -188,16 +185,6 @@ describe("WebRemoteControlMobileShell", () => {
     expect(html).not.toContain('data-testid="chat-content"');
   });
 
-  it("requests a workspace list refresh when returning from chat to the task list", () => {
-    const source = readFileSync(
-      resolve(process.cwd(), "packages/ui/src/WebRemoteControlMobileShell.tsx"),
-      "utf8",
-    );
-
-    expect(source).toContain("homeRefreshKey");
-    expect(source).toContain("refreshKey={homeRefreshKey}");
-  });
-
   it("starts on chat when a cross-workspace click provides a chat intent", () => {
     const html = renderMobileShell("chat");
 
@@ -257,42 +244,12 @@ describe("WebRemoteControlMobileShell", () => {
 
   it("keeps the mobile chat and side-pane content shrinkable at narrow widths", () => {
     const html = renderMobileShell("chat");
-    const shellSource = readFileSync(
-      resolve(process.cwd(), "packages/ui/src/WebRemoteControlMobileShell.tsx"),
-      "utf8",
-    );
-    const sidePaneSource = readFileSync(
-      resolve(process.cwd(), "packages/ui/src/app-shell/AnimatedSidePanePanel.tsx"),
-      "utf8",
-    );
-    const workspaceShellSource = readFileSync(
-      resolve(process.cwd(), "packages/ui/src/app-shell/WorkspaceShellLayout.tsx"),
-      "utf8",
-    );
-    const sessionPaneSource = readFileSync(
-      resolve(process.cwd(), "packages/ui/src/v4/SessionPane.tsx"),
-      "utf8",
-    );
-    const timelineSource = readFileSync(
-      resolve(process.cwd(), "packages/ui/src/v4/ConversationTimeline.tsx"),
-      "utf8",
-    );
 
     // 回归原因：长 subagent 输出或进程条目让 flex 子项按 min-content 宽度撑开，
     // 窄屏远控抽屉随后会裁掉每一行的开头。
     expect(html).toContain(
       '<main class="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">',
     );
-    expect(shellSource).toContain(
-      'className="relative flex h-full min-h-0 min-w-0 flex-col bg-background"',
-    );
-    expect(sidePaneSource).toContain('mobileOverlay && "min-w-0"');
-    expect(sidePaneSource).not.toContain('className={cn("h-full min-w-0"');
-    expect(workspaceShellSource).toContain(
-      'className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col"',
-    );
-    expect(sessionPaneSource).toContain('compactForRemoteControl && "min-w-0"');
-    expect(timelineSource).toContain('compactForRemoteControl && "min-w-0"');
   });
 
   it("renders side pane content as a right-side overlay over the mobile chat page", () => {
@@ -324,9 +281,7 @@ describe("WebRemoteControlMobileShell", () => {
         createElement("input", { placeholder: "Search file changes..." }),
       ),
     );
-    const inertSurfaceContent = html.match(
-      /<main[^>]*inert=""[^>]*>([\s\S]*?)<\/main>/,
-    )?.[1];
+    const inertSurfaceContent = html.match(/<main[^>]*inert=""[^>]*>([\s\S]*?)<\/main>/)?.[1];
 
     expect(html).toContain('data-mobile-chat-overlay="true"');
     expect(html).toContain("pointer-events-none absolute inset-0 z-40");

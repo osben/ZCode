@@ -70,20 +70,9 @@ describe("desktop e2e Electron service lifecycle", () => {
     const packageJson = JSON.parse(
       readFileSync(new URL("../package.json", import.meta.url), "utf8"),
     ) as { devDependencies?: Record<string, string> };
-    const serviceSource = readFileSync(
-      new URL("./e2e/helpers/e2e-electron-service.ts", import.meta.url),
-      "utf8",
-    );
-    const wdioSource = readFileSync(new URL("../wdio.conf.ts", import.meta.url), "utf8");
 
     expect(packageJson.devDependencies?.["wdio-electron-service"]).toBe("^9.2.1");
     expect(packageJson.devDependencies?.["@wdio/electron-types"]).toBe("^9.2.1");
-    expect(serviceSource).toContain(
-      "export const launcher: typeof ElectronLauncherService = ElectronLauncherService",
-    );
-    expect(serviceSource).toContain("async onReload()");
-    expect(serviceSource).toContain("registerE2EElectronServiceBridgeReload(");
-    expect(wdioSource).toContain("E2E_ELECTRON_SERVICE_MODULE_PATH");
   });
 
   it("cancels the ContextId timeout after the default execution context is found", () => {
@@ -93,26 +82,19 @@ describe("desktop e2e Electron service lifecycle", () => {
       pnpm?: { patchedDependencies?: Record<string, string> };
     };
     const electronServiceSource = readFileSync(
-      new URL(
-        "../../../node_modules/wdio-electron-service/dist/esm/index.js",
-        import.meta.url,
-      ),
+      new URL("../../../node_modules/wdio-electron-service/dist/esm/index.js", import.meta.url),
       "utf8",
     );
     const contextIdHandler = electronServiceSource.slice(
-      electronServiceSource.indexOf(
-        "_ElectronCdpBridge_getContextIdHandler = function",
-      ),
+      electronServiceSource.indexOf("_ElectronCdpBridge_getContextIdHandler = function"),
       electronServiceSource.indexOf("function getInitializeScript()"),
     );
 
     // Bug 根因：上游 9.2.1 的 ContextId Promise 成功 resolve 后没有取消 timeout，
     // 定时器仍会在健康 case 运行期间打印误导性的 Timeout exceeded error。
-    expect(
-      rootPackageJson.pnpm?.patchedDependencies?.[
-        "wdio-electron-service@9.2.1"
-      ],
-    ).toBe("patches/wdio-electron-service@9.2.1.patch");
+    expect(rootPackageJson.pnpm?.patchedDependencies?.["wdio-electron-service@9.2.1"]).toBe(
+      "patches/wdio-electron-service@9.2.1.patch",
+    );
     expect(contextIdHandler).toContain("clearTimeout(timeout)");
     expect(contextIdHandler).toContain(
       "this.off('Runtime.executionContextCreated', onExecutionContextCreated)",

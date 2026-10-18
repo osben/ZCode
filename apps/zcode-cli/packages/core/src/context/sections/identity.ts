@@ -2,7 +2,11 @@
 // Identity Section Builder
 // ============================================================
 
-import { DEFAULT_HARNESS_PROMPT, DEFAULT_IDENTITY_INTRO_PROMPT } from "@zcode/shared";
+import {
+  DEFAULT_HARNESS_PROMPT,
+  DEFAULT_IDENTITY_INTRO_PROMPT,
+  OUTPUT_STYLE_IDENTITY_INTRO_PROMPT,
+} from "@zcode/shared";
 import type { ContextSection } from "../types.js";
 import type { OutputStylePromptConfig } from "../types.js";
 import { estimateTokens } from "../utils.js";
@@ -35,7 +39,7 @@ function buildIdentityPrompt(
   const intro = introOverride?.trim()
     ? introOverride.trim()
     : outputStyle
-      ? "You respond to the user according to the active Output Style below while using ZCode's tools and instructions."
+      ? OUTPUT_STYLE_IDENTITY_INTRO_PROMPT
       : DEFAULT_IDENTITY_INTRO_PROMPT;
 
   const identityLines = ["", intro, "", SECURITY_NOTICE].join("\n");

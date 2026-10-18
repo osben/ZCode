@@ -7869,9 +7869,64 @@ const enUS: Record<string, string> = {
     "~/.zcode/AGENTS.md was modified after you opened it. Reload to discard your draft, or overwrite the file with your draft.",
   "settings.instructions.conflict.reload": "Reload",
   "settings.instructions.conflict.overwrite": "Overwrite",
+  "settings.systemPrompt.title": "System Prompts",
+  "settings.systemPrompt.description":
+    "Edit the built-in prompt sections used by new sessions on the active host.",
+  "settings.systemPrompt.desktopOnly": "System prompt sections can be edited in the desktop app.",
+  "settings.systemPrompt.host.local": "This computer",
+  "settings.systemPrompt.pinnedHostNotice":
+    "The active workspace is on another host. The editor still targets {host} until you save or discard the draft.",
+  "settings.systemPrompt.waitingRemote": "Waiting for the remote host connection...",
+  "settings.systemPrompt.unsupportedHost":
+    "This host does not support managing system prompt sections yet. Update ZCode on the remote host and try again.",
+  "settings.systemPrompt.loadFailed": "Could not load system prompt sections.",
+  "settings.systemPrompt.retry": "Retry",
+  "settings.systemPrompt.customized": "Customized",
+  "settings.systemPrompt.effectivePreview": "Effective text",
+  "settings.systemPrompt.edit": "Edit",
+  "settings.systemPrompt.restoreDefault": "Restore default",
+  "settings.systemPrompt.restoreConfirm.title": "Restore built-in prompt?",
+  "settings.systemPrompt.restoreConfirm.description":
+    "This will delete the customized {section} prompt from {host} and restore its built-in default.",
+  "settings.systemPrompt.restoreConfirm.confirm": "Restore default",
+  "settings.systemPrompt.restored": "System prompt section restored to its default text.",
+  "settings.systemPrompt.restoreFailed": "Failed to restore the default text.",
+  "settings.systemPrompt.editorLabel": "Prompt text",
+  "settings.systemPrompt.characterCount": "{count} characters",
+  "settings.systemPrompt.identityBaselineLoading":
+    "Checking the active Output Style before editing…",
+  "settings.systemPrompt.identityBaselineUnavailable":
+    "Could not load Output Styles. Open Output Styles in Settings and retry before editing this section.",
+  "settings.systemPrompt.memoryRootHint":
+    "Keep the {placeholder} token in the text to insert the session's memory directory when a new session starts.",
+  "settings.systemPrompt.memoryExtractionHint":
+    "Runs in the background after each successful turn. {countPlaceholder} becomes the number of recent messages to review; {listPlaceholder} becomes the list of existing memory files (empty when there are none).",
+  "settings.systemPrompt.memoryDreamHint":
+    "Used by the manual /dream consolidation. {rootPlaceholder} becomes the memory directory and {transcriptPlaceholder} the session transcripts directory. Tool limits and the session list are always appended.",
+  "settings.systemPrompt.emptyHint":
+    "A blank section uses its built-in default and cannot be saved as a customization.",
+  "settings.systemPrompt.diffTitle": "Changes",
+  "settings.systemPrompt.save": "Save",
+  "settings.systemPrompt.saved": "System prompt section saved for new sessions.",
+  "settings.systemPrompt.saveFailed": "Failed to save the system prompt section.",
+  "settings.systemPrompt.discard.title": "Discard unsaved prompt changes?",
+  "settings.systemPrompt.discard.leave": "Your unsaved system prompt changes will be lost.",
+  "settings.systemPrompt.discard.hostChanged":
+    "The active workspace switched hosts while this prompt draft was unsaved. Discard the draft and switch?",
+  "settings.systemPrompt.discard.confirm": "Discard",
+  "settings.systemPrompt.section.cliPrefix": "CLI prefix",
+  "settings.systemPrompt.section.identityIntro": "Identity intro",
+  "settings.systemPrompt.section.harness": "Harness",
+  "settings.systemPrompt.section.communication": "Communication",
+  "settings.systemPrompt.section.contextManagement": "Context management",
+  "settings.systemPrompt.section.memoryGuidance": "Memory guidance",
+  "settings.systemPrompt.section.memoryExtraction": "Memory extraction",
+  "settings.systemPrompt.section.memoryDream": "Memory consolidation (/dream)",
   "settings.outputStyles.title": "Output Styles",
   "settings.outputStyles.description":
     "Choose how the agent shapes its responses. Built-in defaults live in the app; edits are saved as override files you can always restore.",
+  "settings.outputStyles.defaultPrompt":
+    "No additional output-style instructions. ZCode uses its standard system prompt.",
   "settings.outputStyles.desktopOnly": "Output styles can be managed in the desktop app.",
   "settings.outputStyles.host.local": "This device",
   "settings.outputStyles.pinnedHostNotice":
