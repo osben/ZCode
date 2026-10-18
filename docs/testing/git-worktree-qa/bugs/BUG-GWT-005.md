@@ -53,6 +53,7 @@ Spec: `specs/composer-worktree-setup-steps.md` (owner paragraph, "Snapshot befor
 Test (`packages/ui/test/composerWorktreePipeline.test.ts`): `BUG-GWT-005: Retry still starts Git and admits the frozen submission once when the Host snapshot for the retried attempt arrives before the Retry acknowledgement` — mounted composer + real setup steps, deferred `onRetryPreparation`, `preparing(B)` fed and async work flushed before the acknowledgement resolves.
 
 - Red without the fix: `expected { status: 'failed', … } to match object { status: 'creating', … }` — the stale-creating reconcile settled B before the acknowledgement.
+- Each half is needed: with the pending-retry mark disabled, the same intermediate assertion fails (reconcile settles B); with `retryComposerWorktreePipeline` proceeding only from `failed`, `onSendText` is `called 0 times` (nobody starts Git for B).
 - Green with the fix: 43/43 in the file; 57 worktree/composer/command-center/session-pane files, 596 tests green. The Wave 3 tests stay green.
 
 - Severity: S3 (обход есть — ручной Restore → Send в той же сессии; но нарушен контракт спеки о допуске замороженной отправки после ready)
