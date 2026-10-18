@@ -62,7 +62,7 @@ const statusIcons: Record<ToolPart["state"], ReactNode> = {
   "input-available": <ClockIcon className="size-4 animate-pulse" />,
   "input-streaming": <CircleIcon className="size-4" />,
   "output-available": <CheckCircleIcon className="size-4 text-success" />,
-  "output-denied": <XCircleIcon className="size-4 text-warning" />,
+  "output-denied": <XCircleIcon className="size-4 text-foreground-subtle" />,
   "output-error": <XCircleIcon className="size-4 text-destructive" />,
 };
 

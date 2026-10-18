@@ -19,7 +19,7 @@ export interface PluginComponentDisplayGroup {
 
 /** Component-group badge colors: reuse the theme's existing Tailwind palette for a light background that works in light and dark themes. */
 const COMPONENT_BADGE_STYLES: Record<ZCodePluginComponentKind, string> = {
-  agent: "bg-violet-500/15 text-violet-500 dark:text-violet-300",
+  agent: "bg-tag text-foreground",
   command: "bg-command-node text-command-node-foreground",
   skill: "bg-skill-node text-skill-node-foreground",
   hook: "bg-warning/15 text-warning",

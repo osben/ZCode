@@ -13,7 +13,7 @@ Source of truth: `DESIGN.md` ("Highest-priority UI constraint", "Color Usage Rul
      sky/blue -> `icon-blue`; slate/zinc/gray -> `foreground-subtle` / `tag`.
    - Unread/new indicator dots use `bg-icon-blue`.
    - Plugin component kind badges reuse the mention-node token families (`command-node`, `skill-node`) and `warning` / `tag`.
-3. Raw `white/N` / `black/N` fills on controls -> `bg-hover` / `bg-selected` / `bg-surface-hover`.
+3. Raw `white/N` / `black/N` fills on controls -> `bg-surface` at rest and `bg-surface-hover` on hover (Zai Dark sets `--color-hover` equal to `--color-surface`, so `bg-hover` alone gives no hover feedback on `bg-surface`).
 
 ## Documented exemptions (unchanged)
 

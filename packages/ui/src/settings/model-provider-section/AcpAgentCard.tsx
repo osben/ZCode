@@ -316,7 +316,7 @@ export function AcpAgentCard({
       </div>
 
       {loginResult ? (
-        <div className="mt-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-ui-sm">
+        <div className="mt-2 rounded-md border border-border bg-surface px-3 py-2 text-ui-sm">
           {loginResult.opened ? (
             <p className="text-foreground-subtle">
               {t("loginOpened", { command: loginResult.command })}
@@ -395,7 +395,7 @@ export function AcpAgentCard({
               : t("testFailed", { message: testResult.error?.message ?? t("unknownError") })}
           </p>
           {testResult.stderrTail ? (
-            <pre className="max-h-24 overflow-auto whitespace-pre-wrap break-all rounded-md border border-border bg-muted/30 px-3 py-2 font-mono text-ui-sm">
+            <pre className="max-h-24 overflow-auto whitespace-pre-wrap break-all rounded-md border border-border bg-surface px-3 py-2 font-mono text-ui-sm">
               {testResult.stderrTail}
             </pre>
           ) : null}
