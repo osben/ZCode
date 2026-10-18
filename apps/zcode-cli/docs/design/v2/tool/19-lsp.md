@@ -1,537 +1,214 @@
 # LSP Tool и Language Server Runtime
 
-Статус: **draft / план** (2026-10-17). Ничего из описанного ниже ещё не реализовано.
-Сейчас `lspServers` в манифесте плагина только распознаётся и показывается
-(`diagnostic-only`), а имя `LSP` лишь зарезервировано в
+Статус: **план** (2026-10-17), не реализовано. Сейчас `lspServers` в манифесте плагина
+только показывается (`diagnostic-only`), имя `LSP` зарезервировано в
 `packages/core/src/tool/provider-visible-order.ts`.
 
-## 1. Зачем
+## 1. Цель
 
-Сейчас агент ищет определения и использования через Bash `grep`. В монорепо это
-шумно (одноимённые символы, re-export, alias-импорты), а проверка типов после
-правки стоит полного `pnpm typecheck`. Language server даёт:
+Дать агенту то, что даёт IDE:
 
-- точные `definition` / `references` / `implementation` с учётом типов и алиасов;
-- `hover` — выведенный тип без чтения половины файлов;
-- `documentSymbol` / `workspaceSymbol` — структуру файла и поиск символа по имени;
-- диагностику по одному файлу сразу после Edit/Write (самая большая ценность, фаза 3;
-  в Claude Code это поведение по умолчанию: «Found N new diagnostic issues» под правкой).
+- **ошибки после правок** — главная польза, как «Found N new diagnostic issues» в Claude Code;
+- **навигацию** — definition, references, implementation, hover, символы файла и workspace,
+  вместо шумного `grep`.
 
-Не цель V1: completion, rename/code actions (это записи — отдельный контракт),
-форматирование, semantic tokens.
+Вне V1: completion, rename/code actions, форматирование.
 
-## 2. Ключевое решение: один источник конфигурации
+## 2. Конфигурация: только плагины
 
-Никакого «встроенного TS-сервера» отдельно от плагинов. Единственная схема
-конфигурации — поле `lspServers` манифеста плагина, совместимое с Claude Code
-marketplace. Официальный маркетплейс уже содержит 12 таких плагинов, поэтому
-поддержка «других языков» не требует кода под каждый язык:
+Встроенного TS-сервера отдельно от плагинов нет. Язык — это запись `lspServers` в
+манифесте плагина в формате Claude Code (`.lsp.json`, inline-map или массив; поздний
+одноимённый сервер заменяет ранний). Официальный маркетплейс уже содержит 12 таких
+плагинов, кода под конкретный язык нет.
 
 ```json
-{
-  "typescript": {
-    "command": "typescript-language-server",
-    "args": ["--stdio"],
-    "extensionToLanguage": { ".ts": "typescript", ".tsx": "typescriptreact", ".js": "javascript" },
-    "startupTimeout": 120000
-  }
-}
+{ "typescript": { "command": "typescript-language-server", "args": ["--stdio"],
+  "extensionToLanguage": { ".ts": "typescript", ".tsx": "typescriptreact" } } }
 ```
 
-TypeScript — просто первый плагин (`typescript-lsp@claude-plugins-official`),
-позже его можно положить в bundled official roots, чтобы он был включён по умолчанию.
+Поля (сверено с <https://code.claude.com/docs/en/plugins-reference#lspservers>):
+обязательные `command`, `extensionToLanguage`; необязательные `args`, `transport`
+(`socket` принимаем, работаем по stdio), `env`, `initializationOptions`, `settings`,
+`workspaceFolder` (внутри workspace), `startupTimeout` (default 30 с), `shutdownTimeout`
+(default 5 с, затем kill tree), `requestTimeout` (default 60 с), `restartOnCrash`
+(default `true`), `maxRestarts` (default 3), `diagnostics` (default `true`).
+Подстановки `${CLAUDE_PLUGIN_ROOT}`, `${CLAUDE_PLUGIN_DATA}`, `${CLAUDE_PROJECT_DIR}`,
+`${user_config.KEY}` — через существующие алиасы шаблонов.
 
-### 2.1 Схема `LspServerConfig` (contracts, Zod)
+- Неизвестный ключ или невалидная запись отключают **только этот сервер** (diagnostic
+  `lsp_config_invalid`), а не весь плагин.
+- Одно расширение у двух плагинов: побеждает более высокий приоритет загрузки,
+  проигравший получает info-diagnostic `lsp_extension_shadowed`. Один файл — один сервер.
 
-Источник — Claude Code Plugin manifest reference, раздел `lspServers`
-(<https://code.claude.com/docs/en/plugins-reference#lspservers>, сверено 2026-10-17).
-В официальных манифестах реально встречаются только `command`, `args`,
-`extensionToLanguage`, `startupTimeout`; остальные поля взяты из reference.
+## 3. Выключатели
 
-Формы значения `lspServers`: путь к `.json`, inline-map `name → config` или массив
-из них. Файл `.lsp.json` в корне плагина загружается первым, затем объявленное в
-манифесте; одноимённый сервер, объявленный позже, заменяет ранний.
+Всё включено по умолчанию, поэтому выключить можно на трёх уровнях:
 
-| Поле | Обяз. | Семантика (upstream) | ZCode V1 |
-| --- | --- | --- | --- |
-| `command` | да | Бинарь сервера; без пробелов, если не начинается с `/` | Резолв по `PATH` (+ `PATHEXT` на Windows) |
-| `extensionToLanguage` | да | Map «расширение с точкой → languageId», ≥ 1 запись | Регистр ключа сохраняется (`.C` ≠ `.c`) |
-| `args` | нет | Аргументы | Массивом, без shell |
-| `transport` | нет | `stdio` (default) или `socket`; upstream принимает `socket`, но всё равно работает по stdio | Так же: принимаем, работаем по stdio |
-| `env` | нет | Переменные окружения процесса | Мержится поверх окружения runtime; не логируется |
-| `initializationOptions` | нет | Отправляется в `initialize` | как есть |
-| `settings` | нет | Отправляется через `workspace/didChangeConfiguration` | плюс ответ на `workspace/configuration` |
-| `workspaceFolder` | нет | Workspace folder для сервера | Должен лежать внутри workspace, иначе запись невалидна |
-| `startupTimeout` | нет | ms на старт, целое > 0 | Default `LSP_DEFAULT_STARTUP_TIMEOUT_MS = 30_000` |
-| `shutdownTimeout` | нет | ms на graceful shutdown; без значения — без таймаута | Без значения: `LSP_DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000`, затем kill tree (не оставляем зависшие процессы) |
-| `requestTimeout` | нет | ms на ответ на запрос, default `60000` | Так же |
-| `restartOnCrash` | нет | default `true` | Так же |
-| `maxRestarts` | нет | ≥ 0 | Default `3` |
-| `diagnostics` | нет | Пушить диагностику в контекст после правок, default `true` | Фаза 4 |
-
-Подстановки (upstream): `${CLAUDE_PLUGIN_ROOT}`, `${CLAUDE_PLUGIN_DATA}`,
-`${CLAUDE_PROJECT_DIR}` и `${user_config.KEY}` раскрываются в `command`, `args`,
-`env`, `workspaceFolder`. Первые три также экспортируются в окружение процесса.
-Используем существующие алиасы шаблонов ZCode.
-
-Upstream-объект строгий: неизвестный ключ — ошибка валидации, плагин не
-загружается. ZCode отклоняет только этот сервер (diagnostic
-`lsp_config_invalid` на плагине), остальные компоненты плагина работают, как и в
-остальной модели diagnostics из `claude-code-marketplace-plugin-compat.md`.
-
-### 2.2 Конфликт расширений
-
-Если два включённых плагина объявляют одно расширение, побеждает плагин с более
-высоким приоритетом загрузки (существующий `FIRST_PLUGIN_PRIORITY` / `PRIORITY_STEP`
-в `adapters/src/plugins`). Проигравший получает diagnostic
-`lsp_extension_shadowed`. В V1 одному файлу соответствует ровно один сервер.
-
-### 2.3 Fork-ограничения
-
-- Не добавлять ключи в `setting.json`. Пользовательские выключатели (§2.4) хранятся
-  в `fork_`-prefixed sidecar-файле.
-
-### 2.4 Пользовательские выключатели
-
-Всё включено по умолчанию, поэтому пользователь должен иметь возможность выключить
-функцию, если она мешает. Три уровня, от грубого к точному:
-
-| Выключатель | Что выключает | Где хранится |
+| Выключатель | Что выключает | Хранение |
 | --- | --- | --- |
-| **Code intelligence (LSP)** — общий | Все language servers: процессы не запускаются, тул `LSP` не регистрируется, диагностик после правок нет. Kill switch на случай, если становится хуже. | sidecar `fork_lsp_preferences.json` |
-| **Плагин языка** (например, TypeScript) | Только этот язык | Существующий enable/disable плагина |
-| **Ошибки после правок** — у каждого сервера | Только автоматический attachment с диагностикой; навигация и явная операция `diagnostics` остаются | sidecar, переопределяет `diagnostics` из манифеста |
+| Общий «Code intelligence» (настройки) | Все серверы, тул и диагностику | sidecar |
+| Плагин языка | Один язык | существующий enable/disable плагина |
+| «Ошибки после правок» (детали плагина) | Только авто-диагностику у сервера | sidecar |
 
-- Sidecar `~/.zcode/cli/fork_lsp_preferences.json`. Владелец — CLI runtime: он один
-  читает и пишет файл через `FileSystemPort` с атомарной записью. Содержимое:
-  `{ version: 1, enabled: boolean, diagnosticsAfterEdit: Record<serverId, boolean> }`.
-  Отсутствующий или битый файл означает значения по умолчанию (всё включено) и diagnostic
-  в логе `warn`, а не падение.
-- UI меняет значения только через методы протокола `lsp/preferences/get` и
-  `lsp/preferences/set` (Zod-схемы в `packages/shared/src/zcode-protocol/index.ts`).
-  Renderer файл напрямую не трогает, локальной копии как «факта» не держит.
-- Изменение применяется без перезапуска. При выключении общего выключателя пул
-  останавливает все серверы, а тул снимается с регистрации со следующего запроса
-  модели (текущий ход не прерывается). Выключение «Ошибки после правок»
-  срабатывает со следующей правки.
-- Место в UI: общий выключатель — в настройках (раздел «Code intelligence»); выключатели
-  по языкам и «Ошибки после правок» — в деталях плагина рядом со статусом сервера.
+- Sidecar `~/.zcode/cli/fork_lsp_preferences.json`
+  (`{ version: 1, enabled, diagnosticsAfterEdit: Record<serverId, boolean> }`), не
+  `setting.json`. Владелец — CLI runtime (атомарная запись через `FileSystemPort`);
+  битый или отсутствующий файл означает значения по умолчанию плюс `warn`.
+- UI читает и пишет только через протокол `lsp/preferences/get|set` (Zod в
+  `packages/shared/src/zcode-protocol/index.ts`). Изменения применяются без
+  перезапуска со следующего запроса модели или следующей правки.
+- Метрика шума: `info`-событие на каждый показ диагностики (serverId, число
+  ошибок и предупреждений, задержка, сработало ли правило «нет baseline»), без текстов
+  и путей.
 
-**Чтобы понять, не становится ли хуже**, с фазы 3 пишем `info`-событие на каждый
-attachment с диагностикой: serverId, число новых ошибок и предупреждений, задержка от
-правки до диагностики, сработало ли правило «нет baseline». Тексты ошибок и пути в лог
-не пишем. По этим событиям видно, сколько шума и задержки добавляет функция.
-
-## 3. Архитектура и владельцы
+## 4. Архитектура
 
 ```mermaid
 flowchart LR
-  subgraph bootstrap
-    PL[Plugin loader<br/>adapters/src/plugins] -->|lspServers по плагинам| REG[LspServerRegistry<br/>ext → server]
-  end
-  subgraph core
-    TOOL[LSP tool handler] --> SVC[LspService]
-    EDIT[Edit / Write / ApplyPatch] -->|FileMutated event| SYNC[LspDocumentSync]
-    SVC --> SYNC
-    SVC --> REG
-  end
-  subgraph contracts
-    PORT[[LanguageServerPort]]
-  end
-  subgraph adapters
-    POOL[LanguageServerPool<br/>adapters/src/lsp] --> PROC[stdio JSON-RPC + process-tree<br/>reuse mcp/process-tree, windows-job-object]
-  end
-  SVC --> PORT
+  PL[Plugin loader] --> REG[LspServerRegistry: ext → server]
+  EDIT[Edit / Write / ApplyPatch] -->|FileMutated| SYNC[LspDocumentSync]
+  TOOL[LSP tool] --> SVC[LspService]
+  SVC --> REG
+  SVC --> SYNC
+  SVC --> PORT[[LanguageServerPort]]
   SYNC --> PORT
-  PORT -.implemented by.-> POOL
+  PORT -.-> POOL[LanguageServerPool, adapters/src/lsp]
 ```
 
-| Состояние | Единственный владелец | Кто читает |
-| --- | --- | --- |
-| Какие серверы объявлены, ext → server | `LspServerRegistry` (bootstrap, строится из `PluginLoadOutcome.lspServers`) | `LspService` |
-| Живые процессы, capabilities, restart-счётчики | `LanguageServerPool` (adapter) | через `LanguageServerPort` |
-| Открытые документы и их `version` | `LspDocumentSync` (core, по одному на ключ пула) | `LspService` |
-| Последние диагностики документа | `LspDocumentSync` | LSP tool, позже Edit/Write |
+| Состояние | Владелец |
+| --- | --- |
+| ext → server | `LspServerRegistry` (bootstrap, из `PluginLoadOutcome.lspServers`) |
+| процессы, capabilities, рестарты | `LanguageServerPool` (adapter) |
+| открытые документы, версии, диагностики | `LspDocumentSync` (core) |
 
-Правила:
+- Edit/Write не вызывают LSP: они публикуют `FileMutated`, а `LspDocumentSync` шлёт
+  `didOpen`/`didChange` и `didChangeWatchedFiles` (последнее нужно gopls и rust-analyzer).
+- Правки вне тулов: у открытых документов перед запросом сверяем `mtime+size`.
+  Своего watcher-а в V1 нет; серверы со своим watcher (tsserver, pyright) видят
+  изменения сами.
+- Не больше 50 открытых документов на сервер, лишние закрываются через `didClose` по LRU.
+- Пул: один процесс на `(workspaceIdentity?.trim() || workspacePath, serverId)`, общий
+  для сессий workspace; `rootUri` из `workspacePath`. Остановка через 10 мин без
+  lease, не больше 4 серверов одновременно (LRU). Процессы гасятся через
+  `mcp/process-tree.ts` и `windows-job-object.ts`.
+- Remote: пул живёт там же, где Read/Bash. Фаза 0 подтверждает это, иначе remote
+  явно выключен с ошибкой `lsp_remote_unsupported`.
 
-- Edit/Write/ApplyPatch **не вызывают LSP напрямую**. Они публикуют событие
-  `FileMutated { path, content, traceId }` после успешной записи; подписчик —
-  `LspDocumentSync`. Это и есть «LSP-уведомление», которое обещают `02-write.md`
-  и `03-edit.md`; отдельный `FileMutationService` для этого не нужен.
-- Для каждого `FileMutated` (в том числе по файлам, которые не открыты)
-  `LspDocumentSync` шлёт `workspace/didChangeWatchedFiles` (created/changed/deleted).
-  Иначе gopls и rust-analyzer, которые полагаются на клиента в вопросе файловых
-  событий, не узнают о правках в неоткрытых файлах.
-- Изменения не через тулы (Bash, `git checkout`, внешний редактор):
-  - для **открытых** документов перед каждым запросом сверяем `mtime+size`;
-    при расхождении перечитываем через `FileSystemPort` и шлём `didChange` (full sync);
-  - для **неоткрытых** клиент в V1 объявляет
-    `workspace.didChangeWatchedFiles.dynamicRegistration: false` и не следит за ФС сам.
-    Серверы с собственным watcher (tsserver, pyright) видят изменения сами. Остальные
-    узнают о них при следующем `didOpen`. Это известное ограничение V1. Watcher через
-    `FileSystemPort` добавляется в V2, если окажется нужен.
-- Набор открытых документов ограничен `LSP_MAX_OPEN_DOCUMENTS = 50` на ключ пула.
-  Лишние закрываются через `didClose` по LRU. Документ, закрытый в ФС
-  (удаление через `FileMutated`), закрывается сразу.
-- core использует только `LanguageServerPort`; `child_process`, `fs` и framing
-  JSON-RPC живут в `adapters/src/lsp`.
-
-### 3.1 Ключ пула и scope
-
-`poolKey = (workspaceIdentity?.trim() || workspacePath, serverId)`, где
-`serverId = <pluginId>/<serverName>`. Один процесс на workspace на сервер,
-общий для всех сессий этого workspace (как MCP `isolation: "workspace"`):
-jdtls/kotlin стартуют до 120 с, per-session процессы неприемлемы.
-`rootUri` берётся из `workspacePath` (+ `workspaceFolder`), не из identity.
-
-Сессии берут lease; при отпускании последнего lease сервер живёт ещё
-`LSP_IDLE_SHUTDOWN_MS = 600_000` (это политика ресурсов, а не ожидание
-синхронизации) и затем корректно останавливается. Лимит
-`LSP_MAX_RUNNING_SERVERS = 4` на runtime; при превышении останавливается
-самый давно неиспользованный сервер без lease.
-
-### 3.2 Remote workspaces
-
-Пул живёт в том же runtime-процессе, что и Read/Bash, то есть там, где лежат
-файлы. Remote workspace получает свой сервер на своём Host автоматически;
-Desktop Main и relay в этом не участвуют и состояния LSP не хранят.
-**Фаза 0 должна подтвердить** это для текущей схемы remote-подключений;
-если подтвердить не удастся, remote явно выключается в V1 с ошибкой
-`lsp_remote_unsupported`, а не молча.
-
-## 4. Жизненный цикл и порядок событий
+## 5. Порядок событий
 
 ```mermaid
 sequenceDiagram
-  participant M as Model
-  participant T as LSP tool
+  participant T as LSP tool / FileMutated
   participant S as LspService
-  participant D as LspDocumentSync
-  participant P as LanguageServerPool
-  participant L as language server
-
-  M->>T: LSP {operation, filePath, line, character}
-  T->>S: query(file, op, traceId, signal)
-  S->>S: registry.resolve(ext) → serverId | lsp_no_server_for_file
+  participant P as Pool
+  participant L as Server
+  T->>S: запрос (traceId, signal)
   S->>P: acquire(poolKey)
-  alt не запущен / ещё стартует
-    P->>L: spawn(command,args) [process-tree], если ещё не запущен
-    P-->>S: state = starting
-    S-->>T: ошибка lsp_server_starting (retryable)
-    Note over P,L: старт продолжается в пуле, вне таймаута тула
-    P->>L: initialize(rootUri, capabilities) [≤ startupTimeout]
-    L-->>P: InitializeResult (capabilities)
-    P->>L: initialized → state = ready
+  alt не запущен / стартует
+    P->>L: spawn → initialize [≤ startupTimeout]
+    S-->>T: lsp_server_starting (retryable), тул не ждёт
   else ready
-    S->>D: ensureSynced(file)
-    D->>L: didOpen(v1) или didChange(v+1), если mtime/size изменились
-    S->>L: textDocument/definition … [≤ requestTimeout]
-    L-->>S: Location[]
-    S-->>T: нормализованный результат (1-based, относительные пути)
+    S->>L: didOpen/didChange(v) → request [≤ requestTimeout]
+    L-->>S: результат (1-based, относительные пути)
   end
-  Note over T,L: отмена → $/cancelRequest, затем abort tool
-  Note over P,L: idle 10 мин без lease → shutdown → exit → kill tree
 ```
 
-**Старт не блокирует тул.** Таймаут executor-а (`timeout.defaultMs`) не знает
-про холодный старт, а jdtls и kotlin стартуют до 120 с. Поэтому `acquire` только
-запускает старт и сразу возвращает `lsp_server_starting`, а модель повторяет
-вызов. Старт ограничен `startupTimeout` внутри пула. Чтобы повтор обычно не
-требовался, пул прогревает сервер заранее: при первом `FileMutated` или Read
-файла с подходящим расширением (upstream тоже стартует сервер при первой правке).
-Read только прогревает сервер и не ждёт его.
+- **Старт не блокирует.** jdtls и kotlin стартуют до 120 с, а таймаут executor-а
+  об этом не знает. Сервер прогревается при первом Read или правке файла его языка.
+- **Падение:** висящие запросы получают `lsp_server_crashed`, сервер перезапускается
+  до `maxRestarts`, затем `lsp_server_unavailable`.
+- **Диагностика без «подождать N мс»:** pull `textDocument/diagnostic`, если сервер
+  его умеет; иначе `publishDiagnostics` с `version ≥ v` (или первый publish после
+  нашего `didChange`). Нет ответа — `status: "pending"`, а не «ошибок нет».
 
-Падение сервера: pool помечает его `crashed`, все висящие запросы получают
-`lsp_server_crashed`; следующий `acquire` перезапускает (до `maxRestarts`),
-`LspDocumentSync` для этого ключа сбрасывает открытые документы и открывает
-их заново по требованию. После лимита — `lsp_server_unavailable` до перезапуска runtime
-или повторного включения плагина.
+## 6. Ошибки после правок
 
-### 4.1 Диагностика без «подождать N мс»
+- Результат Edit/Write сервер не ждёт. **Новые** диагностики (относительно baseline до
+  правки) попадают в attachment к следующему запросу модели: «Found N new diagnostic
+  issues in M files», не больше 20, сначала `error`. Контракт Edit/Write не меняется.
+- Нет baseline (файл не был открыт или сервер стартовал): показываем только
+  диагностики, пересекающиеся с изменённым диапазоном.
+- TUI/V4: раскрываемая строка (`+`/`-`).
 
-Операция `diagnostics` для файла:
+## 7. Тул `LSP`
 
-1. `ensureSynced(file)` → известна `version` v.
-2. Если сервер объявил `diagnosticProvider` → pull `textDocument/diagnostic` (точный ответ).
-3. Иначе ждём `publishDiagnostics` для этого URI с `version ≥ v`.
-4. Если сервер не присылает `version` в publish, принимаем первый publish,
-   пришедший после нашего `didChange`/`didOpen` v.
-5. Если до таймаута тула ничего не пришло — возвращаем
-   `status: "pending"` и пустой список. Мы **не выдаём «ошибок нет»**, когда
-   ответа не было: модель видит, что результат неизвестен.
+Возможности как у Claude Code LSP tool. Точные имена в upstream не опубликованы,
+поэтому перед реализацией сверяем их с реальной схемой.
 
-## 5. Контракт тула `LSP`
+- Вход: `operation` (`goToDefinition`, `findReferences`, `hover`, `documentSymbol`,
+  `workspaceSymbol`, `goToImplementation`, `diagnostics`; позже call hierarchy),
+  `filePath`, `line` (1-based, как в Read), `character` **или** `symbol` (имя на строке —
+  рекомендуемо, модели плохо считают колонки), `query`, `includeDeclaration`.
+- Позиции: конвертация 1-based ↔ 0-based UTF-16 в одном модуле `lsp-position.ts`
+  (тесты: emoji, кириллица, CRLF).
+- Выход: `locations` / `symbols` / `hover` / `diagnostics` с относительными путями и
+  однострочным preview (≤ 200 символов), `status: "ok" | "pending"`, `truncated`, `total`;
+  не больше 200 элементов, остаток уходит в artifact.
+- Метаданные: `readOnly`, `concurrentSafe`, `needsApproval: false`,
+  `sideEffectScope: "none"` (процесс запускается по доверенному плагину, команду модель
+  не выбирает); `timeout` 65 с без override; отмена через `$/cancelRequest`.
+- Видимость: тул регистрируется, только если есть доступный сервер (плагин включён,
+  бинарь найден, workspace доверен). Без бинаря тула нет и в чате ошибок нет.
+  Доступен главному агенту и `Explore`.
+- Коды ошибок: `lsp_no_server_for_file`, `lsp_server_not_installed`,
+  `lsp_server_starting`, `lsp_request_timeout`, `lsp_server_start_failed`,
+  `lsp_startup_timeout`, `lsp_server_crashed`, `lsp_server_unavailable`,
+  `lsp_operation_unsupported`, `lsp_invalid_position`, `lsp_symbol_not_found_on_line`,
+  `lsp_workspace_untrusted`, `lsp_cancelled`.
+- Подсказка модели: LSP — для символов и типов, grep — для текста и конфигов;
+  `pending` не значит «ошибок нет».
 
-Набор возможностей совпадает с Claude Code LSP tool (tools reference: definition,
-references, тип по позиции, символы файла, поиск символа по workspace,
-implementations, call hierarchy). Точные имена операций и поля в публичной
-документации не опубликованы и в репозитории нет захваченной схемы. Имена ниже —
-наше предложение в стиле upstream; перед фазой 3 сверить с реальным tool schema
-Claude Code (например, по debug-логу запроса), чтобы модель получила знакомую форму.
+## 8. Безопасность и платформы
 
-### 5.1 Вход
+- Сервер исполняет код workspace (`build.rs`, `go list`, плагины `tsconfig`), поэтому
+  нужны включённый плагин (политика как у hooks) и доверенный workspace (workspace trust).
+- Автоустановки бинарей нет. `env` и stderr целиком не логируются; сырой JSON-RPC
+  пишется только в `debug`.
+- PATH: Electron из Dock не видит `~/.nvm`, `~/.cargo/bin` и подобные пути, поэтому
+  используем login-shell окружение, которое хост уже снимает
+  (`packages/acp-agent-runtime/src/registry.ts`, shell snapshot в `adapters/src/exec`).
+- Windows: `.cmd`-шимы через `PATHEXT` без shell-строки; регистр буквы диска в URI.
 
-| Поле | Тип | Обяз. | Описание |
-| --- | --- | --- | --- |
-| `operation` | enum | да | `goToDefinition`, `findReferences`, `hover`, `documentSymbol`, `workspaceSymbol`, `goToImplementation`, `diagnostics`; позже в фазе 4: `prepareCallHierarchy`, `incomingCalls`, `outgoingCalls`. |
-| `filePath` | `string` | да* | Абсолютный или относительно cwd; проходит общий `path-policy`. *Для `workspaceSymbol` — любой файл нужного языка, чтобы выбрать сервер. |
-| `line` | `number` | для позиционных | 1-based, как в выводе Read. |
-| `character` | `number` | нет | 1-based колонка в символах строки. |
-| `symbol` | `string` | нет | Альтернатива `character`: имя идентификатора на строке `line`; берётся первое вхождение по границе слова. Модели плохо считают колонки, поэтому это рекомендуемый способ. |
-| `query` | `string` | для `workspaceSymbol` | Строка поиска. |
-| `includeDeclaration` | `boolean` | нет | Для `findReferences`, по умолчанию `false`. |
+## 9. Языки
 
-Нужен ровно один из `character` / `symbol` для позиционных операций, иначе `lsp_invalid_position`.
+- Реализация общая. «Готовым» считаем TypeScript: e2e на реальном сервере, пороги шума.
+- Остальные официальные плагины (pyright, gopls, rust-analyzer, clangd, jdtls, kotlin,
+  csharp, php, ruby, lua, swift, liquid) работают после установки, но помечены
+  «не проверено в ZCode».
+- Чтобы не получился «только TS», fake server в тестах воспроизводит неудобные серверы:
+  старт 60+ с, publish без `version`, без pull diagnostics и без своего watcher.
+  Smoke-тесты pyright, gopls и rust-analyzer запускаются, если бинарь есть, иначе
+  пропускаются с пометкой.
+- Позже: свои плагины (JSON/CSS/HTML/ESLint, bash, yaml, vue, svelte, terraform, zig,
+  elixir) и несколько серверов на файл.
 
-**Позиции.** LSP использует 0-based строки и UTF-16 code units. Конвертация в
-одном модуле `lsp-position.ts`: 1-based строка → 0-based; колонка в
-code points → UTF-16 offset по фактическому тексту строки (суррогатные пары, CRLF).
-На выходе — обратная конвертация. Покрыть тестами emoji/кириллицу/CRLF.
+## 10. Фазы
 
-### 5.2 Выход (`runtimeOutputSchema`)
+0. **Spike:** remote-сценарий, PATH в CLI-рантайме, `vscode-jsonrpc` или свой framing,
+   замер tsserver на монорепо.
+1. **Конфиг:** Zod-схема, загрузчик, diagnostics, `lsp` в component types, снять
+   `diagnosticOnly`.
+2. **Пул:** `LanguageServerPort`, `adapters/src/lsp`, fake server, тесты lifecycle,
+   отмены, crash и Windows.
+3. **Ошибки после правок** (§6) **вместе с выключателями и метриками** (§3); bundled
+   TypeScript-плагин включён по умолчанию.
+4. **Тул `LSP`** (§7) по всем разделам `00-tool-change-chain.md`.
+5. **UI статуса** серверов (starting / running / not installed / crashed), desktop и
+   mobile, i18n.
+6. **Новые языковые плагины.**
 
-```ts
-type LspOutput = {
-  operation: LspOperation;
-  server: string;                 // serverId
-  status: "ok" | "pending";       // pending только для diagnostics
-  locations?: Array<{ path: string; line: number; character: number;
-                      endLine: number; endCharacter: number; preview: string }>;
-  symbols?: Array<{ name: string; kind: string; path: string; line: number;
-                    containerName?: string; children?: number }>;
-  hover?: { contents: string };   // markdown, обрезанный
-  diagnostics?: Array<{ path: string; line: number; character: number;
-                        severity: "error" | "warning" | "info" | "hint";
-                        code?: string; source?: string; message: string }>;
-  truncated: boolean;
-  total?: number;
-};
-```
+При реализации обновить: `docs/claude-code-marketplace-plugin-compat.md`,
+`docs/plan/trajectory/embedded-search-provider-visible.md:74`, README и
+`00-tool-change-chain.md` в этой папке, `02-write.md`/`03-edit.md`, два SKILL.md в
+`zcode-guide-plugin` («recorded but not executed»).
 
-Пути относительные к workspace, если файл внутри него; `preview` — одна строка
-исходника, обрезанная до `LSP_PREVIEW_MAX_CHARS = 200`. Местоположения вне workspace
-(`node_modules`, stdlib) возвращаются, но помечаются абсолютным путём.
+## 11. Решения (2026-10-17)
 
-### 5.3 Метаданные
+1. TypeScript включён по умолчанию, но работает только при найденном бинаре и
+   доверенном workspace. Диалога рекомендаций плагинов в V1 нет.
+2. Ошибки после правок включены по умолчанию и фильтруются (§6).
+3. Выключить можно всё, отдельный язык или только ошибки после правок (§3).
+4. Диагностика идёт раньше навигационного тула.
+5. Архитектура мультиязычная, проверяем на TypeScript.
 
-- `readOnly: true`, `destructive: false`, `concurrentSafe: true`, `needsApproval: false`.
-- `sideEffectScope: "none"`. Обоснование: тул не создаёт побочных эффектов на
-  уровне вызова. Запуск процесса — следствие включённого и доверенного плагина;
-  этот gate проходит при включении плагина и проверке доверия workspace (§6), а не
-  на каждый вызов. Правило «subprocess ⇒ system» из чек-листа относится к тулам,
-  чьи аргументы определяют команду; здесь модель команду не выбирает.
-- `timeout`: default `65_000` (чуть больше default `requestTimeout = 60_000`, чтобы
-  пул успел вернуть структурированную ошибку раньше executor-а), `maxMs` `65_000`,
-  `allowCallOverride: false`. Холодный старт в этот таймаут не входит (§4).
-  Если `requestTimeout` сервера больше, ограничение берётся по меньшему значению.
-- `cancellation`: `$/cancelRequest` для активного запроса; процесс сервера не убивается.
-- `resultBudget`: inline `20_000` chars; `findReferences`/`workspaceSymbol` —
-  не больше `LSP_MAX_RESULTS = 200` элементов, затем `truncated: true` + `total`;
-  полный список уходит в artifact.
-- Видимость: тул регистрируется, только если есть хотя бы один **доступный**
-  сервер: плагин включён, бинарь резолвится и workspace доверен (паттерн
-  capability-conditioned tool shape из `00-tool-change-chain.md`). Плагин,
-  включённый по умолчанию, но без установленного бинаря, не показывает модели
-  тул, который всегда падает, и не пишет ошибок в чат; подсказка по установке
-  есть только в деталях плагина (фаза 5). Доступен главному агенту и `Explore`.
-- Резолв `command`: Desktop/Electron, запущенный из Dock, не наследует PATH
-  shell-а (бинари из `~/.nvm`, `~/.cargo/bin`, `~/go/bin` не видны). Резолвим по
-  PATH из login-shell окружения, которое хост уже снимает для внешних CLI
-  (`packages/acp-agent-runtime/src/registry.ts`) и для Bash (shell init snapshot
-  в `adapters/src/exec`). Отдельный механизм не вводим; как именно это окружение
-  доходит до CLI-рантайма, проверяем в фазе 0.
-
-### 5.4 Ошибки (стабильные коды)
-
-| Код | Когда | Подсказка модели |
-| --- | --- | --- |
-| `lsp_no_server_for_file` | нет сервера для расширения | использовать grep; перечисляет доступные языки |
-| `lsp_server_not_installed` | `command` не найден (ENOENT, Windows `.cmd` тоже) | имя бинаря и источник плагина; **не** устанавливать автоматически |
-| `lsp_server_starting` | сервер ещё инициализируется | повторить вызов позже; пока можно использовать grep |
-| `lsp_request_timeout` | нет ответа за `requestTimeout` | — |
-| `lsp_server_start_failed` / `lsp_startup_timeout` | spawn или `initialize` упали | stderr-хвост в логах, не в ответе |
-| `lsp_server_crashed` / `lsp_server_unavailable` | падение / лимит рестартов | — |
-| `lsp_operation_unsupported` | у сервера нет capability | — |
-| `lsp_invalid_position` / `lsp_symbol_not_found_on_line` | неверные `line`/`character`/`symbol` | — |
-| `lsp_workspace_untrusted` | workspace не доверен (§6) | — |
-| `lsp_cancelled` | отмена пользователем | — |
-
-## 6. Доверие и безопасность
-
-Запуск language server — это исполнение кода, причём **часто кода самого
-workspace**: rust-analyzer запускает `build.rs` и proc-macro, gopls вызывает
-`go list`, tsserver может грузить плагины из `tsconfig`. Поэтому:
-
-1. Плагин должен быть включён. Для сторонних маркетплейсов применяется та же
-   политика, что и для hooks (`adapters/src/plugins/index.ts:376`); если она
-   будет ужесточена, LSP следует за ней.
-2. Workspace должен пройти существующую проверку workspace trust
-   (`docs/specs/workspace-hook-trust*.md`). В недоверенном workspace — `lsp_workspace_untrusted`.
-3. Никакой автоустановки бинарей и никаких вызовов package manager
-   (согласно `claude-code-marketplace-plugin-compat.md`).
-4. `env` из конфига и stderr сервера не пишутся в логи целиком; `info` — старт/стоп/рестарт,
-   `debug` — сырой JSON-RPC.
-
-## 7. Кроссплатформенность
-
-- Windows: `typescript-language-server`, `pyright-langserver`, `intelephense` —
-  это `.cmd`-шимы. Резолвить `command` через `PATHEXT` и запускать `.cmd` по тем же
-  правилам, что и уже существующий MCP stdio transport; не через shell-строку.
-- Убийство дерева процессов: переиспользовать `mcp/process-tree.ts` и
-  `windows-job-object.ts`.
-- URI: `pathToFileURL`/`fileURLToPath`; на Windows нормализовать регистр буквы диска
-  при сравнении URI из `publishDiagnostics`.
-- Регистрозависимость расширений (`.C` в clangd) сохраняется; сопоставление
-  выполняется сначала точное, затем по lower-case.
-
-## 8. Языки
-
-Все официальные плагины работают одной и той же реализацией; отличаются только
-бинарём и особенностями. Кода под конкретный язык нет: язык — это запись
-`lspServers` в манифесте.
-
-**Рамки V1:** реализация общая, но «готовым» считаем только TypeScript: на нём
-проверяем реальным сервером (e2e) и настраиваем пороги шума. Остальные официальные
-плагины заработают сразу после установки бинаря и плагина, но в деталях плагина
-помечаются как «не проверено в ZCode», пока для них нет smoke-теста. Чтобы
-поддержка многих языков была заложена с самого начала, V1 обязан:
-
-- маршрутизировать по расширению и держать несколько серверов одновременно
-  (`LSP_MAX_RUNNING_SERVERS`), а не один «TS-сервер»;
-- не опираться на особенности tsserver (свой watcher файлов, см. §3; быстрый старт;
-  pull-диагностика). Fake server в тестах воспроизводит «неудобные» серверы: без
-  `version` в publish, со стартом 60+ с, без pull diagnostics;
-- держать `workspaceFolder` и `startupTimeout` рабочими, хотя TS их не использует;
-- smoke-тесты для других языков запускаются, если бинарь есть в PATH (pyright, gopls,
-  rust-analyzer), и честно пропускаются с пометкой, если его нет.
-
-| Плагин (claude-plugins-official) | Сервер | Особенности |
-| --- | --- | --- |
-| `typescript-lsp` | typescript-language-server | Сам находит `typescript` в `node_modules` workspace. Время старта на этом монорепо — оценка, замерить в фазе 0. **Первый целевой.** |
-| `pyright-lsp` | pyright-langserver | Нужен правильный venv (`settings.python.pythonPath` или `pyrightconfig.json`). |
-| `gopls-lsp` | gopls | Корень — `go.mod`; при вложенных модулях понадобится `workspaceFolder`. |
-| `rust-analyzer-lsp` | rust-analyzer | Тяжёлый (RAM, индексация минуты), выполняет build scripts → важен trust. |
-| `clangd-lsp` | clangd | Без `compile_commands.json` результаты слабые. |
-| `jdtls-lsp`, `kotlin-lsp` | jdtls, kotlin-lsp | Старт до 120 с — поэтому scope = workspace. |
-| `csharp-lsp`, `php-lsp`, `ruby-lsp`, `lua-lsp`, `swift-lsp` | csharp-ls, intelephense, ruby-lsp, lua-language-server, sourcekit-lsp | Без особенностей для V1. |
-| `liquid-lsp` (Shopify, в официальном каталоге) | `shopify` CLI | Не проверялся. |
-
-Кандидаты для своих плагинов в `zcode-plugins-official` (фаза 6, тем же форматом):
-`vscode-langservers-extracted` (JSON/CSS/HTML/ESLint), `bash-language-server`,
-`yaml-language-server`, `@vue/language-server`, `svelte-language-server`,
-`terraform-ls`, `zls`, `elixir-ls`. Vue/Svelte работают в связке с TS-сервером;
-пока на файл приходится один сервер, такой связки не будет. Это ограничение V1.
-
-## 9. Подсказки модели
-
-В `modelInstructions` тула:
-
-- Использовать `LSP` для определения символа, его ссылок, реализаций и типа;
-  `grep` — для текста, строк, конфигов и файлов, которые сервер не покрывает.
-- Указывать `line` из вывода Read и `symbol`, а не считать колонку.
-- После правок TS-файла можно вызвать `diagnostics`, не запуская весь `typecheck`;
-  `status: "pending"` не означает отсутствие ошибок.
-
-## 10. План реализации
-
-Каждая фаза — отдельный коммит или PR; spec обновляется в той же фазе.
-
-**Фаза 0 — spike (без кода в main).**
-Проверить, где исполняется runtime для remote workspace (§3.2). Выбрать framing:
-`vscode-jsonrpc` (зависимость, проверить лицензию и `third-party/inventory.json`)
-или свой (около 150 строк Content-Length framing). Замерить
-typescript-language-server на этом монорепо: время старта и RSS.
-
-**Фаза 1 — конфиг и загрузка.**
-- `contracts/src/plugins`: Zod `LspServerConfigSchema`, `PluginLoadOutcome.lspServers`.
-- `adapters/src/plugins`: убрать `lspServers` из `UNSUPPORTED_COMPONENT_KEYS`, резолвить
-  шаблонные переменные, diagnostics §2.1/§2.2, namespace `serverId`.
-- `bootstrap/src/plugins.ts`: `inferComponentTypesFromMetadata` добавляет `lsp`;
-  `zcode-protocol/plugins.ts:499` — убрать `lspServers` из `diagnosticOnly`.
-- `plugins/describe`: перечислять LSP-серверы и расширения.
-- Тесты: парсинг официальных 12 манифестов, конфликт расширений, невалидная запись.
-
-**Фаза 2 — порт, адаптер, пул.**
-- `contracts/src/interfaces/language-server.port.ts`: `acquire/release`, `request`,
-  `notify`, `onNotification`, `capabilities`, `status`; ошибки — коды из §5.4.
-- `adapters/src/lsp/`: spawn + framing + `workspace/configuration` + process-tree +
-  idle shutdown + restart + LRU-лимит.
-- Тестовый fixture: `tests/fixtures/fake-lsp-server.mjs` (Node-скрипт, сценарии:
-  ok, медленный старт, crash, без version в publish, pull diagnostics).
-- Тесты: lifecycle, отмена, crash/restart, Windows `.cmd` резолв (unit c инъекцией PATHEXT).
-
-**Фаза 3 — диагностика после правок (раньше навигации).**
-Диагностике нужны пул, синхронизация документов и attachment в контексте, но не
-тул `LSP`. Она даёт главную пользу, не меняя набор тулов модели, и позволяет
-рано замерить шум. Тем временем можно снять реальную схему upstream-тула для фазы 4.
-- `LspService`, `LspDocumentSync` (mtime-сверка, `didChangeWatchedFiles`, LRU `didClose`);
-  событие `FileMutated` из Edit/Write/ApplyPatch → `LspDocumentSync`.
-- Авто-диагностика после правок (upstream default, поле `diagnostics: true`).
-  Результат Edit/Write **не ждёт** сервер. `LspDocumentSync` запоминает baseline
-  диагностик файла до правки, а **новые** диагностики, пришедшие после неё,
-  попадают в attachment к следующему запросу модели: «Found N new diagnostic
-  issues in M files» плюс список с бюджетом `LSP_EDIT_DIAGNOSTICS_MAX = 20`
-  (сначала `error`). Контракт Edit/Write не меняется; меняется сборка контекста
-  (раздел 4 `00-tool-change-chain.md`). Холодный старт ради правки — только прогрев,
-  без ожидания.
-- **Нет baseline** (файл не был открыт в сервере до правки, или сервер ещё
-  стартовал): показываем только диагностики, чей range пересекается с изменённым
-  диапазоном. Иначе все давно существующие ошибки файла выглядели бы «новыми».
-- TUI/V4: строка «Found N new diagnostic issues», раскрываемая (`+`/`-`).
-- Выключатели §2.4 (sidecar, `lsp/preferences/*`, UI-переключатели) и `info`-метрики
-  поставляются **в этой же фазе**: включённую по умолчанию функцию без выключателя
-  не выпускаем.
-- Обновить `02-write.md`/`03-edit.md`: строка «LSP/IDE 通知 missing» → реализовано.
-
-**Фаза 4 — тул `LSP` (навигация и явная `diagnostics`).**
-- Сначала сверить имена операций с реальной схемой Claude Code (§5).
-- `contracts/src/tools/lsp.ts`, `core/src/tool/handlers/lsp.ts` (+ `lsp-position.ts`,
-  `lsp-format.ts`, каждый < 400 строк); операция `diagnostics` по §4.1.
-- Регистрация по доступности серверов (§5.3); проход по всем 12 разделам
-  `00-tool-change-chain.md` (contracts → core → prompt → provider → permission →
-  executor → adapter → budget → events/persistence → TUI/V4 projection → config).
-- TUI и V4: карточка вызова (операция, файл:строка, число результатов).
-- Тесты: контракт и `toContracts()`, позиции UTF-16, e2e на fake server и на реальном
-  typescript-language-server, если он есть в PATH (иначе skip с явной пометкой).
-
-**Фаза 5 — UI статуса.**
-Статус серверов в деталях плагина (`starting` / `running` / `not installed` / `crashed`)
-и ошибки «Executable not found» через новый метод протокола с Zod-схемой в
-`packages/shared/src/zcode-protocol/index.ts`; desktop и mobile web; i18n (en/zh/uk).
-
-**Фаза 6 — дополнительные языки.** Свои LSP-плагины из §8 в `zcode-plugins-official`.
-
-## 11. Документы, которые нужно обновить при реализации
-
-- `docs/claude-code-marketplace-plugin-compat.md`: строка `lspServers` в матрице и roadmap V2.
-- `docs/plan/trajectory/embedded-search-provider-visible.md:74`: `LSP` больше не «暂不新增».
-- `apps/zcode-cli/docs/design/v2/tool/README.md`: оглавление и матрица тулов.
-- `apps/zcode-cli/docs/design/v2/tool/00-tool-change-chain.md`: раздел про LSP.
-- `packages/zcode-guide-plugin/skills/{zcode-configuration-guide,diagnosing-plugins}/SKILL.md`:
-  убрать `lspServers` из «recorded but not executed».
-
-## 12. Решения и открытые вопросы
-
-Решено (2026-10-17):
-
-1. **TypeScript включён по умолчанию.** Манифест поставляется как bundled ZCode
-   official plugin и включается через существующий `officialPluginsEnabledByDefault`.
-   Он работает только при найденном бинаре и доверенном workspace (§5.3); без бинаря
-   агент ничего не видит, а подсказка по установке есть в деталях плагина. Диалог
-   рекомендации плагинов, как в upstream, в V1 не делаем: для его состояния
-   («больше не предлагать») понадобилось бы `fork_`-хранилище, а польза невелика.
-   Если пользователь поставит ещё и `typescript-lsp@claude-plugins-official`,
-   diagnostic `lsp_extension_shadowed` будет info-уровня и в чат не попадёт.
-2. **Диагностика после правок включена по умолчанию**, как в upstream: это главная
-   польза. Шум ограничиваем фильтрами: только новые, сначала `error`, бюджет 20,
-   правило «нет baseline» (фаза 3).
-3. **Пользователь может выключить** всё целиком, отдельный язык или только ошибки после
-   правок (§2.4). Выключатели и метрики шума выходят вместе с фазой 3.
-4. **Порядок фаз:** диагностика (фаза 3) идёт раньше навигационного тула (фаза 4).
-5. **Языки:** архитектура общая для всех языков с первого дня; доводим и проверяем
-   TypeScript, остальные работают после установки, но помечены «не проверено» (§8).
-
-Открыто:
-
-- Несколько серверов на файл (TS + ESLint, Vue + TS) в V2 — с объединением диагностик?
+Открыто: несколько серверов на файл (TS + ESLint, Vue + TS) в V2.
