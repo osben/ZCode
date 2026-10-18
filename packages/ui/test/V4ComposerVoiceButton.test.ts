@@ -89,10 +89,62 @@ describe("V4ComposerVoiceButton live feedback", () => {
     renderPanel(onCancel);
     const cancel = screen.getByTestId("voice-dictation-cancel");
     expect(cancel.getAttribute("aria-label")).toBe("voiceDictation.composer.cancel");
-    // The panel itself ignores pointer events so it never blocks the toolbar; the button opts back in.
-    expect(cancel.className).toContain("pointer-events-auto");
     fireEvent.click(cancel);
     expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("makes the visible panel body a hit target so covered toolbar actions get no pointer input (VD-PNL-01)", () => {
+    render(
+      createElement(
+        TooltipProvider,
+        null,
+        createElement(V4ComposerVoiceButton, {
+          phase: "recording",
+          level: 0.2,
+          preview: null,
+          onToggle: () => undefined,
+          onCancel: () => undefined,
+        }),
+      ),
+    );
+    const panel = screen.getByTestId("voice-dictation-feedback");
+    expect(panel.className).toContain("pointer-events-auto");
+    expect(panel.className).not.toContain("pointer-events-none");
+    // The stop/mic button sits outside the panel and must stay clickable.
+    expect(screen.getByTestId("v4-composer-voice-entry").contains(panel)).toBe(false);
+  });
+
+  it("keeps editor focus when the panel body is pressed (VD-PNL-03)", () => {
+    render(
+      createElement(
+        TooltipProvider,
+        null,
+        createElement(
+          "div",
+          null,
+          createElement("textarea", { "data-testid": "editor-stub" }),
+          createElement(V4ComposerVoiceButton, {
+            phase: "recording",
+            level: 0.2,
+            preview: null,
+            onToggle: () => undefined,
+            onCancel: () => undefined,
+          }),
+        ),
+      ),
+    );
+    const editor = screen.getByTestId("editor-stub") as HTMLTextAreaElement;
+    editor.focus();
+    expect(document.activeElement).toBe(editor);
+
+    const panel = screen.getByTestId("voice-dictation-feedback");
+    const notPrevented = fireEvent.mouseDown(panel);
+    // fireEvent returns false when the handler called preventDefault.
+    expect(notPrevented).toBe(false);
+    expect(document.activeElement).toBe(editor);
+
+    // The panel is passive status UI: it must not become a focus target itself.
+    expect(panel.hasAttribute("tabindex")).toBe(false);
   });
 
   const renderStatus = (phase: "idle" | "recording" | "loading", modelStatus?: string) =>

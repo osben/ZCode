@@ -80,9 +80,14 @@ function V4ComposerVoiceButtonImpl({
       data-testid="voice-dictation-control"
     >
       {recording ? (
+        // Hit testing must match what is visible: with pointer-events-none the covered toolbar actions
+        // (model picker, attachments) received clicks and hover through the panel. The mousedown
+        // default is prevented so pressing the panel never moves focus out of the editor, which the
+        // composer-scoped dictation shortcut depends on.
         <div
-          className="pointer-events-none absolute right-full top-1/2 z-20 mr-2 w-56 -translate-y-1/2 overflow-hidden rounded-xl bg-popover p-2 text-popover-foreground shadow-lg ring-1 ring-border/60 animate-in fade-in slide-in-from-right-2 duration-150 ease-out motion-reduce:animate-none"
+          className="pointer-events-auto absolute right-full top-1/2 z-20 mr-2 w-56 -translate-y-1/2 overflow-hidden rounded-xl bg-popover p-2 text-popover-foreground shadow-lg ring-1 ring-border/60 animate-in fade-in slide-in-from-right-2 duration-150 ease-out motion-reduce:animate-none"
           data-testid="voice-dictation-feedback"
+          onMouseDown={(event) => event.preventDefault()}
         >
           <div className="flex items-center gap-2">
             <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-destructive">
@@ -116,7 +121,7 @@ function V4ComposerVoiceButtonImpl({
                 type="button"
                 variant="ghost"
                 size="icon-sm"
-                className="pointer-events-auto shrink-0"
+                className="shrink-0"
                 aria-label={intl.formatMessage({ id: "voiceDictation.composer.cancel" })}
                 data-testid="voice-dictation-cancel"
                 onClick={onCancel}
