@@ -128,7 +128,7 @@ export function WebRemoteControlTaskIndexRow({
             ) : task.unreadAt ? (
               <span
                 data-unread-indicator="true"
-                className="h-1.5 w-1.5 rounded-full bg-sky-500 dark:bg-sky-400"
+                className="h-1.5 w-1.5 rounded-full bg-icon-blue"
               />
             ) : showPinnedState ? (
               <Pin className="size-4 text-foreground-subtle" />

@@ -52,9 +52,8 @@ describe("AutomationsPageTitle 灰度门", () => {
     expect(screen.queryByTestId(testId(TID_AUTOMATIONS_PAGE_TAB, "workflow"))).toBeNull();
     const heading = screen.getByRole("heading", { level: 1 });
     expect(heading.textContent).toBe("自动化");
-    // 沿用 Figma 30/34 页面标题层级——切换存在与否不该改变标题本身的视觉层级。
-    expect(heading.className).toContain("text-[30px]");
-    expect(heading.className).toContain("leading-[34px]");
+    // 沿用 text-ui-xl 页面标题层级——切换存在与否不该改变标题本身的视觉层级。
+    expect(heading.className).toContain("text-ui-xl");
   });
 
   it("灰度关 + en-US → 标题走同一个 i18n key，不是硬编码中文", () => {

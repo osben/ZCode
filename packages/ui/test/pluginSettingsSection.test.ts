@@ -421,12 +421,8 @@ describe("Plugin settings section", () => {
     expect(mcpSource).toContain('variant="link"');
     expect(mcpListSource).toContain('<ExternalLink className="size-4"');
     expect(mcpSource).toContain('<ExternalLink className="size-4"');
-    expect(mcpListSource).toContain(
-      'className="text-sky-500 hover:text-sky-600 dark:text-sky-400 dark:hover:text-sky-300"',
-    );
-    expect(mcpSource).toContain(
-      'className="text-sky-500 hover:text-sky-600 dark:text-sky-400 dark:hover:text-sky-300"',
-    );
+    expect(mcpListSource).toContain('className="text-icon-blue hover:text-icon-blue/80"');
+    expect(mcpSource).toContain('className="text-icon-blue hover:text-icon-blue/80"');
     expect(skillsSource).toContain("selectSkillsForScope(");
     expect(skillsSource).toContain("groupScopedSkillsBySource(");
     expect(skillsSource).toContain("const query = searchQuery");

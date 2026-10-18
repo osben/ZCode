@@ -20,7 +20,7 @@ const PREVIEW_ROW_LIMIT = 5;
 
 function rowIcon(row: SessionManagerRow) {
   if (row.pinned) {
-    return <Star className="size-3.5 shrink-0 text-amber-500" />;
+    return <Star className="size-3.5 shrink-0 text-warning" />;
   }
   if (row.task.executionWorktree) {
     return <GitBranch className="size-3.5 shrink-0 text-foreground-subtlest" />;
