@@ -41,6 +41,8 @@ export const hostCapabilitiesSchema = z.object({
   workflowRunDeltas: z.boolean().optional(),
   // This Host gates createSession `incognito` on the CLI's incognitoSession runtime capability.
   incognitoSession: z.boolean().optional(),
+  // This Host forwards the v2 incognito profile (see specs/incognito-session.md, Protocol).
+  incognitoProfileV2: z.boolean().optional(),
 });
 export type HostCapabilities = z.infer<typeof hostCapabilitiesSchema>;
 

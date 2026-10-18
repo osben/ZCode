@@ -1,4 +1,5 @@
 import type { Model, ModelInputMessage } from "@zcode/contracts";
+import { DEFAULT_CONFIRMATION_PARAGRAPH, incognitoExcludes, type IncognitoProfile } from "@zcode/shared";
 import { ContextBuilder } from "../context/builder.js";
 import {
   buildContextMetaUserBody,
@@ -14,7 +15,11 @@ import { buildRequestUserContextSection } from "../context/sections/request-user
 import type { ExecutionWorktreeEnvFact } from "../context/sections/env-info.js";
 import { buildSkillsSection } from "../context/sections/skills.js";
 import { estimateTokens } from "../context/utils.js";
-import { buildSubagentCommonNotes, buildSubagentEnvironmentContext } from "./system-prompt.js";
+import {
+  buildSubagentCommonNotes,
+  buildSubagentEnvironmentContext,
+  buildSubagentWorktreeOnlyContext,
+} from "./system-prompt.js";
 
 export interface SubagentContextBuilderConfig {
   agentPrompt: string;
@@ -26,6 +31,8 @@ export interface SubagentContextBuilderConfig {
   skillMetadataBudget?: number;
   skills?: ContextBuilderConfig["skills"];
   userInstructions?: ContextBuilderConfig["userInstructions"];
+  /** Frozen incognito profile inherited from the parent; absent for a normal session. */
+  incognito?: IncognitoProfile;
 }
 
 const EPHEMERAL_CACHE_CONTROL = { type: "ephemeral" as const };
@@ -112,7 +119,10 @@ export function createSubagentContextBuilder(
 }
 
 function buildSubagentContextSections(config: SubagentContextBuilderConfig): ContextSection[] {
-  const sections: ContextSection[] = [buildCliPrefixSection()];
+  const identityOff = incognitoExcludes(config.incognito, "identity");
+  const harnessOff = incognitoExcludes(config.incognito, "harness");
+  const environmentOff = incognitoExcludes(config.incognito, "environment");
+  const sections: ContextSection[] = identityOff ? [] : [buildCliPrefixSection()];
   const agentPrompt = config.agentPrompt.trimEnd();
   if (agentPrompt) {
     sections.push(
@@ -127,26 +137,36 @@ function buildSubagentContextSections(config: SubagentContextBuilderConfig): Con
     );
   }
 
+  // harness off: the notes are behavior text; the confirmation paragraph stays as the safety floor.
   sections.push(
     createSubagentSection({
       name: "Subagent Notes",
       source: "subagent_notes",
       cacheHint: "stable",
       // By design, each subsequent subagent system block carries a double-newline leading boundary.
-      content: `\n\n${buildSubagentCommonNotes()}`,
+      content: harnessOff
+        ? `\n\n${DEFAULT_CONFIRMATION_PARAGRAPH}`
+        : `\n\n${buildSubagentCommonNotes()}`,
     }),
-    createSubagentSection({
-      name: "Subagent Environment",
-      source: "subagent_environment",
-      cacheHint: "dynamic",
-      content: `\n\n${buildSubagentEnvironmentContext({
+  );
+  const environmentContext = environmentOff
+    ? buildSubagentWorktreeOnlyContext(config.executionWorktree)
+    : buildSubagentEnvironmentContext({
         agentPrompt: config.agentPrompt,
         envInfo: config.envInfo,
         model: config.model,
         executionWorktree: config.executionWorktree,
-      })}`,
-    }),
-  );
+      });
+  if (environmentContext) {
+    sections.push(
+      createSubagentSection({
+        name: "Subagent Environment",
+        source: "subagent_environment",
+        cacheHint: "dynamic",
+        content: `\n\n${environmentContext}`,
+      }),
+    );
+  }
 
   const requestUserContextSection = buildRequestUserContextSection({
     userInstructions: config.userInstructions,

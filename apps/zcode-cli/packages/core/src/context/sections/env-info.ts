@@ -74,6 +74,29 @@ export function buildEnvInfoSection(
   };
 }
 
+/**
+ * `environment` toggle off: only the execution-worktree isolation bullet survives (specs/incognito-session.md,
+ * "Prompt toggles (v2)"). Null when no worktree applies, so the section is omitted entirely.
+ */
+export function buildWorktreeOnlyEnvSection(
+  executionWorktree?: ExecutionWorktreeEnvFact,
+): ContextSection | null {
+  const line = executionWorktree ? formatExecutionWorktreeSentence(executionWorktree) : null;
+  if (!line) return null;
+  const content = [ENVIRONMENT_HEADING, `- ${line}`].join("\n");
+
+  return {
+    name: "Environment Info",
+    source: "env_info",
+    injectionTarget: "system",
+    cacheHint: "dynamic",
+    chars: content.length,
+    tokens: estimateTokens(content),
+    content,
+    preview: content.slice(0, 100),
+  };
+}
+
 export function buildGitSystemContextSection(envInfo: EnvInfo): ContextSection | null {
   if (!isEnvInfoGitRepository(envInfo)) {
     return null;

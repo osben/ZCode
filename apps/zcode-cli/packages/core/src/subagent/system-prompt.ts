@@ -24,6 +24,17 @@ export function buildSubagentCommonNotes(): string {
   ].join("\n");
 }
 
+/**
+ * `environment` toggle off: the subagent environment keeps only the worktree isolation line, inside the
+ * same `<env>` tags. Null when no worktree applies.
+ */
+export function buildSubagentWorktreeOnlyContext(
+  executionWorktree: ExecutionWorktreeEnvFact | undefined,
+): string | null {
+  const line = executionWorktree ? formatExecutionWorktreeSentence(executionWorktree) : null;
+  return line ? ["<env>", line, "</env>"].join("\n") : null;
+}
+
 export function buildSubagentEnvironmentContext(
   options: SubagentEnvironmentContextOptions,
 ): string {

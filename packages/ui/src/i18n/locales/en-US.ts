@@ -8273,18 +8273,16 @@ const enUS: Record<string, string> = {
   // Incognito session (specs/incognito-session.md)
   "taskList.incognitoTaskLabel": "Incognito session",
   "chat.incognito.toggle": "Incognito session",
-  "chat.incognito.toggleDescription": "Start the next session without extras",
   "chat.incognito.marker": "Incognito",
   "chat.incognito.turnOff": "Turn off incognito",
   "chat.incognito.includeHeading": "Include in this session",
-  "chat.incognito.settingsLink": "Incognito settings…",
   "chat.incognito.unsupported":
     "This agent version can't start incognito sessions. Update the app or the remote agent and try again.",
   "settings.incognito": "Incognito",
   "settings.incognito.description":
     "Defaults for new incognito sessions. Switch a capability on to include it by default; you can still change it for each session in the composer.",
   "settings.incognito.scopeHint":
-    "Incognito starts a clean session without the extras below. It is not a privacy mode: usage stats, telemetry, input history and model logs are still recorded.",
+    "Incognito starts a clean session without the extras below, including the agent identity, harness, environment and automation tools. It is not a privacy mode: usage stats, telemetry, input history and model logs are still recorded.",
   "incognito.capability.projectInstructions.label": "Project instructions",
   "incognito.capability.projectInstructions.description":
     "AGENTS.md from your home folder and the project",
@@ -8307,6 +8305,17 @@ const enUS: Record<string, string> = {
   "incognito.capability.outputStyle.description": "Your active output style",
   "incognito.capability.systemPromptOverrides.label": "System prompt overrides",
   "incognito.capability.systemPromptOverrides.description": "Your edited system prompt sections",
+  "incognito.capability.identity.label": "Agent identity",
+  "incognito.capability.identity.description":
+    "CLI prefix and identity intro; the safety notice always stays",
+  "incognito.capability.harness.label": "Harness and tool guidance",
+  "incognito.capability.harness.description":
+    "Harness rules, desktop context, communication and session guidance",
+  "incognito.capability.environment.label": "Environment",
+  "incognito.capability.environment.description":
+    "Working directory, platform, git status and recent commits",
+  "incognito.capability.automationTools.label": "Automation and workflow tools",
+  "incognito.capability.automationTools.description": "Cron, off-peak and dynamic workflow tools",
 };
 
 export default enUS;

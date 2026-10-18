@@ -51,6 +51,8 @@ export function ensureIndependentPlanSupport(client: CapabilityClient): Promise<
 }
 
 /** specs/incognito-session.md: an incognito create must never run as a normal session. */
-export function ensureIncognitoSupport(client: CapabilityClient): Promise<void> {
-  return ensureRuntimeCapability(client, "incognitoSession", INCOGNITO_UNSUPPORTED_ERROR);
+export async function ensureIncognitoSupport(client: CapabilityClient): Promise<void> {
+  // Both flags are required: incognitoProfileV2 gates the v2 profile (identity/harness/environment/automationTools).
+  await ensureRuntimeCapability(client, "incognitoSession", INCOGNITO_UNSUPPORTED_ERROR);
+  await ensureRuntimeCapability(client, "incognitoProfileV2", INCOGNITO_UNSUPPORTED_ERROR);
 }

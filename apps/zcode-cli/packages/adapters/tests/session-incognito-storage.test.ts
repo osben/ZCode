@@ -100,7 +100,7 @@ describe("session incognito storage", () => {
     const id = createSessionId("damaged");
     createSession(db, sessionInput(id));
     db.prepare("UPDATE session SET fork_incognito = ? WHERE id = ?").run(
-      JSON.stringify({ ...profile, version: 2 }),
+      JSON.stringify({ ...profile, version: 3 }),
       id,
     );
 

@@ -5,9 +5,7 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu.js";
 import { Button } from "@/components/ui/button.js";
@@ -15,9 +13,7 @@ import { cn } from "@/components/lib/utils.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { useIncognitoDefaultsReader } from "@/hooks/useIncognitoDefaultsReader.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import { setPendingSettingsSection } from "@/lib/settingsNavigation.js";
 import { restoreComposerInputFocusAfterPickerClose } from "@/lib/pickerFocus.js";
-import { useOptionalTabStore } from "@/store/TabStoreProvider.js";
 import {
   selectDraftIncognito,
   selectDraftIncognitoGeneration,
@@ -25,17 +21,15 @@ import {
 } from "@/v4/composer/draftIncognitoIntent.js";
 
 export const TID_V4_COMPOSER_INCOGNITO_TRIGGER = "v4-composer-incognito-trigger";
-export const TID_V4_COMPOSER_INCOGNITO_TOGGLE = "v4-composer-incognito-toggle";
 export const TID_V4_COMPOSER_INCOGNITO_MARKER = "v4-composer-incognito-marker";
 export const TID_V4_COMPOSER_INCOGNITO_OFF = "v4-composer-incognito-off";
+export const TID_V4_COMPOSER_INCOGNITO_CAPABILITY = "v4-composer-incognito-capability";
 
 /**
- * Draft-only incognito toggle (specs/incognito-session.md "Composer toggle"): the menu turns the
- * mode on from the Settings defaults and lets the user opt capabilities back in for this session.
- * It lives in the composer top row after the project and branch chips, so it is not a bottom
- * toolbar collapse participant. While active the control is a chip with the «Incognito» label
- * (not color-only) whose turn-off button is revealed inline on hover/focus, following the project
- * chip in ChatEmptyState.
+ * Draft-only incognito control (specs/incognito-session.md "Composer toggle"). Off: the icon turns the
+ * mode on directly, with the per-session capability set read from the Settings defaults. On: the chip
+ * text opens the capability checklist and the inline × turns the mode off. It lives in the composer top
+ * row after the project and branch chips, so it is not a bottom toolbar collapse participant.
  */
 
 /** Visible checkbox for a menu row; the row itself stays the menuitemcheckbox. */
@@ -79,6 +73,7 @@ function IncognitoCheckboxRow({
     </DropdownMenuCheckboxItem>
   );
 }
+
 export const V4ComposerIncognitoControl = memo(function V4ComposerIncognitoControl({
   workspaceKey,
   disabled,
@@ -88,7 +83,6 @@ export const V4ComposerIncognitoControl = memo(function V4ComposerIncognitoContr
 }) {
   const { intl } = useZCodeIntl();
   const readIncognitoDefaults = useIncognitoDefaultsReader();
-  const openSettingsTab = useOptionalTabStore((state) => state.openSettingsTab);
   const capabilities = useDraftIncognitoIntentStore((state) =>
     selectDraftIncognito(state, workspaceKey),
   );
@@ -108,6 +102,20 @@ export const V4ComposerIncognitoControl = memo(function V4ComposerIncognitoContr
   const removeLabel = intl.formatMessage({ id: "chat.incognito.turnOff" });
 
   const showOffButton = active && !disabled;
+
+  // The defaults read is async; freeze the intent generation so a send, turn-off or unmount that
+  // happens before it resolves discards this activation instead of arming a stale draft.
+  const activate = () => {
+    const generation = selectDraftIncognitoGeneration(
+      useDraftIncognitoIntentStore.getState(),
+      workspaceKey,
+    );
+    void readIncognitoDefaults().then((defaults) => {
+      if (mountedRef.current) {
+        activateIfCurrent(workspaceKey, defaults, generation);
+      }
+    });
+  };
 
   return (
     <div
@@ -133,110 +141,78 @@ export const V4ComposerIncognitoControl = memo(function V4ComposerIncognitoContr
           </Button>
         </ControlHintTooltip>
       ) : null}
-      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
-        {/* The hint must stay closed while the menu is open, or its layer dismisses the menu. */}
-        <ControlHintTooltip title={toggleLabel} open={menuOpen ? false : undefined}>
-          <DropdownMenuTrigger asChild>
-            <Button
-              ref={triggerRef}
-              variant="ghost"
-              size="sm"
-              disabled={disabled}
-              aria-label={toggleLabel}
-              aria-pressed={active}
-              data-testid={TID_V4_COMPOSER_INCOGNITO_TRIGGER}
-              className={cn(
-                "h-7",
-                active
-                  ? "gap-1 rounded-full bg-transparent px-2 text-ui-base text-incognito hover:bg-transparent hover:text-incognito"
-                  : "w-7 rounded-lg px-0",
-              )}
-            >
-              <VenetianMask
-                className={cn(
-                  "size-4",
-                  showOffButton &&
-                    "transition-opacity group-hover/incognito-chip:opacity-0 group-focus-within/incognito-chip:opacity-0",
-                )}
-              />
-              {active ? (
+      {active ? (
+        <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+          {/* The hint must stay closed while the menu is open, or its layer dismisses the menu. */}
+          <ControlHintTooltip title={toggleLabel} open={menuOpen ? false : undefined}>
+            <DropdownMenuTrigger asChild>
+              <Button
+                ref={triggerRef}
+                variant="ghost"
+                size="sm"
+                disabled={disabled}
+                aria-label={toggleLabel}
+                aria-pressed={true}
+                data-testid={TID_V4_COMPOSER_INCOGNITO_TRIGGER}
+                className="h-7 gap-1 rounded-full bg-transparent px-2 text-ui-base text-incognito hover:bg-transparent hover:text-incognito"
+              >
+                <VenetianMask
+                  className={cn(
+                    "size-4",
+                    showOffButton &&
+                      "transition-opacity group-hover/incognito-chip:opacity-0 group-focus-within/incognito-chip:opacity-0",
+                  )}
+                />
                 <span className="inline">
                   {intl.formatMessage({ id: "chat.incognito.marker" })}
                 </span>
-              ) : null}
-            </Button>
-          </DropdownMenuTrigger>
+              </Button>
+            </DropdownMenuTrigger>
+          </ControlHintTooltip>
+          <DropdownMenuContent
+            side="top"
+            sideOffset={4}
+            className="w-72"
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              restoreComposerInputFocusAfterPickerClose({
+                anchor: triggerRef.current,
+                fallbackSelector: `[data-testid="${TID_V4_COMPOSER_INPUT}"]`,
+              });
+            }}
+          >
+            <DropdownMenuLabel className="text-ui-sm text-foreground-subtle">
+              {intl.formatMessage({ id: "chat.incognito.includeHeading" })}
+            </DropdownMenuLabel>
+            {INCOGNITO_CAPABILITY_KEYS.map((capability) => (
+              <IncognitoCheckboxRow
+                key={capability}
+                checked={capabilities[capability]}
+                testId={`${TID_V4_COMPOSER_INCOGNITO_CAPABILITY}-${capability}`}
+                onCheckedChange={(checked) => setCapability(workspaceKey, capability, checked)}
+              >
+                {intl.formatMessage({ id: `incognito.capability.${capability}.label` })}
+              </IncognitoCheckboxRow>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : (
+        <ControlHintTooltip title={toggleLabel}>
+          <Button
+            ref={triggerRef}
+            variant="ghost"
+            size="sm"
+            disabled={disabled}
+            aria-label={toggleLabel}
+            aria-pressed={false}
+            data-testid={TID_V4_COMPOSER_INCOGNITO_TRIGGER}
+            onClick={activate}
+            className="h-7 w-7 rounded-lg px-0"
+          >
+            <VenetianMask className="size-4" />
+          </Button>
         </ControlHintTooltip>
-        <DropdownMenuContent
-          side="top"
-          sideOffset={4}
-          className="w-72"
-          onCloseAutoFocus={(event) => {
-            event.preventDefault();
-            restoreComposerInputFocusAfterPickerClose({
-              anchor: triggerRef.current,
-              fallbackSelector: `[data-testid="${TID_V4_COMPOSER_INPUT}"]`,
-            });
-          }}
-        >
-          <IncognitoCheckboxRow
-            checked={active}
-            testId={TID_V4_COMPOSER_INCOGNITO_TOGGLE}
-            onCheckedChange={(checked) => {
-              if (checked) {
-                // The defaults read is async; freeze the intent generation so a send, uncheck or
-                // unmount that happens before it resolves discards this activation instead of
-                // arming a stale draft.
-                const generation = selectDraftIncognitoGeneration(
-                  useDraftIncognitoIntentStore.getState(),
-                  workspaceKey,
-                );
-                void readIncognitoDefaults().then((defaults) => {
-                  if (mountedRef.current) {
-                    activateIfCurrent(workspaceKey, defaults, generation);
-                  }
-                });
-              } else {
-                deactivate(workspaceKey);
-              }
-            }}
-          >
-            <span className="flex min-w-0 flex-col gap-0.5">
-              <span>{toggleLabel}</span>
-              <span className="text-ui-sm text-foreground-subtle">
-                {intl.formatMessage({ id: "chat.incognito.toggleDescription" })}
-              </span>
-            </span>
-          </IncognitoCheckboxRow>
-          {capabilities ? (
-            <>
-              <DropdownMenuSeparator />
-              <DropdownMenuLabel className="text-ui-sm text-foreground-subtle">
-                {intl.formatMessage({ id: "chat.incognito.includeHeading" })}
-              </DropdownMenuLabel>
-              {INCOGNITO_CAPABILITY_KEYS.map((capability) => (
-                <IncognitoCheckboxRow
-                  key={capability}
-                  checked={capabilities[capability]}
-                  testId={`${TID_V4_COMPOSER_INCOGNITO_TOGGLE}-${capability}`}
-                  onCheckedChange={(checked) => setCapability(workspaceKey, capability, checked)}
-                >
-                  {intl.formatMessage({ id: `incognito.capability.${capability}.label` })}
-                </IncognitoCheckboxRow>
-              ))}
-            </>
-          ) : null}
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            onSelect={() => {
-              setPendingSettingsSection("incognito");
-              openSettingsTab();
-            }}
-          >
-            {intl.formatMessage({ id: "chat.incognito.settingsLink" })}
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      )}
     </div>
   );
 });

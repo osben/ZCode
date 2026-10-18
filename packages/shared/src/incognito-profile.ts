@@ -16,6 +16,12 @@ const incognitoCapabilitiesSchema = z
     memory: z.boolean(),
     outputStyle: z.boolean(),
     systemPromptOverrides: z.boolean(),
+    // Profile v2: identity, harness and environment prompt text and the workflow/automation tool set
+    // were core in v1 (see "Prompt toggles (v2)" in specs/incognito-session.md).
+    identity: z.boolean(),
+    harness: z.boolean(),
+    environment: z.boolean(),
+    automationTools: z.boolean(),
   })
   .strict();
 
@@ -23,7 +29,9 @@ export type IncognitoCapabilities = z.infer<typeof incognitoCapabilitiesSchema>;
 export type IncognitoCapabilityKey = keyof IncognitoCapabilities;
 export const INCOGNITO_CAPABILITY_KEYS = incognitoCapabilitiesSchema.keyof().options;
 
-export const INCOGNITO_PROFILE_VERSION = 1 as const;
+export const INCOGNITO_PROFILE_VERSION = 2 as const;
+/** v2 additions; a v1 session always ran with them included, so the upgrade sets them to true. */
+const INCOGNITO_V2_ADDED_KEYS = ["identity", "harness", "environment", "automationTools"] as const;
 
 /** Error thrown by the renderer transport and the Host when a hop cannot honor `incognito`. */
 export const INCOGNITO_UNSUPPORTED_ERROR = "proto.incognitoUnsupported" as const;
@@ -37,6 +45,17 @@ export const incognitoProfileSchema = incognitoCapabilitiesSchema.extend({
 });
 
 export type IncognitoProfile = z.infer<typeof incognitoProfileSchema>;
+
+/** Strict version-1 shape, accepted only by the stored-profile reader (never written). */
+const incognitoProfileV1Schema = incognitoCapabilitiesSchema
+  .omit(
+    Object.fromEntries(INCOGNITO_V2_ADDED_KEYS.map((key) => [key, true])) as Record<
+      (typeof INCOGNITO_V2_ADDED_KEYS)[number],
+      true
+    >,
+  )
+  .extend({ version: z.literal(1) })
+  .strict();
 
 const allCapabilitiesOff = Object.fromEntries(
   INCOGNITO_CAPABILITY_KEYS.map((key) => [key, false]),
@@ -87,9 +106,10 @@ export function buildIncognitoProfile(capabilities: IncognitoCapabilities): Inco
 }
 
 /**
- * Decode `session.fork_incognito`. `null`/`undefined` is a normal session. A value this build
- * cannot parse (damaged JSON, a newer profile version) fails closed to the lockdown profile so an
- * incognito session never runs as a normal one.
+ * Decode `session.fork_incognito`. `null`/`undefined` is a normal session. A stored v1 profile is
+ * upgraded in memory to v2 with the v2 toggles included (v1 sessions always ran with them). A value
+ * this build cannot parse (damaged JSON, unknown version or shape) fails closed to the lockdown
+ * profile so an incognito session never runs as a normal one.
  */
 export function parseStoredIncognitoProfile(
   stored: string | null | undefined,
@@ -101,8 +121,20 @@ export function parseStoredIncognitoProfile(
   } catch {
     return INCOGNITO_LOCKDOWN_PROFILE;
   }
-  const parsed = incognitoProfileSchema.safeParse(raw);
-  return parsed.success ? parsed.data : INCOGNITO_LOCKDOWN_PROFILE;
+  const current = incognitoProfileSchema.safeParse(raw);
+  if (current.success) return current.data;
+  const v1 = incognitoProfileV1Schema.safeParse(raw);
+  if (v1.success) {
+    const { version: _version, ...capabilities } = v1.data;
+    return buildIncognitoProfile({
+      ...capabilities,
+      identity: true,
+      harness: true,
+      environment: true,
+      automationTools: true,
+    });
+  }
+  return INCOGNITO_LOCKDOWN_PROFILE;
 }
 
 /**

@@ -19,6 +19,7 @@
 import type { ContextSection, WorkflowActorContext } from "../types.js";
 import { estimateTokens } from "../utils.js";
 import { buildHarnessBlock, buildSecurityNotice } from "./identity.js";
+import { DEFAULT_CONFIRMATION_PARAGRAPH } from "@zcode/shared";
 
 /** Describe the tool surface with one sentence about what is available and one about what is not, so the model does not have to guess. */
 const TOOL_SURFACE =
@@ -45,7 +46,15 @@ function buildWorkflowContract(): string {
   ].join("\n");
 }
 
-function buildWorkflowActorIdentityPrompt(actor: WorkflowActorContext): string {
+export interface WorkflowActorSectionOptions {
+  /** `harness` toggle; off omits the `# Harness` block and keeps the confirmation floor. */
+  includeHarness?: boolean;
+}
+
+function buildWorkflowActorIdentityPrompt(
+  actor: WorkflowActorContext,
+  options: WorkflowActorSectionOptions,
+): string {
   const name = actor.name?.trim();
   const named = name ? `, named "${name}"` : "";
   const opening = [
@@ -54,21 +63,25 @@ function buildWorkflowActorIdentityPrompt(actor: WorkflowActorContext): string {
   const persona = actor.persona?.trim();
   // There is no longer a CLI prefix before this section ("You are ZCode, an interactive coding agent" is the wrong identity for a subagent),
   // so this is the first line of the system prompt and no longer starts with a blank line.
+  const includeHarness = options.includeHarness !== false;
   const parts = [
     opening.join("\n"),
     ...(persona ? ["", persona] : []),
     "",
     buildSecurityNotice(),
     "",
-    buildHarnessBlock(),
+    includeHarness ? buildHarnessBlock() : DEFAULT_CONFIRMATION_PARAGRAPH,
     "",
     buildWorkflowContract(),
   ];
   return parts.join("\n");
 }
 
-export function buildWorkflowActorIdentitySection(actor: WorkflowActorContext): ContextSection {
-  const content = buildWorkflowActorIdentityPrompt(actor);
+export function buildWorkflowActorIdentitySection(
+  actor: WorkflowActorContext,
+  options: WorkflowActorSectionOptions = {},
+): ContextSection {
+  const content = buildWorkflowActorIdentityPrompt(actor, options);
   return {
     name: "Workflow Actor Identity",
     source: "workflow_actor_identity",

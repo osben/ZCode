@@ -11,7 +11,7 @@ import type {
   SkillLoadOutcome,
   UserInstructionsOptions,
 } from "@zcode/contracts";
-import type { SystemPromptOverrides } from "@zcode/shared";
+import type { IncognitoProfile, SystemPromptOverrides } from "@zcode/shared";
 import type { AutoCompactPolicyConfig } from "../compact/index.js";
 import type { AgentProfile } from "../subagent/profile.js";
 import type { ExecutionWorktreeEnvFact } from "./sections/env-info.js";
@@ -139,6 +139,8 @@ export interface ContextBuilderConfig {
   systemPromptOverrides?: SystemPromptOverrides;
   compact?: AutoCompactPolicyConfig;
   guidanceToolNames?: readonly string[];
+  /** Frozen incognito profile; absent for a normal session. Gates identity, harness and environment text. */
+  incognito?: IncognitoProfile;
 }
 
 /**

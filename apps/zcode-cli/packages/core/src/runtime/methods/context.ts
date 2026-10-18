@@ -160,6 +160,7 @@ export function createContextBuilderFromSnapshot(
       skillMetadataBudget: this.config.skillMetadataBudget,
       skills: skillListing,
       userInstructions: this.config.subagentContext.userInstructions,
+      incognito: this.config.incognito,
     });
   }
 
@@ -187,6 +188,7 @@ export function createContextBuilderFromSnapshot(
     systemPromptOverrides: resolveMainAgentSystemPromptOverrides(this.config),
     compact: this.config.compact,
     guidanceToolNames: this.getTools(options.model).map((tool) => tool.name),
+    incognito: this.config.incognito,
   };
 
   return createContextBuilder(contextConfig).setToolRegistry(this.registry);

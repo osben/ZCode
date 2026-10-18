@@ -365,7 +365,8 @@ export function createAgentConversationTransport(
       if (
         envelope.type === "createSession" &&
         (envelope.payload as { incognito?: unknown }).incognito !== undefined &&
-        hello.capabilities.incognitoSession !== true
+        (hello.capabilities.incognitoSession !== true ||
+          hello.capabilities.incognitoProfileV2 !== true)
       ) {
         throw new Error(INCOGNITO_UNSUPPORTED_ERROR);
       }
