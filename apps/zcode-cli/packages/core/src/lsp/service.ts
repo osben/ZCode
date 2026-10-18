@@ -3,7 +3,7 @@
 // ============================================================
 // Owners:
 //   - processes, capabilities, restarts: LanguageServerPort (adapter);
-//   - open documents, versions, freshness: LspDocumentSync;
+//   - open documents, versions, freshness: LspDocumentSync (process-wide, injected; owned here only when not);
 //   - queries for the tool: query-runner.ts;
 //   - edits waiting for an attachment: EditDiagnosticsTracker.
 
@@ -40,6 +40,11 @@ import { toFileUri } from "./uri.js";
 
 export interface LspServiceOptions {
   port: LanguageServerPort;
+  /**
+   * Process-wide document owner shared by all sessions on the same port. When omitted the service
+   * creates and disposes a private one (single-session runs and tests).
+   */
+  documents?: LspDocumentSync;
   servers: ResolvedLspServer[];
   key: LanguageServerKey;
   fileSystem: FileSystemPort;
@@ -49,6 +54,18 @@ export interface LspServiceOptions {
 }
 
 export type LspQueryContext = QueryContext;
+
+/** Creates the document owner; bootstrap makes one per process and passes it to every service. */
+export function createLspDocumentSync(options: {
+  fileSystem: FileSystemPort;
+  logger?: Logger;
+}): LspDocumentSync {
+  return new LspDocumentSync({
+    fileSystem: options.fileSystem,
+    maxOpenDocuments: LSP_MAX_OPEN_DOCUMENTS,
+    logger: options.logger,
+  });
+}
 
 function sameServerKey(left: LanguageServerKey, right: LanguageServerKey): boolean {
   return left.identityKey === right.identityKey && left.workspacePath === right.workspacePath;
@@ -73,20 +90,19 @@ export class LspService {
   private readonly waiters = new FreshnessWaiters();
   private readonly modes = new Map<string, DiagnosticsMode>();
   private readonly unsubscribeEvents: () => void;
+  private readonly unsubscribeFresh: () => void;
+  private readonly ownsSync: boolean;
   private readonly now: () => number;
   private disposed = false;
 
   constructor(private readonly options: LspServiceOptions) {
     this.registry = new LspServerRegistry(options.servers);
     this.now = options.now ?? Date.now;
-    this.sync = new LspDocumentSync({
-      fileSystem: options.fileSystem,
-      maxOpenDocuments: LSP_MAX_OPEN_DOCUMENTS,
-      logger: options.logger,
-      onFresh: (event: FreshnessEvent) => {
-        this.modes.set(event.serverId, event.mode);
-        this.waiters.notify();
-      },
+    this.ownsSync = options.documents === undefined;
+    this.sync = options.documents ?? createLspDocumentSync(options);
+    this.unsubscribeFresh = this.sync.onFresh((event: FreshnessEvent) => {
+      this.modes.set(event.serverId, event.mode);
+      this.waiters.notify();
     });
     this.unsubscribeEvents = options.port.onEvent((event) => this.onServerEvent(event));
   }
@@ -245,7 +261,9 @@ export class LspService {
     if (this.disposed) return;
     this.disposed = true;
     this.unsubscribeEvents();
-    this.sync.dispose();
+    this.unsubscribeFresh();
+    // A shared document owner outlives any one session; only a private one is disposed here.
+    if (this.ownsSync) this.sync.dispose();
     this.tracker.clear();
     this.waiters.notify();
   }

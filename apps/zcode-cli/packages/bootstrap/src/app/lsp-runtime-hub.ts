@@ -10,6 +10,7 @@ import type {
   ResolvedLspServer,
 } from "@zcode/contracts";
 import type { ZCodeLspStatusResult } from "@zcode/shared";
+import type { LspDocumentSync } from "@zcode/core";
 import type { LspProtocolHost } from "../zcode-protocol/lsp.js";
 import type { LspPreferencesStore } from "./lsp-preferences.js";
 
@@ -19,6 +20,8 @@ export interface LspRuntimeParticipant {
 
 export interface LspRuntimeHub {
   readonly port: LanguageServerPort;
+  /** The single owner of open documents for every session on this port (spec §4). */
+  readonly documents: LspDocumentSync;
   readonly preferences: LspPreferencesStore;
   readonly protocolHost: LspProtocolHost;
   register(participant: LspRuntimeParticipant): () => void;
@@ -26,6 +29,7 @@ export interface LspRuntimeHub {
 
 export interface CreateLspRuntimeHubOptions {
   port: LanguageServerPort;
+  documents: LspDocumentSync;
   preferences: LspPreferencesStore;
   /** Servers declared by enabled plugins for a workspace; must not start anything. */
   resolveServers(workspacePath: string): ResolvedLspServer[];
@@ -70,6 +74,7 @@ export function createLspRuntimeHub(options: CreateLspRuntimeHubOptions): LspRun
 
   return {
     port,
+    documents: options.documents,
     preferences,
     protocolHost,
     register(participant) {

@@ -7,6 +7,9 @@ import {
 } from "@zcode/contracts";
 import type { LspPreferencesStore } from "../src/app/lsp-preferences.js";
 import { createLspRuntimeHub } from "../src/app/lsp-runtime-hub.js";
+import type { LspDocumentSync } from "@zcode/core";
+
+const documents = { dispose: vi.fn() } as unknown as LspDocumentSync;
 
 const WORKSPACE = "/work/app";
 
@@ -68,6 +71,7 @@ describe("LspRuntimeHub", () => {
     const port = fakePort();
     const hub = createLspRuntimeHub({
       port,
+      documents,
       preferences: fakeStore({
         ...DEFAULT_LSP_PREFERENCES,
         diagnosticsAfterEdit: { "py@x/pyright": false },
@@ -105,6 +109,7 @@ describe("LspRuntimeHub", () => {
     const port = fakePort();
     const hub = createLspRuntimeHub({
       port,
+      documents,
       preferences: fakeStore(DEFAULT_LSP_PREFERENCES),
       resolveServers: () => [],
     });

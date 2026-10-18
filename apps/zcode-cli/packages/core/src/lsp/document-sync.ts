@@ -1,5 +1,6 @@
 // ============================================================
-// LspDocumentSync: single owner of open documents per (serverId, pool key) (spec §4-§6)
+// LspDocumentSync: single owner of open documents per (serverId, pool key) (spec §4-§6).
+// One instance per process, shared by every session's LspService (bootstrap LspRuntimeHub).
 // ============================================================
 // Responsibilities: didOpen/didChange/didClose, drift detection (mtime+size), LRU cap,
 // publishDiagnostics handling and pull diagnostics. Files are read only through FileSystemPort.
@@ -70,8 +71,9 @@ export interface DocumentSyncOptions {
   fileSystem: FileSystemPort;
   maxOpenDocuments: number;
   logger?: Logger;
-  onFresh(event: FreshnessEvent): void;
 }
+
+export type FreshnessListener = (event: FreshnessEvent) => void;
 
 interface StoreEntry {
   connection: LanguageServerConnection;
@@ -82,8 +84,17 @@ interface StoreEntry {
 export class LspDocumentSync {
   private readonly stores = new Map<string, StoreEntry>();
   private readonly locks = new KeyedLock();
+  private readonly freshListeners = new Set<FreshnessListener>();
 
   constructor(private readonly options: DocumentSyncOptions) {}
+
+  /** Subscribes to "a document became fresh" events; every session's service listens. */
+  onFresh(listener: FreshnessListener): () => void {
+    this.freshListeners.add(listener);
+    return () => {
+      this.freshListeners.delete(listener);
+    };
+  }
 
   /** Opens the document or refreshes it when it drifted on disk. Returns the live document. */
   async ensureOpen(context: SyncContext, filePath: string): Promise<OpenDocument> {
@@ -161,7 +172,7 @@ export class LspDocumentSync {
         if (items === undefined) return;
         const normalized = normalizeRawDiagnostics(document.path, lines, items);
         if (document.freshness.recordPull(version, normalized) === "fresh") {
-          this.options.onFresh({
+          this.emitFresh({
             serverId: context.server.id,
             uri: document.uri,
             mode: "pull",
@@ -185,6 +196,11 @@ export class LspDocumentSync {
   dispose(): void {
     for (const entry of this.stores.values()) entry.unsubscribe();
     this.stores.clear();
+    this.freshListeners.clear();
+  }
+
+  private emitFresh(event: FreshnessEvent): void {
+    for (const listener of this.freshListeners) listener(event);
   }
 
   private storeFor(context: SyncContext): OpenDocumentStore {
@@ -212,7 +228,7 @@ export class LspDocumentSync {
     const items = normalizeRawDiagnostics(document.path, document.lines, raw);
     const outcome = document.freshness.recordPublish({ version, items });
     if (outcome === "fresh") {
-      this.options.onFresh({
+      this.emitFresh({
         serverId,
         uri,
         mode: document.freshness.lastFresh?.mode ?? "versioned",

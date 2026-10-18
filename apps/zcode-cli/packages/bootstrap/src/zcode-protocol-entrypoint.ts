@@ -18,7 +18,7 @@ import {
 import type { SqliteSessionStore } from "@zcode/adapters/storage";
 import { traceContextToLogContext, createRootTraceContext } from "@zcode/contracts";
 import type { McpPort, ModelSelection } from "@zcode/contracts";
-import type { PresentationSurface } from "@zcode/core";
+import { createLspDocumentSync, type PresentationSurface } from "@zcode/core";
 import type { RunZCodeProtocolAgentOptions, ZCodeAppOptions } from "./app/types.js";
 import { createZCodeApp } from "./app/create-app.js";
 import { createLspPreferencesStore } from "./app/lsp-preferences.js";
@@ -279,6 +279,7 @@ export async function runZCodeProtocolAgent(
     // One language server pool and one preferences owner per process, shared by all sessions.
     lspRuntimeHub = createLspRuntimeHub({
       port: createLanguageServerPool({ baseEnv: options.env ?? process.env, logger }),
+      documents: createLspDocumentSync({ fileSystem: createNodeFileSystemAdapter(), logger }),
       preferences: createLspPreferencesStore({
         cliStorageRoot: getCliStorageRoot(resolvePath(configResult.config.storage.dir)),
         fileSystem: createNodeFileSystemAdapter(),

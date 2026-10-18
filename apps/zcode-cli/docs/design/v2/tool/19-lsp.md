@@ -89,14 +89,17 @@ flowchart LR
 | --- | --- |
 | ext → server | `LspServerRegistry` (bootstrap, from `PluginLoadOutcome.lspServers`) |
 | processes, capabilities, restarts | `LanguageServerPool` (adapter) |
-| open documents, versions, diagnostics | `LspDocumentSync` (core) |
+| open documents, versions, diagnostics | `LspDocumentSync` (core), one per process and shared by all sessions; created by the bootstrap `LspRuntimeHub` |
+| edits waiting for an attachment | `EditDiagnosticsTracker`, one per session |
 
 - Edit/Write never call LSP. They publish `FileMutated`, and `LspDocumentSync` sends
   `didOpen`/`didChange` and `didChangeWatchedFiles` (gopls and rust-analyzer need the latter).
 - For changes made outside the tools, open documents are checked by `mtime+size`
   before each request. V1 has no watcher of its own, and servers with their own
   watcher (tsserver, pyright) see changes themselves.
-- At most 50 open documents per server; the rest are closed via `didClose` (LRU).
+- At most 50 open documents per server; the rest are closed via `didClose` (LRU). Sessions of the
+  same workspace share the process-wide document owner, so one session can never close, reopen or
+  re-version another session's document; each session only subscribes to freshness events.
 - Pool:
   - one process per `(workspaceIdentity?.trim() || workspacePath, workspacePath, serverId)`,
     shared by the workspace's sessions, with `rootUri` taken from `workspacePath`. The
@@ -130,7 +133,10 @@ sequenceDiagram
   executor timeout knows nothing about that. A server is pre-warmed on the first Read
   or edit of a file in its language.
 - **Crash:** in-flight requests get `lsp_server_crashed`. The server restarts up to
-  `maxRestarts` times, then reports `lsp_server_unavailable`.
+  `maxRestarts` times in a row, then reports `lsp_server_unavailable`. The counter resets after
+  every successful start (initialized), so only consecutive failed or crashing starts count.
+  A restart is triggered only by the next acquire, never by a timer, so a server that keeps
+  crashing after start cannot loop on its own.
 - **Freshness.** A diagnostics result counts for the document's current version `v`
   only when one of these holds:
   1. it is a pull `textDocument/diagnostic` response for `v`;

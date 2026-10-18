@@ -3,7 +3,7 @@
 import { createNodeFileSystemAdapter } from "@zcode/adapters/fs";
 import { createLanguageServerPool } from "@zcode/adapters/lsp";
 import type { FileSystemPort, Logger, ResolvedLspServer } from "@zcode/contracts";
-import { createLspService, type LspService } from "@zcode/core";
+import { createLspDocumentSync, createLspService, type LspService } from "@zcode/core";
 import { createLspPreferencesStore } from "./lsp-preferences.js";
 import {
   createLspRuntimeHub,
@@ -38,6 +38,10 @@ export function createSessionLsp(options: CreateSessionLspOptions): SessionLsp {
     ? undefined
     : createLspRuntimeHub({
         port: createLanguageServerPool({ baseEnv: options.env, logger: options.logger }),
+        documents: createLspDocumentSync({
+          fileSystem: options.fileSystemPort,
+          logger: options.logger,
+        }),
         preferences: createLspPreferencesStore({
           cliStorageRoot: options.cliStorageRoot,
           fileSystem: createNodeFileSystemAdapter(),
@@ -49,6 +53,7 @@ export function createSessionLsp(options: CreateSessionLspOptions): SessionLsp {
   const hub = options.hub ?? ownedHub!;
   const service = createLspService({
     port: hub.port,
+    documents: hub.documents,
     servers: options.servers,
     key: {
       identityKey: options.workspaceIdentity?.trim() || options.workingDirectory,
@@ -81,6 +86,7 @@ export function createSessionLsp(options: CreateSessionLspOptions): SessionLsp {
         await service.dispose();
       } finally {
         await ownedHub?.port.stopAll();
+        ownedHub?.documents.dispose();
       }
     },
   };
