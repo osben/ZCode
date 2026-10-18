@@ -466,10 +466,10 @@ sequenceDiagram
 
 - The prompt is a single prompt. It is shown full width (no 280 px wide control), in a monospace multi-line field of about eight rows that can be resized vertically.
 - The draft is local until **Save**. While the draft differs from the saved value, a "Unsaved changes" indicator appears with **Save** and **Cancel** buttons. Nothing is written per keystroke.
-- **Save:** a draft equal to the built-in default stores no custom prompt (the key is removed), so the default keeps following future changes. A blank draft cannot be saved; Save is disabled and an inline message says to use Reset.
+- **Save:** a draft equal to the built-in default stores no custom prompt (the key is removed), so the default keeps following future changes. A blank draft cannot be saved; Save is disabled and an inline message says to use Reset. A draft without `{{text}}` cannot be saved either; Save is disabled and an inline message says the prompt must contain it.
 - **Cancel** and **Esc** (focus in the field) revert the draft to the saved value. When the draft is dirty, they first ask for confirmation to discard (confirm dialog, same component as other destructive confirmations).
 - **Character counter** `n/4000` is always visible. The field does not truncate silently: above 4000 characters the counter turns warning-colored, Save is disabled, and the message says to shorten the prompt.
-- **`{{text}}` hint:** when the draft has no `{{text}}`, a hint says the transcript will be appended after the prompt. It is informational, not an error.
+- **`{{text}}` requirement:** when the draft is not blank and has no `{{text}}`, the inline message is a warning that the prompt must contain `{{text}}`, and Save is disabled. (The runtime still appends the transcript for an already-stored prompt without the variable; the editor just no longer lets one be created.)
 - **Reset to default:** asks for confirmation, removes the stored prompt key (`postProcessPrompt` becomes undefined; it is not written as the default text), and loads the default into the editor. Reset is disabled when no custom prompt is stored and the draft is the default.
 - Known limit: leaving the Voice dictation section with an unsaved draft discards the draft. It is never persisted implicitly.
 
@@ -507,7 +507,7 @@ One term per concept across the Voice dictation settings and the composer. Label
 | VD-PPR-11    | Edit the prompt                                    | "Unsaved changes", Save and Cancel appear; nothing is written until Save.                         |
 | VD-PPR-12    | Press Esc with an unsaved change                   | A discard confirmation appears; confirming reverts the draft; cancelling keeps it.                |
 | VD-PPR-13    | Draft over 4000 characters                         | Counter shows the count in warning color; Save is disabled; the text is not truncated.            |
-| VD-PPR-14    | Draft without `{{text}}`                           | A hint says the transcript is appended; Save still works.                                         |
+| VD-PPR-14    | Draft without `{{text}}`                           | A warning says the prompt must contain `{{text}}`; Save is disabled.                              |
 | VD-PPR-15    | Save the default text unchanged                    | No custom prompt is stored; a later Reset is disabled.                                            |
 | VD-PPR-16    | Reset with a custom prompt stored                  | After confirmation the stored key is removed and the editor shows the default.                    |
 | VD-PPR-17    | Try it with a sample                               | The output (or inline error) shows; no settings are written; Run is disabled while unavailable.   |

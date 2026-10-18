@@ -7493,8 +7493,7 @@ const zhCN: Record<string, string> = {
   "voiceDictation.postProcess.prompt.counter": "{count} / {max}",
   "voiceDictation.postProcess.prompt.tooLong": "请将提示词缩短到 {max} 个字符以保存。",
   "voiceDictation.postProcess.prompt.blank": "提示词不能为空。使用“恢复默认”可还原。",
-  "voiceDictation.postProcess.prompt.noVariable":
-    "提示词中没有 {variable}，因此转写文本会追加在提示词之后。",
+  "voiceDictation.postProcess.prompt.noVariable": "提示词必须包含 {variable}，转写文本会替换它。",
   "voiceDictation.postProcess.discard.title": "放弃未保存的更改？",
   "voiceDictation.postProcess.discard.description": "提示词将恢复为上次保存的版本。",
   "voiceDictation.postProcess.discard.confirm": "放弃",
