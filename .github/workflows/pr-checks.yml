@@ -27,7 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          # The format-check step diffs against the PR base SHA and needs history.
+          # The format check diffs against the pinned upstream sync base and needs full history.
           fetch-depth: 0
 
       - uses: pnpm/action-setup@v4
@@ -70,17 +70,11 @@ jobs:
       - name: Architecture check
         run: pnpm architecture:check
 
-      # Only files touched by this PR; the repo has pre-existing format drift elsewhere.
-      # oxfmt ignores lockfiles and similar files, so a PR with only those would otherwise fail on "no target files".
-      # Upstream sync merges bring thousands of upstream-formatted files; reformatting them would
-      # turn every future sync into a conflict avalanche, so those PRs (label: upstream-sync) skip this step.
-      - name: Format check (changed files)
-        if: ${{ !contains(github.event.pull_request.labels.*.name, 'upstream-sync') }}
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          git diff --name-only --diff-filter=ACMR -z "$BASE_SHA...HEAD" \
-            | xargs -0 -r pnpm exec oxfmt --check --no-error-on-unmatched-pattern
+      # Same command as local: only files the fork changed since the upstream sync base pinned in
+      # fork-upstream-base.json (specs/fork-format-scope.md). Upstream-identical files stay
+      # untouched so upstream syncs do not conflict; a sync PR bumps the pin in the same PR.
+      - name: Format check (fork-changed files)
+        run: pnpm fmt:check
 
   unit-tests:
     name: Unit tests
