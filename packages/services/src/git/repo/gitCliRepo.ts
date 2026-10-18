@@ -843,21 +843,45 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
   /**
    * Git creates the branch ref before it creates the worktree directory, so a failed
    * `worktree add -b` (e.g. EACCES on the target parent) leaves a half-created branch behind.
-   * Callers must pass only a branch that the failed call itself created. `-D` is required
-   * because the branch may point at an unmerged base. Rollback is best-effort: it logs and never
-   * replaces the original worktree failure.
+   * Ownership is inferred from the ref itself: a branch this call created still points at the
+   * start point, so a ref that moved (another creator already committed on it) is left alone,
+   * and the delete is a compare-and-delete on the observed tip. Unlike `branch -d` this does not
+   * require the branch to be merged. Rollback is best-effort: it logs and never replaces the
+   * original worktree failure.
    */
   async function rollbackCreatedWorktreeBranch(
     resolution: GitResolvedRepository,
     branchName: string,
+    startPoint: string,
   ): Promise<void> {
     try {
-      if (!(await localBranchExists(resolution, branchName))) {
+      const branchRef = `refs/heads/${branchName}`;
+      const resolveCommit = async (ref: string): Promise<string | null> => {
+        const probe = await commandProvider.run({
+          cwd: resolution.repoRoot,
+          args: ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`],
+          timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+        });
+        return probe.exitCode === 0 ? probe.stdout.trim() || null : null;
+      };
+      const branchTip = await resolveCommit(branchRef);
+      if (!branchTip) {
+        return;
+      }
+      if (branchTip !== (await resolveCommit(startPoint))) {
+        log.warn(
+          undefined,
+          "worktree branch rollback skipped: branch no longer at its start point",
+          {
+            workspacePath: resolution.workspacePath,
+            branchName,
+          },
+        );
         return;
       }
       const result = await commandProvider.run({
         cwd: resolution.repoRoot,
-        args: ["branch", "-D", "--", branchName],
+        args: ["update-ref", "-d", branchRef, branchTip],
         timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
       });
       if (result.timedOut || result.outputTruncated || result.exitCode !== 0) {
@@ -1494,7 +1518,11 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
           !branchAlreadyExists &&
           !issues.some((issue) => issue.code === "branch-already-exists")
         ) {
-          await rollbackCreatedWorktreeBranch(resolution, normalizedBranchName);
+          await rollbackCreatedWorktreeBranch(
+            resolution,
+            normalizedBranchName,
+            normalizedBaseBranch || "HEAD",
+          );
         }
         return toWorktreeMutationFailure(issues);
       }

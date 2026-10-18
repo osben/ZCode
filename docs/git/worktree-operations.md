@@ -124,8 +124,8 @@ failure 不 throw exception（timeout / output over limit 等 infrastructure err
 
 - 前置 check 顺序：repository available → branch name → targetPath non-empty absolute → branch name format → targetPath 不存在 → 探测 branch 存在性 → execute command。
 - 命令 failure 时 stderr 经过 classifier mapping；timeout / output over limit 走 `ensureGitCommandSucceeded` throw exception，不吞并为 `unknown`。
-- Git 在 mkdir 之前创建 branch ref，因此 `worktree add -b` 可能在 directory 创建失败（如 EACCES）后留下半成品 branch。Rollback 规则：本次调用前 branch 不存在（`branchAlreadyExists=false`）、命令失败后 branch 已存在、且 classifier 结果不含 `branch-already-exists`（排除并发创建者的 branch）时，执行 `git branch -D <branchName>`（使用 `-D`，因为 base 可能未合并）。
-- Rollback 自身失败（包括探测或 `branch -D` 抛出的 infrastructure error）只记录 warn，不覆盖原始失败的 `issues`，也不改变返回值。
+- Git 在 mkdir 之前创建 branch ref，因此 `worktree add -b` 可能在 directory 创建失败（如 EACCES）后留下半成品 branch。Rollback 规则：本次调用前 branch 不存在（`branchAlreadyExists=false`）、命令失败后 branch 已存在、且 classifier 结果不含 `branch-already-exists`（排除并发创建者的 branch）时，且 branch tip 仍等于本次调用的起点（`baseBranch` 或 `HEAD`，说明没有其他创建者在其上提交）时，执行 compare-and-delete：`git update-ref -d refs/heads/<branchName> <observedTip>`（不使用 `branch -d`，因为 branch 不要求已合并；tip 已移动则保留 branch 并记录 warn）。
+- Rollback 自身失败（包括探测或 `update-ref -d` 抛出的 infrastructure error）只记录 warn，不覆盖原始失败的 `issues`，也不改变返回值。
 - 本次调用前 branch 已存在时（直接 checkout 已有 branch）不回滚，即使命令失败。
 
 ## removeWorktree

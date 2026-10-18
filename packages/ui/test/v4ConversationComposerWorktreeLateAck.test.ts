@@ -842,8 +842,6 @@ describe("late worktree reservation ACK after navigation", () => {
       preparedAttemptId: "attempt-2",
     });
     // The accepted dispatch consumes the recovery record, so Retry cannot leave a duplicate draft.
-    expect(readV4WorktreeRecoveryDrafts("/workspace", undefined, "prepared-session-a")).toEqual(
-      [],
-    );
+    expect(readV4WorktreeRecoveryDrafts("/workspace", undefined, "prepared-session-a")).toEqual([]);
   });
 });

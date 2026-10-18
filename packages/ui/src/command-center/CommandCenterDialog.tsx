@@ -2088,11 +2088,17 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
             ) : null}
             {worktreeExistingBranchName && worktreeExistingBranchStalePath ? (
               <div className="flex flex-col items-start gap-2 px-2.5">
-                <p role="alert" className="flex items-start gap-2 text-ui-sm text-foreground-subtle">
+                <p
+                  role="alert"
+                  className="flex items-start gap-2 text-ui-sm text-foreground-subtle"
+                >
                   <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
                   {intl.formatMessage(
                     { id: "commandCenter.worktree.error.worktreeMissing" },
-                    { branchName: worktreeExistingBranchName, path: worktreeExistingBranchStalePath },
+                    {
+                      branchName: worktreeExistingBranchName,
+                      path: worktreeExistingBranchStalePath,
+                    },
                   )}
                 </p>
                 <Button

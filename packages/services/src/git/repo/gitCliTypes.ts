@@ -92,7 +92,10 @@ export interface GitCliRepo {
   listWorktrees(workspacePath: string): Promise<GitWorktreeListResult>;
   resolveWorktreePathIdentities(paths: string[]): Promise<string[]>;
   verifyWorktreeUsable(workspacePath: string, targetPath: string): Promise<GitWorktreeVerifyResult>;
-  ensureWorktreeExclusion(workspacePath: string, targetPath: string): Promise<GitWorktreeExcludeResult>;
+  ensureWorktreeExclusion(
+    workspacePath: string,
+    targetPath: string,
+  ): Promise<GitWorktreeExcludeResult>;
   createWorktree(
     workspacePath: string,
     branchName: string,

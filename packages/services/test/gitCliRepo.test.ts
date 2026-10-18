@@ -1074,6 +1074,8 @@ describe("gitCliRepo createWorktree branch rollback", () => {
     addStderr: string;
     addCreatesRef: boolean;
     rollbackBehavior?: "success" | "exit-1" | "throw";
+    // Tip of the created ref; the start point (`release`) resolves to "base-sha".
+    branchTipSha?: string;
   }): { commandProvider: GitCommandProvider; run: ReturnType<typeof vi.fn> } {
     let refCreated = false;
     const run = vi.fn(
@@ -1100,7 +1102,17 @@ describe("gitCliRepo createWorktree branch rollback", () => {
             stderr: options.addStderr,
           });
         }
-        if (command.startsWith("branch -D -- ")) {
+        if (command === "rev-parse --verify --quiet refs/heads/feature^{commit}") {
+          const exists = options.branchExistsBeforeCall || refCreated;
+          return createCommandResult(commandOptions, {
+            exitCode: exists ? 0 : 1,
+            stdout: exists ? `${options.branchTipSha ?? "base-sha"}\n` : "",
+          });
+        }
+        if (command === "rev-parse --verify --quiet release^{commit}") {
+          return createCommandResult(commandOptions, { stdout: "base-sha\n" });
+        }
+        if (command.startsWith("update-ref -d refs/heads/feature ")) {
           if (options.rollbackBehavior === "throw") {
             throw new Error("spawn git ENOENT");
           }
@@ -1139,8 +1151,8 @@ describe("gitCliRepo createWorktree branch rollback", () => {
     expect(result.ok).toBe(false);
     expect(result.issues).toHaveLength(1);
     const commands = run.mock.calls.map(([options]) => options.args.join(" "));
-    expect(commands).toContain("branch -D -- feature");
-    expect(commands.indexOf("branch -D -- feature")).toBeGreaterThan(
+    expect(commands).toContain("update-ref -d refs/heads/feature base-sha");
+    expect(commands.indexOf("update-ref -d refs/heads/feature base-sha")).toBeGreaterThan(
       commands.findIndex((command) => command.startsWith("worktree add -b feature")),
     );
   });
@@ -1158,7 +1170,24 @@ describe("gitCliRepo createWorktree branch rollback", () => {
 
     expect(result.ok).toBe(false);
     const commands = run.mock.calls.map(([options]) => options.args.join(" "));
-    expect(commands.some((command) => command.startsWith("branch -D"))).toBe(false);
+    expect(commands.some((command) => command.startsWith("update-ref -d"))).toBe(false);
+  });
+
+  it("does not delete a branch that moved off its start point (another creator committed)", async () => {
+    const target = join(makeTempDir("zcode-git-rollback-moved-"), "wt");
+    const { commandProvider, run } = createScriptedWorktreeProvider({
+      branchExistsBeforeCall: false,
+      addStderr: permissionStderr,
+      addCreatesRef: true,
+      branchTipSha: "foreign-sha",
+    });
+    const repo = createGitCliRepo({ commandProvider });
+
+    const result = await repo.createWorktree("/repo", "feature", target, "release");
+
+    expect(result.ok).toBe(false);
+    const commands = run.mock.calls.map(([options]) => options.args.join(" "));
+    expect(commands.some((command) => command.startsWith("update-ref -d"))).toBe(false);
   });
 
   it("does not delete a branch created concurrently by another creator", async () => {
@@ -1177,7 +1206,7 @@ describe("gitCliRepo createWorktree branch rollback", () => {
     expect(result.ok).toBe(false);
     expect(result.issues[0]?.code).toBe("branch-already-exists");
     const commands = run.mock.calls.map(([options]) => options.args.join(" "));
-    expect(commands.some((command) => command.startsWith("branch -D"))).toBe(false);
+    expect(commands.some((command) => command.startsWith("update-ref -d"))).toBe(false);
   });
 
   it.each([
@@ -1226,9 +1255,7 @@ describe("gitCliRepo ensureWorktreeExclusion", () => {
       rmSync(join(repoPath, ".git", "info"), { recursive: true, force: true });
       const insidePath = join(repoPath, ".worktrees", "feature");
 
-      expect((await repo.createWorktree(repoPath, "feature", insidePath, "release")).ok).toBe(
-        true,
-      );
+      expect((await repo.createWorktree(repoPath, "feature", insidePath, "release")).ok).toBe(true);
       // Git reports the untracked `.worktrees/` before the exclusion is written.
       expect(runGit(repoPath, ["status", "--porcelain"])).toBe("?? .worktrees/");
 
@@ -1248,9 +1275,7 @@ describe("gitCliRepo ensureWorktreeExclusion", () => {
       const { repoPath } = createWorktreeTestRepo();
       const repo = createGitCliRepo();
       const insidePath = join(repoPath, ".worktrees", "feature");
-      expect((await repo.createWorktree(repoPath, "feature", insidePath, "release")).ok).toBe(
-        true,
-      );
+      expect((await repo.createWorktree(repoPath, "feature", insidePath, "release")).ok).toBe(true);
 
       await repo.ensureWorktreeExclusion(repoPath, insidePath);
       const afterFirst = readFileSync(excludeFileOf(repoPath), "utf-8");
@@ -1270,9 +1295,7 @@ describe("gitCliRepo ensureWorktreeExclusion", () => {
       const { repoPath } = createWorktreeTestRepo();
       const repo = createGitCliRepo();
       const insidePath = join(repoPath, ".worktrees", "feature");
-      expect((await repo.createWorktree(repoPath, "feature", insidePath, "release")).ok).toBe(
-        true,
-      );
+      expect((await repo.createWorktree(repoPath, "feature", insidePath, "release")).ok).toBe(true);
       writeFileSync(excludeFileOf(repoPath), "# local rules\nbuild/");
 
       await expect(repo.ensureWorktreeExclusion(repoPath, insidePath)).resolves.toEqual({
@@ -1317,9 +1340,7 @@ describe("gitCliRepo ensureWorktreeExclusion", () => {
       const { container, repoPath } = createWorktreeTestRepo();
       const repo = createGitCliRepo();
       const linkedPath = join(container, "linked");
-      expect((await repo.createWorktree(repoPath, "feature", linkedPath, "release")).ok).toBe(
-        true,
-      );
+      expect((await repo.createWorktree(repoPath, "feature", linkedPath, "release")).ok).toBe(true);
       // Inside placement is relative to the linked worktree's own top level; the exclude file it
       // writes is the main checkout's common one, shared by every worktree of the repository.
       const insidePath = join(linkedPath, ".worktrees", "nested");
@@ -1334,17 +1355,21 @@ describe("gitCliRepo ensureWorktreeExclusion", () => {
     GIT_INTEGRATION_TEST_TIMEOUT_MS,
   );
 
-  it("reports failure without throwing when the exclude file cannot be written", async () => {
-    const { repoPath } = createWorktreeTestRepo();
-    const repo = createGitCliRepo();
-    const insidePath = join(repoPath, ".worktrees", "feature");
-    expect((await repo.createWorktree(repoPath, "feature", insidePath, "release")).ok).toBe(true);
-    // A directory where the exclude file should be makes the append fail with EISDIR.
-    rmSync(excludeFileOf(repoPath), { force: true });
-    mkdirSync(excludeFileOf(repoPath));
+  it(
+    "reports failure without throwing when the exclude file cannot be written",
+    async () => {
+      const { repoPath } = createWorktreeTestRepo();
+      const repo = createGitCliRepo();
+      const insidePath = join(repoPath, ".worktrees", "feature");
+      expect((await repo.createWorktree(repoPath, "feature", insidePath, "release")).ok).toBe(true);
+      // A directory where the exclude file should be makes the append fail with EISDIR.
+      rmSync(excludeFileOf(repoPath), { force: true });
+      mkdirSync(excludeFileOf(repoPath));
 
-    await expect(repo.ensureWorktreeExclusion(repoPath, insidePath)).resolves.toEqual({
-      ok: false,
-    });
-  }, GIT_INTEGRATION_TEST_TIMEOUT_MS);
+      await expect(repo.ensureWorktreeExclusion(repoPath, insidePath)).resolves.toEqual({
+        ok: false,
+      });
+    },
+    GIT_INTEGRATION_TEST_TIMEOUT_MS,
+  );
 });

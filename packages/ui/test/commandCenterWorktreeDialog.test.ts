@@ -338,7 +338,13 @@ describe("CommandCenterDialog worktree flow", () => {
       headRefType: "branch",
       currentBranchName: "main",
       branches: [
-        { name: "main", isCurrent: true, upstreamName: null, commitHash: "a", commitTimestampMs: 1 },
+        {
+          name: "main",
+          isCurrent: true,
+          upstreamName: null,
+          commitHash: "a",
+          commitTimestampMs: 1,
+        },
         {
           name: "zcode/task-9",
           isCurrent: false,
@@ -381,12 +387,15 @@ describe("CommandCenterDialog worktree flow", () => {
       workspacePath: "/dev/alpha",
       targetPath: staleEntry.path,
     });
-    expect(screen.queryByRole("button", { name: "commandCenter.worktree.openExisting" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "commandCenter.worktree.openExisting" }),
+    ).toBeNull();
     expect(onCreateTaskInWorkspace).not.toHaveBeenCalled();
     expect(onOpenChange).not.toHaveBeenCalled();
-    expect(
-      screen.getByRole("button", { name: "commandCenter.worktree.start" }),
-    ).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "commandCenter.worktree.start" })).toHaveProperty(
+      "disabled",
+      true,
+    );
     expect(pruneWorktrees).not.toHaveBeenCalled();
 
     // Prune only happens on the explicit action, then the offer is re-resolved.
@@ -397,9 +406,10 @@ describe("CommandCenterDialog worktree flow", () => {
       expect(screen.queryByText("commandCenter.worktree.error.worktreeMissing")).toBeNull(),
     );
     await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "commandCenter.worktree.start" }),
-      ).toHaveProperty("disabled", false),
+      expect(screen.getByRole("button", { name: "commandCenter.worktree.start" })).toHaveProperty(
+        "disabled",
+        false,
+      ),
     );
   });
 
@@ -409,7 +419,13 @@ describe("CommandCenterDialog worktree flow", () => {
       headRefType: "branch",
       currentBranchName: "main",
       branches: [
-        { name: "main", isCurrent: true, upstreamName: null, commitHash: "a", commitTimestampMs: 1 },
+        {
+          name: "main",
+          isCurrent: true,
+          upstreamName: null,
+          commitHash: "a",
+          commitTimestampMs: 1,
+        },
         {
           name: "zcode/task-9",
           isCurrent: false,
