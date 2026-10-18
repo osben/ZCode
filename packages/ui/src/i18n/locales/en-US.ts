@@ -2394,6 +2394,7 @@ const enUS: Record<string, string> = {
   "chat.changeSummary.filesChanged.other": "{count} files changed",
   "chat.changeSummary.expand": "Expand changed files",
   "chat.changeSummary.collapse": "Collapse changed files",
+  "chat.changeSummary.treeView": "Group by directory",
   "chat.changeSummary.diffUnavailable": "This diff preview is currently unavailable.",
   "chat.changeSummary.review": "Review",
   "chat.changeSummary.openInEditor": "Open in editor",

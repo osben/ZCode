@@ -177,6 +177,28 @@ describe("PermissionDialog focus", () => {
     );
   });
 
+  it("selects an option with a digit key without answering, and answers only on Enter", () => {
+    const { options, flush, onRespond } = renderPermission(false);
+    expect(document.activeElement).toBe(options[0]);
+
+    for (const key of ["1", "2", "3"]) {
+      fireEvent.keyDown(document.activeElement!, { key });
+      flush();
+      expect(document.activeElement).toBe(options[Number(key) - 1]);
+      expect(options[Number(key) - 1]!.getAttribute("aria-selected")).toBe("true");
+    }
+    expect(onRespond).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(document.activeElement!, { key: "2" });
+    flush();
+    fireEvent.keyDown(document.activeElement!, { key: "Enter" });
+    expect(onRespond).toHaveBeenCalledExactlyOnceWith(
+      request.requestId,
+      request.options[1],
+      undefined,
+    );
+  });
+
   it("gives feedback its own numbered row in the arrow and Tab focus cycle", () => {
     const { input, options, flush, onRespond, confirm } = renderPermission();
     const feedbackRow = input!.parentElement!;

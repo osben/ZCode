@@ -26,7 +26,7 @@ export function AutomationsPageTitle({
   if (!workflowTabEnabled) {
     // Use the same typography as the switch state: 30/34 page-title hierarchy, which should not change depending on whether the switch is present.
     return (
-      <h1 className="text-[30px] font-medium leading-[34px] tracking-[0.114px] text-foreground">
+      <h1 className="text-ui-xl font-medium text-foreground">
         {intl.formatMessage({ id: "settings.automations.title" })}
       </h1>
     );
@@ -81,7 +81,7 @@ export function AutomationsPageTitleSwitch({
             data-testid={testId(TID_AUTOMATIONS_PAGE_TAB, tab)}
             onClick={() => onValueChange(tab)}
             className={cn(
-              "rounded-md text-[30px] font-medium leading-[34px] tracking-[0.114px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-input-border-focused",
+              "rounded-md text-ui-xl font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-input-border-focused",
               active ? "text-foreground" : "text-foreground-subtle hover:text-foreground",
             )}
           >

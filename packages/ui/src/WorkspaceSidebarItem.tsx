@@ -839,7 +839,7 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
         <span
           aria-hidden="true"
           data-workspace-unread-indicator="true"
-          className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-500 dark:bg-sky-400"
+          className="h-1.5 w-1.5 shrink-0 rounded-full bg-icon-blue"
         />
       ) : null}
       {!isExpanded && taskListLiveWorkflowCount > 0 ? (

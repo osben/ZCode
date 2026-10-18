@@ -83,8 +83,7 @@ describe("AutomationsPageTitleSwitch", () => {
     render(createElement(Harness));
     const active = screen.getByTestId(testId(TID_AUTOMATIONS_PAGE_TAB, "automation"));
     const inactive = screen.getByTestId(testId(TID_AUTOMATIONS_PAGE_TAB, "workflow"));
-    expect(active.className).toContain("text-[30px]");
-    expect(active.className).toContain("leading-[34px]");
+    expect(active.className).toContain("text-ui-xl");
     expect(active.className).toContain("text-foreground");
     expect(inactive.className).toContain("text-foreground-subtle");
   });

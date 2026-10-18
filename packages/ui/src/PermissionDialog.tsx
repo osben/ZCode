@@ -699,9 +699,10 @@ export function PermissionDialog({
           return;
         }
 
+        // Digits only select: the dialog autofocuses while the user may still be typing in the composer,
+        // so a stray digit must not approve a tool call or persist an "always allow" rule. Enter answers.
         event.preventDefault();
         setSelectedIndex(shortcutIndex);
-        respondWithOption(shortcutOption);
         return;
       }
 
@@ -758,7 +759,6 @@ export function PermissionDialog({
       isWorkflowAsk,
       moveSelection,
       orderedOptions,
-      respondWithOption,
     ],
   );
 

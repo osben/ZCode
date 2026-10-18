@@ -1849,7 +1849,7 @@ export function SettingsPage({
                               </h2>
                             ) : null}
                             {!hasVisibleSettingsBreadcrumb && activeSectionMeta.titleBadgeId ? (
-                              <span className="inline-flex h-6 items-center rounded-full border border-sky-500 px-2 text-ui-xs font-semibold tracking-normal text-sky-500 dark:border-sky-400 dark:text-sky-400">
+                              <span className="inline-flex h-6 items-center rounded-full border border-icon-blue px-2 text-ui-xs font-semibold tracking-normal text-icon-blue">
                                 {intl.formatMessage({
                                   id: activeSectionMeta.titleBadgeId,
                                 })}

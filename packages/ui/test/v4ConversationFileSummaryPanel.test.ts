@@ -38,6 +38,12 @@ vi.mock("@/components/ui/collapsible.js", async () => {
   };
 });
 
+// Radix Checkbox needs a real DOM (Element.closest); the minimal test DOM does not provide it.
+vi.mock("@/components/ui/checkbox.js", async () => {
+  const React = await import("react");
+  return { Checkbox: () => React.createElement("span", { "data-slot": "checkbox" }) };
+});
+
 vi.mock("@/OpenSplitButton.js", async () => {
   const React = await import("react");
   return {

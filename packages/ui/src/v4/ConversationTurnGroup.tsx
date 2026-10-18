@@ -187,7 +187,7 @@ function HighspeedOutputFooter({
             type="button"
             variant="ghost"
             size="default"
-            className="h-7 gap-1 rounded-[8px] bg-black/5 px-2 py-1 text-ui-base font-medium leading-5 text-foreground hover:bg-black/10 dark:bg-white/5 dark:hover:bg-white/10"
+            className="h-7 gap-1 rounded-[8px] bg-surface px-2 py-1 text-ui-base font-medium leading-5 text-foreground hover:bg-surface-hover"
             data-highspeed-output-share="true"
             disabled={sharePending}
             aria-label={shareAriaLabel}

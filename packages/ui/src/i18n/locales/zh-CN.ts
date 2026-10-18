@@ -2261,6 +2261,7 @@ const zhCN: Record<string, string> = {
   "chat.changeSummary.filesChanged.other": "{count} 个文件已更改",
   "chat.changeSummary.expand": "展开已更改文件",
   "chat.changeSummary.collapse": "收起已更改文件",
+  "chat.changeSummary.treeView": "按目录分组",
   "chat.changeSummary.diffUnavailable": "暂时无法预览这份 Diff。",
   "chat.changeSummary.review": "审查",
   // This Chinese entry was mistakenly seeded with the English value when added, so the preview

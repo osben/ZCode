@@ -141,31 +141,21 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     titleId: "settings.hooks.title",
     groupId: "agentCapabilities",
   },
-  // Worktree defaults configure the “New task in worktree” flow (location, branch prefix,
-  // per-project overrides); they sit with agent capabilities next to Commands and Hooks.
-  // Desktop-only, mirroring the flow's supportsWorktreeTasks boundary; filtered for Web in
-  // createSettingsPageConfig.
-  {
-    id: "worktrees",
-    icon: GitBranchPlus,
-    titleId: "settings.worktrees.title",
-    groupId: "agentCapabilities",
-  },
   {
     id: "browser",
     icon: Globe2,
     titleId: "settings.browser.title",
-    groupId: "basics",
+    groupId: "agentCapabilities",
   },
-  // Place Computer Use after Browser: both are local-control entry points for the Agent,
-  // and keeping them in Basic Settings helps users understand "control the browser / control the whole computer" together.
+  // Computer Use follows Browser: both are local-control entry points for the Agent
+  // ("control the browser / control the whole computer"), so they sit together after Hooks.
   {
     id: "computerUse",
     icon: Monitor,
     titleId: "settings.computerUse.title",
-    groupId: "basics",
+    groupId: "agentCapabilities",
   },
-  // Place Keyboard Shortcuts after Computer Use: both configure local control/productivity and belong at the end of Basic Settings.
+  // Keyboard Shortcuts is an app-level preference and starts the tail of Basic Settings.
   {
     id: "shortcuts",
     icon: Keyboard,
@@ -177,6 +167,16 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     id: "voiceDictation",
     icon: Mic,
     titleId: "settings.voiceDictation.title",
+    groupId: "basics",
+  },
+  // Worktree defaults configure the “New task in worktree” flow (location, branch prefix,
+  // per-project overrides); they are an app-level preference, so they live in Basics.
+  // Desktop-only, mirroring the flow's supportsWorktreeTasks boundary; filtered for Web in
+  // createSettingsPageConfig.
+  {
+    id: "worktrees",
+    icon: GitBranchPlus,
+    titleId: "settings.worktrees.title",
     groupId: "basics",
   },
   // Workspace search scope (.zcodeignore) is a basic workspace-behavior setting for all users, placed at the end of Basic Settings.

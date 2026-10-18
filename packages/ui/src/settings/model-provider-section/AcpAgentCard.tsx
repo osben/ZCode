@@ -316,7 +316,7 @@ export function AcpAgentCard({
       </div>
 
       {loginResult ? (
-        <div className="mt-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-ui-sm">
+        <div className="mt-2 rounded-md border border-border bg-surface px-3 py-2 text-ui-sm">
           {loginResult.opened ? (
             <p className="text-foreground-subtle">
               {t("loginOpened", { command: loginResult.command })}
@@ -325,7 +325,7 @@ export function AcpAgentCard({
             <>
               <p className="text-foreground-subtle">{t("loginManual")}</p>
               <div className="mt-1 flex items-center gap-2">
-                <code className="min-w-0 flex-1 truncate rounded bg-background px-2 py-1 font-mono text-xs">
+                <code className="min-w-0 flex-1 truncate rounded bg-background px-2 py-1 font-mono text-ui-sm">
                   {loginResult.command}
                 </code>
                 <Button
@@ -375,7 +375,7 @@ export function AcpAgentCard({
               rows={3}
               value={envText}
               spellCheck={false}
-              className="font-mono text-xs"
+              className="font-mono text-ui-sm"
               onChange={(event) => editEnvText(event.target.value)}
             />
             {envParse.invalidLines.length > 0 ? (
@@ -395,7 +395,7 @@ export function AcpAgentCard({
               : t("testFailed", { message: testResult.error?.message ?? t("unknownError") })}
           </p>
           {testResult.stderrTail ? (
-            <pre className="max-h-24 overflow-auto whitespace-pre-wrap break-all rounded-md border border-border bg-muted/30 px-3 py-2 font-mono text-xs">
+            <pre className="max-h-24 overflow-auto whitespace-pre-wrap break-all rounded-md border border-border bg-surface px-3 py-2 font-mono text-ui-sm">
               {testResult.stderrTail}
             </pre>
           ) : null}

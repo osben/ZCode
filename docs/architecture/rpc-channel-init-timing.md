@@ -110,3 +110,35 @@ Files involved:
 - `packages/rpc/src/channels.ts` — add the `deferInit` parameter to the `ChannelServer` constructor and add a `ready()` method.
 - `packages/rpc/src/logging-middleware.ts` — forward `ready()` through `LoggingChannelServer`.
 - `packages/desktop/src/host/index.ts` — pass `deferInit=true` in Remote mode and call `server.ready()` after registering services.
+
+## Pending Request Lifecycle (Unregistered Channels)
+
+After `Initialize`, a request for a channel that is not registered yet is held by `ChannelServer` in `pendingRequests` (owner: `ChannelServer`, keyed by channel name, records identified by request id). `registerChannel` flushes the bucket on the next tick.
+
+Rules:
+
+| Event                                      | Promise request                                                                 | EventListen request                                                      |
+| ------------------------------------------ | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Channel registers before the timeout       | Executed once                                                                   | Subscribed once                                                          |
+| Timeout (`timeoutDelay`, default 1000 ms)  | `PromiseError` sent, record **removed**; a later registration never executes it | `console.error` only; record **kept** so a later registration subscribes |
+| Client sends `PromiseCancel` while pending | Record removed; never executed                                                  | —                                                                        |
+| Client sends `EventDispose` while pending  | —                                                                               | Record removed; never subscribed                                         |
+| `ChannelServer.dispose()`                  | All pending timers cleared, map emptied                                         | Same                                                                     |
+
+Rationale:
+
+- The client rejects and forgets a Promise on timeout or cancel. Executing it later would run a side effect whose result nobody can observe (double-execution window for mutations), and keeping the record leaks its arguments for the server lifetime.
+- The client never receives an error for a pending EventListen and keeps its emitter until the last listener is removed, so a late registration still yields a working subscription. The record is released when the client removes its last listener (`EventDispose`) or when the server is disposed. `ChannelClient.dispose()` does not send `EventDispose`, so every transport owner must dispose its `ChannelServer` when the transport closes — the same requirement that already applies to active subscriptions.
+- A flow that legitimately needs more than `timeoutDelay` to register channels must use `deferInit` (above) or a larger `timeoutDelay`, not rely on late execution.
+
+Event order for a Promise to a channel that registers late:
+
+```
+client                         ChannelServer
+──────                         ─────────────
+call(id=7) ──────────────────→ channel missing → pendingRequests["x"] = [{id 7, timer}]
+                               ... timeoutDelay ...
+         ←── PromiseError(7) ── timer fires → record 7 removed
+reject; handler deleted
+                               registerChannel("x") → flush: bucket empty → nothing runs
+```

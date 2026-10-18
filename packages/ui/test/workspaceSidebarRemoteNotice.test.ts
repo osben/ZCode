@@ -330,7 +330,7 @@ describe("WorkspaceSidebarItem remote notice", () => {
     const expandedHtml = renderWorkspaceItem({ isExpanded: true, taskListHasUnread: true });
 
     expect(collapsedHtml).toContain('data-workspace-unread-indicator="true"');
-    expect(collapsedHtml).toContain("bg-sky-500 dark:bg-sky-400");
+    expect(collapsedHtml).toContain("bg-icon-blue");
     expect(expandedHtml).not.toContain('data-workspace-unread-indicator="true"');
   });
 
