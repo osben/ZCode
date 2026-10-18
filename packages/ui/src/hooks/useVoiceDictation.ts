@@ -105,6 +105,20 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     [voiceDictationService],
   );
 
+  /** Cancels a stream once its queued feed batches have drained, so the Host never sees a feed after the cancel. */
+  const cancelStreamAfterQueue = useCallback(
+    (streamId: string) => {
+      void streamQueueRef.current
+        .then(() => voiceDictationService?.cancelStream(streamId))
+        .catch((error: unknown) => {
+          logger.warn("voice dictation stream cancellation failed", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+    },
+    [voiceDictationService],
+  );
+
   const failStream = useCallback(
     (streamId: string, error: unknown) => {
       if (streamIdRef.current !== streamId) return;
@@ -176,6 +190,9 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
 
   const start = useCallback(async (): Promise<void> => {
     if (!enabled || phaseRef.current !== "idle" || recorder.isRecording) return;
+    // A cancelled start can still be waiting for the microphone permission prompt; the recorder
+    // cannot abort that request, so a second capture must not begin until it has settled.
+    if (startPromiseRef.current) return;
     if (!voiceDictationService) return;
     if (!modelId) {
       toast(intl.formatMessage({ id: "voiceDictation.noModelSelected" }), {
@@ -222,7 +239,8 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
         if (generation !== startGenerationRef.current) {
           recorder.cancel();
           if (streamId) {
-            streamIdRef.current = null;
+            // Only release the stream this stale start owns; a newer attempt may have set its own id.
+            if (streamIdRef.current === streamId) streamIdRef.current = null;
             cancelServiceStream(streamId);
           }
           return;
@@ -257,7 +275,11 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
       }
     })();
     startPromiseRef.current = pending;
-    await pending;
+    try {
+      await pending;
+    } finally {
+      if (startPromiseRef.current === pending) startPromiseRef.current = null;
+    }
   }, [
     cancelServiceStream,
     enabled,
@@ -297,16 +319,8 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     const streamId = streamIdRef.current;
     streamIdRef.current = null;
     streamBacklogRef.current = [];
-    if (streamId) {
-      void streamQueueRef.current
-        .then(() => voiceDictationService?.cancelStream(streamId))
-        .catch((error: unknown) => {
-          logger.warn("voice dictation stream cancellation failed", {
-            error: error instanceof Error ? error.message : String(error),
-          });
-        });
-    }
-  }, [recorder, recordingAudio, updatePhase, voiceDictationService]);
+    if (streamId) cancelStreamAfterQueue(streamId);
+  }, [cancelStreamAfterQueue, recorder, recordingAudio, updatePhase]);
 
   const stop = useCallback(async (): Promise<void> => {
     // When released quickly after a press, recording may still be waiting for microphone
@@ -446,17 +460,9 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
       const streamId = streamIdRef.current;
       streamIdRef.current = null;
       streamBacklogRef.current = [];
-      if (streamId) {
-        void streamQueueRef.current
-          .then(() => voiceDictationService?.cancelStream(streamId))
-          .catch((error: unknown) => {
-            logger.warn("voice dictation stream cancellation failed", {
-              error: error instanceof Error ? error.message : String(error),
-            });
-          });
-      }
+      if (streamId) cancelStreamAfterQueue(streamId);
     },
-    [recorder, recordingAudio, voiceDictationService],
+    [cancelStreamAfterQueue, recorder, recordingAudio],
   );
 
   return { phase, level, preview, start, stop, cancel, toggle };

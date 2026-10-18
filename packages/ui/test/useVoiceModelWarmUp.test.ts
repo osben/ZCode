@@ -77,13 +77,18 @@ describe("useVoiceModelWarmUp", () => {
   });
 
   it("does nothing when disabled, without a service, or without a selected model", async () => {
+    const disabledWarmUp = mocks.service!.warmUp!;
     render(false);
     focusComposer();
+    await flush();
+    expect(disabledWarmUp).not.toHaveBeenCalled();
     cleanup();
 
     mocks.service = null;
-    render();
-    focusComposer();
+    expect(() => {
+      render();
+      focusComposer();
+    }).not.toThrow();
     cleanup();
 
     mocks.service = { setIdleUnloadMinutes: vi.fn(), warmUp: vi.fn() };

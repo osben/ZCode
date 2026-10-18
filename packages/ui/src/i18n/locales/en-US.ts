@@ -7793,7 +7793,7 @@ const enUS: Record<string, string> = {
   "voiceDictation.noModelSelected":
     "Choose a transcription model in Settings → Voice dictation first.",
   "voiceDictation.openSettings": "Open settings",
-  "voiceDictation.tooShort": "Recording too short. Hold the shortcut while you speak.",
+  "voiceDictation.tooShort": "Recording too short. Keep recording until you finish speaking.",
   "voiceDictation.stillLoading":
     "The speech model was still loading. Start speaking once recording begins.",
   "voiceDictation.composer.cancel": "Cancel voice input",

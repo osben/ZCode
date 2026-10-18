@@ -14,6 +14,9 @@ const mocks = vi.hoisted(() => ({
   feedbackSound: null as ReturnType<typeof vi.fn> | null,
   platform: { setDictationSystemMute: null as ReturnType<typeof vi.fn> | null },
   openSettings: vi.fn(),
+  /** Holds every recorder.start() until released, to model a pending microphone permission prompt. */
+  recorderStartGate: null as Promise<void> | null,
+  recorderStartCount: 0,
   logger: { warn: vi.fn() },
 }));
 
@@ -53,6 +56,8 @@ vi.mock("@/lib/voiceDictationRecorder.js", () => ({
       mocks.recorder = this;
     }
     async start(options: { onChunk?: (samples: Float32Array) => void; collectSamples?: boolean }) {
+      mocks.recorderStartCount += 1;
+      await mocks.recorderStartGate;
       this.options = options;
       this.isRecording = true;
     }
@@ -663,5 +668,48 @@ describe("useVoiceDictation post-processing", () => {
     });
     expect(onTranscript).not.toHaveBeenCalled();
     expect(hook.result.current.phase).toBe("idle");
+  });
+});
+
+describe("useVoiceDictation concurrent starts", () => {
+  afterEach(() => {
+    mocks.recorderStartGate = null;
+    mocks.recorderStartCount = 0;
+  });
+
+  it("ignores a new start while a cancelled start is still waiting for microphone permission", async () => {
+    let grantPermission!: () => void;
+    mocks.recorderStartGate = new Promise<void>((resolve) => (grantPermission = resolve));
+    mocks.recorderStartCount = 0;
+    const onTranscript = vi.fn();
+    const hook = renderHook(() =>
+      useVoiceDictation({ enabled: true, onTranscript, scopeRef: { current: null } }),
+    );
+
+    let first!: Promise<void>;
+    act(() => {
+      first = hook.result.current.start();
+    });
+    await waitFor(() => expect(mocks.recorderStartCount).toBe(1));
+    // The user cancels while the permission prompt is open, then presses the shortcut again.
+    act(() => hook.result.current.cancel());
+    expect(hook.result.current.phase).toBe("idle");
+    await act(async () => hook.result.current.start());
+
+    // The second start must not open a second capture while the first request is unresolved.
+    expect(mocks.recorderStartCount).toBe(1);
+
+    await act(async () => {
+      grantPermission();
+      await first;
+    });
+    expect(hook.result.current.phase).toBe("idle");
+    expect(mocks.recorder?.isRecording).toBe(false);
+
+    // Once the stale start has settled a fresh start works normally.
+    mocks.recorderStartGate = null;
+    await act(async () => hook.result.current.start());
+    expect(mocks.recorderStartCount).toBe(2);
+    await waitFor(() => expect(hook.result.current.phase).toBe("recording"));
   });
 });

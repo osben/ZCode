@@ -7469,7 +7469,7 @@ const zhCN: Record<string, string> = {
     "Web 可以采集麦克风音频，但本地转写模型目前只在 ZCode Desktop 中运行。",
   "voiceDictation.noModelSelected": "请先在 设置 → 语音输入 中选择转写模型。",
   "voiceDictation.openSettings": "打开设置",
-  "voiceDictation.tooShort": "录音时间太短。请在说话时按住快捷键。",
+  "voiceDictation.tooShort": "录音时间太短。请持续录音，直到说完。",
   "voiceDictation.stillLoading": "语音模型仍在加载。请在开始录音后再说话。",
   "voiceDictation.composer.cancel": "取消语音输入",
   "voiceDictation.microphoneFailed": "无法访问麦克风，请检查输入设备和系统权限。",

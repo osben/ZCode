@@ -7381,7 +7381,7 @@ const ukUA: Record<string, string> = {
   "voiceDictation.noModelSelected":
     "Спочатку виберіть модель розпізнавання в Налаштуваннях → Голосове введення.",
   "voiceDictation.openSettings": "Відкрити налаштування",
-  "voiceDictation.tooShort": "Запис закороткий. Тримайте скорочення, поки говорите.",
+  "voiceDictation.tooShort": "Запис закороткий. Записуйте, доки не закінчите говорити.",
   "voiceDictation.stillLoading":
     "Модель розпізнавання ще завантажувалась. Говоріть, коли почнеться запис.",
   "voiceDictation.composer.cancel": "Скасувати голосове введення",

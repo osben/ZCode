@@ -103,14 +103,18 @@ export function isLiveStreamingModel(model: Pick<VoiceModelLike, "streaming">): 
 
 /**
  * Language handed to the native engine: models whose native layer rejects bare codes get their locale
- * (`uk` -> `uk-UA`); automatic detection (no language) and unmapped codes pass through unchanged.
+ * (`uk` -> `uk-UA`); automatic detection (no language) passes through, and a code such as `ca` that the model does not
+ * map falls back to automatic detection. Models without a locale map receive the code unchanged.
  */
 export function toNativeLanguage(
   model: { languageLocales?: Readonly<Record<string, string>> } | undefined,
   language: string | undefined,
 ): string | undefined {
   if (!language) return undefined;
-  return model?.languageLocales?.[language] ?? language;
+  const locales = model?.languageLocales;
+  if (!locales) return language;
+  // The native layer rejects bare codes for these models: an unmapped code falls back to auto-detection.
+  return locales[language];
 }
 
 export interface VoiceModelFilter {

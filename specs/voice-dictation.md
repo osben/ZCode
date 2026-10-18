@@ -139,7 +139,7 @@ sequenceDiagram
 - Catalog metadata alone is insufficient. At model load the transcriber derives a stream family from the loaded model with the pure `selectStreamFamily({ supportsStreaming, accepts })`: when `capabilities.supportsStreaming` is false it returns none; otherwise it returns the first of `parakeet_buffered`, `parakeet` that `model.accepts()`. The same result is used both to decide whether streaming is available and as the `family` of `session.stream()`; there are no two hard-coded copies.
 - Models for which no family is selected stay on the one-shot path. Do not infer support from a model name or description, and do not catch stream-begin errors to fall back silently.
 - The catalog `streaming` flag means "runtime-verified to stream with a family `selectStreamFamily` can pick". It drives the `Streaming` badge and filter, so it may only be set after a real load-and-feed check (see the findings section). `isLiveStreamingModel` reads that flag and nothing else.
-- Language codes: the catalog may declare `languageLocales` (code to locale, for example `uk` to `uk-UA`) for models whose native layer rejects bare ISO 639-1 codes. `VoiceTranscriber` resolves the engine language from the descriptor of the requested model for both one-shot and streaming; no locale list is read from `capabilities.languages` because the 0.3.1 binding returns it garbled. Auto detection (no language) is passed through unchanged.
+- Language codes: the catalog may declare `languageLocales` (code to locale, for example `uk` to `uk-UA`) for models whose native layer rejects bare ISO 639-1 codes. `VoiceTranscriber` resolves the engine language from the descriptor of the requested model for both one-shot and streaming; no locale list is read from `capabilities.languages` because the 0.3.1 binding returns it garbled. Auto detection (no language) is passed through unchanged, and a code that a locale-mapped model does not list falls back to auto detection (the native layer would reject it); models without `languageLocales` receive the code as is.
 
 ### Acceptance scenarios for implementation
 
@@ -303,8 +303,8 @@ Streaming facts, confirmed by running the models with `transcribe-cpp` 0.3.1 on 
 
 1. ~~Select the stream family per loaded model~~ — resolved (`selectStreamFamily`).
 2. ~~Locale mapping and runtime verification for `nemotron-3.5-asr-streaming-0.6b`~~ — resolved (`languageLocales`, added to the catalog).
-3. Voxtral realtime and Moonshine streaming need the transcriber to choose the stream family per model.
-4. Model warm-up on composer focus, level meter RMS and silence hint, recording timer, `AudioWorklet` capture.
+3. Voxtral realtime and Moonshine streaming: add their family kinds to `STREAM_FAMILY_KINDS` after a runtime load-and-feed check.
+4. ~~Model warm-up on composer focus~~ — resolved (see "Model warm-up on composer focus"). Level meter RMS and silence hint, recording timer, `AudioWorklet` capture.
 
 ## Model warm-up on composer focus
 
@@ -381,7 +381,7 @@ sequenceDiagram
 | VD-DOT-06 | Reduced motion is requested                          | The loading dot does not pulse.                                   |
 | VD-DOT-07 | Window hidden                                        | The renderer stops polling until it is visible again.             |
 
-## Post-processing of dictated text (specified, not implemented yet)
+## Post-processing of dictated text
 
 ### Product rules
 

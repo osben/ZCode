@@ -119,7 +119,10 @@ test("toNativeLanguage maps codes to locales only for models that need them", ()
   const nemotron = VOICE_MODEL_CATALOG.find((m) => m.id === "nemotron-3.5-asr-streaming-0.6b");
   assert.equal(toNativeLanguage(nemotron, "uk"), "uk-UA");
   assert.equal(toNativeLanguage(nemotron, "ru"), "ru-RU");
-  assert.equal(toNativeLanguage(nemotron, "xx"), "xx");
+  // The native layer rejects bare codes for this model, so a code it does not map falls back to
+  // automatic detection instead of failing every recording.
+  assert.equal(toNativeLanguage(nemotron, "xx"), undefined);
+  assert.equal(toNativeLanguage(nemotron, "ca"), undefined);
   assert.equal(toNativeLanguage(nemotron, undefined), undefined);
   assert.equal(toNativeLanguage(undefined, "uk"), "uk");
   assert.equal(toNativeLanguage({}, "en"), "en");
