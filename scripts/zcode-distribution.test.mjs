@@ -96,6 +96,23 @@ test("Web startup errors preserve a failing exit code", async (t) => {
   );
 });
 
+test("Web mode rejects --no-token on a non-loopback host before starting the server", async (t) => {
+  const { runner, directory } = await fixture(t);
+  await assert.rejects(
+    exec(process.execPath, [
+      runner,
+      "--web",
+      "--workspace",
+      directory,
+      "--host",
+      "0.0.0.0",
+      "--no-open",
+      "--no-token",
+    ]),
+    /--no-token is only allowed with a loopback --host/,
+  );
+});
+
 test("Web mode passes its runtime configuration and terminates its child on shutdown", async (t) => {
   const { directory, runner, root } = await fixture(t);
   const resultPath = join(directory, "web-result.json");

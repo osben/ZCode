@@ -168,6 +168,12 @@ async function assertRuntimeFiles() {
 }
 
 async function serve(options) {
+  if (options.tokenEnabled === false && !isLocalHost(options.host)) {
+    // The Web server refuses non-loopback listeners without a token; fail here with a CLI-level hint.
+    throw new Error(
+      `--no-token is only allowed with a loopback --host (127.0.0.1, localhost, ::1); got "${options.host}".`,
+    );
+  }
   await assertRuntimeFiles();
   const port = options.port && options.port > 0 ? options.port : await pickPort(options.host);
   const protect = options.tokenEnabled ?? shouldProtectHost(options.host);
