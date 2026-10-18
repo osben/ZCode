@@ -7,6 +7,8 @@ import zhCN from "../src/i18n/locales/zh-CN.js";
 // Keys present in en but missing from zh: the settings key is an existing locale exception;
 // English needs a singular form for these plural families while Chinese uses only `.other`.
 const EN_ONLY_KEYS = [
+  "branchSwitchGuard.taskCount.one",
+  "git.branchSwitcher.currentDirty.one",
   "settings.memory.viewer.disabled",
   "taskList.childSideChatsCount.one",
   "taskList.childSubagentsCount.one",
