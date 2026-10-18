@@ -7535,6 +7535,10 @@ const zhCN: Record<string, string> = {
     "无法加载输出风格。请切换到“输出风格”标签页并重试，然后再编辑此片段。",
   "settings.systemPrompt.memoryRootHint":
     "请保留 {placeholder} 标记；新会话启动时会将其替换为该会话的记忆目录。",
+  "settings.systemPrompt.memoryExtractionHint":
+    "每次成功回合后在后台运行。{countPlaceholder} 会替换为需要回顾的最近消息数；{listPlaceholder} 会替换为现有记忆文件列表（没有时为空）。",
+  "settings.systemPrompt.memoryDreamHint":
+    "用于手动 /dream 整理。{rootPlaceholder} 会替换为记忆目录，{transcriptPlaceholder} 会替换为会话记录目录。工具限制和会话列表始终会追加在末尾。",
   "settings.systemPrompt.emptyHint": "留空时会使用内置默认值，不能保存为空的自定义内容。",
   "settings.systemPrompt.diffTitle": "变更",
   "settings.systemPrompt.save": "保存",
@@ -7551,6 +7555,8 @@ const zhCN: Record<string, string> = {
   "settings.systemPrompt.section.communication": "沟通方式",
   "settings.systemPrompt.section.contextManagement": "上下文管理",
   "settings.systemPrompt.section.memoryGuidance": "记忆指引",
+  "settings.systemPrompt.section.memoryExtraction": "记忆提取",
+  "settings.systemPrompt.section.memoryDream": "记忆整理（/dream）",
   "settings.outputStyles.title": "输出风格",
   "settings.outputStyles.description":
     "选择智能体组织回复的方式。内置默认值保存在应用代码中；编辑会保存为覆盖文件，随时可以恢复默认。",

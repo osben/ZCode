@@ -7457,6 +7457,10 @@ const ukUA: Record<string, string> = {
     "Не вдалося завантажити стилі відповідей. Перейдіть на вкладку «Стилі відповідей» і повторіть спробу перед редагуванням цього фрагмента.",
   "settings.systemPrompt.memoryRootHint":
     "Залиште маркер {placeholder}; під час запуску нового сеансу його буде замінено каталогом пам'яті цього сеансу.",
+  "settings.systemPrompt.memoryExtractionHint":
+    "Виконується у фоні після кожного успішного ходу. {countPlaceholder} замінюється кількістю останніх повідомлень для перегляду; {listPlaceholder} — списком наявних файлів пам'яті (порожньо, якщо їх немає).",
+  "settings.systemPrompt.memoryDreamHint":
+    "Використовується ручною консолідацією /dream. {rootPlaceholder} замінюється каталогом пам'яті, {transcriptPlaceholder} — каталогом стенограм сеансів. Обмеження інструментів і список сеансів додаються завжди.",
   "settings.systemPrompt.emptyHint":
     "Порожній фрагмент використовує вбудоване стандартне значення і не може зберігатися як зміна.",
   "settings.systemPrompt.diffTitle": "Зміни",
@@ -7474,6 +7478,8 @@ const ukUA: Record<string, string> = {
   "settings.systemPrompt.section.communication": "Спілкування",
   "settings.systemPrompt.section.contextManagement": "Керування контекстом",
   "settings.systemPrompt.section.memoryGuidance": "Настанови щодо пам'яті",
+  "settings.systemPrompt.section.memoryExtraction": "Видобування пам'яті",
+  "settings.systemPrompt.section.memoryDream": "Консолідація пам'яті (/dream)",
   "settings.outputStyles.title": "Стилі відповідей",
   "settings.outputStyles.description":
     "Виберіть, як агент формує свої відповіді. Вбудовані стандартні значення зберігаються в коді програми; редагування зберігаються як файли перевизначення, які завжди можна відкотити.",

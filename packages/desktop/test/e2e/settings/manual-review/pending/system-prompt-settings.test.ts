@@ -68,6 +68,8 @@ describe("System Prompt Settings E2E", () => {
       "communication",
       "memory-guidance",
       "context-management",
+      "memory-extraction",
+      "memory-dream",
     ];
     await browser.waitUntil(
       async () => await $(sel(testId(TID_SETTINGS_SYSTEM_PROMPT_ROW, "cli-prefix"))).isDisplayed(),

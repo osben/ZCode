@@ -3,7 +3,9 @@ import {
   DEFAULT_IDENTITY_INTRO_PROMPT,
   DEFAULT_MEMORY_GUIDANCE_PROMPT,
   OUTPUT_STYLE_IDENTITY_INTRO_PROMPT,
+  SYSTEM_PROMPT_DEFAULTS,
   SYSTEM_PROMPT_OVERRIDE_KEYS,
+  type SystemPromptOverrideKey,
 } from "@zcode/shared";
 import type { SystemPromptSection } from "@zcode/services";
 import {
@@ -12,6 +14,8 @@ import {
   resolveEffectiveSystemPrompt,
   resolveSystemPromptDefault,
   SYSTEM_PROMPT_SECTION_DISPLAY_ORDER,
+  SYSTEM_PROMPT_SECTION_VARIABLE_HINTS,
+  isSystemPromptSectionOfferedOnHost,
 } from "../src/settings/systemPromptEditorModel.js";
 
 function section(key: string, overrideContent: string | null = null): SystemPromptSection {
@@ -41,7 +45,31 @@ describe("systemPromptEditorModel", () => {
       "communication",
       "memory-guidance",
       "context-management",
+      "memory-extraction",
+      "memory-dream",
     ] satisfies (typeof SYSTEM_PROMPT_OVERRIDE_KEYS)[number][]);
+  });
+
+  it("hides the background Memory agent sections on a remote host only", () => {
+    expect(isSystemPromptSectionOfferedOnHost("memory-extraction", false)).toBe(true);
+    expect(isSystemPromptSectionOfferedOnHost("memory-dream", false)).toBe(true);
+    expect(isSystemPromptSectionOfferedOnHost("memory-extraction", true)).toBe(false);
+    expect(isSystemPromptSectionOfferedOnHost("memory-dream", true)).toBe(false);
+    expect(isSystemPromptSectionOfferedOnHost("memory-guidance", true)).toBe(true);
+  });
+
+  it("shows placeholder guidance only for sections that the runtime substitutes", () => {
+    expect(Object.keys(SYSTEM_PROMPT_SECTION_VARIABLE_HINTS).sort()).toEqual([
+      "memory-dream",
+      "memory-extraction",
+      "memory-guidance",
+    ]);
+    for (const [key, hint] of Object.entries(SYSTEM_PROMPT_SECTION_VARIABLE_HINTS)) {
+      const template = SYSTEM_PROMPT_DEFAULTS[key as SystemPromptOverrideKey];
+      for (const placeholder of Object.values(hint.values)) {
+        expect(template, `${key} default must contain ${placeholder}`).toContain(placeholder);
+      }
+    }
   });
 
   it("uses the active Output Style identity intro as the default baseline", () => {

@@ -24,6 +24,7 @@ import {
 } from "../../memory/memory-agent-loop.js";
 import { findLatestReadFileState } from "../../tool/read-file-state.js";
 import type { AgentRuntimeInternal } from "../internal.js";
+import { resolveMainAgentSystemPromptOverrides } from "../methods/context.js";
 import { recordModelUsageFact } from "../methods/usage-observability.js";
 import {
   buildProjectMemoryAgentProviderMessages,
@@ -431,6 +432,7 @@ async function runDreamConsolidation(
   try {
     const prompt = buildMemoryDreamPrompt({
       memoryRoot: context.memoryRoot,
+      override: resolveMainAgentSystemPromptOverrides(runtime.config)?.["memory-dream"],
       sessionIds: input.transcriptSessionIds,
       transcriptRoot: runtime.modelIoDir!,
     });

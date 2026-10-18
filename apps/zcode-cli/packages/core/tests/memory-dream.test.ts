@@ -39,6 +39,23 @@ describe("Memory Dream prompt", () => {
       }),
     ).toBe(fixture);
   });
+
+  it("replaces only the body with a memory-dream override and keeps the runtime tail", () => {
+    const fixture = readFileSync(
+      new URL("./fixtures/memory/dream-prompt.md", import.meta.url),
+      "utf8",
+    ).trimEnd();
+    const runtimeTail = fixture.slice(fixture.indexOf("## Additional context"));
+
+    expect(
+      buildMemoryDreamPrompt({
+        memoryRoot: "/memory",
+        override: "Consolidate {{memoryRoot}} using transcripts in {{transcriptRoot}}.",
+        sessionIds: Array.from({ length: 7 }, () => "<SESSION_ID>"),
+        transcriptRoot: "/transcripts",
+      }),
+    ).toBe(`Consolidate /memory using transcripts in /transcripts.\n\n${runtimeTail}`);
+  });
 });
 
 describe("auto Dream timing gate", () => {

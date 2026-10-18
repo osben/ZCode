@@ -645,6 +645,12 @@ tool calls 仍执行，但不再发起第 6 次模型请求。每次 provider at
 
 prompt 的 no-op 响应逐字为 `Nothing to save.`。scheduler 不解析该文本来推导额外状态。
 
+Extraction 指令文本可由 fork 的 system-prompt override key `memory-extraction`
+（`~/.zcode/system-prompt/memory-extraction.md`，见 `docs/system-prompt-overrides.md`）整体替换，
+占位符为 `{{messageCount}}` 与 `{{existingMemories}}`。默认模板位于 shared `system-prompt.ts`，
+替换占位符后与冻结 fixture `extraction-prompt.md` 逐字一致；无 override 时行为不变。override 只改变
+prompt 文本，不改变执行策略、拒绝文案、turn 上限或 cursor 语义。
+
 ZCode 关闭单个 session 后 app-server 仍继续承载其他 session，session close 不等于进程退出，
 不能只在进程即将退出时 drain Extraction。因此 session close 必须先终止该 runtime 的 Extraction 生命周期，再释放 session 资源：
 
@@ -799,6 +805,10 @@ Dream 复用 Extraction 的执行策略，最大 50 个 model turns；第 50 次
 prompt 固定执行 orient、signal、consolidate、prune/index 四个阶段，并要求最终 `MEMORY.md`
 低于 200 行、约 25KB。Runtime 不根据 prompt 再实现 duplicate detector、自动 rebuild、snapshot
 或文件 rollback。
+
+Dream prompt 正文可由 override key `memory-dream` 替换（占位符 `{{memoryRoot}}`、
+`{{transcriptRoot}}`）；`## Additional context` 尾部（tool constraints 与 session 列表）始终由
+Runtime 追加，不可覆盖。默认模板替换后与 `dream-prompt.md` 逐字一致。
 
 Dream 唯一允许的 mutation observer 只记录本次 Dream tool-use 中的 Memory Write/Edit 和窄
 `rm` 目标路径。记录发生在 tool-use 进入执行边界时，因此不以执行结果成功为条件；它不扩展到

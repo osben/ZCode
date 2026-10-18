@@ -7865,6 +7865,10 @@ const enUS: Record<string, string> = {
     "Could not load Output Styles. Switch to the Output Styles tab and retry before editing this section.",
   "settings.systemPrompt.memoryRootHint":
     "Keep the {placeholder} token in the text to insert the session's memory directory when a new session starts.",
+  "settings.systemPrompt.memoryExtractionHint":
+    "Runs in the background after each successful turn. {countPlaceholder} becomes the number of recent messages to review; {listPlaceholder} becomes the list of existing memory files (empty when there are none).",
+  "settings.systemPrompt.memoryDreamHint":
+    "Used by the manual /dream consolidation. {rootPlaceholder} becomes the memory directory and {transcriptPlaceholder} the session transcripts directory. Tool limits and the session list are always appended.",
   "settings.systemPrompt.emptyHint":
     "A blank section uses its built-in default and cannot be saved as a customization.",
   "settings.systemPrompt.diffTitle": "Changes",
@@ -7882,6 +7886,8 @@ const enUS: Record<string, string> = {
   "settings.systemPrompt.section.communication": "Communication",
   "settings.systemPrompt.section.contextManagement": "Context management",
   "settings.systemPrompt.section.memoryGuidance": "Memory guidance",
+  "settings.systemPrompt.section.memoryExtraction": "Memory extraction",
+  "settings.systemPrompt.section.memoryDream": "Memory consolidation (/dream)",
   "settings.outputStyles.title": "Output Styles",
   "settings.outputStyles.description":
     "Choose how the agent shapes its responses. Built-in defaults live in the app; edits are saved as override files you can always restore.",

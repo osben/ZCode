@@ -25,6 +25,8 @@ import {
   resolveEffectiveSystemPrompt,
   resolveSystemPromptDefault,
   SYSTEM_PROMPT_SECTION_TITLE_IDS,
+  SYSTEM_PROMPT_SECTION_VARIABLE_HINTS,
+  isSystemPromptSectionOfferedOnHost,
 } from "@/settings/systemPromptEditorModel.js";
 import { useConfirmDialogStore } from "@/store/confirmDialogStore.js";
 
@@ -130,13 +132,16 @@ function DesktopSystemPromptSection({
     );
   const identityBaselineReady = outputStyles.status === "ready";
 
-  const rows = view.sections.map((section) => {
-    const defaultContent = resolveSystemPromptDefault(section, hasActiveOutputStyle);
-    return {
-      section,
-      effectiveContent: resolveEffectiveSystemPrompt(section, defaultContent),
-    };
-  });
+  const rows = view.sections
+    .filter((section) => isSystemPromptSectionOfferedOnHost(section.key, view.isRemote))
+    .map((section) => {
+      const defaultContent = resolveSystemPromptDefault(section, hasActiveOutputStyle);
+      return {
+        section,
+        effectiveContent: resolveEffectiveSystemPrompt(section, defaultContent),
+        variableHint: SYSTEM_PROMPT_SECTION_VARIABLE_HINTS[section.key],
+      };
+    });
 
   return (
     <div className="space-y-3" data-testid={TID_SETTINGS_SYSTEM_PROMPT_SECTION}>
@@ -179,7 +184,7 @@ function DesktopSystemPromptSection({
       ) : (
         <>
           <SettingsGroupCard>
-            {rows.map(({ section, effectiveContent }, index) => (
+            {rows.map(({ section, effectiveContent, variableHint }, index) => (
               <div
                 key={section.key}
                 className={cn(index > 0 && "border-t border-border")}
@@ -204,12 +209,9 @@ function DesktopSystemPromptSection({
                         </span>
                       ) : null}
                     </div>
-                    {section.key === "memory-guidance" ? (
+                    {variableHint ? (
                       <p className="mt-1 text-ui-xs leading-5 text-foreground-subtle">
-                        {intl.formatMessage(
-                          { id: "settings.systemPrompt.memoryRootHint" },
-                          { placeholder: "{{memoryRoot}}" },
-                        )}
+                        {intl.formatMessage({ id: variableHint.id }, variableHint.values)}
                       </p>
                     ) : null}
                     {section.key === "identity-intro" && !identityBaselineReady ? (

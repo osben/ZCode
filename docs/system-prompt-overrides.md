@@ -26,17 +26,20 @@ sections themselves.
 
 ## Editable keys and boundaries
 
-| Key                  | Replaces                                                                               | Notes                                                                                                                                                                                                                                                                                                                                                                         |
-| -------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cli-prefix`         | `You are ZCode, an interactive coding agent`                                           |                                                                                                                                                                                                                                                                                                                                                                               |
-| `identity-intro`     | identity opening sentence                                                              | Beats an active Output Style intro; the Output Style still appends its `# Output Style` section                                                                                                                                                                                                                                                                               |
-| `harness`            | the `# Harness` block                                                                  | Applies to the main agent; the workflow-actor identity keeps the constant (subagent contract)                                                                                                                                                                                                                                                                                 |
-| `communication`      | the whole `# Communicating with the user` section incl. code-style and risk paragraphs |                                                                                                                                                                                                                                                                                                                                                                               |
-| `context-management` | the whole `# Context management` section incl. autonomy appendix                       |                                                                                                                                                                                                                                                                                                                                                                               |
-| `memory-guidance`    | the `# Memory` guidance body                                                           | Supports one placeholder, `{{memoryRoot}}`, substituted with the session memory root; override replaces the whole body incl. the retrieval-branch line. The default the service reports is the active-branch rendering (`composeMemoryGuidanceDefault("default-index")`), which includes the `MEMORY.md` index pointer paragraph — byte-identical to what the runtime renders |
+| Key                  | Replaces                                                                                                  | Notes                                                                                                                                                                                                                                                                                                                                                                         |
+| -------------------- | --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cli-prefix`         | `You are ZCode, an interactive coding agent`                                                              |                                                                                                                                                                                                                                                                                                                                                                               |
+| `identity-intro`     | identity opening sentence                                                                                 | Beats an active Output Style intro; the Output Style still appends its `# Output Style` section                                                                                                                                                                                                                                                                               |
+| `harness`            | the `# Harness` block                                                                                     | Applies to the main agent; the workflow-actor identity keeps the constant (subagent contract)                                                                                                                                                                                                                                                                                 |
+| `communication`      | the whole `# Communicating with the user` section incl. code-style and risk paragraphs                    |                                                                                                                                                                                                                                                                                                                                                                               |
+| `context-management` | the whole `# Context management` section incl. autonomy appendix                                          |                                                                                                                                                                                                                                                                                                                                                                               |
+| `memory-guidance`    | the `# Memory` guidance body                                                                              | Supports one placeholder, `{{memoryRoot}}`, substituted with the session memory root; override replaces the whole body incl. the retrieval-branch line. The default the service reports is the active-branch rendering (`composeMemoryGuidanceDefault("default-index")`), which includes the `MEMORY.md` index pointer paragraph — byte-identical to what the runtime renders |
+| `memory-extraction`  | the background Memory Extraction instructions (spec: `apps/zcode-cli/docs/design/v2/memory/README.md` §6) | Placeholders `{{messageCount}}` (recent message count) and `{{existingMemories}}` (the `## Existing memory files` block, or empty when the manifest is empty). Override replaces the whole instruction text. Main-equivalent runtimes only, same boundary as the other keys                                                                                                   |
+| `memory-dream`       | the manual `/dream` consolidation instructions (spec §7)                                                  | Placeholders `{{memoryRoot}}` and `{{transcriptRoot}}`. Override replaces the body only; the runtime always appends the `## Additional context` tail (tool constraints + session list), because that tail mirrors the execution policy and the gate's session selection                                                                                                       |
 
 **Not editable:** the authorized-security notice (product safety constant), `# ZCode Desktop
 Context`, `# Session-specific guidance`, `# Environment`, `gitStatus` (runtime-computed), and
+the Memory Extraction/Dream runtime parts (`## Additional context` tail, execution policy, refusal texts), and
 all subagent/workflow prompt fragments — including the subagent context builder's CLI prefix
 and the workflow-actor `# Harness`, which keep the code defaults. These are shown read-only
 or omitted in the UI.
@@ -65,9 +68,10 @@ localized unsupported-host state because its Home-only service does not provide
 filesystem-backed system-prompt overrides. The UI must use the existing
 `ISystemPromptService`; no new service, protocol field, or runtime write path is introduced.
 
-The section lists exactly the six keys in `SYSTEM_PROMPT_OVERRIDE_KEYS`, ordered by their
-appearance in `ContextBuilder.build()`: `cli-prefix`, `identity-intro`, `harness`,
-`communication`, `memory-guidance`, `context-management`. Each entry shows its localized
+The section lists exactly the eight keys in `SYSTEM_PROMPT_OVERRIDE_KEYS`. The six main-prompt
+keys come first, ordered by their appearance in `ContextBuilder.build()`: `cli-prefix`,
+`identity-intro`, `harness`, `communication`, `memory-guidance`, `context-management`;
+the two background Memory agent keys follow: `memory-extraction`, `memory-dream`. Each entry shows its localized
 section name, one effective-text preview, a "Customized" state when an override file is
 effective, and an Edit action. Editing opens exactly one text editor for that section (the row
 preview is hidden until the editor closes), a diff preview while editing, and "Restore default"
@@ -106,18 +110,26 @@ prompt. The section does not change the runtime or push prompt updates into runn
   runtime substitutes the current session's memory root when a new session starts. Do not
   resolve or replace the placeholder in Settings.
 - Show variable guidance next to the section that uses it. `memory-guidance` supports only
-  `{{memoryRoot}}`, the path to the current session's memory directory. The other five
-  editable sections have no runtime variables and should not imply otherwise.
+  `{{memoryRoot}}`, the path to the current session's memory directory. `memory-extraction`
+  supports `{{messageCount}}` and `{{existingMemories}}`; `memory-dream` supports
+  `{{memoryRoot}}` and `{{transcriptRoot}}` and notes that tool constraints and the session list
+  are always appended. Placeholders stay literal in Settings. The other five editable sections
+  have no runtime variables and should not imply otherwise.
+- `memory-extraction` and `memory-dream` are offered only for the local host: Extraction and
+  Dream never run for remote workspaces, so a remote host's editor omits both rows.
+- The `memory-extraction` and `memory-dream` defaults are byte-identical to the frozen
+  provider-visible fixtures (`extraction-prompt.md`, `dream-prompt.md`) after placeholder
+  substitution; absent override files keep current behavior exactly.
 - Do not allow opening the `identity-intro` editor until Output Styles has resolved whether a
   style is active. This prevents a slow Output Styles load from capturing the plain default as
   the baseline when the runtime will use the Output Style intro.
-- The editor set is limited to the six keys above. The security notice, Desktop Context,
+- The editor set is limited to the eight keys above. The security notice, Desktop Context,
   session-specific guidance, Environment, `gitStatus`, and all subagent/workflow fragments
   remain read-only or omitted as described in "Not editable".
 
 ### Acceptance criteria
 
-- Settings exposes exactly the six whitelisted sections in the defined order and no protected
+- Settings exposes exactly the eight whitelisted sections (six on a remote host) in the defined order and no protected
   prompt fragment can be edited.
 - Each section displays its effective default or override, reports customization accurately,
   previews draft differences, saves overrides, and restores defaults by deleting files.
@@ -135,7 +147,9 @@ prompt. The section does not change the runtime or push prompt updates into runn
 - `identity-intro` shows the baseline selected by the active Output Style state; an override
   remains effective with an active style, and the editor cannot open until that state is
   resolved. `memory-guidance` retains the literal placeholder and runtime substitution remains
-  covered by the existing prompt contract; only it shows variable guidance.
+  covered by the existing prompt contract. `memory-extraction` and `memory-dream` show their own
+  placeholder guidance; an override reaches the next Extraction/Dream provider request of a new
+  session, and the Dream runtime tail is still appended after an overridden body.
 - Local edits use the local service; remote edits use the resolved remote service. A dirty
   draft cannot silently move to another host, be written to that other host, or be discarded
   without confirmation. Disconnected remote services cannot be used for writes.

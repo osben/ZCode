@@ -5,7 +5,10 @@ export interface EditableSystemPromptSection extends SystemPromptSection {
   key: SystemPromptOverrideKey;
 }
 
-/** Display order follows the editable sections' invocation order in ContextBuilder.build(). */
+/**
+ * Main-prompt sections follow their invocation order in ContextBuilder.build(); the background
+ * Memory agent prompts (Extraction, /dream) come after them.
+ */
 export const SYSTEM_PROMPT_SECTION_DISPLAY_ORDER: readonly SystemPromptOverrideKey[] = [
   "cli-prefix",
   "identity-intro",
@@ -13,6 +16,8 @@ export const SYSTEM_PROMPT_SECTION_DISPLAY_ORDER: readonly SystemPromptOverrideK
   "communication",
   "memory-guidance",
   "context-management",
+  "memory-extraction",
+  "memory-dream",
 ];
 
 export const SYSTEM_PROMPT_SECTION_TITLE_IDS: Record<SystemPromptOverrideKey, string> = {
@@ -22,7 +27,43 @@ export const SYSTEM_PROMPT_SECTION_TITLE_IDS: Record<SystemPromptOverrideKey, st
   communication: "settings.systemPrompt.section.communication",
   "context-management": "settings.systemPrompt.section.contextManagement",
   "memory-guidance": "settings.systemPrompt.section.memoryGuidance",
+  "memory-extraction": "settings.systemPrompt.section.memoryExtraction",
+  "memory-dream": "settings.systemPrompt.section.memoryDream",
 };
+
+/** Placeholder guidance for sections whose `{{name}}` tokens the runtime substitutes. */
+export const SYSTEM_PROMPT_SECTION_VARIABLE_HINTS: Partial<
+  Record<SystemPromptOverrideKey, { id: string; values: Record<string, string> }>
+> = {
+  "memory-guidance": {
+    id: "settings.systemPrompt.memoryRootHint",
+    values: { placeholder: "{{memoryRoot}}" },
+  },
+  "memory-extraction": {
+    id: "settings.systemPrompt.memoryExtractionHint",
+    values: { countPlaceholder: "{{messageCount}}", listPlaceholder: "{{existingMemories}}" },
+  },
+  "memory-dream": {
+    id: "settings.systemPrompt.memoryDreamHint",
+    values: { rootPlaceholder: "{{memoryRoot}}", transcriptPlaceholder: "{{transcriptRoot}}" },
+  },
+};
+
+/**
+ * Background Memory agents never run for remote workspaces (memory spec §6/§7), so their
+ * overrides would have no effect on a remote host and are not offered there.
+ */
+const LOCAL_ONLY_SYSTEM_PROMPT_KEYS: ReadonlySet<SystemPromptOverrideKey> = new Set([
+  "memory-extraction",
+  "memory-dream",
+]);
+
+export function isSystemPromptSectionOfferedOnHost(
+  key: SystemPromptOverrideKey,
+  isRemoteHost: boolean,
+): boolean {
+  return !isRemoteHost || !LOCAL_ONLY_SYSTEM_PROMPT_KEYS.has(key);
+}
 
 export function orderedEditableSystemPromptSections(
   sections: readonly SystemPromptSection[],
