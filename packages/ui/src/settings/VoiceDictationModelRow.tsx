@@ -47,6 +47,7 @@ export const MODEL_DESCRIPTION_MESSAGE_IDS: Readonly<Record<string, string>> = {
   "parakeet-tdt-0.6b-v3": "voiceDictation.models.description.parakeetMultilingual",
   "canary-180m-flash": "voiceDictation.models.description.canary",
   "nemotron-speech-streaming-en-0.6b": "voiceDictation.models.description.nemotron",
+  "nemotron-3.5-asr-streaming-0.6b": "voiceDictation.models.description.nemotronMultilingual",
 };
 
 /** Card for a single transcription model: shows specs and offers download, cancel, select, and remove actions by state. */
@@ -231,9 +232,8 @@ export function VoiceModelRow({
               { count: descriptor.languages.length },
             )}
           </span>
-          {/* The runtime gate allows streaming only for models with a Parakeet stream slot
-              (supportsStreaming && accepts parakeet); the catalog also marks Nemotron as streaming,
-              but it always runs one-shot — advertising Streaming on that card would contradict the spec. */}
+          {/* The catalog flag is set only for models whose live stream was verified at runtime
+              (VoiceTranscriber picks the stream family from the loaded model), so it is safe to advertise. */}
           {isLiveStreamingModel(descriptor) ? (
             <span className="inline-flex items-center gap-1.5">
               <AudioLines className="size-4" aria-hidden />

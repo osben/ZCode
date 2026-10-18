@@ -94,11 +94,23 @@ export function recommendVoiceModel<T extends VoiceModelLike>(
 }
 
 /**
- * Whether live (streaming) transcription is actually available for the model. The catalog flag alone
- * is insufficient: the runtime gate only opens a stream for families with a verified stream slot.
+ * Whether live (streaming) transcription really activates for the model. The catalog flag is set only
+ * after a runtime check that the model streams with a family `selectStreamFamily` can choose.
  */
-export function isLiveStreamingModel(model: Pick<VoiceModelLike, "streaming" | "family">): boolean {
-  return model.streaming && model.family === "parakeet";
+export function isLiveStreamingModel(model: Pick<VoiceModelLike, "streaming">): boolean {
+  return model.streaming;
+}
+
+/**
+ * Language handed to the native engine: models whose native layer rejects bare codes get their locale
+ * (`uk` -> `uk-UA`); automatic detection (no language) and unmapped codes pass through unchanged.
+ */
+export function toNativeLanguage(
+  model: { languageLocales?: Readonly<Record<string, string>> } | undefined,
+  language: string | undefined,
+): string | undefined {
+  if (!language) return undefined;
+  return model?.languageLocales?.[language] ?? language;
 }
 
 export interface VoiceModelFilter {

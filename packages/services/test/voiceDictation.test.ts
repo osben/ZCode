@@ -20,6 +20,7 @@ import type { VoiceModelDescriptor } from "../src/voice-dictation/voiceModelCata
 import {
   VoiceTranscriber,
   decodePcm16LeToFloat32,
+  selectStreamFamily,
   type VoiceEngineModel,
 } from "../src/voice-dictation/voiceTranscriber.js";
 
@@ -921,3 +922,85 @@ function decodeWavToFloat32(buffer: Buffer): Float32Array {
   }
   throw new Error("WAV data chunk not found");
 }
+
+const fakeFamilyModel = (supportsStreaming: boolean, accepted: readonly string[]) => ({
+  supportsStreaming,
+  accepts: (family: { kind: string }) => accepted.includes(family.kind),
+});
+
+test("selectStreamFamily picks the family each runtime-probed model declares", () => {
+  // Observed with transcribe-cpp 0.3.1: parakeet-unified accepts only parakeet_buffered.
+  assert.equal(
+    selectStreamFamily(fakeFamilyModel(true, ["parakeet_buffered"])),
+    "parakeet_buffered",
+  );
+  // Observed: both Nemotron streaming models accept only the parakeet extension.
+  assert.equal(selectStreamFamily(fakeFamilyModel(true, ["parakeet"])), "parakeet");
+  assert.equal(
+    selectStreamFamily(fakeFamilyModel(true, ["parakeet", "parakeet_buffered"])),
+    "parakeet_buffered",
+  );
+});
+
+test("selectStreamFamily stays one-shot when the model cannot stream or accepts no family", () => {
+  // Observed: parakeet-tdt and canary report supportsStreaming false and accept neither family.
+  assert.equal(selectStreamFamily(fakeFamilyModel(false, [])), null);
+  assert.equal(selectStreamFamily(fakeFamilyModel(false, ["parakeet"])), null);
+  assert.equal(selectStreamFamily(fakeFamilyModel(true, ["voxtral"])), null);
+});
+
+test("transcriber resolves the engine language from the model's locale map for one-shot and streams", async () => {
+  await withTempDir(async (dir) => {
+    const descriptor = makeDescriptor({
+      streaming: true,
+      languages: ["uk", "ru", "en"],
+      languageLocales: { uk: "uk-UA", ru: "ru-RU", en: "en-US" },
+    });
+    await installFakeModel(dir, descriptor);
+    const store = makeStore(dir, { catalog: [descriptor] });
+    const seen: Array<string | undefined> = [];
+    const engine: VoiceEngineModel = {
+      transcribe: async (_samples, options) => {
+        seen.push(options.language);
+        return { text: "x", language: "uk" };
+      },
+      supportsStreaming: () => true,
+      beginStream: async (options) => {
+        seen.push(options.language);
+        return true;
+      },
+      feedStream: async () => ({ committed: "", tentative: "" }),
+      finalizeStream: async () => ({ text: "x", language: "uk" }),
+      cancelStream: () => undefined,
+      dispose: () => undefined,
+    };
+    const transcriber = new VoiceTranscriber({ store, loadEngine: async () => engine });
+    const samples = new Float32Array(160);
+
+    await transcriber.transcribe(descriptor.id, samples, { language: "uk" });
+    await transcriber.transcribe(descriptor.id, samples, {});
+    assert.equal(await transcriber.beginStream(descriptor.id, { language: "ru" }), true);
+    await transcriber.cancelStream();
+    assert.equal(await transcriber.beginStream(descriptor.id, {}), true);
+    await transcriber.cancelStream();
+
+    assert.deepEqual(seen, ["uk-UA", undefined, "ru-RU", undefined]);
+    await transcriber.unload();
+  });
+});
+
+test("transcriber passes bare codes through for models without a locale map", async () => {
+  await withTempDir(async (dir) => {
+    const descriptor = makeDescriptor();
+    await installFakeModel(dir, descriptor);
+    const store = makeStore(dir, { catalog: [descriptor] });
+    const calls: Array<{ language?: string }> = [];
+    const transcriber = new VoiceTranscriber({
+      store,
+      loadEngine: async () => makeFakeEngine(calls),
+    });
+    await transcriber.transcribe(descriptor.id, new Float32Array(160), { language: "uk" });
+    assert.deepEqual(calls, [{ language: "uk" }]);
+    await transcriber.unload();
+  });
+});

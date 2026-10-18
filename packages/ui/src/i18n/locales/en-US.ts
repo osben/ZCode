@@ -7783,6 +7783,8 @@ const enUS: Record<string, string> = {
   "voiceDictation.models.description.gigaam": "Compact, fast Russian-only speech-to-text.",
   "voiceDictation.models.description.nemotron":
     "English speech-to-text with streaming and token-level timestamps.",
+  "voiceDictation.models.description.nemotronMultilingual":
+    "Live multilingual transcription across 28 languages, including Ukrainian, Russian, and English.",
   "voiceDictation.saveFailed": "Could not save voice dictation settings.",
   "voiceDictation.composer.start": "Voice input",
   "voiceDictation.composer.starting": "Starting voice input",

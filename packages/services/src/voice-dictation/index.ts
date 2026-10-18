@@ -30,6 +30,7 @@ export {
   recommendVoiceModel,
   resolveVoiceLanguages,
   sortVoiceModels,
+  toNativeLanguage,
   type VoiceModelFilter,
 } from "./voiceModelLanguages.js";
 export {

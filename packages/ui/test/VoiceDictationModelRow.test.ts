@@ -239,7 +239,7 @@ describe("VoiceModelRow model actions", () => {
     expect(untranslated).toEqual([]);
   });
 
-  it("localizes catalog descriptions and only advertises streaming for parakeet-family models", () => {
+  it("localizes catalog descriptions and advertises streaming only for models flagged as runtime-verified", () => {
     const parakeetModel: VoiceModelListItem = {
       descriptor: {
         id: "parakeet-unified-en-0.6b",
@@ -257,8 +257,7 @@ describe("VoiceModelRow model actions", () => {
       },
       state: { status: "ready", path: "/models/parakeet.gguf", sizeBytes: 10, source: "zcode" },
     };
-    // В каталоге Nemotron помечен streaming: true, но рантайм-гейт допускает только Parakeet —
-    // карточка не должна рекламировать стриминг, которого не будет.
+    // A model not verified to stream must not show the badge, whatever its family.
     const nemotronModel: VoiceModelListItem = {
       ...parakeetModel,
       descriptor: {
@@ -267,6 +266,7 @@ describe("VoiceModelRow model actions", () => {
         name: "Nemotron Speech Streaming EN",
         description: "English speech-to-text with streaming and token-level timestamps.",
         family: "nemotron",
+        streaming: false,
       },
     };
     render(

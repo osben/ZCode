@@ -45,6 +45,7 @@ export {
   recommendVoiceModel,
   resolveVoiceLanguages,
   sortVoiceModels,
+  toNativeLanguage,
   type VoiceModelFilter,
 } from "./voice-dictation/voiceModelLanguages.js";
 export {

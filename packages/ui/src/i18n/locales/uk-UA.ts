@@ -7374,6 +7374,8 @@ const ukUA: Record<string, string> = {
     "Компактне й швидке розпізнавання лише російської мови.",
   "voiceDictation.models.description.nemotron":
     "Англійське розпізнавання мовлення з потоковим режимом і мітками токенів.",
+  "voiceDictation.models.description.nemotronMultilingual":
+    "Потокове розпізнавання мовлення 28 мовами, зокрема українською, російською та англійською.",
   "voiceDictation.saveFailed": "Не вдалося зберегти налаштування голосового введення.",
   "voiceDictation.composer.start": "Голосове введення",
   "voiceDictation.composer.starting": "Запуск голосового введення",

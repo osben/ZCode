@@ -8,6 +8,38 @@ import {
   WHISPER_V3_LANGUAGES,
 } from "./voiceModelLanguageCodes.js";
 
+/** Every locale was accepted by `nemotron-3.5-asr-streaming-0.6b` at stream begin; its native layer rejects bare codes. */
+const NEMOTRON_35_LOCALES = {
+  en: "en-US",
+  es: "es-ES",
+  fr: "fr-FR",
+  it: "it-IT",
+  pt: "pt-BR",
+  nl: "nl-NL",
+  de: "de-DE",
+  tr: "tr-TR",
+  ru: "ru-RU",
+  ar: "ar-AR",
+  hi: "hi-IN",
+  ja: "ja-JP",
+  ko: "ko-KR",
+  vi: "vi-VN",
+  uk: "uk-UA",
+  pl: "pl-PL",
+  sv: "sv-SE",
+  cs: "cs-CZ",
+  nb: "nb-NO",
+  da: "da-DK",
+  bg: "bg-BG",
+  fi: "fi-FI",
+  hr: "hr-HR",
+  sk: "sk-SK",
+  zh: "zh-CN",
+  hu: "hu-HU",
+  ro: "ro-RO",
+  et: "et-EE",
+} as const;
+
 export interface VoiceModelDescriptor {
   id: string;
   name: string;
@@ -15,6 +47,12 @@ export interface VoiceModelDescriptor {
   family: string;
   /** ISO 639-1 codes the model supports (from the model card; Handy's catalog agrees). */
   languages: readonly string[];
+  /**
+   * Maps a bare language code to the locale the native layer accepts, for models that reject bare codes
+   * (checked against transcribe-cpp 0.3.1; `capabilities.languages` is garbled by the binding, so this is static data).
+   */
+  languageLocales?: Readonly<Record<string, string>>;
+  /** Runtime-verified live streaming: the model loaded, `selectStreamFamily` picked a family, and text arrived while feeding. */
   streaming: boolean;
   /** Lower is recommended first among models covering the selected languages; absent means never recommended. */
   recommendRank?: number;
@@ -142,6 +180,21 @@ export const VOICE_MODEL_CATALOG: readonly VoiceModelDescriptor[] = [
     fileName: "nemotron-speech-streaming-en-0.6b-Q8_0.gguf",
     sizeBytes: 729650176,
     sha256: "90d8c89714cd31efc88be62a40c6b2bea57e0cc2063af1ffe2c28f1a228ca110",
+  },
+  {
+    id: "nemotron-3.5-asr-streaming-0.6b",
+    name: "Nemotron Streaming 3.5",
+    description: "Live multilingual transcription across 28 languages.",
+    family: "nemotron",
+    languages: Object.keys(NEMOTRON_35_LOCALES),
+    languageLocales: NEMOTRON_35_LOCALES,
+    streaming: true,
+    license: "other",
+    huggingFaceRepo: "handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf",
+    revision: "6d44e540bc31b0de1dbe174a3cea87f53a7f22fb",
+    fileName: "nemotron-3.5-asr-streaming-0.6b-Q8_0.gguf",
+    sizeBytes: 751094240,
+    sha256: "b94545b313b3223fda7b2857a52681da813935c2127643d1e9ff0c23d988089c",
   },
   {
     id: "whisper-medium",

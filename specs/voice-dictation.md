@@ -135,10 +135,11 @@ sequenceDiagram
 
 ### Model support gate
 
-- `transcribe-cpp` 0.3.1 exposes `Session.stream()`, `feed()`, `finalize()`, and committed/tentative text snapshots. Its local declarations document stream-slot extensions for Parakeet, Moonshine, and Voxtral.
-- Catalog metadata alone is insufficient. At model load, require both `model.capabilities.supportsStreaming` and `model.accepts({ kind: "parakeet" })` before beginning a Parakeet stream.
-- The installed `transcribe-cpp` 0.3.1 declarations expose the Parakeet stream slot. Other catalog families, including Nemotron, stay on the one-shot path until their stream slot is declared and the loaded GGUF confirms compatibility.
-- Use one-shot transcription when the loaded model does not report compatible streaming capability. Do not infer support from a model name or description.
+- `transcribe-cpp` 0.3.1 exposes `Session.stream()`, `feed()`, `finalize()`, and committed/tentative text snapshots. Its declarations document stream-slot extensions for Parakeet (`parakeet`, `parakeet_buffered`), Moonshine, and Voxtral.
+- Catalog metadata alone is insufficient. At model load the transcriber derives a stream family from the loaded model with the pure `selectStreamFamily({ supportsStreaming, accepts })`: when `capabilities.supportsStreaming` is false it returns none; otherwise it returns the first of `parakeet_buffered`, `parakeet` that `model.accepts()`. The same result is used both to decide whether streaming is available and as the `family` of `session.stream()`; there are no two hard-coded copies.
+- Models for which no family is selected stay on the one-shot path. Do not infer support from a model name or description, and do not catch stream-begin errors to fall back silently.
+- The catalog `streaming` flag means "runtime-verified to stream with a family `selectStreamFamily` can pick". It drives the `Streaming` badge and filter, so it may only be set after a real load-and-feed check (see the findings section). `isLiveStreamingModel` reads that flag and nothing else.
+- Language codes: the catalog may declare `languageLocales` (code to locale, for example `uk` to `uk-UA`) for models whose native layer rejects bare ISO 639-1 codes. `VoiceTranscriber` resolves the engine language from the descriptor of the requested model for both one-shot and streaming; no locale list is read from `capabilities.languages` because the 0.3.1 binding returns it garbled. Auto detection (no language) is passed through unchanged.
 
 ### Acceptance scenarios for implementation
 
@@ -157,7 +158,7 @@ sequenceDiagram
 
 - The E2E scenario must use a Desktop runtime with a runtime-verified streaming Parakeet GGUF and a working microphone. Assert that the level meter responds, preview text appears without changing the editor draft, stopping inserts the finalized transcript once, and canceling preserves the pre-existing draft.
 - A fallback scenario must use a model whose loaded runtime reports no compatible stream support and assert that the existing one-shot insertion still works without a streaming preview.
-- Current local model inventory has Whisper Tiny and Parakeet TDT only; neither is a streaming candidate. Real microphone E2E remains pending until a compatible model is installed.
+- Streaming candidates for E2E: `nemotron-3.5-asr-streaming-0.6b` (uk/ru/en and 25 more), `parakeet-unified-en-0.6b` and `nemotron-speech-streaming-en-0.6b` (English). Real microphone E2E remains pending; the runtime facts below were obtained by feeding synthetic 16 kHz speech to the native library, not a live microphone.
 
 ## Proposed follow-up: selected versus loaded model status
 
@@ -280,17 +281,27 @@ Handy's catalog (`src-tauri/src/catalog/catalog.json`, 69 models) was compared w
 
 - **Added** (one-shot transcription; families present in the installed `transcribe-cpp` 0.3.1 native library): `whisper-medium`, `whisper-large-v3`, `canary-1b-v2`, `gigaam-v3-e2e-rnnt` (Russian only). Language lists are copied from the model cards.
 - **Recommendation ranks** (`recommendRank`): `parakeet-unified-en-0.6b` 1, `parakeet-tdt-0.6b-v3` 2, `canary-180m-flash` 3, `whisper-large-v3-turbo` 4, `whisper-medium` 5. Other models are never recommended automatically.
-- **Not added yet** (need a runtime check before shipping, see follow-ups): `nemotron-3.5-asr-streaming-0.6b`, `voxtral-mini-4b-realtime-2602`, `moonshine-base-uk` (Handy accuracy score 38), `parakeet-primeline` (German fine-tune).
+- **Added after runtime verification:** `nemotron-3.5-asr-streaming-0.6b` (Q8_0, 751094240 bytes, sha256 `b94545b3...`), streaming, 28 languages, with `languageLocales`.
+- **Not added yet** (need a runtime check before shipping, see follow-ups): `voxtral-mini-4b-realtime-2602`, `moonshine-base-uk` (Handy accuracy score 38), `parakeet-primeline` (German fine-tune).
 
-Streaming facts (from GGUF headers and the native library's error strings; not yet confirmed by running a model):
+Streaming facts, confirmed by running the models with `transcribe-cpp` 0.3.1 on macOS arm64 (GGUF sha256 matched the catalog; synthetic 16 kHz en/uk/ru speech fed in 100-500 ms chunks):
 
-- `parakeet-tdt-0.6b-v3` cannot use `parakeet_buffered` (TDT head, no chunk menu). It stays one-shot; it is the best multilingual (uk/ru/en) choice for accuracy.
-- `parakeet-unified-en-0.6b` is marked streaming, but its header points to the `parakeet_buffered` family (`chunked_limited_with_rc`), while the transcriber always requests `family: { kind: "parakeet" }`. Live streaming for it may therefore never activate today and silently fall back to one-shot.
-- The only model with live streaming and Ukrainian/Russian coverage is `nemotron-3.5-asr-streaming-0.6b` (28 languages), but it lists locales and Handy maps a bare code to the model's locale; our bare code might be rejected. Accuracy on uk/ru is lower than TDT v3.
+| Model                               | `supportsStreaming` | `accepts parakeet` | `accepts parakeet_buffered` | Streams | Bare language code                                                                       |
+| ----------------------------------- | ------------------- | ------------------ | --------------------------- | ------- | ---------------------------------------------------------------------------------------- |
+| `parakeet-unified-en-0.6b`          | true                | false              | true                        | yes     | `en` ok                                                                                  |
+| `nemotron-speech-streaming-en-0.6b` | true                | true               | false                       | yes     | `en` ok, `en-US` rejected                                                                |
+| `nemotron-3.5-asr-streaming-0.6b`   | true                | true               | false                       | yes     | `en`/`uk`/`ru` rejected (stream and one-shot); `en-US`/`uk-UA`/`ru-RU` and auto accepted |
+| `parakeet-tdt-0.6b-v3`              | false               | false              | false                       | no      | `en` ok (one-shot)                                                                       |
+| `canary-180m-flash`                 | false               | false              | false                       | no      | `en` ok (one-shot)                                                                       |
+
+- Before this change the transcriber gated on `accepts({ kind: "parakeet" })`, which is false for `parakeet-unified-en-0.6b`, so streaming never activated for it and dictation silently stayed one-shot. Requesting the `parakeet` extension on it raises `UnsupportedRequest`.
+- `nemotron-3.5-asr-streaming-0.6b` streams uk/ru/en live (partial committed/tentative text updates arrive during feeding) and its auto-detect mode (`supportsLanguageDetect`) identified all three test languages. All 28 catalog codes were accepted as locales: `en-US es-ES fr-FR it-IT pt-BR nl-NL de-DE tr-TR ru-RU ar-AR hi-IN ja-JP ko-KR vi-VN uk-UA pl-PL sv-SE cs-CZ nb-NO da-DK bg-BG fi-FI hr-HR sk-SK zh-CN hu-HU ro-RO et-EE`. These form its `languageLocales`.
+- Quality note: on the English test clip `parakeet-unified-en-0.6b`'s streamed final text dropped the leading "The" that its one-shot result kept. Not addressed here.
+- Still unknown: accuracy and latency with a real microphone and real speakers, other operating systems and GPU backends, and Nemotron accuracy on uk/ru versus `parakeet-tdt-0.6b-v3` (which is better for accuracy but cannot stream).
 
 ### Follow-ups (not part of this change)
 
-1. Runtime verification: load `parakeet-unified-en-0.6b` and check `accepts({ kind: "parakeet" })` versus `accepts({ kind: "parakeet_buffered" })`; select the family from the loaded model's declared capability instead of hard-coding it.
-2. Runtime verification and locale mapping for `nemotron-3.5-asr-streaming-0.6b`, then add it with `streaming: true`.
+1. ~~Select the stream family per loaded model~~ — resolved (`selectStreamFamily`).
+2. ~~Locale mapping and runtime verification for `nemotron-3.5-asr-streaming-0.6b`~~ — resolved (`languageLocales`, added to the catalog).
 3. Voxtral realtime and Moonshine streaming need the transcriber to choose the stream family per model.
 4. Model warm-up on composer focus, level meter RMS and silence hint, recording timer, `AudioWorklet` capture.

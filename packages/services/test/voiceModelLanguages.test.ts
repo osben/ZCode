@@ -11,6 +11,7 @@ import {
   recommendVoiceModel,
   resolveVoiceLanguages,
   sortVoiceModels,
+  toNativeLanguage,
   type VoiceModelLike,
 } from "../src/voice-dictation/voiceModelLanguages.js";
 
@@ -36,7 +37,8 @@ const EN_LIVE = model({
   languages: ["en"],
   recommendRank: 1,
 });
-const NEMOTRON = model({ id: "nemotron", family: "nemotron", streaming: true, languages: ["en"] });
+// A model the catalog does not flag as runtime-verified: never advertised as streaming whatever its family.
+const NEMOTRON = model({ id: "nemotron", family: "nemotron", streaming: false, languages: ["en"] });
 const CATALOG = [WHISPER, TDT, EN_LIVE, NEMOTRON];
 
 test("resolveVoiceLanguages prefers languages, falls back to the legacy single language", () => {
@@ -84,10 +86,43 @@ test("recommendVoiceModel ignores models without a rank", () => {
   assert.equal(recommendVoiceModel([NEMOTRON], ["en"]), null);
 });
 
-test("isLiveStreamingModel only trusts families with a verified stream slot", () => {
+test("isLiveStreamingModel follows the runtime-verified catalog flag, not the family", () => {
   assert.equal(isLiveStreamingModel(EN_LIVE), true);
   assert.equal(isLiveStreamingModel(NEMOTRON), false);
   assert.equal(isLiveStreamingModel(WHISPER), false);
+  assert.equal(isLiveStreamingModel(TDT), false);
+});
+
+test("catalog streaming flags match the runtime-verified models", () => {
+  const streaming = VOICE_MODEL_CATALOG.filter(isLiveStreamingModel).map((m) => m.id);
+  assert.deepEqual(streaming.sort(), [
+    "nemotron-3.5-asr-streaming-0.6b",
+    "nemotron-speech-streaming-en-0.6b",
+    "parakeet-unified-en-0.6b",
+  ]);
+});
+
+test("nemotron 3.5 declares a locale for every language and covers uk/ru/en", () => {
+  const nemotron = VOICE_MODEL_CATALOG.find((m) => m.id === "nemotron-3.5-asr-streaming-0.6b")!;
+  assert.equal(nemotron.languages.length, 28);
+  assert.deepEqual(
+    Object.keys(nemotron.languageLocales ?? {}).sort(),
+    [...nemotron.languages].sort(),
+  );
+  for (const [code, locale] of Object.entries(nemotron.languageLocales ?? {})) {
+    assert.match(locale, new RegExp(`^${code}-[A-Z]{2}$`));
+  }
+  assert.equal(modelSupportsVoiceLanguages(nemotron, ["uk", "ru", "en"]), true);
+});
+
+test("toNativeLanguage maps codes to locales only for models that need them", () => {
+  const nemotron = VOICE_MODEL_CATALOG.find((m) => m.id === "nemotron-3.5-asr-streaming-0.6b");
+  assert.equal(toNativeLanguage(nemotron, "uk"), "uk-UA");
+  assert.equal(toNativeLanguage(nemotron, "ru"), "ru-RU");
+  assert.equal(toNativeLanguage(nemotron, "xx"), "xx");
+  assert.equal(toNativeLanguage(nemotron, undefined), undefined);
+  assert.equal(toNativeLanguage(undefined, "uk"), "uk");
+  assert.equal(toNativeLanguage({}, "en"), "en");
 });
 
 const items = CATALOG.map((descriptor, index) => ({

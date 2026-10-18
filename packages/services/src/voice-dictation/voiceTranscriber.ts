@@ -1,10 +1,28 @@
-import type { Stream } from "transcribe-cpp";
+import type { FamilyExtension, Stream } from "transcribe-cpp";
+import { toNativeLanguage } from "./voiceModelLanguages.js";
 import type { VoiceModelStore } from "./voiceModelStore.js";
 import type { VoiceTranscriptionPreview } from "./voiceDictation.js";
 
 export interface VoiceTranscriptionResult {
   text: string;
   language: string;
+}
+
+/** Stream-slot extensions tried in order; the first one the loaded model accepts is used. */
+const STREAM_FAMILY_KINDS = ["parakeet_buffered", "parakeet"] as const;
+export type VoiceStreamFamilyKind = (typeof STREAM_FAMILY_KINDS)[number];
+
+/**
+ * Chooses the stream family from what the loaded model declares: none when it cannot stream, otherwise
+ * the first stream extension it accepts. Hard-coding one family silently kept parakeet-unified (buffered
+ * only) on the one-shot path, while Nemotron accepts only `parakeet`.
+ */
+export function selectStreamFamily(model: {
+  supportsStreaming: boolean;
+  accepts(family: { kind: VoiceStreamFamilyKind }): boolean;
+}): VoiceStreamFamilyKind | null {
+  if (!model.supportsStreaming) return null;
+  return STREAM_FAMILY_KINDS.find((kind) => model.accepts({ kind })) ?? null;
 }
 
 export interface VoiceEngineModel {
@@ -80,7 +98,9 @@ export class VoiceTranscriber {
       try {
         await this.ensureLoaded(modelId);
         this.activePhaseValue = "transcribing";
-        return await this.loaded!.engine.transcribe(samples, options);
+        return await this.loaded!.engine.transcribe(samples, {
+          language: toNativeLanguage(this.store.findDescriptor(modelId), options.language),
+        });
       } finally {
         this.activeModelIdValue = null;
         this.activePhaseValue = null;
@@ -105,7 +125,9 @@ export class VoiceTranscriber {
         ) {
           return false;
         }
-        const started = await engine.beginStream(options);
+        const started = await engine.beginStream({
+          language: toNativeLanguage(this.store.findDescriptor(modelId), options.language),
+        });
         if (!started) return false;
         this.activeStreamModelId = modelId;
         this.activePhaseValue = "streaming";
@@ -215,8 +237,11 @@ async function loadTranscribeCppEngine(modelPath: string): Promise<VoiceEngineMo
   const model = await TranscribeModel.load(modelPath);
   const session = model.createSession();
   let stream: Stream | null = null;
-  const supportsStreaming = () =>
-    model.capabilities.supportsStreaming && model.accepts({ kind: "parakeet" });
+  const streamFamily = selectStreamFamily({
+    supportsStreaming: model.capabilities.supportsStreaming,
+    accepts: (family) => model.accepts(family as FamilyExtension),
+  });
+  const supportsStreaming = () => streamFamily !== null;
   return {
     transcribe: async (samples, options) => {
       const result = await model.transcribe(samples, {
@@ -227,12 +252,12 @@ async function loadTranscribeCppEngine(modelPath: string): Promise<VoiceEngineMo
     },
     supportsStreaming,
     beginStream: async (options) => {
-      if (!supportsStreaming()) return false;
+      if (!streamFamily) return false;
       stream = await session.stream({
         language: options.language,
         timestamps: "none",
         commitPolicy: "stable_prefix",
-        family: { kind: "parakeet" },
+        family: { kind: streamFamily },
       });
       return true;
     },

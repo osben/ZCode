@@ -7462,6 +7462,8 @@ const zhCN: Record<string, string> = {
     "覆盖 {languages} 种欧洲语言的高精度语音转文字，支持翻译。",
   "voiceDictation.models.description.gigaam": "小巧快速的纯俄语语音转文字。",
   "voiceDictation.models.description.nemotron": "英语语音转写，支持流式与词级时间戳。",
+  "voiceDictation.models.description.nemotronMultilingual":
+    "支持 28 种语言的实时流式转写，包括乌克兰语、俄语和英语。",
   "voiceDictation.saveFailed": "无法保存语音输入设置。",
   "voiceDictation.composer.start": "语音输入",
   "voiceDictation.composer.starting": "正在启动语音输入",
