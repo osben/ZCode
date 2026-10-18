@@ -182,11 +182,14 @@ function setupChannelServer(
   });
 }
 
-/** Store remote connections in web mode, keyed by random IDs. */
+/** Store remote connections in web mode, keyed by unguessable IDs. */
 const remoteConnections = new Map<string, RemoteConnection>();
 
-function generateId(): string {
-  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+const DEFAULT_HTTP_HOST = "127.0.0.1";
+
+function isLoopbackHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase();
+  return normalized === "127.0.0.1" || normalized === "::1" || normalized === "localhost";
 }
 
 export interface HttpServerOptions {
@@ -194,7 +197,6 @@ export interface HttpServerOptions {
   serverId?: string;
   name?: string;
   host?: string;
-  authRequired?: boolean;
   authToken?: string;
   spaFallback?: boolean;
   staticRoot?: string;
@@ -225,7 +227,10 @@ function resolveServerWorkspaces(options: HttpServerOptions): ServerRemoteWorksp
   ];
 }
 
-function createServerInfo(options: HttpServerOptions): ServerRemoteInfo {
+function createServerInfo(
+  options: HttpServerOptions,
+  authToken: string | undefined,
+): ServerRemoteInfo {
   return {
     serverId: resolveServerId(options),
     ...(options.name?.trim() || readTrimmedEnv("ZCODE_SERVER_NAME")
@@ -233,7 +238,8 @@ function createServerInfo(options: HttpServerOptions): ServerRemoteInfo {
       : {}),
     version: ZCODE_VERSION,
     protocolVersion: SERVER_REMOTE_PROTOCOL_VERSION,
-    authRequired: options.authRequired ?? Boolean(readTrimmedEnv("ZCODE_SERVER_TOKEN")),
+    // Derived from the token only, so the advertised state cannot diverge from enforcement.
+    authRequired: Boolean(authToken),
     workspaces: resolveServerWorkspaces(options),
     capabilities: {
       desktopContinuous: true,
@@ -295,12 +301,54 @@ function hasValidLiteToken(c: Context, token: string): boolean {
   return parseCookieHeader(c.req.header("cookie")).get(zcodeLiteTokenCookieName) === token;
 }
 
-function isTokenProtectedPath(pathname: string): boolean {
-  return pathname === "/ws" || pathname.startsWith("/ws/") || pathname.startsWith("/api/");
+function isApiOrWsPath(pathname: string): boolean {
+  return (
+    pathname === "/ws" ||
+    pathname.startsWith("/ws/") ||
+    pathname === "/api" ||
+    pathname.startsWith("/api/")
+  );
 }
 
-function isStaticFallbackAllowed(pathname: string): boolean {
-  return !isTokenProtectedPath(pathname);
+function tryDecodeURIComponent(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+const maxPathDecodeRounds = 4;
+
+/**
+ * Hono routes on decodeURI(rawPath), so `/%61pi/...` reaches `/api/...` handlers while the raw
+ * URL pathname does not look protected. Check a superset of every form the router could see:
+ * the routed and raw paths, repeatedly decoded, lowercased, with slashes normalized.
+ */
+function targetsApiOrWs(c: Context): boolean {
+  for (const seed of [c.req.path, new URL(c.req.url).pathname]) {
+    let current = seed;
+    for (let round = 0; round <= maxPathDecodeRounds; round += 1) {
+      const normalized = current
+        .toLowerCase()
+        .replace(/\\/g, "/")
+        .replace(/\/{2,}/g, "/");
+      if (isApiOrWsPath(normalized)) {
+        return true;
+      }
+      const decoded = tryDecodeURIComponent(current);
+      if (decoded === current) {
+        break;
+      }
+      current = decoded;
+    }
+  }
+  return false;
+}
+
+/** Deny by default: only GET/HEAD for static Web assets may skip the token. */
+function requiresToken(c: Context): boolean {
+  return (c.req.method !== "GET" && c.req.method !== "HEAD") || targetsApiOrWs(c);
 }
 
 function isInsideDirectory(root: string, candidate: string): boolean {
@@ -338,7 +386,7 @@ async function resolveStaticFile(
     // Enter the SPA fallback only when no static asset matches, preserving 404 semantics for real file errors.
   }
 
-  if (!spaFallback || !isStaticFallbackAllowed(pathname)) {
+  if (!spaFallback) {
     return null;
   }
   const indexFile = resolve(root, "index.html");
@@ -354,21 +402,40 @@ function staticContentType(filePath: string): string {
   return staticMimeTypes[extname(filePath).toLowerCase()] ?? "application/octet-stream";
 }
 
+/**
+ * Resolve the listen host, defaulting to loopback. Without a token, /api/rpc-host-capability and
+ * /api/connect-remote are open to anyone who can reach the listener, so non-loopback binds must fail
+ * closed (same rule as zcode-server-cli).
+ */
+export function resolveHttpListenHost(
+  options: Pick<HttpServerOptions, "host" | "authToken">,
+): string {
+  const host = options.host?.trim() || DEFAULT_HTTP_HOST;
+  if (!options.authToken?.trim() && !isLoopbackHost(host)) {
+    throw new Error(
+      `Refusing to listen on non-loopback host ${host} without authentication; ` +
+        "set ZCODE_SERVER_AUTH_TOKEN or bind ZCODE_SERVER_HOST/HOST to 127.0.0.1",
+    );
+  }
+  return host;
+}
+
 export function createHttpServer(
   services: ServiceCollection,
   port = 3030,
   options: HttpServerOptions = {},
 ) {
+  const authToken = options.authToken?.trim() || undefined;
+  const host = resolveHttpListenHost(options);
+
   const app = new Hono();
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
   const hostCapabilities = createHostCapabilityStore();
 
-  const authToken = options.authToken?.trim();
   if (authToken) {
     app.use("*", async (c, next) => {
-      const pathname = new URL(c.req.url).pathname;
       const validToken = hasValidLiteToken(c, authToken);
-      if (!isTokenProtectedPath(pathname) || validToken) {
+      if (!requiresToken(c) || validToken) {
         await next();
         return;
       }
@@ -376,7 +443,7 @@ export function createHttpServer(
     });
   }
 
-  app.get("/api/server-info", (c) => c.json(createServerInfo(options)));
+  app.get("/api/server-info", (c) => c.json(createServerInfo(options, authToken)));
   app.post("/api/rpc-host-capability", (c) => c.json(hostCapabilities.issue()));
 
   // Plain `/ws` is always terminal-client; browser or other clients cannot promote themselves to trusted
@@ -421,7 +488,7 @@ export function createHttpServer(
     try {
       const backend = await createRemoteBackend(body);
       const connection = await connectRemote(backend);
-      const id = generateId();
+      const id = randomUUID();
       remoteConnections.set(id, connection);
 
       return c.json({ id });
@@ -515,7 +582,8 @@ export function createHttpServer(
     const staticRoot = options.staticRoot.trim();
     app.get("*", async (c) => {
       const pathname = new URL(c.req.url).pathname;
-      const filePath = await resolveStaticFile(staticRoot, pathname, options.spaFallback ?? true);
+      const spaFallback = (options.spaFallback ?? true) && !targetsApiOrWs(c);
+      const filePath = await resolveStaticFile(staticRoot, pathname, spaFallback);
       if (!filePath) {
         return c.notFound();
       }
@@ -528,11 +596,14 @@ export function createHttpServer(
     });
   }
 
-  const server = serve({ fetch: app.fetch, hostname: options.host, port }, () => {
+  const server = serve({ fetch: app.fetch, hostname: host, port }, () => {
     const address = server.address();
-    const listenPort = typeof address === "object" && address ? address.port : port;
-    const listenHost = options.host?.trim() || "localhost";
-    log(`http://${listenHost}:${listenPort}`);
+    if (typeof address === "object" && address) {
+      const listenHost = address.family === "IPv6" ? `[${address.address}]` : address.address;
+      log(`http://${listenHost}:${address.port}`);
+    } else {
+      log(`http://${host}:${port}`);
+    }
   });
 
   injectWebSocket(server);

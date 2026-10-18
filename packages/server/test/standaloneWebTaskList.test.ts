@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AddressInfo } from "node:net";
+import { listeningAddress } from "./listeningAddress.js";
 import { Emitter } from "@zcode/rpc";
 import { connectViaWebSocket } from "@zcode/client";
 import {
@@ -164,7 +164,7 @@ describe("standalone Web /ws task lists", () => {
       .register(IZCodeAgentService, data.agentService);
     const server = createHttpServer(services, 0);
     servers.push(server);
-    const url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}/ws`;
+    const url = `ws://127.0.0.1:${(await listeningAddress(server)).port}/ws`;
     const client = await connectViaWebSocket(url, {
       onOpenSocket: (socket) => sockets.push(socket),
     });
@@ -232,7 +232,7 @@ describe("standalone Web /ws task lists", () => {
     );
     servers.push(server);
     const client = await connectViaWebSocket(
-      `ws://127.0.0.1:${(server.address() as AddressInfo).port}/ws`,
+      `ws://127.0.0.1:${(await listeningAddress(server)).port}/ws`,
       {
         onOpenSocket: (socket) => sockets.push(socket),
       },

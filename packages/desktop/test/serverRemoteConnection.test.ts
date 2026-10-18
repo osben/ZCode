@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AddressInfo } from "node:net";
+import { once } from "node:events";
+import type { AddressInfo } from "node:net";
 import { WebSocket, type RawData } from "ws";
 import { Emitter, Event, SocketProtocol, VSBuffer, type ISocket } from "@zcode/rpc";
 import { ServiceCollection, ISystemService, IZCodeAgentService } from "@zcode/services";
@@ -12,6 +13,14 @@ import {
 } from "../src/host/serverRemoteConnection.js";
 import { registerHostServiceResourceTelemetry } from "../src/host/hostServiceResourceTelemetry.js";
 import { serverRemoteInfoSchema, type AgentLaneResourceSample } from "@zcode/shared";
+
+/** The server binds 127.0.0.1 by default, so the address resolves only after `listening`. */
+async function listeningAddress(server: ReturnType<typeof createHttpServer>): Promise<AddressInfo> {
+  if (!server.listening) {
+    await once(server, "listening");
+  }
+  return server.address() as AddressInfo;
+}
 
 function wrapNodeWebSocket(socket: WebSocket): ISocket {
   const onData = new Emitter<VSBuffer>();
@@ -131,7 +140,7 @@ describe("server remote connection", () => {
     } as never);
     const server = createHttpServer(services, 0, { topicResourcePeers: peers });
     servers.push(server);
-    const address = server.address() as AddressInfo;
+    const address = await listeningAddress(server);
     const validate = vi.fn(async () => undefined);
     const relay = createTopicResourceRelayChannel({
       validate,
@@ -194,7 +203,7 @@ describe("server remote connection", () => {
       workspaces: [{ path: "/home/dev/project" }],
     });
     servers.push(server);
-    const address = server.address() as AddressInfo;
+    const address = await listeningAddress(server);
 
     const requestedPaths: string[] = [];
     const connection = await connectServerRemote(
@@ -259,7 +268,7 @@ describe("server remote connection", () => {
       authToken: "secret-token",
     });
     servers.push(server);
-    const address = server.address() as AddressInfo;
+    const address = await listeningAddress(server);
     const requestedUrls: URL[] = [];
 
     const connection = await connectServerRemote(
@@ -313,7 +322,7 @@ describe("server remote connection", () => {
         0,
       );
       servers.push(server);
-      const address = server.address() as AddressInfo;
+      const address = await listeningAddress(server);
       const connection = await connectServerRemote(
         { kind: "server", url: `http://127.0.0.1:${address.port}` },
         {
@@ -370,7 +379,7 @@ describe("server remote connection", () => {
     } as never);
     const server = createHttpServer(services, 0);
     servers.push(server);
-    const address = server.address() as AddressInfo;
+    const address = await listeningAddress(server);
     const httpBase = `http://127.0.0.1:${address.port}`;
     const wsHost = `ws://127.0.0.1:${address.port}/ws/host`;
 

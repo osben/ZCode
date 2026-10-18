@@ -107,9 +107,9 @@ zcode --help
 zcode --web --help
 ```
 
-In Web mode, it uses the current directory as the workspace, listens on `127.0.0.1` without token authentication by default, selects an available port, and opens a browser. Use the URL printed in the terminal and press `Ctrl+C` to stop the service. For LAN access, use `--host 0.0.0.0`; listening on a non-local address generates an access token by default. Use the token-bearing URL printed in the terminal. Set a token with `--token`, or disable token authentication with `--no-token`.
+In Web mode, it uses the current directory as the workspace, listens on `127.0.0.1` without token authentication by default, selects an available port, and opens a browser. Use the URL printed in the terminal and press `Ctrl+C` to stop the service. For LAN access, use `--host 0.0.0.0`; listening on a non-local address generates an access token by default. Use the token-bearing URL printed in the terminal. Set a token with `--token`. `--no-token` is accepted only with a loopback `--host`; the Web server refuses to listen on a non-loopback address without a token.
 
-When starting the general Web service's HTTP entry directly, configure API/WebSocket authentication with `ZCODE_SERVER_AUTH_TOKEN`. When creating the service programmatically, use the `authToken` option.
+When starting the general Web service's HTTP entry directly, it binds `127.0.0.1` unless `ZCODE_SERVER_HOST` (or `HOST`) is set, and a non-loopback host requires `ZCODE_SERVER_AUTH_TOKEN` for API/WebSocket authentication. When creating the service programmatically, use the `authToken` option.
 
 See Packaging below for build instructions. `pnpm build:zcode` only creates the distribution; it does not replace an existing `zcode` on `PATH`. If the command still points to an older installation or another checkout, check it with `command -v zcode` on macOS / Linux or `where.exe zcode` on Windows.
 
