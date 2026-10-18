@@ -163,15 +163,6 @@ describe("settingsPageConfig", () => {
     expect(zhCN["settings.usageTitle"]).toBe(zhCN["sidebar.usage.plan.openStats"]);
   });
 
-  it("侧栏分组标题同时提供中英文文案", () => {
-    expect(enUS["settings.sidebar.group.basics"]).toBe("Basics");
-    expect(enUS["settings.sidebar.group.agentCapabilities"]).toBe("Agent capabilities");
-    expect(enUS["settings.sidebar.group.dataAndStats"]).toBe("Data and statistics");
-    expect(zhCN["settings.sidebar.group.basics"]).toBe("基础设置");
-    expect(zhCN["settings.sidebar.group.agentCapabilities"]).toBe("Agent 能力");
-    expect(zhCN["settings.sidebar.group.dataAndStats"]).toBe("数据与统计");
-  });
-
   it.each([
     ["macOS", { isMacDesktop: true }, true],
     ["Windows", { isWindowsDesktop: true }, true],

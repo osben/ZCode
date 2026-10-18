@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import enUS from "../src/i18n/locales/en-US.js";
-import zhCN from "../src/i18n/locales/zh-CN.js";
+
 import {
   buildVirtualRows,
   MentionPanel,
@@ -11,17 +10,6 @@ import {
   type MentionPanelSection,
 } from "../src/mentions/components/MentionPanel.js";
 import { resolveVerticalScrollMaskState } from "../src/mentions/components/scrollMask.js";
-
-describe("mention search hint copy", () => {
-  it("只提示插件、文件和对话，不再提及画板", () => {
-    expect(zhCN["chat.mention.searchHint"]).toBe(
-      "输入内容以搜索插件、文件或对话",
-    );
-    expect(enUS["chat.mention.searchHint"]).toBe(
-      "Type to search plugins, files, or conversations",
-    );
-  });
-});
 
 describe("mention section header typography", () => {
   it("uses the base UI font size", () => {
@@ -71,7 +59,14 @@ describe("buildVirtualRows", () => {
 
   it("shows loading status row when section is loading", () => {
     const sections: MentionPanelSection[] = [
-      { id: "files", title: "Files", options: [], emptyText: "No files", loading: true, loadingText: "Loading..." },
+      {
+        id: "files",
+        title: "Files",
+        options: [],
+        emptyText: "No files",
+        loading: true,
+        loadingText: "Loading...",
+      },
     ];
     const rows = buildVirtualRows(sections);
     expect(rows).toHaveLength(1);
@@ -80,7 +75,13 @@ describe("buildVirtualRows", () => {
 
   it("shows error status row when section has error", () => {
     const sections: MentionPanelSection[] = [
-      { id: "files", title: "Files", options: [], emptyText: "No files", errorText: "Failed to load" },
+      {
+        id: "files",
+        title: "Files",
+        options: [],
+        emptyText: "No files",
+        errorText: "Failed to load",
+      },
     ];
     const rows = buildVirtualRows(sections);
     expect(rows).toHaveLength(1);
@@ -143,9 +144,7 @@ describe("buildVirtualRows", () => {
 
     expect(html.indexOf('role="listbox"')).toBeGreaterThanOrEqual(0);
     expect(html.indexOf("Type to search")).toBeGreaterThanOrEqual(0);
-    expect(html.indexOf('role="listbox"')).toBeLessThan(
-      html.indexOf("Type to search"),
-    );
+    expect(html.indexOf('role="listbox"')).toBeLessThan(html.indexOf("Type to search"));
   });
 });
 

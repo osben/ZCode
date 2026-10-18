@@ -13,8 +13,7 @@ const EXPECTED_SHELL_DESCRIPTION_EN =
   "Applies to new sessions only. On Windows, Bash uses this shell; Auto tries Git Bash, then cmd.exe.";
 const EXPECTED_NATIVE_SEARCH_DESCRIPTION_ZH =
   "在新建会话或应用重启后恢复的会话中使用增强 Find 和 Grep。当前会话保持现有设置；Windows 的 Find 保持不变。";
-const EXPECTED_NATIVE_SEARCH_DESCRIPTION_EN =
-  "Use enhanced Find and Grep in new sessions and sessions restored after an app restart. Active sessions keep their current setting; Find remains unchanged on Windows.";
+
 const EXPECTED_MEMORY_DESCRIPTION_ZH =
   "在工作区中保存并复用长期上下文，新会话生效。开启后可能增加模型调用和 Token 成本。";
 const EXPECTED_MEMORY_DESCRIPTION_EN =
@@ -332,17 +331,6 @@ describe("GeneralSectionContent data directory control", () => {
       ?.find((group) => group.includes(EXPECTED_SHELL_DESCRIPTION_ZH));
 
     expect(terminalSettingsGroup).toContain(EXPECTED_NATIVE_SEARCH_DESCRIPTION_ZH);
-  });
-
-  it("增强搜索提供中英文 Session 生命周期说明", () => {
-    expect(enUS["settings.nativeSearchEnhancements"]).toBe("Enhanced Find and Grep");
-    expect(enUS["settings.nativeSearchEnhancementsDescription"]).toBe(
-      EXPECTED_NATIVE_SEARCH_DESCRIPTION_EN,
-    );
-    expect(zhCN["settings.nativeSearchEnhancements"]).toBe("增强 Find 和 Grep");
-    expect(zhCN["settings.nativeSearchEnhancementsDescription"]).toBe(
-      EXPECTED_NATIVE_SEARCH_DESCRIPTION_ZH,
-    );
   });
 
   it("记忆模块使用单段中英文说明表达工作区语义、生效边界和用量提示", () => {

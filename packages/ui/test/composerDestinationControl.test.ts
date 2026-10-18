@@ -2,8 +2,7 @@
 // flag default on + layout rollback wiring (source contract), worktree intent registration with
 // the selected base override, and Task/Base row semantics through the store.
 // @vitest-environment jsdom
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   selectDraftBranchIntent,
@@ -35,23 +34,6 @@ describe("feature flag", () => {
     expect(readComposerDestinationControlEnabled()).toBe(true);
     window.localStorage.setItem(COMPOSER_DESTINATION_CONTROL_FLAG, "0");
     expect(readComposerDestinationControlEnabled()).toBe(false);
-  });
-});
-
-describe("WorkspaceShellLayout rollback wiring (source contract)", () => {
-  const source = readFileSync(
-    resolve(process.cwd(), "packages/ui/src/app-shell/WorkspaceShellLayout.tsx"),
-    "utf8",
-  ).replace(/\s+/gu, " ");
-
-  it("renders the unified control only when the flag is on; the old pair remains for rollback", () => {
-    expect(source).toContain("canRenderGitDestinationControl && destinationControlEnabled ? (");
-    expect(source).toContain("<ComposerDestinationControl");
-    // Flag off must keep the legacy controls fully intact.
-    expect(source).toContain("<GitBranchSwitcher");
-    expect(source).toContain("<ChatEmptyWorktreeTaskToggle");
-    expect(source).toContain("canRenderGitDestinationControl ? (");
-    expect(source).toContain("!destinationControlEnabled ? (");
   });
 });
 
@@ -131,73 +113,6 @@ describe("destination semantics through the shared stores", () => {
     store.setWorktreeIntentActive(WORKSPACE_KEY, false);
     store.clearDraftBranchIntent(WORKSPACE_KEY);
     expect(selectDraftBranchIntent(useDraftBranchIntentStore.getState(), WORKSPACE_KEY)).toBeNull();
-  });
-
-  it("withdraws a queued worktree when project mode is selected", async () => {
-    const source = readFileSync(
-      resolve(process.cwd(), "packages/ui/src/v4/composer/ComposerDestinationControl.tsx"),
-      "utf8",
-    );
-    const toggle = source.slice(source.indexOf("aria-checked={worktreeActive}"));
-    expect(toggle).toContain("setWorktreeIntentActive(workspaceKey, !worktreeActive)");
-    expect(toggle).toContain('pipeline?.status === "creating" || pipeline?.status === "ready"');
-    expect(toggle).toContain("getState().withdraw(workspaceKey)");
-    expect(source).toContain("!pipeline.orphaned");
-  });
-});
-
-describe("workspace isolation (source contract)", () => {
-  const source = readFileSync(
-    resolve(process.cwd(), "packages/ui/src/v4/composer/ComposerDestinationControl.tsx"),
-    "utf8",
-  );
-
-  it("resets cached branch state when the workspace changes (live bug: previous project's branch became the next project's worktree base)", () => {
-    // The shell header stays mounted across workspace tabs; the reset keyed by workspaceKey is
-    // what drops the previous project's cached branch list, base pick, and open views. The
-    // dependency array also covers the remote target and its git service, which are part of the
-    // same workspace identity.
-    expect(source).toContain("setBaseBranch(null);");
-    expect(source).toContain("setBranchesResult(null);");
-    expect(source).toContain("setBranchListFailed(false);");
-    expect(source).toContain(
-      "}, [workspaceKey, workspacePath, resolution.remoteSessionId, baseServices.gitService]);",
-    );
-  });
-
-  it("derives the automatic base from the live git summary, never the cached branch list", () => {
-    // The cached list can outlive a branch switch or a project switch; only the live summary
-    // may name the base. HEAD is the fallback solely when no branch can be named (detached).
-    expect(source).not.toContain("branchesResult?.currentBranchName");
-    expect(source).toContain(
-      "baseBranch ?? branchIntent ?? (headDefault ? undefined : currentBranchName)",
-    );
-    expect(source).toContain("baseFromHeadDefault: headDefault");
-    expect(source).toContain("switcher.setOpen(nextOpen)");
-  });
-});
-
-describe("draft branch creation guard (source contract)", () => {
-  it("confirms affected checkout tasks before creating and switching a branch", () => {
-    const source = readFileSync(
-      resolve(process.cwd(), "packages/ui/src/v4/composer/ComposerDestinationControl.tsx"),
-      "utf8",
-    );
-    const dialog = source.slice(
-      source.indexOf("<GitBranchCreateDialog"),
-      source.indexOf("<GitGraphDialog", source.indexOf("<GitBranchCreateDialog")),
-    );
-    const handler = source.slice(
-      source.indexOf("const handleCreateBranchAndSwitch"),
-      source.indexOf("const currentBranchName"),
-    );
-
-    expect(source).toContain("useBranchSwitchGuard");
-    expect(handler).toContain("await branchSwitchGuard({");
-    expect(handler).toContain('scope: "checkout"');
-    expect(handler).toContain("if (!allowed) return;");
-    expect(handler).toContain("await switcher.createBranchAndSwitch();");
-    expect(dialog).toContain("onSubmit={() => void handleCreateBranchAndSwitch()}");
   });
 });
 

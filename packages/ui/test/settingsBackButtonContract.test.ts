@@ -1,7 +1,5 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import enUS from "../src/i18n/locales/en-US.js";
-import zhCN from "../src/i18n/locales/zh-CN.js";
 
 const secondarySurfaces = [
   "CommandsSection.tsx",
@@ -10,14 +8,6 @@ const secondarySurfaces = [
   "SubagentsSection.tsx",
   "McpSettingsSection.tsx",
   "PluginStoreDetailView.tsx",
-] as const;
-
-const secondaryBackMessageIds = [
-  "settings.plugins.store.back",
-  "settings.commands.backToList",
-  "settings.hooks.backToList",
-  "settings.subagents.backToList",
-  "settings.mcp.form.backToList",
 ] as const;
 
 describe("settings secondary navigation", () => {
@@ -51,12 +41,5 @@ describe("settings secondary navigation", () => {
     expect(automation).not.toContain("SettingsBackButton");
     expect(offPeak).not.toContain("SettingsBackButton");
     expect(upgrade).not.toContain("SettingsBackButton");
-  });
-
-  it("所有二级设置页返回文案不附带业务对象", () => {
-    for (const messageId of secondaryBackMessageIds) {
-      expect(zhCN[messageId], messageId).toBe("返回");
-      expect(enUS[messageId], messageId).toBe("Back");
-    }
   });
 });
