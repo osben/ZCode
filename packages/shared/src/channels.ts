@@ -700,8 +700,6 @@ export const HostResponseTypes = {
   WorkspaceRunningTaskCountChanged: "workspace-running-task-count-changed",
   /** host → main: operation-prompt state for a Windows desktop-local CUA turn */
   CuaOperationState: "cua-operation-state",
-  /** host → main: the workspace generation is safe to attach */
-  RemoteWorkspaceAcquired: "remote-workspace-acquired",
   /** Broadcast message */
   Broadcast: "broadcast",
   /** host → main: request an atomic cross-window claim */

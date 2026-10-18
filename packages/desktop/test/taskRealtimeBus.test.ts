@@ -529,6 +529,53 @@ describe("TaskRealtimeBus", () => {
     vi.useRealTimers();
   });
 
+  it("falls back to snapshot invalidation when replay exceeds the byte limit under the batch limit", () => {
+    vi.useFakeTimers();
+    const hostA = new FakeHostProcess();
+    const hostC = new FakeHostProcess();
+    const bus = new TaskRealtimeBus({ logger: makeLogger() });
+
+    bus.registerHost({
+      hostId: "host-a",
+      windowId: 1,
+      child: asUtilityProcess(hostA),
+      workspaceKeys: ["/repo/demo"],
+    });
+    hostA.emitMessage(makeLeaseRequest());
+    hostA.postedMessages.length = 0;
+
+    // 8 batches of ~100 KB stay far below the 60-batch limit but exceed the 512 KB byte limit.
+    for (let index = 0; index < 8; index += 1) {
+      hostA.emitMessage(makeChunk(`${index}`.repeat(100 * 1024)));
+      vi.advanceTimersByTime(1000);
+    }
+
+    bus.registerHost({
+      hostId: "host-c",
+      windowId: 3,
+      child: asUtilityProcess(hostC),
+      workspaceKeys: ["/repo/demo"],
+    });
+
+    expect(hostC.postedMessages).toContainEqual(
+      expect.objectContaining({
+        type: HostMessageTypes.TaskRealtimeDeliver,
+        event: expect.objectContaining({
+          type: "task_snapshot_invalidated",
+          reason: "stream_mirror_gap",
+          streamWatermark: { runId: "trace-1", opSeq: 8 },
+        }),
+      }),
+    );
+    expect(
+      hostC.postedMessages.some(
+        (message) =>
+          (message as { event?: { type?: string } }).event?.type === "task_stream_mirror_batch",
+      ),
+    ).toBe(false);
+    vi.useRealTimers();
+  });
+
   it("splits oversized mirror batches for owner and invalidates observers", () => {
     vi.useFakeTimers();
     const hostA = new FakeHostProcess();

@@ -84,6 +84,9 @@ import {
   type ZCodeUserInputRequestParams,
   type ZCodeUserInputResponse,
   zcodeContextUsageBreakdownSchema,
+  isZCodeAskUserQuestionToolName as isAskUserQuestionToolName,
+  isZCodeExitPlanModeToolName as isExitPlanModeToolName,
+  isZCodeUserInputBackedPermissionToolName as isUserInputBackedPermissionToolName,
 } from "@zcode/shared";
 import { errorAttributionSchema } from "@zcode/shared/zcode-protocol-v4";
 import { logger } from "@/logger.js";
@@ -91,8 +94,6 @@ import { logger } from "@/logger.js";
 const MODEL_CONFIG_ID = "model";
 const THOUGHT_LEVEL_CONFIG_ID = "thought_level";
 const MODE_CONFIG_ID = "mode";
-const ASK_USER_QUESTION_TOOL_NAME = "AskUserQuestion";
-const EXIT_PLAN_MODE_TOOL_NAME = "ExitPlanMode";
 const EXIT_PLAN_MODE_APPROVAL_QUESTION = "Review this implementation plan.";
 const EXIT_PLAN_MODE_APPROVAL_APPROVE = "approve";
 const STREAMING_TOOL_INPUT_INFO_LOG_LINE_BUCKET = 50;
@@ -3517,18 +3518,6 @@ function goalVerificationFromRecord(record: Record<string, unknown>): ZCodeGoalV
     passed: record.passed === true,
     reason,
   };
-}
-
-function isAskUserQuestionToolName(value: string | undefined): boolean {
-  return value === ASK_USER_QUESTION_TOOL_NAME;
-}
-
-function isExitPlanModeToolName(value: string | undefined): boolean {
-  return value === EXIT_PLAN_MODE_TOOL_NAME;
-}
-
-function isUserInputBackedPermissionToolName(value: string | undefined): boolean {
-  return isAskUserQuestionToolName(value) || isExitPlanModeToolName(value);
 }
 
 function numberValue(value: unknown): number | undefined {

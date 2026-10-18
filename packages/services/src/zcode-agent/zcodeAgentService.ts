@@ -49,7 +49,6 @@ import {
   zcodeSubagentsReadRuntimeConfigParamsSchema,
   type SubagentRuntimeConfig,
   ZCODE_SESSION_RUNTIME_PREFERENCES_REQUEST_TIMEOUT_MS,
-  formatLogPrefix,
   resolveWorkspaceKey,
   type TraceId,
   ZCODE_AGENT_PROVIDER,
@@ -5797,9 +5796,9 @@ export function createZCodeAgentService(
             }
             if (attempt >= SESSION_SUBSCRIBE_MAX_ATTEMPTS - 1) {
               // Warn on terminal failure so the issue remains observable instead of silently failing.
-              console.warn(
-                formatLogPrefix("zcode-agent", process.pid),
-                "session 订阅建立失败，已达最大重试次数，放弃",
+              logger.warn(
+                undefined,
+                "session subscription failed after the maximum retry attempts; giving up",
                 {
                   sessionId: params.sessionId,
                   workspaceKey: resolveWorkspaceKey(params),
