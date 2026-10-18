@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { readFileSync } from "node:fs";
-import { createElement, type ChangeEvent } from "react";
+import { createElement, useLayoutEffect, type ChangeEvent } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,6 +15,7 @@ let useStateCallCount = 0;
 let stateOverrides = new Map<number, unknown>();
 let onManageModels = vi.fn();
 let useRealReactHooks = false;
+let thoughtLevelChangeOnMount: string | undefined;
 const mockTabs = vi.hoisted(() => ({ tabs: [] as unknown[] }));
 const mockInitializePlugins = vi.hoisted(() => vi.fn(async () => {}));
 const mockSubagentsService = vi.hoisted(() => ({
@@ -231,6 +232,14 @@ vi.mock("@/settings/PluginScopeMenu.js", () => ({
 vi.mock("@/chat-input-toolbar/ThoughtLevelCycleControl.js", () => ({
   ThoughtLevelCycleControl: (props: Record<string, unknown>) => {
     capturedThoughtLevelControls.push(props);
+    // Layout effects run before the commit's passive effects flush, so this replays a user edit
+    // that lands while the row's mount effects are still pending (as under CI load).
+    useLayoutEffect(() => {
+      const value = thoughtLevelChangeOnMount;
+      if (value === undefined) return;
+      thoughtLevelChangeOnMount = undefined;
+      (props.onValueChange as (nextValue: string) => void)(value);
+    }, []);
     return createElement("button", {
       type: "button",
       "data-testid": "subagent-thought-level",
@@ -418,6 +427,40 @@ async function renderInteractiveSubagentsSection() {
   );
 }
 
+function createBuiltInExploreAgent() {
+  return {
+    id: "built-in:explore",
+    name: "Explore",
+    description: "Search broadly",
+    systemPrompt: "",
+    path: "built-in:Explore",
+    scope: "built-in" as const,
+    source: "built-in" as const,
+    enabled: true,
+    readOnly: true,
+    modelSelection: {
+      providerId: "custom-openai",
+      modelId: "glm-5.2",
+      options: { reasoningLevel: "high" },
+    },
+    modelSelectionOverride: {
+      providerId: "custom-openai",
+      modelId: "glm-5.2",
+      options: { reasoningLevel: "high" },
+    },
+    tools: ["Read"],
+  };
+}
+
+function listResultFor(agent: ReturnType<typeof createBuiltInExploreAgent>) {
+  return {
+    agents: [agent],
+    userAgents: [agent],
+    pluginAgents: [],
+    capability: { userScopeAvailable: true },
+  };
+}
+
 function findButton(label: string) {
   return capturedButtons.find((button) => button["aria-label"] === label);
 }
@@ -435,6 +478,7 @@ describe("SubagentsSection", () => {
     stateOverrides = new Map<number, unknown>();
     onManageModels = vi.fn();
     useRealReactHooks = false;
+    thoughtLevelChangeOnMount = undefined;
     mockTabs.tabs = [];
     mockInitializePlugins.mockReset().mockResolvedValue(undefined);
     mockToolbarConfigState.status = "ready";
@@ -1092,16 +1136,13 @@ describe("SubagentsSection", () => {
       (onModelValueChange as (value: string) => void)("custom:custom-openai:gpt-5.4");
       await Promise.resolve();
     });
-    await waitFor(
-      () => {
-        expect(
-          capturedModelConfigSelects
-            .slice(beforeOptimisticRender)
-            .some((candidate) => candidate.normalizedValue === "custom:custom-openai:gpt-5.4"),
-        ).toBe(true);
-      },
-      { timeout: 5_000 },
-    );
+    await waitFor(() => {
+      expect(
+        capturedModelConfigSelects
+          .slice(beforeOptimisticRender)
+          .some((candidate) => candidate.normalizedValue === "custom:custom-openai:gpt-5.4"),
+      ).toBe(true);
+    });
 
     expect(rejectWrite).toBeTypeOf("function");
     const beforeRollbackRender = capturedModelConfigSelects.length;
@@ -1111,21 +1152,18 @@ describe("SubagentsSection", () => {
       await Promise.resolve();
     });
 
-    await waitFor(
-      () => {
-        expect(
-          capturedModelConfigSelects
-            .slice(beforeRollbackRender)
-            .some((candidate) => candidate.normalizedValue === "custom:custom-openai:glm-5.2"),
-        ).toBe(true);
-        expect(
-          capturedThoughtLevelControls
-            .slice(beforeThoughtRollbackRender)
-            .some((candidate) => candidate.option?.currentValue === "high"),
-        ).toBe(true);
-      },
-      { timeout: 5_000 },
-    );
+    await waitFor(() => {
+      expect(
+        capturedModelConfigSelects
+          .slice(beforeRollbackRender)
+          .some((candidate) => candidate.normalizedValue === "custom:custom-openai:glm-5.2"),
+      ).toBe(true);
+      expect(
+        capturedThoughtLevelControls
+          .slice(beforeThoughtRollbackRender)
+          .some((candidate) => candidate.option?.currentValue === "high"),
+      ).toBe(true);
+    });
   });
 
   it("keeps the committed built-in config when the follow-up refresh fails", async () => {
@@ -1207,6 +1245,82 @@ describe("SubagentsSection", () => {
         disabled: false,
         option: expect.objectContaining({ currentValue: "max" }),
       });
+    });
+  });
+
+  it("keeps a built-in thought-level edit that lands before the row's mount effects flush", async () => {
+    const agent = createBuiltInExploreAgent();
+    mockSubagentsService.list.mockResolvedValue(listResultFor(agent));
+    mockSubagentsService.setBuiltInModelOverride.mockImplementationOnce(
+      () => new Promise<void>(() => {}),
+    );
+    thoughtLevelChangeOnMount = "max";
+
+    await renderInteractiveSubagentsSection();
+    await waitFor(() => {
+      expect(mockSubagentsService.setBuiltInModelOverride).toHaveBeenCalledWith({
+        agentName: "Explore",
+        modelSelection: {
+          providerId: "custom-openai",
+          modelId: "glm-5.2",
+          options: { reasoningLevel: "max" },
+        },
+      });
+    });
+    await act(async () => {});
+
+    expect(capturedThoughtLevelControls.at(-1)).toMatchObject({
+      disabled: true,
+      option: expect.objectContaining({ currentValue: "max" }),
+    });
+  });
+
+  it("keeps the optimistic built-in config when the list refreshes during a pending write", async () => {
+    const agent = createBuiltInExploreAgent();
+    // Each read returns fresh objects, like a real RPC projection.
+    mockSubagentsService.list.mockImplementation(async () => listResultFor(structuredClone(agent)));
+    mockSubagentsService.setBuiltInModelOverride.mockImplementationOnce(
+      () => new Promise<void>(() => {}),
+    );
+
+    await renderInteractiveSubagentsSection();
+    await waitFor(() => {
+      expect(capturedThoughtLevelControls.at(-1)?.option).toMatchObject({
+        currentValue: "high",
+      });
+    });
+    const onThoughtLevelChange = capturedThoughtLevelControls.at(-1)?.onValueChange;
+    expect(onThoughtLevelChange).toBeTypeOf("function");
+    act(() => {
+      (onThoughtLevelChange as (value: string) => void)("max");
+    });
+    expect(capturedThoughtLevelControls.at(-1)).toMatchObject({
+      disabled: true,
+      option: expect.objectContaining({ currentValue: "max" }),
+    });
+
+    let resolveRefresh: ((result: ReturnType<typeof listResultFor>) => void) | undefined;
+    mockSubagentsService.list.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRefresh = resolve;
+        }),
+    );
+    const [refreshButton] = screen.getAllByRole("button", { name: "Refresh" });
+    act(() => {
+      fireEvent.click(refreshButton!);
+    });
+    expect(resolveRefresh).toBeTypeOf("function");
+    const refreshedList = mockSubagentsService.list.mock.results.at(-1)?.value;
+    // loadAgents awaits the same promise first, so its setAgents runs before this act scope ends.
+    await act(async () => {
+      resolveRefresh!(listResultFor(structuredClone(agent)));
+      await refreshedList;
+    });
+
+    expect(capturedThoughtLevelControls.at(-1)).toMatchObject({
+      disabled: true,
+      option: expect.objectContaining({ currentValue: "max" }),
     });
   });
 
