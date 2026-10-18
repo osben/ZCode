@@ -135,10 +135,11 @@ sequenceDiagram
 
 ### Model support gate
 
-- `transcribe-cpp` 0.3.1 exposes `Session.stream()`, `feed()`, `finalize()`, and committed/tentative text snapshots. Its local declarations document stream-slot extensions for Parakeet, Moonshine, and Voxtral.
-- Catalog metadata alone is insufficient. At model load, require both `model.capabilities.supportsStreaming` and `model.accepts({ kind: "parakeet" })` before beginning a Parakeet stream.
-- The installed `transcribe-cpp` 0.3.1 declarations expose the Parakeet stream slot. Other catalog families, including Nemotron, stay on the one-shot path until their stream slot is declared and the loaded GGUF confirms compatibility.
-- Use one-shot transcription when the loaded model does not report compatible streaming capability. Do not infer support from a model name or description.
+- `transcribe-cpp` 0.3.1 exposes `Session.stream()`, `feed()`, `finalize()`, and committed/tentative text snapshots. Its declarations document stream-slot extensions for Parakeet (`parakeet`, `parakeet_buffered`), Moonshine, and Voxtral.
+- Catalog metadata alone is insufficient. At model load the transcriber derives a stream family from the loaded model with the pure `selectStreamFamily({ supportsStreaming, accepts })`: when `capabilities.supportsStreaming` is false it returns none; otherwise it returns the first of `parakeet_buffered`, `parakeet` that `model.accepts()`. The same result is used both to decide whether streaming is available and as the `family` of `session.stream()`; there are no two hard-coded copies.
+- Models for which no family is selected stay on the one-shot path. Do not infer support from a model name or description, and do not catch stream-begin errors to fall back silently.
+- The catalog `streaming` flag means "runtime-verified to stream with a family `selectStreamFamily` can pick". It drives the `Streaming` badge and filter, so it may only be set after a real load-and-feed check (see the findings section). `isLiveStreamingModel` reads that flag and nothing else.
+- Language codes: the catalog may declare `languageLocales` (code to locale, for example `uk` to `uk-UA`) for models whose native layer rejects bare ISO 639-1 codes. `VoiceTranscriber` resolves the engine language from the descriptor of the requested model for both one-shot and streaming; no locale list is read from `capabilities.languages` because the 0.3.1 binding returns it garbled. Auto detection (no language) is passed through unchanged, and a code that a locale-mapped model does not list falls back to auto detection (the native layer would reject it); models without `languageLocales` receive the code as is.
 
 ### Acceptance scenarios for implementation
 
@@ -157,7 +158,7 @@ sequenceDiagram
 
 - The E2E scenario must use a Desktop runtime with a runtime-verified streaming Parakeet GGUF and a working microphone. Assert that the level meter responds, preview text appears without changing the editor draft, stopping inserts the finalized transcript once, and canceling preserves the pre-existing draft.
 - A fallback scenario must use a model whose loaded runtime reports no compatible stream support and assert that the existing one-shot insertion still works without a streaming preview.
-- Current local model inventory has Whisper Tiny and Parakeet TDT only; neither is a streaming candidate. Real microphone E2E remains pending until a compatible model is installed.
+- Streaming candidates for E2E: `nemotron-3.5-asr-streaming-0.6b` (uk/ru/en and 25 more), `parakeet-unified-en-0.6b` and `nemotron-speech-streaming-en-0.6b` (English). Real microphone E2E remains pending; the runtime facts below were obtained by feeding synthetic 16 kHz speech to the native library, not a live microphone.
 
 ## Proposed follow-up: selected versus loaded model status
 
@@ -208,3 +209,207 @@ sequenceDiagram
 | VD-MEM-05 | Let the idle timer expire                                            | The loaded marker disappears after unload completes.                                                                         |
 | VD-MEM-06 | Remove the currently loaded model                                    | It unloads before its file is removed; runtime status then reports no loaded model.                                          |
 | VD-MEM-07 | Restart the app                                                      | No model is reported loaded until the next transcription loads one.                                                          |
+
+## Languages, model discovery, and dictation output
+
+### Product rules
+
+- **Per-model languages.** Every catalog model declares the explicit ISO 639-1 codes it supports (`languages`), not only a count. The model card shows the supported languages as chips (first few plus `+N`, expandable to the full list). `languageCount` is removed from the descriptor; the count is `languages.length`.
+- **One language catalog.** The set of languages the user can pick is the union of languages declared by catalog models, displayed with `Intl.DisplayNames`; the settings page no longer keeps its own hard-coded list.
+- **Several languages.** The user selects zero or more dictation languages (`voiceDictation.languages`).
+  - Zero selected means automatic detection (same as the former `auto`).
+  - Exactly one selected is passed to the engine as that language code.
+  - Two or more are passed to the engine as automatic detection; the selection is used to filter and recommend models and to warn when the active model cannot cover them. The engine API accepts a single language or none, so the list is never sent as a constraint.
+  - `voiceDictation.language` stays as a mirror for older fork builds (the single selected code, otherwise `auto`) and is the fallback when `languages` is absent. `languages` wins when both are present.
+- **Model coverage warning.** If the active model does not support every selected language, settings show a warning naming the missing languages and a one-click switch to the recommended covering model when one is downloaded or downloadable.
+- **Recommendation.** `recommendVoiceModel(languages)` returns the covering catalog model with the lowest `recommendRank`; with no selected languages nothing is recommended. The card shows a `Recommended` badge on that model.
+- **Model filters** above the model list: free-text search over name, family, and language names; a language filter (default: the selected languages — a model matches only if it supports all of them); `Downloaded`; `Streaming`. Filters are view state only and never change the selection. An empty result shows an explanatory empty state with a reset action.
+- **Ordering.** Recommended first, then the catalog order. Download state is not a sort key, so a card never jumps when its download finishes.
+
+### Dictation output
+
+- **Insertion point.** A finished transcript is inserted at the composer caret, replacing the current selection; if the editor has no usable selection it is appended to the end. The existing `appendText` stays for other callers. A space is added only on a side that borders a non-space character.
+- **Cancel.** `Escape` while loading or recording cancels dictation without transcribing or inserting anything and without interrupting the running agent turn. The floating feedback panel also exposes a Cancel button. Cancel follows the same silent path as window blur (no stop chime, mute released).
+- **Too short.** A recording shorter than `VOICE_MIN_RECORDING_MS` shows a short notice ("Recording too short") instead of being dropped silently.
+- **No model.** Starting without a selected model shows a notice with an `Open settings` action that opens the Voice dictation settings section.
+- **Clipboard.** `voiceDictation.copyToClipboard` (default off): after a transcript is produced, also write it to the system clipboard. Insertion into the composer is unaffected. A clipboard failure is logged and never fails dictation. Unmounting the composer aborts dictation with no output, including no clipboard write. The browser may reject the write when the document is not focused; this is only logged.
+
+### Ownership and interfaces
+
+- `voiceDictation` settings live in the fork sidecar (`fork-settings.json`, keys registered in `forkAppSettings.ts`), so adding `languages` and `copyToClipboard` is additive and cannot be wiped by an upstream write. Both the TypeScript interface and the zod schema in `forkAppSettings.ts` must change together.
+- `voiceModelCatalog.ts` owns language data and `recommendRank`; a pure helper module (`voiceModelLanguages.ts` in services, re-exported through the public entry) owns language resolution, model coverage, recommendation, and filtering so the UI and tests share one implementation.
+- `useVoiceDictation` stays the sole owner of recording phase; it gains `cancel()` and the too-short notice. The composer owns insertion (`LexicalChatInput` handle gets `insertTextAtSelection`). `useDictationTranscriptHandler` (used by `V4ComposerDictationControl`) owns the clipboard copy so both engines (Host and Web Speech) share it.
+
+```mermaid
+sequenceDiagram
+  participant U as User
+  participant H as useVoiceDictation
+  participant C as V4ComposerDictationControl
+  participant E as Composer editor
+  U->>H: Esc (loading or recording)
+  H->>H: cancel recorder, release mute, cancel stream, phase = idle
+  Note over H: no transcript, no insert, no clipboard write
+  U->>H: stop (release / click)
+  H->>C: onTranscript(text)
+  C->>E: insertTextAtSelection(text) (caret or end)
+  C->>C: copy to clipboard when enabled (failure logged only)
+```
+
+### Acceptance scenarios
+
+| Case      | Setup / action                                     | Expected result                                                                                                        |
+| --------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| VD-LNG-01 | Open the model list                                | Each card lists its supported languages as chips with `+N` overflow; the full list is reachable.                       |
+| VD-LNG-02 | Select Ukrainian only                              | Engine receives `uk`; the model list filters to models that support Ukrainian; the best covering model is recommended. |
+| VD-LNG-03 | Select Ukrainian and English                       | Engine receives automatic detection; models must cover both to match the language filter.                              |
+| VD-LNG-04 | Active model lacks a selected language             | A warning names the missing language and offers the recommended model.                                                 |
+| VD-LNG-05 | Clear all languages                                | Behaves as automatic detection; no filter applied; no recommendation.                                                  |
+| VD-LNG-06 | Settings saved by an older build (`language` only) | `languages` is derived from `language`; saving writes both fields.                                                     |
+| VD-FLT-01 | Type in search / toggle Downloaded / Streaming     | The list narrows; the selection and downloads are unaffected; an empty result offers Reset.                            |
+| VD-OUT-01 | Caret in the middle of a draft; dictate            | Text is inserted at the caret with correct spacing; the rest of the draft is intact.                                   |
+| VD-OUT-02 | Text selected in the draft; dictate                | The selection is replaced by the transcript.                                                                           |
+| VD-OUT-03 | Press Esc while recording                          | Capture stops, nothing is inserted or copied, the agent turn is not interrupted, no stop chime.                        |
+| VD-OUT-04 | Click Cancel in the feedback panel                 | Same as VD-OUT-03.                                                                                                     |
+| VD-OUT-05 | Tap the shortcut for less than 250 ms              | A "too short" notice appears; nothing is inserted.                                                                     |
+| VD-OUT-06 | Start with no model selected                       | A notice with `Open settings` appears; the action opens Voice dictation settings.                                      |
+| VD-OUT-07 | `copyToClipboard` on; dictate                      | Text is inserted and also copied; with it off the clipboard is untouched.                                              |
+| VD-OUT-08 | Clipboard write is denied                          | Dictation still inserts; a warning is logged; no error toast.                                                          |
+
+### Catalog additions and streaming findings (research against Handy's catalog)
+
+Handy's catalog (`src-tauri/src/catalog/catalog.json`, 69 models) was compared with ours. All 8 existing entries still match upstream (revision, file, size, sha256, languages, streaming flag). Every Q8_0 size and sha256 below was verified against the Hugging Face tree metadata at the pinned revision (`lfs.oid` / `lfs.size`).
+
+- **Added** (one-shot transcription; families present in the installed `transcribe-cpp` 0.3.1 native library): `whisper-medium`, `whisper-large-v3`, `canary-1b-v2`, `gigaam-v3-e2e-rnnt` (Russian only). Language lists are copied from the model cards.
+- **Recommendation ranks** (`recommendRank`): `parakeet-unified-en-0.6b` 1, `parakeet-tdt-0.6b-v3` 2, `canary-180m-flash` 3, `whisper-large-v3-turbo` 4, `whisper-medium` 5. Other models are never recommended automatically.
+- **Added after runtime verification:** `nemotron-3.5-asr-streaming-0.6b` (Q8_0, 751094240 bytes, sha256 `b94545b3...`), streaming, 28 languages, with `languageLocales`.
+- **Not added yet** (need a runtime check before shipping, see follow-ups): `voxtral-mini-4b-realtime-2602`, `moonshine-base-uk` (Handy accuracy score 38), `parakeet-primeline` (German fine-tune).
+
+Streaming facts, confirmed by running the models with `transcribe-cpp` 0.3.1 on macOS arm64 (GGUF sha256 matched the catalog; synthetic 16 kHz en/uk/ru speech fed in 100-500 ms chunks):
+
+| Model                               | `supportsStreaming` | `accepts parakeet` | `accepts parakeet_buffered` | Streams | Bare language code                                                                       |
+| ----------------------------------- | ------------------- | ------------------ | --------------------------- | ------- | ---------------------------------------------------------------------------------------- |
+| `parakeet-unified-en-0.6b`          | true                | false              | true                        | yes     | `en` ok                                                                                  |
+| `nemotron-speech-streaming-en-0.6b` | true                | true               | false                       | yes     | `en` ok, `en-US` rejected                                                                |
+| `nemotron-3.5-asr-streaming-0.6b`   | true                | true               | false                       | yes     | `en`/`uk`/`ru` rejected (stream and one-shot); `en-US`/`uk-UA`/`ru-RU` and auto accepted |
+| `parakeet-tdt-0.6b-v3`              | false               | false              | false                       | no      | `en` ok (one-shot)                                                                       |
+| `canary-180m-flash`                 | false               | false              | false                       | no      | `en` ok (one-shot)                                                                       |
+
+- Before this change the transcriber gated on `accepts({ kind: "parakeet" })`, which is false for `parakeet-unified-en-0.6b`, so streaming never activated for it and dictation silently stayed one-shot. Requesting the `parakeet` extension on it raises `UnsupportedRequest`.
+- `nemotron-3.5-asr-streaming-0.6b` streams uk/ru/en live (partial committed/tentative text updates arrive during feeding) and its auto-detect mode (`supportsLanguageDetect`) identified all three test languages. All 28 catalog codes were accepted as locales: `en-US es-ES fr-FR it-IT pt-BR nl-NL de-DE tr-TR ru-RU ar-AR hi-IN ja-JP ko-KR vi-VN uk-UA pl-PL sv-SE cs-CZ nb-NO da-DK bg-BG fi-FI hr-HR sk-SK zh-CN hu-HU ro-RO et-EE`. These form its `languageLocales`.
+- Quality note: on the English test clip `parakeet-unified-en-0.6b`'s streamed final text dropped the leading "The" that its one-shot result kept. Not addressed here.
+- Still unknown: accuracy and latency with a real microphone and real speakers, other operating systems and GPU backends, and Nemotron accuracy on uk/ru versus `parakeet-tdt-0.6b-v3` (which is better for accuracy but cannot stream).
+
+### Follow-ups (not part of this change)
+
+1. ~~Select the stream family per loaded model~~ — resolved (`selectStreamFamily`).
+2. ~~Locale mapping and runtime verification for `nemotron-3.5-asr-streaming-0.6b`~~ — resolved (`languageLocales`, added to the catalog).
+3. Voxtral realtime and Moonshine streaming: add their family kinds to `STREAM_FAMILY_KINDS` after a runtime load-and-feed check.
+4. ~~Model warm-up on composer focus~~ — resolved (see "Model warm-up on composer focus"). Level meter RMS and silence hint, recording timer, `AudioWorklet` capture.
+
+## Model warm-up on composer focus
+
+### Product rules
+
+- When the composer gains focus on Desktop and a model is selected, the Host loads that model in the background so the first recording does not wait for it. Warm-up never records, transcribes, or changes the draft.
+- `voiceDictation.warmUpOnFocus` controls it. **Default on**: absent means on; only an explicit `false` disables it. The setting row explains that a loaded model holds memory until the idle-unload delay passes.
+- Warm-up also counts as use: warming an already-loaded model restarts its idle-unload countdown, so a model stays resident while the user keeps coming back to the composer.
+- Warm-up is best-effort. A failure (missing model file, older Host without the method, load error) is logged at warn level and never shown to the user; the next recording loads the model on demand exactly as before.
+- Warm-up is Desktop-local only: Web remote control and hosts without the voice service do nothing.
+
+### Ownership and interfaces
+
+- `IVoiceDictationService.warmUp({ modelId })` is new. `VoiceTranscriber` still owns which model is loaded (`load()` already serializes through its queue); `VoiceDictationService` owns the idle timer and the stream-lease guard.
+- Service rules: no-op while a dictation stream is active (never unload or swap a model under a stream); otherwise load the model, then (re)start the idle-unload timer unless a stream or transcription started meanwhile. A model that is not downloaded rejects with the store's existing error.
+- UI: `useVoiceModelWarmUp` (renderer) listens for focus entering the composer scope, applies the idle-unload preference, and calls `warmUp`. It requests at most once per model per 30 seconds, never while a request is in flight, and tolerates `Method not found: warmUp` from an older Host by disabling itself for the session.
+- Settings UI owns only the toggle; the service stays authoritative for what is loaded (the existing runtime state shows the `Loaded` badge).
+
+```mermaid
+sequenceDiagram
+  participant U as User
+  participant W as useVoiceModelWarmUp
+  participant S as VoiceDictationService
+  participant T as VoiceTranscriber
+  U->>W: focus enters composer
+  W->>W: skip if disabled, no model, throttled, or in flight
+  W->>S: setIdleUnloadMinutes, warmUp(modelId)
+  alt stream active
+    S-->>W: no-op
+  else
+    S->>T: load(modelId) (queued)
+    T-->>S: loaded
+    S->>S: restart idle timer (unless a stream started)
+  end
+  U->>S: first recording: beginStream finds the model already loaded
+```
+
+### Acceptance scenarios
+
+| Case      | Setup / action                                       | Expected result                                                                                         |
+| --------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| VD-WRM-01 | Warm-up on (default), model selected; focus composer | The Host loads the model; settings show it as `Loaded`; the first recording starts without a load wait. |
+| VD-WRM-02 | `warmUpOnFocus` is false                             | Focusing the composer never loads a model.                                                              |
+| VD-WRM-03 | Focus the composer repeatedly within 30 seconds      | At most one warm-up request.                                                                            |
+| VD-WRM-04 | Model already loaded; focus the composer             | No reload; the idle-unload countdown restarts.                                                          |
+| VD-WRM-05 | A dictation stream is active                         | Warm-up does nothing and the stream is untouched.                                                       |
+| VD-WRM-06 | No model selected, or the model is not downloaded    | No error toast; the failure is only logged.                                                             |
+| VD-WRM-07 | Older Host without `warmUp`                          | Dictation works as before; no toast; no repeated requests in the session.                               |
+| VD-WRM-08 | Web remote control                                   | No warm-up.                                                                                             |
+
+## Model status dot on the microphone button
+
+### Product rules
+
+- On Desktop the composer microphone button shows a small dot for the **selected** model: a pulsing warning-colored dot while that model is loading (including a warm-up load), a success-colored dot while it is loaded in memory. No dot when it is not loaded, when no model is selected, on Web remote control, and while recording or busy (the button already shows the recording or spinner state).
+- The dot is never the only signal: the tooltip adds the status text ("Speech model loading" / "Speech model loaded, starts instantly"), and the button is described by the same text for assistive technology. The pulse is disabled under reduced motion.
+- A model loaded for a different selection (the user switched models) shows no dot; loaded state always refers to the selected model.
+
+### Ownership and interfaces
+
+- The Host stays the only owner of what is loaded. `VoiceTranscriber.load()` now reports the `loading` phase and the model id through the existing runtime snapshot (it did not before: only transcription and streaming did, so a warm-up load was invisible).
+- The renderer derives the status with the pure `deriveVoiceModelStatus(runtimeState, selectedModelId)` and polls the existing `getRuntimeState()` once per second, only while Desktop dictation is enabled and the window is visible. There is no second source of truth and no UI timer.
+- The snapshot is a poll, so the dot can lag the Host by up to one poll interval.
+
+### Acceptance scenarios
+
+| Case      | Setup / action                                       | Expected result                                                   |
+| --------- | ---------------------------------------------------- | ----------------------------------------------------------------- |
+| VD-DOT-01 | Selected model starts loading (warm-up or first use) | A pulsing warning dot appears on the microphone button.           |
+| VD-DOT-02 | The model finishes loading                           | The dot turns success-colored and stays.                          |
+| VD-DOT-03 | The idle-unload delay passes                         | The dot disappears within about a second.                         |
+| VD-DOT-04 | A different model is loaded than the selected one    | No dot.                                                           |
+| VD-DOT-05 | Recording or transcribing                            | The dot is hidden; the existing recording/spinner state is shown. |
+| VD-DOT-06 | Reduced motion is requested                          | The loading dot does not pulse.                                   |
+| VD-DOT-07 | Window hidden                                        | The renderer stops polling until it is visible again.             |
+
+## Post-processing of dictated text
+
+### Product rules
+
+- **Name:** "Post-processing". An optional step that rewrites the finished transcript with a language model according to a user-editable prompt, then inserts the result.
+- **Setting:** `voiceDictation.postProcessEnabled` (default off) with `postProcessPrompt` (default below) and `postProcessProvider`.
+- **Provider (first version):** a single system provider, shown in settings as "System model (Apple Foundation Models)". It is offered only when the Host reports it available (macOS with Apple Intelligence enabled and a supported device); otherwise the row explains why it is unavailable and the toggle stays off. When unavailable at dictation time, the raw transcript is inserted unchanged.
+- **TODO (next version):** let the user pick another provider and model from ZCode's configured providers instead of only the system model. The provider setting is an enum so adding values is additive; no other code may assume a single provider.
+- **Prompt variable:** `{{text}}` is replaced by the raw transcript. If the prompt contains no `{{text}}`, the transcript is appended after the prompt on a new line. Only this one variable exists.
+- **Default prompt (English, language-preserving):** the transcript is fenced in `<transcript>{{text}}</transcript>` tags and the prompt says it is dictated data, never a request to follow or answer; it asks for punctuation, capitalization, recognition fixes and filler removal; it requires the output language to equal the input language ("Translating is a failure") and carries three short examples (English, Ukrainian, Russian). The examples are load-bearing: tuned against the real system model, a plain "never translate" instruction still translated Ukrainian and Russian to English in about half of the runs, and examples in only one language pushed English into that language. The helper requests greedy sampling so the same transcript always gives the same output. A reset button restores the default. No presets.
+- **Flow:** transcribe, then (when enabled and available) process, then insert. While processing the microphone button shows its busy state and the tooltip says "Processing". If processing fails, times out (15 s), or returns empty text, the raw transcript is inserted instead and the failure is logged (no error toast).
+- **Clipboard:** with `copyToClipboard` on, the clipboard always receives the **raw** transcript, even when the inserted text is the processed one. Esc during processing discards the result (nothing inserted or copied).
+- **Privacy:** the on-device system model is the only provider in this version, so no transcript leaves the machine.
+
+### Ownership and interfaces
+
+- A Host service owns availability and execution (`getPostProcessAvailability()`, `postProcess({ text, prompt })`); the renderer owns the prompt and the toggle. `useVoiceDictation` owns the phase (a new `processing` phase after `transcribing`) and the fallback to raw text.
+- Apple Foundation Models are reached through a small bundled Swift helper built like `zcode-window-bounds` (`packages/desktop/native/`, a `prepare:` script, `electron-builder` extra resource). It reads JSON from stdin and writes JSON to stdout, checks `SystemLanguageModel.default.availability`, and is spawned per request with a timeout. Main injects the helper path into the Host.
+- Settings live in the fork sidecar (`forkAppSettings.ts`), same rules as the other `voiceDictation` fields.
+
+### Acceptance scenarios
+
+| Case      | Setup / action                                              | Expected result                                                                      |
+| --------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| VD-PPR-01 | Post-processing on, system model available; dictate         | The processed text is inserted; the clipboard (if enabled) holds the raw transcript. |
+| VD-PPR-02 | The prompt has `{{text}}` in the middle                     | The transcript is substituted at that position.                                      |
+| VD-PPR-03 | The prompt has no `{{text}}`                                | The transcript is appended after the prompt.                                         |
+| VD-PPR-04 | The model errors, times out, or returns empty               | The raw transcript is inserted; the failure is logged, no error toast.               |
+| VD-PPR-05 | System model unavailable (no Apple Intelligence, non-macOS) | The setting explains why and stays off; dictation inserts raw text.                  |
+| VD-PPR-06 | Esc while processing                                        | Nothing is inserted or copied.                                                       |
+| VD-PPR-07 | Dictate in Ukrainian with the default prompt                | The output stays Ukrainian (not translated).                                         |
+| VD-PPR-08 | Reset the prompt                                            | The default prompt is restored.                                                      |

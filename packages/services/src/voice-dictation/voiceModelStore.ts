@@ -307,6 +307,11 @@ export class VoiceModelStore {
     }
   }
 
+  /** Descriptor lookup against this store's catalog (the transcriber reads per-model language mapping from it). */
+  findDescriptor(id: string): VoiceModelDescriptor | undefined {
+    return findVoiceModelDescriptor(id, this.catalog);
+  }
+
   private requireDescriptor(id: string): VoiceModelDescriptor {
     const descriptor = findVoiceModelDescriptor(id, this.catalog);
     if (!descriptor) throw new Error(`unknown voice model: ${id}`);

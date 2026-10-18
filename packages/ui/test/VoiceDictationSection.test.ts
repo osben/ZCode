@@ -20,7 +20,7 @@ const h = vi.hoisted(() => {
     name: "Model One",
     description: "Test model",
     family: "whisper",
-    languageCount: 1,
+    languages: ["en"],
     streaming: false,
     license: "mit",
     huggingFaceRepo: "owner/model-one",
@@ -41,6 +41,7 @@ const h = vi.hoisted(() => {
   });
   return {
     state,
+    descriptors: { first: descriptor, second: secondDescriptor },
     updateSettings,
     settings,
     voiceDictationService: {
@@ -76,6 +77,9 @@ const h = vi.hoisted(() => {
         ];
       }),
       setIdleUnloadMinutes: vi.fn(async () => {}),
+      getPostProcessAvailability: vi.fn(
+        async () => ({ status: "available" }) as { status: string; reason?: string },
+      ),
       downloadModel: vi.fn(
         () =>
           new Promise<void>((resolve) => {
@@ -164,7 +168,11 @@ vi.mock("@/lib/voiceDictationRecorder.js", () => ({
 
 import { toast } from "@/components/ui/toast.js";
 import { playVoiceDictationFeedbackSound } from "@/lib/voiceDictationFeedbackSound.js";
-import { VoiceDictationSection } from "@/settings/VoiceDictationSection.js";
+import { DEFAULT_POST_PROCESS_PROMPT } from "@zcode/services";
+import {
+  isSameVoiceSettingValue,
+  VoiceDictationSection,
+} from "@/settings/VoiceDictationSection.js";
 
 // Radix Slider (volume row) reads element sizes through ResizeObserver, which jsdom lacks.
 class ResizeObserverStub {
@@ -175,6 +183,8 @@ class ResizeObserverStub {
 (globalThis as { ResizeObserver?: unknown }).ResizeObserver = ResizeObserverStub;
 
 beforeEach(() => {
+  h.descriptors.first.languages = ["en"];
+  h.descriptors.second.languages = ["en"];
   h.state.downloadRequested = false;
   h.state.downloadPolls = 0;
   h.state.downloadStatus = "not_downloaded";
@@ -520,5 +530,263 @@ describe("VoiceDictationSection shortcut row", () => {
     expect(chips.every(Boolean)).toBe(true);
     expect(new Set(chips).size).toBe(3);
     expect(screen.queryByText("Cmd+Shift+D")).toBeNull();
+  });
+});
+
+describe("VoiceDictationSection post-processing", () => {
+  const prompt = () =>
+    screen.findByRole("textbox", { name: "voiceDictation.postProcess.prompt.title" });
+  const toggle = () =>
+    screen.findByRole("switch", { name: "voiceDictation.postProcess.enabled.title" });
+
+  beforeEach(() => {
+    h.voiceDictationService.getPostProcessAvailability.mockResolvedValue({ status: "available" });
+  });
+
+  it("is off by default and persists the toggle when the system model is available", async () => {
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+    const control = await toggle();
+    await waitFor(() => expect(control.hasAttribute("disabled")).toBe(false));
+    expect(control.getAttribute("aria-checked")).toBe("false");
+
+    fireEvent.click(control);
+    await waitFor(() =>
+      expect(h.updateSettings).toHaveBeenCalledWith({
+        voiceDictation: { modelId: "model-one", postProcessEnabled: true },
+      }),
+    );
+  });
+
+  it("disables the toggle and explains why when the system model is unavailable", async () => {
+    h.voiceDictationService.getPostProcessAvailability.mockResolvedValue({
+      status: "unavailable",
+      reason: "appleIntelligenceNotEnabled",
+    });
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+
+    expect(
+      await screen.findByText("voiceDictation.postProcess.unavailable.appleIntelligenceNotEnabled"),
+    ).toBeTruthy();
+    expect((await toggle()).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("maps an unknown unavailability reason from the Host to the generic message", async () => {
+    h.voiceDictationService.getPostProcessAvailability.mockResolvedValue({
+      status: "unavailable",
+      reason: "someFutureReason",
+    });
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+
+    expect(await screen.findByText("voiceDictation.postProcess.unavailable.unknown")).toBeTruthy();
+  });
+
+  it("shows the toggle and prompt reset immediately, before the settings snapshot republishes", async () => {
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+    const control = await toggle();
+    await waitFor(() => expect(control.hasAttribute("disabled")).toBe(false));
+
+    fireEvent.click(control);
+    // The mocked snapshot never republishes, so only the optimistic overlay can flip the switch.
+    await waitFor(() => expect(control.getAttribute("aria-checked")).toBe("true"));
+  });
+
+  it("reverts the toggle on screen when saving fails", async () => {
+    h.updateSettings.mockRejectedValueOnce(new Error("disk full"));
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+    const control = await toggle();
+    await waitFor(() => expect(control.hasAttribute("disabled")).toBe(false));
+
+    fireEvent.click(control);
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("voiceDictation.saveFailed"));
+    // The failed write clears the overlay; the switch must show the persisted value again.
+    await waitFor(() => expect(control.getAttribute("aria-checked")).toBe("false"));
+  });
+
+  it("treats a Host without the availability method as unavailable", async () => {
+    h.voiceDictationService.getPostProcessAvailability.mockRejectedValue(
+      new Error("Method not found: getPostProcessAvailability"),
+    );
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+
+    expect(await screen.findByText("voiceDictation.postProcess.unavailable.unknown")).toBeTruthy();
+    expect((await toggle()).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("shows the default prompt, saves an edited prompt on blur, and resets to the default", async () => {
+    h.settings.voiceDictation = { modelId: "model-one" };
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+    const field = (await prompt()) as HTMLTextAreaElement;
+    expect(field.value).toBe(DEFAULT_POST_PROCESS_PROMPT);
+
+    fireEvent.change(field, { target: { value: "Shorten: {{text}}" } });
+    // Typing alone must not write settings on every keystroke.
+    expect(h.updateSettings).not.toHaveBeenCalled();
+    fireEvent.blur(field);
+    await waitFor(() =>
+      expect(h.updateSettings).toHaveBeenCalledWith({
+        voiceDictation: { modelId: "model-one", postProcessPrompt: "Shorten: {{text}}" },
+      }),
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "voiceDictation.postProcess.prompt.reset" }),
+    );
+    await waitFor(() =>
+      expect(h.updateSettings).toHaveBeenLastCalledWith({
+        voiceDictation: { modelId: "model-one", postProcessPrompt: DEFAULT_POST_PROCESS_PROMPT },
+      }),
+    );
+    expect(((await prompt()) as HTMLTextAreaElement).value).toBe(DEFAULT_POST_PROCESS_PROMPT);
+  });
+
+  it("offers the system model as the provider", async () => {
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+    const provider = await screen.findByRole("combobox", {
+      name: "voiceDictation.postProcess.provider.title",
+    });
+    expect(provider.textContent).toContain("voiceDictation.postProcess.provider.appleFm");
+  });
+});
+
+describe("VoiceDictationSection warm-up toggle", () => {
+  it("is on by default and persists an explicit off", async () => {
+    h.settings.voiceDictation = { modelId: "model-one" };
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+
+    const toggle = await screen.findByRole("switch", { name: "voiceDictation.warmUp.title" });
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+
+    fireEvent.click(toggle);
+    await waitFor(() =>
+      expect(h.updateSettings).toHaveBeenCalledWith({
+        voiceDictation: { modelId: "model-one", warmUpOnFocus: false },
+      }),
+    );
+  });
+});
+
+describe("VoiceDictationSection languages and model filters", () => {
+  const openPicker = async () => {
+    const trigger = await screen.findByRole("button", { name: /voiceDictation\.language\.title/ });
+    fireEvent.click(trigger);
+  };
+  const cardNames = () =>
+    screen
+      .queryAllByRole("button", { name: /^Model (One|Two):/ })
+      .map((b) => b.getAttribute("aria-label")?.split(":")[0]);
+
+  it("writes languages and the legacy mirror together in one update", async () => {
+    h.descriptors.first.languages = ["en", "uk"];
+    h.descriptors.second.languages = ["en", "ru"];
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+    await openPicker();
+
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Ukrainian" }));
+
+    await waitFor(() =>
+      expect(h.updateSettings).toHaveBeenCalledWith({
+        voiceDictation: expect.objectContaining({ languages: ["uk"], language: "uk" }),
+      }),
+    );
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Russian" }));
+    await waitFor(() =>
+      expect(h.updateSettings).toHaveBeenLastCalledWith({
+        voiceDictation: expect.objectContaining({ languages: ["uk", "ru"], language: "auto" }),
+      }),
+    );
+  });
+
+  it("filters the model list to models covering the selected languages and can show all", async () => {
+    h.descriptors.first.languages = ["en", "uk"];
+    h.descriptors.second.languages = ["en"];
+    h.settings.voiceDictation = { modelId: "model-one", languages: ["uk"], language: "uk" };
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+
+    await waitFor(() => expect(cardNames()).toEqual(["Model One"]));
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "voiceDictation.models.filter.matchLanguages" }),
+    );
+    await waitFor(() => expect(cardNames().sort()).toEqual(["Model One", "Model Two"]));
+  });
+
+  it("warns when the active model lacks a selected language and offers the recommended one", async () => {
+    h.descriptors.first.languages = ["en"];
+    h.descriptors.second.languages = ["en", "uk"];
+    (h.descriptors.second as { recommendRank?: number }).recommendRank = 1;
+    h.settings.voiceDictation = { modelId: "model-one", languages: ["uk"], language: "uk" };
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+
+    expect(await screen.findByTestId("voice-language-model-mismatch")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "voiceDictation.language.useModel" }));
+    // Not downloaded yet: the recommended model starts downloading and is selected once ready.
+    await waitFor(() =>
+      expect(h.voiceDictationService.downloadModel).toHaveBeenCalledWith("model-two"),
+    );
+    delete (h.descriptors.second as { recommendRank?: number }).recommendRank;
+  });
+
+  it("narrows by search text and offers a reset when nothing matches", async () => {
+    // No selected model, so nothing is pinned and the search alone decides what is shown.
+    h.settings.voiceDictation = {};
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+    await waitFor(() => expect(cardNames().sort()).toEqual(["Model One", "Model Two"]));
+
+    fireEvent.change(screen.getByPlaceholderText("voiceDictation.models.filter.search"), {
+      target: { value: "two" },
+    });
+    await waitFor(() => expect(cardNames()).toEqual(["Model Two"]));
+
+    fireEvent.change(screen.getByPlaceholderText("voiceDictation.models.filter.search"), {
+      target: { value: "zzz" },
+    });
+    expect(await screen.findByText("voiceDictation.models.filter.empty")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "voiceDictation.models.filter.reset" }));
+    await waitFor(() => expect(cardNames().sort()).toEqual(["Model One", "Model Two"]));
+  });
+
+  it("never hides the selected model behind a filter", async () => {
+    h.descriptors.first.languages = ["en"];
+    h.descriptors.second.languages = ["en", "uk"];
+    h.settings.voiceDictation = { modelId: "model-one", languages: ["uk"], language: "uk" };
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+
+    // Model One (selected) does not support Ukrainian, yet it stays listed next to the matching model.
+    await waitFor(() => expect(cardNames().sort()).toEqual(["Model One", "Model Two"]));
+  });
+
+  it("keeps a downloading model and its Cancel button visible under the Downloaded filter", async () => {
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /^Model Two: voiceDictation\.models\.download/ }),
+    );
+    await waitFor(() => expect(screen.getByTestId("voice-model-download-progress")).toBeTruthy());
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "voiceDictation.models.filter.downloaded" }),
+    );
+
+    expect(screen.getByTestId("voice-model-download-progress")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "voiceDictation.models.cancel" })).toBeTruthy();
+  });
+
+  it("narrows to downloaded models", async () => {
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+    await waitFor(() => expect(cardNames().sort()).toEqual(["Model One", "Model Two"]));
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "voiceDictation.models.filter.downloaded" }),
+    );
+    await waitFor(() => expect(cardNames()).toEqual(["Model One"]));
+  });
+});
+
+describe("isSameVoiceSettingValue", () => {
+  it("compares arrays structurally so a re-read languages list clears the optimistic overlay", () => {
+    expect(isSameVoiceSettingValue(["uk", "en"], ["uk", "en"])).toBe(true);
+    expect(isSameVoiceSettingValue(["uk", "en"], ["en", "uk"])).toBe(false);
+    expect(isSameVoiceSettingValue(["uk"], ["uk", "en"])).toBe(false);
+    expect(isSameVoiceSettingValue("a", "a")).toBe(true);
+    expect(isSameVoiceSettingValue(undefined, [])).toBe(false);
   });
 });

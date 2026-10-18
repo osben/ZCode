@@ -11,8 +11,13 @@ import {
   type VoiceTranscriptionRequest,
   type VoiceTranscriptionResponse,
   type VoiceTranscriptionPreview,
+  type VoicePostProcessAvailability,
+  type VoicePostProcessRequest,
+  type VoicePostProcessResponse,
   type VoiceStreamRequest,
+  type VoiceWarmUpRequest,
 } from "./voiceDictation.js";
+import { VoicePostProcessor, ZCODE_APPLE_FM_HELPER_ENV } from "./voicePostProcessor.js";
 import { VoiceModelStore } from "./voiceModelStore.js";
 import { VoiceTranscriber, decodePcm16LeToFloat32 } from "./voiceTranscriber.js";
 
@@ -24,6 +29,8 @@ export interface VoiceDictationServiceOptions {
   store: VoiceModelStore;
   transcriber: VoiceTranscriber;
   idleUnloadMs?: number;
+  /** Post-processing provider; without one the feature reports itself unavailable. */
+  postProcessor?: VoicePostProcessor;
 }
 
 /**
@@ -33,6 +40,7 @@ export interface VoiceDictationServiceOptions {
 export class VoiceDictationService implements IVoiceDictationService {
   private readonly store: VoiceModelStore;
   private readonly transcriber: VoiceTranscriber;
+  private readonly postProcessor: VoicePostProcessor;
   private idleUnloadMs: number;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private activeStreamId: string | null = null;
@@ -40,6 +48,7 @@ export class VoiceDictationService implements IVoiceDictationService {
   constructor(options: VoiceDictationServiceOptions) {
     this.store = options.store;
     this.transcriber = options.transcriber;
+    this.postProcessor = options.postProcessor ?? new VoicePostProcessor({ helperPath: undefined });
     this.idleUnloadMs = options.idleUnloadMs ?? VOICE_MODEL_IDLE_UNLOAD_MS;
   }
 
@@ -58,6 +67,23 @@ export class VoiceDictationService implements IVoiceDictationService {
   async setIdleUnloadMinutes(minutes: VoiceModelIdleUnloadMinutes): Promise<void> {
     this.idleUnloadMs = minutes * 60_000;
     if (this.idleTimer) this.scheduleIdleUnload();
+  }
+
+  async warmUp(request: VoiceWarmUpRequest): Promise<void> {
+    // Never load or swap a model under a live stream.
+    if (this.activeStreamId) return;
+    // The countdown is only touched once the load succeeded, so a failed warm-up cannot strand an
+    // already loaded model without its idle timer.
+    await this.transcriber.load(request.modelId);
+    if (!this.activeStreamId) this.scheduleIdleUnload();
+  }
+
+  getPostProcessAvailability(): Promise<VoicePostProcessAvailability> {
+    return this.postProcessor.getAvailability();
+  }
+
+  postProcess(request: VoicePostProcessRequest): Promise<VoicePostProcessResponse> {
+    return this.postProcessor.postProcess(request);
   }
 
   downloadModel(modelId: string): Promise<void> {
@@ -198,7 +224,10 @@ export function createVoiceDictationService(
     fetchImpl: options.fetchImpl,
   });
   const transcriber = new VoiceTranscriber({ store });
-  return new VoiceDictationService({ store, transcriber });
+  const postProcessor = new VoicePostProcessor({
+    helperPath: process.env[ZCODE_APPLE_FM_HELPER_ENV]?.trim() || undefined,
+  });
+  return new VoiceDictationService({ store, transcriber, postProcessor });
 }
 
 /** Handy's documented default model directory; custom Handy data roots are not discoverable here. */

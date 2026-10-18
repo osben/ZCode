@@ -34,6 +34,7 @@ import {
   $getNodeByKey,
   $setSelection,
   $getRoot,
+  $isElementNode,
   $isParagraphNode,
   $isRangeSelection,
   $isTextNode,
@@ -44,6 +45,7 @@ import {
   KEY_ENTER_COMMAND,
   type EditorState,
   type LexicalEditor,
+  type PointType,
 } from "lexical";
 import { SlashCommandPlugin } from "./SlashCommandPlugin.js";
 import type { AppSlashCommand } from "./slashCommandHelpers.js";
@@ -75,6 +77,8 @@ export interface LexicalChatInputHandle {
   getMarkdown: () => string;
   getText: () => string;
   appendText: (text: string) => void;
+  /** Inserts at the caret / over the selection; falls back to appending when the editor has no selection. */
+  insertTextAtSelection: (text: string) => void;
   appendFileMention: (
     label: string,
     value: string,
@@ -423,26 +427,76 @@ function appendEditorFileMention(
 }
 
 function appendEditorPlainText(editor: LexicalEditor, text: string) {
+  editor.update(() => $appendPlainText(text), { tag: PROGRAMMATIC_UPDATE_TAG });
+}
+
+function $appendPlainText(text: string) {
+  const root = $getRoot();
+  const lastChild = root.getLastChild();
+  const paragraph = $isParagraphNode(lastChild) ? lastChild : $createParagraphNode();
+  if (!$isParagraphNode(lastChild)) {
+    root.append(paragraph);
+  }
+
+  const currentText = paragraph.getTextContent();
+  if (currentText.length > 0 && !/\s$/.test(currentText)) {
+    paragraph.append($createTextNode(" "));
+  }
+
+  paragraph.append($createTextNode(text));
+  paragraph.selectEnd();
+}
+
+/**
+ * Inserts dictated text at the caret (replacing a selected range), padding with a space only on a
+ * side that borders a non-space character. Lexical keeps its last stored selection while the editor
+ * is blurred, so inserting after a click on the microphone button is expected to land at the
+ * caret; with no stored selection the text is appended to the end like appendText.
+ */
+export function insertEditorPlainTextAtSelection(editor: LexicalEditor, text: string) {
   editor.update(
     () => {
-      const root = $getRoot();
-      const lastChild = root.getLastChild();
-      const paragraph = $isParagraphNode(lastChild) ? lastChild : $createParagraphNode();
-      if (!$isParagraphNode(lastChild)) {
-        root.append(paragraph);
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) {
+        $appendPlainText(text);
+        return;
       }
-
-      const currentText = paragraph.getTextContent();
-      if (currentText.length > 0 && !/\s$/.test(currentText)) {
-        paragraph.append($createTextNode(" "));
-      }
-
-      paragraph.append($createTextNode(text));
-      paragraph.selectEnd();
+      const [start, end] = selection.isBackward()
+        ? [selection.focus, selection.anchor]
+        : [selection.anchor, selection.focus];
+      const before = $charBeforePoint(start);
+      const after = $charAfterPoint(end);
+      const leading = before && !/\s/.test(before) ? " " : "";
+      const trailing = after && !/\s/.test(after) ? " " : "";
+      selection.insertText(`${leading}${text}${trailing}`);
     },
     { tag: PROGRAMMATIC_UPDATE_TAG },
   );
 }
+
+function $charBeforePoint(point: PointType): string {
+  const node = point.getNode();
+  if (point.type === "text") {
+    if (point.offset > 0) return node.getTextContent().charAt(point.offset - 1);
+    return lastChar(node.getPreviousSibling()?.getTextContent());
+  }
+  if (!$isElementNode(node)) return "";
+  return lastChar(node.getChildAtIndex(point.offset - 1)?.getTextContent());
+}
+
+function $charAfterPoint(point: PointType): string {
+  const node = point.getNode();
+  if (point.type === "text") {
+    const content = node.getTextContent();
+    if (point.offset < content.length) return content.charAt(point.offset);
+    return firstChar(node.getNextSibling()?.getTextContent());
+  }
+  if (!$isElementNode(node)) return "";
+  return firstChar(node.getChildAtIndex(point.offset)?.getTextContent());
+}
+
+const lastChar = (text: string | undefined) => (text ? text.charAt(text.length - 1) : "");
+const firstChar = (text: string | undefined) => (text ? text.charAt(0) : "");
 
 function getPromptMentionIdAfterDomSelection(rootElement: HTMLElement): string | null {
   const selection = window.getSelection();
@@ -1275,6 +1329,7 @@ function EditorApiPlugin({
       getMarkdown: () => getEditorMarkdown(editor.getEditorState()),
       getText: () => getEditorMarkdown(editor.getEditorState()),
       appendText: (text: string) => appendEditorPlainText(editor, text),
+      insertTextAtSelection: (text: string) => insertEditorPlainTextAtSelection(editor, text),
       appendFileMention: (
         label: string,
         value: string,

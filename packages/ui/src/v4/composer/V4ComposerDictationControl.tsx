@@ -1,4 +1,7 @@
 import { useCallback, type RefObject } from "react";
+import { useDictationTranscriptHandler } from "@/hooks/useDictationTranscriptHandler.js";
+import { useVoiceModelStatus } from "@/hooks/useVoiceModelStatus.js";
+import { useVoiceModelWarmUp } from "@/hooks/useVoiceModelWarmUp.js";
 import { useVoiceDictation } from "@/hooks/useVoiceDictation.js";
 import { useWebSpeechDictation } from "@/hooks/useWebSpeechDictation.js";
 import { V4ComposerVoiceButton } from "@/v4/composer/V4ComposerVoiceButton.js";
@@ -21,8 +24,15 @@ export function V4ComposerDictationControl({
   scopeRef: RefObject<HTMLElement | null>;
   webRemote: boolean;
 }) {
-  const webSpeech = useWebSpeechDictation({ enabled: webRemote, onTranscript });
-  const voiceDictation = useVoiceDictation({ enabled: !webRemote, onTranscript, scopeRef });
+  const handleTranscript = useDictationTranscriptHandler(onTranscript);
+  const webSpeech = useWebSpeechDictation({ enabled: webRemote, onTranscript: handleTranscript });
+  const voiceDictation = useVoiceDictation({
+    enabled: !webRemote,
+    onTranscript: handleTranscript,
+    scopeRef,
+  });
+  useVoiceModelWarmUp({ enabled: !webRemote, scopeRef });
+  const modelStatus = useVoiceModelStatus({ enabled: !webRemote });
   const engine = webRemote ? webSpeech : voiceDictation;
   // V4ComposerVoiceButton is a memo component; an inline arrow function would defeat the memo (see the reactStableReferences tests).
   const handleToggle = useCallback(() => void engine.toggle(), [engine.toggle]);
@@ -38,6 +48,8 @@ export function V4ComposerDictationControl({
       loadingLabelId={webRemote ? "voiceDictation.composer.starting" : undefined}
       disabled={disabled}
       onToggle={handleToggle}
+      modelStatus={modelStatus}
+      onCancel={engine.cancel}
     />
   );
 }

@@ -7,7 +7,12 @@ import type { VoiceDictationRuntimeState, VoiceModelListItem } from "@zcode/serv
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import enUS from "@/i18n/locales/en-US.js";
 import ukUA from "@/i18n/locales/uk-UA.js";
-import { formatVoiceModelDownloadSpeed, VoiceModelRow } from "@/settings/VoiceDictationModelRow.js";
+import {
+  formatVoiceModelDownloadSpeed,
+  MODEL_DESCRIPTION_MESSAGE_IDS,
+  VoiceModelRow,
+} from "@/settings/VoiceDictationModelRow.js";
+import { VOICE_MODEL_CATALOG } from "../../services/src/voice-dictation/voiceModelCatalog.js";
 import { useConfirmDialogStore } from "@/store/confirmDialogStore.js";
 
 afterEach(() => {
@@ -21,7 +26,7 @@ const firstModel: VoiceModelListItem = {
     name: "Model One",
     description: "Test model",
     family: "whisper",
-    languageCount: 1,
+    languages: ["en"],
     streaming: false,
     license: "mit",
     huggingFaceRepo: "owner/model-one",
@@ -234,14 +239,14 @@ describe("VoiceModelRow model actions", () => {
     expect(untranslated).toEqual([]);
   });
 
-  it("localizes catalog descriptions and only advertises streaming for parakeet-family models", () => {
+  it("localizes catalog descriptions and advertises streaming only for models flagged as runtime-verified", () => {
     const parakeetModel: VoiceModelListItem = {
       descriptor: {
         id: "parakeet-unified-en-0.6b",
         name: "Parakeet Unified EN 0.6B",
         description: "Fast, accurate live English transcription.",
         family: "parakeet",
-        languageCount: 1,
+        languages: ["en"],
         streaming: true,
         license: "cc-by-4.0",
         huggingFaceRepo: "owner/parakeet",
@@ -252,8 +257,7 @@ describe("VoiceModelRow model actions", () => {
       },
       state: { status: "ready", path: "/models/parakeet.gguf", sizeBytes: 10, source: "zcode" },
     };
-    // В каталоге Nemotron помечен streaming: true, но рантайм-гейт допускает только Parakeet —
-    // карточка не должна рекламировать стриминг, которого не будет.
+    // A model not verified to stream must not show the badge, whatever its family.
     const nemotronModel: VoiceModelListItem = {
       ...parakeetModel,
       descriptor: {
@@ -262,6 +266,7 @@ describe("VoiceModelRow model actions", () => {
         name: "Nemotron Speech Streaming EN",
         description: "English speech-to-text with streaming and token-level timestamps.",
         family: "nemotron",
+        streaming: false,
       },
     };
     render(
@@ -298,5 +303,90 @@ describe("VoiceModelRow model actions", () => {
     ).toBeTruthy();
     const streamingBadges = screen.getAllByText("Streaming");
     expect(streamingBadges).toHaveLength(1);
+  });
+});
+
+describe("VoiceModelRow languages and recommendation", () => {
+  const manyLanguages = ["en", "de", "fr", "es", "it", "uk", "ru", "ja"];
+  const names: Record<string, string> = {
+    en: "English",
+    de: "German",
+    fr: "French",
+    es: "Spanish",
+    it: "Italian",
+    uk: "Ukrainian",
+    ru: "Russian",
+    ja: "Japanese",
+  };
+  const renderLanguageRow = (props: Record<string, unknown> = {}) =>
+    render(
+      createElement(
+        ZCodeIntlProvider,
+        { initialLocale: "en-US" },
+        createElement(VoiceModelRow, {
+          item: {
+            ...firstModel,
+            descriptor: { ...firstModel.descriptor, languages: manyLanguages },
+          },
+          selected: false,
+          runtimeState: { loadedModelId: null, activeModelId: null, activePhase: null },
+          languageName: (code: string) => names[code] ?? code,
+          onSelect: () => undefined,
+          onUseWhenReady: () => undefined,
+          onDownload: () => undefined,
+          onCancel: () => undefined,
+          onRemove: () => undefined,
+          ...props,
+        }),
+      ),
+    );
+
+  it("lists supported languages as chips, selected ones first, with an expandable overflow", () => {
+    renderLanguageRow({ selectedLanguages: ["uk", "ja"] });
+
+    const chips = screen.getAllByTestId("voice-model-language-chip").map((c) => c.textContent);
+    expect(chips).toEqual(["Ukrainian", "Japanese", "English", "German", "French"]);
+    const toggle = screen.getByRole("button", { name: /Show all 8 languages/ });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle.textContent).toBe("+3");
+
+    fireEvent.click(toggle);
+
+    expect(screen.getAllByTestId("voice-model-language-chip")).toHaveLength(8);
+    const collapse = screen.getByRole("button", { name: /Show fewer languages/ });
+    expect(collapse.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("shows every chip without an overflow button for short language lists", () => {
+    renderLanguageRow({
+      item: { ...firstModel, descriptor: { ...firstModel.descriptor, languages: ["en", "de"] } },
+    });
+
+    expect(screen.getAllByTestId("voice-model-language-chip")).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: /Show all/ })).toBeNull();
+  });
+
+  it("marks the recommended model", () => {
+    const { rerender } = renderLanguageRow();
+    expect(screen.queryByText("Recommended")).toBeNull();
+    cleanup();
+    renderLanguageRow({ recommended: true });
+    expect(screen.getByText("Recommended")).toBeTruthy();
+    void rerender;
+  });
+});
+
+describe("model descriptions are localized for every catalog model", () => {
+  it("maps each catalog id to a message that exists in every locale", () => {
+    for (const { id } of VOICE_MODEL_CATALOG) {
+      const messageId = MODEL_DESCRIPTION_MESSAGE_IDS[id];
+      expect(messageId, `${id} has no localized description`).toBeTruthy();
+      for (const catalog of [enUS, ukUA]) {
+        expect(
+          (catalog as Record<string, string>)[messageId!],
+          `${id} / ${messageId}`,
+        ).toBeTruthy();
+      }
+    }
   });
 });

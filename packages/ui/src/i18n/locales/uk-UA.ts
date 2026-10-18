@@ -7306,10 +7306,47 @@ const ukUA: Record<string, string> = {
   "voiceDictation.muteWhileRecording.title": "Вимкнути звук під час запису",
   "voiceDictation.muteWhileRecording.description":
     "Вимкнути системний звук на час запису та відновити попередній стан після нього.",
+  "voiceDictation.copyToClipboard.title": "Копіювати надиктований текст у буфер обміну",
+  "voiceDictation.copyToClipboard.description":
+    "Крім вставки в поле повідомлення, також копіювати кожен готовий текст у системний буфер обміну.",
+  "voiceDictation.warmUp.title": "Прогрівати модель при фокусі на полі повідомлення",
+  "voiceDictation.warmUp.description":
+    "Завантажує вибрану модель у фоні, щоб перший запис починався без очікування. Завантажена модель займає пам'ять, доки не мине затримка вивантаження нижче.",
+  "voiceDictation.postProcess.title": "Постобробка",
+  "voiceDictation.postProcess.description":
+    "Переписує кожен готовий текст мовною моделлю перед вставкою. У буфер обміну потрапляє сирий текст розпізнавання.",
+  "voiceDictation.postProcess.enabled.title": "Обробляти надиктований текст",
+  "voiceDictation.postProcess.enabled.description":
+    "Якщо обробка завершилась помилкою або тривала надто довго, вставляється сирий текст.",
+  "voiceDictation.postProcess.provider.title": "Модель",
+  "voiceDictation.postProcess.provider.description":
+    "Працює на цьому пристрої; текст не залишає ваш комп'ютер.",
+  "voiceDictation.postProcess.provider.appleFm": "Системна модель (Apple Foundation Models)",
+  "voiceDictation.postProcess.prompt.title": "Промпт",
+  "voiceDictation.postProcess.prompt.description":
+    "Використайте {variable} там, куди має потрапити розпізнаний текст. Без нього текст додається після промпта.",
+  "voiceDictation.postProcess.prompt.reset": "Скинути до типового",
+  "voiceDictation.postProcess.unavailable.unsupportedPlatform":
+    "Системна модель доступна лише на macOS.",
+  "voiceDictation.postProcess.unavailable.helperMissing":
+    "Міст до системної моделі не входить до цієї збірки.",
+  "voiceDictation.postProcess.unavailable.deviceNotEligible":
+    "Цей Mac не підтримує Apple Intelligence.",
+  "voiceDictation.postProcess.unavailable.appleIntelligenceNotEnabled":
+    "Увімкніть Apple Intelligence у Системних налаштуваннях, щоб користуватися системною моделлю.",
+  "voiceDictation.postProcess.unavailable.modelNotReady":
+    "Системна модель ще завантажується. Спробуйте пізніше.",
+  "voiceDictation.postProcess.unavailable.unsupportedOS":
+    "Для системної моделі потрібна новіша версія macOS.",
+  "voiceDictation.postProcess.unavailable.unknown": "Системна модель зараз недоступна.",
   "voiceDictation.language.title": "Мова",
   "voiceDictation.language.description":
-    "Мова мовлення. Багатомовні моделі підтримують автоматичне визначення.",
+    "Мови, якими ви диктуєте. Одна мова задається примусово; кілька або жодної — автовизначення, якому потрібна багатомовна модель.",
   "voiceDictation.language.auto": "Визначати автоматично",
+  "voiceDictation.language.summary.count": "Мов: {count}",
+  "voiceDictation.language.search": "Пошук мов",
+  "voiceDictation.language.noMatch": "Немає відповідних мов",
+  "voiceDictation.language.clear": "Скинути (автовизначення)",
   "voiceDictation.models.unloadDelay.title": "Вивантажити з пам'яті через",
   "voiceDictation.models.unloadDelay.description":
     "Після диктування модель залишатиметься готовою протягом цього часу, а потім звільнить пам'ять.",
@@ -7318,6 +7355,16 @@ const ukUA: Record<string, string> = {
   "voiceDictation.models.description":
     "Усе працює на цьому пристрої. Виділена модель вибрана для диктування; у пам'яті одночасно може бути лише одна модель.",
   "voiceDictation.models.languages": "Підтримує мов: {count}",
+  "voiceDictation.models.recommended": "Рекомендовано",
+  "voiceDictation.models.filter.search": "Пошук моделей",
+  "voiceDictation.models.filter.matchLanguages": "Підходять до моїх мов",
+  "voiceDictation.models.filter.downloaded": "Завантажені",
+  "voiceDictation.models.filter.empty": "Жодна модель не відповідає фільтрам.",
+  "voiceDictation.models.filter.reset": "Скинути фільтри",
+  "voiceDictation.language.modelMismatch": "{model} не підтримує: {languages}.",
+  "voiceDictation.language.useModel": "Використати {model}",
+  "voiceDictation.models.languages.showAll": "Показати всі мови ({count})",
+  "voiceDictation.models.languages.showFewer": "Показати менше мов",
   "voiceDictation.models.streaming": "Потокова",
   "voiceDictation.models.license": "Ліцензія: {license}",
   "voiceDictation.models.download": "Завантажити",
@@ -7345,6 +7392,11 @@ const ukUA: Record<string, string> = {
     "У Web можна записувати звук із мікрофона, але локальні моделі розпізнавання працюють лише в ZCode Desktop.",
   "voiceDictation.noModelSelected":
     "Спочатку виберіть модель розпізнавання в Налаштуваннях → Голосове введення.",
+  "voiceDictation.openSettings": "Відкрити налаштування",
+  "voiceDictation.tooShort": "Запис закороткий. Записуйте, доки не закінчите говорити.",
+  "voiceDictation.stillLoading":
+    "Модель розпізнавання ще завантажувалась. Говоріть, коли почнеться запис.",
+  "voiceDictation.composer.cancel": "Скасувати голосове введення",
   "voiceDictation.microphoneFailed":
     "Не вдалося отримати доступ до мікрофона. Перевірте пристрій введення та дозволи.",
   "voiceDictation.transcribeFailed": "Не вдалося розпізнати мовлення.",
@@ -7358,8 +7410,14 @@ const ukUA: Record<string, string> = {
     "Швидке й точне. Підтримує {languages} європейських мов.",
   "voiceDictation.models.description.canary":
     "Крихітна й миттєва, добре працює на будь-якому залізі.",
+  "voiceDictation.models.description.canaryLarge":
+    "Точне розпізнавання мовлення для {languages} європейських мов, з перекладом.",
+  "voiceDictation.models.description.gigaam":
+    "Компактне й швидке розпізнавання лише російської мови.",
   "voiceDictation.models.description.nemotron":
     "Англійське розпізнавання мовлення з потоковим режимом і мітками токенів.",
+  "voiceDictation.models.description.nemotronMultilingual":
+    "Потокове розпізнавання мовлення 28 мовами, зокрема українською, російською та англійською.",
   "voiceDictation.saveFailed": "Не вдалося зберегти налаштування голосового введення.",
   "voiceDictation.composer.start": "Голосове введення",
   "voiceDictation.composer.starting": "Запуск голосового введення",
@@ -7369,6 +7427,11 @@ const ukUA: Record<string, string> = {
   "voiceDictation.composer.listening": "Слухаю",
   "voiceDictation.composer.status.idle": "Голосове введення готове",
   "voiceDictation.composer.status.transcribing": "Розпізнавання мовлення",
+  "voiceDictation.composer.processing": "Обробка тексту",
+  "voiceDictation.composer.status.processing": "Обробка тексту",
+  "voiceDictation.composer.modelStatus.loading": "Модель розпізнавання завантажується",
+  "voiceDictation.composer.modelStatus.loaded":
+    "Модель розпізнавання завантажена, голосове введення стартує миттєво",
   "settings.computerUse.title": "Computer Use",
   "settings.computerUse.toggleLabel": "Увімкнути Computer Use",
   "settings.computerUse.toggleDescription": "Вмикає Computer Use — його сервер MCP і навички.",

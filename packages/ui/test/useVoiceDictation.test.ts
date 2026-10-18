@@ -13,6 +13,11 @@ const mocks = vi.hoisted(() => ({
   settings: null as { voiceDictation?: Record<string, unknown> } | null,
   feedbackSound: null as ReturnType<typeof vi.fn> | null,
   platform: { setDictationSystemMute: null as ReturnType<typeof vi.fn> | null },
+  openSettings: vi.fn(),
+  /** Holds every recorder.start() until released, to model a pending microphone permission prompt. */
+  recorderStartGate: null as Promise<void> | null,
+  recorderStartCount: 0,
+  logger: { warn: vi.fn() },
 }));
 
 vi.mock("@/hooks/useServices.js", () => ({
@@ -35,8 +40,11 @@ vi.mock("@/shortcuts/bindings.js", () => ({
   matchesShortcutBinding: () => false,
 }));
 vi.mock("@/lib/voiceDictationShortcut.js", () => ({ isVoiceShortcutReleased: () => false }));
+vi.mock("@/hooks/useOpenVoiceDictationSettings.js", () => ({
+  useOpenVoiceDictationSettings: () => mocks.openSettings,
+}));
 vi.mock("@/components/ui/toast.js", () => ({ toast: vi.fn() }));
-vi.mock("@/logger.js", () => ({ logger: { warn: vi.fn() } }));
+vi.mock("@/logger.js", () => ({ logger: mocks.logger }));
 vi.mock("@/lib/voiceDictationFeedbackSound.js", () => ({
   playVoiceDictationFeedbackSound: (...args: [string, number]) => mocks.feedbackSound!(...args),
 }));
@@ -48,6 +56,8 @@ vi.mock("@/lib/voiceDictationRecorder.js", () => ({
       mocks.recorder = this;
     }
     async start(options: { onChunk?: (samples: Float32Array) => void; collectSamples?: boolean }) {
+      mocks.recorderStartCount += 1;
+      await mocks.recorderStartGate;
       this.options = options;
       this.isRecording = true;
     }
@@ -62,6 +72,7 @@ vi.mock("@/lib/voiceDictationRecorder.js", () => ({
 }));
 
 import { toast } from "@/components/ui/toast.js";
+import { DEFAULT_POST_PROCESS_PROMPT } from "@zcode/services";
 import { useVoiceDictation } from "@/hooks/useVoiceDictation.js";
 
 afterEach(() => {
@@ -108,7 +119,7 @@ describe("useVoiceDictation streaming", () => {
     expect(mocks.service?.finalizeStream).toHaveBeenCalledWith("stream-1");
     expect(mocks.service?.transcribe).not.toHaveBeenCalled();
     expect(onTranscript).toHaveBeenCalledTimes(1);
-    expect(onTranscript).toHaveBeenCalledWith("Hello there");
+    expect(onTranscript).toHaveBeenCalledWith("Hello there", "Hello there");
     expect(hook.result.current.preview).toBeNull();
   });
 
@@ -127,7 +138,7 @@ describe("useVoiceDictation streaming", () => {
     expect(mocks.service?.feedStream).not.toHaveBeenCalled();
     expect(mocks.service?.finalizeStream).not.toHaveBeenCalled();
     expect(mocks.service?.transcribe).toHaveBeenCalledTimes(1);
-    expect(onTranscript).toHaveBeenCalledWith("One shot");
+    expect(onTranscript).toHaveBeenCalledWith("One shot", "One shot");
   });
 
   it("continues dictation when an older host lacks the idle unload setting", async () => {
@@ -150,7 +161,7 @@ describe("useVoiceDictation streaming", () => {
     now.mockReturnValue(1500);
     await act(async () => hook.result.current.stop());
 
-    expect(onTranscript).toHaveBeenCalledWith("Hello there");
+    expect(onTranscript).toHaveBeenCalledWith("Hello there", "Hello there");
   });
 
   it("does not ignore unrelated idle unload setting failures", async () => {
@@ -198,7 +209,7 @@ describe("useVoiceDictation streaming", () => {
     expect(toast).not.toHaveBeenCalled();
     expect(feedPayloads.reduce((sum, bytes) => sum + bytes, 0)).toBe(8 * 100 * 2);
     expect(mocks.service?.finalizeStream).toHaveBeenCalledWith("stream-1");
-    expect(onTranscript).toHaveBeenCalledWith("Hello there");
+    expect(onTranscript).toHaveBeenCalledWith("Hello there", "Hello there");
   });
 
   it("fails the stream when the pending PCM backlog exceeds its bound", async () => {
@@ -317,7 +328,7 @@ describe("useVoiceDictation streaming", () => {
 
     expect(mocks.feedbackSound).not.toHaveBeenCalled();
     expect(mocks.platform.setDictationSystemMute).not.toHaveBeenCalled();
-    expect(onTranscript).toHaveBeenCalledWith("Hello there");
+    expect(onTranscript).toHaveBeenCalledWith("Hello there", "Hello there");
   });
 
   it("does not apply a pending mute after the recording already ended", async () => {
@@ -351,5 +362,423 @@ describe("useVoiceDictation streaming", () => {
 
     expect(mocks.platform.setDictationSystemMute).not.toHaveBeenCalled();
     expect(hook.result.current.phase).toBe("idle");
+  });
+});
+
+describe("useVoiceDictation cancel and notices", () => {
+  const escapeEvent = () =>
+    new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+
+  it("cancels recording on Escape without inserting, chiming, or reaching later Escape handlers", async () => {
+    mocks.settings!.voiceDictation = {
+      modelId: "model-one",
+      language: "en",
+      feedbackSounds: true,
+      muteWhileRecording: true,
+    };
+    const onTranscript = vi.fn();
+    const laterHandler = vi.fn();
+    window.addEventListener("keydown", laterHandler);
+    const hook = renderHook(() =>
+      useVoiceDictation({ enabled: true, onTranscript, scopeRef: { current: null } }),
+    );
+
+    await act(async () => hook.result.current.start());
+    await waitFor(() => expect(hook.result.current.phase).toBe("recording"));
+    const event = escapeEvent();
+    act(() => {
+      document.body.dispatchEvent(event);
+    });
+    await waitFor(() => expect(mocks.service?.cancelStream).toHaveBeenCalledWith("stream-1"));
+    window.removeEventListener("keydown", laterHandler);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(laterHandler).not.toHaveBeenCalled();
+    expect(onTranscript).not.toHaveBeenCalled();
+    expect(mocks.service?.finalizeStream).not.toHaveBeenCalled();
+    expect(mocks.feedbackSound).not.toHaveBeenCalledWith("stop", expect.anything());
+    expect(hook.result.current.phase).toBe("idle");
+    expect(hook.result.current.preview).toBeNull();
+  });
+
+  it("leaves Escape alone while idle so the agent stop shortcut keeps working", () => {
+    const hook = renderHook(() =>
+      useVoiceDictation({ enabled: true, onTranscript: vi.fn(), scopeRef: { current: null } }),
+    );
+    const event = escapeEvent();
+    act(() => {
+      document.body.dispatchEvent(event);
+    });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(hook.result.current.phase).toBe("idle");
+  });
+
+  it("exposes cancel() for the feedback panel button", async () => {
+    const onTranscript = vi.fn();
+    const hook = renderHook(() =>
+      useVoiceDictation({ enabled: true, onTranscript, scopeRef: { current: null } }),
+    );
+
+    await act(async () => hook.result.current.start());
+    act(() => hook.result.current.cancel());
+    await waitFor(() => expect(mocks.service?.cancelStream).toHaveBeenCalledWith("stream-1"));
+
+    expect(hook.result.current.phase).toBe("idle");
+    expect(onTranscript).not.toHaveBeenCalled();
+  });
+
+  it("tells the user when a recording was too short to transcribe", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    const onTranscript = vi.fn();
+    const hook = renderHook(() =>
+      useVoiceDictation({ enabled: true, onTranscript, scopeRef: { current: null } }),
+    );
+
+    await act(async () => hook.result.current.start());
+    now.mockReturnValue(1100);
+    await act(async () => hook.result.current.stop());
+
+    expect(toast).toHaveBeenCalledWith("voiceDictation.tooShort");
+    expect(onTranscript).not.toHaveBeenCalled();
+    expect(mocks.service?.finalizeStream).not.toHaveBeenCalled();
+  });
+
+  it("explains a release during model loading instead of calling the hold too short", async () => {
+    let resolveBegin!: (id: string) => void;
+    mocks.service!.beginStream!.mockImplementation(
+      () => new Promise<string>((resolve) => (resolveBegin = resolve)),
+    );
+    const onTranscript = vi.fn();
+    const hook = renderHook(() =>
+      useVoiceDictation({ enabled: true, onTranscript, scopeRef: { current: null } }),
+    );
+
+    let starting!: Promise<void>;
+    let stopping!: Promise<void>;
+    act(() => {
+      starting = hook.result.current.start();
+    });
+    expect(hook.result.current.phase).toBe("loading");
+    act(() => {
+      stopping = hook.result.current.stop();
+    });
+    await waitFor(() => expect(mocks.service?.beginStream).toHaveBeenCalled());
+    await act(async () => {
+      resolveBegin("stream-1");
+      await starting;
+      await stopping;
+    });
+
+    expect(toast).toHaveBeenCalledWith("voiceDictation.stillLoading");
+    expect(toast).not.toHaveBeenCalledWith("voiceDictation.tooShort");
+    expect(mocks.service?.finalizeStream).not.toHaveBeenCalled();
+    expect(onTranscript).not.toHaveBeenCalled();
+    expect(hook.result.current.phase).toBe("idle");
+  });
+
+  it("offers to open settings when no model is selected", async () => {
+    mocks.settings = { voiceDictation: {} };
+    const hook = renderHook(() =>
+      useVoiceDictation({ enabled: true, onTranscript: vi.fn(), scopeRef: { current: null } }),
+    );
+
+    await act(async () => hook.result.current.start());
+
+    expect(toast).toHaveBeenCalledTimes(1);
+    const [message, options] = vi.mocked(toast).mock.calls[0]!;
+    expect(message).toBe("voiceDictation.noModelSelected");
+    expect(options).toMatchObject({ actionLabel: "voiceDictation.openSettings" });
+    options?.onAction?.();
+    expect(mocks.openSettings).toHaveBeenCalledTimes(1);
+    expect(mocks.service?.beginStream).not.toHaveBeenCalled();
+  });
+});
+
+describe("useVoiceDictation languages", () => {
+  const beginWith = async (voiceDictation: Record<string, unknown>) => {
+    mocks.settings = { voiceDictation: { modelId: "model-one", ...voiceDictation } };
+    const hook = renderHook(() =>
+      useVoiceDictation({ enabled: true, onTranscript: vi.fn(), scopeRef: { current: null } }),
+    );
+    await act(async () => hook.result.current.start());
+    return mocks.service!.beginStream!.mock.calls.at(-1)![0];
+  };
+
+  it("forces a single selected language, and prefers languages over the legacy field", async () => {
+    expect(await beginWith({ languages: ["uk"], language: "en" })).toEqual({
+      modelId: "model-one",
+      language: "uk",
+    });
+  });
+
+  it("leaves detection to the model for several or no selected languages", async () => {
+    expect((await beginWith({ languages: ["uk", "en"] })).language).toBe("auto");
+    expect((await beginWith({ languages: [], language: "en" })).language).toBe("auto");
+  });
+});
+
+describe("useVoiceDictation post-processing", () => {
+  const speak = async (hook: { result: { current: ReturnType<typeof useVoiceDictation> } }) => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    await act(async () => hook.result.current.start());
+    now.mockReturnValue(1500);
+  };
+  const renderDictation = (onTranscript = vi.fn()) =>
+    renderHook(() =>
+      useVoiceDictation({ enabled: true, onTranscript, scopeRef: { current: null } }),
+    );
+
+  beforeEach(() => {
+    mocks.service!.postProcess = vi.fn().mockResolvedValue({ text: "Hello there." });
+    mocks.settings = {
+      voiceDictation: { modelId: "model-one", language: "en", postProcessEnabled: true },
+    };
+  });
+
+  it("inserts the processed text and hands the raw transcript over for the clipboard", async () => {
+    let finish!: (value: { text: string }) => void;
+    mocks.service!.postProcess!.mockImplementation(
+      () => new Promise((resolve) => (finish = resolve)),
+    );
+    const onTranscript = vi.fn();
+    const hook = renderDictation(onTranscript);
+    await speak(hook);
+
+    let stopping!: Promise<void>;
+    act(() => {
+      stopping = hook.result.current.stop();
+    });
+    await waitFor(() => expect(hook.result.current.phase).toBe("processing"));
+    expect(onTranscript).not.toHaveBeenCalled();
+    expect(mocks.service!.postProcess).toHaveBeenCalledWith({
+      text: "Hello there",
+      prompt: DEFAULT_POST_PROCESS_PROMPT,
+      provider: "apple-fm",
+    });
+
+    await act(async () => {
+      finish({ text: "Hello there." });
+      await stopping;
+    });
+    expect(onTranscript).toHaveBeenCalledTimes(1);
+    expect(onTranscript).toHaveBeenCalledWith("Hello there.", "Hello there");
+    expect(hook.result.current.phase).toBe("idle");
+  });
+
+  it("uses the user's prompt and provider", async () => {
+    mocks.settings = {
+      voiceDictation: {
+        modelId: "model-one",
+        postProcessEnabled: true,
+        postProcessPrompt: "Shorten: {{text}}",
+        postProcessProvider: "apple-fm",
+      },
+    };
+    const hook = renderDictation();
+    await speak(hook);
+    await act(async () => hook.result.current.stop());
+
+    expect(mocks.service!.postProcess).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: "Shorten: {{text}}" }),
+    );
+  });
+
+  it("does not call the provider when post-processing is off", async () => {
+    mocks.settings = { voiceDictation: { modelId: "model-one", language: "en" } };
+    const onTranscript = vi.fn();
+    const hook = renderDictation(onTranscript);
+    await speak(hook);
+    await act(async () => hook.result.current.stop());
+
+    expect(mocks.service!.postProcess).not.toHaveBeenCalled();
+    expect(onTranscript).toHaveBeenCalledWith("Hello there", "Hello there");
+  });
+
+  it("falls back to the raw transcript, logging the failure without an error toast", async () => {
+    mocks.service!.postProcess!.mockRejectedValue(new Error("post-processing failed: timeout"));
+    const onTranscript = vi.fn();
+    const hook = renderDictation(onTranscript);
+    await speak(hook);
+    await act(async () => hook.result.current.stop());
+
+    expect(onTranscript).toHaveBeenCalledTimes(1);
+    expect(onTranscript).toHaveBeenCalledWith("Hello there", "Hello there");
+    expect(toast).not.toHaveBeenCalled();
+    expect(mocks.logger.warn).toHaveBeenCalledWith(
+      "voice dictation post-processing failed; inserting the raw transcript",
+      expect.objectContaining({ error: "post-processing failed: timeout" }),
+    );
+  });
+
+  it("falls back to the raw transcript when an older Host has no post-processing method", async () => {
+    delete mocks.service!.postProcess;
+    const onTranscript = vi.fn();
+    const hook = renderDictation(onTranscript);
+    await speak(hook);
+    await act(async () => hook.result.current.stop());
+
+    expect(onTranscript).toHaveBeenCalledWith("Hello there", "Hello there");
+  });
+
+  it("gives up on a stuck provider after the client timeout and inserts the raw transcript", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      mocks.service!.postProcess!.mockImplementation(() => new Promise(() => undefined));
+      const onTranscript = vi.fn();
+      const hook = renderDictation(onTranscript);
+      await speak(hook);
+      let stopping!: Promise<void>;
+      act(() => {
+        stopping = hook.result.current.stop();
+      });
+      await vi.advanceTimersByTimeAsync(20_001);
+      await act(async () => stopping);
+
+      expect(onTranscript).toHaveBeenCalledWith("Hello there", "Hello there");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("discards the result when Escape cancels during processing", async () => {
+    let resolveProcess!: (value: { text: string }) => void;
+    mocks.service!.postProcess!.mockImplementation(
+      () => new Promise((resolve) => (resolveProcess = resolve)),
+    );
+    const onTranscript = vi.fn();
+    const hook = renderDictation(onTranscript);
+    await speak(hook);
+    let stopping!: Promise<void>;
+    act(() => {
+      stopping = hook.result.current.stop();
+    });
+    await waitFor(() => expect(hook.result.current.phase).toBe("processing"));
+
+    const escape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    act(() => {
+      document.body.dispatchEvent(escape);
+    });
+    expect(escape.defaultPrevented).toBe(true);
+    expect(hook.result.current.phase).toBe("idle");
+
+    await act(async () => {
+      resolveProcess({ text: "Hello there." });
+      await stopping;
+    });
+    expect(onTranscript).not.toHaveBeenCalled();
+    expect(hook.result.current.phase).toBe("idle");
+  });
+});
+
+describe("useVoiceDictation concurrent starts", () => {
+  afterEach(() => {
+    mocks.recorderStartGate = null;
+    mocks.recorderStartCount = 0;
+  });
+
+  it("lets a new start proceed after Escape while the model is still loading", async () => {
+    let finishLoad!: (id: string) => void;
+    mocks.service!.beginStream!.mockImplementationOnce(
+      () => new Promise<string>((resolve) => (finishLoad = resolve)),
+    );
+    mocks.recorderStartCount = 0;
+    const hook = renderHook(() =>
+      useVoiceDictation({ enabled: true, onTranscript: vi.fn(), scopeRef: { current: null } }),
+    );
+
+    let first!: Promise<void>;
+    act(() => {
+      first = hook.result.current.start();
+    });
+    await waitFor(() => expect(mocks.service!.beginStream).toHaveBeenCalledTimes(1));
+    act(() => hook.result.current.cancel());
+    expect(hook.result.current.phase).toBe("idle");
+
+    // The microphone has not been requested yet, so a fresh start must not be blocked by the slow load.
+    await act(async () => hook.result.current.start());
+    await waitFor(() => expect(hook.result.current.phase).toBe("recording"));
+
+    // The stale load finishes later: it must only release its own stream, not disturb the new recording.
+    await act(async () => {
+      finishLoad("stale-stream");
+      await first;
+    });
+    expect(hook.result.current.phase).toBe("recording");
+    expect(mocks.service!.cancelStream).toHaveBeenCalledWith("stale-stream");
+    expect(mocks.recorder?.isRecording).toBe(true);
+  });
+
+  it("does not let a release that belonged to a cancelled start stop its replacement", async () => {
+    let finishLoad!: (id: string) => void;
+    mocks.service!.beginStream!.mockImplementationOnce(
+      () => new Promise<string>((resolve) => (finishLoad = resolve)),
+    );
+    const onTranscript = vi.fn();
+    const hook = renderHook(() =>
+      useVoiceDictation({ enabled: true, onTranscript, scopeRef: { current: null } }),
+    );
+
+    let first!: Promise<void>;
+    let release!: Promise<void>;
+    act(() => {
+      first = hook.result.current.start();
+    });
+    await waitFor(() => expect(mocks.service!.beginStream).toHaveBeenCalledTimes(1));
+    // Push-to-talk released while the model is still loading, then Escape, then a new key press.
+    act(() => {
+      release = hook.result.current.stop();
+    });
+    act(() => hook.result.current.cancel());
+    await act(async () => hook.result.current.start());
+    await waitFor(() => expect(hook.result.current.phase).toBe("recording"));
+
+    await act(async () => {
+      finishLoad("stale-stream");
+      await first;
+      await release;
+    });
+
+    // The stale release must neither stop nor discard the replacement recording.
+    expect(hook.result.current.phase).toBe("recording");
+    expect(mocks.recorder?.isRecording).toBe(true);
+    expect(onTranscript).not.toHaveBeenCalled();
+    expect(toast).not.toHaveBeenCalled();
+  });
+
+  it("ignores a new start while a cancelled start is still waiting for microphone permission", async () => {
+    let grantPermission!: () => void;
+    mocks.recorderStartGate = new Promise<void>((resolve) => (grantPermission = resolve));
+    mocks.recorderStartCount = 0;
+    const onTranscript = vi.fn();
+    const hook = renderHook(() =>
+      useVoiceDictation({ enabled: true, onTranscript, scopeRef: { current: null } }),
+    );
+
+    let first!: Promise<void>;
+    act(() => {
+      first = hook.result.current.start();
+    });
+    await waitFor(() => expect(mocks.recorderStartCount).toBe(1));
+    // The user cancels while the permission prompt is open, then presses the shortcut again.
+    act(() => hook.result.current.cancel());
+    expect(hook.result.current.phase).toBe("idle");
+    await act(async () => hook.result.current.start());
+
+    // The second start must not open a second capture while the first request is unresolved.
+    expect(mocks.recorderStartCount).toBe(1);
+
+    await act(async () => {
+      grantPermission();
+      await first;
+    });
+    expect(hook.result.current.phase).toBe("idle");
+    expect(mocks.recorder?.isRecording).toBe(false);
+
+    // Once the stale start has settled a fresh start works normally.
+    mocks.recorderStartGate = null;
+    await act(async () => hook.result.current.start());
+    expect(mocks.recorderStartCount).toBe(2);
+    await waitFor(() => expect(hook.result.current.phase).toBe("recording"));
   });
 });

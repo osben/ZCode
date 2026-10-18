@@ -17,9 +17,11 @@ import {
   buildModelUrl,
 } from "../src/voice-dictation/voiceModelStore.js";
 import type { VoiceModelDescriptor } from "../src/voice-dictation/voiceModelCatalog.js";
+import { VoicePostProcessor } from "../src/voice-dictation/voicePostProcessor.js";
 import {
   VoiceTranscriber,
   decodePcm16LeToFloat32,
+  selectStreamFamily,
   type VoiceEngineModel,
 } from "../src/voice-dictation/voiceTranscriber.js";
 
@@ -32,7 +34,7 @@ function makeDescriptor(overrides: Partial<VoiceModelDescriptor> = {}): VoiceMod
     name: "Test model",
     description: "fixture",
     family: "test",
-    languageCount: 1,
+    languages: ["en"],
     streaming: false,
     license: "mit",
     huggingFaceRepo: "owner/repo",
@@ -921,3 +923,262 @@ function decodeWavToFloat32(buffer: Buffer): Float32Array {
   }
   throw new Error("WAV data chunk not found");
 }
+
+const fakeFamilyModel = (supportsStreaming: boolean, accepted: readonly string[]) => ({
+  supportsStreaming,
+  accepts: (family: { kind: string }) => accepted.includes(family.kind),
+});
+
+test("selectStreamFamily picks the family each runtime-probed model declares", () => {
+  // Observed with transcribe-cpp 0.3.1: parakeet-unified accepts only parakeet_buffered.
+  assert.equal(
+    selectStreamFamily(fakeFamilyModel(true, ["parakeet_buffered"])),
+    "parakeet_buffered",
+  );
+  // Observed: both Nemotron streaming models accept only the parakeet extension.
+  assert.equal(selectStreamFamily(fakeFamilyModel(true, ["parakeet"])), "parakeet");
+  assert.equal(
+    selectStreamFamily(fakeFamilyModel(true, ["parakeet", "parakeet_buffered"])),
+    "parakeet_buffered",
+  );
+});
+
+test("selectStreamFamily stays one-shot when the model cannot stream or accepts no family", () => {
+  // Observed: parakeet-tdt and canary report supportsStreaming false and accept neither family.
+  assert.equal(selectStreamFamily(fakeFamilyModel(false, [])), null);
+  assert.equal(selectStreamFamily(fakeFamilyModel(false, ["parakeet"])), null);
+  assert.equal(selectStreamFamily(fakeFamilyModel(true, ["voxtral"])), null);
+});
+
+test("transcriber resolves the engine language from the model's locale map for one-shot and streams", async () => {
+  await withTempDir(async (dir) => {
+    const descriptor = makeDescriptor({
+      streaming: true,
+      languages: ["uk", "ru", "en"],
+      languageLocales: { uk: "uk-UA", ru: "ru-RU", en: "en-US" },
+    });
+    await installFakeModel(dir, descriptor);
+    const store = makeStore(dir, { catalog: [descriptor] });
+    const seen: Array<string | undefined> = [];
+    const engine: VoiceEngineModel = {
+      transcribe: async (_samples, options) => {
+        seen.push(options.language);
+        return { text: "x", language: "uk" };
+      },
+      supportsStreaming: () => true,
+      beginStream: async (options) => {
+        seen.push(options.language);
+        return true;
+      },
+      feedStream: async () => ({ committed: "", tentative: "" }),
+      finalizeStream: async () => ({ text: "x", language: "uk" }),
+      cancelStream: () => undefined,
+      dispose: () => undefined,
+    };
+    const transcriber = new VoiceTranscriber({ store, loadEngine: async () => engine });
+    const samples = new Float32Array(160);
+
+    await transcriber.transcribe(descriptor.id, samples, { language: "uk" });
+    await transcriber.transcribe(descriptor.id, samples, {});
+    assert.equal(await transcriber.beginStream(descriptor.id, { language: "ru" }), true);
+    await transcriber.cancelStream();
+    assert.equal(await transcriber.beginStream(descriptor.id, {}), true);
+    await transcriber.cancelStream();
+
+    assert.deepEqual(seen, ["uk-UA", undefined, "ru-RU", undefined]);
+    await transcriber.unload();
+  });
+});
+
+test("transcriber passes bare codes through for models without a locale map", async () => {
+  await withTempDir(async (dir) => {
+    const descriptor = makeDescriptor();
+    await installFakeModel(dir, descriptor);
+    const store = makeStore(dir, { catalog: [descriptor] });
+    const calls: Array<{ language?: string }> = [];
+    const transcriber = new VoiceTranscriber({
+      store,
+      loadEngine: async () => makeFakeEngine(calls),
+    });
+    await transcriber.transcribe(descriptor.id, new Float32Array(160), { language: "uk" });
+    assert.deepEqual(calls, [{ language: "uk" }]);
+    await transcriber.unload();
+  });
+});
+
+function makeWarmUpService(dir: string, descriptor: VoiceModelDescriptor, idleUnloadMs = 60_000) {
+  const counts = { loads: 0, disposes: 0 };
+  const store = makeStore(dir, { catalog: [descriptor] });
+  const engine: VoiceEngineModel = {
+    ...makeFakeEngine([]),
+    supportsStreaming: () => true,
+    beginStream: async () => true,
+    feedStream: async () => ({ committed: "", tentative: "" }),
+    finalizeStream: async () => ({ text: "done", language: "en" }),
+    cancelStream: () => undefined,
+    dispose: () => {
+      counts.disposes += 1;
+    },
+  };
+  const service = new VoiceDictationService({
+    store,
+    transcriber: new VoiceTranscriber({
+      store,
+      loadEngine: async () => {
+        counts.loads += 1;
+        return engine;
+      },
+    }),
+    idleUnloadMs,
+  });
+  return { service, counts };
+}
+
+test("warmUp loads the model without transcribing and shows it as loaded", async () => {
+  await withTempDir(async (dir) => {
+    const descriptor = makeDescriptor();
+    await installFakeModel(dir, descriptor);
+    const { service, counts } = makeWarmUpService(dir, descriptor);
+
+    await service.warmUp({ modelId: descriptor.id });
+
+    assert.equal(counts.loads, 1);
+    assert.deepEqual(await service.getRuntimeState(), {
+      loadedModelId: descriptor.id,
+      activeModelId: null,
+      activePhase: null,
+    });
+    await service.removeModel(descriptor.id);
+  });
+});
+
+test("warming an already loaded model does not reload it and restarts the idle countdown", async () => {
+  await withTempDir(async (dir) => {
+    const descriptor = makeDescriptor();
+    await installFakeModel(dir, descriptor);
+    const { service, counts } = makeWarmUpService(dir, descriptor, 60);
+
+    await service.warmUp({ modelId: descriptor.id });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    await service.warmUp({ modelId: descriptor.id });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    // 80 ms since the first warm-up (> 60 ms idle delay) but only 40 ms since the second: still loaded.
+    assert.equal(counts.loads, 1);
+    assert.equal((await service.getRuntimeState()).loadedModelId, descriptor.id);
+
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    assert.equal(counts.disposes, 1);
+    assert.equal((await service.getRuntimeState()).loadedModelId, null);
+  });
+});
+
+test("warmUp is a no-op while a dictation stream is active", async () => {
+  await withTempDir(async (dir) => {
+    const descriptor = makeDescriptor({ family: "parakeet", streaming: true });
+    await installFakeModel(dir, descriptor);
+    const { service, counts } = makeWarmUpService(dir, descriptor, 5);
+
+    const streamId = await service.beginStream({ modelId: descriptor.id });
+    assert.ok(streamId);
+    await service.warmUp({ modelId: descriptor.id });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    // No idle timer was armed under the stream, so the model is still loaded and streaming.
+    assert.equal(counts.disposes, 0);
+    assert.equal((await service.getRuntimeState()).activePhase, "streaming");
+    await service.cancelStream(streamId);
+    await service.removeModel(descriptor.id);
+  });
+});
+
+test("warmUp rejects for a model that is not downloaded and leaves nothing loaded", async () => {
+  await withTempDir(async (dir) => {
+    const descriptor = makeDescriptor();
+    const { service, counts } = makeWarmUpService(dir, descriptor);
+
+    await assert.rejects(service.warmUp({ modelId: descriptor.id }));
+    assert.equal(counts.loads, 0);
+    assert.equal((await service.getRuntimeState()).loadedModelId, null);
+  });
+});
+
+test("a model load is visible as the loading phase while it is in progress", async () => {
+  await withTempDir(async (dir) => {
+    const descriptor = makeDescriptor();
+    await installFakeModel(dir, descriptor);
+    const store = makeStore(dir, { catalog: [descriptor] });
+    let finishLoad!: () => void;
+    const transcriber = new VoiceTranscriber({
+      store,
+      loadEngine: () =>
+        new Promise<VoiceEngineModel>((resolve) => {
+          finishLoad = () => resolve(makeFakeEngine([]));
+        }),
+    });
+
+    const loading = transcriber.load(descriptor.id);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(transcriber.activeModelId, descriptor.id);
+    assert.equal(transcriber.activePhase, "loading");
+    assert.equal(transcriber.loadedModelId, null);
+
+    finishLoad();
+    await loading;
+    assert.equal(transcriber.activeModelId, null);
+    assert.equal(transcriber.activePhase, null);
+    assert.equal(transcriber.loadedModelId, descriptor.id);
+    await transcriber.unload();
+  });
+});
+
+test("a failed load clears the loading phase", async () => {
+  await withTempDir(async (dir) => {
+    const descriptor = makeDescriptor();
+    const store = makeStore(dir, { catalog: [descriptor] });
+    const transcriber = new VoiceTranscriber({ store, loadEngine: async () => makeFakeEngine([]) });
+
+    await assert.rejects(transcriber.load(descriptor.id));
+    assert.equal(transcriber.activeModelId, null);
+    assert.equal(transcriber.activePhase, null);
+  });
+});
+
+test("service delegates post-processing to its provider and reports it unavailable without one", async () => {
+  await withTempDir(async (dir) => {
+    const store = makeStore(dir);
+    const transcriber = new VoiceTranscriber({ store, loadEngine: async () => makeFakeEngine([]) });
+    // Pin the platform: the default processor checks the OS before the helper path, so on a
+    // non-macOS CI runner it would report unsupportedPlatform instead of helperMissing.
+    const bare = new VoiceDictationService({
+      store,
+      transcriber,
+      postProcessor: new VoicePostProcessor({ helperPath: undefined, platform: "darwin" }),
+    });
+    assert.deepEqual(await bare.getPostProcessAvailability(), {
+      status: "unavailable",
+      reason: "helperMissing",
+    });
+    await assert.rejects(bare.postProcess({ text: "a", prompt: "p" }), /unavailable/i);
+
+    const calls: string[] = [];
+    const wired = new VoiceDictationService({
+      store,
+      transcriber,
+      postProcessor: new VoicePostProcessor({
+        helperPath: "/helper",
+        platform: "darwin",
+        run: async (_command, args, options) => {
+          calls.push(`${args[0]}:${options.stdin ?? ""}`);
+          return args[0] === "availability"
+            ? { stdout: '{"status":"available"}', code: 0 }
+            : { stdout: '{"text":"Done."}', code: 0 };
+        },
+      }),
+    });
+    assert.deepEqual(await wired.getPostProcessAvailability(), { status: "available" });
+    assert.deepEqual(await wired.postProcess({ text: "done", prompt: "{{text}}" }), {
+      text: "Done.",
+    });
+    assert.deepEqual(calls, ["availability:", 'generate:{"prompt":"done"}']);
+  });
+});

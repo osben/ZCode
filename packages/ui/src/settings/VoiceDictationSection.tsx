@@ -2,7 +2,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LoaderCircle } from "lucide-react";
 import type { VoiceDictationSettings, VoiceModelIdleUnloadMinutes } from "@zcode/shared";
-import type { VoiceModelListItem } from "@zcode/services";
+import {
+  filterVoiceModels,
+  languageSettingsPatch,
+  missingVoiceLanguages,
+  recommendVoiceModel,
+  resolveVoiceLanguages,
+  sortVoiceModels,
+  type VoiceModelListItem,
+} from "@zcode/services";
 import { Button } from "@/components/ui/button.js";
 import { Kbd, KbdGroup } from "@/components/ui/kbd.js";
 import {
@@ -24,30 +32,20 @@ import { useShortcutCommandLabelParts } from "@/shortcuts/useShortcutBindings.js
 import { listAudioInputDevices, VoiceDictationRecorder } from "@/lib/voiceDictationRecorder.js";
 import { playVoiceDictationFeedbackSound } from "@/lib/voiceDictationFeedbackSound.js";
 import { SettingsBadge, SettingsGroupCard, SettingsRow } from "@/settings/SettingsPageParts.js";
+import { VoiceDictationPostProcessCard } from "@/settings/VoiceDictationPostProcessCard.js";
+import { VoiceDictationLanguagePicker } from "@/settings/VoiceDictationLanguagePicker.js";
 import { VoiceModelRow } from "@/settings/VoiceDictationModelRow.js";
+import {
+  DEFAULT_VOICE_MODEL_FILTER,
+  VoiceModelFilterBar,
+  type VoiceModelFilterState,
+} from "@/settings/VoiceModelFilterBar.js";
 
 const MIC_TEST_DURATION_MS = 3000;
 /** Peaks below this count as no valid sound (about -40 dBFS). */
 const MIC_SILENT_PEAK = 0.01;
 const MODEL_REFRESH_INTERVAL_MS = 500;
-const DEFAULT_LANGUAGE = "auto";
 const DEFAULT_FEEDBACK_VOLUME = 70;
-const LANGUAGE_CODES = [
-  "en",
-  "zh",
-  "ru",
-  "uk",
-  "de",
-  "fr",
-  "es",
-  "it",
-  "pt",
-  "pl",
-  "ja",
-  "ko",
-  "ar",
-  "vi",
-] as const;
 
 /**
  * Voice input settings: input device, microphone test, shortcut and recording mode, transcription
@@ -101,27 +99,35 @@ function DesktopVoiceDictationSection() {
   // can still be pre-write; clearing early would let a later whole-object patch persist stale data.
   const optimisticVoice = optimisticVoiceRef.current;
   if (optimisticVoice) {
-    const published = Object.entries(optimisticVoice).every(
-      ([key, value]) => voice[key as keyof VoiceDictationSettings] === value,
+    const published = Object.entries(optimisticVoice).every(([key, value]) =>
+      isSameVoiceSettingValue(voice[key as keyof VoiceDictationSettings], value),
     );
     if (published) {
       optimisticVoiceRef.current = null;
     }
   }
   voiceRef.current = optimisticVoiceRef.current ?? voice;
+  const selectedLanguagesKey = resolveVoiceLanguages(voiceRef.current).join(",");
+  const selectedLanguages = useMemo(
+    () => (selectedLanguagesKey ? selectedLanguagesKey.split(",") : []),
+    [selectedLanguagesKey],
+  );
   const modelId = voice.modelId ?? null;
   const microphoneDeviceId = voice.microphoneDeviceId ?? null;
-  const language = voice.language ?? DEFAULT_LANGUAGE;
   const pushToTalk = voice.pushToTalk !== false;
   const idleUnloadMinutes = voice.idleUnloadMinutes ?? 5;
   const feedbackSounds = voice.feedbackSounds === true;
   const savedFeedbackVolume = voice.feedbackVolume ?? DEFAULT_FEEDBACK_VOLUME;
   const muteWhileRecording = voice.muteWhileRecording === true;
+  const copyToClipboard = voice.copyToClipboard === true;
+  const warmUpOnFocus = voice.warmUpOnFocus !== false;
 
   const [models, setModels] = useState<VoiceModelListItem[]>([]);
   const [startingDownloadIds, setStartingDownloadIds] = useState<Set<string>>(() => new Set());
   const [pendingUseModelId, setPendingUseModelId] = useState<string | null>(null);
   const pendingUseModelIdRef = useRef<string | null>(null);
+  const [, setOptimisticTick] = useState(0);
+  const [modelFilter, setModelFilter] = useState<VoiceModelFilterState>(DEFAULT_VOICE_MODEL_FILTER);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [micTesting, setMicTesting] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
@@ -196,6 +202,17 @@ function DesktopVoiceDictationSection() {
       optimisticVoiceRef.current = merged;
       voiceRef.current = merged;
       pendingVoiceWritesRef.current += 1;
+      // The language picker and the post-processing card read the optimistic overlay; show it right away instead of waiting
+      // for the settings snapshot to republish (other controls read the published value).
+      if (
+        patch.languages !== undefined ||
+        patch.language !== undefined ||
+        patch.postProcessEnabled !== undefined ||
+        patch.postProcessProvider !== undefined ||
+        patch.postProcessPrompt !== undefined
+      ) {
+        setOptimisticTick((tick) => tick + 1);
+      }
       try {
         await update({ voiceDictation: merged });
         if (patch.idleUnloadMinutes !== undefined) {
@@ -213,6 +230,8 @@ function DesktopVoiceDictationSection() {
         // is the last in-flight write so later edits re-read the persisted state.
         if (pendingVoiceWritesRef.current === 1) {
           optimisticVoiceRef.current = null;
+          // Re-render so controls fall back to the persisted value instead of the failed edit.
+          setOptimisticTick((tick) => tick + 1);
         }
         return;
       } finally {
@@ -229,17 +248,71 @@ function DesktopVoiceDictationSection() {
       return null;
     }
   }, [locale]);
-
-  const languageOptions = useMemo(
-    () => [
-      {
-        value: DEFAULT_LANGUAGE,
-        label: intl.formatMessage({ id: "voiceDictation.language.auto" }),
-      },
-      ...LANGUAGE_CODES.map((code) => ({ value: code, label: languageNames?.of(code) ?? code })),
-    ],
-    [intl, languageNames],
+  const languageName = useCallback(
+    (code: string) => {
+      try {
+        return languageNames?.of(code) ?? code;
+      } catch {
+        return code;
+      }
+    },
+    [languageNames],
   );
+
+  // One language catalog: every language any catalog model supports, plus whatever is already
+  // selected (so a stale saved code stays visible and removable).
+  const optionCodesKey = [
+    ...new Set([...selectedLanguages, ...models.flatMap((item) => item.descriptor.languages)]),
+  ]
+    .sort()
+    .join(",");
+  const languageOptions = useMemo(() => {
+    const collator = new Intl.Collator(locale);
+    return optionCodesKey
+      .split(",")
+      .filter(Boolean)
+      .map((code) => ({ code, label: languageName(code) }))
+      .sort((a, b) => collator.compare(a.label, b.label));
+  }, [languageName, locale, optionCodesKey]);
+
+  // A handful of models: cheap per render. Depend on the id (a string) downstream, because the
+  // polled model list hands out new descriptor objects every tick.
+  const recommendedModel = recommendVoiceModel(
+    models.map((item) => item.descriptor),
+    selectedLanguages,
+  );
+  const recommendedId = recommendedModel?.id ?? null;
+  const visibleModels = useMemo(() => {
+    const matching = filterVoiceModels(
+      models,
+      { ...modelFilter, languages: modelFilter.matchLanguages ? selectedLanguages : [] },
+      languageName,
+    );
+    // Filters are view-only: the selected model and anything mid-download or marked "use when ready"
+    // always stay visible, so a filter can never hide the Active card or a running download's Cancel.
+    const pinned = (item: VoiceModelListItem) =>
+      item.descriptor.id === modelId ||
+      item.descriptor.id === pendingUseModelId ||
+      item.state.status === "downloading" ||
+      startingDownloadIds.has(item.descriptor.id);
+    return sortVoiceModels(
+      models.filter((item) => matching.includes(item) || pinned(item)),
+      recommendedId,
+    );
+  }, [
+    languageName,
+    modelFilter,
+    modelId,
+    models,
+    pendingUseModelId,
+    recommendedId,
+    selectedLanguages,
+    startingDownloadIds,
+  ]);
+  const activeModelItem = models.find((item) => item.descriptor.id === modelId);
+  const missingLanguages = activeModelItem
+    ? missingVoiceLanguages(activeModelItem.descriptor, selectedLanguages)
+    : [];
 
   const handleMicTest = async () => {
     if (micTesting) return;
@@ -349,6 +422,26 @@ function DesktopVoiceDictationSection() {
     pendingUseModelIdRef.current = null;
     setPendingUseModelId(null);
     void patchVoice({ modelId: id });
+  };
+
+  const handleToggleLanguage = (code: string) => {
+    // Read the latest value, not the rendered one: voiceRef already holds a pending optimistic edit.
+    const current = resolveVoiceLanguages(voiceRef.current);
+    const next = current.includes(code) ? current.filter((c) => c !== code) : [...current, code];
+    void patchVoice(languageSettingsPatch(next));
+  };
+
+  const handleUseRecommended = () => {
+    if (!recommendedModel) return;
+    const item = models.find((candidate) => candidate.descriptor.id === recommendedModel.id);
+    if (item?.state.status === "ready") {
+      handleSelectModel(recommendedModel.id);
+      return;
+    }
+    // Not downloaded: download it and switch once it is ready (the current model stays active until then).
+    pendingUseModelIdRef.current = recommendedModel.id;
+    setPendingUseModelId(recommendedModel.id);
+    if (item?.state.status !== "downloading") handleDownload(recommendedModel.id);
   };
 
   const handleRemove = async (id: string) => {
@@ -561,27 +654,65 @@ function DesktopVoiceDictationSection() {
             }
           />
           <SettingsRow
+            label={intl.formatMessage({ id: "voiceDictation.copyToClipboard.title" })}
+            description={intl.formatMessage({ id: "voiceDictation.copyToClipboard.description" })}
+            control={
+              <Switch
+                aria-label={intl.formatMessage({ id: "voiceDictation.copyToClipboard.title" })}
+                checked={copyToClipboard}
+                onCheckedChange={(checked) => void patchVoice({ copyToClipboard: checked })}
+              />
+            }
+          />
+          <SettingsRow
             label={intl.formatMessage({ id: "voiceDictation.language.title" })}
             description={intl.formatMessage({ id: "voiceDictation.language.description" })}
             control={
-              <Select
-                value={language}
-                onValueChange={(value) => void patchVoice({ language: value })}
-              >
-                <SelectTrigger
-                  aria-label={intl.formatMessage({ id: "voiceDictation.language.title" })}
-                  className="w-full"
+              <VoiceDictationLanguagePicker
+                selected={selectedLanguages}
+                options={languageOptions}
+                ariaLabel={intl.formatMessage({ id: "voiceDictation.language.title" })}
+                onToggle={handleToggleLanguage}
+                onClear={() => void patchVoice(languageSettingsPatch([]))}
+              />
+            }
+            detail={
+              missingLanguages.length > 0 && activeModelItem ? (
+                <div
+                  className="flex flex-wrap items-center gap-x-3 gap-y-1 text-ui-base text-warning"
+                  data-testid="voice-language-model-mismatch"
+                  role="status"
                 >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {languageOptions.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                  <span>
+                    {intl.formatMessage(
+                      { id: "voiceDictation.language.modelMismatch" },
+                      {
+                        model: activeModelItem.descriptor.name,
+                        languages: missingLanguages.map(languageName).join(", "),
+                      },
+                    )}
+                  </span>
+                  {recommendedModel && recommendedModel.id !== modelId ? (
+                    <Button variant="outline" size="sm" onClick={handleUseRecommended}>
+                      {intl.formatMessage(
+                        { id: "voiceDictation.language.useModel" },
+                        { model: recommendedModel.name },
+                      )}
+                    </Button>
+                  ) : null}
+                </div>
+              ) : undefined
+            }
+          />
+          <SettingsRow
+            label={intl.formatMessage({ id: "voiceDictation.warmUp.title" })}
+            description={intl.formatMessage({ id: "voiceDictation.warmUp.description" })}
+            control={
+              <Switch
+                aria-label={intl.formatMessage({ id: "voiceDictation.warmUp.title" })}
+                checked={warmUpOnFocus}
+                onCheckedChange={(checked) => void patchVoice({ warmUpOnFocus: checked })}
+              />
             }
           />
           <SettingsRow
@@ -623,14 +754,43 @@ function DesktopVoiceDictationSection() {
       <section className="space-y-3">
         <div>
           <h3 className="text-ui-base font-medium text-foreground">
+            {intl.formatMessage({ id: "voiceDictation.postProcess.title" })}
+          </h3>
+          <p className="mt-1 text-ui-base leading-6 text-foreground-subtle">
+            {intl.formatMessage({ id: "voiceDictation.postProcess.description" })}
+          </p>
+        </div>
+        <VoiceDictationPostProcessCard voice={voiceRef.current} patchVoice={patchVoice} />
+      </section>
+
+      <section className="space-y-3">
+        <div>
+          <h3 className="text-ui-base font-medium text-foreground">
             {intl.formatMessage({ id: "voiceDictation.models.title" })}
           </h3>
           <p className="mt-1 text-ui-base leading-6 text-foreground-subtle">
             {intl.formatMessage({ id: "voiceDictation.models.description" })}
           </p>
         </div>
+        <VoiceModelFilterBar
+          value={modelFilter}
+          onChange={setModelFilter}
+          hasSelectedLanguages={selectedLanguages.length > 0}
+        />
         <div className="space-y-3">
-          {models.map((item) => (
+          {visibleModels.length === 0 && models.length > 0 ? (
+            <div className="flex flex-col items-center gap-2 rounded-xl border border-card-border bg-card p-6 text-center text-ui-base text-foreground-subtle">
+              <p>{intl.formatMessage({ id: "voiceDictation.models.filter.empty" })}</p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setModelFilter(DEFAULT_VOICE_MODEL_FILTER)}
+              >
+                {intl.formatMessage({ id: "voiceDictation.models.filter.reset" })}
+              </Button>
+            </div>
+          ) : null}
+          {visibleModels.map((item) => (
             <VoiceModelRow
               key={item.descriptor.id}
               item={item}
@@ -638,6 +798,9 @@ function DesktopVoiceDictationSection() {
               runtimeState={runtimeState}
               startingDownload={startingDownloadIds.has(item.descriptor.id)}
               pendingUse={pendingUseModelId === item.descriptor.id}
+              recommended={recommendedId === item.descriptor.id}
+              selectedLanguages={selectedLanguages}
+              languageName={languageName}
               onSelect={() => handleSelectModel(item.descriptor.id)}
               onUseWhenReady={() => handleUseWhenReady(item.descriptor.id)}
               onDownload={() => handleDownload(item.descriptor.id)}
@@ -649,6 +812,14 @@ function DesktopVoiceDictationSection() {
       </section>
     </div>
   );
+}
+
+/** Structural equality for settings values: `languages` is an array that is re-read as a new reference. */
+export function isSameVoiceSettingValue(a: unknown, b: unknown): boolean {
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((value, index) => value === b[index]);
+  }
+  return a === b;
 }
 
 function MicLevelBar({ level }: { level: number }) {

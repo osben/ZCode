@@ -270,6 +270,81 @@ describe("app settings", () => {
     ).toBe(false);
   });
 
+  it("stores dictation languages and the clipboard preference, dropping only a malformed languages value on read", () => {
+    expect(
+      forkAppSettingsSchema.parse({
+        voiceDictation: {
+          modelId: "parakeet",
+          languages: ["uk", "en"],
+          copyToClipboard: true,
+          warmUpOnFocus: false,
+        },
+      }).voiceDictation,
+    ).toEqual({
+      modelId: "parakeet",
+      languages: ["uk", "en"],
+      copyToClipboard: true,
+      warmUpOnFocus: false,
+    });
+
+    // One bad languages value must not wipe the other voice preferences.
+    expect(
+      forkAppSettingsSchema.parse({
+        voiceDictation: { modelId: "parakeet", languages: "uk", pushToTalk: false },
+      }).voiceDictation,
+    ).toEqual({ modelId: "parakeet", pushToTalk: false });
+
+    // Saving stays strict so a bad value is rejected instead of silently dropped.
+    expect(
+      forkAppSettingsPatchSchema.safeParse({ voiceDictation: { languages: ["uk", ""] } }).success,
+    ).toBe(false);
+    expect(
+      forkAppSettingsPatchSchema.safeParse({ voiceDictation: { copyToClipboard: "yes" } }).success,
+    ).toBe(false);
+  });
+
+  it("stores post-processing preferences and drops only an unknown provider on read", () => {
+    expect(
+      forkAppSettingsSchema.parse({
+        voiceDictation: {
+          modelId: "parakeet",
+          postProcessEnabled: true,
+          postProcessProvider: "apple-fm",
+          postProcessPrompt: "Fix: {{text}}",
+        },
+      }).voiceDictation,
+    ).toEqual({
+      modelId: "parakeet",
+      postProcessEnabled: true,
+      postProcessProvider: "apple-fm",
+      postProcessPrompt: "Fix: {{text}}",
+    });
+
+    // A provider written by a newer build must not wipe the other voice preferences.
+    expect(
+      forkAppSettingsSchema.parse({
+        voiceDictation: { modelId: "parakeet", postProcessProvider: "some-future-provider" },
+      }).voiceDictation,
+    ).toEqual({ modelId: "parakeet" });
+
+    // An over-long prompt (hand edit or a newer build with a higher limit) drops only itself.
+    expect(
+      forkAppSettingsSchema.parse({
+        voiceDictation: { modelId: "parakeet", postProcessPrompt: "x".repeat(4001) },
+      }).voiceDictation,
+    ).toEqual({ modelId: "parakeet" });
+
+    expect(
+      forkAppSettingsPatchSchema.safeParse({ voiceDictation: { postProcessProvider: "other" } })
+        .success,
+    ).toBe(false);
+    expect(
+      forkAppSettingsPatchSchema.safeParse({
+        voiceDictation: { postProcessPrompt: "x".repeat(4001) },
+      }).success,
+    ).toBe(false);
+  });
+
   it("keeps every registered fork-owned key out of the upstream-shared setting.json schema", () => {
     // The upstream app shares setting.json with this fork and strips unknown keys on every write,
     // so a fork-only key placed in appSettingsObjectSchema instead of FORK_SETTING_KEYS would be

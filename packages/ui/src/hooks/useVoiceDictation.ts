@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { toast } from "@/components/ui/toast.js";
-import type { VoiceTranscriptionPreview } from "@zcode/services";
+import { resolveEngineLanguage, type VoiceTranscriptionPreview } from "@zcode/services";
+import { applyIdleUnloadPreference } from "@/lib/voiceIdleUnload.js";
+import { postProcessOrRaw, readPostProcessSettings } from "@/lib/voicePostProcess.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useServices } from "@/hooks/useServices.js";
 import { useSettings } from "@/hooks/useSettingService.js";
+import { useOpenVoiceDictationSettings } from "@/hooks/useOpenVoiceDictationSettings.js";
+import { useVoiceDictationShortcut } from "@/hooks/useVoiceDictationShortcut.js";
+import { useVoiceDictationEscapeCancel } from "@/hooks/useVoiceDictationEscapeCancel.js";
 import { useVoiceDictationRecordingAudio } from "@/hooks/useVoiceDictationRecordingAudio.js";
 import { logger } from "@/logger.js";
-import { useEffectiveShortcutBindings } from "@/shortcuts/useShortcutBindings.js";
-import { isShortcutRecordingActive, matchesShortcutBinding } from "@/shortcuts/bindings.js";
-import { isVoiceShortcutReleased } from "@/lib/voiceDictationShortcut.js";
 import {
   VOICE_MIN_RECORDING_MS,
   concatFloat32Chunks,
@@ -17,7 +19,7 @@ import {
 } from "@/lib/voiceDictationAudio.js";
 import { VoiceDictationRecorder } from "@/lib/voiceDictationRecorder.js";
 
-export type VoiceDictationPhase = "idle" | "loading" | "recording" | "transcribing";
+export type VoiceDictationPhase = "idle" | "loading" | "recording" | "transcribing" | "processing";
 
 /**
  * Backlog cap: about 30 seconds at 16 kHz mono. Under normal jitter the backlog stays far below
@@ -29,8 +31,11 @@ const MAX_STREAM_BACKLOG_SAMPLES = 16_000 * 30;
 interface UseVoiceDictationOptions {
   /** True only on desktop: transcription runs on the local Desktop Host; Web/remote provide no voice input. */
   enabled: boolean;
-  /** Called with non-empty transcribed text; the caller decides where to insert it. */
-  onTranscript: (text: string) => void;
+  /**
+   * Called with non-empty text; the caller decides where to insert it. `rawText` is the transcript
+   * before post-processing (equal to `text` when it was not processed), for the clipboard.
+   */
+  onTranscript: (text: string, rawText: string) => void;
   /** The shortcut is active only when this container has focus, so inputs in other panels cannot trigger recording. */
   scopeRef: RefObject<HTMLElement | null>;
 }
@@ -46,15 +51,21 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
   const { intl } = useZCodeIntl();
   const { voiceDictationService } = useServices();
   const { settings } = useSettings();
-  const bindings = useEffectiveShortcutBindings();
   const voice = settings?.voiceDictation;
   const modelId = voice?.modelId ?? null;
   const microphoneDeviceId = voice?.microphoneDeviceId ?? null;
-  const language = voice?.language ?? "auto";
+  // One selected language is forced on the engine; none or several leave detection to the model.
+  const language = resolveEngineLanguage(voice ?? {});
   const pushToTalk = voice?.pushToTalk !== false;
   const idleUnloadMinutes = voice?.idleUnloadMinutes ?? 5;
   const muteWhileRecording = voice?.muteWhileRecording === true;
+  const {
+    enabled: postProcessEnabled,
+    prompt: postProcessPrompt,
+    provider: postProcessProvider,
+  } = readPostProcessSettings(voice);
   const recordingAudio = useVoiceDictationRecordingAudio();
+  const openVoiceSettings = useOpenVoiceDictationSettings();
 
   const [phase, setPhase] = useState<VoiceDictationPhase>("idle");
   const [level, setLevel] = useState(0);
@@ -63,6 +74,8 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
   const phaseRef = useRef<VoiceDictationPhase>("idle");
   const startedAtRef = useRef(0);
   const startPromiseRef = useRef<Promise<void> | null>(null);
+  /** True only while recorder.start() awaits the microphone permission prompt, which cannot be aborted. */
+  const recorderStartPendingRef = useRef(false);
   const streamIdRef = useRef<string | null>(null);
   const streamQueueRef = useRef<Promise<void>>(Promise.resolve());
   /** PCM chunks awaiting send; merged and sent by the serial flush task, so a transiently slow RPC versus the microphone only backs up and never fails. */
@@ -90,25 +103,43 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     [voiceDictationService],
   );
 
+  /** Cancels a stream once its queued feed batches have drained, so the Host never sees a feed after the cancel. */
+  const cancelStreamAfterQueue = useCallback(
+    (streamId: string) => {
+      void streamQueueRef.current
+        .then(() => voiceDictationService?.cancelStream(streamId))
+        .catch((error: unknown) => {
+          logger.warn("voice dictation stream cancellation failed", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+    },
+    [voiceDictationService],
+  );
+
+  /** Aborts capture and returns the UI to idle; the mute is released silently (cancellation paths stay quiet per spec). */
+  const abortRecording = useCallback(() => {
+    recorder.cancel();
+    void recordingAudio.releaseSystemMute();
+    setLevel(0);
+    setPreview(null);
+    updatePhase("idle");
+  }, [recorder, recordingAudio, updatePhase]);
+
   const failStream = useCallback(
     (streamId: string, error: unknown) => {
       if (streamIdRef.current !== streamId) return;
       streamErrorRef.current = error;
       streamIdRef.current = null;
       streamBacklogRef.current = [];
-      recorder.cancel();
-      // Recording aborted: release the mute silently (cancellation paths stay quiet per spec).
-      void recordingAudio.releaseSystemMute();
-      setLevel(0);
-      setPreview(null);
-      updatePhase("idle");
+      abortRecording();
       logger.warn("voice dictation streaming failed", {
         error: error instanceof Error ? error.message : String(error),
       });
       toast(intl.formatMessage({ id: "voiceDictation.transcribeFailed" }));
       cancelServiceStream(streamId);
     },
-    [cancelServiceStream, intl, recorder, recordingAudio, updatePhase],
+    [abortRecording, cancelServiceStream, intl],
   );
 
   const flushStreamBacklog = useCallback(
@@ -161,9 +192,16 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
 
   const start = useCallback(async (): Promise<void> => {
     if (!enabled || phaseRef.current !== "idle" || recorder.isRecording) return;
+    // A cancelled start can still be waiting for the microphone permission prompt; the recorder
+    // cannot abort that request, so a second capture must not begin until it has settled. Only that
+    // window is guarded: a stale start still loading the model never reaches the recorder.
+    if (recorderStartPendingRef.current) return;
     if (!voiceDictationService) return;
     if (!modelId) {
-      toast(intl.formatMessage({ id: "voiceDictation.noModelSelected" }));
+      toast(intl.formatMessage({ id: "voiceDictation.noModelSelected" }), {
+        actionLabel: intl.formatMessage({ id: "voiceDictation.openSettings" }),
+        onAction: openVoiceSettings,
+      });
       return;
     }
     const generation = ++startGenerationRef.current;
@@ -177,19 +215,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     const pending = (async () => {
       let streamId: string | null;
       try {
-        try {
-          await voiceDictationService.setIdleUnloadMinutes(idleUnloadMinutes);
-        } catch (error) {
-          if (!isMissingIdleUnloadMethod(error)) throw error;
-          // Older Desktop Hosts do not implement this preference RPC yet; keep the Host's default
-          // unload time rather than blocking recording and transcription over it.
-          logger.warn(
-            "voice dictation host does not support idle unload preference; using host default",
-            {
-              error: error instanceof Error ? error.message : String(error),
-            },
-          );
-        }
+        await applyIdleUnloadPreference(voiceDictationService, idleUnloadMinutes);
         streamId = await voiceDictationService.beginStream({ modelId, language });
       } catch (error) {
         logger.warn("voice dictation model stream initialization failed", {
@@ -206,6 +232,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
         return;
       }
       streamIdRef.current = streamId;
+      recorderStartPendingRef.current = true;
       try {
         await recorder.start({
           deviceId: microphoneDeviceId,
@@ -213,10 +240,12 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
           onChunk: enqueueStreamChunk,
           collectSamples: streamId === null,
         });
+        recorderStartPendingRef.current = false;
         if (generation !== startGenerationRef.current) {
           recorder.cancel();
           if (streamId) {
-            streamIdRef.current = null;
+            // Only release the stream this stale start owns; a newer attempt may have set its own id.
+            if (streamIdRef.current === streamId) streamIdRef.current = null;
             cancelServiceStream(streamId);
           }
           return;
@@ -236,8 +265,9 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
           });
         }
       } catch (error) {
+        recorderStartPendingRef.current = false;
         recorder.cancel();
-        streamIdRef.current = null;
+        if (streamIdRef.current === streamId) streamIdRef.current = null;
         if (streamId) cancelServiceStream(streamId);
         setLevel(0);
         setPreview(null);
@@ -251,7 +281,11 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
       }
     })();
     startPromiseRef.current = pending;
-    await pending;
+    try {
+      await pending;
+    } finally {
+      if (startPromiseRef.current === pending) startPromiseRef.current = null;
+    }
   }, [
     cancelServiceStream,
     enabled,
@@ -262,19 +296,53 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     microphoneDeviceId,
     modelId,
     muteWhileRecording,
+    openVoiceSettings,
     recorder,
     recordingAudio,
     updatePhase,
     voiceDictationService,
   ]);
 
+  /** Invalidates the current start, aborts capture, and releases the Host stream once its queue drains. */
+  const tearDownRecording = useCallback(() => {
+    startGenerationRef.current += 1;
+    abortRecording();
+    const streamId = streamIdRef.current;
+    streamIdRef.current = null;
+    streamBacklogRef.current = [];
+    if (streamId) cancelStreamAfterQueue(streamId);
+  }, [abortRecording, cancelStreamAfterQueue]);
+
+  /**
+   * Abandons loading or recording without transcribing or inserting anything (window blur, Escape,
+   * the feedback panel's Cancel button). Silent by design: no stop chime, the mute is released.
+   */
+  const cancel = useCallback((): void => {
+    heldBindingRef.current = null;
+    if (phaseRef.current === "processing") {
+      // The transcript exists but is discarded: bumping the generation makes stop() drop its result.
+      startGenerationRef.current += 1;
+      updatePhase("idle");
+      return;
+    }
+    if (phaseRef.current !== "loading" && !recorder.isRecording) return;
+    tearDownRecording();
+  }, [recorder, tearDownRecording, updatePhase]);
+
   const stop = useCallback(async (): Promise<void> => {
     // When released quickly after a press, recording may still be waiting for microphone
     // authorization; wait for it to be ready before finishing so the release is not lost.
-    await startPromiseRef.current;
-    startPromiseRef.current = null;
-    if (!recorder.isRecording) return;
+    // Released while the model is still loading: capture only just began, so the hold time below
+    // would read as ~0 ms even though the user held the key for seconds.
+    const releasedWhileLoading = phaseRef.current === "loading";
+    // Tie this stop to the start it releases: if that start was cancelled (Escape) and replaced while
+    // we waited, the release belongs to a recording that no longer exists and must not touch the new one.
+    const startPromise = startPromiseRef.current;
     const generation = startGenerationRef.current;
+    await startPromise;
+    if (generation !== startGenerationRef.current) return;
+    if (startPromiseRef.current === startPromise) startPromiseRef.current = null;
+    if (!recorder.isRecording) return;
     const durationMs = Date.now() - startedAtRef.current;
     const samples = recorder.stop();
     setLevel(0);
@@ -282,6 +350,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     recordingAudio.handleRecordingStopped();
     const streamId = streamIdRef.current;
     if (
+      releasedWhileLoading ||
       durationMs < VOICE_MIN_RECORDING_MS ||
       (!streamId && samples.length === 0) ||
       !voiceDictationService
@@ -290,6 +359,13 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
       if (streamId) cancelServiceStream(streamId);
       setPreview(null);
       updatePhase("idle");
+      // An accidental tap deserves feedback; an empty buffer without a stream is a capture
+      // problem, not user intent, and stays silent.
+      if (releasedWhileLoading) {
+        toast(intl.formatMessage({ id: "voiceDictation.stillLoading" }));
+      } else if (durationMs < VOICE_MIN_RECORDING_MS) {
+        toast(intl.formatMessage({ id: "voiceDictation.tooShort" }));
+      }
       return;
     }
     updatePhase("transcribing");
@@ -307,8 +383,22 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
           language,
         });
       }
-      const text = result.text.trim();
-      if (text && generation === startGenerationRef.current) onTranscriptRef.current(text);
+      const rawText = result.text.trim();
+      let text = rawText;
+      if (rawText && postProcessEnabled && generation === startGenerationRef.current) {
+        updatePhase("processing");
+        text = await postProcessOrRaw(
+          voiceDictationService,
+          { text: rawText, prompt: postProcessPrompt, provider: postProcessProvider },
+          (error) =>
+            logger.warn("voice dictation post-processing failed; inserting the raw transcript", {
+              error: error instanceof Error ? error.message : String(error),
+            }),
+        );
+      }
+      if (rawText && generation === startGenerationRef.current) {
+        onTranscriptRef.current(text, rawText);
+      }
     } catch (error) {
       if (streamId && streamIdRef.current === streamId) {
         streamIdRef.current = null;
@@ -322,16 +412,23 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
         toast(intl.formatMessage({ id: "voiceDictation.transcribeFailed" }));
       }
     } finally {
-      streamIdRef.current = null;
-      streamBacklogRef.current = [];
-      setPreview(null);
-      updatePhase("idle");
+      // A cancelled run (Escape during processing) may already have been replaced by a new recording;
+      // only the run that still owns the phase may reset it.
+      if (generation === startGenerationRef.current) {
+        streamIdRef.current = null;
+        streamBacklogRef.current = [];
+        setPreview(null);
+        updatePhase("idle");
+      }
     }
   }, [
     cancelServiceStream,
     intl,
     language,
     modelId,
+    postProcessEnabled,
+    postProcessPrompt,
+    postProcessProvider,
     recorder,
     recordingAudio,
     updatePhase,
@@ -346,105 +443,28 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     }
   }, [recorder, start, stop]);
 
-  useEffect(() => {
-    if (!enabled) return;
-    const isInScope = (target: EventTarget | null) => {
-      const scope = scopeRef.current;
-      return Boolean(scope && target instanceof Node && scope.contains(target));
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (isShortcutRecordingActive() || !isInScope(event.target)) return;
-      const binding = bindings.voiceDictation.find((candidate) =>
-        matchesShortcutBinding(event, candidate),
-      );
-      if (!binding) return;
-      event.preventDefault();
-      if (event.repeat) return;
-      if (pushToTalk) {
-        heldBindingRef.current = binding;
-        void start();
-      } else {
-        void toggle();
-      }
-    };
-    const handleKeyUp = (event: KeyboardEvent) => {
-      const held = heldBindingRef.current;
-      if (!held || !isVoiceShortcutReleased(event, held)) return;
-      heldBindingRef.current = null;
-      void stop();
-    };
-    const handleBlur = () => {
-      // Key release during window blur produces no keyup; cancel recording directly to avoid
-      // recording forever.
-      heldBindingRef.current = null;
-      if (phaseRef.current === "loading" || recorder.isRecording) {
-        startGenerationRef.current += 1;
-        recorder.cancel();
-        void recordingAudio.releaseSystemMute();
-        setLevel(0);
-        setPreview(null);
-        updatePhase("idle");
-        const streamId = streamIdRef.current;
-        streamIdRef.current = null;
-        streamBacklogRef.current = [];
-        if (streamId) {
-          void streamQueueRef.current
-            .then(() => voiceDictationService?.cancelStream(streamId))
-            .catch((error: unknown) => {
-              logger.warn("voice dictation stream cancellation failed", {
-                error: error instanceof Error ? error.message : String(error),
-              });
-            });
-        }
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown, true);
-    window.addEventListener("keyup", handleKeyUp, true);
-    window.addEventListener("blur", handleBlur);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown, true);
-      window.removeEventListener("keyup", handleKeyUp, true);
-      window.removeEventListener("blur", handleBlur);
-    };
-  }, [
-    bindings.voiceDictation,
+  useVoiceDictationShortcut({
     enabled,
-    pushToTalk,
-    recorder,
-    recordingAudio,
     scopeRef,
+    pushToTalk,
+    heldBindingRef,
     start,
     stop,
     toggle,
-    updatePhase,
-    voiceDictationService,
-  ]);
+    cancel,
+  });
 
-  useEffect(
-    () => () => {
-      startGenerationRef.current += 1;
-      recorder.cancel();
-      void recordingAudio.releaseSystemMute();
-      const streamId = streamIdRef.current;
-      streamIdRef.current = null;
-      streamBacklogRef.current = [];
-      if (streamId) {
-        void streamQueueRef.current
-          .then(() => voiceDictationService?.cancelStream(streamId))
-          .catch((error: unknown) => {
-            logger.warn("voice dictation stream cancellation failed", {
-              error: error instanceof Error ? error.message : String(error),
-            });
-          });
-      }
-    },
-    [recorder, recordingAudio, voiceDictationService],
+  useVoiceDictationEscapeCancel(
+    enabled,
+    () =>
+      phaseRef.current === "loading" ||
+      phaseRef.current === "recording" ||
+      phaseRef.current === "processing",
+    cancel,
   );
 
-  return { phase, level, preview, start, stop, toggle };
-}
+  // Never leave a capture or a stream lease behind when the owning composer disappears.
+  useEffect(() => tearDownRecording, [tearDownRecording]);
 
-function isMissingIdleUnloadMethod(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.trim() === "Method not found: setIdleUnloadMinutes";
+  return { phase, level, preview, start, stop, cancel, toggle };
 }

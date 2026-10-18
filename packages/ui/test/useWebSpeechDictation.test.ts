@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   settings: null as Record<string, unknown> | null,
   desktopEngine: null as Record<string, unknown> | null,
   desktopEnabled: null as boolean | null,
+  warmUpEnabled: null as boolean | null,
+  statusEnabled: null as boolean | null,
 }));
 
 vi.mock("@/hooks/useSettingService.js", () => ({
@@ -24,6 +26,19 @@ vi.mock("@/shortcuts/useShortcutBindings.js", () => ({
 vi.mock("@/components/ui/toast.js", () => ({ toast: vi.fn() }));
 vi.mock("@/logger.js", () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+// Model warm-up is covered by useVoiceModelWarmUp.test.ts; here only its enablement is observed.
+vi.mock("@/hooks/useVoiceModelWarmUp.js", () => ({
+  useVoiceModelWarmUp: (options: { enabled: boolean }) => {
+    mocks.warmUpEnabled = options.enabled;
+  },
+}));
+// The status dot is covered by useVoiceModelStatus.test.ts; here only its enablement is observed.
+vi.mock("@/hooks/useVoiceModelStatus.js", () => ({
+  useVoiceModelStatus: (options: { enabled: boolean }) => {
+    mocks.statusEnabled = options.enabled;
+    return "none";
+  },
 }));
 // The desktop engine's real behavior stays covered by useVoiceDictation.test.ts; here it is a
 // recording stub so the tests can prove which engine the control routed the toggle to.
@@ -118,6 +133,8 @@ afterEach(() => {
   mocks.settings = null;
   mocks.desktopEngine = null;
   mocks.desktopEnabled = null;
+  mocks.warmUpEnabled = null;
+  mocks.statusEnabled = null;
 });
 
 beforeEach(() => {
@@ -127,6 +144,7 @@ beforeEach(() => {
     preview: null,
     start: vi.fn(),
     stop: vi.fn(),
+    cancel: vi.fn(),
     toggle: vi.fn(),
   };
 });
@@ -268,6 +286,40 @@ describe("useWebSpeechDictation", () => {
     expect(instances).toHaveLength(2);
   });
 
+  it("cancels on Escape or cancel() without inserting what was already recognized", () => {
+    installWebSpeechApi();
+    const onTranscript = vi.fn();
+    const { result } = renderHook(() => useWebSpeechDictation({ enabled: true, onTranscript }));
+
+    act(() => result.current.start());
+    const recognition = currentRecognition();
+    act(() => recognition.onstart?.(new Event("start")));
+    act(() => recognition.onresult?.(resultEvent([{ transcript: "hello ", isFinal: true }])));
+
+    const escape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    act(() => {
+      document.body.dispatchEvent(escape);
+    });
+
+    expect(escape.defaultPrevented).toBe(true);
+    expect(recognition.abort).toHaveBeenCalledTimes(1);
+    expect(result.current.phase).toBe("idle");
+    expect(result.current.preview).toBeNull();
+    expect(onTranscript).not.toHaveBeenCalled();
+
+    // Idle again: Escape must be left to the rest of the app (it stops the agent turn).
+    const idleEscape = new KeyboardEvent("keydown", { key: "Escape", cancelable: true });
+    act(() => {
+      document.body.dispatchEvent(idleEscape);
+    });
+    expect(idleEscape.defaultPrevented).toBe(false);
+
+    act(() => result.current.start());
+    act(() => result.current.cancel());
+    expect(result.current.phase).toBe("idle");
+    expect(onTranscript).not.toHaveBeenCalled();
+  });
+
   it("aborts on unmount without inserting a pending transcript", () => {
     installWebSpeechApi();
     const onTranscript = vi.fn();
@@ -315,6 +367,9 @@ describe("V4ComposerDictationControl engine gating", () => {
     expect(instances).toHaveLength(1);
     expect(currentRecognition().start).toHaveBeenCalledTimes(1);
     expect(mocks.desktopEnabled).toBe(false);
+    // Web remote control never warms a Host model.
+    expect(mocks.warmUpEnabled).toBe(false);
+    expect(mocks.statusEnabled).toBe(false);
     expect(mocks.desktopEngine?.toggle).not.toHaveBeenCalled();
   });
 
@@ -324,6 +379,8 @@ describe("V4ComposerDictationControl engine gating", () => {
 
     act(() => screen.getByTestId(TID_V4_COMPOSER_VOICE_ENTRY).click());
     expect(mocks.desktopEnabled).toBe(true);
+    expect(mocks.warmUpEnabled).toBe(true);
+    expect(mocks.statusEnabled).toBe(true);
     expect(mocks.desktopEngine?.toggle).toHaveBeenCalledTimes(1);
     expect(instances).toHaveLength(0);
   });

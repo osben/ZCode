@@ -755,6 +755,12 @@ export default {
             from: "resources/macos-window-bounds/zcode-window-bounds",
             to: "macos-window-bounds/zcode-window-bounds",
           },
+          {
+            // Apple Foundation Models bridge for voice-dictation post-processing (optional: absent when the
+            // build machine has no Swift toolchain; the Host then reports the system model as unavailable).
+            from: "resources/apple-fm/zcode-apple-fm",
+            to: "apple-fm/zcode-apple-fm",
+          },
         ]
       : []),
     {

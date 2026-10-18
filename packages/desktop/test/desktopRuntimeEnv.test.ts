@@ -146,6 +146,7 @@ vi.mock("@zcode/shared", () => ({
 vi.mock("@zcode/services/node", () => ({
   getAppConfigDir: vi.fn(() => "/mock/config"),
   getDataBaseDir: vi.fn(() => "/mock/db"),
+  ZCODE_APPLE_FM_HELPER_ENV: "ZCODE_APPLE_FM_HELPER",
   ZCODE_CUA_BUNDLED_HELPER_APP_PATH_ENV: "ZCODE_CUA_BUNDLED_HELPER_APP_PATH",
   ZCODE_WINDOWS_APP_INSTALL_DIR_ENV: "ZCODE_WINDOWS_APP_INSTALL_DIR",
 }));
@@ -1155,5 +1156,66 @@ describe("desktopRuntimeEnv voice transcription library path", () => {
     const env = buildHostProcessEnv({ TRANSCRIBE_LIBRARY: explicitLibraryPath });
 
     expect(env.TRANSCRIBE_LIBRARY).toBe(explicitLibraryPath);
+  });
+});
+
+describe("desktopRuntimeEnv Apple Foundation Models helper path", () => {
+  let root: string;
+
+  beforeEach(() => {
+    delete process.env["ZCODE_APPLE_FM_HELPER"];
+    root = mkdtempSync(join(tmpdir(), "zcode-apple-fm-env-"));
+    createdDirs.push(root);
+  });
+
+  const placeHelper = (dir: string) => {
+    mkdirSync(join(dir, "apple-fm"), { recursive: true });
+    writeFileSync(join(dir, "apple-fm", "zcode-apple-fm"), "");
+    return join(dir, "apple-fm", "zcode-apple-fm");
+  };
+
+  it("resolves the bundled helper from the resources directory when packaged on macOS", async () => {
+    const helper = placeHelper(root);
+    const { resolveBundledAppleFmHelperPath } = await import("../src/main/desktopRuntimeEnv.js");
+
+    expect(
+      resolveBundledAppleFmHelperPath({
+        platform: "darwin",
+        isPackaged: true,
+        resourcesPath: root,
+      }),
+    ).toBe(helper);
+  });
+
+  it("resolves the locally built helper in development and ignores a missing binary", async () => {
+    const devResources = join(root, "resources");
+    const helper = placeHelper(devResources);
+    const { resolveBundledAppleFmHelperPath } = await import("../src/main/desktopRuntimeEnv.js");
+
+    expect(
+      resolveBundledAppleFmHelperPath({
+        platform: "darwin",
+        isPackaged: false,
+        devResourcesDir: devResources,
+      }),
+    ).toBe(helper);
+    expect(
+      resolveBundledAppleFmHelperPath({
+        platform: "darwin",
+        isPackaged: false,
+        devResourcesDir: join(root, "nowhere"),
+      }),
+    ).toBeUndefined();
+  });
+
+  it("is macOS only", async () => {
+    placeHelper(root);
+    const { resolveBundledAppleFmHelperPath } = await import("../src/main/desktopRuntimeEnv.js");
+
+    for (const platform of ["win32", "linux"] as const) {
+      expect(
+        resolveBundledAppleFmHelperPath({ platform, isPackaged: true, resourcesPath: root }),
+      ).toBeUndefined();
+    }
   });
 });

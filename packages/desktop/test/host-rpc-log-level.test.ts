@@ -14,6 +14,17 @@ describe("host RPC 日志级别映射", () => {
     ).toBe("info");
   });
 
+  it("dictation runtime-state polling successes are debug, failures stay warn", () => {
+    expect(resolveRpcLogLevel("[rpc:call] voice-dictation.getRuntimeState OK (0.4ms)")).toBe(
+      "debug",
+    );
+    expect(resolveRpcLogLevel("[rpc:call] voice-dictation.getRuntimeState FAIL (0.4ms)")).toBe(
+      "warn",
+    );
+    // Other dictation calls keep their normal level.
+    expect(resolveRpcLogLevel("[rpc:call] voice-dictation.warmUp OK (900ms)")).toBe("info");
+  });
+
   it("RPC 成功日志应记为 info", () => {
     expect(resolveRpcLogLevel("[rpc:call] setting.get OK (1.5ms)")).toBe("info");
   });

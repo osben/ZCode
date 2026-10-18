@@ -7718,10 +7718,47 @@ const enUS: Record<string, string> = {
   "voiceDictation.muteWhileRecording.title": "Mute system sound while recording",
   "voiceDictation.muteWhileRecording.description":
     "Mute the system audio while recording and restore the previous state when it ends.",
+  "voiceDictation.copyToClipboard.title": "Copy dictated text to the clipboard",
+  "voiceDictation.copyToClipboard.description":
+    "Also put each finished transcript on the system clipboard, in addition to inserting it in the message box.",
+  "voiceDictation.warmUp.title": "Warm up the model when the message box is focused",
+  "voiceDictation.warmUp.description":
+    "Loads the selected model in the background so the first recording starts without waiting. A loaded model uses memory until the unload delay below passes.",
+  "voiceDictation.postProcess.title": "Post-processing",
+  "voiceDictation.postProcess.description":
+    "Rewrites each finished transcript with a language model before it is inserted. Your raw transcript is what goes to the clipboard.",
+  "voiceDictation.postProcess.enabled.title": "Process dictated text",
+  "voiceDictation.postProcess.enabled.description":
+    "If processing fails or takes too long, the raw transcript is inserted instead.",
+  "voiceDictation.postProcess.provider.title": "Model",
+  "voiceDictation.postProcess.provider.description":
+    "Runs on this device; no text leaves your computer.",
+  "voiceDictation.postProcess.provider.appleFm": "System model (Apple Foundation Models)",
+  "voiceDictation.postProcess.prompt.title": "Prompt",
+  "voiceDictation.postProcess.prompt.description":
+    "Use {variable} where the transcript should go. Without it, the transcript is added after the prompt.",
+  "voiceDictation.postProcess.prompt.reset": "Reset to default",
+  "voiceDictation.postProcess.unavailable.unsupportedPlatform":
+    "The system model is only available on macOS.",
+  "voiceDictation.postProcess.unavailable.helperMissing":
+    "The system model bridge is not part of this build.",
+  "voiceDictation.postProcess.unavailable.deviceNotEligible":
+    "This Mac does not support Apple Intelligence.",
+  "voiceDictation.postProcess.unavailable.appleIntelligenceNotEnabled":
+    "Turn on Apple Intelligence in System Settings to use the system model.",
+  "voiceDictation.postProcess.unavailable.modelNotReady":
+    "The system model is still downloading. Try again later.",
+  "voiceDictation.postProcess.unavailable.unsupportedOS":
+    "The system model needs a newer version of macOS.",
+  "voiceDictation.postProcess.unavailable.unknown": "The system model is not available right now.",
   "voiceDictation.language.title": "Language",
   "voiceDictation.language.description":
-    "Spoken language. Auto-detect works with multilingual models.",
+    "Languages you dictate in. One language is forced; several or none use auto-detection, which needs a multilingual model.",
   "voiceDictation.language.auto": "Auto-detect",
+  "voiceDictation.language.summary.count": "{count} languages",
+  "voiceDictation.language.search": "Search languages",
+  "voiceDictation.language.noMatch": "No matching languages",
+  "voiceDictation.language.clear": "Clear (auto-detect)",
   "voiceDictation.models.unloadDelay.title": "Unload from memory after",
   "voiceDictation.models.unloadDelay.description":
     "After dictation ends, keep the model ready for this long before releasing its memory.",
@@ -7730,6 +7767,16 @@ const enUS: Record<string, string> = {
   "voiceDictation.models.description":
     "Runs entirely on this device. The highlighted model is selected for dictation; only one model is loaded at a time.",
   "voiceDictation.models.languages": "{count} languages",
+  "voiceDictation.models.recommended": "Recommended",
+  "voiceDictation.models.filter.search": "Search models",
+  "voiceDictation.models.filter.matchLanguages": "Matches my languages",
+  "voiceDictation.models.filter.downloaded": "Downloaded",
+  "voiceDictation.models.filter.empty": "No models match these filters.",
+  "voiceDictation.models.filter.reset": "Reset filters",
+  "voiceDictation.language.modelMismatch": "{model} doesn't support: {languages}.",
+  "voiceDictation.language.useModel": "Use {model}",
+  "voiceDictation.models.languages.showAll": "Show all {count} languages",
+  "voiceDictation.models.languages.showFewer": "Show fewer languages",
   "voiceDictation.models.streaming": "Streaming",
   "voiceDictation.models.license": "License: {license}",
   "voiceDictation.models.download": "Download",
@@ -7757,6 +7804,11 @@ const enUS: Record<string, string> = {
     "Web can capture microphone audio, but local transcription models run only in ZCode Desktop.",
   "voiceDictation.noModelSelected":
     "Choose a transcription model in Settings → Voice dictation first.",
+  "voiceDictation.openSettings": "Open settings",
+  "voiceDictation.tooShort": "Recording too short. Keep recording until you finish speaking.",
+  "voiceDictation.stillLoading":
+    "The speech model was still loading. Start speaking once recording begins.",
+  "voiceDictation.composer.cancel": "Cancel voice input",
   "voiceDictation.microphoneFailed":
     "Could not access the microphone. Check the input device and permissions.",
   "voiceDictation.transcribeFailed": "Voice transcription failed.",
@@ -7768,8 +7820,13 @@ const enUS: Record<string, string> = {
   "voiceDictation.models.description.parakeetMultilingual":
     "Fast and accurate. Supports {languages} European languages.",
   "voiceDictation.models.description.canary": "Tiny and instant, runs well on any hardware.",
+  "voiceDictation.models.description.canaryLarge":
+    "Accurate speech-to-text across {languages} European languages, with translation.",
+  "voiceDictation.models.description.gigaam": "Compact, fast Russian-only speech-to-text.",
   "voiceDictation.models.description.nemotron":
     "English speech-to-text with streaming and token-level timestamps.",
+  "voiceDictation.models.description.nemotronMultilingual":
+    "Live multilingual transcription across 28 languages, including Ukrainian, Russian, and English.",
   "voiceDictation.saveFailed": "Could not save voice dictation settings.",
   "voiceDictation.composer.start": "Voice input",
   "voiceDictation.composer.starting": "Starting voice input",
@@ -7779,6 +7836,10 @@ const enUS: Record<string, string> = {
   "voiceDictation.composer.listening": "Listening",
   "voiceDictation.composer.status.idle": "Voice input ready",
   "voiceDictation.composer.status.transcribing": "Transcribing",
+  "voiceDictation.composer.processing": "Processing text",
+  "voiceDictation.composer.status.processing": "Processing text",
+  "voiceDictation.composer.modelStatus.loading": "Speech model loading",
+  "voiceDictation.composer.modelStatus.loaded": "Speech model loaded, voice input starts instantly",
   "settings.computerUse.title": "Computer Use",
   "settings.computerUse.toggleLabel": "Enable Computer Use",
   "settings.computerUse.toggleDescription":

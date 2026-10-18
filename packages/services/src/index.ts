@@ -31,11 +31,34 @@ export {
   type VoiceDictationRuntimeState,
   type VoiceModelListItem,
   type VoiceModelState,
+  type VoicePostProcessAvailability,
+  type VoicePostProcessProvider,
+  type VoicePostProcessRequest,
+  type VoicePostProcessResponse,
   type VoiceStreamRequest,
   type VoiceTranscriptionPreview,
   type VoiceTranscriptionRequest,
   type VoiceTranscriptionResponse,
+  type VoiceWarmUpRequest,
 } from "./voice-dictation/voiceDictation.js";
+export {
+  DEFAULT_POST_PROCESS_PROMPT,
+  POST_PROCESS_PROMPT_MAX_LENGTH,
+  POST_PROCESS_TEXT_VARIABLE,
+  applyPostProcessPrompt,
+} from "./voice-dictation/voicePostProcessPrompt.js";
+export {
+  resolveEngineLanguage,
+  filterVoiceModels,
+  isLiveStreamingModel,
+  languageSettingsPatch,
+  missingVoiceLanguages,
+  recommendVoiceModel,
+  resolveVoiceLanguages,
+  sortVoiceModels,
+  toNativeLanguage,
+  type VoiceModelFilter,
+} from "./voice-dictation/voiceModelLanguages.js";
 export {
   collectServiceMemoryDiagnostics,
   memoryDiagnosticsRegistry,
