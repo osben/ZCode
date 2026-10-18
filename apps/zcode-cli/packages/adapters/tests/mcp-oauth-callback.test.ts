@@ -41,6 +41,19 @@ describe("localhost OAuth callback server", () => {
     expect(callback.code).toBe("good-code");
   });
 
+  it("answers with the shared HTML callback page and security headers", async () => {
+    const server = await createServer();
+
+    const accepted = await fetch(`${server.callbackUrl}?state=${CORRECT_STATE}&code=good-code`);
+    expect(accepted.status).toBe(200);
+    expect(accepted.headers.get("content-type")).toContain("text/html");
+    expect(accepted.headers.get("content-security-policy")).toContain("default-src 'none'");
+    expect(accepted.headers.get("cache-control")).toBe("no-store");
+    const body = await accepted.text();
+    expect(body).toContain("<!doctype html>");
+    expect(body).not.toContain("Open ZCode");
+  });
+
   it("does not settle on requests for another path", async () => {
     const server = await createServer();
 
