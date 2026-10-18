@@ -96,6 +96,7 @@ test("selection covers fork changes only: committed, staged, unstaged, untracked
   const { repo, base } = makeFixtureRepo(t);
   write(repo, "upstream-edited.ts", `${UNFORMATTED_TS}export const c = 2\n`);
   write(repo, "upstream-reverted.ts", `${UNFORMATTED_TS}// fork edit\n`);
+  write(repo, "-fork-added.ts", UNFORMATTED_TS);
   write(repo, "fork-added.ts", UNFORMATTED_TS);
   git(repo, "mv", "upstream-moved.ts", "fork-moved.ts");
   write(repo, "fork-moved.ts", `${UNFORMATTED_TS}// moved\n`);
@@ -114,6 +115,7 @@ test("selection covers fork changes only: committed, staged, unstaged, untracked
 
   const files = await listForkChangedFiles(repo, base);
   assert.deepEqual(files, [
+    "-fork-added.ts",
     "fork-added.ts",
     "fork-moved.ts",
     UPSTREAM_BASE_FILE,
@@ -125,6 +127,7 @@ test("selection covers fork changes only: committed, staged, unstaged, untracked
 
 test("fmt:check fails on an unformatted fork file and fmt fixes only fork files", (t) => {
   const { repo } = makeFixtureRepo(t);
+  write(repo, "-fork-added.ts", UNFORMATTED_TS);
   write(repo, "fork-added.ts", UNFORMATTED_TS);
   commitAll(repo, "fork: add unformatted file");
 
@@ -134,6 +137,7 @@ test("fmt:check fails on an unformatted fork file and fmt fixes only fork files"
 
   const fixing = runScript(repo);
   assert.equal(fixing.status, 0, fixing.stdout + fixing.stderr);
+  assert.equal(readFileSync(join(repo, "-fork-added.ts"), "utf8"), FORMATTED_TS);
   assert.equal(readFileSync(join(repo, "fork-added.ts"), "utf8"), FORMATTED_TS);
   assert.equal(readFileSync(join(repo, "upstream-untouched.ts"), "utf8"), UNFORMATTED_TS);
 
