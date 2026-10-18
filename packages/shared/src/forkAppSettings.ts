@@ -37,11 +37,16 @@ const voiceDictationSettingsSchema = z.object({
   muteWhileRecording: z.boolean().optional(),
   copyToClipboard: z.boolean().optional(),
   warmUpOnFocus: z.boolean().optional(),
+  postProcessEnabled: z.boolean().optional(),
+  postProcessProvider: z.enum(["apple-fm"]).optional(),
+  postProcessPrompt: z.string().max(4000).optional(),
 });
 
 // Read tolerance: one malformed `languages` value drops only itself instead of the whole voiceDictation object.
 const voiceDictationStoredSchema = voiceDictationSettingsSchema.extend({
   languages: voiceDictationSettingsSchema.shape.languages.catch(undefined),
+  // A provider written by a newer build must only drop itself, not the whole voiceDictation object.
+  postProcessProvider: voiceDictationSettingsSchema.shape.postProcessProvider.catch(undefined),
 });
 
 const worktreeLocationModeSchema = z.enum(["sibling", "inside", "global", "custom"]);

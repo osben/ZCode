@@ -1,6 +1,7 @@
 import { useEffect, useRef, type RefObject } from "react";
 import { useServices } from "@/hooks/useServices.js";
 import { useSettings } from "@/hooks/useSettingService.js";
+import { applyIdleUnloadPreference } from "@/lib/voiceIdleUnload.js";
 import { logger } from "@/logger.js";
 
 /** One request per model per window: refocusing the composer must not hammer the Host. */
@@ -48,11 +49,7 @@ export function useVoiceModelWarmUp({ enabled, scopeRef }: UseVoiceModelWarmUpOp
       inFlightRef.current = true;
       lastRequestRef.current = { modelId, at: now };
       try {
-        try {
-          await voiceDictationService.setIdleUnloadMinutes(idleUnloadMinutes);
-        } catch (error) {
-          if (!isMissingMethod(error, "setIdleUnloadMinutes")) throw error;
-        }
+        await applyIdleUnloadPreference(voiceDictationService, idleUnloadMinutes);
         await voiceDictationService.warmUp({ modelId });
       } catch (error) {
         if (isMissingMethod(error, "warmUp")) {

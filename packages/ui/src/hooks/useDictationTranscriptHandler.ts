@@ -10,15 +10,16 @@ import { logger } from "@/logger.js";
  */
 export function useDictationTranscriptHandler(
   onTranscript: (text: string) => void,
-): (text: string) => void {
+): (text: string, rawText?: string) => void {
   const { settings } = useSettings();
   const copyToClipboard = settings?.voiceDictation?.copyToClipboard === true;
   return useCallback(
-    (text: string) => {
+    (text: string, rawText: string = text) => {
       onTranscript(text);
       if (!copyToClipboard) return;
+      // The clipboard keeps what the user actually said, even when the inserted text was post-processed.
       try {
-        void navigator.clipboard.writeText(text).catch(logCopyFailure);
+        void navigator.clipboard.writeText(rawText).catch(logCopyFailure);
       } catch (error) {
         logCopyFailure(error);
       }

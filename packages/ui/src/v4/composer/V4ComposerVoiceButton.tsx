@@ -37,14 +37,16 @@ function V4ComposerVoiceButtonImpl({
   const { intl } = useZCodeIntl();
   const shortcutLabel = useShortcutCommandLabel("voiceDictation");
   const recording = phase === "recording";
-  const busy = phase === "loading" || phase === "transcribing";
+  const busy = phase === "loading" || phase === "transcribing" || phase === "processing";
   const label = intl.formatMessage({
     id:
       phase === "loading"
         ? (loadingLabelId ?? "voiceDictation.composer.loading")
         : recording
           ? "voiceDictation.composer.stop"
-          : "voiceDictation.composer.start",
+          : phase === "processing"
+            ? "voiceDictation.composer.processing"
+            : "voiceDictation.composer.start",
   });
   // The dot only adds information while the button is otherwise idle.
   const statusDot =
@@ -65,9 +67,11 @@ function V4ComposerVoiceButtonImpl({
         ? (loadingLabelId ?? "voiceDictation.composer.loading")
         : recording
           ? "voiceDictation.composer.listening"
-          : phase === "transcribing"
-            ? "voiceDictation.composer.status.transcribing"
-            : "voiceDictation.composer.status.idle",
+          : phase === "processing"
+            ? "voiceDictation.composer.status.processing"
+            : phase === "transcribing"
+              ? "voiceDictation.composer.status.transcribing"
+              : "voiceDictation.composer.status.idle",
   });
 
   return (

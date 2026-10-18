@@ -1096,6 +1096,7 @@ export function createDefaultCuaProductHelper(
   };
 }
 
+export { ZCODE_APPLE_FM_HELPER_ENV } from "./voice-dictation/voicePostProcessor.js";
 export const ZCODE_CUA_BUNDLED_HELPER_APP_PATH_ENV = "ZCODE_CUA_BUNDLED_HELPER_APP_PATH";
 
 export function resolveBundledCuaHelperAppPath(

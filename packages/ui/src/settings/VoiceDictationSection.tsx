@@ -32,6 +32,7 @@ import { useShortcutCommandLabelParts } from "@/shortcuts/useShortcutBindings.js
 import { listAudioInputDevices, VoiceDictationRecorder } from "@/lib/voiceDictationRecorder.js";
 import { playVoiceDictationFeedbackSound } from "@/lib/voiceDictationFeedbackSound.js";
 import { SettingsBadge, SettingsGroupCard, SettingsRow } from "@/settings/SettingsPageParts.js";
+import { VoiceDictationPostProcessCard } from "@/settings/VoiceDictationPostProcessCard.js";
 import { VoiceDictationLanguagePicker } from "@/settings/VoiceDictationLanguagePicker.js";
 import { VoiceModelRow } from "@/settings/VoiceDictationModelRow.js";
 import {
@@ -740,6 +741,18 @@ function DesktopVoiceDictationSection() {
             }
           />
         </SettingsGroupCard>
+      </section>
+
+      <section className="space-y-3">
+        <div>
+          <h3 className="text-ui-base font-medium text-foreground">
+            {intl.formatMessage({ id: "voiceDictation.postProcess.title" })}
+          </h3>
+          <p className="mt-1 text-ui-base leading-6 text-foreground-subtle">
+            {intl.formatMessage({ id: "voiceDictation.postProcess.description" })}
+          </p>
+        </div>
+        <VoiceDictationPostProcessCard voice={voiceRef.current} patchVoice={patchVoice} />
       </section>
 
       <section className="space-y-3">

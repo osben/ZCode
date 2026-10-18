@@ -77,6 +77,9 @@ const h = vi.hoisted(() => {
         ];
       }),
       setIdleUnloadMinutes: vi.fn(async () => {}),
+      getPostProcessAvailability: vi.fn(
+        async () => ({ status: "available" }) as { status: string; reason?: string },
+      ),
       downloadModel: vi.fn(
         () =>
           new Promise<void>((resolve) => {
@@ -165,6 +168,7 @@ vi.mock("@/lib/voiceDictationRecorder.js", () => ({
 
 import { toast } from "@/components/ui/toast.js";
 import { playVoiceDictationFeedbackSound } from "@/lib/voiceDictationFeedbackSound.js";
+import { DEFAULT_POST_PROCESS_PROMPT } from "@zcode/services";
 import {
   isSameVoiceSettingValue,
   VoiceDictationSection,
@@ -526,6 +530,89 @@ describe("VoiceDictationSection shortcut row", () => {
     expect(chips.every(Boolean)).toBe(true);
     expect(new Set(chips).size).toBe(3);
     expect(screen.queryByText("Cmd+Shift+D")).toBeNull();
+  });
+});
+
+describe("VoiceDictationSection post-processing", () => {
+  const prompt = () =>
+    screen.findByRole("textbox", { name: "voiceDictation.postProcess.prompt.title" });
+  const toggle = () =>
+    screen.findByRole("switch", { name: "voiceDictation.postProcess.enabled.title" });
+
+  beforeEach(() => {
+    h.voiceDictationService.getPostProcessAvailability.mockResolvedValue({ status: "available" });
+  });
+
+  it("is off by default and persists the toggle when the system model is available", async () => {
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+    const control = await toggle();
+    await waitFor(() => expect(control.hasAttribute("disabled")).toBe(false));
+    expect(control.getAttribute("aria-checked")).toBe("false");
+
+    fireEvent.click(control);
+    await waitFor(() =>
+      expect(h.updateSettings).toHaveBeenCalledWith({
+        voiceDictation: { modelId: "model-one", postProcessEnabled: true },
+      }),
+    );
+  });
+
+  it("disables the toggle and explains why when the system model is unavailable", async () => {
+    h.voiceDictationService.getPostProcessAvailability.mockResolvedValue({
+      status: "unavailable",
+      reason: "appleIntelligenceNotEnabled",
+    });
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+
+    expect(
+      await screen.findByText("voiceDictation.postProcess.unavailable.appleIntelligenceNotEnabled"),
+    ).toBeTruthy();
+    expect((await toggle()).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("treats a Host without the availability method as unavailable", async () => {
+    h.voiceDictationService.getPostProcessAvailability.mockRejectedValue(
+      new Error("Method not found: getPostProcessAvailability"),
+    );
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+
+    expect(await screen.findByText("voiceDictation.postProcess.unavailable.unknown")).toBeTruthy();
+    expect((await toggle()).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("shows the default prompt, saves an edited prompt on blur, and resets to the default", async () => {
+    h.settings.voiceDictation = { modelId: "model-one" };
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+    const field = (await prompt()) as HTMLTextAreaElement;
+    expect(field.value).toBe(DEFAULT_POST_PROCESS_PROMPT);
+
+    fireEvent.change(field, { target: { value: "Shorten: {{text}}" } });
+    // Typing alone must not write settings on every keystroke.
+    expect(h.updateSettings).not.toHaveBeenCalled();
+    fireEvent.blur(field);
+    await waitFor(() =>
+      expect(h.updateSettings).toHaveBeenCalledWith({
+        voiceDictation: { modelId: "model-one", postProcessPrompt: "Shorten: {{text}}" },
+      }),
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "voiceDictation.postProcess.prompt.reset" }),
+    );
+    await waitFor(() =>
+      expect(h.updateSettings).toHaveBeenLastCalledWith({
+        voiceDictation: { modelId: "model-one", postProcessPrompt: DEFAULT_POST_PROCESS_PROMPT },
+      }),
+    );
+    expect(((await prompt()) as HTMLTextAreaElement).value).toBe(DEFAULT_POST_PROCESS_PROMPT);
+  });
+
+  it("offers the system model as the provider", async () => {
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+    const provider = await screen.findByRole("combobox", {
+      name: "voiceDictation.postProcess.provider.title",
+    });
+    expect(provider.textContent).toContain("voiceDictation.postProcess.provider.appleFm");
   });
 });
 

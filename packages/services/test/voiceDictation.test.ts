@@ -17,6 +17,7 @@ import {
   buildModelUrl,
 } from "../src/voice-dictation/voiceModelStore.js";
 import type { VoiceModelDescriptor } from "../src/voice-dictation/voiceModelCatalog.js";
+import { VoicePostProcessor } from "../src/voice-dictation/voicePostProcessor.js";
 import {
   VoiceTranscriber,
   decodePcm16LeToFloat32,
@@ -1139,5 +1140,39 @@ test("a failed load clears the loading phase", async () => {
     await assert.rejects(transcriber.load(descriptor.id));
     assert.equal(transcriber.activeModelId, null);
     assert.equal(transcriber.activePhase, null);
+  });
+});
+
+test("service delegates post-processing to its provider and reports it unavailable without one", async () => {
+  await withTempDir(async (dir) => {
+    const store = makeStore(dir);
+    const transcriber = new VoiceTranscriber({ store, loadEngine: async () => makeFakeEngine([]) });
+    const bare = new VoiceDictationService({ store, transcriber });
+    assert.deepEqual(await bare.getPostProcessAvailability(), {
+      status: "unavailable",
+      reason: "helperMissing",
+    });
+    await assert.rejects(bare.postProcess({ text: "a", prompt: "p" }), /unavailable/i);
+
+    const calls: string[] = [];
+    const wired = new VoiceDictationService({
+      store,
+      transcriber,
+      postProcessor: new VoicePostProcessor({
+        helperPath: "/helper",
+        platform: "darwin",
+        run: async (_command, args, options) => {
+          calls.push(`${args[0]}:${options.stdin ?? ""}`);
+          return args[0] === "availability"
+            ? { stdout: '{"status":"available"}', code: 0 }
+            : { stdout: '{"text":"Done."}', code: 0 };
+        },
+      }),
+    });
+    assert.deepEqual(await wired.getPostProcessAvailability(), { status: "available" });
+    assert.deepEqual(await wired.postProcess({ text: "done", prompt: "{{text}}" }), {
+      text: "Done.",
+    });
+    assert.deepEqual(calls, ["availability:", 'generate:{"prompt":"done"}']);
   });
 });

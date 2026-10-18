@@ -50,6 +50,17 @@ describe("useDictationTranscriptHandler", () => {
     expect(writeText).toHaveBeenCalledWith("Hello there");
   });
 
+  it("inserts the processed text but puts the raw transcript on the clipboard", () => {
+    mocks.settings = { voiceDictation: { copyToClipboard: true } };
+    const onTranscript = vi.fn();
+    const { result } = renderHook(() => useDictationTranscriptHandler(onTranscript));
+
+    result.current("Hello there.", "hello there");
+
+    expect(onTranscript).toHaveBeenCalledWith("Hello there.");
+    expect(writeText).toHaveBeenCalledWith("hello there");
+  });
+
   it("keeps the insertion when the clipboard write is rejected and only logs it", async () => {
     mocks.settings = { voiceDictation: { copyToClipboard: true } };
     writeText.mockRejectedValue(new Error("Document is not focused"));

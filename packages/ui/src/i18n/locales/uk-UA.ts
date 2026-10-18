@@ -7300,6 +7300,33 @@ const ukUA: Record<string, string> = {
   "voiceDictation.warmUp.title": "Прогрівати модель при фокусі на полі повідомлення",
   "voiceDictation.warmUp.description":
     "Завантажує вибрану модель у фоні, щоб перший запис починався без очікування. Завантажена модель займає пам'ять, доки не мине затримка вивантаження нижче.",
+  "voiceDictation.postProcess.title": "Постобробка",
+  "voiceDictation.postProcess.description":
+    "Переписує кожен готовий текст мовною моделлю перед вставкою. У буфер обміну потрапляє сирий текст розпізнавання.",
+  "voiceDictation.postProcess.enabled.title": "Обробляти надиктований текст",
+  "voiceDictation.postProcess.enabled.description":
+    "Якщо обробка завершилась помилкою або тривала надто довго, вставляється сирий текст.",
+  "voiceDictation.postProcess.provider.title": "Модель",
+  "voiceDictation.postProcess.provider.description":
+    "Працює на цьому пристрої; текст не залишає ваш комп'ютер.",
+  "voiceDictation.postProcess.provider.appleFm": "Системна модель (Apple Foundation Models)",
+  "voiceDictation.postProcess.prompt.title": "Промпт",
+  "voiceDictation.postProcess.prompt.description":
+    "Використайте {variable} там, куди має потрапити розпізнаний текст. Без нього текст додається після промпта.",
+  "voiceDictation.postProcess.prompt.reset": "Скинути до типового",
+  "voiceDictation.postProcess.unavailable.unsupportedPlatform":
+    "Системна модель доступна лише на macOS.",
+  "voiceDictation.postProcess.unavailable.helperMissing":
+    "Міст до системної моделі не входить до цієї збірки.",
+  "voiceDictation.postProcess.unavailable.deviceNotEligible":
+    "Цей Mac не підтримує Apple Intelligence.",
+  "voiceDictation.postProcess.unavailable.appleIntelligenceNotEnabled":
+    "Увімкніть Apple Intelligence у Системних налаштуваннях, щоб користуватися системною моделлю.",
+  "voiceDictation.postProcess.unavailable.modelNotReady":
+    "Системна модель ще завантажується. Спробуйте пізніше.",
+  "voiceDictation.postProcess.unavailable.unsupportedOS":
+    "Для системної моделі потрібна новіша версія macOS.",
+  "voiceDictation.postProcess.unavailable.unknown": "Системна модель зараз недоступна.",
   "voiceDictation.language.title": "Мова",
   "voiceDictation.language.description":
     "Мови, якими ви диктуєте. Одна мова задається примусово; кілька або жодної — автовизначення, якому потрібна багатомовна модель.",
@@ -7388,6 +7415,8 @@ const ukUA: Record<string, string> = {
   "voiceDictation.composer.listening": "Слухаю",
   "voiceDictation.composer.status.idle": "Голосове введення готове",
   "voiceDictation.composer.status.transcribing": "Розпізнавання мовлення",
+  "voiceDictation.composer.processing": "Обробка тексту",
+  "voiceDictation.composer.status.processing": "Обробка тексту",
   "voiceDictation.composer.modelStatus.loading": "Модель розпізнавання завантажується",
   "voiceDictation.composer.modelStatus.loaded":
     "Модель розпізнавання завантажена, голосове введення стартує миттєво",

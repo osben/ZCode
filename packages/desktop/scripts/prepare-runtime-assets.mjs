@@ -42,6 +42,8 @@ const localRuntimeScripts = [
   ...(nativeSearchReleasePlan.enabled ? ["prepare:native-search"] : []),
   ...(shouldPrepareWindowsBrowserImportHelper ? ["prepare:browser-import-helper"] : []),
   ...(shouldPrepareMacosWindowBounds ? ["prepare:macos-window-bounds"] : []),
+  // Optional (post-processing with the system model): the build script skips itself without a toolchain.
+  ...(shouldPrepareMacosWindowBounds ? ["prepare:macos-apple-fm"] : []),
 ];
 
 function runTimedPnpmScript(scriptName) {

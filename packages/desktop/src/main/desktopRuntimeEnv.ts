@@ -29,6 +29,7 @@ import { resolvePlatformKeyForPackagedApp } from "../../scripts/target-platform.
 import {
   getAppConfigDir,
   getDataBaseDir,
+  ZCODE_APPLE_FM_HELPER_ENV,
   ZCODE_CUA_BUNDLED_HELPER_APP_PATH_ENV,
   ZCODE_WINDOWS_APP_INSTALL_DIR_ENV,
 } from "@zcode/services/node";
@@ -482,6 +483,27 @@ export function resolveBundledTranscribeLibraryPath(
   return existsSync(candidate) ? candidate : undefined;
 }
 
+// Apple Foundation Models bridge (voice-dictation post-processing). macOS only and optional: packaged
+// builds ship it under resources/apple-fm, development uses the output of prepare:macos-apple-fm.
+// Absent file means the Host reports the system model as unavailable.
+export function resolveBundledAppleFmHelperPath(
+  options: {
+    platform?: NodeJS.Platform | string;
+    isPackaged?: boolean;
+    resourcesPath?: string;
+    devResourcesDir?: string;
+  } = {},
+): string | undefined {
+  if ((options.platform ?? process.platform) !== "darwin") return undefined;
+  const isPackaged = options.isPackaged ?? isElectronAppPackaged();
+  const baseDir = isPackaged
+    ? (options.resourcesPath ?? process.resourcesPath)
+    : (options.devResourcesDir ?? join(import.meta.dirname, "..", "..", "resources"));
+  if (!baseDir?.trim()) return undefined;
+  const candidate = join(baseDir, "apple-fm", "zcode-apple-fm");
+  return existsSync(candidate) ? candidate : undefined;
+}
+
 function resolveHostProcessBinaryEnv(
   envVar: string,
   hostProcessLocalEnv: Record<string, string>,
@@ -595,6 +617,11 @@ export function buildHostProcessEnv(hostProcessLocalEnv: Record<string, string>)
               DEV_HELPER_APP_NAME,
             )
           : undefined;
+  const resolvedAppleFmHelperPath = resolveHostProcessBinaryEnv(
+    ZCODE_APPLE_FM_HELPER_ENV,
+    hostProcessLocalEnv,
+    resolveBundledAppleFmHelperPath(),
+  );
   const windowsAppInstallDir = resolveWindowsAppInstallDirForDataBaseDirGuard();
   const agentTelemetryEnv = readZCodeAgentTelemetryEnv(rawInheritedEnv);
   // Host reads Desktop identity from the credential store and local state, then injects it as trusted
@@ -667,5 +694,8 @@ export function buildHostProcessEnv(hostProcessLocalEnv: Record<string, string>)
     ...(resolvedGlmBinaryPath ? { GLM_BINARY_PATH: resolvedGlmBinaryPath } : {}),
     ...(resolvedLarkCliBinaryPath ? { ZCODE_LARK_CLI_BINARY: resolvedLarkCliBinaryPath } : {}),
     ...(resolvedTranscribeLibraryPath ? { TRANSCRIBE_LIBRARY: resolvedTranscribeLibraryPath } : {}),
+    ...(resolvedAppleFmHelperPath
+      ? { [ZCODE_APPLE_FM_HELPER_ENV]: resolvedAppleFmHelperPath }
+      : {}),
   };
 }

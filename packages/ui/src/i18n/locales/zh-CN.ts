@@ -7396,6 +7396,27 @@ const zhCN: Record<string, string> = {
   "voiceDictation.warmUp.title": "聚焦输入框时预热模型",
   "voiceDictation.warmUp.description":
     "在后台加载所选模型，使首次录音无需等待。已加载的模型会占用内存，直到下方的卸载延迟结束。",
+  "voiceDictation.postProcess.title": "后处理",
+  "voiceDictation.postProcess.description":
+    "在插入前用语言模型改写每次转写完成的文本。剪贴板中保存的是原始转写文本。",
+  "voiceDictation.postProcess.enabled.title": "处理听写文本",
+  "voiceDictation.postProcess.enabled.description": "如果处理失败或耗时过长，将插入原始转写文本。",
+  "voiceDictation.postProcess.provider.title": "模型",
+  "voiceDictation.postProcess.provider.description": "在本设备上运行，文本不会离开你的电脑。",
+  "voiceDictation.postProcess.provider.appleFm": "系统模型（Apple Foundation Models）",
+  "voiceDictation.postProcess.prompt.title": "提示词",
+  "voiceDictation.postProcess.prompt.description":
+    "在需要放入转写文本的位置使用 {variable}。不含该变量时，转写文本会追加在提示词之后。",
+  "voiceDictation.postProcess.prompt.reset": "恢复默认",
+  "voiceDictation.postProcess.unavailable.unsupportedPlatform": "系统模型仅在 macOS 上可用。",
+  "voiceDictation.postProcess.unavailable.helperMissing": "此版本未包含系统模型桥接组件。",
+  "voiceDictation.postProcess.unavailable.deviceNotEligible":
+    "这台 Mac 不支持 Apple Intelligence。",
+  "voiceDictation.postProcess.unavailable.appleIntelligenceNotEnabled":
+    "请在“系统设置”中开启 Apple Intelligence 以使用系统模型。",
+  "voiceDictation.postProcess.unavailable.modelNotReady": "系统模型仍在下载，请稍后再试。",
+  "voiceDictation.postProcess.unavailable.unsupportedOS": "系统模型需要更新版本的 macOS。",
+  "voiceDictation.postProcess.unavailable.unknown": "系统模型当前不可用。",
   "voiceDictation.language.title": "语言",
   "voiceDictation.language.description":
     "听写所用语言。选择一种语言将强制使用该语言；选择多种或不选则自动识别，需要多语言模型。",
@@ -7476,6 +7497,8 @@ const zhCN: Record<string, string> = {
   "voiceDictation.composer.listening": "正在聆听",
   "voiceDictation.composer.status.idle": "语音输入已就绪",
   "voiceDictation.composer.status.transcribing": "正在转写",
+  "voiceDictation.composer.processing": "正在处理文本",
+  "voiceDictation.composer.status.processing": "正在处理文本",
   "voiceDictation.composer.modelStatus.loading": "语音模型加载中",
   "voiceDictation.composer.modelStatus.loaded": "语音模型已加载，语音输入可立即开始",
   "settings.computerUse.title": "电脑控制",

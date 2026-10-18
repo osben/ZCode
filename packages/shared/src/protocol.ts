@@ -275,6 +275,12 @@ export interface VoiceDictationSettings {
   copyToClipboard?: boolean;
   /** Load the selected model in the background when the composer gains focus; absent means on (only an explicit false disables it). */
   warmUpOnFocus?: boolean;
+  /** Rewrite each finished transcript with the post-processing provider before inserting it; absent means off. */
+  postProcessEnabled?: boolean;
+  /** Post-processing provider; absent means the only one today, the on-device system model. */
+  postProcessProvider?: "apple-fm";
+  /** Post-processing prompt; `{{text}}` is replaced by the transcript. Absent or blank means the built-in default. */
+  postProcessPrompt?: string;
 }
 
 export type VoiceModelIdleUnloadMinutes = 1 | 5 | 10 | 15 | 30;

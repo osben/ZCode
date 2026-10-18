@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   feedbackSound: null as ReturnType<typeof vi.fn> | null,
   platform: { setDictationSystemMute: null as ReturnType<typeof vi.fn> | null },
   openSettings: vi.fn(),
+  logger: { warn: vi.fn() },
 }));
 
 vi.mock("@/hooks/useServices.js", () => ({
@@ -40,7 +41,7 @@ vi.mock("@/hooks/useOpenVoiceDictationSettings.js", () => ({
   useOpenVoiceDictationSettings: () => mocks.openSettings,
 }));
 vi.mock("@/components/ui/toast.js", () => ({ toast: vi.fn() }));
-vi.mock("@/logger.js", () => ({ logger: { warn: vi.fn() } }));
+vi.mock("@/logger.js", () => ({ logger: mocks.logger }));
 vi.mock("@/lib/voiceDictationFeedbackSound.js", () => ({
   playVoiceDictationFeedbackSound: (...args: [string, number]) => mocks.feedbackSound!(...args),
 }));
@@ -66,6 +67,7 @@ vi.mock("@/lib/voiceDictationRecorder.js", () => ({
 }));
 
 import { toast } from "@/components/ui/toast.js";
+import { DEFAULT_POST_PROCESS_PROMPT } from "@zcode/services";
 import { useVoiceDictation } from "@/hooks/useVoiceDictation.js";
 
 afterEach(() => {
@@ -112,7 +114,7 @@ describe("useVoiceDictation streaming", () => {
     expect(mocks.service?.finalizeStream).toHaveBeenCalledWith("stream-1");
     expect(mocks.service?.transcribe).not.toHaveBeenCalled();
     expect(onTranscript).toHaveBeenCalledTimes(1);
-    expect(onTranscript).toHaveBeenCalledWith("Hello there");
+    expect(onTranscript).toHaveBeenCalledWith("Hello there", "Hello there");
     expect(hook.result.current.preview).toBeNull();
   });
 
@@ -131,7 +133,7 @@ describe("useVoiceDictation streaming", () => {
     expect(mocks.service?.feedStream).not.toHaveBeenCalled();
     expect(mocks.service?.finalizeStream).not.toHaveBeenCalled();
     expect(mocks.service?.transcribe).toHaveBeenCalledTimes(1);
-    expect(onTranscript).toHaveBeenCalledWith("One shot");
+    expect(onTranscript).toHaveBeenCalledWith("One shot", "One shot");
   });
 
   it("continues dictation when an older host lacks the idle unload setting", async () => {
@@ -154,7 +156,7 @@ describe("useVoiceDictation streaming", () => {
     now.mockReturnValue(1500);
     await act(async () => hook.result.current.stop());
 
-    expect(onTranscript).toHaveBeenCalledWith("Hello there");
+    expect(onTranscript).toHaveBeenCalledWith("Hello there", "Hello there");
   });
 
   it("does not ignore unrelated idle unload setting failures", async () => {
@@ -202,7 +204,7 @@ describe("useVoiceDictation streaming", () => {
     expect(toast).not.toHaveBeenCalled();
     expect(feedPayloads.reduce((sum, bytes) => sum + bytes, 0)).toBe(8 * 100 * 2);
     expect(mocks.service?.finalizeStream).toHaveBeenCalledWith("stream-1");
-    expect(onTranscript).toHaveBeenCalledWith("Hello there");
+    expect(onTranscript).toHaveBeenCalledWith("Hello there", "Hello there");
   });
 
   it("fails the stream when the pending PCM backlog exceeds its bound", async () => {
@@ -321,7 +323,7 @@ describe("useVoiceDictation streaming", () => {
 
     expect(mocks.feedbackSound).not.toHaveBeenCalled();
     expect(mocks.platform.setDictationSystemMute).not.toHaveBeenCalled();
-    expect(onTranscript).toHaveBeenCalledWith("Hello there");
+    expect(onTranscript).toHaveBeenCalledWith("Hello there", "Hello there");
   });
 
   it("does not apply a pending mute after the recording already ended", async () => {
@@ -508,5 +510,158 @@ describe("useVoiceDictation languages", () => {
   it("leaves detection to the model for several or no selected languages", async () => {
     expect((await beginWith({ languages: ["uk", "en"] })).language).toBe("auto");
     expect((await beginWith({ languages: [], language: "en" })).language).toBe("auto");
+  });
+});
+
+describe("useVoiceDictation post-processing", () => {
+  const speak = async (hook: { result: { current: ReturnType<typeof useVoiceDictation> } }) => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    await act(async () => hook.result.current.start());
+    now.mockReturnValue(1500);
+  };
+  const renderDictation = (onTranscript = vi.fn()) =>
+    renderHook(() =>
+      useVoiceDictation({ enabled: true, onTranscript, scopeRef: { current: null } }),
+    );
+
+  beforeEach(() => {
+    mocks.service!.postProcess = vi.fn().mockResolvedValue({ text: "Hello there." });
+    mocks.settings = {
+      voiceDictation: { modelId: "model-one", language: "en", postProcessEnabled: true },
+    };
+  });
+
+  it("inserts the processed text and hands the raw transcript over for the clipboard", async () => {
+    let finish!: (value: { text: string }) => void;
+    mocks.service!.postProcess!.mockImplementation(
+      () => new Promise((resolve) => (finish = resolve)),
+    );
+    const onTranscript = vi.fn();
+    const hook = renderDictation(onTranscript);
+    await speak(hook);
+
+    let stopping!: Promise<void>;
+    act(() => {
+      stopping = hook.result.current.stop();
+    });
+    await waitFor(() => expect(hook.result.current.phase).toBe("processing"));
+    expect(onTranscript).not.toHaveBeenCalled();
+    expect(mocks.service!.postProcess).toHaveBeenCalledWith({
+      text: "Hello there",
+      prompt: DEFAULT_POST_PROCESS_PROMPT,
+      provider: "apple-fm",
+    });
+
+    await act(async () => {
+      finish({ text: "Hello there." });
+      await stopping;
+    });
+    expect(onTranscript).toHaveBeenCalledTimes(1);
+    expect(onTranscript).toHaveBeenCalledWith("Hello there.", "Hello there");
+    expect(hook.result.current.phase).toBe("idle");
+  });
+
+  it("uses the user's prompt and provider", async () => {
+    mocks.settings = {
+      voiceDictation: {
+        modelId: "model-one",
+        postProcessEnabled: true,
+        postProcessPrompt: "Shorten: {{text}}",
+        postProcessProvider: "apple-fm",
+      },
+    };
+    const hook = renderDictation();
+    await speak(hook);
+    await act(async () => hook.result.current.stop());
+
+    expect(mocks.service!.postProcess).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: "Shorten: {{text}}" }),
+    );
+  });
+
+  it("does not call the provider when post-processing is off", async () => {
+    mocks.settings = { voiceDictation: { modelId: "model-one", language: "en" } };
+    const onTranscript = vi.fn();
+    const hook = renderDictation(onTranscript);
+    await speak(hook);
+    await act(async () => hook.result.current.stop());
+
+    expect(mocks.service!.postProcess).not.toHaveBeenCalled();
+    expect(onTranscript).toHaveBeenCalledWith("Hello there", "Hello there");
+  });
+
+  it("falls back to the raw transcript, logging the failure without an error toast", async () => {
+    mocks.service!.postProcess!.mockRejectedValue(new Error("post-processing failed: timeout"));
+    const onTranscript = vi.fn();
+    const hook = renderDictation(onTranscript);
+    await speak(hook);
+    await act(async () => hook.result.current.stop());
+
+    expect(onTranscript).toHaveBeenCalledTimes(1);
+    expect(onTranscript).toHaveBeenCalledWith("Hello there", "Hello there");
+    expect(toast).not.toHaveBeenCalled();
+    expect(mocks.logger.warn).toHaveBeenCalledWith(
+      "voice dictation post-processing failed; inserting the raw transcript",
+      expect.objectContaining({ error: "post-processing failed: timeout" }),
+    );
+  });
+
+  it("falls back to the raw transcript when an older Host has no post-processing method", async () => {
+    delete mocks.service!.postProcess;
+    const onTranscript = vi.fn();
+    const hook = renderDictation(onTranscript);
+    await speak(hook);
+    await act(async () => hook.result.current.stop());
+
+    expect(onTranscript).toHaveBeenCalledWith("Hello there", "Hello there");
+  });
+
+  it("gives up on a stuck provider after the client timeout and inserts the raw transcript", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      mocks.service!.postProcess!.mockImplementation(() => new Promise(() => undefined));
+      const onTranscript = vi.fn();
+      const hook = renderDictation(onTranscript);
+      await speak(hook);
+      let stopping!: Promise<void>;
+      act(() => {
+        stopping = hook.result.current.stop();
+      });
+      await vi.advanceTimersByTimeAsync(20_001);
+      await act(async () => stopping);
+
+      expect(onTranscript).toHaveBeenCalledWith("Hello there", "Hello there");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("discards the result when Escape cancels during processing", async () => {
+    let resolveProcess!: (value: { text: string }) => void;
+    mocks.service!.postProcess!.mockImplementation(
+      () => new Promise((resolve) => (resolveProcess = resolve)),
+    );
+    const onTranscript = vi.fn();
+    const hook = renderDictation(onTranscript);
+    await speak(hook);
+    let stopping!: Promise<void>;
+    act(() => {
+      stopping = hook.result.current.stop();
+    });
+    await waitFor(() => expect(hook.result.current.phase).toBe("processing"));
+
+    const escape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    act(() => {
+      document.body.dispatchEvent(escape);
+    });
+    expect(escape.defaultPrevented).toBe(true);
+    expect(hook.result.current.phase).toBe("idle");
+
+    await act(async () => {
+      resolveProcess({ text: "Hello there." });
+      await stopping;
+    });
+    expect(onTranscript).not.toHaveBeenCalled();
+    expect(hook.result.current.phase).toBe("idle");
   });
 });

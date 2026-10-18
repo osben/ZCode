@@ -7712,6 +7712,33 @@ const enUS: Record<string, string> = {
   "voiceDictation.warmUp.title": "Warm up the model when the message box is focused",
   "voiceDictation.warmUp.description":
     "Loads the selected model in the background so the first recording starts without waiting. A loaded model uses memory until the unload delay below passes.",
+  "voiceDictation.postProcess.title": "Post-processing",
+  "voiceDictation.postProcess.description":
+    "Rewrites each finished transcript with a language model before it is inserted. Your raw transcript is what goes to the clipboard.",
+  "voiceDictation.postProcess.enabled.title": "Process dictated text",
+  "voiceDictation.postProcess.enabled.description":
+    "If processing fails or takes too long, the raw transcript is inserted instead.",
+  "voiceDictation.postProcess.provider.title": "Model",
+  "voiceDictation.postProcess.provider.description":
+    "Runs on this device; no text leaves your computer.",
+  "voiceDictation.postProcess.provider.appleFm": "System model (Apple Foundation Models)",
+  "voiceDictation.postProcess.prompt.title": "Prompt",
+  "voiceDictation.postProcess.prompt.description":
+    "Use {variable} where the transcript should go. Without it, the transcript is added after the prompt.",
+  "voiceDictation.postProcess.prompt.reset": "Reset to default",
+  "voiceDictation.postProcess.unavailable.unsupportedPlatform":
+    "The system model is only available on macOS.",
+  "voiceDictation.postProcess.unavailable.helperMissing":
+    "The system model bridge is not part of this build.",
+  "voiceDictation.postProcess.unavailable.deviceNotEligible":
+    "This Mac does not support Apple Intelligence.",
+  "voiceDictation.postProcess.unavailable.appleIntelligenceNotEnabled":
+    "Turn on Apple Intelligence in System Settings to use the system model.",
+  "voiceDictation.postProcess.unavailable.modelNotReady":
+    "The system model is still downloading. Try again later.",
+  "voiceDictation.postProcess.unavailable.unsupportedOS":
+    "The system model needs a newer version of macOS.",
+  "voiceDictation.postProcess.unavailable.unknown": "The system model is not available right now.",
   "voiceDictation.language.title": "Language",
   "voiceDictation.language.description":
     "Languages you dictate in. One language is forced; several or none use auto-detection, which needs a multilingual model.",
@@ -7797,6 +7824,8 @@ const enUS: Record<string, string> = {
   "voiceDictation.composer.listening": "Listening",
   "voiceDictation.composer.status.idle": "Voice input ready",
   "voiceDictation.composer.status.transcribing": "Transcribing",
+  "voiceDictation.composer.processing": "Processing text",
+  "voiceDictation.composer.status.processing": "Processing text",
   "voiceDictation.composer.modelStatus.loading": "Speech model loading",
   "voiceDictation.composer.modelStatus.loaded": "Speech model loaded, voice input starts instantly",
   "settings.computerUse.title": "Computer Use",

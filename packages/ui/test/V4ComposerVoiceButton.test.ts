@@ -148,4 +148,29 @@ describe("V4ComposerVoiceButton live feedback", () => {
       cleanup();
     }
   });
+
+  it("shows a busy, non-clickable state labelled Processing while the transcript is post-processed", () => {
+    const onToggle = vi.fn();
+    render(
+      createElement(
+        TooltipProvider,
+        null,
+        createElement(V4ComposerVoiceButton, {
+          phase: "processing",
+          level: 0,
+          preview: null,
+          onToggle,
+        }),
+      ),
+    );
+    const button = screen.getByTestId("v4-composer-voice-entry");
+    expect(button.getAttribute("aria-label")).toBe("voiceDictation.composer.processing");
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    expect(button.getAttribute("data-voice-phase")).toBe("processing");
+    fireEvent.click(button);
+    expect(onToggle).not.toHaveBeenCalled();
+    expect(screen.getByRole("status").textContent).toBe(
+      "voiceDictation.composer.status.processing",
+    );
+  });
 });

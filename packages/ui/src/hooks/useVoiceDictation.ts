@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { toast } from "@/components/ui/toast.js";
-import { resolveEngineLanguage, type VoiceTranscriptionPreview } from "@zcode/services";
+import {
+  DEFAULT_POST_PROCESS_PROMPT,
+  resolveEngineLanguage,
+  type VoiceTranscriptionPreview,
+} from "@zcode/services";
+import { applyIdleUnloadPreference } from "@/lib/voiceIdleUnload.js";
+import { postProcessOrRaw } from "@/lib/voicePostProcess.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useServices } from "@/hooks/useServices.js";
 import { useSettings } from "@/hooks/useSettingService.js";
@@ -17,7 +23,7 @@ import {
 } from "@/lib/voiceDictationAudio.js";
 import { VoiceDictationRecorder } from "@/lib/voiceDictationRecorder.js";
 
-export type VoiceDictationPhase = "idle" | "loading" | "recording" | "transcribing";
+export type VoiceDictationPhase = "idle" | "loading" | "recording" | "transcribing" | "processing";
 
 /**
  * Backlog cap: about 30 seconds at 16 kHz mono. Under normal jitter the backlog stays far below
@@ -29,8 +35,11 @@ const MAX_STREAM_BACKLOG_SAMPLES = 16_000 * 30;
 interface UseVoiceDictationOptions {
   /** True only on desktop: transcription runs on the local Desktop Host; Web/remote provide no voice input. */
   enabled: boolean;
-  /** Called with non-empty transcribed text; the caller decides where to insert it. */
-  onTranscript: (text: string) => void;
+  /**
+   * Called with non-empty text; the caller decides where to insert it. `rawText` is the transcript
+   * before post-processing (equal to `text` when it was not processed), for the clipboard.
+   */
+  onTranscript: (text: string, rawText: string) => void;
   /** The shortcut is active only when this container has focus, so inputs in other panels cannot trigger recording. */
   scopeRef: RefObject<HTMLElement | null>;
 }
@@ -54,6 +63,11 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
   const pushToTalk = voice?.pushToTalk !== false;
   const idleUnloadMinutes = voice?.idleUnloadMinutes ?? 5;
   const muteWhileRecording = voice?.muteWhileRecording === true;
+  const postProcessEnabled = voice?.postProcessEnabled === true;
+  const postProcessPrompt = voice?.postProcessPrompt?.trim()
+    ? voice.postProcessPrompt
+    : DEFAULT_POST_PROCESS_PROMPT;
+  const postProcessProvider = voice?.postProcessProvider ?? "apple-fm";
   const recordingAudio = useVoiceDictationRecordingAudio();
   const openVoiceSettings = useOpenVoiceDictationSettings();
 
@@ -181,19 +195,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     const pending = (async () => {
       let streamId: string | null;
       try {
-        try {
-          await voiceDictationService.setIdleUnloadMinutes(idleUnloadMinutes);
-        } catch (error) {
-          if (!isMissingIdleUnloadMethod(error)) throw error;
-          // Older Desktop Hosts do not implement this preference RPC yet; keep the Host's default
-          // unload time rather than blocking recording and transcription over it.
-          logger.warn(
-            "voice dictation host does not support idle unload preference; using host default",
-            {
-              error: error instanceof Error ? error.message : String(error),
-            },
-          );
-        }
+        await applyIdleUnloadPreference(voiceDictationService, idleUnloadMinutes);
         streamId = await voiceDictationService.beginStream({ modelId, language });
       } catch (error) {
         logger.warn("voice dictation model stream initialization failed", {
@@ -279,6 +281,12 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
    */
   const cancel = useCallback((): void => {
     heldBindingRef.current = null;
+    if (phaseRef.current === "processing") {
+      // The transcript exists but is discarded: bumping the generation makes stop() drop its result.
+      startGenerationRef.current += 1;
+      updatePhase("idle");
+      return;
+    }
     if (phaseRef.current !== "loading" && !recorder.isRecording) return;
     startGenerationRef.current += 1;
     recorder.cancel();
@@ -350,8 +358,22 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
           language,
         });
       }
-      const text = result.text.trim();
-      if (text && generation === startGenerationRef.current) onTranscriptRef.current(text);
+      const rawText = result.text.trim();
+      let text = rawText;
+      if (rawText && postProcessEnabled && generation === startGenerationRef.current) {
+        updatePhase("processing");
+        text = await postProcessOrRaw(
+          voiceDictationService,
+          { text: rawText, prompt: postProcessPrompt, provider: postProcessProvider },
+          (error) =>
+            logger.warn("voice dictation post-processing failed; inserting the raw transcript", {
+              error: error instanceof Error ? error.message : String(error),
+            }),
+        );
+      }
+      if (rawText && generation === startGenerationRef.current) {
+        onTranscriptRef.current(text, rawText);
+      }
     } catch (error) {
       if (streamId && streamIdRef.current === streamId) {
         streamIdRef.current = null;
@@ -365,16 +387,23 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
         toast(intl.formatMessage({ id: "voiceDictation.transcribeFailed" }));
       }
     } finally {
-      streamIdRef.current = null;
-      streamBacklogRef.current = [];
-      setPreview(null);
-      updatePhase("idle");
+      // A cancelled run (Escape during processing) may already have been replaced by a new recording;
+      // only the run that still owns the phase may reset it.
+      if (generation === startGenerationRef.current) {
+        streamIdRef.current = null;
+        streamBacklogRef.current = [];
+        setPreview(null);
+        updatePhase("idle");
+      }
     }
   }, [
     cancelServiceStream,
     intl,
     language,
     modelId,
+    postProcessEnabled,
+    postProcessPrompt,
+    postProcessProvider,
     recorder,
     recordingAudio,
     updatePhase,
@@ -402,7 +431,10 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
 
   useVoiceDictationEscapeCancel(
     enabled,
-    () => phaseRef.current === "loading" || phaseRef.current === "recording",
+    () =>
+      phaseRef.current === "loading" ||
+      phaseRef.current === "recording" ||
+      phaseRef.current === "processing",
     cancel,
   );
 
@@ -428,9 +460,4 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
   );
 
   return { phase, level, preview, start, stop, cancel, toggle };
-}
-
-function isMissingIdleUnloadMethod(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.trim() === "Method not found: setIdleUnloadMinutes";
 }

@@ -40,6 +40,35 @@ export interface VoiceWarmUpRequest {
   modelId: string;
 }
 
+export type VoicePostProcessProvider = "apple-fm";
+
+export type VoicePostProcessAvailability =
+  | { status: "available" }
+  | {
+      status: "unavailable";
+      reason:
+        | "unsupportedPlatform"
+        | "helperMissing"
+        | "deviceNotEligible"
+        | "appleIntelligenceNotEnabled"
+        | "modelNotReady"
+        | "unsupportedOS"
+        | "unknown";
+    };
+
+export interface VoicePostProcessRequest {
+  /** The raw transcript. */
+  text: string;
+  /** User prompt; `{{text}}` is replaced by the transcript (see voicePostProcessPrompt.ts). */
+  prompt: string;
+  /** Defaults to the only provider, the on-device system model. */
+  provider?: VoicePostProcessProvider;
+}
+
+export interface VoicePostProcessResponse {
+  text: string;
+}
+
 export interface VoiceDictationRuntimeState {
   loadedModelId: string | null;
   activeModelId: string | null;
@@ -56,6 +85,10 @@ export interface IVoiceDictationService {
    * would when the model is not downloaded.
    */
   warmUp(request: VoiceWarmUpRequest): Promise<void>;
+  /** Whether the post-processing provider can run on this machine (and why not, when it cannot). */
+  getPostProcessAvailability(): Promise<VoicePostProcessAvailability>;
+  /** Rewrites a transcript with the provider; rejects on any failure so the caller can fall back to the raw text. */
+  postProcess(request: VoicePostProcessRequest): Promise<VoicePostProcessResponse>;
   /** Download progress is read via listModels()'s downloading state; repeated calls for the same model share one task. */
   downloadModel(modelId: string): Promise<void>;
   cancelDownload(modelId: string): Promise<void>;
