@@ -1336,7 +1336,7 @@ export function createLocalServices(options: {
   // Onboarding completion record; fill userId from the login state (null for API-key or logged-out sessions). See docs/onboarding-record-spec.md.
   const onboardingRecordService = createOnboardingRecordService({
     loadUserId: async () => (await oauthCredentialRepo.loadActiveUserProfile())?.id ?? null,
-    hasExistingLocalTask: async () => (await taskIndexRepo.listTaskMetas({})).length > 0,
+    hasExistingLocalTask: () => taskIndexRepo.hasTaskMetas(),
   });
   let handleOAuthProviderLogout: ReturnType<typeof createOAuthProviderLogoutHandler> | null = null;
   const oauthCredentialRepo = new OAuthCredentialRepo(credentialService, {
