@@ -243,7 +243,11 @@ async function main() {
   let exitCode = 0;
   // Sequential on purpose: oxfmt already parallelizes across threads.
   for (const chunk of chunkPaths(files)) {
-    const result = await runOxfmt(repoRoot, oxfmtBin, check ? ["--check", ...chunk] : chunk);
+    const result = await runOxfmt(
+      repoRoot,
+      oxfmtBin,
+      check ? ["--check", "--", ...chunk] : ["--", ...chunk],
+    );
     if (result.code !== 0) {
       exitCode = result.code;
       console.error(result.output.trimEnd());
