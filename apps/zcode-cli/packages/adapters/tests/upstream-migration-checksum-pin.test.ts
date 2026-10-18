@@ -49,6 +49,10 @@ describe("upstream session migration checksum pin", () => {
     for (const db of databases.splice(0)) db.close();
   });
 
+  it("pins upstream ids only", () => {
+    expect(Object.keys(UPSTREAM_CHECKSUMS).filter((id) => id.startsWith("9001_fork_"))).toEqual([]);
+  });
+
   it("a fresh database writes exactly the upstream checksum for every upstream migration", () => {
     const db = new DatabaseSync(":memory:");
     databases.push(db);

@@ -9,12 +9,15 @@ Commit `ac31c7db` translated the `--` comments inside the `PROVIDER_MODEL_SELECT
 ## Contract
 
 - Session migrations continue to use SHA-256 of `sql.trim()` to identify the exact SQL applied.
-- The SQL text of every upstream migration (ids `0001`–`0022` in the session store, `0001`–`0003` in the tasks index) is byte-for-byte identical to upstream, including comments inside SQL strings. A fresh database created by the fork writes the same ledger checksums as upstream.
+- The checksum input of every upstream migration is byte-for-byte identical to upstream, including comments inside SQL strings: the full SQL text of session-store migrations `0001`–`0022`, and the `checksumInput` of tasks-index migrations `0001`–`0003`. A fresh database created by the fork writes the same ledger checksums as upstream.
 - For `0020_provider_model_selection`, the current (written) checksum is the upstream checksum `681180b4fcb497e13289b6970021678f24c975efdf3538777541105c5b2b444e`.
 - A migration may list an explicit, migration-specific set of historical checksums when a known non-semantic edit changed its SQL text after release. For `0020_provider_model_selection`, the translated checksum `31fdaa50915e6ee967de3d8072a7f98bab64da0ac2864275589e4a2740eda788` is accepted as historical.
 - An accepted historical checksum only permits startup to recognize the migration as already applied. It must not rerun the migration or rewrite the checksum ledger.
 - A checksum not equal to the current checksum or an explicitly listed historical checksum still fails closed with `checksum_mismatch`.
-- A regression test pins the ledger checksum of every upstream migration in both shared databases, so a future edit to upstream SQL text (for example a comment-translation sweep) fails CI.
+- A regression test pins the ledger checksum of every upstream migration in both shared databases, so a future edit to a pinned checksum input (for example a comment-translation sweep) fails CI. Exactly what is pinned:
+  - Session store (`0001`–`0022`): SHA-256 of the full `sql.trim()`, so any edit to the executed SQL, comments included, fails the pin.
+  - Tasks index: SHA-256 of `JSON.stringify(checksumInput)`. For `0003_official_glm_selection` that is the full migration SQL. For `0001_adopt_task_schema` it is the schema DDL strings, frozen column declarations and index SQL plus the semantic marker `scheduled-count-backfill-v1`; other SQL that `adoptSchema` executes (for example the `scheduled_run_count` backfill `UPDATE`) is not hashed. For `0002_provider_selection` it is only the semantic markers `legacy-automation-selection-v1` and `no-provider-for-legacy-off-peak-v1`; the conversion SQL in `provider-selection-v2.ts` is not hashed. Edits to that unhashed SQL do not fail the pin; it must still stay identical to upstream, which only review enforces.
+  - The pinned lists contain upstream ids only; fork migrations (`9001_fork_*`) must never appear in them.
 
 ## Acceptance scenarios
 
