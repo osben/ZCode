@@ -331,6 +331,14 @@ export const appUsageComparisonSchema = z.object({
   dailyTokens: z.array(z.number()),
 });
 
+/** Filter options present in the window; workspaces are session directories ('' = unknown). */
+export const appUsageFacetsSchema = z.object({
+  models: z.array(z.string()),
+  providers: z.array(z.string()),
+  querySources: z.array(z.string()),
+  workspaces: z.array(z.string()),
+});
+
 export const appUsageSnapshotSchema = z.object({
   range: z.enum(APP_USAGE_RANGES),
   generatedAt: z.number(),
@@ -344,6 +352,8 @@ export const appUsageSnapshotSchema = z.object({
   /** Echo of the requested custom window; absent for preset ranges and from older hosts. */
   window: appUsageWindowShapeSchema.optional(),
   previous: appUsageComparisonSchema.optional(),
+  /** Only on the all-time snapshot, and only when the host reads the rollup. */
+  facets: appUsageFacetsSchema.optional(),
 });
 
 export type AppUsageSummary = z.infer<typeof appUsageSummarySchema>;
@@ -360,6 +370,7 @@ export type AppUsageSnapshot = z.infer<typeof appUsageSnapshotSchema>;
 export type AppUsageWindow = z.infer<typeof appUsageWindowSchema>;
 export type AppUsageFilters = z.infer<typeof appUsageFiltersSchema>;
 export type AppUsageComparison = z.infer<typeof appUsageComparisonSchema>;
+export type AppUsageFacets = z.infer<typeof appUsageFacetsSchema>;
 
 export interface AppUsageRequest {
   range: AppUsageRange;

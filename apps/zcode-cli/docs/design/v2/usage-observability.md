@@ -190,6 +190,11 @@ plan: `docs/specs/usage-stats-history-and-filters.md`.
   fail instead of silently returning unfiltered data. Windows snap to 15-minute bucket boundaries
   (the bucket containing `since` is included), which can differ from the legacy exact-millisecond
   boundary by at most one bucket at the oldest edge.
+- Filters and facets: `AppUsageQueryInput.filters` narrows by model, provider, query source, and
+  workspace (session directory). Model/provider/source filters apply to the token bucket table only;
+  the turn and tool tables carry only the workspace dimension, so they follow only the workspace
+  filter. `includeFacets` additionally returns the distinct values per dimension for the window,
+  ignoring the active filters (the host asks for it only on the unfiltered all-time request).
 - Known limitation: raw rows that live and are pruned entirely while no fork build runs are never
   rolled up. History starts when the rollup is first created.
 

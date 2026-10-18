@@ -230,6 +230,22 @@ describe("fork usage rollup", () => {
     expect(unknown.models.map((m) => m.modelId)).toEqual([""]);
   });
 
+  it("lists filter options for the window and ignores the active filters", async () => {
+    await seedUsage();
+    recomputeForkUsageRollup(db, NOW);
+    const base = { since: 0, until: NOW, tzOffsetMs: 0, includeFacets: true };
+
+    const unfiltered = queryAppUsageFromRollup(db, base);
+    expect(unfiltered.facets?.models).toEqual(["", "model-a", "model-b"]);
+    expect(unfiltered.facets?.providers).toEqual(["p1", "p2"]);
+    expect(unfiltered.facets?.querySources).toEqual(["main_turn", "subagent"]);
+    expect(unfiltered.facets?.workspaces).toEqual(["/work/alpha", "/work/beta"]);
+
+    const filtered = queryAppUsageFromRollup(db, { ...base, filters: { modelIds: ["model-a"] } });
+    expect(filtered.facets).toEqual(unfiltered.facets);
+    expect(queryAppUsageFromRollup(db, { ...base, includeFacets: false }).facets).toBeUndefined();
+  });
+
   it("falls back to raw tables for unfiltered reads and fails filtered reads when the rollup is gone", async () => {
     await seedUsage();
     const input = { since: NOW - 30 * DAY, until: NOW, tzOffsetMs: 0 };

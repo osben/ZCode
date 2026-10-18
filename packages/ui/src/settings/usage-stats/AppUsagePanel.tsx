@@ -1,10 +1,11 @@
 import { RefreshCcw } from "lucide-react";
 import { Fragment, lazy, useEffect, useMemo, useState } from "react";
-import type { AppUsageSnapshot } from "@zcode/shared";
+import type { AppUsageFilters, AppUsageSnapshot } from "@zcode/shared";
 import { Button } from "@/components/ui/button.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { type AppUsageStatsQuery, useAppUsageStats } from "@/hooks/useUsageStats.js";
 import { AppUsageDetailMetrics } from "@/settings/usage-stats/AppUsageDetailMetrics.js";
+import { AppUsageFilterBar } from "@/settings/usage-stats/AppUsageFilterBar.js";
 import { AppUsageRangeControls } from "@/settings/usage-stats/AppUsageRangeControls.js";
 import { AppUsageToolsTable } from "@/settings/usage-stats/AppUsageToolsTable.js";
 import { UsageChartLoadBoundary } from "@/settings/usage-stats/UsageChartLoadBoundary.js";
@@ -52,8 +53,9 @@ export function AppUsagePanel() {
   const [customTo, setCustomTo] = useState("");
   const [compare, setCompare] = useState(false);
   const [granularityOverride, setGranularityOverride] = useState<AppUsageGranularity | null>(null);
+  const [filters, setFilters] = useState<AppUsageFilters>({});
 
-  const builtQuery = buildAppUsageQuery({ preset, customFrom, customTo, compare, today });
+  const builtQuery = buildAppUsageQuery({ preset, customFrom, customTo, compare, today, filters });
   const builtQueryKey = JSON.stringify(builtQuery);
   // An invalid custom range must not blank the page: keep requesting (and showing) the last valid query.
   const [query, setQuery] = useState<AppUsageStatsQuery>(() => builtQuery ?? { range: "7d" });
@@ -66,6 +68,13 @@ export function AppUsagePanel() {
 
   const { snapshot: lifetimeSnapshot, refresh: refreshLifetime } = useAppUsageStats("all");
   const { snapshot, loading, error, refresh } = useAppUsageStats(query);
+
+  // Drilling into a heatmap day is just a one-day custom range.
+  const handleSelectDate = (date: string) => {
+    setCustomFrom(date);
+    setCustomTo(date);
+    setPreset("custom");
+  };
 
   const handlePresetChange = (next: AppUsagePreset) => {
     if (next === "custom" && !customFrom && !customTo) {
@@ -118,12 +127,17 @@ export function AppUsagePanel() {
       showGranularity={dayCount >= APP_USAGE_GRANULARITY_MIN_DAYS}
     />
   );
+  // Filter options come from the all-time snapshot; hosts without the rollup omit them, hiding the bar.
+  const filterBar = lifetimeSnapshot?.facets ? (
+    <AppUsageFilterBar facets={lifetimeSnapshot.facets} filters={filters} onChange={setFilters} />
+  ) : null;
 
   if (loading && !snapshot) {
     return (
       <div className="space-y-5">
         <AppUsageLifetimeSummaryStrip snapshot={lifetimeSnapshot} />
         {rangeControls}
+        {filterBar}
         {/* Bugfix: App Usage aggregates only local session history; it cannot reuse the Coding Plan monitor API loading description. */}
         <UsageEmptyState
           title={intl.formatMessage({ id: "settings.usage.loadingTitle" })}
@@ -140,6 +154,7 @@ export function AppUsagePanel() {
       <div className="space-y-5">
         <AppUsageLifetimeSummaryStrip snapshot={lifetimeSnapshot} />
         {rangeControls}
+        {filterBar}
         {error ? <UsageStatsErrorNotice error={error} /> : null}
         <UsageEmptyState
           title={intl.formatMessage({ id: "settings.usage.emptyTitle" })}
@@ -155,9 +170,15 @@ export function AppUsagePanel() {
     <div className="space-y-5">
       <AppUsageLifetimeSummaryStrip snapshot={lifetimeSnapshot} />
       {lifetimeSnapshot?.heatmap.weeks.length ? (
-        <UsageHeatmap locale={locale} intl={intl} weeks={lifetimeSnapshot.heatmap.weeks} />
+        <UsageHeatmap
+          locale={locale}
+          intl={intl}
+          weeks={lifetimeSnapshot.heatmap.weeks}
+          onSelectDate={handleSelectDate}
+        />
       ) : null}
       {rangeControls}
+      {filterBar}
       {error ? <UsageStatsErrorNotice error={error} /> : null}
 
       <UsageChartLoadBoundary

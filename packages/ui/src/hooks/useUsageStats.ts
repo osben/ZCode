@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
+  AppUsageFilters,
   AppUsageRange,
   AppUsageSnapshot,
   AppUsageWindow,
@@ -194,6 +195,7 @@ export interface AppUsageStatsQuery {
   range: AppUsageRange;
   window?: AppUsageWindow;
   compare?: boolean;
+  filters?: AppUsageFilters;
 }
 
 export function useAppUsageStats(query: AppUsageRange | AppUsageStatsQuery) {

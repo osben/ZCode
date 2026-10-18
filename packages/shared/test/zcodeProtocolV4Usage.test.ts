@@ -6,6 +6,7 @@ import {
   v4ConversationUsageParamsSchema,
   v4ConversationUsageResultSchema,
   v4UsageStatsParamsSchema,
+  v4UsageStatsResultSchema,
 } from "../src/zcode-protocol-v4/index.js";
 
 describe("zcode protocol v4 usage query", () => {
@@ -54,6 +55,59 @@ describe("zcode protocol v4 usage query", () => {
     ).toBe(false);
     // Legacy shapes are unchanged: no extras means no extra keys in the parsed params.
     expect(v4UsageStatsParamsSchema.parse({ range: "7d" })).toEqual({ range: "7d" });
+  });
+
+  it("parses snapshots with and without the additive window, previous, and facets fields", () => {
+    const summary = {
+      totalTokens: 1,
+      inputTokens: 1,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+      cacheHitRate: 0,
+      totalSessions: 1,
+      totalTurns: 1,
+      toolCallCount: 0,
+      toolErrorRate: 0,
+      modelErrorRate: 0,
+      avgTimeToFirstTokenMs: null,
+      avgTurnDurationMs: null,
+      activeDays: 1,
+      currentStreakDays: 1,
+      longestSessionMs: 0,
+      longestStreakDays: 1,
+      peakDayTokens: 1,
+      favoriteModel: null,
+    };
+    const legacy = {
+      range: "7d",
+      generatedAt: 1,
+      timeZone: "UTC",
+      source: "agent-db",
+      summary,
+      heatmap: { startDate: null, endDate: null, maxTokens: 0, weeks: [] },
+      dailyModelUsage: [],
+      models: [],
+      tools: [],
+    };
+    // An older host's response (no new fields) still parses, and the new fields stay absent.
+    const legacyParsed = v4UsageStatsResultSchema.parse(legacy);
+    expect(legacyParsed.window).toBeUndefined();
+    expect(legacyParsed.previous).toBeUndefined();
+    expect(legacyParsed.facets).toBeUndefined();
+
+    const extended = v4UsageStatsResultSchema.parse({
+      ...legacy,
+      window: { from: "2026-07-01", to: "2026-07-07" },
+      previous: { window: { from: "2026-06-24", to: "2026-06-30" }, summary, dailyTokens: [1, 2] },
+      facets: { models: ["m"], providers: ["p"], querySources: ["main_turn"], workspaces: [""] },
+      somethingNewerThanThisClient: true,
+    });
+    expect(extended.previous?.dailyTokens).toEqual([1, 2]);
+    expect(extended.facets?.workspaces).toEqual([""]);
+    // Unknown future fields are stripped rather than failing the whole response.
+    expect(extended).not.toHaveProperty("somethingNewerThanThisClient");
   });
 
   it("validates conversation usage params and result round-trip", () => {

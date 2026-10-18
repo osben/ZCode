@@ -35,6 +35,7 @@ Coding Plan:                         [ today / 7d / 30d ]
   // Daily: one cell is one day. Weekly: one column is that week's total. Cumulative: one column is total through that week.
 
 [ Time range: 7d | 30d | 90d | 1y | All | Custom ]   [ Compare ] [ Day | Week | Month ]
+[ Filters: Models | Providers | Source | Workspaces ]   // options from the all-time snapshot facets
 
 [ Daily Token Trend Chart ]
 

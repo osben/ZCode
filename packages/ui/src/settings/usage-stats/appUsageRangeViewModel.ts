@@ -1,4 +1,8 @@
-import { APP_USAGE_MAX_WINDOW_DAYS, type AppUsageDailyModelUsage } from "@zcode/shared";
+import {
+  APP_USAGE_MAX_WINDOW_DAYS,
+  type AppUsageDailyModelUsage,
+  type AppUsageFilters,
+} from "@zcode/shared";
 import type { AppUsageStatsQuery } from "@/hooks/useUsageStats.js";
 
 export const APP_USAGE_PRESETS = ["7d", "30d", "90d", "1y", "all", "custom"] as const;
@@ -61,13 +65,16 @@ export function buildAppUsageQuery(input: {
   customTo: string;
   compare: boolean;
   today: string;
+  filters?: AppUsageFilters;
 }): AppUsageStatsQuery | null {
   const { preset, compare, today } = input;
+  const filters = compactFilters(input.filters);
+  const extras = filters ? { filters } : {};
   if (preset === "all") {
-    return { range: "all" };
+    return { range: "all", ...extras };
   }
   if (preset === "7d" || preset === "30d") {
-    return { range: preset, ...(compare ? { compare: true } : {}) };
+    return { range: preset, ...(compare ? { compare: true } : {}), ...extras };
   }
   if (preset === "custom") {
     if (validateCustomRange(input.customFrom, input.customTo, today) !== "ok") {
@@ -77,13 +84,24 @@ export function buildAppUsageQuery(input: {
       range: "all",
       window: { from: input.customFrom, to: input.customTo },
       ...(compare ? { compare: true } : {}),
+      ...extras,
     };
   }
   return {
     range: "all",
     window: { from: shiftLocalDate(today, 1 - PRESET_WINDOW_DAYS[preset]), to: today },
     ...(compare ? { compare: true } : {}),
+    ...extras,
   };
+}
+
+/** Drops empty lists so an untouched filter bar produces the legacy request shape. */
+export function compactFilters(filters: AppUsageFilters | undefined): AppUsageFilters | undefined {
+  if (!filters) return undefined;
+  const entries = (
+    Object.entries(filters) as Array<[keyof AppUsageFilters, string[] | undefined]>
+  ).filter(([, values]) => values && values.length > 0);
+  return entries.length > 0 ? (Object.fromEntries(entries) as AppUsageFilters) : undefined;
 }
 
 export function resolveAutoGranularity(dayCount: number): AppUsageGranularity {

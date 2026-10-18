@@ -137,6 +137,29 @@ describe("runUsageStats", () => {
     expect(snapshot.summary.totalTokens).toBe(70);
   });
 
+  it("asks for filter facets only on the unfiltered all-time snapshot and returns them", async () => {
+    const facets = { models: ["m"], providers: ["p"], querySources: ["main_turn"], workspaces: [""] };
+    const { store, queryAppUsage } = fakeStore((input) => ({
+      ...resultWithDay(0, 1),
+      ...(input.includeFacets ? { facets } : {}),
+    }));
+
+    const lifetime = await runUsageStats(store, { range: "all", timeZone: "UTC" }, NOW);
+    expect(queryAppUsage).toHaveBeenLastCalledWith(expect.objectContaining({ includeFacets: true }));
+    expect(lifetime.facets).toEqual(facets);
+
+    const preset = await runUsageStats(store, { range: "7d", timeZone: "UTC" }, NOW);
+    expect(queryAppUsage.mock.lastCall?.[0]).not.toHaveProperty("includeFacets");
+    expect(preset.facets).toBeUndefined();
+
+    await runUsageStats(
+      store,
+      { range: "all", window: { from: "2026-07-01", to: "2026-07-02" } },
+      NOW,
+    );
+    expect(queryAppUsage.mock.lastCall?.[0]).not.toHaveProperty("includeFacets");
+  });
+
   it("falls back to an empty result when no usage store is available", async () => {
     const snapshot = await runUsageStats(undefined, { range: "30d" }, NOW);
     expect(snapshot.summary.totalTokens).toBe(0);

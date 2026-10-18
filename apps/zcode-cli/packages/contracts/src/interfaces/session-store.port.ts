@@ -1026,6 +1026,16 @@ export interface AppUsageQueryInput {
   /** Calling client's fixed offset from UTC (ms), used to bucket by local day. */
   tzOffsetMs: number;
   filters?: AppUsageFilters;
+  /** Also list the filter values present in the window (ignoring filters). Rollup read path only. */
+  includeFacets?: boolean;
+}
+
+/** Distinct values per filter dimension; `workspaces` entries are session directories ('' = unknown). */
+export interface AppUsageFacets {
+  models: string[];
+  providers: string[];
+  querySources: string[];
+  workspaces: string[];
 }
 
 export interface AppUsageTotalsRow {
@@ -1088,6 +1098,7 @@ export interface AppUsageQueryResult {
   tools: AppUsageToolRow[];
   days: AppUsageDayRow[];
   dayModels: AppUsageDayModelRow[];
+  facets?: AppUsageFacets;
 }
 
 export interface TaskUsageQueryInput {

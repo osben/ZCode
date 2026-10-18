@@ -1,6 +1,7 @@
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import type {
   AppUsageDayModelRow,
+  AppUsageFacets,
   AppUsageDayRow,
   AppUsageFilters,
   AppUsageModelRow,
@@ -205,6 +206,7 @@ export function queryAppUsageFromRollup(
   for (const row of toolDays) dayRow(Number(row.dayIndex)).toolCallCount = Number(row.toolCallCount);
 
   return {
+    ...(input.includeFacets ? { facets: queryFacets(db, since, until) } : {}),
     totals: {
       totalTokens: Number(totals.totalTokens),
       inputTokens: Number(totals.inputTokens),
@@ -250,5 +252,33 @@ export function queryAppUsageFromRollup(
       modelId: String(d.modelId ?? ""),
       totalTokens: Number(d.totalTokens),
     })),
+  };
+}
+
+const FACET_LIMIT = 200;
+
+/** Filter options for the window; deliberately ignores the active filters so choices never vanish. */
+function queryFacets(db: DatabaseSync, since: number, until: number): AppUsageFacets {
+  const range: SQLInputValue[] = [alignDownToBucket(since), until];
+  const distinct = (sql: string, params: SQLInputValue[]): string[] =>
+    (db.prepare(sql).all(...params) as Array<{ value: string }>).map((row) => String(row.value));
+  const where = "bucket_start >= ? and bucket_start <= ?";
+  const bucketColumn = (column: string) =>
+    distinct(
+      `select distinct ${column} as value from fork_usage_bucket where ${where} order by value limit ${FACET_LIMIT}`,
+      range,
+    );
+  return {
+    models: bucketColumn("model_id"),
+    providers: bucketColumn("provider_id"),
+    querySources: bucketColumn("query_source"),
+    workspaces: distinct(
+      `select value from (
+         select workspace_key as value from fork_usage_bucket where ${where}
+         union select workspace_key from fork_usage_turn where ${where}
+         union select workspace_key from fork_usage_tool where ${where}
+       ) order by value limit ${FACET_LIMIT}`,
+      [...range, ...range, ...range],
+    ),
   };
 }
