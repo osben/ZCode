@@ -95,8 +95,10 @@ flowchart LR
   watcher (tsserver, pyright) see changes themselves.
 - At most 50 open documents per server; the rest are closed via `didClose` (LRU).
 - Pool:
-  - one process per `(workspaceIdentity?.trim() || workspacePath, serverId)`, shared by
-    the workspace's sessions, with `rootUri` taken from `workspacePath`;
+  - one process per `(workspaceIdentity?.trim() || workspacePath, workspacePath, serverId)`,
+    shared by the workspace's sessions, with `rootUri` taken from `workspacePath`. The
+    identity alone is not enough: it can stay the same while the root changes (for example
+    on reconnect), and a reused server would then answer for the wrong root;
   - a server stops after 10 minutes without a lease, and at most 4 servers run at once (LRU);
   - processes are killed via `mcp/process-tree.ts` and `windows-job-object.ts`.
 - Remote: the pool lives where Read/Bash run. Phase 0 confirms this; otherwise remote
@@ -126,17 +128,22 @@ sequenceDiagram
   or edit of a file in its language.
 - **Crash:** in-flight requests get `lsp_server_crashed`. The server restarts up to
   `maxRestarts` times, then reports `lsp_server_unavailable`.
-- **Diagnostics without "wait N ms":** use pull `textDocument/diagnostic` when the
-  server supports it. Otherwise wait for `publishDiagnostics` with `version ≥ v` (or
-  the first publish after our `didChange`). No answer means `status: "pending"`, never
-  "no errors".
+- **Diagnostics without "wait N ms":** a result is fresh only when it comes from pull
+  `textDocument/diagnostic` or from a `publishDiagnostics` carrying `version ≥ v`.
+  `version` is optional in LSP, and a versionless publish can be a delayed result from
+  before the edit, so it never resolves a pending result. Without a fresh result the
+  status is `pending`, never "no errors".
+- Servers that support neither pull nor versioned publish get no post-edit
+  diagnostics (§6), and plugin status shows why. Phase 0 records which official
+  servers fall into this group.
 
 ## 6. Diagnostics after edits
 
 - Edit/Write results never wait for the server. **New** diagnostics (relative to the
   pre-edit baseline) go into an attachment on the next model request: "Found N new
-  diagnostic issues in M files", at most 20, errors first. The Edit/Write contract is
-  unchanged.
+  diagnostic issues in M files", at most 20, errors first. Only fresh results count
+  (§5), so a stale versionless publish is never reported as new. The Edit/Write
+  contract is unchanged.
 - No baseline (the file was not open, or the server was still starting): report only
   diagnostics that overlap the edited range.
 - TUI/V4: a collapsible line (`+`/`-`).
@@ -196,7 +203,8 @@ the exact operation names, so verify them against the real schema before impleme
   csharp, php, ruby, lua, swift, liquid) work once installed but are labeled
   "not verified in ZCode".
 - To avoid a TS-only design, the fake server in tests mimics awkward servers: startup
-  over 60 s, publish without `version`, and no pull diagnostics or watcher of its own.
+  over 60 s, publish without `version`, a stale publish arriving after `didChange`
+  (must stay `pending`), and no pull diagnostics or watcher of its own.
   Smoke tests for pyright, gopls and rust-analyzer run when the binary is present and
   are skipped with a note otherwise.
 - Later: our own plugins (JSON/CSS/HTML/ESLint, bash, yaml, vue, svelte, terraform, zig,
@@ -205,7 +213,8 @@ the exact operation names, so verify them against the real schema before impleme
 ## 10. Phases
 
 0. **Spike:** the remote scenario, PATH in the CLI runtime, `vscode-jsonrpc` versus our
-   own framing, and a tsserver measurement on the monorepo.
+   own framing, a tsserver measurement on the monorepo, and which official servers
+   support pull diagnostics or versioned publish.
 1. **Config:** Zod schema, loader, diagnostics, `lsp` in component types, and removing
    `lspServers` from `diagnosticOnly`.
 2. **Pool:** `LanguageServerPort`, `adapters/src/lsp`, the fake server, and tests for
