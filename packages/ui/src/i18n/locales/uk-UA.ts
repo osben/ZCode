@@ -7384,11 +7384,11 @@ const ukUA: Record<string, string> = {
     "Завантажує вибрану модель у фоні, щоб перший запис починався без очікування. Завантажена модель займає пам'ять, доки не мине затримка вивантаження нижче.",
   "voiceDictation.postProcess.title": "Постобробка",
   "voiceDictation.postProcess.description":
-    "Переписує кожен готовий текст мовною моделлю перед вставкою. У буфер обміну потрапляє сирий текст розпізнавання.",
+    "Переписує кожен готовий текст мовною моделлю перед вставкою. Якщо ввімкнено «Копіювати надиктований текст у буфер обміну», у буфер потрапляє сирий текст розпізнавання.",
   "voiceDictation.postProcess.enabled.title": "Обробляти надиктований текст",
   "voiceDictation.postProcess.enabled.description":
     "Якщо обробка завершилась помилкою або тривала надто довго, вставляється сирий текст.",
-  "voiceDictation.postProcess.provider.title": "Модель",
+  "voiceDictation.postProcess.provider.title": "Провайдер",
   "voiceDictation.postProcess.provider.description":
     "Працює на цьому пристрої; текст не залишає ваш комп'ютер.",
   "voiceDictation.postProcess.provider.appleFm": "Системна модель (Apple Foundation Models)",
@@ -7396,6 +7396,38 @@ const ukUA: Record<string, string> = {
   "voiceDictation.postProcess.prompt.description":
     "Використайте {variable} там, куди має потрапити розпізнаний текст. Без нього текст додається після промпта.",
   "voiceDictation.postProcess.prompt.reset": "Скинути до типового",
+  "voiceDictation.postProcess.status.checking": "Перевірка доступності…",
+  "voiceDictation.postProcess.status.available":
+    "Доступно на цьому Mac. Текст обробляється на цьому пристрої.",
+  "voiceDictation.postProcess.prompt.save": "Зберегти",
+  "voiceDictation.postProcess.prompt.cancel": "Скасувати",
+  "voiceDictation.postProcess.prompt.unsaved": "Є незбережені зміни",
+  "voiceDictation.postProcess.prompt.counter": "{count} із {max}",
+  "voiceDictation.postProcess.prompt.tooLong":
+    "Скоротіть промпт до {max} символів, щоб зберегти його.",
+  "voiceDictation.postProcess.prompt.blank":
+    "Промпт не може бути порожнім. Скиньте його, щоб повернути типовий.",
+  "voiceDictation.postProcess.prompt.noVariable":
+    "У промпті немає {variable}, тож розшифровка буде додана після промпту.",
+  "voiceDictation.postProcess.discard.title": "Відкинути незбережені зміни?",
+  "voiceDictation.postProcess.discard.description":
+    "Промпт повернеться до останньої збереженої версії.",
+  "voiceDictation.postProcess.discard.confirm": "Відкинути",
+  "voiceDictation.postProcess.reset.title": "Повернути типовий промпт?",
+  "voiceDictation.postProcess.reset.description":
+    "Ваш власний промпт буде видалено, і використовуватиметься вбудований типовий. Незбережені зміни буде відкинуто.",
+  "voiceDictation.postProcess.tryIt.title": "Перевірити",
+  "voiceDictation.postProcess.tryIt.description":
+    "Запускає промпт вище на зразковому реченні. Незбережені зміни враховуються; нічого не зберігається.",
+  "voiceDictation.postProcess.tryIt.sample": "Зразок тексту",
+  "voiceDictation.postProcess.tryIt.run": "Запустити",
+  "voiceDictation.postProcess.tryIt.running": "Виконується…",
+  "voiceDictation.postProcess.tryIt.failed": "Промпт не вдалося виконати: {reason}",
+  "voiceDictation.group.dictation.title": "Диктування",
+  "voiceDictation.group.microphone.title": "Мікрофон",
+  "voiceDictation.group.output.title": "Результат",
+  "voiceDictation.memory.title": "Пам'ять",
+  "voiceDictation.shortcut.open": "Відкрити сполучення клавіш",
   "voiceDictation.postProcess.unavailable.unsupportedPlatform":
     "Системна модель доступна лише на macOS.",
   "voiceDictation.postProcess.unavailable.helperMissing":
@@ -7448,8 +7480,7 @@ const ukUA: Record<string, string> = {
   "voiceDictation.models.remove": "Видалити",
   "voiceDictation.models.startingDownload": "Початок завантаження…",
   "voiceDictation.models.useWhenReady": "Використати після завантаження",
-  "voiceDictation.models.cancelUseWhenReady": "Залишити поточну модель",
-  "voiceDictation.models.willUseWhenReady": "Буде вибрана після завантаження",
+  "voiceDictation.models.cancelUseWhenReady": "Скасувати використання після завантаження",
   "voiceDictation.models.removeConfirm.title": "Видалити цю модель?",
   "voiceDictation.models.removeConfirm.description":
     "{model} буде видалено з цього пристрою. Пізніше її можна буде завантажити знову.",

@@ -7792,11 +7792,11 @@ const enUS: Record<string, string> = {
     "Loads the selected model in the background so the first recording starts without waiting. A loaded model uses memory until the unload delay below passes.",
   "voiceDictation.postProcess.title": "Post-processing",
   "voiceDictation.postProcess.description":
-    "Rewrites each finished transcript with a language model before it is inserted. Your raw transcript is what goes to the clipboard.",
+    "Rewrites each finished transcript with a language model before it is inserted. With Copy dictated text to the clipboard on, the clipboard gets the raw transcript.",
   "voiceDictation.postProcess.enabled.title": "Process dictated text",
   "voiceDictation.postProcess.enabled.description":
     "If processing fails or takes too long, the raw transcript is inserted instead.",
-  "voiceDictation.postProcess.provider.title": "Model",
+  "voiceDictation.postProcess.provider.title": "Provider",
   "voiceDictation.postProcess.provider.description":
     "Runs on this device; no text leaves your computer.",
   "voiceDictation.postProcess.provider.appleFm": "System model (Apple Foundation Models)",
@@ -7804,6 +7804,37 @@ const enUS: Record<string, string> = {
   "voiceDictation.postProcess.prompt.description":
     "Use {variable} where the transcript should go. Without it, the transcript is added after the prompt.",
   "voiceDictation.postProcess.prompt.reset": "Reset to default",
+  "voiceDictation.postProcess.status.checking": "Checking availability…",
+  "voiceDictation.postProcess.status.available":
+    "Available on this Mac. Text is processed on this device.",
+  "voiceDictation.postProcess.prompt.save": "Save",
+  "voiceDictation.postProcess.prompt.cancel": "Cancel",
+  "voiceDictation.postProcess.prompt.unsaved": "Unsaved changes",
+  "voiceDictation.postProcess.prompt.counter": "{count} / {max}",
+  "voiceDictation.postProcess.prompt.tooLong": "Shorten the prompt to {max} characters to save it.",
+  "voiceDictation.postProcess.prompt.blank":
+    "The prompt can't be empty. Use Reset to restore the default.",
+  "voiceDictation.postProcess.prompt.noVariable":
+    "No {variable} in the prompt, so the transcript will be appended after the prompt.",
+  "voiceDictation.postProcess.discard.title": "Discard unsaved changes?",
+  "voiceDictation.postProcess.discard.description":
+    "The prompt will go back to the last saved version.",
+  "voiceDictation.postProcess.discard.confirm": "Discard",
+  "voiceDictation.postProcess.reset.title": "Restore the default prompt?",
+  "voiceDictation.postProcess.reset.description":
+    "Your custom prompt will be removed and the built-in default will be used. Unsaved edits are discarded.",
+  "voiceDictation.postProcess.tryIt.title": "Try it",
+  "voiceDictation.postProcess.tryIt.description":
+    "Runs the prompt above on a sample sentence. Unsaved edits are included; nothing is saved.",
+  "voiceDictation.postProcess.tryIt.sample": "Sample text",
+  "voiceDictation.postProcess.tryIt.run": "Run",
+  "voiceDictation.postProcess.tryIt.running": "Running…",
+  "voiceDictation.postProcess.tryIt.failed": "The prompt could not run: {reason}",
+  "voiceDictation.group.dictation.title": "Dictation",
+  "voiceDictation.group.microphone.title": "Microphone",
+  "voiceDictation.group.output.title": "Output",
+  "voiceDictation.memory.title": "Memory",
+  "voiceDictation.shortcut.open": "Open Keyboard Shortcuts",
   "voiceDictation.postProcess.unavailable.unsupportedPlatform":
     "The system model is only available on macOS.",
   "voiceDictation.postProcess.unavailable.helperMissing":
@@ -7856,8 +7887,7 @@ const enUS: Record<string, string> = {
   "voiceDictation.models.remove": "Delete",
   "voiceDictation.models.startingDownload": "Starting download…",
   "voiceDictation.models.useWhenReady": "Use when ready",
-  "voiceDictation.models.cancelUseWhenReady": "Keep current model",
-  "voiceDictation.models.willUseWhenReady": "Will use when ready",
+  "voiceDictation.models.cancelUseWhenReady": "Cancel use when ready",
   "voiceDictation.models.removeConfirm.title": "Delete this model?",
   "voiceDictation.models.removeConfirm.description":
     "{model} will be removed from this device. You can download it again later.",

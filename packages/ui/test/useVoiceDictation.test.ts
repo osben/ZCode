@@ -94,6 +94,7 @@ beforeEach(() => {
     finalizeStream: vi.fn().mockResolvedValue({ text: "Hello there", language: "en" }),
     cancelStream: vi.fn().mockResolvedValue(undefined),
     transcribe: vi.fn().mockResolvedValue({ text: "One shot", language: "en" }),
+    getPostProcessAvailability: vi.fn().mockResolvedValue({ status: "available" }),
   };
 });
 
@@ -564,6 +565,23 @@ describe("useVoiceDictation post-processing", () => {
     expect(onTranscript).toHaveBeenCalledTimes(1);
     expect(onTranscript).toHaveBeenCalledWith("Hello there.", "Hello there");
     expect(hook.result.current.phase).toBe("idle");
+  });
+
+  it("never starts a rewrite when the Host reports the provider unavailable at dictation time", async () => {
+    // A settings-screen answer can be stale; the runtime re-reads availability before processing.
+    mocks.service!.getPostProcessAvailability!.mockResolvedValue({
+      status: "unavailable",
+      reason: "appleIntelligenceNotEnabled",
+    });
+    const onTranscript = vi.fn();
+    const hook = renderDictation(onTranscript);
+    await speak(hook);
+
+    await act(async () => hook.result.current.stop());
+
+    expect(mocks.service!.postProcess).not.toHaveBeenCalled();
+    expect(hook.result.current.phase).toBe("idle");
+    expect(onTranscript).toHaveBeenCalledWith("Hello there", "Hello there");
   });
 
   it("uses the user's prompt and provider", async () => {

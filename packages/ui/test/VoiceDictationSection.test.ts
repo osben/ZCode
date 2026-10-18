@@ -121,6 +121,8 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
 }));
 vi.mock("@/components/ui/toast.js", () => ({ toast: vi.fn() }));
 vi.mock("@/logger.js", () => ({ logger: { warn: vi.fn() } }));
+const confirmMock = vi.hoisted(() => ({ confirm: vi.fn(async () => true) }));
+vi.mock("@/hooks/useConfirmDialog.js", () => ({ useConfirmDialog: () => confirmMock.confirm }));
 vi.mock("@/lib/voiceDictationFeedbackSound.js", () => ({
   playVoiceDictationFeedbackSound: vi.fn(async () => {}),
 }));
@@ -168,7 +170,7 @@ vi.mock("@/lib/voiceDictationRecorder.js", () => ({
 
 import { toast } from "@/components/ui/toast.js";
 import { playVoiceDictationFeedbackSound } from "@/lib/voiceDictationFeedbackSound.js";
-import { DEFAULT_POST_PROCESS_PROMPT } from "@zcode/services";
+import { DEFAULT_POST_PROCESS_PROMPT, POST_PROCESS_PROMPT_MAX_LENGTH } from "@zcode/services";
 import {
   isSameVoiceSettingValue,
   VoiceDictationSection,
@@ -269,8 +271,13 @@ describe("VoiceDictationSection model downloads", () => {
     );
 
     expect(screen.getByText("voiceDictation.models.selected")).toBeTruthy();
-    expect(screen.getByText("voiceDictation.models.willUseWhenReady")).toBeTruthy();
-    expect(screen.queryByText("voiceDictation.models.useWhenReady")).toBeNull();
+    // One term for the pending state: the badge reads "use when ready" and the action flips to cancel.
+    expect(screen.getByText("voiceDictation.models.useWhenReady")).toBeTruthy();
+    expect(
+      screen.getByRole("button", {
+        name: "Model Two: voiceDictation.models.cancelUseWhenReady",
+      }),
+    ).toBeTruthy();
     expect(h.updateSettings).not.toHaveBeenCalled();
     await screen.findByText("voiceDictation.models.downloading", {}, { timeout: 3000 });
 
@@ -612,39 +619,194 @@ describe("VoiceDictationSection post-processing", () => {
     expect((await toggle()).hasAttribute("disabled")).toBe(true);
   });
 
-  it("shows the default prompt, saves an edited prompt on blur, and resets to the default", async () => {
+  const saveButton = () =>
+    screen.findByRole("button", { name: "voiceDictation.postProcess.prompt.save" });
+  const cancelButton = () =>
+    screen.findByRole("button", { name: "voiceDictation.postProcess.prompt.cancel" });
+  const resetButton = () =>
+    screen.findByRole("button", { name: "voiceDictation.postProcess.prompt.reset" });
+  const tryItRun = () =>
+    screen.findByRole("button", { name: "voiceDictation.postProcess.tryIt.run" });
+
+  it("keeps edits as an unsaved draft until Save, then stores the prompt", async () => {
     h.settings.voiceDictation = { modelId: "model-one" };
     render(createElement(VoiceDictationSection, { isDesktop: true }));
     const field = (await prompt()) as HTMLTextAreaElement;
     expect(field.value).toBe(DEFAULT_POST_PROCESS_PROMPT);
+    expect((await saveButton()).hasAttribute("disabled")).toBe(true);
 
     fireEvent.change(field, { target: { value: "Shorten: {{text}}" } });
-    // Typing alone must not write settings on every keystroke.
+    // Typing alone must not write settings; the draft shows the dirty state instead.
     expect(h.updateSettings).not.toHaveBeenCalled();
-    fireEvent.blur(field);
+    expect(screen.getByText("voiceDictation.postProcess.prompt.unsaved")).toBeTruthy();
+    expect((await saveButton()).hasAttribute("disabled")).toBe(false);
+
+    fireEvent.click(await saveButton());
     await waitFor(() =>
       expect(h.updateSettings).toHaveBeenCalledWith({
         voiceDictation: { modelId: "model-one", postProcessPrompt: "Shorten: {{text}}" },
       }),
     );
-
-    fireEvent.click(
-      screen.getByRole("button", { name: "voiceDictation.postProcess.prompt.reset" }),
-    );
     await waitFor(() =>
-      expect(h.updateSettings).toHaveBeenLastCalledWith({
-        voiceDictation: { modelId: "model-one", postProcessPrompt: DEFAULT_POST_PROCESS_PROMPT },
-      }),
+      expect(screen.queryByText("voiceDictation.postProcess.prompt.unsaved")).toBeNull(),
     );
+  });
+
+  it("saves the default text as no custom prompt so the default keeps following updates", async () => {
+    h.settings.voiceDictation = { modelId: "model-one", postProcessPrompt: "Custom {{text}}" };
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+    const field = (await prompt()) as HTMLTextAreaElement;
+    expect(field.value).toBe("Custom {{text}}");
+
+    fireEvent.change(field, { target: { value: DEFAULT_POST_PROCESS_PROMPT } });
+    fireEvent.click(await saveButton());
+    await waitFor(() => expect(h.updateSettings).toHaveBeenCalled());
+    expect(h.updateSettings.mock.lastCall?.[0].voiceDictation.postProcessPrompt).toBeUndefined();
+  });
+
+  it("Reset asks first, then removes the stored key instead of writing the default text", async () => {
+    h.settings.voiceDictation = { modelId: "model-one", postProcessPrompt: "Custom {{text}}" };
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+    fireEvent.click(await resetButton());
+
+    await waitFor(() => expect(confirmMock.confirm).toHaveBeenCalled());
+    await waitFor(() => expect(h.updateSettings).toHaveBeenCalled());
+    expect(h.updateSettings.mock.lastCall?.[0].voiceDictation.postProcessPrompt).toBeUndefined();
     expect(((await prompt()) as HTMLTextAreaElement).value).toBe(DEFAULT_POST_PROCESS_PROMPT);
   });
 
-  it("offers the system model as the provider", async () => {
+  it("Reset does nothing when the user cancels the confirmation", async () => {
+    h.settings.voiceDictation = { modelId: "model-one", postProcessPrompt: "Custom {{text}}" };
+    confirmMock.confirm.mockResolvedValueOnce(false);
     render(createElement(VoiceDictationSection, { isDesktop: true }));
-    const provider = await screen.findByRole("combobox", {
-      name: "voiceDictation.postProcess.provider.title",
+    fireEvent.click(await resetButton());
+
+    await waitFor(() => expect(confirmMock.confirm).toHaveBeenCalled());
+    expect(h.updateSettings).not.toHaveBeenCalled();
+    expect(((await prompt()) as HTMLTextAreaElement).value).toBe("Custom {{text}}");
+  });
+
+  it("Escape with unsaved edits asks to discard; confirming reverts the draft", async () => {
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+    const field = (await prompt()) as HTMLTextAreaElement;
+    fireEvent.change(field, { target: { value: "Edited {{text}}" } });
+
+    fireEvent.keyDown(field, { key: "Escape" });
+    await waitFor(() =>
+      expect(confirmMock.confirm).toHaveBeenCalledWith(
+        expect.objectContaining({ confirmVariant: "destructive" }),
+      ),
+    );
+    await waitFor(() => expect(field.value).toBe(DEFAULT_POST_PROCESS_PROMPT));
+    expect(h.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("Escape keeps the draft when the discard is declined", async () => {
+    confirmMock.confirm.mockResolvedValueOnce(false);
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+    const field = (await prompt()) as HTMLTextAreaElement;
+    fireEvent.change(field, { target: { value: "Edited {{text}}" } });
+
+    fireEvent.keyDown(field, { key: "Escape" });
+    await waitFor(() => expect(confirmMock.confirm).toHaveBeenCalled());
+    expect(field.value).toBe("Edited {{text}}");
+  });
+
+  it("Cancel reverts an unsaved draft without writing settings", async () => {
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+    const field = (await prompt()) as HTMLTextAreaElement;
+    fireEvent.change(field, { target: { value: "Edited {{text}}" } });
+
+    fireEvent.click(await cancelButton());
+    await waitFor(() => expect(field.value).toBe(DEFAULT_POST_PROCESS_PROMPT));
+    expect(h.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("disables Save above the length limit and never truncates the draft", async () => {
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+    const field = (await prompt()) as HTMLTextAreaElement;
+    const tooLong = `${"a".repeat(POST_PROCESS_PROMPT_MAX_LENGTH)} {{text}}`;
+    fireEvent.change(field, { target: { value: tooLong } });
+
+    expect(field.value).toBe(tooLong);
+    expect(screen.getByText("voiceDictation.postProcess.prompt.tooLong")).toBeTruthy();
+    expect((await saveButton()).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("explains that the transcript is appended when the prompt has no {{text}}", async () => {
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+    const field = (await prompt()) as HTMLTextAreaElement;
+    fireEvent.change(field, { target: { value: "Fix punctuation." } });
+
+    expect(screen.getByText("voiceDictation.postProcess.prompt.noVariable")).toBeTruthy();
+    expect((await saveButton()).hasAttribute("disabled")).toBe(false);
+  });
+
+  it("keeps the unsaved draft when saving fails", async () => {
+    h.updateSettings.mockRejectedValueOnce(new Error("disk full"));
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+    const field = (await prompt()) as HTMLTextAreaElement;
+    fireEvent.change(field, { target: { value: "Shorten: {{text}}" } });
+
+    fireEvent.click(await saveButton());
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("voiceDictation.saveFailed"));
+    expect(field.value).toBe("Shorten: {{text}}");
+    expect(screen.getByText("voiceDictation.postProcess.prompt.unsaved")).toBeTruthy();
+  });
+
+  it("Try it runs the editor draft on the sample and shows the output without saving", async () => {
+    h.voiceDictationService.postProcess = vi.fn(async () => ({
+      text: "Can you explain why this test fails?",
+    }));
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+    const field = (await prompt()) as HTMLTextAreaElement;
+    fireEvent.change(field, { target: { value: "Fix: {{text}}" } });
+
+    fireEvent.click(await tryItRun());
+    expect(await screen.findByText("Can you explain why this test fails?")).toBeTruthy();
+    expect(h.voiceDictationService.postProcess).toHaveBeenCalledWith({
+      text: "um so can you explain why this test fails",
+      prompt: "Fix: {{text}}",
+      provider: "apple-fm",
     });
-    expect(provider.textContent).toContain("voiceDictation.postProcess.provider.appleFm");
+    expect(h.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("Try it shows an inline error when the Host fails", async () => {
+    h.voiceDictationService.postProcess = vi.fn(async () => {
+      throw new Error("post-processing failed: timeout");
+    });
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+
+    fireEvent.click(await tryItRun());
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("voiceDictation.postProcess.tryIt.failed");
+  });
+
+  it("shows a checking status without a reason, and keeps the switch disabled, until the Host answers", async () => {
+    let answer!: (value: { status: string; reason?: string }) => void;
+    h.voiceDictationService.getPostProcessAvailability.mockReturnValueOnce(
+      new Promise((resolve) => (answer = resolve)),
+    );
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+
+    expect(await screen.findByText("voiceDictation.postProcess.status.checking")).toBeTruthy();
+    expect(screen.queryByText(/voiceDictation\.postProcess\.unavailable\./)).toBeNull();
+    expect((await toggle()).hasAttribute("disabled")).toBe(true);
+
+    await act(async () => answer({ status: "unavailable", reason: "modelNotReady" }));
+    expect(
+      await screen.findByText("voiceDictation.postProcess.unavailable.modelNotReady"),
+    ).toBeTruthy();
+    expect((await toggle()).getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("shows the system model as read-only provider text", async () => {
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+    expect(await screen.findByText("voiceDictation.postProcess.provider.appleFm")).toBeTruthy();
+    expect(
+      screen.queryByRole("combobox", { name: "voiceDictation.postProcess.provider.title" }),
+    ).toBeNull();
   });
 });
 
@@ -778,6 +940,60 @@ describe("VoiceDictationSection languages and model filters", () => {
       screen.getByRole("button", { name: "voiceDictation.models.filter.downloaded" }),
     );
     await waitFor(() => expect(cardNames()).toEqual(["Model One"]));
+  });
+});
+
+describe("VoiceDictationSection layout and compatibility", () => {
+  it("renders the five cards in order", async () => {
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+    const titles = [
+      "voiceDictation.group.dictation.title",
+      "voiceDictation.group.microphone.title",
+      "voiceDictation.models.title",
+      "voiceDictation.group.output.title",
+      "voiceDictation.postProcess.title",
+    ];
+    const headings = await Promise.all(
+      titles.map((name) => screen.findByRole("heading", { name, level: 3 })),
+    );
+    for (let index = 1; index < headings.length; index += 1) {
+      expect(
+        headings[index - 1]!.compareDocumentPosition(headings[index]!) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    }
+  });
+
+  it("opens the Keyboard Shortcuts section from the Dictation card", async () => {
+    window.sessionStorage.removeItem("zcode-settings-section-intent");
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "voiceDictation.shortcut.open" }));
+    expect(window.sessionStorage.getItem("zcode-settings-section-intent")).toBe("shortcuts");
+  });
+
+  it("saves the unload delay without a failure toast when the Host predates the method", async () => {
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    h.voiceDictationService.setIdleUnloadMinutes.mockRejectedValueOnce(
+      new Error("Method not found: setIdleUnloadMinutes"),
+    );
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+
+    fireEvent.click(
+      await screen.findByRole("combobox", { name: "voiceDictation.models.unloadDelay.title" }),
+    );
+    fireEvent.click((await screen.findAllByRole("option"))[2]!);
+
+    await waitFor(() =>
+      expect(h.updateSettings).toHaveBeenCalledWith({
+        voiceDictation: { modelId: "model-one", idleUnloadMinutes: 10 },
+      }),
+    );
+    await waitFor(() => expect(h.voiceDictationService.setIdleUnloadMinutes).toHaveBeenCalled());
+    expect(toast).not.toHaveBeenCalledWith("voiceDictation.saveFailed");
   });
 });
 

@@ -2,7 +2,11 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
 import { toast } from "@/components/ui/toast.js";
 import { resolveEngineLanguage, type VoiceTranscriptionPreview } from "@zcode/services";
 import { applyIdleUnloadPreference } from "@/lib/voiceIdleUnload.js";
-import { postProcessOrRaw, readPostProcessSettings } from "@/lib/voicePostProcess.js";
+import {
+  isPostProcessAvailable,
+  postProcessOrRaw,
+  readPostProcessSettings,
+} from "@/lib/voicePostProcess.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useServices } from "@/hooks/useServices.js";
 import { useSettings } from "@/hooks/useSettingService.js";
@@ -386,15 +390,20 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
       const rawText = result.text.trim();
       let text = rawText;
       if (rawText && postProcessEnabled && generation === startGenerationRef.current) {
-        updatePhase("processing");
-        text = await postProcessOrRaw(
-          voiceDictationService,
-          { text: rawText, prompt: postProcessPrompt, provider: postProcessProvider },
-          (error) =>
-            logger.warn("voice dictation post-processing failed; inserting the raw transcript", {
-              error: error instanceof Error ? error.message : String(error),
-            }),
-        );
+        // The Host decides availability at dictation time: a stale settings-screen answer must never
+        // start a rewrite on a machine where the provider is now unavailable.
+        const available = await isPostProcessAvailable(voiceDictationService);
+        if (available && generation === startGenerationRef.current) {
+          updatePhase("processing");
+          text = await postProcessOrRaw(
+            voiceDictationService,
+            { text: rawText, prompt: postProcessPrompt, provider: postProcessProvider },
+            (error) =>
+              logger.warn("voice dictation post-processing failed; inserting the raw transcript", {
+                error: error instanceof Error ? error.message : String(error),
+              }),
+          );
+        }
       }
       if (rawText && generation === startGenerationRef.current) {
         onTranscriptRef.current(text, rawText);
