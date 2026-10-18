@@ -316,7 +316,25 @@ describe("useVoiceDictation streaming", () => {
     expect(mute.mock.invocationCallOrder[1]).toBeLessThan(chime.mock.invocationCallOrder[1]);
   });
 
+  it("mutes system sound by default when muteWhileRecording is absent", async () => {
+    const onTranscript = vi.fn();
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    const hook = renderHook(() =>
+      useVoiceDictation({ enabled: true, onTranscript, scopeRef: { current: null } }),
+    );
+
+    await act(async () => hook.result.current.start());
+    now.mockReturnValue(1500);
+    await act(async () => hook.result.current.stop());
+
+    expect(mocks.platform.setDictationSystemMute!.mock.calls).toEqual([[true], [false]]);
+  });
+
   it("stays silent for sounds and the mute when the settings are off", async () => {
+    mocks.settings!.voiceDictation = {
+      ...mocks.settings!.voiceDictation,
+      muteWhileRecording: false,
+    };
     const onTranscript = vi.fn();
     const now = vi.spyOn(Date, "now").mockReturnValue(1000);
     const hook = renderHook(() =>

@@ -122,7 +122,7 @@ function DesktopVoiceDictationSection() {
   const idleUnloadMinutes = voice.idleUnloadMinutes ?? 5;
   const feedbackSounds = voice.feedbackSounds === true;
   const savedFeedbackVolume = voice.feedbackVolume ?? DEFAULT_FEEDBACK_VOLUME;
-  const muteWhileRecording = voice.muteWhileRecording === true;
+  const muteWhileRecording = voice.muteWhileRecording !== false;
   const copyToClipboard = voice.copyToClipboard === true;
   const warmUpOnFocus = voice.warmUpOnFocus !== false;
 

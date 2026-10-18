@@ -375,7 +375,7 @@ describe("VoiceDictationSection feedback sounds", () => {
           modelId: "model-one",
           feedbackVolume: 54,
           feedbackSounds: true,
-          muteWhileRecording: true,
+          muteWhileRecording: false,
         },
       }),
     );

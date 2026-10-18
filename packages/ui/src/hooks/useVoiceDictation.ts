@@ -62,7 +62,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
   const language = resolveEngineLanguage(voice ?? {});
   const pushToTalk = voice?.pushToTalk !== false;
   const idleUnloadMinutes = voice?.idleUnloadMinutes ?? 5;
-  const muteWhileRecording = voice?.muteWhileRecording === true;
+  const muteWhileRecording = voice?.muteWhileRecording !== false;
   const {
     enabled: postProcessEnabled,
     prompt: postProcessPrompt,
