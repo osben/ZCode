@@ -1935,6 +1935,7 @@ const enUS: Record<string, string> = {
   "workspaceSidebar.conversationsSection": "Tasks",
   "workspaceSidebar.projectsSection": "Projects",
   "workspaceSidebar.newConversation": "New task",
+  "workspaceSidebar.newTaskOutsideProject": "New task outside a project",
   "workspaceSidebar.reorderSection": "Move {section} section",
   "workspaceSidebar.addProject": "Add project",
   "workspaceSidebar.noConversations": "No tasks yet",

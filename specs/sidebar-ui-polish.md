@@ -12,3 +12,23 @@ The conversation pinned-message strip keeps its accessible title on the containe
 - A pointer move beyond the drag activation distance after pressing the menu trigger does not reorder the project row.
 - Menu actions retain their labels and behavior.
 - Pinned messages retain navigation, removal, and an accessible strip label.
+
+## Distinct names for the two "New task" entry points
+
+The sidebar has two task-creation entry points with different destinations:
+
+- The top "New task" control (`taskList.newThread` in the sidebar, `sidebar.newTask` on the collapsed-sidebar overlay) starts a draft in the active workspace (the project the user is working in).
+- The "Tasks" section's add button (`TID_CONVERSATION_NEW_TASK`) starts a draft in the app-owned conversation workspace. The composer then shows "Select project" and no Git destination chip, by design.
+
+Both used to carry the same accessible name and tooltip ("New task"). Screen readers, keyboard users, and automation that select by role and name could not tell them apart. Clicking `button "New task"` (the only button with that exact name) reproduces the QA MINOR-3 symptom (RT3-C7obs): after a reload, the composer shows "Select project" with no destination chip. The QA harness did not record which control it clicked.
+
+### Contract
+
+- The conversation-section button uses its own message key, `workspaceSidebar.newTaskOutsideProject`, for both its `aria-label` and its tooltip title. The wording reuses the composer's existing "outside a project" phrasing (`chat.empty.workOutsideProject`).
+- In every shipped locale, that label differs from both `taskList.newThread` and `sidebar.newTask`, so only the top entry point is named plain "New task".
+- Behavior, test id, icon, and placement are unchanged. The upstream key `workspaceSidebar.newConversation` stays in the locale tables untouched.
+
+### Acceptance
+
+- With each locale's real message table, the mounted sidebar's conversation button has an accessible name that differs from that locale's `taskList.newThread` and `sidebar.newTask`.
+- Clicking the button still calls the conversation-task handler.

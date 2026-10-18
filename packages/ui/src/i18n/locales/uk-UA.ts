@@ -1748,6 +1748,7 @@ const ukUA: Record<string, string> = {
   "workspaceSidebar.conversationsSection": "Завдання",
   "workspaceSidebar.projectsSection": "Проєкти",
   "workspaceSidebar.newConversation": "Нове завдання",
+  "workspaceSidebar.newTaskOutsideProject": "Нове завдання поза проєктом",
   "workspaceSidebar.reorderSection": "Перемістити розділ {section}",
   "workspaceSidebar.addProject": "Додати проєкт",
   "workspaceSidebar.noConversations": "Завдань ще немає",
