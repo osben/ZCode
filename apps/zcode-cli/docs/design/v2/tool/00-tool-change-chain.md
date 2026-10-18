@@ -17,6 +17,9 @@ Bash 的 runtime capability 在命令通过 readonly validation 且不含 `cd`/`
 仍受 scheduler/executor 的 `maxConcurrency` 上限约束。含目录切换的只读命令保持串行，因为成功后
 捕获的 cwd 会写回 session，并行写回的先后顺序不可预测。
 边界：调度基于模型给出的 input；PreToolUse hook 改写后的 input 会重走权限检查，但不重新调度。
+因此 Bash cwd 写回是 compare-and-set：只有 session cwd 仍等于本命令启动时的 cwd 才写回。若同组的
+另一命令（例如被 hook 改写成 `cd` 的调用）已先改变 session cwd，本命令不写回；若本命令自己也切换了
+目录，则在 stderr 追加未持久化提示。串行执行时启动与完成之间无人改 cwd，行为不变。
 streaming 期间的提前执行仍只看静态 metadata，Bash 不参与（后续单独设计）。
 工具 schema、权限决策、执行、结果格式与 UI/V4 投影不变；`tool_call_scheduled` 的
 `canRunParallel` / `parallelGroupIndex` 如实反映新的分组。cwd 捕获文件按调用随机命名，后台任务

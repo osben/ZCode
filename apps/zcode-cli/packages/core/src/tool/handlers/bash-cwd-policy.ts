@@ -48,6 +48,38 @@ export function decideBashCwdPolicy(input: BashCwdPolicyInput): BashCwdPolicyDec
   };
 }
 
+export const BASH_CONCURRENT_CWD_CHANGE_SUFFIX =
+  "Shell cwd was not persisted because another command changed it concurrently";
+
+/**
+ * Compare-and-set guard for the cwd write-back. Scheduling admits calls into a parallel group from
+ * the model's input, but a PreToolUse hook may rewrite one of them into a directory change; if a
+ * sibling that started from the old cwd finished last, its write-back would undo that change.
+ * Only write back while the session cwd still equals the cwd this command started from.
+ */
+export function guardBashCwdWriteBack(
+  decision: BashCwdPolicyDecision,
+  input: {
+    startWorkingDirectory: string;
+    currentWorkingDirectory: string | undefined;
+    platform?: ToolPathPlatform;
+  },
+): BashCwdPolicyDecision {
+  if (!decision.nextWorkingDirectory || input.currentWorkingDirectory === undefined) {
+    return decision;
+  }
+  if (input.currentWorkingDirectory === input.startWorkingDirectory) return decision;
+  const isWindows = (input.platform ?? currentPlatform) === "win32";
+  const changedOwnCwd =
+    comparableCwd(decision.nextWorkingDirectory, isWindows) !==
+    comparableCwd(input.startWorkingDirectory, isWindows);
+  return changedOwnCwd ? { stderrSuffix: BASH_CONCURRENT_CWD_CHANGE_SUFFIX } : {};
+}
+
+function comparableCwd(value: string, isWindows: boolean): string {
+  return realpathCwdBoundary(value, isWindows) ?? normalizeCwdBoundary(value, isWindows);
+}
+
 export function appendBashCwdStderrSuffix(stderr: string, suffix: string | undefined): string {
   if (!suffix) return stderr;
   const stderrWithoutTrailingNewlines = stderr.replace(/[\r\n]+$/, "");

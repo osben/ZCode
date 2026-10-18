@@ -189,6 +189,8 @@ export interface ToolExecutionContext {
   recordSkillTelemetryMetadata?: (metadata: SkillTelemetryMetadata) => void;
   bashShellSelection?: ExecutionShellSelection;
   embeddedSearch?: ToolEmbeddedSearchContext;
+  /** Live session cwd from its owner; `workingDirectory` is the snapshot this call started from. */
+  getWorkingDirectory?: () => string;
   setWorkingDirectory?: (cwd: string) => Promise<void> | void;
   workingDirectory: string;
   workspaceRoot: string;

@@ -36,7 +36,7 @@ import type {
   ToolRuntimePermissionCapabilityContext,
 } from "../types.js";
 import { resolveToolWorkingDirectory } from "../path-policy.js";
-import { decideBashCwdPolicy } from "./bash-cwd-policy.js";
+import { decideBashCwdPolicy, guardBashCwdWriteBack } from "./bash-cwd-policy.js";
 export {
   getBashActivityDescription,
   getBashAutoClassifierInput,
@@ -254,13 +254,19 @@ async function executeBashHandler(
   }
 
   const result = runResult.result;
-  const cwdDecision = decideBashCwdPolicy({
-    status: result.status,
-    exitCode: result.exitCode,
-    resolvedCwd: result.resolvedCwd,
-    workspaceRoot: context.workspaceRoot,
-    runtimeScope: context.runtimeScope,
-  });
+  const cwdDecision = guardBashCwdWriteBack(
+    decideBashCwdPolicy({
+      status: result.status,
+      exitCode: result.exitCode,
+      resolvedCwd: result.resolvedCwd,
+      workspaceRoot: context.workspaceRoot,
+      runtimeScope: context.runtimeScope,
+    }),
+    {
+      startWorkingDirectory: context.workingDirectory,
+      currentWorkingDirectory: context.getWorkingDirectory?.(),
+    },
+  );
   if (cwdDecision.nextWorkingDirectory) {
     // After successful Bash execution on the main thread, preserve a CWD inside the project.
     // If it leaves the project boundary, reset to the original workspace and put the reset message in Bash stderr.

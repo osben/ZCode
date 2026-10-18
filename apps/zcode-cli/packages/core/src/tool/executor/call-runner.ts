@@ -469,6 +469,7 @@ async function executeToolCallImpl(
           skillTelemetryMetadata = metadata;
         },
         bashShellSelection,
+        getWorkingDirectory: deps.getWorkingDirectory,
         setWorkingDirectory: deps.setWorkingDirectory,
         workingDirectory: guardedWorkingDirectory ?? deps.getWorkingDirectory(),
         workspaceRoot: deps.getWorkspaceRoot(),

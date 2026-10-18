@@ -143,7 +143,8 @@ ZCode prompt 可以更短，但这些约束应变成 tool policy 和 tests，而
 - `isConcurrencySafe(input)` 等于只读判断，且命令不含 `cd`/`pushd`/`popd`：前台命令成功后会把
   `pwd -P` 写回 session cwd，并行的目录切换会让最终 cwd 取决于完成顺序。runtime capability 以
   `concurrentSafe` 字段返回该结论，`scheduleTools` 据此把只读 Bash 与相邻并发安全调用放入同一
-  parallel group；其余 Bash 保持串行。
+  parallel group；其余 Bash 保持串行。cwd 写回是 compare-and-set：session cwd 已被同组其他命令改变时
+  不写回，避免 hook 改写出的目录切换被并行兄弟命令覆盖。
 - command permission 支持 exact、prefix、wildcard。
 - compound command 必须拆分子命令，任一子命令匹配 hook 或 deny 规则都要触发。
 - 无法安全解析、过于复杂、包含危险语义时 fail closed 到 ask。

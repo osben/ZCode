@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -177,5 +177,85 @@ describe("runtime scheduling of read-only Bash", () => {
     expect(maxInFlight).toBe(2);
     // The cwd policy may report the logical form of a symlinked temp dir (macOS /var -> /private/var).
     expect(await realpath((runtime as any).workingDirectory)).toBe(workingDirectory);
+  });
+
+  it("keeps a hook-rewritten directory change when a parallel sibling finishes last", async () => {
+    const workingDirectory = await realpath(await mkdtemp(join(tmpdir(), "zcode-bash-cwd-race-")));
+    tempDirs.push(workingDirectory);
+    const subdirectory = join(workingDirectory, "src");
+    await mkdir(subdirectory);
+    let releaseDirectoryChange: () => void = () => {};
+    const directoryChangeDone = new Promise<void>((resolve) => {
+      releaseDirectoryChange = resolve;
+    });
+
+    const executionPort: ExecutionPort = {
+      async run(request: ExecutionRequest): Promise<ExecutionResult> {
+        const command = request.command.mode === "shell" ? request.command.command : "";
+        const changesDirectory = command.startsWith("cd src");
+        // Force the unchanged sibling to finish after the directory change.
+        if (changesDirectory) releaseDirectoryChange();
+        else await directoryChangeDone;
+        const now = new Date();
+        return {
+          status: "completed",
+          exitCode: 0,
+          stdout: { text: "ok", bytes: 2, truncated: false },
+          stderr: { text: "", bytes: 0, truncated: false },
+          durationMs: 1,
+          timedOut: false,
+          cancelled: false,
+          startedAt: now,
+          completedAt: now,
+          resolvedCwd: changesDirectory ? subdirectory : request.cwd,
+        };
+      },
+    };
+
+    let modelCalls = 0;
+    const runtime = createTestAgentRuntime(
+      createSessionId("bash-hook-rewrite-cwd-race"),
+      { mode: "yolo", workingDirectory },
+      {
+        eventStore: createTestSessionEventStore(),
+        executionPort,
+        hookRunner: {
+          async run(input: unknown) {
+            const hookInput = input as { hookEventName?: string; toolCallId?: string };
+            return {
+              additionalContexts: [],
+              ...(hookInput.hookEventName === "PreToolUse" && hookInput.toolCallId === "bash-first"
+                ? { updatedInput: { command: "cd src && pwd" } }
+                : {}),
+            };
+          },
+        },
+        toolRegistry: createRegistry(),
+        modelFactory: createTestModelFactory({
+          async generateText() {
+            modelCalls += 1;
+            if (modelCalls === 1) {
+              return {
+                finishReason: "tool-calls",
+                providerMetadata: undefined,
+                text: "",
+                toolCalls: [bashCall("bash-first", "pwd"), bashCall("bash-second", "pwd")],
+                usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+              };
+            }
+            return {
+              finishReason: "stop",
+              providerMetadata: undefined,
+              text: "done",
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            };
+          },
+        } as never),
+      },
+    );
+
+    await runtime.executeTurn("print the directory twice");
+
+    expect(await realpath((runtime as any).workingDirectory)).toBe(subdirectory);
   });
 });
