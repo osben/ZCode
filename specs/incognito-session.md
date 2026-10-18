@@ -1,6 +1,6 @@
 # Incognito session
 
-Status: in progress (2026-10-18). Slices 1–4 implemented: shared profile contract and fork setting; CLI storage (`session.fork_incognito`); CLI runtime overrides, inheritance, dream exclusion and the `incognitoSession` runtime capability (apps/zcode-cli/docs/design/v2/incognito-session.md); Host and renderer capability gates and the `incognito` summary/task-meta projection. UI (slice 5) pending; nothing sends `incognito` yet.
+Status: implemented (2026-10-18), slices 1–5: shared profile contract and fork setting; CLI storage (`session.fork_incognito`); CLI runtime overrides, inheritance, dream exclusion and the `incognitoSession` runtime capability (apps/zcode-cli/docs/design/v2/incognito-session.md); Host and renderer capability gates and the `incognito` summary/task-meta projection; UI (composer toggle and checklist, prompt-shell tint and chip, prewarm bypass, sidebar/hover-card/session-manager marker, Settings «Incognito», i18n). The desktop E2E scenarios (13, 17) are written but have not been run.
 
 ## Problem
 

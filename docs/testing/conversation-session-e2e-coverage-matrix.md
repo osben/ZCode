@@ -2868,3 +2868,10 @@ Accepted by the implementation request; evidence remains pending manual review.
 | REL-WT-05  | A late reservation ACK after navigating away never switches the active chat or overwrites the next draft; the prepared session and its recovery record survive                                                                           | v4ConversationComposerWorktreeLateAck mounted composer tests; worktree-chat-first pending desktop navigation case                   |
 | REL-WT-06  | Host preparation updates stay authoritative over renderer pipeline entries: newer attempts replace stale ones, cancellation stops delivery, and stale Git registrations fail recoverably instead of turning ready                        | composerWorktreePipeline restore/reconcile tests; gitCliRepo verifyWorktreeUsable test; SetupSteps mounted behavior tests           |
 | REL-WT-07  | Recovery records snapshot the full frozen submission (quotes, code comments, web/PPTX/plugin contexts); Restore re-establishes exactly that submission, and Command Center refuses to delete a prepared session's worktree (incl. force) | composerRecoveryContexts store/dispatch tests; worktreeProtection pure guard tests; windowControllerWorktreePreparation schema test |
+
+## Incognito session draft coverage
+
+specs/incognito-session.md scenarios 13 and 17: INCOGNITO-01/02 use pending
+`conversation-session-incognito-draft.test.ts` (composer toggle, per-session checklist, prompt-shell
+tint + chip, no upstream request before send; first send produces the sidebar incognito marker).
+Not run yet: written without a built desktop app or CLI in the authoring environment.

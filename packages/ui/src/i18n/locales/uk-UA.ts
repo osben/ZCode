@@ -8255,6 +8255,43 @@ const ukUA: Record<string, string> = {
   "sessionManager.empty.noMatch": "Жодна сесія не відповідає цим фільтрам",
   "sessionManager.openFromProjectMenu": "Керування сесіями",
   "quickPick.command.manageSessions": "Керування сесіями",
+  // Incognito session (specs/incognito-session.md)
+  "taskList.incognitoTaskLabel": "Сесія інкогніто",
+  "chat.incognito.toggle": "Сесія інкогніто",
+  "chat.incognito.toggleDescription": "Почати наступну сесію без розширень",
+  "chat.incognito.marker": "Інкогніто",
+  "chat.incognito.removeMarker": "Вимкнути інкогніто",
+  "chat.incognito.includeHeading": "Увімкнути в цій сесії",
+  "chat.incognito.settingsLink": "Налаштування інкогніто…",
+  "chat.incognito.unsupported":
+    "Ця версія агента не вміє запускати сесії інкогніто. Оновіть застосунок або віддалений агент і спробуйте ще раз.",
+  "settings.incognito": "Інкогніто",
+  "settings.incognito.description":
+    "Типові налаштування для нових сесій інкогніто. Увімкніть можливість, щоб вона була включена за замовчуванням; для кожної сесії її все одно можна змінити в полі введення.",
+  "settings.incognito.scopeHint":
+    "Інкогніто запускає чисту сесію без розширень нижче. Це не режим приватності: статистика використання, телеметрія, історія введення та журнали моделі все одно записуються.",
+  "incognito.capability.projectInstructions.label": "Інструкції проєкту",
+  "incognito.capability.projectInstructions.description": "AGENTS.md з домашньої теки та проєкту",
+  "incognito.capability.skills.label": "Список навичок",
+  "incognito.capability.skills.description":
+    "Навички не перелічуються в промпті; навичку все одно можна запустити за назвою",
+  "incognito.capability.hooks.label": "Хуки",
+  "incognito.capability.hooks.description": "Хуки користувача, проєкту та плагінів",
+  "incognito.capability.plugins.label": "Плагіни",
+  "incognito.capability.plugins.description":
+    "Навички, хуки, MCP-сервери та агенти плагінів, зокрема керування браузером і комп'ютером",
+  "incognito.capability.mcp.label": "MCP-сервери",
+  "incognito.capability.mcp.description": "MCP-сервери з налаштувань і проєкту",
+  "incognito.capability.customAgents.label": "Власні агенти",
+  "incognito.capability.customAgents.description":
+    "Ваші профілі агентів і профілі проєкту; вбудовані агенти лишаються доступними",
+  "incognito.capability.memory.label": "Пам'ять",
+  "incognito.capability.memory.description": "Читання та запис пам'яті проєкту",
+  "incognito.capability.outputStyle.label": "Стиль відповідей",
+  "incognito.capability.outputStyle.description": "Ваш активний стиль відповідей",
+  "incognito.capability.systemPromptOverrides.label": "Перевизначення системного промпту",
+  "incognito.capability.systemPromptOverrides.description":
+    "Відредаговані вами розділи системного промпту",
 };
 
 export default ukUA;

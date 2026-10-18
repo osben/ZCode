@@ -7770,6 +7770,39 @@ const zhCN: Record<string, string> = {
   "sessionManager.empty.noMatch": "没有符合筛选条件的会话",
   "sessionManager.openFromProjectMenu": "管理会话",
   "quickPick.command.manageSessions": "管理会话",
+  // Incognito session (specs/incognito-session.md)
+  "taskList.incognitoTaskLabel": "无痕会话",
+  "chat.incognito.toggle": "无痕会话",
+  "chat.incognito.toggleDescription": "下一个会话不加载任何扩展",
+  "chat.incognito.marker": "无痕",
+  "chat.incognito.removeMarker": "关闭无痕模式",
+  "chat.incognito.includeHeading": "本次会话包含",
+  "chat.incognito.settingsLink": "无痕设置…",
+  "chat.incognito.unsupported": "当前 Agent 版本无法启动无痕会话。请更新应用或远程 Agent 后重试。",
+  "settings.incognito": "无痕",
+  "settings.incognito.description":
+    "新无痕会话的默认设置。打开某项能力即默认包含它；仍可在输入框中为每个会话单独调整。",
+  "settings.incognito.scopeHint":
+    "无痕模式会启动一个不含下列扩展的干净会话。它不是隐私模式：用量统计、遥测、输入历史和模型日志仍会被记录。",
+  "incognito.capability.projectInstructions.label": "项目指令",
+  "incognito.capability.projectInstructions.description": "主目录和项目中的 AGENTS.md",
+  "incognito.capability.skills.label": "技能列表",
+  "incognito.capability.skills.description": "提示词中不列出技能；仍可按名称运行技能",
+  "incognito.capability.hooks.label": "Hooks",
+  "incognito.capability.hooks.description": "用户、项目和插件 Hooks",
+  "incognito.capability.plugins.label": "插件",
+  "incognito.capability.plugins.description":
+    "插件的技能、Hooks、MCP 服务器和 Agent，包括浏览器操作和电脑操作",
+  "incognito.capability.mcp.label": "MCP 服务器",
+  "incognito.capability.mcp.description": "设置和项目中的 MCP 服务器",
+  "incognito.capability.customAgents.label": "自定义 Agent",
+  "incognito.capability.customAgents.description": "你和项目的 Agent 配置；内置 Agent 仍可用",
+  "incognito.capability.memory.label": "记忆",
+  "incognito.capability.memory.description": "读取和写入项目记忆",
+  "incognito.capability.outputStyle.label": "输出风格",
+  "incognito.capability.outputStyle.description": "当前启用的输出风格",
+  "incognito.capability.systemPromptOverrides.label": "系统提示词覆盖",
+  "incognito.capability.systemPromptOverrides.description": "你编辑过的系统提示词片段",
 };
 
 export default zhCN;
