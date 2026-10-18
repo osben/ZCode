@@ -491,6 +491,7 @@ Must remain true:
 
 - Single-instance key = current OS user + data root;
 - Stale-lock recovery must first atomically claim the lock to an isolated path using the ownership token; release may delete only a token that still belongs to it. Never delete the current path based on a single stale PID check;
+- Lock and recovery-gate records are published only complete: write the full record to a unique temp file next to the target, fsync it, then `link()` it to the target (exclusive, fails with EEXIST) and remove the temp file. A live owner therefore never exposes an empty or partial record, so unparseable content at the target means a crash or corruption and is recoverable like a stale lock. Leftover temp files never block acquisition. Only when the filesystem does not support hard links may the writer fall back to exclusive create-then-write, which reopens that window;
 - Workspace isolation uses `workspaceKey = workspaceIdentity?.trim() || workspacePath`;
 - Path operations continue to use `workspacePath`;
 - Remote identity must not use `workspacePath` alone;

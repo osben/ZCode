@@ -113,6 +113,7 @@ import {
   useStreamingThroughput,
 } from "@/v4/conversationStreamingThroughput.js";
 import { formatTokensPerSecond, useSessionThroughput } from "@/hooks/useSessionThroughput.js";
+import { formatCompactTokenNumber } from "@/lib/tokenNumberFormat.js";
 import { ConversationTurnRow, resolveAssistantCopyText } from "@/v4/ConversationTurnRow.js";
 import { ConversationHookDetailsAction } from "@/v4/ConversationHookDetailsAction.js";
 import { toolCallRowToLegacyNode } from "@/v4/toolCallRowAdapter.js";
@@ -769,6 +770,19 @@ function AssistantHistoryStatus({
         >
           {isEstimate ? "~" : ""}
           {formatTokensPerSecond(locale, throughputTokensPerSecond)} tok/s
+        </span>
+      ) : !isRunning && segment.workStatus?.outputTokens !== undefined ? (
+        // Takes the live tok/s slot once the turn completes; the projection attaches the turn total
+        // only to the final segment, so guided segments never repeat it.
+        <span
+          data-testid="chat-worked-output-tokens"
+          title={intl.formatMessage({ id: "chat.history.outputTokensTitle" })}
+          className="ml-auto shrink-0 pl-2 text-ui-base tabular-nums text-foreground-subtle"
+        >
+          {intl.formatMessage(
+            { id: "chat.history.outputTokens" },
+            { count: formatCompactTokenNumber(locale, segment.workStatus.outputTokens) },
+          )}
         </span>
       ) : null}
     </div>

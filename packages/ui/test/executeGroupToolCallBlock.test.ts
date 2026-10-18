@@ -7,7 +7,7 @@ import { ExecuteGroupToolCallBlock } from "@/ToolCallBlocks/renderers/execute-gr
 function renderExecuteGroup(
   locale: "zh-CN" | "en-US",
   statuses: Array<"pending" | "completed" | "failed" | "stopped" | "in_progress">,
-  options: { forceOpen?: boolean } = {},
+  options: { forceOpen?: boolean; durationMs?: number } = {},
 ) {
   return renderToStaticMarkup(
     createElement(
@@ -24,6 +24,7 @@ function renderExecuteGroup(
               statuses.includes("in_progress") || statuses.includes("pending")
                 ? "in_progress"
                 : "completed",
+            ...(options.durationMs !== undefined ? { durationMs: options.durationMs } : {}),
           },
           childToolCalls: statuses.map((status, index) => ({
             toolCall: {
@@ -52,9 +53,7 @@ function renderExecuteGroup(
         rawFileSummaries: [],
         isRunning: statuses.includes("in_progress") || statuses.includes("pending"),
         statusLabel:
-          statuses.includes("in_progress") || statuses.includes("pending")
-            ? "执行中"
-            : "已完成",
+          statuses.includes("in_progress") || statuses.includes("pending") ? "执行中" : "已完成",
         childToolList: null,
         forceOpen: options.forceOpen ?? false,
         canToggle: true,
@@ -75,23 +74,13 @@ describe("ExecuteGroupToolCallBlock", () => {
     expect(html).toContain("pnpm test");
     expect(html).not.toContain("2 个命令");
     expect(html).toContain(">·</span>");
-    expect(enHtml).toContain(
-      '<span class="shrink-0 text-foreground-subtle">Running</span>',
-    );
-    expect(enHtml).toContain(
-      '<code class="min-w-0 truncate font-sans">pnpm test</code>',
-    );
-    expect(html).toContain(
-      "relative inline-flex min-w-0 items-center gap-2 overflow-hidden",
-    );
+    expect(enHtml).toContain('<span class="shrink-0 text-foreground-subtle">Running</span>');
+    expect(enHtml).toContain('<code class="min-w-0 truncate font-sans">pnpm test</code>');
+    expect(html).toContain("relative inline-flex min-w-0 items-center gap-2 overflow-hidden");
   });
 
   it("shows only the command count in the expanded running summary", () => {
-    const html = renderExecuteGroup(
-      "en-US",
-      ["completed", "in_progress"],
-      { forceOpen: true },
-    );
+    const html = renderExecuteGroup("en-US", ["completed", "in_progress"], { forceOpen: true });
     const summaryEnd = html.indexOf('data-slot="collapsible-content"');
     const summary = html.slice(0, summaryEnd);
 
@@ -117,8 +106,19 @@ describe("ExecuteGroupToolCallBlock", () => {
     expect(enHtml).toContain("1 failed");
     expect(enHtml).toContain(">Terminal</span>");
     expect(enHtml).toContain(">·</span>");
-    expect(enHtml).not.toContain(
-      "relative inline-flex min-w-0 items-center overflow-hidden",
-    );
+    expect(enHtml).not.toContain("relative inline-flex min-w-0 items-center overflow-hidden");
+  });
+
+  it("shows the finished stage duration after the command count", () => {
+    const html = renderExecuteGroup("en-US", ["completed", "completed"], { durationMs: 12_000 });
+
+    expect(html).toContain("2 commands");
+    expect(html).toContain(">12s<");
+  });
+
+  it("does not show a duration while the stage is running", () => {
+    const html = renderExecuteGroup("en-US", ["completed", "in_progress"], { durationMs: 12_000 });
+
+    expect(html).not.toContain(">12s<");
   });
 });

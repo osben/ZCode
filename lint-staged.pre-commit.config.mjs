@@ -13,25 +13,12 @@
 // scripts/run-pre-commit-checks.mjs then runs oxfmt (write mode) and oxlint
 // over the appended paths in a fixed order.
 
-// oxfmt also enforces formatting for Markdown (the CI format-check step
-// covers .md/.mdx), so those extensions are formatted here too; oxlint
-// simply finds nothing lintable in them.
-const FORMATTED_EXTENSIONS = [
-  "js",
-  "mjs",
-  "cjs",
-  "jsx",
-  "ts",
-  "tsx",
-  "mts",
-  "cts",
-  "json",
-  "md",
-  "mdx",
-];
-
-const STAGED_FILES_GLOB = `**/*.{${FORMATTED_EXTENSIONS.join(",")}}`;
+// The glob covers exactly the files `pnpm fmt:check` checks (one shared list
+// in scripts/fork-format.mjs; spec: specs/fork-format-scope.md), so a fork
+// edit to e.g. a .yml file is formatted here instead of failing later in CI.
+// oxlint simply finds nothing lintable in the non-JS types.
+import { formattableFilesGlob } from "./scripts/fork-format.mjs";
 
 export default {
-  [STAGED_FILES_GLOB]: "node scripts/run-pre-commit-checks.mjs",
+  [formattableFilesGlob()]: "node scripts/run-pre-commit-checks.mjs",
 };

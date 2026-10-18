@@ -700,33 +700,42 @@ describe("ChatCodingPlanUsageRemainingPanel refresh action", () => {
 describe("buildContextUsageBreakdownSegments", () => {
   it("aggregates valid chars by source and sorts largest first", () => {
     expect(
-      buildContextUsageBreakdownSegments([
-        { source: "messages", chars: 700 },
-        { source: "system_tool_schemas", chars: 200 },
-        { source: "messages", chars: 100 },
-        { source: "skills", chars: 0 },
-      ]),
+      buildContextUsageBreakdownSegments(
+        [
+          { source: "messages", chars: 700 },
+          { source: "system_tool_schemas", chars: 200 },
+          { source: "messages", chars: 100 },
+          { source: "skills", chars: 0 },
+        ],
+        10_000,
+      ),
     ).toEqual([
-      { source: "messages", chars: 800, percent: 0.8 },
-      { source: "system_tool_schemas", chars: 200, percent: 0.2 },
+      { source: "messages", chars: 800, percent: 0.8, tokens: 8_000 },
+      { source: "system_tool_schemas", chars: 200, percent: 0.2, tokens: 2_000 },
     ]);
   });
 
   it("returns an empty list when no positive chars are available", () => {
     expect(
-      buildContextUsageBreakdownSegments([
-        { source: "messages", chars: 0 },
-        { source: "skills", chars: -1 },
-      ]),
+      buildContextUsageBreakdownSegments(
+        [
+          { source: "messages", chars: 0 },
+          { source: "skills", chars: -1 },
+        ],
+        10_000,
+      ),
     ).toEqual([]);
   });
 
   it("assigns the Coding Plan blue tone to the largest segment", () => {
-    const segments = buildContextUsageBreakdownSegments([
-      { source: "messages", chars: 100 },
-      { source: "mcp_tool_schemas", chars: 900 },
-      { source: "system_prompt", chars: 300 },
-    ]);
+    const segments = buildContextUsageBreakdownSegments(
+      [
+        { source: "messages", chars: 100 },
+        { source: "mcp_tool_schemas", chars: 900 },
+        { source: "system_prompt", chars: 300 },
+      ],
+      0,
+    );
 
     expect(buildContextUsageProgressSegments(segments)).toEqual([
       {
@@ -754,14 +763,17 @@ describe("buildContextUsageBreakdownSegments", () => {
   });
 
   it("keeps later Coding Plan blue tones readable on the popover background", () => {
-    const segments = buildContextUsageBreakdownSegments([
-      { source: "messages", chars: 600 },
-      { source: "system_prompt", chars: 500 },
-      { source: "meta_user_context", chars: 400 },
-      { source: "skills", chars: 300 },
-      { source: "tool_prompt", chars: 200 },
-      { source: "system_tool_schemas", chars: 100 },
-    ]);
+    const segments = buildContextUsageBreakdownSegments(
+      [
+        { source: "messages", chars: 600 },
+        { source: "system_prompt", chars: 500 },
+        { source: "meta_user_context", chars: 400 },
+        { source: "skills", chars: 300 },
+        { source: "tool_prompt", chars: 200 },
+        { source: "system_tool_schemas", chars: 100 },
+      ],
+      0,
+    );
 
     expect(buildContextUsageProgressSegments(segments).at(-1)?.style).toEqual({
       backgroundColor: "color-mix(in oklab, var(--color-usage-chart-1) 28%, var(--color-surface))",
@@ -1058,7 +1070,7 @@ describe("ChatContextUsage", () => {
     expect(html).toContain("sidebar.usage.plan.fiveHour");
   });
 
-  it("does not render per-source token counts in the breakdown rows", () => {
+  it("renders per-source tokens as shares of the used total, not raw chars", () => {
     const html = renderToStaticMarkup(
       createElement(ChatContextUsage, {
         intl: {
@@ -1081,6 +1093,8 @@ describe("ChatContextUsage", () => {
     expect(html).toContain("chat.contextUsage.breakdown.messages");
     expect(html).toContain("57.8%");
     expect(html).toContain("42.2%");
+    expect(html).toContain("9.8K");
+    expect(html).toContain("7.2K");
     expect(html).not.toContain("52K");
     expect(html).not.toContain("38K");
   });

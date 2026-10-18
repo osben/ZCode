@@ -1,7 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
+import { link, mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { dirname } from "node:path";
+
+// link(2) reports these when the filesystem cannot create hard links (for example FAT/exFAT volumes or some network mounts).
+const HARD_LINK_UNSUPPORTED_CODES = new Set(["ENOTSUP", "EOPNOTSUPP", "ENOSYS", "EPERM"]);
+
+function errorCode(error: unknown): unknown {
+  return error instanceof Error && "code" in error ? error.code : undefined;
+}
 
 export type DataRootLockInspection =
   | { state: "missing" }
@@ -11,7 +18,6 @@ export type DataRootLockInspection =
   | { state: "unreadable"; error: unknown };
 
 export class DataRootLock {
-  private handle: FileHandle | undefined;
   private ownerToken: string | undefined;
   public constructor(private readonly path: string) {}
 
@@ -76,30 +82,71 @@ export class DataRootLock {
   }
 
   public async release(): Promise<void> {
-    await this.handle?.close().catch(() => undefined);
-    this.handle = undefined;
     const token = this.ownerToken;
     this.ownerToken = undefined;
     if (token) await this.releaseOwnedPath(this.path, token);
   }
 
   private async tryAcquireOnce(): Promise<boolean> {
+    const ownerToken = await this.publishRecord(this.path);
+    if (!ownerToken) return false;
+    this.ownerToken = ownerToken;
+    return true;
+  }
+
+  /**
+   * Exclusively creates `path` holding a complete owner record and returns its token, or null when
+   * `path` already exists.
+   */
+  private async publishRecord(path: string): Promise<string | null> {
     const ownerToken = randomUUID();
+    const content = `${JSON.stringify({ pid: process.pid, acquiredAt: Date.now(), ownerToken })}\n`;
+    // Creating `path` first and writing afterwards would expose an empty record that contenders read
+    // as stale and take over while this owner still believes it holds the path. Publishing a fully
+    // written temp file via link() makes the record appear complete or not at all.
+    const temp = `${path}.tmp-${process.pid}-${ownerToken}`;
+    try {
+      const handle = await open(temp, "wx", 0o600);
+      try {
+        await handle.writeFile(content);
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      try {
+        await link(temp, path);
+        return ownerToken;
+      } catch (error: unknown) {
+        if (errorCode(error) === "EEXIST") return null;
+        if (!HARD_LINK_UNSUPPORTED_CODES.has(String(errorCode(error)))) throw error;
+      }
+      return (await this.publishRecordWithoutLink(path, content, ownerToken)) ? ownerToken : null;
+    } finally {
+      // A leftover temp file never blocks acquisition, so cleanup failures must not fail the caller.
+      await rm(temp, { force: true }).catch(() => undefined);
+    }
+  }
+
+  private async publishRecordWithoutLink(
+    path: string,
+    content: string,
+    ownerToken: string,
+  ): Promise<boolean> {
+    // Without hard links the record is created empty and then written, so a contender can still
+    // observe it mid-write and treat it as stale; this only applies to filesystems that lack link().
     let handle: FileHandle | undefined;
     try {
-      handle = await open(this.path, "wx", 0o600);
-      await handle.writeFile(
-        `${JSON.stringify({ pid: process.pid, acquiredAt: Date.now(), ownerToken })}\n`,
-      );
-      this.handle = handle;
-      this.ownerToken = ownerToken;
+      handle = await open(path, "wx", 0o600);
+      await handle.writeFile(content);
+      await handle.sync();
+      await handle.close();
       return true;
     } catch (error: unknown) {
-      if (error instanceof Error && "code" in error && error.code === "EEXIST") return false;
       await handle?.close().catch(() => undefined);
-      const observed = await this.readOwner(this.path);
+      if (errorCode(error) === "EEXIST") return false;
+      const observed = await this.readOwner(path);
       if (observed?.record.ownerToken === ownerToken) {
-        await this.releaseOwnedPath(this.path, ownerToken);
+        await this.releaseOwnedPath(path, ownerToken);
       }
       throw error;
     }
@@ -145,31 +192,11 @@ export class DataRootLock {
   }
 
   private async tryAcquireRecoveryGate(path: string): Promise<string | null> {
-    const ownerToken = randomUUID();
-    let handle: FileHandle | undefined;
-    try {
-      handle = await open(path, "wx", 0o600);
-      await handle.writeFile(
-        `${JSON.stringify({ pid: process.pid, acquiredAt: Date.now(), ownerToken })}\n`,
-      );
-      await handle.close();
-      return ownerToken;
-    } catch (error: unknown) {
-      if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) {
-        await handle?.close().catch(() => undefined);
-        const observed = await this.readOwner(path);
-        if (observed?.record.ownerToken === ownerToken) {
-          await this.releaseOwnedPath(path, ownerToken);
-        }
-        throw error;
-      }
-    } finally {
-      await handle?.close().catch(() => undefined);
-    }
+    const ownerToken = await this.publishRecord(path);
+    if (ownerToken) return ownerToken;
     const observed = await this.readOwner(path);
-    if (!observed || !this.isHolderAlive(observed.record.pid)) {
-      if (observed) await this.claimStalePath(path, observed.raw);
-      return null;
+    if (observed && !this.isHolderAlive(observed.record.pid)) {
+      await this.claimStalePath(path, observed.raw);
     }
     return null;
   }

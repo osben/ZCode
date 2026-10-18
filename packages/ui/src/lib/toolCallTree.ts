@@ -76,6 +76,7 @@ export function areTaskChatToolCallsRenderEqual(
     left.thought === right.thought &&
     left.error === right.error &&
     left.startedAt === right.startedAt &&
+    left.durationMs === right.durationMs &&
     areUnknownValuesEqual(left.input, right.input, { remaining: 500 }) &&
     areUnknownValuesEqual(left.output, right.output, { remaining: 500 }) &&
     areUnknownValuesEqual(left.raw, right.raw, { remaining: 500 }) &&

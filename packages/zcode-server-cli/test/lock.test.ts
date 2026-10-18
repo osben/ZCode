@@ -32,6 +32,35 @@ describe("DataRootLock", () => {
     await lock.release();
   });
 
+  it("recovers an empty lock file, which a live owner never exposes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "zcode-r2-lock-empty-"));
+    const lockFile = join(root, "run", "server.lock");
+    await mkdir(join(root, "run"), { recursive: true });
+    await writeFile(lockFile, "", "utf8");
+
+    const lock = new DataRootLock(lockFile);
+    await lock.acquire();
+    expect(JSON.parse(await readFile(lockFile, "utf8"))).toMatchObject({ pid: process.pid });
+    await lock.release();
+  });
+
+  it("is not blocked by temp records left behind by a crashed contender", async () => {
+    const root = await mkdtemp(join(tmpdir(), "zcode-r2-lock-temp-"));
+    const lockFile = join(root, "run", "server.lock");
+    await mkdir(join(root, "run"), { recursive: true });
+    await writeFile(`${lockFile}.tmp-${DEAD_PID}-leftover`, "", "utf8");
+    await writeFile(`${lockFile}.recovery.tmp-${DEAD_PID}-leftover`, "", "utf8");
+
+    const lock = new DataRootLock(lockFile);
+    await lock.acquire();
+    await lock.release();
+    // Only the crashed contender's leftovers remain; this owner's own temp records were removed.
+    expect((await readdir(join(root, "run"))).sort()).toEqual([
+      `server.lock.recovery.tmp-${DEAD_PID}-leftover`,
+      `server.lock.tmp-${DEAD_PID}-leftover`,
+    ]);
+  });
+
   it("refuses to steal the lock from a live process", async () => {
     const root = await mkdtemp(join(tmpdir(), "zcode-r2-lock-live-"));
     const lockFile = join(root, "run", "server.lock");
