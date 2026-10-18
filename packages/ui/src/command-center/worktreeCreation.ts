@@ -82,6 +82,21 @@ export async function ensureWorktreeExclusionSafely(
   }
 }
 
+/**
+ * Git's own failure line for an unclassified rejection: the first `fatal:`/`error:` line with the
+ * prefix removed, else the last non-empty line. `git worktree add` prints a "Preparing worktree"
+ * progress line on stderr before the failure, so the first line alone is not the cause.
+ */
+function summarizeGitFailureDetail(detail: string | null | undefined): string | null {
+  const lines = (detail ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const failure = lines.find((line) => /^(fatal|error):/i.test(line)) ?? lines.at(-1);
+  if (!failure) return null;
+  return failure.replace(/^(fatal|error):\s*/i, "") || null;
+}
+
 /** Optional delay for controlled manual/E2E verification; normal app flows have no artificial wait. */
 function waitForWorktreeCreationTestGate(): Promise<void> {
   const delayMs = Number(import.meta.env["VITE_E2E_WORKTREE_CREATION_DELAY_MS"] ?? 0);
@@ -188,14 +203,20 @@ export async function executeWorktreeCreation({
     }
   }
 
+  const unclassifiedDetail =
+    issue?.code === "unknown" ? summarizeGitFailureDetail(issue.detail) : null;
   return {
     kind: "failed",
-    message: issue
-      ? formatMessage(resolveWorktreeIssueMessageId(issue.code), {
-          branchName:
-            issue.code === "target-branch-not-found" ? (baseBranch ?? branchName) : branchName,
+    message: unclassifiedDetail
+      ? formatMessage("commandCenter.worktree.error.unknownWithDetail", {
+          detail: unclassifiedDetail,
         })
-      : formatMessage("commandCenter.worktree.error.unknown"),
+      : issue
+        ? formatMessage(resolveWorktreeIssueMessageId(issue.code), {
+            branchName:
+              issue.code === "target-branch-not-found" ? (baseBranch ?? branchName) : branchName,
+          })
+        : formatMessage("commandCenter.worktree.error.unknown"),
     issueCodes: result.issues.map((entry) => entry.code),
     errorDetail: null,
   };

@@ -70,6 +70,9 @@ export function restoreComposerWorktreePipelineFromPreparation({
 
   const hostAttempt = preparation.attemptId;
   const entryAttempt = current.params?.attemptId ?? current.attemptId;
+  // Attempt ids are opaque: a differing Host attempt the entry already replaced is a stale seed,
+  // not a newer generation. Rolling back to it detached the armed first submission (BUG-GWT-005).
+  if (hostAttempt && current.supersededAttemptIds?.includes(hostAttempt)) return;
   if (hostAttempt && hostAttempt !== entryAttempt) {
     // Newer Host generation replaces the renderer's stale attempt for this session only.
     const queuedPromptPreview = current.queuedPromptPreview;
@@ -79,6 +82,7 @@ export function restoreComposerWorktreePipelineFromPreparation({
         ...hostEntry,
         ...(queuedPromptPreview ? { queuedPromptPreview } : {}),
         ...(current.orphaned ? { orphaned: true } : {}),
+        supersededAttemptIds: [...(current.supersededAttemptIds ?? []), entryAttempt],
       },
       { activate: false },
     );

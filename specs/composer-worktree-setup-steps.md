@@ -122,6 +122,28 @@ locally settled `ready` stays visible until the Host reports a terminal state fo
 Snapshot-driven restore never starts Git creation by itself, and a consumed or discarded entry is
 never resurrected from stale metadata.
 
+"Newer" is decided by supersession, not by inequality: attempt ids are opaque, so a Host attempt
+that differs from the entry's attempt is newer only when the renderer has not itself replaced it.
+A local Retry records the attempt it replaces on the entry before Git restarts; a Host preparation
+seed carrying a superseded attempt is stale and is ignored. The Host accepts the retry before its
+snapshot reaches the renderer, so the seed for the failed attempt is still live when the retry
+turns the entry `creating`; treating it as newer rolled the entry back to `failed` for one render,
+which made the queued-send effect abandon the armed submission and left the later `ready` admitting
+nothing (BUG-GWT-005, RT4-C5). A genuinely newer Host attempt (for example another client's retry)
+still replaces the entry and inherits its superseded set, adding the attempt it replaced.
+
+```text
+Renderer entry (session S)     Setup-steps reconcile           Host snapshot seed
+failed(A)                      seed = failed(A)
+Retry → Host accepts B
+startPipeline creating(B),
+  superseded = {A}  ----------> seed failed(A): A ∈ superseded
+                                → ignored (no rollback)
+Git ready → ready(B)                                           preparing(B) arrives
+  → armed submission dispatched -> seed preparing(B): same attempt
+    once, entry consumed            → keep local ready
+```
+
 ### Preparation states
 
 ```text
@@ -217,6 +239,14 @@ directory was removed, or a directory that is not a usable worktree checkout, se
 recoverable failure; the flow never prunes registrations, deletes branches, or creates a second
 directory on its own.
 
+A failed creation names its cause in the `{reason}` of the failed row (and in the Command Center
+error, which shares `executeWorktreeCreation`). A rejection Git did not classify (`unknown`) shows
+Git's own failure line — the first `fatal:`/`error:` line of its output with that prefix removed,
+for example `could not create leading directories of '…': Permission denied` — instead of only the
+generic "Could not create the worktree"; without Git output the generic text stays. A
+`target-branch-not-found` rejection also reminds the user that a repository without commits has no
+branches yet, because an unborn HEAD reports the default branch as missing.
+
 The Command Center “New task in worktree” action remains its separate Start-driven flow and opens its
 own workspace. Its branch-name collision avoidance and shared `executeWorktreeCreation` request
 semantics remain intact.
@@ -300,6 +330,11 @@ early transcript persistence or a second accepted-input store.
     or invalidate a pending ACK, and a committed owner change advances the epoch once.
 16. Deleting a worktree owned by a prepared, not-yet-cancelled session is refused in Command
     Center, including the force-confirmation path; cancelling the preparation releases the guard.
+17. Failed creation → Retry through the setup-steps button while the Host seed still reports the
+    failed attempt: the entry never rolls back to the failed attempt, the retried creation turns
+    `ready`, the frozen submission is dispatched exactly once against the retry attempt with no
+    further user action, the entry is consumed, and its recovery record is cleared so the
+    "Unsent message saved" card disappears (BUG-GWT-005).
 
 ## Validation
 

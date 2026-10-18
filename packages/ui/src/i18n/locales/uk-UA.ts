@@ -607,7 +607,7 @@ const ukUA: Record<string, string> = {
   "commandCenter.worktree.error.invalid-branch-name": "«{branchName}» — некоректна назва гілки.",
   "commandCenter.worktree.error.branch-already-exists": "Гілка «{branchName}» вже існує.",
   "commandCenter.worktree.error.target-branch-not-found":
-    "Базову гілку «{branchName}» не знайдено.",
+    "Базову гілку «{branchName}» не знайдено. У репозиторії без комітів ще немає гілок; створіть перший коміт, перш ніж використовувати worktree.",
   "commandCenter.worktree.error.branch-in-other-worktree":
     "Гілка «{branchName}» уже активна в іншому worktree. Виберіть іншу назву.",
   "commandCenter.worktree.error.target-path-invalid": "Обчислений цільовий шлях некоректний.",
@@ -627,6 +627,7 @@ const ukUA: Record<string, string> = {
   "commandCenter.worktree.error.worktree-dirty": "Worktree має змінені або невідстежувані файли.",
   "commandCenter.worktree.error.worktree-locked": "Worktree заблоковано в Git.",
   "commandCenter.worktree.error.unknown": "Не вдалося створити worktree.",
+  "commandCenter.worktree.error.unknownWithDetail": "Не вдалося створити worktree: {detail}",
   "commandCenter.worktree.error.requestFailed": "Помилка запиту Git: {error}",
   "confirmDialog.taskDeleteTitle": "Видалити це завдання?",
   "confirmDialog.taskDeleteDescription":

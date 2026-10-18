@@ -651,7 +651,8 @@ const zhCN: Record<string, string> = {
   "commandCenter.worktree.prune.done": "已清理 {count} 条失效的 worktree 记录。",
   "commandCenter.worktree.error.invalid-branch-name": "“{branchName}”不是有效的分支名。",
   "commandCenter.worktree.error.branch-already-exists": "分支 {branchName} 已存在。",
-  "commandCenter.worktree.error.target-branch-not-found": "未找到基准分支 {branchName}。",
+  "commandCenter.worktree.error.target-branch-not-found":
+    "未找到基准分支 {branchName}。没有任何提交的仓库还没有分支，请先创建第一个提交再使用 worktree。",
   "commandCenter.worktree.error.branch-in-other-worktree":
     "分支 {branchName} 已在另一个 worktree 中检出，请换一个分支名。",
   "commandCenter.worktree.error.target-path-invalid": "计算出的目标路径无效。",
@@ -670,6 +671,7 @@ const zhCN: Record<string, string> = {
   "commandCenter.worktree.error.worktree-dirty": "worktree 包含已修改或未跟踪的文件。",
   "commandCenter.worktree.error.worktree-locked": "worktree 已被 Git 锁定。",
   "commandCenter.worktree.error.unknown": "无法创建 worktree。",
+  "commandCenter.worktree.error.unknownWithDetail": "无法创建 worktree：{detail}",
   "commandCenter.worktree.error.requestFailed": "Git 请求失败：{error}",
   "confirmDialog.taskDeleteTitle": "删除这个任务？",
   "confirmDialog.taskDeleteDescription": "任务“{taskTitle}”会从当前工作区移除，现有记录无法恢复。",

@@ -56,6 +56,11 @@ export interface ComposerWorktreePipelineEntry {
   orphaned?: boolean;
   /** Whether a queued send is still attached (cleared by withdrawal or navigation detach). */
   queuedPromptPreview?: string;
+  /**
+   * Attempts this session's entry already replaced (local Retry or a newer Host attempt). A Host
+   * preparation seed carrying one of them is stale and must not roll the entry back.
+   */
+  supersededAttemptIds?: string[];
 }
 
 interface ComposerWorktreePipelineState {
