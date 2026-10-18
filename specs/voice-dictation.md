@@ -32,6 +32,8 @@ Make the existing local desktop dictation flow easier to understand and avoid do
 
 - If an older local Host reports `Method not found: setIdleUnloadMinutes`, continue dictation using that Host's default unload delay. Do not treat this one missing preference method as a transcription failure.
 - Other errors while applying the preference remain fatal and keep the existing transcription error handling.
+- The Settings save path for the unload delay uses the same `applyIdleUnloadPreference` helper as recording and warm-up. The setting is persisted first; an older Host therefore shows no "save failed" toast (VD-COMPAT-01).
+- Older Hosts without `getPostProcessAvailability` or `warmUp` keep their existing handling: post-processing is unavailable with reason `unknown`; warm-up disables itself for the session.
 
 ```mermaid
 sequenceDiagram
@@ -387,29 +389,136 @@ sequenceDiagram
 
 - **Name:** "Post-processing". An optional step that rewrites the finished transcript with a language model according to a user-editable prompt, then inserts the result.
 - **Setting:** `voiceDictation.postProcessEnabled` (default off) with `postProcessPrompt` (default below) and `postProcessProvider`.
-- **Provider (first version):** a single system provider, shown in settings as "System model (Apple Foundation Models)". It is offered only when the Host reports it available (macOS with Apple Intelligence enabled and a supported device); otherwise the row explains why it is unavailable and the toggle stays off. When unavailable at dictation time, the raw transcript is inserted unchanged.
+- **Provider (first version):** a single system provider, shown in settings as read-only text "System model (Apple Foundation Models)" under the label "Provider" (no selector while there is one option). It is offered only when the Host reports it available (macOS with Apple Intelligence enabled and a supported device); otherwise the status line explains why it is unavailable and the switch shows Off. When unavailable at dictation time, the raw transcript is inserted unchanged, and post-processing is not attempted (see "Post-processing settings" below).
 - **TODO (next version):** let the user pick another provider and model from ZCode's configured providers instead of only the system model. The provider setting is an enum so adding values is additive; no other code may assume a single provider.
 - **Prompt variable:** `{{text}}` is replaced by the raw transcript. If the prompt contains no `{{text}}`, the transcript is appended after the prompt on a new line. Only this one variable exists.
-- **Default prompt (English, language-preserving):** the transcript is fenced in `<transcript>{{text}}</transcript>` tags and the prompt says it is dictated data, never a request to follow or answer; it asks for punctuation, capitalization, recognition fixes and filler removal; it requires the output language to equal the input language ("Translating is a failure") and carries three short examples (English, Ukrainian, Russian). The examples are load-bearing: tuned against the real system model, a plain "never translate" instruction still translated Ukrainian and Russian to English in about half of the runs, and examples in only one language pushed English into that language. The helper requests greedy sampling so the same transcript always gives the same output. A reset button restores the default. No presets.
-- **Flow:** transcribe, then (when enabled and available) process, then insert. While processing the microphone button shows its busy state and the tooltip says "Processing". If processing fails, times out (15 s), or returns empty text, the raw transcript is inserted instead and the failure is logged (no error toast).
-- **Clipboard:** with `copyToClipboard` on, the clipboard always receives the **raw** transcript, even when the inserted text is the processed one. Esc during processing discards the result (nothing inserted or copied).
+- **Default prompt (English, language-preserving):** the transcript is fenced in `<transcript>{{text}}</transcript>` tags and the prompt says it is dictated data, never a request to follow or answer; it asks for punctuation, capitalization, recognition fixes and filler removal; it requires the output language to equal the input language ("Translating is a failure") and carries three short examples (English, Ukrainian, Russian). The examples are load-bearing: tuned against the real system model, a plain "never translate" instruction still translated Ukrainian and Russian to English in about half of the runs, and examples in only one language pushed English into that language. The helper requests greedy sampling so the same transcript always gives the same output. A single prompt is kept (no presets, no prompt library). Reset removes the stored prompt key so the built-in default applies, including after the default changes in a later version; see "Post-processing settings".
+- **Flow:** transcribe, then (when enabled and the Host reports the provider available at dictation time) process, then insert. While processing the microphone button shows its busy state and the tooltip says "Processing". If processing fails, returns empty text, or does not finish in time (the Host stops after 15 s; the client wrapper `runPostProcess` gives up after 20 s, whichever comes first), the raw transcript is inserted instead and the failure is logged (no error toast).
+- **Clipboard:** only when `copyToClipboard` is on, the clipboard receives the **raw** transcript, even when the inserted text is the processed one. When the setting is off, post-processing never touches the clipboard. Esc during processing discards the result (nothing inserted or copied).
 - **Privacy:** the on-device system model is the only provider in this version, so no transcript leaves the machine.
 
 ### Ownership and interfaces
 
-- A Host service owns availability and execution (`getPostProcessAvailability()`, `postProcess({ text, prompt })`); the renderer owns the prompt and the toggle. `useVoiceDictation` owns the phase (a new `processing` phase after `transcribing`) and the fallback to raw text.
+- A Host service owns availability and execution (`getPostProcessAvailability()`, `postProcess({ text, prompt })`); the renderer owns the prompt and the toggle. `useVoiceDictation` owns the phase (a new `processing` phase after `transcribing`) and the fallback to raw text. Availability is re-read at dictation time before the processing phase starts, so a stale settings-screen answer can never run an unavailable provider.
+- The client wraps `postProcess` with `runPostProcess` (`lib/voicePostProcess.ts`): a 20 s client timeout above the Host's 15 s limit, so a hung Host call cannot strand the busy state. The Try-it control uses the same wrapper; no new Host method is added.
 - Apple Foundation Models are reached through a small bundled Swift helper built like `zcode-window-bounds` (`packages/desktop/native/`, a `prepare:` script, `electron-builder` extra resource). It reads JSON from stdin and writes JSON to stdout, checks `SystemLanguageModel.default.availability`, and is spawned per request with a timeout. Main injects the helper path into the Host.
 - Settings live in the fork sidecar (`forkAppSettings.ts`), same rules as the other `voiceDictation` fields.
 
 ### Acceptance scenarios
 
-| Case      | Setup / action                                              | Expected result                                                                      |
-| --------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| VD-PPR-01 | Post-processing on, system model available; dictate         | The processed text is inserted; the clipboard (if enabled) holds the raw transcript. |
-| VD-PPR-02 | The prompt has `{{text}}` in the middle                     | The transcript is substituted at that position.                                      |
-| VD-PPR-03 | The prompt has no `{{text}}`                                | The transcript is appended after the prompt.                                         |
-| VD-PPR-04 | The model errors, times out, or returns empty               | The raw transcript is inserted; the failure is logged, no error toast.               |
-| VD-PPR-05 | System model unavailable (no Apple Intelligence, non-macOS) | The setting explains why and stays off; dictation inserts raw text.                  |
-| VD-PPR-06 | Esc while processing                                        | Nothing is inserted or copied.                                                       |
-| VD-PPR-07 | Dictate in Ukrainian with the default prompt                | The output stays Ukrainian (not translated).                                         |
-| VD-PPR-08 | Reset the prompt                                            | The default prompt is restored.                                                      |
+| Case      | Setup / action                                                    | Expected result                                                                                |
+| --------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| VD-PPR-01 | Post-processing on, system model available; dictate               | The processed text is inserted; the clipboard (if enabled) holds the raw transcript.           |
+| VD-PPR-02 | The prompt has `{{text}}` in the middle                           | The transcript is substituted at that position.                                                |
+| VD-PPR-03 | The prompt has no `{{text}}`                                      | The transcript is appended after the prompt.                                                   |
+| VD-PPR-04 | The model errors, times out, or returns empty                     | The raw transcript is inserted; the failure is logged, no error toast.                         |
+| VD-PPR-05 | System model unavailable (no Apple Intelligence, non-macOS)       | The setting explains why and stays off; dictation inserts raw text.                            |
+| VD-PPR-06 | Esc while processing                                              | Nothing is inserted or copied.                                                                 |
+| VD-PPR-07 | Dictate in Ukrainian with the default prompt                      | The output stays Ukrainian (not translated).                                                   |
+| VD-PPR-08 | Reset the prompt                                                  | The default prompt is restored.                                                                |
+| VD-PPR-09 | Preference on, but the Host reports unavailable at dictation time | No post-processing call is made; the raw transcript is inserted.                               |
+| VD-PPR-10 | Availability answer still loading on the settings screen          | The switch is disabled and shows no reason text; no Off-then-On flicker from a guessed answer. |
+
+## Settings information architecture
+
+Desktop Voice dictation settings are five cards in this order. Each card has a heading and an optional one-line description above it. Web keeps its single Desktop-only explanation (VD-06).
+
+1. **Dictation:** shortcut (keycaps, plus an "Open Keyboard Shortcuts" action that opens the Shortcuts section), push to talk, sound notification, volume with Test.
+2. **Microphone:** input device; "Test microphone" with its result shown beside the button (recording indicator, peak level, or the no-sound message).
+3. **Transcription models:** language at the top (with the "Matches my languages" filter directly under it, with search, Downloaded, and Streaming), then the model cards, then a **Memory** subgroup with "Warm up the model when the message box is focused" and "Unload from memory after".
+4. **Output:** copy dictated text to the clipboard, mute system sound while recording.
+5. **Post-processing:** see "Post-processing settings".
+
+Rules:
+
+- Every card writes through the existing single optimistic patch path. No card keeps a second copy of a setting.
+- The shared `SettingsRow` uses a fixed 192 px control column. That is not changed here because every Settings section depends on it; on narrow Web it can squeeze labels. This is a follow-up that needs a cross-section check.
+
+## Post-processing settings
+
+### Availability rule
+
+- The Host is the only source of availability. The settings card has three states:
+  - **Checking** (before the first answer): the switch is disabled and unchecked, and no reason text is shown.
+  - **Available:** the switch reflects the saved preference and is enabled.
+  - **Unavailable:** the switch shows Off and is disabled; the status line gives the localized reason. An unknown reason and a Host without the method both use the generic message.
+- Runtime gate: the rewrite runs only when the saved preference is on **and** `getPostProcessAvailability()` reports `available` at dictation time. A check that fails counts as unavailable (logged at warn, raw transcript inserted).
+
+```mermaid
+sequenceDiagram
+  participant S as Settings card (display only)
+  participant R as useVoiceDictation (phase owner)
+  participant H as Desktop Host
+  S->>H: getPostProcessAvailability() on mount
+  Note over S: checking until answered; switch disabled
+  R->>R: transcription done, postProcessEnabled true?
+  R->>H: getPostProcessAvailability() at dictation time
+  alt available and still same recording
+    R->>R: phase = processing
+    R->>H: postProcess(text, prompt), 20 s client / 15 s Host
+    H-->>R: processed text, or failure / timeout
+  else unavailable, error, or cancelled
+    Note over R: no rewrite call; raw transcript or nothing
+  end
+```
+
+### Prompt editor
+
+- The prompt is a single prompt. It is shown full width (no 280 px wide control), in a monospace multi-line field of about eight rows that can be resized vertically.
+- The draft is local until **Save**. While the draft differs from the saved value, a "Unsaved changes" indicator appears with **Save** and **Cancel** buttons. Nothing is written per keystroke.
+- **Save:** a draft equal to the built-in default stores no custom prompt (the key is removed), so the default keeps following future changes. A blank draft cannot be saved; Save is disabled and an inline message says to use Reset.
+- **Cancel** and **Esc** (focus in the field) revert the draft to the saved value. When the draft is dirty, they first ask for confirmation to discard (confirm dialog, same component as other destructive confirmations).
+- **Character counter** `n/4000` is always visible. The field does not truncate silently: above 4000 characters the counter turns warning-colored, Save is disabled, and the message says to shorten the prompt.
+- **`{{text}}` hint:** when the draft has no `{{text}}`, a hint says the transcript will be appended after the prompt. It is informational, not an error.
+- **Reset to default:** asks for confirmation, removes the stored prompt key (`postProcessPrompt` becomes undefined; it is not written as the default text), and loads the default into the editor. Reset is disabled when no custom prompt is stored and the draft is the default.
+- Known limit: leaving the Voice dictation section with an unsaved draft discards the draft. It is never persisted implicitly.
+
+### Try it
+
+- An editable sample sentence (prefilled with a short English sentence containing filler words) and a **Run** button.
+- Run calls `IVoiceDictationService.postProcess` through `runPostProcess` (20 s client timeout). It uses the editor draft, including unsaved text, and says so next to the control.
+- The output appears below the control. A failure shows an inline error with `role="alert"`; it is not a toast.
+- Run is disabled while the provider is unavailable or while a run is in flight. Try it never writes settings.
+
+### Terminology
+
+One term per concept across the Voice dictation settings and the composer. Labels in each language must follow the same mapping.
+
+| Concept                      | Term (en)        | Meaning                                                                                                                                                                            |
+| ---------------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Selected transcription model | Active           | The preference; badge on the model card.                                                                                                                                           |
+| Resident model               | Loaded in memory | The single model the Host holds; badge on the model card.                                                                                                                          |
+| Queued switch for a download | Use when ready   | A download-card state: the current model stays Active until the new one is ready. The action on a downloading card is "Use when ready"; once set it reads "Cancel use when ready". |
+| Rewrite step                 | Post-processing  | Optional step after transcription.                                                                                                                                                 |
+| Engine for the rewrite       | Provider         | Read-only text for the single provider. Replaces the former "Model" label, which clashed with transcription models.                                                                |
+| Editable instruction         | Prompt           | The text with `{{text}}`.                                                                                                                                                          |
+| Rewrite in progress          | Processing       | Composer phase after transcription.                                                                                                                                                |
+
+### Acceptance scenarios
+
+| Case         | Setup / action                                     | Expected result                                                                                   |
+| ------------ | -------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| VD-SET-01    | Desktop Voice dictation settings open              | Five cards in the order above, each with its heading.                                             |
+| VD-SET-02    | Click "Open Keyboard Shortcuts"                    | The Shortcuts section opens; the shortcut stays editable there.                                   |
+| VD-SET-03    | Run "Test microphone"                              | The result text is next to the button; it is cleared when the next test starts.                   |
+| VD-SET-04    | Change "Unload from memory after" on an older Host | The value is saved; no "save failed" toast; the Host keeps its default delay.                     |
+| VD-SET-05    | Language and filters                               | "Matches my languages" is directly under the language row; it does not change the selection.      |
+| VD-SET-06    | Pending download uses wording                      | Only the terms in the Terminology table appear; no "Keep current model" or "Will use when ready". |
+| VD-PPR-11    | Edit the prompt                                    | "Unsaved changes", Save and Cancel appear; nothing is written until Save.                         |
+| VD-PPR-12    | Press Esc with an unsaved change                   | A discard confirmation appears; confirming reverts the draft; cancelling keeps it.                |
+| VD-PPR-13    | Draft over 4000 characters                         | Counter shows the count in warning color; Save is disabled; the text is not truncated.            |
+| VD-PPR-14    | Draft without `{{text}}`                           | A hint says the transcript is appended; Save still works.                                         |
+| VD-PPR-15    | Save the default text unchanged                    | No custom prompt is stored; a later Reset is disabled.                                            |
+| VD-PPR-16    | Reset with a custom prompt stored                  | After confirmation the stored key is removed and the editor shows the default.                    |
+| VD-PPR-17    | Try it with a sample                               | The output (or inline error) shows; no settings are written; Run is disabled while unavailable.   |
+| VD-PPR-18    | Copy to clipboard off, post-processing on          | The clipboard is never written by the rewrite path.                                               |
+| VD-PPR-19    | Copy to clipboard on, post-processing on           | The clipboard receives the raw transcript; the inserted text is the processed one.                |
+| VD-COMPAT-01 | Older Host without `setIdleUnloadMinutes`          | Save of the unload delay persists the value and shows no error toast.                             |
+
+### E2E scenarios (written, not run)
+
+These need a real Desktop runtime on macOS with Apple Intelligence available, and a microphone. They are not runnable in the current environment and are not automated.
+
+- VD-E2E-SET: open Voice dictation settings; assert the five card headings in order; open Keyboard Shortcuts from the Dictation card.
+- VD-E2E-PPR: enable post-processing on an available Host; edit and save the prompt; Try it returns text; Reset returns to the default; dictation inserts the processed text and the clipboard holds the raw transcript when copy is on.
+- VD-E2E-PPR-OFF: on an unavailable Host, the switch is Off with the reason and dictation inserts raw text with no rewrite call.

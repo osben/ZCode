@@ -184,7 +184,8 @@ describe("VoiceModelRow model actions", () => {
       progress.compareDocumentPosition(status) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(status.compareDocumentPosition(cancel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.queryByText("Will use when ready")).toBeTruthy();
+    // Pending-use wording is one term ("Use when ready") across the badge and the card action.
+    expect(screen.queryByText("Use when ready")).toBeTruthy();
     expect(formatVoiceModelDownloadSpeed(26_000_000)).toBe("26.0 MB/s");
     expect(formatVoiceModelDownloadSpeed(26_000)).toBe("26 KB/s");
     expect(
