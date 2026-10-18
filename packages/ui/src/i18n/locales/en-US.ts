@@ -7932,7 +7932,6 @@ const enUS: Record<string, string> = {
   "voiceDictation.composer.processing": "Processing text",
   "voiceDictation.composer.status.processing": "Processing text",
   "voiceDictation.composer.modelStatus.loading": "Speech model loading",
-  "voiceDictation.composer.modelStatus.loaded": "Speech model loaded, voice input starts instantly",
   "settings.computerUse.title": "Computer Use",
   "settings.computerUse.toggleLabel": "Enable Computer Use",
   "settings.computerUse.toggleDescription":

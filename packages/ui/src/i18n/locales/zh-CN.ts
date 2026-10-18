@@ -7600,7 +7600,6 @@ const zhCN: Record<string, string> = {
   "voiceDictation.composer.processing": "正在处理文本",
   "voiceDictation.composer.status.processing": "正在处理文本",
   "voiceDictation.composer.modelStatus.loading": "语音模型加载中",
-  "voiceDictation.composer.modelStatus.loaded": "语音模型已加载，语音输入可立即开始",
   "settings.computerUse.title": "电脑控制",
   "settings.computerUse.toggleLabel": "启用电脑控制",
   "settings.computerUse.toggleDescription": "开启后将启用电脑控制及其 MCP 与技能。",

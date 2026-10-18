@@ -129,7 +129,7 @@ import {
 } from "@/lib/workspaceFileDrag.js";
 import { appendWorkspaceFileMentionToComposer } from "@/lib/workspaceFileComposer.js";
 import { resolveProviderBaseURL } from "@/lib/registryProviderView.js";
-import type { ModelSelectionView } from "@zcode/services";
+import type { ModelSelectionView, VoiceTranscriptionPreview } from "@zcode/services";
 import type { ModelSelectionState } from "@/hooks/useModelSelectionView.js";
 import type { ZCodeUiError } from "@/lib/zcodeUiError.js";
 import {
@@ -800,6 +800,9 @@ function ConversationComposerImpl({
   const pendingShareContext = activeShareContext?.status === "pending" ? activeShareContext : null;
   const inputApiRef = useRef<LexicalChatInputHandle | null>(null);
   const voiceScopeRef = useRef<HTMLDivElement | null>(null);
+  // Streaming ghost preview (specs/voice-dictation.md, "Ghost preview"): display state only; it is
+  // drawn by the editor and never enters the draft text, submission, or undo history.
+  const [voicePreview, setVoicePreview] = useState<VoiceTranscriptionPreview | null>(null);
   const insertVoiceTranscript = useCallback((text: string) => {
     const api = inputApiRef.current;
     if (!api) return;
@@ -2998,6 +3001,7 @@ function ConversationComposerImpl({
           <V4ComposerDictationControl
             disabled={disabled}
             onTranscript={insertVoiceTranscript}
+            onPreviewChange={setVoicePreview}
             scopeRef={voiceScopeRef}
             webRemote={isWebRemoteControl}
           />
@@ -3232,6 +3236,7 @@ function ConversationComposerImpl({
           </div>
         ) : null}
         <ChatPromptEditor
+          voicePreview={voicePreview}
           workspacePath={workspacePath}
           workspaceIdentity={workspaceIdentity}
           taskId={sessionId}

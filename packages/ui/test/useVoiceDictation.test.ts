@@ -585,6 +585,32 @@ describe("useVoiceDictation post-processing", () => {
     expect(hook.result.current.phase).toBe("idle");
   });
 
+  it("clears the ghost preview as soon as finalization returns, before the rewrite wait (VD-GHO-05)", async () => {
+    let finish!: (value: { text: string }) => void;
+    mocks.service!.postProcess!.mockImplementation(
+      () => new Promise((resolve) => (finish = resolve)),
+    );
+    const onTranscript = vi.fn();
+    const hook = renderDictation(onTranscript);
+    await speak(hook);
+    await act(async () => mocks.recorder?.options?.onChunk?.(new Float32Array([0.5, 0.25])));
+    await waitFor(() => expect(hook.result.current.preview).not.toBeNull());
+
+    let stopping!: Promise<void>;
+    act(() => {
+      stopping = hook.result.current.stop();
+    });
+    await waitFor(() => expect(hook.result.current.phase).toBe("processing"));
+    expect(hook.result.current.preview).toBeNull();
+    expect(onTranscript).not.toHaveBeenCalled();
+
+    await act(async () => {
+      finish({ text: "Hello there." });
+      await stopping;
+    });
+    expect(onTranscript).toHaveBeenCalledTimes(1);
+  });
+
   it("never starts a rewrite when the Host reports the provider unavailable at dictation time", async () => {
     // A settings-screen answer can be stale; the runtime re-reads availability before processing.
     mocks.service!.getPostProcessAvailability!.mockResolvedValue({
