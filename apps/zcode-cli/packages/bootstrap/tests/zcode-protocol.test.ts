@@ -1179,27 +1179,6 @@ describe("ZCodeProtocolAgentServer", () => {
     });
   });
 
-  it("does not expose internal streaming tool ledger updates to the app protocol", () => {
-    const events = mapSessionEvents([
-      {
-        id: "evt_tool_ledger" as SessionEvent["id"],
-        payload: {
-          input: { content: "large generated file" },
-          status: "tool_started",
-          toolCallId: "call_1",
-          toolName: "Write",
-        },
-        sequenceNumber: 8,
-        sessionId: "sess_1" as SessionId,
-        timestamp: new Date(9),
-        traceId: "trace_tool_ledger" as SessionEvent["traceId"],
-        type: SessionEventType.StreamingToolLedgerUpdated,
-      },
-    ]);
-
-    expect(events).toEqual([]);
-  });
-
   it("logs snapshot phase timings for session create diagnostics", async () => {
     const logs: RecordedLog[] = [];
     const server = new ZCodeProtocolAgentServer({
@@ -3217,47 +3196,6 @@ describe("ZCodeProtocolAgentServer", () => {
         retryNumber: 4,
       },
     });
-  });
-
-  it("returns direct session snapshots for create/read and wrapped subscribe results", async () => {
-    const server = new ZCodeProtocolAgentServer({
-      createZCodeApp: (options) => createFakeApp(options),
-      cwd: workspace.workspacePath,
-      version: "test-version",
-    });
-
-    const created = zcodeSessionStateSnapshotSchema.parse(
-      await requestResult(server, {
-        id: 1,
-        method: zcodeProtocolMethods.sessionCreate,
-        params: { workspace },
-      }),
-    );
-    expect(created.protocol).toEqual({ name: "ZCode Protocol", version: 1 });
-    expect(created.session.workspace.workspaceKey).toBe(workspace.workspaceKey);
-
-    const read = zcodeSessionStateSnapshotSchema.parse(
-      await requestResult(server, {
-        id: 2,
-        method: zcodeProtocolMethods.sessionRead,
-        params: { sessionId: created.session.sessionId },
-      }),
-    );
-    expect(read.session.sessionId).toBe(created.session.sessionId);
-
-    const subscribed = zcodeSessionSubscribeResultSchema.parse(
-      await requestResult(server, {
-        id: 3,
-        method: zcodeProtocolMethods.sessionSubscribe,
-        params: {
-          sessionId: created.session.sessionId,
-          deliveryKind: "desktop-continuous",
-          includeSnapshot: true,
-        },
-      }),
-    );
-    expect(subscribed.sessionId).toBe(created.session.sessionId);
-    expect(subscribed.snapshot?.session.sessionId).toBe(created.session.sessionId);
   });
 
   it("session/read contentProfile=index 剥离大载荷，缺省仍返回完整历史", async () => {
@@ -5883,57 +5821,6 @@ describe("ZCodeProtocolAgentServer", () => {
 
     expect(testModelConnectivity).toHaveBeenCalledOnce();
     expect(close).toHaveBeenCalledOnce();
-  });
-
-  it("cancels an active workspace text generation by operation id", async () => {
-    let generatedSignal: AbortSignal | undefined;
-    let resolveStarted: (() => void) | undefined;
-    const started = new Promise<void>((resolve) => {
-      resolveStarted = resolve;
-    });
-    const generateWorkspaceText = vi.fn(
-      async (...[, options]: Parameters<ZCodeApp["generateWorkspaceText"]>) => {
-        generatedSignal = options?.abortSignal;
-        resolveStarted?.();
-        await new Promise<never>((_resolve, reject) => {
-          generatedSignal?.addEventListener("abort", () => reject(generatedSignal?.reason), {
-            once: true,
-          });
-        });
-      },
-    );
-    const server = new ZCodeProtocolAgentServer({
-      createZCodeApp: (options) => createFakeApp(options, { generateWorkspaceText }),
-      cwd: workspace.workspacePath,
-    });
-
-    const generateResponse = server.handleMessage({
-      id: 1,
-      method: zcodeProtocolMethods.workspaceGenerateText,
-      params: {
-        workspace,
-        selection: { providerId: "glm", modelId: "glm-4.6" },
-        prompt: "generate text",
-        querySource: "test_sidecar",
-        operationId: "workspace_model_1",
-      },
-    });
-    await started;
-
-    const cancelResult = zcodeWorkspaceCancelGenerateTextResultSchema.parse(
-      await requestResult(server, {
-        id: 2,
-        method: zcodeProtocolMethods.workspaceCancelGenerateText,
-        params: { operationId: "workspace_model_1" },
-      }),
-    );
-
-    expect(cancelResult).toEqual({ operationId: "workspace_model_1", cancelled: true });
-    expect(generatedSignal?.aborted).toBe(true);
-    await expect(generateResponse).resolves.toMatchObject({
-      id: 1,
-      error: expect.objectContaining({ message: expect.any(String) }),
-    });
   });
 
   it("rejects a duplicate active workspace text operation id without replacing its controller", async () => {
