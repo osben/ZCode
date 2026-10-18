@@ -59,7 +59,7 @@ export function toWireChildSession(child: ChildSessionInfo, running: boolean) {
 }
 
 /** Finished-but-resident children must not render the running spinner. */
-function isRecordBusy(record: ZCodeProtocolSessionRecord): boolean {
+export function isRecordBusy(record: ZCodeProtocolSessionRecord): boolean {
   return (
     record.activeAbortController !== undefined ||
     (record.residencyFinalizationCount ?? 0) > 0 ||

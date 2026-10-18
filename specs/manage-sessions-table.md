@@ -113,7 +113,7 @@ Context menu on the row / `⋯` button:
 - **Copy path** — workspace path copy idiom.
 - _separator_
 - **Archive** / **Restore** (archived rows) — `archiveTask` / `unarchiveTask`; reversible, no confirmation.
-- **Delete** — destructive, always confirmed via the §8 dialog (single-row preselection). Semantics (review-corrected): non-archived row → `deleteTask` = **index tombstone** (row hidden; CLI session content retained on disk); archived row → `deleteArchivedTask` = **permanent index removal** (row gone from every list; CLI session content still retained — `zcodeTaskService.ts:748-757`). Neither path deletes files in v1.
+- **Delete** — destructive, always confirmed via the §8 dialog (single-row preselection). Semantics (review-corrected): non-archived row → `deleteTask` = **index tombstone** (row hidden; CLI session content retained on disk); archived row → `deleteArchivedTask` = the same **index tombstone** (`deleted = 1`, not a row removal — `taskIndexRepo.ts` `deleteArchivedTask`; CLI session content still retained — `zcodeTaskService.ts:748-757`). Permanent removal is specified in `specs/session-deletion-cascade.md`. Neither path deletes files in v1.
 
 ### 8. Bulk selection
 

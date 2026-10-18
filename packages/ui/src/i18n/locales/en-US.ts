@@ -739,7 +739,7 @@ const enUS: Record<string, string> = {
     "Task “{taskTitle}” will be removed from this workspace, and the current record cannot be restored.",
   "confirmDialog.archivedTaskDeleteTitle": "Delete this archived task?",
   "confirmDialog.archivedTaskDeleteDescription":
-    "Tasks will be removed from the task list and Archive.",
+    "The task is hidden from the task list and Archive. Its files stay on disk.",
   "taskList.deleteAllArchived": "Delete all archived tasks",
   "taskList.archivedActions": "Archive actions",
   "taskList.archivedTaskCount": "{count} archived tasks",
@@ -8217,7 +8217,8 @@ const enUS: Record<string, string> = {
   "sessionManager.delete": "Delete",
   "sessionManager.delete.title.one": "Delete {count} session?",
   "sessionManager.delete.title.other": "Delete {count} sessions?",
-  "sessionManager.delete.body": "Sessions are removed from this list. Session files stay on disk.",
+  "sessionManager.delete.body":
+    "Sessions are hidden from this list. Their files stay on disk until you erase them.",
   "sessionManager.delete.tagActive": "active",
   "sessionManager.delete.tagArchived": "archived",
   "sessionManager.delete.more.one": "+{count} more",
@@ -8225,6 +8226,36 @@ const enUS: Record<string, string> = {
   "sessionManager.delete.includePinned.one": "Include {count} pinned session",
   "sessionManager.delete.includePinned.other": "Include {count} pinned sessions",
   "sessionManager.delete.confirm": "Delete {count}",
+  "sessionManager.delete.includes": "Includes {items}.",
+  "sessionManager.delete.includesGeneric":
+    "May also include side chats and subagents attached to these sessions.",
+  "sessionManager.delete.workflowSessions.one": "{count} workflow session",
+  "sessionManager.delete.workflowSessions.other": "{count} workflow sessions",
+  "sessionManager.delete.running.one":
+    "{count} session is still running. It keeps running after it is hidden.",
+  "sessionManager.delete.running.other":
+    "{count} sessions are still running. They keep running after they are hidden.",
+  "sessionManager.erase.checkbox": "Also erase the stored conversations permanently",
+  "sessionManager.erase.warning.one":
+    "This permanently erases {count} session in total and can't be undone. Tool output and cache files may remain on disk.",
+  "sessionManager.erase.warning.other":
+    "This permanently erases {count} sessions in total and can't be undone. Tool output and cache files may remain on disk.",
+  "sessionManager.erase.blocked.one": "Stop {count} running session before erasing.",
+  "sessionManager.erase.blocked.other": "Stop {count} running sessions before erasing.",
+  "sessionManager.erase.confirm": "Erase {count}",
+  "sessionManager.erase.result": "Erased {erased}. Kept hidden: {kept}.",
+  "sessionManager.erase.unsupported": "Permanent erase isn't available here.",
+  "sessionManager.erase.filesFailed":
+    "Some session folders could not be removed. Those sessions stay hidden; erase again to retry.",
+  "sessionManager.hidden.count.one": "{count} hidden session is still stored on disk.",
+  "sessionManager.hidden.count.other": "{count} hidden sessions are still stored on disk.",
+  "sessionManager.hidden.erase": "Erase hidden sessions",
+  "sessionManager.hidden.confirmTitle": "Erase all hidden sessions?",
+  "sessionManager.hidden.confirmBody.one":
+    "This permanently erases {count} stored session, including side chats and subagents, and can't be undone. Tool output and cache files may remain on disk.",
+  "sessionManager.hidden.confirmBody.other":
+    "This permanently erases {count} stored sessions, including side chats and subagents, and can't be undone. Tool output and cache files may remain on disk.",
+  "sessionManager.hidden.confirm": "Erase",
   "sessionManager.delete.partialFailure": "Deleted {succeeded}, failed: {failed}",
   "sessionManager.mutationFailed": "Action failed. Please try again.",
   "sessionManager.bulk.ariaLabel": "Bulk actions",

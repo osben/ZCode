@@ -14,6 +14,7 @@ import {
   sortSessionManagerRows,
   type SessionManagerRow,
 } from "@/session-manager/sessionManagerModel.js";
+import { HiddenSessionsMaintenance } from "@/session-manager/HiddenSessionsMaintenance.js";
 import { SessionManagerDeleteDialog } from "@/session-manager/SessionManagerDeleteDialog.js";
 import { SessionManagerTable } from "@/session-manager/SessionManagerTable.js";
 import { SessionManagerToolbar } from "@/session-manager/SessionManagerToolbar.js";
@@ -24,6 +25,7 @@ import {
   readSessionManagerViewState,
   SESSION_MANAGER_DEFAULT_VIEW_STATE,
 } from "@/session-manager/sessionManagerViewState.js";
+import { useHiddenSessionsMaintenance } from "@/session-manager/useHiddenSessionsMaintenance.js";
 import {
   useSessionManagerRowActions,
   useSessionManagerTaskLists,
@@ -35,12 +37,15 @@ const SEARCH_DEBOUNCE_MS = 250;
 
 interface SessionsSettingsSectionProps {
   onOpenSession?: (target: OpenExistingSessionTarget) => Promise<void>;
+  /** False on web remote control: neither the erase option nor the hidden-sessions row is offered. */
+  allowErase?: boolean;
   /** Workspace scope carried by the settings navigation intent (project-menu entry). */
   scope?: SettingsSessionsScope;
   onClearScope: () => void;
 }
 
 export function SessionsSettingsSection({
+  allowErase = true,
   scope,
   onClearScope,
   onOpenSession,
@@ -84,6 +89,7 @@ export function SessionsSettingsSection({
     [intl],
   );
   const actions = useSessionManagerRowActions(universe, formatMessage);
+  const hiddenSessions = useHiddenSessionsMaintenance(formatMessage, allowErase);
 
   const rowsByKey = useMemo(() => new Map(rows.map((row) => [row.taskKey, row])), [rows]);
   // Projection deltas prune the selection: keys whose rows vanished externally cannot stay selected.
@@ -229,7 +235,7 @@ export function SessionsSettingsSection({
   }, []);
 
   const confirmDelete = useCallback(
-    async (rowsToDelete: readonly SessionManagerRow[]) => {
+    async (rowsToDelete: readonly SessionManagerRow[], options: { erase: boolean }) => {
       setDeleteDialogRows(null);
       setSelectedKeys((current) => {
         const next = new Set(current);
@@ -238,9 +244,11 @@ export function SessionsSettingsSection({
         }
         return next;
       });
-      await actions.deleteRows(rowsToDelete);
+      await actions.deleteRows(rowsToDelete, options);
+      // Hide adds to the hidden-content count and erase removes from it; either way it changed.
+      await hiddenSessions.refresh();
     },
-    [actions],
+    [actions, hiddenSessions],
   );
 
   const hasFilters = hasActiveSessionManagerFilters(viewState);
@@ -335,6 +343,11 @@ export function SessionsSettingsSection({
           onRenameCancel={() => setRenamingKey(null)}
         />
       )}
+      <HiddenSessionsMaintenance
+        sessions={allowErase ? hiddenSessions.sessions : null}
+        busy={hiddenSessions.busy}
+        onErase={hiddenSessions.erase}
+      />
       {liveSelectedKeys.size > 0 ? (
         <div
           role="toolbar"
@@ -384,8 +397,10 @@ export function SessionsSettingsSection({
       {deleteDialogRows ? (
         <SessionManagerDeleteDialog
           selectedRows={deleteDialogRows}
+          loadTreeCounts={actions.countTrees}
+          canEraseRow={allowErase ? actions.canErase : () => false}
           onCancel={() => setDeleteDialogRows(null)}
-          onConfirm={(rowsToDelete) => void confirmDelete(rowsToDelete)}
+          onConfirm={(rowsToDelete, options) => void confirmDelete(rowsToDelete, options)}
         />
       ) : null}
     </div>
