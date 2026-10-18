@@ -1123,10 +1123,46 @@ export interface ChildSessionInfo {
   lastActivityAt: number;
 }
 
+/**
+ * Task types that belong to a parent's tree for permanent erase (specs/session-deletion-cascade.md).
+ * Forks and interactive sessions also carry parent_id but are independent conversations: never descendants.
+ */
+export const SESSION_TREE_CHILD_TASK_TYPES = [
+  "selection_side_chat",
+  "subagent_child",
+  "workflow_child",
+  "nested_workflow_child",
+] as const;
+
+/** Read-only totals for the sessions an erase of the given roots would remove. */
+export interface SessionTreeCounts {
+  /** Every session in the tree that exists, roots included. */
+  total: number;
+  sideChats: number;
+  subagents: number;
+  /** workflow_child and nested_workflow_child sessions. */
+  workflowSessions: number;
+  /** workflow_run plus dwf_run rows owned by sessions in the tree. */
+  workflowRuns: number;
+}
+
 export interface SessionStorePort {
   createSession(input: CreateSessionInput): Promise<SessionInfo>;
   /** Remove a session row only when it has no messages, entries, or admitted input records. */
   deleteEmptySession?(sessionID: SessionId): Promise<boolean>;
+  /**
+   * Totals for the roots plus their descendants through SESSION_TREE_CHILD_TASK_TYPES, archived
+   * children included, forks excluded. Unknown ids count as zero. Read-only.
+   */
+  countSessionTree?(input: { rootIds: readonly SessionId[] }): Promise<SessionTreeCounts>;
+  /** Session ids of the roots that exist plus their descendants (same scope as countSessionTree). Read-only. */
+  listSessionTreeIds?(input: { rootIds: readonly SessionId[] }): Promise<SessionId[]>;
+  /**
+   * Permanently remove the roots and their descendants (same scope as countSessionTree) in one
+   * transaction, including workflow_run / dwf_run rows that foreign keys would otherwise orphan.
+   * Idempotent: ids that no longer exist are skipped. Returns the session ids that were removed.
+   */
+  deleteSessionTree?(input: { rootIds: readonly SessionId[] }): Promise<{ erasedIds: SessionId[] }>;
   /** Legacy compatibility primitive; V4 stable / compact-edit forks must use commitForkBundle instead. */
   createForkedSessionWithMetadata?(
     input: CreateSessionInput,

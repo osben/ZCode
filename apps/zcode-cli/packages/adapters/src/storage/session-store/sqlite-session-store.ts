@@ -37,6 +37,7 @@ import type {
   ScriptWorkflowEventRecord,
   ScriptWorkflowRunRecord,
   ScriptWorkflowRunStatus,
+  SessionTreeCounts,
   ScriptWorkflowStorePort,
   SessionGoal,
   SessionId,
@@ -100,6 +101,7 @@ import * as scriptWorkflowRunRepository from "./repositories/script-workflow-run
 import * as sessionEntryRepository from "./repositories/session-entries.js";
 import * as sessionInputRepository from "./repositories/session-inputs.js";
 import * as sessionRepository from "./repositories/sessions.js";
+import * as sessionTreeRepository from "./repositories/session-tree.js";
 import * as todoRepository from "./repositories/todos.js";
 import * as usageRepository from "./repositories/usage.js";
 
@@ -311,6 +313,21 @@ export class SqliteSessionStore
   async createSession(input: CreateSessionInput): Promise<SessionInfo> {
     this.throwBeforeWrite();
     return sessionRepository.createSession(this.db, input);
+  }
+
+  async countSessionTree(input: { rootIds: readonly SessionId[] }): Promise<SessionTreeCounts> {
+    return sessionTreeRepository.countSessionTree(this.db, input.rootIds);
+  }
+
+  async listSessionTreeIds(input: { rootIds: readonly SessionId[] }): Promise<SessionId[]> {
+    return sessionTreeRepository.listSessionTreeIds(this.db, input.rootIds);
+  }
+
+  async deleteSessionTree(input: {
+    rootIds: readonly SessionId[];
+  }): Promise<{ erasedIds: SessionId[] }> {
+    this.throwBeforeWrite();
+    return sessionTreeRepository.deleteSessionTree(this.db, input.rootIds);
   }
 
   async deleteEmptySession(sessionID: SessionId): Promise<boolean> {

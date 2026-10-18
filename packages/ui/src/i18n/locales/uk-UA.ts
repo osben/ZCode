@@ -633,7 +633,7 @@ const ukUA: Record<string, string> = {
     "Завдання «{taskTitle}» буде вилучено з цього робочого простору, а поточний запис не можна буде відновити.",
   "confirmDialog.archivedTaskDeleteTitle": "Видалити це архівоване завдання?",
   "confirmDialog.archivedTaskDeleteDescription":
-    "Завдання буде вилучено зі списку завдань і з архіву.",
+    "Завдання буде приховано зі списку завдань і з архіву. Його файли залишаться на диску.",
   "taskList.deleteAllArchived": "Видалити всі заархівовані завдання",
   "taskList.archivedActions": "Дії з архівом",
   "taskList.archivedTaskCount": "Заархівовані завдання: {count}",
@@ -8293,7 +8293,7 @@ const ukUA: Record<string, string> = {
   "sessionManager.delete.title.many": "Видалити {count} сесій?",
   "sessionManager.delete.title.other": "Видалити {count} сесії?",
   "sessionManager.delete.body":
-    "Сесії буде вилучено з цього списку. Файли сесій залишаться на диску.",
+    "Сесії буде приховано з цього списку. Їхні файли залишаться на диску, доки ви їх не видалите остаточно.",
   "sessionManager.delete.tagActive": "активна",
   "sessionManager.delete.tagArchived": "архівована",
   "sessionManager.delete.more.one": "ще {count}",
@@ -8305,6 +8305,52 @@ const ukUA: Record<string, string> = {
   "sessionManager.delete.includePinned.many": "Включити {count} закріплених сесій",
   "sessionManager.delete.includePinned.other": "Включити {count} закріпленої сесії",
   "sessionManager.delete.confirm": "Видалити {count}",
+  "sessionManager.delete.includes": "Містить: {items}.",
+  "sessionManager.delete.includesGeneric":
+    "Також можуть бути включені побічні розмови та субагенти цих сесій.",
+  "sessionManager.erase.checkbox": "Також остаточно стерти збережені розмови",
+  "sessionManager.erase.confirm": "Стерти {count}",
+  "sessionManager.erase.result": "Стерто: {erased}. Залишаються прихованими: {kept}.",
+  "sessionManager.erase.unsupported": "Остаточне стирання тут недоступне.",
+  "sessionManager.hidden.erase": "Стерти приховані сесії",
+  "sessionManager.hidden.confirmTitle": "Стерти всі приховані сесії?",
+  "sessionManager.hidden.confirm": "Стерти",
+  "sessionManager.delete.workflowSessions.one": "{count} сесія робочого процесу",
+  "sessionManager.delete.workflowSessions.few": "{count} сесії робочого процесу",
+  "sessionManager.delete.workflowSessions.many": "{count} сесій робочого процесу",
+  "sessionManager.delete.workflowSessions.other": "{count} сесії робочого процесу",
+  "sessionManager.delete.running.one":
+    "{count} сесія досі працює. Вона продовжить працювати після приховування.",
+  "sessionManager.delete.running.few":
+    "{count} сесії досі працюють. Вони продовжать працювати після приховування.",
+  "sessionManager.delete.running.many":
+    "{count} сесій досі працюють. Вони продовжать працювати після приховування.",
+  "sessionManager.delete.running.other":
+    "{count} сесії досі працюють. Вони продовжать працювати після приховування.",
+  "sessionManager.erase.warning.one":
+    "Буде остаточно стерто {count} сесію загалом. Це не можна скасувати. Вивід інструментів і файли кешу можуть залишитися на диску.",
+  "sessionManager.erase.warning.few":
+    "Буде остаточно стерто {count} сесії загалом. Це не можна скасувати. Вивід інструментів і файли кешу можуть залишитися на диску.",
+  "sessionManager.erase.warning.many":
+    "Буде остаточно стерто {count} сесій загалом. Це не можна скасувати. Вивід інструментів і файли кешу можуть залишитися на диску.",
+  "sessionManager.erase.warning.other":
+    "Буде остаточно стерто {count} сесії загалом. Це не можна скасувати. Вивід інструментів і файли кешу можуть залишитися на диску.",
+  "sessionManager.erase.blocked.one": "Зупиніть {count} запущену сесію перед стиранням.",
+  "sessionManager.erase.blocked.few": "Зупиніть {count} запущені сесії перед стиранням.",
+  "sessionManager.erase.blocked.many": "Зупиніть {count} запущених сесій перед стиранням.",
+  "sessionManager.erase.blocked.other": "Зупиніть {count} запущеної сесії перед стиранням.",
+  "sessionManager.hidden.count.one": "{count} прихована сесія досі зберігається на диску.",
+  "sessionManager.hidden.count.few": "{count} приховані сесії досі зберігаються на диску.",
+  "sessionManager.hidden.count.many": "{count} прихованих сесій досі зберігаються на диску.",
+  "sessionManager.hidden.count.other": "{count} прихованої сесії досі зберігаються на диску.",
+  "sessionManager.hidden.confirmBody.one":
+    "Буде остаточно стерто {count} збережену сесію, зокрема побічні розмови та субагентів. Це не можна скасувати. Вивід інструментів і файли кешу можуть залишитися на диску.",
+  "sessionManager.hidden.confirmBody.few":
+    "Буде остаточно стерто {count} збережені сесії, зокрема побічні розмови та субагентів. Це не можна скасувати. Вивід інструментів і файли кешу можуть залишитися на диску.",
+  "sessionManager.hidden.confirmBody.many":
+    "Буде остаточно стерто {count} збережених сесій, зокрема побічні розмови та субагентів. Це не можна скасувати. Вивід інструментів і файли кешу можуть залишитися на диску.",
+  "sessionManager.hidden.confirmBody.other":
+    "Буде остаточно стерто {count} збереженої сесії, зокрема побічні розмови та субагентів. Це не можна скасувати. Вивід інструментів і файли кешу можуть залишитися на диску.",
   "sessionManager.delete.partialFailure": "Видалено {succeeded}, помилок: {failed}",
   "sessionManager.mutationFailed": "Не вдалося виконати дію. Спробуйте ще раз.",
   "sessionManager.bulk.ariaLabel": "Масові дії",

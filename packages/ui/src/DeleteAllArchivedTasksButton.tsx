@@ -15,10 +15,12 @@ import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import {
   collectArchivedTaskDeletion,
+  countArchivedTaskDeletionTrees,
   deleteArchivedTaskSelection,
   type ArchivedTaskDeletionWorkspace,
   type ArchivedTaskDeletionTarget,
 } from "@/lib/archivedTaskDeletion.js";
+import { appendTreeChildrenCopy } from "@/lib/taskTreeCounts.js";
 import { logger } from "@/logger.js";
 
 export function DeleteAllArchivedTasksButton({
@@ -61,13 +63,18 @@ export function DeleteAllArchivedTasksButton({
         setResultMessage(unavailable || intl.formatMessage({ id: "taskList.noArchivedTasks" }));
         return;
       }
+      const treeCounts = await countArchivedTaskDeletionTrees(selection);
       const confirmed = await confirmDialog({
         title: intl.formatMessage(
           { id: "taskList.deleteAllArchivedTitle" },
           { count: selection.count },
         ),
         description: [
-          intl.formatMessage({ id: "confirmDialog.archivedTaskDeleteDescription" }),
+          appendTreeChildrenCopy(
+            intl,
+            intl.formatMessage({ id: "confirmDialog.archivedTaskDeleteDescription" }),
+            treeCounts,
+          ),
           unavailable,
         ]
           .filter(Boolean)

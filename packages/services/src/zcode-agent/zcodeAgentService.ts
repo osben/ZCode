@@ -127,6 +127,8 @@ import {
   zcodeSessionGoalResultSchema,
   zcodeSessionListResultSchema,
   zcodeSessionSubagentsResultSchema,
+  zcodeSessionTreeCountsResultSchema,
+  zcodeSessionEraseTreeResultSchema,
   zcodeSessionMessagesResultSchema,
   zcodeSessionEventSchema,
   zcodeSessionSendResultSchema,
@@ -217,6 +219,7 @@ import type {
   ZCodeAgentServiceEvent,
   ZCodeAgentSessionSubscribeParams,
   ZCodeAgentSessionTarget,
+  ZCodeAgentSessionTreeParams,
   ZCodeAgentSessionRuntimePreferencesRequest,
   ZCodeAgentTaskTokenUsageParams,
   ZCodeAgentSetModeParams,
@@ -5413,6 +5416,35 @@ export function createZCodeAgentService(
       );
       // Support Agents that do not yet return the closed field but have successfully completed a normal close.
       return result.closed ?? true;
+    },
+
+    async countSessionTrees(params: ZCodeAgentSessionTreeParams) {
+      const client = await getReadOnlyClient(params, params.runtimePolicy);
+      try {
+        return await client.request(
+          zcodeProtocolMethods.sessionTreeCounts,
+          { sessionIds: params.sessionIds },
+          zcodeSessionTreeCountsResultSchema,
+        );
+      } catch (error) {
+        // Older CLIs predate the method: callers fall back to generic copy and hide Erase.
+        if (isProtocolMethodNotFoundError(error)) return null;
+        throw error;
+      }
+    },
+
+    async eraseSessionTrees(params: ZCodeAgentSessionTreeParams) {
+      const client = await getReadOnlyClient(params, params.runtimePolicy);
+      try {
+        return await client.request(
+          zcodeProtocolMethods.sessionEraseTree,
+          { sessionIds: params.sessionIds },
+          zcodeSessionEraseTreeResultSchema,
+        );
+      } catch (error) {
+        if (isProtocolMethodNotFoundError(error)) return null;
+        throw error;
+      }
     },
 
     async setModel(params: ZCodeAgentSetModelParams) {

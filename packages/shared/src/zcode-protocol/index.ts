@@ -2382,6 +2382,40 @@ export const zcodeSessionCloseResultSchema = z
   })
   .strict();
 export type ZCodeSessionCloseResult = z.infer<typeof zcodeSessionCloseResultSchema>;
+// Permanent erase of a session tree (specs/session-deletion-cascade.md). Session ids are global in the CLI
+// store, so neither method carries a workspace; older CLIs answer -32601 and callers treat that as unsupported.
+const zcodeSessionTreeRootIdsSchema = z.array(nonEmptyString).min(1).max(5000);
+export const zcodeSessionTreeCountsParamsSchema = z
+  .object({ sessionIds: zcodeSessionTreeRootIdsSchema })
+  .strict();
+export type ZCodeSessionTreeCountsParams = z.infer<typeof zcodeSessionTreeCountsParamsSchema>;
+export const zcodeSessionTreeCountsResultSchema = z
+  .object({
+    /** Every existing session in the trees, roots included. */
+    total: z.number().int().nonnegative(),
+    sideChats: z.number().int().nonnegative(),
+    subagents: z.number().int().nonnegative(),
+    workflowSessions: z.number().int().nonnegative(),
+    workflowRuns: z.number().int().nonnegative(),
+    /** Sessions in the trees with a live turn or background work in the answering CLI process. */
+    running: z.number().int().nonnegative(),
+  })
+  .strict();
+export type ZCodeSessionTreeCountsResult = z.infer<typeof zcodeSessionTreeCountsResultSchema>;
+export const zcodeSessionEraseTreeParamsSchema = z
+  .object({ sessionIds: zcodeSessionTreeRootIdsSchema })
+  .strict();
+export type ZCodeSessionEraseTreeParams = z.infer<typeof zcodeSessionEraseTreeParamsSchema>;
+export const zcodeSessionEraseTreeResultSchema = z
+  .object({
+    erasedSessionIds: z.array(nonEmptyString),
+    /** Non-empty means nothing was erased: these sessions are running in the answering CLI process. */
+    blockedRunningSessionIds: z.array(nonEmptyString),
+    /** Per-session directories that could not be removed after the database rows were erased. */
+    fileFailureCount: z.number().int().nonnegative(),
+  })
+  .strict();
+export type ZCodeSessionEraseTreeResult = z.infer<typeof zcodeSessionEraseTreeResultSchema>;
 export const zcodeWorkspaceReadPresentationParamsSchema = z
   .object({ workspace: zcodeWorkspaceRefSchema })
   .strict();
@@ -4234,6 +4268,9 @@ export const zcodeProtocolMethods = {
   sessionCompact: "session/compact",
   sessionGoal: "session/goal",
   sessionClose: "session/close",
+  // Read-only totals for the sessions an erase would remove, and the erase itself.
+  sessionTreeCounts: "session/treeCounts",
+  sessionEraseTree: "session/eraseTree",
   // setModel is still consumed by zcodeSessionService's legacy Desktop path; replayable
   // switchModelConfig resolves Selection directly through the target Environment Registry.
   sessionSetModel: "session/setModel",

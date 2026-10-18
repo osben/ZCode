@@ -2086,6 +2086,27 @@ export class TaskIndexRepo {
     return rows.map(rowToMeta);
   }
 
+  /** Tombstones of local workspaces (no remote identity), for permanent-erase maintenance. */
+  async listLocalDeletedTaskRefs(params: {
+    provider?: ZCodeProvider;
+  }): Promise<Array<{ workspacePath: string; taskId: string }>> {
+    await this.ensureReady();
+    const rows = this.getDatabase()
+      .prepare(
+        `SELECT workspace_path, task_id
+        FROM tasks
+        WHERE deleted = 1
+          AND (workspace_identity IS NULL OR TRIM(workspace_identity) = '')
+          AND (@provider IS NULL OR provider = @provider)
+        ORDER BY workspace_path, task_id`,
+      )
+      .all({ provider: params.provider ?? null }) as Array<{
+      workspace_path: string;
+      task_id: string;
+    }>;
+    return rows.map((row) => ({ workspacePath: row.workspace_path, taskId: row.task_id }));
+  }
+
   /**
    * Read deletion tombstones for a workspace.
    *

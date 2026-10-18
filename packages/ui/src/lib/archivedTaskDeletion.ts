@@ -1,5 +1,6 @@
 import type { IZCodeTaskService } from "@zcode/services";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
+import { sumTreeCounts } from "@/lib/taskTreeCounts.js";
 import { logger } from "@/logger.js";
 
 export interface ArchivedTaskDeletionTarget {
@@ -12,7 +13,7 @@ export interface ArchivedTaskDeletionWorkspace {
   workspacePath: string;
   workspaceIdentity?: string;
   label: string;
-  service?: Pick<IZCodeTaskService, "listArchivedTasks" | "deleteArchivedTasks">;
+  service?: Pick<IZCodeTaskService, "listArchivedTasks" | "deleteArchivedTasks" | "countTaskTrees">;
 }
 
 export async function collectArchivedTaskDeletion(workspaces: ArchivedTaskDeletionWorkspace[]) {
@@ -97,4 +98,26 @@ export async function deleteArchivedTaskSelection(
     }),
   );
   return { deleted, skipped, failed, unavailableWorkspaces: selection.unavailableWorkspaces };
+}
+
+/** Tree totals for the collected archived tasks; null when any workspace cannot count them. */
+export async function countArchivedTaskDeletionTrees(
+  selection: Awaited<ReturnType<typeof collectArchivedTaskDeletion>>,
+) {
+  try {
+    const counts = await Promise.all(
+      selection.groups.map(async ({ workspace, targets }) => {
+        if (!targets?.length || !workspace.service?.countTaskTrees) return null;
+        return workspace.service.countTaskTrees({
+          workspacePath: workspace.workspacePath,
+          workspaceIdentity: workspace.workspaceIdentity,
+          taskIds: targets.map((target) => target.taskId),
+        });
+      }),
+    );
+    return sumTreeCounts(counts);
+  } catch (error) {
+    logger.warn("[ArchivedTaskDeletion] tree count failed", { error });
+    return null;
+  }
 }

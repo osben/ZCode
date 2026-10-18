@@ -339,6 +339,7 @@ export async function runZCodeProtocolAgent(
       mcpPort,
       mcpTelemetry: mcpTelemetryTracker,
       sessionStore,
+      storageRoot: resolvePath(configResult.config.storage.dir),
       syncAccountProviderConfig: activeProviderRegistryRuntime.syncAccountProviderConfig,
       refreshProviderRegistry: async (reason) => {
         await activeProviderRegistryRuntime.runtime.registryService.refresh(reason);

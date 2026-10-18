@@ -69,6 +69,29 @@ export interface ZCodeArchivedTaskDeletionResult {
   failedTaskIds: string[];
 }
 
+/** Sessions an erase of the given tasks would remove: the tasks plus their side chats, subagents and workflow runs. */
+export interface ZCodeTaskTreeCounts {
+  total: number;
+  sideChats: number;
+  subagents: number;
+  workflowSessions: number;
+  workflowRuns: number;
+  /** Sessions in the trees running in the answering agent process. */
+  running: number;
+}
+
+/** Result of a permanent erase (specs/session-deletion-cascade.md §4); every requested task is in exactly one set. */
+export interface ZCodeTaskEraseResult {
+  erasedTaskIds: string[];
+  /** Not hidden (no tombstone), so never erased. */
+  skippedTaskIds: string[];
+  /** Left untouched because a session in the tree is running. */
+  blockedRunningTaskIds: string[];
+  failedTaskIds: string[];
+  /** Per-session directories that could not be removed after the database rows were erased. */
+  fileFailureCount: number;
+}
+
 /** A message content part from one model request (text / tool call / tool result / other raw structure). */
 export type ZCodeModelTrajectoryContentPart =
   | { kind: "text"; text: string }
@@ -462,6 +485,32 @@ export interface IZCodeTaskService {
     workspacePath: string;
     workspaceIdentity?: string;
   }): Promise<string[]>;
+
+  /**
+   * Read-only totals for the task trees (tasks plus side chats, subagents, workflow runs). Resolves null
+   * when the workspace is remote or the connected CLI does not support it; callers then show generic copy.
+   */
+  countTaskTrees?(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    taskIds: string[];
+  }): Promise<ZCodeTaskTreeCounts | null>;
+
+  /**
+   * Permanently erase tasks that are already hidden (tombstoned), with their side chats, subagents and
+   * workflow runs. The tombstone is kept. Resolves null when unsupported (remote workspace, older CLI).
+   */
+  eraseTasks?(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    taskIds: string[];
+  }): Promise<ZCodeTaskEraseResult | null>;
+
+  /** Number of stored sessions behind local hidden tasks; null when unsupported. */
+  countHiddenTaskContent?(): Promise<{ sessions: number } | null>;
+
+  /** Erase the stored content of every local hidden task; null when unsupported. */
+  eraseHiddenTaskContent?(): Promise<ZCodeTaskEraseResult | null>;
 
   /**
    * Query an aggregated task list for the currently open workspace scopes; tasks-index.sqlite is the source of truth.

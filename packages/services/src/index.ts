@@ -142,6 +142,8 @@ export type {
 export { IZCodeTaskService } from "./session/zcodeTaskService.js";
 export type {
   ZCodeArchivedTaskDeletionResult,
+  ZCodeTaskEraseResult,
+  ZCodeTaskTreeCounts,
   ZCodeModelTrajectory,
   ZCodeModelTrajectoryCallSource,
   ZCodeModelTrajectoryCallSourceKind,
