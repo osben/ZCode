@@ -941,6 +941,16 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
         add column execution_branch text;
     `,
   },
+  {
+    appVersion: "0.16.9",
+    id: "9001_fork_session_incognito",
+    // Fork-owned (fork_ prefix, 9001_fork_* id): the frozen incognito profile JSON; NULL is a
+    // normal session. Upstream builds ignore this ledger row and never list the column.
+    sql: `
+      alter table session
+        add column fork_incognito text;
+    `,
+  },
 ];
 import { OFFICIAL_GLM_SELECTION_MIGRATION_SQL } from "./migrations/0021-official-glm-selection.js";
 import { BACKFILLED_SESSION_REASONING_MIGRATION_SQL } from "./migrations/0022-backfilled-session-reasoning.js";

@@ -1,9 +1,12 @@
 import { createServer, type ServerResponse } from "node:http";
+import {
+  buildOAuthCallbackPage,
+  respondWithOAuthCallbackPage,
+  type OAuthCallbackOutcome,
+} from "@zcode/shared/node";
 import type { AddressInfo } from "node:net";
 
 const LOCALHOST = "127.0.0.1";
-const SUCCESS_TEXT = "Authorization successful! You may close this window and return to the CLI.";
-const FAILURE_TEXT = "Authorization failed. You may close this window and return to the CLI.";
 
 /** Stable error code returned when the authorization server sends `error` per RFC 6749 §4.1.2.1. */
 export const MCP_OAUTH_CALLBACK_DENIED_ERROR_CODE = "MCP_OAUTH_CALLBACK_DENIED";
@@ -62,7 +65,7 @@ export async function createLocalhostOAuthCallbackServer(input: {
     try {
       const requestUrl = new URL(request.url ?? "/", `http://${LOCALHOST}`);
       if (requestUrl.pathname !== input.callbackPath) {
-        writeText(response, 404, FAILURE_TEXT);
+        writePage(response, 404, "invalid");
         return;
       }
 
@@ -71,7 +74,7 @@ export async function createLocalhostOAuthCallbackServer(input: {
       // state could prevent the correct callback from succeeding later. Now return 400 and keep waiting for this transaction's state.
       const state = requestUrl.searchParams.get("state") ?? "";
       if (state !== input.state) {
-        writeText(response, 400, FAILURE_TEXT);
+        writePage(response, 400, "invalid");
         return;
       }
 
@@ -79,7 +82,7 @@ export async function createLocalhostOAuthCallbackServer(input: {
       // the server returns error=access_denied; previously we waited for the caller to time out, but now settle immediately.
       const oauthError = requestUrl.searchParams.get("error");
       if (oauthError) {
-        writeText(response, 400, FAILURE_TEXT);
+        writePage(response, 400, "denied", requestUrl.searchParams.get("error_description"));
         if (!settled) {
           settled = true;
           rejectCallback(
@@ -94,7 +97,7 @@ export async function createLocalhostOAuthCallbackServer(input: {
       if (!code) {
         // A matching state with neither code nor error is an invalid response, so this transaction cannot succeed. Fail
         // immediately instead of consuming the rest of the authorization window.
-        writeText(response, 400, FAILURE_TEXT);
+        writePage(response, 400, "invalid");
         if (!settled) {
           settled = true;
           rejectCallback(new Error("OAuth callback is missing an authorization code."));
@@ -102,7 +105,7 @@ export async function createLocalhostOAuthCallbackServer(input: {
         return;
       }
 
-      writeText(response, 200, SUCCESS_TEXT);
+      writePage(response, 200, "success");
       if (!settled) {
         settled = true;
         // Extra params (SIWC returns the issued client_id and iss) are tolerated and only the
@@ -115,7 +118,7 @@ export async function createLocalhostOAuthCallbackServer(input: {
         });
       }
     } catch (error) {
-      writeText(response, 500, FAILURE_TEXT);
+      writePage(response, 500, "failed");
       if (!settled) {
         settled = true;
         rejectCallback(error instanceof Error ? error : new Error(String(error)));
@@ -148,11 +151,21 @@ export async function createLocalhostOAuthCallbackServer(input: {
   };
 }
 
-function writeText(response: ServerResponse, status: number, message: string): void {
-  response.writeHead(status, {
-    "Content-Type": "text/plain; charset=utf-8",
-  });
-  response.end(message);
+function writePage(
+  response: ServerResponse,
+  status: number,
+  outcome: OAuthCallbackOutcome,
+  detail?: string | null,
+): void {
+  respondWithOAuthCallbackPage(
+    response,
+    status,
+    buildOAuthCallbackPage(outcome, {
+      flow: "sign-in",
+      surface: "cli",
+      ...(detail ? { detail } : {}),
+    }),
+  );
 }
 
 function closeServer(server: ReturnType<typeof createServer>): Promise<void> {

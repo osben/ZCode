@@ -141,12 +141,15 @@ export function useBranchSwitchGuardShell({
             <AlertDialogDescription asChild>
               <div>
                 <p>
+                  {/* formatMessage only substitutes {key} placeholders (createIntl), so the plural
+                      count comes from the formatPlural key family and is assembled here. */}
                   {intl.formatMessage(
-                    { id: "branchSwitchGuard.description" },
-                    {
-                      count: dialogState.affected.length,
-                      branch: dialogState.request.targetBranchName,
-                    },
+                    { id: "branchSwitchGuard.descriptionPrefix" },
+                    { branch: dialogState.request.targetBranchName },
+                  )}{" "}
+                  {intl.formatPlural(
+                    { id: "branchSwitchGuard.taskCount" },
+                    dialogState.affected.length,
                   )}
                 </p>
                 <ul className="mt-2 max-h-40 list-disc overflow-auto pl-5 text-foreground-subtle">

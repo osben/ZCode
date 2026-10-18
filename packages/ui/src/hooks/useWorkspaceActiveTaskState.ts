@@ -67,6 +67,7 @@ function areResolvedTaskMetasEqual(left: ZCodeTaskMeta | null, right: ZCodeTaskM
     areTaskMetaJsonFieldsEqual(left.childSessions, right.childSessions) &&
     // Normalized so absent ≈ false: only a real health flip (false ↔ true) counts as a change.
     (left.executionWorktreeMissing ?? false) === (right.executionWorktreeMissing ?? false) &&
+    (left.incognito ?? false) === (right.incognito ?? false) &&
     areTaskMetaJsonFieldsEqual(left.target, right.target)
   );
 }

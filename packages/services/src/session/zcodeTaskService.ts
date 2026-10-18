@@ -37,6 +37,7 @@ import type {
   ModelSelection,
   ZCodeBackgroundTurnAttribution,
   ZCodeAutomationBotDeliveryTarget,
+  ZCodeExecutionWorktree,
 } from "@zcode/shared";
 import type {
   SessionMessageDeliveryResult,
@@ -471,6 +472,15 @@ export interface IZCodeTaskService {
   listTasks(params: {
     workspacePath: string;
     workspaceIdentity?: string;
+    /**
+     * Host sessions-index convergence input (BUG-GWT-010): persist these execution-worktree facts into
+     * tasks-index meta_json before reading. Used by the window controller so worktree facts learned from
+     * the live overlay survive restarts of closed workspaces; callers that omit it get a plain read.
+     */
+    executionWorktreeFacts?: ReadonlyArray<{
+      taskId: string;
+      executionWorktree: ZCodeExecutionWorktree;
+    }>;
   }): Promise<ZCodeTaskMeta[]>;
 
   /** Read the global pinned task ID list; tasks-index.sqlite is the source of truth. */

@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import type { GitDiffResult } from "@zcode/shared";
 import { ChevronDownIcon, CopyIcon, FolderOpenIcon, ListTreeIcon } from "lucide-react";
 import { DiffViewer } from "@/components/ui/diff-viewer.js";
+import { Badge } from "@/components/ui/badge.js";
 import { cn } from "@/components/lib/utils.js";
 import {
   ContextMenu,
@@ -111,6 +112,13 @@ export function GitPaneChangeCard({
                     filePathClassName: "truncate text-ui-base text-foreground-subtlest",
                   }}
                 />
+                {change.isConflicted ? (
+                  // Unmerged (UU) rows report +0/-0, so without this badge the row is
+                  // indistinguishable from a clean file (BUG-GWT-011; docs/git/requirements.md §4.1).
+                  <Badge variant="destructive">
+                    {intl.formatMessage({ id: "git.kind.conflicted" })}
+                  </Badge>
+                ) : null}
               </div>
             </div>
             <div className="flex shrink-0 items-center justify-end gap-3 pl-3">

@@ -8,8 +8,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { SessionStorePort } from "@zcode/contracts";
+import { createProjectId, type SessionStorePort } from "@zcode/contracts";
 import { createSqliteSessionStore } from "@zcode/adapters/storage";
+import { INCOGNITO_LOCKDOWN_PROFILE } from "@zcode/shared";
 import { V4InteractionRegistry } from "../src/zcode-protocol-v4/interaction-registry.js";
 import type { ConversationV4Gateway } from "../src/zcode-protocol-v4/v4-gateway.js";
 import { createConversationV4Gateway } from "../src/zcode-protocol/v4-bridge.js";
@@ -403,5 +404,173 @@ describe("prepared worktree lifecycle (real bridge + sqlite store + gateway)", (
     expect(target.materializations).toEqual([]);
     expect(target.sentInputs).toEqual([]);
     expect(await readPreparationStatus(target, sessionId)).toBe("preparing");
+  });
+});
+
+describe("prepared worktree incognito freeze (specs/incognito-session.md scenario 20)", () => {
+  const LOCKDOWN = INCOGNITO_LOCKDOWN_PROFILE;
+  const OTHER_PROFILE = { ...LOCKDOWN, memory: true };
+
+  /** Simulate the first-send persistence that lands the profile on the prepared row. */
+  async function persistRowProfile(target: Harness, sessionId: string, incognito: unknown) {
+    await target.store.createSession({
+      id: sessionId as never,
+      projectID: createProjectId("wt-lifecycle"),
+      slug: sessionId.toLowerCase(),
+      directory: WORKSPACE,
+      title: `Worktree ${BRANCH}`,
+      version: "wt-lifecycle-test",
+      ...(incognito ? { incognito: incognito as never } : {}),
+    });
+  }
+
+  it("rejects a prepare create that carries an incognito profile (fail-closed)", async () => {
+    const dbDir = mkdtempSync(join(tmpdir(), "wt-lifecycle-"));
+    const target = await makeHarness(join(dbDir, "sessions.sqlite"));
+    harness = { ...target, dbDir };
+
+    const ack = await target.gateway.handleCommand(
+      command(
+        "createSession",
+        {
+          workspaceId: WORKSPACE,
+          worktreePreparation: { branchName: BRANCH, targetPath: TARGET_PATH, attemptId: ATTEMPT },
+          incognito: LOCKDOWN,
+        },
+        "cmd-prepare-incognito",
+      ),
+    );
+    expect(ack.status).toBe("rejected");
+    expect(ack.reasonCode).toBe("proto.invalidPayload");
+    expect(target.materializations).toEqual([]);
+  });
+
+  it("rejects a repeat activation whose profile differs from the stored row", async () => {
+    const dbDir = mkdtempSync(join(tmpdir(), "wt-lifecycle-"));
+    const target = await makeHarness(join(dbDir, "sessions.sqlite"));
+    harness = { ...target, dbDir };
+    const sessionId = await prepare(target);
+
+    const first = await target.gateway.handleCommand(
+      command(
+        "createSession",
+        activationPayload({ preparedSessionId: sessionId, incognito: LOCKDOWN }),
+        "cmd-activate",
+      ),
+    );
+    expect(first.status).toBe("accepted");
+    target.heldCompletions.forEach((held) => held.resolve());
+    // First-send persistence landed the profile; simulate it for the fake runtime.
+    await persistRowProfile(target, sessionId, LOCKDOWN);
+    expect(await readPreparationStatus(target, sessionId)).toBe("active");
+
+    const differentProfile = await target.gateway.handleCommand(
+      command(
+        "createSession",
+        activationPayload({ preparedSessionId: sessionId, incognito: OTHER_PROFILE }),
+        "cmd-reactivate-other",
+      ),
+    );
+    expect(differentProfile.status).toBe("failed");
+
+    const absentProfile = await target.gateway.handleCommand(
+      command(
+        "createSession",
+        activationPayload({ preparedSessionId: sessionId, incognito: undefined }),
+        "cmd-reactivate-none",
+      ),
+    );
+    expect(absentProfile.status).toBe("failed");
+
+    const matching = await target.gateway.handleCommand(
+      command(
+        "createSession",
+        activationPayload({ preparedSessionId: sessionId, incognito: LOCKDOWN }),
+        "cmd-reactivate-same",
+      ),
+    );
+    expect(matching.status).toBe("accepted");
+    expect((matching.result as { sessionId: string }).sessionId).toBe(sessionId);
+    // The existing identity is reused; no second runtime or input.
+    expect(target.materializations).toEqual([sessionId]);
+    expect(target.sentInputs).toEqual(["frozen first input"]);
+  });
+
+  it("keeps the first materialization's choice for a warm-host retry of a failed activation", async () => {
+    const dbDir = mkdtempSync(join(tmpdir(), "wt-lifecycle-"));
+    const target = await makeHarness(join(dbDir, "sessions.sqlite"));
+    harness = { ...target, dbDir };
+    const sessionId = await prepare(target);
+
+    // First attempt carries the profile but fails before admission; the row has no profile yet,
+    // so only the in-memory stamp on the prepared entry holds the frozen choice.
+    target.failAdmissions = 1;
+    const failed = await target.gateway.handleCommand(
+      command(
+        "createSession",
+        activationPayload({ preparedSessionId: sessionId, incognito: LOCKDOWN }),
+        "cmd-fail",
+      ),
+    );
+    expect(failed.status).toBe("failed");
+    expect(await readPreparationStatus(target, sessionId)).toBe("preparing");
+
+    const swapped = await target.gateway.handleCommand(
+      command(
+        "createSession",
+        activationPayload({ preparedSessionId: sessionId, incognito: OTHER_PROFILE }),
+        "cmd-retry-swapped",
+      ),
+    );
+    expect(swapped.status).toBe("failed");
+    expect(target.sentInputs).toEqual([]);
+
+    const kept = await target.gateway.handleCommand(
+      command(
+        "createSession",
+        activationPayload({ preparedSessionId: sessionId, incognito: LOCKDOWN }),
+        "cmd-retry-kept",
+      ),
+    );
+    expect(kept.status).toBe("accepted");
+    expect(target.sentInputs).toEqual(["frozen first input"]);
+    expect(await readPreparationStatus(target, sessionId)).toBe("active");
+
+    target.heldCompletions.forEach((held) => held.resolve());
+  });
+
+  it("materializes with the stored row profile, not the retry's request", async () => {
+    const dbDir = mkdtempSync(join(tmpdir(), "wt-lifecycle-"));
+    const target = await makeHarness(join(dbDir, "sessions.sqlite"));
+    harness = { ...target, dbDir };
+    const sessionId = await prepare(target);
+    // A profile already landed on the row (earlier admitted activation); the runtime is gone.
+    await persistRowProfile(target, sessionId, LOCKDOWN);
+
+    const mismatch = await target.gateway.handleCommand(
+      command(
+        "createSession",
+        activationPayload({ preparedSessionId: sessionId, incognito: OTHER_PROFILE }),
+        "cmd-activate-mismatch",
+      ),
+    );
+    expect(mismatch.status).toBe("failed");
+    expect(target.materializations).toEqual([]);
+
+    const matching = await target.gateway.handleCommand(
+      command(
+        "createSession",
+        activationPayload({ preparedSessionId: sessionId, incognito: LOCKDOWN }),
+        "cmd-activate-matching",
+      ),
+    );
+    expect(matching.status).toBe("accepted");
+    expect(target.materializations).toEqual([sessionId]);
+    const rawParams = vi.mocked(createSessionRecordForV4).mock.calls.at(-1)![1] as {
+      incognito?: unknown;
+    };
+    expect(rawParams.incognito).toEqual(LOCKDOWN);
+
+    target.heldCompletions.forEach((held) => held.resolve());
   });
 });

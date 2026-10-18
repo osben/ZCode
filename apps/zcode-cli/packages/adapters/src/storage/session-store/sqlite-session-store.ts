@@ -103,6 +103,8 @@ import * as sessionInputRepository from "./repositories/session-inputs.js";
 import * as sessionRepository from "./repositories/sessions.js";
 import * as sessionTreeRepository from "./repositories/session-tree.js";
 import * as todoRepository from "./repositories/todos.js";
+import * as forkUsageQuery from "./repositories/fork-usage-query.js";
+import { scheduleForkUsageRollup } from "./repositories/fork-usage-rollup.js";
 import * as usageRepository from "./repositories/usage.js";
 
 function forkChildSessionId(entry: SessionEntryInfo): SessionId | null {
@@ -878,15 +880,18 @@ export class SqliteSessionStore
   }
 
   async recordModelUsage(input: ModelUsageRecord): Promise<void> {
-    return usageRepository.recordModelUsage(this.db, input);
+    await usageRepository.recordModelUsage(this.db, input);
+    scheduleForkUsageRollup(this.db);
   }
 
   async upsertTurnUsage(input: TurnUsageRecord): Promise<void> {
-    return usageRepository.upsertTurnUsage(this.db, input);
+    await usageRepository.upsertTurnUsage(this.db, input);
+    scheduleForkUsageRollup(this.db);
   }
 
   async upsertToolUsage(input: ToolUsageRecord): Promise<void> {
-    return usageRepository.upsertToolUsage(this.db, input);
+    await usageRepository.upsertToolUsage(this.db, input);
+    scheduleForkUsageRollup(this.db);
   }
 
   async pruneUsage(input?: { beforeTime?: number }): Promise<void> {
@@ -894,7 +899,7 @@ export class SqliteSessionStore
   }
 
   async queryAppUsage(input: AppUsageQueryInput): Promise<AppUsageQueryResult> {
-    return usageRepository.queryAppUsage(this.db, input);
+    return forkUsageQuery.queryAppUsageWithRollup(this.db, input);
   }
 
   async queryTaskUsage(input: TaskUsageQueryInput): Promise<TaskUsageQueryResult> {

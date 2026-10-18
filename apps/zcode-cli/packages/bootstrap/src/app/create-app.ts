@@ -37,7 +37,11 @@ import {
   type ExecutionShellSelection,
   type MessageId,
 } from "@zcode/contracts";
-import { isRemoteWorkspaceIdentity, resolveZCodeRuntimeEnv } from "@zcode/shared";
+import {
+  incognitoExcludes,
+  isRemoteWorkspaceIdentity,
+  resolveZCodeRuntimeEnv,
+} from "@zcode/shared";
 import {
   ZCODE_ATTACHMENT_FAULT_CODES,
   ZCodeAttachmentFaultError,
@@ -234,12 +238,21 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       cliStorageRoot,
       resolveZCodeRuntimeEnv(options.env ?? process.env) === "development",
     );
+    // Incognito profile (docs/design/v2/incognito-session.md). Without custom agents every agent
+    // source resolves as the built-in fallback and no per-turn Host read is installed.
+    const incognito = options.runtimeConfig?.incognito;
+    const customAgentsExcluded = incognitoExcludes(incognito, "customAgents");
+    const readSubagentRuntimeConfig = customAgentsExcluded
+      ? undefined
+      : options.readSubagentRuntimeConfig;
     // Initialization and the parent turn must use the same Host source, preventing a separate
     // CLI storage.dir definition from disappearing in the first turn.
-    const hostSubagentSnapshot = await options.readSubagentRuntimeConfig?.({
-      signal: new AbortController().signal,
-      traceContext,
-    });
+    const hostSubagentSnapshot = customAgentsExcluded
+      ? ({ kind: "built-in-fallback" } as const)
+      : await readSubagentRuntimeConfig?.({
+          signal: new AbortController().signal,
+          traceContext,
+        });
     const zcodeSubagentProfileOutcome = hostSubagentSnapshot
       ? subagentProfilesFromSnapshot(hostSubagentSnapshot)
       : await loadZCodeAgentProfiles({ logger, storageRoot, workingDirectory });
@@ -248,6 +261,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       cliStorageRoot,
       configResult,
       env: options.env,
+      incognito,
       logger,
       options,
       startupTimer,
@@ -255,7 +269,9 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
     });
     // Skills shipped with the CLI (such as dynamic-workflows): they do not belong to a plugin, so users cannot disable or uninstall them.
     const bundledSkillRoots = resolveBundledSkillRoots({ cliStorageRoot, logger });
-    const pluginTemplates = loadPluginAgentTemplates({ logger, plugins: pluginOutcome.plugins });
+    const pluginTemplates = customAgentsExcluded
+      ? { profiles: [], diagnostics: [] }
+      : loadPluginAgentTemplates({ logger, plugins: pluginOutcome.plugins });
     const pluginSubagentProfiles =
       hostSubagentSnapshot?.kind === "built-in-fallback"
         ? []
@@ -293,13 +309,16 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
     // Session-level overrides win; otherwise fall back to the persisted files on disk.
     // The loader reads the fixed ~/.zcode/system-prompt location (same rule as the global
     // AGENTS.md), not the redirected storage root, so it stays in sync with the host service.
-    const persistedSystemPromptOverrides = options.runtimeConfig?.systemPromptOverrides
-      ? undefined
-      : await loadPersistedSystemPromptOverrides({ env: options.env ?? process.env, logger });
+    const persistedSystemPromptOverrides =
+      options.runtimeConfig?.systemPromptOverrides ||
+      incognitoExcludes(incognito, "systemPromptOverrides")
+        ? undefined
+        : await loadPersistedSystemPromptOverrides({ env: options.env ?? process.env, logger });
     // Session-level output style wins; otherwise fall back to the persisted active style on disk.
-    const persistedOutputStyle = options.runtimeConfig?.outputStyle
-      ? undefined
-      : await loadPersistedOutputStyle({ storageRoot, logger });
+    const persistedOutputStyle =
+      options.runtimeConfig?.outputStyle || incognitoExcludes(incognito, "outputStyle")
+        ? undefined
+        : await loadPersistedOutputStyle({ storageRoot, logger });
     let { configuredMcpServers, runtimeConfig, untrustedProjectMcpServers } =
       resolveAppRuntimeConfig({
         cliStorageRoot,
@@ -375,7 +394,10 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
         maxOutputBytes: runtimeConfig.hooks?.maxOutputBytes ?? 32_768,
       },
       sessionId,
-      snapshot: configResult.sources.project.workspaceHookSnapshot,
+      // Incognito without hooks never admits workspace hooks, so no trust review or admission runs.
+      snapshot: incognitoExcludes(incognito, "hooks")
+        ? undefined
+        : configResult.sources.project.workspaceHookSnapshot,
       userConfigPath: configResult.sources.user.path,
       workingDirectory,
       ...(options.workspaceHookReviewHost
@@ -880,10 +902,10 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       currentSelection: () => getRuntime().getSessionModelSelection(),
     });
     runtime = new AgentRuntime(sessionId, runtimeConfig, {
-      ...(options.readSubagentRuntimeConfig
+      ...(readSubagentRuntimeConfig
         ? {
             loadAgentDefinitions: async (input) => {
-              const snapshot = await options.readSubagentRuntimeConfig!(input);
+              const snapshot = await readSubagentRuntimeConfig!(input);
               const parsed = subagentProfilesFromSnapshot(snapshot);
               const pluginProfiles =
                 snapshot.kind === "built-in-fallback"

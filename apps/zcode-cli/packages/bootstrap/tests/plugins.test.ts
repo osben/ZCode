@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createConfig } from "@zcode/adapters/config";
-import { DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS } from "@zcode/shared";
+import { DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS, INCOGNITO_LOCKDOWN_PROFILE } from "@zcode/shared";
 import { ZCODE_PLUGIN_HOST_COMMAND } from "@zcode/contracts";
 import type { Logger } from "@zcode/contracts";
 import { describe, expect, it, vi } from "vitest";
@@ -2641,6 +2641,38 @@ describe("ZCode plugins", () => {
   // content-only official plugins (skill-creator) the same way the CLI subcommand
   // path does. Without forwarding the default-enabled set, `/skill skill-creator`
   // failed with "Skill not found" inside a session even though it was bundled.
+  // docs/design/v2/incognito-session.md: plugins off → the empty plugin outcome.
+  it.each([
+    { label: "normal session", incognito: undefined, discovered: true },
+    { label: "lockdown profile", incognito: INCOGNITO_LOCKDOWN_PROFILE, discovered: false },
+    {
+      label: "plugins opted back in",
+      incognito: { ...INCOGNITO_LOCKDOWN_PROFILE, plugins: true },
+      discovered: true,
+    },
+  ])("startup plugin discovery for $label: $discovered", async ({ incognito, discovered }) => {
+    const root = await mkdtemp(join(tmpdir(), "zcode-incognito-plugins-"));
+    try {
+      const outcome = resolveStartupPlugins({
+        cliStorageRoot: join(root, "cli"),
+        configResult: createConfig({ env: {}, skipUserConfig: true, workingDirectory: root }),
+        env: {},
+        incognito,
+        options: { pluginStorageRoot: join(root, "plugins") } as ZCodeAppOptions,
+        startupTimer: createNoopStartupTimer(),
+        workingDirectory: root,
+      });
+      expect(outcome.plugins.length > 0).toBe(discovered);
+      expect(outcome.skillRoots.length > 0).toBe(discovered);
+      if (!discovered) {
+        expect(outcome.mcpServers).toEqual({});
+        expect(outcome.hooks).toEqual({});
+      }
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
   it("default-enables skill-creator through the app-startup plugin discovery path", async () => {
     const root = await mkdtemp(join(tmpdir(), "zcode-bootstrap-startup-plugins-"));
     const pluginStorageRoot = join(root, "plugins");

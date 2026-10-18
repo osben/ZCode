@@ -617,6 +617,7 @@ async function persistSession(
       path: persistedWorkspacePath,
       executionDirectory: executionWorktreePath,
       executionBranch: this.config.executionWorktree?.branchName,
+      incognito: this.config.incognito,
       title,
       titleSource: "first_input",
       version: this.appVersion,

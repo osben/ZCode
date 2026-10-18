@@ -3,6 +3,7 @@ import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import type { ZCodeTaskMeta } from "@zcode/shared";
 import { TooltipContent } from "@/components/ui/tooltip.js";
+import { IncognitoTaskMarker } from "@/components/IncognitoTaskMarker.js";
 import { WorktreeTaskMarker } from "@/components/WorktreeTaskMarker.js";
 import { thoughtLevelLabelId } from "@/chat-input-toolbar/thoughtLevelOptions.js";
 import type { IntlInstance } from "@/i18n/IntlProvider.js";
@@ -56,6 +57,7 @@ export function TaskSidebarHoverCard({
         <div className="flex min-w-0 items-center gap-2">
           <span className="min-w-0 truncate text-ui-base text-foreground">{taskTitle}</span>
           {task.executionWorktree ? <WorktreeTaskMarker task={task} /> : null}
+          {task.incognito ? <IncognitoTaskMarker task={task} /> : null}
           <span className="ml-auto shrink-0 text-foreground-subtle">
             {formatTaskRelativeTime(lastActivity, intl)}
           </span>

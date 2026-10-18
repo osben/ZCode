@@ -1,6 +1,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import * as fsPromises from "node:fs/promises";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -802,6 +803,49 @@ describeIfGit("gitCliRepo worktree operations", () => {
         expect.objectContaining({ code: "branch-in-other-worktree" }),
       ]);
       expect(existsSync(join(container, "wt-b"))).toBe(false);
+    },
+    GIT_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  // BUG-GWT-003 regression guard (docs/testing/git-worktree-qa/bugs/BUG-GWT-003.md):
+  // `git worktree add -b` creates the branch ref before the worktree directory, so a failed run
+  // (read-only parent, EACCES) used to leave a half-created branch with no worktree.
+  // createWorktree now rolls the branch back via rollbackCreatedWorktreeBranch. POSIX directory
+  // modes are not enforced for root or on Windows, so the read-only parent cannot fail there.
+  const canMakeDirReadOnly =
+    process.platform !== "win32" && typeof process.getuid === "function" && process.getuid() !== 0;
+  it.skipIf(!canMakeDirReadOnly)(
+    "BUG-GWT-003: failed worktree creation reports the error and leaves no half-created branch",
+    async () => {
+      const { container, repoPath } = createWorktreeTestRepo();
+      const repo = createGitCliRepo();
+      // Mirror QA case C5: the sibling worktrees parent directory exists but is
+      // read-only, so `git worktree add` cannot create the target directory (EACCES).
+      const readOnlyParent = join(container, "worktrees-parent");
+      mkdirSync(readOnlyParent);
+      chmodSync(readOnlyParent, 0o555);
+      try {
+        const result = await repo.createWorktree(
+          repoPath,
+          "zcode/half-created",
+          join(readOnlyParent, "zcode-half-created"),
+          "release",
+        );
+
+        // The service contract must surface the failure to the caller. The misleading
+        // "git.createWorktree OK" log line observed in QA comes from the RPC logging
+        // middleware, which logs OK for any resolved (non-thrown) result.
+        expect(result.ok).toBe(false);
+        expect(result.issues.length).toBeGreaterThan(0);
+      } finally {
+        // Restore write access so the shared afterEach cleanup can remove the container.
+        chmodSync(readOnlyParent, 0o755);
+      }
+
+      // `git worktree add -b` writes the new branch ref before creating the worktree directory;
+      // the rollback in createWorktree must remove it so a failed creation leaves no branch
+      // garbage in the repository (see docs/testing/git-worktree-qa/bugs/BUG-GWT-003.md).
+      expect(runGit(repoPath, ["branch", "--list", "zcode/half-created"])).toBe("");
     },
     GIT_INTEGRATION_TEST_TIMEOUT_MS,
   );

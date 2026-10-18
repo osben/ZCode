@@ -13,6 +13,7 @@ import {
 import { isCronTask, isOffPeakTask, type ZCodeTaskMeta } from "@zcode/shared";
 import { TID_TASK_ARCHIVE, TID_TASK_ITEM, testId } from "@zcode/shared";
 import { Badge } from "@/components/ui/badge.js";
+import { IncognitoTaskMarker } from "@/components/IncognitoTaskMarker.js";
 import { WorktreeTaskMarker } from "@/components/WorktreeTaskMarker.js";
 import { Button } from "@/components/ui/button.js";
 import { cn } from "@/components/lib/utils.js";
@@ -696,6 +697,7 @@ export const MemoTaskItem = memo(function TaskListItem({
                         // icons (specs/worktree-icon-visibility.md).
                         <WorktreeTaskMarker task={task} />
                       ) : null}
+                      {task.incognito ? <IncognitoTaskMarker task={task} /> : null}
                       <span className="mr-1">{taskTimeLabel}</span>
                     </span>
                   ) : null}
@@ -794,6 +796,7 @@ export const MemoTaskItem = memo(function TaskListItem({
                       // icons (specs/worktree-icon-visibility.md).
                       <WorktreeTaskMarker task={task} />
                     ) : null}
+                    {task.incognito ? <IncognitoTaskMarker task={task} /> : null}
                     {taskTimeLabel}
                   </span>
                 ) : null}

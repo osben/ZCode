@@ -87,6 +87,7 @@ export interface AgentRuntimeCoreMethods {
   getProjectId(): ProjectId;
   setWorkingDirectory(cwd: string): void;
   getExecutionWorktree(): { path: string; branchName?: string; missing?: boolean } | undefined;
+  isIncognito(): boolean;
   ensureSessionPersistedForExternalActivity(
     input: string,
     options?: { traceContext?: TraceContext },

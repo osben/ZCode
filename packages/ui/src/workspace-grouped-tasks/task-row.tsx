@@ -29,6 +29,7 @@ import { Button } from "@/components/ui/button.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { cn } from "@/components/lib/utils.js";
 import { Badge } from "@/components/ui/badge.js";
+import { IncognitoTaskMarker } from "@/components/IncognitoTaskMarker.js";
 import { WorktreeTaskMarker } from "@/components/WorktreeTaskMarker.js";
 import { toast } from "@/components/ui/toast.js";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu.js";
@@ -261,6 +262,7 @@ function GroupedTaskRowComponent({
               // shared component owns glyph, colors, and the branch+directory tooltip).
               <WorktreeTaskMarker task={task} />
             ) : null}
+            {!hasPendingInteraction && task.incognito ? <IncognitoTaskMarker task={task} /> : null}
             {!hasPendingInteraction ? (
               <ChildSessionCountsMarker task={task} expanded={false} />
             ) : null}
@@ -533,6 +535,9 @@ function GroupedTaskRowComponent({
                 // Worktree-session marker, styled like the neighboring clock/moon meta icons (the
                 // shared component owns glyph, colors, and the branch+directory tooltip).
                 <WorktreeTaskMarker task={task} />
+              ) : null}
+              {!hasPendingInteraction && task.incognito ? (
+                <IncognitoTaskMarker task={task} />
               ) : null}
 
               {!hasPendingInteraction ? <span className="mr-1">{taskTimeLabel}</span> : null}

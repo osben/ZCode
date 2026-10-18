@@ -118,7 +118,7 @@ import {
   type ZCodeProtocolToolInputTransmissionState,
 } from "./server-types.js";
 import { createWorkspaceZCodeApp, ensureSessionModelAvailable } from "./workspace-model-runtime.js";
-import { buildAppUsageSnapshot, resolveTzOffsetMs } from "./usage-stats-builder.js";
+import { runUsageStats } from "./usage-stats-run.js";
 import { createProtocolInteractionBroker } from "./interaction-broker.js";
 import { createProtocolAutomationPort } from "./automation-port.js";
 import { createProtocolOffPeakPort } from "./offpeak-port.js";
@@ -158,6 +158,9 @@ type ZCodeSessionRecordParams = (
       parentSessionId?: ZCodeSessionCreateParams["parentSessionId"];
       thoughtLevel?: ZCodeSessionCreateParams["thoughtLevel"];
       executionWorktree?: ZCodeSessionCreateParams["executionWorktree"];
+      // Cold resume and fork carry the persisted profile: plugins, MCP, hooks and agents are
+      // composed by createZCodeApp before core resume runs.
+      incognito?: ZCodeSessionCreateParams["incognito"];
       // Automation sessions disable title regeneration at creation, and create/resume share the
       // record initializer; the resume compatibility branch must declare this policy field too.
       titleGenerationEnabled?: ZCodeSessionCreateParams["titleGenerationEnabled"];
@@ -1086,6 +1089,9 @@ async function persistImportedSessionHistory(params: {
         slug: slugifyImportedSession(params.sessionId),
         directory: workspace.workspacePath,
         path: workspace.workspacePath,
+        // The app.resume() after this import marks the runtime persisted, so first-send
+        // persistence never writes the profile: the import write must carry it (set-once).
+        incognito: params.createParams.incognito,
         title: importedHistory.title,
         titleSource: "custom",
         version: params.context.deps.version ?? "0.0.0",
@@ -1165,6 +1171,9 @@ async function persistImportedSessionHistory(params: {
     slug: slugifyImportedSession(params.sessionId),
     directory: workspace.workspacePath,
     path: workspace.workspacePath,
+    // Same constraint as the shared-context bundle above: the resume that follows this write
+    // suppresses first-send persistence, so the profile must land here.
+    incognito: params.createParams.incognito,
     title: importedHistory.title?.trim() || "Imported session",
     titleSource: "custom",
     version: params.context.deps.version ?? "0.0.0",
@@ -1520,6 +1529,7 @@ export async function activateSessionForResume(
     {
       ...params,
       mode,
+      incognito: session.incognito,
       ...(session.executionDirectory
         ? {
             executionWorktree: {
@@ -1834,62 +1844,13 @@ export async function listSessionSubagents(
   };
 }
 
-const APP_USAGE_RANGE_DAYS: Record<string, number> = { "7d": 7, "30d": 30 };
-
 export async function getUsageStats(context: ZCodeProtocolAgentServerContext, rawParams: unknown) {
   const params = parseParams(zcodeUsageStatsParamsSchema, rawParams ?? {});
-  const timeZone = params.timeZone ?? "UTC";
-  const until = Date.now();
-  const tzOffsetMs = resolveTzOffsetMs(timeZone, until);
-  const rangeDays = APP_USAGE_RANGE_DAYS[params.range] ?? 30;
-  const since = params.range === "all" ? 0 : until - rangeDays * 86_400_000;
-  const buildOptions = {
-    range: params.range,
-    timeZone,
-    tzOffsetMs,
-    generatedAt: until,
-    since,
-    until,
-  };
-
   // SessionStorePort and UsageStorePort are separate interfaces, but the actual store implements
   // both. Use the runtime narrowing pattern from core/usage-observability to access the read-only
   // aggregate method.
   const usageStore = context.deps.sessionStore as Partial<UsageStorePort> | undefined;
-  if (!usageStore?.queryAppUsage) {
-    // No usage store (should not happen): return an empty snapshot instead of throwing so the UI can
-    // show its empty state.
-    return buildAppUsageSnapshot(
-      {
-        totals: {
-          totalTokens: 0,
-          inputTokens: 0,
-          outputTokens: 0,
-          reasoningTokens: 0,
-          cacheCreationTokens: 0,
-          cacheReadTokens: 0,
-          modelRequestCount: 0,
-          modelErrorCount: 0,
-          avgTimeToFirstTokenMs: null,
-        },
-        turnTotals: {
-          totalSessions: 0,
-          totalTurns: 0,
-          avgTurnDurationMs: null,
-          longestSessionMs: 0,
-        },
-        toolTotals: { toolCallCount: 0, toolErrorCount: 0 },
-        models: [],
-        tools: [],
-        days: [],
-        dayModels: [],
-      },
-      buildOptions,
-    );
-  }
-
-  const result = await usageStore.queryAppUsage({ since, until, tzOffsetMs });
-  return buildAppUsageSnapshot(result, buildOptions);
+  return runUsageStats(usageStore, params, Date.now(), context.logger);
 }
 
 export async function readSession(context: ZCodeProtocolAgentServerContext, rawParams: unknown) {
@@ -2374,6 +2335,7 @@ export async function registerForkedSession(
       // parse an empty string just because of the fork.
       model: optionalModelSelectionFromString(parentModel),
       ...(fork.parentSessionId ? { parentSessionId: fork.parentSessionId } : {}),
+      incognito: forkedSession.incognito,
       taskType: forkedSession.taskType,
       workspace: record.workspace,
     },
@@ -3597,6 +3559,7 @@ async function createRecord(
       // above keeps the session identity/persistence anchored to the parent workspace. The fact was
       // health-checked above (create rejects a dead path; resume carries missing: true).
       ...(recordExecutionWorktree ? { executionWorktree: recordExecutionWorktree } : {}),
+      incognito: params.incognito,
       // Keep identity isolation separate from execution paths: core writes only identity to
       // session.workspace_id, while workingDirectory remains the actual path on the remote machine.
       // Local workspaces keep it undefined.

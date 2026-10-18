@@ -1,4 +1,5 @@
 import { LocalTtftObserver, setLocalTtftObserver } from "../src/v4/telemetry/localTtftObserver.js";
+import { INCOGNITO_LOCKDOWN_PROFILE, INCOGNITO_UNSUPPORTED_ERROR } from "@zcode/shared";
 import { Emitter } from "@zcode/rpc";
 import type {
   ConversationTopicFrame,
@@ -122,6 +123,20 @@ it("Plan 请求不发给会剥掉 Plan 字段的旧 Host；普通请求仍兼容
     ...envelope,
     payload: { text: "build", mode: "yolo", planEnabled: false },
   });
+  expect(agent.sendConversationCommandV4).toHaveBeenCalledOnce();
+});
+
+it("incognito create is never sent to a Host that would drop the profile", async () => {
+  const agent = setupAgent();
+  const transport = createAgentConversationTransport(agent as never, { workspacePath: "/work" });
+  const envelope = createCommandEnvelope({
+    type: "createSession",
+    sessionId: null,
+    payload: { workspaceId: "/work", incognito: INCOGNITO_LOCKDOWN_PROFILE },
+  });
+  await expect(transport.sendCommand(envelope)).rejects.toThrow(INCOGNITO_UNSUPPORTED_ERROR);
+  expect(agent.sendConversationCommandV4).not.toHaveBeenCalled();
+  await transport.sendCommand({ ...envelope, payload: { workspaceId: "/work" } });
   expect(agent.sendConversationCommandV4).toHaveBeenCalledOnce();
 });
 

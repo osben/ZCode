@@ -95,6 +95,7 @@ export function mapSessionSummaryToTaskMeta(
         : {}),
       // Worktree health flag rides at the summary top level (cross-version wire shape); absent = healthy.
       ...(summary.executionWorktreeMissing ? { executionWorktreeMissing: true } : {}),
+      ...(summary.incognito ? { incognito: true } : {}),
       ...(previous?.unreadAt ? { unreadAt: previous.unreadAt } : {}),
     },
     {

@@ -4,7 +4,13 @@ import { createServer, type Server } from "node:http";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { isZCodeFileLockTimeoutError } from "@zcode/shared";
-import { withFileLock, RefreshSingleflight } from "@zcode/shared/node";
+import {
+  buildOAuthCallbackPage,
+  respondWithOAuthCallbackPage,
+  withFileLock,
+  RefreshSingleflight,
+  type OAuthCallbackOutcome,
+} from "@zcode/shared/node";
 import type { ICredentialService } from "../../credential/credential.js";
 import { createServiceLogger } from "../../logger/serviceLogger.js";
 import { getAppConfigDir } from "../../paths.js";
@@ -954,23 +960,30 @@ function listenForCallback(state: string): Promise<LoopbackHandle> {
   });
 
   const server = createServer((request, response) => {
-    const respond = (status: number, message: string) => {
-      response.writeHead(status, { "content-type": "text/plain; charset=utf-8" });
-      response.end(message);
+    const respond = (status: number, outcome: OAuthCallbackOutcome, detail?: string | null) => {
+      respondWithOAuthCallbackPage(
+        response,
+        status,
+        buildOAuthCallbackPage(outcome, {
+          flow: "sign-in",
+          surface: "app",
+          ...(detail ? { detail } : {}),
+        }),
+      );
     };
     try {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
       if (url.pathname !== SIWC_CALLBACK_PATH) {
-        respond(404, "Unknown callback path.");
+        respond(404, "invalid");
         return;
       }
       if (url.searchParams.get("state") !== state) {
-        respond(400, "Authorization state mismatch.");
+        respond(400, "invalid");
         return;
       }
       const oauthError = url.searchParams.get("error");
       if (oauthError) {
-        respond(400, "Authorization failed. You may close this window and return to the app.");
+        respond(400, "denied", url.searchParams.get("error_description"));
         if (!settled) {
           settled = true;
           rejectCompletion(
@@ -986,10 +999,10 @@ function listenForCallback(state: string): Promise<LoopbackHandle> {
       }
       const code = url.searchParams.get("code")?.trim();
       if (!code) {
-        respond(400, "Authorization callback is missing a code.");
+        respond(400, "invalid");
         return;
       }
-      respond(200, "Authorization successful! You may close this window and return to the app.");
+      respond(200, "success");
       if (!settled) {
         settled = true;
         const issuedClientId = url.searchParams.get("client_id")?.trim() || undefined;
@@ -1000,7 +1013,7 @@ function listenForCallback(state: string): Promise<LoopbackHandle> {
         });
       }
     } catch (error) {
-      respond(500, "Authorization failed.");
+      respond(500, "failed");
       if (!settled) {
         settled = true;
         rejectCompletion(error instanceof Error ? error : new Error(String(error)));

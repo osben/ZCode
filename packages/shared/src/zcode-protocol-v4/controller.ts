@@ -105,6 +105,8 @@ export const windowHostControllerTaskRowSchema = z
     executionWorktree: zcodeExecutionWorktreeSchema.optional(),
     /** Host-observed health for the live execution target; never persisted in task metadata. */
     executionWorktreeMissing: z.boolean().optional(),
+    /** Incognito marker from the Host sessions-index overlay; never persisted in task metadata. */
+    incognito: z.boolean().optional(),
     /**
      * Host-owned worktree preparation for a not-yet-active session (runtime-less prepared
      * identity). Deletion guards treat a non-cancelled preparation as using its target path and

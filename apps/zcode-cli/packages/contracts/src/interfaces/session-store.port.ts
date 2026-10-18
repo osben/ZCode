@@ -30,6 +30,7 @@ import type { SessionGoal, GoalStatus } from "../tools/target.js";
 import type { PermissionRuleset } from "./permission.port.js";
 import type { CollaborationMode } from "./session.port.js";
 import type { EnvInfo } from "./context-source.port.js";
+import type { IncognitoProfile } from "@zcode/shared";
 
 export const SESSION_TASK_TYPES = [
   "interactive",
@@ -163,6 +164,8 @@ export interface SessionInfo {
    */
   executionDirectory?: string;
   executionBranch?: string;
+  /** Frozen incognito profile (root specs/incognito-session.md); absent for a normal session. */
+  incognito?: IncognitoProfile;
   title: string;
   titleSource?: SessionTitleSource;
   titleMessageID?: MessageId;
@@ -195,6 +198,8 @@ export interface CreateSessionInput {
   path?: string;
   executionDirectory?: string;
   executionBranch?: string;
+  /** Set once: an existing row keeps its profile; a NULL row accepts one from a later upsert. */
+  incognito?: IncognitoProfile;
   title: string;
   titleSource?: SessionTitleSource;
   titleMessageID?: MessageId;
@@ -1004,6 +1009,20 @@ export interface ToolUsageRecord {
   errorMessage?: string;
 }
 
+/**
+ * Optional narrowing for the rollup read path (fork). Model, provider, and query-source filters
+ * constrain token and model data only; workspace filters also constrain turns, sessions, and tools.
+ * The raw-table fallback cannot honor filters, so a filtered request fails instead of returning
+ * unfiltered data when the rollup is unavailable.
+ */
+export interface AppUsageFilters {
+  modelIds?: string[];
+  providerIds?: string[];
+  querySources?: string[];
+  /** Session `directory` values; the empty string selects sessions whose directory is unknown. */
+  workspaceKeys?: string[];
+}
+
 export interface AppUsageQueryInput {
   /** Inclusive lower bound of the (since, until] interval (Unix ms). */
   since: number;
@@ -1011,6 +1030,36 @@ export interface AppUsageQueryInput {
   until: number;
   /** Calling client's fixed offset from UTC (ms), used to bucket by local day. */
   tzOffsetMs: number;
+  filters?: AppUsageFilters;
+  /** Also list the filter values present in the window (ignoring filters). Rollup read path only. */
+  includeFacets?: boolean;
+  /** Optional extra breakdowns for the window. Rollup read path only. */
+  include?: AppUsageInclude;
+}
+
+export interface AppUsageInclude {
+  /** Tokens by local weekday and hour (168 cells, index = weekday * 24 + hour, Sunday = 0). */
+  hourly?: boolean;
+  /** Busiest sessions of the window by token count. */
+  sessions?: boolean;
+}
+
+export interface AppUsageSessionRow {
+  sessionId: string;
+  /** Null when the session row no longer exists. */
+  title: string | null;
+  workspaceKey: string;
+  totalTokens: number;
+  turnCount: number;
+  durationMs: number;
+}
+
+/** Distinct values per filter dimension; `workspaces` entries are session directories ('' = unknown). */
+export interface AppUsageFacets {
+  models: string[];
+  providers: string[];
+  querySources: string[];
+  workspaces: string[];
 }
 
 export interface AppUsageTotalsRow {
@@ -1073,6 +1122,11 @@ export interface AppUsageQueryResult {
   tools: AppUsageToolRow[];
   days: AppUsageDayRow[];
   dayModels: AppUsageDayModelRow[];
+  facets?: AppUsageFacets;
+  hourlyTokens?: number[];
+  topSessions?: AppUsageSessionRow[];
+  /** Set when the rollup could not serve the request and the raw tables answered instead (30-day data). */
+  rollupFallbackReason?: string;
 }
 
 export interface TaskUsageQueryInput {

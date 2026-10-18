@@ -104,6 +104,7 @@ function sessionOverlay(
     ...(summary.executionWorktreeMissing !== undefined
       ? { executionWorktreeMissing: summary.executionWorktreeMissing }
       : {}),
+    ...(summary.incognito ? { incognito: true } : {}),
     ...(summary.worktreePreparation ? { worktreePreparation: summary.worktreePreparation } : {}),
     ...(summary.sideChatCount !== undefined ? { sideChatCount: summary.sideChatCount } : {}),
     ...(summary.subagentCount !== undefined ? { subagentCount: summary.subagentCount } : {}),
@@ -172,7 +173,18 @@ export function createWindowHostControllerRuntime(options: {
   const sourceLiveOverlays = new Map<string, WindowHostControllerSessionOverlay[]>();
   const sourceSessionObservers = new Map<
     string,
-    { agentService: IZCodeAgentService; observer: WindowHostSessionsIndexObserver }
+    {
+      agentService: IZCodeAgentService;
+      observer: WindowHostSessionsIndexObserver;
+    }
+  >();
+  // BUG-GWT-010: execution-worktree facts already confirmed present in the source's tasks-index, so
+  // repeated sessions-index publishes do not re-issue convergence reads. Acknowledgement is per fact and
+  // bound to the task-service instance that confirmed it: a replaced service starts from an empty set, and a
+  // fact whose task row did not exist yet stays unacknowledged until a later publish finds the row.
+  const sourceWorktreeFactSynced = new Map<
+    string,
+    { taskService: IZCodeTaskService; facts: Set<string>; inFlight: Set<string> }
   >();
   const pendingReplacementByNextSourceKey = new Map<string, WindowHostControllerSourceScope>();
   let disposed = false;
@@ -194,8 +206,78 @@ export function createWindowHostControllerRuntime(options: {
     sourceSessionObservers.get(key)?.observer.dispose();
     sourceSessionObservers.delete(key);
     sourceLiveOverlays.delete(key);
+    sourceWorktreeFactSynced.delete(key);
     sourceRefreshGenerations.set(key, (sourceRefreshGenerations.get(key) ?? 0) + 1);
     sourceRefreshFlights.delete(key);
+  }
+
+  // BUG-GWT-010 (docs/testing/git-worktree-qa/bugs/BUG-GWT-010.md): the execution-worktree fact reaches the
+  // Host only through sessions-index summaries and used to live solely in the in-memory live overlay, so
+  // sessions of closed workspaces lost the sidebar marker and Environment/Branch classification after a
+  // restart. Converge the fact into the source's tasks-index meta at this boundary: the overlay stays the
+  // freshness source, persisted meta becomes the durability source. Local scopes only — a remote workspace's
+  // tasks-index belongs to its own host, whose controller converges the same facts there.
+  function convergeExecutionWorktreeFacts(
+    resolved: ResolvedWindowHostControllerSource,
+    overlays: WindowHostControllerSessionOverlay[],
+  ): void {
+    if (resolved.scope.kind !== "local" || !resolved.taskService) return;
+    const facts = overlays.flatMap((overlay) =>
+      overlay.executionWorktree
+        ? [{ taskId: overlay.taskId, executionWorktree: overlay.executionWorktree }]
+        : [],
+    );
+    // An empty overlay (runtime restart gap) must not erase persisted facts; durability is meta's job.
+    if (facts.length === 0) return;
+    const key = sourceKey(resolved.scope);
+    const taskService = resolved.taskService;
+    const factSignature = (fact: (typeof facts)[number]) =>
+      `${fact.taskId}\n${fact.executionWorktree.path}\n${fact.executionWorktree.branchName ?? ""}`;
+    let synced = sourceWorktreeFactSynced.get(key);
+    if (synced?.taskService !== taskService) {
+      synced = { taskService, facts: new Set(), inFlight: new Set() };
+      sourceWorktreeFactSynced.set(key, synced);
+    }
+    const { facts: acknowledged, inFlight } = synced;
+    // Facts already sent by an overlapping publish are excluded until that request settles.
+    const pending = facts.filter((fact) => {
+      const signature = factSignature(fact);
+      return !acknowledged.has(signature) && !inFlight.has(signature);
+    });
+    if (pending.length === 0) return;
+    for (const fact of pending) inFlight.add(factSignature(fact));
+    void taskService
+      .listTasks({
+        workspacePath: resolved.scope.workspacePath,
+        ...(resolved.scope.workspaceIdentity
+          ? { workspaceIdentity: resolved.scope.workspaceIdentity }
+          : {}),
+        executionWorktreeFacts: pending,
+      })
+      .then((tasks) => {
+        // listTasks succeeding does not mean a fact was persisted: the repo skips facts whose task-index row
+        // does not exist yet. Acknowledge only facts the returned rows now carry. Pinned/archived rows are
+        // excluded from this read and are retried on the next publish; the repo checks the stored fact
+        // read-only before taking the write lock, so that retry costs a list read, not a write transaction.
+        const persisted = new Map(
+          tasks.map((task) => [task.taskId, task.executionWorktree] as const),
+        );
+        for (const fact of pending) {
+          const stored = persisted.get(fact.taskId);
+          if (
+            stored?.path === fact.executionWorktree.path &&
+            stored?.branchName === fact.executionWorktree.branchName
+          ) {
+            acknowledged.add(factSignature(fact));
+          }
+        }
+      })
+      .catch((error) => {
+        if (!disposed) options.onSourceError?.(resolved.scope, "refresh", error);
+      })
+      .finally(() => {
+        for (const fact of pending) inFlight.delete(factSignature(fact));
+      });
   }
 
   function ensureSourceSessionObserver(
@@ -233,6 +315,11 @@ export function createWindowHostControllerRuntime(options: {
         const overlays = sessions.map(sessionOverlay);
         sourceLiveOverlays.set(key, overlays);
         projection.replaceSourceSessionOverlays(resolved.scope, overlays);
+        // Persist the freshly observed worktree facts after the live projection is updated, so a
+        // convergence failure can never disturb the overlay path (BUG-GWT-010). Resolve the source again:
+        // the captured `resolved.taskService` may have been replaced while the agent service stayed the same.
+        const current = resolveCurrentSource(resolved.scope);
+        if (current) convergeExecutionWorktreeFacts(current, overlays);
       },
       onError: (error) => options.onSourceError?.(resolved.scope, "refresh", error),
     });
@@ -616,6 +703,7 @@ export function createWindowHostControllerRuntime(options: {
                   ...(projected?.executionWorktreeMissing !== undefined
                     ? { executionWorktreeMissing: projected.executionWorktreeMissing }
                     : {}),
+                  ...(projected?.incognito ? { incognito: true } : {}),
                   ...(projected?.activity ? { activity: projected.activity } : {}),
                   ...(item.searchSnippets ? { searchSnippets: item.searchSnippets } : {}),
                 };
@@ -670,6 +758,7 @@ export function createWindowHostControllerRuntime(options: {
           ...(row.executionWorktreeMissing !== undefined
             ? { executionWorktreeMissing: row.executionWorktreeMissing }
             : {}),
+          ...(row.incognito ? { incognito: true } : {}),
           ...(row.worktreePreparation ? { worktreePreparation: row.worktreePreparation } : {}),
           ...(row.activity ? { activity: row.activity } : {}),
           ...(row.searchSnippets ? { searchSnippets: row.searchSnippets } : {}),

@@ -34,12 +34,23 @@ Coding Plan:                         [ today / 7d / 30d ]
   // independent range control, reads range=all, first row is Sunday, bottom row shows month labels.
   // Daily: one cell is one day. Weekly: one column is that week's total. Cumulative: one column is total through that week.
 
-[ Time range: 7d / 30d ]
+[ Time range: 7d | 30d | 90d | 1y | All | Custom ]   [ Compare ] [ Day | Week | Month ]
+[ Filters: Models | Providers | Source | Workspaces ]   // options from the all-time snapshot facets
 
 [ Daily Token Trend Chart ]
 
+[ Details: 8 metric tiles ]
+  input / output / cache hit rate / avg turn duration / avg first token / tool calls / tool error rate / model error rate
+
 [ Model Usage Pie Chart ]
   donut chart                                model name + tokens + percent
+
+[ Tools table ]
+  tool | calls | errors | avg duration      // top 8, expandable
+
+[ Activity by hour ]   7 x 24 weekday/hour grid, busiest cell caption
+[ Busiest sessions ]   top 10 by tokens
+[ Refresh ] [ Export CSV ] [ Export JSON ]
 ```
 
 - 趋势图的绘图区左右各保留 24px 安全区，确保首尾日期刻度在桌面端和手机 Web 端都完整显示，不被 SVG 边界裁切；下方时间范围 tabs 使用 pill 样式，尺寸对齐 task tabs。

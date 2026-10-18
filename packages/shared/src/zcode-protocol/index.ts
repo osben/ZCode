@@ -33,13 +33,18 @@ export { conversationQuoteSchema, conversationQuotesSchema } from "../conversati
 // Note: schemas with no external consumers are often internal dependencies of live schema unions; handle them with their host file, not individually.
 import { z } from "zod";
 import { accountProviderUnavailableReasonSchema } from "../account-provider-state.js";
+import { incognitoProfileSchema } from "../incognito-profile.js";
 import { bashOutputDisplaySchema } from "../bash-output-display.js";
 import { zcodeAutomationBotDeliveryTargetSchema } from "../bots.js";
 import { executionOutputPreviewSchema } from "../execution-output-preview.js";
 import { completeModelPropertiesDataSchema } from "../model-config.js";
 import { modelExecutionSchema } from "../model-execution.js";
 import { modelSelectionSchema } from "../model-selection.js";
-import { APP_USAGE_RANGES, appUsageSnapshotSchema } from "../usage-stats.js";
+import {
+  APP_USAGE_RANGES,
+  appUsageRequestExtrasShape,
+  appUsageSnapshotSchema,
+} from "../usage-stats.js";
 import { DYNAMIC_WORKFLOW_MODES } from "../dynamic-workflow-feature.js";
 import { errorAttributionSchema } from "../zcode-protocol-v4/snapshot.js";
 // Shared compact read-only response schema for background details; it carries no command or timing metadata.
@@ -121,7 +126,10 @@ export const ZCODE_PROTOCOL_VERSION = 1 as const;
 export const ZCODE_PROTOCOL_V4_WIRE_VERSION = 3 as const;
 export const zcodeRuntimeCapabilitiesSchema = z.object({
   independentPlanState: z.boolean().optional(),
+  // This CLI persists and enforces createSession `incognito`; the Host must not forward it otherwise.
+  incognitoSession: z.boolean().optional(),
 });
+export type ZCodeRuntimeCapabilities = z.infer<typeof zcodeRuntimeCapabilitiesSchema>;
 export const zcodeProtocolErrorCodes = {
   sessionUnavailable: -32004,
 } as const;
@@ -1948,6 +1956,9 @@ export const zcodeSessionCreateParamsSchema = z
     // Send rollout mode alongside the boolean (launch.md, "On demand: activation"): `onDemand` tells the CLI
     // to defer registering the ten tools until the session's first `/workflow`; absent means follow the boolean (alwaysOn), for compatibility with older Hosts.
     dynamicWorkflowMode: zcodeDynamicWorkflowModeSchema.optional(),
+    // Incognito profile; never an optional compat field: an older CLI rejecting it must fail the create.
+    // Resume does not carry it: cold resume reads the profile from the session row.
+    incognito: incognitoProfileSchema.optional(),
   })
   .strict();
 export type ZCodeSessionCreateParams = z.infer<typeof zcodeSessionCreateParamsSchema>;
@@ -1995,6 +2006,7 @@ export const zcodeUsageStatsParamsSchema = z
   .object({
     range: z.enum(APP_USAGE_RANGES),
     timeZone: z.string().optional(),
+    ...appUsageRequestExtrasShape,
   })
   .strict();
 export const zcodeUsageStatsResultSchema = appUsageSnapshotSchema;

@@ -1,4 +1,8 @@
-import type { RequestVerificationReason, SystemPromptOverrides } from "@zcode/shared";
+import type {
+  IncognitoProfile,
+  RequestVerificationReason,
+  SystemPromptOverrides,
+} from "@zcode/shared";
 import type { GetAgentDefinitions, LoadAgentDefinitions } from "../subagent/definitions.js";
 import type { LspService } from "../lsp/service.js";
 import type { RuntimeInputPresentation, TurnExecutionModelFallbackReason } from "@zcode/contracts";
@@ -271,6 +275,11 @@ export interface AgentRuntimeConfig {
     missing?: boolean;
     workspacePath?: string;
   };
+  /**
+   * Frozen incognito profile (docs/design/v2/incognito-session.md). Absent for a normal session;
+   * an excluded capability is never composed into this runtime.
+   */
+  incognito?: IncognitoProfile;
   /** Used only for persistence isolation; file and command execution still use workingDirectory. */
   workspaceIdentity?: WorkspaceId;
   envInfo?: EnvInfo; // Optional, will be auto-detected if not provided

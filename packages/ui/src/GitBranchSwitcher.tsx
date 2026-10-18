@@ -132,10 +132,9 @@ export function GitBranchSwitcher({
   const currentBranchDirtyLabel = useMemo(
     () =>
       dirtyFileCount > 0
-        ? intl.formatMessage(
-            { id: "git.branchSwitcher.currentDirty" },
-            { count: numberFormatter.format(dirtyFileCount) },
-          )
+        ? intl.formatPlural({ id: "git.branchSwitcher.currentDirty" }, dirtyFileCount, {
+            count: numberFormatter.format(dirtyFileCount),
+          })
         : null,
     [dirtyFileCount, intl, numberFormatter],
   );

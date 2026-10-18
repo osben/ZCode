@@ -313,6 +313,7 @@ export interface V4CommandCoreHost {
      * runs with this directory as execution cwd while staying listed under workspaceId.
      */
     executionWorktree?: CommandPayloadMap["createSession"]["executionWorktree"];
+    incognito?: CommandPayloadMap["createSession"]["incognito"];
     /** Host-determined Off-Peak tool-surface gate; tools are not registered by default. */
     offPeakToolEnabled?: boolean;
     /**

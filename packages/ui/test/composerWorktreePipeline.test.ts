@@ -2,10 +2,14 @@
 // state machine transitions (consume-once, withdraw/orphan), runner idempotency and outcome
 // mapping, and stale-creating reconcile.
 // @vitest-environment jsdom
-import { cleanup } from "@testing-library/react";
+import { act, cleanup, render } from "@testing-library/react";
+import { createElement, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GitWorktreeCreateResult } from "@zcode/shared";
+import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import {
+  armWorktreeSendContinuation,
+  peekWorktreeSendContinuation,
   selectComposerWorktreePipeline,
   useComposerWorktreePipelineStore,
 } from "@/store/composerWorktreePipelineStore.js";
@@ -19,6 +23,126 @@ import {
 } from "@/v4/composer/composerWorktreePipeline.js";
 
 import { restartPreparedWorktreeCreation } from "@/v4/composer/restartPreparedWorktreeCreation.js";
+import { ConversationComposer } from "@/v4/ConversationComposer.js";
+import {
+  ComposerDraftWorktreeIntentContext,
+  type ComposerDraftWorktreeIntent,
+} from "@/v4/composer/composerDraftWorktreeIntent.js";
+import { useDraftBranchIntentStore } from "@/v4/composer/draftBranchIntent.js";
+import { readV4WorktreeRecoveryDrafts } from "@/v4/composer/composerDraftStore.js";
+
+// BUG-GWT-005 (docs/testing/git-worktree-qa/bugs/BUG-GWT-005.md) is a composer-level admission
+// bug, so its regression mounts ConversationComposer. The heavy editor/toolbar subtrees are
+// stubbed at their module boundary; the pipeline, store, and queued-send effects stay real.
+const composerMount = vi.hoisted(() => ({
+  editorProps: [] as Array<Record<string, unknown>>,
+}));
+
+vi.mock("@/prompt-editor/ChatPromptEditor.js", async () => {
+  const React = await import("react");
+  return {
+    ChatPromptEditor: (props: Record<string, unknown>) => {
+      composerMount.editorProps.push(props);
+      const inputApiRef = props.inputApiRef as
+        | { current: Record<string, unknown> | null }
+        | undefined;
+      if (inputApiRef) {
+        inputApiRef.current = {
+          clear: vi.fn(),
+          focus: vi.fn(),
+          getEditorState: () => null,
+          getMarkdown: () => "",
+          setEditorStateJson: vi.fn(),
+          setText: vi.fn(),
+        };
+      }
+      return React.createElement(
+        "form",
+        { "data-testid": "bug005-chat-prompt-editor" },
+        props.submitControl as ReactNode,
+      );
+    },
+  };
+});
+
+vi.mock("@/v4/composer/useComposerAttachments.js", () => ({
+  useComposerAttachments: () => ({
+    adoptSentAttachments: vi.fn(async () => {}),
+    attachmentError: null,
+    attachmentInputRef: { current: null },
+    attachments: [] as unknown[],
+    clearAttachments: vi.fn(),
+    handleAttachmentInputChange: vi.fn(),
+    handleDragLeaveComposer: vi.fn(),
+    handleDragOverComposer: vi.fn(),
+    handleDropComposer: vi.fn(),
+    handlePaste: vi.fn(),
+    handleWhiteboardMentionSelected: vi.fn(),
+    hasAttachments: false,
+    hasUnreadyAttachments: false,
+    isDraggingOverComposer: false,
+    openAttachmentPicker: vi.fn(),
+    prepareForSend: vi.fn(async () => []),
+    removeAttachment: vi.fn(),
+    retryAttachment: vi.fn(),
+    setAttachmentError: vi.fn(),
+  }),
+}));
+
+vi.mock("@/v4/composer/V4ComposerToolbar.js", async () => {
+  const React = await import("react");
+  return {
+    V4ComposerModeSwitch: () => React.createElement("span", null, "mode"),
+    V4ComposerModelControls: () => React.createElement("span", null, "model"),
+  };
+});
+
+vi.mock("@/ControlHintTooltip.js", async () => {
+  const React = await import("react");
+  return {
+    ControlHintTooltip: ({ children }: { children?: ReactNode }) =>
+      React.createElement(React.Fragment, null, children),
+  };
+});
+
+vi.mock("@/components/ui/toast.js", () => ({ toast: vi.fn() }));
+
+vi.mock("@/components/ui/dialog.js", async () => {
+  const React = await import("react");
+  const Passthrough = ({ children }: { children?: ReactNode }) =>
+    React.createElement(React.Fragment, null, children);
+  return {
+    Dialog: () => null,
+    DialogClose: Passthrough,
+    DialogContent: Passthrough,
+    DialogDescription: Passthrough,
+    DialogFooter: Passthrough,
+    DialogHeader: Passthrough,
+    DialogTitle: Passthrough,
+  };
+});
+
+vi.mock("@/components/ai-elements/attachments.js", async () => {
+  const React = await import("react");
+  const Passthrough = ({
+    children,
+    ...props
+  }: { children?: ReactNode } & Record<string, unknown>) =>
+    React.createElement("div", props, children);
+  const Trigger = ({ children }: { children?: ReactNode }) =>
+    React.createElement(React.Fragment, null, children);
+  const Span = (props: Record<string, unknown>) => React.createElement("span", props);
+  return {
+    Attachment: Passthrough,
+    AttachmentHoverCard: Passthrough,
+    AttachmentHoverCardContent: Trigger,
+    AttachmentHoverCardTrigger: Trigger,
+    AttachmentInfo: Span,
+    AttachmentPreview: Span,
+    AttachmentRemove: (props: Record<string, unknown>) => React.createElement("button", props),
+    Attachments: Passthrough,
+  };
+});
 
 const createWorktree = vi.fn();
 const listWorktrees = vi.fn();
@@ -70,7 +194,18 @@ function worktreeEntry(path: string, branchName = PARAMS.branchName) {
 }
 
 beforeEach(() => {
+  // dropWorkspace (not a raw setState) also clears the module-scope armed-continuation registry,
+  // so a failed pipeline left armed by a previous test's composer unmount cannot leak in.
+  for (const workspaceKey of Object.keys(
+    useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey,
+  )) {
+    useComposerWorktreePipelineStore.getState().dropWorkspace(workspaceKey);
+  }
   useComposerWorktreePipelineStore.setState({ pipelineByWorkspaceKey: {} });
+  useDraftBranchIntentStore.setState({
+    intentByWorkspaceKey: {},
+    worktreeIntentActiveByWorkspaceKey: {},
+  });
 });
 
 afterEach(() => {
@@ -132,6 +267,40 @@ describe("composerWorktreePipelineStore state machine", () => {
       status: "creating",
       attemptId: currentAttempt,
     });
+  });
+
+  it("keeps the armed continuation when a stale attempt's consume/discard is rejected by the store", () => {
+    const store = useComposerWorktreePipelineStore.getState();
+    const firstAttempt = store.startPipeline(WORKSPACE_KEY, {
+      status: "creating",
+      sessionId: "session-retry",
+      params: PARAMS,
+      createdAt: 1,
+    });
+    const currentAttempt = useComposerWorktreePipelineStore
+      .getState()
+      .startPipeline(WORKSPACE_KEY, {
+        status: "creating",
+        sessionId: "session-retry",
+        params: PARAMS,
+        createdAt: 2,
+      });
+    armWorktreeSendContinuation({
+      workspaceKey: WORKSPACE_KEY,
+      preparedSessionId: "session-retry",
+      attemptId: currentAttempt,
+      hasBoundPreparedSession: true,
+      dispatch: async () => {},
+      restore: () => {},
+      restoreForRetry: () => {},
+    });
+
+    store.consume(WORKSPACE_KEY, "session-retry", firstAttempt);
+    store.discard(WORKSPACE_KEY, "session-retry", firstAttempt);
+    expect(peekWorktreeSendContinuation(WORKSPACE_KEY, "session-retry")).not.toBeNull();
+
+    store.consume(WORKSPACE_KEY, "session-retry", currentAttempt);
+    expect(peekWorktreeSendContinuation(WORKSPACE_KEY, "session-retry")).toBeNull();
   });
 
   it("walks creating → ready → consumed with consume-once semantics", () => {
@@ -1198,5 +1367,420 @@ describe("reopened preparation attempts", () => {
       status: "ready",
       params: { attemptId: "new" },
     });
+  });
+});
+
+describe("BUG-GWT-005: frozen submission admission after failed creation → Retry → ready", () => {
+  function flushAsyncWork() {
+    return new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  // Regression for BUG-GWT-005 (docs/testing/git-worktree-qa/bugs/BUG-GWT-005.md): the live UI
+  // path failed while the store-level path passed, so this test also reproduces the first-send
+  // view promotion (draft composer becomes the prepared session's composer) and the empty-state
+  // worktree toggle unmount clearing the intent mirror before Retry is clicked.
+  it("BUG-GWT-005: admits the frozen first submission exactly once after a retried creation turns ready", async () => {
+    // C5 shape: creation fails at the Git boundary (EACCES on the worktrees parent), the view
+    // promotes to the prepared session, the user restores permissions, clicks Retry (the Host
+    // mints a fresh attempt id), and the retried creation succeeds. The frozen submission must
+    // then be admitted by the same prepared session exactly once
+    // (specs/composer-worktree-setup-steps.md §Contract: "After Git reports a ready path,
+    // activate the same session with the frozen submission … admits that submission exactly
+    // once" / "one retry can admit it exactly once").
+    const preparedSessionId = "session-prepared-c5";
+    const onSendText = vi.fn(async () => "sent" as const);
+    const onPrepareWorktreeSession = vi.fn(async () => preparedSessionId);
+    const onWorktreePreparationFailed = vi.fn(async () => undefined);
+    const intent: ComposerDraftWorktreeIntent = {
+      workspaceKey: WORKSPACE_KEY,
+      beginCreation: (queuedPromptPreview, prepareSession, syncPreparedWorktree, submissionId) =>
+        beginWorktreePipelineCreation({
+          gitService,
+          workspaceKey: WORKSPACE_KEY,
+          workspacePath: WORKSPACE_KEY,
+          effectiveLocation: {
+            mode: "sibling",
+            customPath: null,
+            appWorktreesDir: null,
+            prefix: "zcode/",
+            baseBranchDefault: null,
+            hasProjectOverride: false,
+          },
+          branchName: PARAMS.branchName,
+          baseBranch: PARAMS.baseBranch,
+          baseFromHeadDefault: false,
+          queuedPromptPreview,
+          prepareSession,
+          ...(syncPreparedWorktree ? { syncPreparedWorktree } : {}),
+          ...(submissionId ? { submissionId } : {}),
+          formatMessage: (id) => id,
+        }),
+    };
+    const composerElement = (props: { draftMode: boolean; sessionId: string | null }) =>
+      createElement(
+        ZCodeIntlProvider,
+        { initialLocale: "en-US" },
+        createElement(
+          ComposerDraftWorktreeIntentContext.Provider,
+          { value: { current: intent } },
+          createElement(ConversationComposer, {
+            composerDraft: { text: "", updatedAt: 0 },
+            draftMode: props.draftMode,
+            onSelectModel: vi.fn(),
+            onSelectThought: vi.fn(),
+            onSendText,
+            onPrepareWorktreeSession,
+            onWorktreePreparationFailed,
+            onStop: vi.fn(),
+            onSwitchMode: vi.fn(),
+            provider: undefined,
+            sessionId: props.sessionId,
+            snapshot: null,
+            submissionReady: true,
+            updateComposerContent: vi.fn(),
+            replaceComposerDraft: vi.fn(),
+            workspacePath: WORKSPACE_KEY,
+          }),
+        ),
+      );
+    try {
+      // Live state before the first send: the worktree intent mirror is on.
+      useDraftBranchIntentStore.getState().setWorktreeIntentActive(WORKSPACE_KEY, true);
+      // First attempt: the Git boundary rejects with EACCES, so the pipeline entry fails while
+      // the submission is queued.
+      createWorktree.mockRejectedValueOnce(
+        new Error(`EACCES: permission denied, mkdir '${PARAMS.targetPath}'`),
+      );
+      const view = render(composerElement({ draftMode: true, sessionId: null }));
+      await act(async () => {
+        composerMount.editorProps.at(-1)!.onSubmit!("C5 frozen input");
+        await flushAsyncWork();
+      });
+      await act(async () => {
+        await vi.waitFor(() => {
+          expect(currentPipeline(preparedSessionId)?.status).toBe("failed");
+        });
+      });
+      // The frozen submission was never admitted; it only lives in the session-scoped
+      // recovery record (the "Unsent message saved" card of the C5 report).
+      expect(onSendText).not.toHaveBeenCalled();
+      expect(onPrepareWorktreeSession).toHaveBeenCalled();
+      expect(
+        readV4WorktreeRecoveryDrafts(WORKSPACE_KEY, undefined, preparedSessionId).some(
+          (entry) => entry.draft.text === "C5 frozen input",
+        ),
+      ).toBe(true);
+
+      // First-send promotion: the composer is reused for the prepared session (stable key), and
+      // the empty-state worktree toggle unmounts, clearing the draft-only intent mirror. The
+      // armed frozen submission must survive both (BUG-GWT-005 live trigger).
+      useDraftBranchIntentStore.getState().setWorktreeIntentActive(WORKSPACE_KEY, false);
+      view.rerender(composerElement({ draftMode: false, sessionId: preparedSessionId }));
+      await act(async () => {
+        await flushAsyncWork();
+      });
+      expect(onSendText).not.toHaveBeenCalled();
+
+      // Retry after the permissions are restored: SessionPane.handleWorktreePreparationRetry
+      // mints a fresh attempt id on the Host, then reruns creation with the frozen params.
+      createWorktree.mockResolvedValue({
+        ok: true,
+        worktreePath: PARAMS.targetPath,
+        branchName: PARAMS.branchName,
+        issues: [],
+      } satisfies GitWorktreeCreateResult);
+      let retryOutcome: "ready" | "failed" = "failed";
+      await act(async () => {
+        retryOutcome = await retryComposerWorktreePipeline({
+          gitService,
+          workspaceKey: WORKSPACE_KEY,
+          sessionId: preparedSessionId,
+          attemptId: "attempt-c5-retry",
+          formatMessage: (id) => id,
+        });
+      });
+      expect(retryOutcome).toBe("ready");
+      await act(async () => {
+        await vi.waitFor(() => {
+          expect(onSendText).toHaveBeenCalledTimes(1);
+        });
+        await flushAsyncWork();
+      });
+
+      // The pipeline is ready with a validated path: the same prepared session admitted the
+      // frozen submission exactly once and consumed the entry (terminal success).
+      expect(onSendText).toHaveBeenCalledTimes(1);
+      expect(onSendText).toHaveBeenCalledWith(
+        "C5 frozen input",
+        expect.objectContaining({
+          executionWorktree: { path: PARAMS.targetPath, branchName: PARAMS.branchName },
+          preparedSessionId,
+        }),
+      );
+      expect(currentPipeline(preparedSessionId)).toMatchObject({
+        status: "consumed",
+        worktreePath: PARAMS.targetPath,
+        sessionId: preparedSessionId,
+      });
+    } finally {
+      window.localStorage.clear();
+    }
+  });
+
+  it("BUG-GWT-005: admits the frozen submission after the draft composer unmounts and the prepared session's composer remounts (RT2-C5 live path)", async () => {
+    // RT2-C5 wave-2 live evidence: the same-instance rerender above stayed green while the live
+    // app never admitted after Retry→ready (0 admission RPC for 225 s). The live first-send view
+    // promotion swaps the composer INSTANCE (the draft view unmounts; the prepared session's view
+    // mounts its own composer), so a component-ref continuation died with the old instance and
+    // the new instance's queued-send effect saw nothing. This regression unmounts the draft
+    // composer and mounts a fresh composer bound to the prepared session before Retry, which is
+    // the missing coverage: the armed continuation must live outside the component instance and
+    // be adopted by the prepared session's composer
+    // (specs/composer-worktree-setup-steps.md §Contract "Retry-admission is a renderer
+    // obligation … survives the first-send view promotion").
+    const preparedSessionId = "session-prepared-c5-remount";
+    const onSendText = vi.fn(async () => "sent" as const);
+    const onPrepareWorktreeSession = vi.fn(async () => preparedSessionId);
+    const onWorktreePreparationFailed = vi.fn(async () => undefined);
+    const intent: ComposerDraftWorktreeIntent = {
+      workspaceKey: WORKSPACE_KEY,
+      beginCreation: (queuedPromptPreview, prepareSession, syncPreparedWorktree, submissionId) =>
+        beginWorktreePipelineCreation({
+          gitService,
+          workspaceKey: WORKSPACE_KEY,
+          workspacePath: WORKSPACE_KEY,
+          effectiveLocation: {
+            mode: "sibling",
+            customPath: null,
+            appWorktreesDir: null,
+            prefix: "zcode/",
+            baseBranchDefault: null,
+            hasProjectOverride: false,
+          },
+          branchName: PARAMS.branchName,
+          baseBranch: PARAMS.baseBranch,
+          baseFromHeadDefault: false,
+          queuedPromptPreview,
+          prepareSession,
+          ...(syncPreparedWorktree ? { syncPreparedWorktree } : {}),
+          ...(submissionId ? { submissionId } : {}),
+          formatMessage: (id) => id,
+        }),
+    };
+    const composerElement = (props: { draftMode: boolean; sessionId: string | null }) =>
+      createElement(
+        ZCodeIntlProvider,
+        { initialLocale: "en-US" },
+        createElement(
+          ComposerDraftWorktreeIntentContext.Provider,
+          { value: { current: intent } },
+          createElement(ConversationComposer, {
+            composerDraft: { text: "", updatedAt: 0 },
+            draftMode: props.draftMode,
+            onSelectModel: vi.fn(),
+            onSelectThought: vi.fn(),
+            onSendText,
+            onPrepareWorktreeSession,
+            onWorktreePreparationFailed,
+            onStop: vi.fn(),
+            onSwitchMode: vi.fn(),
+            provider: undefined,
+            sessionId: props.sessionId,
+            snapshot: null,
+            submissionReady: true,
+            updateComposerContent: vi.fn(),
+            replaceComposerDraft: vi.fn(),
+            workspacePath: WORKSPACE_KEY,
+          }),
+        ),
+      );
+    try {
+      // Live state before the first send: the worktree intent mirror is on.
+      useDraftBranchIntentStore.getState().setWorktreeIntentActive(WORKSPACE_KEY, true);
+      createWorktree.mockRejectedValueOnce(
+        new Error(`EACCES: permission denied, mkdir '${PARAMS.targetPath}'`),
+      );
+      const draftView = render(composerElement({ draftMode: true, sessionId: null }));
+      await act(async () => {
+        composerMount.editorProps.at(-1)!.onSubmit!("RT2-C5 frozen input");
+        await flushAsyncWork();
+      });
+      await act(async () => {
+        await vi.waitFor(() => {
+          expect(currentPipeline(preparedSessionId)?.status).toBe("failed");
+        });
+      });
+      expect(onSendText).not.toHaveBeenCalled();
+
+      // The live view promotion: the draft composer instance UNMOUNTS (the draft view is replaced
+      // by the prepared session's view), and a DIFFERENT composer instance mounts bound to the
+      // prepared session. The empty-state worktree toggle unmounts with it (intent mirror off).
+      draftView.unmount();
+      useDraftBranchIntentStore.getState().setWorktreeIntentActive(WORKSPACE_KEY, false);
+      render(composerElement({ draftMode: false, sessionId: preparedSessionId }));
+      await act(async () => {
+        await flushAsyncWork();
+      });
+      // The frozen submission is still claimed (editor empty, no restore) and recoverable.
+      expect(onSendText).not.toHaveBeenCalled();
+      expect(
+        readV4WorktreeRecoveryDrafts(WORKSPACE_KEY, undefined, preparedSessionId).some(
+          (entry) => entry.draft.text === "RT2-C5 frozen input",
+        ),
+      ).toBe(true);
+
+      // Retry with a fresh attempt id (SessionPane.handleWorktreePreparationRetry mints one on
+      // the Host): the remounted composer must adopt the armed continuation and admit exactly
+      // once when the retried creation turns ready — with no further user action.
+      createWorktree.mockResolvedValue({
+        ok: true,
+        worktreePath: PARAMS.targetPath,
+        branchName: PARAMS.branchName,
+        issues: [],
+      } satisfies GitWorktreeCreateResult);
+      const retryOutcome = await retryComposerWorktreePipeline({
+        gitService,
+        workspaceKey: WORKSPACE_KEY,
+        sessionId: preparedSessionId,
+        attemptId: "attempt-c5-retry-remount",
+        formatMessage: (id) => id,
+      });
+      expect(retryOutcome).toBe("ready");
+      await act(async () => {
+        await vi.waitFor(() => {
+          expect(onSendText).toHaveBeenCalledTimes(1);
+        });
+        await flushAsyncWork();
+      });
+
+      expect(onSendText).toHaveBeenCalledTimes(1);
+      expect(onSendText).toHaveBeenCalledWith(
+        "RT2-C5 frozen input",
+        expect.objectContaining({
+          executionWorktree: { path: PARAMS.targetPath, branchName: PARAMS.branchName },
+          preparedSessionId,
+        }),
+      );
+      expect(currentPipeline(preparedSessionId)).toMatchObject({
+        status: "consumed",
+        worktreePath: PARAMS.targetPath,
+        sessionId: preparedSessionId,
+      });
+      // Admitted: the recovery record for the frozen submission is gone.
+      expect(
+        readV4WorktreeRecoveryDrafts(WORKSPACE_KEY, undefined, preparedSessionId).some(
+          (entry) => entry.draft.text === "RT2-C5 frozen input",
+        ),
+      ).toBe(false);
+    } finally {
+      window.localStorage.clear();
+    }
+  });
+
+  it("BUG-GWT-005: a New-task send while a stuck-ready pipeline exists routes into that prepared session instead of vanishing", async () => {
+    // RT-C5 silent-loss trigger: with a stuck-ready pipeline in the workspace, a Send from the
+    // "New task" empty composer was claimed (editor cleared), joined the ready entry without any
+    // Host call, and then never dispatched — no session, no recovery, no RPC. The submission must
+    // instead be admitted through the same prepared session
+    // (specs/composer-worktree-setup-steps.md §Contract "New task send while a pipeline exists").
+    const stuckSessionId = "session-stuck-ready";
+    const onSendText = vi.fn(async () => "sent" as const);
+    const onPrepareWorktreeSession = vi.fn(async () => "unused-fresh-session");
+    const intent: ComposerDraftWorktreeIntent = {
+      workspaceKey: WORKSPACE_KEY,
+      beginCreation: (queuedPromptPreview, prepareSession, syncPreparedWorktree, submissionId) =>
+        beginWorktreePipelineCreation({
+          gitService,
+          workspaceKey: WORKSPACE_KEY,
+          workspacePath: WORKSPACE_KEY,
+          effectiveLocation: {
+            mode: "sibling",
+            customPath: null,
+            appWorktreesDir: null,
+            prefix: "zcode/",
+            baseBranchDefault: null,
+            hasProjectOverride: false,
+          },
+          branchName: PARAMS.branchName,
+          baseBranch: PARAMS.baseBranch,
+          baseFromHeadDefault: false,
+          queuedPromptPreview,
+          prepareSession,
+          ...(syncPreparedWorktree ? { syncPreparedWorktree } : {}),
+          ...(submissionId ? { submissionId } : {}),
+          formatMessage: (id) => id,
+        }),
+    };
+    try {
+      // A previous preparation is stuck ready: its frozen submission lives only in its
+      // session-scoped recovery record, and the entry still owns a validated worktree path.
+      useComposerWorktreePipelineStore.getState().startPipeline(WORKSPACE_KEY, {
+        status: "ready",
+        sessionId: stuckSessionId,
+        params: { ...PARAMS, attemptId: "attempt-stuck" },
+        worktreePath: PARAMS.targetPath,
+        createdAt: 1,
+      });
+      render(
+        createElement(
+          ZCodeIntlProvider,
+          { initialLocale: "en-US" },
+          createElement(
+            ComposerDraftWorktreeIntentContext.Provider,
+            { value: { current: intent } },
+            createElement(ConversationComposer, {
+              composerDraft: { text: "", updatedAt: 0 },
+              draftMode: true,
+              onSelectModel: vi.fn(),
+              onSelectThought: vi.fn(),
+              onSendText,
+              onPrepareWorktreeSession,
+              onWorktreePreparationFailed: vi.fn(async () => undefined),
+              onStop: vi.fn(),
+              onSwitchMode: vi.fn(),
+              provider: undefined,
+              sessionId: null,
+              snapshot: null,
+              submissionReady: true,
+              updateComposerContent: vi.fn(),
+              replaceComposerDraft: vi.fn(),
+              workspacePath: WORKSPACE_KEY,
+            }),
+          ),
+        ),
+      );
+      await act(async () => {
+        composerMount.editorProps.at(-1)!.onSubmit!("New task text");
+        await flushAsyncWork();
+      });
+      await act(async () => {
+        await vi.waitFor(() => {
+          expect(onSendText).toHaveBeenCalledTimes(1);
+        });
+        await flushAsyncWork();
+      });
+
+      // The ready entry was joined (no new reservation, no Git call), and the submission was
+      // admitted through the stuck prepared session exactly once — not dropped.
+      expect(onPrepareWorktreeSession).not.toHaveBeenCalled();
+      expect(createWorktree).not.toHaveBeenCalled();
+      expect(onSendText).toHaveBeenCalledTimes(1);
+      expect(onSendText).toHaveBeenCalledWith(
+        "New task text",
+        expect.objectContaining({
+          executionWorktree: { path: PARAMS.targetPath, branchName: PARAMS.branchName },
+          preparedSessionId: stuckSessionId,
+        }),
+      );
+      expect(currentPipeline(stuckSessionId)?.status).toBe("consumed");
+      // The message was delivered, so it must not linger in any recovery record.
+      expect(
+        readV4WorktreeRecoveryDrafts(WORKSPACE_KEY, undefined, stuckSessionId).some(
+          (entry) => entry.draft.text === "New task text",
+        ),
+      ).toBe(false);
+    } finally {
+      window.localStorage.clear();
+    }
   });
 });

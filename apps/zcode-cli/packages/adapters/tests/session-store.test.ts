@@ -432,7 +432,7 @@ describe("SQLite session store", () => {
   it("keeps the existing in-memory session store path working", () => {
     const store = createSqliteSessionStore({ dbPath: ":memory:" });
     try {
-      expect(store.debugMigrationIds()).toHaveLength(23);
+      expect(store.debugMigrationIds()).toHaveLength(24);
     } finally {
       store.close();
     }
@@ -559,6 +559,7 @@ describe("SQLite session store", () => {
       "0021_official_glm_selection",
       "0022_backfilled_session_reasoning",
       "0023_session_execution_worktree",
+      "9001_fork_session_incognito",
     ];
 
     try {
@@ -596,6 +597,7 @@ describe("SQLite session store", () => {
         "0.16.5",
         "0.16.5",
         "0.16.9",
+        "0.16.9",
       ]);
       const modelUsageColumns = db.prepare("pragma table_info(model_usage)").all() as Array<{
         name: string;
@@ -606,7 +608,7 @@ describe("SQLite session store", () => {
         name: string;
       }>;
       expect(sessionColumns.map((column) => column.name)).toEqual(
-        expect.arrayContaining(["execution_directory", "execution_branch"]),
+        expect.arrayContaining(["execution_directory", "execution_branch", "fork_incognito"]),
       );
       db.close();
 
@@ -643,7 +645,7 @@ describe("SQLite session store", () => {
         ]),
       );
       expect(attempts.flat().filter((result) => !result.ok)).toEqual([]);
-      expect(attempts.flat().every((result) => result.migrationIds?.length === 23)).toBe(true);
+      expect(attempts.flat().every((result) => result.migrationIds?.length === 24)).toBe(true);
     },
     CONCURRENT_STARTUP_TEST_TIMEOUT_MS,
   );
@@ -867,6 +869,7 @@ describe("SQLite session store", () => {
         "0021_official_glm_selection",
         "0022_backfilled_session_reasoning",
         "0023_session_execution_worktree",
+        "9001_fork_session_incognito",
       ]);
       store.close();
     } finally {

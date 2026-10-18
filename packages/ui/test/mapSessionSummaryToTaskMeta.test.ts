@@ -80,6 +80,15 @@ describe("mapSessionSummaryToTaskMeta", () => {
     ).toBe(false);
   });
 
+  it("incognito maps through when true and stays absent otherwise", () => {
+    expect(
+      mapSessionSummaryToTaskMeta(summary({ incognito: true }), { workspacePath: "/ws" }).incognito,
+    ).toBe(true);
+    expect("incognito" in mapSessionSummaryToTaskMeta(summary({}), { workspacePath: "/ws" })).toBe(
+      false,
+    );
+  });
+
   it("workflowActivity 原样搬进 sidecar（侧栏运行行的数据），缺席时不建键", () => {
     const workflowActivity: SessionSummary["workflowActivity"] = {
       runs: [

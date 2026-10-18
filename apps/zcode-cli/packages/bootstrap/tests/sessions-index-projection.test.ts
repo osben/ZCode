@@ -209,6 +209,27 @@ describe("SessionsIndexProjection 黄金测试（L1）", () => {
     expect(parsed.success).toBe(true);
   });
 
+  it("incognito flag rides at the summary top level and only-flag changes produce deltas", () => {
+    const events = buildEvents("s-incognito", (push) => {
+      push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
+    });
+    const snapshot = projectionFor("s-incognito", events).getSnapshot();
+    const extra = { workspaceId: "ws-1", createdAt: 1000, lastActivityAt: 2000 };
+
+    expect(deriveSessionSummary(snapshot, { ...extra, incognito: true }).incognito).toBe(true);
+    expect("incognito" in deriveSessionSummary(snapshot, extra)).toBe(false);
+
+    const projection = new SessionsIndexProjection("ws-1", "epoch-1");
+    projection.upsertFromConversation(snapshot, extra);
+    expect(projection.upsertFromConversation(snapshot, { ...extra, incognito: true })).toHaveLength(
+      1,
+    );
+    expect(projection.upsertFromConversation(snapshot, { ...extra, incognito: true })).toHaveLength(
+      0,
+    );
+    expect(sessionsIndexSnapshotSchema.safeParse(projection.getSnapshot()).success).toBe(true);
+  });
+
   it("hasBackgroundWork：有 running 后台任务时为 true", () => {
     const events = buildEvents("s2", (push) => {
       push(SessionEventType.SessionCreated, {

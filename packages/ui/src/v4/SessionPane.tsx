@@ -25,6 +25,7 @@ import { Hand } from "lucide-react";
 import {
   BUILTIN_MODEL_PROVIDER_IDS,
   buildCustomSupplierKey,
+  INCOGNITO_UNSUPPORTED_ERROR,
   TID_CHAT_EMPTY,
   TID_V4_SESSION_PANE,
   testId,
@@ -68,6 +69,10 @@ import type {
 } from "@zcode/services";
 import { useCodingPlanBillingDiscountFromService } from "@/CodingPlanBillingDiscount.js";
 import { toast } from "@/components/ui/toast.js";
+import {
+  selectDraftIncognito,
+  useDraftIncognitoIntentStore,
+} from "@/v4/composer/draftIncognitoIntent.js";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { CHAT_ERROR_RESUME_MESSAGE } from "@/lib/chatErrorResume.js";
@@ -3070,8 +3075,12 @@ export function SessionPane({
   // When the pane is not bound to a session, create a phase=draft session in the background as a prewarm carrier:
   // configuration writes go directly through CAS, and first send reuses it.
   // External binding semantics are unchanged (shell activeTaskId remains null); the prewarm session is only the pane's internal effective subscription target.
+  const incognitoDraftActive = useDraftIncognitoIntentStore(
+    (state) => sessionId === null && selectDraftIncognito(state, workspaceKey) !== null,
+  );
   const { binding: prewarmBinding } = useDraftSessionPrewarm({
-    enabled: sessionId === null && draftAgentStartupAllowed,
+    // An incognito draft never warms a session: it would start with every extra loaded.
+    enabled: sessionId === null && draftAgentStartupAllowed && !incognitoDraftActive,
     workspaceKey,
     paneId,
     invalidationVersion: draftRuntimeInvalidationVersion,
@@ -3508,6 +3517,9 @@ export function SessionPane({
       // so it can never serve a worktree send — skip promotion and create the session with
       // executionWorktree through the fallback path instead.
       const executionWorktree = options?.executionWorktree;
+      // Incognito first send (specs/incognito-session.md): a prewarmed session already started with
+      // every extra on, so it is never promoted and the profile rides on the createSession below.
+      const incognito = options?.incognito;
       const heldQueueDisposition = options?.heldQueueDisposition;
       const expectedHeldQueueItemIds = options?.expectedHeldQueueItemIds;
       const readyAttachments = options?.attachments ?? [];
@@ -3600,7 +3612,7 @@ export function SessionPane({
         }
       }
       const prewarmTargetBeforeSend =
-        sessionId === null ? prewarmBindingRef.current?.sessionId : null;
+        sessionId === null && !incognito ? prewarmBindingRef.current?.sessionId : null;
       if (prewarmTargetBeforeSend) {
         // The barrier guarantees only that already queued commands finish. If the prewarm session/snapshot was not ready
         // when configuration was clicked, the command may not have had a target. Sync the authoritative draft configuration
@@ -3647,7 +3659,7 @@ export function SessionPane({
           return;
         }
         const prewarm = prewarmBindingRef.current;
-        if (!executionWorktree && prewarm?.beginPromotion()) {
+        if (!executionWorktree && !incognito && prewarm?.beginPromotion()) {
           try {
             const consumed = await dispatchSlashCommand(
               draftSlashCommand,
@@ -3689,6 +3701,7 @@ export function SessionPane({
             workspaceId: workspaceKey,
             ...draftConfigPayload,
             ...(executionWorktree ? { executionWorktree } : {}),
+            ...(incognito ? { incognito } : {}),
             ...(options?.preparedSessionId
               ? {
                   preparedSessionId: options.preparedSessionId,
@@ -3724,7 +3737,7 @@ export function SessionPane({
         // Draft attachments were pre-uploaded in Composer and bound to the prewarm session.
         // Submit only ready refs here; do not start uploads from the send click.
         const prewarm = prewarmBindingRef.current;
-        if (!executionWorktree && prewarm?.beginPromotion()) {
+        if (!executionWorktree && !incognito && prewarm?.beginPromotion()) {
           try {
             const highspeed = await prepareHighspeedSendContext(
               prewarm.sessionId,
@@ -3807,6 +3820,7 @@ export function SessionPane({
             workspaceId: workspaceKey,
             ...draftConfigPayload,
             ...(executionWorktree ? { executionWorktree } : {}),
+            ...(incognito ? { incognito } : {}),
             ...(options?.preparedSessionId
               ? {
                   preparedSessionId: options.preparedSessionId,
@@ -4013,6 +4027,11 @@ export function SessionPane({
         return "sent";
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
+        if (detail.includes(INCOGNITO_UNSUPPORTED_ERROR)) {
+          // The Host or agent cannot honor incognito; keep the draft and its incognito selection.
+          toast(intl.formatMessage({ id: "chat.incognito.unsupported" }), { variant: "warning" });
+          return "blocked";
+        }
         const runtimeModelUnavailable = detail.includes("provider.notInRegistry");
         // Before first send, switchModelConfig failures are thrown back to Composer. To preserve the draft, Composer
         // only logs them and does not set snapshot.control.lastError, so the user sees no response to the click.
@@ -5631,7 +5650,7 @@ export function SessionPane({
       sessionId={sessionId}
       // The draft taskId is still null, but prewarm already owns an independent AgentRuntime.
       // Pass the effective ID only to the Skill catalog so the UI does not scan for new Skills before the prewarm runtime has loaded them.
-      skillCatalogSessionId={effectiveSessionId}
+      skillCatalogSessionId={incognitoDraftActive ? sessionId : effectiveSessionId}
       draftMode={isDraft}
       draftConfig={draftConfig}
       composerDraft={composerDraft}

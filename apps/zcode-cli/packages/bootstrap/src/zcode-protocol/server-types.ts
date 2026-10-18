@@ -17,6 +17,7 @@ import {
   zcodeProtocolErrorCodes,
   type ZCodeAutomationBotDeliveryTarget,
   type ZCodeDeliveryKind,
+  type IncognitoProfile,
   type ModelSelection,
   type ZCodeModelContextBudgetStrategy,
   type ZCodeProtocolMessage,
@@ -142,6 +143,13 @@ export interface ZCodeProtocolPreparedWorktreeSession {
   updatedAt: number;
   status: "preparing" | "failed" | "cancelled" | "active";
   failureMessage?: string;
+  /**
+   * Incognito choice of the first materialization (specs/incognito-session.md): a profile, `null`
+   * for a normal session, `undefined` until first materialization. In-memory only — it freezes the
+   * choice for warm-host retries of a failed first activation, before the row's set-once
+   * `fork_incognito` has landed via first-send persistence.
+   */
+  incognito?: IncognitoProfile | null;
 }
 
 export interface ZCodeProtocolClientRequestOptions {

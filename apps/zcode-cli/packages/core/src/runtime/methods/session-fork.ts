@@ -172,6 +172,8 @@ function buildForkedSessionInput(
     slug: `${slugify(parentSession.slug)}-${kind}-${now.toString(36)}`.slice(0, 120),
     directory: parentSession.directory,
     path: parentSession.path,
+    // Forks and side chats run with the parent's frozen incognito profile.
+    incognito: parentSession.incognito,
     title:
       kind === "selection_side_chat" ? "Selection side chat" : `Fork of ${parentSession.title}`,
     titleSource: "generated",
