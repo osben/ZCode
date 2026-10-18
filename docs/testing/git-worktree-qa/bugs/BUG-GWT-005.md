@@ -1,6 +1,7 @@
 # BUG-GWT-005: после Retry в recovery подготовка зависает в ready — замороженное сообщение не допускается в сессию автоматически
 
 - Status: FIXED (wave 3, 2026-10-18), verified live on a production QA build of the fix branch (RT4-C5): Retry → `git.createWorktree` +146 ms → `createSession{preparedSessionId}` +206 ms → `highspeed-card.prepareTurn` +556 ms → `sendText` +572 ms with no user action; recovery card and "Queued message" cleared; agent wrote `live6.txt` in the worktree of the same session.
+- Wave 4 (2026-10-18): the opposite ordering (Host snapshot before the Retry acknowledgement) is closed by a mounted regression; not verified live (see Wave 4 below).
 - Previous status (wave 2): PARTIALLY FIXED — continuation moved to a store-level registry surviving view promotion; the remaining "runtime CommandInbox" localization turned out to be wrong (see Wave 3 below).
 
 ## Wave 3 (2026-10-18): real cause — stale Host seed rolls Retry back
@@ -22,7 +23,7 @@ Confirmed cause:
 
 Fix: attempt ids are opaque, so "newer" is decided by supersession. The pipeline store's `startPipeline` is the single owner: replacing a session's entry with another attempt (Retry, `restartPreparedWorktreeCreation` on Send in a failed prepared session, a newer Host attempt) records the replaced attempt in `entry.supersededAttemptIds`; restore ignores a Host seed carrying a superseded attempt; a genuinely newer Host attempt still replaces the entry and inherits the superseded set.
 
-Known residual (pre-existing, not observed live): if the Host snapshot `preparing(B)` arrives before the Retry acknowledgement, restore adopts B as `creating`, the Retry handler's `status !== "failed"` guard returns before Git starts, and the stale-creating reconcile settles the attempt as failed. Spec: `specs/composer-worktree-setup-steps.md` (supersession paragraph + event diagram, acceptance scenario 17).
+Opposite ordering (snapshot before acknowledgement): closed in Wave 4 below. Spec: `specs/composer-worktree-setup-steps.md` (supersession paragraph + event diagram, acceptance scenario 17).
 
 Tests (`packages/ui/test/composerWorktreePipeline.test.ts`):
 
@@ -30,6 +31,29 @@ Tests (`packages/ui/test/composerWorktreePipeline.test.ts`):
 - `BUG-GWT-005: ignores a Host seed for an attempt the renderer already superseded, but still yields to a newer Host attempt` — restore-level rule.
 - `BUG-GWT-005: a prepared-session restart is not rolled back by the stale Host failed seed` — same race through the restart path.
 - Red without the fix (source swapped to HEAD): mounted test `expected "vi.fn()" to be called 1 times, but got 0 times`; store trace `creating B → failed A → creating B (released) → failed B`, identical to the live CDP trace. Green with the fix: 42/42 in the file (all three BUG-005 tests red with the store rule removed); 50 worktree/composer/command-center files, 467 tests green.
+
+## Wave 4 (2026-10-18): snapshot before the Retry acknowledgement
+
+Pre-existing ordering, not observed live; found while reviewing the Wave 3 fix.
+
+Cause (confirmed by a red mounted test):
+
+- If the Host snapshot `preparing(B)` arrives while `onRetryPreparation` is still pending, `restoreComposerWorktreePipelineFromPreparation` adopts B as `creating` (A superseded).
+- The setup-steps effect re-runs and `settleStaleCreating` sees `creating` with no runner. `reconcileCreatingComposerWorktreePipeline` lists worktrees, finds none, marks B `failed`, and reports it via `onPreparationFailed(B)`.
+- When the acknowledgement resolves, the Retry handler's `status !== "failed"` guard (or, with a relaxed guard, the reconcile resuming after its own await) still leaves nobody to start Git for B, so the armed submission is never admitted.
+
+Fix: the renderer that issued Retry is the single owner of starting Git for the acknowledged attempt.
+
+- `markComposerWorktreeRetryPending` (runner module, `composerWorktreePipeline.ts`) is held from before `onRetryPreparation` until the handler ends. The stale-creating reconcile skips a session with a pending retry or an in-flight runner, and re-checks both after each of its own awaits.
+- `retryComposerWorktreePipeline` proceeds from `failed` for the retried attempt, or from `creating` for exactly the acknowledged attempt with no runner in flight; otherwise it resolves `skipped`. Restore still never starts Git.
+- When the handler ends without starting a runner while the entry is `creating` (acknowledgement threw or named another attempt), the setup-steps effect re-runs on `actionPending` and hands the session back to the stale-creating reconcile.
+
+Spec: `specs/composer-worktree-setup-steps.md` (owner paragraph, "Snapshot before acknowledgement" diagram, acceptance scenario 18).
+
+Test (`packages/ui/test/composerWorktreePipeline.test.ts`): `BUG-GWT-005: Retry still starts Git and admits the frozen submission once when the Host snapshot for the retried attempt arrives before the Retry acknowledgement` — mounted composer + real setup steps, deferred `onRetryPreparation`, `preparing(B)` fed and async work flushed before the acknowledgement resolves.
+
+- Red without the fix: `expected { status: 'failed', … } to match object { status: 'creating', … }` — the stale-creating reconcile settled B before the acknowledgement.
+- Green with the fix: 43/43 in the file; 57 worktree/composer/command-center/session-pane files, 596 tests green. The Wave 3 tests stay green.
 
 - Severity: S3 (обход есть — ручной Restore → Send в той же сессии; но нарушен контракт спеки о допуске замороженной отправки после ready)
 - Кейсы: C5 (основной, FAIL)

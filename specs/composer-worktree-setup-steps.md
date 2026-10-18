@@ -133,10 +133,19 @@ turns the entry `creating`; treating it as newer rolled the entry back to `faile
 which made the queued-send effect abandon the armed submission and left the later `ready` admitting
 nothing (BUG-GWT-005, RT4-C5). A genuinely newer Host attempt (for example another client's retry)
 still replaces the entry and inherits its superseded set, adding the attempt it replaced.
-Known residual ordering: if the Host snapshot for the retried attempt reaches the renderer before
-the Retry acknowledgement, restore adopts that attempt as `creating` and the Retry handler, which
-only proceeds from `failed`, does not start Git; the stale-creating reconcile then settles it. This
-ordering predates the supersession rule and was not observed live.
+The renderer that issued Retry is the single owner of starting Git for the attempt the Host
+acknowledged; snapshot restore still never starts Git. The Host snapshot for the retried attempt may
+reach the renderer before the Retry acknowledgement, in which case restore adopts that attempt as
+`creating` (superseding the failed one) before the handler resumes. The Retry handler therefore
+proceeds from either `failed` for the attempt it retried, or `creating` for exactly the attempt the
+Host acknowledged with no runner in flight; any other entry state means another owner already moved
+the session on, and the handler starts nothing. While the acknowledgement is pending, the runner
+marks the session as having a pending retry, and the stale-creating reconcile neither starts nor
+settles that session (it re-checks the pending retry and the in-flight runner after each of its own
+awaits); otherwise it would report the adopted attempt as failed to the Host before Git started. If
+the handler ends without starting a runner while the entry is `creating` (the acknowledgement threw
+or named another attempt), it hands the session back to the stale-creating reconcile once the
+pending mark is cleared.
 
 ```text
 Renderer entry (session S)     Setup-steps reconcile           Host snapshot seed
@@ -148,6 +157,24 @@ startPipeline creating(B),
 Git ready → ready(B)                                           preparing(B) arrives
   → armed submission dispatched -> seed preparing(B): same attempt
     once, entry consumed            → keep local ready
+```
+
+Snapshot before acknowledgement (same session S):
+
+```text
+Retry handler / runner         Setup-steps reconcile           Host snapshot seed
+failed(A)                      seed = failed(A)
+mark retry pending(S)
+updateWorktreePreparation ...                                  preparing(B) arrives
+                               restore: creating(B),
+                                 superseded = {A}
+                               stale-creating reconcile:
+                                 retry pending(S) → skip
+ack = B; entry creating(B),
+  no runner → start Git for B
+clear retry pending(S)
+Git ready → ready(B)
+  → armed submission dispatched once, entry consumed
 ```
 
 ### Preparation states
@@ -341,6 +368,11 @@ early transcript persistence or a second accepted-input store.
     `ready`, the frozen submission is dispatched exactly once against the retry attempt with no
     further user action, the entry is consumed, and its recovery record is cleared so the
     "Unsent message saved" card disappears (BUG-GWT-005).
+18. Same as 17, but the Host snapshot for the retried attempt reaches the renderer before the Retry
+    acknowledgement resolves: restore adopts the retried attempt as `creating`, the stale-creating
+    reconcile does not settle it while the acknowledgement is pending, the Retry handler starts Git
+    for exactly the acknowledged attempt, the frozen submission is dispatched exactly once against
+    it, and the Host is never told that attempt failed (BUG-GWT-005 Wave 4).
 
 ## Validation
 

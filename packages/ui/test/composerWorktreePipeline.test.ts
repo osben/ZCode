@@ -2087,4 +2087,195 @@ describe("BUG-GWT-005: frozen submission admission after failed creation → Ret
       window.localStorage.clear();
     }
   });
+
+  it("BUG-GWT-005: Retry still starts Git and admits the frozen submission once when the Host snapshot for the retried attempt arrives before the Retry acknowledgement", async () => {
+    // Opposite ordering of the RT4-C5 race (BUG-GWT-005 Wave 4): the Host snapshot preparing(B)
+    // reaches the renderer while onRetryPreparation is still pending. Restore adopts B as
+    // `creating`; the Retry handler only proceeded from `failed`, so nobody started Git for B and
+    // the stale-creating reconcile settled B as failed and reported it to the Host
+    // (specs/composer-worktree-setup-steps.md acceptance scenario 18).
+    const preparedSessionId = "session-prepared-c5-early-snapshot";
+    const onSendText = vi.fn(async () => "sent" as const);
+    const onPrepareWorktreeSession = vi.fn(async () => preparedSessionId);
+    const onWorktreePreparationFailed = vi.fn(async () => undefined);
+    let acknowledgeRetry!: (attemptId: string) => void;
+    const onRetryPreparation = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          acknowledgeRetry = resolve;
+        }),
+    );
+    setupStepsServices.current = { rpcReady: true, services: { gitService } };
+    const intent: ComposerDraftWorktreeIntent = {
+      workspaceKey: WORKSPACE_KEY,
+      beginCreation: (queuedPromptPreview, prepareSession, syncPreparedWorktree, submissionId) =>
+        beginWorktreePipelineCreation({
+          gitService,
+          workspaceKey: WORKSPACE_KEY,
+          workspacePath: WORKSPACE_KEY,
+          effectiveLocation: {
+            mode: "sibling",
+            customPath: null,
+            appWorktreesDir: null,
+            prefix: "zcode/",
+            baseBranchDefault: null,
+            hasProjectOverride: false,
+          },
+          branchName: PARAMS.branchName,
+          baseBranch: PARAMS.baseBranch,
+          baseFromHeadDefault: false,
+          queuedPromptPreview,
+          prepareSession,
+          ...(syncPreparedWorktree ? { syncPreparedWorktree } : {}),
+          ...(submissionId ? { submissionId } : {}),
+          formatMessage: (id) => id,
+        }),
+    };
+    const sessionView = (props: {
+      draftMode: boolean;
+      sessionId: string | null;
+      preparation?: { status: "preparing" | "failed"; attemptId: string; failureMessage?: string };
+    }) =>
+      createElement(
+        ZCodeIntlProvider,
+        { initialLocale: "en-US" },
+        createElement(
+          ComposerDraftWorktreeIntentContext.Provider,
+          { value: { current: intent } },
+          props.sessionId && props.preparation
+            ? createElement(ConversationWorktreeSetupSteps, {
+                workspacePath: WORKSPACE_KEY,
+                sessionId: props.sessionId,
+                preparation: {
+                  branchName: PARAMS.branchName,
+                  targetPath: PARAMS.targetPath,
+                  baseBranch: PARAMS.baseBranch,
+                  ...props.preparation,
+                },
+                onRetryPreparation,
+                onPreparationFailed: onWorktreePreparationFailed,
+              })
+            : null,
+          createElement(ConversationComposer, {
+            composerDraft: { text: "", updatedAt: 0 },
+            draftMode: props.draftMode,
+            onSelectModel: vi.fn(),
+            onSelectThought: vi.fn(),
+            onSendText,
+            onPrepareWorktreeSession,
+            onWorktreePreparationFailed,
+            onStop: vi.fn(),
+            onSwitchMode: vi.fn(),
+            provider: undefined,
+            sessionId: props.sessionId,
+            snapshot: null,
+            submissionReady: true,
+            updateComposerContent: vi.fn(),
+            replaceComposerDraft: vi.fn(),
+            workspacePath: WORKSPACE_KEY,
+          }),
+        ),
+      );
+    try {
+      useDraftBranchIntentStore.getState().setWorktreeIntentActive(WORKSPACE_KEY, true);
+      createWorktree.mockRejectedValueOnce(
+        new Error(`EACCES: permission denied, mkdir '${PARAMS.targetPath}'`),
+      );
+      const view = render(sessionView({ draftMode: true, sessionId: null }));
+      await act(async () => {
+        composerMount.editorProps.at(-1)!.onSubmit!("RT4-C5 early snapshot input");
+        await flushAsyncWork();
+      });
+      await act(async () => {
+        await vi.waitFor(() => {
+          expect(currentPipeline(preparedSessionId)?.status).toBe("failed");
+        });
+      });
+      const failedAttemptId = currentPipeline(preparedSessionId)!.params!.attemptId!;
+
+      // Live promotion (same composer instance, as the CDP trace showed) plus the setup steps fed
+      // by the Host seed for the failed attempt.
+      useDraftBranchIntentStore.getState().setWorktreeIntentActive(WORKSPACE_KEY, false);
+      const failedSeed = {
+        status: "failed" as const,
+        attemptId: failedAttemptId,
+        failureMessage: "EACCES",
+      };
+      view.rerender(
+        sessionView({ draftMode: false, sessionId: preparedSessionId, preparation: failedSeed }),
+      );
+      await act(async () => {
+        await flushAsyncWork();
+      });
+      expect(onSendText).not.toHaveBeenCalled();
+
+      // Retry through the real button; the Host acknowledgement stays pending.
+      createWorktree.mockResolvedValue({
+        ok: true,
+        worktreePath: PARAMS.targetPath,
+        branchName: PARAMS.branchName,
+        issues: [],
+      } satisfies GitWorktreeCreateResult);
+      listWorktrees.mockResolvedValue({ worktrees: [] });
+      await act(async () => {
+        screen.getByRole("button", { name: "Retry" }).click();
+        await flushAsyncWork();
+      });
+      // The Host snapshot for the retried attempt arrives before the acknowledgement. Flush so a
+      // stale-creating reconcile, if allowed to run, would settle the adopted attempt first.
+      view.rerender(
+        sessionView({
+          draftMode: false,
+          sessionId: preparedSessionId,
+          preparation: { status: "preparing", attemptId: "attempt-c5-retry-host" },
+        }),
+      );
+      await act(async () => {
+        await flushAsyncWork();
+        await flushAsyncWork();
+      });
+      expect(currentPipeline(preparedSessionId)).toMatchObject({
+        status: "creating",
+        params: { attemptId: "attempt-c5-retry-host" },
+      });
+
+      await act(async () => {
+        acknowledgeRetry("attempt-c5-retry-host");
+        await vi.waitFor(() => {
+          expect(onSendText).toHaveBeenCalledTimes(1);
+        });
+        await flushAsyncWork();
+      });
+
+      expect(createWorktree).toHaveBeenCalledTimes(2);
+      expect(onWorktreePreparationFailed).not.toHaveBeenCalledWith(
+        preparedSessionId,
+        expect.anything(),
+        "attempt-c5-retry-host",
+      );
+      expect(onRetryPreparation).toHaveBeenCalledTimes(1);
+      expect(onSendText).toHaveBeenCalledTimes(1);
+      expect(onSendText).toHaveBeenCalledWith(
+        "RT4-C5 early snapshot input",
+        expect.objectContaining({
+          executionWorktree: { path: PARAMS.targetPath, branchName: PARAMS.branchName },
+          preparedSessionId,
+          preparedAttemptId: "attempt-c5-retry-host",
+        }),
+      );
+      expect(currentPipeline(preparedSessionId)).toMatchObject({
+        status: "consumed",
+        sessionId: preparedSessionId,
+      });
+      // Admitted, so the recovery card's record is gone (MINOR-1).
+      expect(
+        readV4WorktreeRecoveryDrafts(WORKSPACE_KEY, undefined, preparedSessionId).some(
+          (entry) => entry.draft.text === "RT4-C5 early snapshot input",
+        ),
+      ).toBe(false);
+    } finally {
+      setupStepsServices.current = null;
+      window.localStorage.clear();
+    }
+  });
 });
