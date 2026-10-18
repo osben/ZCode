@@ -273,9 +273,17 @@ describe("AppUsageExportButtons", () => {
     );
     render(inIntl(createElement(AppUsageExportButtons, { snapshot: createSnapshot(), query: {} })));
 
-    fireEvent.click(screen.getByRole("button", { name: "Export CSV" }));
-    await waitFor(() => expect(clicked).toEqual(["zcode-usage-2026-07-19_2026-07-20.csv"]));
-    expect(createObjectURL).toHaveBeenCalledTimes(1);
-    expect(revokeObjectURL).toHaveBeenCalledWith("blob:usage");
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Export CSV" }));
+      await vi.waitFor(() => expect(clicked).toEqual(["zcode-usage-2026-07-19_2026-07-20.csv"]));
+      expect(createObjectURL).toHaveBeenCalledTimes(1);
+      // Some browsers start the download asynchronously, so the URL must outlive the click.
+      expect(revokeObjectURL).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(10_000);
+      expect(revokeObjectURL).toHaveBeenCalledWith("blob:usage");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

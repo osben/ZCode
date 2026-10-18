@@ -1,7 +1,8 @@
-# Usage Stats: History Rollup, Date Filters, Dimension Filters (DRAFT, awaiting approval)
+# Usage Stats: History Rollup, Date Filters, Dimension Filters
 
-Status: plan only, no code written. Spec-first per root `AGENTS.md`; each phase updates its specs
-before code. Goals, in priority order: (1) break nothing, (2) stay backward compatible, (3) stay cheap.
+Status: implemented (P0-P4, PR #151). This is the spec of record; the sections below describe the
+shipped behavior, and "Deviations" lists where the implementation differs from the original plan.
+Goals, in priority order: (1) break nothing, (2) stay backward compatible, (3) stay cheap.
 
 ## Problem
 
@@ -29,17 +30,25 @@ at most 30 days. Date presets longer than 30 days would show nothing until histo
 ## Compatibility rules (apply to every phase)
 
 1. Protocol is additive only. `AppUsageRange` (`"all" | "7d" | "30d"`) is NOT extended. New request
-   fields are optional (`window`, `compare`, `filters`); the response keeps `range` and adds optional
-   fields. Zod object schemas strip unknown keys, so old clients/servers ignore new fields instead of
-   failing. An old host that ignores `window` returns the old range: the UI detects the missing
-   `window` echo in the response and shows "needs update" instead of silently showing wrong data.
+   fields are optional (`window`, `compare`, `filters`, `include`); the response keeps `range` and adds
+   optional fields. Response schemas are non-strict, so an older client strips unknown response fields
+   instead of failing. Request params schemas ARE strict (`.strict()`, unchanged): an older host
+   rejects a request that carries a new field with `Invalid params`. The UI therefore sends new fields
+   only when the user picks something that needs them (`window` / `compare` / `filters`), and sends
+   `include` only after the all-time snapshot proves the host returns `facets`. Against an older host
+   the panel keeps the last data and shows the standard error notice; there is no separate "needs
+   update" state, and a `window` is never silently dropped (that would turn it into an all-time query
+   with wrong data).
 2. Defaults reproduce today's behavior byte-for-byte: no new fields => same output as now.
 3. Parity guarantee: for any data inside the 30-day raw window, the rollup-based result must equal the
    legacy raw-based result (golden test over a synthetic DB, many time zones). This is the main
    regression net for P1.
-4. Legacy raw query stays in the code as the fallback. If the rollup tables are missing, a migration
-   failed, or the rollup read throws, App Usage falls back to the raw path (not a union: one path
-   per request) and logs a `warn`. Downgrading to an older fork build or upstream is safe because raw
+4. Legacy raw query stays in the code as the fallback. If the rollup tables are missing, were never
+   computed (first recompute skipped by a busy lock or transaction), or the rollup read throws, App
+   Usage falls back to the raw path (not a union: one path per request) and the host logs a `warn`
+   with the reason. A request the raw tables cannot answer correctly (any filter, or a bounded window
+   that starts before the raw retention) fails with `usage_rollup_unavailable` instead; the all-time
+   range keeps its legacy meaning ("what the raw tables still hold") and may fall back. Downgrading to an older fork build or upstream is safe because raw
    tables and their migrations are untouched and unknown fork tables are ignored.
 5. No new env vars or `setting.json` keys (fork-unsafe). Persisted UI choices (last range) go to
    `localStorage`/UI-local state only.
@@ -53,8 +62,9 @@ at most 30 days. Date presets longer than 30 days would show nothing until histo
 - Recompute is incremental and idempotent: window = max(watermark - 7 days, oldest surviving raw
   row), full only on first run. Replaces buckets in one `begin immediate` transaction; never
   increments. Concurrent recomputes (CLI + desktop host) are therefore benign.
-- Recompute runs off the hot path: debounced (>= 5 min), chunked by day with yields between chunks
-  because `node:sqlite` is synchronous. Never inside the turn/tool write path.
+- Recompute runs off the hot path after writes: debounced (>= 5 min) and deferred with `setImmediate`.
+  Reads recompute first unless nothing was written through that connection and a recompute finished
+  within the last 2 s (the page-load burst of lifetime, main, and previous-period queries).
 - Budget (verified by a benchmark test on a synthetic ~200k-row DB): full recompute < 1 s, incremental
   < 100 ms, 1-year query < 50 ms. Check `tool_usage(started_at)` has an index (only `model_usage` and
   `turn_usage` indexes were found); fork indexes go in the fork migration if needed.
@@ -126,3 +136,16 @@ typecheck` and `lint`; report real results, including anything not run.
 
 - Rollup retention (proposal: 2 years, pruned by fork recompute).
 - Whether to surface "history starts <date>" in the UI (proposal: yes, subtle caption on All/long ranges).
+
+## Deviations from the original plan
+
+- **No day-chunked recompute.** `node:sqlite` is synchronous, and chunking would either hold the write
+  lock across yields or give up the single-transaction atomicity. Measured instead: full recompute
+  ~240 ms for 230k raw rows, incremental ~120 ms, 1-year query ~35 ms
+  (`fork-usage-rollup-perf.test.ts`, ceilings 5 s / 1.5 s / 1 s). Revisit if a real database makes the
+  first-run backfill noticeable.
+- **`fork_usage_session` was not built.** Distinct sessions and the longest session come from
+  `fork_usage_turn`, which is keyed by session and bucket; busiest sessions use
+  `fork_usage_turn.total_tokens`.
+- **No upstream migration entry.** Fork tables are created idempotently by
+  `ensureForkUsageRollupSchema` and recorded in the shared ledger, so `migrations.ts` stays untouched.

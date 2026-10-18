@@ -1840,7 +1840,7 @@ export async function getUsageStats(context: ZCodeProtocolAgentServerContext, ra
   // both. Use the runtime narrowing pattern from core/usage-observability to access the read-only
   // aggregate method.
   const usageStore = context.deps.sessionStore as Partial<UsageStorePort> | undefined;
-  return runUsageStats(usageStore, params, Date.now());
+  return runUsageStats(usageStore, params, Date.now(), context.logger);
 }
 
 export async function readSession(context: ZCodeProtocolAgentServerContext, rawParams: unknown) {

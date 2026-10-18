@@ -67,20 +67,20 @@ export function ensureForkUsageRollupSchema(db: DatabaseSync): void {
   }
   db.exec(FORK_USAGE_ROLLUP_SCHEMA);
   upgradeForkUsageRollupColumns(db);
-  const applied = db
-    .prepare("select 1 from schema_migration where id = ?")
-    .get(FORK_USAGE_ROLLUP_MIGRATION_ID);
-  if (!applied) {
-    db.prepare(
-      "insert into schema_migration (id, checksum, app_version, time_applied) values (?, ?, ?, ?)",
-    ).run(
-      FORK_USAGE_ROLLUP_MIGRATION_ID,
-      createHash("sha256").update(FORK_USAGE_ROLLUP_SCHEMA.trim()).digest("hex"),
-      "fork",
-      Date.now(),
-    );
+  // The CLI process and the desktop host share this database and can both run this; the ledger
+  // insert must therefore be conflict-tolerant instead of check-then-insert.
+  db.prepare(
+    "insert into schema_migration (id, checksum, app_version, time_applied) values (?, ?, ?, ?) on conflict(id) do nothing",
+  ).run(
+    FORK_USAGE_ROLLUP_MIGRATION_ID,
+    createHash("sha256").update(FORK_USAGE_ROLLUP_SCHEMA.trim()).digest("hex"),
+    "fork",
+    Date.now(),
+  );
+  // DDL issued inside a surrounding transaction can still be rolled back; only cache a committed schema.
+  if (!db.isTransaction) {
+    ensuredDatabases.add(db);
   }
-  ensuredDatabases.add(db);
 }
 
 /**
@@ -93,7 +93,14 @@ function upgradeForkUsageRollupColumns(db: DatabaseSync): void {
     name: string;
   }>;
   if (!turnColumns.some((column) => column.name === "total_tokens")) {
-    db.exec("alter table fork_usage_turn add column total_tokens integer not null default 0");
+    try {
+      db.exec("alter table fork_usage_turn add column total_tokens integer not null default 0");
+    } catch (error) {
+      // A concurrent process may have added the column between the check and the alter.
+      if (!(error instanceof Error) || !/duplicate column name/i.test(error.message)) {
+        throw error;
+      }
+    }
     db.prepare("delete from fork_usage_meta where key = 'watermark_ms'").run();
   }
 }

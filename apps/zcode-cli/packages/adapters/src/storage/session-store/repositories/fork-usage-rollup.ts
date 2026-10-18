@@ -7,10 +7,15 @@ import {
 const REPLACE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const ROLLUP_RETENTION_MS = 2 * 365 * 24 * 60 * 60 * 1000;
 const WRITE_DEBOUNCE_MS = 5 * 60 * 1000;
+/** One App Usage page load sends several queries back to back; reuse a just-finished recompute. */
+const READ_DEBOUNCE_MS = 2 * 1000;
 const WATERMARK_KEY = "watermark_ms";
 
 const lastRecomputeAt = new WeakMap<DatabaseSync, number>();
 const scheduledDatabases = new WeakSet<DatabaseSync>();
+/** Usage written through this connection since the last successful recompute; reads must not skip it. */
+const dirtyDatabases = new WeakSet<DatabaseSync>();
+const lastRecomputeError = new WeakMap<DatabaseSync, string>();
 
 const BUCKET_EXPR = (column: string) =>
   `cast(${column} / ${FORK_USAGE_BUCKET_MS} as integer) * ${FORK_USAGE_BUCKET_MS}`;
@@ -34,6 +39,7 @@ export function recomputeForkUsageRollup(db: DatabaseSync, nowMs: number): void 
     replaceBuckets(db, {
       table: "fork_usage_bucket",
       rawTable: "model_usage",
+      countColumn: "request_count",
       windowStart,
       insertSql: (from) => `
         insert into fork_usage_bucket (
@@ -65,6 +71,7 @@ export function recomputeForkUsageRollup(db: DatabaseSync, nowMs: number): void 
     replaceBuckets(db, {
       table: "fork_usage_turn",
       rawTable: "turn_usage",
+      countColumn: "turn_count",
       windowStart,
       insertSql: (from) => `
         insert into fork_usage_turn (
@@ -87,6 +94,7 @@ export function recomputeForkUsageRollup(db: DatabaseSync, nowMs: number): void 
     replaceBuckets(db, {
       table: "fork_usage_tool",
       rawTable: "tool_usage",
+      countColumn: "call_count",
       windowStart,
       insertSql: (from) => `
         insert into fork_usage_tool (
@@ -123,6 +131,8 @@ function replaceBuckets(
   input: {
     table: string;
     rawTable: string;
+    /** Rollup column that counts the raw rows a bucket row stands for. */
+    countColumn: string;
     windowStart: number;
     insertSql: (fromParam: string) => string;
   },
@@ -133,13 +143,22 @@ function replaceBuckets(
   if (oldest.oldest === null) {
     return;
   }
-  // The bucket holding the oldest surviving raw row may have lost earlier rows to a prune. Rebuild
-  // it only when the rollup has nothing for it yet; otherwise keep what was already rolled up.
+  // The bucket holding the oldest surviving raw row may have lost earlier rows to a prune (by this
+  // or the upstream build). It is complete, and therefore safe to rebuild, only when the raw table
+  // still holds at least as many rows for it as the rollup already counted; otherwise keep it.
   const oldestBucket = alignDownToBucket(oldest.oldest);
-  const oldestBucketRolledUp = db
-    .prepare(`select 1 from ${input.table} where bucket_start = ? limit 1`)
-    .get(oldestBucket);
-  const earliestSafe = oldestBucketRolledUp ? oldestBucket + FORK_USAGE_BUCKET_MS : oldestBucket;
+  const rolledUp = db
+    .prepare(
+      `select coalesce(sum(${input.countColumn}), 0) as n from ${input.table} where bucket_start = ?`,
+    )
+    .get(oldestBucket) as { n: number };
+  const raw = db
+    .prepare(
+      `select count(*) as n from ${input.rawTable} where started_at >= ? and started_at < ?`,
+    )
+    .get(oldestBucket, oldestBucket + FORK_USAGE_BUCKET_MS) as { n: number };
+  const earliestSafe =
+    Number(raw.n) >= Number(rolledUp.n) ? oldestBucket : oldestBucket + FORK_USAGE_BUCKET_MS;
   const from = Math.max(input.windowStart, earliestSafe);
   db.prepare(`delete from ${input.table} where bucket_start >= ?`).run(from);
   db.exec(input.insertSql(String(from)));
@@ -161,15 +180,37 @@ function readWatermark(db: DatabaseSync): number | null {
 }
 
 /**
- * Recompute before every read so a query never misses rows written just before it (including by
- * another process). The replace window is bounded to 7 days, so this stays cheap. Never throws.
+ * Recompute before a read so a query does not miss rows written just before it. Skipped only when
+ * nothing was written through this connection and a recompute finished within the read debounce
+ * (the page-load burst); rows written by another process show up after at most that debounce.
+ * The replace window is bounded to 7 days, so this stays cheap. Never throws.
  */
 export function refreshForkUsageRollupForRead(db: DatabaseSync, nowMs: number): void {
+  const last = lastRecomputeAt.get(db);
+  if (
+    !dirtyDatabases.has(db) &&
+    last !== undefined &&
+    nowMs >= last &&
+    nowMs - last < READ_DEBOUNCE_MS
+  ) {
+    return;
+  }
   runRecomputeQuietly(db, nowMs);
+}
+
+/** True once a recompute has completed at least once, i.e. the rollup holds a usable history. */
+export function isForkUsageRollupReady(db: DatabaseSync): boolean {
+  return readWatermark(db) !== null;
+}
+
+/** Why the last recompute did not complete, for fallback diagnostics. */
+export function describeForkUsageRollupFailure(db: DatabaseSync): string {
+  return lastRecomputeError.get(db) ?? "rollup_not_ready";
 }
 
 /** Deferred, debounced recompute after usage writes; keeps the synchronous write path short. */
 export function scheduleForkUsageRollup(db: DatabaseSync): void {
+  dirtyDatabases.add(db);
   const now = Date.now();
   const last = lastRecomputeAt.get(db);
   if (
@@ -191,10 +232,14 @@ function runRecomputeQuietly(db: DatabaseSync, nowMs: number): void {
   try {
     // Reading `isTransaction` also throws on a closed connection (a deferred run after close()).
     if (db.isTransaction) {
+      lastRecomputeError.set(db, "database_in_transaction");
       return;
     }
     recomputeForkUsageRollup(db, nowMs);
-  } catch {
-    // Intentionally ignored: derived data, retried by the next trigger.
+    dirtyDatabases.delete(db);
+    lastRecomputeError.delete(db);
+  } catch (error) {
+    // Derived data, retried by the next trigger; remembered so a fallback can say why.
+    lastRecomputeError.set(db, error instanceof Error ? error.message : String(error));
   }
 }

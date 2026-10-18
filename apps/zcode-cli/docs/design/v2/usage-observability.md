@@ -176,8 +176,9 @@ plan: `docs/specs/usage-stats-history-and-filters.md`.
 - The single owner is `recomputeForkUsageRollup`. It is idempotent: it replaces (never increments)
   the buckets from a window start onwards using `delete` + `insert ... select` in one
   `begin immediate` transaction. Window start = `max(watermark - 7 days, oldest surviving raw
-  bucket)`; the oldest surviving raw bucket itself is rebuilt only when the rollup has nothing for it
-  yet (earlier rows of that bucket may have been pruned), so buckets whose raw rows were already
+  bucket)`; the oldest surviving raw bucket itself is rebuilt only when the raw table still holds at least
+  as many rows for it as the rollup already counted (otherwise earlier rows were pruned and the
+  rollup keeps its value; a brand-new history therefore keeps refreshing its first bucket), so buckets whose raw rows were already
   pruned (by either build) are never rewritten. Deleting a session cascades its raw rows away, so a
   recent deletion leaves the replace window, while older rolled-up buckets keep that usage. First run has no watermark and backfills the whole surviving raw span from real usage
   facts; nothing is estimated or imported from session snapshots.
@@ -185,11 +186,14 @@ plan: `docs/specs/usage-stats-history-and-filters.md`.
   every App Usage query so a read never misses rows written just before it (the replace window is
   bounded to 7 days, so this stays cheap). A busy database or a surrounding transaction skips the round.
 - Rollup rows older than 2 years are pruned during recompute.
-- Read path: `queryAppUsage` reads only the rollup. Any rollup failure falls back to the legacy raw
-  query for default requests; requests that need the rollup (filters, windows beyond raw retention)
-  fail instead of silently returning unfiltered data. Windows snap to 15-minute bucket boundaries
-  (the bucket containing `since` is included), which can differ from the legacy exact-millisecond
-  boundary by at most one bucket at the oldest edge.
+- Read path: `queryAppUsage` reads only the rollup. Fallback to the legacy raw query happens when the
+  rollup tables are missing, were never computed (no watermark: the first recompute was skipped by a
+  busy lock or a surrounding transaction), or the rollup read throws; the result then carries
+  `rollupFallbackReason` and the host logs a `warn`. Requests the raw tables cannot answer correctly
+  (any filter, or a bounded window that starts before the 30-day raw retention) fail with
+  `usage_rollup_unavailable` instead. The all-time range (`since` = 0) keeps its legacy meaning and may
+  fall back. Windows snap to 15-minute bucket boundaries (the bucket containing `since` is included),
+  which can differ from the legacy exact-millisecond boundary by at most one bucket at the oldest edge.
 - Filters and facets: `AppUsageQueryInput.filters` narrows by model, provider, query source, and
   workspace (session directory). Model/provider/source filters apply to the token bucket table only;
   the turn and tool tables carry only the workspace dimension, so they follow only the workspace

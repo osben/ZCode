@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import type { AppUsageQueryInput, AppUsageQueryResult, UsageStorePort } from "@zcode/contracts";
+import type {
+  AppUsageQueryInput,
+  AppUsageQueryResult,
+  Logger,
+  UsageStorePort,
+} from "@zcode/contracts";
 import { planUsageQuery } from "../src/zcode-protocol/usage-stats-request.js";
 import { runUsageStats } from "../src/zcode-protocol/usage-stats-run.js";
 
@@ -187,6 +192,27 @@ describe("runUsageStats", () => {
     expect(queryAppUsage.mock.lastCall?.[0]).not.toHaveProperty("include");
     expect(plain.hourlyTokens).toBeUndefined();
     expect(plain.topSessions).toBeUndefined();
+  });
+
+  it("logs a warning when the store answered from the raw tables", async () => {
+    const warn = vi.fn();
+    const logger = { warn } as unknown as Logger;
+    const { store } = fakeStore(() => ({
+      ...resultWithDay(0, 1),
+      rollupFallbackReason: "database_in_transaction",
+    }));
+
+    await runUsageStats(store, { range: "all", timeZone: "UTC" }, NOW, logger);
+
+    expect(warn).toHaveBeenCalledWith(
+      "App Usage rollup unavailable, answered from raw usage tables",
+      { reason: "database_in_transaction", range: "all" },
+    );
+
+    const quiet = vi.fn();
+    const { store: healthy } = fakeStore(() => resultWithDay(0, 1));
+    await runUsageStats(healthy, { range: "all" }, NOW, { warn: quiet } as unknown as Logger);
+    expect(quiet).not.toHaveBeenCalled();
   });
 
   it("falls back to an empty result when no usage store is available", async () => {

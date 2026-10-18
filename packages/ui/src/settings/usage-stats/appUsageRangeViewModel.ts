@@ -110,6 +110,17 @@ export function compactFilters(filters: AppUsageFilters | undefined): AppUsageFi
   return entries.length > 0 ? (Object.fromEntries(entries) as AppUsageFilters) : undefined;
 }
 
+/** A manual choice counts only while the granularity control is visible; short ranges always show days. */
+export function resolveEffectiveGranularity(
+  override: AppUsageGranularity | null,
+  dayCount: number,
+): AppUsageGranularity {
+  if (override && dayCount >= APP_USAGE_GRANULARITY_MIN_DAYS) {
+    return override;
+  }
+  return resolveAutoGranularity(dayCount);
+}
+
 export function resolveAutoGranularity(dayCount: number): AppUsageGranularity {
   if (dayCount <= AUTO_DAILY_MAX_DAYS) return "day";
   if (dayCount <= AUTO_WEEKLY_MAX_DAYS) return "week";

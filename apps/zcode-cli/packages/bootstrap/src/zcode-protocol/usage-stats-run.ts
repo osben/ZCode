@@ -1,4 +1,4 @@
-import type { AppUsageQueryResult, UsageStorePort } from "@zcode/contracts";
+import type { AppUsageQueryResult, Logger, UsageStorePort } from "@zcode/contracts";
 import type { AppUsageSnapshot } from "@zcode/shared";
 import { buildAppUsageSnapshot } from "./usage-stats-builder.js";
 import {
@@ -44,6 +44,7 @@ export async function runUsageStats(
   usageStore: Partial<UsageStorePort> | undefined,
   params: UsageStatsRequestParams,
   nowMs: number,
+  logger?: Logger,
 ): Promise<AppUsageSnapshot> {
   const plan = planUsageQuery(params, nowMs);
   const baseOptions = {
@@ -69,6 +70,20 @@ export async function runUsageStats(
   const query = async (
     span: UsageQuerySpan,
     extras: { withFacets?: boolean; withInclude?: boolean } = {},
+  ): Promise<AppUsageQueryResult> => {
+    const result = await queryStore(span, extras);
+    if (result.rollupFallbackReason) {
+      // The raw tables only hold ~30 days; make a persistently broken rollup visible in the logs.
+      logger?.warn("App Usage rollup unavailable, answered from raw usage tables", {
+        reason: result.rollupFallbackReason,
+        range: params.range,
+      });
+    }
+    return result;
+  };
+  const queryStore = async (
+    span: UsageQuerySpan,
+    extras: { withFacets?: boolean; withInclude?: boolean },
   ): Promise<AppUsageQueryResult> => {
     if (!usageStore?.queryAppUsage) {
       // No usage store (should not happen): an empty result lets the UI show its empty state.

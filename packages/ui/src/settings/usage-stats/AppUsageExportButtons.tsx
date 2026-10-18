@@ -12,6 +12,8 @@ import {
   usageExportFileName,
 } from "@/settings/usage-stats/appUsagePatternsViewModel.js";
 
+const BLOB_URL_REVOKE_DELAY_MS = 10_000;
+
 type ExportKind = "csv" | "json";
 const MIME_TYPES: Record<ExportKind, string> = {
   csv: "text/csv;charset=utf-8",
@@ -26,7 +28,8 @@ function downloadWithBlob(name: string, mime: string, text: string): void {
   document.body.append(link);
   link.click();
   link.remove();
-  URL.revokeObjectURL(url);
+  // Some browsers start the download asynchronously; revoking right away can yield an empty file.
+  setTimeout(() => URL.revokeObjectURL(url), BLOB_URL_REVOKE_DELAY_MS);
 }
 
 export function AppUsageExportButtons({

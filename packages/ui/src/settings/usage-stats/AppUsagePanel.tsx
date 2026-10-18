@@ -22,7 +22,7 @@ import {
   bucketNumberSeries,
   buildAppUsageQuery,
   formatLocalDate,
-  resolveAutoGranularity,
+  resolveEffectiveGranularity,
   shiftLocalDate,
   validateCustomRange,
 } from "@/settings/usage-stats/appUsageRangeViewModel.js";
@@ -87,6 +87,7 @@ export function AppUsagePanel() {
   const handleSelectDate = (date: string) => {
     setCustomFrom(date);
     setCustomTo(date);
+    setGranularityOverride(null);
     setPreset("custom");
   };
 
@@ -95,11 +96,13 @@ export function AppUsagePanel() {
       setCustomTo(today);
       setCustomFrom(shiftLocalDate(today, 1 - DEFAULT_CUSTOM_RANGE_DAYS));
     }
+    // A manual interval belongs to the range it was chosen for.
+    setGranularityOverride(null);
     setPreset(next);
   };
 
   const dayCount = snapshot?.dailyModelUsage.length ?? 0;
-  const granularity = granularityOverride ?? resolveAutoGranularity(dayCount);
+  const granularity = resolveEffectiveGranularity(granularityOverride, dayCount);
   const chartSnapshot = useMemo(
     () =>
       snapshot

@@ -84,7 +84,8 @@ function HeatmapCell({
         "aspect-square w-full min-w-0 rounded-[4px] border transition-transform hover:scale-110 hover:border-border-hover",
         cell.hasUsage ? "border-border" : "border-transparent",
         cell.columnHover && "group-hover/usage-heatmap-column:border-border-hover",
-        selectable && "cursor-pointer",
+        selectable &&
+          "cursor-pointer outline-none focus-visible:border-border-hover focus-visible:ring-2 focus-visible:ring-input-border-focused/50",
       )}
       style={getHeatmapCellStyle(cell.level)}
       {...(selectable

@@ -1120,6 +1120,8 @@ export interface AppUsageQueryResult {
   facets?: AppUsageFacets;
   hourlyTokens?: number[];
   topSessions?: AppUsageSessionRow[];
+  /** Set when the rollup could not serve the request and the raw tables answered instead (30-day data). */
+  rollupFallbackReason?: string;
 }
 
 export interface TaskUsageQueryInput {

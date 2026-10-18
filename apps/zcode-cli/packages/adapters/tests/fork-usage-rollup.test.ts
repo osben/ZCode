@@ -253,6 +253,92 @@ describe("fork usage rollup", () => {
     }
   });
 
+  it("treats a rollup that was never computed as unavailable instead of answering with zeros", async () => {
+    await seedUsage();
+    const allTime = { since: 0, until: NOW, tzOffsetMs: 0 };
+
+    // An open transaction makes the first recompute skip, leaving no watermark.
+    db.exec("begin");
+    try {
+      const fallback = await queryAppUsageWithRollup(db, allTime);
+      expect(fallback.rollupFallbackReason).toBe("database_in_transaction");
+      expect(fallback.totals.modelRequestCount).toBeGreaterThan(0);
+
+      // Requests the raw tables cannot answer correctly fail instead of returning partial data.
+      await expect(
+        queryAppUsageWithRollup(db, { ...allTime, filters: { modelIds: ["model-a"] } }),
+      ).rejects.toThrow("usage_rollup_unavailable");
+      const sixtyDaysAgo = Date.now() - 60 * DAY;
+      await expect(
+        queryAppUsageWithRollup(db, { since: sixtyDaysAgo, until: Date.now(), tzOffsetMs: 0 }),
+      ).rejects.toThrow("usage_rollup_unavailable");
+    } finally {
+      db.exec("rollback");
+    }
+
+    const recovered = await queryAppUsageWithRollup(db, allTime);
+    expect(recovered.rollupFallbackReason).toBeUndefined();
+    expect(recovered.totals.modelRequestCount).toBeGreaterThan(0);
+  });
+
+  it("tolerates a concurrent ensure that already recorded the ledger row", () => {
+    recomputeForkUsageRollup(db, NOW);
+    const other = new DatabaseSync(dbPath);
+    try {
+      expect(() => ensureForkUsageRollupSchema(other)).not.toThrow();
+      const rows = other
+        .prepare("select id from schema_migration where id = ?")
+        .all(FORK_USAGE_ROLLUP_MIGRATION_ID);
+      expect(rows).toHaveLength(1);
+    } finally {
+      other.close();
+    }
+  });
+
+  it("reuses a just-finished recompute within the read debounce but never skips fresh writes", async () => {
+    db.close();
+    const store = createSqliteSessionStore({ dbPath });
+    const input = { since: 0, until: NOW + DAY, tzOffsetMs: 0 };
+    const record = (id: string, startedAt: number) =>
+      store.recordModelUsage({
+        id,
+        logicalRequestId: `r-${id}`,
+        sessionID: createSessionId("s1"),
+        querySource: "main_turn",
+        providerId: "p1",
+        modelId: "model-a",
+        status: "completed",
+        startedAt,
+        inputTokens: 10,
+        outputTokens: 0,
+      });
+    const probe = new DatabaseSync(dbPath);
+    try {
+      await record("d1", NOW - MINUTE);
+      expect((await store.queryAppUsage(input)).totals.modelRequestCount).toBe(1);
+
+      // A sentinel bucket survives a debounced read, proving no second replace ran...
+      probe
+        .prepare(
+          "insert into fork_usage_bucket values (?, '', 'p1', 'sentinel', 'main_turn', 1, 0, 0, 0, 0, 1, 1, 0, 0, 0)",
+        )
+        .run(NOW);
+      // ...and nothing was written through the store since, so this read reuses the last recompute.
+      expect((await store.queryAppUsage(input)).totals.modelRequestCount).toBe(2);
+
+      // A write marks the connection dirty: the next read recomputes and drops the sentinel.
+      await record("d2", NOW - 2 * MINUTE);
+      expect((await store.queryAppUsage(input)).totals.modelRequestCount).toBe(2);
+      expect(
+        probe.prepare("select count(*) as n from fork_usage_bucket where model_id = 'sentinel'").get(),
+      ).toEqual({ n: 0 });
+    } finally {
+      probe.close();
+      store.close();
+      db = new DatabaseSync(dbPath);
+    }
+  });
+
   it("lists filter options for the window and ignores the active filters", async () => {
     await seedUsage();
     recomputeForkUsageRollup(db, NOW);

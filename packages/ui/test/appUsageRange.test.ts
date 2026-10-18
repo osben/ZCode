@@ -16,6 +16,7 @@ import {
   computeAppUsageDelta,
   formatLocalDate,
   resolveAutoGranularity,
+  resolveEffectiveGranularity,
   shiftLocalDate,
   validateCustomRange,
 } from "@/settings/usage-stats/appUsageRangeViewModel.js";
@@ -120,6 +121,13 @@ describe("granularity bucketing", () => {
     expect(resolveAutoGranularity(30)).toBe("day");
     expect(resolveAutoGranularity(90)).toBe("week");
     expect(resolveAutoGranularity(365)).toBe("month");
+  });
+
+  it("applies a manual granularity only while the control is visible", () => {
+    expect(resolveEffectiveGranularity("month", 90)).toBe("month");
+    expect(resolveEffectiveGranularity("month", 14)).toBe("day");
+    expect(resolveEffectiveGranularity("week", 7)).toBe("day");
+    expect(resolveEffectiveGranularity(null, 90)).toBe("week");
   });
 
   it("starts weeks on Sunday and months on the 1st", () => {
@@ -390,7 +398,10 @@ describe("AppUsagePanel filters and day drill-down", () => {
     }
     expect(await screen.findByText(/apply to token and model data only/)).toBeTruthy();
 
-    fireEvent.click(await screen.findByRole("button", { name: activeDay }));
+    const dayButton = await screen.findByRole("button", { name: activeDay });
+    // Keyboard users need a visible focus indicator on selectable cells.
+    expect(dayButton.className).toContain("focus-visible:ring-2");
+    fireEvent.click(dayButton);
     await waitFor(() => {
       const last = getAppUsageSnapshot.mock.calls.at(-1)?.[0] as
         | { window?: { from: string; to: string }; filters?: unknown }
@@ -398,5 +409,46 @@ describe("AppUsagePanel filters and day drill-down", () => {
       expect(last?.window).toEqual({ from: activeDay, to: activeDay });
       expect(last?.filters).toEqual({ modelIds: ["glm"] });
     });
+  });
+});
+
+describe("AppUsagePanel granularity override", () => {
+  it("drops a manual interval when the range changes", async () => {
+    await Promise.all([
+      import("@/settings/usage-stats/AppUsageDailyModelTrendChart.js"),
+      import("@/settings/usage-stats/AppUsageModelUsagePieChart.js"),
+    ]);
+    const days = Array.from({ length: 90 }, (_, index) => ({
+      date: shiftLocalDate(formatLocalDate(new Date()), index - 89),
+      models: [{ modelId: "glm", totalTokens: 10 }],
+    }));
+    const getAppUsageSnapshot = vi.fn(async (request: { range: AppUsageSnapshot["range"] }) => ({
+      ...createSnapshot(request.range, false),
+      dailyModelUsage: days,
+    }));
+    const services = { usageStatsService: { getAppUsageSnapshot } } as unknown as IServiceAccessor;
+    render(
+      createElement(
+        ServiceProvider,
+        { services },
+        createElement(ZCodeIntlProvider, { initialLocale: "en-US" }, createElement(AppUsagePanel)),
+      ),
+    );
+    await screen.findByText("Time range");
+
+    fireEvent.mouseDown(screen.getByText("Last 90 days"), { button: 0 });
+    const month = await screen.findByText("Month");
+    fireEvent.mouseDown(month, { button: 0 });
+    await waitFor(() =>
+      expect(screen.getByText("Month").getAttribute("aria-selected")).toBe("true"),
+    );
+
+    // Switching the range clears the manual choice; 90 days falls back to weekly again.
+    fireEvent.mouseDown(screen.getByText("Last 30 days"), { button: 0 });
+    fireEvent.mouseDown(screen.getByText("Last 90 days"), { button: 0 });
+    await waitFor(() =>
+      expect(screen.getByText("Week").getAttribute("aria-selected")).toBe("true"),
+    );
+    expect(screen.getByText("Month").getAttribute("aria-selected")).toBe("false");
   });
 });

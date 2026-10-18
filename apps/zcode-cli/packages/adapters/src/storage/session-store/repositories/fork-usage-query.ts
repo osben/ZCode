@@ -10,7 +10,12 @@ import type {
   AppUsageSessionRow,
   AppUsageToolRow,
 } from "@zcode/contracts";
-import { alignDownToBucket, refreshForkUsageRollupForRead } from "./fork-usage-rollup.js";
+import {
+  alignDownToBucket,
+  describeForkUsageRollupFailure,
+  isForkUsageRollupReady,
+  refreshForkUsageRollupForRead,
+} from "./fork-usage-rollup.js";
 import { ensureForkUsageRollupSchema } from "./fork-usage-rollup-schema.js";
 import { queryAppUsage as queryAppUsageFromRawTables } from "./usage.js";
 
@@ -58,10 +63,20 @@ function hasFilters(filters: AppUsageFilters | undefined): boolean {
   );
 }
 
+/** Mirrors the raw-table retention in usage.ts (not exported there, and that file stays upstream-identical). */
+const RAW_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** A bounded window that reaches past the raw retention cannot be answered from the raw tables. */
+function reachesBeyondRawRetention(since: number, nowMs: number): boolean {
+  return since > 0 && since < nowMs - RAW_RETENTION_MS;
+}
+
 /**
- * App Usage read path: the long-lived rollup first, the raw tables only as a fallback for
- * unfiltered requests. A filtered request cannot be answered from the raw tables, so it fails
- * loudly instead of silently returning unfiltered data.
+ * App Usage read path: the long-lived rollup first, the raw tables only as a fallback. A request
+ * the raw tables cannot answer correctly (filters, or a bounded window older than the raw
+ * retention) fails loudly instead of silently returning unfiltered or truncated data. The all-time
+ * range (`since` = 0) keeps its legacy meaning, "whatever the raw tables still hold", and may fall
+ * back; the result then carries `rollupFallbackReason` so the host can log it.
  */
 export async function queryAppUsageWithRollup(
   db: DatabaseSync,
@@ -70,12 +85,21 @@ export async function queryAppUsageWithRollup(
   try {
     ensureForkUsageRollupSchema(db);
     refreshForkUsageRollupForRead(db, Date.now());
+    // A skipped first recompute (busy lock, surrounding transaction) leaves empty tables that would
+    // answer with zeros; "never computed" is unavailable, not empty.
+    if (!isForkUsageRollupReady(db)) {
+      throw new Error(describeForkUsageRollupFailure(db));
+    }
     return queryAppUsageFromRollup(db, input);
   } catch (error) {
-    if (hasFilters(input.filters)) {
+    if (hasFilters(input.filters) || reachesBeyondRawRetention(input.since, Date.now())) {
       throw new Error("usage_rollup_unavailable", { cause: error });
     }
-    return queryAppUsageFromRawTables(db, input);
+    const result = await queryAppUsageFromRawTables(db, input);
+    return {
+      ...result,
+      rollupFallbackReason: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
