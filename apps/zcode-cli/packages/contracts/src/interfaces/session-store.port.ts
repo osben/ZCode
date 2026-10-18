@@ -1004,6 +1004,20 @@ export interface ToolUsageRecord {
   errorMessage?: string;
 }
 
+/**
+ * Optional narrowing for the rollup read path (fork). Model, provider, and query-source filters
+ * constrain token and model data only; workspace filters also constrain turns, sessions, and tools.
+ * The raw-table fallback cannot honor filters, so a filtered request fails instead of returning
+ * unfiltered data when the rollup is unavailable.
+ */
+export interface AppUsageFilters {
+  modelIds?: string[];
+  providerIds?: string[];
+  querySources?: string[];
+  /** Session `directory` values; the empty string selects sessions whose directory is unknown. */
+  workspaceKeys?: string[];
+}
+
 export interface AppUsageQueryInput {
   /** Inclusive lower bound of the (since, until] interval (Unix ms). */
   since: number;
@@ -1011,6 +1025,7 @@ export interface AppUsageQueryInput {
   until: number;
   /** Calling client's fixed offset from UTC (ms), used to bucket by local day. */
   tzOffsetMs: number;
+  filters?: AppUsageFilters;
 }
 
 export interface AppUsageTotalsRow {
