@@ -32,7 +32,10 @@ describe("E2E source evidence", () => {
     const evidence = JSON.parse(
       await readFile(join(paths.artifactDir, "build-source-evidence.json"), "utf8"),
     );
-
+    expect(evidence.status).toBe("fresh-stable");
+    expect(evidence.sources["packages/ui/src/a.ts"]).toBe("hash");
+    expect(evidence.outputs["index.js"]).toMatch(/^[a-f0-9]{64}$/);
+    expect(evidence.domains).toEqual(["renderer", "host", "main"]);
     expect(build).toHaveBeenCalledTimes(1);
   });
   it("does not validate a source edit during build", async () => {

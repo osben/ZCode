@@ -365,7 +365,7 @@ describe("FillWorkflowHole — handler", () => {
     );
     await fillWorkflowHoleToolEntry.handler((resolved as { input: unknown }).input, context);
     expect(seenAtCall).toEqual([true]);
-    
+    expect(readFileSync(join(draftsDir, "triage.决定分组.dwf.ts"), "utf8")).toBe(BODY);
 
     await fillWorkflowHoleToolEntry.handler((resolved as { input: unknown }).input, context);
     expect(fillFilesIn(draftsDir)).toEqual(["triage.决定分组-2.dwf.ts", "triage.决定分组.dwf.ts"]);

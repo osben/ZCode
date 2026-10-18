@@ -590,7 +590,10 @@ describe("CreateWorkflow saved source", () => {
       // bound is adjustable, with no upper limit.
       adjustable_settings: { subagent_model: false },
     });
-    
+    // The copy is byte-for-byte equal to the definition file itself.
+    expect(readFileSync(join(cwd, WORKFLOW_DRAFTS_DIR, "nightly.dwf.ts"), "utf8")).toBe(
+      readFileSync(savedPath(cwd, "nightly"), "utf8"),
+    );
 
     expect(outcome.result.success).toBe(true);
     const output = outcome.result.output as CreateWorkflowOutput;

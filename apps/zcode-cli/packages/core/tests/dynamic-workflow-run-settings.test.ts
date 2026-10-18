@@ -574,7 +574,9 @@ describe("amendWorkflowRunSettings — 新 run 的脚本文件", () => {
 
     expect(result).toMatchObject({ ok: false, reason: "unchanged" });
     expect(amends).toHaveLength(0);
-    
+    expect(() =>
+      readFileSync(join(SETTINGS_CWD, WORKFLOW_DRAFTS_DIR, "never-written.dwf.ts")),
+    ).toThrow();
   });
 });
 

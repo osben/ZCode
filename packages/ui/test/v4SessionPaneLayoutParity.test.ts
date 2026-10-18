@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -379,10 +377,6 @@ describe("SessionPane v4 chat layout parity", () => {
     );
     expect(html).toMatch(/data-v4-composer-dock="true" class="[^"]*mt-3[^"]*"/u);
     expect(html).not.toContain("@media(max-height:700px)");
-    const timelineSource = readFileSync(
-      resolve(process.cwd(), "packages/ui/src/v4/ConversationTimeline.tsx"),
-      "utf8",
-    );
 
     expect(html).toContain('data-compact-remote="false"');
 
@@ -466,10 +460,6 @@ describe("SessionPane v4 chat layout parity", () => {
     expect(html).not.toContain("max-md:pb-2");
     expect(html).not.toContain("h-4 bg-background max-md:h-2");
     expect(html).toContain("mask-repeat:no-repeat");
-    const timelineSource = readFileSync(
-      resolve(process.cwd(), "packages/ui/src/v4/ConversationTimeline.tsx"),
-      "utf8",
-    );
   });
 
   it("anchors the back-to-bottom control to the composer dock above input", () => {

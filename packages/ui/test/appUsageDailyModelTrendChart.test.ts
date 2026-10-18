@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { AppUsageSnapshot } from "@zcode/shared";
 import {
@@ -215,13 +213,5 @@ describe("AppUsageDailyModelTrendChart view model", () => {
       number: "419.9M",
       unit: "tokens",
     });
-
-    const source = readFileSync(
-      resolve(
-        process.cwd(),
-        "packages/ui/src/settings/usage-stats/AppUsageDailyModelTrendChart.tsx",
-      ),
-      "utf8",
-    );
   });
 });

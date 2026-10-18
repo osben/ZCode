@@ -307,7 +307,8 @@ describe("CreateWorkflow — the `path` source", () => {
     expect((outcome.result.output as CreateWorkflowOutput).response).toContain(
       `The script file is ${join("scripts", "check.dwf.ts")};`,
     );
-    
+    // 已经是工作副本了，不再抄一份。
+    expect(() => readFileSync(draftPath(cwd, "check.dwf.ts"), "utf8")).toThrow();
   });
 
   it("accepts an absolute path outside the workspace and reports it absolute", async () => {
