@@ -5,6 +5,7 @@ import type {
   McpServerConfig,
   PluginHookDetail,
   PluginManifest,
+  ResolvedLspServer,
   PluginSource,
   SkillRoot,
 } from "@zcode/contracts";
@@ -29,6 +30,7 @@ export interface PluginComponents {
   commandRoots: CustomCommandRoot[];
   hooks: Partial<Record<HookEventName, HookMatcherConfig[]>>;
   hookDetails: PluginHookDetail[];
+  lspServers: ResolvedLspServer[];
   mcpServers: Record<string, McpServerConfig>;
   skillCount: number;
   skillRoots: SkillRoot[];

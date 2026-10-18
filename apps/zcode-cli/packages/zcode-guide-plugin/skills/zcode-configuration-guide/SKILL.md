@@ -75,7 +75,7 @@ Within a level, `.zcode` is scanned before `.agents`. A deeper working-directory
 ## Plugins: essentials
 
 - Managed in **Settings → Plugin Management** (the **Installed** and **Discover** tabs). A plugin directory carries a manifest at `.zcode-plugin/plugin.json` (the compatibility names `.claude-plugin/` and `.codex-plugin/` are also recognized). The minimal manifest requires only `name` (matching `^[a-z0-9][a-z0-9._-]{0,127}$`).
-- Component fields: `commands`, `skills`, `hooks`, `mcpServers`, `agents` (each may be a directory name, an array, or inline). The fields `channels`, `lspServers`, `outputStyles`, and `settings` are recorded but not executed.
+- Component fields: `commands`, `skills`, `hooks`, `mcpServers`, `agents` (each may be a directory name, an array, or inline). The fields `channels`, `outputStyles`, and `settings` are recorded but not executed. `lspServers` is loaded (`.lsp.json` or the manifest field), but its language server processes are not started yet.
 - Enable/disable state is stored under `plugins` in `~/.zcode/cli/config.json`. A built-in plugin can be disabled but not uninstalled.
 - Marketplaces can be added (via the **`+`** button on the Discover tab) from a GitHub repository, a Git URL, a local directory, or a file.
 

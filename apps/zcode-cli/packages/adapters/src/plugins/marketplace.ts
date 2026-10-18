@@ -70,7 +70,6 @@ const PLUGIN_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,127}$/;
 const SOURCE_SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const UNSUPPORTED_MANIFEST_FIELDS = [
   "channels",
-  "lspServers",
   "outputStyles",
   "settings",
 ] as const;

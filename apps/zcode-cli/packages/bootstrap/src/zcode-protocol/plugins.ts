@@ -495,8 +495,8 @@ export async function validatePlugin(
     ok: diagnostics.every((diagnostic) => diagnostic.severity !== "error"),
     diagnostics: diagnostics.map(toPluginDiagnostic),
     compatibility: {
-      runnable: ["skills", "commands", "hooks", "mcpServers", "userConfig"],
-      diagnosticOnly: ["agents", "lspServers", "outputStyles", "channels", "settings"],
+      runnable: ["skills", "commands", "hooks", "mcpServers", "lspServers", "userConfig"],
+      diagnosticOnly: ["agents", "outputStyles", "channels", "settings"],
       unsupported: ["mcpb", "dxt", "npm", "hostPattern", "pathPattern"],
     },
   };

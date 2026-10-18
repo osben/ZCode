@@ -221,6 +221,12 @@ const remoteOfficialPluginPackages = [
     stagedPath: "packages/skill-creator-plugin",
   },
   {
+    packageName: "@zcode/typescript-lsp-plugin",
+    relativePath: "apps/zcode-cli/packages/typescript-lsp-plugin",
+    requiresRuntime: false,
+    stagedPath: "packages/typescript-lsp-plugin",
+  },
+  {
     packageName: "@zcode/plugin-creator-plugin",
     relativePath: "apps/zcode-cli/packages/plugin-creator-plugin",
     requiresRuntime: false,
@@ -285,6 +291,7 @@ const remoteOfficialPluginRequiredPaths = [
   "packages/ios-simulator-plugin/.zcode-plugin/plugin.json",
   "packages/restore-legacy-sessions-plugin/.zcode-plugin/plugin.json",
   "packages/skill-creator-plugin/.zcode-plugin/plugin.json",
+  "packages/typescript-lsp-plugin/.zcode-plugin/plugin.json",
   "packages/plugin-creator-plugin/.zcode-plugin/plugin.json",
   "packages/plugin-creator-plugin/skills/plugin-creator/SKILL.md",
   "packages/zcode-guide-plugin/.zcode-plugin/plugin.json",
