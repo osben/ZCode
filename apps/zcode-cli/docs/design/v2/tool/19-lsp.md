@@ -128,22 +128,36 @@ sequenceDiagram
   or edit of a file in its language.
 - **Crash:** in-flight requests get `lsp_server_crashed`. The server restarts up to
   `maxRestarts` times, then reports `lsp_server_unavailable`.
-- **Diagnostics without "wait N ms":** a result is fresh only when it comes from pull
-  `textDocument/diagnostic` or from a `publishDiagnostics` carrying `version ≥ v`.
-  `version` is optional in LSP, and a versionless publish can be a delayed result from
-  before the edit, so it never resolves a pending result. Without a fresh result the
-  status is `pending`, never "no errors".
-- Servers that support neither pull nor versioned publish get no post-edit
-  diagnostics (§6), and plugin status shows why. Phase 0 records which official
-  servers fall into this group.
+- **Freshness.** A diagnostics result counts for the document's current version `v`
+  only when one of these holds:
+  1. it is a pull `textDocument/diagnostic` response for `v`;
+  2. it is a `publishDiagnostics` carrying `version ≥ v`;
+  3. it is a versionless publish attributed to `v`. `LspDocumentSync` counts
+     `didChange`/`didOpen` sent for the URI since its last publish. A versionless
+     publish is attributed to `v` only when exactly one change is in flight. With two
+     or more it is ambiguous: we cannot tell a delayed result for an older version
+     from a fresh one, so it does not resolve anything.
+
+  Without a fresh result the status is `pending`, never "no errors". Rule 3 assumes the
+  server publishes once per processed state. Phase 0 confirmed this for
+  typescript-language-server: two quick changes produced one publish. Servers that
+  send several partial publishes per version are out of scope for rule 3, and plugin
+  status marks them.
 
 ## 6. Diagnostics after edits
 
-- Edit/Write results never wait for the server. **New** diagnostics (relative to the
-  pre-edit baseline) go into an attachment on the next model request: "Found N new
-  diagnostic issues in M files", at most 20, errors first. Only fresh results count
-  (§5), so a stale versionless publish is never reported as new. The Edit/Write
-  contract is unchanged.
+- Edit/Write results do not wait for the server.
+- **New** diagnostics (relative to the pre-edit baseline) go into an attachment on the
+  next model request: "Found N new diagnostic issues in M files", at most 20, errors
+  first. The Edit/Write contract is unchanged.
+- Only results fresh for the document's current version (§5) are attached; older
+  ones are dropped.
+- A tool result is always followed by a model request. While building that request,
+  the attachment source waits for fresh diagnostics of the files changed by the
+  previous tool batch, at most `LSP_EDIT_DIAGNOSTICS_WAIT_MS = 2_000` from the last
+  change. The measured first publish arrives after 0.9–1.3 s. This bound covers
+  latency, not sync: on expiry the attachment says "diagnostics pending for N files",
+  and the results join a later request once they are fresh.
 - No baseline (the file was not open, or the server was still starting): report only
   diagnostics that overlap the edited range.
 - TUI/V4: a collapsible line (`+`/`-`).
@@ -203,8 +217,9 @@ the exact operation names, so verify them against the real schema before impleme
   csharp, php, ruby, lua, swift, liquid) work once installed but are labeled
   "not verified in ZCode".
 - To avoid a TS-only design, the fake server in tests mimics awkward servers: startup
-  over 60 s, publish without `version`, a stale publish arriving after `didChange`
-  (must stay `pending`), and no pull diagnostics or watcher of its own.
+  over 60 s, publish without `version`, a stale publish after two quick changes
+  (must stay `pending`), several partial publishes per version, and no pull diagnostics
+  or watcher of its own.
   Smoke tests for pyright, gopls and rust-analyzer run when the binary is present and
   are skipped with a note otherwise.
 - Later: our own plugins (JSON/CSS/HTML/ESLint, bash, yaml, vue, svelte, terraform, zig,
@@ -212,9 +227,18 @@ the exact operation names, so verify them against the real schema before impleme
 
 ## 10. Phases
 
-0. **Spike:** the remote scenario, PATH in the CLI runtime, `vscode-jsonrpc` versus our
-   own framing, a tsserver measurement on the monorepo, and which official servers
-   support pull diagnostics or versioned publish.
+0. **Spike (done 2026-10-17).** typescript-language-server 6.0.2 on this monorepo:
+   - timing: `initialize` about 0.3 s, first request about 0.2 s, first publish 0.9–1.3 s;
+   - memory: about 850 MB RSS across three processes;
+   - diagnostics: no pull diagnostics (not even via dynamic registration), publish
+     without `version`, and two quick changes produce one publish;
+   - noise: with unbuilt workspace packages (`dist` missing) it reports
+     pre-existing errors like "Cannot find module '@zcode/contracts'", which the
+     baseline/overlap rules (§6) must filter;
+   - framing: no JSON-RPC package is in the lockfile, so we write our own
+     Content-Length framing.
+
+   Remote scenario and PATH in the CLI runtime are checked during phase 2.
 1. **Config:** Zod schema, loader, diagnostics, `lsp` in component types, and removing
    `lspServers` from `diagnosticOnly`.
 2. **Pool:** `LanguageServerPort`, `adapters/src/lsp`, the fake server, and tests for
