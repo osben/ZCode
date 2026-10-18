@@ -7886,7 +7886,7 @@ const enUS: Record<string, string> = {
   "settings.systemPrompt.identityBaselineLoading":
     "Checking the active Output Style before editing…",
   "settings.systemPrompt.identityBaselineUnavailable":
-    "Could not load Output Styles. Switch to the Output Styles tab and retry before editing this section.",
+    "Could not load Output Styles. Open Output Styles in Settings and retry before editing this section.",
   "settings.systemPrompt.memoryRootHint":
     "Keep the {placeholder} token in the text to insert the session's memory directory when a new session starts.",
   "settings.systemPrompt.memoryExtractionHint":

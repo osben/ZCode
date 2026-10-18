@@ -81,8 +81,8 @@ feature graph; this test task does not change its state or persistence contract.
 ### System Prompt Settings editor
 
 `SP-01` (accepted, manual-review pending): in an isolated desktop E2E HOME, open Settings →
-System Prompts; assert the six editable sections appear in ContextBuilder invocation order,
-edit and save one section, confirm the Customized state and diff/effective text, then restore
+System Prompts; assert the eight editable sections appear: the six main-prompt sections in
+ContextBuilder invocation order, followed by memory-extraction and memory-dream; edit and save one section, confirm the Customized state and diff/effective text, then restore
 the default and confirm the customization marker clears. Protected prompt fragments must not
 appear as editable entries. Keep this candidate under `settings/manual-review/pending/` until human
 review; it does not enter the default Electron or Docker gate automatically. Local/remote

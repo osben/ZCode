@@ -7555,7 +7555,7 @@ const zhCN: Record<string, string> = {
   "settings.systemPrompt.characterCount": "{count} 个字符",
   "settings.systemPrompt.identityBaselineLoading": "正在确认当前输出风格后再编辑…",
   "settings.systemPrompt.identityBaselineUnavailable":
-    "无法加载输出风格。请切换到“输出风格”标签页并重试，然后再编辑此片段。",
+    "无法加载输出风格。请在设置中打开“输出风格”并重试，然后再编辑此片段。",
   "settings.systemPrompt.memoryRootHint":
     "请保留 {placeholder} 标记；新会话启动时会将其替换为该会话的记忆目录。",
   "settings.systemPrompt.memoryExtractionHint":

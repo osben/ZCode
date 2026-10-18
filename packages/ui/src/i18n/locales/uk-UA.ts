@@ -7480,7 +7480,7 @@ const ukUA: Record<string, string> = {
   "settings.systemPrompt.identityBaselineLoading":
     "Перевіряємо активний стиль відповідей перед редагуванням…",
   "settings.systemPrompt.identityBaselineUnavailable":
-    "Не вдалося завантажити стилі відповідей. Перейдіть на вкладку «Стилі відповідей» і повторіть спробу перед редагуванням цього фрагмента.",
+    "Не вдалося завантажити стилі відповідей. Відкрийте «Стилі відповідей» у налаштуваннях і повторіть спробу перед редагуванням цього фрагмента.",
   "settings.systemPrompt.memoryRootHint":
     "Залиште маркер {placeholder}; під час запуску нового сеансу його буде замінено каталогом пам'яті цього сеансу.",
   "settings.systemPrompt.memoryExtractionHint":
