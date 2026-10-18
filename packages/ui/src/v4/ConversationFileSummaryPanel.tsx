@@ -8,7 +8,7 @@ import type {
   V4ConversationFileRewindPreviewResult,
 } from "@zcode/shared/zcode-protocol-v4";
 import { Button } from "@/components/ui/button.js";
-import { Checkbox } from "@/components/ui/checkbox.js";
+import { GroupByDirectoryCheckbox } from "@/components/GroupByDirectoryCheckbox.js";
 import {
   persistChangeSummaryTreeViewPreference,
   readChangeSummaryTreeViewPreference,
@@ -233,19 +233,14 @@ export function ConversationFileSummaryPanel({
             </button>
           </CollapsibleTrigger>
           {open && summary.files > 1 ? (
-            <label className="flex min-w-0 cursor-pointer items-center gap-2 px-1 text-ui-base text-foreground-subtle">
-              <Checkbox
-                checked={isTreeView}
-                onCheckedChange={(checked) => {
-                  const next = checked === true;
-                  setIsTreeView(next);
-                  persistChangeSummaryTreeViewPreference(next);
-                }}
-              />
-              <span className="truncate">
-                {intl.formatMessage({ id: "chat.changeSummary.treeView" })}
-              </span>
-            </label>
+            <GroupByDirectoryCheckbox
+              checked={isTreeView}
+              onCheckedChange={(next) => {
+                setIsTreeView(next);
+                persistChangeSummaryTreeViewPreference(next);
+              }}
+              label={intl.formatMessage({ id: "chat.changeSummary.treeView" })}
+            />
           ) : null}
           <Button
             type="button"

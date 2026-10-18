@@ -76,6 +76,18 @@ export function buildGitPaneRows(changes: readonly GitPaneFileChange[]): GitPane
   return rows;
 }
 
+// Flat mode is a one-to-one list of file rows, so flat row indices equal change indices and
+// the flat list stays byte-identical to the pre-grouping Review list.
+export function buildGitPaneDisplayRows(
+  changes: readonly GitPaneFileChange[],
+  groupByDirectory: boolean,
+): GitPaneRow[] {
+  if (groupByDirectory) {
+    return buildGitPaneRows(changes);
+  }
+  return changes.map((change) => ({ kind: "file", change }));
+}
+
 export function getGitPaneRowIndexByPath(rows: readonly GitPaneRow[]): Map<string, number> {
   const indexByPath = new Map<string, number>();
   rows.forEach((row, index) => {
