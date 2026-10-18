@@ -3805,6 +3805,45 @@ describe("AgentRuntime manual compact", () => {
     expect(finalRequestContext).toContain("tool-output-token");
   });
 
+  it("skips the Microcompact projection and estimate when Microcompact is disabled", async () => {
+    const debug = vi.fn();
+    const logger = {
+      child: () => logger,
+      debug,
+      error: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+    };
+    const runtime = createTestAgentRuntime(
+      createSessionId("runtime-microcompact-disabled-skip"),
+      { compact: { microcompact: { enabled: false } } },
+      {
+        eventStore: createTestSessionEventStore(),
+        logger,
+        modelFactory: createTestModelFactory({
+          async generateText(): Promise<ModelResult> {
+            return {
+              finishReason: "stop",
+              text: "done",
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            } as ModelResult;
+          },
+        } as never),
+      },
+    );
+
+    await runtime.executeTurn("small request");
+
+    const microcompactLogs = debug.mock.calls
+      .map((call) => call[1])
+      .filter((context) => context?.event === "compact.micro.skipped");
+    expect(microcompactLogs.length).toBeGreaterThan(0);
+    for (const log of microcompactLogs) {
+      expect(log).toMatchObject({ reason: "disabled" });
+      expect(log).not.toHaveProperty("estimatedTokenCount");
+    }
+  });
+
   it("uses the runtime effective output budget when assembling Microcompact policy", async () => {
     const debug = vi.fn();
     const logger = {
