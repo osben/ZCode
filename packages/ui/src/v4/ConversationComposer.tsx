@@ -795,8 +795,8 @@ function ConversationComposerImpl({
   const insertVoiceTranscript = useCallback((text: string) => {
     const api = inputApiRef.current;
     if (!api) return;
-    // Must go through appendText: getText/setText rebuild the editor as plain text nodes, flattening existing structured mentions.
-    api.appendText(text);
+    // Must go through the editor transaction API: getText/setText rebuild the editor as plain text nodes, flattening existing structured mentions.
+    api.insertTextAtSelection(text);
     api.focus();
   }, []);
   const reportedErrorKeysRef = useRef(new Set<string>());

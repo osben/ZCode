@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { LoaderCircle, Mic, Square } from "lucide-react";
+import { LoaderCircle, Mic, Square, X } from "lucide-react";
 import { TID_V4_COMPOSER_VOICE_ENTRY } from "@zcode/shared";
 import type { VoiceTranscriptionPreview } from "@zcode/services";
 import { Button } from "@/components/ui/button.js";
@@ -16,6 +16,8 @@ interface V4ComposerVoiceButtonProps {
   loadingLabelId?: string;
   disabled?: boolean;
   onToggle: () => void;
+  /** Abandons the recording without transcribing; the Cancel button renders only when provided. */
+  onCancel?: () => void;
 }
 
 /** Voice input button inside the composer: click to start/stop recording (shares the same recording state as the shortcut). */
@@ -26,6 +28,7 @@ function V4ComposerVoiceButtonImpl({
   loadingLabelId,
   disabled,
   onToggle,
+  onCancel,
 }: V4ComposerVoiceButtonProps) {
   const { intl } = useZCodeIntl();
   const shortcutLabel = useShortcutCommandLabel("voiceDictation");
@@ -92,6 +95,19 @@ function V4ComposerVoiceButtonImpl({
                 );
               })}
             </div>
+            {onCancel ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="pointer-events-auto shrink-0"
+                aria-label={intl.formatMessage({ id: "voiceDictation.composer.cancel" })}
+                data-testid="voice-dictation-cancel"
+                onClick={onCancel}
+              >
+                <X aria-hidden />
+              </Button>
+            ) : null}
           </div>
           {preview && (preview.committed || preview.tentative) ? (
             <div

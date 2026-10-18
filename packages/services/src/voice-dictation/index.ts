@@ -22,6 +22,17 @@ export {
   type VoiceModelDescriptor,
 } from "./voiceModelCatalog.js";
 export {
+  resolveEngineLanguage,
+  filterVoiceModels,
+  isLiveStreamingModel,
+  languageSettingsPatch,
+  missingVoiceLanguages,
+  recommendVoiceModel,
+  resolveVoiceLanguages,
+  sortVoiceModels,
+  type VoiceModelFilter,
+} from "./voiceModelLanguages.js";
+export {
   VoiceTranscriber,
   decodePcm16LeToFloat32,
   type VoiceEngineModel,

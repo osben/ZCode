@@ -208,3 +208,89 @@ sequenceDiagram
 | VD-MEM-05 | Let the idle timer expire                                            | The loaded marker disappears after unload completes.                                                                         |
 | VD-MEM-06 | Remove the currently loaded model                                    | It unloads before its file is removed; runtime status then reports no loaded model.                                          |
 | VD-MEM-07 | Restart the app                                                      | No model is reported loaded until the next transcription loads one.                                                          |
+
+## Languages, model discovery, and dictation output
+
+### Product rules
+
+- **Per-model languages.** Every catalog model declares the explicit ISO 639-1 codes it supports (`languages`), not only a count. The model card shows the supported languages as chips (first few plus `+N`, expandable to the full list). `languageCount` is removed from the descriptor; the count is `languages.length`.
+- **One language catalog.** The set of languages the user can pick is the union of languages declared by catalog models, displayed with `Intl.DisplayNames`; the settings page no longer keeps its own hard-coded list.
+- **Several languages.** The user selects zero or more dictation languages (`voiceDictation.languages`).
+  - Zero selected means automatic detection (same as the former `auto`).
+  - Exactly one selected is passed to the engine as that language code.
+  - Two or more are passed to the engine as automatic detection; the selection is used to filter and recommend models and to warn when the active model cannot cover them. The engine API accepts a single language or none, so the list is never sent as a constraint.
+  - `voiceDictation.language` stays as a mirror for older fork builds (the single selected code, otherwise `auto`) and is the fallback when `languages` is absent. `languages` wins when both are present.
+- **Model coverage warning.** If the active model does not support every selected language, settings show a warning naming the missing languages and a one-click switch to the recommended covering model when one is downloaded or downloadable.
+- **Recommendation.** `recommendVoiceModel(languages)` returns the covering catalog model with the lowest `recommendRank`; with no selected languages nothing is recommended. The card shows a `Recommended` badge on that model.
+- **Model filters** above the model list: free-text search over name, family, and language names; a language filter (default: the selected languages — a model matches only if it supports all of them); `Downloaded`; `Streaming`. Filters are view state only and never change the selection. An empty result shows an explanatory empty state with a reset action.
+- **Ordering.** Recommended first, then the catalog order. Download state is not a sort key, so a card never jumps when its download finishes.
+
+### Dictation output
+
+- **Insertion point.** A finished transcript is inserted at the composer caret, replacing the current selection; if the editor has no usable selection it is appended to the end. The existing `appendText` stays for other callers. A space is added only on a side that borders a non-space character.
+- **Cancel.** `Escape` while loading or recording cancels dictation without transcribing or inserting anything and without interrupting the running agent turn. The floating feedback panel also exposes a Cancel button. Cancel follows the same silent path as window blur (no stop chime, mute released).
+- **Too short.** A recording shorter than `VOICE_MIN_RECORDING_MS` shows a short notice ("Recording too short") instead of being dropped silently.
+- **No model.** Starting without a selected model shows a notice with an `Open settings` action that opens the Voice dictation settings section.
+- **Clipboard.** `voiceDictation.copyToClipboard` (default off): after a transcript is produced, also write it to the system clipboard. Insertion into the composer is unaffected. A clipboard failure is logged and never fails dictation. Unmounting the composer aborts dictation with no output, including no clipboard write. The browser may reject the write when the document is not focused; this is only logged.
+
+### Ownership and interfaces
+
+- `voiceDictation` settings live in the fork sidecar (`fork-settings.json`, keys registered in `forkAppSettings.ts`), so adding `languages` and `copyToClipboard` is additive and cannot be wiped by an upstream write. Both the TypeScript interface and the zod schema in `forkAppSettings.ts` must change together.
+- `voiceModelCatalog.ts` owns language data and `recommendRank`; a pure helper module (`voiceModelLanguages.ts` in services, re-exported through the public entry) owns language resolution, model coverage, recommendation, and filtering so the UI and tests share one implementation.
+- `useVoiceDictation` stays the sole owner of recording phase; it gains `cancel()` and the too-short notice. The composer owns insertion (`LexicalChatInput` handle gets `insertTextAtSelection`). `useDictationTranscriptHandler` (used by `V4ComposerDictationControl`) owns the clipboard copy so both engines (Host and Web Speech) share it.
+
+```mermaid
+sequenceDiagram
+  participant U as User
+  participant H as useVoiceDictation
+  participant C as V4ComposerDictationControl
+  participant E as Composer editor
+  U->>H: Esc (loading or recording)
+  H->>H: cancel recorder, release mute, cancel stream, phase = idle
+  Note over H: no transcript, no insert, no clipboard write
+  U->>H: stop (release / click)
+  H->>C: onTranscript(text)
+  C->>E: insertTextAtSelection(text) (caret or end)
+  C->>C: copy to clipboard when enabled (failure logged only)
+```
+
+### Acceptance scenarios
+
+| Case      | Setup / action                                     | Expected result                                                                                                        |
+| --------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| VD-LNG-01 | Open the model list                                | Each card lists its supported languages as chips with `+N` overflow; the full list is reachable.                       |
+| VD-LNG-02 | Select Ukrainian only                              | Engine receives `uk`; the model list filters to models that support Ukrainian; the best covering model is recommended. |
+| VD-LNG-03 | Select Ukrainian and English                       | Engine receives automatic detection; models must cover both to match the language filter.                              |
+| VD-LNG-04 | Active model lacks a selected language             | A warning names the missing language and offers the recommended model.                                                 |
+| VD-LNG-05 | Clear all languages                                | Behaves as automatic detection; no filter applied; no recommendation.                                                  |
+| VD-LNG-06 | Settings saved by an older build (`language` only) | `languages` is derived from `language`; saving writes both fields.                                                     |
+| VD-FLT-01 | Type in search / toggle Downloaded / Streaming     | The list narrows; the selection and downloads are unaffected; an empty result offers Reset.                            |
+| VD-OUT-01 | Caret in the middle of a draft; dictate            | Text is inserted at the caret with correct spacing; the rest of the draft is intact.                                   |
+| VD-OUT-02 | Text selected in the draft; dictate                | The selection is replaced by the transcript.                                                                           |
+| VD-OUT-03 | Press Esc while recording                          | Capture stops, nothing is inserted or copied, the agent turn is not interrupted, no stop chime.                        |
+| VD-OUT-04 | Click Cancel in the feedback panel                 | Same as VD-OUT-03.                                                                                                     |
+| VD-OUT-05 | Tap the shortcut for less than 250 ms              | A "too short" notice appears; nothing is inserted.                                                                     |
+| VD-OUT-06 | Start with no model selected                       | A notice with `Open settings` appears; the action opens Voice dictation settings.                                      |
+| VD-OUT-07 | `copyToClipboard` on; dictate                      | Text is inserted and also copied; with it off the clipboard is untouched.                                              |
+| VD-OUT-08 | Clipboard write is denied                          | Dictation still inserts; a warning is logged; no error toast.                                                          |
+
+### Catalog additions and streaming findings (research against Handy's catalog)
+
+Handy's catalog (`src-tauri/src/catalog/catalog.json`, 69 models) was compared with ours. All 8 existing entries still match upstream (revision, file, size, sha256, languages, streaming flag). Every Q8_0 size and sha256 below was verified against the Hugging Face tree metadata at the pinned revision (`lfs.oid` / `lfs.size`).
+
+- **Added** (one-shot transcription; families present in the installed `transcribe-cpp` 0.3.1 native library): `whisper-medium`, `whisper-large-v3`, `canary-1b-v2`, `gigaam-v3-e2e-rnnt` (Russian only). Language lists are copied from the model cards.
+- **Recommendation ranks** (`recommendRank`): `parakeet-unified-en-0.6b` 1, `parakeet-tdt-0.6b-v3` 2, `canary-180m-flash` 3, `whisper-large-v3-turbo` 4, `whisper-medium` 5. Other models are never recommended automatically.
+- **Not added yet** (need a runtime check before shipping, see follow-ups): `nemotron-3.5-asr-streaming-0.6b`, `voxtral-mini-4b-realtime-2602`, `moonshine-base-uk` (Handy accuracy score 38), `parakeet-primeline` (German fine-tune).
+
+Streaming facts (from GGUF headers and the native library's error strings; not yet confirmed by running a model):
+
+- `parakeet-tdt-0.6b-v3` cannot use `parakeet_buffered` (TDT head, no chunk menu). It stays one-shot; it is the best multilingual (uk/ru/en) choice for accuracy.
+- `parakeet-unified-en-0.6b` is marked streaming, but its header points to the `parakeet_buffered` family (`chunked_limited_with_rc`), while the transcriber always requests `family: { kind: "parakeet" }`. Live streaming for it may therefore never activate today and silently fall back to one-shot.
+- The only model with live streaming and Ukrainian/Russian coverage is `nemotron-3.5-asr-streaming-0.6b` (28 languages), but it lists locales and Handy maps a bare code to the model's locale; our bare code might be rejected. Accuracy on uk/ru is lower than TDT v3.
+
+### Follow-ups (not part of this change)
+
+1. Runtime verification: load `parakeet-unified-en-0.6b` and check `accepts({ kind: "parakeet" })` versus `accepts({ kind: "parakeet_buffered" })`; select the family from the loaded model's declared capability instead of hard-coding it.
+2. Runtime verification and locale mapping for `nemotron-3.5-asr-streaming-0.6b`, then add it with `streaming: true`.
+3. Voxtral realtime and Moonshine streaming need the transcriber to choose the stream family per model.
+4. Model warm-up on composer focus, level meter RMS and silence hint, recording timer, `AudioWorklet` capture.

@@ -27,6 +27,7 @@ const voiceDictationSettingsSchema = z.object({
   modelId: nonEmptyStringSchema.nullable().optional(),
   microphoneDeviceId: nonEmptyStringSchema.nullable().optional(),
   language: nonEmptyStringSchema.optional(),
+  languages: z.array(nonEmptyStringSchema).max(100).optional(),
   pushToTalk: z.boolean().optional(),
   idleUnloadMinutes: z
     .union([z.literal(1), z.literal(5), z.literal(10), z.literal(15), z.literal(30)])
@@ -34,6 +35,12 @@ const voiceDictationSettingsSchema = z.object({
   feedbackSounds: z.boolean().optional(),
   feedbackVolume: z.number().int().min(0).max(100).optional(),
   muteWhileRecording: z.boolean().optional(),
+  copyToClipboard: z.boolean().optional(),
+});
+
+// Read tolerance: one malformed `languages` value drops only itself instead of the whole voiceDictation object.
+const voiceDictationStoredSchema = voiceDictationSettingsSchema.extend({
+  languages: voiceDictationSettingsSchema.shape.languages.catch(undefined),
 });
 
 const worktreeLocationModeSchema = z.enum(["sibling", "inside", "global", "custom"]);
@@ -50,7 +57,7 @@ const worktreeProjectOverrideSchema = z.object({
  * failing the whole file.
  */
 export const forkAppSettingsStoredSchema = z.object({
-  voiceDictation: voiceDictationSettingsSchema.optional().catch(undefined),
+  voiceDictation: voiceDictationStoredSchema.optional().catch(undefined),
   codingPlanLimitAutoContinueDefaultEnabled: z.boolean().optional().catch(undefined),
   worktreeLocationMode: worktreeLocationModeSchema.optional().catch(undefined),
   worktreeCustomLocationPath: nonEmptyStringSchema.optional().catch(undefined),

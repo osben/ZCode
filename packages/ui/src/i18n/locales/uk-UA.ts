@@ -7294,10 +7294,17 @@ const ukUA: Record<string, string> = {
   "voiceDictation.muteWhileRecording.title": "Вимкнути звук під час запису",
   "voiceDictation.muteWhileRecording.description":
     "Вимкнути системний звук на час запису та відновити попередній стан після нього.",
+  "voiceDictation.copyToClipboard.title": "Копіювати надиктований текст у буфер обміну",
+  "voiceDictation.copyToClipboard.description":
+    "Крім вставки в поле повідомлення, також копіювати кожен готовий текст у системний буфер обміну.",
   "voiceDictation.language.title": "Мова",
   "voiceDictation.language.description":
-    "Мова мовлення. Багатомовні моделі підтримують автоматичне визначення.",
+    "Мови, якими ви диктуєте. Одна мова задається примусово; кілька або жодної — автовизначення, якому потрібна багатомовна модель.",
   "voiceDictation.language.auto": "Визначати автоматично",
+  "voiceDictation.language.summary.count": "Мов: {count}",
+  "voiceDictation.language.search": "Пошук мов",
+  "voiceDictation.language.noMatch": "Немає відповідних мов",
+  "voiceDictation.language.clear": "Скинути (автовизначення)",
   "voiceDictation.models.unloadDelay.title": "Вивантажити з пам'яті через",
   "voiceDictation.models.unloadDelay.description":
     "Після диктування модель залишатиметься готовою протягом цього часу, а потім звільнить пам'ять.",
@@ -7306,6 +7313,16 @@ const ukUA: Record<string, string> = {
   "voiceDictation.models.description":
     "Усе працює на цьому пристрої. Виділена модель вибрана для диктування; у пам'яті одночасно може бути лише одна модель.",
   "voiceDictation.models.languages": "Підтримує мов: {count}",
+  "voiceDictation.models.recommended": "Рекомендовано",
+  "voiceDictation.models.filter.search": "Пошук моделей",
+  "voiceDictation.models.filter.matchLanguages": "Підходять до моїх мов",
+  "voiceDictation.models.filter.downloaded": "Завантажені",
+  "voiceDictation.models.filter.empty": "Жодна модель не відповідає фільтрам.",
+  "voiceDictation.models.filter.reset": "Скинути фільтри",
+  "voiceDictation.language.modelMismatch": "{model} не підтримує: {languages}.",
+  "voiceDictation.language.useModel": "Використати {model}",
+  "voiceDictation.models.languages.showAll": "Показати всі мови ({count})",
+  "voiceDictation.models.languages.showFewer": "Показати менше мов",
   "voiceDictation.models.streaming": "Потокова",
   "voiceDictation.models.license": "Ліцензія: {license}",
   "voiceDictation.models.download": "Завантажити",
@@ -7333,6 +7350,11 @@ const ukUA: Record<string, string> = {
     "У Web можна записувати звук із мікрофона, але локальні моделі розпізнавання працюють лише в ZCode Desktop.",
   "voiceDictation.noModelSelected":
     "Спочатку виберіть модель розпізнавання в Налаштуваннях → Голосове введення.",
+  "voiceDictation.openSettings": "Відкрити налаштування",
+  "voiceDictation.tooShort": "Запис закороткий. Тримайте скорочення, поки говорите.",
+  "voiceDictation.stillLoading":
+    "Модель розпізнавання ще завантажувалась. Говоріть, коли почнеться запис.",
+  "voiceDictation.composer.cancel": "Скасувати голосове введення",
   "voiceDictation.microphoneFailed":
     "Не вдалося отримати доступ до мікрофона. Перевірте пристрій введення та дозволи.",
   "voiceDictation.transcribeFailed": "Не вдалося розпізнати мовлення.",
@@ -7346,6 +7368,10 @@ const ukUA: Record<string, string> = {
     "Швидке й точне. Підтримує {languages} європейських мов.",
   "voiceDictation.models.description.canary":
     "Крихітна й миттєва, добре працює на будь-якому залізі.",
+  "voiceDictation.models.description.canaryLarge":
+    "Точне розпізнавання мовлення для {languages} європейських мов, з перекладом.",
+  "voiceDictation.models.description.gigaam":
+    "Компактне й швидке розпізнавання лише російської мови.",
   "voiceDictation.models.description.nemotron":
     "Англійське розпізнавання мовлення з потоковим режимом і мітками токенів.",
   "voiceDictation.saveFailed": "Не вдалося зберегти налаштування голосового введення.",

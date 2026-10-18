@@ -32,7 +32,7 @@ function makeDescriptor(overrides: Partial<VoiceModelDescriptor> = {}): VoiceMod
     name: "Test model",
     description: "fixture",
     family: "test",
-    languageCount: 1,
+    languages: ["en"],
     streaming: false,
     license: "mit",
     huggingFaceRepo: "owner/repo",

@@ -256,6 +256,11 @@ export interface VoiceDictationSettings {
   microphoneDeviceId?: string | null;
   /** Transcription language: `auto` means the model detects it, otherwise a language code (e.g. `en`, `ru`). */
   language?: string;
+  /**
+   * Selected dictation languages (ISO 639-1); empty/absent means automatic detection. Wins over `language`
+   * when present; exactly one entry is forced on the engine, several leave detection to the model.
+   */
+  languages?: string[];
   /** true: hold the shortcut to record, release to transcribe; false: press once to start, press again to stop. */
   pushToTalk?: boolean;
   /** Minutes an idle model waits in memory before being unloaded automatically. */
@@ -266,6 +271,8 @@ export interface VoiceDictationSettings {
   feedbackVolume?: number;
   /** Mute the OS audio output while recording and restore it when recording ends; absent means off. Desktop only. */
   muteWhileRecording?: boolean;
+  /** Also copy each finished transcript to the system clipboard (insertion into the composer is unaffected); absent means off. */
+  copyToClipboard?: boolean;
 }
 
 export type VoiceModelIdleUnloadMinutes = 1 | 5 | 10 | 15 | 30;

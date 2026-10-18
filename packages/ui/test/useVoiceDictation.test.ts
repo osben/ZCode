@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   settings: null as { voiceDictation?: Record<string, unknown> } | null,
   feedbackSound: null as ReturnType<typeof vi.fn> | null,
   platform: { setDictationSystemMute: null as ReturnType<typeof vi.fn> | null },
+  openSettings: vi.fn(),
 }));
 
 vi.mock("@/hooks/useServices.js", () => ({
@@ -35,6 +36,9 @@ vi.mock("@/shortcuts/bindings.js", () => ({
   matchesShortcutBinding: () => false,
 }));
 vi.mock("@/lib/voiceDictationShortcut.js", () => ({ isVoiceShortcutReleased: () => false }));
+vi.mock("@/hooks/useOpenVoiceDictationSettings.js", () => ({
+  useOpenVoiceDictationSettings: () => mocks.openSettings,
+}));
 vi.mock("@/components/ui/toast.js", () => ({ toast: vi.fn() }));
 vi.mock("@/logger.js", () => ({ logger: { warn: vi.fn() } }));
 vi.mock("@/lib/voiceDictationFeedbackSound.js", () => ({
@@ -351,5 +355,158 @@ describe("useVoiceDictation streaming", () => {
 
     expect(mocks.platform.setDictationSystemMute).not.toHaveBeenCalled();
     expect(hook.result.current.phase).toBe("idle");
+  });
+});
+
+describe("useVoiceDictation cancel and notices", () => {
+  const escapeEvent = () =>
+    new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+
+  it("cancels recording on Escape without inserting, chiming, or reaching later Escape handlers", async () => {
+    mocks.settings!.voiceDictation = {
+      modelId: "model-one",
+      language: "en",
+      feedbackSounds: true,
+      muteWhileRecording: true,
+    };
+    const onTranscript = vi.fn();
+    const laterHandler = vi.fn();
+    window.addEventListener("keydown", laterHandler);
+    const hook = renderHook(() =>
+      useVoiceDictation({ enabled: true, onTranscript, scopeRef: { current: null } }),
+    );
+
+    await act(async () => hook.result.current.start());
+    await waitFor(() => expect(hook.result.current.phase).toBe("recording"));
+    const event = escapeEvent();
+    act(() => {
+      document.body.dispatchEvent(event);
+    });
+    await waitFor(() => expect(mocks.service?.cancelStream).toHaveBeenCalledWith("stream-1"));
+    window.removeEventListener("keydown", laterHandler);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(laterHandler).not.toHaveBeenCalled();
+    expect(onTranscript).not.toHaveBeenCalled();
+    expect(mocks.service?.finalizeStream).not.toHaveBeenCalled();
+    expect(mocks.feedbackSound).not.toHaveBeenCalledWith("stop", expect.anything());
+    expect(hook.result.current.phase).toBe("idle");
+    expect(hook.result.current.preview).toBeNull();
+  });
+
+  it("leaves Escape alone while idle so the agent stop shortcut keeps working", () => {
+    const hook = renderHook(() =>
+      useVoiceDictation({ enabled: true, onTranscript: vi.fn(), scopeRef: { current: null } }),
+    );
+    const event = escapeEvent();
+    act(() => {
+      document.body.dispatchEvent(event);
+    });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(hook.result.current.phase).toBe("idle");
+  });
+
+  it("exposes cancel() for the feedback panel button", async () => {
+    const onTranscript = vi.fn();
+    const hook = renderHook(() =>
+      useVoiceDictation({ enabled: true, onTranscript, scopeRef: { current: null } }),
+    );
+
+    await act(async () => hook.result.current.start());
+    act(() => hook.result.current.cancel());
+    await waitFor(() => expect(mocks.service?.cancelStream).toHaveBeenCalledWith("stream-1"));
+
+    expect(hook.result.current.phase).toBe("idle");
+    expect(onTranscript).not.toHaveBeenCalled();
+  });
+
+  it("tells the user when a recording was too short to transcribe", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    const onTranscript = vi.fn();
+    const hook = renderHook(() =>
+      useVoiceDictation({ enabled: true, onTranscript, scopeRef: { current: null } }),
+    );
+
+    await act(async () => hook.result.current.start());
+    now.mockReturnValue(1100);
+    await act(async () => hook.result.current.stop());
+
+    expect(toast).toHaveBeenCalledWith("voiceDictation.tooShort");
+    expect(onTranscript).not.toHaveBeenCalled();
+    expect(mocks.service?.finalizeStream).not.toHaveBeenCalled();
+  });
+
+  it("explains a release during model loading instead of calling the hold too short", async () => {
+    let resolveBegin!: (id: string) => void;
+    mocks.service!.beginStream!.mockImplementation(
+      () => new Promise<string>((resolve) => (resolveBegin = resolve)),
+    );
+    const onTranscript = vi.fn();
+    const hook = renderHook(() =>
+      useVoiceDictation({ enabled: true, onTranscript, scopeRef: { current: null } }),
+    );
+
+    let starting!: Promise<void>;
+    let stopping!: Promise<void>;
+    act(() => {
+      starting = hook.result.current.start();
+    });
+    expect(hook.result.current.phase).toBe("loading");
+    act(() => {
+      stopping = hook.result.current.stop();
+    });
+    await waitFor(() => expect(mocks.service?.beginStream).toHaveBeenCalled());
+    await act(async () => {
+      resolveBegin("stream-1");
+      await starting;
+      await stopping;
+    });
+
+    expect(toast).toHaveBeenCalledWith("voiceDictation.stillLoading");
+    expect(toast).not.toHaveBeenCalledWith("voiceDictation.tooShort");
+    expect(mocks.service?.finalizeStream).not.toHaveBeenCalled();
+    expect(onTranscript).not.toHaveBeenCalled();
+    expect(hook.result.current.phase).toBe("idle");
+  });
+
+  it("offers to open settings when no model is selected", async () => {
+    mocks.settings = { voiceDictation: {} };
+    const hook = renderHook(() =>
+      useVoiceDictation({ enabled: true, onTranscript: vi.fn(), scopeRef: { current: null } }),
+    );
+
+    await act(async () => hook.result.current.start());
+
+    expect(toast).toHaveBeenCalledTimes(1);
+    const [message, options] = vi.mocked(toast).mock.calls[0]!;
+    expect(message).toBe("voiceDictation.noModelSelected");
+    expect(options).toMatchObject({ actionLabel: "voiceDictation.openSettings" });
+    options?.onAction?.();
+    expect(mocks.openSettings).toHaveBeenCalledTimes(1);
+    expect(mocks.service?.beginStream).not.toHaveBeenCalled();
+  });
+});
+
+describe("useVoiceDictation languages", () => {
+  const beginWith = async (voiceDictation: Record<string, unknown>) => {
+    mocks.settings = { voiceDictation: { modelId: "model-one", ...voiceDictation } };
+    const hook = renderHook(() =>
+      useVoiceDictation({ enabled: true, onTranscript: vi.fn(), scopeRef: { current: null } }),
+    );
+    await act(async () => hook.result.current.start());
+    return mocks.service!.beginStream!.mock.calls.at(-1)![0];
+  };
+
+  it("forces a single selected language, and prefers languages over the legacy field", async () => {
+    expect(await beginWith({ languages: ["uk"], language: "en" })).toEqual({
+      modelId: "model-one",
+      language: "uk",
+    });
+  });
+
+  it("leaves detection to the model for several or no selected languages", async () => {
+    expect((await beginWith({ languages: ["uk", "en"] })).language).toBe("auto");
+    expect((await beginWith({ languages: [], language: "en" })).language).toBe("auto");
   });
 });

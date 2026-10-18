@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "@/components/ui/toast.js";
-import type { VoiceTranscriptionPreview } from "@zcode/services";
+import { resolveEngineLanguage, type VoiceTranscriptionPreview } from "@zcode/services";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useSettings } from "@/hooks/useSettingService.js";
+import { useVoiceDictationEscapeCancel } from "@/hooks/useVoiceDictationEscapeCancel.js";
 import { logger } from "@/logger.js";
 import type { VoiceDictationPhase } from "@/hooks/useVoiceDictation.js";
 import {
@@ -27,10 +28,10 @@ interface UseWebSpeechDictationOptions {
 export function useWebSpeechDictation({ enabled, onTranscript }: UseWebSpeechDictationOptions) {
   const { intl } = useZCodeIntl();
   const { settings } = useSettings();
-  const language = settings?.voiceDictation?.language;
-  // "auto" (whisper auto-detect) has no SpeechRecognition equivalent: leave lang empty so the
-  // browser picks its default, instead of forcing a possibly wrong locale.
-  const speechLanguage = !language || language === "auto" ? null : language;
+  // "auto" (whisper auto-detect, or several selected languages) has no SpeechRecognition equivalent:
+  // leave lang empty so the browser picks its default, instead of forcing a possibly wrong locale.
+  const engineLanguage = resolveEngineLanguage(settings?.voiceDictation ?? {});
+  const speechLanguage = engineLanguage === "auto" ? null : engineLanguage;
   const [supported] = useState(() => getSpeechRecognitionConstructor() !== null);
   const [phase, setPhase] = useState<VoiceDictationPhase>("idle");
   const [preview, setPreview] = useState<VoiceTranscriptionPreview | null>(null);
@@ -102,6 +103,14 @@ export function useWebSpeechDictation({ enabled, onTranscript }: UseWebSpeechDic
     engine.stop();
   }, [engine]);
 
+  /** Aborts the session without inserting anything; the engine drops accumulated finals on abort. */
+  const cancel = useCallback((): void => {
+    if (phaseRef.current === "idle") return;
+    engine.cancel();
+    setPreview(null);
+    updatePhase("idle");
+  }, [engine, updatePhase]);
+
   const toggle = useCallback((): void => {
     if (phaseRef.current === "idle") {
       start();
@@ -109,6 +118,12 @@ export function useWebSpeechDictation({ enabled, onTranscript }: UseWebSpeechDic
       stop();
     }
   }, [start, stop]);
+
+  useVoiceDictationEscapeCancel(
+    enabled && supported,
+    () => phaseRef.current === "loading" || phaseRef.current === "recording",
+    cancel,
+  );
 
   useEffect(
     () => () => {
@@ -119,5 +134,5 @@ export function useWebSpeechDictation({ enabled, onTranscript }: UseWebSpeechDic
   );
 
   // SpeechRecognition exposes no audio level; 0 keeps the shared button's meter at its baseline.
-  return { supported, phase, level: 0, preview, start, stop, toggle };
+  return { supported, phase, level: 0, preview, start, stop, cancel, toggle };
 }

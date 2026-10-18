@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { createElement } from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip.js";
 
@@ -63,5 +63,35 @@ describe("V4ComposerVoiceButton live feedback", () => {
     expect(screen.queryByTestId("voice-dictation-preview")).toBeNull();
     // Постоянный live region объявляет и не-Recording фазы; без превью он единственный role="status".
     expect(screen.getByRole("status").textContent).toBe("voiceDictation.composer.status.idle");
+  });
+
+  it("offers a clickable Cancel inside the recording panel only when a handler is given", () => {
+    const onCancel = vi.fn();
+    const renderPanel = (handler?: () => void) =>
+      render(
+        createElement(
+          TooltipProvider,
+          null,
+          createElement(V4ComposerVoiceButton, {
+            phase: "recording",
+            level: 0.2,
+            preview: null,
+            onToggle: () => undefined,
+            onCancel: handler,
+          }),
+        ),
+      );
+
+    renderPanel();
+    expect(screen.queryByTestId("voice-dictation-cancel")).toBeNull();
+    cleanup();
+
+    renderPanel(onCancel);
+    const cancel = screen.getByTestId("voice-dictation-cancel");
+    expect(cancel.getAttribute("aria-label")).toBe("voiceDictation.composer.cancel");
+    // The panel itself ignores pointer events so it never blocks the toolbar; the button opts back in.
+    expect(cancel.className).toContain("pointer-events-auto");
+    fireEvent.click(cancel);
+    expect(onCancel).toHaveBeenCalledTimes(1);
   });
 });

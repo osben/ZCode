@@ -127,6 +127,7 @@ beforeEach(() => {
     preview: null,
     start: vi.fn(),
     stop: vi.fn(),
+    cancel: vi.fn(),
     toggle: vi.fn(),
   };
 });
@@ -266,6 +267,40 @@ describe("useWebSpeechDictation", () => {
     // After the session settled, a new session can start again.
     act(() => result.current.start());
     expect(instances).toHaveLength(2);
+  });
+
+  it("cancels on Escape or cancel() without inserting what was already recognized", () => {
+    installWebSpeechApi();
+    const onTranscript = vi.fn();
+    const { result } = renderHook(() => useWebSpeechDictation({ enabled: true, onTranscript }));
+
+    act(() => result.current.start());
+    const recognition = currentRecognition();
+    act(() => recognition.onstart?.(new Event("start")));
+    act(() => recognition.onresult?.(resultEvent([{ transcript: "hello ", isFinal: true }])));
+
+    const escape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    act(() => {
+      document.body.dispatchEvent(escape);
+    });
+
+    expect(escape.defaultPrevented).toBe(true);
+    expect(recognition.abort).toHaveBeenCalledTimes(1);
+    expect(result.current.phase).toBe("idle");
+    expect(result.current.preview).toBeNull();
+    expect(onTranscript).not.toHaveBeenCalled();
+
+    // Idle again: Escape must be left to the rest of the app (it stops the agent turn).
+    const idleEscape = new KeyboardEvent("keydown", { key: "Escape", cancelable: true });
+    act(() => {
+      document.body.dispatchEvent(idleEscape);
+    });
+    expect(idleEscape.defaultPrevented).toBe(false);
+
+    act(() => result.current.start());
+    act(() => result.current.cancel());
+    expect(result.current.phase).toBe("idle");
+    expect(onTranscript).not.toHaveBeenCalled();
   });
 
   it("aborts on unmount without inserting a pending transcript", () => {

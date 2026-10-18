@@ -7390,9 +7390,17 @@ const zhCN: Record<string, string> = {
   "voiceDictation.muteWhileRecording.title": "录音时静音系统声音",
   "voiceDictation.muteWhileRecording.description":
     "录音期间静音系统声音，结束后恢复之前的静音状态。",
+  "voiceDictation.copyToClipboard.title": "将听写文本复制到剪贴板",
+  "voiceDictation.copyToClipboard.description":
+    "除了插入输入框，还将每次转写完成的文本复制到系统剪贴板。",
   "voiceDictation.language.title": "语言",
-  "voiceDictation.language.description": "说话所用语言。多语言模型支持自动识别。",
+  "voiceDictation.language.description":
+    "听写所用语言。选择一种语言将强制使用该语言；选择多种或不选则自动识别，需要多语言模型。",
   "voiceDictation.language.auto": "自动识别",
+  "voiceDictation.language.summary.count": "{count} 种语言",
+  "voiceDictation.language.search": "搜索语言",
+  "voiceDictation.language.noMatch": "没有匹配的语言",
+  "voiceDictation.language.clear": "清除（自动检测）",
   "voiceDictation.models.unloadDelay.title": "内存释放等待时间",
   "voiceDictation.models.unloadDelay.description":
     "听写结束后，模型会保持就绪一段时间，然后释放内存。",
@@ -7401,6 +7409,16 @@ const zhCN: Record<string, string> = {
   "voiceDictation.models.description":
     "完全在本机运行。高亮显示的模型已选作听写模型；内存中一次只加载一个模型。",
   "voiceDictation.models.languages": "{count} 种语言",
+  "voiceDictation.models.recommended": "推荐",
+  "voiceDictation.models.filter.search": "搜索模型",
+  "voiceDictation.models.filter.matchLanguages": "匹配我的语言",
+  "voiceDictation.models.filter.downloaded": "已下载",
+  "voiceDictation.models.filter.empty": "没有符合筛选条件的模型。",
+  "voiceDictation.models.filter.reset": "重置筛选",
+  "voiceDictation.language.modelMismatch": "{model} 不支持：{languages}。",
+  "voiceDictation.language.useModel": "使用 {model}",
+  "voiceDictation.models.languages.showAll": "显示全部 {count} 种语言",
+  "voiceDictation.models.languages.showFewer": "显示较少语言",
   "voiceDictation.models.streaming": "流式",
   "voiceDictation.models.license": "许可：{license}",
   "voiceDictation.models.download": "下载",
@@ -7426,6 +7444,10 @@ const zhCN: Record<string, string> = {
   "voiceDictation.webUnavailable.description":
     "Web 可以采集麦克风音频，但本地转写模型目前只在 ZCode Desktop 中运行。",
   "voiceDictation.noModelSelected": "请先在 设置 → 语音输入 中选择转写模型。",
+  "voiceDictation.openSettings": "打开设置",
+  "voiceDictation.tooShort": "录音时间太短。请在说话时按住快捷键。",
+  "voiceDictation.stillLoading": "语音模型仍在加载。请在开始录音后再说话。",
+  "voiceDictation.composer.cancel": "取消语音输入",
   "voiceDictation.microphoneFailed": "无法访问麦克风，请检查输入设备和系统权限。",
   "voiceDictation.transcribeFailed": "语音转写失败。",
   "voiceDictation.downloadFailed": "模型下载失败。",
@@ -7436,6 +7458,9 @@ const zhCN: Record<string, string> = {
   "voiceDictation.models.description.parakeetMultilingual":
     "快速且准确，支持 {languages} 种欧洲语言。",
   "voiceDictation.models.description.canary": "极小且即时，在任何硬件上都能流畅运行。",
+  "voiceDictation.models.description.canaryLarge":
+    "覆盖 {languages} 种欧洲语言的高精度语音转文字，支持翻译。",
+  "voiceDictation.models.description.gigaam": "小巧快速的纯俄语语音转文字。",
   "voiceDictation.models.description.nemotron": "英语语音转写，支持流式与词级时间戳。",
   "voiceDictation.saveFailed": "无法保存语音输入设置。",
   "voiceDictation.composer.start": "语音输入",

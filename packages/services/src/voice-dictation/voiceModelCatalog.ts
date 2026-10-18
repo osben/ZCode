@@ -2,13 +2,22 @@
 // cjpais/Handy (MIT), including only each model's default quantization (Q8_0). The sha256 values
 // are the trust anchors for download verification and must be cross-checked whenever models are updated.
 
+import {
+  EUROPEAN_25_LANGUAGES,
+  WHISPER_LANGUAGES,
+  WHISPER_V3_LANGUAGES,
+} from "./voiceModelLanguageCodes.js";
+
 export interface VoiceModelDescriptor {
   id: string;
   name: string;
   description: string;
   family: string;
-  languageCount: number;
+  /** ISO 639-1 codes the model supports (from the model card; Handy's catalog agrees). */
+  languages: readonly string[];
   streaming: boolean;
+  /** Lower is recommended first among models covering the selected languages; absent means never recommended. */
+  recommendRank?: number;
   license: string;
   huggingFaceRepo: string;
   revision: string;
@@ -23,7 +32,7 @@ export const VOICE_MODEL_CATALOG: readonly VoiceModelDescriptor[] = [
     name: "Whisper Tiny",
     description: "99 languages, auto language detection, segment timestamps.",
     family: "whisper",
-    languageCount: 99,
+    languages: WHISPER_LANGUAGES,
     streaming: false,
     license: "apache-2.0",
     huggingFaceRepo: "handy-computer/whisper-tiny-gguf",
@@ -37,7 +46,7 @@ export const VOICE_MODEL_CATALOG: readonly VoiceModelDescriptor[] = [
     name: "Whisper Base",
     description: "99 languages, auto language detection, segment timestamps.",
     family: "whisper",
-    languageCount: 99,
+    languages: WHISPER_LANGUAGES,
     streaming: false,
     license: "apache-2.0",
     huggingFaceRepo: "handy-computer/whisper-base-gguf",
@@ -51,7 +60,7 @@ export const VOICE_MODEL_CATALOG: readonly VoiceModelDescriptor[] = [
     name: "Whisper Small",
     description: "99 languages, auto language detection, segment timestamps.",
     family: "whisper",
-    languageCount: 99,
+    languages: WHISPER_LANGUAGES,
     streaming: false,
     license: "apache-2.0",
     huggingFaceRepo: "handy-computer/whisper-small-gguf",
@@ -65,8 +74,9 @@ export const VOICE_MODEL_CATALOG: readonly VoiceModelDescriptor[] = [
     name: "Whisper Large v3 Turbo",
     description: "100 languages, auto language detection, segment timestamps.",
     family: "whisper",
-    languageCount: 100,
+    languages: WHISPER_V3_LANGUAGES,
     streaming: false,
+    recommendRank: 4,
     license: "apache-2.0",
     huggingFaceRepo: "handy-computer/whisper-large-v3-turbo-gguf",
     revision: "5eaf945c7978e564bae5b28a5b1639dd93c2bfb1",
@@ -79,8 +89,9 @@ export const VOICE_MODEL_CATALOG: readonly VoiceModelDescriptor[] = [
     name: "Parakeet Unified EN 0.6B",
     description: "Fast, accurate live English transcription.",
     family: "parakeet",
-    languageCount: 1,
+    languages: ["en"],
     streaming: true,
+    recommendRank: 1,
     license: "cc-by-4.0",
     huggingFaceRepo: "handy-computer/parakeet-unified-en-0.6b-gguf",
     revision: "7e948f21b7bdbac698d3318db9d350f1096f3b6c",
@@ -93,8 +104,9 @@ export const VOICE_MODEL_CATALOG: readonly VoiceModelDescriptor[] = [
     name: "Parakeet TDT 0.6B v3",
     description: "Fast and accurate. Supports 25 European languages.",
     family: "parakeet",
-    languageCount: 25,
+    languages: EUROPEAN_25_LANGUAGES,
     streaming: false,
+    recommendRank: 2,
     license: "cc-by-4.0",
     huggingFaceRepo: "handy-computer/parakeet-tdt-0.6b-v3-gguf",
     revision: "85ac09ea12fc4b1112fa76810059364bc6adc9de",
@@ -107,8 +119,9 @@ export const VOICE_MODEL_CATALOG: readonly VoiceModelDescriptor[] = [
     name: "Canary 180M Flash",
     description: "Tiny and instant, runs well on any hardware.",
     family: "canary",
-    languageCount: 4,
+    languages: ["en", "de", "es", "fr"],
     streaming: false,
+    recommendRank: 3,
     license: "cc-by-4.0",
     huggingFaceRepo: "handy-computer/canary-180m-flash-gguf",
     revision: "b147f9dc52b59f0998e410540a84727bd86457fd",
@@ -121,7 +134,7 @@ export const VOICE_MODEL_CATALOG: readonly VoiceModelDescriptor[] = [
     name: "Nemotron Speech Streaming EN",
     description: "English speech-to-text with streaming and token-level timestamps.",
     family: "nemotron",
-    languageCount: 1,
+    languages: ["en"],
     streaming: true,
     license: "other",
     huggingFaceRepo: "handy-computer/nemotron-speech-streaming-en-0.6b-gguf",
@@ -129,6 +142,65 @@ export const VOICE_MODEL_CATALOG: readonly VoiceModelDescriptor[] = [
     fileName: "nemotron-speech-streaming-en-0.6b-Q8_0.gguf",
     sizeBytes: 729650176,
     sha256: "90d8c89714cd31efc88be62a40c6b2bea57e0cc2063af1ffe2c28f1a228ca110",
+  },
+  {
+    id: "whisper-medium",
+    name: "Whisper Medium",
+    description:
+      "Broadest language coverage; a good accuracy/speed balance, though slower than Small.",
+    family: "whisper",
+    languages: WHISPER_LANGUAGES,
+    streaming: false,
+    recommendRank: 5,
+    license: "apache-2.0",
+    huggingFaceRepo: "handy-computer/whisper-medium-gguf",
+    revision: "ec78f06fded51aa82cde751678b78f76f78c8b7f",
+    fileName: "whisper-medium-Q8_0.gguf",
+    sizeBytes: 831538144,
+    sha256: "09e6a65e7de377aa5b10bae24608bc6f8ca2ed04b3993ef10d4a02bcd9a82adf",
+  },
+  {
+    id: "whisper-large-v3",
+    name: "Whisper Large v3",
+    description:
+      "100 languages, auto language detection, segment timestamps. Most accurate Whisper, needs a fast machine.",
+    family: "whisper",
+    languages: WHISPER_V3_LANGUAGES,
+    streaming: false,
+    license: "apache-2.0",
+    huggingFaceRepo: "handy-computer/whisper-large-v3-gguf",
+    revision: "e3e29bee6389c7da4a141406f07bb80ddac5337c",
+    fileName: "whisper-large-v3-Q8_0.gguf",
+    sizeBytes: 1668741440,
+    sha256: "2fa1a5f179f8a511a53e2108db270aa4af3ce08cd976af4180e2854666bb4ba3",
+  },
+  {
+    id: "canary-1b-v2",
+    name: "Canary 1B v2",
+    description: "Accurate 25-language speech-to-text with translation.",
+    family: "canary",
+    languages: EUROPEAN_25_LANGUAGES,
+    streaming: false,
+    license: "cc-by-4.0",
+    huggingFaceRepo: "handy-computer/canary-1b-v2-gguf",
+    revision: "58d13c2c0102229aad45f7e19a77ddc42b41dd9a",
+    fileName: "canary-1b-v2-Q8_0.gguf",
+    sizeBytes: 1144290016,
+    sha256: "224f83d1bc487b3303b495a7d6874912fdece93de19d1a04b550829c30a5d289",
+  },
+  {
+    id: "gigaam-v3-e2e-rnnt",
+    name: "GigaAM v3 E2E RNN-T",
+    description: "Compact, fast Russian-only speech-to-text.",
+    family: "gigaam",
+    languages: ["ru"],
+    streaming: false,
+    license: "mit",
+    huggingFaceRepo: "handy-computer/gigaam-v3-e2e-rnnt-gguf",
+    revision: "f719d70812344f4d0fb8c11c0887b190501a7465",
+    fileName: "gigaam-v3-e2e-rnnt-Q8_0.gguf",
+    sizeBytes: 273724832,
+    sha256: "78d63b47723b7f8d78c6113a6ef983b5a86e2a86f6c273e1f5cb6967b1c4467a",
   },
 ];
 

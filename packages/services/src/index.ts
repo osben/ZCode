@@ -37,6 +37,17 @@ export {
   type VoiceTranscriptionResponse,
 } from "./voice-dictation/voiceDictation.js";
 export {
+  resolveEngineLanguage,
+  filterVoiceModels,
+  isLiveStreamingModel,
+  languageSettingsPatch,
+  missingVoiceLanguages,
+  recommendVoiceModel,
+  resolveVoiceLanguages,
+  sortVoiceModels,
+  type VoiceModelFilter,
+} from "./voice-dictation/voiceModelLanguages.js";
+export {
   collectServiceMemoryDiagnostics,
   memoryDiagnosticsRegistry,
   registerMemoryDiagnosticsProvider,

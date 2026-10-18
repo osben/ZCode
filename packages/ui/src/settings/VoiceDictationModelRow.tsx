@@ -1,10 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button.js";
 import { AudioLines, Globe2, HardDrive, LoaderCircle, Trash2 } from "lucide-react";
 import { SettingsBadge } from "@/settings/SettingsPageParts.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
-import type { VoiceDictationRuntimeState, VoiceModelListItem } from "@zcode/services";
+import {
+  isLiveStreamingModel,
+  type VoiceDictationRuntimeState,
+  type VoiceModelListItem,
+} from "@zcode/services";
 
 interface VoiceModelRowProps {
   item: VoiceModelListItem;
@@ -12,6 +16,12 @@ interface VoiceModelRowProps {
   runtimeState: VoiceDictationRuntimeState;
   startingDownload?: boolean;
   pendingUse?: boolean;
+  /** The best covering model for the selected languages (see recommendVoiceModel). */
+  recommended?: boolean;
+  /** Languages the user selected for dictation; supported ones are listed first and highlighted. */
+  selectedLanguages?: readonly string[];
+  /** Localized language name for a code; defaults to the code itself. */
+  languageName?: (code: string) => string;
   onSelect: () => void;
   onUseWhenReady: () => void;
   onDownload: () => void;
@@ -24,11 +34,15 @@ interface VoiceModelRowProps {
  * descriptions), so known models are mapped to an i18n key. Unknown models (a new catalog with an
  * older UI) fall back to the catalog's English text.
  */
-const MODEL_DESCRIPTION_MESSAGE_IDS: Readonly<Record<string, string>> = {
+export const MODEL_DESCRIPTION_MESSAGE_IDS: Readonly<Record<string, string>> = {
   "whisper-tiny": "voiceDictation.models.description.whisper",
   "whisper-base": "voiceDictation.models.description.whisper",
   "whisper-small": "voiceDictation.models.description.whisper",
+  "whisper-medium": "voiceDictation.models.description.whisper",
   "whisper-large-v3-turbo": "voiceDictation.models.description.whisper",
+  "whisper-large-v3": "voiceDictation.models.description.whisper",
+  "canary-1b-v2": "voiceDictation.models.description.canaryLarge",
+  "gigaam-v3-e2e-rnnt": "voiceDictation.models.description.gigaam",
   "parakeet-unified-en-0.6b": "voiceDictation.models.description.parakeetLive",
   "parakeet-tdt-0.6b-v3": "voiceDictation.models.description.parakeetMultilingual",
   "canary-180m-flash": "voiceDictation.models.description.canary",
@@ -42,6 +56,9 @@ export function VoiceModelRow({
   runtimeState,
   startingDownload = false,
   pendingUse = false,
+  recommended = false,
+  selectedLanguages = [],
+  languageName = identity,
   onSelect,
   onUseWhenReady,
   onDownload,
@@ -179,6 +196,11 @@ export function VoiceModelRow({
               {intl.formatMessage({ id: "voiceDictation.models.fromHandy" })}
             </SettingsBadge>
           ) : null}
+          {recommended ? (
+            <SettingsBadge>
+              {intl.formatMessage({ id: "voiceDictation.models.recommended" })}
+            </SettingsBadge>
+          ) : null}
           {(downloading || startingDownload) && pendingUse ? (
             <SettingsBadge>
               {intl.formatMessage({ id: "voiceDictation.models.willUseWhenReady" })}
@@ -189,10 +211,15 @@ export function VoiceModelRow({
           {descriptionMessageId
             ? intl.formatMessage(
                 { id: descriptionMessageId },
-                { languages: descriptor.languageCount },
+                { languages: descriptor.languages.length },
               )
             : descriptor.description}
         </p>
+        <LanguageChips
+          languages={descriptor.languages}
+          selected={selectedLanguages}
+          languageName={languageName}
+        />
       </div>
 
       <div className="relative z-10 mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3 pointer-events-none">
@@ -201,13 +228,13 @@ export function VoiceModelRow({
             <Globe2 className="size-4" aria-hidden />
             {intl.formatMessage(
               { id: "voiceDictation.models.languages" },
-              { count: descriptor.languageCount },
+              { count: descriptor.languages.length },
             )}
           </span>
           {/* The runtime gate allows streaming only for models with a Parakeet stream slot
               (supportsStreaming && accepts parakeet); the catalog also marks Nemotron as streaming,
               but it always runs one-shot — advertising Streaming on that card would contradict the spec. */}
-          {descriptor.streaming && descriptor.family === "parakeet" ? (
+          {isLiveStreamingModel(descriptor) ? (
             <span className="inline-flex items-center gap-1.5">
               <AudioLines className="size-4" aria-hidden />
               {intl.formatMessage({ id: "voiceDictation.models.streaming" })}
@@ -290,4 +317,62 @@ export function formatVoiceModelDownloadSpeed(bytesPerSecond: number): string {
 export function formatVoiceModelSize(bytes: number): string {
   if (bytes >= 1_000_000_000) return `${(bytes / 1_000_000_000).toFixed(1)} GB`;
   return `${Math.round(bytes / 1_000_000)} MB`;
+}
+
+const identity = (code: string) => code;
+const COLLAPSED_LANGUAGE_CHIPS = 5;
+
+/** Supported-language chips: the user's selected languages first, the rest collapsed behind a +N toggle. */
+function LanguageChips({
+  languages,
+  selected,
+  languageName,
+}: {
+  languages: readonly string[];
+  selected: readonly string[];
+  languageName: (code: string) => string;
+}) {
+  const { intl } = useZCodeIntl();
+  const [expanded, setExpanded] = useState(false);
+  const ordered = useMemo(() => {
+    const preferred = languages.filter((code) => selected.includes(code));
+    return [...preferred, ...languages.filter((code) => !selected.includes(code))];
+  }, [languages, selected]);
+  const collapsible = ordered.length > COLLAPSED_LANGUAGE_CHIPS + 1;
+  const visible = collapsible && !expanded ? ordered.slice(0, COLLAPSED_LANGUAGE_CHIPS) : ordered;
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+      {visible.map((code) => (
+        <span
+          key={code}
+          data-testid="voice-model-language-chip"
+          className={`rounded-md px-1.5 py-0.5 text-ui-xs ${
+            selected.includes(code)
+              ? "bg-brand/10 font-medium text-foreground"
+              : "bg-surface text-foreground-subtle"
+          }`}
+        >
+          {languageName(code)}
+        </span>
+      ))}
+      {collapsible ? (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          aria-label={intl.formatMessage(
+            {
+              id: expanded
+                ? "voiceDictation.models.languages.showFewer"
+                : "voiceDictation.models.languages.showAll",
+            },
+            { count: ordered.length },
+          )}
+          onClick={() => setExpanded((current) => !current)}
+          className="pointer-events-auto rounded-md px-1.5 py-0.5 text-ui-xs font-medium text-foreground-subtle hover:bg-surface-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {expanded ? "−" : `+${ordered.length - COLLAPSED_LANGUAGE_CHIPS}`}
+        </button>
+      ) : null}
+    </div>
+  );
 }

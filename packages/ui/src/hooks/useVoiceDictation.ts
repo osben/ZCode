@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { toast } from "@/components/ui/toast.js";
-import type { VoiceTranscriptionPreview } from "@zcode/services";
+import { resolveEngineLanguage, type VoiceTranscriptionPreview } from "@zcode/services";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useServices } from "@/hooks/useServices.js";
 import { useSettings } from "@/hooks/useSettingService.js";
+import { useOpenVoiceDictationSettings } from "@/hooks/useOpenVoiceDictationSettings.js";
+import { useVoiceDictationShortcut } from "@/hooks/useVoiceDictationShortcut.js";
+import { useVoiceDictationEscapeCancel } from "@/hooks/useVoiceDictationEscapeCancel.js";
 import { useVoiceDictationRecordingAudio } from "@/hooks/useVoiceDictationRecordingAudio.js";
 import { logger } from "@/logger.js";
-import { useEffectiveShortcutBindings } from "@/shortcuts/useShortcutBindings.js";
-import { isShortcutRecordingActive, matchesShortcutBinding } from "@/shortcuts/bindings.js";
-import { isVoiceShortcutReleased } from "@/lib/voiceDictationShortcut.js";
 import {
   VOICE_MIN_RECORDING_MS,
   concatFloat32Chunks,
@@ -46,15 +46,16 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
   const { intl } = useZCodeIntl();
   const { voiceDictationService } = useServices();
   const { settings } = useSettings();
-  const bindings = useEffectiveShortcutBindings();
   const voice = settings?.voiceDictation;
   const modelId = voice?.modelId ?? null;
   const microphoneDeviceId = voice?.microphoneDeviceId ?? null;
-  const language = voice?.language ?? "auto";
+  // One selected language is forced on the engine; none or several leave detection to the model.
+  const language = resolveEngineLanguage(voice ?? {});
   const pushToTalk = voice?.pushToTalk !== false;
   const idleUnloadMinutes = voice?.idleUnloadMinutes ?? 5;
   const muteWhileRecording = voice?.muteWhileRecording === true;
   const recordingAudio = useVoiceDictationRecordingAudio();
+  const openVoiceSettings = useOpenVoiceDictationSettings();
 
   const [phase, setPhase] = useState<VoiceDictationPhase>("idle");
   const [level, setLevel] = useState(0);
@@ -163,7 +164,10 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     if (!enabled || phaseRef.current !== "idle" || recorder.isRecording) return;
     if (!voiceDictationService) return;
     if (!modelId) {
-      toast(intl.formatMessage({ id: "voiceDictation.noModelSelected" }));
+      toast(intl.formatMessage({ id: "voiceDictation.noModelSelected" }), {
+        actionLabel: intl.formatMessage({ id: "voiceDictation.openSettings" }),
+        onAction: openVoiceSettings,
+      });
       return;
     }
     const generation = ++startGenerationRef.current;
@@ -262,15 +266,46 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     microphoneDeviceId,
     modelId,
     muteWhileRecording,
+    openVoiceSettings,
     recorder,
     recordingAudio,
     updatePhase,
     voiceDictationService,
   ]);
 
+  /**
+   * Abandons loading or recording without transcribing or inserting anything (window blur, Escape,
+   * the feedback panel's Cancel button). Silent by design: no stop chime, the mute is released.
+   */
+  const cancel = useCallback((): void => {
+    heldBindingRef.current = null;
+    if (phaseRef.current !== "loading" && !recorder.isRecording) return;
+    startGenerationRef.current += 1;
+    recorder.cancel();
+    void recordingAudio.releaseSystemMute();
+    setLevel(0);
+    setPreview(null);
+    updatePhase("idle");
+    const streamId = streamIdRef.current;
+    streamIdRef.current = null;
+    streamBacklogRef.current = [];
+    if (streamId) {
+      void streamQueueRef.current
+        .then(() => voiceDictationService?.cancelStream(streamId))
+        .catch((error: unknown) => {
+          logger.warn("voice dictation stream cancellation failed", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+    }
+  }, [recorder, recordingAudio, updatePhase, voiceDictationService]);
+
   const stop = useCallback(async (): Promise<void> => {
     // When released quickly after a press, recording may still be waiting for microphone
     // authorization; wait for it to be ready before finishing so the release is not lost.
+    // Released while the model is still loading: capture only just began, so the hold time below
+    // would read as ~0 ms even though the user held the key for seconds.
+    const releasedWhileLoading = phaseRef.current === "loading";
     await startPromiseRef.current;
     startPromiseRef.current = null;
     if (!recorder.isRecording) return;
@@ -282,6 +317,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     recordingAudio.handleRecordingStopped();
     const streamId = streamIdRef.current;
     if (
+      releasedWhileLoading ||
       durationMs < VOICE_MIN_RECORDING_MS ||
       (!streamId && samples.length === 0) ||
       !voiceDictationService
@@ -290,6 +326,13 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
       if (streamId) cancelServiceStream(streamId);
       setPreview(null);
       updatePhase("idle");
+      // An accidental tap deserves feedback; an empty buffer without a stream is a capture
+      // problem, not user intent, and stays silent.
+      if (releasedWhileLoading) {
+        toast(intl.formatMessage({ id: "voiceDictation.stillLoading" }));
+      } else if (durationMs < VOICE_MIN_RECORDING_MS) {
+        toast(intl.formatMessage({ id: "voiceDictation.tooShort" }));
+      }
       return;
     }
     updatePhase("transcribing");
@@ -346,79 +389,22 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     }
   }, [recorder, start, stop]);
 
-  useEffect(() => {
-    if (!enabled) return;
-    const isInScope = (target: EventTarget | null) => {
-      const scope = scopeRef.current;
-      return Boolean(scope && target instanceof Node && scope.contains(target));
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (isShortcutRecordingActive() || !isInScope(event.target)) return;
-      const binding = bindings.voiceDictation.find((candidate) =>
-        matchesShortcutBinding(event, candidate),
-      );
-      if (!binding) return;
-      event.preventDefault();
-      if (event.repeat) return;
-      if (pushToTalk) {
-        heldBindingRef.current = binding;
-        void start();
-      } else {
-        void toggle();
-      }
-    };
-    const handleKeyUp = (event: KeyboardEvent) => {
-      const held = heldBindingRef.current;
-      if (!held || !isVoiceShortcutReleased(event, held)) return;
-      heldBindingRef.current = null;
-      void stop();
-    };
-    const handleBlur = () => {
-      // Key release during window blur produces no keyup; cancel recording directly to avoid
-      // recording forever.
-      heldBindingRef.current = null;
-      if (phaseRef.current === "loading" || recorder.isRecording) {
-        startGenerationRef.current += 1;
-        recorder.cancel();
-        void recordingAudio.releaseSystemMute();
-        setLevel(0);
-        setPreview(null);
-        updatePhase("idle");
-        const streamId = streamIdRef.current;
-        streamIdRef.current = null;
-        streamBacklogRef.current = [];
-        if (streamId) {
-          void streamQueueRef.current
-            .then(() => voiceDictationService?.cancelStream(streamId))
-            .catch((error: unknown) => {
-              logger.warn("voice dictation stream cancellation failed", {
-                error: error instanceof Error ? error.message : String(error),
-              });
-            });
-        }
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown, true);
-    window.addEventListener("keyup", handleKeyUp, true);
-    window.addEventListener("blur", handleBlur);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown, true);
-      window.removeEventListener("keyup", handleKeyUp, true);
-      window.removeEventListener("blur", handleBlur);
-    };
-  }, [
-    bindings.voiceDictation,
+  useVoiceDictationShortcut({
     enabled,
-    pushToTalk,
-    recorder,
-    recordingAudio,
     scopeRef,
+    pushToTalk,
+    heldBindingRef,
     start,
     stop,
     toggle,
-    updatePhase,
-    voiceDictationService,
-  ]);
+    cancel,
+  });
+
+  useVoiceDictationEscapeCancel(
+    enabled,
+    () => phaseRef.current === "loading" || phaseRef.current === "recording",
+    cancel,
+  );
 
   useEffect(
     () => () => {
@@ -441,7 +427,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     [recorder, recordingAudio, voiceDictationService],
   );
 
-  return { phase, level, preview, start, stop, toggle };
+  return { phase, level, preview, start, stop, cancel, toggle };
 }
 
 function isMissingIdleUnloadMethod(error: unknown): boolean {

@@ -270,6 +270,29 @@ describe("app settings", () => {
     ).toBe(false);
   });
 
+  it("stores dictation languages and the clipboard preference, dropping only a malformed languages value on read", () => {
+    expect(
+      forkAppSettingsSchema.parse({
+        voiceDictation: { modelId: "parakeet", languages: ["uk", "en"], copyToClipboard: true },
+      }).voiceDictation,
+    ).toEqual({ modelId: "parakeet", languages: ["uk", "en"], copyToClipboard: true });
+
+    // One bad languages value must not wipe the other voice preferences.
+    expect(
+      forkAppSettingsSchema.parse({
+        voiceDictation: { modelId: "parakeet", languages: "uk", pushToTalk: false },
+      }).voiceDictation,
+    ).toEqual({ modelId: "parakeet", pushToTalk: false });
+
+    // Saving stays strict so a bad value is rejected instead of silently dropped.
+    expect(
+      forkAppSettingsPatchSchema.safeParse({ voiceDictation: { languages: ["uk", ""] } }).success,
+    ).toBe(false);
+    expect(
+      forkAppSettingsPatchSchema.safeParse({ voiceDictation: { copyToClipboard: "yes" } }).success,
+    ).toBe(false);
+  });
+
   it("keeps every registered fork-owned key out of the upstream-shared setting.json schema", () => {
     // The upstream app shares setting.json with this fork and strips unknown keys on every write,
     // so a fork-only key placed in appSettingsObjectSchema instead of FORK_SETTING_KEYS would be
