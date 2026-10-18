@@ -34,4 +34,13 @@ export {
   type NodeSelfResourceSampler,
   type NodeSelfResourceSamplerOptions,
 } from "./node/nodeSelfResourceTelemetry.js";
+
+export * from "./node/process-tree/processTreeSnapshot.js";
+export * from "./node/process-tree/processTreeTypes.js";
+export * from "./node/process-tree/processTreeTerminator.js";
+export * from "./node/process-tree/processTreeOwnership.js";
+export * from "./node/process-tree/windowsProcessListAsync.js";
+export * from "./node/process-tree/windowsTaskkillRunner.js";
+export * from "./node/process-tree/processTreeSnapshotAsync.js";
+export * from "./node/process-tree/processTreeWaiter.js";
 export { RefreshSingleflight } from "./node/refreshSingleflight.js";
