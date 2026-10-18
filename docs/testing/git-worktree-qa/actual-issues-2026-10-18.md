@@ -6,7 +6,8 @@
 > OPEN-1 — FIXED (живьём на production-сборке ветки, RT4-C5, 2 прогона); OPEN-2 — not reproduced
 > (5/5 New-task Send доставлены после фикса, оговорки ниже); MINOR-1 — FIXED вместе с OPEN-1; MINOR-2 — FIXED (причина Git в
 > `{reason}`, подсказка про репозиторий без коммитов); MINOR-3 — deferred (подсистема восстановления
-> сессии / выбора проекта, не worktree); MINOR-4 — deferred (продуктовое решение владельца);
+> сессии / выбора проекта, не worktree); MINOR-4 — FIXED (решение владельца: предупреждать; спека
+> `specs/git-commit-detached-head-warning.md`, проверено живьём);
 > MINOR-5 — not reproduced (0 send-RPC во время ввода, включая `inserttext` с ожиданием 14 с). Детали — в пунктах ниже.
 > Статус после трёх волн: 12 из 13 багов закрыты и подтверждены живьём
 > (001–004, 006–013); проверка — marker-тесты + UI-ретесты RT3 (QA_ROOT/cases/RT3-\*.md).
@@ -82,8 +83,11 @@ stuck-ready пайплайна (исходного предусловия) не 
    **New task сбрасывает выбор проекта** (path-dependent: из session-view → «Select project»,
    чипа нет; из empty-state — выживает) + «basic» отсутствует в списке выбора воркспейса
    New task (только 6 недавних) — RT3-C7obs.
-4. **[DEFERRED — продуктовое решение]** предупреждать ли перед коммитом в detached HEAD — вопрос
-   владельцу. **Detached-коммит уходит вне веток без предупреждения** (H5-производный UX-вопрос;
+4. **[FIXED, волна 3]** Владелец решил предупреждать. Commit / Commit and push на detached HEAD
+   спрашивают подтверждение («Commit on a detached HEAD?» → «Commit anyway»); Cancel ничего не
+   меняет и оставляет диалог с сообщением. Спека `specs/git-commit-detached-head-warning.md`, тест
+   `gitActionMenuDetachedCommitWarning.test.ts`; живьём на фикстуре `detached`
+   (`$QA_ROOT/evidence/RT4-MINOR4-detached-warning.png`). Исходно: **Detached-коммит уходит вне веток без предупреждения** (H5-производный UX-вопрос;
    push при этом корректно отказывает с видимым тостом).
 5. **[NOT REPRODUCED, волна 3]** 0 `sendConversationCommandV4` в окне ввода во всех прогонах:
    3× `keyboard type` и 2× `keyboard inserttext` (исходный метод, окно ожидания 14 с до Enter).

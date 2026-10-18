@@ -1545,6 +1545,10 @@ const enUS: Record<string, string> = {
     "Commit message generation failed. Try again or enter one manually.",
   "git.actionMenu.commitDialog.error.requestFailed": "Commit failed: {error}",
   "git.actionMenu.commitDialog.error.pushAfterCommitFailed": "Committed, but push failed: {error}",
+  "git.actionMenu.commitDialog.detachedWarning.title": "Commit on a detached HEAD?",
+  "git.actionMenu.commitDialog.detachedWarning.description":
+    "HEAD is not on a branch, so this commit will not belong to any branch and can be lost after you switch branches. Create or switch to a branch first to keep it.",
+  "git.actionMenu.commitDialog.detachedWarning.confirm": "Commit anyway",
   "git.actionMenu.commitDialog.toast.success": "Committed the current changes",
   "git.actionMenu.commitDialog.toast.commitAndPushSuccess":
     "Committed and pushed the current changes",
