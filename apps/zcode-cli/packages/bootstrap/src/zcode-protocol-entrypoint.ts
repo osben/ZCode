@@ -1,4 +1,6 @@
-import { createConfig } from "@zcode/adapters/config";
+import { createConfig, resolvePath } from "@zcode/adapters/config";
+import { createNodeFileSystemAdapter } from "@zcode/adapters/fs";
+import { createLanguageServerPool } from "@zcode/adapters/lsp";
 import type { McpElicitationPort, McpNotificationPort } from "@zcode/contracts";
 import { createNodeModelSelectionFacade } from "@zcode/provider-node";
 import { createNodeLoggerFactory } from "@zcode/adapters/logging";
@@ -19,6 +21,10 @@ import type { McpPort, ModelSelection } from "@zcode/contracts";
 import type { PresentationSurface } from "@zcode/core";
 import type { RunZCodeProtocolAgentOptions, ZCodeAppOptions } from "./app/types.js";
 import { createZCodeApp } from "./app/create-app.js";
+import { createLspPreferencesStore } from "./app/lsp-preferences.js";
+import { createLspRuntimeHub, type LspRuntimeHub } from "./app/lsp-runtime-hub.js";
+import { getCliStorageRoot } from "./app/paths.js";
+import { resolveZCodePlugins } from "./plugins.js";
 import {
   createNodeReplBrowserBroker,
   type NodeReplBrowserBroker,
@@ -127,6 +133,7 @@ export async function runZCodeProtocolAgent(
   let serverForCleanup: ZCodeProtocolAgentServer | undefined;
   let nodeReplBrowserBroker: NodeReplBrowserBroker | undefined;
   let mcpConnectionPool: McpConnectionPool | undefined;
+  let lspRuntimeHub: LspRuntimeHub | undefined;
   let mcpPort: McpPort | undefined;
   let mcpTelemetryTracker: McpTelemetryTracker | undefined;
   let mcpResourceSink: ((samples: ZCodeMcpResourceSample[]) => void) | undefined;
@@ -269,6 +276,19 @@ export async function runZCodeProtocolAgent(
             workingDirectory: options.cwd,
           });
     mcpPort = mcpConnectionPool?.acquireLease({ leaseId: "protocol-settings" });
+    // One language server pool and one preferences owner per process, shared by all sessions.
+    lspRuntimeHub = createLspRuntimeHub({
+      port: createLanguageServerPool({ baseEnv: options.env ?? process.env, logger }),
+      preferences: createLspPreferencesStore({
+        cliStorageRoot: getCliStorageRoot(resolvePath(configResult.config.storage.dir)),
+        fileSystem: createNodeFileSystemAdapter(),
+        logger,
+      }),
+      resolveServers: (workspacePath) =>
+        resolveZCodePlugins({ logger, workingDirectory: workspacePath }).lspServers,
+      logger,
+    });
+    const activeLspRuntimeHub = lspRuntimeHub;
     const activeProviderRegistryRuntime = providerRegistryRuntime;
     const modelSelectionFacade = createNodeModelSelectionFacade(
       activeProviderRegistryRuntime.runtime.registryService,
@@ -296,6 +316,7 @@ export async function runZCodeProtocolAgent(
             ...(telemetryDeviceMid ? { ZCODE_TELEMETRY_DEVICE_MID: telemetryDeviceMid } : {}),
           },
           ...(nodeReplBrowserBroker ? { nodeReplBrowserBroker } : {}),
+          lspRuntimeHub: activeLspRuntimeHub,
           ...(mcpConnectionPool
             ? {
                 mcpPortFactory: () =>
@@ -313,6 +334,7 @@ export async function runZCodeProtocolAgent(
       cwd: options.cwd,
       env: options.env,
       loggerFactory,
+      lsp: activeLspRuntimeHub.protocolHost,
       mcpPort,
       mcpTelemetry: mcpTelemetryTracker,
       sessionStore,
@@ -394,6 +416,7 @@ export async function runZCodeProtocolAgent(
       nodeReplBrowserBroker,
       mcpPort,
       mcpConnectionPool,
+      languageServerPort: lspRuntimeHub?.port,
       sessionStore,
       providerRegistryRuntime,
     });

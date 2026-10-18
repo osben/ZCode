@@ -59,6 +59,7 @@ import {
   resolveEffectiveConfigResult,
 } from "./app-config-options.js";
 import { getCliStorageRoot, getModelIoDir, projectIdFromDirectory } from "./paths.js";
+import { createSessionLsp, type SessionLsp } from "./lsp-session.js";
 import {
   asInputHistoryStore,
   asLocalSettingStore,
@@ -225,6 +226,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
   let nodeReplBrowserBroker: NodeReplBrowserBroker | undefined;
   let ownedNodeReplBrowserBroker: NodeReplBrowserBroker | undefined;
   let providerModelRuntime: ApiProviderModelRuntime | undefined;
+  let sessionLsp: SessionLsp | undefined;
   try {
     const storageRoot = resolvePath(configResult.config.storage.dir);
     const cliStorageRoot = getCliStorageRoot(storageRoot);
@@ -467,6 +469,20 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
     // browser-use control port: available only when injected by the host (desktop); no local
     // fallback exists because plain CLI has no browser foundation.
     const fileSystemPort = options.fileSystemPort ?? createNodeFileSystemAdapter();
+    const lspWorkspaceIdentity = options.runtimeConfig?.memory?.workspaceIdentity?.toString();
+    // Remote workspaces are out of scope for V1 (spec 19-lsp.md §4): never start servers for them.
+    sessionLsp = createSessionLsp({
+      hub: options.lspRuntimeHub,
+      servers: isRemoteWorkspaceIdentity(lspWorkspaceIdentity ?? "")
+        ? []
+        : pluginOutcome.lspServers,
+      cliStorageRoot,
+      fileSystemPort,
+      workingDirectory,
+      workspaceIdentity: lspWorkspaceIdentity,
+      env: options.env ?? process.env,
+      logger,
+    });
     const httpClientPort =
       options.httpClientPort ??
       createNodeWebFetchHttpClientAdapter({
@@ -952,9 +968,11 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       automationPort: options.automationPort,
       offPeakPort: options.offPeakPort,
       topicResourcePort: options.topicResourcePort,
+      ...(sessionLsp.service ? { lsp: sessionLsp.service } : {}),
       appVersion,
       traceContext,
     });
+    sessionLsp.attach(runtime);
     markRuntimeConstructed({
       hasInjectedModelAdapter: options.modelAdapter !== undefined,
       sessionId,
@@ -1074,6 +1092,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
     });
 
     const closeSession = sessionFacade.close;
+    const activeSessionLsp = sessionLsp;
     const resolvePromptAttachment = async (input: {
       ref: string;
       mime: string;
@@ -1312,6 +1331,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
         } finally {
           try {
             providerModelRuntime?.dispose();
+            await activeSessionLsp?.close();
           } finally {
             await modelTelemetry.shutdown();
           }
@@ -1499,6 +1519,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
     };
   } catch (error) {
     providerModelRuntime?.dispose();
+    void sessionLsp?.close().catch(() => undefined);
     void modelTelemetry.shutdown().catch(() => undefined);
     void ownedNodeReplBrowserBroker?.close();
     startupTimer.fail("ZCode app startup failed", error, {
