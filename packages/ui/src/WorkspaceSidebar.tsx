@@ -2030,7 +2030,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
                               action={
                                 <ControlHintTooltip
                                   title={intl.formatMessage({
-                                    id: "workspaceSidebar.newConversation",
+                                    id: "workspaceSidebar.newTaskOutsideProject",
                                   })}
                                 >
                                   <Button
@@ -2039,7 +2039,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
                                     size="icon-sm"
                                     className="text-foreground-subtle hover:text-foreground"
                                     aria-label={intl.formatMessage({
-                                      id: "workspaceSidebar.newConversation",
+                                      id: "workspaceSidebar.newTaskOutsideProject",
                                     })}
                                     data-testid={TID_CONVERSATION_NEW_TASK}
                                     onClick={onCreateConversationTask}
