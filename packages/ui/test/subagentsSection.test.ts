@@ -1318,6 +1318,7 @@ describe("SubagentsSection", () => {
       await refreshedList;
     });
 
+    expect(mockSubagentsService.list).toHaveBeenCalledTimes(2);
     expect(capturedThoughtLevelControls.at(-1)).toMatchObject({
       disabled: true,
       option: expect.objectContaining({ currentValue: "max" }),
