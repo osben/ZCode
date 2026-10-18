@@ -87,6 +87,10 @@ export function createUsageStatsService(
       return dependencies.zcodeAgentService.getAppUsageStats({
         range: request.range,
         timeZone: request.timeZone,
+        window: request.window,
+        compare: request.compare,
+        filters: request.filters,
+        include: request.include,
       });
     },
     async getCodingPlanUsageSnapshot(

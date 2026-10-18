@@ -3,7 +3,11 @@ import { localTtftFactsSchema } from "../localTtft.js";
 // Transport envelope: connection handshake / subscription / frame envelope.
 // The phase is a type placeholder (enabled when the channel layer is connected later); the data shape is finalized.
 import { z } from "zod";
-import { APP_USAGE_RANGES, appUsageSnapshotSchema } from "../usage-stats.js";
+import {
+  APP_USAGE_RANGES,
+  appUsageRequestExtrasShape,
+  appUsageSnapshotSchema,
+} from "../usage-stats.js";
 import { zcodeWorkspaceRefSchema } from "../zcode-protocol-legacy-types.js";
 import {
   PROTOCOL_V4_LIMITS,
@@ -787,6 +791,7 @@ export const v4UsageStatsParamsSchema = z
   .object({
     range: z.enum(APP_USAGE_RANGES),
     timeZone: z.string().optional(),
+    ...appUsageRequestExtrasShape,
   })
   .strict();
 export type V4UsageStatsParams = z.infer<typeof v4UsageStatsParamsSchema>;

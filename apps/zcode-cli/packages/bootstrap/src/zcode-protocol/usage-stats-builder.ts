@@ -16,6 +16,8 @@ export interface BuildAppUsageOptions {
   generatedAt: number;
   since: number;
   until: number;
+  /** First local day of an explicit custom window; overrides the range-derived start (fork). */
+  windowStartDayIndex?: number;
 }
 
 /** Use Intl to calculate the timeZone offset from UTC (ms) at atMs; fall back to 0 if it cannot be parsed. */
@@ -47,7 +49,7 @@ export function resolveTzOffsetMs(timeZone: string, atMs: number): number {
   }
 }
 
-function dayIndexToDate(dayIndex: number): string {
+export function dayIndexToDate(dayIndex: number): string {
   // dayIndex*DAY is the instant of "local midnight treated as UTC"; its UTC calendar components are the local date.
   return new Date(dayIndex * DAY_MS).toISOString().slice(0, 10);
 }
@@ -66,6 +68,9 @@ function resolveUsageStartDayIndex(
   opts: BuildAppUsageOptions,
   endDayIndex: number,
 ): number {
+  if (opts.windowStartDayIndex !== undefined) {
+    return opts.windowStartDayIndex;
+  }
   if (opts.range !== "all") {
     return Math.floor((opts.since + opts.tzOffsetMs) / DAY_MS);
   }

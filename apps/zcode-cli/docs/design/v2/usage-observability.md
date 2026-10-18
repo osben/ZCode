@@ -153,9 +153,67 @@ group by tool_name
 order by calls desc;
 ```
 
+## Fork History Rollup
+
+The raw usage tables above stay the canonical write target and keep the 30-day retention, because the
+upstream build shares this database and runs its own `pruneUsage`. The fork adds a long-lived,
+read-only-derived rollup so App Usage can show history beyond 30 days. Spec of record for the whole
+plan: `docs/specs/usage-stats-history-and-filters.md`.
+
+- Tables (fork-owned, `fork_` prefix, created idempotently by `ensureForkUsageRollupSchema`, tracked
+  in `schema_migration` as `9001_fork_usage_rollup`; upstream migration definitions are untouched and
+  upstream builds ignore the unknown ledger row):
+  - `fork_usage_bucket(bucket_start, workspace_key, provider_id, model_id, query_source)` with token
+    sums, request/error counts, and TTFT sum + count.
+  - `fork_usage_turn(bucket_start, session_id)` with turn count, completed duration sum + count,
+    and `workspace_key`.
+  - `fork_usage_tool(bucket_start, workspace_key, tool_name)` with call/error counts and duration sum + count.
+  - `fork_usage_meta(key, value)` for the recompute watermark.
+- `bucket_start` is a UTC 15-minute boundary in ms. Every modern IANA zone offset is a multiple of 15
+  minutes, so local-day bucketing at read time stays exact. `workspace_key` is the session
+  `directory` (empty when the session row is gone). `model_id` is `NOT NULL` in the raw table and kept as is.
+- Rows are sums and counts only. Averages and rates are derived at read time.
+- The single owner is `recomputeForkUsageRollup`. It is idempotent: it replaces (never increments)
+  the buckets from a window start onwards using `delete` + `insert ... select` in one
+  `begin immediate` transaction. Window start = `max(watermark - 7 days, oldest surviving raw
+  bucket)`; the oldest surviving raw bucket itself is rebuilt only when the raw table still holds at least
+  as many rows for it as the rollup already counted (otherwise earlier rows were pruned and the
+  rollup keeps its value; a brand-new history therefore keeps refreshing its first bucket), so buckets whose raw rows were already
+  pruned (by either build) are never rewritten. Deleting a session cascades its raw rows away, so a
+  recent deletion leaves the replace window, while older rolled-up buckets keep that usage. First run has no watermark and backfills the whole surviving raw span from real usage
+  facts; nothing is estimated or imported from session snapshots.
+- Triggers: debounced (>= 5 min) and deferred with `setImmediate` after usage writes, and before
+  every App Usage query so a read never misses rows written just before it (the replace window is
+  bounded to 7 days, so this stays cheap). A busy database or a surrounding transaction skips the round.
+- Rollup rows older than 2 years are pruned during recompute.
+- Read path: `queryAppUsage` reads only the rollup. Fallback to the legacy raw query happens when the
+  rollup tables are missing, were never computed (no watermark: the first recompute was skipped by a
+  busy lock or a surrounding transaction), or the rollup read throws; the result then carries
+  `rollupFallbackReason` and the host logs a `warn`. Requests the raw tables cannot answer correctly
+  (any filter, or a bounded window that starts before the 30-day raw retention) fail with
+  `usage_rollup_unavailable` instead. The all-time range (`since` = 0) keeps its legacy meaning and may
+  fall back. Windows snap to 15-minute bucket boundaries (the bucket containing `since` is included),
+  which can differ from the legacy exact-millisecond boundary by at most one bucket at the oldest edge.
+- Filters and facets: `AppUsageQueryInput.filters` narrows by model, provider, query source, and
+  workspace (session directory). Model/provider/source filters apply to the token bucket table only;
+  the turn and tool tables carry only the workspace dimension, so they follow only the workspace
+  filter. `includeFacets` additionally returns the distinct values per dimension for the window,
+  ignoring the active filters (the host asks for it only on the unfiltered all-time request).
+- Breakdowns: `include.hourly` returns tokens for 168 local weekday x hour cells (15-minute buckets
+  never straddle a local hour boundary, including +5:30 / +5:45 zones); `include.sessions` returns the
+  ten busiest sessions by `fork_usage_turn.total_tokens` (sum of `turn_usage.computed_total_tokens`)
+  joined to the live `session` row for the title. `total_tokens` was added after the first rollout;
+  `ensureForkUsageRollupSchema` adds the missing column and resets the watermark so the next recompute
+  backfills it for every bucket whose raw rows still exist (older buckets keep 0).
+- Known limitation: raw rows that live and are pruned entirely while no fork build runs are never
+  rolled up. History starts when the rollup is first created.
+
 ## Tests
 
 - SQLite migration creates all usage tables and indexes.
+- Rollup parity: for bucket-aligned windows the rollup result equals the raw result across several
+  time zones, including +5:30, +5:45 and -3:30; recompute is idempotent; an upstream-style prune of
+  raw rows keeps older rollup buckets; schema ensure is idempotent and records the ledger row.
 - SQLite usage repository upserts model, turn, and tool rows and prunes old rows.
 - Runtime records main-turn model usage, turn usage, and tool usage.
 - Runtime records non-transcript model calls such as session title generation and compact through

@@ -200,6 +200,7 @@ function buildDailyHeatmapColumns(
       const displayCell = cell ?? createEmptyHeatmapCell(fallbackDate);
       return {
         key: `daily-${displayCell.date}`,
+        ...(cell ? { date: cell.date } : {}),
         level: displayCell.level,
         hasUsage: displayCell.totalTokens > 0,
         columnHover: false,
@@ -324,12 +325,15 @@ export function UsageHeatmap({
   intl,
   weeks,
   countMetric = "turns",
+  onSelectDate,
 }: {
   locale: string;
   intl: ReturnType<typeof useZCodeIntl>["intl"];
   weeks: AppUsageHeatmapWeek[];
   /** Remote Coding Plan provides only mcpCalls; only App Usage provides actual message-turn counts. */
   countMetric?: HeatmapCountMetric;
+  /** Drill into one day; only the daily view offers it. */
+  onSelectDate?: (date: string) => void;
 }) {
   const [mode, setMode] = useState<TokenActivityMode>("daily");
   const displayWeeks = buildDisplayHeatmapWeeks(weeks);
@@ -368,7 +372,12 @@ export function UsageHeatmap({
         <div>
           <div className="grid w-full gap-x-0.5" style={HEATMAP_GRID_STYLE}>
             {displayColumns.map((column) => (
-              <HeatmapColumn key={column.key} column={column} mode={mode} />
+              <HeatmapColumn
+                key={column.key}
+                column={column}
+                mode={mode}
+                onSelectDate={mode === "daily" ? onSelectDate : undefined}
+              />
             ))}
           </div>
           <div className="mt-3 grid w-full gap-x-0.5" style={HEATMAP_GRID_STYLE}>
