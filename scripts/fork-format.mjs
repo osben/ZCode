@@ -190,7 +190,7 @@ async function isRegularFile(repoRoot, path) {
 export async function listForkChangedFiles(repoRoot, base) {
   const [changed, untracked] = await Promise.all([
     // Base against the working tree: committed, staged and unstaged changes.
-    git(repoRoot, ["diff", "-z", "--name-only", "--no-renames", "--diff-filter=AM", base]),
+    git(repoRoot, ["diff", "-z", "--name-only", "--no-renames", "--diff-filter=AMT", base]),
     git(repoRoot, ["ls-files", "-z", "--others", "--exclude-standard"]),
   ]);
   const candidates = [...new Set([...splitNul(changed), ...splitNul(untracked)])].filter(
