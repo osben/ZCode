@@ -18,6 +18,7 @@ import {
   resolveBuiltInToolAllowlist,
   resolveRuntimeDisallowedTools,
   resolveRuntimeDynamicWorkflowToolsIncluded,
+  resolveRuntimeLspToolIncluded,
 } from "./tool-allowlist.js";
 import { isStaleBranchRuntimeTaskEvent } from "../methods/runtime-command-generation.js";
 import { resolveEnabledProjectMemoryRoot } from "./project-memory.js";
@@ -77,6 +78,8 @@ function registerRuntimeBuiltInTools(runtime: AgentRuntimeInternal, deps: AgentR
     // Reason for the fix: browserControlPort is a host capability and must not implicitly expose the privileged node_repl.
     // node_repl/browser-use is controlled by runtimeFeatures derived from whether the official ZCode browser-use plugin is enabled.
     includeNodeRepl: nodeReplEnabled,
+    // Language-server tool: gated by wired service plus availability (shared helper, also used by the branch refresh path).
+    includeLsp: resolveRuntimeLspToolIncluded(runtime),
     includeBrowserUse: browserUseEnabled,
     embeddedSearchEnabled: resolveRuntimeEmbeddedSearchEnabled(runtime),
     allowedTools: resolveBuiltInToolAllowlist(runtime.config),
@@ -177,6 +180,7 @@ function createRuntimeToolExecutor(
       ? runtime.config.runtimeFeatures?.browserDocumentationRoot
       : undefined,
     fileSystemPort: deps.fileSystemPort,
+    lsp: deps.lsp,
     httpClientPort: deps.httpClientPort,
     imageProcessorPort: deps.imageProcessorPort,
     // A previous connection-merge deletion accidentally omitted this port; Read pagination rendering and full-PDF page-count checks

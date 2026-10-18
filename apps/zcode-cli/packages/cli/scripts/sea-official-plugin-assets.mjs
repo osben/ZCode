@@ -166,6 +166,14 @@ export const officialSeaPlugins = [
   },
   {
     marketplace: "zcode-plugins-official",
+    name: "typescript-lsp",
+    packageName: "@zcode/typescript-lsp-plugin",
+    requiresRuntime: false,
+    rootPath: join("packages", "typescript-lsp-plugin"),
+    version: "0.1.0",
+  },
+  {
+    marketplace: "zcode-plugins-official",
     name: "plugin-creator",
     packageName: "@zcode/plugin-creator-plugin",
     requiresRuntime: false,

@@ -125,6 +125,17 @@ export async function runRegularTurnLoop(
     if (!outputTokenRecoveryActive) {
       await appendRuntimeAgentListing(this, state.turnRequestState, tools, state.turnTraceContext);
     }
+    // Only runtimes with a language-server service pay for this step; others keep the exact previous microtask sequence.
+    if (!outputTokenRecoveryActive && this.lspService) {
+      // Post-edit LSP diagnostics: returns at once unless a file was mutated since the previous request (spec §6).
+      const lspDiagnosticsBody = await this.collectLspEditDiagnosticsBody(state.turnAbortSignal);
+      throwIfTurnAborted(state.turnAbortSignal);
+      if (lspDiagnosticsBody) {
+        commitTurnRequestEntries(this, state.turnRequestState, [
+          systemReminderAttachmentEntry("diagnostics", lspDiagnosticsBody),
+        ]);
+      }
+    }
     if (!outputTokenRecoveryActive && this.needsPlanModeExitReminder) {
       this.needsPlanModeExitReminder = false;
       commitTurnRequestEntries(this, state.turnRequestState, [

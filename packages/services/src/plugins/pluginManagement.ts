@@ -20,6 +20,8 @@ import type {
   ZCodePluginsReferenceCatalogResult,
   ZCodePluginsRestoreBuiltinResult,
   ZCodePluginsSetEnabledResult,
+  ZCodeLspPreferences,
+  ZCodeLspStatusResult,
   ZCodePluginsUninstallResult,
   ZCodePluginsValidateResult,
 } from "@zcode/shared";
@@ -35,6 +37,7 @@ import type {
   ZCodeAgentResolveSuggestedPluginReferenceParams,
   ZCodeAgentResetPluginConfigParams,
   ZCodeAgentPluginViewParams,
+  ZCodeAgentSetLspPreferencesParams,
   ZCodeAgentRemovePluginMarketplaceParams,
   ZCodeAgentRestoreBuiltinPluginParams,
   ZCodeAgentSetPluginEnabledParams,
@@ -86,6 +89,10 @@ export interface IPluginManagementService {
   validatePlugin(params: ZCodeAgentValidatePluginParams): Promise<ZCodePluginsValidateResult>;
   describePlugin(params: ZCodeAgentDescribePluginParams): Promise<ZCodePluginsDescribeResult>;
   setPluginEnabled(params: ZCodeAgentSetPluginEnabledParams): Promise<ZCodePluginsSetEnabledResult>;
+  /** Code intelligence (LSP) global toggle and per-server diagnostics overrides, owned by the CLI runtime. */
+  getLspPreferences(params: ZCodeAgentPluginViewParams): Promise<ZCodeLspPreferences>;
+  setLspPreferences(params: ZCodeAgentSetLspPreferencesParams): Promise<ZCodeLspPreferences>;
+  getLspStatus(params: ZCodeAgentPluginViewParams): Promise<ZCodeLspStatusResult>;
 }
 
 export const IPluginManagementService = createServiceDescriptor<IPluginManagementService>(

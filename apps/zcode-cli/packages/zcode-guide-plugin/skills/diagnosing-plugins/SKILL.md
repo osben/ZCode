@@ -22,7 +22,8 @@ Plugins are managed in **Settings → Plugin Management** — the **Installed** 
 ## 2. Manifest schema
 
 - **plugin.json**: requires `name` (matching `^[a-z0-9][a-z0-9._-]{0,127}$`); optional `version` (defaults to `0.0.0`), `description`, `commands`/`skills`/`hooks`/`mcpServers`, and `userConfig`.
-- **Recorded but not executed**: `agents`, `channels`, `lspServers`, `outputStyles`, `settings`.
+- **Recorded but not executed**: `agents`, `channels`, `outputStyles`, `settings`.
+- **`lspServers` is loaded**: `.lsp.json` at the plugin root and the manifest field (path, array, or inline map) are read like `mcpServers`. An invalid server is skipped with `lsp_config_invalid` and the rest of the plugin still loads. When two enabled plugins claim the same file extension, the plugin loaded first keeps it and the other gets `lsp_extension_shadowed`. Server processes are not started yet; the runtime is still being built, so a declared server is listed but not running.
 - Component paths are validated: an absolute path or one that escapes the plugin root is rejected as an invalid component path.
 - **userConfig**: `type` is one of `string`, `number`, `boolean`, `directory`, or `file`, with `title`, `description`, `default`, `required`, and `sensitive`. A **sensitive value cannot currently be entered in the interface or persisted** to the configuration file.
 - **marketplace.json**: `{ name, plugins[], pluginRoot?, allowCrossMarketplaceDependenciesOn? }`. Each `plugins[].source` may be a relative path string or an object of kind `directory`, `github`, `git`, `url`, or `git-subdir`; `npm` and `pip` are not supported.

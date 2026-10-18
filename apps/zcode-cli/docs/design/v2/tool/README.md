@@ -22,6 +22,7 @@
 12. [WebSearch](13-websearch.md)
 13. [Workflow](15-workflow.md)
 14. [EnterPlanMode / ExitPlanMode](16-plan-mode.md)
+15. [LSP 与 Language Server Runtime](19-lsp.md)
 
 ## 公共 tool 形态
 
@@ -190,6 +191,7 @@ L3 已经补齐两个运行时闭环：
 | ExitPlanMode | `ExitPlanMode` | 主智能体 | 提交计划、请求用户同意并退出 plan mode | 否 | 否 | 100000 chars |
 | TodoRead | `TodoRead` | 主智能体 | session todo 状态读取 | 是 | 是 | 100000 chars |
 | TodoWrite | `TodoWrite` | 主智能体 | session todo 状态替换 | 是，session-only | 否 | 100000 chars |
+| LSP | `LSP` | 主智能体、Explore（仅存在可用 language server 时注册） | 经已启用插件启动的 language server 查询；不修改文件 | 是 | 是 | 200 条结果，超出落 artifact |
 
 ## ZCode 的实现取向
 

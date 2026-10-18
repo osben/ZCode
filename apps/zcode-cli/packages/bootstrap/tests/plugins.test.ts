@@ -238,6 +238,44 @@ describe("ZCode plugins", () => {
     ).toEqual([OFFICIAL_BROWSER_USE_REQUIRED_SEED_PATHS.at(-1)]);
   });
 
+  it("bundled typescript-lsp declares the typescript server, enabled by default with the lsp component", async () => {
+    const root = await mkdtemp(join(tmpdir(), "zcode-typescript-lsp-"));
+    try {
+      const outcome = resolveZCodePlugins({
+        env: {},
+        pluginStorageRoot: join(root, "plugins"),
+        userConfigPath: join(root, "config.json"),
+        workingDirectory: root,
+      });
+      const plugin = outcome.plugins.find((entry) => entry.name === "typescript-lsp");
+      expect(plugin).toMatchObject({
+        enabled: true,
+        lspServerNames: ["typescript"],
+      });
+      expect(plugin?.components).toContainEqual(
+        expect.objectContaining({
+          kind: "lsp",
+          items: [expect.objectContaining({ name: "typescript" })],
+        }),
+      );
+      const server = outcome.lspServers.find((entry) => entry.pluginId === plugin?.id);
+      expect(server).toMatchObject({
+        id: "typescript-lsp@zcode-plugins-official/typescript",
+        command: "typescript-language-server",
+        args: ["--stdio"],
+      });
+      expect(server?.extensionToLanguage).toMatchObject({
+        ".ts": "typescript",
+        ".tsx": "typescriptreact",
+      });
+      expect(
+        outcome.diagnostics.filter((entry) => entry.code === "plugin_unsupported_component"),
+      ).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("can disable one document plugin without disabling the other formats or search", async () => {
     const root = await mkdtemp(join(tmpdir(), "zcode-document-toggle-"));
     try {
@@ -629,7 +667,7 @@ describe("ZCode plugins", () => {
             id: "zcode-plugins-official",
             isOfficial: true,
             name: "zcode-plugins-official",
-            pluginCount: 14,
+            pluginCount: 15,
             source: {
               source: "url",
               url: "https://cdn-zcode.z.ai/zcode/official-plugin/marketplace.json",
@@ -2388,7 +2426,7 @@ describe("ZCode plugins", () => {
       expect(
         overview.marketplaces.find((marketplace) => marketplace.id === "zcode-plugins-official"),
       ).toMatchObject({
-        pluginCount: 14,
+        pluginCount: 15,
         source: {
           source: "url",
           url: "https://cdn-zcode.z.ai/zcode/official-plugin/marketplace.json",

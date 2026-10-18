@@ -17,6 +17,14 @@ export interface ZCodeAgentPluginViewParams extends ZCodeAgentWorkspaceTarget {
   configScope?: "user" | "workspace";
 }
 
+/** LSP preference patch: `null` in diagnosticsAfterEdit removes the per-server override. */
+export interface ZCodeAgentSetLspPreferencesParams extends ZCodeAgentWorkspaceTarget {
+  patch: {
+    enabled?: boolean;
+    diagnosticsAfterEdit?: Record<string, boolean | null>;
+  };
+}
+
 export interface ZCodeAgentListMcpServerStatusesParams extends ZCodeAgentWorkspaceTarget {
   mcpServers?: ZCodeAgentMcpServer[];
   mode?: ZCodeMcpListMode;

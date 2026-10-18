@@ -1,6 +1,7 @@
 import type { CustomCommandRoot } from "../commands/index.js";
 import type { HookEventName, HookMatcherConfig } from "../hooks/index.js";
 import type { McpServerConfig } from "../interfaces/mcp.port.js";
+import type { ResolvedLspServer } from "../lsp/index.js";
 import type { SkillRoot } from "../skills/index.js";
 import type { ExecutionContext, TraceContext } from "../tracing/tracer.js";
 
@@ -56,7 +57,9 @@ export type PluginDiagnosticCode =
   | "plugin_variable_missing"
   | "plugin_duplicate_id"
   | "plugin_not_found"
-  | "plugin_ambiguous_name";
+  | "plugin_ambiguous_name"
+  | "lsp_config_invalid"
+  | "lsp_extension_shadowed";
 
 export interface PluginUserConfigOption {
   default?: string | number | boolean;
@@ -98,7 +101,7 @@ export interface PluginHookDetail {
 }
 
 /** Component groups for the detail UI, in display order: agent / command / skill / hook / mcp. */
-export type PluginComponentKind = "agent" | "command" | "skill" | "hook" | "mcp";
+export type PluginComponentKind = "agent" | "command" | "skill" | "hook" | "mcp" | "lsp";
 
 export interface PluginComponentItem {
   name: string;
@@ -210,6 +213,8 @@ export interface PluginMetadata {
   configuredOptions?: PluginOptionValues;
   dataPath: string;
   declaredMcpServerNames: string[];
+  /** Language server names declared by a valid entry (`.lsp.json` or manifest), enabled or not. */
+  lspServerNames: string[];
   description?: string;
   enabled: boolean;
   /** homepage from the manifest (plugin.json); used as the detail-page fallback when store listing info is missing. */
@@ -284,6 +289,8 @@ export interface PluginLoadOutcome {
   diagnostics: PluginDiagnostic[];
   hooks: Partial<Record<HookEventName, HookMatcherConfig[]>>;
   mcpServers: Record<string, McpServerConfig>;
+  /** Language servers of enabled plugins, templates expanded and extension conflicts resolved. */
+  lspServers: ResolvedLspServer[];
   /** Store listing is associated by full Plugin ID for CLI/TUI display; not used for runtime identity checks. */
   pluginListingsById?: Record<string, PluginStoreListing>;
   plugins: PluginMetadata[];

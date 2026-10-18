@@ -11,6 +11,7 @@ import { directoryExists, isRecord, resolveInside } from "./helpers.js";
 import { listPluginHookEventNames } from "./hook-sources.js";
 import { readMarkdownFrontmatter } from "./markdown-frontmatter.js";
 import { loadPluginMcpServerDefinitions } from "./mcp.js";
+import { formatLspExtensions, loadPluginLspServerDefinitions } from "./lsp.js";
 import { scanSkillFilesUnderRootSync } from "../skills/scan.js";
 import type { LoadedPlugin } from "./types.js";
 
@@ -44,6 +45,9 @@ export function enumeratePluginComponents(
 
   const mcpItems = collectMcpComponents(manifest, options);
   if (mcpItems.length > 0) groups.push({ kind: "mcp", items: mcpItems });
+
+  const lspItems = collectLspComponents(options);
+  if (lspItems.length > 0) groups.push({ kind: "lsp", items: lspItems });
 
   return groups;
 }
@@ -160,6 +164,22 @@ function collectMcpComponents(
     .map((name) => name.trim())
     .filter((name) => name.length > 0)
     .map((name) => ({ name }));
+}
+
+/** LSP: list declared server names (valid entries only) with their extensions as the description. Needs the loaded plugin, because the manifest alone cannot show `.lsp.json`. */
+function collectLspComponents(options: {
+  diagnostics?: PluginDiagnostic[];
+  loaded?: LoadedPlugin;
+}): PluginComponentItem[] {
+  if (!options.loaded) return [];
+  const definitions = loadPluginLspServerDefinitions({
+    diagnostics: options.diagnostics ?? [],
+    loaded: options.loaded,
+  });
+  return Object.entries(definitions).map(([name, config]) => {
+    const description = formatLspExtensions(config);
+    return description ? { name, description } : { name };
+  });
 }
 
 function collectInlineHookEvents(value: unknown): string[] {

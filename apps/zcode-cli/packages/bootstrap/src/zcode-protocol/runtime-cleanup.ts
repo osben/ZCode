@@ -1,4 +1,4 @@
-import type { Logger, McpPort } from "@zcode/contracts";
+import type { LanguageServerPort, Logger, McpPort } from "@zcode/contracts";
 import type { McpConnectionPool, McpTelemetryTracker } from "@zcode/adapters/mcp";
 import type { SqliteSessionStore } from "@zcode/adapters/storage";
 import { shutdownPreparedModelTelemetry } from "@zcode/telemetry";
@@ -19,6 +19,7 @@ export async function cleanupProtocolRuntime(options: {
   nodeReplBrowserBroker?: Pick<NodeReplBrowserBroker, "close">;
   mcpPort?: Pick<McpPort, "close">;
   mcpConnectionPool?: Pick<McpConnectionPool, "close">;
+  languageServerPort?: Pick<LanguageServerPort, "stopAll">;
   sessionStore?: SqliteSessionStore;
   providerRegistryRuntime?: { dispose(): unknown };
 }): Promise<void> {
@@ -58,6 +59,7 @@ export async function cleanupProtocolRuntime(options: {
     // Do not await inside the same finally block; the pool must still be closed if the port hangs.
     step("mcp", () => options.mcpPort?.close()),
     step("mcp_pool", () => options.mcpConnectionPool?.close()),
+    step("lsp_pool", () => options.languageServerPort?.stopAll()),
   ]);
   await Promise.all([
     step("session_store", () => {

@@ -24,6 +24,7 @@ const COMPONENT_BADGE_STYLES: Record<ZCodePluginComponentKind, string> = {
   skill: "bg-skill-node text-skill-node-foreground",
   hook: "bg-warning/15 text-warning",
   mcp: "bg-tag text-foreground-subtle",
+  lsp: "bg-success/15 text-foreground",
 };
 
 const COMPONENT_LABEL_IDS: Record<ZCodePluginComponentKind, string> = {
@@ -32,6 +33,7 @@ const COMPONENT_LABEL_IDS: Record<ZCodePluginComponentKind, string> = {
   skill: "settings.plugins.detail.component.skill",
   hook: "settings.plugins.detail.component.hook",
   mcp: "settings.plugins.detail.component.mcp",
+  lsp: "settings.plugins.detail.component.lsp",
 };
 
 /**

@@ -1,3 +1,4 @@
+import type { LspService } from "../lsp/service.js";
 import {
   createTurnAgentDefinitions,
   createAgentDefinitionsReader,
@@ -174,6 +175,8 @@ export class AgentRuntime {
   /** launch.md, “On demand: activation”: onDemand sessions start as false; `activateDynamicWorkflowTools` changes this to true. */
   private dynamicWorkflowToolsActivated: boolean;
   private dynamicWorkflowActivationSource?: DynamicWorkflowActivationSource;
+  private lspService?: LspService;
+  private lspToolAvailable = false;
   private contextBuilder: ContextBuilder | null = null;
   private contextInitialized = false;
   private contextSourceSnapshot?: ContextSourceSnapshot;
@@ -336,7 +339,10 @@ export class AgentRuntime {
     this.workspaceRoot = this.workingDirectory;
     // This must happen before tool setup: the gradual rollout gate in registerRuntimeBuiltInTools reads this state.
     this.dynamicWorkflowToolsActivated = resolveInitialDynamicWorkflowToolsActivated(this.config);
+    this.lspService = deps.lsp;
     const tooling = initializeRuntimeTooling(runtime, deps, sessionId);
+    // Availability needs an async binary check; the LSP tool joins the tool set once it resolves.
+    if (this.lspService) void runtime.applyLspPreferences();
     this.hookRunner = tooling.hookRunner;
     this.workspaceHookAdmission = deps.workspaceHookAdmission;
     this.executor = tooling.executor;
@@ -544,6 +550,11 @@ export interface AgentRuntime {
    * declaration will continue to be sent to the model.
    */
   invalidateToolCache(): void;
+  /**
+   * Bootstrap calls this when LSP preferences change (sidecar fork_lsp_preferences.json). Re-evaluates
+   * availability, registers or removes the LSP tool, and stops every server when code intelligence is off.
+   */
+  applyLspPreferences(): Promise<void>;
   getToolExecutor(): ToolExecutor;
   subscribeEvents(sink: SessionEventSink): () => void;
   /** Bootstrap-owned lifecycle producers append only validated session events through this durable path. */

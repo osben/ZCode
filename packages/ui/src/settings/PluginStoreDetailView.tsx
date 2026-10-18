@@ -4,6 +4,7 @@ import {
   Anchor,
   ArrowRight,
   Bot,
+  Braces,
   ChevronRight,
   ExternalLink,
   Loader2,
@@ -46,10 +47,18 @@ import type { PluginComponentDisplayGroup } from "@/settings/PluginComponentGrou
 import type { PluginDescribeEntry } from "@/store/pluginManagementStore.js";
 
 // Component sections follow the screenshot order: MCP servers → skills → commands → subagents → Hooks.
-const SECTION_ORDER: ZCodePluginComponentKind[] = ["mcp", "skill", "command", "agent", "hook"];
+const SECTION_ORDER: ZCodePluginComponentKind[] = [
+  "mcp",
+  "lsp",
+  "skill",
+  "command",
+  "agent",
+  "hook",
+];
 
 const SECTION_TITLE_IDS: Record<ZCodePluginComponentKind, string> = {
   mcp: "settings.plugins.store.section.mcp",
+  lsp: "settings.plugins.detail.component.lsp",
   skill: "settings.plugins.store.section.skills",
   command: "settings.plugins.store.section.commands",
   agent: "settings.plugins.store.section.agents",
@@ -59,6 +68,7 @@ const SECTION_TITLE_IDS: Record<ZCodePluginComponentKind, string> = {
 // Share icon semantics with each resource settings list to avoid recognition differences from similar-looking icons on the detail page.
 const SECTION_ICONS: Record<ZCodePluginComponentKind, typeof Server> = {
   mcp: Server,
+  lsp: Braces,
   skill: WandSparkles,
   command: Terminal,
   agent: Bot,
@@ -90,6 +100,7 @@ export function PluginStoreDetailView({
   onRetryDescribe,
   onUsePrompt,
   advanced,
+  languageServers,
 }: {
   item: StorePluginItem;
   actions: PluginStoreActions;
@@ -99,6 +110,8 @@ export function PluginStoreDetailView({
   onUsePrompt: (item: StorePluginItem, prompt: string) => void;
   /** Advanced disclosure (rootPath/Hook details/config options), injected by the parent only when installed and runtime information is available. */
   advanced?: ReactNode;
+  /** Installed-plugin language server status and per-server switches; supplied only by the installed detail page. */
+  languageServers?: ReactNode;
 }) {
   const { intl, locale } = useZCodeIntl();
   const displayName = resolveItemDisplayName(item, locale);
@@ -232,6 +245,8 @@ export function PluginStoreDetailView({
       ) : (
         orderedGroups.map((group) => <ComponentSection key={group.kind} group={group} />)
       )}
+
+      {languageServers}
 
       {/* Information area: prefer listing, fall back to manifest (runtime/describe), and omit a row entirely when no value exists (ADR-0001). */}
       <InfoSection item={item} describeMetadata={describeMetadata} />

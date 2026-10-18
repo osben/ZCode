@@ -65,7 +65,7 @@
 9. 可选记录 file history，用于撤销或审计。
 10. 再次同步读取当前文件并确认没有被并发修改。
 11. 以原编码写入完整内容；ZCode 当前会把已有文件的 `lineEndings` metadata 传回 adapter 以保留既有换行风格。无法编码到原编码时失败，不降级成有损替换。
-12. 通知 LSP 和 IDE 文件已更新。
+12. 通知 LSP 和 IDE 文件已更新（LSP：发布 `FileMutatedEvent`，Write 不等待 language server，见 [19-lsp.md](19-lsp.md)）。
 13. 更新 `readFileState` 为新内容和新 mtime。
 14. 返回 create/update 结果和展示用 diff。
 
@@ -119,7 +119,7 @@ ZCode 应把 create/update 都归入 `workspace` side effect，并显式声明�
 | 模型可见短结果 | in progress | 本轮将 `Write` 成功结果序列化为短确认文本，完整内容和 diff 仅留给结构化 output / UI projection。 |
 | existing file read-before-write | missing | 当前 runtime 尚未要求已有文件先被完整 `Read`。 |
 | stale write 防护 | partial | 当前依赖 `FileSystemPort.writeTextFile(expectedRevision)` 的单次读写保护，但缺少基于 read cache 的未读、partial read 和 mtime/content 对比。 |
-| file history / LSP / IDE 通知 | missing | 尚未接入文件历史记录和编辑器通知链路。 |
+| file history / LSP / IDE 通知 | partial | 写入成功后发布 `FileMutatedEvent`，由 LSP document sync 消费（见 [19-lsp.md](19-lsp.md)）；file history 与 IDE 通知仍未接入。 |
 | secret/settings/dangerous path 校验 | missing | 当前主要依赖通用路径策略和权限声明，尚未覆盖特殊文件安全校验。 |
 
 本轮只落地模型指导和短结果序列化；read cache、stale guard 和安全校验在后续阶段补齐。
