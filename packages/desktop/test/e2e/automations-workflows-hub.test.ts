@@ -37,6 +37,7 @@ import {
   clearAppData,
   clickTestIdByDom,
   clickTestIdByWebDriver,
+  seedSettings,
   setInputValueByTestIdDom,
   waitForTestIdByDom,
 } from "./helpers/desktop-app.js";
@@ -95,6 +96,34 @@ async function readTestIdText(currentTestId: string): Promise<string | null> {
   }, currentTestId);
 }
 
+// Assertions read literal zh-CN dialog text while the runner machine defaults to en-US, so pin
+// the locale through the real settings file and reload, matching the feishu specs' convention.
+async function ensureZhCnLocale() {
+  await seedSettings({ locale: "zh-CN", localePreference: "zh-CN" });
+  await browser.refresh();
+}
+
+// The Automations main view unmounts the session pane, so the next case's workspace readiness
+// probe would never see it. Leave through the view's own back control (the top-bar history back,
+// which is primaryNavigationBack while Automations is active); this also unmounts any open dialog.
+async function leaveAutomationsPage() {
+  await clickTestIdByDom("desktop-top-nav-back", {
+    timeout: 15000,
+    timeoutMsg: "自动化页顶栏「后退」不可点击",
+  });
+  await browser.waitUntil(
+    async () =>
+      browser.execute(
+        (openTestId) =>
+          document
+            .querySelector<HTMLElement>(`[data-testid="${openTestId}"]`)
+            ?.getAttribute("aria-pressed") !== "true",
+        TID_AUTOMATIONS_OPEN,
+      ),
+    { timeout: 15000, timeoutMsg: "点「后退」后仍停在自动化页" },
+  );
+}
+
 /**
  * End-to-end "list → detail → edit metadata → delete" for the saved-workflows hub (docs/dynamic-workflow/launch.md).
  *
@@ -104,6 +133,7 @@ async function readTestIdText(currentTestId: string): Promise<string | null> {
  */
 describe("已保存工作流中枢 E2E", () => {
   before(async () => {
+    await ensureZhCnLocale();
     await mkdir(WORKFLOWS_DIR, { recursive: true });
     await writeFile(WORKFLOW_FILE, SEED, "utf-8");
   });
@@ -247,6 +277,7 @@ const GLOBAL_SEED = [
 
 describe("全局工作流中枢 E2E", () => {
   before(async () => {
+    await ensureZhCnLocale();
     await mkdir(GLOBAL_WORKFLOWS_DIR, { recursive: true });
     await writeFile(GLOBAL_WORKFLOW_FILE, GLOBAL_SEED, "utf-8");
   });
@@ -536,6 +567,7 @@ async function readTimelineText(): Promise<string> {
 
 describe("直接启动 E2E", () => {
   before(async () => {
+    await ensureZhCnLocale();
     await mkdir(WORKFLOWS_DIR, { recursive: true });
     await writeFile(LAUNCH_OK_FILE, LAUNCH_OK_SEED, "utf-8");
     await writeFile(LAUNCH_FAIL_FILE, LAUNCH_FAIL_SEED, "utf-8");
@@ -701,6 +733,8 @@ describe("直接启动 E2E", () => {
       timeout: 15000,
       timeoutMsg: "编译失败却新增了一个会话",
     });
+
+    await leaveAutomationsPage();
   });
 
   it("脚本点名的模型解不出来：实参窗行内显示 compile_failed 与那个名字的 9011，会话列表不新增", async function () {
@@ -752,6 +786,8 @@ describe("直接启动 E2E", () => {
       timeout: 15000,
       timeoutMsg: "解不出来的模型却新增了一个会话",
     });
+
+    await leaveAutomationsPage();
   });
 
   // Composer badge direct-open (docs/dynamic-workflow/presentation.md, "Other places a run appears"): when the only

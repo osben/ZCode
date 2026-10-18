@@ -175,9 +175,12 @@ describe("Team Plan 设置与使用统计 E2E", () => {
         timeout: 30000,
         timeoutMsg: "侧栏头像入口没有出现",
       });
+      // The footer rework moved the plan badge from the avatar trigger into the profile menu
+      // header (profile-menu-plan); the menu is force-mounted, so open it and read the badge there.
+      await profileTrigger.click();
       // The English UI's plan label is Team; assert only the badge itself to avoid a false pass when the username contains team text.
       const teamLabel = locale === "zh-CN" ? "团队" : "Team";
-      const badge = profileTrigger.$(`span[title="${teamLabel}"]`);
+      const badge = $('[data-testid="profile-menu-plan"]');
       await badge.waitForDisplayed({ timeout: 30000 });
       await expect(badge).toHaveText(teamLabel);
     });
