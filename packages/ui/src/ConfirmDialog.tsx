@@ -20,6 +20,9 @@ import {
   AUTOMATION_CONFIRM_DIALOG_DESCRIPTION_CLASS,
 } from "@/settings/automationConfirmDialogPresentation.js";
 
+const CONFIRM_DIALOG_OWN_ENTER_SELECTOR =
+  'button,input,textarea,select,[role="checkbox"],[contenteditable="true"]';
+
 export function ConfirmDialogHost() {
   const { intl } = useZCodeIntl();
   const pendingRequest = useConfirmDialogStore((state) => state.pendingRequest);
@@ -71,11 +74,11 @@ export function ConfirmDialogHost() {
         return;
       }
 
-      // Preserve the focused button’s keyboard behavior in checkbox selection dialogs so pressing Enter on “No” does not toggle the checkbox.
+      // A focused control owns Enter: confirming here would turn Enter on Cancel/Close into a destructive confirm.
+      // The autofocused Confirm button still confirms through its native click.
       if (
-        displayedRequest?.checkbox &&
         event.target instanceof HTMLElement &&
-        event.target.closest("button,input")
+        event.target.closest(CONFIRM_DIALOG_OWN_ENTER_SELECTOR)
       )
         return;
       // Without Enter handling in a second-confirmation dialog, keyboard users would have to move focus to a button first,

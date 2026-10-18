@@ -1346,6 +1346,9 @@ const SingleUserInputRowView = memo(function SingleUserInputRowView({
           onChange={setDraft}
           onSubmit={(nextText) => {
             void handleSubmitEdit(nextText, "preserve");
+            // The edit is async and may fail or hit a rewind conflict; returning false stops Lexical
+            // from clearing the editor (and the draft the conflict dialog resubmits). Success closes it.
+            return false;
           }}
           onCancel={handleCancelEdit}
         />

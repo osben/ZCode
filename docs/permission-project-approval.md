@@ -41,7 +41,7 @@ V4 permission snapshot 可通过 `freeText: true` 声明“拒绝时允许附带
 - 拒绝内容以稳定 Deny 文案开头；非空反馈按固定格式追加：稳定文案后接一个空格、
   `To tell you how to proceed, the user said:`，再换行放置 `<trimmed feedback>`。
 - 空白反馈回退稳定 Deny 文案；allow 选项携带的 `freeText` 忽略；未知 option 仍 fail-closed 为 deny。
-- 输入框是独立的 UI 导航行，序号接在权限选项之后（支持完全访问时为 `5.`，旧能力组合仍为 `4.`），与 Deny 分别选中、高亮；默认仍聚焦第一个权限选项。上下键、Tab / Shift+Tab 在权限选项和输入行间循环，对应数字键（完整选项为 `5`）聚焦输入行而不提交；输入法选词不切换行。
+- 输入框是独立的 UI 导航行，序号接在权限选项之后（支持完全访问时为 `5.`，旧能力组合仍为 `4.`），与 Deny 分别选中、高亮；默认仍聚焦第一个权限选项。上下键、Tab / Shift+Tab 在权限选项和输入行间循环，对应数字键（完整选项为 `5`）聚焦输入行而不提交；输入法选词不切换行。权限选项的数字键 `1`–`3` 同样只选中并聚焦对应选项，不直接提交；Enter 或确认才提交（弹窗出现时会自动聚焦，避免用户仍在输入时误批准，见 `specs/ui-accidental-action-guards.md`）。
 - 输入行与权限选项属于同一视觉分组，行间距统一为 4px；工具详情、选项分组和底部确认区之间仍保持 12px。输入框保持在权限 `listbox` 外，不改变权限选项的无障碍语义。
 - 输入行非空时 Enter 或确认提交 Deny with feedback；空白时 Enter 不提交、确认禁用。普通 Deny 确认仍附带已有非空反馈，Allow 仍忽略反馈；Escape 仍只退出输入焦点，五行上限不变。
 - PermissionDialog 的 feedback 输入是可自动换行、按内容增高的多行文本框，序号与 textarea 第一行文字的垂直中心对齐，不随输入框整体高度移动（普通权限选项仍居中），最多 5 行、4096 字符，超过行数后在输入框内滚动；共享 `resolveInteraction` schema 不限制其他
@@ -209,6 +209,7 @@ resolveInteraction(fullAccess) → session FIFO → registry + broker claim（Ho
 `$` 起始标记与命令正文放在同一滚动视口内，滚动离开首行后一起消失，回到顶部后重新出现；不得固定在命令中段旁。
 
 键盘路径：存在长命令展开按钮时，默认第一项权限选项按 Shift+Tab 返回命令按钮，按钮按 Tab 回到第一项；展开后继续 Shift+Tab 可进入命令滚动视口。展开/滚动不得提交授权。短命令没有按钮时，既有选项循环保持不变。
+
 ## Group task scope
 
 Feishu/Lark group tasks use `SessionInfo.permission.scope = "session"` before tool execution. The first trusted group input initializes an empty session ruleset; later inputs retain only that task's explicit approvals. Session-scoped tasks do not read or write project approval memory. Existing private/Desktop tasks without this marker retain project semantics. An explicit owner mode change remains session configuration; message text and model output never set the marker or grant permissions.
