@@ -233,6 +233,26 @@ describe("fork usage rollup", () => {
     expect(unknown.models.map((m) => m.modelId)).toEqual([""]);
   });
 
+  it("keeps the database openable by a build that does not know the fork ledger row", async () => {
+    await seedUsage();
+    recomputeForkUsageRollup(db, NOW);
+    expect(
+      db.prepare("select 1 from schema_migration where id = ?").get(FORK_USAGE_ROLLUP_MIGRATION_ID),
+    ).toBeDefined();
+    db.close();
+
+    // The upstream runner only walks its own migration list; unknown ledger rows and fork_ tables
+    // must not trip its checksum or schema checks. Opening the store again exercises that path.
+    const reopened = createSqliteSessionStore({ dbPath });
+    try {
+      const result = await reopened.queryAppUsage({ since: 0, until: NOW, tzOffsetMs: 0 });
+      expect(result.totals.modelRequestCount).toBeGreaterThan(0);
+    } finally {
+      reopened.close();
+      db = new DatabaseSync(dbPath);
+    }
+  });
+
   it("lists filter options for the window and ignores the active filters", async () => {
     await seedUsage();
     recomputeForkUsageRollup(db, NOW);
