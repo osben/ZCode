@@ -4,7 +4,9 @@
 // @vitest-environment jsdom
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { createElement, useState } from "react";
 import {
   selectDraftBranchIntent,
   selectWorktreeIntentActive,
@@ -12,8 +14,13 @@ import {
 } from "@/v4/composer/draftBranchIntent.js";
 import {
   COMPOSER_DESTINATION_CONTROL_FLAG,
+  ComposerDestinationControl,
   readComposerDestinationControlEnabled,
 } from "@/v4/composer/ComposerDestinationControl.js";
+import {
+  ComposerDraftWorktreeIntentContext,
+  createComposerDraftWorktreeIntentSlot,
+} from "@/v4/composer/composerDraftWorktreeIntent.js";
 import { shouldRenderComposerDestinationControl } from "@/v4/composer/destinationControlVisibility.js";
 
 const WORKSPACE_KEY = "/dev/alpha";
@@ -208,3 +215,199 @@ describe("draft branch creation guard (source contract)", () => {
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({ intl: { formatMessage: ({ id }: { id: string }) => id } }),
 }));
+
+// ---------------------------------------------------------------------------
+// BUG-GWT-009 render harness: docs/testing/git-worktree-qa/bugs/BUG-GWT-009.md
+// The popover caches its branch list in component state and never invalidates it after the
+// footer "Create and switch…" mutates HEAD, so a reopened list misses the new current branch.
+// RPC surface (gitService) is mocked; interaction goes through the real popover + dialog.
+const destinationControlHarness = vi.hoisted(() => {
+  const branch = (name: string, isCurrent: boolean) => ({
+    name,
+    isCurrent,
+    upstreamName: null,
+    commitHash: "e17a7fd",
+    commitTimestampMs: 1,
+  });
+  const repositoryState = {
+    currentBranchName: "main" as string,
+    branches: [branch("feature/a", false), branch("main", true), branch("release", false)],
+  };
+  // Full GitRepositorySummary shape (the component reads branchName/headRefType live).
+  const summary = (branchName: string) => ({
+    workspacePath: "/dev/bug009",
+    repoRoot: "/dev/bug009",
+    workspaceInRepoPath: "",
+    autoRefreshWatchPaths: [],
+    branchName,
+    trackingBranchName: null,
+    headRefType: "branch" as const,
+    ahead: 0,
+    behind: 0,
+    isDirty: true,
+    isGitAvailable: true,
+    isRepository: true,
+  });
+  const getLocalBranches = vi.fn(async () => ({
+    headRefType: "branch" as const,
+    currentBranchName: repositoryState.currentBranchName,
+    branches: repositoryState.branches.map((entry) => ({ ...entry })),
+  }));
+  const createBranchAndSwitch = vi.fn(async (request: { branchName: string }) => {
+    repositoryState.branches = [
+      ...repositoryState.branches.map((entry) => ({
+        ...entry,
+        isCurrent: entry.name === request.branchName,
+      })),
+      branch(request.branchName, true),
+    ];
+    repositoryState.currentBranchName = request.branchName;
+    return {
+      ok: true,
+      action: "create-and-switch" as const,
+      branchName: request.branchName,
+      didChange: true,
+      created: true,
+      summary: summary(request.branchName),
+      issues: [],
+    };
+  });
+  const gitService = {
+    getLocalBranches,
+    createBranchAndSwitch,
+    switchBranch: vi.fn(),
+    listWorktrees: vi.fn(async () => ({ isGitAvailable: true, isRepository: true, worktrees: [] })),
+    getWorktreeStorageInfo: vi.fn(async () => ({ globalWorktreesDir: null })),
+  };
+  // References must stay stable: the component resets its cached state when the resolved
+  // gitService identity changes, so a fresh object per render would hide the bug.
+  const services = { gitService };
+  const resolution = {
+    services,
+    remoteSessionId: null,
+    isRemoteTarget: false,
+    connectionKind: "local-ready" as const,
+    rpcReady: true,
+  };
+  const reset = () => {
+    repositoryState.currentBranchName = "main";
+    repositoryState.branches = [
+      branch("feature/a", false),
+      branch("main", true),
+      branch("release", false),
+    ];
+    getLocalBranches.mockClear();
+    createBranchAndSwitch.mockClear();
+  };
+  return {
+    repositoryState,
+    getLocalBranches,
+    createBranchAndSwitch,
+    services,
+    resolution,
+    summary,
+    reset,
+  };
+});
+
+vi.mock("@/hooks/useWorkspaceServices.js", () => ({
+  useBaseWorkspaceServices: () => destinationControlHarness.services,
+  useWorkspaceServicesResolution: () => destinationControlHarness.resolution,
+}));
+vi.mock("@/hooks/useServices.js", () => ({
+  useServices: () => destinationControlHarness.services,
+  useOptionalServices: () => destinationControlHarness.services,
+}));
+vi.mock("@/hooks/useSettingService.js", () => ({
+  useSettings: () => ({ settings: null, loading: false, error: null }),
+}));
+
+describe("BUG-GWT-009: branch list refresh after create-and-switch", () => {
+  const CURRENT_DIRTY_HINT = "git.branchSwitcher.currentDirty";
+
+  function DestinationControlHarness() {
+    // gitSummary is live state owned by the parent; onRefreshGit stands in for the parent's
+    // post-mutation summary refresh (same contract as the status-panel switcher path).
+    const [branchName, setBranchName] = useState("main");
+    return createElement(ComposerDestinationControl, {
+      workspacePath: "/dev/bug009",
+      gitSummary: destinationControlHarness.summary(branchName),
+      dirtyFileCount: 1,
+      onRefreshGit: () => setBranchName("qa/b4-valid"),
+    });
+  }
+
+  function renderControl() {
+    return render(
+      createElement(
+        ComposerDraftWorktreeIntentContext.Provider,
+        { value: createComposerDraftWorktreeIntentSlot() },
+        createElement(DestinationControlHarness),
+      ),
+    );
+  }
+
+  async function openBranchList() {
+    // The radix Popover trigger toggles on click (onOpenToggle), not on pointerDown.
+    fireEvent.click(screen.getByRole("button", { name: "destination.trigger.ariaLabel" }));
+    fireEvent.click(await screen.findByRole("button", { name: /destination\.taskBranch/ }));
+    return screen.findAllByRole("option");
+  }
+
+  beforeAll(() => {
+    // Radix Popper measures content with ResizeObserver; cmdk scrolls the selected item into
+    // view — jsdom implements neither.
+    globalThis.ResizeObserver ??= class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver;
+    Element.prototype.scrollIntoView ??= () => {};
+  });
+
+  beforeEach(() => {
+    destinationControlHarness.reset();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it.fails("BUG-GWT-009: reopening the branch list after create-and-switch shows the new current branch", async () => {
+    renderControl();
+
+    // Pre-switch sanity: the inline list renders the mock RPC branches, main marked current.
+    const initialOptions = await openBranchList();
+    const initialTexts = initialOptions.map((option) => option.textContent ?? "");
+    expect(initialTexts.some((text) => text.includes("feature/a"))).toBe(true);
+    expect(initialTexts.some((text) => text.includes("release"))).toBe(true);
+    expect(
+      initialTexts.some((text) => text.includes("main") && text.includes(CURRENT_DIRTY_HINT)),
+    ).toBe(true);
+    expect(initialTexts.some((text) => text.includes("qa/b4-valid"))).toBe(false);
+
+    // Footer action → create dialog → create-and-switch (mock RPC mutates the branch state).
+    fireEvent.click(screen.getByRole("button", { name: "git.branchSwitcher.createAction" }));
+    const nameInput = await screen.findByLabelText("git.branchSwitcher.createDialog.nameLabel");
+    fireEvent.change(nameInput, { target: { value: "qa/b4-valid" } });
+    fireEvent.submit(nameInput.closest("form") as HTMLFormElement);
+
+    await waitFor(() => {
+      expect(destinationControlHarness.createBranchAndSwitch).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(screen.queryByLabelText("git.branchSwitcher.createDialog.nameLabel")).toBeNull();
+    });
+
+    // Reopen the popover (listOpen survived): the list must show the branch just created,
+    // carrying the current-branch hint (live gitSummary says HEAD is now qa/b4-valid).
+    fireEvent.click(screen.getByRole("button", { name: "destination.trigger.ariaLabel" }));
+    await screen.findAllByRole("option");
+    await waitFor(() => {
+      const reopenedTexts = screen.getAllByRole("option").map((option) => option.textContent ?? "");
+      const created = reopenedTexts.find((text) => text.includes("qa/b4-valid"));
+      expect(created).toBeTruthy();
+      expect(created).toContain(CURRENT_DIRTY_HINT);
+    });
+  });
+});

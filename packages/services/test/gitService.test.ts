@@ -950,4 +950,28 @@ describeIfGit("gitService", () => {
     expect(branchDiff.beforeContent).toBe("line 1\nline 2\n");
     expect(branchDiff.afterContent).toBe("line 1\nline 2\nbranch change\n");
   });
+
+  // BUG-GWT-008 (docs/testing/git-worktree-qa/bugs/BUG-GWT-008.md): the "inside" location mode
+  // places a new worktree at <repoRoot>/.worktrees/<segment> (computeWorktreeTargetPath), but
+  // createWorktree only runs `git worktree add` and never appends `.worktrees/` to
+  // .git/info/exclude or .gitignore, so the main checkout reports the directory as untracked.
+  it.fails("BUG-GWT-008: inside worktree creation keeps .worktrees/ out of the main checkout status", async () => {
+    const { repoPath, workspacePath } = await createRepo();
+    const service = createGitService();
+    const targetPath = join(repoPath, ".worktrees", "zcode-brave-otter");
+
+    const result = await service.createWorktree({
+      workspacePath,
+      branchName: "zcode/brave-otter",
+      baseBranch: "main",
+      targetPath,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.worktreePath).toBe(targetPath);
+    // Guard: the worktree must really exist, otherwise a clean status would pass vacuously.
+    expect(runGit(repoPath, ["worktree", "list", "--porcelain"])).toContain(targetPath);
+    // The main checkout must stay clean: .worktrees/ must not surface as untracked.
+    expect(runGit(repoPath, ["status", "--porcelain"])).toBe("");
+  }, 15_000);
 });

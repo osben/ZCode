@@ -1,6 +1,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import * as fsPromises from "node:fs/promises";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -802,6 +803,47 @@ describeIfGit("gitCliRepo worktree operations", () => {
         expect.objectContaining({ code: "branch-in-other-worktree" }),
       ]);
       expect(existsSync(join(container, "wt-b"))).toBe(false);
+    },
+    GIT_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  // BUG-GWT-003 (docs/testing/git-worktree-qa/bugs/BUG-GWT-003.md): `git worktree add -b`
+  // creates the branch ref before the worktree directory, so a failed run (read-only
+  // parent, EACCES) leaves a half-created branch with no worktree. Remove `.fails` once
+  // createWorktree rolls the branch back on failure.
+  it.fails(
+    "BUG-GWT-003: failed worktree creation reports the error and leaves no half-created branch",
+    async () => {
+      const { container, repoPath } = createWorktreeTestRepo();
+      const repo = createGitCliRepo();
+      // Mirror QA case C5: the sibling worktrees parent directory exists but is
+      // read-only, so `git worktree add` cannot create the target directory (EACCES).
+      const readOnlyParent = join(container, "worktrees-parent");
+      mkdirSync(readOnlyParent);
+      chmodSync(readOnlyParent, 0o555);
+      try {
+        const result = await repo.createWorktree(
+          repoPath,
+          "zcode/half-created",
+          join(readOnlyParent, "zcode-half-created"),
+          "release",
+        );
+
+        // The service contract must surface the failure to the caller. The misleading
+        // "git.createWorktree OK" log line observed in QA comes from the RPC logging
+        // middleware, which logs OK for any resolved (non-thrown) result.
+        expect(result.ok).toBe(false);
+        expect(result.issues.length).toBeGreaterThan(0);
+      } finally {
+        // Restore write access so the shared afterEach cleanup can remove the container.
+        chmodSync(readOnlyParent, 0o755);
+      }
+
+      // `git worktree add -b` writes the new branch ref before creating the worktree
+      // directory, so the failed run currently leaves a half-created branch behind
+      // with no worktree registered (see docs/testing/git-worktree-qa/bugs/BUG-GWT-003.md).
+      // A failed creation must not leave branch garbage in the repository.
+      expect(runGit(repoPath, ["branch", "--list", "zcode/half-created"])).toBe("");
     },
     GIT_INTEGRATION_TEST_TIMEOUT_MS,
   );
