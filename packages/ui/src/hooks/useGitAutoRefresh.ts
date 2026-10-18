@@ -10,9 +10,15 @@ import {
 import { logger } from "@/logger.js";
 import { useWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 
-// During agent batch writes, 150ms watcher debounce + 350ms Git debounce still split a long batch into multiple
-// `git status` runs. Delay automatic Git refresh to one minute to reduce repeated Git I/O in large workspaces.
-const GIT_AUTO_REFRESH_DEBOUNCE_MS = 60_000;
+// Agent batch writes emit many file events. Refreshing on each would run `git status` repeatedly in large
+// workspaces, so refreshes coalesce, but the coalescing must not starve refresh: a debounce that every event
+// resets never fires under a steady event stream (the former 60s debounce did exactly that).
+// - Quiet single event: refresh after the debounce.
+// - Continuous stream: refresh at most once per max-wait window, measured from the first event of the burst.
+// - Minimum interval: no two refreshes closer than the max-wait window; a lone event right after a refresh waits.
+// The schedule state lives in the watcher subscription effect, so a re-watch starts from a clean schedule.
+const GIT_AUTO_REFRESH_DEBOUNCE_MS = 500;
+const GIT_AUTO_REFRESH_MAX_WAIT_MS = 5_000;
 
 interface GitWatcherRegistration {
   subscription: IDisposable;
@@ -107,18 +113,33 @@ export function useGitAutoRefresh({
     let cancelled = false;
     const registrations: GitWatcherRegistration[] = [];
 
+    let burstStartedAt: number | null = null;
+    let lastRefreshAt: number | null = null;
+
     const scheduleRefresh = (path: string) => {
+      const now = Date.now();
+      burstStartedAt ??= now;
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
       }
-      debounceTimerRef.current = setTimeout(() => {
-        debounceTimerRef.current = null;
-        logger.debug("[GitAutoRefresh] Git 状态变更，刷新仓库状态", {
-          workspacePath,
-          path,
-        });
-        refreshRef.current();
-      }, GIT_AUTO_REFRESH_DEBOUNCE_MS);
+      const quietDeadline = now + GIT_AUTO_REFRESH_DEBOUNCE_MS;
+      const maxWaitDeadline = burstStartedAt + GIT_AUTO_REFRESH_MAX_WAIT_MS;
+      const minIntervalDeadline =
+        lastRefreshAt === null ? now : lastRefreshAt + GIT_AUTO_REFRESH_MAX_WAIT_MS;
+      const deadline = Math.max(Math.min(quietDeadline, maxWaitDeadline), minIntervalDeadline);
+      debounceTimerRef.current = setTimeout(
+        () => {
+          debounceTimerRef.current = null;
+          burstStartedAt = null;
+          lastRefreshAt = Date.now();
+          logger.debug("[GitAutoRefresh] Git 状态变更，刷新仓库状态", {
+            workspacePath,
+            path,
+          });
+          refreshRef.current();
+        },
+        Math.max(0, deadline - now),
+      );
     };
 
     // Each Git summary refresh returns a new autoRefreshWatchPaths array reference.
