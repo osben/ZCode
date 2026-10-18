@@ -1,4 +1,4 @@
-import { memo, useRef } from "react";
+import { memo, useRef, useState } from "react";
 import { VenetianMask, XIcon } from "lucide-react";
 import {
   INCOGNITO_CAPABILITY_KEYS,
@@ -52,14 +52,16 @@ export const V4ComposerIncognitoControl = memo(function V4ComposerIncognitoContr
   );
   const { activate, deactivate, setCapability } = useDraftIncognitoIntentStore.getState();
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
   const active = capabilities !== null;
   const toggleLabel = intl.formatMessage({ id: "chat.incognito.toggle" });
   const removeLabel = intl.formatMessage({ id: "chat.incognito.removeMarker" });
 
   return (
     <>
-      <DropdownMenu>
-        <ControlHintTooltip title={toggleLabel}>
+      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+        {/* The hint must stay closed while the menu is open, or its layer dismisses the menu. */}
+        <ControlHintTooltip title={toggleLabel} open={menuOpen ? false : undefined}>
           <DropdownMenuTrigger asChild>
             <Button
               ref={triggerRef}
