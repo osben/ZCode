@@ -99,7 +99,8 @@ function parseArgs(argv) {
 }
 
 function isLocalHost(host) {
-  return host === "127.0.0.1" || host === "localhost" || host === "::1";
+  const normalized = host.trim().toLowerCase();
+  return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
 }
 
 function shouldProtectHost(host) {

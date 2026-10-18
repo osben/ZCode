@@ -7,19 +7,17 @@ import {
   materializeBundledZCodeBuiltinProviderConfig,
   readBundledZCodeBuiltinProviderConfig,
 } from "./bundledZCodeBuiltinProviderConfig.js";
+import { readHttpEntryEnv } from "./entryHttpEnv.js";
 import { createHttpServer, resolveHttpListenHost } from "./http.js";
 
 async function main(): Promise<void> {
-  const host = process.env["ZCODE_SERVER_HOST"]?.trim() || process.env["HOST"]?.trim() || undefined;
-  const authToken = process.env["ZCODE_SERVER_AUTH_TOKEN"]?.trim() || undefined;
+  const { port, host, staticRoot, authToken } = readHttpEntryEnv(process.env);
   // Validate before createLocalServices: its handles would keep a refused process alive.
   resolveHttpListenHost({ host, authToken });
   const zcodeBuiltinProviderConfigFilePath = await materializeBundledZCodeBuiltinProviderConfig({
     environmentConfigRoot: getAppConfigDir(),
     content: readBundledZCodeBuiltinProviderConfig(),
   });
-  const port = Number(process.env["PORT"]) || 3030;
-  const staticRoot = process.env["ZCODE_WEB_STATIC_ROOT"]?.trim() || undefined;
   const topicResourcePeers = createTopicResourcePeers();
   const services = createLocalServices({
     topicResourceRelayChannel: (request) => topicResourcePeers.getChannel(request),

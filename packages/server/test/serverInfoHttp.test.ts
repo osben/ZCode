@@ -3,6 +3,7 @@ import { listeningAddress } from "./listeningAddress.js";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { WebSocket } from "ws";
 import { ServiceCollection } from "@zcode/services";
 import { SERVER_REMOTE_PROTOCOL_VERSION } from "@zcode/shared";
 import { createHttpServer } from "../src/http.js";
@@ -114,6 +115,76 @@ describe("server info HTTP endpoint", () => {
 
     const info = await fetch(`${baseUrl}/api/server-info?token=secret-token`);
     await expect(info.json()).resolves.toMatchObject({ authRequired: true });
+  });
+
+  it.each([
+    ["GET", "/%61pi/server-info"],
+    ["GET", "/%2561pi/server-info"],
+    ["GET", "/API/server-info"],
+    ["GET", "//api/server-info"],
+    ["GET", "/api%2Fserver-info"],
+    ["GET", "/api%2fserver-info"],
+    ["GET", "/api/server-info/"],
+    ["GET", "/api"],
+    ["POST", "/%61pi/rpc-host-capability"],
+    ["POST", "/%41PI/rpc-host-capability"],
+    ["POST", "/%61pi/connect-remote"],
+    ["POST", "/anything-not-public"],
+  ])("rejects %s %s without the token", async (method, path) => {
+    const server = createHttpServer(new ServiceCollection(), 0, { authToken: "secret-token" });
+    servers.push(server);
+    const address = await listeningAddress(server);
+
+    const response = await fetch(`http://127.0.0.1:${address.port}${path}`, {
+      method,
+      ...(method === "POST"
+        ? { headers: { "content-type": "application/json" }, body: JSON.stringify({}) }
+        : {}),
+    });
+
+    expect(response.status).toBe(401);
+  });
+
+  it.each(["/ws", "/%77s", "/%2577s", "/WS", "/%77s/host", "/ws%2Fhost", "/%77s/remote/x"])(
+    "refuses the WebSocket upgrade on %s without the token",
+    async (path) => {
+      const server = createHttpServer(new ServiceCollection(), 0, { authToken: "secret-token" });
+      servers.push(server);
+      const address = await listeningAddress(server);
+
+      const status = await new Promise<number | "open">((resolve, reject) => {
+        const socket = new WebSocket(`ws://127.0.0.1:${address.port}${path}`);
+        socket.once("unexpected-response", (_request, response) => {
+          resolve(response.statusCode ?? 0);
+          socket.terminate();
+        });
+        socket.once("open", () => {
+          resolve("open");
+          socket.close();
+        });
+        socket.once("error", (error) => reject(error));
+      });
+
+      expect(status).toBe(401);
+    },
+  );
+
+  it("still serves public static assets without the token", async () => {
+    const staticRoot = await mkdtemp(join(tmpdir(), "zcode-lite-static-"));
+    tempDirs.push(staticRoot);
+    await writeFile(join(staticRoot, "index.html"), "<html>lite</html>", "utf8");
+    const server = createHttpServer(new ServiceCollection(), 0, {
+      authToken: "secret-token",
+      staticRoot,
+      spaFallback: true,
+    });
+    servers.push(server);
+    const address = await listeningAddress(server);
+
+    const page = await fetch(`http://127.0.0.1:${address.port}/workspace/deep/link`);
+
+    expect(page.status).toBe(200);
+    await expect(page.text()).resolves.toBe("<html>lite</html>");
   });
 
   it("binds loopback by default when no token is configured", async () => {

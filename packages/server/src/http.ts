@@ -301,12 +301,54 @@ function hasValidLiteToken(c: Context, token: string): boolean {
   return parseCookieHeader(c.req.header("cookie")).get(zcodeLiteTokenCookieName) === token;
 }
 
-function isTokenProtectedPath(pathname: string): boolean {
-  return pathname === "/ws" || pathname.startsWith("/ws/") || pathname.startsWith("/api/");
+function isApiOrWsPath(pathname: string): boolean {
+  return (
+    pathname === "/ws" ||
+    pathname.startsWith("/ws/") ||
+    pathname === "/api" ||
+    pathname.startsWith("/api/")
+  );
 }
 
-function isStaticFallbackAllowed(pathname: string): boolean {
-  return !isTokenProtectedPath(pathname);
+function tryDecodeURIComponent(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+const maxPathDecodeRounds = 4;
+
+/**
+ * Hono routes on decodeURI(rawPath), so `/%61pi/...` reaches `/api/...` handlers while the raw
+ * URL pathname does not look protected. Check a superset of every form the router could see:
+ * the routed and raw paths, repeatedly decoded, lowercased, with slashes normalized.
+ */
+function targetsApiOrWs(c: Context): boolean {
+  for (const seed of [c.req.path, new URL(c.req.url).pathname]) {
+    let current = seed;
+    for (let round = 0; round <= maxPathDecodeRounds; round += 1) {
+      const normalized = current
+        .toLowerCase()
+        .replace(/\\/g, "/")
+        .replace(/\/{2,}/g, "/");
+      if (isApiOrWsPath(normalized)) {
+        return true;
+      }
+      const decoded = tryDecodeURIComponent(current);
+      if (decoded === current) {
+        break;
+      }
+      current = decoded;
+    }
+  }
+  return false;
+}
+
+/** Deny by default: only GET/HEAD for static Web assets may skip the token. */
+function requiresToken(c: Context): boolean {
+  return (c.req.method !== "GET" && c.req.method !== "HEAD") || targetsApiOrWs(c);
 }
 
 function isInsideDirectory(root: string, candidate: string): boolean {
@@ -344,7 +386,7 @@ async function resolveStaticFile(
     // Enter the SPA fallback only when no static asset matches, preserving 404 semantics for real file errors.
   }
 
-  if (!spaFallback || !isStaticFallbackAllowed(pathname)) {
+  if (!spaFallback) {
     return null;
   }
   const indexFile = resolve(root, "index.html");
@@ -392,9 +434,8 @@ export function createHttpServer(
 
   if (authToken) {
     app.use("*", async (c, next) => {
-      const pathname = new URL(c.req.url).pathname;
       const validToken = hasValidLiteToken(c, authToken);
-      if (!isTokenProtectedPath(pathname) || validToken) {
+      if (!requiresToken(c) || validToken) {
         await next();
         return;
       }
@@ -541,7 +582,8 @@ export function createHttpServer(
     const staticRoot = options.staticRoot.trim();
     app.get("*", async (c) => {
       const pathname = new URL(c.req.url).pathname;
-      const filePath = await resolveStaticFile(staticRoot, pathname, options.spaFallback ?? true);
+      const spaFallback = (options.spaFallback ?? true) && !targetsApiOrWs(c);
+      const filePath = await resolveStaticFile(staticRoot, pathname, spaFallback);
       if (!filePath) {
         return c.notFound();
       }
