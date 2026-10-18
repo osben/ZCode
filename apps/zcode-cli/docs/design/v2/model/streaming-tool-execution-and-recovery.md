@@ -34,7 +34,8 @@ The core rule is:
 ## Current Baseline
 
 Current ZCode starts eligible read-only client tools before the model stream
-finishes. Other tools wait until the full step returns. The streaming callback
+finishes (see "Early Execution Eligibility" below; this includes read-only Bash).
+Other tools wait until the full step returns. The streaming callback
 returns synchronously; pending persistence stays inside the existing early
 execution error boundary. Cancellation aborts the active request and does not retry.
 
@@ -264,6 +265,97 @@ Scheduling rules:
 - Provider-native/server-side tools do not enter the client-side executor.
 - Result emission must remain provider-valid even when execution finishes out of
   order.
+
+### Early Execution Eligibility
+
+The streaming tool coordinator (`runtime/methods/streaming-tool-coordinator.ts`)
+owns the early-execution decision; the predicate lives in
+`streaming-tool-eligibility.ts`. A call is decided once, when its normalized
+`tool_call` (complete id, name, and parsed input) reaches `accept()`.
+`tool_input_delta` bytes never trigger execution. The adapter cannot retry past
+a closed `tool_call`, because `stream-retry-boundary.ts` buffers only prelude
+events, so a pre-executed call is never replayed by a transport-level retry.
+
+A call starts during the stream only if all of these hold:
+
+1. Gates: `modelStreaming: "on"`, `streamingToolExecution` is not `"off"`,
+   the call is client-side (not `providerExecuted`), its name is non-empty,
+   and it resolves to a registry entry.
+2. Input-aware capability: the capability is resolved through
+   `resolveRuntimePermissionCapability` and `resolveToolSchedulingFlags`. This
+   is the same resolution, with the same precedence, used by `scheduleTools`
+   and by the permission check: runtime capability > `entry.permission` >
+   `entry.metadata`. The resolved capability must be `readOnly`,
+   `concurrentSafe`, not `destructive`, `needsApproval` false (read as
+   `permission.needsApproval ?? needsApproval`), `sideEffectScope: "none"`,
+   free of `requiresUserInteraction` and `alwaysAsk`, and carry no Guarded
+   `userApprovalRule`.
+3. Bash: the call has no `run_in_background: true`. A detached job is session
+   state that stream abort does not reap.
+4. Prefix barrier: every call accepted earlier in the same stream attempt is
+   also eligible. Once one accepted call is ineligible, no later call in that
+   step starts early. Pre-executed calls therefore always form the leading
+   prefix, which matches the first parallel group `scheduleTools` would build.
+   Without the barrier, `npm run build` followed by `ls dist` (or a Write
+   followed by a Read) would observe state from before the earlier call.
+
+All runtime call sites build the capability context through one helper:
+`resolveRuntimeToolCapabilityContext` in `runtime/helpers/runtime-tools.ts`.
+It carries `mode`, `bashShellSelection`, `runtimeScope`, `workingDirectory`,
+and `workspaceRoot`. Guarded mode can only report a dangerous Bash match
+(`userApprovalRule`) when both `mode` and the shell dialect are present, so
+neither the scheduler nor the coordinator may construct the context by hand.
+
+Eligibility is a timing gate, not a permission grant. `executeTools` still
+runs PreToolUse hooks, the permission decision, input recheck after hook
+rewrites, timeout, cancellation, and result budget. An explicit project `ask`
+rule that matches an eligible call can still raise a prompt while the stream is
+open; the permission broker keeps that prompt serialized. Read already had this
+exposure before Bash became eligible.
+
+Mode behavior:
+
+| Mode             | Read-only Bash, no `cd`                   | Other Bash                     |
+| ---------------- | ----------------------------------------- | ------------------------------ |
+| build / edit     | early; permission allows read-only        | end of stream                  |
+| plan             | early; plan allows read-only tools        | end of stream (then denied)    |
+| guarded          | early unless the dangerous matcher fires  | end of stream; user-once ask   |
+| yolo             | early                                     | end of stream                  |
+| auto (reserved)  | early; the executor denies it right away  | end of stream                  |
+
+The ledger records the same input-aware `readOnly`, `destructive`,
+`concurrentSafe`, and `sideEffectScope` flags that the call was scheduled with.
+
+```mermaid
+sequenceDiagram
+    participant A as Adapter
+    participant C as Coordinator
+    participant E as Executor
+    participant R as Recovery
+    A->>C: tool_call #1 (Bash "ls", closed)
+    C->>C: eligible + prefix intact
+    C->>E: scheduleTools/executeTools (during_stream)
+    A->>C: tool_call #2 (Bash "npm i")
+    C->>C: ineligible, barrier closes
+    alt stream finishes
+        A->>C: finish
+        C->>E: drain #1 result, run #2 at end of stream
+    else retryable stream failure
+        A--xC: error
+        C->>E: abort signal
+        E-->>C: #1 real / cancelled result, or synthetic unknown_execution_state
+        C->>R: commit #1 and #2 results (#2 not_executed), new SSE request
+    end
+```
+
+Retry safety: when a retryable failure happens after a call was accepted,
+`prepareAcceptedToolSettlement` aborts in-flight pre-executed calls and waits
+up to the cancel drain timeout. Each accepted call is then committed exactly
+once: a completed result, a cancelled result, or a synthetic
+`unknown_execution_state` / `not_executed` result. The retry request starts
+from those committed results and never re-runs them. If the model re-issues
+the same command, it gets a new call id and a fresh execution. That is
+acceptable only because eligible calls are read-only and have no side effects.
 
 ## Provider-Safe Transcript Builder
 

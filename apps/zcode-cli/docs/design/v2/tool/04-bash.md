@@ -145,6 +145,8 @@ ZCode prompt 可以更短，但这些约束应变成 tool policy 和 tests，而
   `concurrentSafe` 字段返回该结论，`scheduleTools` 据此把只读 Bash 与相邻并发安全调用放入同一
   parallel group；其余 Bash 保持串行。cwd 写回是 compare-and-set：session cwd 已被同组其他命令改变时
   不写回，避免 hook 改写出的目录切换被并行兄弟命令覆盖。
+  同一结论也决定 streaming 提前执行：非后台的只读、无目录切换
+  Bash 可在模型输出期间启动（见 `model/streaming-tool-execution-and-recovery.md`）。
 - command permission 支持 exact、prefix、wildcard。
 - compound command 必须拆分子命令，任一子命令匹配 hook 或 deny 规则都要触发。
 - 无法安全解析、过于复杂、包含危险语义时 fail closed 到 ask。

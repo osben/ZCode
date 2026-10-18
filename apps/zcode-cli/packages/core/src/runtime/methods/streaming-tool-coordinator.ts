@@ -18,6 +18,7 @@ import {
 import type { AgentRuntimeInternal } from "../internal.js";
 import type { StreamedToolExecutionResult } from "../types.js";
 import { createSyntheticStreamedToolResult } from "./streaming-tool-synthetic-result.js";
+import { isToolCallEligibleDuringStream } from "./streaming-tool-eligibility.js";
 import {
   beginStreamRecoveryAttempt,
   emitStreamRecoveryRetryEvents,
@@ -38,7 +39,6 @@ import { createRuntimeAssistantEntry } from "../../agent/message-history.js";
 import { commitTurnRequestEntries } from "./turn-output-token-continuation.js";
 
 const STREAMING_TOOL_CANCEL_DRAIN_TIMEOUT_MS = 250;
-const STREAMING_TOOL_EXECUTION_MODE = "readOnly";
 
 export function createStreamingToolCoordinator(
   runtime: AgentRuntimeInternal,
@@ -53,6 +53,9 @@ export function createStreamingToolCoordinator(
   const abortController = new AbortController();
   const handles = new Map<string, Promise<StreamedToolExecutionResult | undefined>>();
   const acceptedToolCalls = new Map<string, { call: ToolCall; error?: Error }>();
+  // Early calls must form the leading prefix (the scheduler's first parallel group); a later
+  // read-only call must not observe state from before an earlier call that waits for finish.
+  let earlyExecutionPrefixOpen = true;
   let discardedReasoningBytes = 0;
   let discardedTextBytes = 0;
 
@@ -125,8 +128,12 @@ export function createStreamingToolCoordinator(
       if (normalizedToolCall.providerExecuted) return;
       const admission = admit(normalizedToolCall);
       const acceptedCall = admission.call;
-      if (admission.error || !shouldExecuteToolDuringStream(runtime, acceptedCall)) return;
       if (handles.has(normalizedToolCall.id)) return;
+      if (!earlyExecutionPrefixOpen) return;
+      if (admission.error || !isToolCallEligibleDuringStream(runtime, acceptedCall)) {
+        earlyExecutionPrefixOpen = false;
+        return;
+      }
       const promise = executeDuringStream(runtime, state, {
         abortSignal: abortController.signal,
         assistantMessageId: options.assistantMessageId,
@@ -367,31 +374,6 @@ async function executeDuringStream(
     result,
     toolCallId: toolCall.id as ToolCallId,
   };
-}
-
-function shouldExecuteToolDuringStream(
-  runtime: AgentRuntimeInternal,
-  toolCall: ModelToolCall,
-): boolean {
-  if (toolCall.providerExecuted) return false;
-  if (toolCall.name.trim().length === 0) return false;
-  if (runtime.config.modelStreaming !== "on") return false;
-  if ((runtime.config.streamingToolExecution ?? STREAMING_TOOL_EXECUTION_MODE) === "off") {
-    return false;
-  }
-  const entry = runtime.registry.get(toolCall.name);
-  if (!entry) return false;
-  const metadata = entry.metadata;
-  const sideEffectScope = entry.permission?.sideEffectScope ?? metadata.sideEffectScope;
-  const requiresUserInteraction = entry.requiresUserInteraction ?? metadata.requiresUserInteraction;
-  return (
-    metadata.readOnly &&
-    metadata.concurrentSafe &&
-    !metadata.destructive &&
-    !metadata.needsApproval &&
-    !requiresUserInteraction &&
-    sideEffectScope === "none"
-  );
 }
 
 async function raceWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | undefined> {
