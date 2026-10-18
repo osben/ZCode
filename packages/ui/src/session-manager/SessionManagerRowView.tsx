@@ -222,9 +222,7 @@ export const SessionManagerRowView = memo(function SessionManagerRowView({
             type="button"
             className={cn(
               "inline-flex size-6 items-center justify-center rounded-sm hover:bg-surface-hover",
-              row.pinned
-                ? "text-amber-500"
-                : "text-foreground-subtlest hover:text-foreground-subtle",
+              row.pinned ? "text-warning" : "text-foreground-subtlest hover:text-foreground-subtle",
             )}
             disabled={!canMutate}
             title={

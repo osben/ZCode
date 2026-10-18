@@ -207,7 +207,10 @@ function getServerRemoteTargetIdentityId(
 export function resolveRemoteWorkspaceSessionIdentity(
   entry: Pick<RemoteWorkspaceSessionEntry, "workspacePath" | "target" | "workspaceIdentity">,
 ): string {
-  return entry.workspaceIdentity || buildRemoteWorkspaceIdentity(entry.workspacePath, entry.target);
+  return (
+    entry.workspaceIdentity?.trim() ||
+    buildRemoteWorkspaceIdentity(entry.workspacePath, entry.target)
+  );
 }
 
 export function buildWorkspaceSessionKey(entry: {

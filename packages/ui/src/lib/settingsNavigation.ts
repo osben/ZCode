@@ -9,6 +9,7 @@ export type SettingsSectionId =
   | "modelProvider"
   | "instructions"
   | "outputStyles"
+  | "systemPrompt"
   | "memory"
   | "plugin"
   | "mcp"
@@ -52,6 +53,9 @@ const HIDDEN_SETTINGS_SECTIONS = new Set<SettingsSectionId>([
   // Hide the workspace search (.zcodeignore) entry for now. The rules file still applies and can be edited manually,
   // and the editor code remains; remove this entry from here when it is enabled again.
   "workspaceFileSearch",
+  // The Settings page has no entry or caller for Migration; onboarding owns that flow.
+  // Hiding it keeps a stale stored/explicit intent from landing on an unreachable page.
+  "migration",
 ]);
 
 export interface SettingsSectionIntentEventDetail {
@@ -77,6 +81,7 @@ function isSettingsSectionId(value: string): value is SettingsSectionId {
     value === "modelProvider" ||
     value === "instructions" ||
     value === "outputStyles" ||
+    value === "systemPrompt" ||
     value === "memory" ||
     value === "plugin" ||
     value === "mcp" ||

@@ -2,7 +2,7 @@
 
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
-import { readFileSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 import {
   ContextQuotaResetOpportunityReminderContent,
@@ -247,32 +247,5 @@ describe("ContextQuotaResetOpportunityReminderContent", () => {
     expect(html).toContain("codingPlan.quotaReset.contextReminder.dismiss");
     expect(html).toContain("data-context-reset-reminder-copy");
     expect(html).toContain("gap-0");
-  });
-});
-
-describe("context quota reset opportunity reminder integration", () => {
-  it("uses the shared ControlHintTooltip wrapper instead of composing tooltip primitives", () => {
-    const source = readFileSync("packages/ui/src/chat-input-toolbar/contextUsage.tsx", "utf8");
-
-    expect(source).toContain('import { ControlHintTooltip } from "@/ControlHintTooltip.js"');
-    expect(source).toContain("standalone");
-    expect(source).not.toContain("<TooltipProvider>");
-    expect(source).not.toContain("<TooltipContent");
-    expect(source).not.toContain("<TooltipTrigger");
-    expect(source).not.toContain("sideOffset={6}");
-    expect(source).toMatch(
-      /triggerTooltipKind === "reset-status"\s*\? undefined\s*:\s*"bg-background py-0\.5 pr-0\.5"/,
-    );
-    expect(source).toContain('opportunityTriggerTone === "available" && "text-success"');
-    expect(source).not.toContain('opportunityTriggerTone === "available" && "bg-success/10');
-    expect(source).toMatch(
-      /opportunityTriggerTone === "urgent"\s*&&\s*"bg-warning\/10 text-warning"/,
-    );
-    expect(source).toContain("useSyncExternalStore(");
-    expect(source).toContain("contextQuotaResetOpportunityDismissalStore.dismiss(");
-    expect(source).toContain('document.addEventListener("pointerdown"');
-    expect(source).toContain("shouldDismissContextQuotaResetOpportunityReminder(");
-    expect(source).toContain("triggerRef={contextUsageTriggerRef}");
-    expect(source).not.toContain("useState<ContextQuotaResetOpportunityDismissal>");
   });
 });

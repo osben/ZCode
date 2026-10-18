@@ -21,6 +21,38 @@ export function resolveRuntimePermissionCapability(
   };
 }
 
+export interface ToolSchedulingFlags {
+  readOnly?: boolean;
+  destructive?: boolean;
+  concurrentSafe?: boolean;
+  sideEffectScope?: ModelToolSideEffectScope;
+}
+
+/**
+ * Scheduling flags for a model-emitted call, resolved through the same runtime capability as
+ * permission checks so input-aware conclusions (for example a read-only Bash command) can run
+ * in a parallel group. Precedence: runtime capability > `entry.permission` > `entry.metadata`.
+ */
+export function resolveToolSchedulingFlags(
+  entry: ToolEntry,
+  input: unknown,
+  context: ToolRuntimePermissionCapabilityContext,
+): ToolSchedulingFlags {
+  const runtimeCapability = entry.resolvePermissionCapability?.(input, context);
+  const metadata = entry.metadata;
+  const sideEffectScope =
+    runtimeCapability?.sideEffectScope ??
+    entry.permission?.sideEffectScope ??
+    metadata.sideEffectScope;
+  const readOnly = runtimeCapability?.readOnly ?? metadata.readOnly;
+  return {
+    readOnly: readOnly === undefined ? undefined : readOnly && sideEffectScope === "none",
+    destructive: runtimeCapability?.destructive ?? metadata.destructive,
+    concurrentSafe: runtimeCapability?.concurrentSafe ?? metadata.concurrentSafe,
+    sideEffectScope,
+  };
+}
+
 /**
  * Side-effect flags for a call **after input resolution**, attached to `ToolCallStarted`.
  * They use the same resolution as permission checks, so runtime conclusions such as

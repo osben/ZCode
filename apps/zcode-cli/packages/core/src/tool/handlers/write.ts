@@ -19,6 +19,7 @@ import {
 import { createStructuredPatch } from "../diff.js";
 import { stampMemoryOriginSessionId } from "../../memory/origin-session.js";
 import { resolveWorkspacePath } from "../path-policy.js";
+import { publishFileMutation, writeChangedRange } from "../file-mutation.js";
 import {
   createReadFileStateKey,
   findLatestReadFileState,
@@ -144,6 +145,12 @@ export const writeHandler: ToolHandler = async (input, context) => {
     writeResult.revision,
   );
   recordReadFileStateMetadata(context, readFileStateEntry);
+  publishFileMutation(context, {
+    path: filePath,
+    kind: originalFile === null ? "created" : "changed",
+    content: contentToWrite,
+    changedRange: writeChangedRange(originalFile, contentToWrite),
+  });
 
   if (originalFile) {
     return attachToolExecutionTelemetry(

@@ -27,6 +27,48 @@ const WORKSPACE_ROOT = "/workspace";
 const MEMORY_ROOT = "/storage/memories/project/memory";
 
 describe("memory extraction prompt", () => {
+  it("renders a memory-extraction override with its placeholders substituted", () => {
+    const timestamp = "2026-07-16T01:02:03.000Z";
+    const override = "Review the last {{messageCount}} messages.{{existingMemories}}\nSave only durable facts.";
+
+    expect(
+      buildMemoryExtractionPrompt({
+        manifest: [
+          {
+            description: "Database tests must use the real database rather than mocks.",
+            filePath: `${MEMORY_ROOT}/database-test-policy.md`,
+            filename: "database-test-policy.md",
+            mtimeMs: Date.parse(timestamp),
+            type: "feedback",
+          },
+        ],
+        messageCount: 3,
+        override,
+      }),
+    ).toBe(
+      [
+        "Review the last 3 messages.",
+        "",
+        "## Existing memory files",
+        "",
+        `- [feedback] database-test-policy.md (${timestamp}): Database tests must use the real database rather than mocks.`,
+        "",
+        "Check this list before writing — update an existing file rather than creating a duplicate.",
+        "Save only durable facts.",
+      ].join("\n"),
+    );
+    expect(buildMemoryExtractionPrompt({ manifest: [], messageCount: 1, override })).toBe(
+      "Review the last 1 messages.\nSave only durable facts.",
+    );
+  });
+
+  it("keeps the default text when the override is blank", () => {
+    const withoutOverride = buildMemoryExtractionPrompt({ manifest: [], messageCount: 2 });
+    expect(buildMemoryExtractionPrompt({ manifest: [], messageCount: 2, override: "  \n" })).toBe(
+      withoutOverride,
+    );
+  });
+
   it("matches the frozen provider-visible fixture", () => {
     const timestamp = "2026-07-16T01:02:03.000Z";
     const fixture = readFileSync(

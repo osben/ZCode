@@ -5,6 +5,7 @@ import { resolveEmbeddedSearchBranchCapability } from "../../embedded-search/cap
 import {
   resolveBuiltInToolAllowlist,
   resolveRuntimeDynamicWorkflowToolsIncluded,
+  resolveRuntimeLspToolIncluded,
 } from "../helpers/tool-allowlist.js";
 import { isToolNameDisallowed } from "../../tool/tool-visibility.js";
 
@@ -37,6 +38,8 @@ export function refreshBranchAwareBuiltInTools(runtime: AgentRuntimeInternal): v
     // and silentDuplicateWarnings hides the warning, so it is silent). Derivation must therefore share the helper in runtime-tools.ts
     // instead of reimplementing the condition here.
     includeDynamicWorkflow: resolveRuntimeDynamicWorkflowToolsIncluded(runtime),
+    // Same helper as the initial registration in runtime-tools.ts; a refresh must not drop the LSP tool.
+    includeLsp: resolveRuntimeLspToolIncluded(runtime),
     allowedTools: resolveBuiltInToolAllowlist(runtime.config),
     disallowedTools: runtime.config.toolDisallowlist,
     silentDuplicateWarnings: true,

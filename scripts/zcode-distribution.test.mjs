@@ -96,6 +96,60 @@ test("Web startup errors preserve a failing exit code", async (t) => {
   );
 });
 
+test("Web mode rejects --no-token on a non-loopback host before starting the server", async (t) => {
+  const { runner, directory } = await fixture(t);
+  await assert.rejects(
+    exec(process.execPath, [
+      runner,
+      "--web",
+      "--workspace",
+      directory,
+      "--host",
+      "0.0.0.0",
+      "--no-open",
+      "--no-token",
+    ]),
+    /--no-token is only allowed with a loopback --host/,
+  );
+});
+
+test("Web mode treats loopback host names case-insensitively for --no-token", async (t) => {
+  const { directory, runner } = await fixture(t);
+  const resultPath = join(directory, "web-result.json");
+  const child = spawn(
+    process.execPath,
+    [
+      runner,
+      "--web",
+      "--workspace",
+      directory,
+      "--host",
+      "LOCALHOST",
+      "--port",
+      "3042",
+      "--no-open",
+      "--no-token",
+    ],
+    { env: { ...process.env, FIXTURE_WEB_RESULT: resultPath }, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  t.after(() => {
+    if (child.exitCode === null) child.kill();
+  });
+  let result;
+  for (let attempt = 0; attempt < 100; attempt++) {
+    result = await readFile(resultPath, "utf8")
+      .then(JSON.parse)
+      .catch(() => undefined);
+    if (result) break;
+    await setTimeout(20);
+  }
+  assert.equal(result?.host, "LOCALHOST");
+  assert.equal(result?.token, "");
+  const exited = once(child, "exit");
+  child.kill("SIGTERM");
+  await exited;
+});
+
 test("Web mode passes its runtime configuration and terminates its child on shutdown", async (t) => {
   const { directory, runner, root } = await fixture(t);
   const resultPath = join(directory, "web-result.json");

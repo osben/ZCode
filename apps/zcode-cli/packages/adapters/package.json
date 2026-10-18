@@ -78,6 +78,10 @@
       "types": "./dist/mcp/index.d.ts",
       "import": "./dist/mcp/index.js"
     },
+    "./lsp": {
+      "types": "./dist/lsp/index.d.ts",
+      "import": "./dist/lsp/index.js"
+    },
     "./mailbox": {
       "types": "./dist/mailbox/index.d.ts",
       "import": "./dist/mailbox/index.js"

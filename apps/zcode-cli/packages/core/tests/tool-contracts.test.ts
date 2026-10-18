@@ -420,7 +420,9 @@ describe("tool contract declarations", () => {
     expect(agentDescription).not.toContain("ID or name");
     expect(agentDescription).not.toContain(".claude/agents");
     expect(agentDescription).not.toContain("When you launch multiple agents for independent work");
-    expect(agentDescription).toContain("Available agent types are listed in <system-reminder> messages in the conversation.");
+    expect(agentDescription).toContain(
+      "Available agent types are listed in <system-reminder> messages in the conversation.",
+    );
     expect(agentDescription).not.toContain("- general-purpose:");
     expect(agentDescription).not.toContain("- Explore:");
     expect(agentDescription).not.toContain("model:");
@@ -1030,7 +1032,8 @@ describe("tool contract declarations", () => {
         ...findProviderSchemaIssues(entry.outputSchema, `${entry.metadata.name}.outputSchema`),
       ];
 
-      expect(schemaIssues, entry.metadata.name).toEqual([]);
+      // Soft so one non-compliant tool does not hide issues in the tools after it.
+      expect.soft(schemaIssues, entry.metadata.name).toEqual([]);
     }
   });
 
@@ -1181,7 +1184,9 @@ describe("tool contract declarations", () => {
 
     const agentDescription = byName.get("Agent")?.description ?? "";
     expect(agentDescription).not.toContain("Tools: Glob, Grep");
-    expect(agentDescription).toContain("Available agent types are listed in <system-reminder> messages in the conversation.");
+    expect(agentDescription).toContain(
+      "Available agent types are listed in <system-reminder> messages in the conversation.",
+    );
     expect(agentDescription).not.toContain("(Tools:");
     expect(agentDescription).not.toContain("<system-reminder>\n");
 

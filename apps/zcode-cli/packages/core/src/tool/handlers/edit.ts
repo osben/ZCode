@@ -28,6 +28,8 @@ import {
   type TraceContext,
 } from "@zcode/contracts";
 import { createStructuredPatch } from "../diff.js";
+import { publishFileMutation } from "../file-mutation.js";
+import { changedRangeFromHunks } from "../../lsp/results.js";
 import { stampMemoryOriginSessionId } from "../../memory/origin-session.js";
 import {
   findEditMatch,
@@ -193,7 +195,7 @@ export const editHandler: ToolHandler = async (input, context) => {
   if (filePath.endsWith(".ipynb")) {
     return editFailure(
       EditErrorCode.NOTEBOOK_FILE,
-      "File is a Jupyter Notebook. Use the NotebookEdit to edit this file.",
+      "Edit does not support Jupyter Notebook (.ipynb) files. No notebook editing tool is available; read the notebook and rewrite its JSON with Write if a change is required.",
     );
   }
 
@@ -532,6 +534,12 @@ async function writeEditResult(input: {
     filePath: input.inputFilePath,
     oldContent: input.originalFile,
     newContent: contentToWrite,
+  });
+  publishFileMutation(input.context, {
+    path: input.filePath,
+    kind: "changed",
+    content: contentToWrite,
+    changedRange: changedRangeFromHunks(structuredPatch),
   });
   // totalBytes/maxFileBytes have the same meaning in perf; cache the result to avoid rescanning new content during large-file edits.
   const newContentBytes = fileByteCount(contentToWrite);

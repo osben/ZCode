@@ -135,9 +135,7 @@ async function readGroupedUnreadAndCloseState(taskId: string) {
       (candidate) => candidate.dataset.groupedTaskKey?.includes(id),
     );
     const unread = row?.querySelector<HTMLElement>('[data-unread-indicator="true"]');
-    const close = row?.querySelector<HTMLElement>(
-      'button[aria-label="Close"], button[aria-label="关闭"]',
-    );
+    const close = row?.querySelector<HTMLElement>('button[data-testid^="task-archive"]');
     const unreadRect = unread?.getBoundingClientRect();
     const closeRect = close?.getBoundingClientRect();
     return {
@@ -245,12 +243,20 @@ async function clickGroupedClose(taskId: string): Promise<boolean> {
   // 修复原因：grouped task action 只在整行 hover/focus 后挂载；DOM 直查 close
   // 会在真实用户尚未触发 hover 时把正确的延迟挂载误判为按钮缺失。
   await row.moveTo();
-  const close = row.$('button[aria-label="Close"], button[aria-label="关闭"]');
-  await close.waitForClickable({
+  // The grouped hover action archives through a two-step inline confirmation
+  // (specs/ui-accidental-action-guards.md): the first click arms it, the second archives.
+  const archive = row.$('button[data-testid^="task-archive"]');
+  await archive.waitForClickable({
     timeout: 15_000,
-    timeoutMsg: `grouped task hover 后没有显示关闭按钮: ${taskId}`,
+    timeoutMsg: `grouped task hover 后没有显示归档按钮: ${taskId}`,
   });
-  await close.click();
+  await archive.click();
+  const confirm = row.$('button[data-testid^="task-archive"][data-variant="destructive"]');
+  await confirm.waitForClickable({
+    timeout: 5_000,
+    timeoutMsg: `grouped task 归档确认按钮没有出现: ${taskId}`,
+  });
+  await confirm.click();
   return true;
 }
 

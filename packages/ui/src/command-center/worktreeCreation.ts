@@ -9,6 +9,7 @@
  */
 import type {
   GitWorktreeCreateResult,
+  GitWorktreeExcludeResult,
   GitWorktreeListResult,
   GitWorktreeVerifyResult,
 } from "@zcode/shared";
@@ -33,6 +34,11 @@ export interface WorktreeCreationGitService {
     workspacePath: string;
     targetPath: string;
   }): Promise<GitWorktreeVerifyResult>;
+  /** Keep an inside-placement worktree out of the main checkout's Review status (best-effort). */
+  ensureWorktreeExclusion(params: {
+    workspacePath: string;
+    targetPath: string;
+  }): Promise<GitWorktreeExcludeResult>;
 }
 
 /** Result of one worktree-creation attempt, shared by the palette Start and the empty-state send interception. */
@@ -48,6 +54,33 @@ export type WorktreeCreationOutcome =
       /** Error text from a thrown request (logging only); null when the server rejected. */
       errorDetail: string | null;
     };
+
+/**
+ * Inside-placement worktrees (`<repoRoot>/.worktrees/<branch>`) would otherwise show `.worktrees/`
+ * as untracked in the main checkout's Review. Awaited so the exclusion is in place before the
+ * caller refreshes Git status; a failure only logs and never changes the creation outcome.
+ */
+export async function ensureWorktreeExclusionSafely(
+  gitService: WorktreeCreationGitService,
+  workspacePath: string,
+  targetPath: string,
+): Promise<void> {
+  try {
+    const exclusion = await gitService.ensureWorktreeExclusion({ workspacePath, targetPath });
+    if (!exclusion.ok) {
+      logger.warn("[WorktreeTask] worktree exclusion was not written", {
+        workspacePath,
+        targetPath,
+      });
+    }
+  } catch (error) {
+    logger.warn("[WorktreeTask] worktree exclusion request failed", {
+      workspacePath,
+      targetPath,
+      error: getErrorMessage(error),
+    });
+  }
+}
 
 /** Optional delay for controlled manual/E2E verification; normal app flows have no artificial wait. */
 function waitForWorktreeCreationTestGate(): Promise<void> {
@@ -97,7 +130,9 @@ export async function executeWorktreeCreation({
   }
 
   if (result.ok) {
-    return { kind: "created", worktreePath: result.worktreePath ?? targetPath };
+    const worktreePath = result.worktreePath ?? targetPath;
+    await ensureWorktreeExclusionSafely(gitService, workspacePath, worktreePath);
+    return { kind: "created", worktreePath };
   }
 
   const issue = result.issues[0];
@@ -133,6 +168,7 @@ export async function executeWorktreeCreation({
             errorDetail: null,
           };
         }
+        await ensureWorktreeExclusionSafely(gitService, workspacePath, existing.path);
         return {
           kind: "existing-worktree",
           worktreePath: existing.path,

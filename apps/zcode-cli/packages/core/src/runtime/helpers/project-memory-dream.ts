@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 
 import type { BackgroundTaskPayloadBase, ModelTextContentBlock } from "@zcode/contracts";
 import type { Model, ModelInputMessage, SessionInfo, TraceContext } from "../deps.js";
-import { SessionEventType, createChildTraceContext } from "../deps.js";
+import { SessionEventType } from "../deps.js";
 import {
   systemReminderAttachmentEntry,
   type RuntimeAttachmentEntry,
@@ -18,17 +18,15 @@ import {
   restoreDreamLockAfterFailure,
   writeDreamConsolidatedAt,
 } from "../../memory/dream.js";
-import {
-  runMemoryAgentLoop,
-  type MemoryAgentLoopRequestUsage,
-} from "../../memory/memory-agent-loop.js";
+import { runMemoryAgentLoop } from "../../memory/memory-agent-loop.js";
 import { findLatestReadFileState } from "../../tool/read-file-state.js";
 import type { AgentRuntimeInternal } from "../internal.js";
-import { recordModelUsageFact } from "../methods/usage-observability.js";
+import { resolveMainAgentSystemPromptOverrides } from "../methods/context.js";
 import {
   buildProjectMemoryAgentProviderMessages,
   captureProjectMemoryAgentContext,
   createProjectMemoryAgentToolExecutor,
+  recordProjectMemoryAgentModelUsageFact,
   type ProjectMemoryAgentContext,
 } from "./project-memory-agent.js";
 import { invalidateProjectMemoryRecallPaths } from "./project-memory-recall.js";
@@ -431,6 +429,7 @@ async function runDreamConsolidation(
   try {
     const prompt = buildMemoryDreamPrompt({
       memoryRoot: context.memoryRoot,
+      override: resolveMainAgentSystemPromptOverrides(runtime.config)?.["memory-dream"],
       sessionIds: input.transcriptSessionIds,
       transcriptRoot: runtime.modelIoDir!,
     });
@@ -454,7 +453,8 @@ async function runDreamConsolidation(
         });
       },
       onRequestStart: (index) => input.onActivity?.(`Model request ${index + 1}…`),
-      onRequestSettled: (request) => recordDreamModelUsageFact(runtime, context, request),
+      onRequestSettled: (request) =>
+        recordProjectMemoryAgentModelUsageFact(runtime, context, request, "dream"),
       maxTurns: DREAM_MAX_TURNS,
       messages: providerMessages,
       model: context.model,
@@ -550,27 +550,6 @@ function describeDreamToolActivity(toolCall: { name: string; input?: unknown }):
 }
 
 /** Per-request `model_usage` facts for the dream loop (title-sidecar pattern, querySource "dream"). */
-async function recordDreamModelUsageFact(
-  runtime: AgentRuntimeInternal,
-  context: ProjectMemoryAgentContext,
-  request: MemoryAgentLoopRequestUsage,
-): Promise<void> {
-  await recordModelUsageFact(runtime, {
-    attemptIndex: request.index,
-    completedAt: request.completedAt,
-    error: request.error,
-    events: [],
-    model: context.model,
-    networkEventStartIndex: 0,
-    querySource: "dream",
-    result: request.result,
-    startedAt: request.startedAt,
-    status: request.status,
-    toolCallCount: request.result?.toolCalls?.length,
-    traceContext: createChildTraceContext(context.traceContext, {}),
-  });
-}
-
 /** First line of the agent summary, capped for the completed panel entry. */
 function dreamCompletedDescription(summary: string): string {
   const firstLine = summary.split("\n", 1)[0] ?? "";

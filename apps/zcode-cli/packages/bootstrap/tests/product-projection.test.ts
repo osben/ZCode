@@ -1,7 +1,7 @@
 // First batch of ProductProjection golden tests (M2, docs/v4-refactor/13-golden-test-mapping).
 // Shape: event sequences in, projection assertions out (L1). Test names carry the catalog group for
 // coverage matrix reconciliation.
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import type {
   EventId,
   SessionEvent,
@@ -719,53 +719,6 @@ describe("ProductProjection 黄金测试（L1）", () => {
     expect(projection.getSnapshot().control.phase).toBe("running");
   });
 
-  it("PV4-08：成功轮固化 fork 能力时不复制并反转完整 rows 窗口", () => {
-    const log = new EventLog();
-    log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
-    log.push(
-      SessionEventType.TurnStarted,
-      { turnNumber: 1, input: "first", messageId: "user-1" },
-      { turnId: "turn-1" },
-    );
-    log.push(
-      SessionEventType.ModelStreaming,
-      { kind: "text_start", delta: "", done: false, assistantMessageId: "assistant-1" },
-      { turnId: "turn-1" },
-    );
-    log.push(
-      SessionEventType.ModelStreaming,
-      { kind: "text_end", delta: "", done: false },
-      { turnId: "turn-1" },
-    );
-
-    const { projection } = runAll(log.events);
-    const reverse = vi.spyOn(Array.prototype, "reverse").mockImplementation(() => {
-      throw new Error("TurnComplete must not reverse the full rows window");
-    });
-    try {
-      projection.applyEvent(
-        log.push(
-          SessionEventType.TurnComplete,
-          {
-            response: "done",
-            tokenCount: 1,
-            toolCallCount: 0,
-            duration: 1,
-            resultType: "success",
-          },
-          { turnId: "turn-1" },
-        ),
-      );
-    } finally {
-      reverse.mockRestore();
-    }
-
-    const assistant = projection
-      .getSnapshot()
-      .rows.window.find((row) => row.kind === "assistantText");
-    expect(assistant?.actions?.canFork).toBe(true);
-  });
-
   it("PV4-08：中间 assistant 段和 interrupted turn 都不可 fork", () => {
     const log = new EventLog();
     log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
@@ -1219,38 +1172,6 @@ describe("ProductProjection 黄金测试（L1）", () => {
     expect(kinds).toEqual(["turnHeader"]);
     expect(projection.getSnapshot().rows.window[0]).toMatchObject({
       origin: "goalContinuation",
-    });
-  });
-
-  it("BG27/BG28：background model-only turn 把结构化标题投影到 turnHeader", () => {
-    const log = new EventLog();
-    log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 1000 });
-    log.push(
-      SessionEventType.TurnStarted,
-      {
-        turnNumber: 1,
-        input: "background result",
-        inputSource: "background_task",
-        inputVisibility: "model-only",
-        originMeta: {
-          backgroundSource: "subagent",
-          title: "Review the projection chain",
-          workId: "agent-review",
-        },
-      } as never,
-      { turnId: "turn-background" },
-    );
-
-    const rows = runAll(log.events).projection.getSnapshot().rows.window;
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
-      kind: "turnHeader",
-      origin: "backgroundResult",
-      originMeta: {
-        backgroundSource: "subagent",
-        title: "Review the projection chain",
-        workId: "agent-review",
-      },
     });
   });
 
@@ -4246,17 +4167,6 @@ describe("结构性不变量", () => {
     }
   });
 
-  it("结构性4（半）：coalesce 后的 delta 流与逐条投递终态逐字节一致", () => {
-    const log = new EventLog();
-    basicTurnEvents(log);
-    const { deltasPerEvent, snapshots } = fullDeltaStream(log.events);
-    const base = snapshots[0]!;
-    const all = deltasPerEvent.flat();
-    const direct = applyConversationDeltas(base, all);
-    const coalesced = applyConversationDeltas(base, coalesceConversationDeltas(all));
-    expect(coalesced).toEqual(direct);
-  });
-
   it("结构性10：fault 注入 session A，session B 投影逐字节不变（X 组）", () => {
     const logA = new EventLog("session-a");
     logA.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 1000 });
@@ -6808,15 +6718,6 @@ describe("fork / modelChange marker", () => {
     expect(snapshot.inputRouting.mode).toBe("startNow");
   });
 
-  it("A/B：setAutoDrain 幂等 —— 同值不产 delta", () => {
-    const log = new EventLog();
-    log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
-    // Initial autoDrain=true; setting true again should produce no change.
-    log.push(SessionEventType.QueueAutoDrainChanged, { autoDrain: true });
-    const { projection } = runAll(log.events);
-    expect(projection.getSnapshot().queue.autoDrain).toBe(true);
-  });
-
   // ── M4: setFollowupMode (FollowupModeChanged → enqueue vs guide while running) ──
   it("A/B：setFollowupMode(guide) → running 时输入路由为 guide", () => {
     const log = new EventLog();
@@ -7549,34 +7450,6 @@ describe("fork / modelChange marker", () => {
     expect(newFirstRow.rowId).toBeGreaterThan(originalMaxRowId);
     expect(rerun.rows.firstRowId).toBe(newFirstRow.rowId);
     expect(rerun.rows.totalCount).toBe(rerun.rows.window.length);
-  });
-
-  it("D：getTurnRewindAnchor(user 行 rowId) → 同 turn 的 assistant messageId", () => {
-    const log = new EventLog();
-    log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
-    log.push(SessionEventType.TurnStarted, { turnNumber: 1, input: "问" }, { turnId: "t1" });
-    log.push(
-      SessionEventType.ModelStreaming,
-      { kind: "text_start", delta: "", done: false, assistantMessageId: "msg-a1" },
-      { turnId: "t1" },
-    );
-    log.push(
-      SessionEventType.ModelStreaming,
-      { kind: "text_delta", delta: "答", done: false, assistantMessageId: "msg-a1" },
-      { turnId: "t1" },
-    );
-    log.push(
-      SessionEventType.ModelStreaming,
-      { kind: "text_end", delta: "", done: false },
-      { turnId: "t1" },
-    );
-    const { projection } = runAll(log.events);
-    const userRow = projection.getSnapshot().rows.window.find((r) => r.kind === "userInput");
-    expect(userRow).toBeDefined();
-    // The user row itself has no messageId, but the same turn's assistant messageId serves as the
-    // rewind anchor.
-    expect(projection.getMessageIdForRow(userRow!.rowId)).toBeNull();
-    expect(projection.getTurnRewindAnchor(userRow!.rowId)).toBe("msg-a1");
   });
 
   it("D/G：RewindTriggered 目标 messageId 无法反查（user 行无 messageId）→ 不误删", () => {

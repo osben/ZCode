@@ -72,6 +72,9 @@ interface PendingStreamBatch {
   nextOpSeq: number;
   pendingOps: TaskStreamMirrorPublishOp[];
   replay: TaskStreamMirrorBatchEvent[];
+  /** Serialized length of each replay entry, index-aligned with replay. */
+  replaySizes: number[];
+  replayByteTotal: number;
   replayUnavailable: boolean;
   timer: ReturnType<typeof setTimeout> | null;
   replayInitializedHostIds: Set<string>;
@@ -442,6 +445,8 @@ export class TaskRealtimeBus {
       nextOpSeq: 1,
       pendingOps: [],
       replay: [],
+      replaySizes: [],
+      replayByteTotal: 0,
       replayUnavailable: false,
       timer: null,
       replayInitializedHostIds: new Set<string>(),
@@ -503,7 +508,8 @@ export class TaskRealtimeBus {
         (op) => op.kind === "stream_event" && this.isTerminalEventType(op.event.type),
       ),
     };
-    if (JSON.stringify(event).length > STREAM_MIRROR_MAX_BATCH_BYTES) {
+    const eventBytes = JSON.stringify(event).length;
+    if (eventBytes > STREAM_MIRROR_MAX_BATCH_BYTES) {
       // An oversized mirror batch is copied multiple times as RPC/base64/JSON, which can exhaust the
       // Host heap. The owner still relies on the mirror sequence stream from the renderer sender, so
       // send smaller batches to the owner. Observers do not consume the body stream; they receive
@@ -511,7 +517,7 @@ export class TaskRealtimeBus {
       this.deliverOversizedStreamBatchFallback(batch, event);
       return;
     }
-    this.rememberReplayBatch(batch, event);
+    this.rememberReplayBatch(batch, event, eventBytes);
     this.deliverStreamBatch(batch, event);
 
     if (event.terminal) {
@@ -529,7 +535,7 @@ export class TaskRealtimeBus {
     // Send consecutive small batches only to the owner; observers and late subscribers are filled
     // from snapshots to avoid spreading large payloads.
     batch.replayUnavailable = true;
-    batch.replay = [];
+    this.clearReplay(batch);
     for (const chunk of this.splitOversizedBatchForOwner(batch, event)) {
       this.deliverStreamBatchToHost(batch.ownerHostId, batch, chunk, "relay_owner");
     }
@@ -731,21 +737,35 @@ export class TaskRealtimeBus {
     });
   }
 
-  private rememberReplayBatch(batch: PendingStreamBatch, event: TaskStreamMirrorBatchEvent): void {
+  private rememberReplayBatch(
+    batch: PendingStreamBatch,
+    event: TaskStreamMirrorBatchEvent,
+    eventBytes: number,
+  ): void {
     // Unbounded replay uses main-process memory linearly during long tasks.
     // Restore both batch-count and byte-count limits; after the limit, replayVisibleRunsToHost emits
     // stream_mirror_gap and uses snapshot recovery.
+    // Track sizes incrementally: re-serializing the whole buffer on every push is O(n) per batch.
     batch.replay.push(event);
+    batch.replaySizes.push(eventBytes);
+    batch.replayByteTotal += eventBytes;
     while (batch.replay.length > STREAM_MIRROR_MAX_REPLAY_BATCHES) {
-      batch.replay.shift();
+      this.evictOldestReplay(batch);
     }
-    while (this.replayBytes(batch.replay) > STREAM_MIRROR_MAX_REPLAY_BYTES) {
-      batch.replay.shift();
+    while (batch.replayByteTotal > STREAM_MIRROR_MAX_REPLAY_BYTES && batch.replay.length > 0) {
+      this.evictOldestReplay(batch);
     }
   }
 
-  private replayBytes(replay: TaskStreamMirrorBatchEvent[]): number {
-    return replay.reduce((total, replayEvent) => total + JSON.stringify(replayEvent).length, 0);
+  private evictOldestReplay(batch: PendingStreamBatch): void {
+    batch.replay.shift();
+    batch.replayByteTotal -= batch.replaySizes.shift() ?? 0;
+  }
+
+  private clearReplay(batch: PendingStreamBatch): void {
+    batch.replay = [];
+    batch.replaySizes = [];
+    batch.replayByteTotal = 0;
   }
 
   private replayVisibleRunsToHost(hostId: string, workspaceKeys: Iterable<string>): void {

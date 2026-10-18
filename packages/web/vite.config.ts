@@ -64,8 +64,8 @@ export default defineConfig(({ mode }) => {
           secure: true,
         },
         // Proxy /ws and /api requests to the server (port 3030 by default).
-        "/ws": { target: "ws://localhost:3030", ws: true },
-        "/api": { target: "http://localhost:3030" },
+        "/ws": { target: "ws://127.0.0.1:3030", ws: true },
+        "/api": { target: "http://127.0.0.1:3030" },
       },
     },
     optimizeDeps: {

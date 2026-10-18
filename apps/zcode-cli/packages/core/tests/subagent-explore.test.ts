@@ -549,6 +549,7 @@ describe("Explore subagent", () => {
     const toolResultPayload = toolResultEvent.payload as any;
     expect(spawnPayload.allowedTools).toEqual([
       "Bash",
+      "LSP",
       "Read",
       "WebFetch",
       "WebSearch",

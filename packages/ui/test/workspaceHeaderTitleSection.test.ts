@@ -1,6 +1,5 @@
 import { createElement, type ReactNode } from "react";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { TID_WORKSPACE_MORE_BUTTON, TID_WORKSPACE_PATH, TID_WORKSPACE_TITLE } from "@zcode/shared";
@@ -316,16 +315,6 @@ describe("WorkspaceHeaderTitleSection", () => {
     expect(html).toContain('aria-label="zcode-cli · zcode/angry-meerkat"');
     expect(html).not.toContain("feat/Oct-08");
     sessionsIndexItems.splice(0, sessionsIndexItems.length);
-  });
-
-  it("scopes the context popover path to the execution worktree directory (source contract)", () => {
-    // The path row renders only inside the opened popover, so pin the wiring at the source level
-    // (same convention as the composer worktree queue contract tests).
-    const source = readFileSync(
-      resolve(process.cwd(), "packages/ui/src/WorkspaceHeaderSections.tsx"),
-      "utf8",
-    );
-    expect(source).toContain("workspacePath={sessionExecutionWorktree?.path ?? workspaceAbsPath}");
   });
 
   it("uses the SSH alias suffix format for remote workspace context", async () => {

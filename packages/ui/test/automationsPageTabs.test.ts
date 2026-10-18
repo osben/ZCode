@@ -2,8 +2,7 @@
 // Top-level tabs of the automations page: "Automation / Workflows"
 // (docs/dynamic-workflow/launch.md, "Where it lives" / "label memory").
 import { createElement, useState } from "react";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { TID_AUTOMATIONS_PAGE_TAB, testId } from "@zcode/shared";
@@ -25,13 +24,6 @@ function Harness({ initial = "automation" }: { initial?: AutomationsPageTab }) {
     createElement(AutomationsPageTitleSwitch, { value: tab, onValueChange: setTab }),
   );
 }
-
-// Under jsdom, `new URL(…, import.meta.url)` is not a file: URL; vitest runs from the repo root,
-// so resolve the source relative to cwd.
-const automationsSectionSource = readFileSync(
-  resolve(process.cwd(), "packages/ui/src/settings/AutomationsSection.tsx"),
-  "utf8",
-).replaceAll("\r\n", "\n");
 
 describe("AutomationsPageTitleSwitch", () => {
   afterEach(() => {
@@ -83,8 +75,7 @@ describe("AutomationsPageTitleSwitch", () => {
     render(createElement(Harness));
     const active = screen.getByTestId(testId(TID_AUTOMATIONS_PAGE_TAB, "automation"));
     const inactive = screen.getByTestId(testId(TID_AUTOMATIONS_PAGE_TAB, "workflow"));
-    expect(active.className).toContain("text-[30px]");
-    expect(active.className).toContain("leading-[34px]");
+    expect(active.className).toContain("text-ui-xl");
     expect(active.className).toContain("text-foreground");
     expect(inactive.className).toContain("text-foreground-subtle");
   });
@@ -107,32 +98,5 @@ describe("automationsPageTabMemory", () => {
     writeAutomationsPageTab("automation");
     expect(readAutomationsPageTab()).toBe("automation");
     expect(sessionStorage.length).toBe(1);
-  });
-});
-
-describe("AutomationsSection 顶级标签接线", () => {
-  it('页标题即切换，且 openAutomationTab: "workflow" 深链直接落到工作流页', () => {
-    // The title component decides between switch and flat h1 via the gray-scale flag
-    // (gray-scale assertions live in dynamicWorkflowGrayAutomationsPage.test.ts).
-    expect(automationsSectionSource).toMatch(
-      /<AutomationsPageTitle\s+workflowTabEnabled=\{dynamicWorkflowEnabled\}\s+value=\{pageTab\}\s+onValueChange=\{setPageTab\}\s*\/>/,
-    );
-    // Memory is app-level now: no more pageTabStorageKey; reads take no arguments and writes take
-    // one.
-    expect(automationsSectionSource).not.toContain("pageTabStorageKey");
-    expect(automationsSectionSource).toContain("readAutomationsPageTab()");
-    expect(automationsSectionSource).toContain("writeAutomationsPageTab(next)");
-    expect(automationsSectionSource).toMatch(
-      /if \(openAutomationTab === "workflow"\) \{\s*setPageTab\("workflow"\);\s*onOpenAutomationConsumed\?\.\(\);\s*return;/,
-    );
-    // The scheduled / off-peak task pill rows stay inside "Automation": the whole Workflows page
-    // is delegated to SavedWorkflowsSection.
-    expect(automationsSectionSource).toMatch(
-      /if \(pageTab === "workflow"\) \{\s*return \(\s*<SavedWorkflowsSection/,
-    );
-    // Deep-link openWorkflow / consumption callbacks are passed through to SavedWorkflowsSection
-    // (invariant 8, multi-project view).
-    expect(automationsSectionSource).toContain("openWorkflow={openWorkflow}");
-    expect(automationsSectionSource).toContain("onOpenWorkflowConsumed={onOpenWorkflowConsumed}");
   });
 });

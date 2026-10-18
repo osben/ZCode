@@ -528,7 +528,7 @@ export function ComputerUseSection({
         type="button"
         variant="link"
         size="sm"
-        className="text-sky-500 hover:text-sky-600 dark:text-sky-400 dark:hover:text-sky-300"
+        className="text-icon-blue hover:text-icon-blue/80"
         aria-label={intl.formatMessage({ id: labelId })}
         title={intl.formatMessage({ id: labelId })}
         disabled={!settled}
@@ -592,7 +592,7 @@ export function ComputerUseSection({
       </Button>
       {verifyTimedOut && !restarting ? (
         <div className="flex flex-col items-start gap-1">
-          <span className="text-xs text-foreground-subtlest">
+          <span className="text-ui-sm text-foreground-subtlest">
             {intl.formatMessage({ id: "cuaPermission.modal.relaunchAppHint" })}
           </span>
           <Button type="button" variant="ghost" size="sm" onClick={() => void onRelaunchApp()}>
@@ -751,7 +751,7 @@ export function ComputerUseSection({
           {/* When macOS is below the CUA Helper support floor, authorization cannot complete
                   (LaunchServices rejects Helper startup with -10825); replace the entire card with an upgrade notice. */}
           {macOsBelowCuaFloor ? (
-            <div className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm text-warning">
+            <div className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-ui-base text-warning">
               <p className="font-medium">
                 {intl.formatMessage(
                   { id: "cuaPermission.osFloorTitle" },

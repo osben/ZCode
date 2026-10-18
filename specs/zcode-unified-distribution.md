@@ -7,7 +7,7 @@
 - `zcode --web` starts the existing local HTTP/WebSocket server with bundled Web assets and Agent. Existing Web flags remain available: `--workspace`, `--host`, `--port`, `--open`, `--no-open`, `--token`, `--no-token`.
 - Only a leading `--web` selects Web mode; a prompt value containing `--web` must remain CLI input. CLI parsing, locale, permissions and sessions keep their existing owner.
 - `zcode --help` includes the Web invocation plus existing CLI help; `zcode --web --help` describes Web flags. `zcode --version` reports the distribution version.
-- Web keeps localhost binding, automatic port selection and non-loopback token defaults. TUI inherits the real terminal in the same process; the launcher must not consume its stdin or print Web status.
+- Web keeps localhost binding, automatic port selection and non-loopback token defaults. `--no-token` with a non-loopback `--host` is rejected before the server starts (see `docs/specs/web-server-bind-auth.md`). TUI inherits the real terminal in the same process; the launcher must not consume its stdin or print Web status.
 
 ## Ownership and boundaries
 

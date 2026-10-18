@@ -1107,3 +1107,311 @@ describe("gitCliRepo verifyWorktreeUsable", () => {
     await expect(repo.verifyWorktreeUsable("/repo", dir)).rejects.toBe(error);
   });
 });
+
+describe("gitCliRepo createWorktree branch rollback", () => {
+  // Scripted Git: `worktree add -b` creates the ref before the directory step, like real Git,
+  // so the post-failure `show-ref` reports the branch only when this run created it.
+  function createScriptedWorktreeProvider(options: {
+    branchExistsBeforeCall: boolean;
+    addStderr: string;
+    addCreatesRef: boolean;
+    rollbackBehavior?: "success" | "exit-1" | "throw";
+    // Tip of the created ref; the start point (`release`) resolves to "base-sha".
+    branchTipSha?: string;
+  }): { commandProvider: GitCommandProvider; run: ReturnType<typeof vi.fn> } {
+    let refCreated = false;
+    const run = vi.fn(
+      async (commandOptions: GitCommandExecutionOptions): Promise<GitCommandExecutionResult> => {
+        const command = commandOptions.args.join(" ");
+        if (command.startsWith("rev-parse --show-toplevel")) {
+          return createCommandResult(commandOptions, {
+            stdout: "/repo\n\n/repo/.git\n.git\n",
+          });
+        }
+        if (command.startsWith("check-ref-format --branch")) {
+          return createCommandResult(commandOptions);
+        }
+        if (command.startsWith("show-ref --verify --quiet refs/heads/")) {
+          const exists = options.branchExistsBeforeCall || refCreated;
+          return createCommandResult(commandOptions, { exitCode: exists ? 0 : 1 });
+        }
+        if (command.startsWith("worktree add")) {
+          if (options.addCreatesRef) {
+            refCreated = true;
+          }
+          return createCommandResult(commandOptions, {
+            exitCode: 128,
+            stderr: options.addStderr,
+          });
+        }
+        if (command === "rev-parse --verify --quiet refs/heads/feature^{commit}") {
+          const exists = options.branchExistsBeforeCall || refCreated;
+          return createCommandResult(commandOptions, {
+            exitCode: exists ? 0 : 1,
+            stdout: exists ? `${options.branchTipSha ?? "base-sha"}\n` : "",
+          });
+        }
+        if (command === "rev-parse --verify --quiet release^{commit}") {
+          return createCommandResult(commandOptions, { stdout: "base-sha\n" });
+        }
+        if (command.startsWith("update-ref -d refs/heads/feature ")) {
+          if (options.rollbackBehavior === "throw") {
+            throw new Error("spawn git ENOENT");
+          }
+          if (options.rollbackBehavior === "exit-1") {
+            return createCommandResult(commandOptions, {
+              exitCode: 1,
+              stderr: "error: branch is checked out",
+            });
+          }
+          refCreated = false;
+          return createCommandResult(commandOptions, { stdout: "Deleted branch feature" });
+        }
+        throw new Error(`Unexpected git command in test: ${command}`);
+      },
+    );
+    return {
+      commandProvider: { resolveGitBinary: vi.fn().mockResolvedValue("git"), run },
+      run,
+    };
+  }
+
+  const permissionStderr =
+    "fatal: could not create leading directories of '/locked/wt/.git': Permission denied";
+
+  it("deletes the half-created branch after a failed worktree add -b", async () => {
+    const target = join(makeTempDir("zcode-git-rollback-parent-"), "wt");
+    const { commandProvider, run } = createScriptedWorktreeProvider({
+      branchExistsBeforeCall: false,
+      addStderr: permissionStderr,
+      addCreatesRef: true,
+    });
+    const repo = createGitCliRepo({ commandProvider });
+
+    const result = await repo.createWorktree("/repo", "feature", target, "release");
+
+    expect(result.ok).toBe(false);
+    expect(result.issues).toHaveLength(1);
+    const commands = run.mock.calls.map(([options]) => options.args.join(" "));
+    expect(commands).toContain("update-ref -d refs/heads/feature base-sha");
+    expect(commands.indexOf("update-ref -d refs/heads/feature base-sha")).toBeGreaterThan(
+      commands.findIndex((command) => command.startsWith("worktree add -b feature")),
+    );
+  });
+
+  it("does not delete a branch that existed before the call", async () => {
+    const target = join(makeTempDir("zcode-git-rollback-existing-"), "wt");
+    const { commandProvider, run } = createScriptedWorktreeProvider({
+      branchExistsBeforeCall: true,
+      addStderr: permissionStderr,
+      addCreatesRef: false,
+    });
+    const repo = createGitCliRepo({ commandProvider });
+
+    const result = await repo.createWorktree("/repo", "feature", target, "release");
+
+    expect(result.ok).toBe(false);
+    const commands = run.mock.calls.map(([options]) => options.args.join(" "));
+    expect(commands.some((command) => command.startsWith("update-ref -d"))).toBe(false);
+  });
+
+  it("does not delete a branch that moved off its start point (another creator committed)", async () => {
+    const target = join(makeTempDir("zcode-git-rollback-moved-"), "wt");
+    const { commandProvider, run } = createScriptedWorktreeProvider({
+      branchExistsBeforeCall: false,
+      addStderr: permissionStderr,
+      addCreatesRef: true,
+      branchTipSha: "foreign-sha",
+    });
+    const repo = createGitCliRepo({ commandProvider });
+
+    const result = await repo.createWorktree("/repo", "feature", target, "release");
+
+    expect(result.ok).toBe(false);
+    const commands = run.mock.calls.map(([options]) => options.args.join(" "));
+    expect(commands.some((command) => command.startsWith("update-ref -d"))).toBe(false);
+  });
+
+  it("does not delete a branch created concurrently by another creator", async () => {
+    const target = join(makeTempDir("zcode-git-rollback-race-"), "wt");
+    // The other creator's ref appears between our pre-probe and the failed add, so the
+    // post-failure probe sees it. The stderr classifier must keep it out of the rollback.
+    const { commandProvider, run } = createScriptedWorktreeProvider({
+      branchExistsBeforeCall: false,
+      addStderr: "fatal: a branch named 'feature' already exists",
+      addCreatesRef: true,
+    });
+    const repo = createGitCliRepo({ commandProvider });
+
+    const result = await repo.createWorktree("/repo", "feature", target, "release");
+
+    expect(result.ok).toBe(false);
+    expect(result.issues[0]?.code).toBe("branch-already-exists");
+    const commands = run.mock.calls.map(([options]) => options.args.join(" "));
+    expect(commands.some((command) => command.startsWith("update-ref -d"))).toBe(false);
+  });
+
+  it.each([
+    ["non-zero exit", "exit-1"],
+    ["thrown error", "throw"],
+  ] as const)(
+    "keeps the original worktree failure when rollback fails (%s)",
+    async (_label, rollbackBehavior) => {
+      const target = join(makeTempDir("zcode-git-rollback-fail-"), "wt");
+      const { commandProvider } = createScriptedWorktreeProvider({
+        branchExistsBeforeCall: false,
+        addStderr: permissionStderr,
+        addCreatesRef: true,
+        rollbackBehavior,
+      });
+      const repo = createGitCliRepo({ commandProvider });
+
+      const result = await repo.createWorktree("/repo", "feature", target, "release");
+
+      expect(result).toEqual({
+        ok: false,
+        worktreePath: null,
+        branchName: null,
+        issues: [expect.objectContaining({ code: "unknown", detail: permissionStderr })],
+      });
+    },
+  );
+});
+
+describe("gitCliRepo ensureWorktreeExclusion", () => {
+  const worktreeExcludeLine = ".worktrees/";
+
+  function excludeFileOf(repoPath: string): string {
+    return join(repoPath, ".git", "info", "exclude");
+  }
+
+  function countExcludeLines(content: string): number {
+    return content.split(/\r?\n/).filter((line) => line.trim() === worktreeExcludeLine).length;
+  }
+
+  it(
+    "creates the exclude file with the line for inside placement and keeps main status clean",
+    async () => {
+      const { repoPath } = createWorktreeTestRepo();
+      const repo = createGitCliRepo();
+      rmSync(join(repoPath, ".git", "info"), { recursive: true, force: true });
+      const insidePath = join(repoPath, ".worktrees", "feature");
+
+      expect((await repo.createWorktree(repoPath, "feature", insidePath, "release")).ok).toBe(true);
+      // Git reports the untracked `.worktrees/` before the exclusion is written.
+      expect(runGit(repoPath, ["status", "--porcelain"])).toBe("?? .worktrees/");
+
+      await expect(repo.ensureWorktreeExclusion(repoPath, insidePath)).resolves.toEqual({
+        ok: true,
+      });
+
+      expect(readFileSync(excludeFileOf(repoPath), "utf-8")).toBe(`${worktreeExcludeLine}\n`);
+      expect(runGit(repoPath, ["status", "--porcelain"])).toBe("");
+    },
+    GIT_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "does not duplicate the line on a second call",
+    async () => {
+      const { repoPath } = createWorktreeTestRepo();
+      const repo = createGitCliRepo();
+      const insidePath = join(repoPath, ".worktrees", "feature");
+      expect((await repo.createWorktree(repoPath, "feature", insidePath, "release")).ok).toBe(true);
+
+      await repo.ensureWorktreeExclusion(repoPath, insidePath);
+      const afterFirst = readFileSync(excludeFileOf(repoPath), "utf-8");
+      await expect(repo.ensureWorktreeExclusion(repoPath, insidePath)).resolves.toEqual({
+        ok: true,
+      });
+
+      expect(readFileSync(excludeFileOf(repoPath), "utf-8")).toBe(afterFirst);
+      expect(countExcludeLines(afterFirst)).toBe(1);
+    },
+    GIT_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "preserves existing content and terminates a missing trailing newline before appending",
+    async () => {
+      const { repoPath } = createWorktreeTestRepo();
+      const repo = createGitCliRepo();
+      const insidePath = join(repoPath, ".worktrees", "feature");
+      expect((await repo.createWorktree(repoPath, "feature", insidePath, "release")).ok).toBe(true);
+      writeFileSync(excludeFileOf(repoPath), "# local rules\nbuild/");
+
+      await expect(repo.ensureWorktreeExclusion(repoPath, insidePath)).resolves.toEqual({
+        ok: true,
+      });
+
+      expect(readFileSync(excludeFileOf(repoPath), "utf-8")).toBe(
+        `# local rules\nbuild/\n${worktreeExcludeLine}\n`,
+      );
+    },
+    GIT_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "is a no-op success for a target outside .worktrees/",
+    async () => {
+      const { container, repoPath } = createWorktreeTestRepo();
+      const repo = createGitCliRepo();
+      const siblingPath = join(container, "sibling");
+      expect((await repo.createWorktree(repoPath, "feature", siblingPath, "release")).ok).toBe(
+        true,
+      );
+      const before = readFileSync(excludeFileOf(repoPath), "utf-8");
+
+      await expect(repo.ensureWorktreeExclusion(repoPath, siblingPath)).resolves.toEqual({
+        ok: true,
+      });
+      // The `.worktrees` directory itself is not a worktree inside it.
+      await expect(
+        repo.ensureWorktreeExclusion(repoPath, join(repoPath, ".worktrees")),
+      ).resolves.toEqual({ ok: true });
+
+      expect(readFileSync(excludeFileOf(repoPath), "utf-8")).toBe(before);
+      expect(countExcludeLines(before)).toBe(0);
+    },
+    GIT_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "writes to the shared common exclude file when the workspace is a linked worktree",
+    async () => {
+      const { container, repoPath } = createWorktreeTestRepo();
+      const repo = createGitCliRepo();
+      const linkedPath = join(container, "linked");
+      expect((await repo.createWorktree(repoPath, "feature", linkedPath, "release")).ok).toBe(true);
+      // Inside placement is relative to the linked worktree's own top level; the exclude file it
+      // writes is the main checkout's common one, shared by every worktree of the repository.
+      const insidePath = join(linkedPath, ".worktrees", "nested");
+      mkdirSync(insidePath, { recursive: true });
+
+      await expect(repo.ensureWorktreeExclusion(linkedPath, insidePath)).resolves.toEqual({
+        ok: true,
+      });
+
+      expect(countExcludeLines(readFileSync(excludeFileOf(repoPath), "utf-8"))).toBe(1);
+    },
+    GIT_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "reports failure without throwing when the exclude file cannot be written",
+    async () => {
+      const { repoPath } = createWorktreeTestRepo();
+      const repo = createGitCliRepo();
+      const insidePath = join(repoPath, ".worktrees", "feature");
+      expect((await repo.createWorktree(repoPath, "feature", insidePath, "release")).ok).toBe(true);
+      // A directory where the exclude file should be makes the append fail with EISDIR.
+      rmSync(excludeFileOf(repoPath), { force: true });
+      mkdirSync(excludeFileOf(repoPath));
+
+      await expect(repo.ensureWorktreeExclusion(repoPath, insidePath)).resolves.toEqual({
+        ok: false,
+      });
+    },
+    GIT_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+});

@@ -19,7 +19,9 @@ import {
 } from "#src/memory/projectMemoryFrontmatter.js";
 import { getZCodeDataRootDir } from "#src/paths.js";
 import { readProjectMemoryIndexLineCount } from "#src/memory/projectMemoryIndexContent.js";
+import { createServiceLogger } from "#src/logger/serviceLogger.js";
 
+const logger = createServiceLogger("memory");
 const PROJECT_MEMORY_INDEX_FILE_NAME = "MEMORY.md";
 const PROJECT_MEMORY_DIRECTORY_NAME = "memory";
 // Success marker written by the runtime only after a Dream run completes (see
@@ -201,7 +203,7 @@ export function createMemoryService(): IMemoryService {
         return { memory: null };
       }
     } catch (error) {
-      console.error("Failed to load memory:", error);
+      logger.warn(undefined, "Failed to load memory:", error);
       return { memory: null };
     }
   }
@@ -222,7 +224,7 @@ export function createMemoryService(): IMemoryService {
       const filePath = join(memoryDir, fileName);
       await writeFile(filePath, config.content, "utf-8");
     } catch (error) {
-      console.error("Failed to save memory:", error);
+      logger.error(undefined, "Failed to save memory:", error);
       throw error;
     }
   }
@@ -241,7 +243,7 @@ export function createMemoryService(): IMemoryService {
         // File does not exist; ignore the error.
       }
     } catch (error) {
-      console.error("Failed to clear memory:", error);
+      logger.error(undefined, "Failed to clear memory:", error);
       throw error;
     }
   }

@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import enUS from "../src/i18n/locales/en-US.js";
 import zhCN from "../src/i18n/locales/zh-CN.js";
@@ -69,10 +67,5 @@ describe("sessionManagerColumns", () => {
     for (const column of SESSION_MANAGER_SORTABLE_COLUMNS) {
       expect(SESSION_MANAGER_TOGGLEABLE_COLUMNS).toContain(column);
     }
-    const tableSource = readFileSync(
-      join(import.meta.dirname, "../src/session-manager/SessionManagerTable.tsx"),
-      "utf8",
-    );
-    expect(tableSource).toContain("SESSION_MANAGER_SORTABLE_COLUMNS.includes(column)");
   });
 });

@@ -119,6 +119,9 @@ import {
   type ZCodeUserInputRequestParams,
   type ZCodeUserInputResponse,
   type ZCodeAgentMcpServer,
+  isZCodeAskUserQuestionToolName as isAskUserQuestionToolName,
+  isZCodeExitPlanModeToolName as isExitPlanModeToolName,
+  isZCodeUserInputBackedPermissionToolName as isUserInputBackedPermissionToolName,
 } from "@zcode/shared";
 import type {
   ZCodeTaskListQuery,
@@ -224,8 +227,6 @@ type ZCodeTerminalStreamEvent =
 const GLM_PROVIDER: ZCodeProvider = ZCODE_AGENT_PROVIDER;
 const EMPTY_SLASH_COMMANDS: ZCodeSlashCommand[] = [];
 const logger = createServiceLogger("zcode-task-service");
-const ASK_USER_QUESTION_TOOL_NAME = "AskUserQuestion";
-const EXIT_PLAN_MODE_TOOL_NAME = "ExitPlanMode";
 const EXIT_PLAN_MODE_APPROVAL_QUESTION = "Review this implementation plan.";
 const EXIT_PLAN_MODE_APPROVAL_APPROVE = "approve";
 
@@ -6241,18 +6242,6 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function isAskUserQuestionToolName(value: string | undefined): boolean {
-  return value === ASK_USER_QUESTION_TOOL_NAME;
-}
-
-function isExitPlanModeToolName(value: string | undefined): boolean {
-  return value === EXIT_PLAN_MODE_TOOL_NAME;
-}
-
-function isUserInputBackedPermissionToolName(value: string | undefined): boolean {
-  return isAskUserQuestionToolName(value) || isExitPlanModeToolName(value);
 }
 
 function numberValue(value: unknown): number | undefined {

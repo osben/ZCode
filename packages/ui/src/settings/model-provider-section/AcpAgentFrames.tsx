@@ -25,8 +25,10 @@ export function AcpAgentFrames({
       <summary className="cursor-pointer select-none text-ui-sm text-foreground-subtle">
         {title}
       </summary>
-      {dropped > 0 ? <p className="mt-1 text-xs text-foreground-subtle">{droppedLabel}</p> : null}
-      <ul className="mt-2 max-h-64 space-y-1 overflow-auto font-mono text-xs leading-5">
+      {dropped > 0 ? (
+        <p className="mt-1 text-ui-sm text-foreground-subtle">{droppedLabel}</p>
+      ) : null}
+      <ul className="mt-2 max-h-64 space-y-1 overflow-auto font-mono text-ui-sm leading-5">
         {frames.map((frame, index) => (
           <li key={index} className="whitespace-pre-wrap break-all">
             <span className="sr-only">{frame.direction} </span>

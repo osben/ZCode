@@ -12,6 +12,8 @@ import type {
   PluginHookDetail,
   PluginLoadOutcome,
   PluginManifest,
+  LspServerConfig,
+  ResolvedLspServer,
   PluginUiSurfaceDefinition,
   PluginMetadata,
   PluginOperationOptions,
@@ -37,6 +39,11 @@ import {
 } from "./helpers.js";
 import { scanSkillFilesUnderRootSync } from "../skills/scan.js";
 import { loadPluginMcpServerDefinitions, resolvePluginMcpServers } from "./mcp.js";
+import {
+  loadPluginLspServerDefinitions,
+  resolveLspExtensionConflicts,
+  resolvePluginLspServers,
+} from "./lsp.js";
 import { parsePluginUiSurfaces } from "./ui-surfaces.js";
 import { listPluginHookSources } from "./hook-sources.js";
 import { enumeratePluginComponents } from "./plugin-components.js";
@@ -109,7 +116,7 @@ const DEFAULT_VERSION = "0.0.0";
 const FIRST_PLUGIN_PRIORITY = 1_000;
 const PRIORITY_STEP = 10;
 const PLUGIN_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,127}$/;
-const UNSUPPORTED_COMPONENT_KEYS = ["channels", "lspServers", "outputStyles", "settings"] as const;
+const UNSUPPORTED_COMPONENT_KEYS = ["channels", "outputStyles", "settings"] as const;
 const SUPPORTED_HOOK_EVENTS = new Set<string>(Object.values(HookEventNameValue));
 
 interface PluginHookInspection {
@@ -143,6 +150,9 @@ export class NodePluginAdapter implements PluginPort {
     const commandRoots: CustomCommandRoot[] = [];
     const hooks: PluginLoadOutcome["hooks"] = {};
     const mcpServers: PluginLoadOutcome["mcpServers"] = {};
+    // Collected across plugins, then conflict-resolved once all enabled plugins are known.
+    const lspServers: ResolvedLspServer[] = [];
+    const lspManifestPaths = new Map<string, string>();
     const plugins: PluginMetadata[] = [];
     const seen = new Set<string>();
     const skillRoots: SkillRoot[] = [];
@@ -184,6 +194,7 @@ export class NodePluginAdapter implements PluginPort {
       // servers from the management page for disabled plugins. Read the declared names for read-only UI
       // display; runtime injection still uses only component.mcpServers resolved by the enabled branch.
       const mcpServerDefinitions = loadPluginMcpServerDefinitions({ diagnostics, loaded });
+      const lspServerDefinitions = loadPluginLspServerDefinitions({ diagnostics, loaded });
       const hooksRunnable = canRunPluginHooks(loaded);
       const hookInspection = inspectPluginHooks({
         dataPath,
@@ -199,6 +210,7 @@ export class NodePluginAdapter implements PluginPort {
             hookEvents: hooksRunnable ? hookInspection.events : {},
             hookDetails: hookInspection.details,
             loaded,
+            lspServerDefinitions,
             mcpServerDefinitions,
             options: request.config.options[loaded.id] ?? {},
             priority,
@@ -208,6 +220,8 @@ export class NodePluginAdapter implements PluginPort {
       priority += PRIORITY_STEP;
 
       Object.assign(mcpServers, component.mcpServers);
+      lspServers.push(...component.lspServers);
+      lspManifestPaths.set(loaded.id, loaded.manifestPath);
       mergeHookEvents(hooks, component.hooks);
       skillRoots.push(...component.skillRoots);
       commandRoots.push(...component.commandRoots);
@@ -219,6 +233,7 @@ export class NodePluginAdapter implements PluginPort {
           dataPath,
           enabled,
           declaredMcpServerNames,
+          Object.keys(lspServerDefinitions),
           request.config.options[loaded.id] ?? {},
           // Plugin UI panel entry (A5): resolve regardless of enabled state; listUiSurfaces filters entries for disabled plugins.
           parsePluginUiSurfaces({ loaded, declaredMcpServerNames, diagnostics }),
@@ -226,10 +241,16 @@ export class NodePluginAdapter implements PluginPort {
       );
     }
 
+    const lspResolution = resolveLspExtensionConflicts(lspServers, {
+      diagnostics,
+      manifestPathByPluginId: lspManifestPaths,
+    });
+
     return {
       commandRoots,
       diagnostics,
       hooks,
+      lspServers: lspResolution.servers,
       mcpServers,
       plugins,
       skillRoots,
@@ -298,6 +319,7 @@ function createPluginMetadata(
   dataPath: string,
   enabled: boolean,
   declaredMcpServerNames: string[],
+  declaredLspServerNames: string[],
   configuredOptions: Record<string, string | number | boolean>,
   uiSurfaces: PluginUiSurfaceDefinition[],
 ): PluginMetadata {
@@ -329,6 +351,7 @@ function createPluginMetadata(
     id: loaded.id,
     manifestPath: loaded.manifestPath,
     marketplace: loaded.marketplace,
+    lspServerNames: declaredLspServerNames,
     mcpServerNames: Object.keys(component.mcpServers),
     name: loaded.manifest.name,
     hookDetails: component.hookDetails,
@@ -349,6 +372,7 @@ function resolveEnabledComponents(input: {
   hookDetails: PluginHookDetail[];
   hookEvents: Partial<Record<HookEventName, HookMatcherConfig[]>>;
   loaded: LoadedPlugin;
+  lspServerDefinitions: Record<string, LspServerConfig>;
   mcpServerDefinitions: Record<string, unknown>;
   options: Record<string, string | number | boolean>;
   priority: number;
@@ -361,6 +385,10 @@ function resolveEnabledComponents(input: {
     commandRoots: resolveCommandRoots(input, input.priority + 1),
     hooks: input.hookEvents,
     hookDetails: input.hookDetails,
+    lspServers: resolvePluginLspServers({
+      ...input,
+      definitions: input.lspServerDefinitions,
+    }),
     mcpServers: resolvePluginMcpServers({
       ...input,
       definitions: input.mcpServerDefinitions,
@@ -984,6 +1012,7 @@ function emptyOutcome(): PluginLoadOutcome {
     commandRoots: [],
     diagnostics: [],
     hooks: {},
+    lspServers: [],
     mcpServers: {},
     plugins: [],
     skillRoots: [],
@@ -995,6 +1024,7 @@ function emptyComponents(hookDetails: PluginHookDetail[] = []): PluginComponents
     commandRoots: [],
     hooks: {},
     hookDetails,
+    lspServers: [],
     mcpServers: {},
     skillCount: 0,
     skillRoots: [],

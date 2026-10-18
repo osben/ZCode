@@ -481,6 +481,57 @@ describe("Manual /dream command", () => {
     expect(dreamTurn).toBe(1);
   });
 
+  it("sends the memory-dream override body followed by the runtime tail", async () => {
+    const cliStorageRoot = await temporaryDirectory();
+    const modelIoDir = join(cliStorageRoot, "rollout");
+    const memoryRoot = resolveProjectMemoryRoot({
+      cliStorageRoot,
+      workspacePath: WORKSPACE_PATH,
+    });
+    const pastSessions = [session("manual-override", NOW)];
+    const fileSystemPort = new MemoryFileSystem(
+      { [join(modelIoDir, `model-io-${pastSessions[0]!.id}.jsonl`)]: "{}\n" },
+      { [join(modelIoDir, `model-io-${pastSessions[0]!.id}.jsonl`)]: NOW },
+    );
+    const dreamTexts: string[] = [];
+    const runtime = createTestAgentRuntime(
+      createSessionId("manual-dream-override"),
+      {
+        memory: { cliStorageRoot, enabled: true, use: true },
+        mode: "yolo",
+        systemPromptOverrides: {
+          "memory-dream": "# Dream: Memory Consolidation\nTidy {{memoryRoot}} using {{transcriptRoot}}.",
+        },
+        workingDirectory: WORKSPACE_PATH,
+      },
+      {
+        eventStore: createTestSessionEventStore(),
+        fileSystemPort,
+        modelFactory: createTestModelFactory({
+          async generateText(request, observation) {
+            const text = providerMessagesToText(request.messages);
+            if (!text.includes("# Dream: Memory Consolidation")) {
+              throw new Error(`unexpected non-dream model request: ${text.slice(0, 80)}`);
+            }
+            dreamTexts.push(text);
+            return textResult(observation.model, "Nothing worth keeping");
+          },
+        }),
+        modelIoDir,
+        now: () => new Date(NOW),
+        sessionStore: createMemorySessionStore(pastSessions),
+        toolRegistry: createToolRegistry(),
+      },
+    );
+
+    await runtime.executeTurn("/dream");
+    await runtime.drainBackgroundDreams();
+
+    expect(dreamTexts[0]).toContain(`Tidy ${memoryRoot} using ${modelIoDir}.\n\n## Additional context`);
+    expect(dreamTexts[0]).toContain("Sessions since last consolidation (1):");
+    expect(dreamTexts[0]).not.toContain("## Phase 1 — Orient");
+  });
+
   it("skips an immediate re-run after a successful dream while the consolidation lock is fresh", async () => {
     const cliStorageRoot = await temporaryDirectory();
     const modelIoDir = join(cliStorageRoot, "rollout");

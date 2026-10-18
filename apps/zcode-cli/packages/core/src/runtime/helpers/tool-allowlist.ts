@@ -84,6 +84,17 @@ export function resolveRuntimeDynamicWorkflowToolsIncluded(runtime: {
   return runtime.config.dynamicWorkflowEnabled !== false && runtime.dynamicWorkflowToolsActivated;
 }
 
+/**
+ * Gate for the LSP tool (spec §7), shared by both registration entry points (initial setup and branch refresh).
+ * Registered only when an LspService is wired and availability resolved true; it never follows the tool allowlist alone.
+ */
+export function resolveRuntimeLspToolIncluded(runtime: {
+  lspService?: unknown;
+  lspToolAvailable: boolean;
+}): boolean {
+  return runtime.lspService !== undefined && runtime.lspToolAvailable;
+}
+
 export function resolveBuiltInToolAllowlist(
   config: AgentRuntimeConfig,
 ): readonly string[] | undefined {

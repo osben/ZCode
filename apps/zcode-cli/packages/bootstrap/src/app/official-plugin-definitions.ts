@@ -349,6 +349,28 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
     version: "0.1.0",
   },
   {
+    // Declaration-only plugin: it ships an inline lspServers entry and no skills, commands, or MCP.
+    // The language server binary is not bundled; the entry stays inert until typescript-language-server
+    // is on PATH (see the plugin README). Keep packages/shared/src/plugin-marketplaces.ts in sync.
+    defaultEnabled: true,
+    listing: {
+      author: ZAI_AUTHOR,
+      category: "developer-tools",
+      displayName: "TypeScript LSP",
+      description_i18n: {
+        "zh-CN": "为 TypeScript 与 JavaScript 文件提供语言服务器，支持编辑后诊断。",
+      },
+    },
+    name: "typescript-lsp",
+    rootCandidates: [
+      "packages/typescript-lsp-plugin",
+      "../typescript-lsp-plugin",
+      "../../typescript-lsp-plugin",
+      "../../../typescript-lsp-plugin",
+    ],
+    version: "0.1.0",
+  },
+  {
     // Content-only plugin (commands + skills, no MCP / system dependencies), enabled by
     // default so users/agents have the ZCode configuration guide, self-diagnostic skill,
     // and dynamic-workflow authoring guide out of the box.

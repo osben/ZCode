@@ -765,4 +765,83 @@ describe("late worktree reservation ACK after navigation", () => {
     const recoveries = readV4WorktreeRecoveryDrafts("/workspace", undefined, "prepared-session-a");
     expect(recoveries.some((entry) => entry.draft.text === "queued failing text")).toBe(true);
   });
+
+  it("keeps the frozen send armed across failure so Retry dispatches it exactly once", async () => {
+    const harness = renderLateAckComposer();
+    const paramsFor = (attemptId: string) => ({
+      workspacePath: "/workspace",
+      branchName: "feature-a",
+      targetPath: "/worktrees/feature-a",
+      attemptId,
+      baseFromHeadDefault: true,
+    });
+    // The pipeline exists when the send is queued, as in production.
+    const store = useComposerWorktreePipelineStore.getState();
+    store.startPipeline("/workspace", {
+      status: "creating",
+      sessionId: "prepared-session-a",
+      params: paramsFor("attempt-1"),
+      queuedPromptPreview: "frozen retry text",
+      createdAt: Date.now(),
+    });
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("frozen retry text");
+      await flushAsyncWork();
+    });
+    const prepareSession = harness.capturedPrepareSession();
+    await act(async () => {
+      void prepareSession!({
+        workspaceKey: "/workspace",
+        branchName: "feature-a",
+        targetPath: "/worktrees/feature-a",
+        attemptId: "attempt-1",
+      });
+      await flushAsyncWork();
+    });
+    await act(async () => {
+      harness.resolveReservation("prepared-session-a");
+      await flushAsyncWork();
+    });
+    store.markFailed("/workspace", "EACCES", "prepared-session-a", "attempt-1");
+    await act(async () => {
+      await flushAsyncWork();
+    });
+    // Failure never dispatches; the frozen message stays recoverable for the user.
+    expect(harness.onSendText).not.toHaveBeenCalled();
+    expect(
+      readV4WorktreeRecoveryDrafts("/workspace", undefined, "prepared-session-a").some(
+        (entry) => entry.draft.text === "frozen retry text",
+      ),
+    ).toBe(true);
+
+    // Retry restarts the same prepared session under a new attempt id and settles ready.
+    useComposerWorktreePipelineStore.getState().startPipeline("/workspace", {
+      status: "creating",
+      sessionId: "prepared-session-a",
+      params: paramsFor("attempt-2"),
+      queuedPromptPreview: "frozen retry text",
+      createdAt: Date.now(),
+    });
+    await act(async () => {
+      await flushAsyncWork();
+    });
+    useComposerWorktreePipelineStore
+      .getState()
+      .markReady("/workspace", "/worktrees/feature-a", false, "prepared-session-a", "attempt-2");
+    await act(async () => {
+      await flushAsyncWork();
+      await flushAsyncWork();
+    });
+
+    expect(harness.onSendText).toHaveBeenCalledTimes(1);
+    const [text, options] = harness.onSendText.mock.calls[0] as [string, Record<string, unknown>];
+    expect(text).toBe("frozen retry text");
+    expect(options).toMatchObject({
+      executionWorktree: { path: "/worktrees/feature-a", branchName: "feature-a" },
+      preparedSessionId: "prepared-session-a",
+      preparedAttemptId: "attempt-2",
+    });
+    // The accepted dispatch consumes the recovery record, so Retry cannot leave a duplicate draft.
+    expect(readV4WorktreeRecoveryDrafts("/workspace", undefined, "prepared-session-a")).toEqual([]);
+  });
 });

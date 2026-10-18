@@ -80,6 +80,12 @@ interface TaskIndexRow {
   meta_json: string;
 }
 
+/**
+ * List reads never need the (up to 200 KB per row) body text, and tasks-index.sqlite is read
+ * synchronously in the Host, so they select the row without searchable_text.
+ */
+type TaskIndexMetaRow = Omit<TaskIndexRow, "searchable_text">;
+
 interface LegacyAcpTaskIndexRow extends TaskIndexRow {
   acp_session_id: string | null;
 }
@@ -192,7 +198,7 @@ function shouldPreserveNewerTerminalStatus(
   return existingMeta.updatedAt > incomingMeta.updatedAt;
 }
 
-function resolveTaskIndexRowWorkspaceIdentity(row: TaskIndexRow): string | undefined {
+function resolveTaskIndexRowWorkspaceIdentity(row: TaskIndexMetaRow): string | undefined {
   const columnIdentity = row.workspace_identity?.trim();
   if (columnIdentity === row.workspace_key) {
     return columnIdentity;
@@ -207,7 +213,7 @@ function resolveTaskIndexRowWorkspaceIdentity(row: TaskIndexRow): string | undef
   return undefined;
 }
 
-function rowToMeta(row: TaskIndexRow): ZCodeTaskMeta {
+function rowToMeta(row: TaskIndexMetaRow): ZCodeTaskMeta {
   const workspaceIdentity = resolveTaskIndexRowWorkspaceIdentity(row);
   try {
     const parsed = zcodeTaskMetaSchema.safeParse(JSON.parse(row.meta_json));
@@ -363,9 +369,13 @@ function buildSearchSnippets(searchableText: string, search: string | null): str
   return snippets;
 }
 
-function rowToTaskListItem(row: TaskIndexRow, search: string | null): ZCodeTaskListItem {
+function rowToTaskListItem(
+  row: TaskIndexMetaRow & { searchable_text?: string },
+  search: string | null,
+): ZCodeTaskListItem {
   const meta = rowToMeta(row);
-  const snippets = buildSearchSnippets(row.searchable_text, search);
+  // Non-search list reads do not select searchable_text; snippets are only built when searching.
+  const snippets = buildSearchSnippets(row.searchable_text ?? "", search);
   if (snippets.length === 0) {
     return meta;
   }
@@ -2056,7 +2066,6 @@ export class TaskIndexRepo {
           archived,
           deleted,
           title_overridden,
-          searchable_text,
           meta_json
         FROM tasks
         WHERE (@workspace_key IS NULL OR workspace_key = @workspace_key)
@@ -2073,7 +2082,7 @@ export class TaskIndexRepo {
         provider: params.provider ?? null,
         pinned: typeof params.pinned === "boolean" ? (params.pinned ? 1 : 0) : null,
         archived: typeof params.archived === "boolean" ? (params.archived ? 1 : 0) : null,
-      }) as unknown as TaskIndexRow[];
+      }) as unknown as TaskIndexMetaRow[];
     return rows.map(rowToMeta);
   }
 
@@ -2109,6 +2118,19 @@ export class TaskIndexRepo {
     return rows.map((row) => row.task_id);
   }
 
+  /** Existence check for callers that only need "is there any task"; avoids materializing every row. */
+  async hasTaskMetas(params: { includeDeleted?: boolean } = {}): Promise<boolean> {
+    await this.ensureReady();
+    const row = this.getDatabase()
+      .prepare(
+        `SELECT EXISTS(
+          SELECT 1 FROM tasks WHERE (@include_deleted = 1 OR deleted = 0)
+        ) AS found`,
+      )
+      .get({ include_deleted: params.includeDeleted ? 1 : 0 }) as { found: number } | undefined;
+    return row?.found === 1;
+  }
+
   /**
    * List all cron sessions produced by an automation (for expanded automation details and association queries).
    * Use the cron_automation_id index column; return only undeleted sessions in descending creation time.
@@ -2138,14 +2160,13 @@ export class TaskIndexRepo {
           archived,
           deleted,
           title_overridden,
-          searchable_text,
           meta_json
         FROM tasks
         WHERE cron_automation_id = @automation_id
           AND deleted = 0
         ORDER BY created_at DESC, task_id DESC`,
       )
-      .all({ automation_id: automationId }) as unknown as TaskIndexRow[];
+      .all({ automation_id: automationId }) as unknown as TaskIndexMetaRow[];
     return rows.map(rowToMeta);
   }
 
@@ -2220,13 +2241,13 @@ export class TaskIndexRepo {
           archived,
           deleted,
           title_overridden,
-          searchable_text,
+          ${normalizedSearchLike ? "searchable_text," : ""}
           meta_json
         FROM tasks
         WHERE ${whereClause}
         ORDER BY ${orderBy}${limit === null ? "" : " LIMIT ?"}`,
       )
-      .all(...listArgs) as unknown as TaskIndexRow[];
+      .all(...listArgs) as unknown as Array<TaskIndexMetaRow & { searchable_text?: string }>;
     const workspacePurposeByKey = new Map(
       params.workspaceScopes.flatMap((scope) =>
         scope.workspacePurpose ? [[workspaceKey(scope), scope.workspacePurpose] as const] : [],

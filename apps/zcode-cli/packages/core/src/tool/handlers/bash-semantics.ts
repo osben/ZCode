@@ -1,6 +1,7 @@
 import type { ExecutionResult } from "@zcode/contracts";
 import { analyzeBashCommand, isBashCommandPermissionSafe } from "./bash-command-parser.js";
 import {
+  analysisContainsDirectoryChange,
   analysisContainsGitAndDirectoryChange,
   analysisContainsGitCommand,
   isGitRuntimeContextUnsafe,
@@ -119,6 +120,14 @@ export function isSearchOrReadBashCommand(command: string): BashCommandClassific
 
 export function isBashReadOnlyCommand(command: string): boolean {
   return isRuntimeReadOnlyBashCommand(command);
+}
+
+/**
+ * Foreground Bash writes the final `pwd -P` back to the session cwd, so concurrent
+ * directory changes would make the resulting cwd depend on completion order.
+ */
+export function bashCommandChangesDirectory(command: string): boolean {
+  return analysisContainsDirectoryChange(analyzeBashCommand(command).commands);
 }
 
 export function isSimpleReadOnlyBashCommand(command: string): boolean {

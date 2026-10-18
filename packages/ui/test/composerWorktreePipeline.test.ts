@@ -144,7 +144,13 @@ vi.mock("@/components/ai-elements/attachments.js", async () => {
 const createWorktree = vi.fn();
 const listWorktrees = vi.fn();
 const verifyWorktreeUsable = vi.fn(async () => ({ ok: true }));
-const gitService = { createWorktree, listWorktrees, verifyWorktreeUsable };
+const ensureWorktreeExclusion = vi.fn(async () => ({ ok: true }));
+const gitService = {
+  createWorktree,
+  listWorktrees,
+  verifyWorktreeUsable,
+  ensureWorktreeExclusion,
+};
 
 const WORKSPACE_KEY = "/dev/alpha";
 const PARAMS = {
@@ -786,6 +792,10 @@ describe("reconcileCreatingComposerWorktreePipeline", () => {
       status: "ready",
       existing: true,
       worktreePath: "/dev/alpha-worktrees/zcode-sleepy-capybara",
+    });
+    expect(ensureWorktreeExclusion).toHaveBeenCalledWith({
+      workspacePath: PARAMS.workspacePath,
+      targetPath: "/dev/alpha-worktrees/zcode-sleepy-capybara",
     });
   });
 

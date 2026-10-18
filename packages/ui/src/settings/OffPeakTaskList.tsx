@@ -276,7 +276,7 @@ export function OffPeakTaskList({
               {task.sessionId ? (
                 <button
                   type="button"
-                  className="flex size-6 items-center justify-center rounded-md opacity-100 transition-colors hover:bg-white/10 md:opacity-0 md:group-hover:opacity-100"
+                  className="flex size-6 items-center justify-center rounded-md opacity-100 transition-colors hover:bg-surface-hover md:opacity-0 md:group-hover:opacity-100"
                   aria-label={intl.formatMessage({
                     id: "offPeak.goToSession",
                   })}
@@ -295,7 +295,7 @@ export function OffPeakTaskList({
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
-                    className="flex size-6 items-center justify-center rounded-md opacity-100 transition-colors hover:bg-white/10 md:opacity-0 md:group-hover:opacity-100 data-[state=open]:bg-white/10 data-[state=open]:opacity-100"
+                    className="flex size-6 items-center justify-center rounded-md opacity-100 transition-colors hover:bg-surface-hover md:opacity-0 md:group-hover:opacity-100 data-[state=open]:bg-surface-hover data-[state=open]:opacity-100"
                     data-testid={TID_OFFPEAK_CARD_MENU}
                     aria-label={intl.formatMessage({
                       id: "automations.moreActions",

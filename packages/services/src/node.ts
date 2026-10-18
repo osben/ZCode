@@ -572,7 +572,6 @@ import { resolveBrokerSocketPath } from "@zcode/zcode-cua/broker/socketPath";
 import {
   DEFAULT_ZCODE_MODEL_CONTEXT_BUDGET_STRATEGY,
   ZCODE_JWT_INVALID_BROADCAST_CHANNEL,
-  formatLogPrefix,
   isCredentialDecryptError,
   isStartPlanModelProviderId,
   OFF_PEAK_PROVIDER_IDS,
@@ -1278,7 +1277,7 @@ export function createLocalServices(options: {
   try {
     ensureAppCaCert();
   } catch (error) {
-    console.error(formatLogPrefix("appCaCert", process.pid), "ensure app CA cert failed:", error);
+    createServiceLogger("appCaCert").warn(undefined, "ensure app CA cert failed:", error);
   }
 
   const localSettings = options?.settingService ? null : createSettingServiceWithMigrations();
@@ -1336,7 +1335,7 @@ export function createLocalServices(options: {
   // Onboarding completion record; fill userId from the login state (null for API-key or logged-out sessions). See docs/onboarding-record-spec.md.
   const onboardingRecordService = createOnboardingRecordService({
     loadUserId: async () => (await oauthCredentialRepo.loadActiveUserProfile())?.id ?? null,
-    hasExistingLocalTask: async () => (await taskIndexRepo.listTaskMetas({})).length > 0,
+    hasExistingLocalTask: () => taskIndexRepo.hasTaskMetas(),
   });
   let handleOAuthProviderLogout: ReturnType<typeof createOAuthProviderLogoutHandler> | null = null;
   const oauthCredentialRepo = new OAuthCredentialRepo(credentialService, {

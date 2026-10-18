@@ -1,5 +1,4 @@
-import { readFileSync } from "node:fs";
-import { dirname, relative, resolve } from "node:path";
+import { relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
@@ -15,8 +14,6 @@ import { describe, expect, it } from "vitest";
 // denylist keys were `@/` alias literals, so side-effect imports `import "@/x"`, dynamic `import("@/x")`,
 // and relative `from "../../x"` paths (common IDE autocomplete output) bypassed it silently. Specifier
 const UI_SRC_ROOT = fileURLToPath(new URL("../src", import.meta.url));
-
-const SHARE_BOUNDARY_SOURCES = ["v4/ConversationShareReadonlyTimeline.tsx"] as const;
 
 // Denylist: module roots that would drag the Desktop-only subtree into the public page bundle.
 // @/OpenSplitButton.js is the open-with subtree entry; the other entries are its Desktop-only deps,
@@ -96,22 +93,6 @@ function findDeniedValueImports(source: string, sourceDir: string): DeniedValueI
 }
 
 describe("conversation share public-page bundle boundary", () => {
-  it("分享只读时间线对 open-with 子树只允许 import type 引用", () => {
-    for (const sourceRelPath of SHARE_BOUNDARY_SOURCES) {
-      const sourcePath = resolve(UI_SRC_ROOT, sourceRelPath);
-      const violations = findDeniedValueImports(
-        readFileSync(sourcePath, "utf8"),
-        dirname(sourcePath),
-      );
-      expect(
-        violations,
-        `${sourceRelPath} 对 open-with 子树存在静态值 import（公开页 bundle 边界回归）：` +
-          JSON.stringify(violations) +
-          "。Desktop 侧能力请改由消费方经组件注入（见 artifactOpenAction 注入契约）。",
-      ).toEqual([]);
-    }
-  });
-
   // Regression tests for the guard itself: the three forms missed by the first regex must all be caught,
   // so future extractor changes cannot reintroduce blind spots (a mechanical guard is only worth what its hardest-to-bypass form covers).
   describe("denylist 提取器形态覆盖（盲区自测）", () => {

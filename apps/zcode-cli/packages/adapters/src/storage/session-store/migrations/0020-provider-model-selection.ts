@@ -1,5 +1,6 @@
 // This frozen data migration generates SQL only, and the checksum covers the final SQL; do not call mutable account/Registry state.
 // Do not delete or overwrite old objects. Change only the structure of historical message sources; current Session selection uses the existing identity mapping.
+// The `--` comments inside the SQL template are upstream text and feed the shared ledger checksum; never edit or translate them.
 const value = (path: string) => `json_extract(data, '$.${path}')`;
 const text = (expression: string) =>
   `(typeof(${expression}) = 'text' and length(trim(${expression})) > 0)`;
@@ -65,8 +66,7 @@ function migratePartMember(source: string, target: string): string {
 }
 
 export const PROVIDER_MODEL_SELECTION_MIGRATION_SQL = `
-  -- If there is no entry, keep the existing rule for choosing the latest explicit message source;
-  -- do not skip a corrupt or explicitly empty selection to find an earlier value.
+  -- 无 entry 时沿用既有最后一个明确消息来源规则；不能越过损坏/明确空选择找更早的值。
   with ranked as (
     select message.*, row_number() over (
       partition by session_id order by sequence desc, time_created desc, rowid desc
@@ -96,8 +96,7 @@ export const PROVIDER_MODEL_SELECTION_MIGRATION_SQL = `
     where type = 'runtime/model_selection' and json_valid(data) and json_type(data) = 'object'
       and ${text(value("providerId"))} and ${text(value("modelId"))} and ${entrySelection} is not null;
 
-  -- A published User message may also contain modelSelection; it is not an unpublished new target
-  -- field that can be overwritten.
+  -- 已发布 User 消息也可能含 modelSelection；它本身不是可覆盖的未发布新目标字段。
   update message set data = json_set(data, '$.modelSelection', json(${legacyUserSelection}))
     where json_valid(data) and json_type(data) = 'object' and ${value("role")} = 'user'
       and json_type(data, '$.modelSelection') is null and json_type(data, '$.model') = 'object';

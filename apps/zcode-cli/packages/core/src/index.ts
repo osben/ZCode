@@ -20,6 +20,21 @@ export type { ToolSchedule, ToolScheduleItem, ToolDependency } from "./tool/sche
 export { createToolRegistry, ToolRegistry, ToolRegistryImpl } from "./tool/registry.js";
 export { createToolExecutor, ToolExecutor, ToolExecutorImpl } from "./tool/executor.js";
 export { builtInTools, registerBuiltInTools } from "./tool/handlers/index.js";
+// Language-server (LSP) service: bootstrap constructs one per workspace and passes it through AgentRuntimeDeps.lsp.
+export {
+  LspService,
+  createLspService,
+  createLspDocumentSync,
+  LspServerRegistry,
+} from "./lsp/index.js";
+export type { LspDocumentSync } from "./lsp/index.js";
+export type {
+  LspServiceOptions,
+  LspQueryContext,
+  EditDiagnosticsRequest,
+  EditDiagnosticsResult,
+  LspServerMatch,
+} from "./lsp/index.js";
 // The DWF driver's submit-profile runtime guard converts the typed declaration back to a generic declaration.
 export {
   createSubmitResultToolEntry,

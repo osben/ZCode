@@ -586,6 +586,22 @@ function AgentListRow({
   );
 }
 
+interface SubagentOverrideConfig {
+  model?: string;
+  thoughtLevel?: string;
+}
+
+function toSubagentOverrideConfig(override: ModelSelection | undefined): SubagentOverrideConfig {
+  return {
+    model: override ? toSubagentModelValue(override) : undefined,
+    thoughtLevel: override?.options?.reasoningLevel,
+  };
+}
+
+function subagentOverrideConfigKey(config: SubagentOverrideConfig): string {
+  return JSON.stringify([config.model ?? null, config.thoughtLevel ?? null]);
+}
+
 /** Inline model / effort override controls shared by built-in and Plugin subagents; save immediately on change. */
 function SubagentModelOverrideControl({
   agent,
@@ -608,15 +624,18 @@ function SubagentModelOverrideControl({
   const recommendStartPlan = useStartPlanRecommendation(modelSelectionView, "subagent");
   const { intl } = useZCodeIntl();
   const [pending, setPending] = useState(false);
-  const [config, setConfig] = useState<{
-    model?: string;
-    thoughtLevel?: string;
-  }>(() => ({
-    model: agent.modelSelectionOverride
-      ? toSubagentModelValue(agent.modelSelectionOverride)
-      : undefined,
-    thoughtLevel: agent.modelSelectionOverride?.options?.reasoningLevel,
-  }));
+  const overrideConfig = toSubagentOverrideConfig(agent.modelSelectionOverride);
+  const overrideConfigKey = subagentOverrideConfigKey(overrideConfig);
+  const [config, setConfig] = useState<SubagentOverrideConfig>(overrideConfig);
+  const [syncedOverrideConfigKey, setSyncedOverrideConfigKey] = useState(overrideConfigKey);
+  // Adopt the persisted override during render, and only when its value changes. A passive
+  // effect keyed on the override object ran on mount and on every list refresh, after commit:
+  // an edit landing before that flush (or a refresh during a pending write) was overwritten
+  // by the stale persisted value.
+  if (overrideConfigKey !== syncedOverrideConfigKey) {
+    setSyncedOverrideConfigKey(overrideConfigKey);
+    setConfig(overrideConfig);
+  }
   const defaultLabel = intl.formatMessage({
     id: "settings.subagents.model.defaultMain",
   });
@@ -649,17 +668,8 @@ function SubagentModelOverrideControl({
             modelGroups,
             model: value,
           });
-  useEffect(() => {
-    setConfig({
-      model: agent.modelSelectionOverride
-        ? toSubagentModelValue(agent.modelSelectionOverride)
-        : undefined,
-      thoughtLevel: agent.modelSelectionOverride?.options?.reasoningLevel,
-    });
-  }, [agent.modelSelectionOverride]);
-
   const persistConfig = useCallback(
-    async (nextConfig: { model?: string; thoughtLevel?: string }) => {
+    async (nextConfig: SubagentOverrideConfig) => {
       if (pending) {
         return;
       }
@@ -820,7 +830,7 @@ function SubagentForm({
     () => createSubagentFormInitialState(initial),
     [initial, initialFormStateKey],
   );
-  const previousInitialFormStateKeyRef = useRef(initialFormStateKey);
+  const [syncedInitialFormStateKey, setSyncedInitialFormStateKey] = useState(initialFormStateKey);
   const [name, setName] = useState(initialFormState.name);
   const [description, setDescription] = useState(initialFormState.description);
   const [color, setColor] = useState<AgentColor>(initialFormState.color);
@@ -834,6 +844,25 @@ function SubagentForm({
   const [descriptionError, setDescriptionError] = useState<string | null>(null);
   const [promptError, setPromptError] = useState<string | null>(null);
   const [modelError, setModelError] = useState<string | null>(null);
+  // Adopt a changed agent snapshot during render, and only when its value changes. A passive
+  // effect wrote the snapshot after commit, so an edit landing between that commit and the
+  // effect flush was overwritten by the snapshot.
+  if (initialFormStateKey !== syncedInitialFormStateKey) {
+    setSyncedInitialFormStateKey(initialFormStateKey);
+    setName(initialFormState.name);
+    setDescription(initialFormState.description);
+    setColor(initialFormState.color);
+    setModel(initialFormState.model);
+    setThoughtLevel(initialFormState.thoughtLevel);
+    setInjectAgentsMd(initialFormState.injectAgentsMd);
+    setInheritAllTools(initialFormState.inheritAllTools);
+    setSelectedTools(initialFormState.selectedTools);
+    setSystemPrompt(initialFormState.systemPrompt);
+    setNameError(null);
+    setDescriptionError(null);
+    setPromptError(null);
+    setModelError(null);
+  }
   const inheritModelLabel = intl.formatMessage({
     id: "settings.subagents.model.inherit",
   });
@@ -899,30 +928,6 @@ function SubagentForm({
     !thoughtLevelInvalid,
   );
   const selectedColorIndex = Math.max(0, AGENT_COLORS.indexOf(color));
-
-  useEffect(() => {
-    if (previousInitialFormStateKeyRef.current === initialFormStateKey) {
-      return;
-    }
-    previousInitialFormStateKeyRef.current = initialFormStateKey;
-    const nextInitialState = createSubagentFormInitialState(initial);
-
-    // The form component may reuse an old instance after save/refresh; hydrate fields from the latest agent snapshot,
-    // or a model already written to Markdown may remain in the local inherit state.
-    setName(nextInitialState.name);
-    setDescription(nextInitialState.description);
-    setColor(nextInitialState.color);
-    setModel(nextInitialState.model);
-    setThoughtLevel(nextInitialState.thoughtLevel);
-    setInjectAgentsMd(nextInitialState.injectAgentsMd);
-    setInheritAllTools(nextInitialState.inheritAllTools);
-    setSelectedTools(nextInitialState.selectedTools);
-    setSystemPrompt(nextInitialState.systemPrompt);
-    setNameError(null);
-    setDescriptionError(null);
-    setPromptError(null);
-    setModelError(null);
-  }, [initial, initialFormStateKey]);
 
   const validate = (): boolean => {
     const trimmedName = name.trim();
