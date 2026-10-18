@@ -7815,7 +7815,7 @@ const enUS: Record<string, string> = {
   "voiceDictation.postProcess.prompt.blank":
     "The prompt can't be empty. Use Reset to restore the default.",
   "voiceDictation.postProcess.prompt.noVariable":
-    "No {variable} in the prompt, so the transcript will be appended after the prompt.",
+    "The prompt must contain {variable}; it is replaced by the transcript.",
   "voiceDictation.postProcess.discard.title": "Discard unsaved changes?",
   "voiceDictation.postProcess.discard.description":
     "The prompt will go back to the last saved version.",

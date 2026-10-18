@@ -733,13 +733,13 @@ describe("VoiceDictationSection post-processing", () => {
     expect((await saveButton()).hasAttribute("disabled")).toBe(true);
   });
 
-  it("explains that the transcript is appended when the prompt has no {{text}}", async () => {
+  it("disables Save and warns when the prompt has no {{text}}", async () => {
     render(createElement(VoiceDictationSection, { isDesktop: true }));
     const field = (await prompt()) as HTMLTextAreaElement;
     fireEvent.change(field, { target: { value: "Fix punctuation." } });
 
     expect(screen.getByText("voiceDictation.postProcess.prompt.noVariable")).toBeTruthy();
-    expect((await saveButton()).hasAttribute("disabled")).toBe(false);
+    expect((await saveButton()).hasAttribute("disabled")).toBe(true);
   });
 
   it("keeps the unsaved draft when saving fails", async () => {

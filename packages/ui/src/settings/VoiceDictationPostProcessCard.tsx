@@ -71,7 +71,7 @@ export function VoiceDictationPostProcessCard({
   const overLimit = editing.length > POST_PROCESS_PROMPT_MAX_LENGTH;
   const blank = editing.trim() === "";
   const hasVariable = editing.includes(POST_PROCESS_TEXT_VARIABLE);
-  const canSave = dirty && !blank && !overLimit && !saving;
+  const canSave = dirty && !blank && hasVariable && !overLimit && !saving;
   const canReset = hasCustomPrompt || editing !== DEFAULT_POST_PROCESS_PROMPT;
 
   const [tryItSample, setTryItSample] = useState(POST_PROCESS_TRY_IT_SAMPLE);
@@ -256,7 +256,7 @@ export function VoiceDictationPostProcessCard({
               </span>
             ) : null}
           </div>
-          <p id={hintId} className={overLimit || blank ? "text-warning" : ""}>
+          <p id={hintId} className={overLimit || blank || !hasVariable ? "text-warning" : ""}>
             {overLimit
               ? intl.formatMessage(
                   { id: "voiceDictation.postProcess.prompt.tooLong" },

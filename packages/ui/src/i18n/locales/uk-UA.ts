@@ -7408,7 +7408,7 @@ const ukUA: Record<string, string> = {
   "voiceDictation.postProcess.prompt.blank":
     "Промпт не може бути порожнім. Скиньте його, щоб повернути типовий.",
   "voiceDictation.postProcess.prompt.noVariable":
-    "У промпті немає {variable}, тож розшифровка буде додана після промпту.",
+    "Промпт має містити {variable}: сюди підставляється розшифровка.",
   "voiceDictation.postProcess.discard.title": "Відкинути незбережені зміни?",
   "voiceDictation.postProcess.discard.description":
     "Промпт повернеться до останньої збереженої версії.",
