@@ -8,6 +8,7 @@ Source of truth: `DESIGN.md` ("Highest-priority UI constraint", "Color Usage Rul
    - Legacy mapping: `text-sm` (14px) -> `text-ui-base`; `text-xs` (12px) -> `text-ui-sm`.
    - `text-[7px]` badge on the composer attachment overlay -> `text-ui-2xs` is NOT allowed (axis furniture only); use `text-ui-xs`.
    - Page-title `text-[30px]` (Automations) and onboarding `text-[16px]` are display headings; use `text-ui-xl` / `text-ui-lg`.
+   - Accepted visual change: the Automations page title shrinks from 30px to 18px (`text-ui-xl`); no 30px token exists.
 2. Colors come from semantic tokens, never Tailwind palette colors (`sky-500`, `green-500`, ...) or `dark:` palette pairs. Tokens are theme-aware, so `dark:` variants are dropped.
    - green/emerald -> `success`; red -> `destructive`; yellow/amber/orange -> `warning`;
      sky/blue -> `icon-blue`; slate/zinc/gray -> `foreground-subtle` / `tag`.
