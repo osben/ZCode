@@ -248,12 +248,32 @@ export function extractOpenWorkspacePathFromArgs(args: readonly string[]): strin
   return null;
 }
 
+// Electron #52020 (fixed upstream in electron/electron#52025): Chromium serializes additionalData, splits it on NUL,
+// and trims whitespace. A NUL followed by a whitespace byte corrupts the value, and non-ASCII paths can crash the
+// second-instance read. Percent-encoding keeps the payload ASCII-only with no whitespace. This is a mitigation on
+// Electron 41.x; the full fix is an Electron upgrade (>= 42.4.2).
+function encodeSingleInstanceValue(value: string): string {
+  return encodeURIComponent(value);
+}
+
+function decodeSingleInstanceValue(value: string): string {
+  // Values written before encoding are raw, and decodeURIComponent throws on a stray "%".
+  // Fall back to the raw value so legacy payloads from older instances are not dropped.
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 export function createDeepLinkSingleInstanceData(args: readonly string[]): Record<string, string> {
   const url = extractDeepLinkUrlFromArgs(args);
   const openWorkspacePath = extractOpenWorkspacePathFromArgs(args);
   return {
-    ...(url ? { [DEEP_LINK_ADDITIONAL_DATA_KEY]: url } : {}),
-    ...(openWorkspacePath ? { [OPEN_WORKSPACE_ADDITIONAL_DATA_KEY]: openWorkspacePath } : {}),
+    ...(url ? { [DEEP_LINK_ADDITIONAL_DATA_KEY]: encodeSingleInstanceValue(url) } : {}),
+    ...(openWorkspacePath
+      ? { [OPEN_WORKSPACE_ADDITIONAL_DATA_KEY]: encodeSingleInstanceValue(openWorkspacePath) }
+      : {}),
   };
 }
 
@@ -267,7 +287,7 @@ export function extractDeepLinkUrlFromSingleInstanceData(additionalData: unknown
     return null;
   }
 
-  return extractDeepLinkUrlFromArgs([value]);
+  return extractDeepLinkUrlFromArgs([decodeSingleInstanceValue(value)]);
 }
 
 export function extractOpenWorkspacePathFromSingleInstanceData(
@@ -282,5 +302,8 @@ export function extractOpenWorkspacePathFromSingleInstanceData(
     return null;
   }
 
-  return extractOpenWorkspacePathFromArgs([`${OPEN_WORKSPACE_ARG}=${value}`]);
+  // Decode before the argv-style wrapper so trimArgValue still normalizes the real path.
+  return extractOpenWorkspacePathFromArgs([
+    `${OPEN_WORKSPACE_ARG}=${decodeSingleInstanceValue(value)}`,
+  ]);
 }
