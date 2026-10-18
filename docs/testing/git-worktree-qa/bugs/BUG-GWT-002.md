@@ -1,5 +1,7 @@
 # BUG-GWT-002: Review pane / счётчик изменений не обновляются сами при внешнем изменении файлов (60-секундный самосбрасывающийся debounce)
 
+- Status: FIXED (retest 2026-10-18, merge b67cc63f; UI-confirmed; marker removed / covered by upstream test)
+
 - Severity: S3 (обход есть — ручной Refresh; UX-деградация stale-статуса до минуты и дольше)
 - Кейсы: A7 (основной; FAIL 0/2), B2 (echo: предупреждение о dirty появилось только после reload), F2 (echo: счётчик изменений stale до переоткрытия панели)
 - Окружение: macOS 27.2 (darwin, arm64), commit `bd6a05b3` (ветка `qa/git-worktree-20261017`), изолированный QA-инстанс (production build, sandbox HOME)

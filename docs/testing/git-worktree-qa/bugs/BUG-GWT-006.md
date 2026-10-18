@@ -1,5 +1,7 @@
 # BUG-GWT-006: commit-and-push в detached HEAD — пуш молча проваливается: ошибка пишется в уже закрытый commit-диалог, тоста нет
 
+- Status: OPEN (retest 2026-10-18: not in the fix wave; still expected-fail)
+
 - Severity: S3 (push-сценарий сломан тихо; git-часть безопасна — пуш не выполняется; обход: повторить пуш из ветки через push-диалог, коммит уже создан)
 - Кейсы: H5 (FAIL)
 - Окружение: macOS 27.2 (darwin, arm64), commit `bd6a05b3` (ветка `qa/git-worktree-20261017`), изолированный QA-инстанс (production build, sandbox HOME)

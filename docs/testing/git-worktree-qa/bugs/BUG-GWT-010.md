@@ -1,5 +1,7 @@
 # BUG-GWT-010: факт executionWorktree не персистится в tasks-index — после рестарта у сессий закрытых воркспейсов пропадает маркер worktree и классификация Environment=Worktree
 
+- Status: OPEN (retest 2026-10-18: not in the fix wave; still expected-fail)
+
 - Severity: S3 (данные классификации/маркера неверны до повторного открытия воркспейса; обход — открыть воркспейс; сессии, история и git не затронуты)
 - Кейсы: F7, I1
 - Окружение: macOS 27.2, commit `bd6a05b3b7dd045d10a47bc7a193a27f86e8f355` (ветка `qa/git-worktree-20261017`), изолированный QA-инстанс (production build)

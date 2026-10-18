@@ -1,5 +1,7 @@
 # BUG-GWT-011: Строка конфликтного (UU) файла в Review pane не имеет бейджа «Conflicted»; i18n-ключи `git.section.conflicted`/`git.kind.conflicted` не используются
 
+- Status: OPEN (retest 2026-10-18: not in the fix wave; still expected-fail)
+
 - Severity: S4 (косметика/информативность: единственный намёк на конфликт в свёрнутой строке — неинформативное `+0−0`; сам diff с маркерами конфликта и функциональные блокировки мутаций веток работают)
 - Кейсы: A8 (PASS с дефект-наблюдением)
 - Окружение: macOS 27.2 (darwin, arm64), commit `bd6a05b3` (ветка `qa/git-worktree-20261017`), изолированный QA-инстанс (production build, sandbox HOME)

@@ -1,5 +1,7 @@
 # BUG-GWT-012: Сырой ICU-plural шаблон в диалоге guard переключения ветки
 
+- Status: OPEN (retest 2026-10-18: not in the fix wave; still expected-fail)
+
 - Severity: S4 (косметика/текст; семантика guard не нарушена — список задач и cancel работают)
 - Кейсы: B6
 - Окружение: macOS 27.2, commit `bd6a05b3b7dd045d10a47bc7a193a27f86e8f355` (ветка `qa/git-worktree-20261017`), изолированный QA-инстанс (production build)

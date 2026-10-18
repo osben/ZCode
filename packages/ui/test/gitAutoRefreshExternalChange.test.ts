@@ -64,7 +64,7 @@ describe("useGitAutoRefresh external file change", () => {
   // Fails while BUG-GWT-002 is unfixed: the renderer-side Git debounce is 60 s with a full reset
   // on every event, so an external file change never refreshes within seconds.
   // See docs/testing/git-worktree-qa/bugs/BUG-GWT-002.md.
-  it.fails("BUG-GWT-002: refreshes Git shortly after an external change event reaches the renderer", async () => {
+  it("BUG-GWT-002: refreshes Git shortly after an external change event reaches the renderer", async () => {
     const onRefreshGit = vi.fn();
     renderHook(() =>
       useGitAutoRefresh({

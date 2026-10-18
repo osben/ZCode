@@ -811,7 +811,7 @@ describeIfGit("gitCliRepo worktree operations", () => {
   // creates the branch ref before the worktree directory, so a failed run (read-only
   // parent, EACCES) leaves a half-created branch with no worktree. Remove `.fails` once
   // createWorktree rolls the branch back on failure.
-  it.fails(
+  it(
     "BUG-GWT-003: failed worktree creation reports the error and leaves no half-created branch",
     async () => {
       const { container, repoPath } = createWorktreeTestRepo();

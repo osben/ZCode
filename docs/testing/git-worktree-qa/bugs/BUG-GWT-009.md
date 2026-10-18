@@ -1,5 +1,7 @@
 # BUG-GWT-009: поповер композера не обновляет список веток после create-and-switch
 
+- Status: FIXED (retest 2026-10-18, merge b67cc63f; UI-confirmed; marker removed / covered by upstream test)
+
 - Severity: S3 (обход есть: reload окна или смена воркспейса сбрасывают кэш; данные не теряются, но до этого список веток и отметка current врут)
 - Кейсы: B4
 - Окружение: macOS 27.2, commit `bd6a05b3b7dd045d10a47bc7a193a27f86e8f355` (ветка `qa/git-worktree-20261017`), изолированный QA-инстанс (production build)

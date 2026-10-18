@@ -1,5 +1,7 @@
 # BUG-GWT-001: Открытие папки с пробелами + unicode через второй экземпляр (`--open-workspace`) детерминированно роняет ПЕРВИЧНОЕ приложение (Electron process singleton)
 
+- Status: FIXED (retest 2026-10-18, merge b67cc63f; UI-confirmed; marker removed / covered by upstream test)
+
 - Severity: S2 (крах всего приложения по единственному программному пути открытия проекта; обход — нативный диалог выбора папки или ASCII-путь — не проверялся; сопутствующий дефект — зависший второй инстанс блокирует перезапуск)
 - Кейсы: A6 (FAIL 2/2; статус/diff/ветки для R7 не проверены — проект не открылся ни разу)
 - Окружение: macOS 27.2 (darwin, arm64), commit `bd6a05b3` (ветка `qa/git-worktree-20261017`), изолированный QA-инстанс (production build, sandbox HOME), Electron 41.0.3 (`packages/desktop/package.json:111`)

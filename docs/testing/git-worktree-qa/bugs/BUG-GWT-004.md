@@ -1,5 +1,7 @@
 # BUG-GWT-004: Worktree setup failure/recovery UI renders raw i18n keys instead of text
 
+- Status: FIXED (retest 2026-10-18, merge b67cc63f; UI-confirmed; marker removed / covered by upstream test)
+
 - Severity: S3 (recovery works and Retry creates the worktree, but the failure step, Retry/Discard buttons and queued-message label are unreadable raw keys; the user cannot tell what failed — workaround: the translated recovery card "Unsent message saved / Restore / Dismiss saved message" and sidebar entry)
 - Кейсы: C5 (forced EACCES failure), C8 (empty repo / unborn HEAD; the step text also never mentions the actual cause — permission denied / unborn HEAD)
 - Окружение: macOS 27.2, commit bd6a05b3b7dd045d10a47bc7a193a27f86e8f355, изолированный QA-инстанс (production build)

@@ -1,5 +1,7 @@
 # BUG-GWT-007: «Open worktree» для stale-ветки молча открывает несуществующий каталог как проект
 
+- Status: FIXED (retest 2026-10-18, merge b67cc63f; UI-confirmed; marker removed / covered by upstream test)
+
 - Severity: S3 (есть обход: закрыть ghost-проект и нажать «Prune stale» на setup-странице)
 - Кейсы: E4
 - Окружение: macOS 27.2, commit `bd6a05b3b7dd045d10a47bc7a193a27f86e8f355` (ветка `qa/git-worktree-20261017`), изолированный QA-инстанс (production build)

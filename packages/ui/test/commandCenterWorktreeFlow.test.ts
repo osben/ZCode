@@ -633,7 +633,7 @@ describe("BUG-GWT-007 existing-branch offer vs stale registered worktree", () =>
 
   // BUG-GWT-007: marked it.fails while the bug is open; remove the marker when fixed
   // (the test then goes green and this suite reports the change).
-  it.fails("BUG-GWT-007: opening a worktree whose registered directory is missing must be blocked or surface an error, not open silently", async () => {
+  it("BUG-GWT-007: opening a worktree whose registered directory is missing must be blocked or surface an error, not open silently", async () => {
     staleOfferGitService.getWorkspaceRepositoryInfo.mockResolvedValue({
       workspacePath: "/dev/alpha",
       kind: "main-tree",

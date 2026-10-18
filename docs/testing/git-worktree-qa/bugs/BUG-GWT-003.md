@@ -1,5 +1,7 @@
 # BUG-GWT-003: failed `git.createWorktree` логируется как «OK» и оставляет полу-ветку в git (нет отката `-b`-ветки при отказе создания)
 
+- Status: FIXED (retest 2026-10-18, merge b67cc63f; UI-confirmed; marker removed / covered by upstream test)
+
 - Severity: S3 (обход есть — Retry после восстановления прав доиспользует ту же ветку; мусор в git и ложная строка «OK» в логах сбивают диагностику и восстановление)
 - Кейсы: C5 (основной, дефект 2), C8 (echo: тот же класс «OK при провале»)
 - Окружение: macOS 27.2 (darwin, arm64), git 2.56.0, commit `bd6a05b3` (ветка `qa/git-worktree-20261017`), изолированный QA-инстанс (production build, sandbox HOME)
