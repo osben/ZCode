@@ -73,19 +73,17 @@ export function createLspPreferencesStore(
     }
   }
 
-  async function readFromDisk(): Promise<LspPreferences> {
-    let content: string;
+  /** Undefined when the sidecar does not exist. Throws on I/O errors other than not-found. */
+  async function readRaw(): Promise<string | undefined> {
     try {
-      content = (await fileSystem.readTextFile({ path: filePath })).content;
+      return (await fileSystem.readTextFile({ path: filePath })).content;
     } catch (error) {
-      if (error instanceof FileSystemPortError && error.code === "not_found") {
-        return cloneDefaults();
-      }
-      logger.warn("LSP preferences file unreadable; using defaults", {
-        error: String(error),
-      });
-      return cloneDefaults();
+      if (error instanceof FileSystemPortError && error.code === "not_found") return undefined;
+      throw error;
     }
+  }
+
+  function parseContent(content: string): LspPreferences {
     let parsed: unknown;
     try {
       parsed = JSON.parse(content);
@@ -99,6 +97,19 @@ export function createLspPreferencesStore(
       return cloneDefaults();
     }
     return result.data;
+  }
+
+  async function readFromDisk(): Promise<LspPreferences> {
+    let content: string | undefined;
+    try {
+      content = await readRaw();
+    } catch (error) {
+      logger.warn("LSP preferences file unreadable; using defaults", {
+        error: String(error),
+      });
+      return cloneDefaults();
+    }
+    return content === undefined ? cloneDefaults() : parseContent(content);
   }
 
   async function writeToDisk(next: LspPreferences): Promise<void> {
@@ -125,7 +136,12 @@ export function createLspPreferencesStore(
 
     update(patch) {
       return enqueue(async () => {
-        const next = applyPatch(current, patch);
+        // Merge onto the sidecar as it is on disk. The in-memory copy is only defaults until load() has
+        // run in this process, so merging onto it would drop the stored enabled flag and overrides.
+        // An unreadable file fails the write instead of being replaced by defaults.
+        const stored = await readRaw();
+        const base = stored === undefined ? cloneDefaults() : parseContent(stored);
+        const next = applyPatch(base, patch);
         // Persist first: listeners and `get()` only ever observe what is on disk.
         await writeToDisk(next);
         setCurrent(next);

@@ -182,3 +182,35 @@ describe("LspPreferencesStore", () => {
     expect(listener).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("LspPreferencesStore update without a prior load", () => {
+  // Regression: update() merged the patch onto the in-memory defaults when load() had not run in this
+  // process, so a stored `enabled: false` and per-server overrides were overwritten on disk.
+  it("merges the patch onto the stored sidecar, keeping fields the patch does not mention", async () => {
+    const stored = JSON.stringify({
+      version: 1,
+      enabled: false,
+      diagnosticsAfterEdit: { "p/ts": false, "p/py": true },
+    });
+    const fs = createFakeFs(stored);
+    const store = storeWith(fs);
+
+    const next = await store.update({ diagnosticsAfterEdit: { "p/go": false } });
+
+    expect(next).toEqual({
+      version: 1,
+      enabled: false,
+      diagnosticsAfterEdit: { "p/ts": false, "p/py": true, "p/go": false },
+    });
+    expect(JSON.parse(fs.files.get(FILE)!)).toEqual(next);
+  });
+
+  it("fails the write instead of replacing an unreadable sidecar with defaults", async () => {
+    const fs = createFakeFs("{}");
+    fs.readTextFile.mockRejectedValueOnce(new Error("EACCES"));
+    const store = storeWith(fs);
+
+    await expect(store.update({ enabled: false })).rejects.toThrow("EACCES");
+    expect(fs.writeTextFile).not.toHaveBeenCalled();
+  });
+});
