@@ -5,7 +5,8 @@ import type { GitChangeSourceId, GitDiffResult } from "@zcode/shared";
 import { TID_GIT_PANE } from "@zcode/shared";
 import { cn } from "@/components/lib/utils.js";
 import { Button } from "@/components/ui/button.js";
-import { FileTextIcon, FolderTreeIcon, ListIcon, RefreshCw } from "lucide-react";
+import { FileTextIcon, RefreshCw } from "lucide-react";
+import { GroupByDirectoryCheckbox } from "@/components/GroupByDirectoryCheckbox.js";
 import {
   Select,
   SelectContent,
@@ -27,17 +28,16 @@ import {
 } from "@/GitPane/helpers.js";
 import { GitPaneChangeCard } from "@/GitPaneChangeCard.js";
 import {
-  buildGitPaneRows,
+  buildGitPaneDisplayRows,
   getGitPaneRowIndexByPath,
   type GitPaneRow,
 } from "@/GitPane/directoryRowModel.js";
 import { GitPaneDirectoryHeader } from "@/GitPane/GitPaneDirectoryHeader.js";
 import { getFileChangeFindState } from "@/GitPane/fileChangeFindSearch.js";
 import {
-  readGitPaneFileListLayout,
-  writeGitPaneFileListLayout,
-  type GitPaneFileListLayout,
-} from "@/lib/gitPaneFileListLayoutPreference.js";
+  persistGitPaneGroupByDirectoryPreference,
+  readGitPaneGroupByDirectoryPreference,
+} from "@/lib/gitPaneGroupByDirectoryPreference.js";
 import { logger } from "@/logger.js";
 import { useZCodeStore } from "@/store/StoreProvider.js";
 import { resolveTheme } from "@/useTheme.js";
@@ -102,8 +102,8 @@ export function GitPane({
   });
   const resolvedTheme = resolveTheme(theme);
   const [expandedPath, setExpandedPath] = useState<string | null>(null);
-  const [fileListLayout, setFileListLayout] = useState<GitPaneFileListLayout>(() =>
-    readGitPaneFileListLayout(),
+  const [groupByDirectory, setGroupByDirectory] = useState<boolean>(() =>
+    readGitPaneGroupByDirectoryPreference(),
   );
   const [diffStateByKey, setDiffStateByKey] = useState<Record<string, GitDiffLoadState>>({});
   const diffGenerationRef = useRef(0);
@@ -119,16 +119,13 @@ export function GitPane({
     [currentDataset],
   );
   const paneRows = useMemo<GitPaneRow[]>(
-    () =>
-      fileListLayout === "directory"
-        ? buildGitPaneRows(currentChanges)
-        : currentChanges.map((change) => ({ kind: "file", change })),
-    [currentChanges, fileListLayout],
+    () => buildGitPaneDisplayRows(currentChanges, groupByDirectory),
+    [currentChanges, groupByDirectory],
   );
   const rowIndexByPath = useMemo(() => getGitPaneRowIndexByPath(paneRows), [paneRows]);
-  const handleSetFileListLayout = useCallback((layout: GitPaneFileListLayout) => {
-    setFileListLayout(layout);
-    writeGitPaneFileListLayout(layout);
+  const handleGroupByDirectoryChange = useCallback((next: boolean) => {
+    setGroupByDirectory(next);
+    persistGitPaneGroupByDirectoryPreference(next);
   }, []);
   const normalizedFileChangeFindQuery = fileChangeFindQuery.trim();
 
@@ -496,38 +493,14 @@ export function GitPane({
           </SelectContent>
         </Select>
 
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 items-center gap-2">
           {currentChanges.length > 0 ? (
-            <div
-              className="flex items-center gap-0.5 rounded-md border border-border p-0.5"
-              role="group"
-              aria-label={intl.formatMessage({ id: "git.fileListLayout.toggleLabel" })}
-            >
-              <Button
-                type="button"
-                variant={fileListLayout === "directory" ? "secondary" : "ghost"}
-                size="icon-sm"
-                aria-pressed={fileListLayout === "directory"}
-                aria-label={intl.formatMessage({ id: "git.fileListLayout.directory" })}
-                title={intl.formatMessage({ id: "git.fileListLayout.directory" })}
-                disabled={gitState.loading}
-                onClick={() => handleSetFileListLayout("directory")}
-              >
-                <FolderTreeIcon />
-              </Button>
-              <Button
-                type="button"
-                variant={fileListLayout === "flat" ? "secondary" : "ghost"}
-                size="icon-sm"
-                aria-pressed={fileListLayout === "flat"}
-                aria-label={intl.formatMessage({ id: "git.fileListLayout.flat" })}
-                title={intl.formatMessage({ id: "git.fileListLayout.flat" })}
-                disabled={gitState.loading}
-                onClick={() => handleSetFileListLayout("flat")}
-              >
-                <ListIcon />
-              </Button>
-            </div>
+            <GroupByDirectoryCheckbox
+              checked={groupByDirectory}
+              onCheckedChange={handleGroupByDirectoryChange}
+              label={intl.formatMessage({ id: "chat.changeSummary.treeView" })}
+              className="min-w-0 text-ui-base"
+            />
           ) : null}
           <Button
             type="button"
@@ -591,7 +564,7 @@ export function GitPane({
                   >
                     <GitPaneChangeCard
                       change={change}
-                      hideDirectoryPart={fileListLayout === "directory"}
+                      hideDirectoryPart={groupByDirectory}
                       contextMenuLabels={contextMenuLabels}
                       diffState={diffState}
                       isDiffLoading={isDiffLoading}

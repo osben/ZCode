@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { GitPaneFileChange } from "@/hooks/useGitRepository.js";
 import {
+  buildGitPaneDisplayRows,
   buildGitPaneRows,
   getChangeDirectory,
   getGitPaneRowIndexByPath,
@@ -134,5 +135,53 @@ describe("getChangeDirectory", () => {
     expect(
       getChangeDirectory(makeChange({ workspaceRelativePath: "packages/ui/src/GitPane.tsx" })),
     ).toBe("packages/ui/src");
+  });
+});
+
+describe("buildGitPaneDisplayRows", () => {
+  const sampleChanges = [
+    makeChange({ workspaceRelativePath: "packages/a/one.ts", section: "unstaged" }),
+    makeChange({ workspaceRelativePath: "packages/a/two.ts", section: "unstaged" }),
+    makeChange({ workspaceRelativePath: "packages/a/new.ts", section: "untracked" }),
+    makeChange({ workspaceRelativePath: "README.md", section: "untracked" }),
+  ];
+
+  it("returns exactly one file row per change, in input order, when grouping is off", () => {
+    const rows = buildGitPaneDisplayRows(sampleChanges, false);
+
+    expect(rows).toHaveLength(sampleChanges.length);
+    expect(rows.every((row) => row.kind === "file")).toBe(true);
+    expect(rows.map((row) => (row.kind === "file" ? row.change : null))).toEqual(sampleChanges);
+  });
+
+  it("returns the same rows as buildGitPaneRows when grouping is on", () => {
+    expect(buildGitPaneDisplayRows(sampleChanges, true)).toEqual(buildGitPaneRows(sampleChanges));
+  });
+
+  it("returns an empty list for empty input in both modes", () => {
+    expect(buildGitPaneDisplayRows([], false)).toEqual([]);
+    expect(buildGitPaneDisplayRows([], true)).toEqual([]);
+  });
+
+  it("maps each change path to its file row in both modes", () => {
+    for (const groupByDirectory of [false, true]) {
+      const rows = buildGitPaneDisplayRows(sampleChanges, groupByDirectory);
+      const indexByPath = getGitPaneRowIndexByPath(rows);
+
+      expect(indexByPath.size).toBe(sampleChanges.length);
+      for (const change of sampleChanges) {
+        const index = indexByPath.get(change.path);
+        expect(index).toBeDefined();
+        expect(rows[index!]).toMatchObject({ kind: "file", change: { path: change.path } });
+      }
+    }
+  });
+
+  it("maps flat-mode paths to their change index (identity) so find scrolling is unchanged", () => {
+    const indexByPath = getGitPaneRowIndexByPath(buildGitPaneDisplayRows(sampleChanges, false));
+
+    sampleChanges.forEach((change, index) => {
+      expect(indexByPath.get(change.path)).toBe(index);
+    });
   });
 });

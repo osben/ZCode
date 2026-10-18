@@ -1,104 +1,89 @@
-# Review tab: group changed files by directory (JetBrains-style Directory/Flatten toggle)
+# Review tab: "Group by directory" checkbox for the changed-file list
 
-Status: draft 2026-10-16 (ZCO-37). Decided direction: Variant 1 from the issue — single-level directory grouping with static (non-collapsible, non-sticky in phase 1) header rows, plus a Directory/Flatten presentation toggle. Collapsible single-level groups were evaluated and rejected (see Non-goals); a full nested tree stays a separate follow-up (issue Variant 2).
+Status: revised 2026-10-18 to match the chat card (`specs/message-change-summary-tree-view.md`). Supersedes the 2026-10-16 draft and its Directory/Flatten icon toggle (commit `12eab371`), which defaulted to grouped. This document is the single source of truth for the Review pane; the chat card spec remains the source of truth for the chat card.
 
 ## Problem
 
-The Review pane list (`packages/ui/src/GitPane.tsx`) is a flat list of change cards sorted by `workspaceRelativePath`. With agent-driven diffs of 10–40 files the user gets no spatial orientation: long path prefixes (`packages/ui/src/components/…`) repeat on every row, and there is no way to see at a glance which areas of the project a change set touched. JetBrains solves this with a Directory vs Flatten presentation toggle in the commit/changes toolwindow; this spec ports that interaction to the Review pane only.
+The Review pane (`packages/ui/src/GitPane.tsx`) lists changes as flat cards. With 10–40 changed files the directory prefix repeats on every row and the touched areas are hard to see. The chat card already offers a "Group by directory" checkbox. The Review pane should offer the same control with the same defaults and the same persistence model, while keeping its own section-aware presentation.
 
-Verified current state (2026-10-16):
+## Product rules
 
-- `currentChanges` = flatMap of the active dataset's sections (`GitPane.tsx:102`); virtualizer consumes it directly (`count: currentChanges.length`, `GitPane.tsx:302`).
-- Per-section order is `workspaceRelativePath.localeCompare` (`useGitRepository.ts:240` `buildSectionsForSource`), but the unstaged dataset flattens **three** sections — `SECTION_ORDER_BY_SOURCE.unstaged = ["unstaged", "untracked", "conflicted"]` (`useGitRepository.ts:84`). Files of the same directory can therefore be non-adjacent across a section boundary. The issue's "already sorted → already adjacent" claim holds per section, not across the flattened list — the row model must respect section boundaries.
-- Rows are absolutely positioned with a `top` offset, deliberately not transforms, so inline sticky positioning inside cards keeps working (`GitPane.tsx:508` comment). Row heights are variable (`measureElement` + `estimateSize: 32`, remeasure effect at `GitPane.tsx:318`).
-- Find-in-changes scrolls via `currentChanges.findIndex(...)` → `scrollToIndex(activeMatchIndex)` (`GitPane.tsx:369-376`); match targets are built per change path (`fileChangeFindTargets`, `GitPane.tsx:282`).
-- `GitPaneChangeCard` renders the full `workspaceRelativePath` in its header (`GitPaneChangeCard.tsx:103`) and is consumed only by `GitPane`.
-- Sticky folder headers already exist for the workspace file tree (`workspace-file-tree/WorkspaceFileTreeStickyFolders.tsx`, plus a scroll-synced mask in `WorkspaceFileTreeList.tsx:33-34`) — but that mechanism assumes fixed-height virtual rows; the Git pane has variable-height rows. Sticky headers here are real work, not free (see §8).
+1. **Default is flat.** With the checkbox off, the list is exactly today's list: full workspace-relative paths, no headers, same order, same card rendering.
+2. **"Group by directory" checkbox** in the Review header, same label and same visual style as the chat card checkbox (`Checkbox` + text label inside a `<label>`). Checked: the list shows one directory header per run of consecutive files that share a directory **within the same section**. Unchecked: flat.
+3. **Grouping never reorders, filters or merges across sections** (`unstaged`, `untracked`, `conflicted`, `staged`, `last-turn`, branch). File order is always the flat order with headers inserted. A directory that occurs in two sections gets two headers.
+4. **Group header row** is non-interactive: directory path, file count, aggregate `+a −d`. A run of one file still gets a header. Headers are not collapsible and not sticky in this phase.
+5. **File rows in grouped mode** show the basename only (the header gives the directory). Click/Enter/Space expansion, the diff, copy/reveal actions and find-in-changes behave as in flat mode.
+6. **Checkbox visibility:** shown whenever the Review list has at least one change, hidden in empty, loading and error states (no dead controls). Unlike the chat card there is no `> 1` file rule: the Review list is not nested, so a one-file grouped list is simply one header plus one file.
+7. **Persistence** (same mechanism as the chat card):
+   - Global, UI-local boolean in `localStorage` under `zcode-git-pane-group-by-directory`, stored as `"true"` when on and removed when off. Missing or unknown values mean off. SSR-safe; storage errors are swallowed.
+   - Not per workspace, not in `setting.json` (fork-unsafe, see AGENTS.md), not broadcast-synced.
+   - **Separate key from the chat card.** Each surface keeps its own preference; toggling one must not silently change the other.
+8. **Source switches** (unstaged / staged / branch / last-turn) keep the checkbox state. Toggling keeps the expanded card expanded and does not scroll the list to the top.
 
-## Contract
+## State owners and interfaces
 
-### 1. Row model — pure, order-preserving, section-aware
+- **Preference:** new `packages/ui/src/lib/localBooleanPreference.ts` exports `readLocalBooleanPreference(key, storage?)` and `persistLocalBooleanPreference(key, enabled, storage?)`. It is the single implementation of the `"true"`/absent pattern. Both `lib/changeSummaryTreeViewPreference.ts` (chat, key unchanged) and `lib/gitPaneGroupByDirectoryPreference.ts` (Review, new key) delegate to it. The old `lib/gitPaneFileListLayoutPreference.ts` is deleted.
+- **Checkbox:** new shared presentational `packages/ui/src/components/GroupByDirectoryCheckbox.tsx` (props: `checked`, `onCheckedChange`, `label`). Used by the chat card (`v4/ConversationFileSummaryPanel.tsx`) and the Review header (`GitPane.tsx`). It owns no state.
+- **Row model:** `packages/ui/src/GitPane/directoryRowModel.ts` (pure, no React):
+  - `buildGitPaneRows(changes)`: consecutive-run grouping keyed by `(directory, section)`. Unchanged.
+  - `buildGitPaneDisplayRows(changes, groupByDirectory)`: new. `false` returns one `{kind:"file"}` row per change in order; `true` delegates to `buildGitPaneRows`. `GitPane` calls only this function.
+  - `getGitPaneRowIndexByPath(rows)`: maps `change.path` to the row index of its file row. In flat mode it is the identity over changes.
+- **GitPane** owns `groupByDirectory` state, initialised from the preference and written on change. It derives `paneRows` with `buildGitPaneDisplayRows`, and passes `hideDirectoryPart={groupByDirectory}` to `GitPaneChangeCard`.
+- **Not reused: the chat tree.** `lib/changeSummaryTree.ts` builds a nested, folders-first, alphabetically sorted tree with collapse. Applied to the Review list it would reorder files across sections and merge same-directory files from different sections, violating rule 3. Collapse state would also complicate find-in-changes and virtual-row keys. Review therefore keeps one-level runs. This is the one intentional presentation difference from the chat card.
 
-New pure helper `packages/ui/src/GitPane/directoryRowModel.ts` (colocated with the existing `GitPane/helpers.ts`, `GitPane/fileChangeFindSearch.ts`):
+## Layout
 
-```ts
-type GitPaneRow =
-  | {
-      kind: "directory";
-      runIndex: number;
-      directory: string;
-      fileCount: number;
-      additions: number;
-      deletions: number;
-    }
-  | { kind: "file"; change: GitPaneFileChange };
+- The header keeps the source select on the left. The right cluster becomes `[GroupByDirectoryCheckbox] [Refresh]`, replacing the old two-button layout toggle.
+- Long labels truncate (`min-w-0`, `truncate`). Below `sm`, the checkbox label may truncate but must remain visible and clickable as a whole row (`<label>` wraps the checkbox and text).
+- Rows use absolute `top` positioning (unchanged, required for inline sticky filenames). Directory headers are `h-7` (28px) and measured like any other virtual row; `estimateSize` 28.
 
-function buildGitPaneRows(changes: readonly GitPaneFileChange[]): GitPaneRow[];
-function getGitPaneRowIndexByPath(rows: readonly GitPaneRow[]): Map<string, number>; // change.path -> row index
-```
+## Directory header row
 
-- Walks the flattened `currentChanges` **in order** and opens a new directory group whenever `dirname(workspaceRelativePath)` changes **or `change.section` changes** (consecutive-run grouping). The section survives the flatten — `GitPaneFileChange extends GitFileChange` (`useGitRepository.ts:44`) and the last-turn builder stamps `section: "last-turn"` (`useGitRepository.ts:299`) — so the helper needs no changes to `buildSectionsForSource`. Same directory may legitimately produce two headers (e.g. a modified file in "unstaged" and a new file in "untracked" under `packages/ui/src/`) — this preserves today's exact list order and section semantics; grouping never reorders or merges across sections.
-- A run of one file still emits a directory header (JetBrains behaves the same; the header deduplicates the path prefix and carries aggregate stats).
-- Aggregate `additions`/`deletions` sum the run's changes.
-- Flat mode does not use the helper: `paneRows` = `currentChanges.map(change => ({ kind: "file", … }))`, byte-identical to today's list.
-- `id` uniqueness rules are defined in §5.
+Non-interactive `div`, no `tabIndex`, no button semantics. Folder icon `size-3.5` muted, directory path (`text-ui-xs`, truncate, `text-foreground-subtle`; root files show `.`), file-count pill, aggregate `+a −d` in the diff add/remove colors. The header is a visual landmark only; the checkbox is the single control.
 
-### 2. Layout toggle and persistence
+## i18n
 
-- Segmented icon control in the pane header, in the existing right-side button cluster next to Refresh (`GitPane.tsx:457-477`): two icon buttons — `FolderTree` (directory) and `List` (flat) from `lucide-react`, JetBrains-style, composed with the existing `button-group` primitive (`components/ui/button-group.tsx`; if its API fits composition only, two ghost `Button`s with `aria-pressed` are the fallback). Labels/tooltips from i18n (§7).
-- Rendered only when `currentChanges.length > 0` (the pane's empty/loading states already own the full header area below; the toggle would be dead weight there).
-- New `packages/ui/src/lib/gitPaneFileListLayoutPreference.ts` following the `workspaceExpansionPreference.ts` `StorageLike` pattern: key `zcode-git-pane-file-list-layout`, value `"directory" | "flat"`, default `"directory"`, SSR-safe (no `window` → default), unknown values fall back to the default. Single global value, deliberately **not** per-workspace (presentation choice, like JetBrains) and **not** in `setting.json` (fork-unsafe — upstream writes strip unknown keys) and **not** broadcast-synced (UI-local preference).
+- Reuse `chat.changeSummary.treeView` ("Group by directory" / «Групувати за каталогами» / 「按目录分组」) for the Review checkbox. The label semantics are identical; the key namespace is historical.
+- Remove the now-unused `git.fileListLayout.directory`, `git.fileListLayout.flat` and `git.fileListLayout.toggleLabel` keys from `en-US`, `uk-UA` and `zh-CN`.
 
-### 3. Directory header row
+## Find-in-changes and virtualizer
 
-Non-interactive `div` (nothing on it is clickable — no button semantics, no `tabindex`): `FolderTree` icon `size-3.5` muted, directory path (`text-ui-xs`, mono, truncate, `text-foreground-subtle`), file-count pill, aggregated `+a −d` in the cards' add/delete colors. No collapsible chevron, not sticky in phase 1. Height ≈ 28px, `estimateSize` 28.
-
-### 4. File rows inside groups
-
-`GitPaneChangeCard` gets an optional prop (exact name at implementation, e.g. `hideDirectoryPart: boolean`, default `false`) that renders the basename only in the card header — the group header directly above already shows the directory. Implementation note: the card header already renders through `FileDisplayInline` with a `showFilePath` option (`GitPaneChangeCard.tsx:105`, `lib/fileDisplay.tsx:32,172`), so the new prop only forwards `showFilePath: false`; no `fileDisplay` changes needed. Flat mode passes nothing → full path, today's rendering byte-for-byte. No other consumers exist (`GitPaneChangeCard` is used only by `GitPane.tsx`), so the default-value change is safe by construction.
-
-### 5. Virtualizer and keys
-
-- `useVirtualizer` count = `paneRows.length`; the render loop switches on `row.kind` (directory header vs `GitPaneChangeCard`). `expandedPath` / diff lazy-load / single-expanded semantics stay keyed by change path and are untouched.
-- `getItemKey`: file rows `${dataset.id}:file:${change.path}` (same as today modulo the `file:` infix — still unique and stable across mode toggles); directory rows `${dataset.id}:dir:${runIndex}:${directory}` where `runIndex` is the run ordinal, so two same-directory runs never collide.
-- The remeasure effect (`GitPane.tsx:318-323`) keeps firing on `expandedPath` change; directory headers are constant-height rows measured like any other row.
-
-### 6. Find-in-changes integration
-
-The one real regression risk. `fileChangeFindTargets`/`fileChangeFindState` stay keyed by change path (§ unchanged). The scroll effect (`GitPane.tsx:369-376`) replaces `currentChanges.findIndex(...)` with `getGitPaneRowIndexByPath(paneRows).get(activeMatch.path)`, falling back to today's flat index in flat mode (where the map is the identity). The effect's dependency list gains the row-index map so an active match re-resolves its row after a mode toggle (the virtualizer scrolls to the same file's new row). Match-count and active-match highlight logic untouched.
-
-### 7. i18n
-
-Keys in `packages/ui/src/i18n/locales/{en-US,uk-UA,zh-CN}.ts`: `git.fileListLayout.directory` ("Directory"), `git.fileListLayout.flat` ("Flatten"), `git.fileListLayout.toggleLabel` (aria-label for the group). Directory header content is icon + path + numbers — no plural forms needed. uk-UA: «Каталог» / «Плоско» / «Режим списку файлів»; zh-CN: 「目录」 / 「平铺」 / 「文件列表布局」.
-
-### 8. Phase 2 (explicitly out of this change): sticky current-directory header
-
-While scrolling a long grouped list, show the current directory as a floating header, reusing the `workspace-file-tree` approach (overlay + scroll-synced mask, `WorkspaceFileTreeList.tsx:33-34`). Not free here: that mechanism assumes fixed-height rows; Git pane rows are variable-height and `measureElement`-driven, so the visible-run computation and mask height need adapting. Ship phase 1 without it; decide phase 2 after using phase 1 on real diffs.
+- `fileChangeFindTargets` / `fileChangeFindState` stay keyed by change path. Unchanged.
+- The scroll effect resolves `rowIndexByPath.get(activeMatch.path)` from `paneRows` (display rows of the current mode) and calls `scrollToIndex(index, {align: "center"})`. The map is a dependency, so an active match re-resolves after a toggle.
+- `getItemKey`: file rows `${dataset.id}:file:${path}`; directory rows `${dataset.id}:dir:${runIndex}:${directory}`. Keys are unique within a mode; mode switches remount rows, which is acceptable because expansion is keyed by path, not by row.
+- Remeasure effect (`changeRowVirtualizer.measure()` on dataset or expansion change) is unchanged.
 
 ## Acceptance scenarios
 
-1. Grouped mode on the unstaged dataset: consecutive same-directory files share one header; a section boundary (unstaged → untracked) with files in the same directory produces two headers; the total list order matches flat mode exactly (headers interleaved, files never reordered).
-2. Toggle Directory ↔ Flatten: list switches in place; the expanded diff (if any) stays expanded on the same file; toggling does not scroll the list to the top.
-3. Reload the app: the chosen layout persists (localStorage) and applies to every source option (unstaged / staged / branch) and to worktree sessions.
-4. Find-in-changes in grouped mode: next/prev match scrolls the matched file's row into view (`align: "center"`); a match inside a file below many headers still lands on the right row (map covers all file rows).
-5. Expanding a diff in grouped mode: single-expanded behavior, lazy diff load, and row remeasure work as today; directory headers do not clip or overlap the expanded card (absolute `top` positioning preserved).
-6. Flat mode: rendering is identical to the current build (full paths, no headers) — verified by existing behavior, no visual diff expected.
-7. Empty/loading/error states and worktree-missing banner render exactly as today (toggle hidden when the list is empty).
+1. **Fresh state:** no stored value. The list is flat, identical to the pre-feature build (full paths, no headers, same order). Checkbox unchecked.
+2. **Check "Group by directory":** consecutive same-directory files share one header showing directory, count and `+a −d`. Files appear in the same order as in flat mode, headers interleaved. A same-directory file in another section produces a second header.
+3. **Uncheck:** returns to flat without changing order. An expanded card stays expanded and the scroll position is kept.
+4. **Reload:** the checkbox state is restored from `localStorage`. An invalid stored value means unchecked.
+5. **Find in grouped mode:** next/prev scrolls the matched file's row into view. A match in a file below many headers lands on the right row. Toggling while a match is active keeps the match visible.
+6. **Expanding a diff in grouped mode:** single-expanded behavior, lazy diff load and row remeasure work as in flat mode. Headers do not overlap the expanded card.
+7. **Empty, loading, error and worktree-missing states:** unchanged, and the checkbox is hidden.
+8. **Narrow (mobile remote and narrow web):** no horizontal page overflow; the header label and source select truncate; the checkbox and Refresh stay reachable.
+9. **Chat card unaffected:** the chat checkbox still reads and writes `zcode-change-summary-tree-view`, and toggling the Review checkbox does not change it.
 
-## Compatibility
+## E2E scenario (interaction change)
 
-Renderer-only, no protocol/CLI changes. Old builds and new builds share the localStorage key namespace safely (unknown values → default). No new permissions, no host RPC.
+Case: open a workspace with mixed changes (a modified file and an untracked file in the same directory, plus a file in another directory). Open the Review pane. Check "Group by directory", assert one header per directory run and the header count, uncheck, assert flat rows, reload, assert the preference is restored. Status: written here as the case definition; the desktop E2E harness (`packages/desktop/test/e2e/`) has not been extended yet, so this case is unrun.
+
+## Tests
+
+- `packages/ui/src/GitPane/directoryRowModel.test.ts`:
+  - grouped runs and section splitting (existing);
+  - `buildGitPaneDisplayRows(changes, false)` returns file rows only, in input order, and has no directory rows;
+  - `buildGitPaneDisplayRows(changes, true)` equals `buildGitPaneRows(changes)`;
+  - `getGitPaneRowIndexByPath` covers exactly the file rows in both modes and points at the right row index.
+- `packages/ui/test/gitPaneGroupByDirectoryPreference.test.ts`: default off on empty and invalid values, `"true"` reads on, writing off removes the key, storage that throws reads off and does not throw on write, and the Review key does not collide with the chat key.
+- `packages/ui/test/changeSummaryTree.test.ts` keeps covering the chat preference via the shared helper.
+- `packages/ui/test/v4ConversationFileSummaryPanel.test.ts` keeps covering the chat flat path (Radix checkbox mocked).
 
 ## Non-goals
 
-- Collapsible single-level groups: worst-of-both-worlds — collapse state without real hierarchy; the state machine (persist, restore, force-expand on find/filter) is not S-sized, and the code does not carry over to a real tree. Rejected.
-- Full nested directory tree (issue Variant 2): separate follow-up, referencing `packages/ui/src/workspace-file-tree/` as the model/flatten/sticky reference.
-- Applying grouping to chat change summaries (`MessageChangeSummaryPanel`, `ConversationFileSummaryPanel`): not in this change.
-- Reordering, filtering, or cross-section merging of changes.
+- Collapsible groups, sticky headers (phase 2), nested tree (the chat tree is not reused here).
+- A Settings entry or a per-workspace preference.
+- Reordering, filtering or cross-section merging of changes.
+- Applying grouping to other surfaces.
 - Cross-machine sync of the preference.
-
-## Verification
-
-- Unit tests (vitest, colocated `packages/ui/src/GitPane/directoryRowModel.test.ts` — first tests in the `GitPane/` dir): grouping correctness, section-boundary splitting, aggregate stats, single-file runs, empty input, `getGitPaneRowIndexByPath` covering exactly the file rows with correct indices for both modes.
-- `pnpm typecheck`, `pnpm lint` on the touched packages; architecture check per `.agents/skills/architecture-governance/SKILL.md` for `packages/ui`.
-- Manual `pnpm dev:desktop` pass on a repo with a mixed diff (modified + untracked in the same directories): scenarios 1–7.

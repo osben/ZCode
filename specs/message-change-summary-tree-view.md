@@ -53,5 +53,5 @@ Note: the live panel is `packages/ui/src/v4/ConversationFileSummaryPanel.tsx` (f
 ## Non-goals
 
 - A Settings entry for the default (would need fork-safe `fork_` storage; the inline checkbox already persists the choice).
-- Tree mode in the Review tab (already has Directory/Flatten, see `specs/review-tab-directory-grouping.md`).
+- Tree mode in the Review tab. The Review pane has its own checkbox with one-level section-aware group headers (see `specs/review-tab-directory-grouping.md`); it does not reuse this nested tree.
 - Sticky folder headers, per-folder "open all diffs", persisted collapse state.
