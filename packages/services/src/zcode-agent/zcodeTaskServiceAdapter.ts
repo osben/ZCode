@@ -2761,6 +2761,11 @@ export function createZCodeTaskServiceAdapter(
         provider: GLM_PROVIDER,
         pinned: false,
         archived: false,
+        // BUG-GWT-010: forward the window controller's live worktree facts so the read also converges
+        // them into meta_json (durability); absent input keeps this a plain read.
+        ...(params.executionWorktreeFacts
+          ? { executionWorktreeFacts: params.executionWorktreeFacts }
+          : {}),
       });
       return tasks.map(rememberIndexedTaskMeta);
     },

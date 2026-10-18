@@ -481,9 +481,9 @@ export function ComposerDestinationControl({
                           </span>
                         ) : isCurrent && dirtyFileCount > 0 ? (
                           <span className="text-ui-sm text-foreground-subtle">
-                            {intl.formatMessage(
+                            {intl.formatPlural(
                               { id: "git.branchSwitcher.currentDirty" },
-                              { count: String(dirtyFileCount) },
+                              dirtyFileCount,
                             )}
                           </span>
                         ) : null}

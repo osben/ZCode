@@ -39,6 +39,11 @@ interface GitLiveDataRefreshInput {
   includeExtendedData: boolean;
   refreshToken: string | number | boolean | null;
   workspaceRpcEnabled: boolean;
+  // Self-healing inputs (BUG-GWT-013), optional so pure-diff callers keep the legacy contract:
+  // summaryResolved is true once a refresh settled for this exact target; refreshPending is
+  // true while the version-current request has not settled yet (its settle handler owns recovery).
+  summaryResolved?: boolean;
+  refreshPending?: boolean;
 }
 
 export interface GitPaneFileChange extends GitFileChange {
@@ -375,10 +380,21 @@ export function shouldRefreshLiveGitData(
     return true;
   }
 
+  // Key behavior (BUG-GWT-013): re-issue the initial refresh when the active target has no
+  // settled summary and no request is pending — a dropped (services identity swap) or rejected
+  // first refresh must not hide the destination chip until a renderer reload. While a request
+  // is pending, its settle handler owns recovery instead. Strict checks keep the rule inert for
+  // callers that do not provide the self-healing inputs.
+  if (next.summaryResolved === false && next.refreshPending === false) {
+    return true;
+  }
+
   // Key behavior: closing the Git pane must not trigger real Git work just because branch/identity data is missing.
   // Fetch extra data only on the closed → open transition; task/last-turn switches only reorganize local data.
   return !previous.includeExtendedData && next.includeExtendedData;
 }
+
+const MAX_INITIAL_REFRESH_RETRIES = 2;
 
 export function useGitRepository(options: {
   workspacePath: string;
@@ -419,9 +435,25 @@ export function useGitRepository(options: {
     createInitialState(workspacePath, { workspaceKey }),
   );
   const requestVersionRef = useRef(0);
+  const pendingRequestVersionRef = useRef<number | null>(null);
+  // Bounded recovery for a rejected initial refresh: the failure leaves summaryResolved false without
+  // changing any effect dependency, so the re-issue rule would never be re-evaluated. A tick bump re-runs
+  // the effect; the counter (per target) caps it so a persistent failure settles on the error state.
+  const [retryTick, setRetryTick] = useState(0);
+  const consecutiveFailuresRef = useRef<{ key: string; count: number }>({
+    key: "",
+    count: 0,
+  });
   const lastLiveRefreshInputRef = useRef<GitLiveDataRefreshInput | null>(null);
   const lastFileChangeEntry = null;
   const lastSummaryEntry = null;
+  // True once a refresh settled (loaded, not loading, not errored) for the exact current target.
+  // A settle flips this flag, which re-evaluates the effect below, and the flag feeds the
+  // self-healing re-issue rule in shouldRefreshLiveGitData (BUG-GWT-013).
+  const summaryResolved =
+    matchesGitRepositoryTarget(repositoryState, { workspacePath, workspaceKey }) &&
+    !repositoryState.loading &&
+    repositoryState.error === null;
 
   useEffect(() => {
     const nextRefreshInput: GitLiveDataRefreshInput = {
@@ -430,6 +462,10 @@ export function useGitRepository(options: {
       includeExtendedData,
       refreshToken,
       workspaceRpcEnabled,
+      summaryResolved,
+      refreshPending:
+        pendingRequestVersionRef.current !== null &&
+        pendingRequestVersionRef.current === requestVersionRef.current,
     };
 
     if (!enabled) {
@@ -474,6 +510,7 @@ export function useGitRepository(options: {
     let disposed = false;
     const requestVersion = requestVersionRef.current + 1;
     requestVersionRef.current = requestVersion;
+    pendingRequestVersionRef.current = requestVersion;
 
     setRepositoryState((current) =>
       matchesGitRepositoryTarget(current, nextRefreshInput)
@@ -498,8 +535,26 @@ export function useGitRepository(options: {
     // fetch branch comparison and identity only after the Git pane is expanded, avoiding full Git-pane prefetch on the first frame.
     void refreshPromise
       .then(({ summary, identity, unstagedChanges, stagedChanges, branchComparison }) => {
-        if (disposed || requestVersionRef.current !== requestVersion) {
+        if (pendingRequestVersionRef.current === requestVersion) {
+          pendingRequestVersionRef.current = null;
+        }
+
+        // Key behavior (BUG-GWT-013): a result for the still version-current request must be
+        // applied even when the issuing effect run was cleaned up by a services identity swap
+        // with unchanged logical inputs — dropping it left the workspace summary-less (no
+        // destination chip) until a renderer reload. Version currency is the target check: any
+        // logical input change bumps the version or re-issues, so an equal version means the
+        // same workspacePath/workspaceKey still owns this result.
+        if (requestVersionRef.current !== requestVersion) {
           return;
+        }
+        // Only a current request's success resets the cap; a stale result must not clear another target's count.
+        consecutiveFailuresRef.current = { key: workspaceKey, count: 0 };
+
+        if (disposed) {
+          // The result came from a superseded service instance; drop the stored baseline so
+          // the next effect evaluation re-establishes the fetch through the current instance.
+          lastLiveRefreshInputRef.current = null;
         }
 
         const repositoryDatasets = buildRepositoryDatasets({
@@ -528,7 +583,15 @@ export function useGitRepository(options: {
         });
       })
       .catch((error: unknown) => {
-        if (disposed || requestVersionRef.current !== requestVersion) {
+        if (pendingRequestVersionRef.current === requestVersion) {
+          pendingRequestVersionRef.current = null;
+        }
+
+        // Key behavior (BUG-GWT-013): same version-currency rule as the success path — an
+        // identity swap must not silence the failure. The applied error state keeps
+        // summaryResolved false, so shouldRefreshLiveGitData re-issues on the next effect
+        // evaluation instead of pinning the workspace without its destination chip.
+        if (requestVersionRef.current !== requestVersion) {
           return;
         }
 
@@ -545,6 +608,19 @@ export function useGitRepository(options: {
             revision: current.revision,
           }),
         }));
+        // Bounded: after MAX_INITIAL_REFRESH_RETRIES consecutive rejections the error state stands until the
+        // next file-change trigger or a dependency change.
+        const failures =
+          consecutiveFailuresRef.current.key === workspaceKey
+            ? consecutiveFailuresRef.current.count
+            : 0;
+        if (failures < MAX_INITIAL_REFRESH_RETRIES) {
+          consecutiveFailuresRef.current = {
+            key: workspaceKey,
+            count: failures + 1,
+          };
+          setRetryTick((tick) => tick + 1);
+        }
       });
 
     return () => {
@@ -554,6 +630,8 @@ export function useGitRepository(options: {
     gitService,
     includeExtendedData,
     refreshToken,
+    retryTick,
+    summaryResolved,
     workspaceIdentity,
     workspaceKey,
     workspacePath,

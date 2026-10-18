@@ -43,6 +43,7 @@ import { wslUserSchema } from "./wslUserValidation.js";
 import { legacyZCodeProviderSchema } from "./zcode-agent-policy.js";
 import { errorAttributionSchema } from "./zcode-protocol-v4/snapshot.js";
 import {
+  zcodeExecutionWorktreeSchema,
   zcodeMcpResourceSamplesSchema,
   zcodeMcpTelemetryEventSchema,
   zcodeProcessResourceSampleSchema,
@@ -1739,6 +1740,12 @@ export const zcodeTaskMetaSchema = z.object({
   // Off-peak identity uses the same persistence strategy as cron: meta_json is the single source of
   // truth, with an off_peak_task_id index projection column in the tasks table for fallback/lookups.
   offPeakTaskId: nonEmptyStringSchema.optional(),
+  // Execution worktree fact (BUG-GWT-010, docs/testing/git-worktree-qa/bugs/BUG-GWT-010.md): converged from
+  // the live sessions-index overlay into meta_json at the Host boundary so the sidebar worktree marker and the
+  // Sessions Environment/Branch classification survive an app restart for closed workspaces. Runtime snapshot
+  // syncs preserve the fact (preserve-on-absent in TaskIndexRepo.syncTaskMeta); the live overlay stays the
+  // freshness source. Same shape as the sessions-index summary field (zcodeExecutionWorktreeSchema).
+  executionWorktree: zcodeExecutionWorktreeSchema.optional(),
   unreadAt: z.number().int().nonnegative().optional(),
   status: zcodeTaskPersistStatusSchema.optional(),
   lastError: z

@@ -1,5 +1,14 @@
-import { describe, expect, it } from "vitest";
+// @vitest-environment jsdom
+//
+// Pure helper tests for the Command Center worktree flow, plus one rendered-dialog
+// regression test for BUG-GWT-007 (jsdom needed for the dialog block below).
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { createElement, type ReactNode } from "react";
 import type { GitWorktreeEntry } from "@zcode/shared";
+import { CommandCenterDialog } from "@/command-center/CommandCenterDialog.js";
+import type { QuickPickCommand } from "@/quickpick/quickPickCommands.js";
+import type { WorkspaceTabState } from "@/store/tabStore.js";
 import {
   buildWorktreeTaskProjects,
   composeBranchName,
@@ -487,5 +496,245 @@ describe("deriveWorktreeFormValues existing-branch contract (2026-10-13)", () =>
     const derived = derive("fresh-task");
     expect(derived.existingBranchName).toBeNull();
     expect(derived.branchNameIssue).toBeNull();
+  });
+});
+// ---------------------------------------------------------------------------
+// BUG-GWT-007 (docs/testing/git-worktree-qa/bugs/BUG-GWT-007.md, case E4):
+// the setup page's existing-branch offer must not silently open a stale
+// registered worktree (git record present, directory deleted). Rendered-dialog
+// test with a mocked git RPC surface (self-contained; no real git, no sleeps).
+// The Command component is mocked following commandCenterWorktreeDialog.test.ts
+// (cmdk Input stays real).
+// ---------------------------------------------------------------------------
+
+vi.mock("@/components/ui/command.js", async () => {
+  const { Command } = await vi.importActual<typeof import("cmdk")>("cmdk");
+  const fake = ({ children, ...props }: { children: ReactNode }) =>
+    createElement("div", props, children);
+
+  return {
+    Command,
+    CommandDialog: fake,
+    CommandEmpty: fake,
+    CommandGroup: fake,
+    CommandItem: ({
+      children,
+      onSelect,
+      value,
+      ...props
+    }: {
+      children: ReactNode;
+      onSelect?: () => void;
+      value?: string;
+    }) =>
+      createElement(
+        "div",
+        { ...props, "data-item-value": value ?? "", onClick: onSelect },
+        children,
+      ),
+    CommandList: fake,
+    CommandShortcut: ({ children, ...props }: { children: ReactNode }) =>
+      createElement("span", props, children),
+  };
+});
+
+vi.mock("@/i18n/IntlProvider.js", () => ({
+  useZCodeIntl: () => ({
+    intl: {
+      formatMessage: ({ id }: { id: string }) => id,
+    },
+  }),
+}));
+
+vi.mock("@/hooks/useGlobalTaskList.js", () => ({
+  useGlobalTaskList: () => ({
+    items: [],
+    loading: false,
+  }),
+}));
+
+vi.mock("@/hooks/useServices.js", () => ({
+  useServices: () => ({
+    fileService: {
+      listWorkspaceFiles: vi.fn(async () => []),
+    },
+  }),
+}));
+
+const staleOfferGitService = {
+  createWorktree: vi.fn(),
+  listWorktrees: vi.fn(),
+  resolveWorktreePathIdentities: vi.fn(async ({ paths }: { paths: string[] }) => paths),
+  getLocalBranches: vi.fn(),
+  getWorkspaceRepositoryInfo: vi.fn(),
+  verifyWorktreeUsable: vi.fn(),
+};
+
+vi.mock("@/hooks/useWorkspaceServices.js", () => ({
+  // The worktree flow targets local project paths: base (local Host) git service only.
+  useBaseWorkspaceServices: () => ({ gitService: staleOfferGitService }),
+}));
+
+vi.mock("@/hooks/usePlatform.js", () => ({
+  useOptionalPlatform: () => null,
+}));
+
+vi.mock("@/hooks/useSettingService.js", () => ({
+  useSettings: () => ({
+    settings: { recentProjects: ["/dev/recent-project"] },
+    loading: false,
+    error: null,
+  }),
+}));
+
+vi.mock("@/workspace-file-search/fetchWorkspaceFileEntries.js", () => ({
+  fetchWorkspaceFileEntriesPacked: vi.fn(async () => ""),
+}));
+
+vi.mock("@/components/ui/toast.js", () => ({
+  toast: vi.fn(),
+}));
+
+const STALE_OFFER_COMMAND: QuickPickCommand = {
+  id: "new-task-worktree",
+  sectionId: "suggested",
+  titleId: "quickPick.command.newTaskWorktree",
+  icon: "worktree",
+  keywords: ["worktree"],
+  page: {
+    id: "new-task-project",
+    placeholderId: "commandCenter.placeholder.newTaskProject",
+  },
+};
+
+const STALE_OFFER_TABS: WorkspaceTabState[] = [
+  {
+    id: "tab-alpha" as WorkspaceTabState["id"],
+    kind: "workspace",
+    label: "alpha",
+    workspacePath: "/dev/alpha",
+    workspaceIdentity: "alpha-id",
+  },
+];
+
+function getStaleOfferRow(container: HTMLElement, value: string) {
+  const row = container.querySelector(`[data-item-value^="${value}"]`);
+  expect(row, `row for ${value}`).not.toBeNull();
+  return row as HTMLElement;
+}
+
+describe("BUG-GWT-007 existing-branch offer vs stale registered worktree", () => {
+  const STALE_WORKTREE_PATH = "/dev/alpha-worktrees/stale";
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  // BUG-GWT-007: marked it.fails while the bug is open; remove the marker when fixed
+  // (the test then goes green and this suite reports the change).
+  it("BUG-GWT-007: opening a worktree whose registered directory is missing must be blocked or surface an error, not open silently", async () => {
+    staleOfferGitService.getWorkspaceRepositoryInfo.mockResolvedValue({
+      workspacePath: "/dev/alpha",
+      kind: "main-tree",
+      isGitAvailable: true,
+    });
+    staleOfferGitService.getLocalBranches.mockResolvedValue({
+      headRefType: "branch",
+      currentBranchName: "main",
+      branches: [
+        {
+          name: "main",
+          isCurrent: true,
+          upstreamName: null,
+          commitHash: "a",
+          commitTimestampMs: 1,
+        },
+        {
+          name: "zcode/stale",
+          isCurrent: false,
+          upstreamName: null,
+          commitHash: "b",
+          commitTimestampMs: 1,
+        },
+      ],
+    });
+    // `git worktree list` keeps the stale registration (prunable record) even though
+    // the directory was removed; the real-directory probe reports it missing.
+    staleOfferGitService.listWorktrees.mockResolvedValue({
+      isGitAvailable: true,
+      isRepository: true,
+      worktrees: [
+        {
+          path: "/dev/alpha",
+          headCommitHash: "a",
+          branchName: "main",
+          isMain: true,
+          isBare: false,
+          isDetached: false,
+          isCurrent: true,
+        },
+        {
+          path: STALE_WORKTREE_PATH,
+          headCommitHash: "b",
+          branchName: "zcode/stale",
+          isMain: false,
+          isBare: false,
+          isDetached: false,
+          isCurrent: false,
+        },
+      ],
+    });
+    staleOfferGitService.verifyWorktreeUsable.mockResolvedValue({
+      ok: false,
+      reason: "missing-directory",
+    });
+
+    const onCreateTaskInWorkspace = vi.fn();
+    const { container } = render(
+      createElement(CommandCenterDialog, {
+        open: true,
+        commands: [STALE_OFFER_COMMAND],
+        workspaceAbsPath: "/dev/alpha",
+        workspaceIdentity: "alpha-id",
+        workspaceTabs: STALE_OFFER_TABS,
+        onOpenChange: vi.fn(),
+        onSelectTask: vi.fn(),
+        onCreateTaskInWorkspace,
+        onOpenCodeViewer: vi.fn(),
+      }),
+    );
+
+    // Command selection pushes the project page, then picking alpha pushes the setup page.
+    fireEvent.click(getStaleOfferRow(container, "quickPick.command.newTaskWorktree"));
+    fireEvent.click(getStaleOfferRow(container, "alpha /dev/alpha"));
+    fireEvent.change(await screen.findByLabelText("commandCenter.worktree.branchName"), {
+      target: { value: "stale" },
+    });
+
+    // The composed name zcode/stale matches the existing branch: the offer appears.
+    await waitFor(() => {
+      expect(screen.getByText("commandCenter.worktree.existingBranchHint")).toBeTruthy();
+    });
+    // The stale registration must replace the open offer: no "open existing" button for a missing
+    // directory, a recoverable alert naming it, and a prune action instead.
+    expect(
+      screen.queryByRole("button", {
+        name: "commandCenter.worktree.openExisting",
+      }),
+      "stale worktree must not offer to open the missing directory",
+    ).toBeNull();
+    expect(screen.getByRole("alert").textContent ?? "").toContain(
+      "commandCenter.worktree.error.worktreeMissing",
+    );
+    expect(
+      screen.getAllByRole("button", { name: "commandCenter.worktree.prune" }).length,
+    ).toBeGreaterThan(0);
+    // Flush any async open contract (microtasks only; no timer sleeps).
+    await act(async () => {});
+
+    expect(onCreateTaskInWorkspace.mock.calls.some((call) => call[0] === STALE_WORKTREE_PATH)).toBe(
+      false,
+    );
   });
 });

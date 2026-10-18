@@ -14,6 +14,7 @@ import {
   resolveWorkspaceKey,
   CRON_DEFAULT_GROUP_ID,
   OFF_PEAK_DEFAULT_GROUP_ID,
+  type ZCodeExecutionWorktree,
   type ZCodeProvider,
   type ZCodeTaskMeta,
 } from "@zcode/shared";
@@ -1709,6 +1710,9 @@ export class TaskIndexRepo {
           cronAutomationId: params.meta.cronAutomationId ?? existingMeta?.cronAutomationId,
           // Apply the same fallback for off-peak identity: preserve existing ownership when the snapshot has no marker.
           offPeakTaskId: params.meta.offPeakTaskId ?? existingMeta?.offPeakTaskId,
+          // Runtime session snapshots do not carry the worktree fact (BUG-GWT-010); preserve the fact converged
+          // from sessions-index so a later sync never erases it and the marker survives restarts of closed workspaces.
+          executionWorktree: params.meta.executionWorktree ?? existingMeta?.executionWorktree,
           updatedAt,
           unreadAt: params.meta.unreadAt ?? existingMeta?.unreadAt,
         };
@@ -2033,8 +2037,26 @@ export class TaskIndexRepo {
     pinned?: boolean;
     archived?: boolean;
     includeDeleted?: boolean;
+    /**
+     * Host sessions-index convergence input (BUG-GWT-010): execution-worktree facts learned from the live
+     * sessions-index overlay are converged into meta_json before the read, so the fact survives restarts of
+     * closed workspaces. Requires an explicit workspacePath scope; without it the read stays a plain read.
+     */
+    executionWorktreeFacts?: ReadonlyArray<{
+      taskId: string;
+      executionWorktree: ZCodeExecutionWorktree;
+    }>;
   }): Promise<ZCodeTaskMeta[]> {
     await this.ensureReady();
+    if (params.workspacePath && params.executionWorktreeFacts?.length) {
+      await this.applyExecutionWorktreeFacts(
+        {
+          workspacePath: params.workspacePath,
+          ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+        },
+        params.executionWorktreeFacts,
+      );
+    }
     // listTaskMetas supports querying all tasks when workspacePath is omitted, but workspaceKey requires a path.
     // Narrow the optional argument into an explicit workspace target first so types do not mix global and workspace queries.
     const targetWorkspaceKey = params.workspacePath
@@ -2084,6 +2106,86 @@ export class TaskIndexRepo {
         archived: typeof params.archived === "boolean" ? (params.archived ? 1 : 0) : null,
       }) as unknown as TaskIndexMetaRow[];
     return rows.map(rowToMeta);
+  }
+
+  /**
+   * Converge execution-worktree facts from the live sessions-index overlay into meta_json (BUG-GWT-010,
+   * docs/testing/git-worktree-qa/bugs/BUG-GWT-010.md). Only the meta_json column of existing rows changes,
+   * so ordering (updated_at), status, and membership columns are never disturbed. Rows without a task-index
+   * entry (draft sessions) and rows whose meta_json cannot be parsed are skipped: convergence must never
+   * rewrite or replace data it does not understand.
+   */
+  private async applyExecutionWorktreeFacts(
+    scope: { workspacePath: string; workspaceIdentity?: string },
+    facts: ReadonlyArray<{ taskId: string; executionWorktree: ZCodeExecutionWorktree }>,
+  ): Promise<void> {
+    await Promise.all(
+      facts.map((fact) =>
+        this.enqueueWrite({ ...scope, taskId: fact.taskId }, () => {
+          // enqueueWrite only serializes writers inside this process; another Host sharing the database can
+          // update the row between the read and the UPDATE. BEGIN IMMEDIATE takes the write lock before the
+          // read so meta_json is never replaced with a stale copy (same pattern as deleteArchivedTask).
+          const database = this.getDatabase();
+          // Read-only fast path: when the stored fact already matches (or the row is absent/unreadable),
+          // skip the write lock entirely so repeated publishes never contend with other Hosts.
+          const peek = this.getTaskRow({ ...scope, taskId: fact.taskId });
+          if (!peek || peek.deleted === 1) return;
+          try {
+            const stored = (
+              JSON.parse(peek.meta_json) as { executionWorktree?: ZCodeExecutionWorktree } | null
+            )?.executionWorktree;
+            if (
+              stored?.path === fact.executionWorktree.path &&
+              stored?.branchName === fact.executionWorktree.branchName
+            ) {
+              return;
+            }
+          } catch {
+            return;
+          }
+          database.exec("BEGIN IMMEDIATE");
+          try {
+            const row = this.getTaskRow({ ...scope, taskId: fact.taskId });
+            if (!row || row.deleted === 1) {
+              database.exec("COMMIT");
+              return;
+            }
+            let parsed: unknown;
+            try {
+              parsed = JSON.parse(row.meta_json);
+            } catch {
+              database.exec("COMMIT");
+              return;
+            }
+            if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+              database.exec("COMMIT");
+              return;
+            }
+            const existing = (parsed as { executionWorktree?: ZCodeExecutionWorktree })
+              .executionWorktree;
+            if (
+              existing?.path !== fact.executionWorktree.path ||
+              existing?.branchName !== fact.executionWorktree.branchName
+            ) {
+              database
+                .prepare("UPDATE tasks SET meta_json = ? WHERE workspace_key = ? AND task_id = ?")
+                .run(
+                  JSON.stringify({
+                    ...parsed,
+                    executionWorktree: fact.executionWorktree,
+                  }),
+                  workspaceKey(scope),
+                  fact.taskId,
+                );
+            }
+            database.exec("COMMIT");
+          } catch (error) {
+            database.exec("ROLLBACK");
+            throw error;
+          }
+        }),
+      ),
+    );
   }
 
   /**

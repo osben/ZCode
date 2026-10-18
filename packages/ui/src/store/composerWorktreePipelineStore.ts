@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { ComposerExecutionWorktree } from "@/v4/composer/composerDraftWorktreeIntent.js";
 
 /**
  * Composer worktree setup pipeline (spec: specs/composer-worktree-setup-steps.md).
@@ -100,6 +101,48 @@ let nextAttemptId = 0;
 
 function sessionKey(sessionId?: string): string {
   return sessionId ?? UNSCOPED_SESSION_KEY;
+}
+
+const armedWorktreeSends = new Map<string, ArmedWorktreeSendContinuation>();
+
+function armedContinuationKey(workspaceKey: string, preparedSessionId: string): string {
+  return `${workspaceKey}\u0000${preparedSessionId}`;
+}
+
+/**
+ * Release the armed continuation matching an entry address. `sessionId === undefined` resolves
+ * against the workspace's active entry the same way patchEntry does. Terminal store actions call
+ * this so an armed continuation cannot outlive its pipeline entry when no composer instance for
+ * that prepared session is mounted to abandon it locally.
+ */
+function releaseArmedContinuation(workspaceKey: string, sessionId: string | undefined): void {
+  let targetSessionId = sessionId;
+  if (!targetSessionId) {
+    const workspace =
+      useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey[workspaceKey];
+    const activeKey = workspace?.activeSessionKey;
+    targetSessionId = activeKey && activeKey !== UNSCOPED_SESSION_KEY ? activeKey : undefined;
+  }
+  if (targetSessionId) {
+    armedWorktreeSends.delete(armedContinuationKey(workspaceKey, targetSessionId));
+  }
+}
+
+/**
+ * patchEntry plus continuation release, gated on the patch applying. patchEntry returns the same
+ * state object when its guards reject (missing, already terminal, or addressed to a different
+ * session/attempt); a stale terminal call must not drop the continuation of a newer attempt.
+ */
+function patchEntryReleasingContinuation(
+  state: ComposerWorktreePipelineState,
+  workspaceKey: string,
+  sessionId: string | undefined,
+  attemptId: string | undefined,
+  patch: Partial<ComposerWorktreePipelineEntry>,
+): Partial<ComposerWorktreePipelineState> {
+  const next = patchEntry(state, workspaceKey, sessionId, attemptId, patch);
+  if (next !== state) releaseArmedContinuation(workspaceKey, sessionId);
+  return next;
 }
 
 function patchEntry(
@@ -210,7 +253,7 @@ export const useComposerWorktreePipelineStore = create<ComposerWorktreePipelineS
     }),
   consume: (workspaceKey, sessionId, attemptId) =>
     set((state) =>
-      patchEntry(state, workspaceKey, sessionId, attemptId, {
+      patchEntryReleasingContinuation(state, workspaceKey, sessionId, attemptId, {
         status: "consumed",
         queuedPromptPreview: undefined,
         orphaned: undefined,
@@ -218,27 +261,38 @@ export const useComposerWorktreePipelineStore = create<ComposerWorktreePipelineS
     ),
   discard: (workspaceKey, sessionId, attemptId) =>
     set((state) =>
-      patchEntry(state, workspaceKey, sessionId, attemptId, {
+      patchEntryReleasingContinuation(state, workspaceKey, sessionId, attemptId, {
         status: "discarded",
         queuedPromptPreview: undefined,
       }),
     ),
   withdraw: (workspaceKey, sessionId) =>
     set((state) =>
-      patchEntry(state, workspaceKey, sessionId, undefined, {
+      patchEntryReleasingContinuation(state, workspaceKey, sessionId, undefined, {
         queuedPromptPreview: undefined,
         orphaned: true,
       }),
     ),
   detachQueuedSend: (workspaceKey, sessionId) =>
     set((state) =>
-      patchEntry(state, workspaceKey, sessionId, undefined, { queuedPromptPreview: undefined }),
+      patchEntryReleasingContinuation(state, workspaceKey, sessionId, undefined, {
+        queuedPromptPreview: undefined,
+      }),
     ),
-  dropWorkspace: (workspaceKey) =>
+  dropWorkspace: (workspaceKey) => {
+    // Map iteration tolerates deleting the visited entry; no snapshot copy is needed.
+    for (const continuation of armedWorktreeSends.values()) {
+      if (continuation.workspaceKey === workspaceKey) {
+        armedWorktreeSends.delete(
+          armedContinuationKey(continuation.workspaceKey, continuation.preparedSessionId),
+        );
+      }
+    }
     set((state) => {
       const { [workspaceKey]: _removed, ...rest } = state.pipelineByWorkspaceKey;
       return { pipelineByWorkspaceKey: rest };
-    }),
+    });
+  },
 }));
 
 /** Current pipeline for a workspaceKey, or null. */
@@ -251,4 +305,60 @@ export function selectComposerWorktreePipeline(
   if (!workspace) return null;
   const key = sessionId ? sessionKey(sessionId) : workspace.activeSessionKey;
   return key ? (workspace.entriesBySessionKey[key] ?? null) : null;
+}
+
+/**
+ * Armed continuation of a queued worktree first send (BUG-GWT-005 live path; spec
+ * specs/composer-worktree-setup-steps.md §Contract "Retry-admission is a renderer obligation").
+ *
+ * The continuation holds the submit-time dispatch closure of the frozen submission. It must
+ * survive the first-send view promotion (the draft composer unmounts and the prepared session's
+ * composer mounts as a different instance), so it lives in this module-scope registry keyed by
+ * workspace + prepared session instead of a component ref; the composer keeps the ref only as a
+ * local cache. The closures write recovery drafts through the composer draft store and guard
+ * editor access with optional chaining, so dispatching from another mounted instance is
+ * equivalent to the same-instance late dispatch.
+ */
+export interface ArmedWorktreeSendContinuation {
+  workspaceKey: string;
+  preparedSessionId: string;
+  attemptId?: string;
+  hasBoundPreparedSession: boolean;
+  dispatch: (
+    executionWorktree: ComposerExecutionWorktree,
+    preparedSessionId: string,
+    preparedAttemptId?: string,
+  ) => Promise<void>;
+  /** Unclaims the submission and writes the recovery record for an abandoned pipeline. */
+  restore: () => void;
+  /**
+   * Writes the recovery record for a retryable failure but keeps the submission claimed, so the
+   * armed dispatch skips a second claim that would wipe or reject edits typed meanwhile.
+   */
+  restoreForRetry: () => void;
+  restoredFailureKey?: string;
+}
+
+/** Arm (or rebind) the continuation of a queued worktree send for a prepared session. */
+export function armWorktreeSendContinuation(continuation: ArmedWorktreeSendContinuation): void {
+  armedWorktreeSends.set(
+    armedContinuationKey(continuation.workspaceKey, continuation.preparedSessionId),
+    continuation,
+  );
+}
+
+/** The armed continuation for a prepared session, or null when none is armed. */
+export function peekWorktreeSendContinuation(
+  workspaceKey: string,
+  preparedSessionId: string,
+): ArmedWorktreeSendContinuation | null {
+  return armedWorktreeSends.get(armedContinuationKey(workspaceKey, preparedSessionId)) ?? null;
+}
+
+/** Release the armed continuation (dispatched, withdrawn, or no longer recoverable). */
+export function releaseWorktreeSendContinuation(
+  workspaceKey: string,
+  preparedSessionId: string,
+): void {
+  armedWorktreeSends.delete(armedContinuationKey(workspaceKey, preparedSessionId));
 }

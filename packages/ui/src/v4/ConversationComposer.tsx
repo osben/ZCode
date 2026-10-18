@@ -162,8 +162,12 @@ import {
   type ComposerWorktreePreparationSync,
 } from "@/v4/composer/composerDraftWorktreeIntent.js";
 import {
+  armWorktreeSendContinuation,
+  peekWorktreeSendContinuation,
+  releaseWorktreeSendContinuation,
   selectComposerWorktreePipeline,
   useComposerWorktreePipelineStore,
+  type ArmedWorktreeSendContinuation,
 } from "@/store/composerWorktreePipelineStore.js";
 import { isComposerWorktreePipelineInFlight } from "@/v4/composer/composerWorktreePipeline.js";
 import {
@@ -683,22 +687,10 @@ function ConversationComposerImpl({
       setWorktreeQueued(false);
     }
   }, [workspaceKey, draftScopeId]);
-  const pendingWorktreeSendRef = useRef<{
-    workspaceKey: string;
-    preparedSessionId: string;
-    attemptId?: string;
-    hasBoundPreparedSession: boolean;
-    dispatch: (
-      executionWorktree: ComposerExecutionWorktree,
-      preparedSessionId: string,
-      preparedAttemptId?: string,
-    ) => Promise<void>;
-    restore: () => void;
-    // Writes the recovery record for a retryable failure but keeps the submission claimed, so the
-    // armed dispatch skips a second claim that would wipe or reject edits typed meanwhile.
-    restoreForRetry: () => void;
-    restoredFailureKey?: string;
-  } | null>(null);
+  // Local cache of the armed worktree-send continuation; the authoritative copy lives in the
+  // module-scope registry (composerWorktreePipelineStore) so it survives the first-send view
+  // promotion remounting the composer as another instance (BUG-GWT-005 live path).
+  const pendingWorktreeSendRef = useRef<ArmedWorktreeSendContinuation | null>(null);
   const reportedWorktreeFailuresRef = useRef(new Set<string>());
   const worktreePipeline = useComposerWorktreePipelineStore((state) =>
     selectComposerWorktreePipeline(state, workspaceKey, sessionId),
@@ -1382,12 +1374,29 @@ function ConversationComposerImpl({
   // the chat area shows the pending bubble), so a creation failure restores the message into the
   // composer for a plain re-send.
   useEffect(() => {
-    const queued = pendingWorktreeSendRef.current;
+    let armed = pendingWorktreeSendRef.current;
+    // The composer that armed the continuation may have unmounted when the first-send view
+    // promoted this draft into the prepared session (BUG-GWT-005 live path): adopt the armed
+    // continuation from the module-scope registry so the prepared session's composer can still
+    // dispatch it when a retried creation turns ready.
+    if (!armed && sessionId !== null) {
+      const adopted = peekWorktreeSendContinuation(workspaceKey, sessionId);
+      if (adopted) {
+        pendingWorktreeSendRef.current = adopted;
+        armed = adopted;
+        if (adopted.restoredFailureKey) {
+          reportedWorktreeFailuresRef.current.add(adopted.restoredFailureKey);
+        }
+        if (worktreePipeline?.status === "creating") setWorktreeQueued(true);
+      }
+    }
+    const queued = armed;
     if (!queued) return;
     if (sessionId === queued.preparedSessionId) queued.hasBoundPreparedSession = true;
     // Every settled outcome detaches the queued submission first; only what happens next differs.
     const detachQueued = () => {
       pendingWorktreeSendRef.current = null;
+      releaseWorktreeSendContinuation(queued.workspaceKey, queued.preparedSessionId);
       setWorktreeQueued(false);
     };
     if (
@@ -1483,6 +1492,7 @@ function ConversationComposerImpl({
       (sessionId !== null && sessionId !== queued.preparedSessionId);
     if (navigatedAway) {
       pendingWorktreeSendRef.current = null;
+      releaseWorktreeSendContinuation(queued.workspaceKey, queued.preparedSessionId);
       setWorktreeQueued(false);
       useComposerWorktreePipelineStore
         .getState()
@@ -1490,9 +1500,15 @@ function ConversationComposerImpl({
       queued.restore();
       return;
     }
-    if (worktreeIntentActive && (sessionId === null || sessionId === queued.preparedSessionId))
-      return;
+    // Once the composer is bound to the prepared session, the draft-only intent mirror must not
+    // withdraw the queued send: the mirror flips off for non-user reasons when the empty-state
+    // worktree toggle unmounts at first-send promotion, which stranded the armed submission after
+    // a retried creation turned ready (BUG-GWT-005). Explicit toggles withdraw the store entry
+    // themselves; the queued-send effect abandons delivery on that orphaned flag.
+    if (sessionId === queued.preparedSessionId) return;
+    if (worktreeIntentActive && sessionId === null) return;
     pendingWorktreeSendRef.current = null;
+    releaseWorktreeSendContinuation(queued.workspaceKey, queued.preparedSessionId);
     setWorktreeQueued(false);
     useComposerWorktreePipelineStore
       .getState()
@@ -1500,19 +1516,36 @@ function ConversationComposerImpl({
     queued.restore();
   }, [draftMode, sessionId, worktreeIntentActive, workspaceKey]);
 
-  // Composer unmount (workspace/tab switch) detaches the renderer callback and restores the draft;
-  // the Host-owned preparation and Git operation continue for the same session.
+  // Composer unmount (workspace/tab switch, or the first-send view promotion remounting the
+  // composer as the prepared session's composer) releases only the local cache: while the
+  // pipeline is still recoverable the continuation stays armed in the module-scope registry, so
+  // the composer instance that mounts next for that prepared session adopts it and a Retry that
+  // turns ready still admits the frozen submission exactly once (BUG-GWT-005 live path). The
+  // Host-owned preparation and Git operation continue for the same session either way; only an
+  // unrecoverable pipeline falls back to detaching and restoring the frozen draft.
   useEffect(
     () => () => {
-      if (pendingWorktreeSendRef.current) {
-        const queued = pendingWorktreeSendRef.current;
-        pendingWorktreeSendRef.current = null;
-        setWorktreeQueued(false);
-        useComposerWorktreePipelineStore
-          .getState()
-          .detachQueuedSend(queued.workspaceKey, queued.preparedSessionId);
-        queued.restore();
-      }
+      const queued = pendingWorktreeSendRef.current;
+      if (!queued) return;
+      pendingWorktreeSendRef.current = null;
+      setWorktreeQueued(false);
+      const entry = selectComposerWorktreePipeline(
+        useComposerWorktreePipelineStore.getState(),
+        queued.workspaceKey,
+        queued.preparedSessionId,
+      );
+      const recoverable =
+        entry !== null &&
+        !entry.orphaned &&
+        (entry.status === "creating" ||
+          entry.status === "ready" ||
+          (entry.status === "failed" && entry.params !== undefined));
+      if (recoverable) return;
+      releaseWorktreeSendContinuation(queued.workspaceKey, queued.preparedSessionId);
+      useComposerWorktreePipelineStore
+        .getState()
+        .detachQueuedSend(queued.workspaceKey, queued.preparedSessionId);
+      queued.restore();
     },
     [workspaceKey],
   );
@@ -2219,8 +2252,31 @@ function ConversationComposerImpl({
           restoreSubmittedDraft();
           return;
         }
+        const joinedPipeline = selectComposerWorktreePipeline(
+          useComposerWorktreePipelineStore.getState(),
+          workspaceKey,
+          preparedSessionIdForSend,
+        );
+        if (
+          joinedPipeline?.status === "ready" &&
+          joinedPipeline.worktreePath &&
+          joinedPipeline.params
+        ) {
+          // A begin that joined an already-ready pipeline (a New-task send reusing a stuck-ready
+          // entry, or an orphaned-ready reuse) must dispatch immediately: no store transition will
+          // re-run the queued-send effect, so arming the ref would strand the claimed submission
+          // with the editor already cleared and no recovery card in the current view.
+          clearQueuedSubmissionState();
+          pendingWorktreeSendRef.current = null;
+          await runSend(
+            { path: joinedPipeline.worktreePath, branchName: joinedPipeline.params.branchName },
+            preparedSessionIdForSend,
+            joinedPipeline.params.attemptId,
+          );
+          return;
+        }
         submittedAttachments.moveToScope?.(`${workspaceKey}\0${preparedSessionIdForSend}`);
-        pendingWorktreeSendRef.current = {
+        const armedContinuation: ArmedWorktreeSendContinuation = {
           workspaceKey,
           preparedSessionId: preparedSessionIdForSend,
           hasBoundPreparedSession: renderedOwnerRef.current.scopeId === preparedSessionIdForSend,
@@ -2233,6 +2289,12 @@ function ConversationComposerImpl({
           restore: restoreSubmittedDraft,
           restoreForRetry,
         };
+        // The authoritative armed continuation lives in the module-scope registry (not this
+        // instance's ref): the first-send view promotion can unmount this composer and mount the
+        // prepared session's composer as another instance, which adopts it from the registry
+        // (BUG-GWT-005 live path).
+        armWorktreeSendContinuation(armedContinuation);
+        pendingWorktreeSendRef.current = armedContinuation;
         return;
       }
       await runSend(
