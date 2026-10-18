@@ -13,6 +13,7 @@ const TRIGGER = '[data-testid="v4-composer-incognito-trigger"]';
 const TOGGLE = '[data-testid="v4-composer-incognito-toggle"]';
 const MCP_ITEM = '[data-testid="v4-composer-incognito-toggle-mcp"]';
 const MARKER = '[data-testid="v4-composer-incognito-marker"]';
+const OFF = '[data-testid="v4-composer-incognito-off"]';
 
 // The toggle row arms the intent only after the Settings defaults read resolves, so the checked
 // state settles asynchronously.
@@ -48,13 +49,21 @@ describe("Incognito session draft", () => {
 
     await $(MARKER).waitForDisplayed();
     expect(await $(TRIGGER).getAttribute("aria-pressed")).toBe("true");
+    // specs/incognito-session.md "Composer toggle": the control sits in the trailing cluster, left of the model controls.
+    const inTrailingCluster = await browser.execute((triggerSelector) => {
+      const trigger = document.querySelector(triggerSelector);
+      return Boolean(trigger?.closest("[data-composer-trailing-actions]"));
+    }, TRIGGER);
+    expect(inTrailingCluster).toBe(true);
     const tinted = await browser.execute((inputSelector) => {
       const shell = document.querySelector(inputSelector)?.closest(".rounded-2xl");
       return shell?.className.includes("!border-incognito") ?? false;
     }, `[data-testid="${TID_V4_COMPOSER_INPUT}"]`);
     expect(tinted).toBe(true);
 
-    await $(MARKER).$("button").click();
+    // The turn-off button is revealed on hover/focus of the chip (project-chip pattern).
+    await $(MARKER).moveTo();
+    await $(OFF).click();
     await $(MARKER).waitForExist({ reverse: true });
     expect(await $(TRIGGER).getAttribute("aria-pressed")).toBe("false");
     expect(await getUpstreamRequestRecordCount()).toBe(before);

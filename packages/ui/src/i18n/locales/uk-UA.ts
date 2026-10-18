@@ -8443,7 +8443,7 @@ const ukUA: Record<string, string> = {
   "chat.incognito.toggle": "Сесія інкогніто",
   "chat.incognito.toggleDescription": "Почати наступну сесію без додаткових можливостей",
   "chat.incognito.marker": "Інкогніто",
-  "chat.incognito.removeMarker": "Вимкнути інкогніто",
+  "chat.incognito.turnOff": "Вимкнути інкогніто",
   "chat.incognito.includeHeading": "Увімкнути в цій сесії",
   "chat.incognito.settingsLink": "Налаштування інкогніто…",
   "chat.incognito.unsupported":

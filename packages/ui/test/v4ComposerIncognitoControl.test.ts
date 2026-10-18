@@ -6,6 +6,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { resolveIncognitoDefaults, type IncognitoCapabilities } from "@zcode/shared";
 import {
   TID_V4_COMPOSER_INCOGNITO_MARKER,
+  TID_V4_COMPOSER_INCOGNITO_OFF,
   TID_V4_COMPOSER_INCOGNITO_TOGGLE,
   TID_V4_COMPOSER_INCOGNITO_TRIGGER,
   V4ComposerIncognitoControl,
@@ -86,9 +87,42 @@ it("shows a pressed trigger and a removable chip while the draft is incognito", 
     "true",
   );
 
-  fireEvent.click(screen.getByRole("button", { name: "chat.incognito.removeMarker" }));
+  fireEvent.click(screen.getByTestId(TID_V4_COMPOSER_INCOGNITO_OFF));
   expect(useDraftIncognitoIntentStore.getState().capabilitiesByWorkspaceKey).toEqual({});
   expect(screen.queryByTestId(TID_V4_COMPOSER_INCOGNITO_MARKER)).toBeNull();
+});
+
+// specs/incognito-session.md "Composer toggle": the turn-off button is an inline sibling of the
+// trigger inside the active chip (project-chip pattern), never a second control beside it.
+it("places exactly one turn-off button inside the active chip and none while off", () => {
+  render(createElement(V4ComposerIncognitoControl, { workspaceKey: "/ws" }));
+  expect(screen.queryByTestId(TID_V4_COMPOSER_INCOGNITO_OFF)).toBeNull();
+
+  act(() => {
+    useDraftIncognitoIntentStore
+      .getState()
+      .activate("/ws", resolveIncognitoDefaults({ mcp: true }));
+  });
+  const chip = screen.getByTestId(TID_V4_COMPOSER_INCOGNITO_MARKER);
+  const off = screen.getByTestId(TID_V4_COMPOSER_INCOGNITO_OFF);
+  expect(chip.contains(off)).toBe(true);
+  expect(chip.contains(screen.getByTestId(TID_V4_COMPOSER_INCOGNITO_TRIGGER))).toBe(true);
+  expect(off.getAttribute("aria-label")).toBe("chat.incognito.turnOff");
+  expect(screen.getAllByRole("button", { name: "chat.incognito.turnOff" })).toHaveLength(1);
+  // The turn-off button must not nest inside the trigger button.
+  expect(screen.getByTestId(TID_V4_COMPOSER_INCOGNITO_TRIGGER).contains(off)).toBe(false);
+});
+
+it("disables the turn-off button together with the control", () => {
+  act(() => {
+    useDraftIncognitoIntentStore
+      .getState()
+      .activate("/ws", resolveIncognitoDefaults({ mcp: true }));
+  });
+  render(createElement(V4ComposerIncognitoControl, { workspaceKey: "/ws", disabled: true }));
+  expect((screen.getByTestId(TID_V4_COMPOSER_INCOGNITO_OFF) as HTMLButtonElement).disabled).toBe(
+    true,
+  );
 });
 
 // specs/incognito-session.md scenario 18 (composer half): the defaults read resolves after the

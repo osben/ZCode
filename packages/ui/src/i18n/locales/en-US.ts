@@ -8275,7 +8275,7 @@ const enUS: Record<string, string> = {
   "chat.incognito.toggle": "Incognito session",
   "chat.incognito.toggleDescription": "Start the next session without extras",
   "chat.incognito.marker": "Incognito",
-  "chat.incognito.removeMarker": "Turn off incognito",
+  "chat.incognito.turnOff": "Turn off incognito",
   "chat.incognito.includeHeading": "Include in this session",
   "chat.incognito.settingsLink": "Incognito settings…",
   "chat.incognito.unsupported":

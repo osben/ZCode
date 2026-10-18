@@ -180,17 +180,44 @@ Ordering constraints:
 
 ## UI
 
-- **Composer toggle.** Icon button (lucide `VenetianMask`, `size-4`) in the composer `leadingActionsNode` (`packages/ui/src/v4/ConversationComposer.tsx:3002`), next to the mode switch, available in every workspace type. `aria-pressed`, tooltip, i18n label.
+- **Composer toggle.** Rendered as the first child of the trailing cluster in `submitControlNode` (`packages/ui/src/v4/ConversationComposer.tsx`), immediately left of the model/thought controls (`V4ComposerModelControls`), and not in the leading group next to the mode switch. Available in every workspace type, gated by the same `draftMode && sessionId === null && !isWebRemoteControl` condition as before. `aria-pressed`, tooltip, i18n label.
+  - **Off:** icon-only ghost button (lucide `VenetianMask`, `size-4`, `size-7`), tooltip «Incognito session».
+  - **On:** a cyan pill chip (`rounded-full`, token `--color-incognito`) with the «Incognito» label. The chip is a `relative` wrapper (`group/incognito-chip`, carrying `data-testid` `v4-composer-incognito-marker`) that holds the trigger button and a sibling turn-off button; the wrapper never nests a button inside the trigger. The wrapper keeps `data-composer-collapse-priority="1"`, so `useComposerToolbarFit` sets `data-composer-compact` on it; in compact mode the label is hidden and the chip collapses to the icon.
+  - **Turn-off button** (`data-testid` `v4-composer-incognito-off`, `aria-label` = `chat.incognito.turnOff`): an absolutely positioned `Button` sibling, the same pattern as the project chip's `composer-project-detach` in `ChatEmptyState.tsx`. It is `opacity-0 pointer-events-none` and becomes visible on `group-hover/incognito-chip` and `group-focus-within/incognito-chip`, overlaying the mask icon, which fades out at the same time. It is reachable by keyboard focus (Tab) and is disabled with the control. It is not rendered in compact mode, because an overlay there would cover the whole w-7 chip and block the checklist; turning off remains available from the checklist toggle row.
+  - **Clicking the chip body** opens the checklist menu as before.
 - **Checklist.** The button opens a menu: the incognito on/off row and, while active, one row per capability, each with a visible leading checkbox (the row stays a `menuitemcheckbox`), initialized from `incognitoDefaults`. A footer link opens Settings «Incognito».
-- **Composer highlight.** New semantic token `--color-incognito` defined in all four theme blocks of `packages/ui/src/styles.css` (mirroring `--color-worktree-task`) and documented in DESIGN.md. Active incognito tints the prompt shell border via `shellClassName`; the trigger itself turns into «mask + Incognito» (label hidden in the compact composer) with a separate turn-off button, so the state is not color-only and the icon is not repeated.
+- **Composer highlight.** New semantic token `--color-incognito` defined in all four theme blocks of `packages/ui/src/styles.css` (mirroring `--color-worktree-task`) and documented in DESIGN.md. Active incognito tints the prompt shell border via `shellClassName`. The active chip is always paired with the «Incognito» label, so the state is not color-only; the mask icon is not repeated next to the label.
 - **Draft state.** Incognito intent and deviations are UI-local draft state keyed by the workspace identity key (`workspaceIdentity?.trim() || workspacePath`). They clear after the session is created. The draft store also owns a per-workspace **intent generation**: a counter bumped on every intent transition (activation, explicit deactivation — including a no-op one, which cancels a pending activation — capability change) and when a draft is submitted. Async continuations capture the generation when the user acts and apply only if it is still current, so a defaults read that resolves after the draft was sent never arms the intent for a later draft, and a send completion never clears the intent of a newer draft that re-armed or changed capabilities while the send was in flight.
 - **Prewarm.** While incognito is active the draft does not use or promote a prewarmed session (same as worktree sends, `SessionPane.tsx:3507`); toggling invalidates the prewarm. This matters beyond reuse: `getSkillCatalog` on a prewarmed draft runs `ensureContextInitialized` and fixes its instructions and skills before the first message (specs/global-instructions.md).
 - **Slash catalog.** Accepted V1 limitation: with `plugins` off, the composer slash catalog may still list plugin-sourced skills; invoking one fails as an unknown skill.
 - **Sidebar marker.** `IncognitoTaskMarker` (uncolored, `size-3.5`, like `WorktreeTaskMarker`) reads `task.incognito`; rendered at the same sites as the worktree marker (`TaskListItem.tsx`, `workspace-grouped-tasks/task-row.tsx`, `TaskSidebarHoverCard.tsx`, session manager rows). Both markers render when both apply.
 - **Settings «Incognito».** New section in the `agentCapabilities` group (`packages/ui/src/settings/settingsPageConfig.ts`), one `SettingsRow` + switch per capability, plus the honest-scope hint (Non-goals). Every write sends the full `incognitoDefaults` object (`resolveIncognitoDefaults(current)` with one capability flipped); the patch schema rejects partial objects. Because a full-object write races with the settings refresh, the section keeps an immediately-updated optimistic draft as the single source for the next write and serializes writes through a promise chain, so quick successive toggles compose instead of the second write erasing the first; the draft resyncs from the refreshed settings once the write queue is idle, and a failed write reverts the draft to the stored defaults.
 - **Mobile Web.** The mobile Web task list currently renders no worktree marker; the incognito marker follows the same treatment (added wherever the worktree marker is rendered, so out of V1 on mobile today). Creating incognito sessions from mobile remote control is out of scope for V1 (toggle hidden in the compact remote shell).
-- **i18n.** All strings in `en-US`, `zh-CN`, `uk-UA`.
+- **i18n.** All strings in `en-US`, `zh-CN`, `uk-UA`. The turn-off aria-label is `chat.incognito.turnOff` (renamed from `chat.incognito.removeMarker`, same text and translations).
 - **Errors.** `proto.incognitoUnsupported` shows a toast; the draft text and incognito selection are kept.
+
+## Sidebar marker durability (proposed, not implemented)
+
+Status: proposed after the 2026-10-18 dev-web investigation. The marker today depends only on the live sessions-index overlay, so any client that does not observe the CLI sessions-index (dev web: the server shows no zcode-cli child and the rows carry only tasks-index meta) renders no marker, and tasks-index never stores `incognito`.
+
+Root cause (file:line, verified in the code and in the dev web DOM):
+
+- The only writer of `incognito` on the list path is the overlay: `sessionOverlay` (`packages/services/src/window-controller/windowHostControllerService.ts:107`) → `buildSourceRows` (`windowHostControllerProjection.ts:179`) → row (`windowHostControllerService.ts:706,761`). Without an observer the row has no `incognito`.
+- Persisted meta has no field for it: the runtime snapshot upsert rebuilds meta from explicit fields (`packages/services/src/session/taskIndexRepo.ts:1700-1725`), which would drop `incognito` on every sync, and `zcodeTaskMetaSchema` (`packages/shared/src/validation.ts:1704`) has no `incognito` key.
+- Convergence exists only for the execution-worktree fact (BUG-GWT-010: `convergeExecutionWorktreeFacts`, `windowHostControllerService.ts:215`; `applyExecutionWorktreeFacts`, `taskIndexRepo.ts:2175`). It runs inside the overlay observer, so it does not help a client without one.
+- Legacy rows: `sess_f17a4862-…` has `fork_incognito` in `cli/db/db.sqlite` but no `incognito` in `tasks-index` meta_json. The desktop observer, which shares the DB, can converge it.
+
+Design (mirrors BUG-GWT-010; `incognito` is frozen per session, so a persisted `true` never goes stale and needs no clearing):
+
+1. `zcodeTaskMetaSchema` accepts optional `incognito: boolean` (tasks-index meta_json only; the wire row keeps its own `incognito` field).
+2. The runtime snapshot upsert preserves the stored value: `incognito: params.meta.incognito ?? existingMeta?.incognito`.
+3. Convergence: the observer's incognito overlays are persisted into meta_json (`true` only, idempotent), alongside the worktree facts, through the same `listTasks` input channel. The adapter must forward the new facts field (`zcode-agent/zcodeTaskServiceAdapter.ts`, owned by another active change).
+4. Reads: `buildSourceRows` and the search path use `overlay?.incognito || membership.meta.incognito`, so a persisted marker shows without a live overlay.
+5. Fork-safe: meta_json is a JSON blob (no migration, no new column, no `setting.json` key). Upstream strips unknown meta keys on read; the marker is re-converged by the next observer publish after an upstream rewrite.
+
+Limit: a client that never runs an observer (dev web) shows the marker only after a desktop or CLI-observed publish has converged it into the shared DB.
+
+Scenario 23: the web sidebar (no sessions-index observer in-process) shows the incognito marker for a session whose tasks-index meta carries `incognito: true`; a runtime snapshot sync does not erase it; a legacy row converges from the CLI row via the observer.
 
 ## Acceptance scenarios
 

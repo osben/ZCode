@@ -2963,6 +2963,10 @@ function ConversationComposerImpl({
   const submitControlNode = useMemo(
     () => (
       <div className="flex min-w-0 items-center gap-1">
+        {/* specs/incognito-session.md "Composer toggle": right group, immediately left of the model controls. */}
+        {draftMode && sessionId === null && !isWebRemoteControl ? (
+          <V4ComposerIncognitoControl workspaceKey={workspaceKey} disabled={disabled} />
+        ) : null}
         <span className="flex min-w-0 shrink items-center gap-1 overflow-hidden empty:hidden">
           <V4ComposerModelControls
             workspacePath={workspacePath}
@@ -3077,6 +3081,7 @@ function ConversationComposerImpl({
       sendShortcut,
       sendTooltipTitle,
       sessionId,
+      workspaceKey,
       showStopControl,
       stopTooltipTitle,
       voiceDictationEnabled,
@@ -3102,9 +3107,6 @@ function ConversationComposerImpl({
           onConfigPickerOpenChange={handleConfigPickerOpenChange}
           onSwitchMode={onSwitchMode}
         />
-        {draftMode && sessionId === null && !isWebRemoteControl ? (
-          <V4ComposerIncognitoControl workspaceKey={workspaceKey} disabled={disabled} />
-        ) : null}
         {/* Bug cause: The attachment gallery rebase once replaced all of leadingActions and removed the
             persistent staging CUA entry. The entry itself still handles platform, remote, and settings
             visibility; do not duplicate those checks in the composer. */}
@@ -3128,7 +3130,6 @@ function ConversationComposerImpl({
       canStop,
       disabled,
       draftConfig,
-      draftMode,
       handleConfigPickerOpenChange,
       isWebRemoteControl,
       backgroundWorkOpenTarget,
