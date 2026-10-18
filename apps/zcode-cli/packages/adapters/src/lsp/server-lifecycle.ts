@@ -167,6 +167,8 @@ function onInitialized(
     proc.rpc.notify(LSP_METHOD_DID_CHANGE_CONFIGURATION, { settings: proc.server.settings });
   }
   entry.state = "ready";
+  // maxRestarts bounds consecutive failed starts, not crashes over the whole session (spec §5).
+  entry.restarts = 0;
   entry.lastErrorCode = undefined;
   entry.lastErrorMessage = undefined;
   const connection = new LspServerConnection(proc, () => {

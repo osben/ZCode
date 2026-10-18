@@ -32,36 +32,50 @@ function countEvents(events: LanguageServerEvent[], type: LanguageServerEvent["t
 
 describe("LSP pool: crashes, restarts and startup failures", () => {
   it(
-    "restarts after a crash until maxRestarts, then reports unavailable",
+    "resets the restart counter after every successful start, so crashes over a session never exhaust it",
     async () => {
       const { pool, events } = setup();
-      const server = fakeServer({ FAKE_LSP_CRASH_ON: "fake/sleep" }, { maxRestarts: 2 });
+      const server = fakeServer({ FAKE_LSP_CRASH_ON: "fake/sleep" }, { maxRestarts: 1 });
 
-      let connection = await waitForReady(pool, server);
-      await expect(connection.request("fake/sleep", { ms: 10 })).rejects.toMatchObject({
-        code: "lsp_server_crashed",
-      });
-      await waitUntil(() => countEvents(events, "crashed") === 1, 5_000, "first crashed event");
+      for (let round = 1; round <= 3; round += 1) {
+        const connection = await waitForReady(pool, server);
+        expect(pool.status()[0]?.restarts).toBe(0);
+        await expect(connection.request("fake/sleep", { ms: 10 })).rejects.toMatchObject({
+          code: "lsp_server_crashed",
+        });
+        await waitUntil(
+          () => countEvents(events, "crashed") === round,
+          5_000,
+          `crashed event ${round}`,
+        );
+      }
+      expect(countEvents(events, "ready")).toBe(3);
+      expect(pool.acquire(server, TEST_KEY)).toMatchObject({ state: "starting" });
+    },
+    LONG_TEST_MS,
+  );
 
-      connection = await waitForReady(pool, server);
-      expect(pool.status()[0]?.restarts).toBe(1);
-      await expect(connection.request("fake/sleep", { ms: 10 })).rejects.toMatchObject({
-        code: "lsp_server_crashed",
-      });
+  it(
+    "reports unavailable after maxRestarts consecutive failed starts",
+    async () => {
+      const { pool, events } = setup();
+      const server = fakeServer({ FAKE_LSP_CRASH_ON: "initialize" }, { maxRestarts: 2 });
 
-      connection = await waitForReady(pool, server);
-      expect(pool.status()[0]?.restarts).toBe(2);
-      await expect(connection.request("fake/sleep", { ms: 10 })).rejects.toMatchObject({
-        code: "lsp_server_crashed",
-      });
-      await waitUntil(() => countEvents(events, "crashed") === 3, 5_000, "third crashed event");
-
+      // Initial start plus two restarts, each crashing before it is initialized.
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        expect(pool.acquire(server, TEST_KEY)).toMatchObject({ state: "starting" });
+        await waitUntil(
+          () => pool.status()[0]?.state !== "starting",
+          5_000,
+          `failed start ${attempt}`,
+        );
+      }
       expect(pool.acquire(server, TEST_KEY)).toMatchObject({
         state: "failed",
         code: "lsp_server_unavailable",
       });
-      expect(pool.status()[0]?.state).toBe("unavailable");
-      expect(countEvents(events, "ready")).toBe(3);
+      expect(pool.status()[0]?.restarts).toBe(2);
+      expect(countEvents(events, "ready")).toBe(0);
     },
     LONG_TEST_MS,
   );
