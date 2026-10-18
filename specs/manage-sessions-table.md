@@ -165,6 +165,12 @@ All user-facing strings under the `sessionManager.*` namespace in `en-US`, `zh-C
 
 ## Resolved open questions (from the issue)
 
+Opening a row delegates to the shared existing-session navigation callback. A closed local project
+is validated and opened before selecting its existing task; no new draft is created. Remote targets
+require their exact live attachment and never probe the local filesystem. An unavailable project
+leaves Settings visible with an error. Archived disables Pinned and ignores its predicate while
+retaining the Active preference for the return transition.
+
 - **Inline rename for running sessions** — allowed (§7); auto-title overwrite caveat accepted.
 - **Sorts** — default Updated desc; server sorts on Updated/Created, client sort on Name; no Status sort in v1.
 - **Hosting** — `sessions` section in the `dataAndStats` group of the Settings page (2026-10-17 redesign), not a main-window tab; not persisted (§1).

@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Archive, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
+import type { OpenExistingSessionTarget } from "@/hooks/useOpenExistingSession.js";
+import { toast } from "@/components/ui/toast.js";
+import { getErrorMessage } from "@/lib/errorMessage.js";
 import { useTabStore } from "@/store/TabStoreProvider.js";
 import { TaskListLoadingHint } from "@/TaskListLoadingHint.js";
 import {
@@ -32,17 +34,20 @@ import type { SettingsSessionsScope } from "@/lib/settingsNavigation.js";
 const SEARCH_DEBOUNCE_MS = 250;
 
 interface SessionsSettingsSectionProps {
+  onOpenSession?: (target: OpenExistingSessionTarget) => Promise<void>;
   /** Workspace scope carried by the settings navigation intent (project-menu entry). */
   scope?: SettingsSessionsScope;
   onClearScope: () => void;
 }
 
-export function SessionsSettingsSection({ scope, onClearScope }: SessionsSettingsSectionProps) {
+export function SessionsSettingsSection({
+  scope,
+  onClearScope,
+  onOpenSession,
+}: SessionsSettingsSectionProps) {
   const { intl } = useZCodeIntl();
   const activeWorkspacePath = useTabStore((state) => state.activeWorkspacePath);
   const activeWorkspaceIdentity = useTabStore((state) => state.activeWorkspaceIdentity);
-  const activateTabByPath = useTabStore((state) => state.activateTabByPath);
-  const setActiveTaskId = useZCodeSessionStore((state) => state.setActiveTaskId);
 
   const [viewState, setViewState] = useState<SessionManagerViewState>(readSessionManagerViewState);
   const [search, setSearch] = useState("");
@@ -92,9 +97,9 @@ export function SessionsSettingsSection({ scope, onClearScope }: SessionsSetting
       applySessionManagerClientFilters(rows, {
         environment: viewState.environment,
         type: viewState.type,
-        pinnedOnly: viewState.pinnedOnly,
+        pinnedOnly: viewState.status === "archived" ? false : viewState.pinnedOnly,
       }),
-    [rows, viewState.environment, viewState.pinnedOnly, viewState.type],
+    [rows, viewState.environment, viewState.pinnedOnly, viewState.type, viewState.status],
   );
   const sortedRows = useMemo(
     () =>
@@ -132,13 +137,13 @@ export function SessionsSettingsSection({ scope, onClearScope }: SessionsSetting
 
   const openRow = useCallback(
     (row: SessionManagerRow) => {
-      activateTabByPath(
-        row.task.workspacePath,
-        row.task.workspaceIdentity ? { workspaceIdentity: row.task.workspaceIdentity } : undefined,
-      );
-      setActiveTaskId(row.task.workspacePath, row.task.taskId, row.task.workspaceIdentity);
+      if (!onOpenSession) {
+        toast(intl.formatMessage({ id: "sessionManager.openUnavailable" }));
+        return;
+      }
+      void onOpenSession(row.task).catch((error: unknown) => toast(getErrorMessage(error)));
     },
-    [activateTabByPath, setActiveTaskId],
+    [intl, onOpenSession],
   );
 
   const toggleRowSelected = useCallback((row: SessionManagerRow, selected: boolean) => {

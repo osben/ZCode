@@ -1,3 +1,4 @@
+import type { OpenExistingSessionTarget } from "@/hooks/useOpenExistingSession.js";
 /* oxlint-disable eslint(max-lines) */
 import { ArrowLeft, Rocket, type LucideIcon } from "lucide-react";
 import { useStore } from "zustand";
@@ -297,6 +298,7 @@ export function SettingsPage({
   onBack,
   onCreateTask,
   onOpenWorkspace,
+  onOpenSession,
   allowOpenWorkspace = true,
   onLogin,
   onLogout,
@@ -311,6 +313,7 @@ export function SettingsPage({
   onBack?: () => void;
   onCreateTask?: (request?: CreateTaskRequest) => void;
   onOpenWorkspace?: () => void;
+  onOpenSession?: (target: OpenExistingSessionTarget) => Promise<void>;
   allowOpenWorkspace?: boolean;
   onLogin?: () => void;
   onLogout?: () => void;
@@ -2163,6 +2166,7 @@ export function SettingsPage({
                           />
                         ) : activeSection === "sessions" ? (
                           <SessionsSettingsSection
+                            onOpenSession={onOpenSession}
                             scope={sessionsScope}
                             onClearScope={() => setSessionsScope(undefined)}
                           />
