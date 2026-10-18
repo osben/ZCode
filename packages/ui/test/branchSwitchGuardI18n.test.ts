@@ -49,10 +49,10 @@ afterEach(() => {
 });
 
 describe("branch switch guard dialog i18n", () => {
-  // See docs/testing/git-worktree-qa/bugs/BUG-GWT-012.md: formatMessage cannot expand the inline
-  // ICU plural in branchSwitchGuard.description, so the raw template leaks into the dialog text.
-  // it.fails keeps CI green; remove the marker when the bug is fixed (the test then guards the fix).
-  it.fails("BUG-GWT-012: guard dialog renders the localized plural instead of the raw ICU template", () => {
+  // See docs/testing/git-worktree-qa/bugs/BUG-GWT-012.md: formatMessage cannot expand inline ICU
+  // plurals, so the description is assembled from a formatMessage prefix plus the formatPlural
+  // taskCount family; this test guards that the localized count renders, not a raw template.
+  it("BUG-GWT-012: guard dialog renders the localized plural instead of the raw ICU template", () => {
     mocks.taskListResult = {
       items: [
         {

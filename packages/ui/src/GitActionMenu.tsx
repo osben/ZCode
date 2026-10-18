@@ -838,6 +838,21 @@ export function GitActionMenu({
   const { gitService } = useServices();
   const { intl, locale } = useZCodeIntl();
   const [commitDialogOpen, setCommitDialogOpen] = useState(false);
+  // BUG-GWT-006: async commit/push handlers must know at failure time whether the commit
+  // dialog is still open; state captured in the callback goes stale once the dialog is
+  // dismissed mid-mutation, so mirror the open flag in a ref owned by the dialog lifecycle.
+  const commitDialogOpenRef = useRef(false);
+  // BUG-GWT-006 (RT2-H5 live path): the status section hosting this menu can unmount while the
+  // commit/push mutation is still in flight, which makes the open dialog disappear without ever
+  // running closeCommitDialog — the ref stays true while nothing is on screen. Track the mount
+  // state so a failure never routes its error into setState on a dead component.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
   const [commitDialogLoading, setCommitDialogLoading] = useState(false);
   const [commitDialogState, setCommitDialogState] = useState<GitCommitDialogState | null>(null);
   const [commitMessage, setCommitMessage] = useState("");
@@ -904,6 +919,7 @@ export function GitActionMenu({
   ]);
 
   const closeCommitDialog = useCallback(() => {
+    commitDialogOpenRef.current = false;
     setCommitDialogOpen(false);
     setCommitDialogLoading(false);
     setCommitDialogState(null);
@@ -978,6 +994,7 @@ export function GitActionMenu({
   );
 
   const openCommitDialog = useCallback(async () => {
+    commitDialogOpenRef.current = true;
     setCommitDialogOpen(true);
     setCommitDialogState(null);
     setCommitMessage("");
@@ -1214,17 +1231,26 @@ export function GitActionMenu({
           committed,
           pushAfterCommit: Boolean(options?.pushAfterCommit),
         });
-        setCommitError(
-          intl.formatMessage(
-            {
-              id:
-                committed && options?.pushAfterCommit
-                  ? "git.actionMenu.commitDialog.error.pushAfterCommitFailed"
-                  : "git.actionMenu.commitDialog.error.requestFailed",
-            },
-            { error: message },
-          ),
+        const errorMessage = intl.formatMessage(
+          {
+            id:
+              committed && options?.pushAfterCommit
+                ? "git.actionMenu.commitDialog.error.pushAfterCommitFailed"
+                : "git.actionMenu.commitDialog.error.requestFailed",
+          },
+          { error: message },
         );
+        // BUG-GWT-006: the dialog may have been dismissed while the mutation was in flight;
+        // an inline error in a closed dialog is invisible and the failure would be lost, so
+        // route it to a toast instead. Exactly one surface shows the error. The dialog counts
+        // as open only while this component is still mounted: an unmounted menu (RT2-H5 live
+        // path — the status section unmounts mid-mutation) leaves commitDialogOpenRef stale
+        // true while nothing is visible, which used to swallow the error entirely.
+        if (commitDialogOpenRef.current && mountedRef.current) {
+          setCommitError(errorMessage);
+        } else {
+          toast(errorMessage);
+        }
         if (committed) {
           onRefreshGit();
         }

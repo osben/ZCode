@@ -1,6 +1,6 @@
 # BUG-GWT-005: после Retry в recovery подготовка зависает в ready — замороженное сообщение не допускается в сессию автоматически
 
-- Status: OPEN (retest 2026-10-18: fix 5c270df9 works in unit test but NOT in live UI — Retry→ready still never activates the session, no admission RPC in logs; manual Restore→Send required; new related trigger: Send from "New task" while a stuck-ready pipeline exists vanishes 2/2)
+- Status: PARTIALLY FIXED (wave 2, 2026-10-18): renderer path fixed — continuation moved to a store-level registry surviving view promotion (regression: unmount+remount test, 38/38); live RT3: Retry now queues the frozen message (sendConversationCommandV4) and the view opens the ready session. REMAINING: the queue never drains into a turn for the freshly-prepared session (0 prepareTurn in 260s; manual Send drains in 350ms) — runtime-side CommandInbox admission follow-up needed.
 
 - Severity: S3 (обход есть — ручной Restore → Send в той же сессии; но нарушен контракт спеки о допуске замороженной отправки после ready)
 - Кейсы: C5 (основной, FAIL)

@@ -92,6 +92,9 @@ Git entry is located in `WorkspaceHeader` top toolbar, same interaction group as
 - `commit` opens independent commit popup, defaults to staging and committing all uncommitted changes within current workspace scope together
 - Commit popup additionally provides `commit and push`, after successful commit immediately reuses same Git service to push current branch
 - `push` opens independent push popup, executes real `git push`; when current branch has not established upstream, automatically adds `--set-upstream` on first push
+- Failure of a commit / push mutation started from a popup must never be lost: while the mutation is in flight, dismissing the popup must not discard the pending failure
+- The same holds when the popup disappears because its host unmounts mid-mutation (the dialog vanishes without a dismissal event): the failure must still surface as a toast
+- If such a mutation fails after the popup has been dismissed, show the failure as an error toast using the same error text as the inline popup error; exactly one surface (inline popup error or toast) presents the failure
 
 ### 2. Git Pane
 

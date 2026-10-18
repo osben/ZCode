@@ -122,7 +122,7 @@ function makeLiveAgentService(): IZCodeAgentService {
 }
 
 describe("task index executionWorktree fact across restart (BUG-GWT-010)", () => {
-  it.fails("BUG-GWT-010: cold listTaskList after a restart keeps the worktree session fact", async () => {
+  it("BUG-GWT-010: cold listTaskList after a restart keeps the worktree session fact", async () => {
     // Phase 1 - the worktree session exists while its workspace host runs: the row is persisted the
     // way today's desktop write path persists it (no worktree fact: the session state snapshot and
     // buildMetaFromSnapshot carry none), and the live sessions-index overlay supplies the fact.

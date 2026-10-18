@@ -26,7 +26,9 @@ V4 gateway projects that authoritative record to the conversation topic and work
 The renderer owns only the frozen, uncommitted submission and its editor revision snapshot. Setup
 pipeline state is scoped by workspace and prepared session; a workspace-level active-session pointer
 serves the draft composer, while existing prepared conversations read their own entry. Git creation
-remains in the existing worktree service flow and keeps its five-second delay unchanged.
+remains in the existing worktree service flow and has no artificial delay in production; the
+optional `VITE_E2E_WORKTREE_CREATION_DELAY_MS` environment gate exists only for E2E and manual
+verification builds.
 There is exactly one transition that materializes a runtime and admits the frozen first input.
 
 ```text
@@ -39,8 +41,8 @@ Renderer                  V4 Host / session store        Git service       Agent
    | open normal session view       | sessions-index          |                  |
    | subscribe(sessionId) -------->|                         |                  |
    |                                |                         |                  |
-   |                                | start worktree -------->| (5s delay kept)  |
-   | render progress in timeline   |                         |                  |
+   |                                | start worktree -------->| (no artificial   |
+   | render progress in timeline   |                         |  delay in prod.) |
    |                                |<------ ready(path) ------|                  |
    | syncPreparedSession(path) ---->| update marker when path |                  |
    |   (only when path differs)    | differs; await acceptance|                  |
@@ -57,6 +59,15 @@ Renderer                  V4 Host / session store        Git service       Agent
 
 Sends that arrive while the first response is still running follow the ordinary queue/guide
 rules of the already-active session; they never restart preparation or reserve another session.
+
+A Send issued from a fresh draft ("New task") while a preparation pipeline already exists for the
+same workspace must never disappear silently. A `creating` entry joins that reservation and queues
+the new submission under the same prepared session; a `ready` entry routes the submission
+immediately through that same prepared session — the renderer dispatches it against the ready
+worktree without waiting for a store transition, activation admits it, and the entry is consumed;
+a `failed` entry starts a fresh attempt on a freshly reserved session. Every such submission is
+either admitted or surfaced as a visible error with a recovery record — never dropped with no
+session, no recovery record, and no Host call.
 
 When Git settles the branch at a path other than the prepared target, readiness goes through the
 marker sync row above: the renderer updates the Host marker to the real path and awaits acceptance
@@ -80,6 +91,19 @@ finishes. Turn-completion callbacks are not the activation trigger, and deferred
 persistence promotion is not evidence of admission. If activation fails before admission, the
 preparation entry stays `preparing` with its session identity, so the frozen submission remains
 recoverable and one retry can admit it exactly once.
+
+Retry-admission is a renderer obligation, not only a Host one. The frozen submission's armed
+continuation survives the first-send view promotion (the draft composer becomes the prepared
+session's composer) — including when that promotion unmounts the draft composer instance and the
+prepared session's composer mounts as a different instance: the armed continuation lives outside
+any composer instance (renderer-owned continuation storage keyed by workspace and prepared
+session), and the composer instance bound to the prepared session adopts it — and follows the
+prepared session across retries by rebinding to the new attempt id. After a successful Retry settles `ready`, that same prepared session must be activated and the
+frozen submission admitted exactly once, with no further user action. Draft-scope intent changes —
+including the empty-state worktree toggle unmounting when the view promotes — must not withdraw the
+armed submission; only an explicit user withdraw or cancel abandons it, recorded as the pipeline
+entry's orphaned/cancelled state. A `ready` entry that admits nothing is a contract violation, not a
+terminal state.
 
 The durable preparation entry reaching `active` for a given attempt is the receipt of a completed
 activation. A repeat activation with the same session, attempt, workspace, and worktree returns the
@@ -249,7 +273,8 @@ early transcript persistence or a second accepted-input store.
    recoverable failure, never a ready entry; only `ENOENT` and `ENOTDIR` mean a missing path, while
    other filesystem errors propagate to the caller.
 9. Missing/failed branch list uses HEAD and notes the default; invalid destination fails before Git
-   creation; the five-second delay remains unchanged.
+   creation; creation has no artificial delay in production (the optional
+   `VITE_E2E_WORKTREE_CREATION_DELAY_MS` gate applies only to E2E/manual verification builds).
 10. Plain sessions, palette Start, per-worktree Git Tools, sibling non-Git destination visibility,
     merge-status badge behavior, and the separate merged-session chat WIP retain their current
     behavior.

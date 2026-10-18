@@ -57,7 +57,7 @@ function renderConflictedChangeCard(): void {
 }
 
 describe("review pane conflicted file badge", () => {
-  it.fails("BUG-GWT-011: renders the Conflicted badge on a UU (unmerged) file row", () => {
+  it("BUG-GWT-011: renders the Conflicted badge on a UU (unmerged) file row", () => {
     renderConflictedChangeCard();
 
     // The row itself renders, so a failure below is about the missing badge, not the harness.

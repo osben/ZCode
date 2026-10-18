@@ -7,7 +7,9 @@
 // cleanup while logical inputs stay equal — e.g. a services identity swap during the
 // open-workspace reconnect burst), shouldRefreshLiveGitData sees identical inputs forever and
 // never re-issues the request, so summary.isRepository never resolves without a remount or a
-// workspace switch. The it.fails test below pins the desired self-healing behavior.
+// workspace switch. The test below pins the self-healing behavior (fixed: a version-current
+// result is applied even after an identity-swap cleanup, and the next effect evaluation
+// re-establishes the fetch through the current service instance).
 import { createElement, type ReactNode } from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
@@ -134,7 +136,7 @@ describe("useGitRepository destination chip resolution after programmatic open-w
     ).toBe(true);
   });
 
-  it.fails("BUG-GWT-013: re-issues the initial git refresh when the in-flight result is dropped, so the destination chip resolves without a reload", async () => {
+  it("BUG-GWT-013: re-issues the initial git refresh when the in-flight result is dropped, so the destination chip resolves without a reload", async () => {
     const firstConnection = createDeferredGitService();
     const reconnectedService = createDeferredGitService();
     const { result, swapServices } = renderGitRepositoryHook(firstConnection.gitService);
@@ -153,9 +155,10 @@ describe("useGitRepository destination chip resolution after programmatic open-w
       firstConnection.resolvePendingRefresh(createRefreshResult(WORKSPACE_PATH));
     });
 
-    // Desired behavior (currently broken, see bug file): the dropped initial result must
-    // self-heal — a new refresh is issued and the destination chip gate resolves without a
-    // renderer reload or a workspace tab switch.
+    // Desired behavior (fixed, see bug file): the dropped initial result must self-heal — the
+    // version-current result is applied and a new refresh is issued through the current service
+    // instance, so the destination chip gate resolves without a renderer reload or a workspace
+    // tab switch.
     await waitFor(
       () => {
         expect(result.current.summary.isRepository).toBe(true);

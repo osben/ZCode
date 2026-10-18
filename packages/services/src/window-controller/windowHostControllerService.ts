@@ -174,6 +174,9 @@ export function createWindowHostControllerRuntime(options: {
     string,
     { agentService: IZCodeAgentService; observer: WindowHostSessionsIndexObserver }
   >();
+  // BUG-GWT-010: last execution-worktree fact batch already converged into the source's tasks-index,
+  // so repeated sessions-index publishes do not re-issue convergence reads.
+  const sourceWorktreeFactSynced = new Map<string, string>();
   const pendingReplacementByNextSourceKey = new Map<string, WindowHostControllerSourceScope>();
   let disposed = false;
   let activeSourceReads = 0;
@@ -194,8 +197,52 @@ export function createWindowHostControllerRuntime(options: {
     sourceSessionObservers.get(key)?.observer.dispose();
     sourceSessionObservers.delete(key);
     sourceLiveOverlays.delete(key);
+    sourceWorktreeFactSynced.delete(key);
     sourceRefreshGenerations.set(key, (sourceRefreshGenerations.get(key) ?? 0) + 1);
     sourceRefreshFlights.delete(key);
+  }
+
+  // BUG-GWT-010 (docs/testing/git-worktree-qa/bugs/BUG-GWT-010.md): the execution-worktree fact reaches the
+  // Host only through sessions-index summaries and used to live solely in the in-memory live overlay, so
+  // sessions of closed workspaces lost the sidebar marker and Environment/Branch classification after a
+  // restart. Converge the fact into the source's tasks-index meta at this boundary: the overlay stays the
+  // freshness source, persisted meta becomes the durability source. Local scopes only — a remote workspace's
+  // tasks-index belongs to its own host, whose controller converges the same facts there.
+  function convergeExecutionWorktreeFacts(
+    resolved: ResolvedWindowHostControllerSource,
+    overlays: WindowHostControllerSessionOverlay[],
+  ): void {
+    if (resolved.scope.kind !== "local" || !resolved.taskService) return;
+    const facts = overlays.flatMap((overlay) =>
+      overlay.executionWorktree
+        ? [{ taskId: overlay.taskId, executionWorktree: overlay.executionWorktree }]
+        : [],
+    );
+    // An empty overlay (runtime restart gap) must not erase persisted facts; durability is meta's job.
+    if (facts.length === 0) return;
+    const key = sourceKey(resolved.scope);
+    const signature = facts
+      .map(
+        (fact) =>
+          `${fact.taskId} ${fact.executionWorktree.path} ${fact.executionWorktree.branchName ?? ""}`,
+      )
+      .sort()
+      .join("\n");
+    if (sourceWorktreeFactSynced.get(key) === signature) return;
+    void resolved.taskService
+      .listTasks({
+        workspacePath: resolved.scope.workspacePath,
+        ...(resolved.scope.workspaceIdentity
+          ? { workspaceIdentity: resolved.scope.workspaceIdentity }
+          : {}),
+        executionWorktreeFacts: facts,
+      })
+      .then(() => {
+        sourceWorktreeFactSynced.set(key, signature);
+      })
+      .catch((error) => {
+        if (!disposed) options.onSourceError?.(resolved.scope, "refresh", error);
+      });
   }
 
   function ensureSourceSessionObserver(
@@ -233,6 +280,9 @@ export function createWindowHostControllerRuntime(options: {
         const overlays = sessions.map(sessionOverlay);
         sourceLiveOverlays.set(key, overlays);
         projection.replaceSourceSessionOverlays(resolved.scope, overlays);
+        // Persist the freshly observed worktree facts after the live projection is updated, so a
+        // convergence failure can never disturb the overlay path (BUG-GWT-010).
+        convergeExecutionWorktreeFacts(resolved, overlays);
       },
       onError: (error) => options.onSourceError?.(resolved.scope, "refresh", error),
     });

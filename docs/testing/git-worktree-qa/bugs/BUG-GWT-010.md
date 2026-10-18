@@ -1,6 +1,6 @@
 # BUG-GWT-010: факт executionWorktree не персистится в tasks-index — после рестарта у сессий закрытых воркспейсов пропадает маркер worktree и классификация Environment=Worktree
 
-- Status: OPEN (retest 2026-10-18: not in the fix wave; still expected-fail)
+- Status: FIXED (fix wave 2, 2026-10-18: unit + live confirmed in RT2; marker removed)
 
 - Severity: S3 (данные классификации/маркера неверны до повторного открытия воркспейса; обход — открыть воркспейс; сессии, история и git не затронуты)
 - Кейсы: F7, I1

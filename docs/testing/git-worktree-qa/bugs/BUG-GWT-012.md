@@ -1,6 +1,6 @@
 # BUG-GWT-012: Сырой ICU-plural шаблон в диалоге guard переключения ветки
 
-- Status: OPEN (retest 2026-10-18: not in the fix wave; still expected-fail)
+- Status: FIXED (fix wave 2, 2026-10-18: unit + live confirmed in RT2; marker removed)
 
 - Severity: S4 (косметика/текст; семантика guard не нарушена — список задач и cancel работают)
 - Кейсы: B6

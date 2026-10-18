@@ -1,6 +1,6 @@
 # BUG-GWT-006: commit-and-push в detached HEAD — пуш молча проваливается: ошибка пишется в уже закрытый commit-диалог, тоста нет
 
-- Status: OPEN (retest 2026-10-18: not in the fix wave; still expected-fail)
+- Status: PARTIALLY FIXED (wave 2, 2026-10-18): failure routing + mountedRef guard + unmount regression test (2/2 green); single GitCommitDialog render path confirmed. REMAINING: live RT2+RT3 show no visible toast although the catch runs (onRefreshGit fires after each git.push FAIL) — needs live breakpoint debugging (suspect: dialog closes at commit-success via a path outside closeCommitDialog, or toast portal interaction in production bundle).
 
 - Severity: S3 (push-сценарий сломан тихо; git-часть безопасна — пуш не выполняется; обход: повторить пуш из ветки через push-диалог, коммит уже создан)
 - Кейсы: H5 (FAIL)

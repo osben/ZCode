@@ -146,8 +146,7 @@ afterEach(() => {
 });
 
 describe("GitActionMenu commit dialog error visibility", () => {
-  // it.fails keeps CI green until BUG-GWT-006 is fixed; remove the marker with the fix.
-  it.fails("BUG-GWT-006: keeps a push-after-commit failure visible after the commit dialog closes", async () => {
+  it("BUG-GWT-006: keeps a push-after-commit failure visible after the commit dialog closes", async () => {
     const failPush = armPendingPush("Cannot push while HEAD is detached.");
     mocks.gitService = {
       refresh: vi.fn(async () => ({
@@ -210,6 +209,68 @@ describe("GitActionMenu commit dialog error visibility", () => {
     expect(
       errorInDialog || failureToast,
       "push-after-commit failure must stay visible after the commit dialog closes",
+    ).toBe(true);
+  });
+
+  it("BUG-GWT-006 (RT2-H5 live path): shows a failure toast when GitActionMenu unmounts while the push is pending", async () => {
+    // RT2-H5 wave-2 live evidence: 7 attempts, each with the commit created and git.push FAIL
+    // in the host log, yet 0 toasts and no inline error. The toast host never mounted, so the
+    // toast branch never ran: the failure handler read a stale-true commitDialogOpenRef after
+    // the menu (status section) unmounted mid-mutation — the dialog disappeared without
+    // closeCommitDialog, and setCommitError on the dead component showed nothing. The unmount
+    // is the real live path this regression covers.
+    const failPush = armPendingPush("Cannot push while HEAD is detached.");
+    mocks.gitService = {
+      refresh: vi.fn(async () => ({
+        summary: detachedSummary,
+        identity,
+        unstagedChanges: [unstagedChange],
+        stagedChanges: [],
+      })),
+      stagePaths: vi.fn(async () => undefined),
+      commit: vi.fn(async () => undefined),
+      push: vi.fn(() => mocks.pushDeferred?.promise),
+      generateCommitMessage: vi.fn(async () => "chore: qa"),
+    } as unknown as Record<string, ReturnType<typeof vi.fn>>;
+
+    const view = render(
+      createElement(GitActionMenu, {
+        workspacePath: "/qa/detached",
+        gitSummary: detachedSummary,
+        onRefreshGit: vi.fn(),
+      }),
+    );
+
+    fireEvent.click(screen.getByTestId("git-action-trigger"));
+    const messageInput = await screen.findByTestId("git-commit-message-input");
+    fireEvent.change(messageInput, {
+      target: { value: "qa: commit in detached HEAD" },
+    });
+
+    fireEvent.click(screen.getByTestId("git-commit-action-item-commitAndPush"));
+    await waitFor(() => {
+      expect(mocks.gitService.push).toHaveBeenCalledTimes(1);
+    });
+
+    // The whole menu unmounts while the push is still in flight (live observation: the open
+    // dialog vanished around the failure moment). The async handler keeps running.
+    view.unmount();
+    expect(screen.queryByTestId("git-commit-dialog")).toBeNull();
+
+    await act(async () => {
+      failPush();
+      await flushMicrotasks();
+    });
+
+    expect(mocks.gitService.commit).toHaveBeenCalledTimes(1);
+    expect(
+      mocks.toast.mock.calls.some(
+        ([message]) =>
+          typeof message === "string" &&
+          message.includes("pushAfterCommitFailed") &&
+          message.includes("Cannot push while HEAD is detached."),
+      ),
+      "a push-after-commit failure after unmount must surface as a toast",
     ).toBe(true);
   });
 });

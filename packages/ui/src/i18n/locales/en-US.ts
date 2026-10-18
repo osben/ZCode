@@ -1574,7 +1574,8 @@ const enUS: Record<string, string> = {
   "git.branchSwitcher.searchPlaceholder": "Search branches",
   "git.branchSwitcher.section.branches": "Branches",
   "git.branchSwitcher.empty": "No matching branches",
-  "git.branchSwitcher.currentDirty": "Uncommitted changes: {count} files",
+  "git.branchSwitcher.currentDirty.one": "Uncommitted changes: {count} file",
+  "git.branchSwitcher.currentDirty.other": "Uncommitted changes: {count} files",
   "git.branchSwitcher.checkedOutIn": "Checked out in {directory}",
   "git.branchSwitcher.createAction": "Create and switch to new branch...",
   "git.branchSwitcher.createDialog.title": "Create and switch to a new branch",
@@ -5225,8 +5226,9 @@ const enUS: Record<string, string> = {
   "branchSwitchGuard.title": "Switch branch?",
   "branchSwitchGuard.listUnavailable":
     "Couldn't verify active tasks. Try again when the task list is available.",
-  "branchSwitchGuard.description":
-    "Switching to {branch} changes the working tree for {count, plural, one {# running task} other {# running tasks}}:",
+  "branchSwitchGuard.descriptionPrefix": "Switching to {branch} changes the working tree for",
+  "branchSwitchGuard.taskCount.one": "{count} running task:",
+  "branchSwitchGuard.taskCount.other": "{count} running tasks:",
   "branchSwitchGuard.confirm": "Switch branch",
   "destination.trigger.ariaLabel": "Choose where this task runs",
   "destination.worktreeLabel": "Worktree",

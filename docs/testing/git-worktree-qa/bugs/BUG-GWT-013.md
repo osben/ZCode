@@ -1,6 +1,6 @@
 # BUG-GWT-013: Чип назначения не появляется после программного открытия воркспейса (qa-open/--open-workspace) — потерянный первичный git-refresh не повторяется
 
-- Status: OPEN (retest 2026-10-18: not in the fix wave; still expected-fail)
+- Status: FIXED (fix wave 2, 2026-10-18: unit + live confirmed in RT2; marker removed)
 
 - Severity: S4 (косметика/доступность фичи; восстановимо reload'ом рендерера или кликом по проекту; FLAKY-признак — гонка инициализации)
 - Кейсы: A2, A4 (повторные наблюдения: B1-0, warn в H-блоке; см. progress.md 18:40, 19:44, 21:28)
