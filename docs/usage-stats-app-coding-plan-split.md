@@ -38,8 +38,14 @@ Coding Plan:                         [ today / 7d / 30d ]
 
 [ Daily Token Trend Chart ]
 
+[ Details: 8 metric tiles ]
+  input / output / cache hit rate / avg turn duration / avg first token / tool calls / tool error rate / model error rate
+
 [ Model Usage Pie Chart ]
   donut chart                                model name + tokens + percent
+
+[ Tools table ]
+  tool | calls | errors | avg duration      // top 8, expandable
 ```
 
 - 趋势图的绘图区左右各保留 24px 安全区，确保首尾日期刻度在桌面端和手机 Web 端都完整显示，不被 SVG 边界裁切；下方时间范围 tabs 使用 pill 样式，尺寸对齐 task tabs。

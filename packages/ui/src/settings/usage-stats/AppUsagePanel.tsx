@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button.js";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useAppUsageStats } from "@/hooks/useUsageStats.js";
+import { AppUsageDetailMetrics } from "@/settings/usage-stats/AppUsageDetailMetrics.js";
+import { AppUsageToolsTable } from "@/settings/usage-stats/AppUsageToolsTable.js";
 import { UsageChartLoadBoundary } from "@/settings/usage-stats/UsageChartLoadBoundary.js";
 import { UsageHeatmap } from "@/settings/usage-stats/UsageHeatmap.js";
 import { UsageStatsErrorNotice } from "@/settings/usage-stats/UsageStatsErrorNotice.js";
@@ -102,6 +104,7 @@ export function AppUsagePanel() {
       >
         <AppUsageDailyModelTrendChart snapshot={snapshot} />
       </UsageChartLoadBoundary>
+      <AppUsageDetailMetrics snapshot={snapshot} />
       <UsageChartLoadBoundary
         scope="settings.usage.app-model-pie-chart"
         resetKeys={[snapshot.range, snapshot.generatedAt, "model-pie"]}
@@ -111,6 +114,7 @@ export function AppUsagePanel() {
       >
         <AppUsageModelUsagePieChart snapshot={snapshot} />
       </UsageChartLoadBoundary>
+      <AppUsageToolsTable snapshot={snapshot} />
 
       <div className="flex justify-end">
         <Button
