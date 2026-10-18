@@ -5,7 +5,7 @@
 - This repository is a fork of `zai-org/ZCode`. Upstream syncs are merge commits such as `Merge upstream v3.15.1 (aac47556) into integration`; the `upstream` remote points at `zai-org/ZCode`.
 - Upstream does not run oxfmt over its whole tree. At the last sync (`aac47556`, v3.15.1) about 1480 files fail `oxfmt --check`, and every one of them is byte-identical to the upstream blob. Reformatting them would turn every later upstream sync into a conflict on each of those files.
 - Before this spec, `fmt` / `fmt:check` were plain `oxfmt` / `oxfmt --check` over the whole tree, so `pnpm fmt:check` always failed, and `pnpm fmt` would have rewritten upstream files. PR CI ran its own inline check over the PR diff only and skipped PRs labelled `upstream-sync`.
-- The pre-commit hook (`lint-staged.pre-commit.config.mjs` → `scripts/run-pre-commit-checks.mjs`) formats staged files in write mode, which is why fork-touched files are already clean.
+- The pre-commit hook (`lint-staged.pre-commit.config.mjs` → `scripts/run-pre-commit-checks.mjs`) formats staged files in write mode, which is why fork-touched files are already clean. Until it was aligned with this spec it only matched `js mjs cjs jsx ts tsx mts cts json md mdx`, so a fork edit to e.g. a `.yml` file could be committed unformatted and fail only in CI.
 
 ## Product rules
 
@@ -25,6 +25,8 @@
   - ignore rules stay oxfmt's own (`.gitignore`, `.prettierignore` — e.g. `apps/zcode-cli/` with its own formatter — and `.oxfmtrc.json` `ignorePatterns`); the script passes `--no-error-on-unmatched-pattern`.
 - A file that was edited and later reverted to the base content is out of scope (it no longer differs from the base). A file the fork edits even slightly is fully in scope and is formatted as a whole; that is the accepted cost of keeping fork files formatted.
 - **Execution**: `scripts/fork-format.mjs` runs the root `oxfmt` bin via `process.execPath` (Windows `.cmd` shims cannot be spawned without a shell) with the file list split into argv chunks under the Windows command-line limit. Exit code is non-zero if any chunk fails; an empty selection exits 0. `--list` prints the selection without running oxfmt.
+- **Pre-commit uses the same formattable set**: `scripts/fork-format.mjs` exports the extension and basename lists (`FORMATTABLE_EXTENSIONS`, `FORMATTABLE_BASENAMES`) and `formattableFilesGlob()`, and `lint-staged.pre-commit.config.mjs` uses that glob as its only key. There is no second list. A staged file `pnpm fmt:check` would check is formatted (write mode) and re-staged on commit; `scripts/run-pre-commit-checks.mjs` then runs oxlint over the same paths, which lints only the file types it understands (`.vue` script blocks included) and exits 0 for a set with nothing lintable (`--no-error-on-unmatched-pattern`).
+  - Known gap (accepted): lint-staged globs are case-sensitive while `isFormattable` lowercases the extension, so an upper-case extension such as `Foo.YML` is checked by `fmt:check` but not formatted on commit.
 - **CI**: `.github/workflows/pr-checks.yml` runs `pnpm fmt:check` with `fetch-depth: 0`, for every PR including upstream syncs (the former `upstream-sync` label skip is removed: a sync PR bumps the pin, so upstream-only files fall out of scope by themselves, and a forgotten bump must not be waved through by a label). CI has no `upstream` remote, so the stale-pin assertion does not run there; a forgotten bump instead keeps upstream-changed files in scope, and CI fails on any of them that upstream left unformatted. The assertion catches it locally for whoever runs `pnpm fmt` with an `upstream` remote.
 
 ## Upstream sync procedure (pin bump)
@@ -41,6 +43,7 @@ Part of every upstream sync PR, in the same PR as the merge:
 - A fork-added or fork-modified unformatted file makes `pnpm fmt:check` exit non-zero, and `pnpm fmt` formats it.
 - Uncommitted edits and untracked files are in scope locally; deleted files and fork edits reverted to the base are not.
 - A missing pin file, a pin absent from history, a pin that is not an ancestor of `HEAD`, or a pin that disagrees with `merge-base HEAD upstream/main` fails before any formatting; an `upstream/main` behind the pin asks for a fetch.
+- A staged unformatted `.yml` file (or any other formattable type, including `.prettierrc`) is formatted and re-staged by the pre-commit hook; a staged set containing only non-JS formattable files passes oxlint.
 - On the repository at the time of writing, `pnpm fmt:check` passes: all ~3840 fork-changed formattable files are already formatted, and all ~1480 failing files are upstream-identical.
 
-Tests: `scripts/fork-format.test.mjs` (temporary git repositories; part of `pnpm test:node`).
+Tests: `scripts/fork-format.test.mjs` (temporary git repositories) and `scripts/run-pre-commit-checks.test.mjs` (pre-commit glob parity with the formattable set, staged yml formatting); both are part of `pnpm test:node`.

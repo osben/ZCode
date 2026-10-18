@@ -24,40 +24,47 @@ export const UPSTREAM_BASE_FILE = "fork-upstream-base.json";
 // The local remote-tracking ref used only for the stale-pin assertion.
 const UPSTREAM_TRACKING_REF = "refs/remotes/upstream/main";
 
-const FORMATTABLE_EXTENSIONS = new Set(
-  [
-    "js",
-    "jsx",
-    "mjs",
-    "cjs",
-    "ts",
-    "tsx",
-    "mts",
-    "cts",
-    "json",
-    "jsonc",
-    "json5",
-    "md",
-    "mdx",
-    "markdown",
-    "yml",
-    "yaml",
-    "toml",
-    "css",
-    "scss",
-    "less",
-    "html",
-    "htm",
-    "vue",
-    "graphql",
-    "gql",
-    "hbs",
-    "handlebars",
-  ].map((extension) => `.${extension}`),
-);
+// Single source of truth for "files oxfmt formats": fork-format selection and
+// the pre-commit lint-staged glob (lint-staged.pre-commit.config.mjs) both
+// derive from these lists, so a fork edit fmt:check would flag is also
+// formatted on commit.
+export const FORMATTABLE_EXTENSIONS = Object.freeze([
+  "js",
+  "jsx",
+  "mjs",
+  "cjs",
+  "ts",
+  "tsx",
+  "mts",
+  "cts",
+  "json",
+  "jsonc",
+  "json5",
+  "md",
+  "mdx",
+  "markdown",
+  "yml",
+  "yaml",
+  "toml",
+  "css",
+  "scss",
+  "less",
+  "html",
+  "htm",
+  "vue",
+  "graphql",
+  "gql",
+  "hbs",
+  "handlebars",
+]);
 
 // Extensionless names oxfmt formats as JSON.
-const FORMATTABLE_BASENAMES = new Set([".prettierrc", ".babelrc", ".swcrc"]);
+export const FORMATTABLE_BASENAMES = Object.freeze([".prettierrc", ".babelrc", ".swcrc"]);
+
+const FORMATTABLE_EXTENSION_SET = new Set(
+  FORMATTABLE_EXTENSIONS.map((extension) => `.${extension}`),
+);
+const FORMATTABLE_BASENAME_SET = new Set(FORMATTABLE_BASENAMES);
 
 // Windows caps a command line at 32767 characters; leave room for the node
 // and oxfmt bin paths plus flags.
@@ -83,7 +90,16 @@ async function gitSucceeds(cwd, args) {
 
 export function isFormattable(path) {
   const name = basename(path);
-  return FORMATTABLE_BASENAMES.has(name) || FORMATTABLE_EXTENSIONS.has(extname(name).toLowerCase());
+  return (
+    FORMATTABLE_BASENAME_SET.has(name) || FORMATTABLE_EXTENSION_SET.has(extname(name).toLowerCase())
+  );
+}
+
+// lint-staged glob for the same set, matched against repo-relative paths at
+// any depth. Unlike isFormattable it is case-sensitive (lint-staged's matcher
+// has no nocase option); see specs/fork-format-scope.md.
+export function formattableFilesGlob() {
+  return `**/{*.{${FORMATTABLE_EXTENSIONS.join(",")}},${FORMATTABLE_BASENAMES.join(",")}}`;
 }
 
 export function chunkPaths(paths, maxChars = MAX_ARGV_CHARS) {
