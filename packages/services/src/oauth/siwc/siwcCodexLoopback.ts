@@ -1,4 +1,9 @@
 import { createServer, type Server } from "node:http";
+import {
+  buildOAuthCallbackPage,
+  respondWithOAuthCallbackPage,
+  type OAuthCallbackOutcome,
+} from "@zcode/shared/node";
 import { SIWC_CODEX_CALLBACK_PATH } from "./siwcCodexWire.js";
 import { SiwcOAuthError } from "./siwcOAuth.js";
 
@@ -25,23 +30,30 @@ export function listenForCodexCallback(state: string, port: number): Promise<Cod
   });
 
   const server = createServer((request, response) => {
-    const respond = (status: number, message: string) => {
-      response.writeHead(status, { "content-type": "text/plain; charset=utf-8" });
-      response.end(message);
+    const respond = (status: number, outcome: OAuthCallbackOutcome, detail?: string | null) => {
+      respondWithOAuthCallbackPage(
+        response,
+        status,
+        buildOAuthCallbackPage(outcome, {
+          flow: "usage-link",
+          surface: "app",
+          ...(detail ? { detail } : {}),
+        }),
+      );
     };
     try {
       const url = new URL(request.url ?? "/", "http://localhost");
       if (url.pathname !== SIWC_CODEX_CALLBACK_PATH) {
-        respond(404, "Unknown callback path.");
+        respond(404, "invalid");
         return;
       }
       if (url.searchParams.get("state") !== state) {
-        respond(400, "Authorization state mismatch.");
+        respond(400, "invalid");
         return;
       }
       const oauthError = url.searchParams.get("error");
       if (oauthError) {
-        respond(400, "Authorization failed. You may close this window and return to the app.");
+        respond(400, "denied", url.searchParams.get("error_description"));
         if (!settled) {
           settled = true;
           rejectCompletion(
@@ -57,16 +69,16 @@ export function listenForCodexCallback(state: string, port: number): Promise<Cod
       }
       const code = url.searchParams.get("code")?.trim();
       if (!code) {
-        respond(400, "Authorization callback is missing a code.");
+        respond(400, "invalid");
         return;
       }
-      respond(200, "Usage linking successful! You may close this window and return to the app.");
+      respond(200, "success");
       if (!settled) {
         settled = true;
         settleCompletion({ code });
       }
     } catch (error) {
-      respond(500, "Authorization failed.");
+      respond(500, "failed");
       if (!settled) {
         settled = true;
         rejectCompletion(error instanceof Error ? error : new Error(String(error)));

@@ -44,3 +44,15 @@ export * from "./node/process-tree/windowsTaskkillRunner.js";
 export * from "./node/process-tree/processTreeSnapshotAsync.js";
 export * from "./node/process-tree/processTreeWaiter.js";
 export { RefreshSingleflight } from "./node/refreshSingleflight.js";
+export {
+  DEFAULT_OAUTH_CALLBACK_APP_URL,
+  buildOAuthCallbackPage,
+  isSafeAppUrl,
+  renderOAuthCallbackPage,
+  respondWithOAuthCallbackPage,
+  type OAuthCallbackFlow,
+  type OAuthCallbackOutcome,
+  type OAuthCallbackPageOptions,
+  type OAuthCallbackSurface,
+  type RenderedOAuthCallbackPage,
+} from "./node/oauthCallbackPage.js";
