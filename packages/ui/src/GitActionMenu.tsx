@@ -47,6 +47,7 @@ import {
 } from "@/git-action-menu/currentSessionFileScope.js";
 import { useServices } from "@/hooks/useServices.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { useConfirmDialogStore } from "@/store/confirmDialogStore.js";
 import { getErrorMessage } from "@/lib/errorMessage.js";
 import { runUserAction } from "@/lib/userActionTelemetry.js";
 import { formatCommandShortcutLabel, matchesPrimaryShortcut } from "@/lib/keyboardShortcuts.js";
@@ -1151,6 +1152,22 @@ export function GitActionMenu({
           }),
         );
         return;
+      }
+
+      // A commit on a detached HEAD belongs to no branch and can be lost after switching away, so
+      // ask before any generation or Git mutation (specs/git-commit-detached-head-warning.md). The
+      // dialog's refreshed summary is authoritative; the menu's gitSummary prop can be stale.
+      if (commitDialogState.summary.headRefType === "detached") {
+        const confirmed = await useConfirmDialogStore.getState().requestConfirmation({
+          title: intl.formatMessage({ id: "git.actionMenu.commitDialog.detachedWarning.title" }),
+          description: intl.formatMessage({
+            id: "git.actionMenu.commitDialog.detachedWarning.description",
+          }),
+          confirmLabel: intl.formatMessage({
+            id: "git.actionMenu.commitDialog.detachedWarning.confirm",
+          }),
+        });
+        if (!confirmed) return;
       }
 
       let nextCommitMessage = commitMessage.trim();

@@ -18,6 +18,7 @@ import {
   buildSessionManagerRows,
   type SessionManagerRow,
 } from "./sessionManagerModel.js";
+import { countRowTrees, eraseHiddenRows } from "./sessionManagerErase.js";
 import type { SessionManagerScope, SessionManagerStatusFilter } from "./sessionManagerTypes.js";
 
 export interface SessionManagerUniverseTab {
@@ -180,6 +181,14 @@ export function useSessionManagerRowActions(
     () => ({
       canMutate: (row: SessionManagerRow) => !row.offline && Boolean(resolveRowServices(row)),
 
+      /** Erase needs a local workspace whose host exposes the optional erase methods (spec §4). */
+      canErase: (row: SessionManagerRow) =>
+        !row.offline &&
+        !row.task.workspaceIdentity &&
+        typeof resolveRowServices(row)?.eraseTasks === "function",
+
+      countTrees: (rows: readonly SessionManagerRow[]) => countRowTrees(rows, resolveRowServices),
+
       async setPinned(row: SessionManagerRow, pinned: boolean) {
         const service = resolveRowServices(row);
         if (!service) {
@@ -272,15 +281,21 @@ export function useSessionManagerRowActions(
        * still-archived guard skips rows restored elsewhere. Partial failures are tolerated
        * and reported by count; the list refreshes through the registry either way.
        */
-      async deleteRows(rows: readonly SessionManagerRow[]): Promise<SessionManagerRowActionResult> {
+      async deleteRows(
+        rows: readonly SessionManagerRow[],
+        options: { erase?: boolean } = {},
+      ): Promise<SessionManagerRowActionResult> {
         let succeeded = 0;
         let failed = 0;
+        // Erase only follows a successful Hide, so a failure at any point leaves the session hidden.
+        const hiddenRows: SessionManagerRow[] = [];
         const archivedByWorkspace = new Map<
           string,
           {
             workspacePath: string;
             workspaceIdentity?: string;
             taskIds: string[];
+            rows: SessionManagerRow[];
           }
         >();
         for (const row of rows) {
@@ -292,8 +307,10 @@ export function useSessionManagerRowActions(
                 ? { workspaceIdentity: row.task.workspaceIdentity }
                 : {}),
               taskIds: [],
+              rows: [],
             };
             bucket.taskIds.push(row.task.taskId);
+            bucket.rows.push(row);
             archivedByWorkspace.set(key, bucket);
             continue;
           }
@@ -316,6 +333,7 @@ export function useSessionManagerRowActions(
               taskId: row.task.taskId,
             });
             succeeded += 1;
+            hiddenRows.push(row);
           } catch (error) {
             reportError(error, "delete", row);
             failed += 1;
@@ -342,6 +360,8 @@ export function useSessionManagerRowActions(
             // reappear through the next active-kind query and are simply not removed here.
             succeeded += result.deletedTaskIds.length;
             failed += result.failedTaskIds.length;
+            const deletedIds = new Set(result.deletedTaskIds);
+            hiddenRows.push(...bucket.rows.filter((row) => deletedIds.has(row.task.taskId)));
             for (const taskId of result.deletedTaskIds) {
               removeTaskFromTaskCaches({
                 workspacePath: bucket.workspacePath,
@@ -365,6 +385,9 @@ export function useSessionManagerRowActions(
               succeeded: String(succeeded),
             }),
           );
+        }
+        if (options.erase && hiddenRows.length > 0) {
+          await eraseHiddenRows(hiddenRows, { resolveRowServices, reportError, formatMessage });
         }
         return { succeeded, failed };
       },

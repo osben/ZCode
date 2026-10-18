@@ -143,6 +143,7 @@ import type {
   SessionMessageSendRequested,
 } from "#src/session/sessionMailbox.js";
 import { TaskIndexRepo } from "#src/session/taskIndexRepo.js";
+import { createTaskEraseOperations } from "./zcodeTaskErase.js";
 import { ForkWorkspacePinRepo } from "#src/session/forkWorkspacePinRepo.js";
 import type {
   IZCodeAgentService,
@@ -308,6 +309,11 @@ export function createZCodeTaskServiceAdapter(
     overlays: overlays.size,
   }));
   const taskIndexRepo = options.taskIndexRepo ?? new TaskIndexRepo();
+  const taskErase = createTaskEraseOperations({
+    agent: options.zcodeAgentService,
+    taskIndexRepo,
+    provider: GLM_PROVIDER,
+  });
   const ownsForkWorkspacePinRepo = !options.forkWorkspacePinRepo;
   const forkWorkspacePinRepo = options.forkWorkspacePinRepo ?? new ForkWorkspacePinRepo();
   const taskIndexSyncer = options.taskIndexSyncer;
@@ -2789,6 +2795,8 @@ export function createZCodeTaskServiceAdapter(
       });
       return tasks.map(rememberIndexedTaskMeta);
     },
+
+    ...taskErase,
 
     async listDeletedTaskIds(params): Promise<string[]> {
       return taskIndexRepo.listDeletedTaskIds({

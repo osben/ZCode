@@ -56,7 +56,11 @@ it("compiles real UAC calls when the plugin directory follows the custom include
         `-DELEVATED_LOG_PATH=${join(temp, "elevated.log")}`,
         join(desktopDir, "test/fixtures/installer-nsh-smoke.nsi"),
       ];
-      await execFileAsync(compiler, args, { env: { ...process.env, NSISDIR: nsisDir } });
+      // makensis Unicode builds abort with std::bad_alloc under the C locale; pin UTF-8 so the result
+      // does not depend on the caller's LANG/LC_ALL (electron-builder pins it the same way in production).
+      await execFileAsync(compiler, args, {
+        env: { ...process.env, NSISDIR: nsisDir, LC_ALL: "C.UTF-8" },
+      });
       expect((await stat(output)).size).toBeGreaterThan(0);
     }
   } finally {

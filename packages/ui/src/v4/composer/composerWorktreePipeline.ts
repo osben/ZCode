@@ -34,6 +34,12 @@ import {
 
 const inFlightByPipelineKey = new Map<string, Promise<"ready" | "failed">>();
 const beginInFlightByWorkspaceKey = new Map<string, Promise<ComposerWorktreeBeginResult>>();
+/** Sessions whose Retry is waiting on the Host acknowledgement (count per session key). */
+const pendingRetryBySessionKey = new Map<string, number>();
+
+function retrySessionKey(workspaceKey: string, sessionId?: string): string {
+  return `${workspaceKey}\0${sessionId ?? "unscoped"}`;
+}
 
 function pipelineRunKey(workspaceKey: string, sessionId?: string, attemptId?: string): string {
   return `${workspaceKey}\0${sessionId ?? "unscoped"}\0${attemptId ?? "legacy"}`;
@@ -49,6 +55,33 @@ export function isComposerWorktreePipelineInFlight(
         key.startsWith(`${workspaceKey}\0${sessionId}\0`),
       )
     : [...inFlightByPipelineKey.keys()].some((key) => key.startsWith(`${workspaceKey}\0`));
+}
+
+/**
+ * Mark a session's Retry as waiting on the Host acknowledgement. Until the returned release runs,
+ * the stale-creating reconcile neither starts nor settles that session: the Retry owner starts Git
+ * for the acknowledged attempt even when its Host snapshot was adopted as `creating` first.
+ * The release is idempotent.
+ */
+export function markComposerWorktreeRetryPending(
+  workspaceKey: string,
+  sessionId?: string,
+): () => void {
+  const key = retrySessionKey(workspaceKey, sessionId);
+  pendingRetryBySessionKey.set(key, (pendingRetryBySessionKey.get(key) ?? 0) + 1);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const remaining = (pendingRetryBySessionKey.get(key) ?? 1) - 1;
+    if (remaining > 0) pendingRetryBySessionKey.set(key, remaining);
+    else pendingRetryBySessionKey.delete(key);
+  };
+}
+
+/** Whether a Retry for the session is still waiting on the Host acknowledgement. */
+export function isComposerWorktreeRetryPending(workspaceKey: string, sessionId?: string): boolean {
+  return pendingRetryBySessionKey.has(retrySessionKey(workspaceKey, sessionId));
 }
 
 /**
@@ -307,14 +340,19 @@ export function beginWorktreePipelineCreation({
 export { restoreComposerWorktreePipelineFromPreparation } from "./composerWorktreePreparationRestore.js";
 
 /**
- * Retry a failed pipeline with its frozen params. No-op unless the entry is failed.
- * The caller re-marks the entry as creating first (setup rows show the spinner again).
+ * Retry a pipeline with its frozen params; the caller that obtained the Host acknowledgement for
+ * `attemptId` is the single owner of starting Git for it. Proceeds from:
+ * - `failed` (for `retriedAttemptId` when given): re-marks the entry `creating` for the new attempt;
+ * - `creating` for exactly the acknowledged `attemptId` with no runner in flight: the Host snapshot
+ *   for the retried attempt was restored before the acknowledgement (restore never starts Git).
+ * Any other entry state means the session already moved on, and resolves `skipped`.
  */
 export function retryComposerWorktreePipeline({
   gitService,
   workspaceKey,
   sessionId,
   attemptId,
+  retriedAttemptId,
   formatMessage,
   syncPreparedWorktree,
 }: {
@@ -322,13 +360,34 @@ export function retryComposerWorktreePipeline({
   workspaceKey: string;
   sessionId?: string;
   attemptId?: string;
+  /** Entry attempt the caller retried; a `failed` entry for another attempt is not retried. */
+  retriedAttemptId?: string;
   formatMessage: (id: string, values?: Record<string, string>) => string;
   syncPreparedWorktree?: ComposerWorktreePreparationSync;
-}): Promise<"ready" | "failed"> {
+}): Promise<"ready" | "failed" | "skipped"> {
   const store = useComposerWorktreePipelineStore.getState();
   const entry = selectComposerWorktreePipeline(store, workspaceKey, sessionId);
-  if (!entry || entry.status !== "failed" || !entry.params) {
-    return Promise.resolve("failed");
+  if (!entry?.params) return Promise.resolve("skipped");
+  if (
+    entry.status === "creating" &&
+    attemptId &&
+    entry.params.attemptId === attemptId &&
+    !isComposerWorktreePipelineInFlight(workspaceKey, sessionId)
+  ) {
+    return startComposerWorktreePipeline({
+      gitService,
+      workspaceKey,
+      sessionId: entry.sessionId,
+      params: entry.params,
+      formatMessage,
+      ...(syncPreparedWorktree ? { syncPreparedWorktree } : {}),
+    });
+  }
+  if (
+    entry.status !== "failed" ||
+    (retriedAttemptId !== undefined && entry.attemptId !== retriedAttemptId)
+  ) {
+    return Promise.resolve("skipped");
   }
   const params = { ...entry.params, ...(attemptId ? { attemptId } : {}) };
   store.startPipeline(workspaceKey, {
@@ -369,12 +428,18 @@ export async function reconcileCreatingComposerWorktreePipeline({
   formatMessage: (id: string, values?: Record<string, string>) => string;
   syncPreparedWorktree?: ComposerWorktreePreparationSync;
 }): Promise<void> {
-  if (isComposerWorktreePipelineInFlight(workspaceKey, sessionId)) return;
+  // A Retry awaiting its Host acknowledgement owns starting Git for the session; settling the
+  // adopted attempt now would report it failed before its runner starts (BUG-GWT-005 Wave 4).
+  const isOwnedElsewhere = () =>
+    isComposerWorktreePipelineInFlight(workspaceKey, sessionId) ||
+    isComposerWorktreeRetryPending(workspaceKey, sessionId);
+  if (isOwnedElsewhere()) return;
   const store = useComposerWorktreePipelineStore.getState();
   const entry = selectComposerWorktreePipeline(store, workspaceKey, sessionId);
   if (!entry || entry.status !== "creating" || !entry.params) return;
   const attemptId = entry.attemptId;
   const isCurrent = () => {
+    if (isOwnedElsewhere()) return false;
     const current = selectComposerWorktreePipeline(
       useComposerWorktreePipelineStore.getState(),
       workspaceKey,
@@ -441,6 +506,7 @@ export async function reconcileCreatingComposerWorktreePipeline({
           return;
         }
       }
+      if (!isCurrent()) return;
       store.markReady(workspaceKey, existing.path, true, ownerSessionId, attemptId);
     } else {
       store.markFailed(
@@ -455,6 +521,7 @@ export async function reconcileCreatingComposerWorktreePipeline({
       workspaceKey,
       error: getErrorMessage(error),
     });
+    if (!isCurrent()) return;
     store.markFailed(
       workspaceKey,
       formatMessage("worktreeSetup.reconcile.staleCreating"),

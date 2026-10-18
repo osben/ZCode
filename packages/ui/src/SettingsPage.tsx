@@ -2185,6 +2185,9 @@ export function SettingsPage({
                         ) : activeSection === "sessions" ? (
                           <SessionsSettingsSection
                             onOpenSession={onOpenSession}
+                            // Mobile web remote never offers permanent erase (spec §4); the host cannot be
+                            // told apart from a desktop one by method presence on an RPC proxy.
+                            allowErase={!isWebRemoteControl}
                             scope={sessionsScope}
                             onClearScope={() => setSessionsScope(undefined)}
                           />

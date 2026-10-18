@@ -24,6 +24,8 @@ import {
 } from "@/store/composerWorktreePipelineStore.js";
 import {
   isComposerWorktreePipelineInFlight,
+  isComposerWorktreeRetryPending,
+  markComposerWorktreeRetryPending,
   reconcileCreatingComposerWorktreePipeline,
   retryComposerWorktreePipeline,
   restoreComposerWorktreePipelineFromPreparation,
@@ -132,6 +134,7 @@ export function ConversationWorktreeSetupSteps({
   const settleStaleCreating = useCallback(() => {
     if (!resolution.rpcReady || !entry || entry.status !== "creating" || !entry.params) return;
     if (isComposerWorktreePipelineInFlight(workspaceKey, sessionId)) return;
+    if (isComposerWorktreeRetryPending(workspaceKey, sessionId)) return;
     void reconcileCreatingComposerWorktreePipeline({
       gitService: baseServices.gitService,
       workspaceKey,
@@ -184,7 +187,10 @@ export function ConversationWorktreeSetupSteps({
       preparation,
     });
     settleStaleCreating();
+    // actionPending: a Retry that ends without starting a runner hands an adopted `creating` entry
+    // back to this reconcile, which it skipped while the Host acknowledgement was pending.
   }, [
+    actionPending,
     baseServices.gitService,
     entry,
     intl,
@@ -284,24 +290,26 @@ export function ConversationWorktreeSetupSteps({
                     setActionPending(true);
                     void (async () => {
                       let ownerAttemptId = entry.attemptId;
+                      // The Host snapshot for the retried attempt may be restored as `creating`
+                      // before the acknowledgement resolves; this handler still owns starting Git
+                      // for it, so the stale-creating reconcile must not settle it meanwhile.
+                      const releaseRetryPending = markComposerWorktreeRetryPending(
+                        workspaceKey,
+                        sessionId,
+                      );
                       try {
                         const attemptId = await onRetryPreparation(entry.params?.attemptId);
-                        const current = selectComposerWorktreePipeline(
-                          useComposerWorktreePipelineStore.getState(),
-                          workspaceKey,
-                          sessionId,
-                        );
-                        if (current?.attemptId !== ownerAttemptId || current.status !== "failed")
-                          return;
-                        ownerAttemptId = attemptId || ownerAttemptId;
                         const outcome = await retryComposerWorktreePipeline({
                           ...(attemptId ? { attemptId } : {}),
+                          retriedAttemptId: ownerAttemptId,
                           gitService: baseServices.gitService,
                           workspaceKey,
                           sessionId,
                           formatMessage: (id, values) => intl.formatMessage({ id }, values),
                           ...(onSyncPreparation ? { syncPreparedWorktree: onSyncPreparation } : {}),
                         });
+                        if (outcome === "skipped") return;
+                        ownerAttemptId = attemptId || ownerAttemptId;
                         if (outcome === "failed") {
                           const failed = selectComposerWorktreePipeline(
                             useComposerWorktreePipelineStore.getState(),
@@ -327,6 +335,7 @@ export function ConversationWorktreeSetupSteps({
                           );
                         toast(getErrorMessage(error));
                       } finally {
+                        releaseRetryPending();
                         actionInFlight.current = false;
                         setActionPending(false);
                       }

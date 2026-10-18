@@ -54,6 +54,7 @@ import {
   stopSession,
   subscribeSession,
 } from "./server-operations.js";
+import { countSessionTrees, eraseSessionTrees } from "./session-tree.js";
 import { listChildProcesses } from "./process-child-processes.js";
 import { ProtocolRuntimeResources } from "./runtime-resources.js";
 import {
@@ -675,6 +676,10 @@ export class ZCodeProtocolAgentServer {
         return await setMode(this.context, request.params);
       case zcodeProtocolMethods.sessionClose:
         return await closeSession(this.context, request.params);
+      case zcodeProtocolMethods.sessionTreeCounts:
+        return await countSessionTrees(this.context, request.params);
+      case zcodeProtocolMethods.sessionEraseTree:
+        return await eraseSessionTrees(this.context, request.params);
       case zcodeProtocolMethods.workspaceReadPresentation:
         return await readWorkspacePresentation(this.context, request.params);
       case zcodeProtocolMethods.workspaceHookTrustGrant: {

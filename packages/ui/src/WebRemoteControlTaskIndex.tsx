@@ -43,6 +43,7 @@ import { useRemoteWorkspaceSessionStore } from "@/store/remoteWorkspaceSessionSt
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { WebRemoteControlTaskIndexRow } from "@/WebRemoteControlTaskIndexRow.js";
 import { DeleteAllArchivedTasksButton } from "@/DeleteAllArchivedTasksButton.js";
+import { appendTreeChildrenCopy } from "@/lib/taskTreeCounts.js";
 
 const WEB_REMOTE_CONTROL_TASK_INDEX_EMPTY_RETRY_DELAY_MS = 300;
 const WEB_REMOTE_CONTROL_TASK_INDEX_EMPTY_RETRY_MAX_ATTEMPTS = 3;
@@ -398,9 +399,12 @@ export function WebRemoteControlTaskIndex({
       void (async () => {
         const confirmed = await confirmDialog({
           title: intl.formatMessage({ id: "confirmDialog.archivedTaskDeleteTitle" }),
-          description: intl.formatMessage({
-            id: "confirmDialog.archivedTaskDeleteDescription",
-          }),
+          // Remote workspaces cannot count children, so the generic sentence is always shown here.
+          description: appendTreeChildrenCopy(
+            intl,
+            intl.formatMessage({ id: "confirmDialog.archivedTaskDeleteDescription" }),
+            null,
+          ),
           confirmLabel: intl.formatMessage({ id: "taskList.delete" }),
         });
         if (!confirmed) {

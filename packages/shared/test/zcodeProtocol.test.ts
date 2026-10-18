@@ -463,6 +463,8 @@ describe("ZCode Protocol", () => {
     expect(methods).toContain("session/read");
     expect(methods).toContain("session/usage");
     expect(methods).toContain("session/subagents");
+    expect(methods).toContain("session/treeCounts");
+    expect(methods).toContain("session/eraseTree");
     expect(methods).toContain("session/setModel");
     expect(methods).toContain("session/cancelBackgroundTask");
     expect(methods).toContain("workspace/readPresentation");

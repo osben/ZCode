@@ -20,6 +20,7 @@ import { TaskListRemoteSyncHint } from "@/TaskListRemoteSyncHint.js";
 import { TaskListLoadingHint } from "@/TaskListLoadingHint.js";
 import { buildWorkspaceServiceLookup } from "@/lib/workspaceServiceResolver.js";
 import { DeleteAllArchivedTasksButton } from "@/DeleteAllArchivedTasksButton.js";
+import { appendTreeChildrenCopy } from "@/lib/taskTreeCounts.js";
 
 export function WorkspaceArchivedTasksFlatSection({
   workspaceTabs,
@@ -282,13 +283,26 @@ export function WorkspaceArchivedTasksFlatSection({
                         event.preventDefault();
                         event.stopPropagation();
                         void (async () => {
+                          const treeCounts = await services.zcodeTaskService
+                            .countTaskTrees?.({
+                              taskIds: [task.taskId],
+                              workspacePath: task.workspacePath,
+                              ...(task.workspaceIdentity
+                                ? { workspaceIdentity: task.workspaceIdentity }
+                                : {}),
+                            })
+                            .catch(() => null);
                           const confirmed = await confirmDialog({
                             title: intl.formatMessage({
                               id: "confirmDialog.archivedTaskDeleteTitle",
                             }),
-                            description: intl.formatMessage({
-                              id: "confirmDialog.archivedTaskDeleteDescription",
-                            }),
+                            description: appendTreeChildrenCopy(
+                              intl,
+                              intl.formatMessage({
+                                id: "confirmDialog.archivedTaskDeleteDescription",
+                              }),
+                              treeCounts ?? null,
+                            ),
                             confirmLabel: deleteLabel,
                           });
                           if (!confirmed) {

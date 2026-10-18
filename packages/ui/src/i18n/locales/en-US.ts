@@ -712,7 +712,7 @@ const enUS: Record<string, string> = {
   "commandCenter.worktree.error.invalid-branch-name": "“{branchName}” is not a valid branch name.",
   "commandCenter.worktree.error.branch-already-exists": "Branch “{branchName}” already exists.",
   "commandCenter.worktree.error.target-branch-not-found":
-    "Base branch “{branchName}” was not found.",
+    "Base branch “{branchName}” was not found. A repository without commits has no branches yet; create the first commit before using a worktree.",
   "commandCenter.worktree.error.branch-in-other-worktree":
     "Branch “{branchName}” is already checked out in another worktree. Choose a different branch name.",
   "commandCenter.worktree.error.target-path-invalid": "The computed target path is invalid.",
@@ -732,13 +732,14 @@ const enUS: Record<string, string> = {
   "commandCenter.worktree.error.worktree-dirty": "The worktree has modified or untracked files.",
   "commandCenter.worktree.error.worktree-locked": "The worktree is locked by Git.",
   "commandCenter.worktree.error.unknown": "Could not create the worktree.",
+  "commandCenter.worktree.error.unknownWithDetail": "Could not create the worktree: {detail}",
   "commandCenter.worktree.error.requestFailed": "Git request failed: {error}",
   "confirmDialog.taskDeleteTitle": "Delete this task?",
   "confirmDialog.taskDeleteDescription":
     "Task “{taskTitle}” will be removed from this workspace, and the current record cannot be restored.",
   "confirmDialog.archivedTaskDeleteTitle": "Delete this archived task?",
   "confirmDialog.archivedTaskDeleteDescription":
-    "Tasks will be removed from the task list and Archive.",
+    "The task is hidden from the task list and Archive. Its files stay on disk.",
   "taskList.deleteAllArchived": "Delete all archived tasks",
   "taskList.archivedActions": "Archive actions",
   "taskList.archivedTaskCount": "{count} archived tasks",
@@ -1544,6 +1545,10 @@ const enUS: Record<string, string> = {
     "Commit message generation failed. Try again or enter one manually.",
   "git.actionMenu.commitDialog.error.requestFailed": "Commit failed: {error}",
   "git.actionMenu.commitDialog.error.pushAfterCommitFailed": "Committed, but push failed: {error}",
+  "git.actionMenu.commitDialog.detachedWarning.title": "Commit on a detached HEAD?",
+  "git.actionMenu.commitDialog.detachedWarning.description":
+    "HEAD is not on a branch, so this commit will not belong to any branch and can be lost after you switch branches. Create or switch to a branch first to keep it.",
+  "git.actionMenu.commitDialog.detachedWarning.confirm": "Commit anyway",
   "git.actionMenu.commitDialog.toast.success": "Committed the current changes",
   "git.actionMenu.commitDialog.toast.commitAndPushSuccess":
     "Committed and pushed the current changes",
@@ -8213,7 +8218,8 @@ const enUS: Record<string, string> = {
   "sessionManager.delete": "Delete",
   "sessionManager.delete.title.one": "Delete {count} session?",
   "sessionManager.delete.title.other": "Delete {count} sessions?",
-  "sessionManager.delete.body": "Sessions are removed from this list. Session files stay on disk.",
+  "sessionManager.delete.body":
+    "Sessions are hidden from this list. Their files stay on disk until you erase them.",
   "sessionManager.delete.tagActive": "active",
   "sessionManager.delete.tagArchived": "archived",
   "sessionManager.delete.more.one": "+{count} more",
@@ -8221,6 +8227,36 @@ const enUS: Record<string, string> = {
   "sessionManager.delete.includePinned.one": "Include {count} pinned session",
   "sessionManager.delete.includePinned.other": "Include {count} pinned sessions",
   "sessionManager.delete.confirm": "Delete {count}",
+  "sessionManager.delete.includes": "Includes {items}.",
+  "sessionManager.delete.includesGeneric":
+    "May also include side chats and subagents attached to these sessions.",
+  "sessionManager.delete.workflowSessions.one": "{count} workflow session",
+  "sessionManager.delete.workflowSessions.other": "{count} workflow sessions",
+  "sessionManager.delete.running.one":
+    "{count} session is still running. It keeps running after it is hidden.",
+  "sessionManager.delete.running.other":
+    "{count} sessions are still running. They keep running after they are hidden.",
+  "sessionManager.erase.checkbox": "Also erase the stored conversations permanently",
+  "sessionManager.erase.warning.one":
+    "This permanently erases {count} session in total and can't be undone. Tool output and cache files may remain on disk.",
+  "sessionManager.erase.warning.other":
+    "This permanently erases {count} sessions in total and can't be undone. Tool output and cache files may remain on disk.",
+  "sessionManager.erase.blocked.one": "Stop {count} running session before erasing.",
+  "sessionManager.erase.blocked.other": "Stop {count} running sessions before erasing.",
+  "sessionManager.erase.confirm": "Erase {count}",
+  "sessionManager.erase.result": "Erased {erased}. Kept hidden: {kept}.",
+  "sessionManager.erase.unsupported": "Permanent erase isn't available here.",
+  "sessionManager.erase.filesFailed":
+    "Some session folders could not be removed. Those sessions stay hidden; erase again to retry.",
+  "sessionManager.hidden.count.one": "{count} hidden session is still stored on disk.",
+  "sessionManager.hidden.count.other": "{count} hidden sessions are still stored on disk.",
+  "sessionManager.hidden.erase": "Erase hidden sessions",
+  "sessionManager.hidden.confirmTitle": "Erase all hidden sessions?",
+  "sessionManager.hidden.confirmBody.one":
+    "This permanently erases {count} stored session, including side chats and subagents, and can't be undone. Tool output and cache files may remain on disk.",
+  "sessionManager.hidden.confirmBody.other":
+    "This permanently erases {count} stored sessions, including side chats and subagents, and can't be undone. Tool output and cache files may remain on disk.",
+  "sessionManager.hidden.confirm": "Erase",
   "sessionManager.delete.partialFailure": "Deleted {succeeded}, failed: {failed}",
   "sessionManager.mutationFailed": "Action failed. Please try again.",
   "sessionManager.bulk.ariaLabel": "Bulk actions",

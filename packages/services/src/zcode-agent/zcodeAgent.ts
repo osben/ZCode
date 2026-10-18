@@ -84,6 +84,8 @@ import type {
   ZCodeSessionRuntimePreferencesResult,
   ZCodeSessionStateSnapshot,
   ZCodeSessionSubagentsResult,
+  ZCodeSessionTreeCountsResult,
+  ZCodeSessionEraseTreeResult,
   ZCodeStateUpdatedNotification,
   ZCodeTaskClientMode,
   ZCodeBrowserAmbientContext,
@@ -184,6 +186,13 @@ import type {
 
 export interface ZCodeAgentSessionTarget extends ZCodeAgentWorkspaceTarget {
   sessionId: string;
+}
+
+/** Session ids are global in the CLI store; the workspace only selects which agent process answers. */
+export interface ZCodeAgentSessionTreeParams extends ZCodeAgentWorkspaceTarget {
+  sessionIds: string[];
+  /** existing-only never starts an agent; it fails when the workspace has no runtime yet. */
+  runtimePolicy?: ZCodeAgentRuntimePolicy;
 }
 
 export interface ZCodeAgentResumeSessionParams extends ZCodeAgentSessionTarget {
@@ -844,6 +853,14 @@ export interface IZCodeAgentService {
   closeSession(
     params: ZCodeAgentSessionTarget & { expectedPersistence?: "deferred" | "immediate" },
   ): Promise<boolean>;
+  /** Read-only totals for a permanent erase; resolves null when the connected CLI predates the method. */
+  countSessionTrees?(
+    params: ZCodeAgentSessionTreeParams,
+  ): Promise<ZCodeSessionTreeCountsResult | null>;
+  /** Permanently erase session trees; resolves null when the connected CLI predates the method. */
+  eraseSessionTrees?(
+    params: ZCodeAgentSessionTreeParams,
+  ): Promise<ZCodeSessionEraseTreeResult | null>;
   setModel(params: ZCodeAgentSetModelParams): Promise<ZCodeSessionStateSnapshot>;
   setThoughtLevel(params: ZCodeAgentSetThoughtLevelParams): Promise<ZCodeSessionStateSnapshot>;
   setMode(params: ZCodeAgentSetModeParams): Promise<ZCodeSessionStateSnapshot>;

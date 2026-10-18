@@ -62,6 +62,12 @@ export interface ZCodeProtocolAgentDependencies {
   /** Compatibility for older tests/embedded callers; new code should configure low-water through sessionResidentPoolOptions. */
   sessionResidentTargetCount?: number;
   sessionStore?: SessionStorePort;
+  /**
+   * Raw `storage.dir` (not getCliStorageRoot): the per-session directory writers all build
+   * `join(storageRoot, "cli", ...)`, and erase must resolve the same paths. Absent: directories are
+   * reported as failures.
+   */
+  storageRoot?: string;
   version?: string;
   /** Hook policy managed by the trusted Host; workspace/project configuration cannot override it. */
   workspaceHookPolicyProvider?: WorkspaceHookPolicyProvider;

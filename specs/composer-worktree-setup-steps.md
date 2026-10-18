@@ -122,6 +122,63 @@ locally settled `ready` stays visible until the Host reports a terminal state fo
 Snapshot-driven restore never starts Git creation by itself, and a consumed or discarded entry is
 never resurrected from stale metadata.
 
+"Newer" is decided by supersession, not by inequality: attempt ids are opaque, so a Host attempt
+that differs from the entry's attempt is newer only when the renderer has not itself replaced it.
+The pipeline store is the single owner of this rule: whenever a session's entry is replaced by
+another attempt — Retry, a Send that restarts a failed prepared session, or a newer Host attempt —
+the replaced attempt is recorded on the entry before Git restarts, and a Host preparation seed
+carrying a superseded attempt is stale and is ignored. The marker's attempt id is optional, so once an entry has
+replaced an attempt, a seed without an attempt id cannot be matched to the live attempt and is
+ignored as well (it can neither fail nor replace it); Host cancellation stays authoritative. The Host accepts the retry before its
+snapshot reaches the renderer, so the seed for the failed attempt is still live when the retry
+turns the entry `creating`; treating it as newer rolled the entry back to `failed` for one render,
+which made the queued-send effect abandon the armed submission and left the later `ready` admitting
+nothing (BUG-GWT-005, RT4-C5). A genuinely newer Host attempt (for example another client's retry)
+still replaces the entry and inherits its superseded set, adding the attempt it replaced.
+The renderer that issued Retry is the single owner of starting Git for the attempt the Host
+acknowledged; snapshot restore still never starts Git. The Host snapshot for the retried attempt may
+reach the renderer before the Retry acknowledgement, in which case restore adopts that attempt as
+`creating` (superseding the failed one) before the handler resumes. The Retry handler therefore
+proceeds from either `failed` for the attempt it retried, or `creating` for exactly the attempt the
+Host acknowledged with no runner in flight; any other entry state means another owner already moved
+the session on, and the handler starts nothing. While the acknowledgement is pending, the runner
+marks the session as having a pending retry, and the stale-creating reconcile neither starts nor
+settles that session (it re-checks the pending retry and the in-flight runner after each of its own
+awaits); otherwise it would report the adopted attempt as failed to the Host before Git started. If
+the handler ends without starting a runner while the entry is `creating` (the acknowledgement threw
+or named another attempt), it hands the session back to the stale-creating reconcile once the
+pending mark is cleared.
+
+```text
+Renderer entry (session S)     Setup-steps reconcile           Host snapshot seed
+failed(A)                      seed = failed(A)
+Retry → Host accepts B
+startPipeline creating(B),
+  superseded = {A}  ----------> seed failed(A): A ∈ superseded
+                                → ignored (no rollback)
+Git ready → ready(B)                                           preparing(B) arrives
+  → armed submission dispatched -> seed preparing(B): same attempt
+    once, entry consumed            → keep local ready
+```
+
+Snapshot before acknowledgement (same session S):
+
+```text
+Retry handler / runner         Setup-steps reconcile           Host snapshot seed
+failed(A)                      seed = failed(A)
+mark retry pending(S)
+updateWorktreePreparation ...                                  preparing(B) arrives
+                               restore: creating(B),
+                                 superseded = {A}
+                               stale-creating reconcile:
+                                 retry pending(S) → skip
+ack = B; entry creating(B),
+  no runner → start Git for B
+clear retry pending(S)
+Git ready → ready(B)
+  → armed submission dispatched once, entry consumed
+```
+
 ### Preparation states
 
 ```text
@@ -217,6 +274,14 @@ directory was removed, or a directory that is not a usable worktree checkout, se
 recoverable failure; the flow never prunes registrations, deletes branches, or creates a second
 directory on its own.
 
+A failed creation names its cause in the `{reason}` of the failed row (and in the Command Center
+error, which shares `executeWorktreeCreation`). A rejection Git did not classify (`unknown`) shows
+Git's own failure line — the first `fatal:`/`error:` line of its output with that prefix removed,
+for example `could not create leading directories of '…': Permission denied` — instead of only the
+generic "Could not create the worktree"; without Git output the generic text stays. A
+`target-branch-not-found` rejection also reminds the user that a repository without commits has no
+branches yet, because an unborn HEAD reports the default branch as missing.
+
 The Command Center “New task in worktree” action remains its separate Start-driven flow and opens its
 own workspace. Its branch-name collision avoidance and shared `executeWorktreeCreation` request
 semantics remain intact.
@@ -300,6 +365,16 @@ early transcript persistence or a second accepted-input store.
     or invalidate a pending ACK, and a committed owner change advances the epoch once.
 16. Deleting a worktree owned by a prepared, not-yet-cancelled session is refused in Command
     Center, including the force-confirmation path; cancelling the preparation releases the guard.
+17. Failed creation → Retry through the setup-steps button while the Host seed still reports the
+    failed attempt: the entry never rolls back to the failed attempt, the retried creation turns
+    `ready`, the frozen submission is dispatched exactly once against the retry attempt with no
+    further user action, the entry is consumed, and its recovery record is cleared so the
+    "Unsent message saved" card disappears (BUG-GWT-005).
+18. Same as 17, but the Host snapshot for the retried attempt reaches the renderer before the Retry
+    acknowledgement resolves: restore adopts the retried attempt as `creating`, the stale-creating
+    reconcile does not settle it while the acknowledgement is pending, the Retry handler starts Git
+    for exactly the acknowledged attempt, the frozen submission is dispatched exactly once against
+    it, and the Host is never told that attempt failed (BUG-GWT-005 Wave 4).
 
 ## Validation
 
