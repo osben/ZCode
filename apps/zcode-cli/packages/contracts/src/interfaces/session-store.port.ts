@@ -30,6 +30,7 @@ import type { SessionGoal, GoalStatus } from "../tools/target.js";
 import type { PermissionRuleset } from "./permission.port.js";
 import type { CollaborationMode } from "./session.port.js";
 import type { EnvInfo } from "./context-source.port.js";
+import type { IncognitoProfile } from "@zcode/shared";
 
 export const SESSION_TASK_TYPES = [
   "interactive",
@@ -163,6 +164,8 @@ export interface SessionInfo {
    */
   executionDirectory?: string;
   executionBranch?: string;
+  /** Frozen incognito profile (root specs/incognito-session.md); absent for a normal session. */
+  incognito?: IncognitoProfile;
   title: string;
   titleSource?: SessionTitleSource;
   titleMessageID?: MessageId;
@@ -195,6 +198,8 @@ export interface CreateSessionInput {
   path?: string;
   executionDirectory?: string;
   executionBranch?: string;
+  /** Set once: an existing row keeps its profile; a NULL row accepts one from a later upsert. */
+  incognito?: IncognitoProfile;
   title: string;
   titleSource?: SessionTitleSource;
   titleMessageID?: MessageId;
