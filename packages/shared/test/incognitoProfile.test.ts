@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import {
   INCOGNITO_CAPABILITY_KEYS,
   INCOGNITO_LOCKDOWN_PROFILE,
@@ -22,7 +23,8 @@ const allOn = Object.fromEntries(INCOGNITO_CAPABILITY_KEYS.map((key) => [key, tr
 
 describe("incognito profile", () => {
   it("lockdown profile has every capability off", () => {
-    expect(INCOGNITO_LOCKDOWN_PROFILE.version).toBe(1);
+    expect(INCOGNITO_LOCKDOWN_PROFILE.version).toBe(2);
+    expect(INCOGNITO_CAPABILITY_KEYS).toHaveLength(13);
     for (const key of INCOGNITO_CAPABILITY_KEYS) {
       expect(INCOGNITO_LOCKDOWN_PROFILE[key]).toBe(false);
     }
@@ -37,8 +39,17 @@ describe("incognito profile", () => {
       incognitoProfileSchema.safeParse({ ...INCOGNITO_LOCKDOWN_PROFILE, extra: true }).success,
     ).toBe(false);
     expect(
-      incognitoProfileSchema.safeParse({ ...INCOGNITO_LOCKDOWN_PROFILE, version: 2 }).success,
+      incognitoProfileSchema.safeParse({ ...INCOGNITO_LOCKDOWN_PROFILE, version: 3 }).success,
     ).toBe(false);
+    // v2 requires the four v2 toggles; a v1-shaped object is not a v2 profile.
+    const {
+      identity: _i,
+      harness: _h,
+      environment: _e,
+      automationTools: _a,
+      ...v1Shape
+    } = INCOGNITO_LOCKDOWN_PROFILE;
+    expect(incognitoProfileSchema.safeParse({ ...v1Shape, version: 2 }).success).toBe(false);
   });
 
   it("resolves Settings defaults to every capability off and keeps explicit values", () => {
@@ -78,13 +89,54 @@ describe("incognito profile", () => {
   });
 
   it("reads an unparsable stored profile as lockdown, never as a normal session", () => {
-    const stored = JSON.stringify({ ...INCOGNITO_LOCKDOWN_PROFILE, ...allOn });
-    expect(parseStoredIncognitoProfile(stored)).toEqual({ version: 1, ...allOn });
     expect(parseStoredIncognitoProfile("{not json")).toEqual(INCOGNITO_LOCKDOWN_PROFILE);
     expect(
-      parseStoredIncognitoProfile(JSON.stringify({ ...INCOGNITO_LOCKDOWN_PROFILE, version: 2 })),
+      parseStoredIncognitoProfile(JSON.stringify({ ...INCOGNITO_LOCKDOWN_PROFILE, version: 3 })),
     ).toEqual(INCOGNITO_LOCKDOWN_PROFILE);
+    expect(parseStoredIncognitoProfile(JSON.stringify({ version: 2, skills: true }))).toEqual(
+      INCOGNITO_LOCKDOWN_PROFILE,
+    );
     expect(parseStoredIncognitoProfile(null)).toBeUndefined();
+  });
+
+  it("upgrades a stored v1 profile to v2 with the four v2 toggles included (v1 always ran with them)", () => {
+    const v1Stored = JSON.stringify({
+      version: 1,
+      projectInstructions: false,
+      skills: true,
+      hooks: false,
+      plugins: false,
+      mcp: false,
+      customAgents: false,
+      memory: false,
+      outputStyle: false,
+      systemPromptOverrides: false,
+    });
+    expect(parseStoredIncognitoProfile(v1Stored)).toEqual({
+      ...INCOGNITO_LOCKDOWN_PROFILE,
+      version: 2,
+      skills: true,
+      identity: true,
+      harness: true,
+      environment: true,
+      automationTools: true,
+    });
+    // A v1 object with an unknown key is not a v1 profile: fail closed.
+    expect(
+      parseStoredIncognitoProfile(JSON.stringify({ ...JSON.parse(v1Stored), extra: true })),
+    ).toEqual(INCOGNITO_LOCKDOWN_PROFILE);
+  });
+
+  it("v1 readers reject a v2 profile (an older build falls back to its own lockdown)", () => {
+    const v1Reader = {
+      version: z.literal(1),
+      ...Object.fromEntries(
+        INCOGNITO_CAPABILITY_KEYS.filter(
+          (key) => !["identity", "harness", "environment", "automationTools"].includes(key),
+        ).map((key) => [key, z.boolean()]),
+      ),
+    };
+    expect(z.object(v1Reader).strict().safeParse(INCOGNITO_LOCKDOWN_PROFILE).success).toBe(false);
   });
 });
 
@@ -171,6 +223,12 @@ describe("incognito protocol fields", () => {
       true,
     );
     expect(zcodeRuntimeCapabilitiesSchema.parse({}).incognitoSession).toBeUndefined();
+    // The version gate: a CLI without incognitoProfileV2 cannot persist or enforce the v2 toggles.
+    expect(
+      zcodeRuntimeCapabilitiesSchema.parse({ incognitoSession: true, incognitoProfileV2: true })
+        .incognitoProfileV2,
+    ).toBe(true);
+    expect(zcodeRuntimeCapabilitiesSchema.parse({}).incognitoProfileV2).toBeUndefined();
     expect(
       hostCapabilitiesSchema.parse({
         nativeDialogs: true,
@@ -178,7 +236,8 @@ describe("incognito protocol fields", () => {
         binaryFrames: true,
         compression: "none",
         incognitoSession: true,
-      }).incognitoSession,
+        incognitoProfileV2: true,
+      }).incognitoProfileV2,
     ).toBe(true);
   });
 });

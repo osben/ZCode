@@ -3,6 +3,7 @@
 // ============================================================
 
 import {
+  DEFAULT_CONFIRMATION_PARAGRAPH,
   DEFAULT_HARNESS_PROMPT,
   DEFAULT_IDENTITY_INTRO_PROMPT,
   OUTPUT_STYLE_IDENTITY_INTRO_PROMPT,
@@ -29,20 +30,36 @@ export function buildHarnessBlock(override?: string): string {
   return override?.trim() ? override.trim() : DEFAULT_HARNESS_PROMPT;
 }
 
+/** Which toggle-owned parts of the identity section are rendered (specs/incognito-session.md). */
+export interface IdentitySectionOptions {
+  /** `identity` toggle: the identity intro sentence. */
+  includeIntro?: boolean;
+  /** `harness` toggle: the `# Harness` block. */
+  includeHarness?: boolean;
+}
+
 function buildIdentityPrompt(
   outputStyle: OutputStylePromptConfig | undefined,
   introOverride: string | undefined,
   harnessOverride: string | undefined,
+  options: IdentitySectionOptions,
 ): string {
   // An explicit identity-intro override wins over the active Output Style intro; the style
   // still appends its own `# Output Style` section.
-  const intro = introOverride?.trim()
-    ? introOverride.trim()
-    : outputStyle
-      ? OUTPUT_STYLE_IDENTITY_INTRO_PROMPT
-      : DEFAULT_IDENTITY_INTRO_PROMPT;
+  const intro = !options.includeIntro
+    ? undefined
+    : introOverride?.trim()
+      ? introOverride.trim()
+      : outputStyle
+        ? OUTPUT_STYLE_IDENTITY_INTRO_PROMPT
+        : DEFAULT_IDENTITY_INTRO_PROMPT;
 
-  const identityLines = ["", intro, "", SECURITY_NOTICE].join("\n");
+  // The safety notice is never toggled; without an intro it is the first line of the section.
+  const identityLines = (intro ? ["", intro, "", SECURITY_NOTICE] : [SECURITY_NOTICE]).join("\n");
+  // Harness off: the confirmation paragraph (normally inside Dynamic Behavior) stays as the safety floor.
+  if (options.includeHarness === false) {
+    return [identityLines, "", DEFAULT_CONFIRMATION_PARAGRAPH].join("\n");
+  }
 
   return [identityLines, "", buildHarnessBlock(harnessOverride)].join("\n");
 }
@@ -50,11 +67,13 @@ function buildIdentityPrompt(
 export function buildIdentitySection(
   outputStyle?: OutputStylePromptConfig,
   overrides?: { "identity-intro"?: string; harness?: string },
+  options: IdentitySectionOptions = {},
 ): ContextSection {
   const content = buildIdentityPrompt(
     outputStyle,
     overrides?.["identity-intro"],
     overrides?.harness,
+    { includeIntro: options.includeIntro ?? true, includeHarness: options.includeHarness ?? true },
   );
 
   return {

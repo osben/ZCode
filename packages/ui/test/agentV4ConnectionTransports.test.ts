@@ -140,6 +140,34 @@ it("incognito create is never sent to a Host that would drop the profile", async
   expect(agent.sendConversationCommandV4).toHaveBeenCalledOnce();
 });
 
+it("incognito create needs the v2 profile flag on the Host hello, not only incognitoSession", async () => {
+  const envelope = createCommandEnvelope({
+    type: "createSession",
+    sessionId: null,
+    payload: { workspaceId: "/work", incognito: INCOGNITO_LOCKDOWN_PROFILE },
+  });
+  // The handshake is cached per agent service, so each Host hello gets its own agent.
+  const v1Host = setupAgent();
+  const v1Hello = await v1Host.helloConversationV4();
+  v1Host.helloConversationV4.mockResolvedValue({
+    ...v1Hello,
+    capabilities: { ...v1Hello.capabilities, incognitoSession: true },
+  } as never);
+  const rejected = createAgentConversationTransport(v1Host as never, { workspacePath: "/work" });
+  await expect(rejected.sendCommand(envelope)).rejects.toThrow(INCOGNITO_UNSUPPORTED_ERROR);
+  expect(v1Host.sendConversationCommandV4).not.toHaveBeenCalled();
+
+  const v2Host = setupAgent();
+  const v2Hello = await v2Host.helloConversationV4();
+  v2Host.helloConversationV4.mockResolvedValue({
+    ...v2Hello,
+    capabilities: { ...v2Hello.capabilities, incognitoSession: true, incognitoProfileV2: true },
+  } as never);
+  const accepted = createAgentConversationTransport(v2Host as never, { workspacePath: "/work" });
+  await accepted.sendCommand(envelope);
+  expect(v2Host.sendConversationCommandV4).toHaveBeenCalledOnce();
+});
+
 function emptyFrame(topic: string, subscriptionId: string): ConversationTopicFrame {
   return {
     topic,

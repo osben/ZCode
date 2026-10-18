@@ -3,6 +3,7 @@
 // ============================================================
 
 import type { ModelInputMessage } from "@zcode/contracts";
+import { incognitoExcludes } from "@zcode/shared";
 import type {
   ContextMetaUserAttachment,
   ContextSection,
@@ -15,7 +16,11 @@ import { estimateTokens } from "./utils.js";
 import { buildCliPrefixSection } from "./sections/cli-prefix.js";
 import { buildIdentitySection } from "./sections/identity.js";
 import { buildWorkflowActorIdentitySection } from "./sections/workflow-actor.js";
-import { buildEnvInfoSection, buildGitSystemContextSection } from "./sections/env-info.js";
+import {
+  buildEnvInfoSection,
+  buildGitSystemContextSection,
+  buildWorktreeOnlyEnvSection,
+} from "./sections/env-info.js";
 import { buildSkillsSection } from "./sections/skills.js";
 import { buildRequestUserContextSection } from "./sections/request-user-context.js";
 import { buildCurrentDateSection } from "./sections/current-date.js";
@@ -98,11 +103,16 @@ export class ContextBuilder {
     }
     const isWorkflowActor = workflowActor !== undefined;
     const promptOverrides = isWorkflowActor ? undefined : this.config.systemPromptOverrides;
+    // Incognito toggles for prompt text (specs/incognito-session.md, "Prompt toggles (v2)"). Absent profile = all included.
+    const incognito = this.config.incognito;
+    const identityOff = incognitoExcludes(incognito, "identity");
+    const harnessOff = incognitoExcludes(incognito, "harness");
+    const environmentOff = incognitoExcludes(incognito, "environment");
 
     // 1. CLI / product prefix. Keep this as the short leading identity block.
     // "You are ZCode, an interactive coding agent" is the wrong identity for a subagent that speaks only to a script
     // and may not even have file-reading tools, and it would appear before the correct identity section.
-    if (!isWorkflowActor) {
+    if (!isWorkflowActor && !identityOff) {
       sections.push(buildCliPrefixSection(promptOverrides?.["cli-prefix"]));
     }
 
@@ -118,13 +128,17 @@ export class ContextBuilder {
         }),
       );
     } else if (workflowActor !== undefined) {
-      sections.push(buildWorkflowActorIdentitySection(workflowActor));
+      sections.push(buildWorkflowActorIdentitySection(workflowActor, { includeHarness: !harnessOff }));
     } else {
       sections.push(
-        buildIdentitySection(activeOutputStyle, {
-          "identity-intro": promptOverrides?.["identity-intro"],
-          harness: promptOverrides?.harness,
-        }),
+        buildIdentitySection(
+          activeOutputStyle,
+          {
+            "identity-intro": promptOverrides?.["identity-intro"],
+            harness: promptOverrides?.harness,
+          },
+          { includeIntro: !identityOff, includeHarness: !harnessOff },
+        ),
       );
     }
 
@@ -134,18 +148,19 @@ export class ContextBuilder {
     // Workflow subagents skip the three sections aimed at "talking with the user" (desktop, Dynamic Behavior, and session
     // guidance—the contract already carries Report outcomes faithfully), while retaining memory and subsequent sections.
     if (!hasCustomSystemPrompt) {
-      if (!isWorkflowActor && this.config.presentationSurface === "zcode_desktop") {
+      if (!isWorkflowActor && !harnessOff && this.config.presentationSurface === "zcode_desktop") {
         sections.push(buildDesktopContextSection(this.config.genUiOutputDirectory));
       }
 
       // behaviour part right after stable sp...
-      if (!isWorkflowActor) {
+      if (!isWorkflowActor && !harnessOff) {
         sections.push(buildDynamicBehaviorSection(promptOverrides?.communication));
       }
 
       // Session-specific guidance
-      const sessionGuidanceSection = isWorkflowActor
-        ? null
+      const sessionGuidanceSection =
+        isWorkflowActor || harnessOff
+          ? null
         : buildSessionGuidanceSection(
             this.config.guidanceToolNames ?? [],
             (this.config.skills?.skills.length ?? 0) > 0,
@@ -165,9 +180,15 @@ export class ContextBuilder {
           sections.push(memorySection);
         }
       }
-      sections.push(
-        buildEnvInfoSection(this.config.envInfo, this.config.model, this.config.executionWorktree),
-      );
+      if (environmentOff) {
+        // The worktree bullet is isolation context, not environment text (specs/incognito-session.md).
+        const worktreeSection = buildWorktreeOnlyEnvSection(this.config.executionWorktree);
+        if (worktreeSection) sections.push(worktreeSection);
+      } else {
+        sections.push(
+          buildEnvInfoSection(this.config.envInfo, this.config.model, this.config.executionWorktree),
+        );
+      }
 
       // Output Style
       const outputStyleSection = buildOutputStyleSection(activeOutputStyle);
@@ -178,7 +199,9 @@ export class ContextBuilder {
       // Context Management
       sections.push(buildContextManagementSection(promptOverrides?.["context-management"]));
 
-      const gitSystemContextSection = buildGitSystemContextSection(this.config.envInfo);
+      const gitSystemContextSection = environmentOff
+        ? null
+        : buildGitSystemContextSection(this.config.envInfo);
       if (gitSystemContextSection) {
         sections.push(gitSystemContextSection);
       }

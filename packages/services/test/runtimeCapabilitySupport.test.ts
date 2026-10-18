@@ -28,11 +28,29 @@ describe("独立 Plan 执行端能力", () => {
 describe("incognito execution-endpoint capability", () => {
   it("accepts a CLI that advertises incognitoSession and shares one capability read", async () => {
     const client = {
-      request: vi.fn().mockResolvedValue({ independentPlanState: true, incognitoSession: true }),
+      request: vi.fn().mockResolvedValue({
+        independentPlanState: true,
+        incognitoSession: true,
+        incognitoProfileV2: true,
+      }),
     };
     await ensureIncognitoSupport(client as never);
     await ensureIndependentPlanSupport(client as never);
     expect(client.request).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a v1-era CLI that advertises incognitoSession but not the v2 profile flag", async () => {
+    // incognitoProfileV2 is the version gate: such a CLI would read the v2 toggles as absent.
+    const v1Era = {
+      request: vi.fn().mockResolvedValue({ independentPlanState: true, incognitoSession: true }),
+    };
+    await expect(ensureIncognitoSupport(v1Era as never)).rejects.toThrow(
+      INCOGNITO_UNSUPPORTED_ERROR,
+    );
+    const v2 = {
+      request: vi.fn().mockResolvedValue({ incognitoSession: true, incognitoProfileV2: true }),
+    };
+    await expect(ensureIncognitoSupport(v2 as never)).resolves.toBeUndefined();
   });
 
   it("rejects a CLI without the capability or without the capability query", async () => {

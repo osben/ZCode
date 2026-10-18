@@ -3,11 +3,15 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import { resolveIncognitoDefaults, type IncognitoCapabilities } from "@zcode/shared";
 import {
+  INCOGNITO_CAPABILITY_KEYS,
+  resolveIncognitoDefaults,
+  type IncognitoCapabilities,
+} from "@zcode/shared";
+import {
+  TID_V4_COMPOSER_INCOGNITO_CAPABILITY,
   TID_V4_COMPOSER_INCOGNITO_MARKER,
   TID_V4_COMPOSER_INCOGNITO_OFF,
-  TID_V4_COMPOSER_INCOGNITO_TOGGLE,
   TID_V4_COMPOSER_INCOGNITO_TRIGGER,
   V4ComposerIncognitoControl,
 } from "@/v4/composer/V4ComposerIncognitoControl.js";
@@ -71,25 +75,71 @@ afterEach(() => {
   });
 });
 
-// specs/incognito-session.md "Composer toggle": pressed state and a removable chip, never color-only.
-it("shows a pressed trigger and a removable chip while the draft is incognito", () => {
+// specs/incognito-session.md "Composer toggle": clicking the icon turns incognito on directly (no menu);
+// the × is the only control that turns it off.
+it("turns incognito on from the icon with no menu, and the × turns it off", async () => {
   render(createElement(V4ComposerIncognitoControl, { workspaceKey: "/ws" }));
   const trigger = screen.getByTestId(TID_V4_COMPOSER_INCOGNITO_TRIGGER);
   expect(trigger.getAttribute("aria-pressed")).toBe("false");
   expect(screen.queryByTestId(TID_V4_COMPOSER_INCOGNITO_MARKER)).toBeNull();
+  // No menu content is rendered for the off state.
+  expect(screen.queryByText("chat.incognito.includeHeading")).toBeNull();
 
-  act(() => {
-    useDraftIncognitoIntentStore
-      .getState()
-      .activate("/ws", resolveIncognitoDefaults({ mcp: true }));
+  fireEvent.click(trigger);
+  expect(resolveDefaultsRead).toBeTypeOf("function");
+  await act(async () => {
+    resolveDefaultsRead?.(resolveIncognitoDefaults({ mcp: true }));
+    await Promise.resolve();
   });
   expect(screen.getByTestId(TID_V4_COMPOSER_INCOGNITO_TRIGGER).getAttribute("aria-pressed")).toBe(
     "true",
+  );
+  expect(screen.getByTestId(TID_V4_COMPOSER_INCOGNITO_MARKER).textContent).toContain(
+    "chat.incognito.marker",
   );
 
   fireEvent.click(screen.getByTestId(TID_V4_COMPOSER_INCOGNITO_OFF));
   expect(useDraftIncognitoIntentStore.getState().capabilitiesByWorkspaceKey).toEqual({});
   expect(screen.queryByTestId(TID_V4_COMPOSER_INCOGNITO_MARKER)).toBeNull();
+});
+
+// specs/incognito-session.md "Composer toggle" / "Checklist": the menu holds only the capability rows
+// (no master row, no Settings link), starts from the draft's frozen set, and each row changes this session only.
+it("opens the capability checklist from the chip text without a master row or Settings link", async () => {
+  render(createElement(V4ComposerIncognitoControl, { workspaceKey: "/ws" }));
+  fireEvent.click(screen.getByTestId(TID_V4_COMPOSER_INCOGNITO_TRIGGER));
+  await act(async () => {
+    resolveDefaultsRead?.(resolveIncognitoDefaults({ mcp: true }));
+    await Promise.resolve();
+  });
+
+  expect(screen.queryByText("chat.incognito.settingsLink")).toBeNull();
+  expect(screen.queryByTestId("v4-composer-incognito-toggle")).toBeNull();
+  const rows = INCOGNITO_CAPABILITY_KEYS.map((key) =>
+    screen.getByTestId(`${TID_V4_COMPOSER_INCOGNITO_CAPABILITY}-${key}`),
+  );
+  expect(rows).toHaveLength(INCOGNITO_CAPABILITY_KEYS.length);
+  expect(
+    screen.getByTestId(`${TID_V4_COMPOSER_INCOGNITO_CAPABILITY}-mcp`).getAttribute("aria-checked"),
+  ).toBe("true");
+  expect(
+    screen
+      .getByTestId(`${TID_V4_COMPOSER_INCOGNITO_CAPABILITY}-identity`)
+      .getAttribute("aria-checked"),
+  ).toBe("false");
+
+  fireEvent.click(screen.getByTestId(`${TID_V4_COMPOSER_INCOGNITO_CAPABILITY}-harness`));
+  expect(selectDraftIncognito(useDraftIncognitoIntentStore.getState(), "/ws")?.harness).toBe(true);
+});
+
+it("shows the four v2 toggles as checklist rows", () => {
+  act(() => {
+    useDraftIncognitoIntentStore.getState().activate("/ws", resolveIncognitoDefaults({}));
+  });
+  render(createElement(V4ComposerIncognitoControl, { workspaceKey: "/ws" }));
+  for (const key of ["identity", "harness", "environment", "automationTools"]) {
+    expect(screen.getByTestId(`${TID_V4_COMPOSER_INCOGNITO_CAPABILITY}-${key}`)).toBeTruthy();
+  }
 });
 
 // specs/incognito-session.md "Composer toggle": the turn-off button is an inline sibling of the
@@ -149,9 +199,8 @@ it("disables the turn-off button together with the control", () => {
 // next draft.
 it("discards the activation when the draft was submitted before the defaults read resolved", () => {
   render(createElement(V4ComposerIncognitoControl, { workspaceKey: "/ws" }));
-  const toggleRow = screen.getByTestId(TID_V4_COMPOSER_INCOGNITO_TOGGLE);
 
-  fireEvent.click(toggleRow);
+  fireEvent.click(screen.getByTestId(TID_V4_COMPOSER_INCOGNITO_TRIGGER));
   expect(resolveDefaultsRead).toBeTypeOf("function");
   // The draft is sent while the defaults read is still pending.
   expect(useDraftIncognitoIntentStore.getState().captureForSubmission("/ws")).toBeUndefined();
@@ -164,7 +213,7 @@ it("discards the activation when the draft was submitted before the defaults rea
 
 it("discards the activation when the intent was deactivated before the read resolved", () => {
   render(createElement(V4ComposerIncognitoControl, { workspaceKey: "/ws" }));
-  fireEvent.click(screen.getByTestId(TID_V4_COMPOSER_INCOGNITO_TOGGLE));
+  fireEvent.click(screen.getByTestId(TID_V4_COMPOSER_INCOGNITO_TRIGGER));
   expect(resolveDefaultsRead).toBeTypeOf("function");
 
   // Another flow consumes the intent while the defaults read is still pending (for example the
@@ -181,7 +230,7 @@ it("discards the activation when the intent was deactivated before the read reso
 
 it("arms the intent from the defaults when nothing intervened", async () => {
   render(createElement(V4ComposerIncognitoControl, { workspaceKey: "/ws" }));
-  fireEvent.click(screen.getByTestId(TID_V4_COMPOSER_INCOGNITO_TOGGLE));
+  fireEvent.click(screen.getByTestId(TID_V4_COMPOSER_INCOGNITO_TRIGGER));
 
   await act(async () => {
     resolveDefaultsRead?.(resolveIncognitoDefaults({ mcp: true }));

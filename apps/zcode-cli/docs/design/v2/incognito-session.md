@@ -5,6 +5,7 @@ Product rules, protocol and UI live in the root `specs/incognito-session.md`. Th
 ## Profile source
 
 - `AgentRuntimeConfig.incognito?: IncognitoProfile` (`@zcode/shared`). Absent means a normal session; every code path below is a no-op without it, so normal sessions are byte-identical.
+- Profile version 2 (twelve capability keys). `parseStoredIncognitoProfile` reads a stored v1 profile as v2 with `identity`, `harness` and `environment` set to `true` (v1 sessions always included them); an unparsable value reads as the lockdown profile. See `specs/incognito-session.md`, "Versioning and compatibility".
 - A capability is off when `incognitoExcludes(config.incognito, key)` is true (profile present and the key is `false`).
 - Set by `createRecord` from `session/create` params (v4 `createSession` → handler pick list → v4 bridge → legacy params). Cold resume passes the persisted `SessionInfo.incognito` into `materializeSessionRecord`, because plugins, MCP, hooks, agents, output style and prompt overrides are composed in `createZCodeApp` before core `resume` runs.
 - The CLI's own resume paths (TUI `--resume`/`--continue` and headless `-p --resume`) resolve the target through `resolveResumeSession`, which returns the persisted `SessionInfo.incognito` alongside the id; the app factory receives it in `runtimeConfig.incognito` before `createZCodeApp` composes capabilities. A profiled session resumed in the CLI therefore keeps its frozen capabilities instead of running fail-open as a normal session.
@@ -27,6 +28,10 @@ Bootstrap owns composition; core reads `incognito` only for the instructions and
 | `systemPromptOverrides` | `createZCodeApp` (disk load skipped) + `resolveAppRuntimeConfig` (value dropped)                                   | Built-in section texts.                                                                                |
 | `projectInstructions`   | `ensureContextInitialized` (core)                                                                                  | No user or project `AGENTS.md` in the context snapshot (subagents inherit the snapshot).               |
 | `skills`                | `createContextBuilderFromSnapshot` (core)                                                                          | No skills listing block; skill discovery, catalog and the Skill tool stay.                             |
+| `identity`              | `ContextBuilder.build` (`core/src/context/builder.ts`), `SubagentContextBuilder` (`core/src/subagent/context-builder.ts`) | No CLI prefix section and no identity intro. Safety notice stays.                        |
+| `harness`               | `ContextBuilder.build` (desktop, dynamic behavior, session guidance), `identity.ts` (`# Harness`), subagent notes   | No `# Harness`, desktop context, dynamic behavior, session guidance or subagent notes. Confirmation paragraph stays as a floor. |
+| `environment`           | `ContextBuilder.build` (`buildEnvInfoSection`, `buildGitSystemContextSection`), subagent environment context        | No `# Environment` block (except the execution-worktree bullet) and no git system context.             |
+| `automationTools`       | `registerBuiltInTools` gates in `core/src/runtime/helpers/runtime-tools.ts` (`includeAutomation`, `includeOffPeak`) and `resolveRuntimeDynamicWorkflowToolsIncluded` (`core/src/runtime/helpers/tool-allowlist.ts`), shared by both registration entry points | No Cron, OffPeak or dynamic-workflow tools, and no workflow instruction in the Agent/Task descriptions. |
 
 ## Inheritance
 
@@ -40,7 +45,7 @@ Bootstrap owns composition; core reads `incognito` only for the instructions and
 
 ## Capability
 
-`runtime/capabilities` returns `incognitoSession: true` only once all of the above is in place.
+`runtime/capabilities` returns `incognitoSession: true` and `incognitoProfileV2: true` only once all of the above is in place. The Host refuses an incognito create unless both are present.
 
 ## Limitation
 

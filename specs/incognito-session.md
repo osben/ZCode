@@ -1,6 +1,6 @@
 # Incognito session
 
-Status: implemented (2026-10-18), slices 1–5: shared profile contract and fork setting; CLI storage (`session.fork_incognito`); CLI runtime overrides, inheritance, dream exclusion and the `incognitoSession` runtime capability (apps/zcode-cli/docs/design/v2/incognito-session.md); Host and renderer capability gates and the `incognito` summary/task-meta projection; UI (composer toggle and checklist, prompt-shell tint and chip, prewarm bypass, sidebar/hover-card/session-manager marker, Settings «Incognito», i18n). Draft-intent generation (scenario 18, composer half) and the serialized Settings write harden the UI races found in review. The desktop E2E scenarios (13, 17) are written but have not been run.
+Status: slice 6 (2026-10-18, in progress): profile v2 adds four toggles that were core in v1 (`identity`, `harness`, `environment`, `automationTools`), see "Prompt toggles (v2)". Slices 1–5 implemented: shared profile contract and fork setting; CLI storage (`session.fork_incognito`); CLI runtime overrides, inheritance, dream exclusion and the `incognitoSession` runtime capability (apps/zcode-cli/docs/design/v2/incognito-session.md); Host and renderer capability gates and the `incognito` summary/task-meta projection; UI (composer toggle and checklist, prompt-shell tint and chip, prewarm bypass, sidebar/hover-card/session-manager marker, Settings «Incognito», i18n). Draft-intent generation (scenario 18, composer half) and the serialized Settings write harden the UI races found in review. The desktop E2E scenarios (13, 17) are written but have not been run.
 
 ## Problem
 
@@ -26,19 +26,48 @@ Today the only switches for these extras are global or per-project config, and s
 
 ### Capabilities
 
-| Profile key             | When **off** (incognito default)                                                                                                                                                                                                                       | Owner today                                                                                    |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| `projectInstructions`   | No `~/.zcode/AGENTS.md` and no project `AGENTS.md` in the request user context.                                                                                                                                                                        | `resolveUserInstructions`, `apps/zcode-cli/packages/adapters/src/context/index.ts:94`          |
-| `skills`                | No skills listing meta block. The Skill tool **stays registered**: the user can still invoke a skill explicitly, and the agent may run one the user names.                                                                                             | listing `core/src/context/builder.ts:191`; tool `core/src/runtime/helpers/runtime-tools.ts:55` |
-| `hooks`                 | No hook runner from user/project config, workspace hook snapshot or plugin hooks. SessionStart hooks do not run.                                                                                                                                       | `createRuntimeHookRunner`, `runtime-tools.ts:93`; `mergeRuntimeHooks`                          |
-| `plugins`               | Plugin discovery yields nothing for this session: no plugin skill roots, hooks, MCP servers, LSP servers, agents or runtime features. The `node_repl` MCP server, browser use and computer use come from official plugins, so they follow this toggle. | `resolveStartupPlugins`, `bootstrap/src/app/startup-marks.ts:12`                               |
-| `mcp`                   | No user/project-configured MCP servers.                                                                                                                                                                                                                | MCP merge, `runtime-config.ts:100`                                                             |
-| `customAgents`          | Subagent profiles resolve as `{ kind: "built-in-fallback" }` (built-in agents only).                                                                                                                                                                   | `packages/shared/src/subagent-runtime-config.ts:32`; `create-app.ts:260,890`                   |
-| `memory`                | No memory root: no memory section, no MEMORY.md index, no recall prefetch, no extraction, `/dream` unavailable, no subagent persistent memory. Excluded from dream (see below).                                                                        | `resolveEnabledProjectMemoryRoot`, `core/src/runtime/helpers/project-memory.ts:4`              |
-| `outputStyle`           | No output-style system section and no output-style reminders.                                                                                                                                                                                          | `bootstrap/src/output-style.ts:48`, `create-app.ts:300`                                        |
-| `systemPromptOverrides` | `~/.zcode/system-prompt/<key>.md` overrides are ignored; built-in section texts are used.                                                                                                                                                              | `loadPersistedSystemPromptOverrides`, `bootstrap/src/system-prompt.ts:30`                      |
+| Profile key             | When **off** (incognito default)                                                                                                                                                                                                                       | Owner today                                                                                                                                                             |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `projectInstructions`   | No `~/.zcode/AGENTS.md` and no project `AGENTS.md` in the request user context.                                                                                                                                                                        | `resolveUserInstructions`, `apps/zcode-cli/packages/adapters/src/context/index.ts:94`                                                                                   |
+| `skills`                | No skills listing meta block. The Skill tool **stays registered**: the user can still invoke a skill explicitly, and the agent may run one the user names.                                                                                             | listing `core/src/context/builder.ts:191`; tool `core/src/runtime/helpers/runtime-tools.ts:55`                                                                          |
+| `hooks`                 | No hook runner from user/project config, workspace hook snapshot or plugin hooks. SessionStart hooks do not run.                                                                                                                                       | `createRuntimeHookRunner`, `runtime-tools.ts:93`; `mergeRuntimeHooks`                                                                                                   |
+| `plugins`               | Plugin discovery yields nothing for this session: no plugin skill roots, hooks, MCP servers, LSP servers, agents or runtime features. The `node_repl` MCP server, browser use and computer use come from official plugins, so they follow this toggle. | `resolveStartupPlugins`, `bootstrap/src/app/startup-marks.ts:12`                                                                                                        |
+| `mcp`                   | No user/project-configured MCP servers.                                                                                                                                                                                                                | MCP merge, `runtime-config.ts:100`                                                                                                                                      |
+| `customAgents`          | Subagent profiles resolve as `{ kind: "built-in-fallback" }` (built-in agents only).                                                                                                                                                                   | `packages/shared/src/subagent-runtime-config.ts:32`; `create-app.ts:260,890`                                                                                            |
+| `memory`                | No memory root: no memory section, no MEMORY.md index, no recall prefetch, no extraction, `/dream` unavailable, no subagent persistent memory. Excluded from dream (see below).                                                                        | `resolveEnabledProjectMemoryRoot`, `core/src/runtime/helpers/project-memory.ts:4`                                                                                       |
+| `outputStyle`           | No output-style system section and no output-style reminders.                                                                                                                                                                                          | `bootstrap/src/output-style.ts:48`, `create-app.ts:300`                                                                                                                 |
+| `systemPromptOverrides` | `~/.zcode/system-prompt/<key>.md` overrides are ignored; built-in section texts are used.                                                                                                                                                              | `loadPersistedSystemPromptOverrides`, `bootstrap/src/system-prompt.ts:30`                                                                                               |
+| `identity`              | No CLI prefix and no identity intro sentence. The safety notice stays (see "Prompt toggles (v2)").                                                                                                                                                     | `ContextBuilder.build`, `core/src/context/builder.ts`                                                                                                                   |
+| `harness`               | No `# Harness` block, no desktop context, no dynamic behavior section, no session guidance and no subagent notes. The confirmation paragraph stays as a floor.                                                                                         | `core/src/context/builder.ts`, `core/src/subagent/context-builder.ts`                                                                                                   |
+| `environment`           | No `# Environment` block (cwd, platform, shell, OS, git flag, model line) and no git system context. The execution-worktree line stays.                                                                                                                | `core/src/context/builder.ts`, `core/src/subagent/context-builder.ts`                                                                                                   |
+| `automationTools`       | No `CronCreate`/`CronList`/`CronUpdate`/`CronDelete`, `OffPeakCreate`/`OffPeakList` and the 11 dynamic-workflow tools (`DYNAMIC_WORKFLOW_TOOL_NAMES`, incl. `ListModels`) are registered; the Agent and Task descriptions carry no workflow guidance.  | `registerBuiltInTools`, `core/src/tool/handlers/index.ts`; gates `core/src/runtime/helpers/runtime-tools.ts:74-82`, `core/src/runtime/helpers/tool-allowlist.ts:78-100` |
 
-**Core (never toggleable):** CLI prefix, agent identity and `# Harness`, desktop context, dynamic behavior, session/tool guidance, environment info (including the execution-worktree line), context management, git system context, current date, built-in tools, permissions and permission mode, model selection, internal mailbox hooks.
+**Core (never toggleable):** safety notice, current date, context management, built-in tools, permissions and permission mode, model selection, internal mailbox hooks, the execution-worktree isolation line.
+
+### Prompt toggles (v2)
+
+v1 treated the system prompt's identity, `# Harness` and environment text as core. Profile v2 makes them toggleable so an incognito session can start with no ZCode identity, harness or environment text. Default is off, like every other capability. The rule for each toggle is "what the section owns", and every section below belongs to exactly one owner. Plain sessions render byte-identically (pinned by tests).
+
+Ownership (main agent, `ContextBuilder.build`; subagents use `SubagentContextBuilder`):
+
+| Toggle            | Sections removed when off                                                                                                                      | Source (file:line)                                                                                                                                                                                                                                                 |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `identity`        | `cli_prefix` system message; the identity intro sentence (`identity-intro` override included). Kept: safety notice.                            | main: `core/src/context/builder.ts:115-116` (cli prefix), `:134-140` (identity section); composition `core/src/context/sections/identity.ts:41-65`; subagent: `core/src/subagent/context-builder.ts:125`                                                           |
+| `harness`         | `# Harness` block; `desktop_context`; `dynamic_behavior`; `session_guidance`; subagent `Subagent Notes`. Kept: confirmation paragraph (floor). | main: `builder.ts:151-152` (desktop), `:156-157` (behavior), `:161-163` (session guidance), `identity.ts:29` + `:60-64` (`# Harness`, floor); workflow: `core/src/context/sections/workflow-actor.ts:73`; subagent: `core/src/subagent/context-builder.ts:147-148` |
+| `environment`     | `env_info` (`# Environment` heading, cwd, platform, shell, OS, git flag, model line); `system_context` (git snapshot). Kept: worktree line.    | main: `builder.ts:183-190` (env; worktree-only via `core/src/context/sections/env-info.ts:81`), `:202-204` (git); subagent: `core/src/subagent/context-builder.ts:152-158`, `core/src/subagent/system-prompt.ts:31`                                                |
+| `automationTools` | Cron, OffPeak and the eleven dynamic-workflow tools; Agent/Task workflow instruction.                                                          | `core/src/runtime/helpers/runtime-tools.ts:74-82`; `core/src/runtime/helpers/tool-allowlist.ts:98-100` (gate), `:78-92` (dynamic workflow helper, shared with `embedded-search-branch.ts`)                                                                         |
+
+Owned by no toggle (core, unchanged): `output_style` (its own toggle), `context_management`, `current_date`, `skills_listing`, `request_user_context` (its own toggles), custom sections, `workflow_actor_identity` persona and contract (the script-facing role contract is required for workflow children to work; only its `# Harness` block follows `harness`).
+
+Minimal prompt, every toggle off (main agent): the stable system message is the safety notice plus the confirmation paragraph, and the dynamic system message is `# Context management`. Neither names ZCode or describes the environment. The system prompt is never empty: the safety notice is the floor, and `assembleSystemMessages` already skips empty groups for the other cases.
+
+Decisions:
+
+- **Safety floor.** With `harness` off, the paragraph "For actions that are hard to reverse or outward-facing, confirm first…" is emitted inside the identity section. Permission enforcement is runtime (permission mode, tool approval) and is untouched by any toggle; the paragraph is prompt text only and is kept so that incognito mode does not remove the model's own confirmation habit. This paragraph is a constant (`RISKY_ACTIONS_PARAGRAPH`) that the communication default also embeds, so the default render stays byte-identical.
+- **`harness` drops the desktop context and session guidance, not only the `# Harness` block.** Desktop context is harness instructions for a host surface (Gen UI, file links); session guidance only lists skill usage and is already empty without skills. Both are about how the harness talks to the user, so they follow the harness owner.
+- **`environment` keeps the worktree line.** It is the execution-isolation fact (`execution-worktree-model-context.md`): without it the model may merge or report paths outside the worktree. When `environment` is off and a worktree applies, the section is `# Environment` with that single bullet. Current date stays core: it is a meta-user line with no coupling to the other sections.
+- **Tools and envInfo collection are unchanged.** `envInfo` (and its git status) is still collected for runtime use. Only prompt rendering is removed, so a toggle never changes tool behavior.
+- **Workflow children.** The workflow identity opening sentence (no user, the script consumes results) stays because the script depends on it; a `harness` off workflow child omits its `# Harness` block and keeps the confirmation floor, like the main agent.
 
 ## Data model
 
@@ -57,12 +86,16 @@ export const INCOGNITO_CAPABILITY_KEYS = [
   "memory",
   "outputStyle",
   "systemPromptOverrides",
+  "identity",
+  "harness",
+  "environment",
+  "automationTools",
 ] as const;
 
 // `true` = capability included in this session.
 export const incognitoProfileSchema = z
   .object({
-    version: z.literal(1),
+    version: z.literal(2),
     projectInstructions: z.boolean(),
     skills: z.boolean(),
     hooks: z.boolean(),
@@ -72,10 +105,14 @@ export const incognitoProfileSchema = z
     memory: z.boolean(),
     outputStyle: z.boolean(),
     systemPromptOverrides: z.boolean(),
+    identity: z.boolean(),
+    harness: z.boolean(),
+    environment: z.boolean(),
+    automationTools: z.boolean(),
   })
   .strict();
 
-export const INCOGNITO_LOCKDOWN_PROFILE: IncognitoProfile; // version 1, every capability false
+export const INCOGNITO_LOCKDOWN_PROFILE: IncognitoProfile; // version 2, every capability false
 export const INCOGNITO_UNSUPPORTED_ERROR = "proto.incognitoUnsupported";
 export function resolveIncognitoDefaults(
   stored?: Partial<IncognitoCapabilities>,
@@ -88,6 +125,21 @@ export function parseStoredIncognitoProfile(
 
 - The profile is the **resolved, explicit** value of every capability, never a diff against Settings defaults, so later Settings edits do not change existing sessions.
 - `version` allows a future fork build to add capabilities. A reader that cannot parse a stored profile (unknown version or shape) uses `INCOGNITO_LOCKDOWN_PROFILE` — the most restrictive reading — never "normal session".
+
+#### Versioning and compatibility (v1 → v2)
+
+Choice: **bump to version 2 with the four new keys required, and upgrade v1 on read.** Rejected alternatives:
+
+- Making the new keys optional in a v1 shape: the strict reader of an older build would then accept a v2 profile as a v1 profile with unknown keys stripped, and run it as a session whose toggles it does not understand. The lockdown fallback only works when the older reader fails, so the version must change.
+- Keeping v1 and treating missing keys as off: that would silently change the meaning of every existing incognito session (identity and harness would disappear mid-life), contrary to "frozen at creation".
+
+Rules:
+
+1. **Writers** (renderer, Host, CLI `createRecord`) write only v2. The wire schema accepts only v2; an older renderer that sends v1 is rejected by the strict schema (`proto.invalidPayload`) and never creates a session.
+2. **Stored readers** (`parseStoredIncognitoProfile`, used by `session.fork_incognito`): try the v2 strict schema; else try the v1 strict schema and return it **upgraded** to v2 with `identity`, `harness`, `environment` and `automationTools` set to `true` (v1 sessions always ran with them included, so the upgrade preserves their behavior exactly); else `INCOGNITO_LOCKDOWN_PROFILE`. The stored row is not rewritten (it stays v1; the column is set-once).
+3. **Older builds reading a v2 row** fail their v1 strict schema and use their own lockdown (every capability off). They do not run a normal session.
+4. **Older hosts or CLIs** do not advertise the new capability `incognitoProfileV2` (see Protocol), so the renderer and the Host reject before any row is written (`proto.incognitoUnsupported`).
+5. **Settings defaults** (`incognitoDefaults`) gain the four keys. A stored object without them reads as off (the rule for every capability). The patch schema requires all thirteen keys, as before.
 
 ### Session storage (CLI `~/.zcode/cli/db/db.sqlite`)
 
@@ -116,9 +168,9 @@ export function parseStoredIncognitoProfile(
 - Legacy `session/create` (`packages/shared/src/zcode-protocol/index.ts:1927`) gains the same optional field, so the bridge (`bootstrap/src/zcode-protocol/v4-bridge.ts:1443`) and `createRecord` (`server-operations.ts:3503`) carry it explicitly. The handler pick list in `session-mgmt.ts:73` must name it. A create with `importedHistory` persists through `persistImportedSessionHistory`, whose session inputs carry the profile: the `app.resume()` that follows marks the runtime persisted, so first-send persistence never gets a chance to write it.
 - `incognito` is **never** an optional compat field: it must not be added to `SESSION_CREATE_OPTIONAL_COMPAT_FIELDS` or `SESSION_RESUME_OPTIONAL_COMPAT_FIELDS` (`packages/services/src/zcode-agent/zcodeAgentService.ts:440`). If a CLI's `.strict()` schema rejects it, the create fails; the Host must not retry without it.
 - Capability gate, two hops (precedent: `independentPlanState`):
-  1. CLI advertises `incognitoSession: true` in runtime capabilities (`zcodeRuntimeCapabilitiesSchema`).
-  2. Host checks the CLI with an `ensureIncognitoSupport(client)` gate (same shape as `packages/services/src/zcode-agent/independentPlanSupport.ts`) before forwarding a `createSession` that carries `incognito`; failure → `proto.incognitoUnsupported`.
-  3. Host advertises `incognitoSession: true` in `hostCapabilitiesSchema` (`packages/shared/src/zcode-protocol-v4/transport.ts:23`); the renderer transport (`packages/ui/src/v4/agentConversationTransport.ts:350`) throws `proto.incognitoUnsupported` before sending when the Host does not advertise it.
+  1. CLI advertises `incognitoSession: true` and `incognitoProfileV2: true` in runtime capabilities (`zcodeRuntimeCapabilitiesSchema`). `incognitoProfileV2` is the version gate: a CLI with only `incognitoSession` (v1-era) cannot persist or enforce the four v2 toggles.
+  2. Host checks the CLI with an `ensureIncognitoSupport(client)` gate (same shape as `packages/services/src/zcode-agent/independentPlanSupport.ts`) before forwarding a `createSession` that carries `incognito`; the gate requires both flags; failure → `proto.incognitoUnsupported`.
+  3. Host advertises `incognitoSession: true` and `incognitoProfileV2: true` in `hostCapabilitiesSchema` (`packages/shared/src/zcode-protocol-v4/transport.ts`); the renderer transport (`packages/ui/src/v4/agentConversationTransport.ts`) throws `proto.incognitoUnsupported` before sending when the Host does not advertise both.
 - The Host never rewrites or fills the profile; the renderer sends the resolved profile.
 
 ## Owners and event order
@@ -174,6 +226,9 @@ Ordering constraints:
   - `memory` off → `memory: { enabled: false }` regardless of the Host `memoryEnabled` preference; no memory root, recall, extraction or `/dream`.
   - `outputStyle` off → no active output style.
   - `systemPromptOverrides` off → overrides map empty.
+  - `identity` off → no CLI prefix section and no identity intro (`ContextBuilder` gate; subagents skip the CLI prefix too).
+  - `harness` off → no `# Harness`, desktop context, dynamic behavior, session guidance or subagent notes; the confirmation paragraph is emitted as a floor. Workflow children omit their `# Harness` block and keep the confirmation floor.
+  - `environment` off → no `# Environment` block (except the worktree bullet) and no git system context; subagent environment keeps only the worktree line.
 - Plain sessions (`incognito` absent) are byte-identical in prompt and behavior to today.
 - Inheritance: `forkSession` (`server-operations.ts:2318`), side chats, Task-tool children (explicit config field list in `core/src/runtime/methods/subagent.ts`) and workflow child runtimes (`bootstrap/src/app/script-workflow-child-runtime.ts:295`, which re-reads skills config) receive the parent profile explicitly. Child session rows store the inherited profile.
 - Dream exclusion: `selectProjectDreamSessions` (`core/src/runtime/helpers/project-memory-dream.ts:59`) skips sessions whose profile has `memory: false`, so another session's `/dream` never reads an incognito transcript.
@@ -183,11 +238,12 @@ Ordering constraints:
 - **Composer toggle.** Rendered in the composer's top row, the `contextHeader` row (`data-composer-context-row` in `packages/ui/src/v4/ConversationComposer.tsx`), after the workspace (project) chip and the Git branch chip. It sits at the row's trailing end (`ml-auto`). It is not in the bottom toolbar's trailing cluster (`submitControlNode`) and not in the leading group next to the mode switch. Available in every workspace type, gated by the same `draftMode && sessionId === null && !isWebRemoteControl` condition as before. `aria-pressed`, tooltip, i18n label.
   - The top row keeps `flex-wrap`: when the composer is narrow the toggle drops to a second line instead of overflowing, with no horizontal page scroll at phone width (375px) or a ~380px composer.
   - The toggle is not part of `useComposerToolbarFit` (no `data-composer-collapse-priority`, no compact-only styling). The label is never collapsed to an icon; the row wraps instead.
-  - **Off:** icon-only ghost button (lucide `VenetianMask`, `size-4`, `size-7`), tooltip «Incognito session».
+  - **Off:** icon-only ghost button (lucide `VenetianMask`, `size-4`, `size-7`), tooltip «Incognito session», `aria-pressed="false"`. Clicking it turns incognito **on** directly: no menu opens. The per-session capability set is read from the Settings defaults (async read; the chip appears once that read resolves, and a late read never arms a newer draft, see Draft state).
   - **On:** a cyan pill chip (`rounded-full`, token `--color-incognito`) with the «Incognito» label. The chip is a `relative` wrapper (`group/incognito-chip`, carrying `data-testid` `v4-composer-incognito-marker`) that holds the trigger button and a sibling turn-off button; the wrapper never nests a button inside the trigger.
   - **Turn-off button** (`data-testid` `v4-composer-incognito-off`, `aria-label` = `chat.incognito.turnOff`): an absolutely positioned `Button` sibling, the same pattern as the project chip's detach button in `ChatEmptyState.tsx` (`composer-project-detach`). It is `opacity-0 pointer-events-none` and becomes visible on `group-hover/incognito-chip` and `group-focus-within/incognito-chip`, overlaying the mask icon, which fades out at the same time. It is reachable by keyboard focus (Tab) and is disabled with the control.
-  - **Clicking the chip body** opens the checklist menu as before.
-- **Checklist.** The button opens a menu: the incognito on/off row and, while active, one row per capability, each with a visible leading checkbox (the row stays a `menuitemcheckbox`), initialized from `incognitoDefaults`. A footer link opens Settings «Incognito».
+  - **On, trigger click:** clicking the chip text (not the inline turn-off button) opens the checklist menu. The trigger is a menu button: `aria-haspopup="menu"`, `aria-expanded` reflects the open menu, `aria-pressed="true"`.
+  - **Turning off:** only the inline turn-off button (×) turns incognito off from the chip; the menu has no master row.
+- **Checklist.** The menu (opened only from the active chip) lists one row per capability in `INCOGNITO_CAPABILITY_KEYS` order, each with a visible leading checkbox (the row stays a `menuitemcheckbox`), checked as in the draft's frozen capability set. The menu has no incognito on/off row (the chip's × is the only off control) and no footer link to Settings: Settings «Incognito» remains reachable from the Settings page. Changing a row changes that session's set only (draft deviation). Test IDs: `v4-composer-incognito-trigger`, `v4-composer-incognito-off`, `v4-composer-incognito-capability-<key>`.
 - **Composer highlight.** New semantic token `--color-incognito` defined in all four theme blocks of `packages/ui/src/styles.css` (mirroring `--color-worktree-task`) and documented in DESIGN.md. Active incognito tints the prompt shell border via `shellClassName`. The active chip is always paired with the «Incognito» label, so the state is not color-only; the mask icon is not repeated next to the label.
 - **Draft state.** Incognito intent and deviations are UI-local draft state keyed by the workspace identity key (`workspaceIdentity?.trim() || workspacePath`). They clear after the session is created. The draft store also owns a per-workspace **intent generation**: a counter bumped on every intent transition (activation, explicit deactivation — including a no-op one, which cancels a pending activation — capability change) and when a draft is submitted. Async continuations capture the generation when the user acts and apply only if it is still current, so a defaults read that resolves after the draft was sent never arms the intent for a later draft, and a send completion never clears the intent of a newer draft that re-armed or changed capabilities while the send was in flight.
 - **Prewarm.** While incognito is active the draft does not use or promote a prewarmed session (same as worktree sends, `SessionPane.tsx:3507`); toggling invalidates the prewarm. This matters beyond reuse: `getSkillCatalog` on a prewarmed draft runs `ensureContextInitialized` and fixes its instructions and skills before the first message (specs/global-instructions.md).
@@ -245,9 +301,21 @@ Scenario 23: the web sidebar (no sessions-index observer in-process) shows the i
 20. Prepared-row activation profile mismatch: a repeat createSession whose `incognito` differs from the stored row profile (present vs absent, or a different capability set) → rejected; a matching retry returns the existing session, and materialization uses the stored profile.
 21. A session created incognito in Desktop, resumed in the CLI (TUI `--resume`/`--continue` or headless `-p --resume`) → runs with the frozen profile (no plugins/MCP/hooks/`AGENTS.md`/memory extraction), not as a normal session.
 22. `session/create` with `importedHistory` and `incognito` (both import sources) → the session row stores the profile; a later first send does not overwrite it and the runtime keeps the profile.
+23. Incognito with all thirteen defaults off → the model request's system messages contain the safety notice and the confirmation paragraph, plus `# Context management`; no text containing the CLI prefix, the identity intro, `# Harness`, `# Environment`, `Primary working directory`, `gitStatus:`, `# ZCode Desktop Context`, `# Communicating with the user` or `# Session-specific guidance` (the test asserts each marker is absent in the built messages and in the model-io request).
+24. Each v2 toggle switched on individually → only its own sections return: `identity` → the CLI prefix and intro; `harness` → `# Harness`, desktop context, communication and session guidance; `environment` → `# Environment` and the git system context; `automationTools` → the Cron, OffPeak and dynamic-workflow tool names appear in the registered tool list and the Agent/Task descriptions carry workflow guidance. Each one is asserted against the built prompt or tool list.
+25. Normal session → prompt byte-identical to v1 (the existing snapshot tests for the default prompt, including desktop, subagent and workflow children, must not change).
+26. `environment` off with an execution worktree → the prompt keeps the worktree bullet under a `# Environment` heading and nothing else from the environment block; the worktree line stays in subagent environment context.
+27. `harness` off → the confirmation paragraph is present exactly once; `harness` on → it is present exactly once, inside Dynamic Behavior.
+28. A v1 profile row (`{version: 1, …9 keys}`) read by this build → upgraded in memory to v2 with `identity`, `harness`, `environment` and `automationTools` = `true`; the session behaves exactly as before the change. The row stays v1.
+29. A v2 row read by an older build → that build's strict v1 reader rejects it and uses its lockdown profile; a test pins the v1 reader's rejection of version 2.
+30. CLI with `incognitoSession` but without `incognitoProfileV2` → Host create rejected with `proto.incognitoUnsupported`; the renderer rejects a Host hello without `incognitoProfileV2`; no session row is created.
+31. Desktop E2E (written, not run; `manual-review/pending/conversation-session-incognito-draft.test.ts`): clicking the composer icon turns incognito on with no menu and the chip appears; clicking the chip text opens the checklist of thirteen capability rows in `INCOGNITO_CAPABILITY_KEYS` order (the four new rows unchecked by default), with no master row and no Settings link; the × turns incognito off. Settings «Incognito» shows the same thirteen switches; switching `harness` on in Settings and then starting a new incognito draft pre-checks it; the session's first request then contains `# Harness`.
+32. `automationTools` off → the tool names `CronCreate`, `CronList`, `CronUpdate`, `CronDelete`, `OffPeakCreate`, `OffPeakList` and every `DYNAMIC_WORKFLOW_TOOL_NAMES` entry are absent from `getTools()` on the main runtime, on the embedded-search refresh path (`refreshBranchAwareBuiltInTools`) and in the request's tool list; `automationTools` on → present. Subagent and workflow children of an off session stay off (inherited profile).
 
 ## Validation
 
+- v2 unit tests: `core/tests/incognito-prompt-toggles.test.ts` (main and subagent builder per toggle, automationTools runtime gate through the registered request tools); `shared/test/incognitoProfile.test.ts` (v2 shape, v1 upgrade, v1 reader rejects v2, `incognitoProfileV2` capability); `services/test/runtimeCapabilitySupport.test.ts` (both flags required); `ui/test/agentV4ConnectionTransports.test.ts` (renderer needs `incognitoProfileV2`); `ui/test/v4ComposerIncognitoControl.test.ts` (icon turns on, chip opens capability checklist, × turns off, no master row, no Settings link).
+- Measured on the built request (`createContextBuilder` and `createTestAgentRuntime`, 2026-10-18, default test fixtures): system prompt 8,300 chars normal → 3,011 all toggles off (-64%); harness is the largest owner (about 4,600 chars); the request's tool JSON 146,749 chars / 31 tools normal → 67,106 / 16 tools with `automationTools` off (-54%); with `automationTools` on the tool set is back to 31.
 - `pnpm typecheck`, `pnpm lint`, `pnpm architecture:check --changed`, `pnpm fmt:check`.
 - CLI unit: migration test (fresh DB, upstream-shaped DB, ledger coexistence, set-once upsert, 16); context builder per capability (1–5); resume/fork/child inheritance (6–8); dream selection (9); profile decode fallback (10).
 - Services/UI unit: capability gates (11–12, 15), fork-settings key round-trip, summary → task meta mapping.

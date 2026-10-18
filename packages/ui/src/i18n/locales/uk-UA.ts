@@ -8472,18 +8472,16 @@ const ukUA: Record<string, string> = {
   // Incognito session (specs/incognito-session.md)
   "taskList.incognitoTaskLabel": "Сесія інкогніто",
   "chat.incognito.toggle": "Сесія інкогніто",
-  "chat.incognito.toggleDescription": "Почати наступну сесію без додаткових можливостей",
   "chat.incognito.marker": "Інкогніто",
   "chat.incognito.turnOff": "Вимкнути інкогніто",
   "chat.incognito.includeHeading": "Увімкнути в цій сесії",
-  "chat.incognito.settingsLink": "Налаштування інкогніто…",
   "chat.incognito.unsupported":
     "Ця версія агента не вміє запускати сесії інкогніто. Оновіть застосунок або віддалений агент і спробуйте ще раз.",
   "settings.incognito": "Інкогніто",
   "settings.incognito.description":
     "Типові налаштування для нових сесій інкогніто. Увімкніть можливість, щоб вона була включена за замовчуванням; для кожної сесії її все одно можна змінити в полі введення.",
   "settings.incognito.scopeHint":
-    "Інкогніто запускає чисту сесію без додаткових можливостей нижче за замовчуванням; їх можна ввімкнути для нової сесії. Це не режим приватності: статистика використання, телеметрія, історія введення та журнали моделі все одно записуються.",
+    "Інкогніто запускає чисту сесію без додаткових можливостей нижче за замовчуванням (включно з ідентичністю агента, harness, середовищем і інструментами автоматизації); їх можна ввімкнути для нової сесії. Це не режим приватності: статистика використання, телеметрія, історія введення та журнали моделі все одно записуються.",
   "incognito.capability.projectInstructions.label": "Інструкції проєкту",
   "incognito.capability.projectInstructions.description": "AGENTS.md з домашньої теки та проєкту",
   "incognito.capability.skills.label": "Список навичок",
@@ -8506,6 +8504,18 @@ const ukUA: Record<string, string> = {
   "incognito.capability.systemPromptOverrides.label": "Перевизначення системного промпту",
   "incognito.capability.systemPromptOverrides.description":
     "Відредаговані вами розділи системного промпту",
+  "incognito.capability.identity.label": "Ідентичність агента",
+  "incognito.capability.identity.description":
+    "Префікс CLI та вступ про ідентичність; запобіжна примітка завжди лишається",
+  "incognito.capability.harness.label": "Harness і настанови інструментів",
+  "incognito.capability.harness.description":
+    "Правила harness, контекст десктопа, комунікація та настанови сесії",
+  "incognito.capability.environment.label": "Середовище",
+  "incognito.capability.environment.description":
+    "Робоча тека, платформа, стан Git і останні коміти",
+  "incognito.capability.automationTools.label": "Автоматизація та інструменти робочих процесів",
+  "incognito.capability.automationTools.description":
+    "Cron, off-peak і динамічні інструменти робочих процесів",
 };
 
 export default ukUA;
