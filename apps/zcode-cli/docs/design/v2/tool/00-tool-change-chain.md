@@ -24,8 +24,10 @@ streaming 期间的提前执行改为按 input 判定：closed `tool_call` 进�
 的只读 Bash 可以在模型仍在输出时启动；变更型 Bash、目录切换和 Guarded 危险命令仍在
 stream 结束后执行。新增前缀屏障：同一 stream attempt 中一旦出现不可提前的调用，其后的调用
 （包括 Read）都不再提前，提前执行集合始终是 `scheduleTools` 的第一个 parallel group，
-避免读到前一个调用执行之前的状态。capability context 统一由 `resolveRuntimeToolCapabilityContext`
-构造（含 mode、bashShellSelection），调度、提前执行与 ledger 共用。
+避免读到前一个调用执行之前的状态。每个提前调用是独立 executor batch，而 `maxConcurrency` 只在
+batch 内生效，因此 coordinator 自行把每个 stream attempt 的提前调用数限制在
+`toolConcurrency.maxConcurrency`（默认 10）以内，超出部分随 stream 结束后的调度执行。capability context 统一由 `resolveRuntimeToolCapabilityContext`
+构造（含 mode、bashShellSelection），调度、提前执行与 ledger 共用；ledger 中的 flags 仅供观测。
 提前执行只是时机门槛，不是权限授权：hook、权限决策、hook 改写后的复检仍由 executor 负责，
 匹配的项目 ask 规则仍可能在 stream 期间经 broker 串行弹出（与既有 Read 相同）。
 stream 可重试失败时，已接受的调用被 abort 并恰好提交一次结果（真实、取消或 synthetic），

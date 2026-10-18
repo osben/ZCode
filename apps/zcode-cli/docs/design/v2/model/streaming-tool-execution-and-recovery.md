@@ -298,9 +298,17 @@ A call starts during the stream only if all of these hold:
    prefix, which matches the first parallel group `scheduleTools` would build.
    Without the barrier, `npm run build` followed by `ls dist` (or a Write
    followed by a Read) would observe state from before the earlier call.
+5. Concurrency cap: at most `toolConcurrency.maxConcurrency` calls (executor
+   default 10) start early per stream attempt. Each early call is its own
+   executor batch, and the executor caps concurrency only within a batch, so
+   the coordinator applies the cap itself. Reaching it closes the prefix; the
+   remaining calls run in the end-of-stream schedule, which the executor caps
+   as usual.
 
-All runtime call sites build the capability context through one helper:
-`resolveRuntimeToolCapabilityContext` in `runtime/helpers/runtime-tools.ts`.
+Scheduling, early execution, and the ledger build the capability context
+through one helper: `resolveRuntimeToolCapabilityContext` in
+`runtime/helpers/runtime-tools.ts`. The executor's permission flow keeps its
+own construction from executor deps.
 It carries `mode`, `bashShellSelection`, `runtimeScope`, `workingDirectory`,
 and `workspaceRoot`. Guarded mode can only report a dangerous Bash match
 (`userApprovalRule`) when both `mode` and the shell dialect are present, so
@@ -325,6 +333,8 @@ Mode behavior:
 
 The ledger records the same input-aware `readOnly`, `destructive`,
 `concurrentSafe`, and `sideEffectScope` flags that the call was scheduled with.
+These ledger flags are observational: no reducer, protocol mapper, resume, or
+recovery path makes a decision from them.
 
 ```mermaid
 sequenceDiagram

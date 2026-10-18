@@ -121,6 +121,7 @@ async function createFixture(options: {
   midStream?: (state: PortControl) => Promise<void>;
   failFirstStream?: boolean;
   holdUntilAbort?: boolean;
+  maxConcurrency?: number;
 }) {
   const workingDirectory = await realpath(
     await mkdtemp(join(tmpdir(), "zcode-stream-bash-early-")),
@@ -135,7 +136,14 @@ async function createFixture(options: {
   const requests: any[] = [];
   const runtime = createTestAgentRuntime(
     sessionId,
-    { mode: options.mode, modelStreaming: "on", workingDirectory },
+    {
+      mode: options.mode,
+      modelStreaming: "on",
+      workingDirectory,
+      ...(options.maxConcurrency
+        ? { toolConcurrency: { maxConcurrency: options.maxConcurrency } }
+        : {}),
+    },
     {
       eventStore,
       executionPort: port,
@@ -231,6 +239,27 @@ describe("streaming early execution of read-only Bash", () => {
     expect(fixture.state.commands).toEqual(["npm run build", "ls dist"]);
   });
 
+  it("starts at most maxConcurrency calls early and runs the rest after the stream", async () => {
+    let startedBeforeFinish: string[] = [];
+    const fixture = await createFixture({
+      name: "stream-bash-early-concurrency-cap",
+      mode: "build",
+      maxConcurrency: 2,
+      toolCalls: [bashCall("ls-1", "ls a"), bashCall("ls-2", "ls b"), bashCall("ls-3", "ls c")],
+      async midStream(state) {
+        await within(state.firstStarted, EARLY_START_WAIT_MS);
+        await new Promise((resolve) => setTimeout(resolve, NOT_STARTED_WAIT_MS));
+        startedBeforeFinish = [...state.commands];
+      },
+    });
+
+    await fixture.runtime.executeTurn("list three directories");
+
+    expect(startedBeforeFinish.sort()).toEqual(["ls a", "ls b"]);
+    expect(fixture.state.commands).toHaveLength(3);
+    expect(fixture.state.commands.at(-1)).toBe("ls c");
+  });
+
   it("commits a completed early Bash result once and retries the stream from it", async () => {
     const fixture = await createFixture({
       name: "stream-bash-early-retry-completed",
@@ -299,9 +328,11 @@ describe("isToolCallEligibleDuringStream", () => {
         await eligibility(mode, [
           bashCall("ls", "ls -la"),
           bashCall("rg", "rg foo src"),
+          bashCall("git-status", "git status"),
+          bashCall("git-diff", "git diff"),
           { id: "read", name: "Read", input: { file_path: "/tmp/a.txt" } },
         ]),
-      ).toEqual([true, true, true]);
+      ).toEqual([true, true, true, true, true]);
     }
   });
 
@@ -316,7 +347,7 @@ describe("isToolCallEligibleDuringStream", () => {
     ).toEqual([false, false, false, false]);
   });
 
-  it("keeps read-only Bash eligible in Guarded mode and rejects dangerous commands", async () => {
+  it("keeps read-only Bash eligible in Guarded mode", async () => {
     expect(
       await eligibility("guarded", [bashCall("rm", "rm -rf /"), bashCall("ls", "ls")]),
     ).toEqual([false, true]);

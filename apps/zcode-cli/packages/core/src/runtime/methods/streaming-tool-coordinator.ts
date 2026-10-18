@@ -18,7 +18,10 @@ import {
 import type { AgentRuntimeInternal } from "../internal.js";
 import type { StreamedToolExecutionResult } from "../types.js";
 import { createSyntheticStreamedToolResult } from "./streaming-tool-synthetic-result.js";
-import { isToolCallEligibleDuringStream } from "./streaming-tool-eligibility.js";
+import {
+  isToolCallEligibleDuringStream,
+  resolveStreamingToolExecutionLimit,
+} from "./streaming-tool-eligibility.js";
 import {
   beginStreamRecoveryAttempt,
   emitStreamRecoveryRetryEvents,
@@ -130,7 +133,11 @@ export function createStreamingToolCoordinator(
       const acceptedCall = admission.call;
       if (handles.has(normalizedToolCall.id)) return;
       if (!earlyExecutionPrefixOpen) return;
-      if (admission.error || !isToolCallEligibleDuringStream(runtime, acceptedCall)) {
+      if (
+        admission.error ||
+        handles.size >= resolveStreamingToolExecutionLimit(runtime) ||
+        !isToolCallEligibleDuringStream(runtime, acceptedCall)
+      ) {
         earlyExecutionPrefixOpen = false;
         return;
       }

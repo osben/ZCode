@@ -4,6 +4,7 @@ import {
   resolveRuntimePermissionCapability,
   resolveToolSchedulingFlags,
 } from "../../tool/executor/permission-capability.js";
+import { DEFAULT_TOOL_MAX_CONCURRENCY } from "../../tool/executor/impl.js";
 import { resolveRuntimeToolCapabilityContext } from "../helpers/runtime-tools.js";
 
 const STREAMING_TOOL_EXECUTION_MODE = "readOnly";
@@ -46,6 +47,15 @@ export function isToolCallEligibleDuringStream(
     !requiresUserInteraction &&
     capability.userApprovalRule === undefined
   );
+}
+
+/**
+ * Each early call runs as its own executor batch, so the per-batch `maxConcurrency` cap does
+ * not bound them together. Limit early calls per stream attempt to the same cap; the rest run
+ * in the end-of-stream schedule, which the executor caps as usual.
+ */
+export function resolveStreamingToolExecutionLimit(runtime: AgentRuntimeInternal): number {
+  return runtime.config.toolConcurrency?.maxConcurrency ?? DEFAULT_TOOL_MAX_CONCURRENCY;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
