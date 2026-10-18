@@ -80,7 +80,7 @@
 14. 匹配不到或非唯一匹配时拒绝；fallback 候选多于一个也必须拒绝，不允许工具替模型猜位置。
 15. 对 settings 文件做额外校验。
 16. 生成 patch，调用 `FileSystemPort.writeTextFile` 时带回 `encoding` 和 `lineEndings`，保持原编码和原换行风格写回；如果 `new_string` 无法编码到原编码，工具必须失败且不写入。
-17. 通知 LSP 和 IDE。
+17. 通知 LSP 和 IDE（LSP：发布带 `changedRange` 的 `FileMutatedEvent`，Edit 不等待 language server，见 [19-lsp.md](19-lsp.md)）。
 18. 更新 `readFileState`。
 
 ## 权限模型

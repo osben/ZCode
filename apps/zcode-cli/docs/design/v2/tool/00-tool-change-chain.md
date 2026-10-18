@@ -1620,3 +1620,14 @@ interrupted result。修复不改变工具 schema、权限、执行时机、协�
 
 身份定位补充：conversation-quotes 将原始有序 text/mention 节点逐条映射到模型专用
 材料，保留同名手打文字与原生提及的区别，不改持久化正文或发送 ref 的授权边界。
+
+## LSP 工具与编辑后诊断（2026-10-17）
+
+契约见 [19-lsp.md](19-lsp.md)。链路要点：
+
+- **Contracts**：`contracts/src/lsp`（manifest `lspServers` 严格 schema、`ResolvedLspServer`、偏好 sidecar schema、`FileMutatedEvent`）、`interfaces/language-server.port.ts`、`tools/lsp.ts`。
+- **插件加载**：`adapters/src/plugins` 解析 `.lsp.json` 与 manifest `lspServers`，产出 `PluginLoadOutcome.lspServers`；单个无效 server 只禁用它自己。
+- **Adapter**：`adapters/src/lsp` 持有进程、JSON-RPC framing、能力、重启与空闲回收；`acquire` 永不等待初始化。
+- **Core**：`LspDocumentSync` 是打开文档、版本与诊断的唯一 owner；Edit/Write 只发布 `FileMutatedEvent`，不直接调用 LSP。`LSP` 工具仅在存在可用 server 时注册（两个注册入口共用 gate），Explore 同步可见。
+- **上下文**：编辑后的新诊断通过既有 `diagnostics` system-reminder source 在下一次模型请求附带，等待上限 `LSP_EDIT_DIAGNOSTICS_WAIT_MS`，超时明确标为 pending。
+- **协议/UI**：`lsp/preferences/get|set`、`lsp/status`；偏好存于 fork sidecar `fork_lsp_preferences.json`，不写 `setting.json`。

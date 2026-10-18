@@ -1,8 +1,10 @@
 # LSP Tool and Language Server Runtime
 
-Status: **plan** (2026-10-17), not implemented. Today `lspServers` in a plugin manifest
-is only displayed (`diagnostic-only`), and the `LSP` name is only reserved in
-`packages/core/src/tool/provider-visible-order.ts`.
+Status: **implemented, phases 0–5** (2026-10-17). Phase 6 (more language plugins) is open.
+Code: `contracts/src/lsp`, `contracts/src/interfaces/language-server.port.ts`,
+`contracts/src/tools/lsp.ts`, `adapters/src/lsp`, `adapters/src/plugins/lsp.ts`, `core/src/lsp`,
+`core/src/tool/handlers/lsp.ts`, `bootstrap/src/app/lsp-*.ts`, `bootstrap/src/zcode-protocol/lsp.ts`,
+the bundled `typescript-lsp-plugin`, and the plugin settings UI.
 
 ## 1. Goal
 
@@ -44,8 +46,9 @@ and `${user_config.KEY}` go through the existing template aliases.
 
 - An unknown key or invalid entry disables **only that server** (diagnostic
   `lsp_config_invalid`), not the whole plugin.
-- If two plugins claim the same extension, the higher load priority wins and the
-  loser gets an info-level `lsp_extension_shadowed` diagnostic. One file maps to one server.
+- If two plugins claim the same extension, the plugin loaded first wins (same rule as
+  duplicate custom commands: user dirs, then official, then installed) and the
+  loser gets a `lsp_extension_shadowed` warning (plugin diagnostics have no info level); it shows on the plugin page, never in chat. One file maps to one server.
 
 ## 3. Toggles
 
@@ -99,10 +102,10 @@ flowchart LR
     shared by the workspace's sessions, with `rootUri` taken from `workspacePath`. The
     identity alone is not enough: it can stay the same while the root changes (for example
     on reconnect), and a reused server would then answer for the wrong root;
-  - a server stops after 10 minutes without a lease, and at most 4 servers run at once (LRU);
+  - a server stops after 10 minutes without use, and at most 4 servers run at once (LRU);
   - processes are killed via `mcp/process-tree.ts` and `windows-job-object.ts`.
-- Remote: the pool lives where Read/Bash run. Phase 0 confirms this; otherwise remote
-  is explicitly disabled with `lsp_remote_unsupported`.
+- Remote: V1 starts no servers for a remote workspace identity (the session gets no
+  `LspService`, so the tool is absent). Running servers on the remote host is a follow-up.
 
 ## 5. Event order
 
@@ -180,27 +183,30 @@ the exact operation names, so verify them against the real schema before impleme
   - `locations` / `symbols` / `hover` / `diagnostics`, with relative paths and a
     one-line preview (≤ 200 chars);
   - `status: "ok" | "pending"`, `truncated`, `total`;
-  - at most 200 items, with the remainder stored as an artifact.
+  - at most 200 items; the rest is reported via `truncated` and `total` (no artifact yet).
 - **Metadata:**
   - `readOnly`, `concurrentSafe`, `needsApproval: false`;
-  - `sideEffectScope: "none"`: the process starts from a trusted plugin, and the model
-    never chooses the command;
+  - `sideEffectScope: "none"`: the process starts from a plugin the user enabled, and
+    the model never chooses the command;
   - `timeout` 65 s with no override; cancellation via `$/cancelRequest`.
-- **Visibility:** the tool is registered only when a usable server exists (plugin
-  enabled, binary found, workspace trusted). Without a binary there is no tool and
+- **Visibility:** the tool is registered only when a usable server exists (global
+  toggle on, plugin enabled, binary found). Without a binary there is no tool and
   no errors in chat. It is available to the main agent and `Explore`.
 - **Error codes:** `lsp_no_server_for_file`, `lsp_server_not_installed`,
   `lsp_server_starting`, `lsp_request_timeout`, `lsp_server_start_failed`,
   `lsp_startup_timeout`, `lsp_server_crashed`, `lsp_server_unavailable`,
   `lsp_operation_unsupported`, `lsp_invalid_position`, `lsp_symbol_not_found_on_line`,
-  `lsp_workspace_untrusted`, `lsp_cancelled`.
+  `lsp_disabled`, `lsp_remote_unsupported`, `lsp_cancelled`.
 - **Model hint:** use LSP for symbols and types and grep for text and config;
   `pending` does not mean "no errors".
 
 ## 8. Security and platforms
 
-- A server executes workspace code (`build.rs`, `go list`, `tsconfig` plugins), so it
-  needs an enabled plugin (same policy as hooks) and a trusted workspace (workspace trust).
+- A server executes workspace code (`build.rs`, `go list`, `tsconfig` plugins). The CLI
+  has no workspace-level trust (workspace trust covers individual hooks, and project MCP
+  servers are trusted by default), so in V1 the gate is the user's own choice:
+  the plugin is enabled (same policy as hooks) and the global toggle is on. A
+  workspace-level trust gate is a follow-up once such trust exists.
 - Binaries are never installed automatically. `env` and full stderr are never
   logged, and raw JSON-RPC goes only to `debug`.
 - PATH: Electron launched from the Dock does not see `~/.nvm`, `~/.cargo/bin` and similar
@@ -238,7 +244,14 @@ the exact operation names, so verify them against the real schema before impleme
    - framing: no JSON-RPC package is in the lockfile, so we write our own
      Content-Length framing.
 
-   Remote scenario and PATH in the CLI runtime are checked during phase 2.
+   PATH: the desktop host captures the login-shell environment and passes it to the CLI
+   process, so binaries under `~/.nvm` resolve without extra work in the CLI.
+
+   Found during implementation: typescript-language-server answers early requests from a
+   syntax-only server while the project loads, which makes go-to-definition point at the
+   import itself. The bundled plugin sets `initializationOptions.tsserver.useSyntaxServer:
+   "never"`. The server also needs a TypeScript with `lib/tsserver.js` (the workspace's own
+   `typescript`, or a global TypeScript 5/6; TypeScript 7 no longer ships it).
 1. **Config:** Zod schema, loader, diagnostics, `lsp` in component types, and removing
    `lspServers` from `diagnosticOnly`.
 2. **Pool:** `LanguageServerPort`, `adapters/src/lsp`, the fake server, and tests for
@@ -248,7 +261,12 @@ the exact operation names, so verify them against the real schema before impleme
 4. **The `LSP` tool** (§7), following every section of `00-tool-change-chain.md`.
 5. **Server status UI** (starting / running / not installed / crashed) on desktop and
    mobile, with i18n.
-6. **New language plugins.**
+6. **New language plugins** (open).
+
+Verification: unit tests per layer (fake port in core, fake server process in adapters,
+loader fixtures for the 12 official manifests) and an end-to-end test
+(`bootstrap/tests/lsp-typescript-e2e.test.ts`) against the real typescript-language-server,
+skipped when the binary is missing.
 
 When implementing, update `docs/claude-code-marketplace-plugin-compat.md`,
 `docs/plan/trajectory/embedded-search-provider-visible.md:74`, the README and
@@ -257,8 +275,7 @@ SKILL.md files in `zcode-guide-plugin` ("recorded but not executed").
 
 ## 11. Decisions (2026-10-17)
 
-1. TypeScript is on by default, but works only when its binary is found and the
-   workspace is trusted. There is no plugin recommendation dialog in V1.
+1. TypeScript is on by default, but works only when its binary is found. There is no plugin recommendation dialog in V1.
 2. Diagnostics after edits are on by default and filtered (§6).
 3. The user can turn off everything, one language, or only diagnostics after edits (§3).
 4. Diagnostics ship before the navigation tool.
