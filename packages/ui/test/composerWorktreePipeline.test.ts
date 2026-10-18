@@ -8,6 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GitWorktreeCreateResult } from "@zcode/shared";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import {
+  armWorktreeSendContinuation,
+  peekWorktreeSendContinuation,
   selectComposerWorktreePipeline,
   useComposerWorktreePipelineStore,
 } from "@/store/composerWorktreePipelineStore.js";
@@ -265,6 +267,40 @@ describe("composerWorktreePipelineStore state machine", () => {
       status: "creating",
       attemptId: currentAttempt,
     });
+  });
+
+  it("keeps the armed continuation when a stale attempt's consume/discard is rejected by the store", () => {
+    const store = useComposerWorktreePipelineStore.getState();
+    const firstAttempt = store.startPipeline(WORKSPACE_KEY, {
+      status: "creating",
+      sessionId: "session-retry",
+      params: PARAMS,
+      createdAt: 1,
+    });
+    const currentAttempt = useComposerWorktreePipelineStore
+      .getState()
+      .startPipeline(WORKSPACE_KEY, {
+        status: "creating",
+        sessionId: "session-retry",
+        params: PARAMS,
+        createdAt: 2,
+      });
+    armWorktreeSendContinuation({
+      workspaceKey: WORKSPACE_KEY,
+      preparedSessionId: "session-retry",
+      attemptId: currentAttempt,
+      hasBoundPreparedSession: true,
+      dispatch: async () => {},
+      restore: () => {},
+      restoreForRetry: () => {},
+    });
+
+    store.consume(WORKSPACE_KEY, "session-retry", firstAttempt);
+    store.discard(WORKSPACE_KEY, "session-retry", firstAttempt);
+    expect(peekWorktreeSendContinuation(WORKSPACE_KEY, "session-retry")).not.toBeNull();
+
+    store.consume(WORKSPACE_KEY, "session-retry", currentAttempt);
+    expect(peekWorktreeSendContinuation(WORKSPACE_KEY, "session-retry")).toBeNull();
   });
 
   it("walks creating → ready → consumed with consume-once semantics", () => {

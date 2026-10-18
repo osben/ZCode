@@ -196,20 +196,20 @@ describe("GitActionMenu commit dialog error visibility", () => {
       await flushMicrotasks();
     });
 
-    // The commit succeeded and the push failed; the user must still learn about the
-    // failure either from the (re-opened) dialog error or from a toast.
+    // The commit succeeded and the push failed after the dialog was dismissed: the failure must
+    // surface on exactly one surface — a toast carrying the rejection text, with no inline error.
     expect(mocks.gitService.commit).toHaveBeenCalledTimes(1);
-    const errorInDialog =
-      document.body.textContent?.includes("pushAfterCommitFailed") ??
-      document.body.textContent?.includes("Cannot push while HEAD is detached.") ??
-      false;
-    const failureToast = mocks.toast.mock.calls.some(([message]) =>
-      /push|fail/i.test(String(message)),
+    expect(screen.queryByTestId("git-commit-dialog")).toBeNull();
+    const failureToasts = mocks.toast.mock.calls.filter(
+      ([message]) =>
+        typeof message === "string" &&
+        message.includes("pushAfterCommitFailed") &&
+        message.includes("Cannot push while HEAD is detached."),
     );
     expect(
-      errorInDialog || failureToast,
-      "push-after-commit failure must stay visible after the commit dialog closes",
-    ).toBe(true);
+      failureToasts,
+      "push-after-commit failure must surface as one toast after the commit dialog closes",
+    ).toHaveLength(1);
   });
 
   it("BUG-GWT-006 (RT2-H5 live path): shows a failure toast when GitActionMenu unmounts while the push is pending", async () => {

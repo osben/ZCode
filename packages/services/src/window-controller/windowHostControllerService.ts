@@ -172,11 +172,19 @@ export function createWindowHostControllerRuntime(options: {
   const sourceLiveOverlays = new Map<string, WindowHostControllerSessionOverlay[]>();
   const sourceSessionObservers = new Map<
     string,
-    { agentService: IZCodeAgentService; observer: WindowHostSessionsIndexObserver }
+    {
+      agentService: IZCodeAgentService;
+      observer: WindowHostSessionsIndexObserver;
+    }
   >();
-  // BUG-GWT-010: last execution-worktree fact batch already converged into the source's tasks-index,
-  // so repeated sessions-index publishes do not re-issue convergence reads.
-  const sourceWorktreeFactSynced = new Map<string, string>();
+  // BUG-GWT-010: execution-worktree facts already confirmed present in the source's tasks-index, so
+  // repeated sessions-index publishes do not re-issue convergence reads. Acknowledgement is per fact and
+  // bound to the task-service instance that confirmed it: a replaced service starts from an empty set, and a
+  // fact whose task row did not exist yet stays unacknowledged until a later publish finds the row.
+  const sourceWorktreeFactSynced = new Map<
+    string,
+    { taskService: IZCodeTaskService; facts: Set<string> }
+  >();
   const pendingReplacementByNextSourceKey = new Map<string, WindowHostControllerSourceScope>();
   let disposed = false;
   let activeSourceReads = 0;
@@ -221,24 +229,41 @@ export function createWindowHostControllerRuntime(options: {
     // An empty overlay (runtime restart gap) must not erase persisted facts; durability is meta's job.
     if (facts.length === 0) return;
     const key = sourceKey(resolved.scope);
-    const signature = facts
-      .map(
-        (fact) =>
-          `${fact.taskId} ${fact.executionWorktree.path} ${fact.executionWorktree.branchName ?? ""}`,
-      )
-      .sort()
-      .join("\n");
-    if (sourceWorktreeFactSynced.get(key) === signature) return;
-    void resolved.taskService
+    const taskService = resolved.taskService;
+    const factSignature = (fact: (typeof facts)[number]) =>
+      `${fact.taskId}\n${fact.executionWorktree.path}\n${fact.executionWorktree.branchName ?? ""}`;
+    let synced = sourceWorktreeFactSynced.get(key);
+    if (synced?.taskService !== taskService) {
+      synced = { taskService, facts: new Set() };
+      sourceWorktreeFactSynced.set(key, synced);
+    }
+    const acknowledged = synced.facts;
+    const pending = facts.filter((fact) => !acknowledged.has(factSignature(fact)));
+    if (pending.length === 0) return;
+    void taskService
       .listTasks({
         workspacePath: resolved.scope.workspacePath,
         ...(resolved.scope.workspaceIdentity
           ? { workspaceIdentity: resolved.scope.workspaceIdentity }
           : {}),
-        executionWorktreeFacts: facts,
+        executionWorktreeFacts: pending,
       })
-      .then(() => {
-        sourceWorktreeFactSynced.set(key, signature);
+      .then((tasks) => {
+        // listTasks succeeding does not mean a fact was persisted: the repo skips facts whose task-index row
+        // does not exist yet. Acknowledge only facts the returned rows now carry. Pinned/archived rows are
+        // excluded from this read and are simply retried on the next publish (an idempotent no-op in the repo).
+        const persisted = new Map(
+          tasks.map((task) => [task.taskId, task.executionWorktree] as const),
+        );
+        for (const fact of pending) {
+          const stored = persisted.get(fact.taskId);
+          if (
+            stored?.path === fact.executionWorktree.path &&
+            stored?.branchName === fact.executionWorktree.branchName
+          ) {
+            acknowledged.add(factSignature(fact));
+          }
+        }
       })
       .catch((error) => {
         if (!disposed) options.onSourceError?.(resolved.scope, "refresh", error);
@@ -281,8 +306,10 @@ export function createWindowHostControllerRuntime(options: {
         sourceLiveOverlays.set(key, overlays);
         projection.replaceSourceSessionOverlays(resolved.scope, overlays);
         // Persist the freshly observed worktree facts after the live projection is updated, so a
-        // convergence failure can never disturb the overlay path (BUG-GWT-010).
-        convergeExecutionWorktreeFacts(resolved, overlays);
+        // convergence failure can never disturb the overlay path (BUG-GWT-010). Resolve the source again:
+        // the captured `resolved.taskService` may have been replaced while the agent service stayed the same.
+        const current = resolveCurrentSource(resolved.scope);
+        if (current) convergeExecutionWorktreeFacts(current, overlays);
       },
       onError: (error) => options.onSourceError?.(resolved.scope, "refresh", error),
     });

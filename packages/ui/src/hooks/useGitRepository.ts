@@ -394,6 +394,8 @@ export function shouldRefreshLiveGitData(
   return !previous.includeExtendedData && next.includeExtendedData;
 }
 
+const MAX_INITIAL_REFRESH_RETRIES = 2;
+
 export function useGitRepository(options: {
   workspacePath: string;
   activeTaskId: string | null;
@@ -434,6 +436,14 @@ export function useGitRepository(options: {
   );
   const requestVersionRef = useRef(0);
   const pendingRequestVersionRef = useRef<number | null>(null);
+  // Bounded recovery for a rejected initial refresh: the failure leaves summaryResolved false without
+  // changing any effect dependency, so the re-issue rule would never be re-evaluated. A tick bump re-runs
+  // the effect; the counter (per target) caps it so a persistent failure settles on the error state.
+  const [retryTick, setRetryTick] = useState(0);
+  const consecutiveFailuresRef = useRef<{ key: string; count: number }>({
+    key: "",
+    count: 0,
+  });
   const lastLiveRefreshInputRef = useRef<GitLiveDataRefreshInput | null>(null);
   const lastFileChangeEntry = null;
   const lastSummaryEntry = null;
@@ -528,6 +538,7 @@ export function useGitRepository(options: {
         if (pendingRequestVersionRef.current === requestVersion) {
           pendingRequestVersionRef.current = null;
         }
+        consecutiveFailuresRef.current = { key: workspaceKey, count: 0 };
 
         // Key behavior (BUG-GWT-013): a result for the still version-current request must be
         // applied even when the issuing effect run was cleaned up by a services identity swap
@@ -596,6 +607,19 @@ export function useGitRepository(options: {
             revision: current.revision,
           }),
         }));
+        // Bounded: after MAX_INITIAL_REFRESH_RETRIES consecutive rejections the error state stands until the
+        // next file-change trigger or a dependency change.
+        const failures =
+          consecutiveFailuresRef.current.key === workspaceKey
+            ? consecutiveFailuresRef.current.count
+            : 0;
+        if (failures < MAX_INITIAL_REFRESH_RETRIES) {
+          consecutiveFailuresRef.current = {
+            key: workspaceKey,
+            count: failures + 1,
+          };
+          setRetryTick((tick) => tick + 1);
+        }
       });
 
     return () => {
@@ -605,6 +629,7 @@ export function useGitRepository(options: {
     gitService,
     includeExtendedData,
     refreshToken,
+    retryTick,
     summaryResolved,
     workspaceIdentity,
     workspaceKey,

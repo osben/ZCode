@@ -716,20 +716,25 @@ describe("BUG-GWT-007 existing-branch offer vs stale registered worktree", () =>
     await waitFor(() => {
       expect(screen.getByText("commandCenter.worktree.existingBranchHint")).toBeTruthy();
     });
-    const openButton = screen.queryByRole("button", {
-      name: "commandCenter.worktree.openExisting",
-    }) as HTMLButtonElement | null;
-    if (openButton && !openButton.disabled) {
-      fireEvent.click(openButton);
-    }
-    // Flush the click's async open contract (microtasks only; no timer sleeps).
+    // The stale registration must replace the open offer: no "open existing" button for a missing
+    // directory, a recoverable alert naming it, and a prune action instead.
+    expect(
+      screen.queryByRole("button", {
+        name: "commandCenter.worktree.openExisting",
+      }),
+      "stale worktree must not offer to open the missing directory",
+    ).toBeNull();
+    expect(screen.getByRole("alert").textContent ?? "").toContain(
+      "commandCenter.worktree.error.worktreeMissing",
+    );
+    expect(
+      screen.getAllByRole("button", { name: "commandCenter.worktree.prune" }).length,
+    ).toBeGreaterThan(0);
+    // Flush any async open contract (microtasks only; no timer sleeps).
     await act(async () => {});
 
-    const ghostOpenCall = onCreateTaskInWorkspace.mock.calls.some(
-      (call) => call[0] === STALE_WORKTREE_PATH,
+    expect(onCreateTaskInWorkspace.mock.calls.some((call) => call[0] === STALE_WORKTREE_PATH)).toBe(
+      false,
     );
-    const inlineErrorShown = screen.queryAllByRole("alert").length > 0;
-    // Blocked (no open call for the missing directory) or accompanied by a visible error.
-    expect(ghostOpenCall && !inlineErrorShown).toBe(false);
   });
 });

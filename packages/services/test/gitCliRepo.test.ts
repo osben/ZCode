@@ -807,11 +807,14 @@ describeIfGit("gitCliRepo worktree operations", () => {
     GIT_INTEGRATION_TEST_TIMEOUT_MS,
   );
 
-  // BUG-GWT-003 (docs/testing/git-worktree-qa/bugs/BUG-GWT-003.md): `git worktree add -b`
-  // creates the branch ref before the worktree directory, so a failed run (read-only
-  // parent, EACCES) leaves a half-created branch with no worktree. Remove `.fails` once
-  // createWorktree rolls the branch back on failure.
-  it(
+  // BUG-GWT-003 regression guard (docs/testing/git-worktree-qa/bugs/BUG-GWT-003.md):
+  // `git worktree add -b` creates the branch ref before the worktree directory, so a failed run
+  // (read-only parent, EACCES) used to leave a half-created branch with no worktree.
+  // createWorktree now rolls the branch back via rollbackCreatedWorktreeBranch. POSIX directory
+  // modes are not enforced for root or on Windows, so the read-only parent cannot fail there.
+  const canMakeDirReadOnly =
+    process.platform !== "win32" && typeof process.getuid === "function" && process.getuid() !== 0;
+  it.skipIf(!canMakeDirReadOnly)(
     "BUG-GWT-003: failed worktree creation reports the error and leaves no half-created branch",
     async () => {
       const { container, repoPath } = createWorktreeTestRepo();
@@ -839,10 +842,9 @@ describeIfGit("gitCliRepo worktree operations", () => {
         chmodSync(readOnlyParent, 0o755);
       }
 
-      // `git worktree add -b` writes the new branch ref before creating the worktree
-      // directory, so the failed run currently leaves a half-created branch behind
-      // with no worktree registered (see docs/testing/git-worktree-qa/bugs/BUG-GWT-003.md).
-      // A failed creation must not leave branch garbage in the repository.
+      // `git worktree add -b` writes the new branch ref before creating the worktree directory;
+      // the rollback in createWorktree must remove it so a failed creation leaves no branch
+      // garbage in the repository (see docs/testing/git-worktree-qa/bugs/BUG-GWT-003.md).
       expect(runGit(repoPath, ["branch", "--list", "zcode/half-created"])).toBe("");
     },
     GIT_INTEGRATION_TEST_TIMEOUT_MS,

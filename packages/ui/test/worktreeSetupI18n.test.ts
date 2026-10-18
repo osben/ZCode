@@ -38,8 +38,8 @@ describe("ConversationWorktreeSetupSteps i18n coverage", () => {
     expect(usedIds).toContain("worktreeSetup.created");
   });
 
-  // BUG-GWT-004: fails while the locale catalogs lack these ids (raw-key rendering in the UI);
-  // turns red once the translations land, so the marker can be removed with the fix.
+  // BUG-GWT-004 regression guard: a missing id renders as a raw key in the UI, so every id the
+  // steps card uses must exist in all locale catalogs.
   it("BUG-GWT-004: every worktreeSetup id used by the steps card exists in locale catalogs", () => {
     const catalogs = { "en-US": en, "zh-CN": zh, "uk-UA": uk } as const;
     const missingByLocale = Object.fromEntries(

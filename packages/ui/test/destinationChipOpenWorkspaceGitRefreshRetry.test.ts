@@ -175,4 +175,37 @@ describe("useGitRepository destination chip resolution after programmatic open-w
       firstConnection.refreshCalls.length + reconnectedService.refreshCalls.length,
     ).toBeGreaterThanOrEqual(2);
   });
+
+  it("BUG-GWT-013: re-issues the initial refresh after a rejection and recovers the destination chip", async () => {
+    let calls = 0;
+    const gitService = {
+      refresh: async (params: { workspacePath: string }) => {
+        calls += 1;
+        if (calls === 1) throw new Error("git status failed");
+        return createRefreshResult(params.workspacePath);
+      },
+    } as unknown as IGitService;
+    const { result } = renderGitRepositoryHook(gitService);
+
+    await waitFor(() => expect(result.current.summary.isRepository).toBe(true));
+    expect(calls).toBe(2);
+    expect(result.current.error).toBeNull();
+  });
+
+  it("stops re-issuing after the bounded retry cap when every refresh is rejected", async () => {
+    let calls = 0;
+    const gitService = {
+      refresh: async () => {
+        calls += 1;
+        throw new Error("git status failed");
+      },
+    } as unknown as IGitService;
+    const { result } = renderGitRepositoryHook(gitService);
+
+    // Initial attempt + MAX_INITIAL_REFRESH_RETRIES (2) re-issues, then the error state stands.
+    await waitFor(() => expect(calls).toBe(3));
+    await act(async () => {});
+    expect(calls).toBe(3);
+    expect(result.current.error).toBe("git status failed");
+  });
 });

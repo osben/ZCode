@@ -128,6 +128,23 @@ function releaseArmedContinuation(workspaceKey: string, sessionId: string | unde
   }
 }
 
+/**
+ * patchEntry plus continuation release, gated on the patch applying. patchEntry returns the same
+ * state object when its guards reject (missing, already terminal, or addressed to a different
+ * session/attempt); a stale terminal call must not drop the continuation of a newer attempt.
+ */
+function patchEntryReleasingContinuation(
+  state: ComposerWorktreePipelineState,
+  workspaceKey: string,
+  sessionId: string | undefined,
+  attemptId: string | undefined,
+  patch: Partial<ComposerWorktreePipelineEntry>,
+): Partial<ComposerWorktreePipelineState> {
+  const next = patchEntry(state, workspaceKey, sessionId, attemptId, patch);
+  if (next !== state) releaseArmedContinuation(workspaceKey, sessionId);
+  return next;
+}
+
 function patchEntry(
   state: ComposerWorktreePipelineState,
   workspaceKey: string,
@@ -234,40 +251,34 @@ export const useComposerWorktreePipelineStore = create<ComposerWorktreePipelineS
         },
       };
     }),
-  consume: (workspaceKey, sessionId, attemptId) => {
-    releaseArmedContinuation(workspaceKey, sessionId);
+  consume: (workspaceKey, sessionId, attemptId) =>
     set((state) =>
-      patchEntry(state, workspaceKey, sessionId, attemptId, {
+      patchEntryReleasingContinuation(state, workspaceKey, sessionId, attemptId, {
         status: "consumed",
         queuedPromptPreview: undefined,
         orphaned: undefined,
       }),
-    );
-  },
-  discard: (workspaceKey, sessionId, attemptId) => {
-    releaseArmedContinuation(workspaceKey, sessionId);
+    ),
+  discard: (workspaceKey, sessionId, attemptId) =>
     set((state) =>
-      patchEntry(state, workspaceKey, sessionId, attemptId, {
+      patchEntryReleasingContinuation(state, workspaceKey, sessionId, attemptId, {
         status: "discarded",
         queuedPromptPreview: undefined,
       }),
-    );
-  },
-  withdraw: (workspaceKey, sessionId) => {
-    releaseArmedContinuation(workspaceKey, sessionId);
+    ),
+  withdraw: (workspaceKey, sessionId) =>
     set((state) =>
-      patchEntry(state, workspaceKey, sessionId, undefined, {
+      patchEntryReleasingContinuation(state, workspaceKey, sessionId, undefined, {
         queuedPromptPreview: undefined,
         orphaned: true,
       }),
-    );
-  },
-  detachQueuedSend: (workspaceKey, sessionId) => {
-    releaseArmedContinuation(workspaceKey, sessionId);
+    ),
+  detachQueuedSend: (workspaceKey, sessionId) =>
     set((state) =>
-      patchEntry(state, workspaceKey, sessionId, undefined, { queuedPromptPreview: undefined }),
-    );
-  },
+      patchEntryReleasingContinuation(state, workspaceKey, sessionId, undefined, {
+        queuedPromptPreview: undefined,
+      }),
+    ),
   dropWorkspace: (workspaceKey) => {
     // Map iteration tolerates deleting the visited entry; no snapshot copy is needed.
     for (const continuation of armedWorktreeSends.values()) {

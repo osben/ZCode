@@ -2122,30 +2122,50 @@ export class TaskIndexRepo {
     await Promise.all(
       facts.map((fact) =>
         this.enqueueWrite({ ...scope, taskId: fact.taskId }, () => {
-          const row = this.getTaskRow({ ...scope, taskId: fact.taskId });
-          if (!row || row.deleted === 1) return;
-          let parsed: unknown;
+          // enqueueWrite only serializes writers inside this process; another Host sharing the database can
+          // update the row between the read and the UPDATE. BEGIN IMMEDIATE takes the write lock before the
+          // read so meta_json is never replaced with a stale copy (same pattern as deleteArchivedTask).
+          const database = this.getDatabase();
+          database.exec("BEGIN IMMEDIATE");
           try {
-            parsed = JSON.parse(row.meta_json);
-          } catch {
-            return;
+            const row = this.getTaskRow({ ...scope, taskId: fact.taskId });
+            if (!row || row.deleted === 1) {
+              database.exec("COMMIT");
+              return;
+            }
+            let parsed: unknown;
+            try {
+              parsed = JSON.parse(row.meta_json);
+            } catch {
+              database.exec("COMMIT");
+              return;
+            }
+            if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+              database.exec("COMMIT");
+              return;
+            }
+            const existing = (parsed as { executionWorktree?: ZCodeExecutionWorktree })
+              .executionWorktree;
+            if (
+              existing?.path !== fact.executionWorktree.path ||
+              existing?.branchName !== fact.executionWorktree.branchName
+            ) {
+              database
+                .prepare("UPDATE tasks SET meta_json = ? WHERE workspace_key = ? AND task_id = ?")
+                .run(
+                  JSON.stringify({
+                    ...parsed,
+                    executionWorktree: fact.executionWorktree,
+                  }),
+                  workspaceKey(scope),
+                  fact.taskId,
+                );
+            }
+            database.exec("COMMIT");
+          } catch (error) {
+            database.exec("ROLLBACK");
+            throw error;
           }
-          if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return;
-          const existing = (parsed as { executionWorktree?: ZCodeExecutionWorktree })
-            .executionWorktree;
-          if (
-            existing?.path === fact.executionWorktree.path &&
-            existing?.branchName === fact.executionWorktree.branchName
-          ) {
-            return;
-          }
-          this.getDatabase()
-            .prepare("UPDATE tasks SET meta_json = ? WHERE workspace_key = ? AND task_id = ?")
-            .run(
-              JSON.stringify({ ...parsed, executionWorktree: fact.executionWorktree }),
-              workspaceKey(scope),
-              fact.taskId,
-            );
         }),
       ),
     );
