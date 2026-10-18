@@ -178,6 +178,76 @@ export interface UsageStatsSnapshot {
 export const APP_USAGE_RANGES = ["all", "7d", "30d"] as const;
 export type AppUsageRange = (typeof APP_USAGE_RANGES)[number];
 
+/** Longest custom window the rollup can serve (rollup retention is 2 years). */
+export const APP_USAGE_MAX_WINDOW_DAYS = 800;
+const APP_USAGE_DAY_MS = 86_400_000;
+
+function appUsageDateToDayIndex(value: string): number | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const time = Date.UTC(year, month - 1, day);
+  const roundTrip = new Date(time);
+  if (
+    roundTrip.getUTCFullYear() !== year ||
+    roundTrip.getUTCMonth() !== month - 1 ||
+    roundTrip.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return Math.floor(time / APP_USAGE_DAY_MS);
+}
+
+const appUsageCalendarDateSchema = z
+  .string()
+  .refine((value) => appUsageDateToDayIndex(value) !== null, {
+    message: "expected a real calendar date as YYYY-MM-DD",
+  });
+
+/** Echoed window in responses; no cross-field checks so a newer host can never fail an older client. */
+export const appUsageWindowShapeSchema = z.object({
+  from: z.string(),
+  to: z.string(),
+});
+
+/** Inclusive local calendar days in the request time zone. Requests validate the cross-field rules. */
+export const appUsageWindowSchema = z
+  .object({ from: appUsageCalendarDateSchema, to: appUsageCalendarDateSchema })
+  .strict()
+  .refine(
+    ({ from, to }) => (appUsageDateToDayIndex(from) ?? 0) <= (appUsageDateToDayIndex(to) ?? 0),
+    {
+      message: "window.from must not be after window.to",
+    },
+  )
+  .refine(
+    ({ from, to }) =>
+      (appUsageDateToDayIndex(to) ?? 0) - (appUsageDateToDayIndex(from) ?? 0) + 1 <=
+      APP_USAGE_MAX_WINDOW_DAYS,
+    { message: `window must span at most ${APP_USAGE_MAX_WINDOW_DAYS} days` },
+  );
+
+const appUsageFilterValuesSchema = z.array(z.string().max(1024)).max(50);
+export const appUsageFiltersSchema = z
+  .object({
+    modelIds: appUsageFilterValuesSchema.optional(),
+    providerIds: appUsageFilterValuesSchema.optional(),
+    querySources: appUsageFilterValuesSchema.optional(),
+    workspaceKeys: appUsageFilterValuesSchema.optional(),
+  })
+  .strict();
+
+/**
+ * Optional request fields shared by the legacy and v4 usage-stats methods. Additive on purpose:
+ * `range` keeps its three values, and a request without these fields behaves exactly as before.
+ * With `window`, the bounds come from the window and `range` is only echoed back.
+ */
+export const appUsageRequestExtrasShape = {
+  window: appUsageWindowSchema.optional(),
+  compare: z.boolean().optional(),
+  filters: appUsageFiltersSchema.optional(),
+} as const;
+
 export const appUsageFavoriteModelSchema = z.object({
   modelId: z.string().nullable(),
   totalTokens: z.number(),
@@ -254,6 +324,13 @@ export const appUsageToolUsageSchema = z.object({
   avgDurationMs: z.number().nullable(),
 });
 
+/** Previous period of equal length, aligned day by day with the main series. */
+export const appUsageComparisonSchema = z.object({
+  window: appUsageWindowShapeSchema,
+  summary: appUsageSummarySchema,
+  dailyTokens: z.array(z.number()),
+});
+
 export const appUsageSnapshotSchema = z.object({
   range: z.enum(APP_USAGE_RANGES),
   generatedAt: z.number(),
@@ -264,6 +341,9 @@ export const appUsageSnapshotSchema = z.object({
   dailyModelUsage: z.array(appUsageDailyModelUsageSchema),
   models: z.array(appUsageModelUsageSchema),
   tools: z.array(appUsageToolUsageSchema),
+  /** Echo of the requested custom window; absent for preset ranges and from older hosts. */
+  window: appUsageWindowShapeSchema.optional(),
+  previous: appUsageComparisonSchema.optional(),
 });
 
 export type AppUsageSummary = z.infer<typeof appUsageSummarySchema>;
@@ -277,9 +357,18 @@ export type AppUsageToolUsage = z.infer<typeof appUsageToolUsageSchema>;
 export type AppUsageFavoriteModel = z.infer<typeof appUsageFavoriteModelSchema>;
 export type AppUsageSnapshot = z.infer<typeof appUsageSnapshotSchema>;
 
+export type AppUsageWindow = z.infer<typeof appUsageWindowSchema>;
+export type AppUsageFilters = z.infer<typeof appUsageFiltersSchema>;
+export type AppUsageComparison = z.infer<typeof appUsageComparisonSchema>;
+
 export interface AppUsageRequest {
   range: AppUsageRange;
   timeZone?: string;
+  /** Custom local-day window; when set, `range` is only echoed. Omit for the legacy preset behavior. */
+  window?: AppUsageWindow;
+  /** Also return the previous period of equal length. Ignored for the all-time range. */
+  compare?: boolean;
+  filters?: AppUsageFilters;
 }
 
 export interface CodingPlanUsageSnapshot {

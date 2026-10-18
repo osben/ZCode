@@ -118,7 +118,7 @@ import {
   type ZCodeProtocolToolInputTransmissionState,
 } from "./server-types.js";
 import { createWorkspaceZCodeApp, ensureSessionModelAvailable } from "./workspace-model-runtime.js";
-import { buildAppUsageSnapshot, resolveTzOffsetMs } from "./usage-stats-builder.js";
+import { runUsageStats } from "./usage-stats-run.js";
 import { createProtocolInteractionBroker } from "./interaction-broker.js";
 import { createProtocolAutomationPort } from "./automation-port.js";
 import { createProtocolOffPeakPort } from "./offpeak-port.js";
@@ -1834,62 +1834,13 @@ export async function listSessionSubagents(
   };
 }
 
-const APP_USAGE_RANGE_DAYS: Record<string, number> = { "7d": 7, "30d": 30 };
-
 export async function getUsageStats(context: ZCodeProtocolAgentServerContext, rawParams: unknown) {
   const params = parseParams(zcodeUsageStatsParamsSchema, rawParams ?? {});
-  const timeZone = params.timeZone ?? "UTC";
-  const until = Date.now();
-  const tzOffsetMs = resolveTzOffsetMs(timeZone, until);
-  const rangeDays = APP_USAGE_RANGE_DAYS[params.range] ?? 30;
-  const since = params.range === "all" ? 0 : until - rangeDays * 86_400_000;
-  const buildOptions = {
-    range: params.range,
-    timeZone,
-    tzOffsetMs,
-    generatedAt: until,
-    since,
-    until,
-  };
-
   // SessionStorePort and UsageStorePort are separate interfaces, but the actual store implements
   // both. Use the runtime narrowing pattern from core/usage-observability to access the read-only
   // aggregate method.
   const usageStore = context.deps.sessionStore as Partial<UsageStorePort> | undefined;
-  if (!usageStore?.queryAppUsage) {
-    // No usage store (should not happen): return an empty snapshot instead of throwing so the UI can
-    // show its empty state.
-    return buildAppUsageSnapshot(
-      {
-        totals: {
-          totalTokens: 0,
-          inputTokens: 0,
-          outputTokens: 0,
-          reasoningTokens: 0,
-          cacheCreationTokens: 0,
-          cacheReadTokens: 0,
-          modelRequestCount: 0,
-          modelErrorCount: 0,
-          avgTimeToFirstTokenMs: null,
-        },
-        turnTotals: {
-          totalSessions: 0,
-          totalTurns: 0,
-          avgTurnDurationMs: null,
-          longestSessionMs: 0,
-        },
-        toolTotals: { toolCallCount: 0, toolErrorCount: 0 },
-        models: [],
-        tools: [],
-        days: [],
-        dayModels: [],
-      },
-      buildOptions,
-    );
-  }
-
-  const result = await usageStore.queryAppUsage({ since, until, tzOffsetMs });
-  return buildAppUsageSnapshot(result, buildOptions);
+  return runUsageStats(usageStore, params, Date.now());
 }
 
 export async function readSession(context: ZCodeProtocolAgentServerContext, rawParams: unknown) {

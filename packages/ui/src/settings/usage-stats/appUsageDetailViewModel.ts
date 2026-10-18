@@ -40,16 +40,9 @@ export interface AppUsageDetailValues {
   modelErrorRate: number;
 }
 
-/** Details only make sense when the range has model or tool activity; otherwise the empty states already explain it. */
-export function resolveAppUsageDetailValues(
-  snapshot: AppUsageSnapshot,
-): AppUsageDetailValues | null {
-  const { summary } = snapshot;
-  const hasActivity =
-    summary.totalTokens > 0 || summary.totalTurns > 0 || summary.toolCallCount > 0;
-  if (!hasActivity) {
-    return null;
-  }
+export function extractAppUsageDetailValues(
+  summary: AppUsageSnapshot["summary"],
+): AppUsageDetailValues {
   return {
     inputTokens: summary.inputTokens,
     outputTokens: summary.outputTokens,
@@ -62,6 +55,16 @@ export function resolveAppUsageDetailValues(
     toolErrorRate: summary.toolErrorRate,
     modelErrorRate: summary.modelErrorRate,
   };
+}
+
+/** Details only make sense when the range has model or tool activity; otherwise the empty states already explain it. */
+export function resolveAppUsageDetailValues(
+  snapshot: AppUsageSnapshot,
+): AppUsageDetailValues | null {
+  const { summary } = snapshot;
+  const hasActivity =
+    summary.totalTokens > 0 || summary.totalTurns > 0 || summary.toolCallCount > 0;
+  return hasActivity ? extractAppUsageDetailValues(summary) : null;
 }
 
 export function resolveVisibleAppUsageTools(

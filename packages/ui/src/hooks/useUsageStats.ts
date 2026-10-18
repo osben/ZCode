@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AppUsageRange,
   AppUsageSnapshot,
+  AppUsageWindow,
   CodingPlanUsageRange,
   CodingPlanUsageSnapshot,
   UsageStatsRange,
@@ -188,7 +189,14 @@ export function useUsageStats(
   };
 }
 
-export function useAppUsageStats(range: AppUsageRange) {
+/** Request fields for App Usage; a bare range keeps the legacy preset behavior. */
+export interface AppUsageStatsQuery {
+  range: AppUsageRange;
+  window?: AppUsageWindow;
+  compare?: boolean;
+}
+
+export function useAppUsageStats(query: AppUsageRange | AppUsageStatsQuery) {
   const { usageStatsService } = useServices();
   const [state, setState] = useState<AppUsageStatsState>({
     snapshot: null,
@@ -196,11 +204,15 @@ export function useAppUsageStats(range: AppUsageRange) {
     error: null,
   });
   const requestVersionRef = useRef(0);
+  // Callers pass fresh objects every render; key the request by value so only real changes refetch.
+  const queryKey = typeof query === "string" ? query : JSON.stringify(query);
 
   const refresh = useCallback(async () => {
     const requestVersion = requestVersionRef.current + 1;
     requestVersionRef.current = requestVersion;
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const request: AppUsageStatsQuery =
+      typeof query === "string" ? { range: query } : (JSON.parse(queryKey) as AppUsageStatsQuery);
     setState((current) => ({
       snapshot: current.snapshot,
       loading: true,
@@ -208,7 +220,7 @@ export function useAppUsageStats(range: AppUsageRange) {
     }));
     try {
       const snapshot = await usageStatsService.getAppUsageSnapshot({
-        range,
+        ...request,
         timeZone,
       });
       if (requestVersionRef.current !== requestVersion) {
@@ -221,7 +233,8 @@ export function useAppUsageStats(range: AppUsageRange) {
       }
       const message = getErrorMessage(error);
       logger.warn("[useAppUsageStats] 读取本地使用统计失败", {
-        range,
+        range: request.range,
+        window: request.window,
         timeZone,
         error: message,
       });
@@ -231,7 +244,8 @@ export function useAppUsageStats(range: AppUsageRange) {
         error: message,
       }));
     }
-  }, [range, usageStatsService]);
+    // `query` is intentionally omitted: `queryKey` is its by-value identity.
+  }, [queryKey, usageStatsService]);
 
   useEffect(() => {
     void refresh();

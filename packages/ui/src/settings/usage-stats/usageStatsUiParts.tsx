@@ -1,5 +1,6 @@
 import type { AppUsageRange } from "@zcode/shared";
 import { Flame } from "lucide-react";
+import type { ReactNode } from "react";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { formatCompactTokenNumber } from "@/lib/tokenNumberFormat.js";
@@ -96,6 +97,7 @@ export function UsageMetricCard({
   helper,
   helperPlacement = "below",
   valueSize = "xl",
+  trailing,
 }: {
   icon: typeof Flame;
   label: string;
@@ -103,6 +105,8 @@ export function UsageMetricCard({
   helper?: string;
   helperPlacement?: "below" | "inline";
   valueSize?: "sm" | "base" | "lg" | "xl";
+  /** Small inline note after the value, e.g. a comparison delta. */
+  trailing?: ReactNode;
 }) {
   const valueNode = (
     <div
@@ -131,6 +135,11 @@ export function UsageMetricCard({
         <div className="mt-2 flex min-w-0 items-baseline gap-2">
           {valueNode}
           <div className="min-w-0 truncate text-ui-base text-foreground-subtle">{helper}</div>
+        </div>
+      ) : trailing ? (
+        <div className="mt-2 flex min-w-0 items-baseline gap-2">
+          <div className="min-w-0 flex-1 truncate">{valueNode}</div>
+          {trailing}
         </div>
       ) : (
         <div className="mt-2">{valueNode}</div>

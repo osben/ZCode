@@ -39,7 +39,11 @@ import { executionOutputPreviewSchema } from "../execution-output-preview.js";
 import { completeModelPropertiesDataSchema } from "../model-config.js";
 import { modelExecutionSchema } from "../model-execution.js";
 import { modelSelectionSchema } from "../model-selection.js";
-import { APP_USAGE_RANGES, appUsageSnapshotSchema } from "../usage-stats.js";
+import {
+  APP_USAGE_RANGES,
+  appUsageRequestExtrasShape,
+  appUsageSnapshotSchema,
+} from "../usage-stats.js";
 import { DYNAMIC_WORKFLOW_MODES } from "../dynamic-workflow-feature.js";
 import { errorAttributionSchema } from "../zcode-protocol-v4/snapshot.js";
 // Shared compact read-only response schema for background details; it carries no command or timing metadata.
@@ -1995,6 +1999,7 @@ export const zcodeUsageStatsParamsSchema = z
   .object({
     range: z.enum(APP_USAGE_RANGES),
     timeZone: z.string().optional(),
+    ...appUsageRequestExtrasShape,
   })
   .strict();
 export const zcodeUsageStatsResultSchema = appUsageSnapshotSchema;

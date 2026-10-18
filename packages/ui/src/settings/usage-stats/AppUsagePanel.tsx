@@ -1,19 +1,28 @@
 import { RefreshCcw } from "lucide-react";
-import { Fragment, lazy, useState } from "react";
-import { APP_USAGE_RANGES } from "@zcode/shared";
-import type { AppUsageRange, AppUsageSnapshot } from "@zcode/shared";
+import { Fragment, lazy, useEffect, useMemo, useState } from "react";
+import type { AppUsageSnapshot } from "@zcode/shared";
 import { Button } from "@/components/ui/button.js";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import { useAppUsageStats } from "@/hooks/useUsageStats.js";
+import { type AppUsageStatsQuery, useAppUsageStats } from "@/hooks/useUsageStats.js";
 import { AppUsageDetailMetrics } from "@/settings/usage-stats/AppUsageDetailMetrics.js";
+import { AppUsageRangeControls } from "@/settings/usage-stats/AppUsageRangeControls.js";
 import { AppUsageToolsTable } from "@/settings/usage-stats/AppUsageToolsTable.js";
 import { UsageChartLoadBoundary } from "@/settings/usage-stats/UsageChartLoadBoundary.js";
 import { UsageHeatmap } from "@/settings/usage-stats/UsageHeatmap.js";
 import { UsageStatsErrorNotice } from "@/settings/usage-stats/UsageStatsErrorNotice.js";
 import {
-  USAGE_STATS_TABS_LIST_CLASS,
-  USAGE_STATS_TABS_TRIGGER_CLASS,
+  APP_USAGE_GRANULARITY_MIN_DAYS,
+  type AppUsageGranularity,
+  type AppUsagePreset,
+  bucketDailyModelUsage,
+  bucketNumberSeries,
+  buildAppUsageQuery,
+  formatLocalDate,
+  resolveAutoGranularity,
+  shiftLocalDate,
+  validateCustomRange,
+} from "@/settings/usage-stats/appUsageRangeViewModel.js";
+import {
   UsageEmptyState,
   formatCompactNumber,
   formatSummaryCompactTokenUsage,
@@ -33,22 +42,88 @@ const AppUsageModelUsagePieChart = lazy(() =>
   })),
 );
 
+const DEFAULT_CUSTOM_RANGE_DAYS = 30;
+
 export function AppUsagePanel() {
   const { intl, locale } = useZCodeIntl();
-  const [range, setRange] = useState<AppUsageRange>("7d");
+  const [preset, setPreset] = useState<AppUsagePreset>("7d");
+  const [today, setToday] = useState(() => formatLocalDate(new Date()));
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
+  const [compare, setCompare] = useState(false);
+  const [granularityOverride, setGranularityOverride] = useState<AppUsageGranularity | null>(null);
+
+  const builtQuery = buildAppUsageQuery({ preset, customFrom, customTo, compare, today });
+  const builtQueryKey = JSON.stringify(builtQuery);
+  // An invalid custom range must not blank the page: keep requesting (and showing) the last valid query.
+  const [query, setQuery] = useState<AppUsageStatsQuery>(() => builtQuery ?? { range: "7d" });
+  useEffect(() => {
+    const next = JSON.parse(builtQueryKey) as AppUsageStatsQuery | null;
+    if (next) {
+      setQuery(next);
+    }
+  }, [builtQueryKey]);
+
   const { snapshot: lifetimeSnapshot, refresh: refreshLifetime } = useAppUsageStats("all");
-  const { snapshot, loading, error, refresh } = useAppUsageStats(range);
+  const { snapshot, loading, error, refresh } = useAppUsageStats(query);
+
+  const handlePresetChange = (next: AppUsagePreset) => {
+    if (next === "custom" && !customFrom && !customTo) {
+      setCustomTo(today);
+      setCustomFrom(shiftLocalDate(today, 1 - DEFAULT_CUSTOM_RANGE_DAYS));
+    }
+    setPreset(next);
+  };
+
+  const dayCount = snapshot?.dailyModelUsage.length ?? 0;
+  const granularity = granularityOverride ?? resolveAutoGranularity(dayCount);
+  const chartSnapshot = useMemo(
+    () =>
+      snapshot
+        ? {
+            ...snapshot,
+            dailyModelUsage: bucketDailyModelUsage(snapshot.dailyModelUsage, granularity),
+          }
+        : null,
+    [snapshot, granularity],
+  );
+  const previousDailyTotals = useMemo(
+    () =>
+      snapshot?.previous
+        ? bucketNumberSeries(
+            snapshot.dailyModelUsage.map((day) => day.date),
+            snapshot.previous.dailyTokens,
+            granularity,
+          )
+        : undefined,
+    [snapshot, granularity],
+  );
+
+  const rangeControls = (
+    <AppUsageRangeControls
+      preset={preset}
+      onPresetChange={handlePresetChange}
+      customFrom={customFrom}
+      customTo={customTo}
+      onCustomChange={({ from, to }) => {
+        setCustomFrom(from);
+        setCustomTo(to);
+      }}
+      customValidation={validateCustomRange(customFrom, customTo, today)}
+      today={today}
+      compare={compare}
+      onCompareChange={setCompare}
+      granularity={granularity}
+      onGranularityChange={setGranularityOverride}
+      showGranularity={dayCount >= APP_USAGE_GRANULARITY_MIN_DAYS}
+    />
+  );
 
   if (loading && !snapshot) {
     return (
       <div className="space-y-5">
         <AppUsageLifetimeSummaryStrip snapshot={lifetimeSnapshot} />
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="text-ui-base font-medium text-foreground">
-            {intl.formatMessage({ id: "settings.usage.appUsageRangeTitle" })}
-          </div>
-          <AppUsageRangeTabs range={range} onRangeChange={setRange} />
-        </div>
+        {rangeControls}
         {/* Bugfix: App Usage aggregates only local session history; it cannot reuse the Coding Plan monitor API loading description. */}
         <UsageEmptyState
           title={intl.formatMessage({ id: "settings.usage.loadingTitle" })}
@@ -60,16 +135,11 @@ export function AppUsagePanel() {
     );
   }
 
-  if (!snapshot) {
+  if (!snapshot || !chartSnapshot) {
     return (
       <div className="space-y-5">
         <AppUsageLifetimeSummaryStrip snapshot={lifetimeSnapshot} />
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="text-ui-base font-medium text-foreground">
-            {intl.formatMessage({ id: "settings.usage.appUsageRangeTitle" })}
-          </div>
-          <AppUsageRangeTabs range={range} onRangeChange={setRange} />
-        </div>
+        {rangeControls}
         {error ? <UsageStatsErrorNotice error={error} /> : null}
         <UsageEmptyState
           title={intl.formatMessage({ id: "settings.usage.emptyTitle" })}
@@ -87,12 +157,7 @@ export function AppUsagePanel() {
       {lifetimeSnapshot?.heatmap.weeks.length ? (
         <UsageHeatmap locale={locale} intl={intl} weeks={lifetimeSnapshot.heatmap.weeks} />
       ) : null}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="text-ui-base font-medium text-foreground">
-          {intl.formatMessage({ id: "settings.usage.appUsageRangeTitle" })}
-        </div>
-        <AppUsageRangeTabs range={range} onRangeChange={setRange} />
-      </div>
+      {rangeControls}
       {error ? <UsageStatsErrorNotice error={error} /> : null}
 
       <UsageChartLoadBoundary
@@ -102,7 +167,10 @@ export function AppUsagePanel() {
           id: "settings.usage.appUsageLoadingDescription",
         })}
       >
-        <AppUsageDailyModelTrendChart snapshot={snapshot} />
+        <AppUsageDailyModelTrendChart
+          snapshot={chartSnapshot}
+          previousDailyTotals={previousDailyTotals}
+        />
       </UsageChartLoadBoundary>
       <AppUsageDetailMetrics snapshot={snapshot} />
       <UsageChartLoadBoundary
@@ -123,6 +191,8 @@ export function AppUsagePanel() {
           size="sm"
           className="h-8 rounded-md bg-background"
           onClick={() => {
+            // Roll the "today" anchor forward if the window stayed open past midnight.
+            setToday(formatLocalDate(new Date()));
             void Promise.all([refresh(), refreshLifetime()]);
           }}
         >
@@ -207,29 +277,4 @@ export function formatAppUsageDuration(
     parts.push(`${minutes} ${intl.formatMessage({ id: "settings.usage.duration.minute" })}`);
   }
   return parts.join(" ");
-}
-
-function AppUsageRangeTabs({
-  range,
-  onRangeChange,
-}: {
-  range: AppUsageRange;
-  onRangeChange: (range: AppUsageRange) => void;
-}) {
-  const { intl } = useZCodeIntl();
-  return (
-    <Tabs
-      value={range}
-      onValueChange={(value) => onRangeChange(value as AppUsageRange)}
-      className="shrink-0"
-    >
-      <TabsList className={USAGE_STATS_TABS_LIST_CLASS}>
-        {APP_USAGE_RANGES.filter((option) => option !== "all").map((option) => (
-          <TabsTrigger key={option} value={option} className={USAGE_STATS_TABS_TRIGGER_CLASS}>
-            {intl.formatMessage({ id: `settings.usage.range.${option}` })}
-          </TabsTrigger>
-        ))}
-      </TabsList>
-    </Tabs>
-  );
 }

@@ -4080,9 +4080,17 @@ export function createZCodeAgentService(
       }
       // usage/stats → v4/usage/stats (additive query; the CLI usage store is the source of truth,
       // and the payload is unchanged. Old-term consumption is zero; the old CLI case remains until the old term is removed.)
+      // Optional fields are attached only when set: an older host validates this payload with a
+      // strict schema, so a default request must stay byte-identical to the pre-window shape.
       return active.client.request(
         V4_METHODS.usageStats,
-        { range: params.range, timeZone: params.timeZone },
+        {
+          range: params.range,
+          timeZone: params.timeZone,
+          ...(params.window ? { window: params.window } : {}),
+          ...(params.compare ? { compare: true } : {}),
+          ...(params.filters ? { filters: params.filters } : {}),
+        },
         v4UsageStatsResultSchema,
       );
     },

@@ -6,7 +6,13 @@ import type {
 /* eslint-disable max-lines -- The ZCode Agent service interface declares protocol/session/workspace methods together; splitting it would increase service descriptor migration costs. */
 import type { Event, IDisposable } from "@zcode/rpc";
 import { ServiceChannels } from "@zcode/shared";
-import type { AppUsageRange, AppUsageSnapshot, ZCodeTaskTokenUsageResult } from "@zcode/shared";
+import type {
+  AppUsageFilters,
+  AppUsageRange,
+  AppUsageSnapshot,
+  AppUsageWindow,
+  ZCodeTaskTokenUsageResult,
+} from "@zcode/shared";
 import type { DynamicWorkflowMode } from "@zcode/shared";
 import type { ZCodeAutomation, ZCodeAutomationRun } from "@zcode/shared";
 import type {
@@ -256,6 +262,9 @@ export interface ZCodeAgentListSessionSubagentsParams extends ZCodeAgentSessionT
 export interface ZCodeAgentAppUsageParams {
   range: AppUsageRange;
   timeZone?: string;
+  window?: AppUsageWindow;
+  compare?: boolean;
+  filters?: AppUsageFilters;
 }
 
 export interface ZCodeAgentTaskTokenUsageParams extends ZCodeAgentSessionTarget {}

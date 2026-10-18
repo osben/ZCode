@@ -456,6 +456,24 @@ describe("createUsageStatsService", () => {
     expect(snapshot.summary.totalTokens).toBe(104);
   });
 
+  it("App Usage forwards the additive window, compare, and filters fields unchanged", async () => {
+    const getAppUsageStats = vi.fn(async () => createAppUsageSnapshot());
+    const service = createUsageStatsServiceForTest({
+      apiClient: { request: vi.fn() },
+      providers: [],
+      getAppUsageStats,
+    });
+    const extras = {
+      window: { from: "2026-07-01", to: "2026-07-10" },
+      compare: true,
+      filters: { workspaceKeys: ["/work/alpha"] },
+    };
+
+    await service.getAppUsageSnapshot({ range: "all", timeZone: "UTC", ...extras });
+
+    expect(getAppUsageStats).toHaveBeenCalledWith({ range: "all", timeZone: "UTC", ...extras });
+  });
+
   it("App Usage 不会因为存在 Coding Plan key 而切到 monitor 接口", async () => {
     const getAppUsageStats = vi.fn(async () => createAppUsageSnapshot());
     const apiClient: ApiClient = {

@@ -34,7 +34,7 @@ Coding Plan:                         [ today / 7d / 30d ]
   // independent range control, reads range=all, first row is Sunday, bottom row shows month labels.
   // Daily: one cell is one day. Weekly: one column is that week's total. Cumulative: one column is total through that week.
 
-[ Time range: 7d / 30d ]
+[ Time range: 7d | 30d | 90d | 1y | All | Custom ]   [ Compare ] [ Day | Week | Month ]
 
 [ Daily Token Trend Chart ]
 

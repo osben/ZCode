@@ -28,6 +28,34 @@ describe("zcode protocol v4 usage query", () => {
     expect(v4UsageStatsParamsSchema.safeParse({ range: "1y" }).success).toBe(false);
   });
 
+  it("accepts the additive window, compare, and filters fields and validates the window", () => {
+    const parsed = v4UsageStatsParamsSchema.parse({
+      range: "all",
+      timeZone: "Asia/Kolkata",
+      window: { from: "2026-07-01", to: "2026-09-30" },
+      compare: true,
+      filters: { modelIds: ["glm-5.3"], workspaceKeys: ["/work/alpha", ""] },
+    });
+    expect(parsed.window).toEqual({ from: "2026-07-01", to: "2026-09-30" });
+    expect(parsed.compare).toBe(true);
+
+    const invalidWindows = [
+      { from: "2026-09-30", to: "2026-07-01" },
+      { from: "2026-02-30", to: "2026-03-01" },
+      { from: "2026-7-1", to: "2026-07-02" },
+      { from: "2020-01-01", to: "2026-01-01" },
+      { from: "2026-07-01", to: "2026-07-02", extra: true },
+    ];
+    for (const window of invalidWindows) {
+      expect(v4UsageStatsParamsSchema.safeParse({ range: "all", window }).success).toBe(false);
+    }
+    expect(
+      v4UsageStatsParamsSchema.safeParse({ range: "all", filters: { unknown: ["x"] } }).success,
+    ).toBe(false);
+    // Legacy shapes are unchanged: no extras means no extra keys in the parsed params.
+    expect(v4UsageStatsParamsSchema.parse({ range: "7d" })).toEqual({ range: "7d" });
+  });
+
   it("validates conversation usage params and result round-trip", () => {
     expect(v4ConversationUsageParamsSchema.parse({ sessionId: "sess_1" })).toEqual({
       sessionId: "sess_1",
