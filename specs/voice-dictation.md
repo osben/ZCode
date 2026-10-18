@@ -101,6 +101,13 @@ This behavior applies to Desktop voice dictation. Web continues to show the exis
 
 - During recording, show a compact microphone-level meter in the composer voice control. Reuse the recorder's existing per-buffer peak level; do not draw or retain a waveform of the raw audio.
 - Keep the microphone stop button anchored in the toolbar while recording. Show the level meter and any live transcript in a floating panel to its left; the panel overlays earlier toolbar actions and must not change their layout positions.
+- **Floating panel interaction rules.** Hit testing matches what is visible:
+  1. The panel body is a hit target (`pointer-events-auto`). It absorbs clicks and hover that land on it, so covered toolbar actions (model picker, attachments) are not clicked or hovered through the panel. The trade-off is that clicks on the part of the panel that overlaps the editor are absorbed too; the panel is anchored to the button and sized compactly to limit this.
+  2. The panel's Cancel button stays clickable (VD-PNL-02).
+  3. The panel never takes focus or changes the editor selection. A mousedown on the panel body calls `preventDefault`, so focus stays in the composer editor; the dictation shortcut is scoped to the composer and would otherwise stop responding. Its Cancel click still fires.
+  4. The panel sits strictly to the left of the stop button and never covers the stop button or the send button.
+  5. Dialogs, popovers, and menus render in portals above the composer (`z-50`/`z-[60]`), so the panel never covers them; they stay above the panel.
+  6. The panel is passive status UI only: no tab stop other than the Cancel button, no `autoFocus`, no `aria-modal`.
 - Keep recording, transcribing, and idle visually distinct. The level meter is active only while recording and returns to zero on stop or cancel.
 - For a streaming-capable model, show committed text plus a visually distinct tentative suffix as a preview. The preview is not part of the editable/submittable draft until finalization succeeds.
 - On successful stop, replace the preview with the final transcript exactly once using the existing composer insertion behavior. On cancellation or failure, clear the preview and preserve the user's existing draft.
@@ -155,6 +162,9 @@ sequenceDiagram
 | VD-LIVE-06 | Edit the composer while a preview is visible            | User edits are preserved; final dictation text is inserted once according to the existing append behavior.                  |
 | VD-LIVE-07 | Start a second transcription while one stream is active | The service serializes or rejects it explicitly; no concurrent model use or silent audio loss occurs.                       |
 | VD-LIVE-08 | Start recording while composer toolbar is visible       | Stop button stays in its original position; level/preview panel opens to its left without shifting toolbar actions.         |
+| VD-PNL-01  | Hover or click the visible panel body while recording   | The panel receives the pointer; covered toolbar actions (model picker, attachments) get no click or hover.                  |
+| VD-PNL-02  | Click Cancel in the panel while recording               | Cancel fires (same as VD-OUT-03); the editor keeps focus and the draft is unchanged.                                        |
+| VD-PNL-03  | Mousedown on the panel body while the editor has focus  | Editor focus and caret are kept (default prevented); the dictation shortcut still stops recording afterwards.               |
 
 ### E2E validation handoff
 
