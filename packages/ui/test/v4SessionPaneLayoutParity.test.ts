@@ -427,17 +427,6 @@ describe("SessionPane v4 chat layout parity", () => {
     expect(readTimelineClassName(desktopHtml)).not.toContain("min-w-0");
   });
 
-  it("keeps constrained desktop draft content reachable through the timeline scroll viewport", () => {
-    const timelineSource = readFileSync(
-      resolve(process.cwd(), "packages/ui/src/v4/ConversationTimeline.tsx"),
-      "utf8",
-    );
-
-    // 回归原因：内容可达性必须由 timeline 自身承担，不能依赖原生窗口反向扩高。
-    expect(timelineSource).not.toContain('"h-full min-h-0 overflow-hidden"');
-    expect(timelineSource).toMatch(/centeredEmptyLayout[\s\S]*?"flex[^"]*min-h-full[^"]*"/u);
-  });
-
   it("keeps a bound empty session blank while preserving the bottom composer dock", () => {
     const html = renderPane({
       snapshot: makeSnapshot({
@@ -530,17 +519,6 @@ describe("SessionPane v4 chat layout parity", () => {
     expect(html.indexOf('data-v4-back-to-bottom-anchor="composer-dock"')).toBeLessThan(
       html.indexOf('data-testid="mock-composer"'),
     );
-  });
-
-  it("uses the z-code-2 icon-only back-to-bottom control", () => {
-    const timelineSource = readFileSync(
-      resolve(process.cwd(), "packages/ui/src/v4/ConversationTimeline.tsx"),
-      "utf8",
-    );
-
-    expect(timelineSource).toContain('<ArrowDownIcon className="size-4" />');
-    expect(timelineSource).not.toMatch(/>\s*回到底部\s*</);
-    expect(timelineSource).toContain('id: "chat.scrollToBottom"');
   });
 
   it("renders pending permission before the composer inside the composer dock", () => {

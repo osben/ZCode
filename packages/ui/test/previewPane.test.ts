@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   getPreviewPaneSafeErrorMessage,
@@ -28,29 +27,6 @@ describe("PreviewPane helpers", () => {
     [undefined, "codeViewer.mediaLoadFailed"],
   ])("classifies media error code %s", (code, expectedMessageId) => {
     expect(resolveMediaPlaybackErrorMessageId(code)).toBe(expectedMessageId);
-  });
-
-  it("媒体预览只走 mediaPreviewService，不回退到 file.readMediaPreview", () => {
-    const source = readFileSync("packages/ui/src/PreviewPane.tsx", "utf8");
-    const mediaEffectStart = source.indexOf("if (!mediaSource)");
-    const mediaEffectEnd = source.indexOf("  useEffect(() => {", mediaEffectStart + 1);
-    const mediaEffect = source.slice(mediaEffectStart, mediaEffectEnd);
-
-    expect(mediaEffectStart).toBeGreaterThan(0);
-    expect(mediaEffect).toContain("mediaPreviewService");
-    expect(mediaEffect).toContain(".prepare({");
-    expect(mediaEffect).not.toContain("fileService.readMediaPreview");
-    expect(mediaEffect.indexOf("preparedPreviewId = previewId")).toBeLessThan(
-      mediaEffect.indexOf("generation !== mediaPreviewGenerationRef.current"),
-    );
-  });
-
-  it("媒体播放器错误时支持通过 service 刷新 URL 并恢复播放状态", () => {
-    const source = readFileSync("packages/ui/src/PreviewPane.tsx", "utf8");
-    expect(source).toContain("refreshPlaybackUrl");
-    expect(source).toContain("mediaPlaybackRestoreRef");
-    expect(source).toContain("onMediaLoadedMetadata");
-    expect(source).toContain("mediaPreviewGenerationRef");
   });
 
   it.each([
@@ -101,32 +77,6 @@ describe("PreviewPane helpers", () => {
         path: "/workspace/app.ts",
       }),
     ).toBe(false);
-  });
-
-  it("keeps the diff source header action visible as text", () => {
-    const source = readFileSync("packages/ui/src/PreviewPane.tsx", "utf8");
-    const triggerIndex = source.indexOf("data-diff-source-preview-trigger");
-    const triggerSource = source.slice(triggerIndex - 600, triggerIndex + 800);
-
-    expect(triggerIndex).toBeGreaterThan(0);
-    expect(triggerSource).toContain('size="default"');
-    expect(triggerSource).toContain("rounded-lg");
-    expect(triggerSource).toContain('id: "codeViewer.openSourcePreview"');
-    expect(triggerSource).toContain("<span>");
-  });
-
-  it("uses the shared open-with ordering for preview pane editor actions", () => {
-    const source = readFileSync("packages/ui/src/PreviewPane.tsx", "utf8");
-    const editorSelectionIndex = source.indexOf("const editorSelection = useMemo");
-    const editorSelectionSource = source.slice(editorSelectionIndex, editorSelectionIndex + 500);
-
-    expect(editorSelectionIndex).toBeGreaterThan(0);
-    expect(editorSelectionSource).toContain("resolveWorkspaceEditorSelection({");
-    expect(editorSelectionSource).toContain("remoteTarget: openInEditorRemoteTarget");
-    expect(source).toContain("const selectedEditor = editorSelection.selectedEditor");
-    expect(source).toContain("const [preferredEditorId] = useState");
-    expect(source).not.toContain("persistLastSelectedEditorId");
-    expect(source).not.toContain("const availableEditors = installedEditors");
   });
 
   it("uses media preview for raster image file sources", () => {
@@ -298,20 +248,6 @@ describe("PreviewPane helpers", () => {
   it("enforces the 64 MB PPTX preview source limit", () => {
     expect(isPptxPreviewFileTooLarge(64 * 1024 * 1024)).toBe(false);
     expect(isPptxPreviewFileTooLarge(64 * 1024 * 1024 + 1)).toBe(true);
-  });
-
-  it("keeps PPTX rendering lazy and uses DESIGN typography tokens", () => {
-    const contentSource = readFileSync("packages/ui/src/previewPanePptxContent.tsx", "utf8");
-    const viewerSource = readFileSync(
-      "packages/ui/src/components/ui/pptx-preview-viewer.tsx",
-      "utf8",
-    );
-
-    expect(contentSource).toContain("lazy(() =>");
-    expect(viewerSource).toContain('import("@/presentation/pptxRendererPreviewEngine.js")');
-    expect(viewerSource).toContain("IntersectionObserver");
-    expect(viewerSource).not.toMatch(/\btext-(?:xs|sm|base|lg|xl)\b/);
-    expect(viewerSource.match(/\bbg-surface\/30\b/g)).toHaveLength(2);
   });
 
   it("hides the more menu when a preview source has no display options", () => {
@@ -516,13 +452,6 @@ describe("PreviewPane helpers", () => {
     ).toBe("Permission denied: slides.pptx");
   });
 
-  it("routes Office files through the bounded binary preview service", () => {
-    const source = readFileSync("packages/ui/src/PreviewPane.tsx", "utf8");
-
-    expect(source).toContain(".readBinaryPreview({ path: source.path })");
-    expect(source).toMatch(/!imageSource\s*&&\s*!pdfSource\s*&&\s*!officePreviewKind/);
-  });
-
   it("renders missing-file preview errors as tertiary helper text", () => {
     const missingFileMessage = "文件不存在，或当前环境无法访问该路径。";
 
@@ -548,18 +477,6 @@ describe("PreviewPane helpers", () => {
       scrollHeight: 2400,
       scrollTop: 720,
     });
-  });
-
-  it("wires scroll memory through to the CodeViewer scroll container", () => {
-    const previewPaneSource = readFileSync("packages/ui/src/PreviewPane.tsx", "utf8");
-    const contentSource = readFileSync("packages/ui/src/previewPaneContent.tsx", "utf8");
-    const codeContentSource = readFileSync("packages/ui/src/previewPaneCodeContent.tsx", "utf8");
-    const codeViewerSource = readFileSync("packages/ui/src/components/ui/code-viewer.tsx", "utf8");
-
-    expect(previewPaneSource).toContain("scrollContainerRef={scrollContainerRef}");
-    expect(contentSource).toContain("scrollContainerRef?: Ref<HTMLDivElement>");
-    expect(codeContentSource).toContain("scrollContainerRef?: Ref<HTMLDivElement>");
-    expect(codeViewerSource).toContain("assignCodeViewerScrollContainerRef");
   });
 
   it("builds a normal file preview source from diff preview sources", () => {

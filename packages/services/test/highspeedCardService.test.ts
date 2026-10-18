@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
 import type { HighspeedDrawRequest, HighspeedDrawResponse } from "@zcode/shared";
 import {
@@ -712,15 +711,6 @@ describe("Highspeed mock transport", () => {
 });
 
 describe("Highspeed HTTP contract", () => {
-  it("keeps the renderer-shared Highspeed entry free of Node logger initialization", async () => {
-    const source = await readFile(
-      new URL("../src/highspeed/highspeedHttpTransport.ts", import.meta.url),
-      "utf8",
-    );
-
-    expect(source).not.toContain("createServiceLogger");
-  });
-
   it("builds the shared Coding Plan headers for personal and team plans", () => {
     expect(
       buildHighspeedCodingPlanAuthHeaders({

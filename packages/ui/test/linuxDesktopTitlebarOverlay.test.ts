@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { createElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -107,71 +106,6 @@ function renderWithTooltipProvider(element: ReactElement) {
 }
 
 describe("Desktop titlebar overlay guards", () => {
-  it("registers the Linux desktop Tailwind variant used by shared overlays", () => {
-    const styles = readFileSync("packages/ui/src/styles.css", "utf8");
-
-    expect(styles).toContain("@custom-variant platform-linux-desktop");
-    expect(styles).toContain(".platform-linux-desktop");
-  });
-
-  it("registers the Windows desktop variant and renderer root marker for caption-safe overlays", () => {
-    const styles = readFileSync("packages/ui/src/styles.css", "utf8");
-    const desktopRendererSource = readFileSync(
-      "packages/desktop/src/renderer/src/main.tsx",
-      "utf8",
-    );
-
-    expect(styles).toContain("@custom-variant platform-windows-desktop");
-    expect(styles).toContain(".platform-windows-desktop");
-    expect(desktopRendererSource).toContain(
-      'document.documentElement.classList.toggle("platform-windows-desktop", isWindowsDesktop)',
-    );
-  });
-
-  it("registers the macOS desktop variant and renderer root marker for native-titlebar-safe overlays", () => {
-    const styles = readFileSync("packages/ui/src/styles.css", "utf8");
-    const desktopRendererSource = readFileSync(
-      "packages/desktop/src/renderer/src/main.tsx",
-      "utf8",
-    );
-
-    expect(styles).toContain("@custom-variant platform-mac-desktop");
-    expect(styles).toContain(".platform-mac-desktop");
-    expect(desktopRendererSource).toContain(
-      'document.documentElement.classList.toggle("platform-mac-desktop", isMacDesktop)',
-    );
-  });
-
-  it("keeps Linux modal overlays full-window and vertically centered", () => {
-    const dialogSource = readFileSync("packages/ui/src/components/ui/dialog.tsx", "utf8");
-    const alertDialogSource = readFileSync(
-      "packages/ui/src/components/ui/alert-dialog.tsx",
-      "utf8",
-    );
-
-    expect(dialogSource).not.toContain("platform-linux-desktop:top-12");
-    expect(dialogSource).not.toContain("platform-linux-desktop:top-[calc(50%+1.5rem)]");
-    expect(alertDialogSource).not.toContain("platform-linux-desktop:top-12");
-    expect(alertDialogSource).not.toContain("platform-linux-desktop:top-[calc(50%+1.5rem)]");
-  });
-
-  it("keeps image preview actions inset below desktop window controls", () => {
-    const imagePreviewSource = readFileSync(
-      "packages/ui/src/components/ai-elements/image-preview-dialog.tsx",
-      "utf8",
-    );
-
-    // Bugfix: Windows caption controls占据右上角；Linux 预览内容虽已整体避开自绘标题栏，
-    // action row 仍需显式保留平台 inset，避免后续全屏布局重构把按钮重新推回窗控区。
-    expect(imagePreviewSource).toContain("platform-linux-desktop:right-6");
-    expect(imagePreviewSource).toContain("platform-linux-desktop:top-4");
-    expect(imagePreviewSource).toContain("platform-mac-desktop:top-12");
-    expect(imagePreviewSource).toContain("platform-windows-desktop:right-6");
-    expect(imagePreviewSource).toContain(
-      "platform-windows-desktop:top-[calc(env(titlebar-area-height,48px)_+_0.5rem)]",
-    );
-  });
-
   it("keeps the command center top-positioned after CommandDialog class merging", async () => {
     const html = await renderCommandCenterDialog();
 

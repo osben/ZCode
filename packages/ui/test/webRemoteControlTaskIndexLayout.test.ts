@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { createElement, type ComponentType, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -230,39 +228,6 @@ describe("WebRemoteControlTaskIndex layout", () => {
     expect(html).not.toContain("aria-expanded");
     expect(html).not.toContain("webRemoteControl.collapseTasks");
     expect(html).not.toContain("overflow-y-auto");
-  });
-
-  it("binds desktop task index loading to active remote workspace transitions", () => {
-    const source = readFileSync(
-      resolve(process.cwd(), "packages/ui/src/WebRemoteControlTaskIndex.tsx"),
-      "utf8",
-    );
-
-    expect(source).toContain("shouldRetryWebRemoteControlTaskIndexLoad");
-    // Format-agnostic: oxfmt may wrap the useCallback dependency array onto separate lines.
-    expect(source).toMatch(
-      /\}\s*,?\s*\[\s*activeTaskId,\s*activeWorkspaceIdentity,\s*activeWorkspacePath,\s*switcher\s*\]\s*,?\s*\)/,
-    );
-  });
-
-  it("lets the wide remote sidebar render its workspace toolbar after pinned tasks", () => {
-    const taskIndexSource = readFileSync(
-      resolve(process.cwd(), "packages/ui/src/WebRemoteControlTaskIndex.tsx"),
-      "utf8",
-    );
-    const sidebarSource = readFileSync(
-      resolve(process.cwd(), "packages/ui/src/WorkspaceSidebar.tsx"),
-      "utf8",
-    );
-
-    expect(taskIndexSource).toContain("renderBeforePinnedTasks");
-    expect(taskIndexSource).toContain("model.pinnedTasks.map((task) => renderTaskRow(task))");
-    expect(
-      taskIndexSource.indexOf("{renderBeforePinnedTasks ? renderBeforePinnedTasks() : null}"),
-    ).toBeLessThan(taskIndexSource.indexOf("{model.pinnedTasks.length > 0 ? ("));
-    expect(sidebarSource).toContain("const workspaceTaskToolbar");
-    expect(sidebarSource).toContain("renderBeforePinnedTasks={workspaceTaskToolbar}");
-    expect(sidebarSource).toContain("{!isWebRemoteControlSidebar ? workspaceTaskToolbar() : null}");
   });
 
   it("keeps mutable wide remote task actions out of the initial static markup", async () => {

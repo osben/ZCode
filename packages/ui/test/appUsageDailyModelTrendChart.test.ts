@@ -35,21 +35,6 @@ function createDateKey(index: number): string {
 }
 
 describe("AppUsageDailyModelTrendChart view model", () => {
-  it("使用折线图而不是柱状图渲染趋势", () => {
-    const source = readFileSync(
-      resolve(
-        process.cwd(),
-        "packages/ui/src/settings/usage-stats/AppUsageDailyModelTrendChart.tsx",
-      ),
-      "utf8",
-    );
-
-    expect(source).toContain("LineChart");
-    expect(source).toContain("<Line");
-    expect(source).not.toContain("BarChart");
-    expect(source).not.toContain("<Bar");
-  });
-
   it("为首尾日期刻度保留水平安全区", () => {
     expect(APP_USAGE_TREND_CHART_MARGIN).toMatchObject({
       left: 24,

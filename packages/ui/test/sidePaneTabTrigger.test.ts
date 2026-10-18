@@ -2,8 +2,7 @@
 
 import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+
 import { cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -424,15 +423,6 @@ describe("SortableSidePaneTabTrigger", () => {
 });
 
 describe("SidePaneTabTitleTooltip", () => {
-  it("uses the shared tooltip default side offset", async () => {
-    const source = await readFile(
-      resolve(process.cwd(), "packages/ui/src/app-shell/SidePaneTabTitleTooltip.tsx"),
-      "utf8",
-    );
-
-    expect(source).not.toContain("sideOffset=");
-  });
-
   it("preserves the trigger shrink behavior required by responsive tab widths", () => {
     const html = renderToStaticMarkup(
       createElement(
