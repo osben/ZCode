@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { Check, FolderOpen, Monitor, Plus, RotateCcw, Server, Trash2 } from "lucide-react";
 import {
   TID_SETTINGS_INSTRUCTIONS_RETRY,
+  TID_SETTINGS_OUTPUT_STYLES_DEFAULT_PROMPT,
   TID_SETTINGS_OUTPUT_STYLES_ROW,
   TID_SETTINGS_OUTPUT_STYLES_SECTION,
 } from "@zcode/shared";
@@ -274,7 +275,7 @@ function StyleRow({
               {intl.formatMessage({ id: "settings.outputStyles.builtinTag" })}
             </span>
           ) : null}
-          {style.isOverridden ? (
+          {style.isOverridden && style.id !== "default" ? (
             <span className="rounded-full bg-surface-muted px-2 py-0.5 text-ui-xs text-foreground-subtle">
               {intl.formatMessage({ id: "settings.outputStyles.overriddenTag" })}
             </span>
@@ -286,7 +287,15 @@ function StyleRow({
           ) : null}
         </div>
         <p className="text-ui-sm leading-5 text-foreground-subtle">{style.description}</p>
-        {style.filePath ? (
+        {style.id === "default" ? (
+          <div
+            data-testid={TID_SETTINGS_OUTPUT_STYLES_DEFAULT_PROMPT}
+            className="rounded-md border border-border bg-surface-muted px-3 py-2 text-ui-sm leading-5 text-foreground-subtle"
+          >
+            {intl.formatMessage({ id: "settings.outputStyles.defaultPrompt" })}
+          </div>
+        ) : null}
+        {style.filePath && style.id !== "default" ? (
           <div className="flex items-center gap-1.5 font-mono text-ui-xs break-all text-foreground-subtlest">
             <HostIcon className="size-3 shrink-0" aria-hidden="true" />
             {style.filePath}
@@ -311,7 +320,7 @@ function StyleRow({
             })}
           </Button>
         ) : null}
-        {style.isBuiltIn && style.isOverridden ? (
+        {style.id !== "default" && style.isBuiltIn && style.isOverridden ? (
           <Button
             variant="ghost"
             size="sm"

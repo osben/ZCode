@@ -8,6 +8,7 @@ import {
 import { runMemoryAgentLoop } from "../../memory/memory-agent-loop.js";
 import { scanMemoryManifest } from "../../memory/recall/index.js";
 import type { AgentRuntimeInternal } from "../internal.js";
+import { resolveMainAgentSystemPromptOverrides } from "../methods/context.js";
 import {
   buildProjectMemoryAgentProviderMessages,
   captureProjectMemoryAgentContext,
@@ -138,6 +139,7 @@ async function executeProjectMemoryExtraction(
       const prompt = buildMemoryExtractionPrompt({
         manifest,
         messageCount: input.messageCount,
+        override: resolveMainAgentSystemPromptOverrides(runtime.config)?.["memory-extraction"],
       });
       const providerMessages = buildProjectMemoryAgentProviderMessages(
         runtime,
