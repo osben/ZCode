@@ -200,6 +200,9 @@ export class LspService {
       deadline - this.now(),
       request.signal,
     );
+    // An aborted request never delivers its body (the turn loop throws), so leave the pending edits
+    // untouched; consuming them here would drop their diagnostics for every later request too.
+    if (request.signal?.aborted) return {};
 
     const resolved: ResolvedEdit[] = [];
     let pendingCount = 0;

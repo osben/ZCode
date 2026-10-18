@@ -391,7 +391,28 @@ describe("waiting for fresh diagnostics (spec §6, fake timers)", () => {
     const controller = new AbortController();
     const waiting = harness.service.collectEditDiagnostics({ signal: controller.signal });
     controller.abort();
-    expect((await waiting).attachmentBody).toBe("Diagnostics pending for 1 files");
+    expect((await waiting).attachmentBody).toBeUndefined();
+  });
+
+  // Regression: an aborted collection used to consume the pending edit even though its body was discarded.
+  it("keeps a pending edit for the next request when the collecting request was aborted", async () => {
+    vi.useFakeTimers();
+    harness.port.acquire(harness.server, LSP_KEY);
+    harness.service.onFileMutated(
+      mutation({ kind: "created", content: DOC, changedRange: { startLine: 1, endLine: 3 } }),
+    );
+    await settleAsync();
+    const controller = new AbortController();
+    const waiting = harness.service.collectEditDiagnostics({ signal: controller.signal });
+    controller.abort();
+    await waiting;
+
+    harness.port.connection.publish(FILE_URI, [rawDiagnostic({ line: 0, message: "late" })], 1);
+    await flushMicrotasks();
+    const result = await harness.service.collectEditDiagnostics({ waitMs: 0 });
+    expect(result.attachmentBody).toBe(
+      "Found 1 new diagnostic issues in 1 files\nsrc/a.ts:1:1 error late",
+    );
   });
 
   it("returns pending for the diagnostics operation after the query wait, never ok without a fresh result", async () => {
