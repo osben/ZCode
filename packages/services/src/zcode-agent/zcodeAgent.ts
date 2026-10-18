@@ -58,6 +58,8 @@ import type {
   ZCodePluginsDescribeResult,
   ZCodePluginsValidateResult,
   ZCodePluginsSetEnabledResult,
+  ZCodeLspPreferences,
+  ZCodeLspStatusResult,
   ZCodePluginsCancelOperationResult,
   ZCodePluginOperationProgressNotification,
   ZCodeProviderRuntimeHeadersRequestParams,
@@ -153,6 +155,7 @@ import type {
   ZCodeAgentRemovePluginMarketplaceParams,
   ZCodeAgentRestoreBuiltinPluginParams,
   ZCodeAgentSetPluginEnabledParams,
+  ZCodeAgentSetLspPreferencesParams,
   ZCodeAgentSetAutomationEnabledParams,
   ZCodeAgentUninstallPluginParams,
   ZCodeAgentUpdatePluginMarketplaceParams,
@@ -798,6 +801,10 @@ export interface IZCodeAgentService {
   validatePlugin(params: ZCodeAgentValidatePluginParams): Promise<ZCodePluginsValidateResult>;
   describePlugin(params: ZCodeAgentDescribePluginParams): Promise<ZCodePluginsDescribeResult>;
   setPluginEnabled(params: ZCodeAgentSetPluginEnabledParams): Promise<ZCodePluginsSetEnabledResult>;
+  /** LSP preferences live in the CLI sidecar; the workspace target only selects the process that owns them. */
+  getLspPreferences(params: ZCodeAgentPluginViewParams): Promise<ZCodeLspPreferences>;
+  setLspPreferences(params: ZCodeAgentSetLspPreferencesParams): Promise<ZCodeLspPreferences>;
+  getLspStatus(params: ZCodeAgentPluginViewParams): Promise<ZCodeLspStatusResult>;
   // ---- Scheduled task (automation) management ----
   listAutomations(params: ZCodeAgentWorkspaceTarget): Promise<ZCodeAutomation[]>;
   listAllAutomations(): Promise<ZCodeAutomation[]>;

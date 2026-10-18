@@ -109,6 +109,7 @@ import {
   unsubscribeMcpUiResource,
 } from "./mcp-ui/index.js";
 import { listPluginUiSurfaces } from "./plugin-ui-surfaces.js";
+import { getLspPreferences, getLspStatus, setLspPreferences } from "./lsp.js";
 import { updateInteractionPreferences } from "./interaction-preferences.js";
 import { updateAccountProviderConfig } from "./account-provider-config.js";
 import { updateModelIoPreferences } from "./model-io-preferences.js";
@@ -297,6 +298,7 @@ export class ZCodeProtocolAgentServer {
     this.context = {
       assertServing: () => this.runtimeResources.assertServing(),
       deps: resolvedDeps,
+      ...(deps.lsp ? { lsp: deps.lsp } : {}),
       logger: this.logger,
       appRuntimePreferences: {
         askUserQuestionAutoResolutionEnabled: true,
@@ -819,6 +821,12 @@ export class ZCodeProtocolAgentServer {
         return await validatePlugin(this.context, request.params);
       case zcodeProtocolMethods.pluginsDescribe:
         return await describePlugin(this.context, request.params);
+      case zcodeProtocolMethods.lspPreferencesGet:
+        return await getLspPreferences(this.context, request.params);
+      case zcodeProtocolMethods.lspPreferencesSet:
+        return await setLspPreferences(this.context, request.params);
+      case zcodeProtocolMethods.lspStatus:
+        return await getLspStatus(this.context, request.params);
       case zcodeProtocolMethods.usageStats:
         return await getUsageStats(this.context, request.params);
       case zcodeProtocolMethods.sessionDebug:

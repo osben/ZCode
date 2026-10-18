@@ -26,6 +26,9 @@ export interface PluginManagementServiceDependencies {
     | "validatePlugin"
     | "describePlugin"
     | "setPluginEnabled"
+    | "getLspPreferences"
+    | "setLspPreferences"
+    | "getLspStatus"
   >;
 }
 
@@ -53,5 +56,8 @@ export function createPluginManagementService(
     validatePlugin: (params) => agent.validatePlugin(params),
     describePlugin: (params) => agent.describePlugin(params),
     setPluginEnabled: (params) => agent.setPluginEnabled(params),
+    getLspPreferences: (params) => agent.getLspPreferences(params),
+    setLspPreferences: (params) => agent.setLspPreferences(params),
+    getLspStatus: (params) => agent.getLspStatus(params),
   };
 }

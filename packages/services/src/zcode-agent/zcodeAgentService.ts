@@ -98,6 +98,9 @@ import {
   zcodePluginsUninstallResultSchema,
   zcodePluginsValidateResultSchema,
   zcodePluginsDescribeResultSchema,
+  zcodeLspPreferencesGetResultSchema,
+  zcodeLspPreferencesSetResultSchema,
+  zcodeLspStatusResultSchema,
   zcodeAutomationCheckTaskBindingParamsSchema,
   zcodeAutomationCreateParamsSchema,
   zcodeAutomationDeleteParamsSchema,
@@ -220,6 +223,7 @@ import type {
   ZCodeAgentSetModeParams,
   ZCodeAgentSetModelParams,
   ZCodeAgentSetPluginEnabledParams,
+  ZCodeAgentSetLspPreferencesParams,
   ZCodeAgentSetThoughtLevelParams,
   ZCodeAgentPluginReferenceCatalogParams,
   ZCodeAgentSkillReferenceCatalogParams,
@@ -4999,6 +5003,36 @@ export function createZCodeAgentService(
           pluginName: params.pluginName,
         },
         zcodePluginsDescribeResultSchema,
+        { timeoutMs: PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS },
+      );
+    },
+
+    async getLspPreferences(params: ZCodeAgentPluginViewParams) {
+      const client = await getPluginManagementClient();
+      return client.request(
+        zcodeProtocolMethods.lspPreferencesGet,
+        { workspace: buildWorkspaceRef(params) },
+        zcodeLspPreferencesGetResultSchema,
+        { timeoutMs: PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS },
+      );
+    },
+
+    async setLspPreferences(params: ZCodeAgentSetLspPreferencesParams) {
+      const client = await getPluginManagementClient();
+      return client.request(
+        zcodeProtocolMethods.lspPreferencesSet,
+        { workspace: buildWorkspaceRef(params), patch: params.patch },
+        zcodeLspPreferencesSetResultSchema,
+        { timeoutMs: PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS },
+      );
+    },
+
+    async getLspStatus(params: ZCodeAgentPluginViewParams) {
+      const client = await getPluginManagementClient();
+      return client.request(
+        zcodeProtocolMethods.lspStatus,
+        { workspace: buildWorkspaceRef(params) },
+        zcodeLspStatusResultSchema,
         { timeoutMs: PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS },
       );
     },

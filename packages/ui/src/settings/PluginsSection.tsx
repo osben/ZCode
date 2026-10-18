@@ -46,6 +46,11 @@ import {
 } from "@/settings/InstalledPluginManagement.js";
 import { PluginConfigControls } from "@/settings/PluginConfigControls.js";
 import {
+  CodeIntelligenceSettingRow,
+  PluginLanguageServerList,
+} from "@/settings/PluginLanguageServers.js";
+import { useLspStore, type LspWorkspaceTarget } from "@/store/lspStore.js";
+import {
   PluginStoreAdvancedSection,
   PluginStoreDetailView,
 } from "@/settings/PluginStoreDetailView.js";
@@ -310,6 +315,30 @@ function PluginList({
   useEffect(() => {
     onVisibleCountChange?.(visibleInstalledPlugins.length + visibleBuiltInPlugins.length);
   }, [onVisibleCountChange, visibleBuiltInPlugins.length, visibleInstalledPlugins.length]);
+  // Code intelligence snapshot for this target. The CLI owns the preferences and server processes;
+  // the store only mirrors lsp/status and forwards user intent.
+  const lspEnabled = useLspStore((state) => state.enabled);
+  const lspServers = useLspStore((state) => state.servers);
+  const lspLoadError = useLspStore((state) => state.loadError);
+  const lspSaveErrorKey = useLspStore((state) => state.saveErrorKey);
+  const lspPendingKey = useLspStore((state) => state.pendingKey);
+  const refreshLsp = useLspStore((state) => state.refresh);
+  const setLspEnabled = useLspStore((state) => state.setEnabled);
+  const setLspDiagnosticsAfterEdit = useLspStore((state) => state.setDiagnosticsAfterEdit);
+  const lspWorkspacePath = target?.workspacePath;
+  const lspWorkspaceIdentity = target?.workspaceIdentity;
+  const lspRemoteSessionId = target?.remoteSessionId;
+  const lspTarget = useMemo<LspWorkspaceTarget | null>(
+    () =>
+      lspWorkspacePath
+        ? {
+            workspacePath: lspWorkspacePath,
+            ...(lspWorkspaceIdentity ? { workspaceIdentity: lspWorkspaceIdentity } : {}),
+            ...(lspRemoteSessionId ? { remoteSessionId: lspRemoteSessionId } : {}),
+          }
+        : null,
+    [lspWorkspacePath, lspWorkspaceIdentity, lspRemoteSessionId],
+  );
   const refreshAfterPluginChange = useCallback(async () => {
     if (!target || !targetServiceResolution.rpcReady) return;
     await initialize({
@@ -326,6 +355,10 @@ function PluginList({
         ? resolveManagedPluginDisplay(plugin, storeItemById.get(plugin.id), locale).name
         : pluginId;
       const succeeded = await setEnabled(pluginId, enabled, pluginManagementService, configScope);
+      // Enabling or disabling a plugin changes which language servers exist, so re-read the snapshot.
+      if (lspTarget && targetServiceResolution.rpcReady) {
+        void refreshLsp(pluginManagementService, lspTarget);
+      }
       if (!succeeded) {
         toast(
           usePluginManagementStore.getState().error ??
@@ -483,6 +516,10 @@ function PluginList({
       pluginService: pluginManagementService,
     });
   }, [initialize, pluginManagementService, configScope, target, targetServiceResolution.rpcReady]);
+  useEffect(() => {
+    if (!lspTarget || !targetServiceResolution.rpcReady) return;
+    void refreshLsp(pluginManagementService, lspTarget);
+  }, [lspTarget, pluginManagementService, refreshLsp, targetServiceResolution.rpcReady]);
 
   const renderPluginRows = (items: ZCodePluginInfo[]) => (
     <div className="overflow-hidden rounded-xl bg-surface">
@@ -703,6 +740,29 @@ function PluginList({
               }),
             });
           }}
+          languageServers={
+            selectedPlugin.packageStatus === "missing" || !lspTarget ? undefined : (
+              <PluginLanguageServerList
+                servers={lspServers.filter((server) => server.pluginId === selectedPlugin.id)}
+                globalEnabled={lspEnabled}
+                pendingKey={lspPendingKey}
+                loadFailed={lspLoadError !== null}
+                failedServerId={
+                  lspSaveErrorKey?.startsWith("diagnostics:")
+                    ? lspSaveErrorKey.slice("diagnostics:".length)
+                    : null
+                }
+                onSetDiagnosticsAfterEdit={(serverId, enabled) => {
+                  void setLspDiagnosticsAfterEdit(
+                    pluginManagementService,
+                    lspTarget,
+                    serverId,
+                    enabled,
+                  );
+                }}
+              />
+            )
+          }
           advanced={
             selectedPlugin.packageStatus === "missing" ? undefined : (
               <PluginStoreAdvancedSection>
@@ -771,6 +831,18 @@ function PluginList({
 
   return (
     <section className="space-y-6" aria-labelledby="plugin-installed-title">
+      {searchQuery.trim() || !lspTarget ? null : (
+        <CodeIntelligenceSettingRow
+          enabled={lspEnabled ?? true}
+          pending={lspPendingKey === "enabled"}
+          disabled={lspEnabled === null || !targetServiceResolution.rpcReady}
+          saveFailed={lspSaveErrorKey === "enabled"}
+          onChange={(enabled) => {
+            if (!lspTarget) return;
+            void setLspEnabled(pluginManagementService, lspTarget, enabled);
+          }}
+        />
+      )}
       {hasEmptySearchResult ? (
         <EmptyState
           message={intl.formatMessage({
