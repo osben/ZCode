@@ -1,10 +1,6 @@
-import { memo, useRef, useState } from "react";
-import { VenetianMask, XIcon } from "lucide-react";
-import {
-  INCOGNITO_CAPABILITY_KEYS,
-  TID_V4_COMPOSER_INPUT,
-  resolveIncognitoDefaults,
-} from "@zcode/shared";
+import { memo, useRef, useState, type ReactNode } from "react";
+import { CheckIcon, VenetianMask, XIcon } from "lucide-react";
+import { INCOGNITO_CAPABILITY_KEYS, TID_V4_COMPOSER_INPUT } from "@zcode/shared";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -17,8 +13,7 @@ import {
 import { Button } from "@/components/ui/button.js";
 import { cn } from "@/components/lib/utils.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
-import { useOptionalServices } from "@/hooks/useServices.js";
-import { logger } from "@/logger.js";
+import { useIncognitoDefaultsReader } from "@/hooks/useIncognitoDefaultsReader.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { setPendingSettingsSection } from "@/lib/settingsNavigation.js";
 import { restoreComposerInputFocusAfterPickerClose } from "@/lib/pickerFocus.js";
@@ -35,8 +30,50 @@ export const TID_V4_COMPOSER_INCOGNITO_MARKER = "v4-composer-incognito-marker";
 /**
  * Draft-only incognito toggle (specs/incognito-session.md "Composer toggle"): the menu turns the
  * mode on from the Settings defaults and lets the user opt capabilities back in for this session;
- * the chip shows the active state without relying on color.
+ * while active the trigger carries the «Incognito» label (not color-only) next to a turn-off button.
  */
+
+/** Visible checkbox for a menu row; the row itself stays the menuitemcheckbox. */
+function MenuCheckbox({ checked }: { checked: boolean }) {
+  return (
+    <span
+      aria-hidden="true"
+      data-state={checked ? "checked" : "unchecked"}
+      className={cn(
+        "mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-sm border border-input-border bg-input",
+        checked && "border-incognito bg-incognito text-primary-foreground",
+      )}
+    >
+      {checked ? <CheckIcon className="size-3" /> : null}
+    </span>
+  );
+}
+
+/** Menu checkbox row with a leading checkbox instead of the trailing check indicator. */
+function IncognitoCheckboxRow({
+  checked,
+  onCheckedChange,
+  testId,
+  children,
+}: {
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+  testId: string;
+  children: ReactNode;
+}) {
+  return (
+    <DropdownMenuCheckboxItem
+      checked={checked}
+      onCheckedChange={(next) => onCheckedChange(next === true)}
+      onSelect={(event) => event.preventDefault()}
+      data-testid={testId}
+      className="items-start gap-2.5 pr-2 [&_[data-slot=dropdown-menu-checkbox-item-indicator]]:hidden"
+    >
+      <MenuCheckbox checked={checked} />
+      {children}
+    </DropdownMenuCheckboxItem>
+  );
+}
 export const V4ComposerIncognitoControl = memo(function V4ComposerIncognitoControl({
   workspaceKey,
   disabled,
@@ -45,7 +82,7 @@ export const V4ComposerIncognitoControl = memo(function V4ComposerIncognitoContr
   disabled?: boolean;
 }) {
   const { intl } = useZCodeIntl();
-  const services = useOptionalServices();
+  const readIncognitoDefaults = useIncognitoDefaultsReader();
   const openSettingsTab = useOptionalTabStore((state) => state.openSettingsTab);
   const capabilities = useDraftIncognitoIntentStore((state) =>
     selectDraftIncognito(state, workspaceKey),
@@ -72,9 +109,19 @@ export const V4ComposerIncognitoControl = memo(function V4ComposerIncognitoContr
               aria-pressed={active}
               data-testid={TID_V4_COMPOSER_INCOGNITO_TRIGGER}
               data-composer-collapse-priority="1"
-              className={cn("h-7 w-7 rounded-lg px-0", active && "text-incognito")}
+              className={cn(
+                "group/incognito h-7 rounded-lg",
+                active
+                  ? "gap-1 px-2 text-ui-base text-incognito hover:text-incognito data-[composer-compact=true]:w-7 data-[composer-compact=true]:px-0"
+                  : "w-7 px-0",
+              )}
             >
               <VenetianMask className="size-4" />
+              {active ? (
+                <span className="inline group-data-[composer-compact=true]/incognito:hidden">
+                  {intl.formatMessage({ id: "chat.incognito.marker" })}
+                </span>
+              ) : null}
             </Button>
           </DropdownMenuTrigger>
         </ControlHintTooltip>
@@ -90,35 +137,24 @@ export const V4ComposerIncognitoControl = memo(function V4ComposerIncognitoContr
             });
           }}
         >
-          <DropdownMenuCheckboxItem
+          <IncognitoCheckboxRow
             checked={active}
+            testId={TID_V4_COMPOSER_INCOGNITO_TOGGLE}
             onCheckedChange={(checked) => {
               if (checked) {
-                // Settings defaults are read at activation; harnesses without services start locked down.
-                void (services?.settingService.get() ?? Promise.resolve(undefined))
-                  .catch((error: unknown) => {
-                    logger.warn("Incognito defaults unavailable; using lockdown", { error });
-                    return undefined;
-                  })
-                  .then((settings) =>
-                    activate(workspaceKey, resolveIncognitoDefaults(settings?.incognitoDefaults)),
-                  );
+                void readIncognitoDefaults().then((defaults) => activate(workspaceKey, defaults));
               } else {
                 deactivate(workspaceKey);
               }
             }}
-            onSelect={(event) => event.preventDefault()}
-            data-testid={TID_V4_COMPOSER_INCOGNITO_TOGGLE}
-            className="min-h-13 items-start gap-3 py-2"
           >
-            <VenetianMask className="mt-0.5 size-4.5 shrink-0" />
             <span className="flex min-w-0 flex-col gap-0.5">
               <span>{toggleLabel}</span>
               <span className="text-ui-sm text-foreground-subtle">
                 {intl.formatMessage({ id: "chat.incognito.toggleDescription" })}
               </span>
             </span>
-          </DropdownMenuCheckboxItem>
+          </IncognitoCheckboxRow>
           {capabilities ? (
             <>
               <DropdownMenuSeparator />
@@ -126,17 +162,14 @@ export const V4ComposerIncognitoControl = memo(function V4ComposerIncognitoContr
                 {intl.formatMessage({ id: "chat.incognito.includeHeading" })}
               </DropdownMenuLabel>
               {INCOGNITO_CAPABILITY_KEYS.map((capability) => (
-                <DropdownMenuCheckboxItem
+                <IncognitoCheckboxRow
                   key={capability}
                   checked={capabilities[capability]}
-                  onCheckedChange={(checked) =>
-                    setCapability(workspaceKey, capability, checked === true)
-                  }
-                  onSelect={(event) => event.preventDefault()}
-                  data-testid={`${TID_V4_COMPOSER_INCOGNITO_TOGGLE}-${capability}`}
+                  testId={`${TID_V4_COMPOSER_INCOGNITO_TOGGLE}-${capability}`}
+                  onCheckedChange={(checked) => setCapability(workspaceKey, capability, checked)}
                 >
                   {intl.formatMessage({ id: `incognito.capability.${capability}.label` })}
-                </DropdownMenuCheckboxItem>
+                </IncognitoCheckboxRow>
               ))}
             </>
           ) : null}
@@ -152,12 +185,7 @@ export const V4ComposerIncognitoControl = memo(function V4ComposerIncognitoContr
         </DropdownMenuContent>
       </DropdownMenu>
       {active ? (
-        <span data-testid={TID_V4_COMPOSER_INCOGNITO_MARKER} className="flex items-center gap-1">
-          <span
-            role="separator"
-            aria-orientation="vertical"
-            className="h-3 w-px shrink-0 bg-border"
-          />
+        <span data-testid={TID_V4_COMPOSER_INCOGNITO_MARKER} className="flex items-center">
           <ControlHintTooltip title={removeLabel}>
             <Button
               type="button"
@@ -167,13 +195,9 @@ export const V4ComposerIncognitoControl = memo(function V4ComposerIncognitoContr
               data-composer-collapse-priority="2"
               onClick={() => deactivate(workspaceKey)}
               aria-label={removeLabel}
-              className="group/incognito h-7 gap-1 rounded-lg px-2 text-ui-base text-incognito hover:text-incognito data-[composer-compact=true]:w-7 data-[composer-compact=true]:px-0"
+              className="h-7 w-7 rounded-lg px-0 text-foreground-subtle"
             >
-              <VenetianMask className="size-4 group-hover/incognito:hidden group-focus-visible/incognito:hidden" />
-              <XIcon className="hidden size-4 group-hover/incognito:block group-focus-visible/incognito:block" />
-              <span className="inline group-data-[composer-compact=true]/incognito:hidden">
-                {intl.formatMessage({ id: "chat.incognito.marker" })}
-              </span>
+              <XIcon className="size-4" />
             </Button>
           </ControlHintTooltip>
         </span>
