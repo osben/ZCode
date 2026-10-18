@@ -426,7 +426,7 @@ Desktop Voice dictation settings are five cards in this order. Each card has a h
 1. **Dictation:** shortcut (keycaps, plus an "Open Keyboard Shortcuts" action that opens the Shortcuts section), push to talk, sound notification, volume with Test.
 2. **Microphone:** input device; "Test microphone" with its result shown beside the button (recording indicator, peak level, or the no-sound message).
 3. **Transcription models:** language at the top (with the "Matches my languages" filter directly under it, with search, Downloaded, and Streaming), then the model cards, then a **Memory** subgroup with "Warm up the model when the message box is focused" and "Unload from memory after".
-4. **Output:** copy dictated text to the clipboard, mute system sound while recording.
+4. **Output:** copy dictated text to the clipboard, mute system sound while recording. `muteWhileRecording` defaults to **on**: an absent value means on, only an explicit `false` disables it (copy to clipboard stays default off).
 5. **Post-processing:** see "Post-processing settings".
 
 Rules:

@@ -16,7 +16,7 @@ export function useVoiceDictationRecordingAudio() {
   const voice = settings?.voiceDictation;
   const feedbackSounds = voice?.feedbackSounds === true;
   const feedbackVolume = voice?.feedbackVolume ?? 70;
-  const muteWhileRecording = voice?.muteWhileRecording === true;
+  const muteWhileRecording = voice?.muteWhileRecording !== false;
 
   /** Whether this renderer requested the system output mute and has not released it yet. */
   const systemMuteActiveRef = useRef(false);
