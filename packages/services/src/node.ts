@@ -572,7 +572,6 @@ import { resolveBrokerSocketPath } from "@zcode/zcode-cua/broker/socketPath";
 import {
   DEFAULT_ZCODE_MODEL_CONTEXT_BUDGET_STRATEGY,
   ZCODE_JWT_INVALID_BROADCAST_CHANNEL,
-  formatLogPrefix,
   isCredentialDecryptError,
   isStartPlanModelProviderId,
   OFF_PEAK_PROVIDER_IDS,
@@ -1278,7 +1277,7 @@ export function createLocalServices(options: {
   try {
     ensureAppCaCert();
   } catch (error) {
-    console.error(formatLogPrefix("appCaCert", process.pid), "ensure app CA cert failed:", error);
+    createServiceLogger("appCaCert").warn(undefined, "ensure app CA cert failed:", error);
   }
 
   const localSettings = options?.settingService ? null : createSettingServiceWithMigrations();
