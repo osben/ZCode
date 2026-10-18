@@ -250,6 +250,28 @@ describe("FileMutated synchronization", () => {
     expect(methodNames(restarted.notifications)).toContain("textDocument/didOpen");
   });
 
+  // Regression: servers percent-encode URIs their own way (`b%40c.ts` for `b@c.ts`, verified against
+  // typescript-language-server). A raw string comparison dropped the publish, leaving the file pending.
+  it("matches a publish whose URI is encoded differently from the URI that was sent", async () => {
+    const path = `${WORKSPACE}/src/b@c.ts`;
+    harness.fs.set(path, DOC);
+    harness.port.acquire(harness.server, LSP_KEY);
+    harness.service.onFileMutated(
+      mutation({ path, kind: "created", content: DOC, changedRange: { startLine: 1, endLine: 3 } }),
+    );
+    await flushMicrotasks();
+    harness.port.connection.publish(
+      `file://${WORKSPACE}/src/b%40c.ts`,
+      [rawDiagnostic({ line: 0, message: "late" })],
+      1,
+    );
+    await flushMicrotasks();
+    const result = await harness.service.collectEditDiagnostics({ waitMs: 0 });
+    expect(result.attachmentBody).toBe(
+      "Found 1 new diagnostic issues in 1 files\nsrc/b@c.ts:1:1 error late",
+    );
+  });
+
   // Regression: the process-wide pool emits ready for every workspace; replaying onto another workspace's
   // server opened this session's file in the wrong root and marked it fresh from that server.
   it("does not replay a pending edit onto a server that is ready for another workspace", async () => {
