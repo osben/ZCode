@@ -45,6 +45,19 @@ export async function microcompactIfNeeded(
     modelContextBudgetStrategy: this.config.modelContextBudgetStrategy,
   };
   const microcompactConfig = resolveLocalMicrocompactConfig(autoConfig);
+  if (!microcompactConfig.enabled) {
+    // Disabled is the default; the projection, clone, and token estimate below are O(history) per step.
+    this.logger?.debug("Microcompact skipped", {
+      ...traceContextToLogContext(turnTraceContext),
+      event: "compact.micro.skipped",
+      modelStepIndex: context.modelStepIndex,
+      module: "core.runtime",
+      phase: context.phase,
+      reason: "disabled",
+      thresholdTokens: microcompactConfig.thresholdTokens,
+    });
+    return;
+  }
   const useMidConversationSystem =
     this.config.midConversationSystem?.mode === "force" ||
     context.model.properties.supportsMidConversationSystem;

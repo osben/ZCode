@@ -34,26 +34,27 @@ import type {
 } from "../types.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { createMcpToolDisplay } from "../../tool/executor/result-display.js";
+import { resolveToolSchedulingFlags } from "../../tool/executor/permission-capability.js";
+import type { ToolRuntimePermissionCapabilityContext } from "../../tool/types.js";
+import { resolveRuntimeToolScope } from "../helpers/runtime-tools.js";
 
 export async function scheduleTools(
   this: AgentRuntimeInternal,
   toolCalls: ToolCall[],
 ): Promise<ToolSchedule> {
+  const capabilityContext: ToolRuntimePermissionCapabilityContext = {
+    mode: this.config.mode ?? "build",
+    runtimeScope: resolveRuntimeToolScope(this),
+    workingDirectory: this.workingDirectory,
+    workspaceRoot: this.workspaceRoot,
+  };
   const dependencies: ToolDependency[] = toolCalls.map((tc) => {
     const entry = this.registry.get(tc.name);
-    const metadata = entry?.metadata;
-    const sideEffectScope = entry?.permission?.sideEffectScope ?? metadata?.sideEffectScope;
     return {
       toolCallId: tc.id as ToolCallId,
       toolName: tc.name,
       dependsOn: [],
-      readOnly:
-        metadata?.readOnly === undefined
-          ? undefined
-          : metadata.readOnly && sideEffectScope === "none",
-      destructive: metadata?.destructive,
-      concurrentSafe: metadata?.concurrentSafe,
-      sideEffectScope,
+      ...(entry ? resolveToolSchedulingFlags(entry, tc.input, capabilityContext) : {}),
     };
   });
 

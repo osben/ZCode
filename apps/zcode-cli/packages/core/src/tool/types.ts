@@ -197,6 +197,8 @@ export interface ToolExecutionContext {
   recordSkillTelemetryMetadata?: (metadata: SkillTelemetryMetadata) => void;
   bashShellSelection?: ExecutionShellSelection;
   embeddedSearch?: ToolEmbeddedSearchContext;
+  /** Live session cwd from its owner; `workingDirectory` is the snapshot this call started from. */
+  getWorkingDirectory?: () => string;
   setWorkingDirectory?: (cwd: string) => Promise<void> | void;
   workingDirectory: string;
   workspaceRoot: string;
@@ -423,6 +425,8 @@ export interface ToolPersistedModelContentInput {
 export interface ToolRuntimePermissionCapability {
   userApprovalRule?: string;
   allowedInPlanMode?: boolean;
+  /** Input-aware override of `metadata.concurrentSafe`, consumed by tool scheduling. */
+  concurrentSafe?: boolean;
   destructive?: boolean;
   needsApproval?: boolean;
   readOnly?: boolean;

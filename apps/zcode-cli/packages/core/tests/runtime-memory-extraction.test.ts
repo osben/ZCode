@@ -59,6 +59,34 @@ describe("AgentRuntime background Memory extraction", () => {
     expect(extractionRequestCount).toBe(1);
   });
 
+  it("records each Extraction model request as a project_memory_extract usage fact", async () => {
+    const facts: Record<string, unknown>[] = [];
+    const sessionStore = Object.assign(createMemorySessionStore(), {
+      recordModelUsage: async (fact: Record<string, unknown>) => {
+        facts.push(fact);
+      },
+      upsertTurnUsage: async () => {},
+      upsertToolUsage: async () => {},
+      pruneUsage: async () => {},
+    });
+    const runtime = createExtractionRuntime({
+      async generateText(request) {
+        return textResult(
+          request,
+          isExtractionRequest(request) ? "Nothing to save." : "main answer",
+        );
+      },
+      sessionStore,
+    });
+
+    await runtime.executeTurn("remember this durable project preference");
+    await runtime.drainMemoryExtractions();
+
+    expect(facts.filter((fact) => fact.querySource === "project_memory_extract")).toMatchObject([
+      { status: "completed", inputTokens: 1, outputTokens: 1, finishReason: "stop" },
+    ]);
+  });
+
   it("reuses the completed Turn Active Model instead of resolving Session Selection again", async () => {
     const createdSelections: string[] = [];
     const modelFactory = createTestModelFactory({

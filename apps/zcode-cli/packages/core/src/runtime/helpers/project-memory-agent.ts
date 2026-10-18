@@ -2,18 +2,21 @@ import type { Model, ModelInputMessage, ModelToolContract, TraceContext } from "
 import type { AgentTelemetryCausation, ModelApiOperation } from "@zcode/contracts";
 import {
   PermissionService,
+  createChildTraceContext,
   createDenyPermissionBroker,
   createToolExecutor,
   defaultPermissionConfig,
   traceContextToLogContext,
 } from "../deps.js";
 import type { RuntimeMessageEntry } from "../../agent/message-history.js";
+import type { MemoryAgentLoopRequestUsage } from "../../memory/memory-agent-loop.js";
 import type { ReadFileStateMap } from "../../tool/types.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { getSessionShellSelectionFromConfig } from "../methods/session-shell-environment.js";
 import { buildRuntimeProviderRequestMessages } from "./runtime-provider-request-messages.js";
 import { createRefreshRuntimeHeadersBeforeModelAttempt } from "../methods/model-runtime-headers.js";
 import { createRuntimeModel, withModelInvocationContext } from "../methods/runtime-model.js";
+import { recordModelUsageFact } from "../methods/usage-observability.js";
 
 export interface ProjectMemoryAgentContext {
   causation?: AgentTelemetryCausation;
@@ -126,5 +129,28 @@ export function createProjectMemoryAgentToolExecutor(
     sessionStore: runtime.sessionStore,
     skillPort: runtime.skillPort,
     traceContext: context.traceContext,
+  });
+}
+
+/** One `model_usage` row per memory-agent request, attributed to the scheduling session. */
+export async function recordProjectMemoryAgentModelUsageFact(
+  runtime: AgentRuntimeInternal,
+  context: ProjectMemoryAgentContext,
+  request: MemoryAgentLoopRequestUsage,
+  querySource: "dream" | "project_memory_extract",
+): Promise<void> {
+  await recordModelUsageFact(runtime, {
+    attemptIndex: request.index,
+    completedAt: request.completedAt,
+    error: request.error,
+    events: [],
+    model: context.model,
+    networkEventStartIndex: 0,
+    querySource,
+    result: request.result,
+    startedAt: request.startedAt,
+    status: request.status,
+    toolCallCount: request.result?.toolCalls?.length,
+    traceContext: createChildTraceContext(context.traceContext, {}),
   });
 }
