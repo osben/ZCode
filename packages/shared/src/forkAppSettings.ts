@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  incognitoDefaultsPatchSchema,
+  incognitoDefaultsStoredSchema,
+} from "./incognito-profile.js";
 import type { AppSettings } from "./protocol.js";
 
 const nonEmptyStringSchema = z.string().trim().min(1);
@@ -19,6 +23,7 @@ export const FORK_SETTING_KEYS = [
   "worktreeBranchPrefix",
   "worktreeProjectOverrides",
   "memoryIndexAsContext",
+  "incognitoDefaults",
 ] as const satisfies readonly (keyof AppSettings)[];
 
 export type ForkSettingKey = (typeof FORK_SETTING_KEYS)[number];
@@ -60,6 +65,7 @@ export const forkAppSettingsStoredSchema = z.object({
     .optional()
     .catch(undefined),
   memoryIndexAsContext: z.boolean().optional().catch(undefined),
+  incognitoDefaults: incognitoDefaultsStoredSchema.optional().catch(undefined),
 });
 
 export type ForkAppSettingsStored = z.infer<typeof forkAppSettingsStoredSchema>;
@@ -79,6 +85,7 @@ export const forkAppSettingsPatchSchema = z.object({
   worktreeBranchPrefix: nonEmptyStringSchema.optional(),
   worktreeProjectOverrides: z.record(z.string(), worktreeProjectOverrideSchema).optional(),
   memoryIndexAsContext: z.boolean().optional(),
+  incognitoDefaults: incognitoDefaultsPatchSchema.optional(),
 });
 
 /**

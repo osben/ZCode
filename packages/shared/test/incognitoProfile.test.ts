@@ -1,0 +1,145 @@
+import { describe, expect, it } from "vitest";
+import {
+  INCOGNITO_CAPABILITY_KEYS,
+  INCOGNITO_LOCKDOWN_PROFILE,
+  buildIncognitoProfile,
+  incognitoProfileSchema,
+  parseStoredIncognitoProfile,
+  resolveIncognitoDefaults,
+} from "../src/incognito-profile.js";
+import { forkAppSettingsPatchSchema, forkAppSettingsSchema } from "../src/forkAppSettings.js";
+import {
+  zcodeRuntimeCapabilitiesSchema,
+  zcodeSessionCreateParamsSchema,
+  zcodeSessionResumeParamsSchema,
+} from "../src/zcode-protocol/index.js";
+import { hostCapabilitiesSchema, parseCommandEnvelope } from "../src/zcode-protocol-v4/index.js";
+
+const { version: _version, ...allOff } = INCOGNITO_LOCKDOWN_PROFILE;
+const allOn = Object.fromEntries(INCOGNITO_CAPABILITY_KEYS.map((key) => [key, true]));
+
+describe("incognito profile", () => {
+  it("lockdown profile has every capability off", () => {
+    expect(INCOGNITO_LOCKDOWN_PROFILE.version).toBe(1);
+    for (const key of INCOGNITO_CAPABILITY_KEYS) {
+      expect(INCOGNITO_LOCKDOWN_PROFILE[key]).toBe(false);
+    }
+    expect(incognitoProfileSchema.parse(INCOGNITO_LOCKDOWN_PROFILE)).toEqual(
+      INCOGNITO_LOCKDOWN_PROFILE,
+    );
+  });
+
+  it("requires every capability explicitly and rejects unknown keys", () => {
+    expect(incognitoProfileSchema.safeParse({ version: 1, skills: true }).success).toBe(false);
+    expect(
+      incognitoProfileSchema.safeParse({ ...INCOGNITO_LOCKDOWN_PROFILE, extra: true }).success,
+    ).toBe(false);
+    expect(
+      incognitoProfileSchema.safeParse({ ...INCOGNITO_LOCKDOWN_PROFILE, version: 2 }).success,
+    ).toBe(false);
+  });
+
+  it("resolves Settings defaults to every capability off and keeps explicit values", () => {
+    expect(resolveIncognitoDefaults(undefined)).toEqual(allOff);
+    expect(resolveIncognitoDefaults({ skills: true, memory: false })).toMatchObject({
+      skills: true,
+      memory: false,
+      hooks: false,
+    });
+  });
+
+  it("builds a resolved profile from capabilities, never a diff", () => {
+    const profile = buildIncognitoProfile({ ...resolveIncognitoDefaults(undefined), mcp: true });
+    expect(incognitoProfileSchema.parse(profile)).toEqual({
+      ...INCOGNITO_LOCKDOWN_PROFILE,
+      mcp: true,
+    });
+  });
+
+  it("reads an unparsable stored profile as lockdown, never as a normal session", () => {
+    const stored = JSON.stringify({ ...INCOGNITO_LOCKDOWN_PROFILE, ...allOn });
+    expect(parseStoredIncognitoProfile(stored)).toEqual({ version: 1, ...allOn });
+    expect(parseStoredIncognitoProfile("{not json")).toEqual(INCOGNITO_LOCKDOWN_PROFILE);
+    expect(
+      parseStoredIncognitoProfile(JSON.stringify({ ...INCOGNITO_LOCKDOWN_PROFILE, version: 2 })),
+    ).toEqual(INCOGNITO_LOCKDOWN_PROFILE);
+    expect(parseStoredIncognitoProfile(null)).toBeUndefined();
+  });
+});
+
+describe("incognitoDefaults fork setting", () => {
+  it("stores only explicitly set capabilities and drops damaged values", () => {
+    expect(forkAppSettingsSchema.parse({}).incognitoDefaults).toBeUndefined();
+    expect(
+      forkAppSettingsSchema.parse({ incognitoDefaults: { skills: true, hooks: "yes" } })
+        .incognitoDefaults,
+    ).toEqual({ skills: true });
+  });
+
+  it("patch requires every capability, so a write can never silently drop the others", () => {
+    expect(
+      forkAppSettingsPatchSchema.safeParse({ incognitoDefaults: { ...allOff, mcp: true } }).success,
+    ).toBe(true);
+    expect(forkAppSettingsPatchSchema.safeParse({ incognitoDefaults: { mcp: true } }).success).toBe(
+      false,
+    );
+    expect(
+      forkAppSettingsPatchSchema.safeParse({ incognitoDefaults: { ...allOff, version: 1 } })
+        .success,
+    ).toBe(false);
+  });
+});
+
+describe("incognito protocol fields", () => {
+  const workspace = { workspacePath: "/workspace/app", workspaceKey: "/workspace/app" };
+  const profile = { ...INCOGNITO_LOCKDOWN_PROFILE, skills: true };
+
+  function createEnvelope(payload: Record<string, unknown>) {
+    return parseCommandEnvelope({
+      commandId: "cmd-incognito",
+      clientId: "client-1",
+      sessionId: null,
+      type: "createSession",
+      payload: { workspaceId: "ws-1", ...payload },
+      issuedAt: 1000,
+    });
+  }
+
+  it("v4 createSession carries a strict resolved profile", () => {
+    const result = createEnvelope({ incognito: profile });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect((result.envelope.payload as { incognito?: unknown }).incognito).toEqual(profile);
+    }
+    expect(createEnvelope({ incognito: { version: 1, skills: true } }).ok).toBe(false);
+    expect(createEnvelope({}).ok).toBe(true);
+  });
+
+  it("legacy session/create carries the profile; resume never does (it reads the session row)", () => {
+    expect(
+      zcodeSessionCreateParamsSchema.parse({ workspace, incognito: profile }).incognito,
+    ).toEqual(profile);
+    expect(() =>
+      zcodeSessionCreateParamsSchema.parse({ workspace, incognito: { version: 1 } }),
+    ).toThrow();
+    expect(() =>
+      zcodeSessionResumeParamsSchema.parse({ sessionId: "sess_1", incognito: profile }),
+    ).toThrow();
+  });
+
+  it("CLI and Host advertise incognito support as an optional capability", () => {
+    expect(zcodeRuntimeCapabilitiesSchema.parse({ incognitoSession: true }).incognitoSession).toBe(
+      true,
+    );
+    expect(zcodeRuntimeCapabilitiesSchema.parse({}).incognitoSession).toBeUndefined();
+    expect(
+      hostCapabilitiesSchema.parse({
+        nativeDialogs: true,
+        localTerminal: true,
+        binaryFrames: true,
+        compression: "none",
+        incognitoSession: true,
+      }).incognitoSession,
+    ).toBe(true);
+  });
+});

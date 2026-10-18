@@ -6,6 +6,7 @@ import type { ZCodeProvider } from "./zcode-task-types-core.js";
 import type { WorkspacePurpose } from "./workspacePurpose.js";
 import type { DynamicWorkflowMode } from "./dynamic-workflow-feature.js";
 import type { EmbeddedBrowserViewportPreference } from "./browser-use/command-metadata.js";
+import type { IncognitoDefaults } from "./incognito-profile.js";
 
 // ── Domain types ──
 
@@ -382,6 +383,9 @@ export interface AppSettings {
   /** Inject the project memory index as a standalone background-context block instead of inside
    *  the "# agentsMd" instruction banner. Fork-only: stored in fork-settings.json. Default false. */
   memoryIndexAsContext?: boolean;
+  /** Default capability set for new incognito sessions (specs/incognito-session.md). Fork-only:
+   *  stored in fork-settings.json. Writes send every capability; a missing one reads as off. */
+  incognitoDefaults?: IncognitoDefaults;
   onboardingOccupation?:
     | "office"
     | "developer"

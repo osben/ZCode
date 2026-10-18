@@ -1,6 +1,6 @@
 # Incognito session
 
-Status: draft (2026-10-18). Decisions agreed with the user; not implemented.
+Status: in progress (2026-10-18). Slice 1 implemented: shared profile module (`packages/shared/src/incognito-profile.ts`), `incognitoDefaults` fork key, v4/legacy `createSession` fields, both `incognitoSession` capability flags. Nothing advertises or sends them yet; slices 2–5 pending.
 
 ## Problem
 
@@ -76,6 +76,14 @@ export const incognitoProfileSchema = z
   .strict();
 
 export const INCOGNITO_LOCKDOWN_PROFILE: IncognitoProfile; // version 1, every capability false
+export const INCOGNITO_UNSUPPORTED_ERROR = "proto.incognitoUnsupported";
+export function resolveIncognitoDefaults(
+  stored?: Partial<IncognitoCapabilities>,
+): IncognitoCapabilities;
+export function buildIncognitoProfile(capabilities: IncognitoCapabilities): IncognitoProfile;
+export function parseStoredIncognitoProfile(
+  stored: string | null | undefined,
+): IncognitoProfile | undefined;
 ```
 
 - The profile is the **resolved, explicit** value of every capability, never a diff against Settings defaults, so later Settings edits do not change existing sessions.
@@ -93,7 +101,7 @@ export const INCOGNITO_LOCKDOWN_PROFILE: IncognitoProfile; // version 1, every c
 ### Fork settings (`~/.zcode/v2/fork-settings.json`)
 
 - New fork key `incognitoDefaults` in `FORK_SETTING_KEYS` (`packages/shared/src/forkAppSettings.ts:14`), never in `appSettingsObjectSchema` / `setting.json`.
-- Value: the capability booleans of the profile without `version`. Effective default: every capability `false`.
+- Value: the capability booleans of the profile without `version`. Effective default: every capability `false`. Reads tolerate a partial or damaged object (a missing capability is off). The patch schema requires every capability: the sidecar merges top-level keys only, so a partial object would replace the stored one and drop the others.
 
 ### Session summary projection
 
@@ -102,7 +110,7 @@ export const INCOGNITO_LOCKDOWN_PROFILE: IncognitoProfile; // version 1, every c
 
 ## Protocol
 
-- v4 `createSession` (`packages/shared/src/zcode-protocol-v4/command.ts:56`) gains `incognito: incognitoProfileSchema.optional()`. Absent = normal session.
+- v4 `createSession` (payload schema split out of `command.ts` into `packages/shared/src/zcode-protocol-v4/create-session-command.ts`) gains `incognito: incognitoProfileSchema.optional()`. Absent = normal session.
 - Legacy `session/create` (`packages/shared/src/zcode-protocol/index.ts:1927`) gains the same optional field, so the bridge (`bootstrap/src/zcode-protocol/v4-bridge.ts:1443`) and `createRecord` (`server-operations.ts:3503`) carry it explicitly. The handler pick list in `session-mgmt.ts:73` must name it.
 - `incognito` is **never** an optional compat field: it must not be added to `SESSION_CREATE_OPTIONAL_COMPAT_FIELDS` or `SESSION_RESUME_OPTIONAL_COMPAT_FIELDS` (`packages/services/src/zcode-agent/zcodeAgentService.ts:440`). If a CLI's `.strict()` schema rejects it, the create fails; the Host must not retry without it.
 - Capability gate, two hops (precedent: `independentPlanState`):
@@ -176,7 +184,7 @@ Ordering constraints:
 - **Prewarm.** While incognito is active the draft does not use or promote a prewarmed session (same as worktree sends, `SessionPane.tsx:3507`); toggling invalidates the prewarm. This matters beyond reuse: `getSkillCatalog` on a prewarmed draft runs `ensureContextInitialized` and fixes its instructions and skills before the first message (specs/global-instructions.md).
 - **Slash catalog.** Accepted V1 limitation: with `plugins` off, the composer slash catalog may still list plugin-sourced skills; invoking one fails as an unknown skill.
 - **Sidebar marker.** `IncognitoTaskMarker` (uncolored, `size-3.5`, like `WorktreeTaskMarker`) reads `task.incognito`; rendered at the same sites as the worktree marker (`TaskListItem.tsx`, `workspace-grouped-tasks/task-row.tsx`, `TaskSidebarHoverCard.tsx`, session manager rows). Both markers render when both apply.
-- **Settings «Incognito».** New section in the `agentCapabilities` group (`packages/ui/src/settings/settingsPageConfig.ts`), one `SettingsRow` + switch per capability, plus the honest-scope hint (Non-goals).
+- **Settings «Incognito».** New section in the `agentCapabilities` group (`packages/ui/src/settings/settingsPageConfig.ts`), one `SettingsRow` + switch per capability, plus the honest-scope hint (Non-goals). Every write sends the full `incognitoDefaults` object (`resolveIncognitoDefaults(current)` with one capability flipped); the patch schema rejects partial objects.
 - **Mobile Web.** The mobile Web task list currently renders no worktree marker; the incognito marker follows the same treatment (added wherever the worktree marker is rendered, so out of V1 on mobile today). Creating incognito sessions from mobile remote control is out of scope for V1 (toggle hidden in the compact remote shell).
 - **i18n.** All strings in `en-US`, `zh-CN`, `uk-UA`.
 - **Errors.** `proto.incognitoUnsupported` shows a toast; the draft text and incognito selection are kept.
@@ -212,7 +220,7 @@ Ordering constraints:
 
 1. Shared profile schema, fork settings key, protocol fields and capabilities.
 2. CLI storage: migration `9001_fork_session_incognito`, insert, decode, `SessionInfo.incognito`.
-3. CLI runtime: `runtimeConfig.incognito`, per-capability overrides, inheritance, dream exclusion, capability advertisement.
+3. CLI runtime: `runtimeConfig.incognito`, per-capability overrides, inheritance, dream exclusion. Advertise `incognitoSession: true` only as the final step: the in-tree CLI's strict legacy schema already accepts `incognito` and ignores it, so until then the missing capability is the only fail-closed guard.
 4. Host gate and projection → task meta.
 5. UI: composer toggle/checklist/highlight/prewarm bypass, sidebar marker, Settings section, i18n, DESIGN.md token.
 
