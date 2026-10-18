@@ -55,6 +55,11 @@ capabilities:
    `localhost`.
 7. **Remote connection ids are unguessable.** `/api/connect-remote` ids come from
    `crypto.randomUUID()`.
+8. **A remote connection is owned by one party at a time.** `POST /api/connect-remote`
+   stores the connection in `packages/server/src/remoteConnectionStore.ts`. It is
+   disposed after `REMOTE_CONNECTION_CLAIM_TTL_MS` (5 minutes) unless `/ws/remote/:id`
+   claims it first. The claim is single-use and hands ownership to that WebSocket, which
+   disposes the connection when it closes. An unknown or expired id closes with `4004`.
 
 ## Distribution runner
 
@@ -78,6 +83,8 @@ loopback-only default bind.
 | set   | `0.0.0.0`   | listens; `/api/*` and `/ws*` return 401 without the token                                                           |
 | set   | any         | `POST /api/rpc-host-capability` and `/api/connect-remote` → 401 without token; `authRequired: true`                 |
 | set   | any         | encoded/case/slash variants (`/%61pi/...`, `/%2561pi/...`, `/API/...`, `//api/...`, `/api%2F...`, WS `/%77s`) → 401 |
+| any   | any         | `/api/connect-remote` without a `/ws/remote/:id` claim: the connection is disposed after 5 minutes                  |
+| any   | any         | `/ws/remote/:id` closes (cleanly or on error): its connection is disposed; a second claim of the same id gets 4004  |
 
 ## Open risks (not covered)
 
@@ -88,8 +95,3 @@ loopback-only default bind.
   capabilities. Closing this requires a product decision on Origin/Host allow-lists
   (dev Vite proxy, `zcode --web`, Desktop connector). Until then, loopback without a
   token is only as safe as the browsers running on that machine.
-
-## Follow-ups (not in this change)
-
-- `remoteConnections` entries that are never claimed by `/ws/remote/:id` have no TTL
-  and keep their remote connection open.

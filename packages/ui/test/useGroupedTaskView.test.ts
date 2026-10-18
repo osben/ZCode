@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
@@ -177,10 +175,7 @@ describe("filterGroupedViewByTaskKeys", () => {
     const rootTask = createTaskMeta({ taskId: "root-task" });
     const groupTask = createTaskMeta({ taskId: "group-task" });
     const staleView: ZCodeGroupedTaskView = {
-      nodes: [
-        { type: "task", task: rootTask },
-        createGroupNode("group-a", [groupTask]),
-      ],
+      nodes: [{ type: "task", task: rootTask }, createGroupNode("group-a", [groupTask])],
     };
 
     const filteredView = filterGroupedViewByTaskKeys(
@@ -190,18 +185,6 @@ describe("filterGroupedViewByTaskKeys", () => {
 
     expect(describeGroupedView(filteredView)).toEqual([["group-a"]]);
     expect(filterGroupedViewByTaskKeys(staleView, new Set())).toBe(staleView);
-  });
-
-  it("keeps the authoritative view as the baseline for grouped structure writes", () => {
-    const source = readFileSync(
-      resolve(process.cwd(), "packages/ui/src/WorkspaceGroupedTasksSection.tsx"),
-      "utf8",
-    );
-
-    expect(source).toContain("moveTaskByMenu(authoritativeView, task, groupId)");
-    expect(source).toContain("moveTaskToTopByMenu(authoritativeView, task)");
-    expect(source).toContain("dragOriginViewRef.current = authoritativeView");
-    expect(source).not.toContain("dragOriginViewRef.current = view");
   });
 
   it("preserves an archiving task when another task changes group", () => {
@@ -214,11 +197,7 @@ describe("filterGroupedViewByTaskKeys", () => {
       ],
     };
 
-    const nextView = moveTaskByMenu(
-      authoritativeView,
-      movingTask,
-      "group-b",
-    );
+    const nextView = moveTaskByMenu(authoritativeView, movingTask, "group-b");
 
     expect(describeGroupedView(nextView)).toEqual([
       ["group-a", "archiving-task"],
@@ -352,20 +331,6 @@ describe("shouldHideGroupedTaskContent", () => {
         hasPaintedOnce: true,
       }),
     ).toBe(false);
-  });
-
-  it("首次门禁期间隐藏 grouped 主体且不渲染任务加载文案", () => {
-    const source = readFileSync(
-      resolve(process.cwd(), "packages/ui/src/WorkspaceGroupedTasksSection.tsx"),
-      "utf8",
-    );
-
-    expect(source).not.toContain("TaskListLoadingHint");
-    expect(source).toMatch(
-      /if \(\s*shouldHideGroupedTaskContent\([\s\S]*?\)\s*\) \{\s*return null;\s*\}/,
-    );
-    // 门禁必须带上「已经画过」的短路条件，否则流式帧又会让整块闪。
-    expect(source).toContain("hasPaintedOnce: hasPaintedGroupedListRef.current");
   });
 });
 

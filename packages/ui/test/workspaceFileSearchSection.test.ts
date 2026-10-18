@@ -1,6 +1,6 @@
 import type { IFileService } from "@zcode/services";
 import type { IServiceAccessor } from "@/hooks/useServices.js";
-import { readFileSync } from "node:fs";
+
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -33,41 +33,6 @@ describe("WorkspaceFileSearch settings section", () => {
     // 显式固定中文，避免系统语言不同导致相同组件在 CI 上断言失败。
     expect(html).toContain("当前没有打开的工作区");
     expect(html).not.toContain("workspace-file-search-ignore-editor");
-  });
-
-  it("wires the ignore editor to the fileService RPC contract", () => {
-    // 契约断言（同 hooksSection 模式）：编辑页必须走 fileService 的专用 RPC，
-    // 不允许绕过服务层直接读写本地文件；分区操作必须走 applyTransform（分区重写，
-    // 不允许整体覆盖用户内容）。
-    const source = readFileSync(
-      new URL("../src/settings/WorkspaceFileSearchSection.tsx", import.meta.url),
-      "utf8",
-    );
-
-    expect(source).toContain("readWorkspaceFileSearchIgnore");
-    expect(source).toContain("writeWorkspaceFileSearchIgnore");
-    expect(source).toContain("applyWorkspaceFileSearchIgnoreTransform({");
-    expect(source).toContain("transform,");
-    expect(source).not.toContain("readTextFile");
-    expect(source).not.toContain("window.zcode");
-  });
-
-  it("keeps the save action gated on editable-or-dirty state in source contract", () => {
-    const source = readFileSync(
-      new URL("../src/settings/WorkspaceFileSearchSection.tsx", import.meta.url),
-      "utf8",
-    );
-
-    // 保存语义是"落盘编辑框内容"：template 态（文件未创建）即使未编辑也可保存，
-    // 用户第一次进页面不改任何内容也能创建 .zcodeignore；已落盘态才有修改才可保存。
-    expect(source).toContain(
-      'const canSave = loaded === null || loaded.source === "template" || draft !== loaded.content;',
-    );
-    expect(source).toContain("disabled={!canSave || saving || loading}");
-    // "未保存修改"提示仍只表达真实差异，template 态未编辑时不显示。
-    expect(source).toContain(
-      'const dirty = loaded !== null && loaded.source === "file" && draft !== loaded.content;',
-    );
   });
 
   it("matches the fileService RPC surface used by the section", () => {

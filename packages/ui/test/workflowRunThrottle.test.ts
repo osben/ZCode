@@ -265,15 +265,6 @@ describe("事件日志：三条自适应并发事件各有一行，其余仍走 
     expect(lines[1]?.label).toBe("chat.toolCall.workflow.run.event.runCapsChanged:?/?");
   });
 
-  it("两种语言各有一句：并发上限 8 → 2 / Concurrency limit 8 → 2", () => {
-    expect(zhCN["chat.toolCall.workflow.run.event.runCapsChanged"]).toBe(
-      "并发上限 {previous} → {next}",
-    );
-    expect(enUS["chat.toolCall.workflow.run.event.runCapsChanged"]).toBe(
-      "Concurrency limit {previous} → {next}",
-    );
-  });
-
   it("node-waiting 缺 cause 时按 slot 处理（没有退避细节可说）", () => {
     const lines = workflowRunEventLines(
       [

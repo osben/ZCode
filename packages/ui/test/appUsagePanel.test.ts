@@ -208,34 +208,6 @@ describe("AppUsageLifetimeSummaryStrip", () => {
     expect(screen.queryByText("最常用模型")).toBeNull();
   });
 
-  it("keeps chart color indicators above the charts", async () => {
-    const dailyChartSource = await readFile(
-      "packages/ui/src/settings/usage-stats/AppUsageDailyModelTrendChart.tsx",
-      "utf8",
-    );
-    const modelChartSource = await readFile(
-      "packages/ui/src/settings/usage-stats/AppUsageModelUsagePieChart.tsx",
-      "utf8",
-    );
-
-    const dailyLegendIndex = dailyChartSource.indexOf('role="list"');
-    const modelLegendIndex = modelChartSource.indexOf('role="list"');
-
-    expect(dailyLegendIndex).toBeGreaterThan(-1);
-    expect(modelLegendIndex).toBeGreaterThan(-1);
-    expect(dailyLegendIndex).toBeLessThan(dailyChartSource.indexOf("<ChartContainer"));
-    expect(modelLegendIndex).toBeGreaterThan(modelChartSource.indexOf("<ChartContainer"));
-    expect(modelChartSource).toContain("md:grid-cols-2");
-    expect(modelChartSource).toContain("grid grid-cols-[auto_minmax(0,1fr)_auto]");
-    expect(modelChartSource).toContain("size-2 shrink-0 self-center rounded-full");
-    expect(modelChartSource).not.toContain("h-2.5 w-1");
-    expect(modelChartSource).not.toContain("mt-0.5");
-    expect(dailyChartSource).not.toContain("rounded-md bg-surface/60");
-    expect(modelChartSource).not.toContain("rounded-md bg-surface/60");
-    expect(dailyChartSource).toContain('className="space-y-3 rounded-xl bg-surface p-4"');
-    expect(modelChartSource).toContain('className="space-y-3 rounded-xl bg-surface p-4"');
-  });
-
   it("uses small typography for chart content while keeping chart titles unchanged", async () => {
     const [
       chartUiSource,

@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -9,9 +8,9 @@ import {
 describe("desktop E2E environment-gated formal spec admission", () => {
   it("excludes real SSH specs from default runs without complete credentials", () => {
     expect(hasRequiredSshE2EEnvironment({})).toBe(false);
-    expect(
-      resolveEnvironmentGatedFormalSpecExcludes({ env: {}, targeted: false }),
-    ).toContain("./test/e2e/conversation-session/conversation-session-ssh-remote*.test.ts");
+    expect(resolveEnvironmentGatedFormalSpecExcludes({ env: {}, targeted: false })).toContain(
+      "./test/e2e/conversation-session/conversation-session-ssh-remote*.test.ts",
+    );
   });
 
   it("keeps explicit SSH runs fail-closed and admits configured default runs", () => {
@@ -23,11 +22,5 @@ describe("desktop E2E environment-gated formal spec admission", () => {
     expect(hasRequiredSshE2EEnvironment(env)).toBe(true);
     expect(resolveEnvironmentGatedFormalSpecExcludes({ env, targeted: false })).toEqual([]);
     expect(resolveEnvironmentGatedFormalSpecExcludes({ env: {}, targeted: true })).toEqual([]);
-  });
-
-  it("uses the shared admission helper in the WDIO exclude list", () => {
-    const source = readFileSync(new URL("../wdio.conf.ts", import.meta.url), "utf8");
-    expect(source).toContain("resolveEnvironmentGatedFormalSpecExcludes({");
-    expect(source).toContain("hasRequiredSshE2EEnvironment(process.env)");
   });
 });

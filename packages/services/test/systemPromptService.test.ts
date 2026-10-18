@@ -34,7 +34,7 @@ test("listSections returns defaults with no overrides on a fresh install", async
   const service = createSystemPromptService();
   const { sections } = await service.listSections();
 
-  assert.equal(sections.length, 6);
+  assert.equal(sections.length, 8);
   for (const section of sections) {
     const expectedDefault =
       section.key === "memory-guidance"
@@ -57,6 +57,21 @@ test("memory-guidance default matches the active runtime branch, including the M
   assert.ok(memory);
   assert.equal(memory.defaultContent, composeMemoryGuidanceDefault("default-index"));
   assert.match(memory.defaultContent, /add a one-line pointer in `MEMORY\.md`/);
+});
+
+test("memory agent defaults are templates that keep their runtime placeholders literal", async () => {
+  const service = createSystemPromptService();
+  const { sections } = await service.listSections();
+  const extraction = sections.find((section) => section.key === "memory-extraction");
+  const dream = sections.find((section) => section.key === "memory-dream");
+  assert.ok(extraction);
+  assert.ok(dream);
+  assert.match(extraction.defaultContent, /\{\{messageCount\}\}/);
+  assert.match(extraction.defaultContent, /\{\{existingMemories\}\}/);
+  assert.match(dream.defaultContent, /\{\{memoryRoot\}\}/);
+  assert.match(dream.defaultContent, /\{\{transcriptRoot\}\}/);
+  // The runtime-owned tail (tool constraints + session list) is not part of the editable body.
+  assert.doesNotMatch(dream.defaultContent, /## Additional context/);
 });
 
 test("getOverridesDirectory is a pure lookup and never creates the directory", async () => {

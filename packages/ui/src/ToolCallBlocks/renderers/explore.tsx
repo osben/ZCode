@@ -10,6 +10,7 @@ import { buildReadSummary, ReadFileChip } from "@/ToolCallBlocks/renderers/read.
 import { getSearchPrimaryText } from "@/ToolCallBlocks/renderers/search.js";
 import { renderFilePath } from "@/ToolCallBlocks/shared.js";
 import { resolveToolCallIdentity } from "@/lib/toolIdentity.js";
+import { useStageDurationText } from "@/ToolCallBlocks/useStageDurationText.js";
 import { ToolLayout } from "../ToolLayout.js";
 import type { ToolCallBlockRenderContext } from "../shared.js";
 import { useCallback, type ReactNode } from "react";
@@ -397,6 +398,7 @@ export function ExploreToolCallBlock(context: ToolCallBlockRenderContext) {
   const kindLabel = intl.formatMessage({
     id: "chat.toolCall.explore.label",
   });
+  const durationText = useStageDurationText(toolCall.durationMs, isRunning);
   const collapsedChildSummary = isRunning
     ? getLatestExploreChildSummaryFromChildren(intl, childToolCalls, context, {
         includeChildActionKindLabel: true,
@@ -444,8 +446,8 @@ export function ExploreToolCallBlock(context: ToolCallBlockRenderContext) {
         sourceLabel={context.sourceLabel}
         primaryText={collapsedChildSummary ? collapsedChildSummary.primaryText : summary}
         expandedPrimaryText={summary}
-        secondaryText={collapsedChildSummary?.secondaryText}
-        expandedSecondaryText={null}
+        secondaryText={collapsedChildSummary ? collapsedChildSummary.secondaryText : durationText}
+        expandedSecondaryText={durationText ?? null}
         summaryContentSeparator="·"
         animateSummaryContent
         disableSummaryContentAnimation={context.disableSummaryContentAnimation}

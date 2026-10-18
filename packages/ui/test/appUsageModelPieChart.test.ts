@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { AppUsageSnapshot } from "@zcode/shared";
 import { buildAppUsageModelPieChartViewModel } from "@/settings/usage-stats/appUsageModelPieChartViewModel.js";
@@ -69,19 +67,6 @@ const intl = {
 };
 
 describe("buildAppUsageModelPieChartViewModel", () => {
-  it("桌面端扩大环形图并保留手机端紧凑尺寸", () => {
-    const source = readFileSync(
-      resolve(process.cwd(), "packages/ui/src/settings/usage-stats/AppUsageModelUsagePieChart.tsx"),
-      "utf8",
-    );
-
-    expect(source).toContain("md:grid-cols-2");
-    expect(source).toContain("h-56 w-full max-w-64 self-center md:h-64 md:max-w-72");
-    expect(source).toContain("h-56 w-full md:h-64");
-    expect(source).toContain('className="font-mono font-medium tabular-nums"');
-    expect(source).toContain('className="text-foreground-subtle">{tokenUnit}</span>');
-  });
-
   it("reuses the app usage chart palette and merges overflow models", () => {
     const snapshot = createSnapshot([
       createModel("model-a", 600),

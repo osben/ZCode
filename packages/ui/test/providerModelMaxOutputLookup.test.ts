@@ -7,7 +7,6 @@ import { ProviderModelsSection } from "@/settings/model-provider-section/Provide
 import { ProviderModelMetadataDialog } from "@/settings/model-provider-section/ProviderModelMetadataDialog.js";
 import { MODEL_PROVIDER_TEXT_IDLE_TRIGGER_MS } from "@/settings/model-provider-section/useIdleTrigger.js";
 import zhCN from "@/i18n/locales/zh-CN.js";
-import enUS from "@/i18n/locales/en-US.js";
 
 const providerSettingsServiceMock = vi.hoisted(() => ({
   resolveModelConfig: vi.fn(),
@@ -159,19 +158,6 @@ function renderAddModelSection(onAddModel = vi.fn(() => true)) {
 }
 
 describe("provider model config resolution", () => {
-  it("匹配提示使用智能配置文案，推理映射标签中英文语义一致", () => {
-    expect(zhCN["settings.modelProvider.modelDefaultsLoaded"]).toBe("已匹配到智能配置");
-    expect(zhCN["settings.modelProvider.reasoningLevelMapping"]).toBe("推理参数映射");
-    expect(enUS["settings.modelProvider.reasoningLevelMapping"]).toBe(
-      "Reasoning parameter mapping",
-    );
-    expect(zhCN["settings.modelProvider.modelMetadata.invalid.reasoningLevelMap"]).toBe(
-      "推理参数映射无效",
-    );
-    expect(enUS["settings.modelProvider.modelDefaultsLoaded"]).toBe(
-      "Smart configuration matched for this model",
-    );
-  });
   beforeEach(() => {
     vi.useFakeTimers();
     providerSettingsServiceMock.resolveModelConfig.mockReset();

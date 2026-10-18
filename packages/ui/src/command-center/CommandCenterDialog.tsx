@@ -533,6 +533,12 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
   const [worktreeExistingBranchWorktreePath, setWorktreeExistingBranchWorktreePath] = useState<
     string | null
   >(null);
+  /** Registered worktree of a typed existing branch whose directory is gone (prunable record). */
+  const [worktreeExistingBranchStalePath, setWorktreeExistingBranchStalePath] = useState<
+    string | null
+  >(null);
+  /** Bumped after an explicit prune so the existing-branch offer is resolved again. */
+  const [worktreeOfferRefreshKey, setWorktreeOfferRefreshKey] = useState(0);
   /** Full worktree list for the setup-page manage section (2026-10-13 Phase 2). */
   const [worktreeListResult, setWorktreeListResult] = useState<GitWorktreeListResult | null>(null);
   const [worktreeRemoveBusyPath, setWorktreeRemoveBusyPath] = useState<string | null>(null);
@@ -1054,17 +1060,44 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
       !setupWorkspacePath
     ) {
       setWorktreeExistingBranchWorktreePath(null);
+      setWorktreeExistingBranchStalePath(null);
       return;
     }
     let cancelled = false;
     Promise.resolve()
       .then(() => baseServices.gitService.listWorktrees({ workspacePath: setupWorkspacePath }))
-      .then((result) => {
+      .then(async (result) => {
         if (cancelled) {
           return;
         }
         const match = findWorktreeForBranch(result.worktrees, worktreeExistingBranchName);
-        setWorktreeExistingBranchWorktreePath(match?.path ?? null);
+        if (!match) {
+          setWorktreeExistingBranchWorktreePath(null);
+          setWorktreeExistingBranchStalePath(null);
+          return;
+        }
+        // `git worktree list` keeps a prunable record after the directory was deleted by hand;
+        // opening it would silently create a ghost workspace on a missing path.
+        let usable = true;
+        try {
+          const verification = await baseServices.gitService.verifyWorktreeUsable({
+            workspacePath: setupWorkspacePath,
+            targetPath: match.path,
+          });
+          usable = verification.ok;
+        } catch (error: unknown) {
+          // Degrade to the plain offer: a failing check must not block the dialog.
+          logger.warn("[CommandCenter] existing worktree usability check failed", {
+            workspacePath: setupWorkspacePath,
+            path: match.path,
+            error: getErrorMessage(error),
+          });
+        }
+        if (cancelled) {
+          return;
+        }
+        setWorktreeExistingBranchWorktreePath(usable ? match.path : null);
+        setWorktreeExistingBranchStalePath(usable ? null : match.path);
       })
       .catch((error: unknown) => {
         // Silent: without the list the Start attempt stays authoritative (server classifies
@@ -1076,6 +1109,7 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
             error: getErrorMessage(error),
           });
           setWorktreeExistingBranchWorktreePath(null);
+          setWorktreeExistingBranchStalePath(null);
         }
       });
     return () => {
@@ -1086,6 +1120,7 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
     setupWorkspacePath,
     worktreeDestination,
     worktreeExistingBranchName,
+    worktreeOfferRefreshKey,
     worktreeSetupPageActive,
   ]);
 
@@ -1320,7 +1355,8 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
       !targetPath ||
       worktreeBranchNameIssue ||
       worktreeCustomLocationInvalid ||
-      worktreeExistingBranchWorktreePath
+      worktreeExistingBranchWorktreePath ||
+      worktreeExistingBranchStalePath
     ) {
       return;
     }
@@ -1497,6 +1533,7 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
           workspacePath: project.workspacePath,
         });
         setWorktreeListResult(list.isRepository && list.isGitAvailable ? list : null);
+        setWorktreeOfferRefreshKey((key) => key + 1);
         setWorktreePruneMessage(
           intl.formatMessage(
             { id: "commandCenter.worktree.prune.done" },
@@ -1546,6 +1583,7 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
       trimmedWorktreeBranchName.length > 0 &&
       worktreeBranchNameIssue === null &&
       !worktreeExistingBranchWorktreePath &&
+      !worktreeExistingBranchStalePath &&
       !worktreeCustomLocationInvalid &&
       !worktreeGlobalLocationUnavailable
     );
@@ -1557,6 +1595,7 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
     worktreeDataError,
     worktreeDataLoading,
     worktreeDestination,
+    worktreeExistingBranchStalePath,
     worktreeExistingBranchWorktreePath,
     worktreeGlobalLocationUnavailable,
     worktreeRepoUnavailable,
@@ -2046,6 +2085,32 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
               <p className="px-2.5 text-ui-sm text-foreground-subtle">
                 {intl.formatMessage({ id: "commandCenter.worktree.existingBranchHint" })}
               </p>
+            ) : null}
+            {worktreeExistingBranchName && worktreeExistingBranchStalePath ? (
+              <div className="flex flex-col items-start gap-2 px-2.5">
+                <p
+                  role="alert"
+                  className="flex items-start gap-2 text-ui-sm text-foreground-subtle"
+                >
+                  <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
+                  {intl.formatMessage(
+                    { id: "commandCenter.worktree.error.worktreeMissing" },
+                    {
+                      branchName: worktreeExistingBranchName,
+                      path: worktreeExistingBranchStalePath,
+                    },
+                  )}
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={worktreePruneBusy || worktreeStartBusy}
+                  onClick={() => void pruneWorktreeEntries()}
+                >
+                  {intl.formatMessage({ id: "commandCenter.worktree.prune" })}
+                </Button>
+              </div>
             ) : null}
             {worktreeExistingBranchName && worktreeExistingBranchWorktreePath ? (
               <div className="px-2.5">

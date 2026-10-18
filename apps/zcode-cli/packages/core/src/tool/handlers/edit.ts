@@ -195,7 +195,7 @@ export const editHandler: ToolHandler = async (input, context) => {
   if (filePath.endsWith(".ipynb")) {
     return editFailure(
       EditErrorCode.NOTEBOOK_FILE,
-      "File is a Jupyter Notebook. Use the NotebookEdit to edit this file.",
+      "Edit does not support Jupyter Notebook (.ipynb) files. No notebook editing tool is available; read the notebook and rewrite its JSON with Write if a change is required.",
     );
   }
 

@@ -9,6 +9,16 @@ const ukUA: Record<string, string> = {
   "worktreeSetup.connectionUnavailable":
     "Відновіть з'єднання з Host цього проєкту, щоб продовжити підготовку worktree.",
   "worktreeSetup.created": "Worktree створено",
+  "worktreeSetup.stepCreating": "Готуємо worktree {branch}…",
+  "worktreeSetup.stepCreating.baseHead": "Базова гілка — HEAD",
+  "worktreeSetup.stepReady": "Worktree готово: {path}",
+  "worktreeSetup.stepExisting": "Використано наявний worktree: {path}",
+  "worktreeSetup.stepFailed": "Не вдалося підготувати worktree: {reason}",
+  "worktreeSetup.retry": "Повторити",
+  "worktreeSetup.discard": "Відхилити",
+  "worktreeSetup.queuedMessageLabel": "Повідомлення в черзі",
+  "worktreeSetup.orphanedNote":
+    "Це приготування вже не належить активній сесії, його можна відхилити.",
   "composerRecovery.editorOccupied": "Надішліть або очистьте поточну чернетку перед відновленням.",
   "composerRecovery.reattach": "Прикріпіть відсутні файли знову або явно видаліть їх.",
   "composerRecovery.restore": "Відновити",
@@ -4999,6 +5009,8 @@ const ukUA: Record<string, string> = {
   "chat.history.workingThroughputEstimateTitle":
     "Швидкість потокового виводу (оцінка за кількістю символів; точне значення з'явиться після завершення запиту)",
   "chat.history.workedFor": "Робота тривала {duration}",
+  "chat.history.outputTokens": "{count} токенів",
+  "chat.history.outputTokensTitle": "Вихідні токени головного агента за цей хід",
   "chat.history.worked": "Виконано",
   "chat.history.stopped": "Зупинено",
   "chat.history.duration.day": "дн.",
@@ -7515,9 +7527,65 @@ const ukUA: Record<string, string> = {
     "~/.zcode/AGENTS.md було змінено після відкриття. Перезавантажте, щоб відхилити чернетку, або перезапишіть файл своєю чернеткою.",
   "settings.instructions.conflict.reload": "Перезавантажити",
   "settings.instructions.conflict.overwrite": "Перезаписати",
+  "settings.systemPrompt.title": "Системні промпти",
+  "settings.systemPrompt.description":
+    "Редагуйте вбудовані фрагменти промпту для нових сеансів на активному хості.",
+  "settings.systemPrompt.desktopOnly":
+    "Фрагменти системного промпту можна редагувати в настільному застосунку.",
+  "settings.systemPrompt.host.local": "Цей комп'ютер",
+  "settings.systemPrompt.pinnedHostNotice":
+    "Активний робочий простір на іншому хості. Редактор усе ще працює з {host}, доки ви не збережете або не відхилите чернетку.",
+  "settings.systemPrompt.waitingRemote": "Очікуємо з'єднання з віддаленим хостом...",
+  "settings.systemPrompt.unsupportedHost":
+    "Цей хост поки не підтримує керування системними фрагментами промпту. Оновіть ZCode на віддаленому хості та спробуйте ще раз.",
+  "settings.systemPrompt.loadFailed": "Не вдалося завантажити фрагменти системного промпту.",
+  "settings.systemPrompt.retry": "Повторити",
+  "settings.systemPrompt.customized": "Змінено",
+  "settings.systemPrompt.effectivePreview": "Поточний текст",
+  "settings.systemPrompt.edit": "Редагувати",
+  "settings.systemPrompt.restoreDefault": "Відновити стандартний",
+  "settings.systemPrompt.restoreConfirm.title": "Відновити вбудований промпт?",
+  "settings.systemPrompt.restoreConfirm.description":
+    "Буде видалено змінений промпт «{section}» на хості {host} і відновлено вбудоване стандартне значення.",
+  "settings.systemPrompt.restoreConfirm.confirm": "Відновити стандартний",
+  "settings.systemPrompt.restored": "Фрагмент системного промпту повернуто до стандартного тексту.",
+  "settings.systemPrompt.restoreFailed": "Не вдалося відновити стандартний текст.",
+  "settings.systemPrompt.editorLabel": "Текст промпту",
+  "settings.systemPrompt.characterCount": "{count} символів",
+  "settings.systemPrompt.identityBaselineLoading":
+    "Перевіряємо активний стиль відповідей перед редагуванням…",
+  "settings.systemPrompt.identityBaselineUnavailable":
+    "Не вдалося завантажити стилі відповідей. Відкрийте «Стилі відповідей» у налаштуваннях і повторіть спробу перед редагуванням цього фрагмента.",
+  "settings.systemPrompt.memoryRootHint":
+    "Залиште маркер {placeholder}; під час запуску нового сеансу його буде замінено каталогом пам'яті цього сеансу.",
+  "settings.systemPrompt.memoryExtractionHint":
+    "Виконується у фоні після кожного успішного ходу. {countPlaceholder} замінюється кількістю останніх повідомлень для перегляду; {listPlaceholder} — списком наявних файлів пам'яті (порожньо, якщо їх немає).",
+  "settings.systemPrompt.memoryDreamHint":
+    "Використовується ручною консолідацією /dream. {rootPlaceholder} замінюється каталогом пам'яті, {transcriptPlaceholder} — каталогом стенограм сеансів. Обмеження інструментів і список сеансів додаються завжди.",
+  "settings.systemPrompt.emptyHint":
+    "Порожній фрагмент використовує вбудоване стандартне значення і не може зберігатися як зміна.",
+  "settings.systemPrompt.diffTitle": "Зміни",
+  "settings.systemPrompt.save": "Зберегти",
+  "settings.systemPrompt.saved": "Фрагмент системного промпту збережено для нових сеансів.",
+  "settings.systemPrompt.saveFailed": "Не вдалося зберегти фрагмент системного промпту.",
+  "settings.systemPrompt.discard.title": "Відхилити незбережені зміни промпту?",
+  "settings.systemPrompt.discard.leave": "Незбережені зміни системного промпту буде втрачено.",
+  "settings.systemPrompt.discard.hostChanged":
+    "Активний робочий простір змінив хост, поки чернетка промпту була незбережена. Відхилити її та переключитися?",
+  "settings.systemPrompt.discard.confirm": "Відхилити",
+  "settings.systemPrompt.section.cliPrefix": "Префікс CLI",
+  "settings.systemPrompt.section.identityIntro": "Вступ про ідентичність",
+  "settings.systemPrompt.section.harness": "Harness",
+  "settings.systemPrompt.section.communication": "Спілкування",
+  "settings.systemPrompt.section.contextManagement": "Керування контекстом",
+  "settings.systemPrompt.section.memoryGuidance": "Настанови щодо пам'яті",
+  "settings.systemPrompt.section.memoryExtraction": "Видобування пам'яті",
+  "settings.systemPrompt.section.memoryDream": "Консолідація пам'яті (/dream)",
   "settings.outputStyles.title": "Стилі відповідей",
   "settings.outputStyles.description":
     "Виберіть, як агент формує свої відповіді. Вбудовані стандартні значення зберігаються в коді програми; редагування зберігаються як файли перевизначення, які завжди можна відкотити.",
+  "settings.outputStyles.defaultPrompt":
+    "Додаткових інструкцій стилю відповіді немає. ZCode використовує стандартний системний промпт.",
   "settings.outputStyles.desktopOnly":
     "Стилями відповідей можна керувати в застосунку для комп'ютера.",
   "settings.outputStyles.host.local": "Цей пристрій",

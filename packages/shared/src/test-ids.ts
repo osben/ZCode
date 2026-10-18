@@ -805,5 +805,16 @@ export const TID_FEEDBACK_LOGS_OPT_IN = "feedback-logs-opt-in";
 export const TID_SETTINGS_OUTPUT_STYLES_SECTION = "settings-output-styles-section";
 /** One style row in the output styles list. */
 export const TID_SETTINGS_OUTPUT_STYLES_ROW = "settings-output-styles-row";
+export const TID_SETTINGS_OUTPUT_STYLES_DEFAULT_PROMPT = "settings-output-styles-default-prompt";
 /** Output styles editor save button. */
 export const TID_SETTINGS_OUTPUT_STYLES_SAVE = "settings-output-styles-save";
+
+/** System prompt override settings section and per-key editor controls. */
+export const TID_SETTINGS_SYSTEM_PROMPT_SECTION = "settings-system-prompt-section";
+export const TID_SETTINGS_SYSTEM_PROMPT_ROW = "settings-system-prompt-row";
+export const TID_SETTINGS_SYSTEM_PROMPT_EDIT = "settings-system-prompt-edit";
+export const TID_SETTINGS_SYSTEM_PROMPT_CUSTOMIZED = "settings-system-prompt-customized";
+export const TID_SETTINGS_SYSTEM_PROMPT_DIFF = "settings-system-prompt-diff";
+export const TID_SETTINGS_SYSTEM_PROMPT_EDITOR = "settings-system-prompt-editor";
+export const TID_SETTINGS_SYSTEM_PROMPT_SAVE = "settings-system-prompt-save";
+export const TID_SETTINGS_SYSTEM_PROMPT_RESTORE = "settings-system-prompt-restore";

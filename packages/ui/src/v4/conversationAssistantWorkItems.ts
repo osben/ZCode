@@ -122,11 +122,29 @@ function resolveGroupStageStatus(
   return rows.some((row) => row.status === "cancelled") ? "stopped" : "completed";
 }
 
+// Only projected timestamps count: a stage with any child lacking endedAt (old snapshots) shows no duration rather than a guess.
+function resolveCompletedStageDurationMs(
+  rows: readonly ToolCallRow[],
+  status: string,
+): number | undefined {
+  if (status === "in_progress") return undefined;
+  let startedAt = Number.POSITIVE_INFINITY;
+  let endedAt = Number.NEGATIVE_INFINITY;
+  for (const row of rows) {
+    if (typeof row.endedAt !== "number") return undefined;
+    startedAt = Math.min(startedAt, row.createdAt);
+    endedAt = Math.max(endedAt, row.endedAt);
+  }
+  return Math.max(0, endedAt - startedAt);
+}
+
 function buildExploreGroup(rows: ToolCallRow[], stageTailIsRunning: boolean) {
   // The group builder is called only after at least two consecutive tools of the same type; an empty array is invalid,
   // so do not hide caller errors behind a fabricated identity fallback.
   const firstRow = rows[0]!;
   const childToolCalls = rows.map(toolCallRowToLegacyNode);
+  const status = resolveGroupStageStatus(rows, stageTailIsRunning);
+  const durationMs = resolveCompletedStageDurationMs(rows, status);
 
   return {
     kind: "exploreGroup" as const,
@@ -143,8 +161,9 @@ function buildExploreGroup(rows: ToolCallRow[], stageTailIsRunning: boolean) {
         kind: "Explore",
         title: "Explore",
         input: {},
-        status: resolveGroupStageStatus(rows, stageTailIsRunning),
+        status,
         startedAt: typeof firstRow.startedAt === "number" ? firstRow.startedAt : undefined,
+        ...(durationMs !== undefined ? { durationMs } : {}),
       },
       childToolCalls,
     },
@@ -153,6 +172,8 @@ function buildExploreGroup(rows: ToolCallRow[], stageTailIsRunning: boolean) {
 
 function buildExecuteGroup(rows: ToolCallRow[], stageTailIsRunning: boolean) {
   const firstRow = rows[0]!;
+  const status = resolveGroupStageStatus(rows, stageTailIsRunning);
+  const durationMs = resolveCompletedStageDurationMs(rows, status);
   return {
     kind: "executeGroup" as const,
     // If group identity includes the last item or count, streaming commands remount the parent and lose expanded state.
@@ -167,8 +188,9 @@ function buildExecuteGroup(rows: ToolCallRow[], stageTailIsRunning: boolean) {
         kind: "executeGroup",
         title: "Execute",
         input: {},
-        status: resolveGroupStageStatus(rows, stageTailIsRunning),
+        status,
         startedAt: typeof firstRow.startedAt === "number" ? firstRow.startedAt : undefined,
+        ...(durationMs !== undefined ? { durationMs } : {}),
       },
       childToolCalls: rows.map(toolCallRowToLegacyNode),
     },

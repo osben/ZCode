@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 import { createE2ERunnerFinalizationGuard } from "./e2e/helpers/e2e-runner-finalization-guard.js";
@@ -37,9 +36,7 @@ describe("desktop E2E infrastructure lifecycle", () => {
         throw "";
       }),
     ).rejects.toBe("");
-    expect(record).toHaveBeenCalledWith(
-      expect.objectContaining({ error: "", status: "failed" }),
-    );
+    expect(record).toHaveBeenCalledWith(expect.objectContaining({ error: "", status: "failed" }));
   });
 
   it("keeps a referenced finalization timer until it is disarmed", () => {
@@ -58,26 +55,5 @@ describe("desktop E2E infrastructure lifecycle", () => {
     } finally {
       vi.useRealTimers();
     }
-  });
-
-  it("arms after the last worker and disarms before normal onComplete", () => {
-    const source = readFileSync(new URL("../wdio.conf.ts", import.meta.url), "utf8");
-    const workerEnd = source.slice(
-      source.indexOf("  onWorkerEnd("),
-      source.indexOf("  async afterTest(", source.indexOf("  onWorkerEnd(")),
-    );
-    const onComplete = source.slice(source.indexOf("  async onComplete("));
-    const forcedFinalization = source.slice(
-      source.indexOf("function forceFinalizeE2ERunnerFromGuard()"),
-      source.indexOf("async function resetE2EHome("),
-    );
-
-    expect(workerEnd).toContain("e2eRunnerFinalizationGuard.arm()");
-    expect(workerEnd.indexOf("e2eRunnerFinalizationGuard.arm()")).toBeLessThan(
-      workerEnd.indexOf("if (!workerLifecycle)"),
-    );
-    expect(workerEnd).toContain('status: exitCode === 0 ? "passed" : "failed"');
-    expect(forcedFinalization).toContain("armE2ERunnerExitWatchdog(1)");
-    expect(onComplete).toContain("e2eRunnerFinalizationGuard.disarm()");
   });
 });

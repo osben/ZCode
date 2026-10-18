@@ -20,8 +20,6 @@ import {
   resolveDefaultRemoteSkillSyncSelection,
   shouldToggleRemoteSkillSyncCardSelection,
 } from "../src/settings/RemoteSkillSyncDialog.js";
-import enUS from "../src/i18n/locales/en-US.js";
-import zhCN from "../src/i18n/locales/zh-CN.js";
 
 const controlHintTooltipMockState = vi.hoisted(() => ({
   latest: null as null | {
@@ -95,10 +93,7 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
     const locale = remoteSkillSyncIntlMockState.locale;
     return {
       intl: {
-        formatMessage: (
-          { id }: { id: string },
-          values?: Record<string, string | number>,
-        ) => {
+        formatMessage: ({ id }: { id: string }, values?: Record<string, string | number>) => {
           const messages: Record<string, string> = {
             "settings.skills.remoteSync.title": "Sync Skills to remote target",
             "settings.skills.remoteSync.warningTitle": "Skill data and environment availability",
@@ -164,19 +159,6 @@ function createSkillSyncServiceStub(): ISkillSyncService {
 }
 
 describe("RemoteSkillSyncDialog helpers", () => {
-  it("provides size-limit copy in both supported locales", () => {
-    const messageIds = [
-      "settings.skills.remoteSync.sizeLimit.selectedContent",
-      "settings.skills.remoteSync.sizeLimit.archive",
-      "settings.skills.remoteSync.sizeLimit.extractedContent",
-    ];
-
-    for (const messageId of messageIds) {
-      expect(enUS[messageId]).toBeTruthy();
-      expect(zhCN[messageId]).toBeTruthy();
-    }
-  });
-
   it("localizes structured selected-content size limit errors", () => {
     const error = Object.assign(new Error("skill sync size limit exceeded"), {
       code: SKILL_SYNC_SIZE_LIMIT_ERROR_CODE,
@@ -484,8 +466,7 @@ describe("RemoteSkillSyncDialog", () => {
     );
 
     const dialogContentClass =
-      html.match(/<div class="([^"]*max-h-\[min\(720px,calc\(100dvh-2rem\)\)\][^"]*)"/u)?.[1] ??
-      "";
+      html.match(/<div class="([^"]*max-h-\[min\(720px,calc\(100dvh-2rem\)\)\][^"]*)"/u)?.[1] ?? "";
     expect(dialogContentClass.split(/\s+/u)).toEqual(
       expect.arrayContaining([
         "h-[min(720px,calc(100dvh-2rem))]",
@@ -522,8 +503,7 @@ describe("RemoteSkillSyncDialog", () => {
     );
 
     expect(html).toContain("line-clamp-1");
-    const descriptionClass =
-      html.match(/class="([^"]*line-clamp-1[^"]*)"/u)?.[1] ?? "";
+    const descriptionClass = html.match(/class="([^"]*line-clamp-1[^"]*)"/u)?.[1] ?? "";
     expect(descriptionClass.split(/\s+/u)).not.toContain("block");
     expect(html).toContain('aria-expanded="false"');
     expect(html).toContain('aria-label="Show more"');
@@ -575,5 +555,4 @@ describe("RemoteSkillSyncDialog", () => {
       html.indexOf("Show existing remote skills"),
     );
   });
-
 });

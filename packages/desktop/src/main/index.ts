@@ -2182,7 +2182,10 @@ app.on("open-url", (event, url) => {
 });
 const gotTheLock = app.requestSingleInstanceLock(createDeepLinkSingleInstanceData(process.argv));
 if (!gotTheLock) {
-  app.quit();
+  // Skipping before-quit is safe here: the loser has no windows, Hosts, cron, or Agents at this point (all are created
+  // after ready), and requestSingleInstanceLock has already handed its payload to the first instance. The before-quit
+  // barrier would only flush this process's own telemetry and emit perf_app_exit, then run no-op host cleanup.
+  app.exit(0);
 }
 app.on("second-instance", (_event, argv, _workingDirectory, additionalData) => {
   if (

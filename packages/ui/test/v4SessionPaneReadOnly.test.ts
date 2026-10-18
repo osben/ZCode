@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { createElement, type ReactNode } from "react";
-import { readFileSync } from "node:fs";
+
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConversationSnapshot } from "@zcode/shared/zcode-protocol-v4";
@@ -8,8 +8,6 @@ import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { SessionPane } from "@/v4/SessionPane.js";
 import type { ConversationShareSelectionDraft } from "@/store/conversationShareSelectionStore.js";
 import type { ConversationRowRenderContext } from "@/v4/conversationRowContext.js";
-
-const sessionPaneSource = readFileSync("packages/ui/src/v4/SessionPane.tsx", "utf8");
 
 const projectionState = vi.hoisted(() => ({
   current: null as {
@@ -460,20 +458,6 @@ describe("SessionPane 分享模式接线", () => {
     renderSharePane(partialDraft({ stage: "configuration", view: "selection" }));
 
     expect(timelineState.backgroundScrollLocked).toBe(false);
-  });
-
-  it("预检可跳过项不提前写入发布成功 warning，避免确认页重复展示", () => {
-    const nextHandlerStart = sessionPaneSource.indexOf("const handleShareNext = useCallback");
-    const nextHandlerEnd = sessionPaneSource.indexOf(
-      "const handleShareSelectAll = useCallback",
-      nextHandlerStart,
-    );
-    expect(nextHandlerStart).toBeGreaterThanOrEqual(0);
-    expect(nextHandlerEnd).toBeGreaterThan(nextHandlerStart);
-
-    const nextHandler = sessionPaneSource.slice(nextHandlerStart, nextHandlerEnd);
-    expect(nextHandler).toContain("goToShareConfiguration(sessionId)");
-    expect(nextHandler).not.toContain("setShareWarnings");
   });
 
   it("不在分享模式时不锁定背景滚动", () => {

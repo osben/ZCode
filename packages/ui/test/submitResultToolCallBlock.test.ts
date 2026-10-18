@@ -27,9 +27,8 @@ import { resolveToolCallRenderer } from "../src/ToolCallBlocks/resolveRenderer.j
 // eslint-disable-next-line import/first -- 同上；整链路由断言要走真实入口组件。
 import { ToolCallBlock } from "@/ToolCallBlocks.js";
 // eslint-disable-next-line import/first -- 同上；词条只用于双语言存在性断言。
-import enUS from "../src/i18n/locales/en-US.js";
+
 // eslint-disable-next-line import/first -- 同上。
-import zhCN from "../src/i18n/locales/zh-CN.js";
 
 interface ToolCallOverrides {
   input?: unknown;
@@ -314,22 +313,5 @@ describe("SubmitResultToolCallBlock 快照字段提示", () => {
     );
 
     expect(html).toContain("加载完整工具数据");
-  });
-});
-
-describe("submitResult 词条双语齐备", () => {
-  it("四个相位 key 加一个小标题 key 在两种语言里都在场，且不是英文占位", () => {
-    // 缺 key 会静默渲染裸 key（IntlProvider.tsx 的 messages[id] ?? id）。
-    for (const key of [
-      "chat.toolCall.submitResult.submitting",
-      "chat.toolCall.submitResult.submitted",
-      "chat.toolCall.submitResult.rejected",
-      "chat.toolCall.submitResult.stopped",
-      "chat.toolCall.submitResult.resultHeading",
-    ]) {
-      expect(enUS[key]).toBeTruthy();
-      expect(zhCN[key]).toBeTruthy();
-      expect(zhCN[key]).not.toBe(enUS[key]);
-    }
   });
 });

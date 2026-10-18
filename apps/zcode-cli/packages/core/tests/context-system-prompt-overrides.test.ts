@@ -6,7 +6,7 @@ import {
   DEFAULT_CONTEXT_MANAGEMENT_PROMPT,
   DEFAULT_HARNESS_PROMPT,
   DEFAULT_IDENTITY_INTRO_PROMPT,
-  renderMemoryGuidancePrompt,
+  renderSystemPromptTemplate,
   SYSTEM_PROMPT_DEFAULTS,
 } from "@zcode/shared";
 import { buildCliPrefixSection } from "../src/context/sections/cli-prefix.js";
@@ -69,7 +69,7 @@ describe("system prompt section defaults and overrides", () => {
     // semantic-recall branch renders exactly the shared constant with the root substituted…
     const plain = buildMemorySection("/mem/root", "semantic-recall");
     expect(plain?.content).toBe(
-      renderMemoryGuidancePrompt(SYSTEM_PROMPT_DEFAULTS["memory-guidance"], "/mem/root"),
+      renderSystemPromptTemplate(SYSTEM_PROMPT_DEFAULTS["memory-guidance"], { memoryRoot: "/mem/root" }),
     );
     // …while default-index adds the MEMORY.md pointer line on top of the same base.
     const indexed = buildMemorySection("/mem/root", "default-index");
@@ -83,7 +83,9 @@ describe("system prompt section defaults and overrides", () => {
     // default/diff preview cannot drift from the restored prompt.
     const indexed = buildMemorySection("/mem/root", "default-index");
     expect(indexed?.content).toBe(
-      renderMemoryGuidancePrompt(composeMemoryGuidanceDefault("default-index"), "/mem/root"),
+      renderSystemPromptTemplate(composeMemoryGuidanceDefault("default-index"), {
+        memoryRoot: "/mem/root",
+      }),
     );
   });
 

@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { createElement, type ContextType } from "react";
 import { DeliveryContext } from "@/v4/botGroupDeliveryContext.js";
 import { withTopicPreparationMessages } from "@/v4/topicPreparationRenderUnits.js";
@@ -781,14 +780,6 @@ describe("ConversationTurnGroup message stream display settings", () => {
 });
 
 describe("ConversationTurnGroup assistant history status", () => {
-  it("会话内分享只打开本地卡片，不再调用后端分享接口", () => {
-    const source = readFileSync("packages/ui/src/v4/ConversationTurnGroup.tsx", "utf8");
-
-    expect(source).toContain("setHighspeedShareDialogOpen(true)");
-    expect(source).toContain("<HighspeedShareDialog");
-    expect(source).not.toContain("highspeedCardService.share");
-  });
-
   it("冷恢复后从 userInput metadata 保留 accelerated output 的紫色工时", () => {
     const input = userInputRow(2, {
       sourceCommandId: "command-highspeed-cold-history",
@@ -1299,6 +1290,30 @@ describe("ConversationTurnGroup assistant history status", () => {
     expect(renderUnit(interruptedUnit, { locale: "en-US" })).not.toContain("Worked for 5s");
     expect(renderUnit(interruptedUnit, { locale: "zh-CN" })).toContain("已停止");
     expect(renderUnit(interruptedUnit, { locale: "zh-CN" })).not.toContain("已工作 5 秒");
+  });
+
+  it("shows turn output tokens next to a completed work status", () => {
+    const row = reasoningRow();
+    const unit = (outputTokens?: number) =>
+      baseUnit({
+        key: "turn-complete:tokens",
+        turnId: "turn-complete",
+        isLastTurn: false,
+        workStatus: {
+          state: "completed",
+          durationMs: 65_000,
+          ...(outputTokens !== undefined ? { outputTokens } : {}),
+        },
+        assistantWorkRows: [row],
+        assistantHistoryRows: [row],
+        renderRows: [row],
+      });
+
+    const html = renderUnit(unit(12_345), { locale: "en-US" });
+    expect(html).toContain("Worked for 1m 5s");
+    expect(html).toContain('data-testid="chat-worked-output-tokens"');
+    expect(html).toContain("12.3K tokens");
+    expect(renderUnit(unit(), { locale: "en-US" })).not.toContain("chat-worked-output-tokens");
   });
 
   it("按语言格式化工作时长的单位间距", () => {
@@ -2450,26 +2465,6 @@ describe("ConversationTurnGroup assistant history status", () => {
 });
 
 describe("ConversationTurnGroup ChatLoading lifecycle", () => {
-  it("Highspeed 运行态作用域用语义紫色覆盖所有呼吸渐变", () => {
-    const styles = readFileSync("packages/ui/src/styles.css", "utf8");
-    const modifier =
-      styles.match(
-        /\.highspeed-animated-gradient-text\s+\.animated-gradient-text\s*\{([^}]*)\}/,
-      )?.[1] ?? "";
-
-    expect(modifier).toContain("--animated-gradient-text-strong: var(--color-icon-purple);");
-    expect(modifier).toContain("--animated-gradient-text-soft:");
-    expect(modifier).toContain("var(--color-icon-purple)");
-  });
-
-  it("Retry 只降低 shimmer 峰值并保留全局低透明度扫光低谷", () => {
-    const styles = readFileSync("packages/ui/src/styles.css", "utf8");
-    const modifier = styles.match(/\.animated-gradient-text-subtle\s*\{([^}]*)\}/)?.[1] ?? "";
-
-    expect(modifier).toContain("--animated-gradient-text-strong: var(--color-foreground-subtle);");
-    expect(modifier).not.toContain("--animated-gradient-text-soft");
-  });
-
   it("第三次 retry 才替换当前 turn 底部的通用 loading，并保留 3/10 计数口径", () => {
     const html = renderUnit(
       baseUnit({

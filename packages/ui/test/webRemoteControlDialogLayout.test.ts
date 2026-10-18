@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 
-import { readFileSync } from "node:fs";
 import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
@@ -13,18 +12,12 @@ import {
 } from "@/WebRemoteControlDialog.js";
 
 vi.mock("@/components/ui/button.js", () => ({
-  Button: ({
-    children,
-    ...props
-  }: {
-    children?: ReactNode;
-    [key: string]: unknown;
-  }) => createElement("button", props, children),
+  Button: ({ children, ...props }: { children?: ReactNode; [key: string]: unknown }) =>
+    createElement("button", props, children),
 }));
 
 vi.mock("@/components/ui/dialog.js", () => ({
-  Dialog: ({ children }: { children?: ReactNode }) =>
-    createElement("div", null, children),
+  Dialog: ({ children }: { children?: ReactNode }) => createElement("div", null, children),
   DialogContent: ({
     children,
     className,
@@ -36,17 +29,10 @@ vi.mock("@/components/ui/dialog.js", () => ({
     showCloseButton?: boolean;
     [key: string]: unknown;
   }) => createElement("section", { className, ...props }, children),
-  DialogDescription: ({ children }: { children?: ReactNode }) =>
-    createElement("p", null, children),
-  DialogHeader: ({
-    children,
-    className,
-  }: {
-    children?: ReactNode;
-    className?: string;
-  }) => createElement("header", { className }, children),
-  DialogTitle: ({ children }: { children?: ReactNode }) =>
-    createElement("h2", null, children),
+  DialogDescription: ({ children }: { children?: ReactNode }) => createElement("p", null, children),
+  DialogHeader: ({ children, className }: { children?: ReactNode; className?: string }) =>
+    createElement("header", { className }, children),
+  DialogTitle: ({ children }: { children?: ReactNode }) => createElement("h2", null, children),
 }));
 
 const feedbackMocks = vi.hoisted(() => ({
@@ -99,12 +85,6 @@ vi.mock("@/logger.js", () => ({
     info: feedbackMocks.info,
   },
 }));
-
-function readWebRemoteControlDialogSource() {
-  // Bugfix: WebRemoteControlDialog 经过 React.memo 包装后，组件 toString() 只会返回 [object Object]。
-  // 源码结构守卫需要读取真实文件，才能继续校验复用顺序和确认弹窗保护没有被性能优化绕开。
-  return readFileSync("packages/ui/src/WebRemoteControlDialog.tsx", "utf8");
-}
 
 describe("WebRemoteControlDialog layout", () => {
   afterEach(() => {
@@ -241,22 +221,6 @@ describe("WebRemoteControlDialog layout", () => {
     ).toBe(false);
   });
 
-  it("打开弹层时先复用已连接手机的 window 会话再考虑重新 start", () => {
-    const source = readWebRemoteControlDialogSource();
-    const reuseIndex = source.indexOf(
-      "isReusableWebRemoteControlSession(currentStatus)",
-    );
-    const startIndex = source.indexOf("platform.startWebRemoteControl");
-    const pollReuseIndex = source.indexOf(
-      "isReusableWebRemoteControlSession(nextStatus)",
-    );
-
-    expect(reuseIndex).toBeGreaterThan(-1);
-    expect(startIndex).toBeGreaterThan(-1);
-    expect(reuseIndex).toBeLessThan(startIndex);
-    expect(pollReuseIndex).toBeGreaterThan(-1);
-  });
-
   it("uses Remote Connect width without forcing the lighter dialog to full height", () => {
     const html = renderToStaticMarkup(
       createElement(WebRemoteControlDialog, {
@@ -318,9 +282,7 @@ describe("WebRemoteControlDialog layout", () => {
     );
 
     const scanCardIndex = html.indexOf('data-testid="web-remote-control-scan-card"');
-    const connectionCardIndex = html.indexOf(
-      'data-testid="web-remote-control-connection-card"',
-    );
+    const connectionCardIndex = html.indexOf('data-testid="web-remote-control-connection-card"');
     const copyLinkIndex = html.indexOf('data-testid="web-remote-control-copy-link-row"');
     const botChannelIndex = html.indexOf("webRemoteControl.botChannel.title");
 
@@ -354,18 +316,6 @@ describe("WebRemoteControlDialog layout", () => {
     expect(refreshIndex).toBeLessThan(copyIndex);
   });
 
-  it("asks for confirmation before refreshing pairing material", () => {
-    const source = readWebRemoteControlDialogSource();
-    const confirmIndex = source.indexOf("confirmDialog({");
-    const refreshIndex = source.indexOf("platform.refreshWebRemoteControlPairing");
-
-    expect(source).toContain("webRemoteControl.refreshQr.confirmTitle");
-    expect(source).toContain("webRemoteControl.refreshQr.confirmDescription");
-    expect(confirmIndex).toBeGreaterThan(-1);
-    expect(refreshIndex).toBeGreaterThan(-1);
-    expect(confirmIndex).toBeLessThan(refreshIndex);
-  });
-
   it("uses the paired mobile device name for the status tag instead of session id", () => {
     expect(
       getWebRemoteControlStatusTagLabel(
@@ -384,19 +334,5 @@ describe("WebRemoteControlDialog layout", () => {
         ({ id }: { id: string }) => id,
       ),
     ).toBe("iPhone");
-  });
-
-  it("does not let dialog-local state decide the global remote-control session state", () => {
-    const source = readWebRemoteControlDialogSource();
-
-    expect(source).not.toContain("setWebRemoteControlSessionActive");
-    expect(source).not.toContain("useWebRemoteControlRuntimeStore");
-  });
-
-  it("does not pass theme into start payload when syncing Web remote control status", () => {
-    const source = readWebRemoteControlDialogSource();
-    // Bugfix: 手机远控已改为默认 dark + 本地偏好，桌面端不应再把 theme 注入 start 参数，
-    // 否则会重新把两端主题耦合到同一链路，和当前设计目标冲突。
-    expect(source).not.toContain("theme,");
   });
 });

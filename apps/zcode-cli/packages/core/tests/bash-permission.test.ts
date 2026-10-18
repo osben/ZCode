@@ -169,7 +169,8 @@ describe("bash runtime permission capability", () => {
 
     for (const command of commands) {
       expect(isBashInputReadOnly({ command })).toBe(true);
-      expect(isBashInputConcurrencySafe({ command })).toBe(true);
+      // Directory changes stay read-only for permissions but serial for scheduling (cwd write-back).
+      expect(isBashInputConcurrencySafe({ command })).toBe(!command.includes("cd "));
 
       const readOnlyDecision = service.checkPermission(
         {
@@ -478,6 +479,42 @@ describe("bash runtime permission capability", () => {
     const emptyMatcher = prepareBashPermissionMatcher({ command: "" });
     expect(emptyMatcher?.("anything")).toBe(false);
   });
+});
+
+describe("bash runtime concurrency capability", () => {
+  it.each(["ls", "rg foo src", "cat README.md | head -n 5", "wc -l README.md"])(
+    "declares read-only command as concurrency safe: %s",
+    (command) => {
+      expect(isBashInputConcurrencySafe({ command })).toBe(true);
+      expect(bashToolEntry.resolvePermissionCapability?.({ command })).toMatchObject({
+        concurrentSafe: true,
+        readOnly: true,
+        sideEffectScope: "none",
+      });
+    },
+  );
+
+  it.each(["cd src && ls", "cd src", "ls && cd ..", "command cd src && rg foo"])(
+    "keeps read-only directory changes serial because cwd is written back: %s",
+    (command) => {
+      expect(isBashInputReadOnly({ command })).toBe(true);
+      expect(isBashInputConcurrencySafe({ command })).toBe(false);
+      expect(bashToolEntry.resolvePermissionCapability?.({ command })).toMatchObject({
+        concurrentSafe: false,
+        readOnly: true,
+      });
+    },
+  );
+
+  it.each(["npm install", "ls > out.txt", "rm -rf build", "pushd src && ls", "ls && popd"])(
+    "does not declare concurrency for non-read-only command: %s",
+    (command) => {
+      expect(isBashInputConcurrencySafe({ command })).toBe(false);
+      expect(bashToolEntry.resolvePermissionCapability?.({ command })?.concurrentSafe).not.toBe(
+        true,
+      );
+    },
+  );
 });
 
 function withRuntimeCapability(input: unknown, cwd = process.cwd()): PermissionToolCapability {

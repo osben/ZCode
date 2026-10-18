@@ -78,6 +78,9 @@ const listWorktrees = vi.fn();
 const resolveWorktreePathIdentities = vi.fn(async ({ paths }: { paths: string[] }) => paths);
 const getLocalBranches = vi.fn();
 const getWorkspaceRepositoryInfo = vi.fn();
+const pruneWorktrees = vi.fn();
+const verifyWorktreeUsable = vi.fn(async (_params: unknown) => ({ ok: true }) as { ok: boolean });
+const ensureWorktreeExclusion = vi.fn(async (_params: unknown) => ({ ok: true }));
 // References must stay stable: the setup page's data-fetch effect depends on gitService; a fresh object per render would cause an infinite refetch/re-render loop.
 const stableGitService = {
   createWorktree,
@@ -85,7 +88,9 @@ const stableGitService = {
   resolveWorktreePathIdentities,
   getLocalBranches,
   getWorkspaceRepositoryInfo,
-  verifyWorktreeUsable: vi.fn(async () => ({ ok: true })),
+  pruneWorktrees,
+  verifyWorktreeUsable,
+  ensureWorktreeExclusion,
 };
 
 vi.mock("@/hooks/useWorkspaceServices.js", () => ({
@@ -202,6 +207,9 @@ function openSetupPage(container: HTMLElement) {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  verifyWorktreeUsable.mockReset();
+  verifyWorktreeUsable.mockImplementation(async () => ({ ok: true }));
+  pruneWorktrees.mockReset();
   mocks.settings = { recentProjects: ["/dev/recent-project"] };
   mocks.platformAvailable = false;
 });
@@ -322,6 +330,139 @@ describe("CommandCenterDialog worktree flow", () => {
       "/dev/alpha-worktrees/zcode-task-9",
       undefined,
     );
+  });
+
+  it("does not offer opening a stale worktree record; warns, blocks Start and re-resolves after an explicit prune", async () => {
+    stubRepositoryData();
+    getLocalBranches.mockResolvedValue({
+      headRefType: "branch",
+      currentBranchName: "main",
+      branches: [
+        {
+          name: "main",
+          isCurrent: true,
+          upstreamName: null,
+          commitHash: "a",
+          commitTimestampMs: 1,
+        },
+        {
+          name: "zcode/task-9",
+          isCurrent: false,
+          upstreamName: null,
+          commitHash: "b",
+          commitTimestampMs: 1,
+        },
+      ],
+    });
+    const staleEntry = {
+      path: "/dev/alpha-worktrees/zcode-task-9",
+      headCommitHash: "c",
+      branchName: "zcode/task-9",
+      isMain: false,
+      isBare: false,
+      isDetached: false,
+      isCurrent: false,
+    };
+    listWorktrees.mockResolvedValue({
+      isGitAvailable: true,
+      isRepository: true,
+      worktrees: [staleEntry],
+    });
+    verifyWorktreeUsable.mockResolvedValue({ ok: false, reason: "missing" } as never);
+    pruneWorktrees.mockImplementation(async () => {
+      listWorktrees.mockResolvedValue({ isGitAvailable: true, isRepository: true, worktrees: [] });
+      return { ok: true, prunedCount: 1, issues: [] };
+    });
+    const { container, onOpenChange, onCreateTaskInWorkspace } = renderWorktreeDialog();
+    openSetupPage(container);
+    await waitFor(() => expect(getRow(container, "base main")).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("commandCenter.worktree.branchName"), {
+      target: { value: "task-9" },
+    });
+
+    await waitFor(() =>
+      expect(screen.getByText("commandCenter.worktree.error.worktreeMissing")).toBeTruthy(),
+    );
+    expect(verifyWorktreeUsable).toHaveBeenCalledWith({
+      workspacePath: "/dev/alpha",
+      targetPath: staleEntry.path,
+    });
+    expect(
+      screen.queryByRole("button", { name: "commandCenter.worktree.openExisting" }),
+    ).toBeNull();
+    expect(onCreateTaskInWorkspace).not.toHaveBeenCalled();
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "commandCenter.worktree.start" })).toHaveProperty(
+      "disabled",
+      true,
+    );
+    expect(pruneWorktrees).not.toHaveBeenCalled();
+
+    // Prune only happens on the explicit action, then the offer is re-resolved.
+    const pruneButtons = screen.getAllByRole("button", { name: "commandCenter.worktree.prune" });
+    fireEvent.click(pruneButtons[0]!);
+    await waitFor(() => expect(pruneWorktrees).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(screen.queryByText("commandCenter.worktree.error.worktreeMissing")).toBeNull(),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "commandCenter.worktree.start" })).toHaveProperty(
+        "disabled",
+        false,
+      ),
+    );
+  });
+
+  it("keeps the open offer when the usability check itself fails", async () => {
+    stubRepositoryData();
+    getLocalBranches.mockResolvedValue({
+      headRefType: "branch",
+      currentBranchName: "main",
+      branches: [
+        {
+          name: "main",
+          isCurrent: true,
+          upstreamName: null,
+          commitHash: "a",
+          commitTimestampMs: 1,
+        },
+        {
+          name: "zcode/task-9",
+          isCurrent: false,
+          upstreamName: null,
+          commitHash: "b",
+          commitTimestampMs: 1,
+        },
+      ],
+    });
+    listWorktrees.mockResolvedValue({
+      isGitAvailable: true,
+      isRepository: true,
+      worktrees: [
+        {
+          path: "/dev/alpha-worktrees/zcode-task-9",
+          headCommitHash: "c",
+          branchName: "zcode/task-9",
+          isMain: false,
+          isBare: false,
+          isDetached: false,
+          isCurrent: false,
+        },
+      ],
+    });
+    verifyWorktreeUsable.mockRejectedValue(new Error("rpc down"));
+    const { container } = renderWorktreeDialog();
+    openSetupPage(container);
+    await waitFor(() => expect(getRow(container, "base main")).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("commandCenter.worktree.branchName"), {
+      target: { value: "task-9" },
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "commandCenter.worktree.openExisting" }),
+      ).toBeTruthy(),
+    );
+    expect(screen.queryByText("commandCenter.worktree.error.worktreeMissing")).toBeNull();
   });
 
   it("keeps Start available when only the optional worktree list fails", async () => {

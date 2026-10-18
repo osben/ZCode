@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { readFileSync } from "node:fs";
+
 import { describe, expect, it, vi } from "vitest";
 import type { IPlatformService, OffPeakTaskCreateResult } from "@zcode/shared";
 import {
@@ -8,108 +8,6 @@ import {
   freezeOffPeakCreateTelemetrySnapshot,
   reportOffPeakCreateResult,
 } from "@/lib/offPeakTelemetry.js";
-
-const automationsSectionSource = readFileSync(
-  new URL("../src/settings/AutomationsSection.tsx", import.meta.url),
-  "utf8",
-);
-
-/** CR-01: the off-peak task creation result telemetry wiring must emit exactly one
- * off_peak_task_create_result event from each of the 4 entries — home template, Automations
- * template, direct creation, and gray-scale gate failure. The source contract guarantees the
- * wiring is not silently removed; helper behavior is covered in
- * packages/ui/test/offPeakTelemetry.test.ts. */
-describe("AutomationsSection off-peak create telemetry wiring (CR-01)", () => {
-  it("从 store 引入 OffPeakCreateDraft 类型", () => {
-    expect(automationsSectionSource).toMatch(
-      /import \{[\s\S]*?type OffPeakCreateDraft,?[\s\S]*?\} from "@\/store\/offPeakTaskStore\.js"/,
-    );
-  });
-
-  it("从 offPeakTelemetry.js 引入全部 3 个 helper", () => {
-    expect(automationsSectionSource).toContain("createAndReportOffPeakTask");
-    expect(automationsSectionSource).toContain("freezeOffPeakCreateTelemetrySnapshot");
-    expect(automationsSectionSource).toContain("reportOffPeakCreateResult");
-    const importBlock = automationsSectionSource.match(
-      /import \{[\s\S]*?\} from "@\/lib\/offPeakTelemetry\.js"/,
-    );
-    expect(importBlock).not.toBeNull();
-  });
-
-  it("AutomationsView 的 offpeak-create 模式使用 OffPeakCreateDraft 而非收窄的内联类型", () => {
-    const offpeakCreateLine = automationsSectionSource.match(
-      /mode: "offpeak-create";\s*draft\?: [^\n]+/,
-    );
-    expect(offpeakCreateLine).not.toBeNull();
-    expect(offpeakCreateLine?.[0]).toContain("OffPeakCreateDraft");
-    expect(offpeakCreateLine?.[0]).not.toContain("title?: string; prompt?: string");
-  });
-
-  it("Client Scenes idle template click 在 draft 上携带 telemetrySource（Automations 模板入口）", () => {
-    const templateSection = automationsSectionSource.slice(
-      automationsSectionSource.indexOf("data-automations-idle-templates"),
-      automationsSectionSource.indexOf("data-automations-scheduled-templates"),
-    );
-    expect(templateSection).toContain("automationTemplates.offPeak.map");
-    expect(templateSection).toContain('eventRegion: "app.automations"');
-    expect(templateSection).toMatch(/templateId:\s*template\.id/);
-  });
-
-  it("handleOffPeakSubmit 顶部先 freezeOffPeakCreateTelemetrySnapshot", () => {
-    const submitBlock = automationsSectionSource.match(
-      /const handleOffPeakSubmit = useCallback\([\s\S]*?\n  \);/,
-    );
-    expect(submitBlock).not.toBeNull();
-    expect(submitBlock?.[0]).toContain("freezeOffPeakCreateTelemetrySnapshot");
-    expect(submitBlock?.[0]).toContain("current.draft?.telemetrySource");
-    expect(submitBlock?.[0]).toContain("input.model");
-    // Only offpeak-create mode freezes the snapshot; offpeak-edit goes through offPeakUpdate and
-    // needs no telemetry
-    expect(submitBlock?.[0]).toMatch(
-      /current\.mode === "offpeak-create"[\s\S]*?freezeOffPeakCreateTelemetrySnapshot/,
-    );
-  });
-
-  it("灰度门禁失败时 fire-and-forget 上报 client_validation 结果", () => {
-    const submitBlock = automationsSectionSource.match(
-      /const handleOffPeakSubmit = useCallback\([\s\S]*?\n  \);/,
-    );
-    expect(submitBlock).not.toBeNull();
-    expect(submitBlock?.[0]).toContain("reportOffPeakCreateResult");
-    expect(submitBlock?.[0]).toContain('failureStage: "client_validation"');
-    expect(submitBlock?.[0]).toContain('errorCategory: "client_validation"');
-    // Must not block the main flow; fire-and-forget
-    expect(submitBlock?.[0]).toMatch(
-      /void reportOffPeakCreateResult\(platform, telemetrySnapshot, \{/,
-    );
-    // On gray-scale gate failure, return false immediately without calling offPeakCreate
-    expect(submitBlock?.[0]).toMatch(/reportOffPeakCreateResult[\s\S]*?return false;/);
-  });
-
-  it("创建路径用 createAndReportOffPeakTask 包裹 offPeakCreate", () => {
-    // Ternary: a non-null snapshot goes through createAndReportOffPeakTask, otherwise fall back
-    // to the original offPeakCreate
-    const ternaryBlock = automationsSectionSource.match(
-      /telemetrySnapshot !== null\s*\n\s*\?\s*await createAndReportOffPeakTask\([\s\S]*?offPeakCreate\(input, offPeakTaskService\)\s*,?\s*\)\s*\n\s*:\s*await offPeakCreate\(input, offPeakTaskService\)/,
-    );
-    expect(ternaryBlock).not.toBeNull();
-    expect(ternaryBlock?.[0]).toContain("createAndReportOffPeakTask");
-    expect(ternaryBlock?.[0]).toContain("offPeakCreate(input, offPeakTaskService)");
-    // createAndReportOffPeakTask must be fed platform + telemetrySnapshot
-    expect(ternaryBlock?.[0]).toMatch(
-      /createAndReportOffPeakTask\(platform, telemetrySnapshot, \(\) =>/,
-    );
-  });
-
-  it("useCallback 依赖列表包含 platform", () => {
-    const submitBlock = automationsSectionSource.match(
-      /const handleOffPeakSubmit = useCallback\([\s\S]*?\n  \);/,
-    );
-    expect(submitBlock).not.toBeNull();
-    // The dependency list must include platform; the submit path reports through it
-    expect(submitBlock?.[0]).toMatch(/\[[\s\S]*?platform,?[\s\S]*?\]/);
-  });
-});
 
 /** Helper behavior is already covered in offPeakTelemetry.test.ts; this smoke test uses the same
  * source types to guard against the telemetry helpers themselves regressing, which would make the

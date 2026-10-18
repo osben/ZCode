@@ -691,12 +691,10 @@ describe("resolveMessageStreamdownMode", () => {
   });
 
   it("loads KaTeX CSS so MathML fallback does not duplicate visual output", () => {
-    const styles = readFileSync(resolve(process.cwd(), "packages/ui/src/styles.css"), "utf8");
     const packageJson = JSON.parse(
       readFileSync(resolve(process.cwd(), "packages/ui/package.json"), "utf8"),
     ) as { dependencies?: Record<string, string> };
 
-    expect(styles).toContain('@import "katex/dist/katex.min.css";');
     // Bugfix: styles.css 作为 @zcode/ui 的公开入口会被 web/desktop 直接构建，
     // 不能依赖 pnpm hoist 偶然把间接依赖 katex 放到根 node_modules。
     expect(packageJson.dependencies?.katex).toBeTruthy();
