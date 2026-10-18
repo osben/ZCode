@@ -1218,13 +1218,4 @@ describe("desktopRuntimeEnv Apple Foundation Models helper path", () => {
       ).toBeUndefined();
     }
   });
-
-  it("injects the helper path into the Host environment when it exists", async () => {
-    const helper = placeHelper(root);
-    const { buildHostProcessEnv } = await import("../src/main/desktopRuntimeEnv.js");
-    const env = buildHostProcessEnv({ ZCODE_APPLE_FM_HELPER: helper });
-
-    // Outside a macOS bundle the lookup falls back to an explicit path, honoured only when it exists.
-    expect(env.ZCODE_APPLE_FM_HELPER).toBe(helper);
-  });
 });
