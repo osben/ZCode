@@ -74,6 +74,8 @@ interface ContextUsageBreakdownSegment {
   chars: number;
   percent: number;
   source: ContextUsageBreakdownSource;
+  /** Share of the reported used tokens; the runtime breakdown is measured in chars only. */
+  tokens: number;
 }
 
 const CONTEXT_PROGRESS_TONE_COLORS = [
@@ -169,6 +171,7 @@ const BREAKDOWN_SOURCE_ORDER: Record<ContextUsageBreakdownSource, number> = {
 
 export function buildContextUsageBreakdownSegments(
   breakdown: readonly ZCodeContextUsageBreakdownItem[] | undefined,
+  usedTokens: number,
 ): ContextUsageBreakdownSegment[] {
   const charsBySource = new Map<ContextUsageBreakdownSource, number>();
   for (const item of breakdown ?? []) {
@@ -188,6 +191,9 @@ export function buildContextUsageBreakdownSegments(
       chars,
       percent: chars / totalChars,
       source,
+      tokens: Number.isFinite(usedTokens)
+        ? Math.round((Math.max(usedTokens, 0) * chars) / totalChars)
+        : 0,
     }))
     .sort(
       (left, right) =>
@@ -837,8 +843,12 @@ export function ChatContextUsage({
     });
   }, [locale, renderableTaskUsage]);
   const breakdownSegments = useMemo(
-    () => buildContextUsageBreakdownSegments(renderableTaskUsage?.breakdown),
-    [renderableTaskUsage?.breakdown],
+    () =>
+      buildContextUsageBreakdownSegments(
+        renderableTaskUsage?.breakdown,
+        renderableTaskUsage?.used ?? 0,
+      ),
+    [renderableTaskUsage?.breakdown, renderableTaskUsage?.used],
   );
   const progressSegments = useMemo(
     () => buildContextUsageProgressSegments(breakdownSegments),
@@ -1037,8 +1047,11 @@ export function ChatContextUsage({
                             id: BREAKDOWN_SOURCE_LABEL_ID[segment.source],
                           })}
                         </span>
-                        {/* Bugfix: Breakdown rows show only percentages; item token counts would be confused with the total shown above. */}
-                        <span className="ml-auto min-w-10 shrink-0 text-right font-mono text-ui-sm tabular-nums text-foreground">
+                        {/* Row tokens are the row's share of the header's used tokens, never raw chars, so rows sum to the header total. */}
+                        <span className="ml-auto min-w-12 shrink-0 text-right font-mono text-ui-sm tabular-nums text-foreground-subtle">
+                          {formatContextUsageTokenCount(segment.tokens, locale)}
+                        </span>
+                        <span className="min-w-10 shrink-0 text-right font-mono text-ui-sm tabular-nums text-foreground">
                           {percentageFormatter.format(segment.percent)}
                         </span>
                       </div>

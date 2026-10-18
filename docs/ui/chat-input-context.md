@@ -39,6 +39,7 @@ AI Elements `Context` compound component.
   - Start Plan balance columns adapt the same way: 1 quota → 1 column, 2 → 2, 3 → 3; each item keeps the compact model label / remaining percent / bar vertical structure
   - The `Context windows` and `Coding Plan` section titles both use `text-ui-base`
   - The used / total summary next to the `Context windows` title uses localized compact token units; English uses uppercase `K` / `M` / `B`, Chinese uses `万` / `亿`
+  - Each `Context windows` breakdown row shows estimated tokens before its percent (`Messages  257.3K  85.5%`). The runtime breakdown reports characters only, so row tokens are `round(share × usage.contextWindow.usedTokens)`, where share is the row's character proportion; rows therefore add up to the header's used value and cannot be mistaken for it. Row tokens use the same localized compact units as the header summary
   - The `Context windows` progress segments are based on the Coding Plan blue `--color-usage-chart-1` and fade step by step in proportion order
   - The Coding Plan details entry in the input-bar context menu renders as link-style `More` text with a right arrow
   - Clicking the Coding Plan `More` entry closes the context panel first, then opens the usage details, so no overlay is left behind after navigation
