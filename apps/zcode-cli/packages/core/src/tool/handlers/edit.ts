@@ -28,6 +28,8 @@ import {
   type TraceContext,
 } from "@zcode/contracts";
 import { createStructuredPatch } from "../diff.js";
+import { publishFileMutation } from "../file-mutation.js";
+import { changedRangeFromHunks } from "../../lsp/results.js";
 import { stampMemoryOriginSessionId } from "../../memory/origin-session.js";
 import {
   findEditMatch,
@@ -532,6 +534,12 @@ async function writeEditResult(input: {
     filePath: input.inputFilePath,
     oldContent: input.originalFile,
     newContent: contentToWrite,
+  });
+  publishFileMutation(input.context, {
+    path: input.filePath,
+    kind: "changed",
+    content: contentToWrite,
+    changedRange: changedRangeFromHunks(structuredPatch),
   });
   // totalBytes/maxFileBytes have the same meaning in perf; cache the result to avoid rescanning new content during large-file edits.
   const newContentBytes = fileByteCount(contentToWrite);

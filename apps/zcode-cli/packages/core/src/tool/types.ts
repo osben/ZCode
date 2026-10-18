@@ -5,6 +5,7 @@ import type { McpToolUiDescriptor } from "@zcode/shared/mcp-apps";
 
 import type {
   CollaborationMode,
+  FileMutationSink,
   AutomationPort,
   BrowserControlPort,
   CoordinatorResponsePort,
@@ -57,6 +58,7 @@ import type {
   WorkflowSubmitPort,
 } from "@zcode/contracts";
 import type { RuntimeTaskRegistry } from "../runtime-task/registry.js";
+import type { LspService } from "../lsp/service.js";
 import type {
   PersistedReadFileStateMetadata,
   PersistedReadFileStateTool,
@@ -156,6 +158,12 @@ export interface ToolExecutionContext {
   /** Official browser-use plugin docs asset directory, used by agent.browsers.documentation() only when browser-use is enabled. */
   browserDocumentationRoot?: string;
   fileSystemPort?: FileSystemPort;
+  /** Publishes FileMutated after a successful Write or Edit; the LSP document sync consumes it. */
+  fileMutationSink?: FileMutationSink;
+  /** Starts the language server for a file being read (acquire only, never waits). */
+  lspPrewarm?: (filePath: string) => void;
+  /** Language-server service for the LSP tool and edit diagnostics; absent when code intelligence is unavailable. */
+  lsp?: LspService;
   httpClientPort?: HttpClientPort;
   imageProcessorPort?: ImageProcessorPort;
   pdfDocumentPort?: PdfDocumentPort;

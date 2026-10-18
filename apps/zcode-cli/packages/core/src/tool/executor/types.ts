@@ -37,6 +37,7 @@ import type {
 } from "@zcode/contracts";
 import type { HookRunner } from "../../hooks/index.js";
 import type { PermissionService } from "../../permission/service.js";
+import type { LspService } from "../../lsp/service.js";
 import type { RuntimeTaskRegistry } from "../../runtime-task/registry.js";
 import type { ToolRegistry } from "../registry.js";
 import type { ToolMetadata } from "../types.js";
@@ -93,6 +94,7 @@ export interface ToolExecutorOptions {
   browserControlPort?: BrowserControlPort;
   browserDocumentationRoot?: string;
   fileSystemPort?: FileSystemPort;
+  lsp?: LspService;
   httpClientPort?: HttpClientPort;
   imageProcessorPort?: ImageProcessorPort;
   pdfDocumentPort?: PdfDocumentPort;
@@ -211,6 +213,7 @@ export interface ToolExecutorDeps {
   browserControlPort?: BrowserControlPort;
   browserDocumentationRoot?: string;
   fileSystemPort?: FileSystemPort;
+  lsp?: LspService;
   httpClientPort?: HttpClientPort;
   imageProcessorPort?: ImageProcessorPort;
   pdfDocumentPort?: PdfDocumentPort;

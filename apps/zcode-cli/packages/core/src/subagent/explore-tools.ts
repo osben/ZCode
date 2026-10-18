@@ -5,6 +5,7 @@ export const EXPLORE_AGENT_ALLOWED_TOOLS = [
   "Bash",
   "Glob",
   "Grep",
+  "LSP",
   "Read",
   "WebFetch",
   "WebSearch",
@@ -15,6 +16,7 @@ export type ExploreAgentAllowedTool = (typeof EXPLORE_AGENT_ALLOWED_TOOLS)[numbe
 
 export const EXPLORE_AGENT_EMBEDDED_SEARCH_ALLOWED_TOOLS = [
   "Bash",
+  "LSP",
   "Read",
   "WebFetch",
   "WebSearch",

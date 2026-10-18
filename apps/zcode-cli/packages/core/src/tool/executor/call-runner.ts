@@ -431,6 +431,10 @@ async function executeToolCallImpl(
         browserControlPort: deps.browserControlPort,
         browserDocumentationRoot: deps.browserDocumentationRoot,
         fileSystemPort: deps.fileSystemPort,
+        // LSP wiring: edits publish FileMutated, reads prewarm the server; both are no-ops when code intelligence is absent.
+        lsp: deps.lsp,
+        fileMutationSink: deps.lsp ? (event) => deps.lsp?.onFileMutated(event) : undefined,
+        lspPrewarm: deps.lsp ? (filePath) => deps.lsp?.prewarm(filePath) : undefined,
         httpClientPort: deps.httpClientPort,
         imageProcessorPort: deps.imageProcessorPort,
         pdfDocumentPort: deps.pdfDocumentPort,
