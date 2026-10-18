@@ -23,7 +23,7 @@ Confirmed cause:
 
 Fix: attempt ids are opaque, so "newer" is decided by supersession. The pipeline store's `startPipeline` is the single owner: replacing a session's entry with another attempt (Retry, `restartPreparedWorktreeCreation` on Send in a failed prepared session, a newer Host attempt) records the replaced attempt in `entry.supersededAttemptIds`; restore ignores a Host seed carrying a superseded attempt; a genuinely newer Host attempt still replaces the entry and inherits the superseded set.
 
-Opposite ordering (snapshot before acknowledgement): closed in Wave 4 below. Spec: `specs/composer-worktree-setup-steps.md` (supersession paragraph + event diagram, acceptance scenario 17).
+Opposite ordering (snapshot before acknowledgement): closed in Wave 4 below. Spec: `specs/composer-worktree-setup-steps.md` (supersession paragraph + event diagram, acceptance scenario 18).
 
 Tests (`packages/ui/test/composerWorktreePipeline.test.ts`):
 
