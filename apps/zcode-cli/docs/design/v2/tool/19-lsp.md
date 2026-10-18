@@ -275,7 +275,8 @@ SKILL.md files in `zcode-guide-plugin` ("recorded but not executed").
 
 ## 11. Decisions (2026-10-17)
 
-1. TypeScript is on by default, but works only when its binary is found. There is no plugin recommendation dialog in V1.
+1. TypeScript is on by default, but works only when its binary is found. No workspace
+   trust gate, same as project MCP servers (confirmed by the user, 2026-10-17). There is no plugin recommendation dialog in V1.
 2. Diagnostics after edits are on by default and filtered (§6).
 3. The user can turn off everything, one language, or only diagnostics after edits (§3).
 4. Diagnostics ship before the navigation tool.
