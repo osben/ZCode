@@ -5,6 +5,7 @@ import { ToolCallBlock } from "@/ToolCallBlocks.js";
 import { ToolLayout } from "@/ToolCallBlocks/ToolLayout.js";
 import type { ToolCallBlockRenderContext } from "@/ToolCallBlocks/shared.js";
 import { getExecuteSecondaryText } from "@/ToolCallBlocks/renderers/execute.js";
+import { useStageDurationText } from "@/ToolCallBlocks/useStageDurationText.js";
 
 const EXECUTE_GROUP_ICON = (
   <SquareTerminalIcon className="size-4 shrink-0 text-foreground-subtle" />
@@ -68,6 +69,7 @@ export function ExecuteGroupToolCallBlock(context: ToolCallBlockRenderContext) {
     intl,
     childToolCalls.map((child) => child.toolCall.status),
   );
+  const durationText = useStageDurationText(toolCall.durationMs, isRunning);
   const renderContent = useCallback(
     () => (
       <div className="ml-2 space-y-2 border-border border-l pl-3.5">
@@ -110,13 +112,13 @@ export function ExecuteGroupToolCallBlock(context: ToolCallBlockRenderContext) {
         id: "chat.toolCall.executeGroup.label",
       })}
       primaryText={isRunning && runningActionLabel ? runningPrimaryText : completedSummary}
-      secondaryText={isRunning ? runningSecondaryText : undefined}
+      secondaryText={isRunning ? runningSecondaryText : durationText}
       summaryContentSeparator="·"
       expandedPrimaryText={completedSummary}
       // ToolLayout reuses secondaryText by default in the expanded state, leaving the current
       // command after the command count. The child tool summary represents the current command once
-      // the parent group is expanded, so explicitly clear it here.
-      expandedSecondaryText={null}
+      // the parent group is expanded, so explicitly clear it here (the finished-stage duration stays).
+      expandedSecondaryText={durationText ?? null}
       animateSummaryContent={isRunning}
       disableSummaryContentAnimation={context.disableSummaryContentAnimation}
       summaryContentKey={

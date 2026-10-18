@@ -121,6 +121,39 @@ describe("buildAssistantWorkRenderItems", () => {
     ]);
   });
 
+  it("derives a completed Explore duration from child row timestamps", () => {
+    const items = buildRenderItems([
+      toolCall(1, "Read", { path: "package.json" }, { endedAt: 1_700_000_001_000 }),
+      toolCall(2, "Grep", { pattern: "group" }, { endedAt: 1_700_000_004_500 }),
+    ]);
+
+    expect(items).toMatchObject([
+      { kind: "exploreGroup", node: { toolCall: { status: "completed", durationMs: 4_499 } } },
+    ]);
+  });
+
+  it("omits the Explore duration while running or when a child has no end time", () => {
+    const running = buildRenderItems(
+      [
+        toolCall(1, "Read", { path: "package.json" }, { endedAt: 1_700_000_001_000 }),
+        toolCall(2, "Grep", { pattern: "group" }, { endedAt: 1_700_000_002_000 }),
+      ],
+      SHOW_ALL_REASONING,
+      { stageTailIsRunning: true },
+    );
+    const missingEnd = buildRenderItems([
+      toolCall(1, "Read", { path: "package.json" }, { endedAt: 1_700_000_001_000 }),
+      toolCall(2, "Grep", { pattern: "group" }),
+    ]);
+
+    for (const items of [running, missingEnd]) {
+      const group = items[0];
+      expect(group?.kind).toBe("exploreGroup");
+      if (group?.kind !== "exploreGroup") throw new Error("expected explore group");
+      expect(group.node.toolCall.durationMs).toBeUndefined();
+    }
+  });
+
   it("does not group same-family tools across a visible tool boundary", () => {
     const items = buildRenderItems([
       toolCall(1, "Read", { path: "src/a.ts" }),
@@ -367,6 +400,28 @@ describe("buildAssistantWorkRenderItems", () => {
     expect(extendedExecute.node.toolCall.toolId).toBe(grownExecute.node.toolCall.toolId);
     expect(grownExecute.rows.map((row) => row.rowId)).toEqual([1, 2]);
     expect(grownExecute.node.toolCall.status).toBe("in_progress");
+  });
+
+  it("derives a completed Execute duration from child row timestamps", () => {
+    const completed = buildRenderItems([
+      toolCall(1, "Bash", { command: "pnpm install" }, { endedAt: 1_700_000_005_000 }),
+      toolCall(2, "Bash", { command: "pnpm test" }, { endedAt: 1_700_000_012_001 }),
+    ]);
+    const running = buildRenderItems(
+      [
+        toolCall(1, "Bash", { command: "pnpm install" }, { endedAt: 1_700_000_005_000 }),
+        toolCall(2, "Bash", { command: "pnpm test" }, { status: "running" }),
+      ],
+      SHOW_ALL_REASONING,
+      { stageTailIsRunning: true },
+    );
+
+    expect(completed).toMatchObject([
+      { kind: "executeGroup", node: { toolCall: { status: "completed", durationMs: 12_000 } } },
+    ]);
+    const runningGroup = running[0];
+    if (runningGroup?.kind !== "executeGroup") throw new Error("expected execute group");
+    expect(runningGroup.node.toolCall.durationMs).toBeUndefined();
   });
 
   it("keeps child failures on execute children and stops at explore boundaries", () => {

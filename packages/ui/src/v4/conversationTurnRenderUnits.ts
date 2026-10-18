@@ -24,6 +24,7 @@ import {
   buildConversationTurnWorkSegments,
   resolveConversationTurnWorkDurationMs,
   resolveConversationTurnWorkStatus,
+  withTurnOutputTokens,
 } from "@/v4/conversationTurnWorkSegments.js";
 import { markHighspeedOutputFooterUnits } from "@/highspeed/highspeedOutputFooter.js";
 
@@ -247,12 +248,15 @@ function materializeDraftUnit(
     actionAssistantTextRow ??
     (!isRunning && lastFlowRow && isAssistantTextRow(lastFlowRow) ? lastFlowRow : undefined);
   const workDurationMs = resolveConversationTurnWorkDurationMs(draft.header, options, isRunning);
-  const workStatus = resolveConversationTurnWorkStatus(
+  const workStatus = withTurnOutputTokens(
+    resolveConversationTurnWorkStatus(
+      draft.header,
+      bodyRows,
+      isRunning,
+      workDurationMs,
+      isInterrupted,
+    ),
     draft.header,
-    bodyRows,
-    isRunning,
-    workDurationMs,
-    isInterrupted,
   );
   const browserTurnEndRowIds = new Set(browserTurnEndRows.map((row) => row.rowId));
   const orderedBodyRows = visibleOrderedRows.filter(
