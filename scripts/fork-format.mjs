@@ -141,6 +141,14 @@ export async function resolveUpstreamBase(repoRoot) {
   }
   if (await gitSucceeds(repoRoot, ["rev-parse", "--verify", "--quiet", UPSTREAM_TRACKING_REF])) {
     const mergeBase = (await git(repoRoot, ["merge-base", "HEAD", UPSTREAM_TRACKING_REF])).trim();
+    if (
+      mergeBase !== commit &&
+      (await gitSucceeds(repoRoot, ["merge-base", "--is-ancestor", mergeBase, commit]))
+    ) {
+      throw new Error(
+        `upstream/main is behind the upstream base ${commit} pinned in ${UPSTREAM_BASE_FILE}; run \`git fetch upstream\``,
+      );
+    }
     if (mergeBase !== commit) {
       throw new Error(
         `${UPSTREAM_BASE_FILE} is stale: it pins ${commit}, but merge-base HEAD upstream/main is ${mergeBase}. ` +

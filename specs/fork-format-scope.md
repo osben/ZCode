@@ -16,7 +16,7 @@
     - `fork-upstream-base.json` is missing, unparsable, or `upstreamCommit` is not a 40-hex SHA;
     - the commit is not present in the local object database (typically a shallow clone; CI must use `fetch-depth: 0`);
     - the commit is not an ancestor of `HEAD`;
-    - a local `upstream/main` remote-tracking ref exists and `git merge-base HEAD upstream/main` differs from the pinned SHA (stale pin: a sync was merged without bumping the pin, so `pnpm fmt` would otherwise reformat freshly merged upstream files). This is an assertion, not a resolution path; it only runs where the ref exists.
+    - a local `upstream/main` remote-tracking ref exists and `git merge-base HEAD upstream/main` differs from the pinned SHA (stale pin: a sync was merged without bumping the pin, so `pnpm fmt` would otherwise reformat freshly merged upstream files). When that merge-base is an ancestor of the pin, the local `upstream/main` is merely behind (fetched before the last sync) and the error asks for `git fetch upstream` instead of a pin change. This is an assertion, not a resolution path; it only runs where the ref exists.
 - **File selection** (one command for local and CI; on a clean CI checkout it equals `<base>...HEAD`):
   - `git diff -z --name-only --no-renames --diff-filter=AM <base>` — base against the working tree, so it includes committed, staged and unstaged changes. `--no-renames` makes a renamed-and-edited file show up under its new path as added.
   - plus `git ls-files -z --others --exclude-standard` (untracked, not ignored).
@@ -40,7 +40,7 @@ Part of every upstream sync PR, in the same PR as the merge:
 - An upstream-identical unformatted file is neither checked nor rewritten.
 - A fork-added or fork-modified unformatted file makes `pnpm fmt:check` exit non-zero, and `pnpm fmt` formats it.
 - Uncommitted edits and untracked files are in scope locally; deleted files and fork edits reverted to the base are not.
-- A missing pin file, a pin absent from history, a pin that is not an ancestor of `HEAD`, or a pin that disagrees with `merge-base HEAD upstream/main` fails before any formatting.
+- A missing pin file, a pin absent from history, a pin that is not an ancestor of `HEAD`, or a pin that disagrees with `merge-base HEAD upstream/main` fails before any formatting; an `upstream/main` behind the pin asks for a fetch.
 - On the repository at the time of writing, `pnpm fmt:check` passes: all ~3840 fork-changed formattable files are already formatted, and all ~1480 failing files are upstream-identical.
 
 Tests: `scripts/fork-format.test.mjs` (temporary git repositories; part of `pnpm test:node`).

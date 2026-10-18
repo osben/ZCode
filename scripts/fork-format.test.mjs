@@ -184,3 +184,17 @@ test("base resolution rejects a pin that disagrees with merge-base HEAD upstream
   assert.equal(await resolveUpstreamBase(repo), next);
   assert.equal((await listForkChangedFiles(repo, next)).includes("upstream-new.ts"), false);
 });
+
+test("base resolution asks for a fetch when upstream/main is behind the pin", async (t) => {
+  const { repo, base } = makeFixtureRepo(t);
+  const emptyTree = execFileSync("git", ["mktree"], { cwd: repo, env: gitEnv, input: "" })
+    .toString()
+    .trim();
+  const older = git(repo, "commit-tree", emptyTree, "-m", "older upstream");
+  // Rebuild history so the pinned base descends from an older upstream commit.
+  const rebased = git(repo, "commit-tree", `${base}^{tree}`, "-p", older, "-m", "upstream");
+  git(repo, "replace", base, rebased);
+  git(repo, "update-ref", "refs/remotes/upstream/main", older);
+
+  await assert.rejects(resolveUpstreamBase(repo), /git fetch upstream/);
+});
