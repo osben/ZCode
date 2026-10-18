@@ -277,6 +277,25 @@ function GroupedTaskRowComponent({
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
   const [archiveConfirming, setArchiveConfirming] = useState(false);
   const taskRowElementRef = useRef<HTMLDivElement | null>(null);
+  const archiveConfirmButtonRef = useRef<HTMLButtonElement | null>(null);
+  // Set only when Archive held focus (keyboard activation); mouse clicks never focus it.
+  const focusArchiveConfirmRef = useRef(false);
+  const hasPendingInteractionForArchive = Boolean(task.pendingInteraction);
+  useEffect(() => {
+    // A pending interaction unmounts the action cluster; drop the armed state so the row never
+    // returns with a ready-to-fire Confirm button.
+    if (hasPendingInteractionForArchive) {
+      focusArchiveConfirmRef.current = false;
+      setArchiveConfirming(false);
+    }
+  }, [hasPendingInteractionForArchive]);
+  useEffect(() => {
+    if (archiveConfirming && focusArchiveConfirmRef.current) {
+      focusArchiveConfirmRef.current = false;
+      // Archive unmounts when it turns into Confirm; hand focus over so a second Enter confirms.
+      archiveConfirmButtonRef.current?.focus();
+    }
+  }, [archiveConfirming]);
   useEffect(() => {
     if (!archiveConfirming) {
       return;
@@ -347,6 +366,7 @@ function GroupedTaskRowComponent({
       return;
     }
     if (!archiveConfirming) {
+      focusArchiveConfirmRef.current = event.currentTarget === document.activeElement;
       setArchiveConfirming(true);
       return;
     }
@@ -552,6 +572,7 @@ function GroupedTaskRowComponent({
               {archiveConfirming ? (
                 <ControlHintTooltip title={archiveLabel} side="top" align="center">
                   <Button
+                    ref={archiveConfirmButtonRef}
                     type="button"
                     variant="destructive"
                     size="sm"

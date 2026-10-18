@@ -54,6 +54,25 @@ const task: ZCodeTaskMeta = {
   provider: "codex",
 };
 
+function rowElement(rowTask: ZCodeTaskMeta, onCloseTask: (task: ZCodeTaskMeta) => void) {
+  return createElement(GroupedTaskRow, {
+    task: rowTask,
+    groups: [],
+    activeWorkspacePath: rowTask.workspacePath,
+    activeWorkspaceIdentity: undefined,
+    activeTaskId: null,
+    workspaceLabel: "workspace",
+    onSelectTask: () => {},
+    onCloseTask,
+    onMoveTaskToGroup: () => {},
+    onMoveTaskToTop: () => {},
+    onStartRenameTask: () => {},
+    onArchiveTask: () => {},
+    onMarkTaskAsUnread: () => {},
+    dragId: "grouped-archive-row",
+  });
+}
+
 function renderRow() {
   const onCloseTask = vi.fn();
   const view = render(
@@ -128,6 +147,47 @@ describe("GroupedTaskRow archive action", () => {
     });
 
     expect(screen.queryByRole("button", { name: "Confirm" })).toBeNull();
+    expect(onCloseTask).not.toHaveBeenCalled();
+  });
+
+  it("moves focus to Confirm when Archive is activated from the keyboard", () => {
+    const { onCloseTask } = renderRow();
+    const archive = screen.getByRole("button", { name: "Archive" });
+    act(() => archive.focus());
+
+    // A browser turns Enter on a focused button into a click on that button.
+    fireEvent.click(archive);
+
+    const confirm = screen.getByRole("button", { name: "Confirm" });
+    expect(document.activeElement).toBe(confirm);
+    fireEvent.click(document.activeElement!);
+    expect(onCloseTask).toHaveBeenCalledExactlyOnceWith(task);
+  });
+
+  it("does not move focus when Archive is clicked with the mouse", () => {
+    renderRow();
+    fireEvent.click(screen.getByRole("button", { name: "Archive" }));
+    expect(document.activeElement).not.toBe(screen.getByRole("button", { name: "Confirm" }));
+  });
+
+  it("clears an armed confirmation when a pending interaction hides the actions", () => {
+    const onCloseTask = vi.fn();
+    const view = render(rowElement(task, onCloseTask));
+    fireEvent.mouseEnter(view.container.querySelector<HTMLElement>("[data-grouped-task-key]")!);
+    fireEvent.click(screen.getByRole("button", { name: "Archive" }));
+    expect(screen.getByRole("button", { name: "Confirm" })).toBeTruthy();
+
+    view.rerender(
+      rowElement(
+        { ...task, pendingInteraction: { interactionId: "ask", kind: "permission" } },
+        onCloseTask,
+      ),
+    );
+    expect(screen.queryByRole("button", { name: "Confirm" })).toBeNull();
+
+    view.rerender(rowElement(task, onCloseTask));
+    expect(screen.queryByRole("button", { name: "Confirm" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Archive" })).toBeTruthy();
     expect(onCloseTask).not.toHaveBeenCalled();
   });
 
