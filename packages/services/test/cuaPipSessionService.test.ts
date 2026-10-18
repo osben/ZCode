@@ -209,4 +209,70 @@ describe("createCuaPipSessionService delivery-skip logging", () => {
       { skipReason: "credentials-unavailable", skippedEvents: 1 },
     );
   });
+
+  it("retries a failed timer-driven send of a deferred turn-started", async () => {
+    const logger = createFakeLogger();
+    const client = createFakeClient();
+    const send = vi
+      .spyOn(client, "send")
+      .mockRejectedValueOnce(new Error("temporary send failure"))
+      .mockResolvedValue({ applied: true });
+    let credentials: CuaPipPresentationCredentials | undefined;
+    const service = createTestService({
+      logger,
+      client,
+      resolveCredentials: async () => credentials,
+    });
+    disposers.push(() => service.dispose());
+
+    await service.publishLifecycle(turnStarted("turn-retry"));
+    credentials = { socketPath: "/tmp/helper.sock" };
+
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2), { timeout: 5000 });
+    expect(send).toHaveBeenNthCalledWith(1, turnStarted("turn-retry"));
+    expect(send).toHaveBeenNthCalledWith(2, turnStarted("turn-retry"));
+    expect(logger.info).toHaveBeenCalledWith(
+      undefined,
+      "[cua-pip-session] replayed deferred turn-started",
+      expect.objectContaining({ turnId: "turn-retry", applied: true }),
+    );
+    expect(logger.info).toHaveBeenCalledWith(
+      undefined,
+      "[cua-pip-session] event delivery recovered after send failures",
+      { failureStreak: 1 },
+    );
+  });
+
+  it("drops a failed deferred turn-started when the current event ends that turn", async () => {
+    const logger = createFakeLogger();
+    const client = createFakeClient();
+    const send = vi
+      .spyOn(client, "send")
+      .mockRejectedValueOnce(new Error("temporary send failure"))
+      .mockResolvedValue({ applied: true });
+    let credentials: CuaPipPresentationCredentials | undefined;
+    const service = createTestService({
+      logger,
+      client,
+      resolveCredentials: async () => credentials,
+    });
+    disposers.push(() => service.dispose());
+
+    await service.publishLifecycle(turnStarted("turn-ended-early"));
+    credentials = { socketPath: "/tmp/helper.sock" };
+    const turnEnded: LifecycleEvent = {
+      kind: "turn-ended",
+      sessionId: "session-1",
+      turnId: "turn-ended-early",
+      sequenceNumber: 2,
+      outcome: "completed",
+    };
+    await service.publishLifecycle(turnEnded);
+
+    expect(send).toHaveBeenNthCalledWith(1, turnStarted("turn-ended-early"));
+    expect(send).toHaveBeenNthCalledWith(2, turnEnded);
+    // Wait past several retry intervals: the ended turn must not be reopened by a replay.
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    expect(send).toHaveBeenCalledTimes(2);
+  });
 });
