@@ -141,8 +141,7 @@ describe("TaskList mobile active indicator", () => {
     });
 
     expect(html).toContain('data-unread-indicator="true"');
-    expect(html).toContain("bg-sky-500");
-    expect(html).toContain("dark:bg-sky-400");
+    expect(html).toContain("bg-icon-blue");
     expect(html).not.toContain("bg-brand");
   });
 

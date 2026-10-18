@@ -33,13 +33,13 @@ export function McpStatusDot({
   const color = disabled
     ? "text-foreground-subtlest"
     : status === "connected"
-      ? "text-green-500"
+      ? "text-success"
       : status === "connecting"
-        ? "text-yellow-500"
+        ? "text-warning"
         : status === "error"
-          ? "text-red-500"
+          ? "text-destructive"
           : attention
-            ? "text-yellow-500"
+            ? "text-warning"
             : "text-foreground-subtlest";
 
   const icon =
@@ -142,7 +142,7 @@ function McpServerItem({
           <Button
             variant="link"
             size="sm"
-            className="text-sky-500 hover:text-sky-600 dark:text-sky-400 dark:hover:text-sky-300"
+            className="text-icon-blue hover:text-icon-blue/80"
             aria-label={openAuthorizationLabel}
             data-testid={testId(TID_MCP_OPEN_AUTHORIZATION_BUTTON, server.name)}
             title={openAuthorizationLabel}

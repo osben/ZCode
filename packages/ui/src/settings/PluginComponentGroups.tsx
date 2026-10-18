@@ -20,10 +20,10 @@ export interface PluginComponentDisplayGroup {
 /** Component-group badge colors: reuse the theme's existing Tailwind palette for a light background that works in light and dark themes. */
 const COMPONENT_BADGE_STYLES: Record<ZCodePluginComponentKind, string> = {
   agent: "bg-violet-500/15 text-violet-500 dark:text-violet-300",
-  command: "bg-sky-500/15 text-sky-600 dark:text-sky-300",
-  skill: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300",
-  hook: "bg-amber-500/15 text-amber-600 dark:text-amber-300",
-  mcp: "bg-slate-500/15 text-slate-600 dark:text-slate-300",
+  command: "bg-command-node text-command-node-foreground",
+  skill: "bg-skill-node text-skill-node-foreground",
+  hook: "bg-warning/15 text-warning",
+  mcp: "bg-tag text-foreground-subtle",
 };
 
 const COMPONENT_LABEL_IDS: Record<ZCodePluginComponentKind, string> = {

@@ -591,7 +591,7 @@ export function WebRemoteControlMobileTaskHome({
                           <Pin className="size-4" />
                         )}
                         {!switching && task.unreadAt ? (
-                          <span className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-sky-500 dark:bg-sky-400" />
+                          <span className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-icon-blue" />
                         ) : null}
                       </span>
                       <span className="min-w-0 flex-1">
@@ -695,7 +695,7 @@ export function WebRemoteControlMobileTaskHome({
                               {switching ? (
                                 <LoaderIcon className="size-4 animate-spin text-foreground-subtle" />
                               ) : task.unreadAt ? (
-                                <span className="h-1.5 w-1.5 rounded-full bg-sky-500 dark:bg-sky-400" />
+                                <span className="h-1.5 w-1.5 rounded-full bg-icon-blue" />
                               ) : null}
                             </span>
                             <span className="min-w-0 flex-1">
@@ -832,7 +832,7 @@ export function WebRemoteControlMobileTaskHome({
                           <span
                             aria-hidden="true"
                             data-workspace-unread-indicator="true"
-                            className="h-1.5 w-1.5 rounded-full bg-sky-500 dark:bg-sky-400"
+                            className="h-1.5 w-1.5 rounded-full bg-icon-blue"
                           />
                         ) : null}
                         {intl.formatMessage(
@@ -939,7 +939,7 @@ export function WebRemoteControlMobileTaskHome({
                                 {switching ? (
                                   <LoaderIcon className="size-4 animate-spin text-foreground-subtle" />
                                 ) : task.unreadAt ? (
-                                  <span className="h-1.5 w-1.5 rounded-full bg-sky-500 dark:bg-sky-400" />
+                                  <span className="h-1.5 w-1.5 rounded-full bg-icon-blue" />
                                 ) : null}
                               </span>
                               <span className="min-w-0 flex-1">

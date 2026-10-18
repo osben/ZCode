@@ -126,7 +126,7 @@ export function DataBaseDirControl({
         <p
           data-testid={TID_SETTINGS_DATA_BASE_DIR_STATUS}
           data-state="saved"
-          className="text-ui-base text-amber-600 dark:text-amber-400"
+          className="text-ui-base text-warning"
         >
           {intl.formatMessage({ id: "settings.dataBaseDirRestartRequired" })}
         </p>
