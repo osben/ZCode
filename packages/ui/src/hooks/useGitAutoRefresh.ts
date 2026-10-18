@@ -114,7 +114,7 @@ export function useGitAutoRefresh({
     const registrations: GitWatcherRegistration[] = [];
 
     let burstStartedAt: number | null = null;
-    let lastRefreshAt: number | null = null;
+    let lastRefreshAt = Number.NEGATIVE_INFINITY;
 
     const scheduleRefresh = (path: string) => {
       const now = Date.now();
@@ -124,8 +124,7 @@ export function useGitAutoRefresh({
       }
       const quietDeadline = now + GIT_AUTO_REFRESH_DEBOUNCE_MS;
       const maxWaitDeadline = burstStartedAt + GIT_AUTO_REFRESH_MAX_WAIT_MS;
-      const minIntervalDeadline =
-        lastRefreshAt === null ? now : lastRefreshAt + GIT_AUTO_REFRESH_MAX_WAIT_MS;
+      const minIntervalDeadline = lastRefreshAt + GIT_AUTO_REFRESH_MAX_WAIT_MS;
       const deadline = Math.max(Math.min(quietDeadline, maxWaitDeadline), minIntervalDeadline);
       debounceTimerRef.current = setTimeout(
         () => {

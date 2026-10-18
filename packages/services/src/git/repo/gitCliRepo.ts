@@ -506,7 +506,14 @@ async function appendWorktreeExcludeLine(excludePath: string): Promise<void> {
     const prefix = existing.length > 0 && !existing.endsWith("\n") ? eol : "";
     await appendFile(excludePath, `${prefix}${WORKTREES_EXCLUDE_PATTERN}${eol}`, "utf-8");
   });
-  worktreeExcludeWriteChains.set(excludePath, current.catch(() => undefined));
+  const settled = current.catch(() => undefined);
+  worktreeExcludeWriteChains.set(excludePath, settled);
+  // Drop the entry once nothing newer is queued behind it, so the map does not grow per repository.
+  void settled.then(() => {
+    if (worktreeExcludeWriteChains.get(excludePath) === settled) {
+      worktreeExcludeWriteChains.delete(excludePath);
+    }
+  });
   await current;
 }
 

@@ -1405,17 +1405,16 @@ function ConversationComposerImpl({
     if (queued.attemptId && worktreePipeline?.params?.attemptId !== queued.attemptId) {
       const liveAttemptId = worktreePipeline?.params?.attemptId;
       if (
-        liveAttemptId &&
-        (worktreePipeline?.status === "creating" || worktreePipeline?.status === "ready")
+        !liveAttemptId ||
+        (worktreePipeline?.status !== "creating" && worktreePipeline?.status !== "ready")
       ) {
-        // Retry restarts the same prepared session under a new attempt; the frozen submission
-        // follows it instead of being detached.
-        queued.attemptId = liveAttemptId;
-      } else {
         detachQueued();
         queued.restore();
         return;
       }
+      // Retry restarts the same prepared session under a new attempt; the frozen submission
+      // follows it instead of being detached.
+      queued.attemptId = liveAttemptId;
     }
     if (worktreePipeline?.orphaned || worktreePipeline?.status === "discarded") {
       // Orphaned withdrawal and authoritative Host cancellation both stop local delivery; the
