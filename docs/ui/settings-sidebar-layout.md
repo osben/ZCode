@@ -12,31 +12,37 @@ Settings uses a desktop-style two-column layout, consistently using the semantic
 
 ## Navigation Groups
 
-Keep the existing route semantics for Settings entries, but organize them into three visible groups based on user tasks:
+Keep the existing route semantics for Settings entries, but organize them into three visible groups based on user tasks. `packages/ui/src/settings/settingsPageConfig.ts` is the single owner of group membership and order:
 
-- **Basics:** General, Interface, Model Settings, Browser.
-- **Agent capabilities:** Plugins, Skills, Subagents, MCP servers, Commands, Hooks. Put Plugins first as the unified entry for Agent extensions, and keep Commands and Hooks adjacent to the other Agent settings.
-- **Data and statistics:** Index, Usage Stats.
+- **Basics** (app-level preferences): General, Appearance, Model Settings, Keyboard Shortcuts, Voice Input, Worktrees (Desktop only).
+- **Agent capabilities** (what the Agent knows and can use or control): Instructions, Output Styles, Memory, Subagents, Plugins, MCP servers, Skills, Commands, Hooks, Browser, Computer Use (Desktop only). Browser and Computer Use are Agent control surfaces ("control the browser / control the whole computer"), so they sit after Hooks, adjacent to each other.
+- **Data and statistics:** Usage Stats, Sessions.
 
 Group titles are navigation structure, not clickable entries. Show localized titles in the wide sidebar. When collapsed to a 64px icon rail below `lg`, hide visible titles and preserve group boundaries with subtle dividers. Give each group its own accessible group name; retain tooltips, `aria-current`, and existing test IDs for entries. Keep the onboarding entry after the grouped list, outside the Settings groups.
 
 Grouping affects only the navigation visuals and semantic structure of the Settings page shared by desktop/Web. Do not change Settings section IDs, recently visited sections, explicit navigation intent, content routes, or persistence. Mobile `/remote` currently has no Settings entry point, so do not add mobile-specific interaction; verify only the responsive icon rail at narrow window widths.
 
+### Hidden and legacy section IDs
+
+These IDs stay valid in `SettingsSectionId` so stored preferences and older callers resolve, but they never appear in navigation and `resolveSettingsSection` falls back to the default section (via `HIDDEN_SETTINGS_SECTIONS` in `lib/settingsNavigation.ts`):
+
+- `automations`: a workspace main view, not a Settings section.
+- `plugins`: the old marketplace; resolves to `plugin`.
+- `workspaceFileSearch`: temporarily hidden; the `.zcodeignore` rules file still applies.
+- `migration`: the section has no navigation entry and no caller; the onboarding dialog owns the migration flow. Hiding it prevents a stale intent from landing on an unreachable page.
+
 Current entry responsibilities:
 
-- **General:** manage interface theme and language.
-- **Models:** use the Lucide `Package` icon.
-- **Plugins:** use the Lucide `Blocks` icon, matching the default plugin icon in Settings.
-- **MCP:** use the Lucide `Server` icon.
-- **Code Preview:** manage code-block themes, line numbers, line wrapping, and font size; retain light/dark previews.
-- **Model Providers:** manage model providers, credentials, and available models used by the ZCode Agent.
-- **Skills:** manage project-level and user-level skills.
-- **MCP Servers:** manage general MCP configuration and the configuration used by the ZCode Agent.
-- **Commands:** manage `.md` command files for different Agent CLIs.
-- **Hooks:** manage task-lifecycle hooks.
-- **Index:** manage workspace-index capabilities.
-- **Browser:** manage the official Browser Use plugin toggle, one-time Chrome data import, and cleanup of built-in browser data.
-- **Usage:** view app and coding-plan usage.
+- **General:** language, interface mode, terminal, proxy, notifications, message-stream display, task auto-archive, data directory.
+- **Appearance:** theme, code-block preview (themes, line numbers, wrapping, font size).
+- **Model Settings:** model providers, credentials, and available models (Lucide `Package`).
+- **Keyboard Shortcuts / Voice Input:** shortcut bindings; dictation models, microphone, recording mode.
+- **Worktrees:** defaults for the "New task in worktree" flow; Desktop only.
+- **Instructions / Output Styles / Memory:** user-scoped prompt material, response style, and project memory.
+- **Subagents / Skills / Commands / Hooks:** Agent extension resources; **Plugins** (Lucide `Blocks`) and **MCP servers** (Lucide `Cable`) are the unified extension entries.
+- **Browser:** Browser Use plugin toggle, one-time Chrome data import, built-in browser data cleanup.
+- **Computer Use:** whole-computer control permissions; Desktop only.
+- **Usage Stats / Sessions:** app and coding-plan usage; cross-workspace session management.
 
 Navigation intent to a section that was later hidden from an older window falls back to the visible default section, preventing a blank Settings page.
 
