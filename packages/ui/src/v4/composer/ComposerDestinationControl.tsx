@@ -183,9 +183,14 @@ export function ComposerDestinationControl({
     };
   }, [effectiveLocation.mode, baseServices.gitService, workspacePath, resolution.rpcReady]);
 
-  // Branch list loads on first popover open; failure is disclosed (base defaults to HEAD).
+  // The branch list reloads on every popover open, so a branch created and switched to from this
+  // popover is listed and marked current the next time it opens. The previous snapshot stays
+  // rendered while the reload runs (no loading flicker). The effect must not depend on
+  // branchesResult or branchListFailed: a result would then retrigger the fetch in a loop. A
+  // response from a superseded open or workspace is dropped by the cancelled flag. A failure is
+  // disclosed (base defaults to HEAD) and retried on the next open.
   useEffect(() => {
-    if (!resolution.rpcReady || !open || branchesResult !== null || branchListFailed) return;
+    if (!resolution.rpcReady || !open) return;
     let cancelled = false;
     baseServices.gitService.getLocalBranches({ workspacePath }).then(
       (result) => {
@@ -210,14 +215,7 @@ export function ComposerDestinationControl({
     return () => {
       cancelled = true;
     };
-  }, [
-    baseServices.gitService,
-    branchListFailed,
-    branchesResult,
-    open,
-    workspacePath,
-    resolution.rpcReady,
-  ]);
+  }, [baseServices.gitService, open, workspacePath, resolution.rpcReady]);
 
   const computeWorktreeBranchName = useCallback(() => {
     const branchNameSet = new Set(branchesResult?.branches.map((branch) => branch.name) ?? []);
@@ -322,6 +320,8 @@ export function ComposerDestinationControl({
       <Popover
         open={open}
         onOpenChange={(nextOpen) => {
+          // A failed list from an earlier open must not stick: each open retries the load.
+          if (nextOpen) setBranchListFailed(false);
           setOpen(nextOpen);
           switcher.setOpen(nextOpen);
         }}

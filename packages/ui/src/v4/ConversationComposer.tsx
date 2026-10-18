@@ -694,6 +694,10 @@ function ConversationComposerImpl({
       preparedAttemptId?: string,
     ) => Promise<void>;
     restore: () => void;
+    // Writes the recovery record for a retryable failure but keeps the submission claimed, so the
+    // armed dispatch skips a second claim that would wipe or reject edits typed meanwhile.
+    restoreForRetry: () => void;
+    restoredFailureKey?: string;
   } | null>(null);
   const reportedWorktreeFailuresRef = useRef(new Set<string>());
   const worktreePipeline = useComposerWorktreePipelineStore((state) =>
@@ -1399,9 +1403,18 @@ function ConversationComposerImpl({
       return;
     }
     if (queued.attemptId && worktreePipeline?.params?.attemptId !== queued.attemptId) {
-      detachQueued();
-      queued.restore();
-      return;
+      const liveAttemptId = worktreePipeline?.params?.attemptId;
+      if (
+        !liveAttemptId ||
+        (worktreePipeline?.status !== "creating" && worktreePipeline?.status !== "ready")
+      ) {
+        detachQueued();
+        queued.restore();
+        return;
+      }
+      // Retry restarts the same prepared session under a new attempt; the frozen submission
+      // follows it instead of being detached.
+      queued.attemptId = liveAttemptId;
     }
     if (worktreePipeline?.orphaned || worktreePipeline?.status === "discarded") {
       // Orphaned withdrawal and authoritative Host cancellation both stop local delivery; the
@@ -1440,6 +1453,16 @@ function ConversationComposerImpl({
             sessionId: queued.preparedSessionId,
           });
         });
+      }
+      if (worktreePipeline.params) {
+        // Retryable failure: the frozen submission stays recoverable but also armed, so the
+        // pipeline's Retry (a new attempt on this session) still activates it once it is ready.
+        if (queued.restoredFailureKey !== failureKey) {
+          queued.restoredFailureKey = failureKey;
+          queued.restoreForRetry();
+        }
+        setWorktreeQueued(false);
+        return;
       }
       detachQueued();
       queued.restore();
@@ -1669,6 +1692,10 @@ function ConversationComposerImpl({
           draftPersistClaimRef.current = null;
         }
         draftSubmissionClaimed = false;
+      };
+      const restoreForRetry = () => {
+        restoreSubmittedDraft();
+        draftSubmissionClaimed = true;
       };
       const finalizeSubmittedDraft = () => {
         if (!draftSubmissionClaimed) return;
@@ -2115,6 +2142,7 @@ function ConversationComposerImpl({
           currentPipeline.params
         ) {
           clearQueuedSubmissionState();
+          pendingWorktreeSendRef.current = null;
           await runSend(
             { path: currentPipeline.worktreePath, branchName: currentPipeline.params.branchName },
             preparedSessionIdForSend,
@@ -2203,6 +2231,7 @@ function ConversationComposerImpl({
           )?.params?.attemptId,
           dispatch: runSend,
           restore: restoreSubmittedDraft,
+          restoreForRetry,
         };
         return;
       }

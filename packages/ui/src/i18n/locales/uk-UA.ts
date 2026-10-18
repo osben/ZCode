@@ -9,6 +9,16 @@ const ukUA: Record<string, string> = {
   "worktreeSetup.connectionUnavailable":
     "Відновіть з'єднання з Host цього проєкту, щоб продовжити підготовку worktree.",
   "worktreeSetup.created": "Worktree створено",
+  "worktreeSetup.stepCreating": "Готуємо worktree {branch}…",
+  "worktreeSetup.stepCreating.baseHead": "Базова гілка — HEAD",
+  "worktreeSetup.stepReady": "Worktree готово: {path}",
+  "worktreeSetup.stepExisting": "Використано наявний worktree: {path}",
+  "worktreeSetup.stepFailed": "Не вдалося підготувати worktree: {reason}",
+  "worktreeSetup.retry": "Повторити",
+  "worktreeSetup.discard": "Відхилити",
+  "worktreeSetup.queuedMessageLabel": "Повідомлення в черзі",
+  "worktreeSetup.orphanedNote":
+    "Це приготування вже не належить активній сесії, його можна відхилити.",
   "composerRecovery.editorOccupied": "Надішліть або очистьте поточну чернетку перед відновленням.",
   "composerRecovery.reattach": "Прикріпіть відсутні файли знову або явно видаліть їх.",
   "composerRecovery.restore": "Відновити",

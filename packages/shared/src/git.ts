@@ -213,6 +213,17 @@ export type GitWorktreeVerifyResult =
   | { ok: true }
   | { ok: false; reason: "missing-directory" | "missing-git-link" };
 
+export interface GitWorktreeExcludeRequest extends GitRepositoryRequest {
+  /** Absolute path of the worktree that was just created or reused. */
+  targetPath: string;
+}
+
+/**
+ * Best-effort local exclusion of `.worktrees/` for inside-placement worktrees. Failure is
+ * informational only; it never fails the worktree creation or reuse that triggered it.
+ */
+export type GitWorktreeExcludeResult = { ok: true } | { ok: false };
+
 /** Invalid-branch-name / branch-already-exists / target-branch-not-found / branch-in-other-worktree / unknown reuse the literals of GitBranchMutationIssueCode; the rest are worktree-specific. */
 export type GitWorktreeMutationIssueCode =
   | "invalid-branch-name"

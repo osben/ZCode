@@ -1,3 +1,4 @@
+/* eslint-disable max-lines */
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -266,6 +267,10 @@ export function createGitService(options?: {
 
     async verifyWorktreeUsable(params) {
       return await repo.verifyWorktreeUsable(params.workspacePath, params.targetPath);
+    },
+
+    async ensureWorktreeExclusion(params) {
+      return await repo.ensureWorktreeExclusion(params.workspacePath, params.targetPath);
     },
 
     async createWorktree(params) {
