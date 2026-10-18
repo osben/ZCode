@@ -1206,3 +1206,145 @@ describe("gitCliRepo createWorktree branch rollback", () => {
     },
   );
 });
+
+describe("gitCliRepo ensureWorktreeExclusion", () => {
+  const worktreeExcludeLine = ".worktrees/";
+
+  function excludeFileOf(repoPath: string): string {
+    return join(repoPath, ".git", "info", "exclude");
+  }
+
+  function countExcludeLines(content: string): number {
+    return content.split(/\r?\n/).filter((line) => line.trim() === worktreeExcludeLine).length;
+  }
+
+  it(
+    "creates the exclude file with the line for inside placement and keeps main status clean",
+    async () => {
+      const { repoPath } = createWorktreeTestRepo();
+      const repo = createGitCliRepo();
+      rmSync(join(repoPath, ".git", "info"), { recursive: true, force: true });
+      const insidePath = join(repoPath, ".worktrees", "feature");
+
+      expect((await repo.createWorktree(repoPath, "feature", insidePath, "release")).ok).toBe(
+        true,
+      );
+      // Git reports the untracked `.worktrees/` before the exclusion is written.
+      expect(runGit(repoPath, ["status", "--porcelain"])).toBe("?? .worktrees/");
+
+      await expect(repo.ensureWorktreeExclusion(repoPath, insidePath)).resolves.toEqual({
+        ok: true,
+      });
+
+      expect(readFileSync(excludeFileOf(repoPath), "utf-8")).toBe(`${worktreeExcludeLine}\n`);
+      expect(runGit(repoPath, ["status", "--porcelain"])).toBe("");
+    },
+    GIT_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "does not duplicate the line on a second call",
+    async () => {
+      const { repoPath } = createWorktreeTestRepo();
+      const repo = createGitCliRepo();
+      const insidePath = join(repoPath, ".worktrees", "feature");
+      expect((await repo.createWorktree(repoPath, "feature", insidePath, "release")).ok).toBe(
+        true,
+      );
+
+      await repo.ensureWorktreeExclusion(repoPath, insidePath);
+      const afterFirst = readFileSync(excludeFileOf(repoPath), "utf-8");
+      await expect(repo.ensureWorktreeExclusion(repoPath, insidePath)).resolves.toEqual({
+        ok: true,
+      });
+
+      expect(readFileSync(excludeFileOf(repoPath), "utf-8")).toBe(afterFirst);
+      expect(countExcludeLines(afterFirst)).toBe(1);
+    },
+    GIT_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "preserves existing content and terminates a missing trailing newline before appending",
+    async () => {
+      const { repoPath } = createWorktreeTestRepo();
+      const repo = createGitCliRepo();
+      const insidePath = join(repoPath, ".worktrees", "feature");
+      expect((await repo.createWorktree(repoPath, "feature", insidePath, "release")).ok).toBe(
+        true,
+      );
+      writeFileSync(excludeFileOf(repoPath), "# local rules\nbuild/");
+
+      await expect(repo.ensureWorktreeExclusion(repoPath, insidePath)).resolves.toEqual({
+        ok: true,
+      });
+
+      expect(readFileSync(excludeFileOf(repoPath), "utf-8")).toBe(
+        `# local rules\nbuild/\n${worktreeExcludeLine}\n`,
+      );
+    },
+    GIT_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "is a no-op success for a target outside .worktrees/",
+    async () => {
+      const { container, repoPath } = createWorktreeTestRepo();
+      const repo = createGitCliRepo();
+      const siblingPath = join(container, "sibling");
+      expect((await repo.createWorktree(repoPath, "feature", siblingPath, "release")).ok).toBe(
+        true,
+      );
+      const before = readFileSync(excludeFileOf(repoPath), "utf-8");
+
+      await expect(repo.ensureWorktreeExclusion(repoPath, siblingPath)).resolves.toEqual({
+        ok: true,
+      });
+      // The `.worktrees` directory itself is not a worktree inside it.
+      await expect(
+        repo.ensureWorktreeExclusion(repoPath, join(repoPath, ".worktrees")),
+      ).resolves.toEqual({ ok: true });
+
+      expect(readFileSync(excludeFileOf(repoPath), "utf-8")).toBe(before);
+      expect(countExcludeLines(before)).toBe(0);
+    },
+    GIT_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "writes to the shared common exclude file when the workspace is a linked worktree",
+    async () => {
+      const { container, repoPath } = createWorktreeTestRepo();
+      const repo = createGitCliRepo();
+      const linkedPath = join(container, "linked");
+      expect((await repo.createWorktree(repoPath, "feature", linkedPath, "release")).ok).toBe(
+        true,
+      );
+      // Inside placement is relative to the linked worktree's own top level; the exclude file it
+      // writes is the main checkout's common one, shared by every worktree of the repository.
+      const insidePath = join(linkedPath, ".worktrees", "nested");
+      mkdirSync(insidePath, { recursive: true });
+
+      await expect(repo.ensureWorktreeExclusion(linkedPath, insidePath)).resolves.toEqual({
+        ok: true,
+      });
+
+      expect(countExcludeLines(readFileSync(excludeFileOf(repoPath), "utf-8"))).toBe(1);
+    },
+    GIT_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  it("reports failure without throwing when the exclude file cannot be written", async () => {
+    const { repoPath } = createWorktreeTestRepo();
+    const repo = createGitCliRepo();
+    const insidePath = join(repoPath, ".worktrees", "feature");
+    expect((await repo.createWorktree(repoPath, "feature", insidePath, "release")).ok).toBe(true);
+    // A directory where the exclude file should be makes the append fail with EISDIR.
+    rmSync(excludeFileOf(repoPath), { force: true });
+    mkdirSync(excludeFileOf(repoPath));
+
+    await expect(repo.ensureWorktreeExclusion(repoPath, insidePath)).resolves.toEqual({
+      ok: false,
+    });
+  }, GIT_INTEGRATION_TEST_TIMEOUT_MS);
+});

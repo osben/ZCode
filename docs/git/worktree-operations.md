@@ -210,8 +210,62 @@ interface GitWorktreePruneResult {
 - Prune removes only stale records whose directory no longer exists；it never touches existing worktree directories or branches。
 - Output lines are counted only；the raw stderr wording is not surfaced to the layer above。
 
-## Test Requirements
+## ensureWorktreeExclusion (inside placement)
 
+### Positioning
+
+When a worktree is created under `<repoRoot>/.worktrees/<branch>` (inside placement), the directory lies inside the main checkout and `git status` in the main checkout would list `.worktrees/` as untracked in Review. This primitive keeps the main checkout status clean without touching any tracked file.
+
+### Requirement
+
+- For inside placement the app guarantees a clean main-checkout status: after a successful creation, the line `.worktrees/` is present in the repository's shared exclude file.
+- The exclude file is resolved by Git itself: `git rev-parse --git-path info/exclude` run in `repoRoot`. This is `.git/info/exclude` for a normal checkout and the common-dir file for linked worktrees and separate git-dirs. A relative result is resolved against `repoRoot`.
+- The rule is local and best-effort: it never modifies `.gitignore` or any tracked file (a tracked `.gitignore` edit would itself dirty the status).
+- Idempotent: when an equal line (after trim and CRLF normalization) already exists, nothing is written. Duplicate lines are never appended.
+- Append-only: existing content is never rewritten. A missing trailing newline is terminated before the appended line. The `info/` directory and the file are created when absent.
+- Target scope: the call is a no-op success when `targetPath` is not strictly inside `<repoRoot>/.worktrees/`. Both sides are compared through the realpath-normalized identity so symlinked roots (e.g. `/var` vs `/private/var`) match.
+- Concurrent calls for the same exclude file are serialized inside the process so two creations cannot both observe "missing" and append twice.
+
+### Input
+
+```ts
+interface GitWorktreeExcludeRequest extends GitRepositoryRequest {
+  /** Absolute path of the worktree that was just created or reused. */
+  targetPath: string;
+}
+```
+
+### Output
+
+```ts
+type GitWorktreeExcludeResult = { ok: true } | { ok: false };
+```
+
+### Failure Handling
+
+- Any failure (repository not available, Git path probe failure, filesystem error) is logged at `warn` and returned as `{ ok: false }`. The method never throws for these, and a failure never fails worktree creation or the reuse path; the UI treats it as informational.
+- The UI calls the primitive through the shared `executeWorktreeCreation` path after the outcome is `created` or `existing-worktree`, and in the composer reconcile path when a registered worktree is settled as ready (a crash between creation and exclusion is recovered there). It awaits the call so the exclusion is in place before Review refreshes. Its result is not part of the creation outcome.
+
+### Owner and Event Order
+
+- Owner: the Git service (`GitCliRepo`) is the only writer of the shared exclude file; the UI only sends the command.
+- Order: `createWorktree` succeeds → UI awaits `ensureWorktreeExclusion` → Review status refresh. The exclusion is not stored in app state, so there is no second source of truth to repair.
+
+```text
+UI executeWorktreeCreation ──create ok──▶ GitService.createWorktree
+        │                                   (worktree dir + branch)
+        └──await──▶ GitService.ensureWorktreeExclusion
+                       ├─ target outside .worktrees/ → no-op ok
+                       └─ append `.worktrees/` to info/exclude if missing → ok / warn + ok:false
+```
+
+### Test Requirements
+
+- Missing exclude file: after an inside-placement creation the file contains the line; `git status --porcelain` in the main checkout no longer lists `.worktrees/`.
+- Second call adds no duplicate line.
+- Existing content (including a missing trailing newline) is preserved and only the line is appended.
+- Target outside `.worktrees/` is a no-op success and writes nothing.
+- A call from a linked worktree workspace writes to the shared common-dir exclude file.
 
 ## Test Requirements
 

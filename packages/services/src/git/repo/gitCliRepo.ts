@@ -1,7 +1,7 @@
 /* eslint-disable max-lines */
-import { mkdtemp, readFile, realpath, rm, stat } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type {
   GitBranchMergeStatus,
   GitBranchMergeState,
@@ -18,6 +18,7 @@ import type {
   GitRepositoryRemotesResult,
   GitWorkspaceRepositoryInfo,
   GitWorktreeCreateResult,
+  GitWorktreeExcludeResult,
   GitWorktreeListResult,
   GitWorktreeMutationIssue,
   GitWorktreePruneResult,
@@ -462,6 +463,53 @@ async function resolveComparableWorktreePath(path: string): Promise<string> {
   }
 }
 
+const WORKTREES_DIRECTORY_NAME = ".worktrees";
+const WORKTREES_EXCLUDE_PATTERN = `${WORKTREES_DIRECTORY_NAME}/`;
+// Writes to one exclude file are chained: two creations in the same repository must not both
+// observe the line as missing and append it twice.
+const worktreeExcludeWriteChains = new Map<string, Promise<unknown>>();
+
+async function isInsideWorktreesDirectory(repoRoot: string, targetPath: string): Promise<boolean> {
+  const worktreesDirectory = join(
+    await resolveComparableWorktreePath(repoRoot),
+    WORKTREES_DIRECTORY_NAME,
+  );
+  const targetIdentity = await resolveComparableWorktreePath(targetPath);
+  const relativePath = relative(worktreesDirectory, targetIdentity);
+  // The `.worktrees` directory itself is not a worktree inside it.
+  return (
+    relativePath.length > 0 &&
+    !isAbsolute(relativePath) &&
+    relativePath !== ".." &&
+    !relativePath.startsWith(`..${sep}`)
+  );
+}
+
+async function appendWorktreeExcludeLine(excludePath: string): Promise<void> {
+  const previous = worktreeExcludeWriteChains.get(excludePath) ?? Promise.resolve();
+  const current = previous.then(async () => {
+    await mkdir(dirname(excludePath), { recursive: true });
+    let existing = "";
+    try {
+      existing = await readFile(excludePath, "utf-8");
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+        throw error;
+      }
+    }
+    if (existing.split("\n").some((line) => line.trim() === WORKTREES_EXCLUDE_PATTERN)) {
+      return;
+    }
+    // Append only: existing bytes are never rewritten. A file without a trailing newline gets
+    // one first, otherwise the new pattern would be glued onto its last line.
+    const eol = existing.includes("\r\n") ? "\r\n" : "\n";
+    const prefix = existing.length > 0 && !existing.endsWith("\n") ? eol : "";
+    await appendFile(excludePath, `${prefix}${WORKTREES_EXCLUDE_PATTERN}${eol}`, "utf-8");
+  });
+  worktreeExcludeWriteChains.set(excludePath, current.catch(() => undefined));
+  await current;
+}
+
 function parseBranchRefRecords(stdout: string, currentBranchName: string | null): GitLocalBranch[] {
   return stdout
     .replace(/\r\n/g, "\n")
@@ -767,6 +815,22 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
     // Exit code 1 means the ref is missing; any other unexpected failure falls through to
     // "does not exist" so the subsequent `worktree add` surfaces the real Git error.
     return result.exitCode === 0;
+  }
+
+  async function resolveInfoExcludePath(resolution: GitResolvedRepository): Promise<string> {
+    // `--git-path` maps into the common Git dir, so linked worktrees and separate git-dirs share
+    // the main checkout's exclude file. Do not assume `<repoRoot>/.git` is a directory.
+    const result = await commandProvider.run({
+      cwd: resolution.repoRoot,
+      args: ["rev-parse", "--git-path", "info/exclude"],
+      timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+    });
+    ensureGitCommandSucceeded("git rev-parse --git-path", result);
+    const excludePath = result.stdout.replace(/\r\n/g, "\n").split("\n")[0]?.trim() ?? "";
+    if (excludePath.length === 0) {
+      throw new Error("Git did not report an exclude path");
+    }
+    return isAbsolute(excludePath) ? excludePath : resolve(resolution.repoRoot, excludePath);
   }
 
   /**
@@ -1298,6 +1362,35 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
         throw error;
       }
       return { ok: true };
+    },
+
+    async ensureWorktreeExclusion(
+      workspacePath: string,
+      targetPath: string,
+    ): Promise<GitWorktreeExcludeResult> {
+      // Best-effort: an inside-placement worktree is still usable when its status exclusion cannot
+      // be written, so every failure is logged and reported as `{ ok: false }` without throwing.
+      try {
+        const resolution = await this.resolveRepository(workspacePath);
+        if (!resolution.isGitAvailable || !resolution.isRepository) {
+          log.warn(undefined, "worktree exclusion skipped: workspace is not a Git repository", {
+            workspacePath,
+          });
+          return { ok: false };
+        }
+        if (!(await isInsideWorktreesDirectory(resolution.repoRoot, targetPath))) {
+          return { ok: true };
+        }
+        await appendWorktreeExcludeLine(await resolveInfoExcludePath(resolution));
+        return { ok: true };
+      } catch (error) {
+        log.warn(undefined, "worktree exclusion failed; .worktrees/ may show as untracked", {
+          workspacePath,
+          targetPath,
+          cause: error instanceof Error ? error.message : String(error),
+        });
+        return { ok: false };
+      }
     },
 
     async createWorktree(

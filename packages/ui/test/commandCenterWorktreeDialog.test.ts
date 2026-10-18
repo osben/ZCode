@@ -80,6 +80,7 @@ const getLocalBranches = vi.fn();
 const getWorkspaceRepositoryInfo = vi.fn();
 const pruneWorktrees = vi.fn();
 const verifyWorktreeUsable = vi.fn(async (_params: unknown) => ({ ok: true }) as { ok: boolean });
+const ensureWorktreeExclusion = vi.fn(async (_params: unknown) => ({ ok: true }));
 // References must stay stable: the setup page's data-fetch effect depends on gitService; a fresh object per render would cause an infinite refetch/re-render loop.
 const stableGitService = {
   createWorktree,
@@ -89,6 +90,7 @@ const stableGitService = {
   getWorkspaceRepositoryInfo,
   pruneWorktrees,
   verifyWorktreeUsable,
+  ensureWorktreeExclusion,
 };
 
 vi.mock("@/hooks/useWorkspaceServices.js", () => ({

@@ -33,6 +33,8 @@ import type {
   GitWorktreePathIdentityRequest,
   GitWorktreePruneResult,
   GitWorktreeRemoveResult,
+  GitWorktreeExcludeRequest,
+  GitWorktreeExcludeResult,
   GitWorktreeVerifyRequest,
   GitWorktreeVerifyResult,
   GitFileChange,
@@ -57,6 +59,8 @@ export interface IGitService {
   resolveWorktreePathIdentities(params: GitWorktreePathIdentityRequest): Promise<string[]>;
   /** Verify a registered worktree's real directory and Git link on this Host; read-only. */
   verifyWorktreeUsable(params: GitWorktreeVerifyRequest): Promise<GitWorktreeVerifyResult>;
+  /** Keep inside-placement worktrees (`<repoRoot>/.worktrees/`) out of the main checkout status. */
+  ensureWorktreeExclusion(params: GitWorktreeExcludeRequest): Promise<GitWorktreeExcludeResult>;
   createWorktree(params: GitCreateWorktreeRequest): Promise<GitWorktreeCreateResult>;
   removeWorktree(params: GitRemoveWorktreeRequest): Promise<GitWorktreeRemoveResult>;
   pruneWorktrees(params: GitRepositoryRequest): Promise<GitWorktreePruneResult>;

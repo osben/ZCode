@@ -246,7 +246,13 @@ describe("beginWorktreePipelineCreation validation (no silent worktree misfires)
   const createWorktree = vi.fn();
   const listWorktrees = vi.fn();
   const verifyWorktreeUsable = vi.fn(async () => ({ ok: true }));
-  const gitService = { createWorktree, listWorktrees, verifyWorktreeUsable };
+  const ensureWorktreeExclusion = vi.fn(async () => ({ ok: true }));
+  const gitService = {
+    createWorktree,
+    listWorktrees,
+    verifyWorktreeUsable,
+    ensureWorktreeExclusion,
+  };
   const formatMessage = (id: string) => id;
   const prepareSession = async () => "session-1";
   const baseInput = {

@@ -11,6 +11,7 @@ import { nanoid } from "nanoid";
 import { getErrorMessage } from "@/lib/errorMessage.js";
 import { logger } from "@/logger.js";
 import {
+  ensureWorktreeExclusionSafely,
   executeWorktreeCreation,
   type WorktreeCreationGitService,
 } from "@/command-center/worktreeCreation.js";
@@ -414,6 +415,9 @@ export async function reconcileCreatingComposerWorktreePipeline({
         );
         return;
       }
+      // A crash between creation and the exclusion step leaves an inside-placement worktree
+      // unexcluded; reconcile is the recovery point that settles it, same as the created outcome.
+      await ensureWorktreeExclusionSafely(gitService, entry.params.workspacePath, existing.path);
       // The recovered worktree may sit elsewhere than the frozen target; realign the Host marker
       // before the strict activation check, and fail the entry when there is no way to realign.
       if (existing.path !== entry.params.targetPath) {
