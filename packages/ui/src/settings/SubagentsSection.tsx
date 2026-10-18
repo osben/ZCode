@@ -830,7 +830,7 @@ function SubagentForm({
     () => createSubagentFormInitialState(initial),
     [initial, initialFormStateKey],
   );
-  const previousInitialFormStateKeyRef = useRef(initialFormStateKey);
+  const [syncedInitialFormStateKey, setSyncedInitialFormStateKey] = useState(initialFormStateKey);
   const [name, setName] = useState(initialFormState.name);
   const [description, setDescription] = useState(initialFormState.description);
   const [color, setColor] = useState<AgentColor>(initialFormState.color);
@@ -844,6 +844,25 @@ function SubagentForm({
   const [descriptionError, setDescriptionError] = useState<string | null>(null);
   const [promptError, setPromptError] = useState<string | null>(null);
   const [modelError, setModelError] = useState<string | null>(null);
+  // Adopt a changed agent snapshot during render, and only when its value changes. A passive
+  // effect wrote the snapshot after commit, so an edit landing between that commit and the
+  // effect flush was overwritten by the snapshot.
+  if (initialFormStateKey !== syncedInitialFormStateKey) {
+    setSyncedInitialFormStateKey(initialFormStateKey);
+    setName(initialFormState.name);
+    setDescription(initialFormState.description);
+    setColor(initialFormState.color);
+    setModel(initialFormState.model);
+    setThoughtLevel(initialFormState.thoughtLevel);
+    setInjectAgentsMd(initialFormState.injectAgentsMd);
+    setInheritAllTools(initialFormState.inheritAllTools);
+    setSelectedTools(initialFormState.selectedTools);
+    setSystemPrompt(initialFormState.systemPrompt);
+    setNameError(null);
+    setDescriptionError(null);
+    setPromptError(null);
+    setModelError(null);
+  }
   const inheritModelLabel = intl.formatMessage({
     id: "settings.subagents.model.inherit",
   });
@@ -909,30 +928,6 @@ function SubagentForm({
     !thoughtLevelInvalid,
   );
   const selectedColorIndex = Math.max(0, AGENT_COLORS.indexOf(color));
-
-  useEffect(() => {
-    if (previousInitialFormStateKeyRef.current === initialFormStateKey) {
-      return;
-    }
-    previousInitialFormStateKeyRef.current = initialFormStateKey;
-    const nextInitialState = createSubagentFormInitialState(initial);
-
-    // The form component may reuse an old instance after save/refresh; hydrate fields from the latest agent snapshot,
-    // or a model already written to Markdown may remain in the local inherit state.
-    setName(nextInitialState.name);
-    setDescription(nextInitialState.description);
-    setColor(nextInitialState.color);
-    setModel(nextInitialState.model);
-    setThoughtLevel(nextInitialState.thoughtLevel);
-    setInjectAgentsMd(nextInitialState.injectAgentsMd);
-    setInheritAllTools(nextInitialState.inheritAllTools);
-    setSelectedTools(nextInitialState.selectedTools);
-    setSystemPrompt(nextInitialState.systemPrompt);
-    setNameError(null);
-    setDescriptionError(null);
-    setPromptError(null);
-    setModelError(null);
-  }, [initial, initialFormStateKey]);
 
   const validate = (): boolean => {
     const trimmedName = name.trim();

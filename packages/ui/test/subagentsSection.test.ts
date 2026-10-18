@@ -16,6 +16,7 @@ let stateOverrides = new Map<number, unknown>();
 let onManageModels = vi.fn();
 let useRealReactHooks = false;
 let thoughtLevelChangeOnMount: string | undefined;
+let thoughtLevelChangeOnNextCommit: string | undefined;
 const mockTabs = vi.hoisted(() => ({ tabs: [] as unknown[] }));
 const mockInitializePlugins = vi.hoisted(() => vi.fn(async () => {}));
 const mockSubagentsService = vi.hoisted(() => ({
@@ -240,6 +241,13 @@ vi.mock("@/chat-input-toolbar/ThoughtLevelCycleControl.js", () => ({
       thoughtLevelChangeOnMount = undefined;
       (props.onValueChange as (nextValue: string) => void)(value);
     }, []);
+    // Replays a user edit in the next commit, before that commit's passive effects flush.
+    useLayoutEffect(() => {
+      const value = thoughtLevelChangeOnNextCommit;
+      if (value === undefined) return;
+      thoughtLevelChangeOnNextCommit = undefined;
+      (props.onValueChange as (nextValue: string) => void)(value);
+    });
     return createElement("button", {
       type: "button",
       "data-testid": "subagent-thought-level",
@@ -479,6 +487,7 @@ describe("SubagentsSection", () => {
     onManageModels = vi.fn();
     useRealReactHooks = false;
     thoughtLevelChangeOnMount = undefined;
+    thoughtLevelChangeOnNextCommit = undefined;
     mockTabs.tabs = [];
     mockInitializePlugins.mockReset().mockResolvedValue(undefined);
     mockToolbarConfigState.status = "ready";
@@ -1479,6 +1488,151 @@ describe("SubagentsSection", () => {
     expect(modelValues).not.toContain("inherit");
     expect(modelPicker?.onManageModels).toBe(onManageModels);
     expect(mockUseModelProviders).not.toHaveBeenCalled();
+  });
+
+  describe("edit form sync from refreshed agents", () => {
+    const createEditableAgent = (overrides: Record<string, unknown> = {}) => ({
+      id: "user:qa-reviewer",
+      name: "qa-reviewer",
+      description: "Review product flows",
+      systemPrompt: "Review carefully",
+      color: "blue",
+      modelSelection: {
+        providerId: "custom-openai",
+        modelId: "gpt-5.4",
+        options: { reasoningLevel: "high" },
+      },
+      tools: ["Read", "Grep"],
+      path: "/tmp/agents/qa-reviewer.md",
+      scope: "user",
+      source: "user",
+      enabled: true,
+      readOnly: false,
+      ...overrides,
+    });
+
+    // Every list() call returns a fresh agent object, like a real refresh.
+    function mockEditableAgentList(createAgent: () => Record<string, unknown>) {
+      mockSubagentsService.list.mockImplementation(async () => {
+        const agent = createAgent();
+        return {
+          agents: [agent],
+          userAgents: [agent],
+          pluginAgents: [],
+          capability: { userScopeAvailable: true },
+        } as never;
+      });
+    }
+
+    // The late plugin-inventory initialization triggers a second list() while the form is open.
+    function deferPluginInventory() {
+      mockTabs.tabs = [{ kind: "workspace", id: "local", workspacePath: "/repo" }];
+      let resolveInventory!: () => void;
+      mockInitializePlugins.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveInventory = resolve;
+          }),
+      );
+      return async () => {
+        const listCalls = mockSubagentsService.list.mock.calls.length;
+        await act(async () => {
+          resolveInventory();
+          await Promise.resolve();
+        });
+        await waitFor(() => expect(mockSubagentsService.list).toHaveBeenCalledTimes(listCalls + 1));
+      };
+    }
+
+    async function openEditForm(beforeOpen?: () => void) {
+      await renderInteractiveSubagentsSection();
+      const row = await screen.findByText("qa-reviewer");
+      beforeOpen?.();
+      fireEvent.click(row);
+      await screen.findByPlaceholderText("settings.subagents.form.name.placeholder");
+    }
+
+    const getFormInput = (placeholder: string) =>
+      screen.getByPlaceholderText(placeholder) as HTMLInputElement | HTMLTextAreaElement;
+    const getFormThoughtLevel = () =>
+      (capturedThoughtLevelControls.at(-1)?.option as { currentValue?: string } | undefined)
+        ?.currentValue;
+
+    it("keeps an edit made before the form's mount effects flush", async () => {
+      mockEditableAgentList(() => createEditableAgent());
+      await openEditForm(() => {
+        thoughtLevelChangeOnMount = "low";
+      });
+
+      await waitFor(() => expect(getFormThoughtLevel()).toBe("low"));
+      expect(thoughtLevelChangeOnMount).toBeUndefined();
+    });
+
+    it("keeps the draft when a refresh returns the same agent value", async () => {
+      const finishInventory = deferPluginInventory();
+      mockEditableAgentList(() => createEditableAgent());
+      await openEditForm();
+      fireEvent.change(getFormInput("settings.subagents.form.name.placeholder"), {
+        target: { value: "edited-reviewer" },
+      });
+      const onThoughtLevelChange = capturedThoughtLevelControls.at(-1)?.onValueChange;
+      expect(onThoughtLevelChange).toBeTypeOf("function");
+      act(() => {
+        (onThoughtLevelChange as (value: string) => void)("low");
+      });
+
+      await finishInventory();
+
+      expect(getFormInput("settings.subagents.form.name.placeholder").value).toBe(
+        "edited-reviewer",
+      );
+      expect(getFormThoughtLevel()).toBe("low");
+    });
+
+    it("replaces the draft when a refresh returns a changed agent value", async () => {
+      const finishInventory = deferPluginInventory();
+      let description = "Review product flows";
+      mockEditableAgentList(() => createEditableAgent({ description }));
+      await openEditForm();
+      fireEvent.change(getFormInput("settings.subagents.form.name.placeholder"), {
+        target: { value: "edited-reviewer" },
+      });
+      description = "Changed elsewhere";
+
+      await finishInventory();
+
+      await waitFor(() =>
+        expect(getFormInput("settings.subagents.form.description.placeholder").value).toBe(
+          "Changed elsewhere",
+        ),
+      );
+      expect(getFormInput("settings.subagents.form.name.placeholder").value).toBe("qa-reviewer");
+    });
+
+    it("keeps an edit made in the commit that delivers a changed agent value", async () => {
+      const finishInventory = deferPluginInventory();
+      let description = "Review product flows";
+      mockEditableAgentList(() => {
+        const agent = createEditableAgent({ description });
+        if (description === "Changed elsewhere") {
+          // Arm the edit only when the changed snapshot is read, so it cannot fire in an earlier commit.
+          thoughtLevelChangeOnNextCommit = "low";
+        }
+        return agent;
+      });
+      await openEditForm();
+      description = "Changed elsewhere";
+
+      await finishInventory();
+
+      await waitFor(() =>
+        expect(getFormInput("settings.subagents.form.description.placeholder").value).toBe(
+          "Changed elsewhere",
+        ),
+      );
+      expect(thoughtLevelChangeOnNextCommit).toBeUndefined();
+      expect(getFormThoughtLevel()).toBe("low");
+    });
   });
 
   it("derives refreshed edit form state from the saved custom model value", async () => {
