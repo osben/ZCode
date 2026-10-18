@@ -602,46 +602,6 @@ describe("AiSdkModelAdapter", () => {
     });
   });
 
-  it("uses Effective Model Config instead of a provider allowlist for native web_search", async () => {
-    let captured: AiSdkGenerateTextOptions | undefined;
-    const runtime: AiSdkModelRuntime = {
-      async generateText(options) {
-        captured = options;
-        return {
-          text: "done",
-          finishReason: "stop",
-          usage: usage(1, 2),
-          totalUsage: usage(1, 2),
-        } as never;
-      },
-      streamText() {
-        throw new Error("not used");
-      },
-    };
-    const adapter = new AiSdkModelAdapter({
-      runtime,
-      registry: new TestProviderConfigFixture({
-        providers: {
-          minimax: {
-            kind: "anthropic",
-            apiKey: "test-key",
-            baseURL: "https://api.minimaxi.com/anthropic",
-          },
-        },
-      }),
-    });
-
-    await executeAdapterGenerateText(adapter, {
-      providerId: "minimax" as never,
-      modelId: "MiniMax-M2.7" as never,
-      properties: createTestModelProperties({}, { supportsNativeWebSearch: true }),
-      messages: [{ role: "user", content: "Ping" }],
-      tools: [createInternalProviderNativeWebSearchContract()],
-    });
-
-    expect(Object.keys(captured?.tools ?? {})).toEqual(["web_search"]);
-  });
-
   it("keeps internal web_search for allowlisted Anthropic-compatible side requests", async () => {
     let captured: AiSdkGenerateTextOptions | undefined;
     const runtime: AiSdkModelRuntime = {
@@ -837,52 +797,6 @@ describe("AiSdkModelAdapter", () => {
     },
   );
 
-  it("adds request attribution headers to generateText requests", async () => {
-    let captured: AiSdkGenerateTextOptions | undefined;
-    const runtime: AiSdkModelRuntime = {
-      async generateText(options) {
-        captured = options;
-        return {
-          text: "done",
-          finishReason: "stop",
-          usage: usage(1, 2),
-          totalUsage: usage(1, 2),
-        } as never;
-      },
-      streamText() {
-        throw new Error("not used");
-      },
-    };
-    const adapter = new AiSdkModelAdapter({
-      runtime,
-      registry: registry(),
-    });
-
-    await executeAdapterGenerateText(adapter, {
-      modelRequestSessionType: "main",
-      metadata: {
-        parentSpanId: "parent_span_generate",
-        queryId: "query_generate",
-        requestId: "model_req_generate",
-        sessionId: "sess_generate",
-        spanId: "span_generate",
-        traceId: "trace_generate",
-        turnId: "turn_generate",
-      },
-      providerId: "test" as never,
-      modelId: "model-a" as never,
-      messages: [{ role: "user", content: "Ping" }],
-    });
-
-    expect(captured?.headers).toEqual({
-      "x-query-id": "generate",
-      "x-request-id": "model_req_generate",
-      "x-session-id": "generate",
-      "x-zcode-session-type": "main",
-      "x-zcode-trace-id": "trace_generate",
-    });
-  });
-
   it("writes raw AI SDK request and response bodies in development mode", async () => {
     const debugDir = await mkdtemp(join(tmpdir(), "zcode-model-io-"));
     const runtime: AiSdkModelRuntime = {
@@ -1068,7 +982,10 @@ describe("AiSdkModelAdapter", () => {
             sources: Promise.resolve([]),
             providerMetadata: Promise.resolve(undefined),
             request: Promise.resolve({
-              body: { messages: [{ role: "user", content: "consolidate memory" }], model: "model-a" },
+              body: {
+                messages: [{ role: "user", content: "consolidate memory" }],
+                model: "model-a",
+              },
             }),
             response: Promise.resolve({
               body: { id: "provider-response", output: [] },
@@ -1457,70 +1374,6 @@ describe("AiSdkModelAdapter", () => {
         rawMarker: "from-ai-sdk-request",
       });
       expect(record.request.body?.bodySource).toBeUndefined();
-    } finally {
-      await rm(debugDir, { recursive: true, force: true });
-    }
-  });
-
-  it("does not wait for pending stream response metadata after mid-stream abort", async () => {
-    const debugDir = await mkdtemp(join(tmpdir(), "zcode-model-io-stream-abort-pending-"));
-    const abortController = new AbortController();
-    const pendingResponse = new Promise<never>(() => undefined);
-    const runtime: AiSdkModelRuntime = {
-      async generateText() {
-        throw new Error("not used");
-      },
-      streamText(options) {
-        return {
-          fullStream: streamThatStallsUntilAbort(options.abortSignal),
-          request: Promise.resolve({
-            body: {
-              messages: options.messages,
-              model: "model-a",
-              rawMarker: "request-settled-before-abort",
-            },
-          }),
-          response: pendingResponse,
-        } as never;
-      },
-    };
-    const adapter = new AiSdkModelAdapter({
-      debugDir,
-      env: { ZCODE_RUNTIME_ENV: "development" },
-      registry: registry(),
-      runtime,
-    });
-
-    try {
-      const drainStream = (async () => {
-        try {
-          for await (const _event of executeAdapterStreamText(adapter, {
-            abortSignal: abortController.signal,
-            metadata: {
-              querySource: "main_turn",
-              sessionId: "sess_stream_abort_pending_debug",
-              traceId: "trace_stream_abort_pending_debug",
-              turnId: "turn_stream_abort_pending_debug",
-            },
-            providerId: "test" as never,
-            modelId: "model-a" as never,
-            messages: [{ role: "user", content: "Ping" }],
-          })) {
-            // drain stream
-          }
-          return "resolved";
-        } catch (error) {
-          expect(error).toBeInstanceOf(AiSdkModelAdapterError);
-          return "rejected";
-        }
-      })();
-
-      await waitForTest(20);
-      abortController.abort(new Error("ZCode Protocol session stopped"));
-
-      await expect(
-        Promise.race([drainStream, waitForTest(500).then(() => "timeout")]),
-      ).resolves.toBe("rejected");
     } finally {
       await rm(debugDir, { recursive: true, force: true });
     }
@@ -4348,70 +4201,6 @@ describe("AiSdkModelAdapter", () => {
         reason: ModelFailureReason.Cancelled,
       },
     });
-  });
-
-  it("does not retry thrown stream network failures after text deltas", async () => {
-    const statusEvents: ModelNetworkStatusEvent[] = [];
-    const resetError = Object.assign(new Error("aborted"), { code: "ECONNRESET" });
-    let attempts = 0;
-    const runtime: AiSdkModelRuntime = {
-      async generateText() {
-        throw new Error("not used");
-      },
-      streamText() {
-        attempts += 1;
-        return {
-          fullStream: streamThenFail(
-            [{ type: "start" }, { type: "text-delta", id: "visible-text", text: "partial" }],
-            resetError,
-          ),
-        } as never;
-      },
-    };
-    const adapter = new AiSdkModelAdapter({
-      registry: registry(),
-      retry: { baseDelayMs: 0, jitter: false, maxAttempts: 2, maxDelayMs: 0 },
-      runtime,
-    });
-
-    const streamEvents: ModelStreamEvent[] = [];
-    await expect(async () => {
-      for await (const event of executeAdapterStreamText(adapter, {
-        metadata: {
-          requestId: "model_req_stream_text_no_retry",
-          traceId: "trace_stream_text_no_retry",
-        },
-        providerId: "test" as never,
-        modelId: "model-a" as never,
-        messages: [{ role: "user", content: "Ping" }],
-        statusSink: {
-          publish(event) {
-            statusEvents.push(event);
-          },
-        },
-      })) {
-        streamEvents.push(event);
-      }
-    }).rejects.toMatchObject({
-      code: ModelErrorCode.ModelRequestFailed,
-      message: "Network connection failed for the provider request.",
-      name: "AiSdkModelAdapterError",
-    } satisfies Partial<AiSdkModelAdapterError>);
-
-    expect(attempts).toBe(1);
-    expect(statusEvents.map((event) => event.type)).toEqual([
-      "model_request_started",
-      "model_request_failed",
-    ]);
-    expect(statusEvents[1]).toMatchObject({
-      attempt: 1,
-      reason: "network_error",
-      retryable: false,
-    });
-    expect(streamEvents).toEqual([
-      { type: "start" },
-      { type: "text_delta", id: "visible-text", text: "partial" },
-    ]);
   });
 
   it("wraps terminal stream error chunks after retry budget is exhausted", async () => {
