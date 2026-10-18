@@ -360,21 +360,31 @@ function staticContentType(filePath: string): string {
   return staticMimeTypes[extname(filePath).toLowerCase()] ?? "application/octet-stream";
 }
 
+/**
+ * Resolve the listen host, defaulting to loopback. Without a token, /api/rpc-host-capability and
+ * /api/connect-remote are open to anyone who can reach the listener, so non-loopback binds must fail
+ * closed (same rule as zcode-server-cli).
+ */
+export function resolveHttpListenHost(
+  options: Pick<HttpServerOptions, "host" | "authToken">,
+): string {
+  const host = options.host?.trim() || DEFAULT_HTTP_HOST;
+  if (!options.authToken?.trim() && !isLoopbackHost(host)) {
+    throw new Error(
+      `Refusing to listen on non-loopback host ${host} without authentication; ` +
+        "set ZCODE_SERVER_AUTH_TOKEN or bind ZCODE_SERVER_HOST/HOST to 127.0.0.1",
+    );
+  }
+  return host;
+}
+
 export function createHttpServer(
   services: ServiceCollection,
   port = 3030,
   options: HttpServerOptions = {},
 ) {
   const authToken = options.authToken?.trim() || undefined;
-  const host = options.host?.trim() || DEFAULT_HTTP_HOST;
-  if (!authToken && !isLoopbackHost(host)) {
-    // Without a token, /api/rpc-host-capability and /api/connect-remote are open to anyone who can
-    // reach the listener, so non-loopback binds must fail closed (same rule as zcode-server-cli).
-    throw new Error(
-      `Refusing to listen on non-loopback host ${host} without authentication; ` +
-        "set ZCODE_SERVER_AUTH_TOKEN or bind ZCODE_SERVER_HOST/HOST to 127.0.0.1",
-    );
-  }
+  const host = resolveHttpListenHost(options);
 
   const app = new Hono();
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
