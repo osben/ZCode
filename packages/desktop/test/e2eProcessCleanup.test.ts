@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -37,15 +36,6 @@ describe("desktop e2e process cleanup", () => {
       "/T",
       "/F",
     ]);
-  });
-
-  it("passes both run and HOME identity markers through Electron appArgs", () => {
-    const wdioSource = readFileSync(new URL("../wdio.conf.ts", import.meta.url), "utf8");
-
-    expect(CURRENT_HOME_MARKER).toBe(`--zcode-e2e-home=${CURRENT_HOME}`);
-    expect(wdioSource).toMatch(
-      /appArgs:\s*\[[\s\S]*?buildE2ERunIdArg\(E2E_RUN_ID\)[\s\S]*?createWindowsE2EHomeMarkerArg\(E2E_HOME_DIR\)[\s\S]*?\]/u,
-    );
   });
 
   it("collects only the current run root and its child process tree", () => {

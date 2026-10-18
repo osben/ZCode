@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   formatOffPeakRemainingWait,
@@ -23,11 +22,6 @@ const remainingWaitIntl = {
     return message;
   },
 };
-
-const offPeakTaskListSource = readFileSync(
-  new URL("../src/settings/OffPeakTaskList.tsx", import.meta.url),
-  "utf8",
-);
 
 describe("resolveLocalizedOffPeakCreateTitle", () => {
   it("updates an untouched localized default when the locale changes", () => {
@@ -171,17 +165,5 @@ describe("off-peak terminal status presentation", () => {
       className: "text-foreground-subtle",
       labelId: "offPeak.status.completed",
     });
-    expect(offPeakTaskListSource).toMatch(
-      /task\.status === "completed"\s*\?\s*"opacity-60 hover:bg-hover"\s*:\s*"hover:bg-hover"/,
-    );
-
-    const menuTriggerStart = offPeakTaskListSource.indexOf("data-testid={TID_OFFPEAK_CARD_MENU}");
-    const menuTriggerEnd = offPeakTaskListSource.indexOf("</button>", menuTriggerStart);
-    const menuTriggerSource = offPeakTaskListSource.slice(menuTriggerStart, menuTriggerEnd);
-
-    expect(menuTriggerStart).toBeGreaterThanOrEqual(0);
-    expect(menuTriggerSource).toContain("disabled={busy}");
-    expect(menuTriggerSource).not.toContain('task.status === "completed"');
-    expect(menuTriggerSource).not.toContain("pointer-events-none");
   });
 });

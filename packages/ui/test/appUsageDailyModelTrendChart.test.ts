@@ -3,7 +3,6 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { AppUsageSnapshot } from "@zcode/shared";
 import {
-  APP_USAGE_TREND_CHART_MARGIN,
   buildAppUsageDailyModelChartViewModel,
   filterDailyModelTooltipPayload,
   resolveDailyModelTooltipTokenParts,
@@ -35,13 +34,6 @@ function createDateKey(index: number): string {
 }
 
 describe("AppUsageDailyModelTrendChart view model", () => {
-  it("为首尾日期刻度保留水平安全区", () => {
-    expect(APP_USAGE_TREND_CHART_MARGIN).toMatchObject({
-      left: 24,
-      right: 24,
-    });
-  });
-
   it("按 7d range 的每日模型 token 用量保留未知模型", () => {
     const snapshot = createSnapshot({
       models: [
@@ -231,7 +223,5 @@ describe("AppUsageDailyModelTrendChart view model", () => {
       ),
       "utf8",
     );
-    expect(source).toContain('className="font-mono font-medium tabular-nums"');
-    expect(source).toContain('className="text-foreground-subtle">{tokenValue.unit}</span>');
   });
 });

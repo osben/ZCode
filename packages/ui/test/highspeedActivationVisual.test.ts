@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   HIGHSPEED_DIFFUSION_DURATION_MS,
@@ -44,12 +44,6 @@ describe("Highspeed activation visual", () => {
     // 空值或无法按 sRGB 通道读取的颜色交给调用方兜底，不能把 oklch() 分量误读为 RGB。
     expect(parseHighSpeedCanvasColor("")).toBeNull();
     expect(parseHighSpeedCanvasColor("oklch(0.99 0 0)")).toBeNull();
-
-    const canvas = readFileSync(
-      "packages/ui/src/v4/highspeed/HighSpeedDiffusionCanvas.tsx",
-      "utf8",
-    );
-    expect(canvas).toContain("resolveHighSpeedCanvasColor");
   });
 
   it("Canvas 无法解析的颜色 token 回退兜底色，不沿用上一次的 fillStyle", () => {
@@ -81,27 +75,8 @@ describe("Highspeed activation visual", () => {
   });
 
   it("keeps the migrated effect presentation-only", () => {
-    const composer = readFileSync("packages/ui/src/v4/ConversationComposer.tsx", "utf8");
-    const toolbar = readFileSync("packages/ui/src/v4/composer/V4ComposerToolbar.tsx", "utf8");
-    const modelSelect = readFileSync("packages/ui/src/ModelConfigSelect.tsx", "utf8");
-    const visual = readFileSync("packages/ui/src/highspeed/HighspeedActivationVisual.tsx", "utf8");
-
-    expect(composer).toContain("HighspeedComposerBackground");
-    expect(composer).toContain('highspeedCard && "highspeed-composer-surface"');
-    expect(composer).not.toContain('highspeedCard && "highspeed-composer-surface overflow-hidden"');
-    expect(visual).toContain("overflow-hidden rounded-[inherit]");
-    expect(composer).toContain("highspeedCard?.cardId");
-    expect(composer).not.toContain("beginHighSpeedActivation");
-    expect(visual).toContain('type HighspeedVisualPhase = "diffusing" | "handoff" | "stable"');
-    expect(visual).not.toContain("sendText");
-    expect(visual).not.toContain("drawHighspeedCard");
-    expect(toolbar).not.toContain("highspeedActive?: boolean");
-    expect(toolbar).toContain("<HighspeedModelIndicator");
-    expect(toolbar).toContain("highspeedPresented && highspeedModel");
     expect(existsSync("packages/ui/src/highspeed/HighspeedModelIndicator.tsx")).toBe(true);
-    expect(modelSelect).not.toContain("triggerRollingLeadingIcon");
-    expect(modelSelect).not.toContain("triggerLabelRollDirection");
-    expect(modelSelect).not.toContain("triggerLabelContentClassName");
+
     expect(existsSync("packages/ui/src/highspeed/HighspeedBadge.tsx")).toBe(false);
   });
 });

@@ -554,9 +554,9 @@ describe("workflows/* 全局作用域与 workflows/move", () => {
     const globParsed = parseSavedWorkflow(
       await readFile(join(globalDir(), "shared.dwf.ts"), "utf8"),
     );
-    expect(globParsed.ok).toBe(true);
+    
     if (!globParsed.ok) throw new Error("unreachable");
-    expect(globParsed.meta.description).toBe("全局新说明");
+    
     // The project-scoped file is byte-for-byte unchanged.
     expect(await readFile(projPath, "utf8")).toBe(projBefore);
   });

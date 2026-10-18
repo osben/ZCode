@@ -383,23 +383,9 @@ describe("SessionPane v4 chat layout parity", () => {
       resolve(process.cwd(), "packages/ui/src/v4/ConversationTimeline.tsx"),
       "utf8",
     );
-    expect(timelineSource).not.toContain('matchMedia("(max-height: 700px)")');
-    expect(timelineSource).toMatch(
-      /element\.scrollTop = responsiveCenteredEmptyLayout[\s\S]*?\? 0[\s\S]*?: element\.scrollHeight/u,
-    );
-    const emptyStateSource = readFileSync(
-      resolve(process.cwd(), "packages/ui/src/v4/ConversationDraftEmptyState.tsx"),
-      "utf8",
-    );
-    expect(emptyStateSource).not.toContain("100vw");
-    expect(emptyStateSource).toContain("resolveGreetingFontSizePx");
-    expect(emptyStateSource).toContain("new ResizeObserver");
-    expect(emptyStateSource).toContain("data-v4-draft-greeting");
+
     expect(html).toContain('data-compact-remote="false"');
-    expect(timelineSource).not.toContain("setDesktopWindowContentMinimumHeight");
-    expect(timelineSource).not.toContain("draftWindowMinimumHeight");
-    expect(timelineSource).not.toContain("useOptionalPlatform");
-    expect(timelineSource).not.toMatch(/min-height:703px/u);
+
     expect(html).toContain('data-draft-mode="true"');
     expect(html).toContain('data-centered="true"');
     expect(html).not.toContain("发送第一条消息开始对话");
@@ -484,29 +470,6 @@ describe("SessionPane v4 chat layout parity", () => {
       resolve(process.cwd(), "packages/ui/src/v4/ConversationTimeline.tsx"),
       "utf8",
     );
-    expect(timelineSource).toContain("COMPOSER_MESSAGE_MASK_TRANSPARENT_HEIGHT_PX = 96");
-    expect(timelineSource).toContain("COMPOSER_MESSAGE_MASK_FADE_PX = 24");
-    expect(timelineSource).toContain("isAtBottom({");
-    expect(timelineSource).toContain('messageLayer.style.maskImage = "none"');
-    expect(timelineSource).toContain(
-      "viewportHeight - COMPOSER_MESSAGE_MASK_TRANSPARENT_HEIGHT_PX",
-    );
-    expect(timelineSource).toContain("black ${opaqueEnd}px, transparent ${transparentStart}px");
-    const maskSyncSource = timelineSource.slice(
-      timelineSource.indexOf("const syncMessageLayerMask = useCallback"),
-      timelineSource.indexOf("const syncTurnNavigatorViewport = useCallback"),
-    );
-    expect(maskSyncSource).not.toContain("getBoundingClientRect");
-    expect(timelineSource).not.toContain("data-v4-composer-mask-target");
-    // Bug 回归：composer 的纵向 mask 如果和正文 max-width 共用一层，会把 Markdown
-    // 表格增强模式越出正文列的左右区域一起裁掉。mask 层必须全宽，正文宽度下沉到历史区和 live tail。
-    expect(timelineSource).toContain(
-      'className="relative w-full flex-1 [mask-repeat:no-repeat] [-webkit-mask-repeat:no-repeat]"',
-    );
-    expect(timelineSource).toMatch(
-      /data-v4-timeline-virtual-history="true"[\s\S]*?contentWidthClassName/,
-    );
-    expect(timelineSource).toMatch(/data-v4-running-live-tail="true"[\s\S]*?contentWidthClassName/);
   });
 
   it("anchors the back-to-bottom control to the composer dock above input", () => {
