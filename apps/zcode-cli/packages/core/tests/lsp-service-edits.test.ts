@@ -3,6 +3,7 @@ import { type FileMutatedEvent } from "@zcode/contracts";
 import { createLspService, LspService } from "../src/lsp/index.js";
 import { LSP_EDIT_DIAGNOSTICS_WAIT_MS } from "../src/lsp/constants.js";
 import {
+  FakeConnection,
   FakeLanguageServerPort,
   LSP_KEY,
   MemoryFileSystem,
@@ -247,6 +248,31 @@ describe("FileMutated synchronization", () => {
     restarted.responses.set("textDocument/documentSymbol", () => []);
     await harness.service.query("documentSymbol", { operation: "documentSymbol", filePath: FILE });
     expect(methodNames(restarted.notifications)).toContain("textDocument/didOpen");
+  });
+
+  // Regression: the process-wide pool emits ready for every workspace; replaying onto another workspace's
+  // server opened this session's file in the wrong root and marked it fresh from that server.
+  it("does not replay a pending edit onto a server that is ready for another workspace", async () => {
+    harness.port.state = "starting";
+    harness.service.onFileMutated(
+      mutation({ kind: "changed", content: DOC, changedRange: { startLine: 1, endLine: 1 } }),
+    );
+    await flushMicrotasks();
+    const foreign = new FakeConnection(harness.server, {
+      identityKey: "ws-2",
+      workspacePath: "/work/other",
+    });
+    harness.port.emit({
+      type: "ready",
+      serverId: harness.server.id,
+      key: foreign.key,
+      connection: foreign,
+    });
+    await flushMicrotasks();
+
+    expect(methodNames(foreign.notifications)).not.toContain("textDocument/didOpen");
+    const result = await harness.service.collectEditDiagnostics({ waitMs: 0 });
+    expect(result.attachmentBody).toBe("Diagnostics pending for 1 files");
   });
 
   it("replays an edit made while the server was starting once it is ready", async () => {

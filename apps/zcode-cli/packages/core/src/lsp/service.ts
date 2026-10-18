@@ -50,6 +50,10 @@ export interface LspServiceOptions {
 
 export type LspQueryContext = QueryContext;
 
+function sameServerKey(left: LanguageServerKey, right: LanguageServerKey): boolean {
+  return left.identityKey === right.identityKey && left.workspacePath === right.workspacePath;
+}
+
 export interface EditDiagnosticsRequest {
   signal?: AbortSignal;
   /** Overrides LSP_EDIT_DIAGNOSTICS_WAIT_MS; measured from the last mutation. */
@@ -280,6 +284,9 @@ export class LspService {
   /** Replays edits made while the server was starting, once it is ready (spec §5: startup never blocks). */
   private async onServerEvent(event: LanguageServerEvent): Promise<void> {
     if (event.type !== "ready" || this.disposed) return;
+    // The pool is process-wide, so a ready event may belong to another workspace's process with the same
+    // server id. Replaying onto it would open this session's files in the wrong root.
+    if (!sameServerKey(event.key, this.options.key)) return;
     const pending = this.tracker
       .entries()
       .filter((entry) => entry.needsSync && entry.serverId === event.serverId);
