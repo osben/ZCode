@@ -2,8 +2,12 @@ import { memo, useCallback, useMemo } from "react";
 import type { MessageFileLinkTarget } from "@/components/ai-elements/message.js";
 import type { CodeViewerSource } from "@/lib/codeViewer.js";
 import type {
+  OpenBackgroundBashSideTabRequest,
   OpenScopedPlanDetailSideTabRequest,
+  OpenScopedSubagentDirectorySideTabRequest,
+  OpenScopedSubagentSideTabRequest,
   SelectionSideChatPaneTab,
+  SyncSubagentSessionTabsRequest,
 } from "@/lib/workspaceSidePane.js";
 import type { PaneWorkspaceScope } from "@/v4/paneLayoutStore.js";
 import { SessionPane } from "@/v4/SessionPane.js";
@@ -16,6 +20,10 @@ export const SelectionSideChatPane = memo(function SelectionSideChatPane({
   onOpenCodeViewer,
   onOpenFileLink,
   onOpenPlanDetail,
+  onOpenSubagentSession,
+  onOpenSubagentDirectory,
+  onSyncSubagentSessionTabs,
+  onOpenBackgroundBash,
   onUnavailable,
 }: {
   tab: SelectionSideChatPaneTab;
@@ -24,6 +32,10 @@ export const SelectionSideChatPane = memo(function SelectionSideChatPane({
   onOpenCodeViewer?: (source: CodeViewerSource) => void;
   onOpenFileLink?: (target: MessageFileLinkTarget) => void;
   onOpenPlanDetail?: (request: OpenScopedPlanDetailSideTabRequest) => void;
+  onOpenSubagentSession?: (request: OpenScopedSubagentSideTabRequest) => void;
+  onOpenSubagentDirectory?: (request: OpenScopedSubagentDirectorySideTabRequest) => void;
+  onSyncSubagentSessionTabs?: (request: SyncSubagentSessionTabsRequest) => void;
+  onOpenBackgroundBash?: (request: OpenBackgroundBashSideTabRequest) => void;
   onUnavailable: (tabId: string) => void;
 }) {
   const scope = useMemo<PaneWorkspaceScope>(
@@ -47,6 +59,9 @@ export const SelectionSideChatPane = memo(function SelectionSideChatPane({
       <SessionPane
         paneId={tab.id}
         sessionId={tab.childSessionId}
+        // Subagents spawned inside this side chat belong to the main task, not to the side chat session.
+        // Passing the tab's parent as the group root keeps the opened child tab visible under that task.
+        rootSessionId={tab.parentSessionId}
         openTrigger="selection"
         selectionSideChat
         focused={focused}
@@ -58,6 +73,10 @@ export const SelectionSideChatPane = memo(function SelectionSideChatPane({
         onOpenCodeViewer={onOpenCodeViewer}
         onOpenFileLink={onOpenFileLink}
         onOpenPlanDetail={handleOpenPlanDetail}
+        onOpenSubagentSession={onOpenSubagentSession}
+        onOpenSubagentDirectory={onOpenSubagentDirectory}
+        onSyncSubagentSessionTabs={onSyncSubagentSessionTabs}
+        onOpenBackgroundBash={onOpenBackgroundBash}
         onSelectionSideChatUnavailable={handleUnavailable}
       />
     </V4PaneConversationProvider>

@@ -642,6 +642,53 @@ describe("workspaceSidePane", () => {
     ).toEqual([]);
   });
 
+  it("selection side chat 的子智能体 tab 归属主任务，且同步只清理自己的子会话", () => {
+    const withSideChatChild = openSubagentSessionSidePane(null, {
+      workspaceKey: "/workspace",
+      workspacePath: "/workspace",
+      // The side chat belongs to the main task; the nested subagent is visible under that root.
+      rootSessionId: "main-task",
+      parentSessionId: "side-chat",
+      childSessionId: "grandchild-session",
+      subagentType: "Explore",
+      title: "Nested explore",
+    });
+    const state = openSubagentSessionSidePane(withSideChatChild, {
+      workspaceKey: "/workspace",
+      workspacePath: "/workspace",
+      rootSessionId: "main-task",
+      parentSessionId: "main-task",
+      childSessionId: "main-child",
+      subagentType: "general-purpose",
+      title: "Main child",
+    });
+    const sideChatTab = state.tabs.find(
+      (tab) => tab.type === "subagent-session" && tab.childSessionId === "grandchild-session",
+    );
+    if (!sideChatTab) throw new Error("side chat child tab was not created");
+
+    expect(isSidePaneTabVisibleForParent(sideChatTab, "main-task")).toBe(true);
+    expect(isSidePaneTabVisibleForParent(sideChatTab, "side-chat")).toBe(false);
+    expect(
+      getVisibleSidePaneTabs(state.tabs, { workspaceKey: "/workspace", ownerTaskId: "main-task" }),
+    ).toHaveLength(2);
+    expect(
+      getVisibleSidePaneTabs(state.tabs, { workspaceKey: "/workspace", ownerTaskId: "side-chat" }),
+    ).toEqual([]);
+
+    // The side chat's own sync must not collect the main task's direct child tab.
+    const synced = syncSubagentSessionSidePaneTabs(state, {
+      rootSessionId: "main-task",
+      parentSessionId: "side-chat",
+      validChildSessionIds: [],
+    });
+    expect(
+      synced?.tabs.map((tab) =>
+        tab.type === "subagent-session" ? tab.childSessionId : `other:${tab.id}`,
+      ),
+    ).toEqual(["main-child"]);
+  });
+
   it("run 详情 tab 的落点（追记「五枚药丸与一扇门」）：随请求落、再开不带就删键、openedAt 刷新", () => {
     const base = {
       workspaceKey: "/workspace",

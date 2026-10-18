@@ -61,6 +61,15 @@ childSessions: z.array(childSessionSchema).optional(),
 
 Old UI + new CLI → unknown summary fields ignored. New UI + old CLI → fields absent → nothing rendered. Remote workspaces: counts and the list are computed in the CLI host that owns the session store (correct machine end-to-end); expansion state is per-device renderer state.
 
+### 6. Subagents spawned inside a side chat (right-pane navigation)
+
+Side chats are real sessions, so an `Agent`/`Task` call inside a side chat spawns a real `subagent_child` whose `parent_id` is the side chat session. Clicking that subagent's summary row (or the status panel entry) must open it as a right-pane `subagent-session` tab — the same behavior the main task already has. Scope follows the fix precedent for plan details from side chats (`b8d9e87d`):
+
+- The tab's own identity keeps the true lineage: `parentSessionId` = the side chat session id that spawned it.
+- The tab's visibility root is the main task, not the side chat: `rootSessionId` = the side chat tab's `parentSessionId` (the main task). Switching the main task hides/restores the tab; opening it inside the side chat never scopes the tab to the side chat session.
+- The side chat pane forwards the existing `onOpenSubagentSession`, `onOpenSubagentDirectory`, `onOpenBackgroundBash` and `onSyncSubagentSessionTabs` handlers unchanged and passes `rootSessionId` to `SessionPane`, so the host, not the card, owns the root injection. The side chat's tab-sync collector prunes only its own tabs (`parentSessionId` = side chat); the main task's direct child tabs are untouched.
+- The sidebar child list stays one level deep: it still lists the side chat as a child of the main task and does NOT nest the side chat's subagents under it. Navigation to a nested subagent is the right pane's job. No new runtime, session, owner, queue, or delivery path is created.
+
 ## Why
 
 The hierarchy already exists in the DB and in `context.sessions`; the only gap is that the wire drops children wholesale. Counters answer "where did my subagents / side chats go"; the clickable list answers "take me back to that one" — the actual day-to-day pain — at deepseek's cost plus one indented level, without Copilot's tree complexity (collapse state trees, DnD, depth, pin-subtree) and without weakening the explicit task-list membership contract. Dropping the v1 toggle keeps the row chrome minimal: the marker is the only added element and doubles as the expander.
@@ -81,6 +90,7 @@ The hierarchy already exists in the DB and in `context.sessions`; the only gap i
 12. A detached live subagent appears as running without a `context.sessions` record; `TurnStarted` marks it running, terminal events clear running, and parent discovery does not depend on busy state.
 13. An idle parent with a child event gets refreshed facts on the next bounded refresh, while its `lastActivityAt` remains unchanged.
 14. Cold summary facts survive the live overlay and pass through the controller projection, strict metadata validation, and task-index/session join; absent facts clear stale values.
+15. A subagent spawned inside a `/side` chat opens as a right-pane `subagent-session` tab: the request carries `parentSessionId` = the side chat session and root `rootSessionId` = the main task, the tab is visible under the main task and hidden under the side chat, and the side chat's sync only prunes its own tabs. The sidebar child list still shows one level only (unchanged non-goal).
 
 ## Validation
 
