@@ -2188,6 +2188,81 @@ describe("ConversationRowView user query editing", () => {
     await act(async () => root.unmount());
   });
 
+  it("tells the editor to keep the draft on submit and resubmits it from the conflict dialog", async () => {
+    const preview = { canApply: false, safeFiles: [], unsafeFiles: [], ignoredFiles: [] };
+    const onEdit = vi
+      .fn()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce({
+        commandId: "edit-blocked",
+        accepted: true,
+        result: { type: "editUserQuery", disposition: "blocked", preview },
+      })
+      .mockResolvedValueOnce(true);
+    const row = userInputRow();
+    const root: Root = createRoot(installMinimalDom());
+
+    await act(async () => {
+      root.render(
+        createElement(
+          ZCodeIntlProvider,
+          { initialLocale: "zh-CN" },
+          createElement(ConversationRowView, { context: rowContext, onEdit, row }),
+        ),
+      );
+    });
+    await act(async () => {
+      (
+        messageActionPropsByTestId.get(testId(TID_V4_EDIT, String(row.rowId)))?.onClick as
+          | (() => void)
+          | undefined
+      )?.();
+    });
+
+    const typed = "改过的问题";
+    await act(async () => {
+      (chatPromptEditorProps.at(-1)!.onChange as (value: string) => void)(typed);
+    });
+
+    // Lexical resets the editor unless onSubmit returns false; the edit is async, so the row must
+    // own the reset and keep the text until onEdit is accepted.
+    let submitResult: unknown;
+    await act(async () => {
+      submitResult = (chatPromptEditorProps.at(-1)!.onSubmit as (value: string) => unknown)(typed);
+      await Promise.resolve();
+    });
+    expect(submitResult).toBe(false);
+    expect(onEdit).toHaveBeenNthCalledWith(
+      1,
+      { rowId: row.rowId, entityId: row.entityId },
+      typed,
+      row.attachments,
+      "preserve",
+    );
+    expect(chatPromptEditorProps.at(-1)?.onSubmit).toBeTypeOf("function");
+
+    await act(async () => {
+      submitResult = (chatPromptEditorProps.at(-1)!.onSubmit as (value: string) => unknown)(typed);
+      await Promise.resolve();
+    });
+    expect(submitResult).toBe(false);
+    expect(fileRewindDialogProps.at(-1)).toMatchObject({ open: true, preview });
+
+    await act(async () => {
+      (fileRewindDialogProps.at(-1)!.onConversationOnly as () => void)();
+      await Promise.resolve();
+    });
+    expect(onEdit).toHaveBeenNthCalledWith(
+      3,
+      { rowId: row.rowId, entityId: row.entityId },
+      typed,
+      row.attachments,
+      "preserve",
+    );
+
+    await act(async () => root.unmount());
+  });
+
   it("keeps the disabled file reset tooltip hoverable and explains why it is unavailable", async () => {
     const row = userInputRow();
     const root: Root = createRoot(installMinimalDom());
