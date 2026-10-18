@@ -47,6 +47,7 @@ import {
 } from "@zcode/shared";
 import { connectRemote, createRemoteBackend, type RemoteConnection } from "./remote/index.js";
 import { createHostCapabilityStore } from "./hostCapability.js";
+import { createRemoteConnectionStore } from "./remoteConnectionStore.js";
 
 function wrapWebSocket(ws: WebSocket): ISocket {
   const onData = new Emitter<VSBuffer>();
@@ -182,8 +183,8 @@ function setupChannelServer(
   });
 }
 
-/** Store remote connections in web mode, keyed by unguessable IDs. */
-const remoteConnections = new Map<string, RemoteConnection>();
+/** Remote connections opened in web mode, keyed by unguessable IDs until a WebSocket claims them. */
+const remoteConnections = createRemoteConnectionStore();
 
 const DEFAULT_HTTP_HOST = "127.0.0.1";
 
@@ -488,8 +489,7 @@ export function createHttpServer(
     try {
       const backend = await createRemoteBackend(body);
       const connection = await connectRemote(backend);
-      const id = randomUUID();
-      remoteConnections.set(id, connection);
+      const id = remoteConnections.add(connection);
 
       return c.json({ id });
     } catch (err: unknown) {
@@ -551,19 +551,19 @@ export function createHttpServer(
     "/ws/remote/:id",
     upgradeWebSocket((c) => {
       const id = c.req.param("id");
+      let claimedConnection: RemoteConnection | undefined;
       return {
         onOpen(_event, ws) {
           if (!id) {
             ws.close(4000, "Missing remote connection id");
             return;
           }
-          const connection = remoteConnections.get(id);
+          const connection = remoteConnections.claim(id);
           if (!connection) {
             ws.close(4004, "Remote connection not found");
             return;
           }
-          // A connection is used by only one WebSocket client; remove it from the Map after retrieval.
-          remoteConnections.delete(id);
+          claimedConnection = connection;
 
           // Wrap remote services in a ServiceCollection and reuse exposeOnChannelServer for consistent registration.
           const remoteServices = new ServiceCollection()
@@ -573,6 +573,9 @@ export function createHttpServer(
             .register(ITerminalService, connection.services.terminalService);
 
           setupChannelServer(ws.raw as WebSocket, remoteServices, "web-remote-replayable");
+        },
+        onClose() {
+          claimedConnection?.dispose();
         },
       };
     }),
