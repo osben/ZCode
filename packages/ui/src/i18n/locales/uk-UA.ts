@@ -2074,6 +2074,7 @@ const ukUA: Record<string, string> = {
   "chat.changeSummary.filesChanged.other": "Змінено {count} файлу",
   "chat.changeSummary.expand": "Розгорнути змінені файли",
   "chat.changeSummary.collapse": "Згорнути змінені файли",
+  "chat.changeSummary.treeView": "Групувати за каталогами",
   "chat.changeSummary.diffUnavailable": "Попередній перегляд цього diff наразі недоступний.",
   "chat.changeSummary.review": "Переглянути",
   "chat.changeSummary.openInEditor": "Відкрити в редакторі",
