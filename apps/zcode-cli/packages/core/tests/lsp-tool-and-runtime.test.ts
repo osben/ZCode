@@ -141,7 +141,10 @@ describe("LSP tool handler", () => {
     ).rejects.toThrow("requires exactly one of character or symbol");
     await expect(
       lspHandler({ operation: "workspaceSymbol", filePath: FILE }, context),
-    ).rejects.toThrow("workspaceSymbol requires query");
+    ).rejects.toMatchObject({
+      message: expect.stringContaining("workspaceSymbol requires query"),
+      context: expect.objectContaining({ code: "lsp_invalid_input" }),
+    });
   });
 
   it("maps a starting server to a recoverable structured error with the stable code", async () => {

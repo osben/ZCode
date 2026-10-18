@@ -201,7 +201,7 @@ the exact operation names, so verify them against the real schema before impleme
 - **Error codes:** `lsp_no_server_for_file`, `lsp_server_not_installed`,
   `lsp_server_starting`, `lsp_request_timeout`, `lsp_server_start_failed`,
   `lsp_startup_timeout`, `lsp_server_crashed`, `lsp_server_unavailable`,
-  `lsp_operation_unsupported`, `lsp_invalid_position`, `lsp_symbol_not_found_on_line`,
+  `lsp_operation_unsupported`, `lsp_request_failed`, `lsp_invalid_input`, `lsp_invalid_position`, `lsp_symbol_not_found_on_line`,
   `lsp_disabled`, `lsp_remote_unsupported`, `lsp_cancelled`.
 - **Model hint:** use LSP for symbols and types and grep for text and config;
   `pending` does not mean "no errors".

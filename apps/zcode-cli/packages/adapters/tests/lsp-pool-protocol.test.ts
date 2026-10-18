@@ -274,4 +274,28 @@ describe("LSP pool: protocol round trips with the fake server", () => {
     },
     LONG_TEST_MS,
   );
+
+  it(
+    "logs only JSON-RPC envelopes, never document text",
+    async () => {
+      const { logger, logs } = recordingLogger();
+      const { pool } = setup({ logger });
+      const connection = await waitForReady(
+        pool,
+        fakeServer({ FAKE_LSP_DIAGNOSTICS: "versioned" }),
+      );
+      const secretText = "const apiKey = 'private-source-text';\n";
+      connection.notify("textDocument/didOpen", {
+        textDocument: { uri: DOC_URI, languageId: "typescript", version: 1, text: secretText },
+      });
+      await connection.request("textDocument/hover", {
+        textDocument: { uri: DOC_URI },
+        position: { line: 0, character: 6 },
+      });
+      const rpc = logs.filter((entry) => entry.context?.event === "adapters.lsp.jsonrpc");
+      expect(rpc.some((entry) => entry.context?.method === "textDocument/didOpen")).toBe(true);
+      expect(JSON.stringify(logs)).not.toContain("private-source-text");
+    },
+    LONG_TEST_MS,
+  );
 });

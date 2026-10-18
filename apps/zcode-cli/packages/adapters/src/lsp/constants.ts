@@ -11,8 +11,6 @@ export const LSP_DEFAULT_NOT_INSTALLED_RETRY_MS = 30_000;
 
 /** Last bytes of server stderr kept for start-failure messages. Never logged in full. */
 export const LSP_STDERR_TAIL_MAX_CHARS = 2_048;
-/** Raw JSON-RPC payloads in debug logs are truncated to this length. */
-export const LSP_LOG_PAYLOAD_MAX_CHARS = 500;
 
 export const LSP_HEADER_SEPARATOR = "\r\n\r\n";
 export const LSP_CONTENT_LENGTH_HEADER = "content-length";

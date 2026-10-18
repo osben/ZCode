@@ -286,4 +286,23 @@ describe("LSP pool: running-server cap", () => {
     },
     LONG_TEST_MS,
   );
+
+  it(
+    "counts servers that are still stopping toward the cap",
+    async () => {
+      const { pool } = setup({ maxRunningServers: 1 });
+      // The victim ignores shutdown, so it stays "stopping" until the shutdown timeout kills it.
+      const slowStop = { FAKE_LSP_IGNORE_SHUTDOWN: "1" };
+      const first = fakeServer(slowStop, { id: "fake/first", shutdownTimeoutMs: 3_000 });
+      const second = fakeServer(slowStop, { id: "fake/second", shutdownTimeoutMs: 3_000 });
+      const third = fakeServer({}, { id: "fake/third" });
+      await waitForReady(pool, first);
+      await waitForReady(pool, second);
+      // first is still stopping; starting third must also evict second instead of overshooting.
+      expect(pool.acquire(third, TEST_KEY)).toMatchObject({ state: "starting" });
+      const stateOf = (id: string) => pool.status().find((status) => status.serverId === id)?.state;
+      await waitUntil(() => stateOf("fake/second") === "stopped", 10_000, "second evicted");
+    },
+    LONG_TEST_MS,
+  );
 });

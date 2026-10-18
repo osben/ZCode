@@ -142,10 +142,10 @@ export const lspToolEntry: ToolEntry = {
 
 /** Input rules that the schema cannot express (spec §7). Failures are invalid-input errors. */
 function validateOperationInput(input: LspInput, context: ToolExecutionContext): void {
-  const fail = (message: string): never => {
+  const fail = (message: string, code: LspErrorCode = "lsp_invalid_position"): never => {
     throw createCoreError(CoreErrorType.ToolExecutionFailed, message, {
       context: {
-        code: "lsp_invalid_position",
+        code,
         toolCallId: context.toolCallId,
         toolName: LSP_TOOL_NAME,
       },
@@ -153,7 +153,7 @@ function validateOperationInput(input: LspInput, context: ToolExecutionContext):
     });
   };
   if (input.operation === "workspaceSymbol") {
-    if (!input.query) fail("workspaceSymbol requires query");
+    if (!input.query) fail("workspaceSymbol requires query", "lsp_invalid_input");
     return;
   }
   if (!isPositionalOperation(input.operation)) return;

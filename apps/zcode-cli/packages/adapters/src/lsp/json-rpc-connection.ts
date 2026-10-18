@@ -5,7 +5,6 @@ import {
   LSP_JSON_RPC_METHOD_NOT_FOUND,
   LSP_JSON_RPC_REQUEST_CANCELLED,
   LSP_JSON_RPC_VERSION,
-  LSP_LOG_PAYLOAD_MAX_CHARS,
   LSP_METHOD_CANCEL_REQUEST,
   LSP_METHOD_LOG_MESSAGE,
   LSP_METHOD_PROGRESS,
@@ -275,15 +274,18 @@ export class LspJsonRpcConnection {
   }
 
   private logPayload(direction: "in" | "out", message: JsonRpcMessage): void {
-    const text = JSON.stringify(message) ?? "";
+    // Only the envelope is logged: params and results carry whole file contents (didOpen/didChange,
+    // hover, symbols), which must not reach logs, and serializing them on every edit is wasted work.
+    const envelope = message as { id?: unknown; method?: unknown; error?: { code?: unknown } };
     this.options.logger.debug("LSP JSON-RPC message", {
       event: "adapters.lsp.jsonrpc",
       serverId: this.options.serverId,
       direction,
-      payload:
-        text.length > LSP_LOG_PAYLOAD_MAX_CHARS
-          ? `${text.slice(0, LSP_LOG_PAYLOAD_MAX_CHARS)}...`
-          : text,
+      ...(typeof envelope.method === "string" ? { method: envelope.method } : {}),
+      ...(typeof envelope.id === "number" || typeof envelope.id === "string"
+        ? { id: envelope.id }
+        : {}),
+      ...(envelope.error ? { errorCode: envelope.error.code } : {}),
     });
   }
 }

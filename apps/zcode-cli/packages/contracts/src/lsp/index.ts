@@ -108,6 +108,7 @@ export type LspErrorCode =
   | "lsp_server_crashed"
   | "lsp_server_unavailable"
   | "lsp_operation_unsupported"
+  | "lsp_invalid_input"
   | "lsp_invalid_position"
   | "lsp_symbol_not_found_on_line"
   | "lsp_remote_unsupported"
@@ -144,6 +145,7 @@ export const LanguageServerStateSchema = z.enum([
 export const LanguageServerStatusSchema = z
   .object({
     serverId: z.string(),
+    identityKey: z.string(),
     workspacePath: z.string(),
     state: LanguageServerStateSchema,
     restarts: z.number().int().min(0),

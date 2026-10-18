@@ -171,10 +171,13 @@ export function createLanguageServerPool(options: LanguageServerPoolOptions): La
    * that has no request in flight. When every candidate is busy the cap is exceeded and a warning is logged.
    */
   function ensureCapacity(target: LspServerEntry): void {
-    const running = [...entries.values()].filter(
-      (entry) => entry !== target && entry.process !== undefined && entry.stopping === undefined,
+    // Servers still stopping hold a live process, so they count toward the cap; they just cannot
+    // be evicted again. Without this a burst of starts overshoots the cap while victims shut down.
+    const live = [...entries.values()].filter(
+      (entry) => entry !== target && entry.process !== undefined,
     );
-    const excess = running.length - maxRunningServers + 1;
+    const running = live.filter((entry) => entry.stopping === undefined);
+    const excess = live.length - maxRunningServers + 1;
     if (excess <= 0) return;
     const idle = running
       .filter((entry) => (entry.process?.rpc.inFlightCount ?? 0) === 0)
@@ -252,6 +255,7 @@ export function createLanguageServerPool(options: LanguageServerPoolOptions): La
             : (entry.process?.registry.hasMethod(LSP_METHOD_PULL_DIAGNOSTICS) ?? false);
         return {
           serverId: entry.server.id,
+          identityKey: entry.key.identityKey,
           workspacePath: entry.key.workspacePath,
           state: entry.state,
           restarts: entry.restarts,

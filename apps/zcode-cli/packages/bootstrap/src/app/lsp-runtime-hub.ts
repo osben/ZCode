@@ -45,7 +45,14 @@ export function createLspRuntimeHub(options: CreateLspRuntimeHubOptions): LspRun
     async getStatus(workspace) {
       const prefs = await preferences.load();
       const servers = options.resolveServers(workspace.workspacePath);
-      const live = port.status().filter((entry) => entry.workspacePath === workspace.workspacePath);
+      // Match the pool key (identity and root), never the path alone (AGENTS.md workspace identity).
+      const identityKey = workspace.workspaceIdentity?.trim() || workspace.workspacePath;
+      const live = port
+        .status()
+        .filter(
+          (entry) =>
+            entry.workspacePath === workspace.workspacePath && entry.identityKey === identityKey,
+        );
       const entries = await Promise.all(
         servers.map(async (server) => {
           const installed = await port.isInstalled(server);

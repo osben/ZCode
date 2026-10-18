@@ -49,13 +49,24 @@ function fakePort(): LanguageServerPort {
     status: () => [
       {
         serverId: "ts@zcode/typescript",
+        identityKey: WORKSPACE,
         workspacePath: WORKSPACE,
         state: "ready",
         restarts: 1,
         diagnosticsMode: "unknown",
       },
       {
+        // Same root, different workspace identity (another connection): must not be reported.
         serverId: "ts@zcode/typescript",
+        identityKey: "remote-identity",
+        workspacePath: WORKSPACE,
+        state: "crashed",
+        restarts: 5,
+        diagnosticsMode: "unknown",
+      },
+      {
+        serverId: "ts@zcode/typescript",
+        identityKey: "/other",
         workspacePath: "/other",
         state: "crashed",
         restarts: 2,
