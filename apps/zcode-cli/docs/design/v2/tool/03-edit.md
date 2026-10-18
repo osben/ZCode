@@ -73,14 +73,14 @@
 7. 通过 `FileSystemPort.readTextFile` 读取文件 bytes，由 adapter 按 BOM、UTF-8 校验和 legacy 中文编码检测推断文本编码，并返回 LF 规范化后的 Unicode 逻辑内容、原始 `encoding` 和 `lineEndings` metadata。
 8. 当前 ZCode 拒绝空 `old_string`，避免对既有文件产生隐式插入；创建新文件或完整重写使用 `Write`。
 9. 不存在文件且 `old_string` 为空时创建文件的行为，ZCode 暂不暴露；后续如需支持必须先更新 `Write/Edit` 边界和测试。
-10. `.ipynb` 文件拒绝，要求用 Notebook edit 工具。
+10. `.ipynb` 文件拒绝；当前没有 notebook 专用编辑工具，错误文案提示必要时读取后用 Write 重写整个 notebook JSON，不得指向不存在的工具。
 11. 已存在文件必须此前完整 `Read`。
 12. mtime 变更时，如果完整读缓存内容仍相同，可继续；否则拒绝 stale edit。
 13. 先用 exact，再用 quote normalization 和受限兼容 matcher 查找实际字符串。
 14. 匹配不到或非唯一匹配时拒绝；fallback 候选多于一个也必须拒绝，不允许工具替模型猜位置。
 15. 对 settings 文件做额外校验。
 16. 生成 patch，调用 `FileSystemPort.writeTextFile` 时带回 `encoding` 和 `lineEndings`，保持原编码和原换行风格写回；如果 `new_string` 无法编码到原编码，工具必须失败且不写入。
-17. 通知 LSP 和 IDE。
+17. 通知 LSP 和 IDE（LSP：发布带 `changedRange` 的 `FileMutatedEvent`，Edit 不等待 language server，见 [19-lsp.md](19-lsp.md)）。
 18. 更新 `readFileState`。
 
 ## 权限模型
@@ -104,7 +104,7 @@
 | deny rule | 权限拒绝 |
 | 目标不存在且旧字符串非空 | 文件不存在 |
 | 目标存在且旧字符串为空 | 不能创建，文件已存在 |
-| notebook | 需要专用 notebook edit |
+| notebook | Edit 不支持；提示用 Write 重写 notebook JSON |
 | 未读或 partial read | 必须先完整读取 |
 | mtime/content 变化 | stale edit |
 | old string 找不到 | 匹配失败 |

@@ -165,7 +165,7 @@ function GroupedTaskRowComponent({
       : leadingIndicator === "unread"
         ? // Bugfix: the grouped task unread dot must share the sky color with the plain task
           // list so the brand color's meaning does not drift across themes.
-          "bg-sky-500 dark:bg-sky-400"
+          "bg-icon-blue"
         : null;
   const hasLeadingStatus = leadingIndicator === "loading" || statusDotClassName !== null;
   const canShowHoverActions = !dragOverlay;

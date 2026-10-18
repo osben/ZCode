@@ -1,5 +1,31 @@
 # Tool Change Chain Spec
 
+## Edit 拒绝 notebook 的文案不再指向 NotebookEdit（2026-10-17）
+
+仓库内不存在 NotebookEdit 工具，旧文案让模型调用一个不可用的工具。Edit 对 `.ipynb` 仍以错误码 `5`
+拒绝，只改模型可见文案：说明没有 notebook 编辑工具，必要时读取后用 Write 重写 notebook JSON。
+schema、权限、执行与 UI/V4 投影不变；回归见 `packages/core/tests/edit-tool-contract.test.ts`。
+
+## 只读 Bash 按输入并发调度（2026-10-17）
+
+`scheduleTools` 不再只读静态 metadata：每个 tool call 的 `readOnly`、`destructive`、`concurrentSafe`、
+`sideEffectScope` 通过与权限检查相同的 `resolvePermissionCapability(input, context)` 解析
+（context 含 mode、runtimeScope、workingDirectory、workspaceRoot）。优先级为 runtime capability >
+`entry.permission` > `entry.metadata`；没有 runtime resolver 的工具调度结果不变。
+Bash 的 runtime capability 在命令通过 readonly validation 且不含 `cd`/`pushd`/`popd` 时声明
+`concurrentSafe: true`，与相邻的并发安全调用（Read、只读 Bash 等）进入同一 parallel group，
+仍受 scheduler/executor 的 `maxConcurrency` 上限约束。含目录切换的只读命令保持串行，因为成功后
+捕获的 cwd 会写回 session，并行写回的先后顺序不可预测。
+边界：调度基于模型给出的 input；PreToolUse hook 改写后的 input 会重走权限检查，但不重新调度。
+因此 Bash cwd 写回是 compare-and-set：只有 session cwd 仍等于本命令启动时的 cwd 才写回。若同组的
+另一命令（例如被 hook 改写成 `cd` 的调用）已先改变 session cwd，本命令不写回；若本命令自己也切换了
+目录，则在 stderr 追加未持久化提示。串行执行时启动与完成之间无人改 cwd，行为不变。
+streaming 期间的提前执行仍只看静态 metadata，Bash 不参与（后续单独设计）。
+工具 schema、权限决策、执行、结果格式与 UI/V4 投影不变；`tool_call_scheduled` 的
+`canRunParallel` / `parallelGroupIndex` 如实反映新的分组。cwd 捕获文件按调用随机命名，后台任务
+按 taskId 登记，均无会话级单槽状态。测试见 `packages/core/tests/bash-permission.test.ts` 与
+`packages/core/tests/runtime-bash-concurrent-schedule.test.ts`。
+
 ## 工具内部模型请求的会话归因（2026-09-30）
 
 WebSearch、WebFetch processing、ReadSessionContext 的内部模型请求继承发起工具的宿主
@@ -1620,3 +1646,14 @@ interrupted result。修复不改变工具 schema、权限、执行时机、协�
 
 身份定位补充：conversation-quotes 将原始有序 text/mention 节点逐条映射到模型专用
 材料，保留同名手打文字与原生提及的区别，不改持久化正文或发送 ref 的授权边界。
+
+## LSP 工具与编辑后诊断（2026-10-17）
+
+契约见 [19-lsp.md](19-lsp.md)。链路要点：
+
+- **Contracts**：`contracts/src/lsp`（manifest `lspServers` 严格 schema、`ResolvedLspServer`、偏好 sidecar schema、`FileMutatedEvent`）、`interfaces/language-server.port.ts`、`tools/lsp.ts`。
+- **插件加载**：`adapters/src/plugins` 解析 `.lsp.json` 与 manifest `lspServers`，产出 `PluginLoadOutcome.lspServers`；单个无效 server 只禁用它自己。
+- **Adapter**：`adapters/src/lsp` 持有进程、JSON-RPC framing、能力、重启与空闲回收；`acquire` 永不等待初始化。
+- **Core**：`LspDocumentSync` 是打开文档、版本与诊断的唯一 owner；Edit/Write 只发布 `FileMutatedEvent`，不直接调用 LSP。`LSP` 工具仅在存在可用 server 时注册（两个注册入口共用 gate），Explore 同步可见。
+- **上下文**：编辑后的新诊断通过既有 `diagnostics` system-reminder source 在下一次模型请求附带，等待上限 `LSP_EDIT_DIAGNOSTICS_WAIT_MS`，超时明确标为 pending。
+- **协议/UI**：`lsp/preferences/get|set`、`lsp/status`；偏好存于 fork sidecar `fork_lsp_preferences.json`，不写 `setting.json`。

@@ -33,6 +33,7 @@ import type { ZCodeApp, ZCodeAppOptions } from "../app/types.js";
 import type { V4InteractionRegistry } from "../zcode-protocol-v4/interaction-registry.js";
 import type { ConversationV4Gateway } from "../zcode-protocol-v4/v4-gateway.js";
 import type { SessionResidentPool, SessionResidentPoolOptions } from "./session-resident-pool.js";
+import type { LspProtocolHost } from "./lsp.js";
 import type { DynamicWorkflowMode } from "@zcode/shared";
 
 export interface ParamsSchema<T> {
@@ -41,6 +42,8 @@ export interface ParamsSchema<T> {
 
 export interface ZCodeProtocolAgentDependencies {
   createZCodeApp(options?: Omit<ZCodeAppOptions, "providerRegistry">): ZCodeApp | Promise<ZCodeApp>;
+  /** Process-wide LSP protocol host (lsp/* methods); absent when the runtime has no LSP support. */
+  lsp?: LspProtocolHost;
   /**
    * In-memory event store factory for each session record.
    * Default turn-window retention policy; tests may inject a spy or unbounded implementation for comparison.
@@ -178,6 +181,8 @@ export interface ZCodeProtocolAgentServerContext {
   // waitForDeactivation; protocol requests hold an operation lease to prevent async handlers from
   // racing with capacity reclamation.
   sessionResidentPool?: SessionResidentPool;
+  /** Language server preferences and status; absent in runtimes without LSP, where the methods return a protocol error. */
+  lsp?: LspProtocolHost;
   sessions: Map<string, ZCodeProtocolSessionRecord>;
   preparedWorktreeSessions?: Map<string, ZCodeProtocolPreparedWorktreeSession>;
   notify(notification: ZCodeProtocolNotification): void;

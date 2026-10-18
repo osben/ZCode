@@ -366,16 +366,21 @@ private async checkPermissions(toolCalls: ToolCall[]): Promise<Map<ToolCallId, P
 交给 executor 的 `executeSchedule()` 消费；不得在拿到 schedule 后退回 `executeBatch()` 把所有 tool call
 一次性并行执行。这样才能保证只读工具并行、有副作用工具串行、依赖顺序、权限阻塞和失败短路在同一条状态机路径里被观测。
 
+并发判定按 input 解析：工具若提供 `resolvePermissionCapability`，调度与权限检查使用同一份 runtime
+capability（例如只读且不切换目录的 Bash 声明 `concurrentSafe: true`）；未提供时退回静态 metadata。
+
 ```typescript
 private async scheduleTools(toolCalls: ToolCall[]): Promise<ToolSchedule> {
+  // Same input-aware resolution as permission checks: runtime capability > entry.permission > metadata.
+  const context = this.resolveToolCapabilityContext();
   const dependencies: ToolDependency[] = toolCalls.map((tc) => ({
     toolCallId: tc.id,
     toolName: tc.name,
     dependsOn: [],
-    ...this.registry.getMetadata(tc.name),
+    ...resolveToolSchedulingFlags(this.registry.get(tc.name), tc.input, context),
   }));
 
-  return this.toolScheduler.schedule(dependencies, READ_ONLY_TOOLS);
+  return this.toolScheduler.schedule(dependencies);
 }
 
 private toScheduleState(schedule: ToolSchedule): ToolScheduleState {

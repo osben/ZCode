@@ -129,3 +129,23 @@ export function isZCodeToolFamily(
 export function isZCodeFileContentWriteToolName(value: string | null | undefined): boolean {
   return normalizeZCodeToolName(value) === "Write";
 }
+
+export const ZCODE_ASK_USER_QUESTION_TOOL_NAME = "AskUserQuestion";
+export const ZCODE_EXIT_PLAN_MODE_TOOL_NAME = "ExitPlanMode";
+
+/** Exact wire-name match, shared by the CLI projection, Host adapter and UI projection. */
+export function isZCodeAskUserQuestionToolName(value: string | null | undefined): boolean {
+  return value === ZCODE_ASK_USER_QUESTION_TOOL_NAME;
+}
+
+/** Exact wire-name match, shared by the CLI projection, Host adapter and UI projection. */
+export function isZCodeExitPlanModeToolName(value: string | null | undefined): boolean {
+  return value === ZCODE_EXIT_PLAN_MODE_TOOL_NAME;
+}
+
+/** Permissions answered through the user-input flow (questions and plan approval), not allow/deny. */
+export function isZCodeUserInputBackedPermissionToolName(
+  value: string | null | undefined,
+): boolean {
+  return isZCodeAskUserQuestionToolName(value) || isZCodeExitPlanModeToolName(value);
+}

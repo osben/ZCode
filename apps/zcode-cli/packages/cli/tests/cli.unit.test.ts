@@ -2967,6 +2967,7 @@ test("command center opens a plugin toggle picker", async () => {
       ({
         listPlugins: async () => ({
           commandRoots: [],
+          lspServers: [],
           diagnostics: [],
           mcpServers: {},
           plugins: [
@@ -3023,6 +3024,7 @@ test("command center resolves plugin labels from listings by stable plugin id", 
       ({
         listPlugins: async () => ({
           commandRoots: [],
+          lspServers: [],
           diagnostics: [],
           mcpServers: {},
           pluginListingsById: {
@@ -3118,6 +3120,7 @@ test("command center toggles plugins and refreshes the picker", async () => {
       ({
         listPlugins: async () => ({
           commandRoots: [],
+          lspServers: [],
           diagnostics: [],
           mcpServers: {},
           plugins: [
@@ -3191,6 +3194,7 @@ test("command center requires --force before uninstalling a plugin", async () =>
       ({
         listPlugins: async () => ({
           commandRoots: [],
+          lspServers: [],
           diagnostics: [],
           mcpServers: {},
           plugins: [],
@@ -3224,6 +3228,7 @@ test("command center uninstalls a plugin when --force is provided", async () => 
       ({
         listPlugins: async () => ({
           commandRoots: [],
+          lspServers: [],
           diagnostics: [],
           mcpServers: {},
           plugins: [],
@@ -4114,6 +4119,7 @@ test("zcode plugins list prints installed plugins", async () => {
       assert.equal(options.workingDirectory, "/workspace/project");
       return {
         commandRoots: [],
+        lspServers: [],
         diagnostics: [
           {
             code: "plugin_unsupported_component",

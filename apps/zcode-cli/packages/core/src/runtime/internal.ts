@@ -1,3 +1,4 @@
+import type { LspService } from "../lsp/service.js";
 import { PermissionService, ToolScheduler } from "./deps.js";
 import type {
   Logger,
@@ -93,6 +94,10 @@ export interface AgentRuntimeInternal
   /** 工作流工具面是否已注册（launch.md「On demand: activation」）；非 onDemand 会话出生即 true。 */
   dynamicWorkflowToolsActivated: boolean;
   dynamicWorkflowActivationSource?: DynamicWorkflowActivationSource;
+  /** Language-server service handed in through deps; absent when code intelligence is not wired. */
+  lspService?: LspService;
+  /** Whether the LSP tool is currently registered (service present, enabled, and a server binary installed). */
+  lspToolAvailable: boolean;
   contextBuilder: ContextBuilder | null;
   contextInitialized: boolean;
   contextSourceSnapshot?: ContextSourceSnapshot;

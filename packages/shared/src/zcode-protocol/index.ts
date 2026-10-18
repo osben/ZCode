@@ -2946,7 +2946,14 @@ export type ZCodePluginUserConfigOption = z.infer<typeof zcodePluginUserConfigOp
 
 // Keep component grouping order aligned with the details dialog and marketplace details: agent / command / skill / hook / mcp.
 // These three schemas must be defined before zcodePluginInfoSchema because its (.strict()) components field references them.
-export const zcodePluginComponentKindSchema = z.enum(["agent", "command", "skill", "hook", "mcp"]);
+export const zcodePluginComponentKindSchema = z.enum([
+  "agent",
+  "command",
+  "skill",
+  "hook",
+  "mcp",
+  "lsp",
+]);
 export type ZCodePluginComponentKind = z.infer<typeof zcodePluginComponentKindSchema>;
 
 export const zcodePluginComponentItemSchema = z
@@ -3876,6 +3883,81 @@ export const zcodePluginsDescribeResultSchema = z
   .strict();
 export type ZCodePluginsDescribeResult = z.infer<typeof zcodePluginsDescribeResultSchema>;
 
+// LSP (language server) preferences and status, workspace-scoped like plugins/*.
+// Mirror of apps/zcode-cli/packages/contracts/src/lsp/index.ts (LspPreferencesSchema, LanguageServerStatusSchema).
+// Shared cannot import CLI contracts, so the shapes are duplicated here and the CLI handler parses
+// both params and results against these schemas. Keep the two in sync when either changes.
+export const zcodeLspPreferencesSchema = z
+  .object({
+    enabled: z.boolean(),
+    diagnosticsAfterEdit: z.record(nonEmptyString, z.boolean()),
+  })
+  .strict();
+export type ZCodeLspPreferences = z.infer<typeof zcodeLspPreferencesSchema>;
+
+export const zcodeLspPreferencesGetParamsSchema = z
+  .object({
+    workspace: zcodeWorkspaceRefSchema,
+  })
+  .strict();
+export const zcodeLspPreferencesGetResultSchema = zcodeLspPreferencesSchema;
+export type ZCodeLspPreferencesGetResult = z.infer<typeof zcodeLspPreferencesGetResultSchema>;
+
+export const zcodeLspPreferencesSetParamsSchema = z
+  .object({
+    workspace: zcodeWorkspaceRefSchema,
+    patch: z
+      .object({
+        enabled: z.boolean().optional(),
+        // null removes the per-server override and falls back to the plugin manifest default.
+        diagnosticsAfterEdit: z.record(nonEmptyString, z.boolean().nullable()).optional(),
+      })
+      .strict(),
+  })
+  .strict();
+export type ZCodeLspPreferencesSetParams = z.infer<typeof zcodeLspPreferencesSetParamsSchema>;
+export const zcodeLspPreferencesSetResultSchema = zcodeLspPreferencesSchema;
+export type ZCodeLspPreferencesSetResult = z.infer<typeof zcodeLspPreferencesSetResultSchema>;
+
+export const zcodeLspServerStateSchema = z.enum([
+  "stopped",
+  "starting",
+  "ready",
+  "crashed",
+  "unavailable",
+  "not_installed",
+]);
+export const zcodeLspServerStatusSchema = z
+  .object({
+    serverId: nonEmptyString,
+    pluginId: nonEmptyString,
+    serverName: nonEmptyString,
+    /** Executable name from the manifest, shown when the binary is not found on PATH. */
+    command: nonEmptyString,
+    extensions: z.array(nonEmptyString),
+    installed: z.boolean(),
+    state: zcodeLspServerStateSchema,
+    diagnosticsMode: z.enum(["pull", "versioned", "attributed", "unknown"]),
+    diagnosticsAfterEdit: z.boolean(),
+    restarts: z.number().int().min(0),
+    lastErrorCode: nonEmptyString.optional(),
+  })
+  .strict();
+export type ZCodeLspServerStatus = z.infer<typeof zcodeLspServerStatusSchema>;
+
+export const zcodeLspStatusParamsSchema = z
+  .object({
+    workspace: zcodeWorkspaceRefSchema,
+  })
+  .strict();
+export const zcodeLspStatusResultSchema = z
+  .object({
+    enabled: z.boolean(),
+    servers: z.array(zcodeLspServerStatusSchema),
+  })
+  .strict();
+export type ZCodeLspStatusResult = z.infer<typeof zcodeLspStatusResultSchema>;
+
 export const zcodeAutomationScheduleRuleSchema = z
   .object({
     unit: z.enum(["minute", "hourly", "daily", "weekly", "monthly", "yearly"]),
@@ -4227,6 +4309,10 @@ export const zcodeProtocolMethods = {
   pluginsResetConfig: "plugins/resetConfig",
   pluginsValidate: "plugins/validate",
   pluginsDescribe: "plugins/describe",
+  // LSP preferences (fork sidecar owned by the CLI) and per-workspace server status.
+  lspPreferencesGet: "lsp/preferences/get",
+  lspPreferencesSet: "lsp/preferences/set",
+  lspStatus: "lsp/status",
   automationCreate: "automation/create",
   topicResourceRead: "topic/resource/read",
   channelReply: "bot/channel/reply",

@@ -30,6 +30,7 @@ export * from "./interfaces/automation.port.js";
 export * from "./interfaces/off-peak.port.js";
 export * from "./interfaces/topic-resource.port.js";
 export * from "./interfaces/mcp.port.js";
+export * from "./interfaces/language-server.port.js";
 
 export * from "./interfaces/runtime-input-presentation.js";
 
@@ -71,6 +72,9 @@ export * from "./commands/index.js";
 
 // Plugins
 export * from "./plugins/index.js";
+
+// Language servers
+export * from "./lsp/index.js";
 
 // Workflow
 export * from "./workflow/index.js";

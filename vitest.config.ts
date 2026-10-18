@@ -130,6 +130,8 @@ export default defineConfig({
             // Gen UI 目录回归位于源码旁，默认入口也必须执行，避免只在手动定向运行时生效。
             "packages/shared/src/node/genUiPaths.test.ts",
             "packages/services/src/gen-ui/**/*.test.ts",
+            // CI runs only the root suite; pin upstream checksums of the shared CLI session DB here.
+            "apps/zcode-cli/packages/adapters/tests/upstream-migration-checksum-pin.test.ts",
             "scripts/assert-safe-cua-helper-zip.test.mjs",
             "scripts/ci/ci-telemetry-keyword-guard.test.mjs",
           ],

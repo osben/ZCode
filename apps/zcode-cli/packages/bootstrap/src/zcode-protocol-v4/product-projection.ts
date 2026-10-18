@@ -77,6 +77,8 @@ import {
   extractPlanStepsFromToolOutput,
   isHighspeedProviderId,
   isZCodeFileStreamingToolInputPreviewTool,
+  isZCodeAskUserQuestionToolName as isAskUserQuestionToolName,
+  isZCodeExitPlanModeToolName as isExitPlanModeToolName,
   isZCodeModelRetryRecoveryProgressPayload,
   parseZCodeBackgroundTaskNotificationText,
   resolveZCodeBackgroundTaskControlKind,
@@ -6032,10 +6034,6 @@ export class ProductProjection {
   }
 }
 
-function isAskUserQuestionToolName(value: string | undefined): boolean {
-  return value === "AskUserQuestion";
-}
-
 /**
  * Narrow core tool display to the kinds that the v4 protocol can carry.
  *
@@ -6076,10 +6074,6 @@ function stringifyToolInput(input: unknown): string {
   } catch {
     return "{}";
   }
-}
-
-function isExitPlanModeToolName(value: string | undefined): boolean {
-  return value === "ExitPlanMode";
 }
 
 function createExitPlanModeApprovalQuestion(reason: string): UserInputQuestionPayload {

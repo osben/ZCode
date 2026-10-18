@@ -118,7 +118,7 @@ export function OffPeakHistoryTab({
                       aria-label={intl.formatMessage({
                         id: "automations.moreActions",
                       })}
-                      className="flex size-6 items-center justify-center rounded-[6px] text-foreground-subtle transition-colors hover:bg-white/10 hover:text-foreground data-[state=open]:bg-white/10 data-[state=open]:text-foreground"
+                      className="flex size-6 items-center justify-center rounded-[6px] text-foreground-subtle transition-colors hover:bg-surface-hover hover:text-foreground data-[state=open]:bg-surface-hover data-[state=open]:text-foreground"
                     >
                       <AutomationMoreHorizontalIcon className="size-4" aria-hidden="true" />
                     </button>

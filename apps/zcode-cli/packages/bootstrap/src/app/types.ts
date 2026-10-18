@@ -108,6 +108,7 @@ import type { ModelProviderSourceTitle } from "../model-config.js";
 import type { ZCodeInstalledPluginData } from "../plugins.js";
 import type { SessionTranscriptMessage } from "../session-transcript.js";
 import type { NodeReplBrowserBroker } from "./node-repl-browser-broker.js";
+import type { LspRuntimeHub } from "./lsp-runtime-hub.js";
 import type { ProviderRegistryModelSource } from "./provider-registry-model-runtime.js";
 import type { WorkspaceHookReviewCommandResult } from "./workspace-hook-review-controller.js";
 export type { ZCodeModelOption } from "@zcode/shared";
@@ -137,6 +138,11 @@ export type ZCodeAppRuntimeConfigInput = AgentRuntimeConfig;
 
 export interface ZCodeAppOptions {
   sessionId?: SessionId;
+  /**
+   * Process-wide language server pool and preferences (protocol mode). Plain CLI runs omit it and
+   * the app creates and owns a private hub for its own lifetime.
+   */
+  lspRuntimeHub?: LspRuntimeHub;
   resume?: boolean;
   version?: string;
   traceContext?: TraceContext;

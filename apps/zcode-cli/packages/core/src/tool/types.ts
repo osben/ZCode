@@ -5,6 +5,7 @@ import type { McpToolUiDescriptor } from "@zcode/shared/mcp-apps";
 
 import type {
   CollaborationMode,
+  FileMutationSink,
   AutomationPort,
   BrowserControlPort,
   CoordinatorResponsePort,
@@ -57,6 +58,7 @@ import type {
   WorkflowSubmitPort,
 } from "@zcode/contracts";
 import type { RuntimeTaskRegistry } from "../runtime-task/registry.js";
+import type { LspService } from "../lsp/service.js";
 import type {
   PersistedReadFileStateMetadata,
   PersistedReadFileStateTool,
@@ -156,6 +158,12 @@ export interface ToolExecutionContext {
   /** Official browser-use plugin docs asset directory, used by agent.browsers.documentation() only when browser-use is enabled. */
   browserDocumentationRoot?: string;
   fileSystemPort?: FileSystemPort;
+  /** Publishes FileMutated after a successful Write or Edit; the LSP document sync consumes it. */
+  fileMutationSink?: FileMutationSink;
+  /** Starts the language server for a file being read (acquire only, never waits). */
+  lspPrewarm?: (filePath: string) => void;
+  /** Language-server service for the LSP tool and edit diagnostics; absent when code intelligence is unavailable. */
+  lsp?: LspService;
   httpClientPort?: HttpClientPort;
   imageProcessorPort?: ImageProcessorPort;
   pdfDocumentPort?: PdfDocumentPort;
@@ -189,6 +197,8 @@ export interface ToolExecutionContext {
   recordSkillTelemetryMetadata?: (metadata: SkillTelemetryMetadata) => void;
   bashShellSelection?: ExecutionShellSelection;
   embeddedSearch?: ToolEmbeddedSearchContext;
+  /** Live session cwd from its owner; `workingDirectory` is the snapshot this call started from. */
+  getWorkingDirectory?: () => string;
   setWorkingDirectory?: (cwd: string) => Promise<void> | void;
   workingDirectory: string;
   workspaceRoot: string;
@@ -415,6 +425,8 @@ export interface ToolPersistedModelContentInput {
 export interface ToolRuntimePermissionCapability {
   userApprovalRule?: string;
   allowedInPlanMode?: boolean;
+  /** Input-aware override of `metadata.concurrentSafe`, consumed by tool scheduling. */
+  concurrentSafe?: boolean;
   destructive?: boolean;
   needsApproval?: boolean;
   readOnly?: boolean;

@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "@zcode/typescript-lsp-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "description": "TypeScript and JavaScript language server declaration published as an official ZCode plugin."
+}

@@ -23,19 +23,21 @@ export function analysisContainsGitCommand(
   });
 }
 
+const DIRECTORY_CHANGE_COMMANDS = new Set(["cd", "pushd", "popd"]);
+
+export function analysisContainsDirectoryChange(
+  commands: readonly { argv: readonly string[]; name: string }[],
+): boolean {
+  return commands.some((commandPart) =>
+    DIRECTORY_CHANGE_COMMANDS.has(normalizedSimpleCommandName(commandPart.argv) ?? commandPart.name),
+  );
+}
+
 export function analysisContainsGitAndDirectoryChange(
   commands: readonly { argv: readonly string[]; name: string }[],
 ): boolean {
-  let hasGit = false;
-  let hasDirectoryChange = false;
-  for (const commandPart of commands) {
-    const name = normalizedSimpleCommandName(commandPart.argv) ?? commandPart.name;
-    hasGit ||= name === "git";
-    hasDirectoryChange ||= name === "cd" || name === "pushd" || name === "popd";
-  }
-
   // Git may load hooks/config from the target directory; ordinary `cd && grep/find` commands can still be allowed as read-only.
-  return hasGit && hasDirectoryChange;
+  return analysisContainsGitCommand(commands) && analysisContainsDirectoryChange(commands);
 }
 
 function normalizedSimpleCommandName(argv: readonly string[]): string | undefined {

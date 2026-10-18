@@ -251,6 +251,10 @@ export interface AgentRuntimeCoreMethods {
   createDefaultSubagentPort(deps: AgentRuntimeDeps): SubagentPort | undefined;
   getTools(model?: Model): ModelToolContract[];
   invalidateToolCache(): void;
+  /** Re-evaluates LSP availability, refreshes the tool set, and stops servers when globally disabled. */
+  applyLspPreferences(): Promise<void>;
+  /** Post-edit diagnostics attachment body for the next model request, or undefined. */
+  collectLspEditDiagnosticsBody(abortSignal: AbortSignal): Promise<string | undefined>;
   getToolRegistry(): ToolRegistry;
   getToolExecutor(): ToolExecutor;
   subscribeEvents(sink: SessionEventSink): () => void;

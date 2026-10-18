@@ -30,6 +30,9 @@ export const DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS: ReadonlySet<string> = new Set(
   "node-repl-host@zcode-plugins-official",
   "skill-creator@zcode-plugins-official",
   "plugin-creator@zcode-plugins-official",
+  // TypeScript language server: the plugin only declares the LSP server. The server runs only when
+  // typescript-language-server is installed (see the plugin README), so default-on is harmless.
+  "typescript-lsp@zcode-plugins-official",
   "zcode-guide@zcode-plugins-official",
   // visualize (interactive views) was already marked defaultEnabled in the CLI definitions when it
   // landed with the UI plugin, but it was missed here — Settings treated it as disabled by

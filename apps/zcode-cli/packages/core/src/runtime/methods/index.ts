@@ -26,6 +26,7 @@ import { recordUserInputAutoResolutionUpdate } from "./interaction-auto-resoluti
 import { recordDynamicWorkflowRunProgress } from "./dynamic-workflow-run-progress.js";
 import { trackResumedDynamicWorkflowRun } from "./dynamic-workflow-run-track.js";
 import { activateDynamicWorkflowTools } from "./dynamic-workflow-activation.js";
+import { applyLspPreferences, collectLspEditDiagnosticsBody } from "./lsp.js";
 import { startSavedWorkflowRun } from "./dynamic-workflow-run-start.js";
 import { amendWorkflowRunSettings } from "./dynamic-workflow-run-settings.js";
 import { getProjection } from "./config.js";
@@ -224,6 +225,8 @@ export function installAgentRuntimeMethods(ctor: AgentRuntimeConstructor): void 
   proto.getActiveTurnInfo = getActiveTurnInfo;
   proto.getTools = getTools;
   proto.invalidateToolCache = invalidateToolCache;
+  proto.applyLspPreferences = applyLspPreferences;
+  proto.collectLspEditDiagnosticsBody = collectLspEditDiagnosticsBody;
   proto.getToolRegistry = getToolRegistry;
   proto.getToolExecutor = getToolExecutor;
   proto.subscribeEvents = subscribeEvents;

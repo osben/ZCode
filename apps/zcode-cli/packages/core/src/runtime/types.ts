@@ -1,5 +1,6 @@
 import type { RequestVerificationReason, SystemPromptOverrides } from "@zcode/shared";
 import type { GetAgentDefinitions, LoadAgentDefinitions } from "../subagent/definitions.js";
+import type { LspService } from "../lsp/service.js";
 import type { RuntimeInputPresentation, TurnExecutionModelFallbackReason } from "@zcode/contracts";
 /* eslint-disable max-lines -- Runtime types centrally define the public core/runtime structures; splitting them requires a separate migration. */
 import { PermissionService, ToolScheduler } from "./deps.js";
@@ -408,6 +409,8 @@ export interface AgentRuntimeDeps {
   artifactStore?: ToolArtifactStorePort;
   automationPort?: AutomationPort;
   offPeakPort?: OffPeakPort;
+  /** Language-server service (code intelligence). Absent means the LSP tool and post-edit diagnostics are unavailable. */
+  lsp?: LspService;
   topicResourcePort?: TopicResourcePort;
   contextSourcePort?: ContextSourcePort;
   eventSink?: SessionEventSink;

@@ -35,10 +35,10 @@ export function StatusIndicator({
 export function FeedbackErrorTip({ message }: { message: string }) {
   return (
     <div
-      className="flex items-start gap-2 rounded-xl border border-red-500/25 bg-red-500/10 px-3 py-2 text-ui-base text-red-300"
+      className="flex items-start gap-2 rounded-xl border border-destructive/25 bg-destructive/10 px-3 py-2 text-ui-base text-destructive"
       role="alert"
     >
-      <AlertCircle className="mt-0.5 size-3.5 shrink-0 text-red-400" />
+      <AlertCircle className="mt-0.5 size-3.5 shrink-0 text-destructive" />
       <span className="break-words leading-relaxed">{message}</span>
     </div>
   );

@@ -13,6 +13,7 @@ import {
   buildProjectMemoryAgentProviderMessages,
   captureProjectMemoryAgentContext,
   createProjectMemoryAgentToolExecutor,
+  recordProjectMemoryAgentModelUsageFact,
   type ProjectMemoryAgentContext,
 } from "./project-memory-agent.js";
 import { resolveEnabledProjectMemoryRoot } from "./project-memory.js";
@@ -156,6 +157,13 @@ async function executeProjectMemoryExtraction(
           }),
         maxTurns: EXTRACTION_MAX_TURNS,
         messages: providerMessages,
+        onRequestSettled: (request) =>
+          recordProjectMemoryAgentModelUsageFact(
+            runtime,
+            input.snapshot,
+            request,
+            "project_memory_extract",
+          ),
         model: input.snapshot.model,
         rootDir: input.snapshot.memoryRoot,
         tools: input.snapshot.tools,

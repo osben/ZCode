@@ -13,6 +13,7 @@ vi.mock("../src/plugins.js", async (importOriginal) => {
       resolverCapture.options = options;
       return {
         commandRoots: [],
+        lspServers: [],
         diagnostics: [],
         hookRegistrations: [],
         mcpServers: {},

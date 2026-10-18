@@ -27,6 +27,7 @@ import type { BashTimeoutPolicy } from "../bash-timeout-policy.js";
 import { createJsToolEntry, jsToolEntry } from "./node-repl.js";
 import { globToolEntry } from "./glob.js";
 import { grepToolEntry } from "./grep.js";
+import { lspToolEntry } from "./lsp.js";
 import { webFetchToolEntry } from "./webfetch.js";
 import { webSearchToolEntry } from "./websearch.js";
 import {
@@ -83,6 +84,8 @@ export const builtInTools: ToolEntry[] = [
   bashToolEntry,
   globToolEntry,
   grepToolEntry,
+  // Registered only when the runtime has a usable language server (includeLsp); see registerBuiltInTools.
+  lspToolEntry,
   webFetchToolEntry,
   webSearchToolEntry,
   todoReadToolEntry,
@@ -187,6 +190,11 @@ interface RegisterBuiltInToolsOptions {
   /** In-session Off-Peak creation tools, controlled by the host's offPeakToolEnabled flag (rollout/remote gate). */
   includeOffPeak?: boolean;
   /**
+   * Language-server tool (spec §7). Registered only when the runtime has an LspService and availability resolved true.
+   * Absence means not registered; both registration entry points pass it from the same helper (tool-allowlist.ts).
+   */
+  includeLsp?: boolean;
+  /**
    * Dynamic-workflow rollout gate. **Only explicit false removes** DYNAMIC_WORKFLOW_TOOL_NAMES. Absence means the caller does not
    * participate in rollout (TUI, headless, workflow_child), so all tools remain available. The fail-closed default is in the protocol
    * service's appRuntimePreferences, not at this layer.
@@ -270,6 +278,9 @@ export function registerBuiltInTools(
       continue;
     }
     if (entry.metadata.name === "js" && options.includeNodeRepl !== true) {
+      continue;
+    }
+    if (entry.metadata.name === "LSP" && options.includeLsp !== true) {
       continue;
     }
     registry.register(resolveBuiltInToolEntryForBranch(entry, options), {

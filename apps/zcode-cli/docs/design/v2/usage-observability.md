@@ -20,7 +20,10 @@ An explicit `pruneUsage` call always prunes immediately.
 
 `model_usage` is the canonical token source. One row represents one logical model request recorded
 at the runtime boundary, including main turns, compact summaries, title generation, target
-completion verification, workflow child sessions, and subagents.
+completion verification, workflow child sessions, subagents, and background project memory
+requests (`project_memory_extract` for per-turn Extraction, `dream` for consolidation). Background
+memory requests record one row per memory-agent request, attributed to the session that scheduled
+them.
 
 `message` and `part` may keep token snapshots for transcript rendering, but `/usage` must not read
 them as the canonical source after this migration. `part` is a UI transcript unit, not a billing or

@@ -53,7 +53,7 @@ const loadedPlugin = (overrides: Record<string, unknown> = {}) =>
   }) as never;
 
 const listOutcome = (plugins: unknown[], diagnostics: unknown[] = []) =>
-  (() => ({ commandRoots: [], diagnostics, mcpServers: {}, plugins, skillRoots: [] })) as never;
+  (() => ({ commandRoots: [], lspServers: [], diagnostics, mcpServers: {}, plugins, skillRoots: [] })) as never;
 
 const installed = (overrides: Record<string, unknown> = {}) => ({
   enabled: true,
@@ -319,7 +319,7 @@ test("plugins disable --all disables every enabled plugin and rejects mixed usag
     TEXT,
     {
       // 有状态的 mock：写 user 层后复查 effective 态要能看到插件真的关掉了。
-      listPlugins: (() => ({ commandRoots: [], diagnostics: [], mcpServers: {}, plugins, skillRoots: [] })) as never,
+      listPlugins: (() => ({ commandRoots: [], lspServers: [], diagnostics: [], mcpServers: {}, plugins, skillRoots: [] })) as never,
       setPluginEnabled: (async (options: { plugin: string; enabled: boolean }) => {
         disabled.push(options.plugin);
         assert.equal(options.enabled, false);
@@ -356,7 +356,7 @@ test("plugins disable --all reports plugins still enabled by a higher-priority c
     loadedPlugin({ id: "broken@market", name: "broken" }),
   ] as Array<{ id: string; enabled: boolean }>;
   const deps = {
-    listPlugins: (() => ({ commandRoots: [], diagnostics: [], mcpServers: {}, plugins, skillRoots: [] })) as never,
+    listPlugins: (() => ({ commandRoots: [], lspServers: [], diagnostics: [], mcpServers: {}, plugins, skillRoots: [] })) as never,
     setPluginEnabled: (async (options: { plugin: string }) => {
       if (options.plugin === "broken@market") throw new Error("config write failed");
       const target = plugins.find((plugin) => plugin.id === options.plugin);

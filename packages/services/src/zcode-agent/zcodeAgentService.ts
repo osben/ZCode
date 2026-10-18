@@ -49,7 +49,6 @@ import {
   zcodeSubagentsReadRuntimeConfigParamsSchema,
   type SubagentRuntimeConfig,
   ZCODE_SESSION_RUNTIME_PREFERENCES_REQUEST_TIMEOUT_MS,
-  formatLogPrefix,
   resolveWorkspaceKey,
   type TraceId,
   ZCODE_AGENT_PROVIDER,
@@ -98,6 +97,9 @@ import {
   zcodePluginsUninstallResultSchema,
   zcodePluginsValidateResultSchema,
   zcodePluginsDescribeResultSchema,
+  zcodeLspPreferencesGetResultSchema,
+  zcodeLspPreferencesSetResultSchema,
+  zcodeLspStatusResultSchema,
   zcodeAutomationCheckTaskBindingParamsSchema,
   zcodeAutomationCreateParamsSchema,
   zcodeAutomationDeleteParamsSchema,
@@ -220,6 +222,7 @@ import type {
   ZCodeAgentSetModeParams,
   ZCodeAgentSetModelParams,
   ZCodeAgentSetPluginEnabledParams,
+  ZCodeAgentSetLspPreferencesParams,
   ZCodeAgentSetThoughtLevelParams,
   ZCodeAgentPluginReferenceCatalogParams,
   ZCodeAgentSkillReferenceCatalogParams,
@@ -5003,6 +5006,36 @@ export function createZCodeAgentService(
       );
     },
 
+    async getLspPreferences(params: ZCodeAgentPluginViewParams) {
+      const client = await getPluginManagementClient();
+      return client.request(
+        zcodeProtocolMethods.lspPreferencesGet,
+        { workspace: buildWorkspaceRef(params) },
+        zcodeLspPreferencesGetResultSchema,
+        { timeoutMs: PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS },
+      );
+    },
+
+    async setLspPreferences(params: ZCodeAgentSetLspPreferencesParams) {
+      const client = await getPluginManagementClient();
+      return client.request(
+        zcodeProtocolMethods.lspPreferencesSet,
+        { workspace: buildWorkspaceRef(params), patch: params.patch },
+        zcodeLspPreferencesSetResultSchema,
+        { timeoutMs: PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS },
+      );
+    },
+
+    async getLspStatus(params: ZCodeAgentPluginViewParams) {
+      const client = await getPluginManagementClient();
+      return client.request(
+        zcodeProtocolMethods.lspStatus,
+        { workspace: buildWorkspaceRef(params) },
+        zcodeLspStatusResultSchema,
+        { timeoutMs: PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS },
+      );
+    },
+
     async setPluginEnabled(params: ZCodeAgentSetPluginEnabledParams) {
       const client = await getPluginManagementClient();
       return client.request(
@@ -5763,9 +5796,9 @@ export function createZCodeAgentService(
             }
             if (attempt >= SESSION_SUBSCRIBE_MAX_ATTEMPTS - 1) {
               // Warn on terminal failure so the issue remains observable instead of silently failing.
-              console.warn(
-                formatLogPrefix("zcode-agent", process.pid),
-                "session 订阅建立失败，已达最大重试次数，放弃",
+              logger.warn(
+                undefined,
+                "session subscription failed after the maximum retry attempts; giving up",
                 {
                   sessionId: params.sessionId,
                   workspaceKey: resolveWorkspaceKey(params),

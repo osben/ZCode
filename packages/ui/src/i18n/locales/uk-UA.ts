@@ -4445,6 +4445,32 @@ const ukUA: Record<string, string> = {
   "settings.plugins.detail.component.hook": "Хуки",
   "settings.plugins.detail.component.mcp": "Сервери MCP",
   "settings.plugins.detail.component.lsp": "Сервери LSP",
+  "settings.plugins.codeIntelligence.title": "Інтелект коду",
+  "settings.plugins.codeIntelligence.description":
+    "Мовні сервери з увімкнених плагінів перевіряють файли після редагування агентом і повідомляють про нові помилки.",
+  "settings.plugins.codeIntelligence.toggle": "Увімкнути інтелект коду",
+  "settings.plugins.lsp.title": "Мовні сервери",
+  "settings.plugins.lsp.state.stopped": "Зупинено",
+  "settings.plugins.lsp.state.starting": "Запускається",
+  "settings.plugins.lsp.state.ready": "Працює",
+  "settings.plugins.lsp.state.crashed": "Аварійно завершено",
+  "settings.plugins.lsp.state.unavailable": "Недоступний",
+  "settings.plugins.lsp.state.not_installed": "Не встановлено",
+  "settings.plugins.lsp.notInstalled":
+    "Виконуваний файл мовного сервера не знайдено в PATH: {command}",
+  "settings.plugins.lsp.extensions": "Файли: {extensions}",
+  "settings.plugins.lsp.restarts": "Перезапуски: {count}",
+  "settings.plugins.lsp.lastError": "Остання помилка: {code}",
+  "settings.plugins.lsp.diagnosticsAfterEdit": "Діагностика після редагування",
+  "settings.plugins.lsp.diagnosticsAfterEditHint":
+    "Після редагування файлів цим сервером повідомляти агенту про нові помилки та попередження.",
+  "settings.plugins.lsp.notVerified": "Не перевірено в ZCode",
+  "settings.plugins.lsp.notVerifiedHint":
+    "Цю мову ще не тестували в ZCode, тому результати можуть бути неповними.",
+  "settings.plugins.lsp.disabledGlobally":
+    "Інтелект коду вимкнено, тож ці сервери не запускаються.",
+  "settings.plugins.lsp.loadError": "Не вдалося завантажити стан мовних серверів.",
+  "settings.plugins.lsp.saveError": "Не вдалося зберегти налаштування інтелекту коду.",
   "settings.plugins.detail.component.unknown": "Компоненти недоступні",
   "settings.plugins.detail.configuration": "Конфігурація",
   "settings.plugins.detail.hooks": "Хуки",

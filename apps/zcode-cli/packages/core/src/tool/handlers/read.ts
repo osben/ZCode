@@ -198,6 +198,8 @@ export const readHandler: ToolHandler = async (input, context) => {
     }
 
     let rangeReadRevision: FileSystemStatResult["revision"] | undefined;
+    // Text reads start the language server for this file type in the background (acquire only, never waits).
+    context.lspPrewarm?.(filePath);
     const output = await readTextFileForModel({
       abortSignal: context.abortSignal,
       filePath,

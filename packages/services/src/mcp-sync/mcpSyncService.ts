@@ -20,6 +20,9 @@ import type {
 } from "@zcode/shared";
 import type { IMcpSyncService } from "./mcpSync.js";
 import { checkRemoteSyncDirectoryWriteAccess } from "../remote-sync/remoteSyncWriteAccess.js";
+import { createServiceLogger } from "../logger/serviceLogger.js";
+
+const logger = createServiceLogger("mcp-sync");
 
 type McpConfigKeyName = "mcp.servers" | "mcpServers";
 
@@ -512,7 +515,7 @@ async function readServerMapWithLegacyMigration(
     const next = writeServerMapToJson(parsed, configKeyName, migration.servers);
     await writeTextAtomic(filePath, `${JSON.stringify(next, null, 2)}\n`);
   } catch (error) {
-    console.warn("[mcp-sync] legacy enable migration failed:", filePath, formatErrorMessage(error));
+    logger.warn(undefined, "legacy enable migration failed:", filePath, formatErrorMessage(error));
   }
   return migration.servers;
 }
