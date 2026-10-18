@@ -70,7 +70,8 @@ function mergeTaskIndexRowWithSession(
     executionWorktree: sessionTask.executionWorktree,
     // Health is live session state too; assigning undefined clears a stale marker after recovery.
     executionWorktreeMissing: sessionTask.executionWorktreeMissing,
-    incognito: sessionTask.incognito,
+    // A persisted marker (tasks-index meta_json) survives a summary that does not project it; the frozen profile never turns off.
+    incognito: sessionTask.incognito ?? taskIndexTask.incognito,
     // Child facts are session-owned; missing fields clear stale task-index metadata.
     sideChatCount: sessionTask.sideChatCount,
     subagentCount: sessionTask.subagentCount,

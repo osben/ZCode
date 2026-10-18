@@ -2772,6 +2772,8 @@ export function createZCodeTaskServiceAdapter(
         ...(params.executionWorktreeFacts
           ? { executionWorktreeFacts: params.executionWorktreeFacts }
           : {}),
+        // Incognito overlays converge into meta_json (specs/incognito-session.md "Sidebar marker durability").
+        ...(params.incognitoTaskIds ? { incognitoTaskIds: params.incognitoTaskIds } : {}),
       });
       return tasks.map(rememberIndexedTaskMeta);
     },

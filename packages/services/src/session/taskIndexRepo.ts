@@ -1719,6 +1719,9 @@ export class TaskIndexRepo {
           // Runtime session snapshots do not carry the worktree fact (BUG-GWT-010); preserve the fact converged
           // from sessions-index so a later sync never erases it and the marker survives restarts of closed workspaces.
           executionWorktree: params.meta.executionWorktree ?? existingMeta?.executionWorktree,
+          // Runtime snapshots carry no incognito marker; keep the converged `true` so a sync never erases it
+          // (specs/incognito-session.md "Sidebar marker durability").
+          incognito: params.meta.incognito ?? existingMeta?.incognito,
           updatedAt,
           unreadAt: params.meta.unreadAt ?? existingMeta?.unreadAt,
         };
@@ -2052,6 +2055,11 @@ export class TaskIndexRepo {
       taskId: string;
       executionWorktree: ZCodeExecutionWorktree;
     }>;
+    /**
+     * Host sessions-index convergence input (specs/incognito-session.md "Sidebar marker durability"): task ids
+     * whose live overlay is incognito. Persists `incognito: true` into meta_json; never clears it.
+     */
+    incognitoTaskIds?: ReadonlyArray<string>;
   }): Promise<ZCodeTaskMeta[]> {
     await this.ensureReady();
     if (params.workspacePath && params.executionWorktreeFacts?.length) {
@@ -2061,6 +2069,15 @@ export class TaskIndexRepo {
           ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
         },
         params.executionWorktreeFacts,
+      );
+    }
+    if (params.workspacePath && params.incognitoTaskIds?.length) {
+      await this.applyIncognitoFacts(
+        {
+          workspacePath: params.workspacePath,
+          ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+        },
+        params.incognitoTaskIds,
       );
     }
     // listTaskMetas supports querying all tasks when workspacePath is omitted, but workspaceKey requires a path.
@@ -2170,6 +2187,65 @@ export class TaskIndexRepo {
    * entry (draft sessions) and rows whose meta_json cannot be parsed are skipped: convergence must never
    * rewrite or replace data it does not understand.
    */
+  /**
+   * Converge incognito overlays into meta_json (specs/incognito-session.md "Sidebar marker durability").
+   * The profile is frozen per session, so a stored `true` never goes stale: the write only ever adds the
+   * marker. Rows that already carry it, are deleted, or hold unreadable meta_json are left untouched.
+   */
+  private async applyIncognitoFacts(
+    scope: { workspacePath: string; workspaceIdentity?: string },
+    taskIds: ReadonlyArray<string>,
+  ): Promise<void> {
+    await Promise.all(
+      taskIds.map((taskId) =>
+        this.enqueueWrite({ ...scope, taskId }, () => {
+          // Read-only fast path: skip the write lock when the marker is already stored.
+          const peek = this.getTaskRow({ ...scope, taskId });
+          if (!peek || peek.deleted === 1) return;
+          try {
+            if (
+              (JSON.parse(peek.meta_json) as { incognito?: boolean } | null)?.incognito === true
+            ) {
+              return;
+            }
+          } catch {
+            return;
+          }
+          // BEGIN IMMEDIATE before re-reading, the same pattern as applyExecutionWorktreeFacts.
+          const database = this.getDatabase();
+          database.exec("BEGIN IMMEDIATE");
+          try {
+            const row = this.getTaskRow({ ...scope, taskId });
+            if (!row || row.deleted === 1) {
+              database.exec("COMMIT");
+              return;
+            }
+            let parsed: unknown;
+            try {
+              parsed = JSON.parse(row.meta_json);
+            } catch {
+              database.exec("COMMIT");
+              return;
+            }
+            if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+              database.exec("COMMIT");
+              return;
+            }
+            if ((parsed as { incognito?: boolean }).incognito !== true) {
+              database
+                .prepare("UPDATE tasks SET meta_json = ? WHERE workspace_key = ? AND task_id = ?")
+                .run(JSON.stringify({ ...parsed, incognito: true }), workspaceKey(scope), taskId);
+            }
+            database.exec("COMMIT");
+          } catch (error) {
+            database.exec("ROLLBACK");
+            throw error;
+          }
+        }),
+      ),
+    );
+  }
+
   private async applyExecutionWorktreeFacts(
     scope: { workspacePath: string; workspaceIdentity?: string },
     facts: ReadonlyArray<{ taskId: string; executionWorktree: ZCodeExecutionWorktree }>,

@@ -196,9 +196,9 @@ Ordering constraints:
 - **i18n.** All strings in `en-US`, `zh-CN`, `uk-UA`. The turn-off aria-label is `chat.incognito.turnOff` (renamed from `chat.incognito.removeMarker`, same text and translations).
 - **Errors.** `proto.incognitoUnsupported` shows a toast; the draft text and incognito selection are kept.
 
-## Sidebar marker durability (proposed, not implemented)
+## Sidebar marker durability
 
-Status: proposed after the 2026-10-18 dev-web investigation. The marker today depends only on the live sessions-index overlay, so any client that does not observe the CLI sessions-index (dev web: the server shows no zcode-cli child and the rows carry only tasks-index meta) renders no marker, and tasks-index never stores `incognito`.
+Status: implemented (2026-10-18) for items 1-5 below; dev-web end-to-end verification is pending (see Limit). Proposed after the dev-web investigation. The marker today depends only on the live sessions-index overlay, so any client that does not observe the CLI sessions-index (dev web: the server shows no zcode-cli child and the rows carry only tasks-index meta) renders no marker, and tasks-index never stores `incognito`.
 
 Root cause (file:line, verified in the code and in the dev web DOM):
 
@@ -211,11 +211,11 @@ Design (mirrors BUG-GWT-010; `incognito` is frozen per session, so a persisted `
 
 1. `zcodeTaskMetaSchema` accepts optional `incognito: boolean` (tasks-index meta_json only; the wire row keeps its own `incognito` field).
 2. The runtime snapshot upsert preserves the stored value: `incognito: params.meta.incognito ?? existingMeta?.incognito`.
-3. Convergence: the observer's incognito overlays are persisted into meta_json (`true` only, idempotent), alongside the worktree facts, through the same `listTasks` input channel. The adapter must forward the new facts field (`zcode-agent/zcodeTaskServiceAdapter.ts`, owned by another active change).
+3. Convergence: the observer's incognito overlays are persisted into meta_json (`true` only, idempotent) through a separate `listTasks({ incognitoTaskIds })` input (`TaskIndexRepo.applyIncognitoFacts`; forwarded by `zcodeTaskServiceAdapter.listTasks`). The window controller acknowledges only ids whose returned row carries the marker.
 4. Reads: `buildSourceRows` and the search path use `overlay?.incognito || membership.meta.incognito`, so a persisted marker shows without a live overlay.
 5. Fork-safe: meta_json is a JSON blob (no migration, no new column, no `setting.json` key). Upstream strips unknown meta keys on read; the marker is re-converged by the next observer publish after an upstream rewrite.
 
-Limit: a client that never runs an observer (dev web) shows the marker only after a desktop or CLI-observed publish has converged it into the shared DB.
+Limit: convergence needs a live sessions-index overlay with `incognito`. A client that never receives one (dev web today: its sidebar rows carry only tasks-index meta) cannot converge, so the marker appears only after a build that includes this change has observed the sessions (desktop Host restart, or a web controller that receives the overlay). Verified by tests: services `taskIndexIncognitoMarker.test.ts` (live convergence, cold restart, sync preserve, absent row) and UI `buildTaskListResultFromSessions.test.ts` (persisted marker kept when the summary lacks it).
 
 Scenario 23: the web sidebar (no sessions-index observer in-process) shows the incognito marker for a session whose tasks-index meta carries `incognito: true`; a runtime snapshot sync does not erase it; a legacy row converges from the CLI row via the observer.
 

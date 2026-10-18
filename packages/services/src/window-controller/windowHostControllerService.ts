@@ -186,6 +186,11 @@ export function createWindowHostControllerRuntime(options: {
     string,
     { taskService: IZCodeTaskService; facts: Set<string>; inFlight: Set<string> }
   >();
+  // Incognito markers already confirmed in the source's tasks-index (specs/incognito-session.md "Sidebar marker durability").
+  const sourceIncognitoSynced = new Map<
+    string,
+    { taskService: IZCodeTaskService; taskIds: Set<string>; inFlight: Set<string> }
+  >();
   const pendingReplacementByNextSourceKey = new Map<string, WindowHostControllerSourceScope>();
   let disposed = false;
   let activeSourceReads = 0;
@@ -207,6 +212,7 @@ export function createWindowHostControllerRuntime(options: {
     sourceSessionObservers.delete(key);
     sourceLiveOverlays.delete(key);
     sourceWorktreeFactSynced.delete(key);
+    sourceIncognitoSynced.delete(key);
     sourceRefreshGenerations.set(key, (sourceRefreshGenerations.get(key) ?? 0) + 1);
     sourceRefreshFlights.delete(key);
   }
@@ -280,6 +286,55 @@ export function createWindowHostControllerRuntime(options: {
       });
   }
 
+  // Incognito is frozen per session (specs/incognito-session.md), so the overlay's `true` is converged once into
+  // meta_json and never cleared. Same ownership as the worktree fact: the overlay is the freshness source, the
+  // persisted marker is the durability source that lets clients without a sessions-index observer show it.
+  function convergeIncognitoFacts(
+    resolved: ResolvedWindowHostControllerSource,
+    overlays: WindowHostControllerSessionOverlay[],
+  ): void {
+    if (resolved.scope.kind !== "local" || !resolved.taskService) return;
+    const taskIds = overlays
+      .filter((overlay) => overlay.incognito)
+      .map((overlay) => overlay.taskId);
+    if (taskIds.length === 0) return;
+    const key = sourceKey(resolved.scope);
+    const taskService = resolved.taskService;
+    let synced = sourceIncognitoSynced.get(key);
+    if (synced?.taskService !== taskService) {
+      synced = { taskService, taskIds: new Set(), inFlight: new Set() };
+      sourceIncognitoSynced.set(key, synced);
+    }
+    const { taskIds: acknowledged, inFlight } = synced;
+    const pending = taskIds.filter((taskId) => !acknowledged.has(taskId) && !inFlight.has(taskId));
+    if (pending.length === 0) return;
+    for (const taskId of pending) inFlight.add(taskId);
+    void taskService
+      .listTasks({
+        workspacePath: resolved.scope.workspacePath,
+        ...(resolved.scope.workspaceIdentity
+          ? { workspaceIdentity: resolved.scope.workspaceIdentity }
+          : {}),
+        incognitoTaskIds: pending,
+      })
+      .then((tasks) => {
+        // Acknowledge only ids whose returned row carries the marker; pinned/archived rows are excluded from
+        // this read and are retried on the next publish.
+        const persisted = new Set(
+          tasks.filter((task) => task.incognito === true).map((t) => t.taskId),
+        );
+        for (const taskId of pending) {
+          if (persisted.has(taskId)) acknowledged.add(taskId);
+        }
+      })
+      .catch((error) => {
+        if (!disposed) options.onSourceError?.(resolved.scope, "refresh", error);
+      })
+      .finally(() => {
+        for (const taskId of pending) inFlight.delete(taskId);
+      });
+  }
+
   function ensureSourceSessionObserver(
     resolved: ResolvedWindowHostControllerSource,
   ): WindowHostSessionsIndexObserver | null {
@@ -319,7 +374,10 @@ export function createWindowHostControllerRuntime(options: {
         // convergence failure can never disturb the overlay path (BUG-GWT-010). Resolve the source again:
         // the captured `resolved.taskService` may have been replaced while the agent service stayed the same.
         const current = resolveCurrentSource(resolved.scope);
-        if (current) convergeExecutionWorktreeFacts(current, overlays);
+        if (current) {
+          convergeExecutionWorktreeFacts(current, overlays);
+          convergeIncognitoFacts(current, overlays);
+        }
       },
       onError: (error) => options.onSourceError?.(resolved.scope, "refresh", error),
     });

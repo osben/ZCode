@@ -176,7 +176,8 @@ function buildSourceRows(source: ControllerSource): Map<string, WindowHostContro
       ...(overlay?.executionWorktreeMissing !== undefined
         ? { executionWorktreeMissing: overlay.executionWorktreeMissing }
         : {}),
-      ...(overlay?.incognito ? { incognito: true } : {}),
+      // Persisted marker (meta_json) is the durability source; the frozen profile never turns back off.
+      ...(overlay?.incognito || membership.meta.incognito ? { incognito: true } : {}),
       ...(overlay?.worktreePreparation ? { worktreePreparation: overlay.worktreePreparation } : {}),
       ...(overlay?.activity ? { activity: overlay.activity } : {}),
       ...(membership.searchSnippets ? { searchSnippets: membership.searchSnippets } : {}),
