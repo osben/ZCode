@@ -985,10 +985,12 @@ function CustomRepeatDialog({
                   <span
                     className={cn(
                       "flex size-4 items-center justify-center rounded-full border-[1.33px]",
-                      !ends ? "border-[#4099FF] bg-[#4099FF]" : "border-border",
+                      !ends ? "border-icon-blue bg-icon-blue" : "border-border",
                     )}
                   >
-                    {!ends ? <span className="size-1.5 rounded-full bg-white" /> : null}
+                    {!ends ? (
+                      <span className="size-1.5 rounded-full bg-foreground-inverse" />
+                    ) : null}
                   </span>
                 </span>
                 {intl.formatMessage({
@@ -1004,10 +1006,10 @@ function CustomRepeatDialog({
                   <span
                     className={cn(
                       "flex size-4 items-center justify-center rounded-full border-[1.33px]",
-                      ends ? "border-[#4099FF] bg-[#4099FF]" : "border-border",
+                      ends ? "border-icon-blue bg-icon-blue" : "border-border",
                     )}
                   >
-                    {ends ? <span className="size-1.5 rounded-full bg-white" /> : null}
+                    {ends ? <span className="size-1.5 rounded-full bg-foreground-inverse" /> : null}
                   </span>
                 </span>
                 {intl.formatMessage({
