@@ -119,6 +119,7 @@ function DesktopVoiceDictationSection() {
   const savedFeedbackVolume = voice.feedbackVolume ?? DEFAULT_FEEDBACK_VOLUME;
   const muteWhileRecording = voice.muteWhileRecording === true;
   const copyToClipboard = voice.copyToClipboard === true;
+  const warmUpOnFocus = voice.warmUpOnFocus !== false;
 
   const [models, setModels] = useState<VoiceModelListItem[]>([]);
   const [startingDownloadIds, setStartingDownloadIds] = useState<Set<string>>(() => new Set());
@@ -692,6 +693,17 @@ function DesktopVoiceDictationSection() {
                   ) : null}
                 </div>
               ) : undefined
+            }
+          />
+          <SettingsRow
+            label={intl.formatMessage({ id: "voiceDictation.warmUp.title" })}
+            description={intl.formatMessage({ id: "voiceDictation.warmUp.description" })}
+            control={
+              <Switch
+                aria-label={intl.formatMessage({ id: "voiceDictation.warmUp.title" })}
+                checked={warmUpOnFocus}
+                onCheckedChange={(checked) => void patchVoice({ warmUpOnFocus: checked })}
+              />
             }
           />
           <SettingsRow

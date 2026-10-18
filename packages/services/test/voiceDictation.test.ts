@@ -1004,3 +1004,99 @@ test("transcriber passes bare codes through for models without a locale map", as
     await transcriber.unload();
   });
 });
+
+function makeWarmUpService(dir: string, descriptor: VoiceModelDescriptor, idleUnloadMs = 60_000) {
+  const counts = { loads: 0, disposes: 0 };
+  const store = makeStore(dir, { catalog: [descriptor] });
+  const engine: VoiceEngineModel = {
+    ...makeFakeEngine([]),
+    supportsStreaming: () => true,
+    beginStream: async () => true,
+    feedStream: async () => ({ committed: "", tentative: "" }),
+    finalizeStream: async () => ({ text: "done", language: "en" }),
+    cancelStream: () => undefined,
+    dispose: () => {
+      counts.disposes += 1;
+    },
+  };
+  const service = new VoiceDictationService({
+    store,
+    transcriber: new VoiceTranscriber({
+      store,
+      loadEngine: async () => {
+        counts.loads += 1;
+        return engine;
+      },
+    }),
+    idleUnloadMs,
+  });
+  return { service, counts };
+}
+
+test("warmUp loads the model without transcribing and shows it as loaded", async () => {
+  await withTempDir(async (dir) => {
+    const descriptor = makeDescriptor();
+    await installFakeModel(dir, descriptor);
+    const { service, counts } = makeWarmUpService(dir, descriptor);
+
+    await service.warmUp({ modelId: descriptor.id });
+
+    assert.equal(counts.loads, 1);
+    assert.deepEqual(await service.getRuntimeState(), {
+      loadedModelId: descriptor.id,
+      activeModelId: null,
+      activePhase: null,
+    });
+    await service.removeModel(descriptor.id);
+  });
+});
+
+test("warming an already loaded model does not reload it and restarts the idle countdown", async () => {
+  await withTempDir(async (dir) => {
+    const descriptor = makeDescriptor();
+    await installFakeModel(dir, descriptor);
+    const { service, counts } = makeWarmUpService(dir, descriptor, 60);
+
+    await service.warmUp({ modelId: descriptor.id });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    await service.warmUp({ modelId: descriptor.id });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    // 80 ms since the first warm-up (> 60 ms idle delay) but only 40 ms since the second: still loaded.
+    assert.equal(counts.loads, 1);
+    assert.equal((await service.getRuntimeState()).loadedModelId, descriptor.id);
+
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    assert.equal(counts.disposes, 1);
+    assert.equal((await service.getRuntimeState()).loadedModelId, null);
+  });
+});
+
+test("warmUp is a no-op while a dictation stream is active", async () => {
+  await withTempDir(async (dir) => {
+    const descriptor = makeDescriptor({ family: "parakeet", streaming: true });
+    await installFakeModel(dir, descriptor);
+    const { service, counts } = makeWarmUpService(dir, descriptor, 5);
+
+    const streamId = await service.beginStream({ modelId: descriptor.id });
+    assert.ok(streamId);
+    await service.warmUp({ modelId: descriptor.id });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    // No idle timer was armed under the stream, so the model is still loaded and streaming.
+    assert.equal(counts.disposes, 0);
+    assert.equal((await service.getRuntimeState()).activePhase, "streaming");
+    await service.cancelStream(streamId);
+    await service.removeModel(descriptor.id);
+  });
+});
+
+test("warmUp rejects for a model that is not downloaded and leaves nothing loaded", async () => {
+  await withTempDir(async (dir) => {
+    const descriptor = makeDescriptor();
+    const { service, counts } = makeWarmUpService(dir, descriptor);
+
+    await assert.rejects(service.warmUp({ modelId: descriptor.id }));
+    assert.equal(counts.loads, 0);
+    assert.equal((await service.getRuntimeState()).loadedModelId, null);
+  });
+});

@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   settings: null as Record<string, unknown> | null,
   desktopEngine: null as Record<string, unknown> | null,
   desktopEnabled: null as boolean | null,
+  warmUpEnabled: null as boolean | null,
 }));
 
 vi.mock("@/hooks/useSettingService.js", () => ({
@@ -24,6 +25,12 @@ vi.mock("@/shortcuts/useShortcutBindings.js", () => ({
 vi.mock("@/components/ui/toast.js", () => ({ toast: vi.fn() }));
 vi.mock("@/logger.js", () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+// Model warm-up is covered by useVoiceModelWarmUp.test.ts; here only its enablement is observed.
+vi.mock("@/hooks/useVoiceModelWarmUp.js", () => ({
+  useVoiceModelWarmUp: (options: { enabled: boolean }) => {
+    mocks.warmUpEnabled = options.enabled;
+  },
 }));
 // The desktop engine's real behavior stays covered by useVoiceDictation.test.ts; here it is a
 // recording stub so the tests can prove which engine the control routed the toggle to.
@@ -118,6 +125,7 @@ afterEach(() => {
   mocks.settings = null;
   mocks.desktopEngine = null;
   mocks.desktopEnabled = null;
+  mocks.warmUpEnabled = null;
 });
 
 beforeEach(() => {
@@ -350,6 +358,8 @@ describe("V4ComposerDictationControl engine gating", () => {
     expect(instances).toHaveLength(1);
     expect(currentRecognition().start).toHaveBeenCalledTimes(1);
     expect(mocks.desktopEnabled).toBe(false);
+    // Web remote control never warms a Host model.
+    expect(mocks.warmUpEnabled).toBe(false);
     expect(mocks.desktopEngine?.toggle).not.toHaveBeenCalled();
   });
 
@@ -359,6 +369,7 @@ describe("V4ComposerDictationControl engine gating", () => {
 
     act(() => screen.getByTestId(TID_V4_COMPOSER_VOICE_ENTRY).click());
     expect(mocks.desktopEnabled).toBe(true);
+    expect(mocks.warmUpEnabled).toBe(true);
     expect(mocks.desktopEngine?.toggle).toHaveBeenCalledTimes(1);
     expect(instances).toHaveLength(0);
   });

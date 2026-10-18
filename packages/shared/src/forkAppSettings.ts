@@ -36,6 +36,7 @@ const voiceDictationSettingsSchema = z.object({
   feedbackVolume: z.number().int().min(0).max(100).optional(),
   muteWhileRecording: z.boolean().optional(),
   copyToClipboard: z.boolean().optional(),
+  warmUpOnFocus: z.boolean().optional(),
 });
 
 // Read tolerance: one malformed `languages` value drops only itself instead of the whole voiceDictation object.

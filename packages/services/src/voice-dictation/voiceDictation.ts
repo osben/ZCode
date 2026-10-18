@@ -36,6 +36,10 @@ export interface VoiceStreamRequest {
   language?: string;
 }
 
+export interface VoiceWarmUpRequest {
+  modelId: string;
+}
+
 export interface VoiceDictationRuntimeState {
   loadedModelId: string | null;
   activeModelId: string | null;
@@ -46,6 +50,12 @@ export interface IVoiceDictationService {
   listModels(): Promise<VoiceModelListItem[]>;
   getRuntimeState(): Promise<VoiceDictationRuntimeState>;
   setIdleUnloadMinutes(minutes: VoiceModelIdleUnloadMinutes): Promise<void>;
+  /**
+   * Loads the model in the background so the first recording does not wait for it, and restarts its
+   * idle-unload countdown. A no-op while a dictation stream is active; rejects like a recording
+   * would when the model is not downloaded.
+   */
+  warmUp(request: VoiceWarmUpRequest): Promise<void>;
   /** Download progress is read via listModels()'s downloading state; repeated calls for the same model share one task. */
   downloadModel(modelId: string): Promise<void>;
   cancelDownload(modelId: string): Promise<void>;

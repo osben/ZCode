@@ -529,6 +529,23 @@ describe("VoiceDictationSection shortcut row", () => {
   });
 });
 
+describe("VoiceDictationSection warm-up toggle", () => {
+  it("is on by default and persists an explicit off", async () => {
+    h.settings.voiceDictation = { modelId: "model-one" };
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+
+    const toggle = await screen.findByRole("switch", { name: "voiceDictation.warmUp.title" });
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+
+    fireEvent.click(toggle);
+    await waitFor(() =>
+      expect(h.updateSettings).toHaveBeenCalledWith({
+        voiceDictation: { modelId: "model-one", warmUpOnFocus: false },
+      }),
+    );
+  });
+});
+
 describe("VoiceDictationSection languages and model filters", () => {
   const openPicker = async () => {
     const trigger = await screen.findByRole("button", { name: /voiceDictation\.language\.title/ });

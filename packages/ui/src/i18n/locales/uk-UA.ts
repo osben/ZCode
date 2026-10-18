@@ -7297,6 +7297,9 @@ const ukUA: Record<string, string> = {
   "voiceDictation.copyToClipboard.title": "Копіювати надиктований текст у буфер обміну",
   "voiceDictation.copyToClipboard.description":
     "Крім вставки в поле повідомлення, також копіювати кожен готовий текст у системний буфер обміну.",
+  "voiceDictation.warmUp.title": "Прогрівати модель при фокусі на полі повідомлення",
+  "voiceDictation.warmUp.description":
+    "Завантажує вибрану модель у фоні, щоб перший запис починався без очікування. Завантажена модель займає пам'ять, доки не мине затримка вивантаження нижче.",
   "voiceDictation.language.title": "Мова",
   "voiceDictation.language.description":
     "Мови, якими ви диктуєте. Одна мова задається примусово; кілька або жодної — автовизначення, якому потрібна багатомовна модель.",

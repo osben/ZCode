@@ -7709,6 +7709,9 @@ const enUS: Record<string, string> = {
   "voiceDictation.copyToClipboard.title": "Copy dictated text to the clipboard",
   "voiceDictation.copyToClipboard.description":
     "Also put each finished transcript on the system clipboard, in addition to inserting it in the message box.",
+  "voiceDictation.warmUp.title": "Warm up the model when the message box is focused",
+  "voiceDictation.warmUp.description":
+    "Loads the selected model in the background so the first recording starts without waiting. A loaded model uses memory until the unload delay below passes.",
   "voiceDictation.language.title": "Language",
   "voiceDictation.language.description":
     "Languages you dictate in. One language is forced; several or none use auto-detection, which needs a multilingual model.",

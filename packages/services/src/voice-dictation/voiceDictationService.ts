@@ -12,6 +12,7 @@ import {
   type VoiceTranscriptionResponse,
   type VoiceTranscriptionPreview,
   type VoiceStreamRequest,
+  type VoiceWarmUpRequest,
 } from "./voiceDictation.js";
 import { VoiceModelStore } from "./voiceModelStore.js";
 import { VoiceTranscriber, decodePcm16LeToFloat32 } from "./voiceTranscriber.js";
@@ -58,6 +59,15 @@ export class VoiceDictationService implements IVoiceDictationService {
   async setIdleUnloadMinutes(minutes: VoiceModelIdleUnloadMinutes): Promise<void> {
     this.idleUnloadMs = minutes * 60_000;
     if (this.idleTimer) this.scheduleIdleUnload();
+  }
+
+  async warmUp(request: VoiceWarmUpRequest): Promise<void> {
+    // Never load or swap a model under a live stream.
+    if (this.activeStreamId) return;
+    // The countdown is only touched once the load succeeded, so a failed warm-up cannot strand an
+    // already loaded model without its idle timer.
+    await this.transcriber.load(request.modelId);
+    if (!this.activeStreamId) this.scheduleIdleUnload();
   }
 
   downloadModel(modelId: string): Promise<void> {

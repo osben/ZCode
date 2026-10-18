@@ -7,6 +7,7 @@ export {
   type VoiceTranscriptionPreview,
   type VoiceTranscriptionRequest,
   type VoiceTranscriptionResponse,
+  type VoiceWarmUpRequest,
 } from "./voiceDictation.js";
 export {
   DEFAULT_VOICE_MODEL_SOURCES,

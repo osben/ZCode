@@ -35,6 +35,7 @@ export {
   type VoiceTranscriptionPreview,
   type VoiceTranscriptionRequest,
   type VoiceTranscriptionResponse,
+  type VoiceWarmUpRequest,
 } from "./voice-dictation/voiceDictation.js";
 export {
   resolveEngineLanguage,

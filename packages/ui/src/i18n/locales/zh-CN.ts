@@ -7393,6 +7393,9 @@ const zhCN: Record<string, string> = {
   "voiceDictation.copyToClipboard.title": "将听写文本复制到剪贴板",
   "voiceDictation.copyToClipboard.description":
     "除了插入输入框，还将每次转写完成的文本复制到系统剪贴板。",
+  "voiceDictation.warmUp.title": "聚焦输入框时预热模型",
+  "voiceDictation.warmUp.description":
+    "在后台加载所选模型，使首次录音无需等待。已加载的模型会占用内存，直到下方的卸载延迟结束。",
   "voiceDictation.language.title": "语言",
   "voiceDictation.language.description":
     "听写所用语言。选择一种语言将强制使用该语言；选择多种或不选则自动识别，需要多语言模型。",

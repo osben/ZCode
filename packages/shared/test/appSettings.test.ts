@@ -273,9 +273,19 @@ describe("app settings", () => {
   it("stores dictation languages and the clipboard preference, dropping only a malformed languages value on read", () => {
     expect(
       forkAppSettingsSchema.parse({
-        voiceDictation: { modelId: "parakeet", languages: ["uk", "en"], copyToClipboard: true },
+        voiceDictation: {
+          modelId: "parakeet",
+          languages: ["uk", "en"],
+          copyToClipboard: true,
+          warmUpOnFocus: false,
+        },
       }).voiceDictation,
-    ).toEqual({ modelId: "parakeet", languages: ["uk", "en"], copyToClipboard: true });
+    ).toEqual({
+      modelId: "parakeet",
+      languages: ["uk", "en"],
+      copyToClipboard: true,
+      warmUpOnFocus: false,
+    });
 
     // One bad languages value must not wipe the other voice preferences.
     expect(

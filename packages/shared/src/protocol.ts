@@ -273,6 +273,8 @@ export interface VoiceDictationSettings {
   muteWhileRecording?: boolean;
   /** Also copy each finished transcript to the system clipboard (insertion into the composer is unaffected); absent means off. */
   copyToClipboard?: boolean;
+  /** Load the selected model in the background when the composer gains focus; absent means on (only an explicit false disables it). */
+  warmUpOnFocus?: boolean;
 }
 
 export type VoiceModelIdleUnloadMinutes = 1 | 5 | 10 | 15 | 30;

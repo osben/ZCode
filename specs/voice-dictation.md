@@ -305,3 +305,52 @@ Streaming facts, confirmed by running the models with `transcribe-cpp` 0.3.1 on 
 2. ~~Locale mapping and runtime verification for `nemotron-3.5-asr-streaming-0.6b`~~ — resolved (`languageLocales`, added to the catalog).
 3. Voxtral realtime and Moonshine streaming need the transcriber to choose the stream family per model.
 4. Model warm-up on composer focus, level meter RMS and silence hint, recording timer, `AudioWorklet` capture.
+
+## Model warm-up on composer focus
+
+### Product rules
+
+- When the composer gains focus on Desktop and a model is selected, the Host loads that model in the background so the first recording does not wait for it. Warm-up never records, transcribes, or changes the draft.
+- `voiceDictation.warmUpOnFocus` controls it. **Default on**: absent means on; only an explicit `false` disables it. The setting row explains that a loaded model holds memory until the idle-unload delay passes.
+- Warm-up also counts as use: warming an already-loaded model restarts its idle-unload countdown, so a model stays resident while the user keeps coming back to the composer.
+- Warm-up is best-effort. A failure (missing model file, older Host without the method, load error) is logged at warn level and never shown to the user; the next recording loads the model on demand exactly as before.
+- Warm-up is Desktop-local only: Web remote control and hosts without the voice service do nothing.
+
+### Ownership and interfaces
+
+- `IVoiceDictationService.warmUp({ modelId })` is new. `VoiceTranscriber` still owns which model is loaded (`load()` already serializes through its queue); `VoiceDictationService` owns the idle timer and the stream-lease guard.
+- Service rules: no-op while a dictation stream is active (never unload or swap a model under a stream); otherwise load the model, then (re)start the idle-unload timer unless a stream or transcription started meanwhile. A model that is not downloaded rejects with the store's existing error.
+- UI: `useVoiceModelWarmUp` (renderer) listens for focus entering the composer scope, applies the idle-unload preference, and calls `warmUp`. It requests at most once per model per 30 seconds, never while a request is in flight, and tolerates `Method not found: warmUp` from an older Host by disabling itself for the session.
+- Settings UI owns only the toggle; the service stays authoritative for what is loaded (the existing runtime state shows the `Loaded` badge).
+
+```mermaid
+sequenceDiagram
+  participant U as User
+  participant W as useVoiceModelWarmUp
+  participant S as VoiceDictationService
+  participant T as VoiceTranscriber
+  U->>W: focus enters composer
+  W->>W: skip if disabled, no model, throttled, or in flight
+  W->>S: setIdleUnloadMinutes, warmUp(modelId)
+  alt stream active
+    S-->>W: no-op
+  else
+    S->>T: load(modelId) (queued)
+    T-->>S: loaded
+    S->>S: restart idle timer (unless a stream started)
+  end
+  U->>S: first recording: beginStream finds the model already loaded
+```
+
+### Acceptance scenarios
+
+| Case      | Setup / action                                       | Expected result                                                                                         |
+| --------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| VD-WRM-01 | Warm-up on (default), model selected; focus composer | The Host loads the model; settings show it as `Loaded`; the first recording starts without a load wait. |
+| VD-WRM-02 | `warmUpOnFocus` is false                             | Focusing the composer never loads a model.                                                              |
+| VD-WRM-03 | Focus the composer repeatedly within 30 seconds      | At most one warm-up request.                                                                            |
+| VD-WRM-04 | Model already loaded; focus the composer             | No reload; the idle-unload countdown restarts.                                                          |
+| VD-WRM-05 | A dictation stream is active                         | Warm-up does nothing and the stream is untouched.                                                       |
+| VD-WRM-06 | No model selected, or the model is not downloaded    | No error toast; the failure is only logged.                                                             |
+| VD-WRM-07 | Older Host without `warmUp`                          | Dictation works as before; no toast; no repeated requests in the session.                               |
+| VD-WRM-08 | Web remote control                                   | No warm-up.                                                                                             |
