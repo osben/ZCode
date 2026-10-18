@@ -34,14 +34,7 @@ describe("settingsPageConfig", () => {
     ).toEqual([
       {
         id: "basics",
-        sections: [
-          "general",
-          "appearance",
-          "modelProvider",
-          "browser",
-          "shortcuts",
-          "voiceDictation",
-        ],
+        sections: ["general", "appearance", "modelProvider", "shortcuts", "voiceDictation"],
       },
       {
         id: "agentCapabilities",
@@ -55,6 +48,7 @@ describe("settingsPageConfig", () => {
           "skill",
           "commands",
           "hooks",
+          "browser",
         ],
       },
       {
@@ -128,7 +122,7 @@ describe("settingsPageConfig", () => {
     expect(SETTINGS_SECTIONS.find((section) => section.id === "skill")?.icon).toBe(WandSparkles);
   });
 
-  it("Worktrees 分区仅桌面平台注册，排在 Hooks 之后并提供中英文标题", async () => {
+  it("Worktrees 分区仅桌面平台注册，排在基础设置末尾并提供中英文标题", async () => {
     const { createSettingsPageConfig, SETTINGS_SECTIONS } = await loadSettingsPageConfig("test");
     const { settingsSections, settingsSectionGroups } = createSettingsPageConfig({
       isDesktop: true,
@@ -139,21 +133,17 @@ describe("settingsPageConfig", () => {
     expect(worktreesSection?.titleId).toBe("settings.worktrees.title");
     expect(enUS["settings.worktrees.title"]).toBe("Worktrees");
     expect(zhCN["settings.worktrees.title"]).toBe("Worktrees");
-    // Desktop: Worktrees follows Hooks inside agent capabilities.
+    // Desktop: Worktrees closes the Basics group.
     expect(
       settingsSectionGroups
-        .find((group) => group.id === "agentCapabilities")
+        .find((group) => group.id === "basics")
         ?.sections.map((section) => section.id),
     ).toEqual([
-      "instructions",
-      "outputStyles",
-      "memory",
-      "subagents",
-      "plugin",
-      "mcp",
-      "skill",
-      "commands",
-      "hooks",
+      "general",
+      "appearance",
+      "modelProvider",
+      "shortcuts",
+      "voiceDictation",
       "worktrees",
     ]);
     // Web default config (same boundary as the supportsWorktreeTasks Command Center command).
@@ -194,23 +184,20 @@ describe("settingsPageConfig", () => {
     expect(settingsSections.some((section) => section.id === "computerUse")).toBe(expected);
   });
 
-  it("桌面平台的电脑控制排在基础设置的浏览器之后", async () => {
+  it("桌面平台的电脑控制排在 Agent 能力的浏览器之后", async () => {
     const { createSettingsPageConfig } = await loadSettingsPageConfig("test");
-    const { settingsSectionGroups } = createSettingsPageConfig({ isMacDesktop: true });
-    const basics = settingsSectionGroups.find((group) => group.id === "basics");
+    const { settingsSectionGroups } = createSettingsPageConfig({
+      isMacDesktop: true,
+    });
+    const capabilities = settingsSectionGroups.find((group) => group.id === "agentCapabilities");
 
-    expect(basics?.sections.map((section) => section.id)).toEqual([
-      "general",
-      "appearance",
-      "modelProvider",
+    expect(capabilities?.sections.map((section) => section.id).slice(-2)).toEqual([
       "browser",
       "computerUse",
-      "shortcuts",
-      "voiceDictation",
     ]);
     expect(
       settingsSectionGroups
-        .find((group) => group.id === "agentCapabilities")
+        .find((group) => group.id === "basics")
         ?.sections.some((section) => section.id === "computerUse"),
     ).toBe(false);
   });
@@ -221,6 +208,19 @@ describe("settingsPageConfig", () => {
     const { settingsSections } = createSettingsPageConfig({});
 
     expect(resolveSettingsSectionForPlatform("computerUse", settingsSections, "general")).toBe(
+      "general",
+    );
+  });
+
+  it("migration 落点不可见并回退到 general", async () => {
+    const { createSettingsPageConfig, resolveSettingsSectionForPlatform } =
+      await loadSettingsPageConfig("test");
+    const { settingsSections } = createSettingsPageConfig({ isDesktop: true });
+
+    expect(settingsSections.some((section) => section.id === "migration")).toBe(false);
+    const { resolveSettingsSection } = await import("../src/lib/settingsNavigation.js");
+    expect(resolveSettingsSection("migration")).toBe("general");
+    expect(resolveSettingsSectionForPlatform("migration", settingsSections, "general")).toBe(
       "general",
     );
   });
