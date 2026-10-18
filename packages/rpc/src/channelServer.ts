@@ -92,6 +92,9 @@ export class ChannelServer<TContext = string> implements IChannelServer<TContext
         return;
       case RequestType.PromiseCancel:
       case RequestType.EventDispose:
+        // A request still waiting for its channel is not in activeRequests; drop it so a late
+        // registration does not execute a cancelled call or subscribe a disposed listener.
+        this.removePendingRequest(header[1]);
         this.disposeActiveRequest(header[1]);
         return;
     }
@@ -234,10 +237,15 @@ export class ChannelServer<TContext = string> implements IChannelServer<TContext
 
     const timer = setTimeout(() => {
       console.error(`Unknown channel: ${request.channelName}`);
+      // A pending listen gets no error; the client keeps its emitter, so keep the record until
+      // a late registration subscribes it or the client sends EventDispose.
       if (request.type !== RequestType.Promise) {
         return;
       }
 
+      // The client rejects and forgets the call on this error. Executing it on a late
+      // registration would run an unobservable side effect, and keeping it leaks its arguments.
+      this.removePendingRequest(request.id);
       this.sendResponse({
         id: request.id,
         data: {
@@ -250,6 +258,21 @@ export class ChannelServer<TContext = string> implements IChannelServer<TContext
     }, this.timeoutDelay);
 
     pendingRequests.push({ request, timer });
+  }
+
+  private removePendingRequest(id: number): void {
+    for (const [channelName, requests] of this.pendingRequests) {
+      const index = requests.findIndex((pending) => pending.request.id === id);
+      if (index === -1) {
+        continue;
+      }
+      clearTimeout(requests[index].timer);
+      requests.splice(index, 1);
+      if (requests.length === 0) {
+        this.pendingRequests.delete(channelName);
+      }
+      return;
+    }
   }
 
   private flushPendingRequests(channelName: string): void {
@@ -279,5 +302,11 @@ export class ChannelServer<TContext = string> implements IChannelServer<TContext
       disposable.dispose();
     }
     this.activeRequests.clear();
+    for (const requests of this.pendingRequests.values()) {
+      for (const { timer } of requests) {
+        clearTimeout(timer);
+      }
+    }
+    this.pendingRequests.clear();
   }
 }
