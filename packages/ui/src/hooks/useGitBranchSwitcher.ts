@@ -1,3 +1,4 @@
+import type { IGitService } from "@zcode/services";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   GitBranchMutationResult,
@@ -26,6 +27,7 @@ import { logger } from "@/logger.js";
 import { worktreeDirectoryNameOf } from "@/components/WorktreeTaskMarker.js";
 
 interface UseGitBranchSwitcherOptions {
+  gitService?: IGitService;
   workspacePath: string;
   // gitSummary is the source of truth for HEAD (updated by the file watcher). Its current
   // branch/HEAD values are used to discard potentially stale local branch snapshots when HEAD changes.
@@ -35,12 +37,14 @@ interface UseGitBranchSwitcherOptions {
 }
 
 export function useGitBranchSwitcher({
+  gitService: targetGitService,
   workspacePath,
   currentBranchName,
   headRefType,
   onRefreshGit,
 }: UseGitBranchSwitcherOptions) {
-  const { gitService } = useServices();
+  const contextServices = useServices();
+  const gitService = targetGitService ?? contextServices.gitService;
   const { intl, locale } = useZCodeIntl();
   const numberFormatter = new Intl.NumberFormat(locale);
   const [open, setOpen] = useState(false);
@@ -90,6 +94,9 @@ export function useGitBranchSwitcher({
     }
   }, [gitService, intl, workspacePath]);
 
+  // Remote workspaces on different hosts can share the same path, so the Git target service is
+  // part of the reset key; otherwise branch, occupancy, and switch-assist state from the previous
+  // host survive and a retried commit/switch would run against the new host.
   useEffect(() => {
     setOpen(false);
     setCreateDialogOpen(false);
@@ -97,7 +104,7 @@ export function useGitBranchSwitcher({
     setBranchesResult(null);
     setWorktreeOccupancy(new Map());
     resetSwitchAssistState();
-  }, [resetSwitchAssistState, workspacePath]);
+  }, [gitService, resetSwitchAssistState, workspacePath]);
 
   const openRef = useRef(open);
   openRef.current = open;
