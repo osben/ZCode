@@ -34,6 +34,12 @@ workspaceKey = workspaceIdentity?.trim() || workspacePath
 - UI 显式区分 `rootSessionId`（tab 分组）、`parentSessionId`（直属 lineage）和
   `childSessionId`（详情订阅目标）。一级 child 中 root 与 parent 相同； subagent tab 的
   稳定身份为 `workspaceKey + rootSessionId + childSessionId`，重复点击只激活。
+- selection side chat 是真实 session，其中派生的 subagent 的真实 lineage 是
+  `parentSessionId = side chat session`，但 tab 可见范围仍归属主任务：
+  `rootSessionId = side chat tab.parentSessionId`。side chat pane 透传宿主 callback，并把
+  该 root 交给 `SessionPane`，因此被打开的 child tab 在主任务下可见、在 side chat 下不可见；
+  side chat 自己的 tab 同步只按 `parentSessionId` 清理本 side chat 派生的 tab，不收集主任务
+  直属 child tab（先例：`b8d9e87d` 的 side chat 计划详情）。
 - 标题统一使用入口提供的任务 `title`：Agent 摘要行传递其可见标题，Running 面板传递
   `session/subagents` 投影标题。重复打开同一 child 时同步最新非空 title；仅在 title 为空时
   回退到本地化“子智能体”，不得再拼接 `subagentType` 或编号。
@@ -174,6 +180,9 @@ publisher(parent) -> parent timeline/index/legacy delivery
 - 切换父 task 只切换 child tab 可见组；workspace 共享 tab 不随 session 切换。
 - child raw event 不改变父 topic sequence/活跃时间；parent mirror 状态仍正常更新。
 - local/remote workspace identity 隔离，桌面与普通 Web 使用右侧 tab，手机 `/remote` 使用现有抽屉。
+- 从 selection side chat 点击派生 subagent 摘要行打开右侧只读 tab 时，`parentSessionId` 仍是该
+  side chat session，`rootSessionId` 是主任务；tab 在主任务下可见、切换 side chat 不显示，
+  side chat 的同步只清理自己的 tab，不新建 runtime/session。
 - child 已完成且文件摘要可撤销时，桌面、普通 Web 与手机 `/remote` 都能完成 safe preview/apply；
   撤销后 workspace 文件恢复且 child 摘要显示已撤销，父 task 与聊天历史保持不变。
 

@@ -81,12 +81,14 @@ import {
   type BrowserUseSidePaneTab,
   type BrowserSidePaneMetadata,
   type OpenScopedSubagentSideTabRequest,
+  type OpenScopedSubagentDirectorySideTabRequest,
   type OpenScopedPlanDetailSideTabRequest,
   type OpenScopedWorkflowActorSessionSideTabRequest,
   type OpenScopedWorkflowWorkspaceSideTabRequest,
   type OpenScopedWorkflowArtifactSideTabRequest,
   type OpenScopedWorkflowRunSideTabRequest,
   type OpenBackgroundBashSideTabRequest,
+  type SyncSubagentSessionTabsRequest,
   type WorkspaceSidePaneState,
 } from "@/lib/workspaceSidePane.js";
 import { inferMediaPreview, type CodeViewerSource } from "@/lib/codeViewer.js";
@@ -336,6 +338,8 @@ export function AnimatedSidePanePanel({
   onOpenCodeViewer,
   onOpenFileLink,
   onOpenSubagentSession,
+  onOpenSubagentDirectory,
+  onSyncSubagentSessionTabs,
   onOpenWorkflowActorSession,
   onOpenWorkflowWorkspace,
   onOpenWorkflowArtifact,
@@ -410,6 +414,8 @@ export function AnimatedSidePanePanel({
   onOpenFileLink?: (target: MessageFileLinkTarget) => void;
   onOpenBackgroundBash?: (request: OpenBackgroundBashSideTabRequest) => void;
   onOpenSubagentSession: (request: OpenScopedSubagentSideTabRequest) => void;
+  onOpenSubagentDirectory: (request: OpenScopedSubagentDirectorySideTabRequest) => void;
+  onSyncSubagentSessionTabs: (request: SyncSubagentSessionTabsRequest) => void;
   /** In the run details page, clicking an ask node opens the transcript tab for that actor instance. */
   onOpenWorkflowActorSession?: (request: OpenScopedWorkflowActorSessionSideTabRequest) => void;
   /** In the run details page, clicking a script row opens that run’s script transcript tab at the corresponding station. */
@@ -1212,6 +1218,10 @@ export function AnimatedSidePanePanel({
                             onOpenCodeViewer={onOpenCodeViewer}
                             onOpenFileLink={onOpenFileLink}
                             onOpenPlanDetail={onOpenPlanDetail}
+                            onOpenSubagentSession={onOpenSubagentSession}
+                            onOpenSubagentDirectory={onOpenSubagentDirectory}
+                            onSyncSubagentSessionTabs={onSyncSubagentSessionTabs}
+                            onOpenBackgroundBash={onOpenBackgroundBash}
                             onUnavailable={onCloseTab}
                           />
                         ) : tab.type === "plugin-ui" ? (

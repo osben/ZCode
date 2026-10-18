@@ -328,6 +328,7 @@ function renderPane({
   onSummaryPanelVariantOverrideChange,
   snapshot = makeSnapshot(),
   sessionId = "session-1",
+  rootSessionId,
 }: {
   compactForRemoteControl?: boolean;
   onOpenSubagentSession?: (request: OpenScopedSubagentSideTabRequest) => void;
@@ -335,6 +336,7 @@ function renderPane({
   onSummaryPanelVariantOverrideChange?: (variant: "panel" | "mini" | null) => void;
   snapshot?: ConversationSnapshot;
   sessionId?: string | null;
+  rootSessionId?: string;
 } = {}): string {
   statusPanelCapture.props = [];
   statusPanelCapture.composerProps = [];
@@ -356,6 +358,7 @@ function renderPane({
         sessionId,
         workspacePath: "/workspace",
         compactForRemoteControl,
+        ...(rootSessionId ? { rootSessionId } : {}),
         ...(onOpenSubagentSession ? { onOpenSubagentSession } : {}),
         ...(onOpenWorkflowRun ? { onOpenWorkflowRun } : {}),
         ...(onSummaryPanelVariantOverrideChange ? { onSummaryPanelVariantOverrideChange } : {}),
@@ -654,6 +657,48 @@ describe("SessionPane v4 chat layout parity", () => {
     expect(statusPanelCapture.props.at(-1)?.isMobileViewport).toBe(false);
     expect(statusPanelCapture.props.at(-1)?.onOpenSubagentSession).toEqual(expect.any(Function));
     expect(statusPanelCapture.props.at(-1)?.onOpenSubagentDirectory).toBeUndefined();
+  });
+
+  it("scopes a side chat subagent open to the main task root", () => {
+    const onOpenSubagentSession = vi.fn();
+    const row = subagentRow();
+    const snapshot = makeSnapshot({
+      rows: { window: [userInputRow(), row], totalCount: 2, firstRowId: 1 },
+    });
+
+    // A selection side chat runs as its own session, but its subagents belong to the main task.
+    renderPane({
+      snapshot,
+      sessionId: "side-chat-session",
+      rootSessionId: "main-task",
+      onOpenSubagentSession,
+    });
+    const panelProps = statusPanelCapture.props.at(-1);
+    if (!panelProps) throw new Error("Status panel props were not captured");
+    expect(panelProps.rootSessionId).toBe("main-task");
+    expect(panelProps.parentSessionId).toBe("side-chat-session");
+
+    (
+      panelProps.onOpenSubagentSession as (request: {
+        parentSessionId: string;
+        childSessionId: string;
+        subagentType: string;
+        title: string;
+      }) => void
+    )({
+      parentSessionId: "side-chat-session",
+      childSessionId: "grandchild-session",
+      subagentType: "Explore",
+      title: "Nested explore",
+    });
+    expect(onOpenSubagentSession).toHaveBeenCalledWith({
+      workspacePath: "/workspace",
+      rootSessionId: "main-task",
+      parentSessionId: "side-chat-session",
+      childSessionId: "grandchild-session",
+      subagentType: "Explore",
+      title: "Nested explore",
+    });
   });
 
   it("wires the Composer background entry to panel expansion and controlled Running state", () => {
