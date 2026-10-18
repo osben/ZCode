@@ -74,6 +74,14 @@ export function resolveIncognitoDefaults(
   return resolved;
 }
 
+/** True when the session is incognito and `capability` is not opted back in. */
+export function incognitoExcludes(
+  profile: IncognitoProfile | undefined,
+  capability: IncognitoCapabilityKey,
+): boolean {
+  return profile !== undefined && !profile[capability];
+}
+
 export function buildIncognitoProfile(capabilities: IncognitoCapabilities): IncognitoProfile {
   return incognitoProfileSchema.parse({ version: INCOGNITO_PROFILE_VERSION, ...capabilities });
 }

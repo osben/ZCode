@@ -271,6 +271,7 @@ export function createDefaultSubagentPort(
           // The child runs in the same (possibly linked-worktree) cwd as the parent; carrying the
           // fact lets the subagent env block render the same isolation notice as the main agent.
           executionWorktree: this.config.executionWorktree,
+          incognito: this.config.incognito,
           // Project the execution model into Context only from the child's Active Model; envInfo must not store a second model fact.
           envInfo: childRuntimeEnvInfo,
           // Explore subruntimes previously did not inherit the main session's streaming

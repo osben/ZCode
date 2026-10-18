@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { incognitoExcludes } from "@zcode/shared";
 
 import {
   traceContextToLogContext,
@@ -52,13 +53,16 @@ export async function ensureContextInitialized(
           currentDate: this.config.currentDate,
           effectiveShellDisplayName: shellDisplayName,
           envInfo: this.config.envInfo,
-          userInstructions: this.config.userInstructions
-            ? {
-                ...this.config.userInstructions,
-                workingDirectory:
-                  this.config.userInstructions.workingDirectory ?? this.workingDirectory,
-              }
-            : undefined,
+          // Incognito without project instructions resolves no user or project AGENTS.md.
+          userInstructions:
+            this.config.userInstructions &&
+            !incognitoExcludes(this.config.incognito, "projectInstructions")
+              ? {
+                  ...this.config.userInstructions,
+                  workingDirectory:
+                    this.config.userInstructions.workingDirectory ?? this.workingDirectory,
+                }
+              : undefined,
           projectContext: this.config.projectContext,
           trace: traceContext,
         },
@@ -141,6 +145,10 @@ export function createContextBuilderFromSnapshot(
     // The execution model belongs to the model step; do not write it back to the reusable Context Source.
     this.config.envInfo = envInfo;
   }
+  // Incognito without skills drops only the listing; discovery, the catalog and the Skill tool stay.
+  const skillListing = incognitoExcludes(this.config.incognito, "skills")
+    ? undefined
+    : this.skillLoadOutcome;
   if (this.config.subagentContext) {
     return createSubagentContextBuilder({
       agentPrompt: this.config.subagentContext.agentPrompt,
@@ -150,7 +158,7 @@ export function createContextBuilderFromSnapshot(
       // Subagents run in the same (worktree) cwd and must carry the same isolation notice.
       executionWorktree: this.config.executionWorktree,
       skillMetadataBudget: this.config.skillMetadataBudget,
-      skills: this.skillLoadOutcome,
+      skills: skillListing,
       userInstructions: this.config.subagentContext.userInstructions,
     });
   }
@@ -168,7 +176,7 @@ export function createContextBuilderFromSnapshot(
     memoryIndexContent: options.memoryIndexContent,
     memoryRoot,
     memoryIndexAsContext: this.config.memory?.indexAsContext === true,
-    skills: this.skillLoadOutcome,
+    skills: skillListing,
     agentProfiles: this.config.subagents?.profiles,
     embeddedSearchEnabled: resolveRuntimeEmbeddedSearchEnabled(this),
     skillMetadataBudget: this.config.skillMetadataBudget,

@@ -1,5 +1,6 @@
 import { basename, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
+import { incognitoExcludes } from "@zcode/shared";
 
 import type { BackgroundTaskPayloadBase, ModelTextContentBlock } from "@zcode/contracts";
 import type { Model, ModelInputMessage, SessionInfo, TraceContext } from "../deps.js";
@@ -68,6 +69,8 @@ export function selectProjectDreamSessions(input: {
   return input.sessions.filter((session) => {
     if (session.id === input.currentSessionId) return false;
     if (!isMainMemoryTaskType(session.taskType)) return false;
+    // An incognito session without memory must never feed another session's dream.
+    if (incognitoExcludes(session.incognito, "memory")) return false;
     if (workspaceIdentity) return session.workspaceID === workspaceIdentity;
     return resolve(session.directory) === workspacePath;
   });

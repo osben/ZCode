@@ -1,6 +1,6 @@
 # Incognito session
 
-Status: in progress (2026-10-18). Slice 1 implemented: shared profile module (`packages/shared/src/incognito-profile.ts`), `incognitoDefaults` fork key, v4/legacy `createSession` fields, both `incognitoSession` capability flags. Nothing advertises or sends them yet; slices 2–5 pending.
+Status: in progress (2026-10-18). Slices 1–3 implemented: shared profile contract and fork setting; CLI storage (`session.fork_incognito`); CLI runtime overrides, inheritance, dream exclusion, and the CLI now advertises `incognitoSession: true` (apps/zcode-cli/docs/design/v2/incognito-session.md). Host gate, projection and UI (slices 4–5) pending; nothing sends `incognito` yet.
 
 ## Problem
 
@@ -26,19 +26,19 @@ Today the only switches for these extras are global or per-project config, and s
 
 ### Capabilities
 
-| Profile key             | When **off** (incognito default)                                                                                                                                                | Owner today                                                                                    |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `projectInstructions`   | No `~/.zcode/AGENTS.md` and no project `AGENTS.md` in the request user context.                                                                                                 | `resolveUserInstructions`, `apps/zcode-cli/packages/adapters/src/context/index.ts:94`          |
-| `skills`                | No skills listing meta block. The Skill tool **stays registered**: the user can still invoke a skill explicitly, and the agent may run one the user names.                      | listing `core/src/context/builder.ts:191`; tool `core/src/runtime/helpers/runtime-tools.ts:55` |
-| `hooks`                 | No hook runner from user/project config, workspace hook snapshot or plugin hooks. SessionStart hooks do not run.                                                                | `createRuntimeHookRunner`, `runtime-tools.ts:93`; `mergeRuntimeHooks`                          |
-| `plugins`               | Plugin discovery yields nothing for this session: no plugin skill roots, hooks, MCP servers, LSP servers, agents or runtime features.                                           | `resolveStartupPlugins`, `bootstrap/src/app/startup-marks.ts:12`                               |
-| `mcp`                   | No user/project-configured MCP servers.                                                                                                                                         | MCP merge, `runtime-config.ts:100`                                                             |
-| `customAgents`          | Subagent profiles resolve as `{ kind: "built-in-fallback" }` (built-in agents only).                                                                                            | `packages/shared/src/subagent-runtime-config.ts:32`; `create-app.ts:260,890`                   |
-| `memory`                | No memory root: no memory section, no MEMORY.md index, no recall prefetch, no extraction, `/dream` unavailable, no subagent persistent memory. Excluded from dream (see below). | `resolveEnabledProjectMemoryRoot`, `core/src/runtime/helpers/project-memory.ts:4`              |
-| `outputStyle`           | No output-style system section and no output-style reminders.                                                                                                                   | `bootstrap/src/output-style.ts:48`, `create-app.ts:300`                                        |
-| `systemPromptOverrides` | `~/.zcode/system-prompt/<key>.md` overrides are ignored; built-in section texts are used.                                                                                       | `loadPersistedSystemPromptOverrides`, `bootstrap/src/system-prompt.ts:30`                      |
+| Profile key             | When **off** (incognito default)                                                                                                                                                                                                                       | Owner today                                                                                    |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| `projectInstructions`   | No `~/.zcode/AGENTS.md` and no project `AGENTS.md` in the request user context.                                                                                                                                                                        | `resolveUserInstructions`, `apps/zcode-cli/packages/adapters/src/context/index.ts:94`          |
+| `skills`                | No skills listing meta block. The Skill tool **stays registered**: the user can still invoke a skill explicitly, and the agent may run one the user names.                                                                                             | listing `core/src/context/builder.ts:191`; tool `core/src/runtime/helpers/runtime-tools.ts:55` |
+| `hooks`                 | No hook runner from user/project config, workspace hook snapshot or plugin hooks. SessionStart hooks do not run.                                                                                                                                       | `createRuntimeHookRunner`, `runtime-tools.ts:93`; `mergeRuntimeHooks`                          |
+| `plugins`               | Plugin discovery yields nothing for this session: no plugin skill roots, hooks, MCP servers, LSP servers, agents or runtime features. The `node_repl` MCP server, browser use and computer use come from official plugins, so they follow this toggle. | `resolveStartupPlugins`, `bootstrap/src/app/startup-marks.ts:12`                               |
+| `mcp`                   | No user/project-configured MCP servers.                                                                                                                                                                                                                | MCP merge, `runtime-config.ts:100`                                                             |
+| `customAgents`          | Subagent profiles resolve as `{ kind: "built-in-fallback" }` (built-in agents only).                                                                                                                                                                   | `packages/shared/src/subagent-runtime-config.ts:32`; `create-app.ts:260,890`                   |
+| `memory`                | No memory root: no memory section, no MEMORY.md index, no recall prefetch, no extraction, `/dream` unavailable, no subagent persistent memory. Excluded from dream (see below).                                                                        | `resolveEnabledProjectMemoryRoot`, `core/src/runtime/helpers/project-memory.ts:4`              |
+| `outputStyle`           | No output-style system section and no output-style reminders.                                                                                                                                                                                          | `bootstrap/src/output-style.ts:48`, `create-app.ts:300`                                        |
+| `systemPromptOverrides` | `~/.zcode/system-prompt/<key>.md` overrides are ignored; built-in section texts are used.                                                                                                                                                              | `loadPersistedSystemPromptOverrides`, `bootstrap/src/system-prompt.ts:30`                      |
 
-**Core (never toggleable):** CLI prefix, agent identity and `# Harness`, desktop context, dynamic behavior, session/tool guidance, environment info (including the execution-worktree line), context management, git system context, current date, built-in tools, the built-in `node_repl` MCP server, permissions and permission mode, model selection, internal mailbox hooks.
+**Core (never toggleable):** CLI prefix, agent identity and `# Harness`, desktop context, dynamic behavior, session/tool guidance, environment info (including the execution-worktree line), context management, git system context, current date, built-in tools, permissions and permission mode, model selection, internal mailbox hooks.
 
 ## Data model
 
@@ -166,7 +166,7 @@ Ordering constraints:
   - `skills` off → `ContextBuilder` omits the skills meta block; the skill port and Skill tool remain.
   - `hooks` off → no hook runner for config, workspace snapshot or plugin hooks (`mergeRuntimeHooks` must not re-enable). Internal mailbox hooks stay.
   - `plugins` off → plugin discovery for this App returns the empty outcome (same as `plugins.enabled: false`, `adapters/src/plugins/index.ts:145`), which also removes plugin skill roots, hooks, MCP, LSP and agents.
-  - `mcp` off → configured MCP servers are empty; built-in `node_repl` is still merged.
+  - `mcp` off → user/project-configured MCP servers are dropped from the merge; plugin-provided servers (including `node_repl`) follow `plugins`. `mcp.enabled` is not used, because it would also remove plugin servers.
   - `customAgents` off → subagent runtime config is `{ kind: "built-in-fallback" }` regardless of the Host's `subagents/readRuntimeConfig`.
   - `memory` off → `memory: { enabled: false }` regardless of the Host `memoryEnabled` preference; no memory root, recall, extraction or `/dream`.
   - `outputStyle` off → no active output style.
@@ -191,7 +191,7 @@ Ordering constraints:
 
 ## Acceptance scenarios
 
-1. Incognito with all defaults → first-turn prompt has no AGENTS.md, skills listing, memory section/index, output style or overrides; no hook runs; no configured or plugin MCP server connects; only built-in agents are listed; `node_repl` is available.
+1. Incognito with all defaults → first-turn prompt has no AGENTS.md, skills listing, memory section/index, output style or overrides; no hook runs; no configured or plugin MCP server connects; only built-in agents are listed; no `node_repl`, browser use or computer use (they come from official plugins).
 2. Each capability switched back on individually → only that capability returns (one scenario per key).
 3. Skills off → a skill named explicitly by the user still runs via the Skill tool.
 4. Plugin hooks installed + hooks off → no hook runs (regression for the forced `enabled: true`).

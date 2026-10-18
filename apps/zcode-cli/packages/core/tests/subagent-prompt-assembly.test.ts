@@ -6,6 +6,7 @@ import {
   createSessionId,
   modelMessageContentToText,
 } from "@zcode/contracts";
+import { INCOGNITO_LOCKDOWN_PROFILE, type IncognitoProfile } from "@zcode/shared";
 import { createTestAgentRuntime } from "./test-agent-runtime.js";
 import { buildPersistentAgentMemoryPrompt } from "../src/subagent/persistent-memory-prompt.js";
 import { resolvePersistentAgentMemoryRoot } from "../src/subagent/persistent-memory.js";
@@ -13,6 +14,7 @@ import { createSubagentContextBuilder } from "../src/subagent/context-builder.js
 import { MemoryFileSystem } from "./memory-test-utils.js";
 import { createTestSessionEventStore } from "./test-event-store.js";
 import { createTestModelFactory } from "./test-runtime-model.js";
+import { createTestSkillPort } from "./test-skill-port.js";
 
 function createMainModelSelection() {
   return {
@@ -689,4 +691,66 @@ describe("subagent provider-visible prompt assembly", () => {
       expect(allMessageText(request)).not.toContain("# ZCode Desktop Context");
     }
   });
+
+  it.each([
+    { label: "normal parent", incognito: undefined, listed: true },
+    { label: "incognito parent", incognito: INCOGNITO_LOCKDOWN_PROFILE, listed: false },
+  ] as Array<{ label: string; incognito: IncognitoProfile | undefined; listed: boolean }>)(
+    "Task-tool child of an $label inherits the skills listing decision",
+    async ({ incognito, listed }) => {
+      const childRequests: any[] = [];
+      let parentCallCount = 0;
+      const runtime = createTestAgentRuntime(
+        createSessionId("subagent-incognito-inheritance"),
+        {
+          mode: "build",
+          modelSelection: createTestModelSelection(createMainModelSelection()),
+          workingDirectory: "/repo/current",
+          ...(incognito ? { incognito } : {}),
+        },
+        {
+          contextSourcePort: createParentContextSourcePort(),
+          eventStore: createTestSessionEventStore(),
+          skillPort: createTestSkillPort("incognito-child-skill"),
+          modelFactory: createTestModelFactory({
+            async generateText(request: any) {
+              const toolNames = (request.tools ?? []).map((tool: any) => tool.name);
+              if (toolNames.includes("Agent")) {
+                parentCallCount++;
+                return parentCallCount === 1
+                  ? {
+                      finishReason: "tool-calls",
+                      text: "",
+                      toolCalls: [
+                        {
+                          id: "call_incognito_child",
+                          name: "Agent",
+                          input: { description: "Research", prompt: "Research the runtime." },
+                        },
+                      ],
+                      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                    }
+                  : {
+                      finishReason: "stop",
+                      text: "done",
+                      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                    };
+              }
+              childRequests.push(request);
+              return {
+                finishReason: "stop",
+                text: "child done",
+                usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+              };
+            },
+          } as never),
+        },
+      );
+
+      await runtime.executeTurn("Delegate to a general-purpose agent");
+
+      expect(childRequests).toHaveLength(1);
+      expect(allMessageText(childRequests[0]).includes("incognito-child-skill")).toBe(listed);
+    },
+  );
 });

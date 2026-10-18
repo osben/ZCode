@@ -3,6 +3,7 @@ import {
   INCOGNITO_CAPABILITY_KEYS,
   INCOGNITO_LOCKDOWN_PROFILE,
   buildIncognitoProfile,
+  incognitoExcludes,
   incognitoProfileSchema,
   parseStoredIncognitoProfile,
   resolveIncognitoDefaults,
@@ -54,6 +55,14 @@ describe("incognito profile", () => {
       ...INCOGNITO_LOCKDOWN_PROFILE,
       mcp: true,
     });
+  });
+
+  it("excludes a capability only for an incognito session that did not opt back in", () => {
+    expect(incognitoExcludes(undefined, "skills")).toBe(false);
+    expect(incognitoExcludes(INCOGNITO_LOCKDOWN_PROFILE, "skills")).toBe(true);
+    expect(incognitoExcludes({ ...INCOGNITO_LOCKDOWN_PROFILE, skills: true }, "skills")).toBe(
+      false,
+    );
   });
 
   it("reads an unparsable stored profile as lockdown, never as a normal session", () => {

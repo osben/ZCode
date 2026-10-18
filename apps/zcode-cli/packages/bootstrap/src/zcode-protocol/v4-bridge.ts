@@ -1446,6 +1446,7 @@ export function createConversationV4Gateway(
       expectedAttemptId,
       mcpServers,
       executionWorktree,
+      incognito,
       offPeakToolEnabled,
       dynamicWorkflowEnabled,
       dynamicWorkflowMode,
@@ -1509,6 +1510,7 @@ export function createConversationV4Gateway(
             // Execution worktree: the record executes in the linked worktree while session identity
             // and listing stay under the parent workspace above.
             ...(executionWorktree ? { executionWorktree } : {}),
+            incognito,
             // MCP is runtime-creation configuration. v4 createSession must pass it through just like
             // legacy session/create, or sessions created here will never start these tools.
             mcpServers,

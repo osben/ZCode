@@ -206,6 +206,25 @@ describe("ZCodeProtocolAgentServer", () => {
     }
   });
 
+  it("advertises incognito session support in runtime capabilities", async () => {
+    const server = new ZCodeProtocolAgentServer({
+      createZCodeApp: (options) => createFakeApp(options),
+      cwd: workspace.workspacePath,
+      version: "test-version",
+    });
+
+    await expect(
+      server.handleMessage({
+        id: "runtime-capabilities",
+        method: "runtime/capabilities",
+        params: {},
+      } as ZCodeProtocolMessage),
+    ).resolves.toMatchObject({
+      id: "runtime-capabilities",
+      result: { independentPlanState: true, incognitoSession: true },
+    });
+  });
+
   it("uses the Host managed policy for no-session Settings pretrust", async () => {
     const policyProvider = new InMemoryWorkspaceHookPolicyProvider({
       mode: "deny",

@@ -2,7 +2,7 @@ import type { ConfigResult } from "@zcode/adapters/config";
 import { GEN_UI_OUTPUT_ROOT_ENV } from "@zcode/shared/node";
 import { resolveInitialModelSelection, type ModelSelectionOptions } from "@zcode/provider";
 import { resolveBashTimeoutPolicy, type AgentProfile, type AgentRuntimeConfig } from "@zcode/core";
-import { type BuiltInSubagentModelSelectionOverrides } from "@zcode/shared";
+import { incognitoExcludes, type BuiltInSubagentModelSelectionOverrides } from "@zcode/shared";
 import {
   type CollaborationMode,
   type HookConfigSource,
@@ -67,6 +67,8 @@ export function resolveAppRuntimeConfig(input: {
     workspaceIdentity,
   } = input;
   const userInstructions = options.runtimeConfig?.userInstructions ?? { workingDirectory };
+  // Incognito profile (docs/design/v2/incognito-session.md): each excluded capability wins over every config source.
+  const incognito = options.runtimeConfig?.incognito;
   const registrySelection = resolveInitialRegistrySelection(options);
   // Restoring history does not start execution: an invalid or missing selection remains unbound and must not be filled from the configured default.
   const initialModelSelection = options.resume
@@ -99,7 +101,9 @@ export function resolveAppRuntimeConfig(input: {
   // same-name config cannot hijack mcp__node_repl__*; explicit user config may still override ordinary plugin MCP servers.
   const configuredMcpServers = {
     ...pluginMcpServers,
-    ...(options.runtimeConfig?.mcp?.servers ?? configResult.config.mcp.servers),
+    ...(incognitoExcludes(incognito, "mcp")
+      ? {}
+      : (options.runtimeConfig?.mcp?.servers ?? configResult.config.mcp.servers)),
     ...builtInMcpServers,
   };
   const trustedOfficialCuaServerNames = resolveTrustedOfficialCuaServerNames(
@@ -156,9 +160,12 @@ export function resolveAppRuntimeConfig(input: {
       }),
     runtimeFeatures: pluginRuntimeFeatures,
     language: options.runtimeConfig?.language,
-    systemPromptOverrides:
-      options.runtimeConfig?.systemPromptOverrides ?? persistedSystemPromptOverrides,
-    outputStyle: options.runtimeConfig?.outputStyle ?? persistedOutputStyle,
+    systemPromptOverrides: incognitoExcludes(incognito, "systemPromptOverrides")
+      ? undefined
+      : (options.runtimeConfig?.systemPromptOverrides ?? persistedSystemPromptOverrides),
+    outputStyle: incognitoExcludes(incognito, "outputStyle")
+      ? undefined
+      : (options.runtimeConfig?.outputStyle ?? persistedOutputStyle),
     titleGeneration,
     workingDirectory,
     userInstructions: {
@@ -181,12 +188,14 @@ export function resolveAppRuntimeConfig(input: {
       servers: autoConnectMcpServers,
       trustedOfficialCuaServerNames: [...trustedOfficialCuaServerNames],
     },
-    hooks: mergeRuntimeHooks(
-      options.runtimeConfig?.hooks
-        ? withHookConfigSource(options.runtimeConfig.hooks, { kind: "internal" })
-        : configResult.config.hooks,
-      input.pluginHooks,
-    ),
+    hooks: incognitoExcludes(incognito, "hooks")
+      ? undefined
+      : mergeRuntimeHooks(
+          options.runtimeConfig?.hooks
+            ? withHookConfigSource(options.runtimeConfig.hooks, { kind: "internal" })
+            : configResult.config.hooks,
+          input.pluginHooks,
+        ),
     subagents: {
       ...options.runtimeConfig?.subagents,
       enabled: options.runtimeConfig?.subagents?.enabled ?? configResult.config.features.subagent,
@@ -195,11 +204,15 @@ export function resolveAppRuntimeConfig(input: {
         ...(input.builtInSubagentModelSelectionOverrides ?? {}),
         ...runtimeBuiltInModelSelectionOverrides,
       },
-      profiles: [...(options.runtimeConfig?.subagents?.profiles ?? []), ...subagentProfiles],
+      profiles: incognitoExcludes(incognito, "customAgents")
+        ? []
+        : [...(options.runtimeConfig?.subagents?.profiles ?? []), ...subagentProfiles],
     },
     memory: {
       cliStorageRoot,
-      enabled: options.runtimeConfig?.memory?.enabled ?? configResult.config.features.memory,
+      enabled: incognitoExcludes(incognito, "memory")
+        ? false
+        : (options.runtimeConfig?.memory?.enabled ?? configResult.config.features.memory),
       ...(options.runtimeConfig?.memory?.extractionEnabled === undefined
         ? {}
         : { extractionEnabled: options.runtimeConfig.memory.extractionEnabled }),
