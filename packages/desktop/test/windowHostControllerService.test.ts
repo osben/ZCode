@@ -266,7 +266,20 @@ describe("WindowHostControllerService", () => {
       liveStatus: "completed",
       activity: { phase: "completedSuccess", lastActivityAt: 30 },
     });
-    expect(local.listTasks).toHaveBeenCalledTimes(1);
+    // BUG-GWT-010: besides the initial list load, the host converges the overlay's
+    // execution-worktree fact into task meta via the same list channel, so the count is 2 here
+    // and the second call must carry the fact payload (no other extra calls are expected).
+    expect(local.listTasks).toHaveBeenCalledTimes(2);
+    expect(local.listTasks).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        executionWorktreeFacts: [
+          {
+            taskId: "live",
+            executionWorktree: { path: "/work/demo/.worktrees/live", branchName: "feature/live" },
+          },
+        ],
+      }),
+    );
     expect(local.listPinnedTasks).toHaveBeenCalledTimes(1);
     expect(local.listArchivedTasks).toHaveBeenCalledTimes(1);
     runtime.dispose();
