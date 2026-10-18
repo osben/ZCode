@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, stat, utimes, writeFile as writeRealFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { INCOGNITO_LOCKDOWN_PROFILE } from "@zcode/shared";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -71,6 +72,29 @@ describe("Dream session selection", () => {
         workspaceIdentity,
       }).map((item) => item.id),
     ).toEqual([createSessionId("one"), createSessionId("two"), createSessionId("old")]);
+  });
+  it("skips incognito sessions without memory and keeps those that opted memory back in", () => {
+    const workspaceIdentity = createWorkspaceId("remote:opaque");
+    const sessions = [
+      session("plain", NOW, { workspaceID: workspaceIdentity }),
+      session("incognito", NOW, {
+        workspaceID: workspaceIdentity,
+        incognito: INCOGNITO_LOCKDOWN_PROFILE,
+      }),
+      session("incognito-memory", NOW, {
+        workspaceID: workspaceIdentity,
+        incognito: { ...INCOGNITO_LOCKDOWN_PROFILE, memory: true },
+      }),
+    ];
+
+    expect(
+      selectProjectDreamSessions({
+        currentSessionId: createSessionId("current"),
+        sessions,
+        workspacePath: WORKSPACE_PATH,
+        workspaceIdentity,
+      }).map((item) => item.id),
+    ).toEqual([createSessionId("plain"), createSessionId("incognito-memory")]);
   });
 });
 
@@ -975,7 +999,7 @@ describe("background Dream lifecycle", () => {
 function session(
   id: string,
   updated: number,
-  options: Partial<Pick<SessionInfo, "directory" | "taskType" | "workspaceID">> = {},
+  options: Partial<Pick<SessionInfo, "directory" | "incognito" | "taskType" | "workspaceID">> = {},
 ): SessionInfo {
   return {
     id: id.startsWith("sess_") ? createSessionId(id) : createSessionId(id),
@@ -987,6 +1011,7 @@ function session(
     title: id,
     version: "test",
     workspaceID: options.workspaceID,
+    incognito: options.incognito,
   };
 }
 

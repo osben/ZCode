@@ -11,6 +11,7 @@ export type SettingsSectionId =
   | "outputStyles"
   | "systemPrompt"
   | "memory"
+  | "incognito"
   | "plugin"
   | "mcp"
   | "skill"
@@ -83,6 +84,7 @@ function isSettingsSectionId(value: string): value is SettingsSectionId {
     value === "outputStyles" ||
     value === "systemPrompt" ||
     value === "memory" ||
+    value === "incognito" ||
     value === "plugin" ||
     value === "mcp" ||
     value === "skill" ||

@@ -15,6 +15,13 @@ vi.mock("@/components/WorktreeTaskMarker.js", () => ({
     createElement("span", { "data-worktree-task-icon": "true" }, "worktree-marker"),
 }));
 
+vi.mock("@/components/IncognitoTaskMarker.js", () => ({
+  IncognitoTaskMarker: ({ task }: { task: ZCodeTaskMeta }) =>
+    task.incognito
+      ? createElement("span", { "data-incognito-task-icon": "true" }, "incognito-marker")
+      : null,
+}));
+
 function baseTask(overrides: Partial<ZCodeTaskMeta> = {}): ZCodeTaskMeta {
   return {
     taskId: "hover-card-task",
@@ -77,6 +84,11 @@ test("renders title, worktree branch with stats, and model details", () => {
   expect(html).toContain("GLM-5.3");
   expect(html).not.toContain("account:zai-individual-coding-plan");
   expect(html).toContain("Extra High");
+});
+
+test("shows the incognito marker next to the title only for incognito sessions", () => {
+  expect(renderCard(baseTask({ incognito: true }))).toContain("incognito-marker");
+  expect(renderCard(baseTask())).not.toContain("incognito-marker");
 });
 
 test("shows change stats without a branch and falls back to Cpu for unknown providers", () => {

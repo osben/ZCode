@@ -51,7 +51,9 @@ export async function prepareTuiAppRuntime(
     });
   }
 
-  const sessionId = await resolveResumeSession(request, workingDirectory, env, deps);
+  const resume = await resolveResumeSession(request, workingDirectory, env, deps);
+  const sessionId = resume?.sessionId;
+  const resumeIncognito = resume?.incognito;
   const bootstrapModule = deps.createZCodeApp ? undefined : await loadBootstrapModule();
   const createAppFactory = deps.createZCodeApp ?? bootstrapModule?.createZCodeApp;
   if (!createAppFactory) throw new Error("ZCode app factory is unavailable.");
@@ -105,6 +107,7 @@ export async function prepareTuiAppRuntime(
     configuredDefaultModelSelection,
     createAppFactory,
     providerRegistryRuntime,
+    resumeIncognito,
     sessionId,
     workingDirectory,
   };

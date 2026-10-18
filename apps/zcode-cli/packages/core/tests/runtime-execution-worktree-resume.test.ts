@@ -10,6 +10,7 @@ import {
   type SessionInfo,
   type SessionStorePort,
 } from "@zcode/contracts";
+import { INCOGNITO_LOCKDOWN_PROFILE } from "@zcode/shared";
 import { AgentRuntime } from "../src/runtime.js";
 import { getMissingExecutionWorktreeToolError } from "../src/runtime/helpers/execution-worktree-guard.js";
 import { createTestSessionEventStore } from "./test-event-store.js";
@@ -267,5 +268,28 @@ describe("execution worktree sessions", () => {
       executionDirectory: "/workspace/worktrees/zcode-sleepy-capybara",
       executionBranch: "zcode/sleepy-capybara",
     });
+  });
+
+  // Incognito sessions persist their frozen profile the same way (docs/design/v2/incognito-session.md).
+  it.each([
+    { label: "incognito", incognito: INCOGNITO_LOCKDOWN_PROFILE },
+    { label: "normal", incognito: undefined },
+  ])("persists the $label profile on first send", async ({ incognito }) => {
+    const session = buildSession();
+    const store = buildStore(session);
+    const runtime = new AgentRuntime(
+      session.id,
+      { workingDirectory: "/workspace/project", titleGeneration: { enabled: false }, incognito },
+      {
+        eventStore: createTestSessionEventStore(),
+        sessionStore: store,
+        modelFactory: vi.fn(createTestModelFactory({})),
+      },
+    );
+
+    await runtime.ensureSessionPersistedForExternalActivity("first input", {
+      traceContext: { traceId: "trace-1" as never },
+    });
+    expect(store.createSession).toHaveBeenCalledWith(expect.objectContaining({ incognito }));
   });
 });

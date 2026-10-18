@@ -24,6 +24,7 @@ import {
   FileText,
   GitBranchPlus,
   Mic,
+  VenetianMask,
 } from "lucide-react";
 import { isSettingsSectionEnabled, type SettingsSectionId } from "@/lib/settingsNavigation.js";
 import type { Theme } from "@/useTheme.js";
@@ -103,6 +104,14 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     id: "memory",
     icon: Brain,
     titleId: "settings.memory",
+    groupId: "agentCapabilities",
+  },
+  // Defaults for incognito sessions (specs/incognito-session.md); after Memory because both decide
+  // what context a new session starts with.
+  {
+    id: "incognito",
+    icon: VenetianMask,
+    titleId: "settings.incognito",
     groupId: "agentCapabilities",
   },
   {

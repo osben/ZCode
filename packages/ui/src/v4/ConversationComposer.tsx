@@ -46,6 +46,7 @@ import {
   TID_V4_STOP,
   testId,
   type HighspeedCardSnapshot,
+  type IncognitoProfile,
   type PlanIdentitySnapshot,
   type ZCodeProvider,
 } from "@zcode/shared";
@@ -176,6 +177,11 @@ import {
   selectWorktreeIntentActive,
   useDraftBranchIntentStore,
 } from "@/v4/composer/draftBranchIntent.js";
+import {
+  selectDraftIncognito,
+  useDraftIncognitoIntentStore,
+} from "@/v4/composer/draftIncognitoIntent.js";
+import { V4ComposerIncognitoControl } from "@/v4/composer/V4ComposerIncognitoControl.js";
 import { isComposerSubmissionOwnerCurrent } from "@/v4/composer/composerSubmissionOwner.js";
 import { ComposerWorktreeRecovery } from "@/v4/composer/ComposerWorktreeRecovery.js";
 import { useBranchSwitchGuard } from "@/v4/composer/branchSwitchGuard.js";
@@ -252,6 +258,8 @@ export interface ConversationComposerSendOptions {
   /** Existing Host-prepared identity to activate and send into after worktree creation. */
   preparedSessionId?: string;
   preparedAttemptId?: string;
+  /** Incognito first send (specs/incognito-session.md): the frozen profile for the new session. */
+  incognito?: IncognitoProfile;
 }
 
 export type ConversationComposerSendResult = "sent" | "blocked" | "confirmationRequired";
@@ -697,6 +705,10 @@ function ConversationComposerImpl({
   );
   const worktreeIntentActive = useDraftBranchIntentStore((state) =>
     selectWorktreeIntentActive(state, workspaceKey),
+  );
+  const incognitoDraftActive = useDraftIncognitoIntentStore(
+    (state) =>
+      draftMode && sessionId === null && selectDraftIncognito(state, workspaceKey) !== null,
   );
   // Draft branch intent (specs/composer-branch-switcher-semantics.md): the guard and git access
   // needed to apply the intent at send time. Null services/guard = harness or compact shell
@@ -1991,9 +2003,18 @@ function ConversationComposerImpl({
             cleanupRevision = contentRevisionRef.current;
             editorClearedOptimistically = true;
           }
+          // The incognito intent only applies to the draft's first createSession. Capture freezes
+          // the profile and its intent generation, so the post-send cleanup cannot clear the
+          // intent of a newer draft and a pending defaults read cannot arm this consumed draft.
+          const incognitoSubmission =
+            draftMode && sessionId === null
+              ? useDraftIncognitoIntentStore.getState().captureForSubmission(workspaceKey)
+              : undefined;
+          const incognito = incognitoSubmission?.profile;
           const sendResult = await onSendText(promptText, {
             submission,
             ...(executionWorktree ? { executionWorktree } : {}),
+            ...(incognito ? { incognito } : {}),
             ...(preparedSessionId ? { preparedSessionId, preparedAttemptId } : {}),
             ...(currentConversationSelections.length
               ? {
@@ -2068,6 +2089,13 @@ function ConversationComposerImpl({
             });
             sendAction.noop();
             return;
+          }
+          if (incognitoSubmission) {
+            // The session now owns the frozen profile; the next draft starts normal again — unless
+            // a newer draft re-armed or changed the intent while this send was in flight.
+            useDraftIncognitoIntentStore
+              .getState()
+              .releaseAfterSend(workspaceKey, incognitoSubmission.generation);
           }
           if (executionWorktree) {
             // Setup pipeline terminal success: this worktree result is consumed by exactly this session.
@@ -3074,6 +3102,9 @@ function ConversationComposerImpl({
           onConfigPickerOpenChange={handleConfigPickerOpenChange}
           onSwitchMode={onSwitchMode}
         />
+        {draftMode && sessionId === null && !isWebRemoteControl ? (
+          <V4ComposerIncognitoControl workspaceKey={workspaceKey} disabled={disabled} />
+        ) : null}
         {/* Bug cause: The attachment gallery rebase once replaced all of leadingActions and removed the
             persistent staging CUA entry. The entry itself still handles platform, remote, and settings
             visibility; do not duplicate those checks in the composer. */}
@@ -3097,6 +3128,7 @@ function ConversationComposerImpl({
       canStop,
       disabled,
       draftConfig,
+      draftMode,
       handleConfigPickerOpenChange,
       isWebRemoteControl,
       backgroundWorkOpenTarget,
@@ -3105,8 +3137,10 @@ function ConversationComposerImpl({
       provider,
       remoteSessionId,
       runningSubagentCount,
+      sessionId,
       snapshot?.backgroundWorks,
       workspaceIdentity,
+      workspaceKey,
       workspacePath,
     ],
   );
@@ -3236,7 +3270,9 @@ function ConversationComposerImpl({
           shellClassName={
             highspeedCard
               ? "relative z-10 !rounded-none !border-0 !bg-transparent !transition-none hover:!border-transparent focus-within:!border-transparent focus-within:!bg-transparent"
-              : undefined
+              : incognitoDraftActive
+                ? "!border-incognito hover:!border-incognito focus-within:!border-incognito"
+                : undefined
           }
           onChange={handleEditorChange}
           onFocus={handleEditorFocus}

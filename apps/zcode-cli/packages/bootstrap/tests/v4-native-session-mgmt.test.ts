@@ -4,6 +4,7 @@
 // 08-phasing M4 完成定义的 L2 层（命令 → core 调用 → 状态推进，不经旧协议代码）。
 import { describe, expect, it, vi } from "vitest";
 import { SessionEventType } from "@zcode/contracts";
+import { INCOGNITO_LOCKDOWN_PROFILE } from "@zcode/shared";
 import type { CommandEnvelope } from "@zcode/shared/zcode-protocol-v4";
 import { V4CommandExecutor } from "../src/zcode-protocol-v4/commands/executor.js";
 import { V4SessionNotFoundError } from "../src/zcode-protocol-v4/commands/record-access.js";
@@ -165,6 +166,40 @@ describe("v4 原生 createSession", () => {
     );
 
     expect(createSessionRecord).toHaveBeenCalledWith({ workspaceId: "/w", mcpServers });
+  });
+
+  it("forwards the incognito profile to the session record", async () => {
+    const record = makeRecord({ app: makeApp(), persistence: "deferred" });
+    const { host, createSessionRecord } = makeCreateHost(record);
+    const incognito = { ...INCOGNITO_LOCKDOWN_PROFILE, memory: true };
+
+    await new V4CommandExecutor(host).execute(
+      envelope("createSession", { workspaceId: "/w", incognito }, "draft-incognito"),
+    );
+
+    expect(createSessionRecord).toHaveBeenCalledWith({ workspaceId: "/w", incognito });
+  });
+
+  it("rejects worktree preparation that carries an incognito profile (fail-closed)", async () => {
+    const record = makeRecord({ app: makeApp(), persistence: "deferred" });
+    const prepareWorktreeSession = vi.fn();
+    const host = makeHost(record, { prepareWorktreeSession });
+
+    await expect(
+      new V4CommandExecutor(host).execute(
+        envelope(
+          "createSession",
+          {
+            workspaceId: "/w",
+            worktreePreparation: { branchName: "b", targetPath: "/wt/b" },
+            incognito: INCOGNITO_LOCKDOWN_PROFILE,
+          },
+          "prepare-incognito",
+        ),
+      ),
+    ).rejects.toMatchObject({ reasonCode: "proto.invalidPayload" });
+    // The prepared row is reserved without a profile; rejecting is the only fail-closed option.
+    expect(prepareWorktreeSession).not.toHaveBeenCalled();
   });
 
   it.each([false, true])(

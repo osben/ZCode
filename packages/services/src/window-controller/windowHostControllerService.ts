@@ -104,6 +104,7 @@ function sessionOverlay(
     ...(summary.executionWorktreeMissing !== undefined
       ? { executionWorktreeMissing: summary.executionWorktreeMissing }
       : {}),
+    ...(summary.incognito ? { incognito: true } : {}),
     ...(summary.worktreePreparation ? { worktreePreparation: summary.worktreePreparation } : {}),
     ...(summary.sideChatCount !== undefined ? { sideChatCount: summary.sideChatCount } : {}),
     ...(summary.subagentCount !== undefined ? { subagentCount: summary.subagentCount } : {}),
@@ -702,6 +703,7 @@ export function createWindowHostControllerRuntime(options: {
                   ...(projected?.executionWorktreeMissing !== undefined
                     ? { executionWorktreeMissing: projected.executionWorktreeMissing }
                     : {}),
+                  ...(projected?.incognito ? { incognito: true } : {}),
                   ...(projected?.activity ? { activity: projected.activity } : {}),
                   ...(item.searchSnippets ? { searchSnippets: item.searchSnippets } : {}),
                 };
@@ -756,6 +758,7 @@ export function createWindowHostControllerRuntime(options: {
           ...(row.executionWorktreeMissing !== undefined
             ? { executionWorktreeMissing: row.executionWorktreeMissing }
             : {}),
+          ...(row.incognito ? { incognito: true } : {}),
           ...(row.worktreePreparation ? { worktreePreparation: row.worktreePreparation } : {}),
           ...(row.activity ? { activity: row.activity } : {}),
           ...(row.searchSnippets ? { searchSnippets: row.searchSnippets } : {}),

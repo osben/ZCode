@@ -10,7 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AppSettings } from "@zcode/shared";
+import { resolveIncognitoDefaults, type AppSettings } from "@zcode/shared";
 import type { ISettingService } from "../src/setting/setting.js";
 
 const originalHome = process.env.HOME;
@@ -1129,6 +1129,23 @@ describe("fork settings sidecar", () => {
 
     await service.update({ memoryIndexAsContext: false });
     expect(readJsonFile(forkSettingsFile(home)).memoryIndexAsContext).toBe(false);
+  });
+
+  it("stores incognitoDefaults in the sidecar as a whole object and rejects partial writes", async () => {
+    // The sidecar merges top-level keys only, so a partial object would replace the stored one and
+    // drop the other capabilities; the patch schema therefore requires every capability.
+    const home = makeTempHome();
+    const service = await createSettingServiceInHome(home);
+    const defaults = resolveIncognitoDefaults(undefined);
+
+    await service.update({ incognitoDefaults: { ...defaults, skills: true } });
+    await service.update({ incognitoDefaults: { ...defaults, skills: true, mcp: true } });
+    await expect(service.update({ incognitoDefaults: { hooks: true } })).rejects.toThrow();
+
+    const expected = { ...defaults, skills: true, mcp: true };
+    expect(readJsonFile(forkSettingsFile(home)).incognitoDefaults).toEqual(expected);
+    expect(readJsonFile(settingsFile(home))).not.toHaveProperty("incognitoDefaults");
+    expect((await service.get()).incognitoDefaults).toEqual(expected);
   });
 
   it("keeps fork settings when a foreign writer rewrites setting.json without them", async () => {

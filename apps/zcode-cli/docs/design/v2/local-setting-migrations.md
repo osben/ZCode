@@ -56,6 +56,9 @@ Migration rules:
 - Applied migrations are checked by `id` and `checksum`. A checksum mismatch is a startup error because historical migration SQL must not be edited in place.
 - Migration SQL must be idempotent where practical, because old databases can already contain tables created by pre-ledger builds.
 - The ledger records a migration only after its SQL succeeds.
+- A build checks only the migration ids it defines and ignores other ledger rows, so the upstream app and this fork can share one database.
+- Fork-owned migrations use `9001_fork_*` ids, are additive only, and add only `fork_`-prefixed tables or columns; they never take an upstream `000N` id. Their ids never appear in the upstream checksum pin (`adapters/tests/upstream-migration-checksum-pin.test.ts`).
+  - `9001_fork_session_incognito`: nullable `session.fork_incognito` (JSON incognito profile, `NULL` = normal session). Upstream upserts do not list the column; the fork upsert sets it with `coalesce`, so it is set once and never cleared (root `specs/incognito-session.md`).
 
 ## Startup Migration Gate
 

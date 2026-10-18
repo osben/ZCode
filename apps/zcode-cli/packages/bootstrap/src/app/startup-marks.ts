@@ -2,6 +2,7 @@ import type { ConfigResult } from "@zcode/adapters/config";
 import { discoverNodePluginsSync } from "@zcode/adapters/plugins";
 import type { AgentRuntimeConfig } from "@zcode/core";
 import type { Logger, McpServerConfig, PluginLoadOutcome } from "@zcode/contracts";
+import { incognitoExcludes, type IncognitoProfile } from "@zcode/shared";
 import type { StartupTimer } from "../startup-logging.js";
 import { resolveOfficialPluginRoots } from "./bundled-plugins.js";
 import { DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS } from "./official-plugin-definitions.js";
@@ -13,6 +14,8 @@ export function resolveStartupPlugins(input: {
   cliStorageRoot: string;
   configResult: ConfigResult;
   env?: NodeJS.ProcessEnv;
+  /** Incognito profile; plugins off yields the same empty outcome as `plugins.enabled: false`. */
+  incognito?: IncognitoProfile;
   logger?: Logger;
   options: Pick<ZCodeAppOptions, "officialPluginRoots" | "pluginStorageRoot" | "includeVisualize">;
   startupTimer: StartupTimer;
@@ -21,7 +24,9 @@ export function resolveStartupPlugins(input: {
   const pluginStorageRoot =
     input.options.pluginStorageRoot ?? getPluginStorageRoot(input.cliStorageRoot);
   const pluginOutcome = discoverNodePluginsSync({
-    config: input.configResult.config.plugins,
+    config: incognitoExcludes(input.incognito, "plugins")
+      ? { ...input.configResult.config.plugins, enabled: false }
+      : input.configResult.config.plugins,
     env: input.env ?? process.env,
     officialPluginRoots: resolveOfficialPluginRoots({
       extraRoots: input.options.officialPluginRoots,

@@ -22,6 +22,7 @@ import {
   type WorkspaceId,
   type SessionTaskType,
 } from "@zcode/contracts";
+import { parseStoredIncognitoProfile } from "@zcode/shared";
 import { decodeJson } from "./json.js";
 import type { MessageRow, PartRow, SessionEntryRow, SessionRow, TodoRow } from "./rows.js";
 
@@ -61,6 +62,7 @@ export function decodeSessionRow(row: SessionRow): SessionInfo {
     path: row.path ?? undefined,
     executionDirectory: row.execution_directory ?? undefined,
     executionBranch: row.execution_branch ?? undefined,
+    incognito: parseStoredIncognitoProfile(row.fork_incognito),
     title: row.title,
     titleSource: decodeSessionTitleSource(row.title_source),
     titleMessageID: row.title_message_id ? (row.title_message_id as MessageId) : undefined,

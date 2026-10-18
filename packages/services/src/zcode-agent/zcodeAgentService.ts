@@ -23,7 +23,10 @@ import {
   type LocalTtftFacts,
 } from "@zcode/shared";
 /* oxlint-disable eslint(max-lines) -- ZCode Protocol transport, notification wiring, and app-facing session methods must share the same client/emitter context. */
-import { ensureIndependentPlanSupport } from "./independentPlanSupport.js";
+import {
+  ensureIncognitoSupport,
+  ensureIndependentPlanSupport,
+} from "./runtimeCapabilitySupport.js";
 import { randomUUID } from "node:crypto";
 import { createTopicResourceBridge } from "./topicResourceBridge.js";
 import { uploadTopicResourceToClient } from "./topicResourceUpload.js";
@@ -5855,6 +5858,7 @@ export function createZCodeAgentService(
           compression: "none" as const,
           workspaceHookReview: true,
           independentPlanState: true,
+          incognitoSession: true,
           // Use the same capability set as the connection-scope hello so internal consumers that call the base service directly
           // can also receive `workflowRun.*` deltas (their own clientHello determines whether they actually receive them).
           workflowRunDeltas: true,
@@ -5996,6 +6000,12 @@ export function createZCodeAgentService(
         planPayload.firstInput?.planEnabled
       ) {
         await ensureIndependentPlanSupport(client);
+      }
+      if (
+        params.envelope.type === "createSession" &&
+        (params.envelope.payload as { incognito?: unknown }).incognito !== undefined
+      ) {
+        await ensureIncognitoSupport(client);
       }
       // The RPC facade removes the caller-forgeable top-level clientMode and injects the Host's
       // trusted value via the trusted carrier; direct calls from internal Host adapters still support explicit clientMode.

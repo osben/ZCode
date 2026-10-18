@@ -22,6 +22,7 @@ import { readBackgroundBashOutputFromOwner } from "./background-work-owner.js";
 // This file lives in the legacy directory, so importing the v4 executor is valid; v4 files must not
 // import any module from this directory in reverse.
 import {
+  incognitoProfilesEqual,
   isConversationRealUserTurnStarter,
   parseRemoteWorkspaceIdentity,
   type ZCodeSessionContextUsage,
@@ -1446,6 +1447,7 @@ export function createConversationV4Gateway(
       expectedAttemptId,
       mcpServers,
       executionWorktree,
+      incognito,
       offPeakToolEnabled,
       dynamicWorkflowEnabled,
       dynamicWorkflowMode,
@@ -1454,6 +1456,10 @@ export function createConversationV4Gateway(
       serializePreparedWorktreeMutation(context, preparedSessionId, async () => {
         if (permissionScope && !context.deps.sessionStore)
           throw new Error("Group task permission scope requires persistence");
+        // The profile actually used for this prepared identity. A prepared row starts without one;
+        // the first activation's request freezes it (durable via the row's set-once column,
+        // in-memory via the prepared entry until that write lands).
+        let activationIncognito = incognito;
         if (preparedSessionId) {
           const prepared = await loadStoredPreparedWorktreeSession(context, preparedSessionId);
           if (
@@ -1471,6 +1477,24 @@ export function createConversationV4Gateway(
           ) {
             throw new Error("Prepared worktree session does not match the requested workspace");
           }
+          const storedProfile = (
+            await context.deps.sessionStore?.getSession(preparedSessionId as SessionId)
+          )?.incognito;
+          // Tri-state: a profile, `null` (frozen as a normal session), `undefined` (first use).
+          const frozenChoice = storedProfile !== undefined ? storedProfile : prepared.incognito;
+          if (
+            frozenChoice !== undefined &&
+            // `null` (frozen as a normal session) compares as an absent profile.
+            !incognitoProfilesEqual(frozenChoice ?? undefined, incognito)
+          ) {
+            // Cause: a retry could report success for an incognito request while returning a
+            // normal session (or materialize the retry's profile against a row that keeps the
+            // original). The stored profile is the frozen fact; only an exact match may reuse it.
+            throw new Error(
+              "Prepared worktree session does not match the requested incognito profile",
+            );
+          }
+          if (frozenChoice !== undefined) activationIncognito = frozenChoice ?? undefined;
           if (prepared.status === "active") {
             // The durable active entry is the receipt of a completed activation: return the
             // existing identity without a second runtime, re-applied startup configuration, or a
@@ -1489,6 +1513,10 @@ export function createConversationV4Gateway(
                 : "input-pending",
             };
           }
+          // First materialization freezes the choice for warm-host retries: the row's profile
+          // lands only at first-send persistence, so until then only this stamp holds it
+          // (`null` freezes a normal session just as a profile freezes an incognito one).
+          prepared.incognito = activationIncognito ?? null;
         }
         // workspaceId has two forms (Workspace Identity constraint):
         // - Local workspace = workspacePath (fallback when identity is omitted).
@@ -1509,6 +1537,9 @@ export function createConversationV4Gateway(
             // Execution worktree: the record executes in the linked worktree while session identity
             // and listing stay under the parent workspace above.
             ...(executionWorktree ? { executionWorktree } : {}),
+            // The frozen choice of the prepared identity (stored profile when one exists), not
+            // the retry's request — see the compare above.
+            incognito: activationIncognito,
             // MCP is runtime-creation configuration. v4 createSession must pass it through just like
             // legacy session/create, or sessions created here will never start these tools.
             mcpServers,
@@ -1972,6 +2003,7 @@ export function createConversationV4Gateway(
               ? { childSessions: childList.map((child) => toWireChildSession(child, false)) }
               : {}),
             ...(executionWorktreeMissing ? { executionWorktreeMissing: true } : {}),
+            ...(session.incognito ? { incognito: true } : {}),
           };
         }),
       );
@@ -2163,6 +2195,7 @@ export function createConversationV4Gateway(
             }
           : {}),
         ...(executionWorktreeMissing ? { executionWorktreeMissing: true } : {}),
+        ...(record.app.runtime.isIncognito() ? { incognito: true } : {}),
         ...childSessionFactsResolver.resolve(sessionId),
       };
     },

@@ -51,6 +51,14 @@ async function createSession(
         "worktree preparation cannot include runtime or input settings",
       );
     }
+    // Second guard besides the shared schema refinement: the prepared row is reserved without a
+    // profile, so an incognito request here would be silently dropped by the reservation write.
+    if (payload.incognito) {
+      throw new V4InputAdmissionRejectedError(
+        "proto.invalidPayload",
+        "worktree preparation cannot include an incognito profile; send it on the activation createSession",
+      );
+    }
     if (!host.prepareWorktreeSession) {
       throw new Error("v4 createSession requires host.prepareWorktreeSession capability");
     }
@@ -78,6 +86,7 @@ async function createSession(
       ...(payload.permissionScope ? { permissionScope: payload.permissionScope } : {}),
       mcpServers: payload.mcpServers,
       ...(payload.executionWorktree ? { executionWorktree: payload.executionWorktree } : {}),
+      incognito: payload.incognito,
       offPeakToolEnabled: payload.offPeakToolEnabled,
       dynamicWorkflowEnabled: payload.dynamicWorkflowEnabled,
       dynamicWorkflowMode: payload.dynamicWorkflowMode,

@@ -35,6 +35,8 @@ export const hostCapabilitiesSchema = z.object({
    * `state.updated` patches, clamped to the old limit by `clampWorkflowRunsForLegacy` first.
    */
   workflowRunDeltas: z.boolean().optional(),
+  // This Host gates createSession `incognito` on the CLI's incognitoSession runtime capability.
+  incognitoSession: z.boolean().optional(),
 });
 export type HostCapabilities = z.infer<typeof hostCapabilitiesSchema>;
 

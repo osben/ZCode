@@ -84,6 +84,8 @@ export const sessionSummarySchema = z.object({
   // Top-level on purpose: old parsers strip unknown summary keys but the nested worktree schema is
   // strict, so a nested flag would fault whole frames on older clients (spec: execution-worktree-missing-handling.md §3).
   executionWorktreeMissing: z.boolean().optional(),
+  // Incognito session (specs/incognito-session.md); top-level for the same cross-version reason.
+  incognito: z.boolean().optional(),
   createdAt: timestampSchema,
 });
 export type SessionSummary = z.infer<typeof sessionSummarySchema>;

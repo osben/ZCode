@@ -140,6 +140,10 @@ Default light and dark CSS variables still exist as fallback foundations, but ne
   The sidebar worktree marker (Split rotated 90°) is intentionally un-colored — only its
   missing state is destructive. Shares the idle-task hue family by approved v1 decision
   (specs/worktree-icon-visibility.md); the glyphs differ (Moon vs Split).
+- **Incognito**: `--color-incognito`
+  Use for the composer incognito toggle and the prompt-shell border while an incognito draft is
+  active (always paired with the «Incognito» trigger label, never color-only). The sidebar incognito marker
+  (VenetianMask) is intentionally un-colored, like the worktree marker (specs/incognito-session.md).
 - **Diff Added**: `--color-diff-added` with `--color-diff-added-foreground`
 - **Diff Removed**: `--color-diff-removed` with `--color-diff-removed-foreground`
 

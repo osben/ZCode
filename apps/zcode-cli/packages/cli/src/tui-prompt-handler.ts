@@ -143,6 +143,7 @@ export function createTuiSubmitPrompt(
       configuredDefaultModelSelection,
       createAppFactory,
       providerRegistryRuntime,
+      resumeIncognito,
       sessionId,
       workingDirectory,
     } = await prepareTuiAppRuntime(deps, version, request, processRuntime);
@@ -169,6 +170,9 @@ export function createTuiSubmitPrompt(
           ...(forceMcs ? { midConversationSystem: { mode: "force" as const } } : {}),
           // The first app and apps created by /new, /resume, and fork all pass through here, keeping mode consistent within the process.
           ...resolveWorkflowModeRuntimeConfig(workflowMode),
+          // Incognito resume (root specs/incognito-session.md): capabilities are composed inside
+          // createZCodeApp, so the persisted profile must enter here — not at core resume time.
+          ...(resumeIncognito ? { incognito: resumeIncognito } : {}),
           modelStreaming: "on",
           titleGeneration: TUI_TITLE_GENERATION_CONFIG,
           workingDirectory,

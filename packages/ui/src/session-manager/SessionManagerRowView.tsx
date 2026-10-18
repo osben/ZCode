@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/dropdown-menu.js";
 import { useTaskListItemContextActions } from "@/useTaskListItemContextActions.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { IncognitoTaskMarker } from "@/components/IncognitoTaskMarker.js";
 import { getTaskChangeSummary } from "@/lib/taskChangeSummary.js";
 import { formatTaskRelativeTime } from "@/lib/taskListItemPresentation.js";
 import type { IntlInstance } from "@/i18n/createIntl.js";
@@ -260,14 +261,23 @@ export const SessionManagerRowView = memo(function SessionManagerRowView({
       case "branch":
         return <BranchCell row={row} />;
       case "environment":
-        return row.task.executionWorktree ? (
-          <span className="inline-flex h-5 items-center gap-1 rounded-sm border border-border bg-surface px-1.5 text-ui-xs text-foreground-subtle">
-            <GitBranch className="size-3" />
-            {intl.formatMessage({ id: "sessionManager.environment.worktree" })}
-          </span>
-        ) : (
-          <span className="text-ui-sm text-foreground-subtle">
-            {intl.formatMessage({ id: "sessionManager.environment.local" })}
+        return (
+          <span className="inline-flex items-center gap-1.5">
+            {row.task.executionWorktree ? (
+              <span className="inline-flex h-5 items-center gap-1 rounded-sm border border-border bg-surface px-1.5 text-ui-xs text-foreground-subtle">
+                <GitBranch className="size-3" />
+                {intl.formatMessage({ id: "sessionManager.environment.worktree" })}
+              </span>
+            ) : (
+              <span className="text-ui-sm text-foreground-subtle">
+                {intl.formatMessage({ id: "sessionManager.environment.local" })}
+              </span>
+            )}
+            {row.task.incognito ? (
+              <span className="text-foreground-subtle">
+                <IncognitoTaskMarker task={row.task} />
+              </span>
+            ) : null}
           </span>
         );
       case "model":

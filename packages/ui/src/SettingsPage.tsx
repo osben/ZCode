@@ -84,6 +84,7 @@ import { HooksSection } from "@/settings/HooksSection.js";
 import { WorkspaceFileSearchSection } from "@/settings/WorkspaceFileSearchSection.js";
 import { MemorySettingsSection } from "@/settings/MemorySettingsSection.js";
 import { WorktreesSection } from "@/settings/WorktreesSection.js";
+import { IncognitoSettingsSection } from "@/settings/IncognitoSettingsSection.js";
 import { UserInstructionsSettingsSection } from "@/settings/UserInstructionsSettingsSection.js";
 import { OutputStylesSection } from "@/settings/OutputStylesSection.js";
 import { SystemPromptSection } from "@/settings/SystemPromptSection.js";
@@ -2215,6 +2216,11 @@ export function SettingsPage({
                           <HooksSection
                             workspacePath={activeWorkspacePath}
                             workspaceIdentity={activeWorkspaceIdentity}
+                          />
+                        ) : activeSection === "incognito" ? (
+                          <IncognitoSettingsSection
+                            settings={sharedSettings}
+                            onUpdate={updateSharedSettings}
                           />
                         ) : activeSection === "worktrees" ? (
                           <WorktreesSection

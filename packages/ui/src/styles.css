@@ -321,6 +321,8 @@ html[data-document-hidden] *::after {
   --color-idle-task-surface: var(--color-violet-50);
   /* Worktree-session GitBranch marker; same hue family as idle-task by approved v1 decision (specs/worktree-icon-visibility.md). */
   --color-worktree-task: var(--color-violet-600);
+  /* Incognito composer tint and toggle (specs/incognito-session.md); sidebar marker stays uncolored. */
+  --color-incognito: var(--color-cyan-600);
   /* Pinned-entry bars in the conversation turn navigator (specs/turn-navigator-pin-highlight.md). */
   --color-pinned-turn: var(--color-amber-600);
   --color-destructive: var(--color-red-600);
@@ -478,6 +480,7 @@ html[data-document-hidden] *::after {
   --color-idle-task: var(--color-violet-400);
   --color-idle-task-surface: color-mix(in oklab, var(--color-violet-950) 50%, transparent);
   --color-worktree-task: var(--color-violet-400);
+  --color-incognito: var(--color-cyan-400);
   --color-pinned-turn: var(--color-amber-400);
   --color-destructive: var(--color-red-500);
   --color-destructive-foreground: var(--color-foreground-inverse);
@@ -626,6 +629,7 @@ html[data-document-hidden] *::after {
   --color-idle-task: #9e77ed;
   --color-idle-task-surface: #f5f3ff;
   --color-worktree-task: #9e77ed;
+  --color-incognito: #0e9fb8;
   --color-pinned-turn: var(--color-amber-600);
   --color-destructive: #e03131;
   --color-destructive-foreground: #ffffff;
@@ -774,6 +778,7 @@ html[data-document-hidden] *::after {
   --color-idle-task: #7b5ce5;
   --color-idle-task-surface: #160d38;
   --color-worktree-task: #7b5ce5;
+  --color-incognito: #22b8cf;
   --color-pinned-turn: var(--color-amber-400);
   --color-destructive: #ff5c5c;
   /* Zai Dark previously set the destructive foreground to black, conflicting with the fixed white text design for red danger buttons. */

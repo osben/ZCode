@@ -158,6 +158,9 @@ type ZCodeSessionRecordParams = (
       parentSessionId?: ZCodeSessionCreateParams["parentSessionId"];
       thoughtLevel?: ZCodeSessionCreateParams["thoughtLevel"];
       executionWorktree?: ZCodeSessionCreateParams["executionWorktree"];
+      // Cold resume and fork carry the persisted profile: plugins, MCP, hooks and agents are
+      // composed by createZCodeApp before core resume runs.
+      incognito?: ZCodeSessionCreateParams["incognito"];
       // Automation sessions disable title regeneration at creation, and create/resume share the
       // record initializer; the resume compatibility branch must declare this policy field too.
       titleGenerationEnabled?: ZCodeSessionCreateParams["titleGenerationEnabled"];
@@ -1086,6 +1089,9 @@ async function persistImportedSessionHistory(params: {
         slug: slugifyImportedSession(params.sessionId),
         directory: workspace.workspacePath,
         path: workspace.workspacePath,
+        // The app.resume() after this import marks the runtime persisted, so first-send
+        // persistence never writes the profile: the import write must carry it (set-once).
+        incognito: params.createParams.incognito,
         title: importedHistory.title,
         titleSource: "custom",
         version: params.context.deps.version ?? "0.0.0",
@@ -1165,6 +1171,9 @@ async function persistImportedSessionHistory(params: {
     slug: slugifyImportedSession(params.sessionId),
     directory: workspace.workspacePath,
     path: workspace.workspacePath,
+    // Same constraint as the shared-context bundle above: the resume that follows this write
+    // suppresses first-send persistence, so the profile must land here.
+    incognito: params.createParams.incognito,
     title: importedHistory.title?.trim() || "Imported session",
     titleSource: "custom",
     version: params.context.deps.version ?? "0.0.0",
@@ -1520,6 +1529,7 @@ export async function activateSessionForResume(
     {
       ...params,
       mode,
+      incognito: session.incognito,
       ...(session.executionDirectory
         ? {
             executionWorktree: {
@@ -2374,6 +2384,7 @@ export async function registerForkedSession(
       // parse an empty string just because of the fork.
       model: optionalModelSelectionFromString(parentModel),
       ...(fork.parentSessionId ? { parentSessionId: fork.parentSessionId } : {}),
+      incognito: forkedSession.incognito,
       taskType: forkedSession.taskType,
       workspace: record.workspace,
     },
@@ -3597,6 +3608,7 @@ async function createRecord(
       // above keeps the session identity/persistence anchored to the parent workspace. The fact was
       // health-checked above (create rejects a dead path; resume carries missing: true).
       ...(recordExecutionWorktree ? { executionWorktree: recordExecutionWorktree } : {}),
+      incognito: params.incognito,
       // Keep identity isolation separate from execution paths: core writes only identity to
       // session.workspace_id, while workingDirectory remains the actual path on the remote machine.
       // Local workspaces keep it undefined.

@@ -8175,6 +8175,43 @@ const enUS: Record<string, string> = {
   "sessionManager.empty.noMatch": "No sessions match these filters",
   "sessionManager.openFromProjectMenu": "Manage sessions",
   "quickPick.command.manageSessions": "Manage sessions",
+  // Incognito session (specs/incognito-session.md)
+  "taskList.incognitoTaskLabel": "Incognito session",
+  "chat.incognito.toggle": "Incognito session",
+  "chat.incognito.toggleDescription": "Start the next session without extras",
+  "chat.incognito.marker": "Incognito",
+  "chat.incognito.removeMarker": "Turn off incognito",
+  "chat.incognito.includeHeading": "Include in this session",
+  "chat.incognito.settingsLink": "Incognito settings…",
+  "chat.incognito.unsupported":
+    "This agent version can't start incognito sessions. Update the app or the remote agent and try again.",
+  "settings.incognito": "Incognito",
+  "settings.incognito.description":
+    "Defaults for new incognito sessions. Switch a capability on to include it by default; you can still change it for each session in the composer.",
+  "settings.incognito.scopeHint":
+    "Incognito starts a clean session without the extras below. It is not a privacy mode: usage stats, telemetry, input history and model logs are still recorded.",
+  "incognito.capability.projectInstructions.label": "Project instructions",
+  "incognito.capability.projectInstructions.description":
+    "AGENTS.md from your home folder and the project",
+  "incognito.capability.skills.label": "Skills list",
+  "incognito.capability.skills.description":
+    "Skills are not listed in the prompt; you can still run a skill by name",
+  "incognito.capability.hooks.label": "Hooks",
+  "incognito.capability.hooks.description": "User, project and plugin hooks",
+  "incognito.capability.plugins.label": "Plugins",
+  "incognito.capability.plugins.description":
+    "Plugin skills, hooks, MCP servers and agents, including browser use and computer use",
+  "incognito.capability.mcp.label": "MCP servers",
+  "incognito.capability.mcp.description": "MCP servers from your settings and project",
+  "incognito.capability.customAgents.label": "Custom agents",
+  "incognito.capability.customAgents.description":
+    "Your and project agent profiles; built-in agents stay available",
+  "incognito.capability.memory.label": "Memory",
+  "incognito.capability.memory.description": "Reading and writing project memory",
+  "incognito.capability.outputStyle.label": "Output style",
+  "incognito.capability.outputStyle.description": "Your active output style",
+  "incognito.capability.systemPromptOverrides.label": "System prompt overrides",
+  "incognito.capability.systemPromptOverrides.description": "Your edited system prompt sections",
 };
 
 export default enUS;

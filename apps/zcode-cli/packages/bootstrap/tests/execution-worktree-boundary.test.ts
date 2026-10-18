@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createProjectId, createSessionId, type SessionInfo } from "@zcode/contracts";
+import { INCOGNITO_LOCKDOWN_PROFILE, type IncognitoProfile } from "@zcode/shared";
 import {
   activateSessionForResume,
   createSessionRecordForV4,
@@ -35,6 +36,7 @@ afterEach(() => {
 interface CapturedAppOptions {
   workingDirectory?: string;
   executionWorktree?: { path: string; branchName?: string; missing?: boolean };
+  incognito?: IncognitoProfile;
 }
 
 /**
@@ -51,6 +53,7 @@ function contextWithCapturingApp(captured: CapturedAppOptions[]): ZCodeProtocolA
         captured.push({
           workingDirectory: options.runtimeConfig?.workingDirectory,
           executionWorktree: options.runtimeConfig?.executionWorktree,
+          incognito: options.runtimeConfig?.incognito,
         });
         throw new Error(SENTINEL_STOP);
       },
@@ -155,5 +158,40 @@ describe("execution worktree boundary health check", () => {
       missing: true,
     });
     expect(captured[0]?.workingDirectory).toBe("/workspace/project");
+  });
+});
+
+// The incognito profile reaches app creation on create and on cold resume (from the persisted
+// row) the same way the execution worktree does (docs/design/v2/incognito-session.md).
+describe("incognito profile at the session record boundary", () => {
+  const profile: IncognitoProfile = { ...INCOGNITO_LOCKDOWN_PROFILE, skills: true };
+
+  it.each([
+    { label: "incognito", incognito: profile },
+    { label: "normal", incognito: undefined },
+  ])("$label create hands the profile to app creation", async ({ incognito }) => {
+    const captured: CapturedAppOptions[] = [];
+    await expect(
+      createSessionRecordForV4(contextWithCapturingApp(captured), {
+        workspace: buildWorkspaceRef({ workspacePath: "/workspace/project" }),
+        incognito,
+      }),
+    ).rejects.toThrow(SENTINEL_STOP);
+    expect(captured.map((options) => options.incognito)).toEqual([incognito]);
+  });
+
+  it.each([
+    { label: "incognito", incognito: profile },
+    { label: "normal", incognito: undefined },
+  ])("cold resume of a $label row restores the persisted profile", async ({ incognito }) => {
+    const captured: CapturedAppOptions[] = [];
+    const context = contextWithCapturingApp(captured);
+    const session = persistedSession({ incognito });
+    context.deps.sessionStore = { getSession: async () => session, messages: async () => [] };
+
+    await expect(activateSessionForResume(context, { sessionId: session.id })).rejects.toThrow(
+      SENTINEL_STOP,
+    );
+    expect(captured.map((options) => options.incognito)).toEqual([incognito]);
   });
 });
