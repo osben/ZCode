@@ -78,7 +78,15 @@ export class VoiceTranscriber {
     return this.enqueue(async () => {
       if (this.activeStreamModelId)
         throw new Error("cannot load a model while a voice stream is active");
-      await this.ensureLoaded(id);
+      // Report the load in the runtime snapshot so the UI can show a warm-up as loading.
+      this.activeModelIdValue = id;
+      this.activePhaseValue = "loading";
+      try {
+        await this.ensureLoaded(id);
+      } finally {
+        this.activeModelIdValue = null;
+        this.activePhaseValue = null;
+      }
     });
   }
 

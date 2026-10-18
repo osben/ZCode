@@ -354,3 +354,62 @@ sequenceDiagram
 | VD-WRM-06 | No model selected, or the model is not downloaded    | No error toast; the failure is only logged.                                                             |
 | VD-WRM-07 | Older Host without `warmUp`                          | Dictation works as before; no toast; no repeated requests in the session.                               |
 | VD-WRM-08 | Web remote control                                   | No warm-up.                                                                                             |
+
+## Model status dot on the microphone button
+
+### Product rules
+
+- On Desktop the composer microphone button shows a small dot for the **selected** model: a pulsing warning-colored dot while that model is loading (including a warm-up load), a success-colored dot while it is loaded in memory. No dot when it is not loaded, when no model is selected, on Web remote control, and while recording or busy (the button already shows the recording or spinner state).
+- The dot is never the only signal: the tooltip adds the status text ("Speech model loading" / "Speech model loaded, starts instantly"), and the button is described by the same text for assistive technology. The pulse is disabled under reduced motion.
+- A model loaded for a different selection (the user switched models) shows no dot; loaded state always refers to the selected model.
+
+### Ownership and interfaces
+
+- The Host stays the only owner of what is loaded. `VoiceTranscriber.load()` now reports the `loading` phase and the model id through the existing runtime snapshot (it did not before: only transcription and streaming did, so a warm-up load was invisible).
+- The renderer derives the status with the pure `deriveVoiceModelStatus(runtimeState, selectedModelId)` and polls the existing `getRuntimeState()` once per second, only while Desktop dictation is enabled and the window is visible. There is no second source of truth and no UI timer.
+- The snapshot is a poll, so the dot can lag the Host by up to one poll interval.
+
+### Acceptance scenarios
+
+| Case      | Setup / action                                       | Expected result                                                   |
+| --------- | ---------------------------------------------------- | ----------------------------------------------------------------- |
+| VD-DOT-01 | Selected model starts loading (warm-up or first use) | A pulsing warning dot appears on the microphone button.           |
+| VD-DOT-02 | The model finishes loading                           | The dot turns success-colored and stays.                          |
+| VD-DOT-03 | The idle-unload delay passes                         | The dot disappears within about a second.                         |
+| VD-DOT-04 | A different model is loaded than the selected one    | No dot.                                                           |
+| VD-DOT-05 | Recording or transcribing                            | The dot is hidden; the existing recording/spinner state is shown. |
+| VD-DOT-06 | Reduced motion is requested                          | The loading dot does not pulse.                                   |
+| VD-DOT-07 | Window hidden                                        | The renderer stops polling until it is visible again.             |
+
+## Post-processing of dictated text (specified, not implemented yet)
+
+### Product rules
+
+- **Name:** "Post-processing". An optional step that rewrites the finished transcript with a language model according to a user-editable prompt, then inserts the result.
+- **Setting:** `voiceDictation.postProcessEnabled` (default off) with `postProcessPrompt` (default below) and `postProcessProvider`.
+- **Provider (first version):** a single system provider, shown in settings as "System model (Apple Foundation Models)". It is offered only when the Host reports it available (macOS with Apple Intelligence enabled and a supported device); otherwise the row explains why it is unavailable and the toggle stays off. When unavailable at dictation time, the raw transcript is inserted unchanged.
+- **TODO (next version):** let the user pick another provider and model from ZCode's configured providers instead of only the system model. The provider setting is an enum so adding values is additive; no other code may assume a single provider.
+- **Prompt variable:** `{{text}}` is replaced by the raw transcript. If the prompt contains no `{{text}}`, the transcript is appended after the prompt on a new line. Only this one variable exists.
+- **Default prompt (English, language-preserving):** "Fix punctuation, capitalization, and obvious speech-recognition mistakes in the text below. Remove filler words and false starts. Keep the text in its original language and never translate it. Do not add, explain, or answer anything; return only the corrected text.\n\n{{text}}". A reset button restores it. No presets.
+- **Flow:** transcribe, then (when enabled and available) process, then insert. While processing the microphone button shows its busy state and the tooltip says "Processing". If processing fails, times out (15 s), or returns empty text, the raw transcript is inserted instead and the failure is logged (no error toast).
+- **Clipboard:** with `copyToClipboard` on, the clipboard always receives the **raw** transcript, even when the inserted text is the processed one. Esc during processing discards the result (nothing inserted or copied).
+- **Privacy:** the on-device system model is the only provider in this version, so no transcript leaves the machine.
+
+### Ownership and interfaces
+
+- A Host service owns availability and execution (`getPostProcessAvailability()`, `postProcess({ text, prompt })`); the renderer owns the prompt and the toggle. `useVoiceDictation` owns the phase (a new `processing` phase after `transcribing`) and the fallback to raw text.
+- Apple Foundation Models are reached through a small bundled Swift helper built like `zcode-window-bounds` (`packages/desktop/native/`, a `prepare:` script, `electron-builder` extra resource). It reads JSON from stdin and writes JSON to stdout, checks `SystemLanguageModel.default.availability`, and is spawned per request with a timeout. Main injects the helper path into the Host.
+- Settings live in the fork sidecar (`forkAppSettings.ts`), same rules as the other `voiceDictation` fields.
+
+### Acceptance scenarios
+
+| Case      | Setup / action                                              | Expected result                                                                      |
+| --------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| VD-PPR-01 | Post-processing on, system model available; dictate         | The processed text is inserted; the clipboard (if enabled) holds the raw transcript. |
+| VD-PPR-02 | The prompt has `{{text}}` in the middle                     | The transcript is substituted at that position.                                      |
+| VD-PPR-03 | The prompt has no `{{text}}`                                | The transcript is appended after the prompt.                                         |
+| VD-PPR-04 | The model errors, times out, or returns empty               | The raw transcript is inserted; the failure is logged, no error toast.               |
+| VD-PPR-05 | System model unavailable (no Apple Intelligence, non-macOS) | The setting explains why and stays off; dictation inserts raw text.                  |
+| VD-PPR-06 | Esc while processing                                        | Nothing is inserted or copied.                                                       |
+| VD-PPR-07 | Dictate in Ukrainian with the default prompt                | The output stays Ukrainian (not translated).                                         |
+| VD-PPR-08 | Reset the prompt                                            | The default prompt is restored.                                                      |

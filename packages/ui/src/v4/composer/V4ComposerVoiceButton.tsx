@@ -7,6 +7,7 @@ import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useShortcutCommandLabel } from "@/shortcuts/useShortcutBindings.js";
 import type { VoiceDictationPhase } from "@/hooks/useVoiceDictation.js";
+import type { VoiceModelStatus } from "@/lib/voiceModelStatus.js";
 
 interface V4ComposerVoiceButtonProps {
   phase: VoiceDictationPhase;
@@ -16,6 +17,8 @@ interface V4ComposerVoiceButtonProps {
   loadingLabelId?: string;
   disabled?: boolean;
   onToggle: () => void;
+  /** Selected model's load state, shown as a small dot (Desktop only; omitted elsewhere). */
+  modelStatus?: VoiceModelStatus;
   /** Abandons the recording without transcribing; the Cancel button renders only when provided. */
   onCancel?: () => void;
 }
@@ -28,6 +31,7 @@ function V4ComposerVoiceButtonImpl({
   loadingLabelId,
   disabled,
   onToggle,
+  modelStatus,
   onCancel,
 }: V4ComposerVoiceButtonProps) {
   const { intl } = useZCodeIntl();
@@ -42,6 +46,14 @@ function V4ComposerVoiceButtonImpl({
           ? "voiceDictation.composer.stop"
           : "voiceDictation.composer.start",
   });
+  // The dot only adds information while the button is otherwise idle.
+  const statusDot =
+    phase === "idle" && (modelStatus === "loading" || modelStatus === "loaded")
+      ? modelStatus
+      : null;
+  const statusText = statusDot
+    ? intl.formatMessage({ id: `voiceDictation.composer.modelStatus.${statusDot}` })
+    : null;
   const Icon = recording ? Square : busy ? LoaderCircle : Mic;
   const levelPercent = Math.round(Math.max(0, Math.min(1, level)) * 100);
   // Persistent polite live region: announces phase changes even when focus is elsewhere
@@ -123,7 +135,10 @@ function V4ComposerVoiceButtonImpl({
           ) : null}
         </div>
       ) : null}
-      <ControlHintTooltip title={label} shortcut={shortcutLabel || undefined}>
+      <ControlHintTooltip
+        title={statusText ? `${label} · ${statusText}` : label}
+        shortcut={shortcutLabel || undefined}
+      >
         <Button
           type="button"
           variant="ghost"
@@ -131,6 +146,7 @@ function V4ComposerVoiceButtonImpl({
           data-testid={TID_V4_COMPOSER_VOICE_ENTRY}
           data-voice-phase={phase}
           aria-label={label}
+          aria-describedby={statusText ? "voice-model-status-text" : undefined}
           aria-pressed={recording}
           aria-disabled={busy || disabled || undefined}
           className={recording ? "text-destructive" : undefined}
@@ -144,6 +160,23 @@ function V4ComposerVoiceButtonImpl({
           />
         </Button>
       </ControlHintTooltip>
+      {statusDot ? (
+        <>
+          <span
+            aria-hidden
+            data-testid="voice-model-status-dot"
+            data-status={statusDot}
+            className={`pointer-events-none absolute right-1 top-1 size-1.5 rounded-full ${
+              statusDot === "loading"
+                ? "animate-pulse bg-warning motion-reduce:animate-none"
+                : "bg-success"
+            }`}
+          />
+          <span id="voice-model-status-text" className="sr-only">
+            {statusText}
+          </span>
+        </>
+      ) : null}
       <span className="sr-only" role="status" aria-live="polite">
         {statusAnnouncement}
       </span>

@@ -94,4 +94,58 @@ describe("V4ComposerVoiceButton live feedback", () => {
     fireEvent.click(cancel);
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
+
+  const renderStatus = (phase: "idle" | "recording" | "loading", modelStatus?: string) =>
+    render(
+      createElement(
+        TooltipProvider,
+        null,
+        createElement(V4ComposerVoiceButton, {
+          phase,
+          level: 0,
+          preview: null,
+          modelStatus: modelStatus as never,
+          onToggle: () => undefined,
+        }),
+      ),
+    );
+
+  it("shows a pulsing warning dot while the model loads and a success dot once loaded", () => {
+    renderStatus("idle", "loading");
+    const loading = screen.getByTestId("voice-model-status-dot");
+    expect(loading.getAttribute("data-status")).toBe("loading");
+    expect(loading.className).toContain("bg-warning");
+    expect(loading.className).toContain("animate-pulse");
+    expect(loading.className).toContain("motion-reduce:animate-none");
+    cleanup();
+
+    renderStatus("idle", "loaded");
+    const loaded = screen.getByTestId("voice-model-status-dot");
+    expect(loaded.getAttribute("data-status")).toBe("loaded");
+    expect(loaded.className).toContain("bg-success");
+    expect(loaded.className).not.toContain("animate-pulse");
+  });
+
+  it("describes the status in text for assistive technology, not only by color", () => {
+    renderStatus("idle", "loaded");
+    const button = screen.getByTestId("v4-composer-voice-entry");
+    const describedBy = button.getAttribute("aria-describedby");
+    expect(describedBy).toBeTruthy();
+    expect(document.getElementById(describedBy!)?.textContent).toBe(
+      "voiceDictation.composer.modelStatus.loaded",
+    );
+  });
+
+  it("shows no dot when idle, without a model, or while recording or busy", () => {
+    for (const [phase, status] of [
+      ["idle", "idle"],
+      ["idle", "none"],
+      ["recording", "loaded"],
+      ["loading", "loaded"],
+    ] as const) {
+      renderStatus(phase, status);
+      expect(screen.queryByTestId("voice-model-status-dot")).toBeNull();
+      cleanup();
+    }
+  });
 });

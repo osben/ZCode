@@ -1100,3 +1100,44 @@ test("warmUp rejects for a model that is not downloaded and leaves nothing loade
     assert.equal((await service.getRuntimeState()).loadedModelId, null);
   });
 });
+
+test("a model load is visible as the loading phase while it is in progress", async () => {
+  await withTempDir(async (dir) => {
+    const descriptor = makeDescriptor();
+    await installFakeModel(dir, descriptor);
+    const store = makeStore(dir, { catalog: [descriptor] });
+    let finishLoad!: () => void;
+    const transcriber = new VoiceTranscriber({
+      store,
+      loadEngine: () =>
+        new Promise<VoiceEngineModel>((resolve) => {
+          finishLoad = () => resolve(makeFakeEngine([]));
+        }),
+    });
+
+    const loading = transcriber.load(descriptor.id);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(transcriber.activeModelId, descriptor.id);
+    assert.equal(transcriber.activePhase, "loading");
+    assert.equal(transcriber.loadedModelId, null);
+
+    finishLoad();
+    await loading;
+    assert.equal(transcriber.activeModelId, null);
+    assert.equal(transcriber.activePhase, null);
+    assert.equal(transcriber.loadedModelId, descriptor.id);
+    await transcriber.unload();
+  });
+});
+
+test("a failed load clears the loading phase", async () => {
+  await withTempDir(async (dir) => {
+    const descriptor = makeDescriptor();
+    const store = makeStore(dir, { catalog: [descriptor] });
+    const transcriber = new VoiceTranscriber({ store, loadEngine: async () => makeFakeEngine([]) });
+
+    await assert.rejects(transcriber.load(descriptor.id));
+    assert.equal(transcriber.activeModelId, null);
+    assert.equal(transcriber.activePhase, null);
+  });
+});

@@ -7797,6 +7797,8 @@ const enUS: Record<string, string> = {
   "voiceDictation.composer.listening": "Listening",
   "voiceDictation.composer.status.idle": "Voice input ready",
   "voiceDictation.composer.status.transcribing": "Transcribing",
+  "voiceDictation.composer.modelStatus.loading": "Speech model loading",
+  "voiceDictation.composer.modelStatus.loaded": "Speech model loaded, voice input starts instantly",
   "settings.computerUse.title": "Computer Use",
   "settings.computerUse.toggleLabel": "Enable Computer Use",
   "settings.computerUse.toggleDescription":

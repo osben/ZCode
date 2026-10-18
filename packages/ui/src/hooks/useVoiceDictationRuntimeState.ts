@@ -10,16 +10,20 @@ const EMPTY_RUNTIME_STATE: VoiceDictationRuntimeState = {
 };
 const REFRESH_INTERVAL_MS = 1000;
 
-/** Polls local model lifecycle while its settings view is mounted. */
-export function useVoiceDictationRuntimeState() {
+/**
+ * Polls the local model lifecycle while the owning view is mounted. `enabled: false` never calls the
+ * Host; a hidden window skips the call and polls again once it is visible.
+ */
+export function useVoiceDictationRuntimeState({ enabled = true }: { enabled?: boolean } = {}) {
   const { voiceDictationService } = useServices();
   const [runtimeState, setRuntimeState] = useState(EMPTY_RUNTIME_STATE);
 
   useEffect(() => {
+    if (!enabled) return;
     let disposed = false;
     let timeout: number | undefined;
     const poll = async () => {
-      if (voiceDictationService) {
+      if (voiceDictationService && !document.hidden) {
         try {
           setRuntimeState(await voiceDictationService.getRuntimeState());
         } catch (error) {
@@ -36,7 +40,7 @@ export function useVoiceDictationRuntimeState() {
       disposed = true;
       if (timeout !== undefined) window.clearTimeout(timeout);
     };
-  }, [voiceDictationService]);
+  }, [enabled, voiceDictationService]);
 
   return { runtimeState };
 }

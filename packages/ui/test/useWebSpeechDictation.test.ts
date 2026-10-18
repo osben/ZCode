@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   desktopEngine: null as Record<string, unknown> | null,
   desktopEnabled: null as boolean | null,
   warmUpEnabled: null as boolean | null,
+  statusEnabled: null as boolean | null,
 }));
 
 vi.mock("@/hooks/useSettingService.js", () => ({
@@ -30,6 +31,13 @@ vi.mock("@/logger.js", () => ({
 vi.mock("@/hooks/useVoiceModelWarmUp.js", () => ({
   useVoiceModelWarmUp: (options: { enabled: boolean }) => {
     mocks.warmUpEnabled = options.enabled;
+  },
+}));
+// The status dot is covered by useVoiceModelStatus.test.ts; here only its enablement is observed.
+vi.mock("@/hooks/useVoiceModelStatus.js", () => ({
+  useVoiceModelStatus: (options: { enabled: boolean }) => {
+    mocks.statusEnabled = options.enabled;
+    return "none";
   },
 }));
 // The desktop engine's real behavior stays covered by useVoiceDictation.test.ts; here it is a
@@ -126,6 +134,7 @@ afterEach(() => {
   mocks.desktopEngine = null;
   mocks.desktopEnabled = null;
   mocks.warmUpEnabled = null;
+  mocks.statusEnabled = null;
 });
 
 beforeEach(() => {
@@ -360,6 +369,7 @@ describe("V4ComposerDictationControl engine gating", () => {
     expect(mocks.desktopEnabled).toBe(false);
     // Web remote control never warms a Host model.
     expect(mocks.warmUpEnabled).toBe(false);
+    expect(mocks.statusEnabled).toBe(false);
     expect(mocks.desktopEngine?.toggle).not.toHaveBeenCalled();
   });
 
@@ -370,6 +380,7 @@ describe("V4ComposerDictationControl engine gating", () => {
     act(() => screen.getByTestId(TID_V4_COMPOSER_VOICE_ENTRY).click());
     expect(mocks.desktopEnabled).toBe(true);
     expect(mocks.warmUpEnabled).toBe(true);
+    expect(mocks.statusEnabled).toBe(true);
     expect(mocks.desktopEngine?.toggle).toHaveBeenCalledTimes(1);
     expect(instances).toHaveLength(0);
   });
