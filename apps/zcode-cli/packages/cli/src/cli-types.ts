@@ -35,6 +35,8 @@ import type {
   ListZCodeSessionsOptions,
   ListZCodeSkillsOptions,
   logoutZCodeCli,
+  readPersistedIncognitoProfile,
+  ReadPersistedIncognitoProfileOptions,
   LogoutChatGptPlanOptions,
   LogoutZCodeCliOptions,
   resolveLatestSession,
@@ -111,6 +113,10 @@ export interface RunDependencies extends PluginsCommandOverrides {
   resolveLatestSession?: (
     options: ResolveLatestSessionOptions,
   ) => ReturnType<typeof resolveLatestSession>;
+  // Injectable so resume unit tests avoid loading the bootstrap module (same pattern as resolveLatestSession).
+  readPersistedIncognitoProfile?: (
+    options: ReadPersistedIncognitoProfileOptions,
+  ) => ReturnType<typeof readPersistedIncognitoProfile>;
   resolveWorkspaceGitBranch?: typeof resolveWorkspaceGitBranch;
   logoutChatGptPlan?: (
     options?: LogoutChatGptPlanOptions,

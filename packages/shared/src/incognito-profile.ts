@@ -104,3 +104,17 @@ export function parseStoredIncognitoProfile(
   const parsed = incognitoProfileSchema.safeParse(raw);
   return parsed.success ? parsed.data : INCOGNITO_LOCKDOWN_PROFILE;
 }
+
+/**
+ * Deep-equal on the normalized profile shape (version + every capability). Reuse decisions compare
+ * a requested profile against the stored one; `undefined` (normal session) never equals a profile,
+ * so an absent request for an incognito session is a mismatch too.
+ */
+export function incognitoProfilesEqual(
+  a: IncognitoProfile | undefined,
+  b: IncognitoProfile | undefined,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.version === b.version && INCOGNITO_CAPABILITY_KEYS.every((key) => a[key] === b[key]);
+}

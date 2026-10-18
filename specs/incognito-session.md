@@ -1,6 +1,6 @@
 # Incognito session
 
-Status: implemented (2026-10-18), slices 1–5: shared profile contract and fork setting; CLI storage (`session.fork_incognito`); CLI runtime overrides, inheritance, dream exclusion and the `incognitoSession` runtime capability (apps/zcode-cli/docs/design/v2/incognito-session.md); Host and renderer capability gates and the `incognito` summary/task-meta projection; UI (composer toggle and checklist, prompt-shell tint and chip, prewarm bypass, sidebar/hover-card/session-manager marker, Settings «Incognito», i18n). The desktop E2E scenarios (13, 17) are written but have not been run.
+Status: implemented (2026-10-18), slices 1–5: shared profile contract and fork setting; CLI storage (`session.fork_incognito`); CLI runtime overrides, inheritance, dream exclusion and the `incognitoSession` runtime capability (apps/zcode-cli/docs/design/v2/incognito-session.md); Host and renderer capability gates and the `incognito` summary/task-meta projection; UI (composer toggle and checklist, prompt-shell tint and chip, prewarm bypass, sidebar/hover-card/session-manager marker, Settings «Incognito», i18n). Draft-intent generation (scenario 18, composer half) and the serialized Settings write harden the UI races found in review. The desktop E2E scenarios (13, 17) are written but have not been run.
 
 ## Problem
 
@@ -111,7 +111,9 @@ export function parseStoredIncognitoProfile(
 ## Protocol
 
 - v4 `createSession` (payload schema split out of `command.ts` into `packages/shared/src/zcode-protocol-v4/create-session-command.ts`) gains `incognito: incognitoProfileSchema.optional()`. Absent = normal session.
-- Legacy `session/create` (`packages/shared/src/zcode-protocol/index.ts:1927`) gains the same optional field, so the bridge (`bootstrap/src/zcode-protocol/v4-bridge.ts:1443`) and `createRecord` (`server-operations.ts:3503`) carry it explicitly. The handler pick list in `session-mgmt.ts:73` must name it.
+- **Worktree preparation cannot carry `incognito`.** The v4 prepare step (`worktreePreparation`) reserves the session row before any profile exists, and that reservation write has no profile, so a create that sends both is rejected — by a refinement on the shared payload schema and again in the handler (`proto.invalidPayload`). The profile is sent on the activation `createSession` (`preparedSessionId`) instead.
+- **Prepared-row activation freezes the profile on first use.** The bridge compares the requested profile with the stored row profile (`getSession(...).incognito`) before any reuse of a prepared identity: a mismatch — including an absent profile on an incognito row, or a profile on a normal row — is rejected (deep-equal on the normalized profile), and materialization uses the stored profile once one exists. A retry can therefore never report success for a profile the session does not have.
+- Legacy `session/create` (`packages/shared/src/zcode-protocol/index.ts:1927`) gains the same optional field, so the bridge (`bootstrap/src/zcode-protocol/v4-bridge.ts:1443`) and `createRecord` (`server-operations.ts:3503`) carry it explicitly. The handler pick list in `session-mgmt.ts:73` must name it. A create with `importedHistory` persists through `persistImportedSessionHistory`, whose session inputs carry the profile: the `app.resume()` that follows marks the runtime persisted, so first-send persistence never gets a chance to write it.
 - `incognito` is **never** an optional compat field: it must not be added to `SESSION_CREATE_OPTIONAL_COMPAT_FIELDS` or `SESSION_RESUME_OPTIONAL_COMPAT_FIELDS` (`packages/services/src/zcode-agent/zcodeAgentService.ts:440`). If a CLI's `.strict()` schema rejects it, the create fails; the Host must not retry without it.
 - Capability gate, two hops (precedent: `independentPlanState`):
   1. CLI advertises `incognitoSession: true` in runtime capabilities (`zcodeRuntimeCapabilitiesSchema`).
@@ -121,12 +123,13 @@ export function parseStoredIncognitoProfile(
 
 ## Owners and event order
 
-| State                                 | Single owner / writer                                         | Readers                                             |
-| ------------------------------------- | ------------------------------------------------------------- | --------------------------------------------------- |
-| Defaults (`incognitoDefaults`)        | Host `SettingService` (fork sidecar)                          | Settings «Incognito» section, composer              |
-| Draft intent + per-session deviations | Renderer draft store (UI-local, not a server fact)            | Composer                                            |
-| Session profile (`fork_incognito`)    | CLI `createRecord` → session upsert (set once, never cleared) | CLI runtime composition, resume, fork, child, dream |
-| Sidebar flag (`incognito: true`)      | CLI sessions-index projection (derived, read-only)            | UI task list, hover card, session manager           |
+| State                                 | Single owner / writer                                         | Readers                                                   |
+| ------------------------------------- | ------------------------------------------------------------- | --------------------------------------------------------- |
+| Defaults (`incognitoDefaults`)        | Host `SettingService` (fork sidecar)                          | Settings «Incognito» section, composer                    |
+| Draft intent + per-session deviations | Renderer draft store (UI-local, not a server fact)            | Composer                                                  |
+| Intent generation per workspace       | Renderer draft store (same owner as the intent)               | Composer toggle (activation), send cleanup (deactivation) |
+| Session profile (`fork_incognito`)    | CLI `createRecord` → session upsert (set once, never cleared) | CLI runtime composition, resume, fork, child, dream       |
+| Sidebar flag (`incognito: true`)      | CLI sessions-index projection (derived, read-only)            | UI task list, hover card, session manager                 |
 
 ```mermaid
 sequenceDiagram
@@ -160,14 +163,14 @@ Ordering constraints:
 
 ## Runtime composition (CLI)
 
-- `AgentRuntimeConfig` (`apps/zcode-cli/packages/core/src/runtime/types.ts:122`) gains `incognito?: IncognitoProfile`. Set by `createRecord` from params, and on resume from `SessionInfo.incognito` (`resume.ts` alongside `executionWorktree`).
+- `AgentRuntimeConfig` (`apps/zcode-cli/packages/core/src/runtime/types.ts:122`) gains `incognito?: IncognitoProfile`. Set by `createRecord` from params, and on resume from `SessionInfo.incognito` (`resume.ts` alongside `executionWorktree`). The CLI's own TUI/headless resume resolves the target through `resolveResumeSession`, which returns the persisted profile with the id and forwards it into `createZCodeApp`'s `runtimeConfig`.
 - Each capability has one override point that wins over every config source (global, project, plugin, env):
   - `projectInstructions` off → `resolveUserInstructions` is not called; `userInstructions` empty.
   - `skills` off → `ContextBuilder` omits the skills meta block; the skill port and Skill tool remain.
   - `hooks` off → no hook runner for config, workspace snapshot or plugin hooks (`mergeRuntimeHooks` must not re-enable). Internal mailbox hooks stay.
   - `plugins` off → plugin discovery for this App returns the empty outcome (same as `plugins.enabled: false`, `adapters/src/plugins/index.ts:145`), which also removes plugin skill roots, hooks, MCP, LSP and agents.
   - `mcp` off → user/project-configured MCP servers are dropped from the merge; plugin-provided servers (including `node_repl`) follow `plugins`. `mcp.enabled` is not used, because it would also remove plugin servers.
-  - `customAgents` off → subagent runtime config is `{ kind: "built-in-fallback" }` regardless of the Host's `subagents/readRuntimeConfig`.
+  - `customAgents` off → subagent runtime config is `{ kind: "built-in-fallback" }` regardless of the Host's `subagents/readRuntimeConfig`, and `subagents.builtInModelSelectionOverrides` is cleared (user-configured `Explore`/`general-purpose` model overrides included), so built-in agents run their default models.
   - `memory` off → `memory: { enabled: false }` regardless of the Host `memoryEnabled` preference; no memory root, recall, extraction or `/dream`.
   - `outputStyle` off → no active output style.
   - `systemPromptOverrides` off → overrides map empty.
@@ -180,11 +183,11 @@ Ordering constraints:
 - **Composer toggle.** Icon button (lucide `VenetianMask`, `size-4`) in the composer `leadingActionsNode` (`packages/ui/src/v4/ConversationComposer.tsx:3002`), next to the mode switch, available in every workspace type. `aria-pressed`, tooltip, i18n label.
 - **Checklist.** The button opens a menu: the incognito on/off row and, while active, one row per capability, each with a visible leading checkbox (the row stays a `menuitemcheckbox`), initialized from `incognitoDefaults`. A footer link opens Settings «Incognito».
 - **Composer highlight.** New semantic token `--color-incognito` defined in all four theme blocks of `packages/ui/src/styles.css` (mirroring `--color-worktree-task`) and documented in DESIGN.md. Active incognito tints the prompt shell border via `shellClassName`; the trigger itself turns into «mask + Incognito» (label hidden in the compact composer) with a separate turn-off button, so the state is not color-only and the icon is not repeated.
-- **Draft state.** Incognito intent and deviations are UI-local draft state keyed by the workspace identity key (`workspaceIdentity?.trim() || workspacePath`). They clear after the session is created.
+- **Draft state.** Incognito intent and deviations are UI-local draft state keyed by the workspace identity key (`workspaceIdentity?.trim() || workspacePath`). They clear after the session is created. The draft store also owns a per-workspace **intent generation**: a counter bumped on every intent transition (activation, explicit deactivation — including a no-op one, which cancels a pending activation — capability change) and when a draft is submitted. Async continuations capture the generation when the user acts and apply only if it is still current, so a defaults read that resolves after the draft was sent never arms the intent for a later draft, and a send completion never clears the intent of a newer draft that re-armed or changed capabilities while the send was in flight.
 - **Prewarm.** While incognito is active the draft does not use or promote a prewarmed session (same as worktree sends, `SessionPane.tsx:3507`); toggling invalidates the prewarm. This matters beyond reuse: `getSkillCatalog` on a prewarmed draft runs `ensureContextInitialized` and fixes its instructions and skills before the first message (specs/global-instructions.md).
 - **Slash catalog.** Accepted V1 limitation: with `plugins` off, the composer slash catalog may still list plugin-sourced skills; invoking one fails as an unknown skill.
 - **Sidebar marker.** `IncognitoTaskMarker` (uncolored, `size-3.5`, like `WorktreeTaskMarker`) reads `task.incognito`; rendered at the same sites as the worktree marker (`TaskListItem.tsx`, `workspace-grouped-tasks/task-row.tsx`, `TaskSidebarHoverCard.tsx`, session manager rows). Both markers render when both apply.
-- **Settings «Incognito».** New section in the `agentCapabilities` group (`packages/ui/src/settings/settingsPageConfig.ts`), one `SettingsRow` + switch per capability, plus the honest-scope hint (Non-goals). Every write sends the full `incognitoDefaults` object (`resolveIncognitoDefaults(current)` with one capability flipped); the patch schema rejects partial objects.
+- **Settings «Incognito».** New section in the `agentCapabilities` group (`packages/ui/src/settings/settingsPageConfig.ts`), one `SettingsRow` + switch per capability, plus the honest-scope hint (Non-goals). Every write sends the full `incognitoDefaults` object (`resolveIncognitoDefaults(current)` with one capability flipped); the patch schema rejects partial objects. Because a full-object write races with the settings refresh, the section keeps an immediately-updated optimistic draft as the single source for the next write and serializes writes through a promise chain, so quick successive toggles compose instead of the second write erasing the first; the draft resyncs from the refreshed settings once the write queue is idle, and a failed write reverts the draft to the stored defaults.
 - **Mobile Web.** The mobile Web task list currently renders no worktree marker; the incognito marker follows the same treatment (added wherever the worktree marker is rendered, so out of V1 on mobile today). Creating incognito sessions from mobile remote control is out of scope for V1 (toggle hidden in the compact remote shell).
 - **i18n.** All strings in `en-US`, `zh-CN`, `uk-UA`.
 - **Errors.** `proto.incognitoUnsupported` shows a toast; the draft text and incognito selection are kept.
@@ -208,6 +211,11 @@ Ordering constraints:
 15. A CLI whose legacy `session/create` `.strict()` schema rejects `incognito` → create fails; the Host does not retry without the field.
 16. The deferred first-send write and the create write race (row first inserted without profile) → the profile still lands and is never cleared afterwards.
 17. Composer: toggle on → shell tinted and chip shown; checklist reflects Settings defaults; deviation applies to the next session only; toggle off → normal session; prewarmed session never promoted for an incognito send.
+18. Stale-intent races: the defaults read resolving after the draft was sent or the toggle unchecked does not arm the intent; a send completing after a newer draft re-armed the intent (or changed capabilities) does not clear it. Two quick Settings toggles both persist (the second write composes on the first).
+19. v4 `createSession` with both `worktreePreparation` and `incognito` → rejected (`proto.invalidPayload`); no session row is reserved. The profile is accepted on the activation create instead.
+20. Prepared-row activation profile mismatch: a repeat createSession whose `incognito` differs from the stored row profile (present vs absent, or a different capability set) → rejected; a matching retry returns the existing session, and materialization uses the stored profile.
+21. A session created incognito in Desktop, resumed in the CLI (TUI `--resume`/`--continue` or headless `-p --resume`) → runs with the frozen profile (no plugins/MCP/hooks/`AGENTS.md`/memory extraction), not as a normal session.
+22. `session/create` with `importedHistory` and `incognito` (both import sources) → the session row stores the profile; a later first send does not overwrite it and the runtime keeps the profile.
 
 ## Validation
 

@@ -174,7 +174,6 @@ import {
   useDraftBranchIntentStore,
 } from "@/v4/composer/draftBranchIntent.js";
 import {
-  resolveDraftIncognitoProfile,
   selectDraftIncognito,
   useDraftIncognitoIntentStore,
 } from "@/v4/composer/draftIncognitoIntent.js";
@@ -1971,11 +1970,14 @@ function ConversationComposerImpl({
             cleanupRevision = contentRevisionRef.current;
             editorClearedOptimistically = true;
           }
-          // The incognito intent only applies to the draft's first createSession.
-          const incognito =
+          // The incognito intent only applies to the draft's first createSession. Capture freezes
+          // the profile and its intent generation, so the post-send cleanup cannot clear the
+          // intent of a newer draft and a pending defaults read cannot arm this consumed draft.
+          const incognitoSubmission =
             draftMode && sessionId === null
-              ? resolveDraftIncognitoProfile(workspaceKey)
+              ? useDraftIncognitoIntentStore.getState().captureForSubmission(workspaceKey)
               : undefined;
+          const incognito = incognitoSubmission?.profile;
           const sendResult = await onSendText(promptText, {
             submission,
             ...(executionWorktree ? { executionWorktree } : {}),
@@ -2055,9 +2057,12 @@ function ConversationComposerImpl({
             sendAction.noop();
             return;
           }
-          if (incognito) {
-            // The session now owns the frozen profile; the next draft starts normal again.
-            useDraftIncognitoIntentStore.getState().deactivate(workspaceKey);
+          if (incognitoSubmission) {
+            // The session now owns the frozen profile; the next draft starts normal again — unless
+            // a newer draft re-armed or changed the intent while this send was in flight.
+            useDraftIncognitoIntentStore
+              .getState()
+              .releaseAfterSend(workspaceKey, incognitoSubmission.generation);
           }
           if (executionWorktree) {
             // Setup pipeline terminal success: this worktree result is consumed by exactly this session.

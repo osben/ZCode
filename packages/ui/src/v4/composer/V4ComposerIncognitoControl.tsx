@@ -1,4 +1,4 @@
-import { memo, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import { CheckIcon, VenetianMask, XIcon } from "lucide-react";
 import { INCOGNITO_CAPABILITY_KEYS, TID_V4_COMPOSER_INPUT } from "@zcode/shared";
 import {
@@ -20,6 +20,7 @@ import { restoreComposerInputFocusAfterPickerClose } from "@/lib/pickerFocus.js"
 import { useOptionalTabStore } from "@/store/TabStoreProvider.js";
 import {
   selectDraftIncognito,
+  selectDraftIncognitoGeneration,
   useDraftIncognitoIntentStore,
 } from "@/v4/composer/draftIncognitoIntent.js";
 
@@ -87,9 +88,17 @@ export const V4ComposerIncognitoControl = memo(function V4ComposerIncognitoContr
   const capabilities = useDraftIncognitoIntentStore((state) =>
     selectDraftIncognito(state, workspaceKey),
   );
-  const { activate, deactivate, setCapability } = useDraftIncognitoIntentStore.getState();
+  const { activateIfCurrent, deactivate, setCapability } = useDraftIncognitoIntentStore.getState();
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const mountedRef = useRef(true);
   const [menuOpen, setMenuOpen] = useState(false);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
   const active = capabilities !== null;
   const toggleLabel = intl.formatMessage({ id: "chat.incognito.toggle" });
   const removeLabel = intl.formatMessage({ id: "chat.incognito.removeMarker" });
@@ -142,7 +151,18 @@ export const V4ComposerIncognitoControl = memo(function V4ComposerIncognitoContr
             testId={TID_V4_COMPOSER_INCOGNITO_TOGGLE}
             onCheckedChange={(checked) => {
               if (checked) {
-                void readIncognitoDefaults().then((defaults) => activate(workspaceKey, defaults));
+                // The defaults read is async; freeze the intent generation so a send, uncheck or
+                // unmount that happens before it resolves discards this activation instead of
+                // arming a stale draft.
+                const generation = selectDraftIncognitoGeneration(
+                  useDraftIncognitoIntentStore.getState(),
+                  workspaceKey,
+                );
+                void readIncognitoDefaults().then((defaults) => {
+                  if (mountedRef.current) {
+                    activateIfCurrent(workspaceKey, defaults, generation);
+                  }
+                });
               } else {
                 deactivate(workspaceKey);
               }

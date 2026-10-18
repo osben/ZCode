@@ -1089,6 +1089,9 @@ async function persistImportedSessionHistory(params: {
         slug: slugifyImportedSession(params.sessionId),
         directory: workspace.workspacePath,
         path: workspace.workspacePath,
+        // The app.resume() after this import marks the runtime persisted, so first-send
+        // persistence never writes the profile: the import write must carry it (set-once).
+        incognito: params.createParams.incognito,
         title: importedHistory.title,
         titleSource: "custom",
         version: params.context.deps.version ?? "0.0.0",
@@ -1168,6 +1171,9 @@ async function persistImportedSessionHistory(params: {
     slug: slugifyImportedSession(params.sessionId),
     directory: workspace.workspacePath,
     path: workspace.workspacePath,
+    // Same constraint as the shared-context bundle above: the resume that follows this write
+    // suppresses first-send persistence, so the profile must land here.
+    incognito: params.createParams.incognito,
     title: importedHistory.title?.trim() || "Imported session",
     titleSource: "custom",
     version: params.context.deps.version ?? "0.0.0",

@@ -5,6 +5,7 @@ import {
   buildIncognitoProfile,
   incognitoExcludes,
   incognitoProfileSchema,
+  incognitoProfilesEqual,
   parseStoredIncognitoProfile,
   resolveIncognitoDefaults,
 } from "../src/incognito-profile.js";
@@ -47,6 +48,17 @@ describe("incognito profile", () => {
       memory: false,
       hooks: false,
     });
+  });
+
+  it("compares profiles deeply and never treats absent as equal to a profile", () => {
+    expect(incognitoProfilesEqual(INCOGNITO_LOCKDOWN_PROFILE, INCOGNITO_LOCKDOWN_PROFILE)).toBe(
+      true,
+    );
+    expect(
+      incognitoProfilesEqual(INCOGNITO_LOCKDOWN_PROFILE, { ...allOff, version: 1, skills: true }),
+    ).toBe(false);
+    expect(incognitoProfilesEqual(INCOGNITO_LOCKDOWN_PROFILE, undefined)).toBe(false);
+    expect(incognitoProfilesEqual(undefined, undefined)).toBe(true);
   });
 
   it("builds a resolved profile from capabilities, never a diff", () => {
@@ -122,6 +134,24 @@ describe("incognito protocol fields", () => {
     }
     expect(createEnvelope({ incognito: { version: 1, skills: true } }).ok).toBe(false);
     expect(createEnvelope({}).ok).toBe(true);
+  });
+
+  it("v4 worktree preparation cannot carry incognito; the activation create can", () => {
+    // The prepare step reserves the row without a profile, so accepting both would persist a
+    // normal session the caller believes is incognito (specs/incognito-session.md, Protocol).
+    expect(
+      createEnvelope({
+        worktreePreparation: { branchName: "b", targetPath: "/wt/b" },
+        incognito: profile,
+      }).ok,
+    ).toBe(false);
+    expect(
+      createEnvelope({
+        preparedSessionId: "session-prepared",
+        executionWorktree: { path: "/wt/b", branchName: "b" },
+        incognito: profile,
+      }).ok,
+    ).toBe(true);
   });
 
   it("legacy session/create carries the profile; resume never does (it reads the session row)", () => {

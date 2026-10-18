@@ -24,9 +24,17 @@ function resolve(incognito: IncognitoProfile | undefined) {
         modelSelection: { providerId: "test-provider", modelId: "test-model" },
         mcp: { enabled: true, servers: { user: userServer } },
         memory: { enabled: true },
-        subagents: { profiles: [inlineAgent] },
+        subagents: {
+          profiles: [inlineAgent],
+          builtInModelSelectionOverrides: {
+            Explore: { providerId: "test-provider", modelId: "runtime-override-model" },
+          },
+        },
         ...(incognito ? { incognito } : {}),
       },
+    },
+    builtInSubagentModelSelectionOverrides: {
+      "general-purpose": { providerId: "test-provider", modelId: "loaded-override-model" },
     },
     persistedOutputStyle: { name: "Concise", prompt: "Be brief." },
     persistedSystemPromptOverrides: { harness: "custom harness" },
@@ -52,6 +60,10 @@ describe("resolveAppRuntimeConfig incognito overrides", () => {
       "inline-agent",
       "loaded-agent",
     ]);
+    expect(runtimeConfig.subagents?.builtInModelSelectionOverrides).toEqual({
+      "general-purpose": { providerId: "test-provider", modelId: "loaded-override-model" },
+      Explore: { providerId: "test-provider", modelId: "runtime-override-model" },
+    });
     expect(runtimeConfig.incognito).toBeUndefined();
   });
 
@@ -66,7 +78,17 @@ describe("resolveAppRuntimeConfig incognito overrides", () => {
     expect(runtimeConfig.outputStyle).toBeUndefined();
     expect(runtimeConfig.systemPromptOverrides).toBeUndefined();
     expect(runtimeConfig.subagents?.profiles).toEqual([]);
+    // Built-in agents stay available, but user-configured model overrides must not reach them.
+    expect(runtimeConfig.subagents?.builtInModelSelectionOverrides).toEqual({});
     expect(runtimeConfig.incognito).toEqual(INCOGNITO_LOCKDOWN_PROFILE);
+  });
+
+  it("keeps built-in model overrides when the session opted back into customAgents", () => {
+    const { runtimeConfig } = resolve({ ...INCOGNITO_LOCKDOWN_PROFILE, customAgents: true });
+    expect(runtimeConfig.subagents?.builtInModelSelectionOverrides).toEqual({
+      "general-purpose": { providerId: "test-provider", modelId: "loaded-override-model" },
+      Explore: { providerId: "test-provider", modelId: "runtime-override-model" },
+    });
   });
 
   it("keeps a capability the session opted back into", () => {

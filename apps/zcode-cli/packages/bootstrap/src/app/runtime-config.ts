@@ -200,10 +200,15 @@ export function resolveAppRuntimeConfig(input: {
       ...options.runtimeConfig?.subagents,
       enabled: options.runtimeConfig?.subagents?.enabled ?? configResult.config.features.subagent,
       outputRootDir: options.runtimeConfig?.subagents?.outputRootDir ?? subagentOutputRootDir,
-      builtInModelSelectionOverrides: {
-        ...(input.builtInSubagentModelSelectionOverrides ?? {}),
-        ...runtimeBuiltInModelSelectionOverrides,
-      },
+      // customAgents off must drop the model overrides with the profiles: built-in agents are
+      // still available, but a user-configured Explore/general-purpose model override is a
+      // custom-agent setting and would otherwise keep reaching them (incognito = default models).
+      builtInModelSelectionOverrides: incognitoExcludes(incognito, "customAgents")
+        ? {}
+        : {
+            ...(input.builtInSubagentModelSelectionOverrides ?? {}),
+            ...runtimeBuiltInModelSelectionOverrides,
+          },
       profiles: incognitoExcludes(incognito, "customAgents")
         ? []
         : [...(options.runtimeConfig?.subagents?.profiles ?? []), ...subagentProfiles],

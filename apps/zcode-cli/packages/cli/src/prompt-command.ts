@@ -186,7 +186,8 @@ export const runPrompt = async (
       });
     }
 
-    const sessionId = await resolveResumeSession(resumeRequest, workingDirectory, env, deps);
+    const resume = await resolveResumeSession(resumeRequest, workingDirectory, env, deps);
+    const sessionId = resume?.sessionId;
     const bootstrapModule = deps.createZCodeApp ? undefined : await loadBootstrapModule();
     const createApp = deps.createZCodeApp ?? bootstrapModule?.createZCodeApp;
     if (!createApp) throw new Error("ZCode app factory is unavailable.");
@@ -264,6 +265,9 @@ export const runPrompt = async (
         ...(toolDisallowlist ? { toolDisallowlist } : {}),
         ...(forceMcs ? { midConversationSystem: { mode: "force" as const } } : {}),
         ...resolveWorkflowModeRuntimeConfig(workflowMode),
+        // Incognito resume (root specs/incognito-session.md): same constraint as the TUI path —
+        // createZCodeApp composes capabilities, so the persisted profile must enter here.
+        ...(resume?.incognito ? { incognito: resume.incognito } : {}),
         memory: { extractionEnabled: options.memoryBench === true },
         modelStreaming: "on",
         presentationSurface,

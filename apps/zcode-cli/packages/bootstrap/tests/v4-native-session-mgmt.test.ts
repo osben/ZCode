@@ -180,6 +180,28 @@ describe("v4 原生 createSession", () => {
     expect(createSessionRecord).toHaveBeenCalledWith({ workspaceId: "/w", incognito });
   });
 
+  it("rejects worktree preparation that carries an incognito profile (fail-closed)", async () => {
+    const record = makeRecord({ app: makeApp(), persistence: "deferred" });
+    const prepareWorktreeSession = vi.fn();
+    const host = makeHost(record, { prepareWorktreeSession });
+
+    await expect(
+      new V4CommandExecutor(host).execute(
+        envelope(
+          "createSession",
+          {
+            workspaceId: "/w",
+            worktreePreparation: { branchName: "b", targetPath: "/wt/b" },
+            incognito: INCOGNITO_LOCKDOWN_PROFILE,
+          },
+          "prepare-incognito",
+        ),
+      ),
+    ).rejects.toMatchObject({ reasonCode: "proto.invalidPayload" });
+    // The prepared row is reserved without a profile; rejecting is the only fail-closed option.
+    expect(prepareWorktreeSession).not.toHaveBeenCalled();
+  });
+
   it.each([false, true])(
     "Guarded 配置失败会清理新草稿且不执行（首发=%s）",
     async (withFirstInput) => {

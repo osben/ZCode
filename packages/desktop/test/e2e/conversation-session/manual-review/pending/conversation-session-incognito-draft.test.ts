@@ -14,6 +14,14 @@ const TOGGLE = '[data-testid="v4-composer-incognito-toggle"]';
 const MCP_ITEM = '[data-testid="v4-composer-incognito-toggle-mcp"]';
 const MARKER = '[data-testid="v4-composer-incognito-marker"]';
 
+// The toggle row arms the intent only after the Settings defaults read resolves, so the checked
+// state settles asynchronously.
+async function waitForIncognitoChecked() {
+  await browser.waitUntil(async () => (await $(TOGGLE).getAttribute("aria-checked")) === "true", {
+    timeoutMsg: "incognito toggle did not become checked",
+  });
+}
+
 describe("Incognito session draft", () => {
   after(async () => {
     await clearAppData();
@@ -29,7 +37,7 @@ describe("Incognito session draft", () => {
     expect(await toggle.getAttribute("role")).toBe("menuitemcheckbox");
     expect(await toggle.getAttribute("aria-checked")).toBe("false");
     await toggle.click();
-    expect(await toggle.getAttribute("aria-checked")).toBe("true");
+    await waitForIncognitoChecked();
 
     const mcp = $(MCP_ITEM);
     await mcp.waitForDisplayed();
@@ -57,6 +65,8 @@ describe("Incognito session draft", () => {
     await $(TRIGGER).click();
     await $(TOGGLE).waitForDisplayed();
     await $(TOGGLE).click();
+    // The intent must be armed before the draft is sent, or the send creates a normal session.
+    await waitForIncognitoChecked();
     await browser.keys("Escape");
     await $(MARKER).waitForDisplayed();
 

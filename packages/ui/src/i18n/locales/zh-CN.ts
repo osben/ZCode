@@ -7773,7 +7773,7 @@ const zhCN: Record<string, string> = {
   // Incognito session (specs/incognito-session.md)
   "taskList.incognitoTaskLabel": "无痕会话",
   "chat.incognito.toggle": "无痕会话",
-  "chat.incognito.toggleDescription": "下一个会话不加载任何扩展",
+  "chat.incognito.toggleDescription": "下一个会话默认不加载额外能力（可在新会话中重新开启）",
   "chat.incognito.marker": "无痕",
   "chat.incognito.removeMarker": "关闭无痕模式",
   "chat.incognito.includeHeading": "本次会话包含",
@@ -7783,7 +7783,7 @@ const zhCN: Record<string, string> = {
   "settings.incognito.description":
     "新无痕会话的默认设置。打开某项能力即默认包含它；仍可在输入框中为每个会话单独调整。",
   "settings.incognito.scopeHint":
-    "无痕模式会启动一个不含下列扩展的干净会话。它不是隐私模式：用量统计、遥测、输入历史和模型日志仍会被记录。",
+    "无痕模式默认会启动一个不含下列能力的干净会话；你可以在新建会话时重新开启其中任意一项。它不是隐私模式：用量统计、遥测、输入历史和模型日志仍会被记录。",
   "incognito.capability.projectInstructions.label": "项目指令",
   "incognito.capability.projectInstructions.description": "主目录和项目中的 AGENTS.md",
   "incognito.capability.skills.label": "技能列表",

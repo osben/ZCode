@@ -8258,7 +8258,7 @@ const ukUA: Record<string, string> = {
   // Incognito session (specs/incognito-session.md)
   "taskList.incognitoTaskLabel": "Сесія інкогніто",
   "chat.incognito.toggle": "Сесія інкогніто",
-  "chat.incognito.toggleDescription": "Почати наступну сесію без розширень",
+  "chat.incognito.toggleDescription": "Почати наступну сесію без додаткових можливостей",
   "chat.incognito.marker": "Інкогніто",
   "chat.incognito.removeMarker": "Вимкнути інкогніто",
   "chat.incognito.includeHeading": "Увімкнути в цій сесії",
@@ -8269,7 +8269,7 @@ const ukUA: Record<string, string> = {
   "settings.incognito.description":
     "Типові налаштування для нових сесій інкогніто. Увімкніть можливість, щоб вона була включена за замовчуванням; для кожної сесії її все одно можна змінити в полі введення.",
   "settings.incognito.scopeHint":
-    "Інкогніто запускає чисту сесію без розширень нижче. Це не режим приватності: статистика використання, телеметрія, історія введення та журнали моделі все одно записуються.",
+    "Інкогніто запускає чисту сесію без додаткових можливостей нижче за замовчуванням; їх можна ввімкнути для нової сесії. Це не режим приватності: статистика використання, телеметрія, історія введення та журнали моделі все одно записуються.",
   "incognito.capability.projectInstructions.label": "Інструкції проєкту",
   "incognito.capability.projectInstructions.description": "AGENTS.md з домашньої теки та проєкту",
   "incognito.capability.skills.label": "Список навичок",
