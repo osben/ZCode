@@ -2126,6 +2126,23 @@ export class TaskIndexRepo {
           // update the row between the read and the UPDATE. BEGIN IMMEDIATE takes the write lock before the
           // read so meta_json is never replaced with a stale copy (same pattern as deleteArchivedTask).
           const database = this.getDatabase();
+          // Read-only fast path: when the stored fact already matches (or the row is absent/unreadable),
+          // skip the write lock entirely so repeated publishes never contend with other Hosts.
+          const peek = this.getTaskRow({ ...scope, taskId: fact.taskId });
+          if (!peek || peek.deleted === 1) return;
+          try {
+            const stored = (
+              JSON.parse(peek.meta_json) as { executionWorktree?: ZCodeExecutionWorktree } | null
+            )?.executionWorktree;
+            if (
+              stored?.path === fact.executionWorktree.path &&
+              stored?.branchName === fact.executionWorktree.branchName
+            ) {
+              return;
+            }
+          } catch {
+            return;
+          }
           database.exec("BEGIN IMMEDIATE");
           try {
             const row = this.getTaskRow({ ...scope, taskId: fact.taskId });

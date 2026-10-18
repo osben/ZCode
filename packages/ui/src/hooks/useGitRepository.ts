@@ -538,7 +538,6 @@ export function useGitRepository(options: {
         if (pendingRequestVersionRef.current === requestVersion) {
           pendingRequestVersionRef.current = null;
         }
-        consecutiveFailuresRef.current = { key: workspaceKey, count: 0 };
 
         // Key behavior (BUG-GWT-013): a result for the still version-current request must be
         // applied even when the issuing effect run was cleaned up by a services identity swap
@@ -549,6 +548,8 @@ export function useGitRepository(options: {
         if (requestVersionRef.current !== requestVersion) {
           return;
         }
+        // Only a current request's success resets the cap; a stale result must not clear another target's count.
+        consecutiveFailuresRef.current = { key: workspaceKey, count: 0 };
 
         if (disposed) {
           // The result came from a superseded service instance; drop the stored baseline so

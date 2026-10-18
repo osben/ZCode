@@ -183,7 +183,7 @@ export function createWindowHostControllerRuntime(options: {
   // fact whose task row did not exist yet stays unacknowledged until a later publish finds the row.
   const sourceWorktreeFactSynced = new Map<
     string,
-    { taskService: IZCodeTaskService; facts: Set<string> }
+    { taskService: IZCodeTaskService; facts: Set<string>; inFlight: Set<string> }
   >();
   const pendingReplacementByNextSourceKey = new Map<string, WindowHostControllerSourceScope>();
   let disposed = false;
@@ -234,12 +234,17 @@ export function createWindowHostControllerRuntime(options: {
       `${fact.taskId}\n${fact.executionWorktree.path}\n${fact.executionWorktree.branchName ?? ""}`;
     let synced = sourceWorktreeFactSynced.get(key);
     if (synced?.taskService !== taskService) {
-      synced = { taskService, facts: new Set() };
+      synced = { taskService, facts: new Set(), inFlight: new Set() };
       sourceWorktreeFactSynced.set(key, synced);
     }
-    const acknowledged = synced.facts;
-    const pending = facts.filter((fact) => !acknowledged.has(factSignature(fact)));
+    const { facts: acknowledged, inFlight } = synced;
+    // Facts already sent by an overlapping publish are excluded until that request settles.
+    const pending = facts.filter((fact) => {
+      const signature = factSignature(fact);
+      return !acknowledged.has(signature) && !inFlight.has(signature);
+    });
     if (pending.length === 0) return;
+    for (const fact of pending) inFlight.add(factSignature(fact));
     void taskService
       .listTasks({
         workspacePath: resolved.scope.workspacePath,
@@ -251,7 +256,8 @@ export function createWindowHostControllerRuntime(options: {
       .then((tasks) => {
         // listTasks succeeding does not mean a fact was persisted: the repo skips facts whose task-index row
         // does not exist yet. Acknowledge only facts the returned rows now carry. Pinned/archived rows are
-        // excluded from this read and are simply retried on the next publish (an idempotent no-op in the repo).
+        // excluded from this read and are retried on the next publish; the repo checks the stored fact
+        // read-only before taking the write lock, so that retry costs a list read, not a write transaction.
         const persisted = new Map(
           tasks.map((task) => [task.taskId, task.executionWorktree] as const),
         );
@@ -267,6 +273,9 @@ export function createWindowHostControllerRuntime(options: {
       })
       .catch((error) => {
         if (!disposed) options.onSourceError?.(resolved.scope, "refresh", error);
+      })
+      .finally(() => {
+        for (const fact of pending) inFlight.delete(factSignature(fact));
       });
   }
 
