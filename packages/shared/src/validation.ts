@@ -1746,6 +1746,9 @@ export const zcodeTaskMetaSchema = z.object({
   // syncs preserve the fact (preserve-on-absent in TaskIndexRepo.syncTaskMeta); the live overlay stays the
   // freshness source. Same shape as the sessions-index summary field (zcodeExecutionWorktreeSchema).
   executionWorktree: zcodeExecutionWorktreeSchema.optional(),
+  // Incognito marker persisted in meta_json (specs/incognito-session.md "Sidebar marker durability").
+  // The profile is frozen per session, so only `true` is ever converged; absence means "not known".
+  incognito: z.boolean().optional(),
   unreadAt: z.number().int().nonnegative().optional(),
   status: zcodeTaskPersistStatusSchema.optional(),
   lastError: z

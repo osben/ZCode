@@ -481,6 +481,8 @@ export interface IZCodeTaskService {
       taskId: string;
       executionWorktree: ZCodeExecutionWorktree;
     }>;
+    /** Host sessions-index convergence input: incognito overlays persisted as `incognito: true` (specs/incognito-session.md). */
+    incognitoTaskIds?: ReadonlyArray<string>;
   }): Promise<ZCodeTaskMeta[]>;
 
   /** Read the global pinned task ID list; tasks-index.sqlite is the source of truth. */
