@@ -82,7 +82,6 @@ export function restoreComposerWorktreePipelineFromPreparation({
         ...hostEntry,
         ...(queuedPromptPreview ? { queuedPromptPreview } : {}),
         ...(current.orphaned ? { orphaned: true } : {}),
-        supersededAttemptIds: [...(current.supersededAttemptIds ?? []), entryAttempt],
       },
       { activate: false },
     );

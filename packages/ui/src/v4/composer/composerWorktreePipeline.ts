@@ -331,7 +331,6 @@ export function retryComposerWorktreePipeline({
     return Promise.resolve("failed");
   }
   const params = { ...entry.params, ...(attemptId ? { attemptId } : {}) };
-  const replacedAttemptId = entry.params.attemptId ?? entry.attemptId;
   store.startPipeline(workspaceKey, {
     status: "creating",
     ...(entry.sessionId ? { sessionId: entry.sessionId } : {}),
@@ -339,9 +338,6 @@ export function retryComposerWorktreePipeline({
     createdAt: Date.now(),
     ...(entry.queuedPromptPreview ? { queuedPromptPreview: entry.queuedPromptPreview } : {}),
     ...(entry.orphaned ? { orphaned: true } : {}),
-    // The Host accepts the retry before its snapshot arrives, so the failed seed for the replaced
-    // attempt is still live; recording it lets restore ignore that stale seed (BUG-GWT-005).
-    supersededAttemptIds: [...(entry.supersededAttemptIds ?? []), replacedAttemptId],
   });
   return startComposerWorktreePipeline({
     gitService,

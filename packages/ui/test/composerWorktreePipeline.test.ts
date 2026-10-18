@@ -1410,6 +1410,52 @@ describe("reopened preparation attempts", () => {
     expect(createWorktree).toHaveBeenCalledWith(expect.objectContaining({ baseBranch: "main" }));
   });
 
+  it("BUG-GWT-005: a prepared-session restart is not rolled back by the stale Host failed seed", async () => {
+    // Same stale-seed race as Retry, through the composer's restart path (Send in a prepared
+    // session whose entry failed): restart replaces failed(A) with creating(C) while the setup
+    // steps still hold the Host seed for A.
+    seedCreating({
+      sessionId: "restarted-session",
+      status: "failed",
+      params: { ...PARAMS, attemptId: "attempt-a" },
+      failureMessage: "EACCES",
+    });
+    createWorktree.mockResolvedValue({
+      ok: true,
+      worktreePath: PARAMS.targetPath,
+      branchName: PARAMS.branchName,
+      issues: [],
+    });
+    await restartPreparedWorktreeCreation({
+      workspaceKey: WORKSPACE_KEY,
+      workspacePath: WORKSPACE_KEY,
+      sessionId: "restarted-session",
+      preparation: { ...PARAMS, status: "failed", attemptId: "attempt-a" },
+      gitService,
+      prepareSession: async () => "restarted-session",
+      formatMessage: (id) => id,
+    });
+    const restartedAttempt = currentPipeline("restarted-session")!.params!.attemptId;
+    restoreComposerWorktreePipelineFromPreparation({
+      workspaceKey: WORKSPACE_KEY,
+      workspacePath: WORKSPACE_KEY,
+      sessionId: "restarted-session",
+      preparation: {
+        ...PARAMS,
+        status: "failed",
+        attemptId: "attempt-a",
+        failureMessage: "EACCES",
+      },
+    });
+    expect(currentPipeline("restarted-session")?.params?.attemptId).toBe(restartedAttempt);
+    await vi.waitFor(() =>
+      expect(currentPipeline("restarted-session")).toMatchObject({
+        status: "ready",
+        params: { attemptId: restartedAttempt },
+      }),
+    );
+  });
+
   it("does not join an old Git runner after an explicit Retry of the same session", async () => {
     let finishOld!: (value: GitWorktreeCreateResult) => void;
     createWorktree.mockReturnValueOnce(

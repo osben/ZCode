@@ -204,6 +204,17 @@ export const useComposerWorktreePipelineStore = create<ComposerWorktreePipelineS
         : undefined;
       const canActivate =
         activate || !activeEntry || ["consumed", "discarded"].includes(activeEntry.status);
+      // Single owner of supersession (BUG-GWT-005): replacing this session's entry with another
+      // attempt (Retry, prepared-session restart, newer Host attempt) records the replaced one, so
+      // a still-live Host seed for it is recognised as stale instead of a newer generation.
+      const previous = workspace.entriesBySessionKey[key];
+      const previousAttemptId = previous
+        ? (previous.params?.attemptId ?? previous.attemptId)
+        : null;
+      const supersededAttemptIds =
+        previousAttemptId && previousAttemptId !== attemptId
+          ? [...(previous?.supersededAttemptIds ?? []), previousAttemptId]
+          : previous?.supersededAttemptIds;
       return {
         pipelineByWorkspaceKey: {
           ...state.pipelineByWorkspaceKey,
@@ -211,7 +222,11 @@ export const useComposerWorktreePipelineStore = create<ComposerWorktreePipelineS
             activeSessionKey: canActivate ? key : workspace.activeSessionKey,
             entriesBySessionKey: {
               ...workspace.entriesBySessionKey,
-              [key]: { ...entry, attemptId },
+              [key]: {
+                ...entry,
+                attemptId,
+                ...(supersededAttemptIds ? { supersededAttemptIds } : {}),
+              },
             },
           },
         },

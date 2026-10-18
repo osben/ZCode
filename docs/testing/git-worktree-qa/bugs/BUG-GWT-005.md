@@ -20,13 +20,16 @@ Confirmed cause:
 - `packages/ui/src/v4/composer/composerWorktreePreparationRestore.ts` treated any `hostAttempt !== entryAttempt` as a "newer Host generation" and replaced the entry with `failed(A)`.
 - `packages/ui/src/v4/ConversationComposer.tsx` queued-send effect: attempt mismatch + status `failed` → `detachQueued()` + `restore()` — the armed continuation is released permanently, so the later `ready(B)` admits nothing and the recovery record stays (MINOR-1).
 
-Fix: attempt ids are opaque, so "newer" is decided by supersession. `retryComposerWorktreePipeline` records the replaced attempt in `entry.supersededAttemptIds`; restore ignores a Host seed carrying a superseded attempt; a genuinely newer Host attempt still replaces the entry and inherits the superseded set. Spec: `specs/composer-worktree-setup-steps.md` (supersession paragraph + event diagram, acceptance scenario 17).
+Fix: attempt ids are opaque, so "newer" is decided by supersession. The pipeline store's `startPipeline` is the single owner: replacing a session's entry with another attempt (Retry, `restartPreparedWorktreeCreation` on Send in a failed prepared session, a newer Host attempt) records the replaced attempt in `entry.supersededAttemptIds`; restore ignores a Host seed carrying a superseded attempt; a genuinely newer Host attempt still replaces the entry and inherits the superseded set.
+
+Known residual (pre-existing, not observed live): if the Host snapshot `preparing(B)` arrives before the Retry acknowledgement, restore adopts B as `creating`, the Retry handler's `status !== "failed"` guard returns before Git starts, and the stale-creating reconcile settles the attempt as failed. Spec: `specs/composer-worktree-setup-steps.md` (supersession paragraph + event diagram, acceptance scenario 17).
 
 Tests (`packages/ui/test/composerWorktreePipeline.test.ts`):
 
 - `BUG-GWT-005: the stale Host failed seed for the retried attempt cannot roll back Retry and strand the frozen submission (RT4-C5 live path)` — mounted `ConversationComposer` + real `ConversationWorktreeSetupSteps`, real Retry button, stale `{failed, A}` seed, Host seed updated afterwards.
 - `BUG-GWT-005: ignores a Host seed for an attempt the renderer already superseded, but still yields to a newer Host attempt` — restore-level rule.
-- Red without the fix (source swapped to HEAD): mounted test `expected "vi.fn()" to be called 1 times, but got 0 times`; store trace `creating B → failed A → creating B (released) → failed B`, identical to the live CDP trace. Green with the fix: 41/41 in the file; 50 worktree/composer/command-center files, 467 tests green.
+- `BUG-GWT-005: a prepared-session restart is not rolled back by the stale Host failed seed` — same race through the restart path.
+- Red without the fix (source swapped to HEAD): mounted test `expected "vi.fn()" to be called 1 times, but got 0 times`; store trace `creating B → failed A → creating B (released) → failed B`, identical to the live CDP trace. Green with the fix: 42/42 in the file (all three BUG-005 tests red with the store rule removed); 50 worktree/composer/command-center files, 467 tests green.
 
 - Severity: S3 (обход есть — ручной Restore → Send в той же сессии; но нарушен контракт спеки о допуске замороженной отправки после ready)
 - Кейсы: C5 (основной, FAIL)

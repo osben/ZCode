@@ -124,13 +124,19 @@ never resurrected from stale metadata.
 
 "Newer" is decided by supersession, not by inequality: attempt ids are opaque, so a Host attempt
 that differs from the entry's attempt is newer only when the renderer has not itself replaced it.
-A local Retry records the attempt it replaces on the entry before Git restarts; a Host preparation
-seed carrying a superseded attempt is stale and is ignored. The Host accepts the retry before its
+The pipeline store is the single owner of this rule: whenever a session's entry is replaced by
+another attempt — Retry, a Send that restarts a failed prepared session, or a newer Host attempt —
+the replaced attempt is recorded on the entry before Git restarts, and a Host preparation seed
+carrying a superseded attempt is stale and is ignored. The Host accepts the retry before its
 snapshot reaches the renderer, so the seed for the failed attempt is still live when the retry
 turns the entry `creating`; treating it as newer rolled the entry back to `failed` for one render,
 which made the queued-send effect abandon the armed submission and left the later `ready` admitting
 nothing (BUG-GWT-005, RT4-C5). A genuinely newer Host attempt (for example another client's retry)
 still replaces the entry and inherits its superseded set, adding the attempt it replaced.
+Known residual ordering: if the Host snapshot for the retried attempt reaches the renderer before
+the Retry acknowledgement, restore adopts that attempt as `creating` and the Retry handler, which
+only proceeds from `failed`, does not start Git; the stale-creating reconcile then settles it. This
+ordering predates the supersession rule and was not observed live.
 
 ```text
 Renderer entry (session S)     Setup-steps reconcile           Host snapshot seed
