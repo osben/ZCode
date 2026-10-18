@@ -769,6 +769,43 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
     return result.exitCode === 0;
   }
 
+  /**
+   * Git creates the branch ref before it creates the worktree directory, so a failed
+   * `worktree add -b` (e.g. EACCES on the target parent) leaves a half-created branch behind.
+   * Callers must pass only a branch that the failed call itself created. `-D` is required
+   * because the branch may point at an unmerged base. Rollback is best-effort: it logs and never
+   * replaces the original worktree failure.
+   */
+  async function rollbackCreatedWorktreeBranch(
+    resolution: GitResolvedRepository,
+    branchName: string,
+  ): Promise<void> {
+    try {
+      if (!(await localBranchExists(resolution, branchName))) {
+        return;
+      }
+      const result = await commandProvider.run({
+        cwd: resolution.repoRoot,
+        args: ["branch", "-D", "--", branchName],
+        timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+      });
+      if (result.timedOut || result.outputTruncated || result.exitCode !== 0) {
+        log.warn(undefined, "worktree branch rollback did not complete", {
+          workspacePath: resolution.workspacePath,
+          branchName,
+          exitCode: result.exitCode,
+          stderr: result.stderr.trim(),
+        });
+      }
+    } catch (error) {
+      log.warn(undefined, "worktree branch rollback threw", {
+        workspacePath: resolution.workspacePath,
+        branchName,
+        cause: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   async function hasOperationInProgress(resolution: GitResolvedRepository): Promise<boolean> {
     // Error messages for in-progress merge/rebase/cherry-pick operations vary across Git versions;
     // use a lightweight git-dir marker probe first so the caller gets a more stable blocking reason.
@@ -1350,7 +1387,16 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
       }
 
       if (result.exitCode !== 0) {
-        return toWorktreeMutationFailure(parseGitWorktreeIssues(result));
+        const issues = parseGitWorktreeIssues(result);
+        // Only roll back a branch this call created. `branch-already-exists` means a concurrent
+        // creator owns the ref, so it must not be deleted here.
+        if (
+          !branchAlreadyExists &&
+          !issues.some((issue) => issue.code === "branch-already-exists")
+        ) {
+          await rollbackCreatedWorktreeBranch(resolution, normalizedBranchName);
+        }
+        return toWorktreeMutationFailure(issues);
       }
 
       return {

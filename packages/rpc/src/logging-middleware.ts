@@ -21,6 +21,21 @@ import { Event } from "./foundation.js";
 export type RPCLogger = (message: string, ...args: unknown[]) => void;
 
 // ============================================================================
+// Outcome labelling
+// ============================================================================
+
+/**
+ * Services report business failures as a resolved `{ ok: false, ... }` payload instead of a
+ * rejected promise, so a plain "OK" would misreport them as success. Only the discriminator is
+ * logged; payload contents are never dumped.
+ */
+function describeResolvedOutcome(result: unknown): string {
+  const isBusinessFailure =
+    typeof result === "object" && result !== null && (result as { ok?: unknown }).ok === false;
+  return isBusinessFailure ? "OK (ok:false)" : "OK";
+}
+
+// ============================================================================
 // LoggingServerChannel — decorates one IServerChannel and logs call/listen
 // ============================================================================
 
@@ -41,7 +56,9 @@ class LoggingServerChannel<TContext> implements IServerChannel<TContext> {
     try {
       const result = await this.inner.call<T>(ctx, command, arg, cancellationToken);
       const elapsed = (performance.now() - start).toFixed(1);
-      this.logger(`[rpc:call] ${this.channelName}.${command} OK (${elapsed}ms)`);
+      this.logger(
+        `[rpc:call] ${this.channelName}.${command} ${describeResolvedOutcome(result)} (${elapsed}ms)`,
+      );
       return result;
     } catch (err) {
       const elapsed = (performance.now() - start).toFixed(1);
@@ -111,7 +128,9 @@ class LoggingChannel implements IChannel {
     try {
       const result = await this.inner.call<T>(command, arg, cancellationToken);
       const elapsed = (performance.now() - start).toFixed(1);
-      this.logger(`[rpc:call] ${this.channelName}.${command} → OK (${elapsed}ms)`);
+      this.logger(
+        `[rpc:call] ${this.channelName}.${command} → ${describeResolvedOutcome(result)} (${elapsed}ms)`,
+      );
       return result;
     } catch (err) {
       const elapsed = (performance.now() - start).toFixed(1);

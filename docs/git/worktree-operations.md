@@ -123,8 +123,10 @@ failure 不 throw exception（timeout / output over limit 等 infrastructure err
 ### Invariants
 
 - 前置 check 顺序：repository available → branch name → targetPath non-empty absolute → branch name format → targetPath 不存在 → 探测 branch 存在性 → execute command。
-- 创建成功前不得创建任何 directory 或 branch（Git single command完成 directory+branch 创建，无部分 success state）。
 - 命令 failure 时 stderr 经过 classifier mapping；timeout / output over limit 走 `ensureGitCommandSucceeded` throw exception，不吞并为 `unknown`。
+- Git 在 mkdir 之前创建 branch ref，因此 `worktree add -b` 可能在 directory 创建失败（如 EACCES）后留下半成品 branch。Rollback 规则：本次调用前 branch 不存在（`branchAlreadyExists=false`）、命令失败后 branch 已存在、且 classifier 结果不含 `branch-already-exists`（排除并发创建者的 branch）时，执行 `git branch -D <branchName>`（使用 `-D`，因为 base 可能未合并）。
+- Rollback 自身失败（包括探测或 `branch -D` 抛出的 infrastructure error）只记录 warn，不覆盖原始失败的 `issues`，也不改变返回值。
+- 本次调用前 branch 已存在时（直接 checkout 已有 branch）不回滚，即使命令失败。
 
 ## removeWorktree
 
@@ -210,7 +212,10 @@ interface GitWorktreePruneResult {
 
 ## Test Requirements
 
+
+## Test Requirements
+
 - `listWorktrees`：Only main worktree → single entry；after real `createWorktree` 创建关联 worktree → two entries with correct path/branch；detached worktree 的 `branchName=null`；contain spaces、non-ASCII characters及line break 的 worktree path原样保留；non-repository path → empty result。
-- `createWorktree`：成功创建 directory 与 branch 且 HEAD 指向新 branch、起点为 baseBranch；branch 被 other worktree 占用 → `branch-in-other-worktree`；targetPath 已存在 → `target-path-exists`；非法 branch 名 → `invalid-branch-name`。
+- `createWorktree`：成功创建 directory 与 branch 且 HEAD 指向新 branch、起点为 baseBranch；branch 被 other worktree 占用 → `branch-in-other-worktree`；targetPath 已存在 → `target-path-exists`；非法 branch 名 → `invalid-branch-name`；create 失败且 branch 为本次创建时 → 该 branch 被回滚（不存在），branch 已存在时不触发回滚。
 - `removeWorktree`: after creating a linked worktree and removing it → directory and record gone，`listWorktrees` back to a single entry；main worktree path → `worktree-not-found`；path outside the repository → `worktree-not-found`；uncommitted changes without force → `worktree-dirty`，with force → success；non-repository → `not-a-repository`。
 - `pruneWorktrees`: after deleting a created worktree directory by hand, prune → `prunedCount >= 1` and `listWorktrees` no longer lists it；clean repository → `prunedCount = 0`，`ok = true`。

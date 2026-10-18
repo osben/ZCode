@@ -1065,3 +1065,144 @@ describe("gitCliRepo verifyWorktreeUsable", () => {
     await expect(repo.verifyWorktreeUsable("/repo", dir)).rejects.toBe(error);
   });
 });
+
+describe("gitCliRepo createWorktree branch rollback", () => {
+  // Scripted Git: `worktree add -b` creates the ref before the directory step, like real Git,
+  // so the post-failure `show-ref` reports the branch only when this run created it.
+  function createScriptedWorktreeProvider(options: {
+    branchExistsBeforeCall: boolean;
+    addStderr: string;
+    addCreatesRef: boolean;
+    rollbackBehavior?: "success" | "exit-1" | "throw";
+  }): { commandProvider: GitCommandProvider; run: ReturnType<typeof vi.fn> } {
+    let refCreated = false;
+    const run = vi.fn(
+      async (commandOptions: GitCommandExecutionOptions): Promise<GitCommandExecutionResult> => {
+        const command = commandOptions.args.join(" ");
+        if (command.startsWith("rev-parse --show-toplevel")) {
+          return createCommandResult(commandOptions, {
+            stdout: "/repo\n\n/repo/.git\n.git\n",
+          });
+        }
+        if (command.startsWith("check-ref-format --branch")) {
+          return createCommandResult(commandOptions);
+        }
+        if (command.startsWith("show-ref --verify --quiet refs/heads/")) {
+          const exists = options.branchExistsBeforeCall || refCreated;
+          return createCommandResult(commandOptions, { exitCode: exists ? 0 : 1 });
+        }
+        if (command.startsWith("worktree add")) {
+          if (options.addCreatesRef) {
+            refCreated = true;
+          }
+          return createCommandResult(commandOptions, {
+            exitCode: 128,
+            stderr: options.addStderr,
+          });
+        }
+        if (command.startsWith("branch -D -- ")) {
+          if (options.rollbackBehavior === "throw") {
+            throw new Error("spawn git ENOENT");
+          }
+          if (options.rollbackBehavior === "exit-1") {
+            return createCommandResult(commandOptions, {
+              exitCode: 1,
+              stderr: "error: branch is checked out",
+            });
+          }
+          refCreated = false;
+          return createCommandResult(commandOptions, { stdout: "Deleted branch feature" });
+        }
+        throw new Error(`Unexpected git command in test: ${command}`);
+      },
+    );
+    return {
+      commandProvider: { resolveGitBinary: vi.fn().mockResolvedValue("git"), run },
+      run,
+    };
+  }
+
+  const permissionStderr =
+    "fatal: could not create leading directories of '/locked/wt/.git': Permission denied";
+
+  it("deletes the half-created branch after a failed worktree add -b", async () => {
+    const target = join(makeTempDir("zcode-git-rollback-parent-"), "wt");
+    const { commandProvider, run } = createScriptedWorktreeProvider({
+      branchExistsBeforeCall: false,
+      addStderr: permissionStderr,
+      addCreatesRef: true,
+    });
+    const repo = createGitCliRepo({ commandProvider });
+
+    const result = await repo.createWorktree("/repo", "feature", target, "release");
+
+    expect(result.ok).toBe(false);
+    expect(result.issues).toHaveLength(1);
+    const commands = run.mock.calls.map(([options]) => options.args.join(" "));
+    expect(commands).toContain("branch -D -- feature");
+    expect(commands.indexOf("branch -D -- feature")).toBeGreaterThan(
+      commands.findIndex((command) => command.startsWith("worktree add -b feature")),
+    );
+  });
+
+  it("does not delete a branch that existed before the call", async () => {
+    const target = join(makeTempDir("zcode-git-rollback-existing-"), "wt");
+    const { commandProvider, run } = createScriptedWorktreeProvider({
+      branchExistsBeforeCall: true,
+      addStderr: permissionStderr,
+      addCreatesRef: false,
+    });
+    const repo = createGitCliRepo({ commandProvider });
+
+    const result = await repo.createWorktree("/repo", "feature", target, "release");
+
+    expect(result.ok).toBe(false);
+    const commands = run.mock.calls.map(([options]) => options.args.join(" "));
+    expect(commands.some((command) => command.startsWith("branch -D"))).toBe(false);
+  });
+
+  it("does not delete a branch created concurrently by another creator", async () => {
+    const target = join(makeTempDir("zcode-git-rollback-race-"), "wt");
+    // The other creator's ref appears between our pre-probe and the failed add, so the
+    // post-failure probe sees it. The stderr classifier must keep it out of the rollback.
+    const { commandProvider, run } = createScriptedWorktreeProvider({
+      branchExistsBeforeCall: false,
+      addStderr: "fatal: a branch named 'feature' already exists",
+      addCreatesRef: true,
+    });
+    const repo = createGitCliRepo({ commandProvider });
+
+    const result = await repo.createWorktree("/repo", "feature", target, "release");
+
+    expect(result.ok).toBe(false);
+    expect(result.issues[0]?.code).toBe("branch-already-exists");
+    const commands = run.mock.calls.map(([options]) => options.args.join(" "));
+    expect(commands.some((command) => command.startsWith("branch -D"))).toBe(false);
+  });
+
+  it.each([
+    ["non-zero exit", "exit-1"],
+    ["thrown error", "throw"],
+  ] as const)(
+    "keeps the original worktree failure when rollback fails (%s)",
+    async (_label, rollbackBehavior) => {
+      const target = join(makeTempDir("zcode-git-rollback-fail-"), "wt");
+      const { commandProvider } = createScriptedWorktreeProvider({
+        branchExistsBeforeCall: false,
+        addStderr: permissionStderr,
+        addCreatesRef: true,
+        rollbackBehavior,
+      });
+      const repo = createGitCliRepo({ commandProvider });
+
+      const result = await repo.createWorktree("/repo", "feature", target, "release");
+
+      expect(result).toEqual({
+        ok: false,
+        worktreePath: null,
+        branchName: null,
+        issues: [expect.objectContaining({ code: "unknown", detail: permissionStderr })],
+      });
+    },
+  );
+});
