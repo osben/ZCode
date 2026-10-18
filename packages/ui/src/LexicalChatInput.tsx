@@ -62,6 +62,8 @@ import { navigatePromptHistory } from "./lib/promptHistory.js";
 import { resolveMobileInputTextSizeClassName } from "@/lib/mobileTextInput.js";
 import type { MentionItemData } from "@/mentions/mentionTypes.js";
 import type { ComposerMentionPrefill } from "@/store/zcodeSessionStoreTypes.js";
+import type { VoiceTranscriptionPreview } from "@zcode/services";
+import { VoiceGhostPreview } from "@/prompt-editor/VoiceGhostPreview.js";
 
 /** The old useChatComposer has been removed; the paste event uses a minimal structural type compatible with ClipboardEvent. */
 export interface ChatComposerPasteEvent {
@@ -1392,6 +1394,8 @@ interface LexicalChatInputProps {
   appSlashCommands?: readonly AppSlashCommand[];
   /** Toggle for the mention (@/#) panel. Explicitly disable it while the v4 data plane is unavailable, while keeping the entry point. */
   enableMentionPanel?: boolean;
+  /** Streaming voice preview drawn as ghost text at the caret; never part of the editor document. */
+  voicePreview?: VoiceTranscriptionPreview | null;
 }
 
 const EDITOR_THEME = {
@@ -1423,6 +1427,7 @@ export function LexicalChatInput({
   excludedSlashCommandNames,
   appSlashCommands,
   enableMentionPanel = true,
+  voicePreview,
 }: LexicalChatInputProps) {
   const inputMountedAtRef = useRef(Date.now());
   const lastReadyLogKeyRef = useRef<string | null>(null);
@@ -1545,6 +1550,7 @@ export function LexicalChatInput({
       <LexicalComposer initialConfig={initialConfig}>
         <div className="relative">
           <PlainTextPlugin contentEditable={contentEditable} ErrorBoundary={LexicalErrorBoundary} />
+          <VoiceGhostPreview preview={voicePreview ?? null} />
           <HistoryPlugin />
           <PromptClipboardPlugin />
           <TextContentPlugin onChange={onChange} taskId={taskId} />

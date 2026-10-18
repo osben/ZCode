@@ -7531,8 +7531,6 @@ const ukUA: Record<string, string> = {
   "voiceDictation.composer.processing": "Обробка тексту",
   "voiceDictation.composer.status.processing": "Обробка тексту",
   "voiceDictation.composer.modelStatus.loading": "Модель розпізнавання завантажується",
-  "voiceDictation.composer.modelStatus.loaded":
-    "Модель розпізнавання завантажена, голосове введення стартує миттєво",
   "settings.computerUse.title": "Computer Use",
   "settings.computerUse.toggleLabel": "Увімкнути Computer Use",
   "settings.computerUse.toggleDescription": "Вмикає Computer Use — його сервер MCP і навички.",

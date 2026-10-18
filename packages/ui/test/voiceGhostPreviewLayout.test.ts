@@ -1,0 +1,60 @@
+import { describe, expect, it } from "vitest";
+import { computeGhostLayout } from "@/lib/voiceGhostPreviewLayout.js";
+
+const editor = { left: 100, top: 50, width: 400, height: 120 };
+
+describe("computeGhostLayout (VD-GHO-04)", () => {
+  it("places the first line at the caret x and aligns the line box with the caret line", () => {
+    const layout = computeGhostLayout({
+      caret: { left: 180, top: 60, height: 16 },
+      editor,
+      lineHeight: 20,
+    });
+    // Caret x relative to the editor box; the first line is indented by this amount only.
+    expect(layout?.indent).toBe(80);
+    // Half of the 4px leading above the caret glyph box keeps the ghost on the editor's line grid.
+    expect(layout?.top).toBe(10 - 2);
+  });
+
+  it("clamps the first-line indent inside the editor box", () => {
+    expect(
+      computeGhostLayout({ caret: { left: 20, top: 60, height: 16 }, editor, lineHeight: 20 })
+        ?.indent,
+    ).toBe(0);
+    const farRight = computeGhostLayout({
+      caret: { left: 580, top: 60, height: 16 },
+      editor,
+      lineHeight: 20,
+    });
+    // Keep room for at least a short word so the ghost never starts past the right edge.
+    expect(farRight?.indent).toBe(400 - 48);
+  });
+
+  it("hides the ghost when the caret is scrolled outside the visible editor box", () => {
+    expect(
+      computeGhostLayout({ caret: { left: 180, top: 10, height: 16 }, editor, lineHeight: 20 }),
+    ).toBeNull();
+    expect(
+      computeGhostLayout({ caret: { left: 180, top: 200, height: 16 }, editor, lineHeight: 20 }),
+    ).toBeNull();
+  });
+
+  it("returns null for an editor with no usable width", () => {
+    expect(
+      computeGhostLayout({
+        caret: { left: 0, top: 60, height: 16 },
+        editor: { ...editor, width: 0 },
+        lineHeight: 20,
+      }),
+    ).toBeNull();
+  });
+
+  it("never reports a negative top when the line height is smaller than the caret box", () => {
+    const layout = computeGhostLayout({
+      caret: { left: 120, top: 50, height: 24 },
+      editor,
+      lineHeight: 16,
+    });
+    expect(layout?.top).toBe(0);
+  });
+});

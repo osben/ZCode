@@ -26,7 +26,7 @@ Make the existing local desktop dictation flow easier to understand and avoid do
 10. Allow a downloading model card to be marked for use after download by clicking the card; do not show a separate `Use when ready` button. Keep the current selected model in effect until the requested model is fully ready; canceling or failing the download keeps the current selection.
 11. Present each model as a separate card with its name and description above a metadata/action footer. Clicking a ready card selects it; clicking a model that is not downloaded starts its download; clicking an in-progress download marks or unmarks it for use when ready. Download progress is shown when available, otherwise show an indeterminate starting state. Keep the current model selected until the requested model is ready. Use the shared settings badge style with the short `Active` label for the selected model; keep the distinct loaded/transcribing status without an unload countdown.
 12. Let the user choose how many minutes an idle model remains in memory after transcription. Apply the preference to the Desktop Host idle-unload timer, use five minutes as the default, and show only that the model is loaded rather than a countdown.
-13. During recording, show a compact floating feedback panel to the left of the microphone button with a clear listening state, microphone-level meter, and optional live transcript preview. Keep it anchored without shifting composer actions.
+13. During recording, show the microphone-level meter and Cancel in the toolbar beside the stop button, and show streaming transcript text as ghost text at the caret (superseded the earlier floating panel; see "Live recording feedback and streaming transcription").
 
 ### Compatibility with an older local Host
 
@@ -58,24 +58,24 @@ sequenceDiagram
 
 ## Acceptance cases
 
-| Case  | Setup                                                                       | Action                                          | Expected result                                                                                                                                                                                            |
-| ----- | --------------------------------------------------------------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| VD-01 | Desktop microphone permission granted; multiple OS inputs exist             | Open Voice dictation settings                   | System default and all named audio inputs are listed; copy explains virtual inputs can appear.                                                                                                             |
-| VD-02 | Exact catalog model exists in Handy's documented default model directory    | Open model settings                             | Model is ready, identified as Handy, selectable, and has no ZCode delete action.                                                                                                                           |
-| VD-03 | Handy candidate has wrong size or SHA-256                                   | Open model settings                             | Candidate is not treated as installed; Handy file is untouched.                                                                                                                                            |
-| VD-04 | Same model exists in ZCode and Handy                                        | Open model settings                             | ZCode-owned copy is used and remains removable by ZCode.                                                                                                                                                   |
-| VD-05 | Model download succeeds/fails                                               | Download a model                                | Progress/cancel remains available; success is confirmed; failure is reported.                                                                                                                              |
-| VD-06 | Web settings                                                                | Open Settings                                   | Voice dictation explains that local transcription is Desktop-only; no microphone or model controls imply Web support.                                                                                      |
-| VD-07 | Voice dictation shortcut is in use                                          | Open Keyboard Shortcuts                         | It remains editable using the shared shortcut recorder and defaults to `CmdOrCtrl+Shift+d`.                                                                                                                |
-| VD-08 | Start a model download                                                      | Click Download                                  | The card shows a full-width progress bar above a row with status at the left, measured speed when available, and Cancel at the right; starting uses an indeterminate bar. Success or failure is announced. |
-| VD-09 | Delete a ZCode-owned model                                                  | Click Delete, then cancel or confirm            | No file is removed before confirmation; confirming removes it and refreshes the model list. Handy-owned models have no delete action.                                                                      |
-| VD-10 | Enumerated inputs include a `deviceId` of `default`                         | Open the input selector                         | Only the System default choice and concrete input devices are shown; the synthetic entry is omitted.                                                                                                       |
-| VD-11 | Set the app language to Ukrainian                                           | Open Voice dictation settings and model actions | All labels, descriptions, statuses, confirmations, and toasts use Ukrainian text.                                                                                                                          |
-| VD-12 | A ready model is selected; another model is downloading                     | Click the downloading model card                | Keep using the selected model, and show a pending-use badge. Switch only after download succeeds; cancel/failure keeps the current selection.                                                              |
-| VD-13 | Open Desktop voice-dictation settings                                       | Review the model list                           | Models appear as separate cards with description and metadata/actions; the selected model is clearly labeled and subtly highlighted.                                                                       |
-| VD-14 | One ready model is selected; another is downloaded, missing, or downloading | Click each model card                           | Ready model becomes selected; missing model starts downloading; in-progress model toggles use-when-ready. The old selection stays active until the new model is ready.                                     |
-| VD-15 | Desktop voice dictation settings are open                                   | Change idle unload delay                        | Persist a supported minute value and apply it to the Host timer; no remaining-time countdown is shown.                                                                                                     |
-| VD-16 | Composer microphone starts recording                                        | Review the floating feedback panel              | Listening status and microphone level are clear, transcript preview is optional, and the mic button stays anchored without shifting composer actions.                                                      |
+| Case  | Setup                                                                       | Action                                           | Expected result                                                                                                                                                                                            |
+| ----- | --------------------------------------------------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| VD-01 | Desktop microphone permission granted; multiple OS inputs exist             | Open Voice dictation settings                    | System default and all named audio inputs are listed; copy explains virtual inputs can appear.                                                                                                             |
+| VD-02 | Exact catalog model exists in Handy's documented default model directory    | Open model settings                              | Model is ready, identified as Handy, selectable, and has no ZCode delete action.                                                                                                                           |
+| VD-03 | Handy candidate has wrong size or SHA-256                                   | Open model settings                              | Candidate is not treated as installed; Handy file is untouched.                                                                                                                                            |
+| VD-04 | Same model exists in ZCode and Handy                                        | Open model settings                              | ZCode-owned copy is used and remains removable by ZCode.                                                                                                                                                   |
+| VD-05 | Model download succeeds/fails                                               | Download a model                                 | Progress/cancel remains available; success is confirmed; failure is reported.                                                                                                                              |
+| VD-06 | Web settings                                                                | Open Settings                                    | Voice dictation explains that local transcription is Desktop-only; no microphone or model controls imply Web support.                                                                                      |
+| VD-07 | Voice dictation shortcut is in use                                          | Open Keyboard Shortcuts                          | It remains editable using the shared shortcut recorder and defaults to `CmdOrCtrl+Shift+d`.                                                                                                                |
+| VD-08 | Start a model download                                                      | Click Download                                   | The card shows a full-width progress bar above a row with status at the left, measured speed when available, and Cancel at the right; starting uses an indeterminate bar. Success or failure is announced. |
+| VD-09 | Delete a ZCode-owned model                                                  | Click Delete, then cancel or confirm             | No file is removed before confirmation; confirming removes it and refreshes the model list. Handy-owned models have no delete action.                                                                      |
+| VD-10 | Enumerated inputs include a `deviceId` of `default`                         | Open the input selector                          | Only the System default choice and concrete input devices are shown; the synthetic entry is omitted.                                                                                                       |
+| VD-11 | Set the app language to Ukrainian                                           | Open Voice dictation settings and model actions  | All labels, descriptions, statuses, confirmations, and toasts use Ukrainian text.                                                                                                                          |
+| VD-12 | A ready model is selected; another model is downloading                     | Click the downloading model card                 | Keep using the selected model, and show a pending-use badge. Switch only after download succeeds; cancel/failure keeps the current selection.                                                              |
+| VD-13 | Open Desktop voice-dictation settings                                       | Review the model list                            | Models appear as separate cards with description and metadata/actions; the selected model is clearly labeled and subtly highlighted.                                                                       |
+| VD-14 | One ready model is selected; another is downloaded, missing, or downloading | Click each model card                            | Ready model becomes selected; missing model starts downloading; in-progress model toggles use-when-ready. The old selection stays active until the new model is ready.                                     |
+| VD-15 | Desktop voice dictation settings are open                                   | Change idle unload delay                         | Persist a supported minute value and apply it to the Host timer; no remaining-time countdown is shown.                                                                                                     |
+| VD-16 | Composer microphone starts recording                                        | Review the toolbar cluster and the ghost preview | Listening status and microphone level are clear, transcript preview is optional, and the mic button stays anchored without shifting composer actions.                                                      |
 
 ## Handy discovery roots
 
@@ -99,19 +99,56 @@ This behavior applies to Desktop voice dictation. Web continues to show the exis
 
 ### UX
 
-- During recording, show a compact microphone-level meter in the composer voice control. Reuse the recorder's existing per-buffer peak level; do not draw or retain a waveform of the raw audio.
-- Keep the microphone stop button anchored in the toolbar while recording. Show the level meter and any live transcript in a floating panel to its left; the panel overlays earlier toolbar actions and must not change their layout positions.
-- **Floating panel interaction rules.** Hit testing matches what is visible:
-  1. The panel body is a hit target (`pointer-events-auto`). It absorbs clicks and hover that land on it, so covered toolbar actions (model picker, attachments) are not clicked or hovered through the panel. The trade-off is that clicks on the part of the panel that overlaps the editor are absorbed too; the panel is anchored to the button and sized compactly to limit this.
-  2. The panel's Cancel button stays clickable (VD-PNL-02).
-  3. The panel never takes focus or changes the editor selection. A mousedown on the panel body calls `preventDefault`, so focus stays in the composer editor; the dictation shortcut is scoped to the composer and would otherwise stop responding. Its Cancel click still fires.
-  4. The panel sits strictly to the left of the stop button and never covers the stop button or the send button.
-  5. Dialogs, popovers, and menus render in portals above the composer (`z-50`/`z-[60]`), so the panel never covers them; they stay above the panel.
-  6. The panel is passive status UI only: no tab stop other than the Cancel button, no `autoFocus`, no `aria-modal`.
-- Keep recording, transcribing, and idle visually distinct. The level meter is active only while recording and returns to zero on stop or cancel.
-- For a streaming-capable model, show committed text plus a visually distinct tentative suffix as a preview. The preview is not part of the editable/submittable draft until finalization succeeds.
-- On successful stop, replace the preview with the final transcript exactly once using the existing composer insertion behavior. On cancellation or failure, clear the preview and preserve the user's existing draft.
-- Models without verified streaming support keep the current record-then-transcribe behavior.
+- **Level meter and Cancel in the toolbar.** While recording, a cluster sits immediately left of the microphone/stop button and holds the microphone-level meter and a Cancel button. The meter reuses the recorder's per-buffer peak level; do not draw or retain a waveform of the raw audio. The meter is active only while recording and returns to zero on stop or cancel.
+- **No overlay, no shift of the stop button.** The cluster is in the toolbar flow and is present only while recording. The stop button keeps its position, and the send button is untouched. Actions to the left of the cluster keep their left edges; the shrinkable model-controls group absorbs the width (it truncates rather than being covered). The panel that previously overlaid the toolbar is removed.
+- **Cluster interaction rules.**
+  1. The cluster is passive status UI: no `autoFocus`, no `aria-modal`, no tab stop except its Cancel button.
+  2. A mousedown on the cluster calls `preventDefault`, so focus and the editor selection stay in the composer. The composer-scoped dictation shortcut depends on that and keeps working afterwards.
+  3. Cancel fires the same silent cancel path as Escape.
+- **Ghost preview.** For a runtime-verified streaming model, the committed and tentative transcript is drawn as ghost text at the caret. See "Ghost preview".
+- Keep recording, transcribing, and idle visually distinct.
+- Models without verified streaming support keep the current record-then-transcribe behavior: no ghost text, but the toolbar level meter and Cancel still show while recording.
+
+### Ghost preview
+
+#### Product rules
+
+- The preview is display-only text. It is not part of the Lexical document: it is absent from editor state, `getText`, `getMarkdown`, drafts persistence, and undo/redo history, and it is never submitted by Enter or Send.
+- Placement: the ghost starts at the current caret (the insertion point of the final transcript) and follows the caret when it moves. Wrapped lines use the full editor width.
+- Style: committed text uses `text-foreground-subtle`; the tentative suffix uses `text-foreground-subtlest` in italic. Both are grey, non-selectable and `pointer-events-none`. Colors come from DESIGN.md tokens, so light and dark themes follow automatically.
+- Metrics: font family, size, weight, line height and letter spacing are copied from the editor's computed style so ghost lines sit on the editor's own line grid. The ghost is clipped to the editor box; it never changes the editor's layout or height.
+- A leading space is shown when the final insertion would add one (the character before the caret is not whitespace), so the preview matches what will be inserted.
+- Accessibility: the ghost layer is `aria-hidden`. Preview words are not announced one by one. The persistent status live region announces listening/transcribing as before, and the final text reaches assistive technology through the textbox value once it is inserted.
+- User edits while a preview is visible are kept (VD-LIVE-06); the ghost re-anchors to the caret after each editor update, selection change, scroll, or resize.
+- On successful stop the ghost is cleared before post-processing starts, and the final text is inserted once through `insertTextAtSelection`.
+- On cancel, blur, failure, or unmount the ghost is cleared together with the stream; the existing draft is untouched.
+- The Web remote control engine (Web Speech) uses the same ghost layer because it shares the preview shape.
+
+#### Ownership and event order
+
+- `useVoiceDictation` (and `useWebSpeechDictation`) owns the preview value. `V4ComposerDictationControl` reports it upward through `onPreviewChange`; `ConversationComposer` holds it and passes it to `ChatPromptEditor`, which passes it to `LexicalChatInput`.
+- `LexicalChatInput` renders a `VoiceGhostPreview` layer inside the editor's positioning box. It reads the caret from Lexical's selection (not from `window.getSelection`), so the position stays correct while the editor is blurred after a click on the toolbar.
+- Pure geometry (text-indent for the first line, vertical alignment, visibility when the caret is outside the editor box) lives in `lib/voiceGhostPreviewLayout.ts` and is unit tested.
+
+```mermaid
+sequenceDiagram
+  participant H as useVoiceDictation (preview owner)
+  participant C as ConversationComposer (holds preview)
+  participant E as LexicalChatInput
+  participant G as VoiceGhostPreview layer
+  participant D as Editor document
+  H->>C: preview {committed, tentative} via onPreviewChange
+  C->>E: voicePreview prop
+  E->>G: preview + caret from Lexical selection
+  G-->>G: aria-hidden overlay; document untouched
+  Note over H,D: stop succeeds
+  H->>H: clear preview (before post-processing)
+  H->>D: insertTextAtSelection(final) once
+```
+
+#### Acceptance cases
+
+See VD-GHO-01 to VD-GHO-07 in the acceptance table.
 
 ### Ownership and event order
 
@@ -152,23 +189,31 @@ sequenceDiagram
 
 ### Acceptance scenarios for implementation
 
-| Case       | Action                                                  | Expected result                                                                                                             |
-| ---------- | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| VD-LIVE-01 | Start recording and speak                               | Composer level meter responds to microphone input; no raw waveform is stored or shown.                                      |
-| VD-LIVE-02 | Use a runtime-verified streaming model                  | Preview updates during recording; committed and tentative text are visually distinct and cannot be submitted as draft text. |
-| VD-LIVE-03 | Stop a streaming recording                              | Stream finalizes; preview becomes one final insertion with no duplicate text.                                               |
-| VD-LIVE-04 | Cancel, blur, unmount, or fail during streaming         | Capture stops, preview disappears, existing draft remains intact, and the model stream lease is released.                   |
-| VD-LIVE-05 | Use an unsupported or unverified model                  | Existing one-shot transcription behavior remains available; no streaming UI is advertised.                                  |
-| VD-LIVE-06 | Edit the composer while a preview is visible            | User edits are preserved; final dictation text is inserted once according to the existing append behavior.                  |
-| VD-LIVE-07 | Start a second transcription while one stream is active | The service serializes or rejects it explicitly; no concurrent model use or silent audio loss occurs.                       |
-| VD-LIVE-08 | Start recording while composer toolbar is visible       | Stop button stays in its original position; level/preview panel opens to its left without shifting toolbar actions.         |
-| VD-PNL-01  | Hover or click the visible panel body while recording   | The panel receives the pointer; covered toolbar actions (model picker, attachments) get no click or hover.                  |
-| VD-PNL-02  | Click Cancel in the panel while recording               | Cancel fires (same as VD-OUT-03); the editor keeps focus and the draft is unchanged.                                        |
-| VD-PNL-03  | Mousedown on the panel body while the editor has focus  | Editor focus and caret are kept (default prevented); the dictation shortcut still stops recording afterwards.               |
+| Case       | Action                                                  | Expected result                                                                                                                                   |
+| ---------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| VD-LIVE-01 | Start recording and speak                               | Composer level meter responds to microphone input; no raw waveform is stored or shown.                                                            |
+| VD-LIVE-02 | Use a runtime-verified streaming model                  | Preview updates during recording; committed and tentative text are visually distinct and cannot be submitted as draft text.                       |
+| VD-LIVE-03 | Stop a streaming recording                              | Stream finalizes; preview becomes one final insertion with no duplicate text.                                                                     |
+| VD-LIVE-04 | Cancel, blur, unmount, or fail during streaming         | Capture stops, preview disappears, existing draft remains intact, and the model stream lease is released.                                         |
+| VD-LIVE-05 | Use an unsupported or unverified model                  | Existing one-shot transcription behavior remains available; no streaming UI is advertised.                                                        |
+| VD-LIVE-06 | Edit the composer while a preview is visible            | User edits are preserved; final dictation text is inserted once according to the existing append behavior.                                        |
+| VD-LIVE-07 | Start a second transcription while one stream is active | The service serializes or rejects it explicitly; no concurrent model use or silent audio loss occurs.                                             |
+| VD-LIVE-08 | Start recording while composer toolbar is visible       | Stop button stays in its original position; the meter and Cancel cluster appears immediately to its left and does not overlay toolbar actions.    |
+| VD-CLU-01  | Hover or click the toolbar cluster while recording      | Nothing overlays the toolbar: actions remain clickable and keep their positions; the cluster never covers the stop or send button.                |
+| VD-CLU-02  | Click Cancel in the toolbar cluster while recording     | Cancel fires (same as VD-OUT-03); the editor keeps focus and the draft is unchanged.                                                              |
+| VD-CLU-03  | Mousedown on the cluster while the editor has focus     | Editor focus and caret are kept (default prevented); the dictation shortcut still stops recording afterwards.                                     |
+| VD-GHO-01  | Stream a runtime-verified model; preview updates        | Committed and tentative text appear as grey ghost text at the caret, visually distinct; the layer is aria-hidden.                                 |
+| VD-GHO-02  | Ghost visible; press Enter, click Send, or undo         | The ghost is never submitted, never saved in the draft, and never added to undo history.                                                          |
+| VD-GHO-03  | Move the caret or edit real text while ghost is visible | Ghost follows the caret; user edits are preserved (VD-LIVE-06).                                                                                   |
+| VD-GHO-04  | Long preview wraps; narrow width; dark theme            | First line starts at the caret, wrapped lines use the full editor width, nothing shifts layout, colors follow theme tokens on mobile and desktop. |
+| VD-GHO-05  | Stop with a streaming model                             | Ghost is cleared before post-processing; the final text is inserted once via the existing insertion path (VD-LIVE-03).                            |
+| VD-GHO-06  | Cancel, blur, failure, or unmount during ghost          | Ghost disappears with the stream; the existing draft is intact (VD-LIVE-04).                                                                      |
+| VD-GHO-07  | Model without streaming support                         | No ghost text; the toolbar meter and Cancel still show while recording (VD-LIVE-05).                                                              |
 
 ### E2E validation handoff
 
 - The E2E scenario must use a Desktop runtime with a runtime-verified streaming Parakeet GGUF and a working microphone. Assert that the level meter responds, preview text appears without changing the editor draft, stopping inserts the finalized transcript once, and canceling preserves the pre-existing draft.
+- VD-E2E-GHOST (written, not run): on a Desktop runtime with a runtime-verified streaming model and a microphone, start recording in a composer that holds a draft with the caret mid-text. Assert the toolbar meter responds and the cluster sits left of the stop button without moving the other toolbar actions; the ghost text appears at the caret and is absent from the textbox value, `Enter` submission, and draft persistence; stop inserts the final transcript once at the caret; Cancel leaves the draft unchanged and the ghost gone.
 - A fallback scenario must use a model whose loaded runtime reports no compatible stream support and assert that the existing one-shot insertion still works without a streaming preview.
 - Streaming candidates for E2E: `nemotron-3.5-asr-streaming-0.6b` (uk/ru/en and 25 more), `parakeet-unified-en-0.6b` and `nemotron-speech-streaming-en-0.6b` (English). Real microphone E2E remains pending; the runtime facts below were obtained by feeding synthetic 16 kHz speech to the native library, not a live microphone.
 
@@ -241,7 +286,7 @@ sequenceDiagram
 ### Dictation output
 
 - **Insertion point.** A finished transcript is inserted at the composer caret, replacing the current selection; if the editor has no usable selection it is appended to the end. The existing `appendText` stays for other callers. A space is added only on a side that borders a non-space character.
-- **Cancel.** `Escape` while loading or recording cancels dictation without transcribing or inserting anything and without interrupting the running agent turn. The floating feedback panel also exposes a Cancel button. Cancel follows the same silent path as window blur (no stop chime, mute released).
+- **Cancel.** `Escape` while loading or recording cancels dictation without transcribing or inserting anything and without interrupting the running agent turn. The toolbar cluster shown while recording also exposes a Cancel button. Cancel follows the same silent path as window blur (no stop chime, mute released).
 - **Too short.** A recording shorter than `VOICE_MIN_RECORDING_MS` shows a short notice ("Recording too short") instead of being dropped silently.
 - **No model.** Starting without a selected model shows a notice with an `Open settings` action that opens the Voice dictation settings section.
 - **Clipboard.** `voiceDictation.copyToClipboard` (default off): after a transcript is produced, also write it to the system clipboard. Insertion into the composer is unaffected. A clipboard failure is logged and never fails dictation. Unmounting the composer aborts dictation with no output, including no clipboard write. The browser may reject the write when the document is not focused; this is only logged.
@@ -281,7 +326,7 @@ sequenceDiagram
 | VD-OUT-01 | Caret in the middle of a draft; dictate            | Text is inserted at the caret with correct spacing; the rest of the draft is intact.                                   |
 | VD-OUT-02 | Text selected in the draft; dictate                | The selection is replaced by the transcript.                                                                           |
 | VD-OUT-03 | Press Esc while recording                          | Capture stops, nothing is inserted or copied, the agent turn is not interrupted, no stop chime.                        |
-| VD-OUT-04 | Click Cancel in the feedback panel                 | Same as VD-OUT-03.                                                                                                     |
+| VD-OUT-04 | Click Cancel in the toolbar cluster                | Same as VD-OUT-03.                                                                                                     |
 | VD-OUT-05 | Tap the shortcut for less than 250 ms              | A "too short" notice appears; nothing is inserted.                                                                     |
 | VD-OUT-06 | Start with no model selected                       | A notice with `Open settings` appears; the action opens Voice dictation settings.                                      |
 | VD-OUT-07 | `copyToClipboard` on; dictate                      | Text is inserted and also copied; with it off the clipboard is untouched.                                              |
@@ -372,7 +417,7 @@ sequenceDiagram
 ### Product rules
 
 - On Desktop the composer microphone button shows a small dot for the **selected** model: a pulsing warning-colored dot while that model is loading (including a warm-up load), a success-colored dot while it is loaded in memory. No dot when it is not loaded, when no model is selected, on Web remote control, and while recording or busy (the button already shows the recording or spinner state).
-- The dot is never the only signal: the tooltip adds the status text ("Speech model loading" / "Speech model loaded, starts instantly"), and the button is described by the same text for assistive technology. The pulse is disabled under reduced motion.
+- The loading dot is never the only signal: its tooltip adds the status text ("Speech model loading"), and the button is described by the same text for assistive technology. The loaded dot is a non-essential hint: it is decorative (`aria-hidden`), adds no tooltip text, and the button has no description for it. Loaded state is therefore conveyed by color only, which is acceptable because it changes no available action. The pulse is disabled under reduced motion.
 - A model loaded for a different selection (the user switched models) shows no dot; loaded state always refers to the selected model.
 
 ### Ownership and interfaces

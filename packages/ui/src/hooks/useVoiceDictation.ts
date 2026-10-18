@@ -1,3 +1,4 @@
+/* oxlint-disable eslint(max-lines) -- The hook owns the whole recording, stream, and post-processing lifecycle; splitting it is a follow-up, so the one added preview clear is kept here. */
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { toast } from "@/components/ui/toast.js";
 import { resolveEngineLanguage, type VoiceTranscriptionPreview } from "@zcode/services";
@@ -380,6 +381,9 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
         if (streamErrorRef.current) throw streamErrorRef.current;
         result = await voiceDictationService.finalizeStream(streamId);
         streamIdRef.current = null;
+        // The final transcript replaces the ghost preview; clear it before any rewrite wait so the
+        // preview never lingers next to the processing state.
+        setPreview(null);
       } else {
         result = await voiceDictationService.transcribe({
           modelId: modelId ?? "",
