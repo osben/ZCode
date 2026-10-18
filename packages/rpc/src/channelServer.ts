@@ -238,7 +238,9 @@ export class ChannelServer<TContext = string> implements IChannelServer<TContext
     const timer = setTimeout(() => {
       console.error(`Unknown channel: ${request.channelName}`);
       // A pending listen gets no error; the client keeps its emitter, so keep the record until
-      // a late registration subscribes it or the client sends EventDispose.
+      // a late registration subscribes it, the client sends EventDispose, or this server is
+      // disposed. ChannelClient.dispose() sends no EventDispose, so transport owners must
+      // dispose the server on close (as they already must for active subscriptions).
       if (request.type !== RequestType.Promise) {
         return;
       }

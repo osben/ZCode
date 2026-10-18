@@ -128,7 +128,7 @@ Rules:
 Rationale:
 
 - The client rejects and forgets a Promise on timeout or cancel. Executing it later would run a side effect whose result nobody can observe (double-execution window for mutations), and keeping the record leaks its arguments for the server lifetime.
-- The client never receives an error for a pending EventListen and keeps its emitter until the last listener is removed, so a late registration still yields a working subscription. The record's lifetime is bounded by the client's own listener lifetime through `EventDispose`.
+- The client never receives an error for a pending EventListen and keeps its emitter until the last listener is removed, so a late registration still yields a working subscription. The record is released when the client removes its last listener (`EventDispose`) or when the server is disposed. `ChannelClient.dispose()` does not send `EventDispose`, so every transport owner must dispose its `ChannelServer` when the transport closes — the same requirement that already applies to active subscriptions.
 - A flow that legitimately needs more than `timeoutDelay` to register channels must use `deferInit` (above) or a larger `timeoutDelay`, not rely on late execution.
 
 Event order for a Promise to a channel that registers late:
