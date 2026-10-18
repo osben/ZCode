@@ -2963,10 +2963,6 @@ function ConversationComposerImpl({
   const submitControlNode = useMemo(
     () => (
       <div className="flex min-w-0 items-center gap-1">
-        {/* specs/incognito-session.md "Composer toggle": right group, immediately left of the model controls. */}
-        {draftMode && sessionId === null && !isWebRemoteControl ? (
-          <V4ComposerIncognitoControl workspaceKey={workspaceKey} disabled={disabled} />
-        ) : null}
         <span className="flex min-w-0 shrink items-center gap-1 overflow-hidden empty:hidden">
           <V4ComposerModelControls
             workspacePath={workspacePath}
@@ -3147,6 +3143,11 @@ function ConversationComposerImpl({
   );
   const isBlockedByInteraction = blockingRequestId !== null;
 
+  // specs/incognito-session.md "Composer toggle": top row, after the project and branch chips.
+  const incognitoComposerControl =
+    draftMode && sessionId === null && !isWebRemoteControl ? (
+      <V4ComposerIncognitoControl workspaceKey={workspaceKey} disabled={disabled} />
+    ) : null;
   // v4 pendingInteractions blocks the bottom dock; keep Composer mounted and hide it only visually and from the accessibility tree,
   // so permission/question cards do not cause the draft or editor state to be lost.
   return (
@@ -3209,10 +3210,15 @@ function ConversationComposerImpl({
             onModelTransitionStart={handleHighspeedModelTransitionStart}
           />
         ) : null}
-        {contextHeader ? (
+        {contextHeader || incognitoComposerControl ? (
           // Same wrapper as the old ChatViewComposer contextHeaderContent (workspace menu + Git branch).
-          <div className="relative z-10 p-1.5 flex min-w-0 flex-wrap items-center gap-0">
+          // specs/incognito-session.md "Composer toggle": the incognito control closes the row after the chips; flex-wrap drops it to a second line when narrow.
+          <div
+            data-composer-context-row=""
+            className="relative z-10 p-1.5 flex min-w-0 flex-wrap items-center gap-0"
+          >
             {contextHeader}
+            {incognitoComposerControl}
           </div>
         ) : null}
         {conversationSelectionLimitReason ? (

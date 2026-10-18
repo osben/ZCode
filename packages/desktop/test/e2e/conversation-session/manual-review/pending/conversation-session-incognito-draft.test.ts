@@ -49,12 +49,17 @@ describe("Incognito session draft", () => {
 
     await $(MARKER).waitForDisplayed();
     expect(await $(TRIGGER).getAttribute("aria-pressed")).toBe("true");
-    // specs/incognito-session.md "Composer toggle": the control sits in the trailing cluster, left of the model controls.
-    const inTrailingCluster = await browser.execute((triggerSelector) => {
+    // specs/incognito-session.md "Composer toggle": the control sits in the composer top row after the
+    // project and branch chips, not in the bottom toolbar's trailing cluster.
+    const placement = await browser.execute((triggerSelector) => {
       const trigger = document.querySelector(triggerSelector);
-      return Boolean(trigger?.closest("[data-composer-trailing-actions]"));
+      return {
+        inTopRow: Boolean(trigger?.closest("[data-composer-context-row]")),
+        inTrailingCluster: Boolean(trigger?.closest("[data-composer-trailing-actions]")),
+      };
     }, TRIGGER);
-    expect(inTrailingCluster).toBe(true);
+    expect(placement.inTopRow).toBe(true);
+    expect(placement.inTrailingCluster).toBe(false);
     const tinted = await browser.execute((inputSelector) => {
       const shell = document.querySelector(inputSelector)?.closest(".rounded-2xl");
       return shell?.className.includes("!border-incognito") ?? false;

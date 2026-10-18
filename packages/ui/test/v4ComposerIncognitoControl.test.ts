@@ -113,6 +113,25 @@ it("places exactly one turn-off button inside the active chip and none while off
   expect(screen.getByTestId(TID_V4_COMPOSER_INCOGNITO_TRIGGER).contains(off)).toBe(false);
 });
 
+// specs/incognito-session.md "Composer toggle": the control lives in the composer top row, outside
+// the bottom toolbar fit, so it never receives a collapse priority and never collapses to an icon.
+it("is placed at the trailing end of the top row and is not a toolbar collapse participant", () => {
+  const { container } = render(createElement(V4ComposerIncognitoControl, { workspaceKey: "/ws" }));
+  const root = container.firstElementChild as HTMLElement;
+  expect(root.className).toContain("ml-auto");
+  expect(container.querySelector("[data-composer-collapse-priority]")).toBeNull();
+
+  act(() => {
+    useDraftIncognitoIntentStore
+      .getState()
+      .activate("/ws", resolveIncognitoDefaults({ mcp: true }));
+  });
+  const marker = screen.getByTestId(TID_V4_COMPOSER_INCOGNITO_MARKER);
+  expect(marker.hasAttribute("data-composer-collapse-priority")).toBe(false);
+  expect(marker.querySelector("[data-composer-compact]")).toBeNull();
+  expect(container.querySelector("[data-composer-collapse-priority]")).toBeNull();
+});
+
 it("disables the turn-off button together with the control", () => {
   act(() => {
     useDraftIncognitoIntentStore
