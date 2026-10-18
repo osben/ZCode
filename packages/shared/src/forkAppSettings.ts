@@ -47,6 +47,8 @@ const voiceDictationStoredSchema = voiceDictationSettingsSchema.extend({
   languages: voiceDictationSettingsSchema.shape.languages.catch(undefined),
   // A provider written by a newer build must only drop itself, not the whole voiceDictation object.
   postProcessProvider: voiceDictationSettingsSchema.shape.postProcessProvider.catch(undefined),
+  // A prompt over the current limit (newer build or hand edit) falls back to the default prompt.
+  postProcessPrompt: voiceDictationSettingsSchema.shape.postProcessPrompt.catch(undefined),
 });
 
 const worktreeLocationModeSchema = z.enum(["sibling", "inside", "global", "custom"]);

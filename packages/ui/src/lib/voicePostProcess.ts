@@ -1,4 +1,9 @@
-import type { IVoiceDictationService, VoicePostProcessProvider } from "@zcode/services";
+import {
+  DEFAULT_POST_PROCESS_PROMPT,
+  type IVoiceDictationService,
+  type VoicePostProcessProvider,
+} from "@zcode/services";
+import type { VoiceDictationSettings } from "@zcode/shared";
 
 /** Safety net above the Host's own 15 s limit, so a hung Host call can never strand the busy state. */
 export const POST_PROCESS_CLIENT_TIMEOUT_MS = 20_000;
@@ -41,4 +46,19 @@ export async function postProcessOrRaw(
     onFailure(error);
     return request.text;
   }
+}
+
+/** Effective post-processing preferences: off unless enabled, a blank prompt means the default. */
+export function readPostProcessSettings(voice: VoiceDictationSettings | undefined): {
+  enabled: boolean;
+  prompt: string;
+  provider: VoicePostProcessProvider;
+} {
+  return {
+    enabled: voice?.postProcessEnabled === true,
+    prompt: voice?.postProcessPrompt?.trim()
+      ? voice.postProcessPrompt
+      : DEFAULT_POST_PROCESS_PROMPT,
+    provider: voice?.postProcessProvider ?? "apple-fm",
+  };
 }

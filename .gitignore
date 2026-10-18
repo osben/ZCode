@@ -80,3 +80,6 @@ __pycache__/
 
 # Local ZCode agent session data (plans).
 /.zcode/
+
+# lint-staged Vitest hook temporary state
+.lint-staged-vitest-*.json

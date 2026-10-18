@@ -10,6 +10,10 @@ export function resolveRpcLogLevel(message: string, ...args: unknown[]): RpcLogL
   // Background details are read once per second and success logs would continuously hit disk; lower the success level for this query only and retain failure diagnostics.
   if (message.startsWith("[rpc:call] zcode-agent.backgroundBashOutputV4 OK (")) return "debug";
 
+  // Every Desktop composer polls the dictation model state about once per second to drive the microphone
+  // status dot; successes would flood the production log, failures stay at warn.
+  if (message.startsWith("[rpc:call] voice-dictation.getRuntimeState OK (")) return "debug";
+
   // On first workspace binding, provider registry syncs after the runtime identity query.
   // This failure with an explicit error code is a startup handshake state, not service degradation; avoid leaving a warning for every workspace.
   if (

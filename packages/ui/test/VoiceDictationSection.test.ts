@@ -570,6 +570,26 @@ describe("VoiceDictationSection post-processing", () => {
     expect((await toggle()).hasAttribute("disabled")).toBe(true);
   });
 
+  it("maps an unknown unavailability reason from the Host to the generic message", async () => {
+    h.voiceDictationService.getPostProcessAvailability.mockResolvedValue({
+      status: "unavailable",
+      reason: "someFutureReason",
+    });
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+
+    expect(await screen.findByText("voiceDictation.postProcess.unavailable.unknown")).toBeTruthy();
+  });
+
+  it("shows the toggle and prompt reset immediately, before the settings snapshot republishes", async () => {
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+    const control = await toggle();
+    await waitFor(() => expect(control.hasAttribute("disabled")).toBe(false));
+
+    fireEvent.click(control);
+    // The mocked snapshot never republishes, so only the optimistic overlay can flip the switch.
+    await waitFor(() => expect(control.getAttribute("aria-checked")).toBe("true"));
+  });
+
   it("treats a Host without the availability method as unavailable", async () => {
     h.voiceDictationService.getPostProcessAvailability.mockRejectedValue(
       new Error("Method not found: getPostProcessAvailability"),

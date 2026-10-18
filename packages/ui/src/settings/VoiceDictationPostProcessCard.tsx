@@ -27,6 +27,16 @@ interface VoiceDictationPostProcessCardProps {
 }
 
 const UNAVAILABLE: VoicePostProcessAvailability = { status: "unavailable", reason: "unknown" };
+/** Reasons that have a localized message; a Host from another version may report others. */
+const KNOWN_UNAVAILABLE_REASONS = new Set<string>([
+  "unsupportedPlatform",
+  "helperMissing",
+  "deviceNotEligible",
+  "appleIntelligenceNotEnabled",
+  "modelNotReady",
+  "unsupportedOS",
+  "unknown",
+]);
 
 /**
  * Post-processing settings: enable toggle (only when the Host reports the provider available),
@@ -89,7 +99,11 @@ export function VoiceDictationPostProcessCard({
           availability?.status === "unavailable" ? (
             <p className="text-ui-base text-foreground-subtle">
               {intl.formatMessage({
-                id: `voiceDictation.postProcess.unavailable.${availability.reason}`,
+                id: `voiceDictation.postProcess.unavailable.${
+                  KNOWN_UNAVAILABLE_REASONS.has(availability.reason)
+                    ? availability.reason
+                    : "unknown"
+                }`,
               })}
             </p>
           ) : undefined

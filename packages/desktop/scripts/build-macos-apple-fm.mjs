@@ -7,7 +7,7 @@
 // binary loadable on older macOS (it then reports "unsupportedOS").
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -43,33 +43,45 @@ if (!hasSwiftc()) {
 
 mkdirSync(outputDir, { recursive: true });
 
-try {
-  for (const arch of ["arm64", "x86_64"]) {
-    execFileSync(
-      "xcrun",
-      [
-        "swiftc",
-        "-O",
-        "-target",
-        `${arch}-apple-macos11`,
-        sourcePath,
-        "-o",
-        `${outputPath}-${arch}`,
-      ],
-      { stdio: "inherit" },
-    );
-  }
+// A previous build must never be packaged after a failed one.
+const slices = { arm64: `${outputPath}-arm64`, x86_64: `${outputPath}-x86_64` };
+for (const path of [outputPath, ...Object.values(slices)]) rmSync(path, { force: true });
+
+function compile(arch) {
   execFileSync(
-    "lipo",
-    ["-create", `${outputPath}-arm64`, `${outputPath}-x86_64`, "-output", outputPath],
+    "xcrun",
+    ["swiftc", "-O", "-target", `${arch}-apple-macos11`, sourcePath, "-o", slices[arch]],
     { stdio: "inherit" },
   );
-  execFileSync("rm", ["-f", `${outputPath}-arm64`, `${outputPath}-x86_64`]);
+}
+
+function cleanSlices() {
+  for (const path of Object.values(slices)) rmSync(path, { force: true });
+}
+
+function warn(message, error) {
+  console.warn(message, error instanceof Error ? error.message : String(error));
+}
+
+try {
+  compile("arm64");
+} catch (error) {
+  cleanSlices();
+  warn("[apple-fm] arm64 build failed; system-model post-processing will be unavailable:", error);
+  process.exit(0);
+}
+
+try {
+  compile("x86_64");
+  execFileSync("lipo", ["-create", slices.arm64, slices.x86_64, "-output", outputPath], {
+    stdio: "inherit",
+  });
   console.log(`[apple-fm] built universal binary: ${outputPath}`);
 } catch (error) {
-  console.warn(
-    "[apple-fm] build failed; system-model post-processing will be unavailable:",
-    error instanceof Error ? error.message : String(error),
-  );
-  process.exit(0);
+  // Apple Intelligence needs Apple silicon, so an arm64-only helper still serves every machine that can use it.
+  rmSync(outputPath, { force: true });
+  renameSync(slices.arm64, outputPath);
+  warn("[apple-fm] universal build failed; using an arm64-only helper:", error);
+} finally {
+  cleanSlices();
 }

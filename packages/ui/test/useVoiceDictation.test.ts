@@ -677,6 +677,38 @@ describe("useVoiceDictation concurrent starts", () => {
     mocks.recorderStartCount = 0;
   });
 
+  it("lets a new start proceed after Escape while the model is still loading", async () => {
+    let finishLoad!: (id: string) => void;
+    mocks.service!.beginStream!.mockImplementationOnce(
+      () => new Promise<string>((resolve) => (finishLoad = resolve)),
+    );
+    mocks.recorderStartCount = 0;
+    const hook = renderHook(() =>
+      useVoiceDictation({ enabled: true, onTranscript: vi.fn(), scopeRef: { current: null } }),
+    );
+
+    let first!: Promise<void>;
+    act(() => {
+      first = hook.result.current.start();
+    });
+    await waitFor(() => expect(mocks.service!.beginStream).toHaveBeenCalledTimes(1));
+    act(() => hook.result.current.cancel());
+    expect(hook.result.current.phase).toBe("idle");
+
+    // The microphone has not been requested yet, so a fresh start must not be blocked by the slow load.
+    await act(async () => hook.result.current.start());
+    await waitFor(() => expect(hook.result.current.phase).toBe("recording"));
+
+    // The stale load finishes later: it must only release its own stream, not disturb the new recording.
+    await act(async () => {
+      finishLoad("stale-stream");
+      await first;
+    });
+    expect(hook.result.current.phase).toBe("recording");
+    expect(mocks.service!.cancelStream).toHaveBeenCalledWith("stale-stream");
+    expect(mocks.recorder?.isRecording).toBe(true);
+  });
+
   it("ignores a new start while a cancelled start is still waiting for microphone permission", async () => {
     let grantPermission!: () => void;
     mocks.recorderStartGate = new Promise<void>((resolve) => (grantPermission = resolve));

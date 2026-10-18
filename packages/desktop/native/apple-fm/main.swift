@@ -43,7 +43,8 @@ func availabilityObject() -> [String: Any] {
 @available(macOS 26.0, *)
 func generate(prompt: String) async throws -> String {
     let session = LanguageModelSession()
-    let response = try await session.respond(to: prompt)
+    // Greedy sampling: rewriting dictated text should be deterministic, not creative.
+    let response = try await session.respond(to: prompt, options: GenerationOptions(sampling: .greedy))
     return response.content
 }
 #endif

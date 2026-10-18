@@ -1,12 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { toast } from "@/components/ui/toast.js";
-import {
-  DEFAULT_POST_PROCESS_PROMPT,
-  resolveEngineLanguage,
-  type VoiceTranscriptionPreview,
-} from "@zcode/services";
+import { resolveEngineLanguage, type VoiceTranscriptionPreview } from "@zcode/services";
 import { applyIdleUnloadPreference } from "@/lib/voiceIdleUnload.js";
-import { postProcessOrRaw } from "@/lib/voicePostProcess.js";
+import { postProcessOrRaw, readPostProcessSettings } from "@/lib/voicePostProcess.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useServices } from "@/hooks/useServices.js";
 import { useSettings } from "@/hooks/useSettingService.js";
@@ -63,11 +59,11 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
   const pushToTalk = voice?.pushToTalk !== false;
   const idleUnloadMinutes = voice?.idleUnloadMinutes ?? 5;
   const muteWhileRecording = voice?.muteWhileRecording === true;
-  const postProcessEnabled = voice?.postProcessEnabled === true;
-  const postProcessPrompt = voice?.postProcessPrompt?.trim()
-    ? voice.postProcessPrompt
-    : DEFAULT_POST_PROCESS_PROMPT;
-  const postProcessProvider = voice?.postProcessProvider ?? "apple-fm";
+  const {
+    enabled: postProcessEnabled,
+    prompt: postProcessPrompt,
+    provider: postProcessProvider,
+  } = readPostProcessSettings(voice);
   const recordingAudio = useVoiceDictationRecordingAudio();
   const openVoiceSettings = useOpenVoiceDictationSettings();
 
@@ -78,6 +74,8 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
   const phaseRef = useRef<VoiceDictationPhase>("idle");
   const startedAtRef = useRef(0);
   const startPromiseRef = useRef<Promise<void> | null>(null);
+  /** True only while recorder.start() awaits the microphone permission prompt, which cannot be aborted. */
+  const recorderStartPendingRef = useRef(false);
   const streamIdRef = useRef<string | null>(null);
   const streamQueueRef = useRef<Promise<void>>(Promise.resolve());
   /** PCM chunks awaiting send; merged and sent by the serial flush task, so a transiently slow RPC versus the microphone only backs up and never fails. */
@@ -191,8 +189,9 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
   const start = useCallback(async (): Promise<void> => {
     if (!enabled || phaseRef.current !== "idle" || recorder.isRecording) return;
     // A cancelled start can still be waiting for the microphone permission prompt; the recorder
-    // cannot abort that request, so a second capture must not begin until it has settled.
-    if (startPromiseRef.current) return;
+    // cannot abort that request, so a second capture must not begin until it has settled. Only that
+    // window is guarded: a stale start still loading the model never reaches the recorder.
+    if (recorderStartPendingRef.current) return;
     if (!voiceDictationService) return;
     if (!modelId) {
       toast(intl.formatMessage({ id: "voiceDictation.noModelSelected" }), {
@@ -229,6 +228,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
         return;
       }
       streamIdRef.current = streamId;
+      recorderStartPendingRef.current = true;
       try {
         await recorder.start({
           deviceId: microphoneDeviceId,
@@ -236,6 +236,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
           onChunk: enqueueStreamChunk,
           collectSamples: streamId === null,
         });
+        recorderStartPendingRef.current = false;
         if (generation !== startGenerationRef.current) {
           recorder.cancel();
           if (streamId) {
@@ -260,8 +261,9 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
           });
         }
       } catch (error) {
+        recorderStartPendingRef.current = false;
         recorder.cancel();
-        streamIdRef.current = null;
+        if (streamIdRef.current === streamId) streamIdRef.current = null;
         if (streamId) cancelServiceStream(streamId);
         setLevel(0);
         setPreview(null);

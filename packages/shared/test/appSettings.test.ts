@@ -327,6 +327,13 @@ describe("app settings", () => {
       }).voiceDictation,
     ).toEqual({ modelId: "parakeet" });
 
+    // An over-long prompt (hand edit or a newer build with a higher limit) drops only itself.
+    expect(
+      forkAppSettingsSchema.parse({
+        voiceDictation: { modelId: "parakeet", postProcessPrompt: "x".repeat(4001) },
+      }).voiceDictation,
+    ).toEqual({ modelId: "parakeet" });
+
     expect(
       forkAppSettingsPatchSchema.safeParse({ voiceDictation: { postProcessProvider: "other" } })
         .success,

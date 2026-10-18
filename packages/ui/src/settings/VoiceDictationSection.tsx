@@ -202,9 +202,15 @@ function DesktopVoiceDictationSection() {
       optimisticVoiceRef.current = merged;
       voiceRef.current = merged;
       pendingVoiceWritesRef.current += 1;
-      // Only the language picker reads the optimistic overlay; show it right away instead of waiting
+      // The language picker and the post-processing card read the optimistic overlay; show it right away instead of waiting
       // for the settings snapshot to republish (other controls read the published value).
-      if (patch.languages !== undefined || patch.language !== undefined) {
+      if (
+        patch.languages !== undefined ||
+        patch.language !== undefined ||
+        patch.postProcessEnabled !== undefined ||
+        patch.postProcessProvider !== undefined ||
+        patch.postProcessPrompt !== undefined
+      ) {
         setOptimisticTick((tick) => tick + 1);
       }
       try {
