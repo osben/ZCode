@@ -1147,7 +1147,13 @@ test("service delegates post-processing to its provider and reports it unavailab
   await withTempDir(async (dir) => {
     const store = makeStore(dir);
     const transcriber = new VoiceTranscriber({ store, loadEngine: async () => makeFakeEngine([]) });
-    const bare = new VoiceDictationService({ store, transcriber });
+    // Pin the platform: the default processor checks the OS before the helper path, so on a
+    // non-macOS CI runner it would report unsupportedPlatform instead of helperMissing.
+    const bare = new VoiceDictationService({
+      store,
+      transcriber,
+      postProcessor: new VoicePostProcessor({ helperPath: undefined, platform: "darwin" }),
+    });
     assert.deepEqual(await bare.getPostProcessAvailability(), {
       status: "unavailable",
       reason: "helperMissing",
