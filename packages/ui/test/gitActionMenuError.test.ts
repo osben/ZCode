@@ -9,6 +9,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { GitFileChange, GitIdentity, GitRepositorySummary } from "@zcode/shared";
 import { GitActionMenu } from "@/GitActionMenu.js";
+import { useConfirmDialogStore } from "@/store/confirmDialogStore.js";
 
 const mocks = vi.hoisted(() => ({
   toast: vi.fn(),
@@ -112,6 +113,15 @@ function armPendingPush(errorMessage: string): () => void {
   return () => reject(new Error(errorMessage));
 }
 
+// Detached HEAD asks before committing (specs/git-commit-detached-head-warning.md); these cases
+// cover the push failure after a confirmed commit.
+async function confirmDetachedCommit(): Promise<void> {
+  await waitFor(() => {
+    expect(useConfirmDialogStore.getState().pendingRequest).toBeDefined();
+  });
+  useConfirmDialogStore.getState().settleConfirmation(true);
+}
+
 async function flushMicrotasks(): Promise<void> {
   // Deterministic flush of the rejection -> catch -> setState chain; no timers involved.
   for (let index = 0; index < 10; index += 1) {
@@ -176,6 +186,7 @@ describe("GitActionMenu commit dialog error visibility", () => {
     });
 
     fireEvent.click(screen.getByTestId("git-commit-action-item-commitAndPush"));
+    await confirmDetachedCommit();
     // The commit resolved and the push request is now in flight.
     await waitFor(() => {
       expect(mocks.gitService.push).toHaveBeenCalledTimes(1);
@@ -248,6 +259,7 @@ describe("GitActionMenu commit dialog error visibility", () => {
     });
 
     fireEvent.click(screen.getByTestId("git-commit-action-item-commitAndPush"));
+    await confirmDetachedCommit();
     await waitFor(() => {
       expect(mocks.gitService.push).toHaveBeenCalledTimes(1);
     });

@@ -1410,6 +1410,37 @@ describe("reopened preparation attempts", () => {
     expect(createWorktree).toHaveBeenCalledWith(expect.objectContaining({ baseBranch: "main" }));
   });
 
+  it("BUG-GWT-005: a stale failed seed without an attempt id cannot fail the retried attempt", () => {
+    seedCreating({
+      sessionId: "session-legacy-seed",
+      status: "failed",
+      params: { ...PARAMS, attemptId: "attempt-a" },
+      failureMessage: "EACCES",
+    });
+    useComposerWorktreePipelineStore.getState().startPipeline(WORKSPACE_KEY, {
+      status: "creating",
+      sessionId: "session-legacy-seed",
+      params: { ...PARAMS, attemptId: "attempt-b" },
+      createdAt: 2,
+    });
+    // A marker written without the optional attempt id (older Host) still reports the old failure.
+    restoreComposerWorktreePipelineFromPreparation({
+      workspaceKey: WORKSPACE_KEY,
+      workspacePath: WORKSPACE_KEY,
+      sessionId: "session-legacy-seed",
+      preparation: {
+        status: "failed",
+        branchName: PARAMS.branchName,
+        targetPath: PARAMS.targetPath,
+        failureMessage: "EACCES",
+      },
+    });
+    expect(currentPipeline("session-legacy-seed")).toMatchObject({
+      status: "creating",
+      params: { attemptId: "attempt-b" },
+    });
+  });
+
   it("BUG-GWT-005: a prepared-session restart is not rolled back by the stale Host failed seed", async () => {
     // Same stale-seed race as Retry, through the composer's restart path (Send in a prepared
     // session whose entry failed): restart replaces failed(A) with creating(C) while the setup

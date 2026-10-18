@@ -1434,6 +1434,10 @@ const zhCN: Record<string, string> = {
   "git.actionMenu.commitDialog.error.generateFailed": "生成提交消息失败，请重试或手动填写。",
   "git.actionMenu.commitDialog.error.requestFailed": "提交失败：{error}",
   "git.actionMenu.commitDialog.error.pushAfterCommitFailed": "已提交，但推送失败：{error}",
+  "git.actionMenu.commitDialog.detachedWarning.title": "在游离 HEAD 上提交？",
+  "git.actionMenu.commitDialog.detachedWarning.description":
+    "HEAD 不在任何分支上，此提交不会属于任何分支，切换分支后可能丢失。如需保留，请先创建或切换到一个分支。",
+  "git.actionMenu.commitDialog.detachedWarning.confirm": "仍然提交",
   "git.actionMenu.commitDialog.toast.success": "已提交当前更改",
   "git.actionMenu.commitDialog.toast.commitAndPushSuccess": "已提交并推送当前更改",
   "git.actionMenu.pushDialog.title": "推送更改",
