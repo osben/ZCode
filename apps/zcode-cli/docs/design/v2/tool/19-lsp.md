@@ -14,7 +14,7 @@
 - точные `definition` / `references` / `implementation` с учётом типов и алиасов;
 - `hover` — выведенный тип без чтения половины файлов;
 - `documentSymbol` / `workspaceSymbol` — структуру файла и поиск символа по имени;
-- диагностику по одному файлу сразу после Edit/Write (самая большая ценность, фаза 4;
+- диагностику по одному файлу сразу после Edit/Write (самая большая ценность, фаза 3;
   в Claude Code это поведение по умолчанию: «Found N new diagnostic issues» под правкой).
 
 Не цель V1: completion, rename/code actions (это записи — отдельный контракт),
@@ -245,7 +245,7 @@ Claude Code (например, по debug-логу запроса), чтобы �
 
 | Поле | Тип | Обяз. | Описание |
 | --- | --- | --- | --- |
-| `operation` | enum | да | `goToDefinition`, `findReferences`, `hover`, `documentSymbol`, `workspaceSymbol`, `goToImplementation`, `diagnostics`; позже в фазе 3: `prepareCallHierarchy`, `incomingCalls`, `outgoingCalls`. |
+| `operation` | enum | да | `goToDefinition`, `findReferences`, `hover`, `documentSymbol`, `workspaceSymbol`, `goToImplementation`, `diagnostics`; позже в фазе 4: `prepareCallHierarchy`, `incomingCalls`, `outgoingCalls`. |
 | `filePath` | `string` | да* | Абсолютный или относительно cwd; проходит общий `path-policy`. *Для `workspaceSymbol` — любой файл нужного языка, чтобы выбрать сервер. |
 | `line` | `number` | для позиционных | 1-based, как в выводе Read. |
 | `character` | `number` | нет | 1-based колонка в символах строки. |
@@ -300,9 +300,18 @@ type LspOutput = {
 - `resultBudget`: inline `20_000` chars; `findReferences`/`workspaceSymbol` —
   не больше `LSP_MAX_RESULTS = 200` элементов, затем `truncated: true` + `total`;
   полный список уходит в artifact.
-- Видимость: только если есть хотя бы один включённый LSP-сервер; иначе тул не
-  регистрируется (паттерн onDemand / capability-conditioned tool shape из
-  `00-tool-change-chain.md`). Доступен главному агенту и `Explore`.
+- Видимость: тул регистрируется, только если есть хотя бы один **доступный**
+  сервер: плагин включён, бинарь резолвится и workspace доверен (паттерн
+  capability-conditioned tool shape из `00-tool-change-chain.md`). Плагин,
+  включённый по умолчанию, но без установленного бинаря, не показывает модели
+  тул, который всегда падает, и не пишет ошибок в чат; подсказка по установке
+  есть только в деталях плагина (фаза 5). Доступен главному агенту и `Explore`.
+- Резолв `command`: Desktop/Electron, запущенный из Dock, не наследует PATH
+  shell-а (бинари из `~/.nvm`, `~/.cargo/bin`, `~/go/bin` не видны). Резолвим по
+  PATH из login-shell окружения, которое хост уже снимает для внешних CLI
+  (`packages/acp-agent-runtime/src/registry.ts`) и для Bash (shell init snapshot
+  в `adapters/src/exec`). Отдельный механизм не вводим; как именно это окружение
+  доходит до CLI-рантайма, проверяем в фазе 0.
 
 ### 5.4 Ошибки (стабильные коды)
 
@@ -407,19 +416,12 @@ typescript-language-server на этом монорепо: время старт
   ok, медленный старт, crash, без version в publish, pull diagnostics).
 - Тесты: lifecycle, отмена, crash/restart, Windows `.cmd` резолв (unit c инъекцией PATHEXT).
 
-**Фаза 3 — тул `LSP` (навигация).**
-- `contracts/src/tools/lsp.ts`, `core/src/tool/handlers/lsp.ts` (+ `lsp-position.ts`,
-  `lsp-format.ts`, каждый < 400 строк), `LspService`, `LspDocumentSync` (mtime-сверка).
-- Регистрация по наличию серверов; проход по всем 12 разделам `00-tool-change-chain.md`
-  (contracts → core → prompt → provider → permission → executor → adapter → budget →
-  events/persistence → TUI/V4 projection → config).
-- TUI и V4: карточка вызова (операция, файл:строка, число результатов).
-- Тесты: контракт и `toContracts()`, позиции UTF-16, e2e на fake server и на реальном
-  typescript-language-server, если он есть в PATH (иначе skip с явной пометкой).
-
-**Фаза 4 — диагностика и синхронизация с правками.**
-- Операция `diagnostics` (§4.1); событие `FileMutated` из Edit/Write/ApplyPatch →
-  `LspDocumentSync` (+ `didChangeWatchedFiles`).
+**Фаза 3 — диагностика после правок (раньше навигации).**
+Диагностике нужны пул, синхронизация документов и attachment в контексте, но не
+тул `LSP`. Она даёт главную пользу, не меняя набор тулов модели, и позволяет
+рано замерить шум. Тем временем можно снять реальную схему upstream-тула для фазы 4.
+- `LspService`, `LspDocumentSync` (mtime-сверка, `didChangeWatchedFiles`, LRU `didClose`);
+  событие `FileMutated` из Edit/Write/ApplyPatch → `LspDocumentSync`.
 - Авто-диагностика после правок (upstream default, поле `diagnostics: true`).
   Результат Edit/Write **не ждёт** сервер. `LspDocumentSync` запоминает baseline
   диагностик файла до правки, а **новые** диагностики, пришедшие после неё,
@@ -428,8 +430,22 @@ typescript-language-server на этом монорепо: время старт
   (сначала `error`). Контракт Edit/Write не меняется; меняется сборка контекста
   (раздел 4 `00-tool-change-chain.md`). Холодный старт ради правки — только прогрев,
   без ожидания.
+- **Нет baseline** (файл не был открыт в сервере до правки, или сервер ещё
+  стартовал): показываем только диагностики, чей range пересекается с изменённым
+  диапазоном. Иначе все давно существующие ошибки файла выглядели бы «новыми».
 - TUI/V4: строка «Found N new diagnostic issues», раскрываемая (`+`/`-`).
 - Обновить `02-write.md`/`03-edit.md`: строка «LSP/IDE 通知 missing» → реализовано.
+
+**Фаза 4 — тул `LSP` (навигация и явная `diagnostics`).**
+- Сначала сверить имена операций с реальной схемой Claude Code (§5).
+- `contracts/src/tools/lsp.ts`, `core/src/tool/handlers/lsp.ts` (+ `lsp-position.ts`,
+  `lsp-format.ts`, каждый < 400 строк); операция `diagnostics` по §4.1.
+- Регистрация по доступности серверов (§5.3); проход по всем 12 разделам
+  `00-tool-change-chain.md` (contracts → core → prompt → provider → permission →
+  executor → adapter → budget → events/persistence → TUI/V4 projection → config).
+- TUI и V4: карточка вызова (операция, файл:строка, число результатов).
+- Тесты: контракт и `toContracts()`, позиции UTF-16, e2e на fake server и на реальном
+  typescript-language-server, если он есть в PATH (иначе skip с явной пометкой).
 
 **Фаза 5 — UI статуса.**
 Статус серверов в деталях плагина (`starting` / `running` / `not installed` / `crashed`)
@@ -447,9 +463,24 @@ typescript-language-server на этом монорепо: время старт
 - `packages/zcode-guide-plugin/skills/{zcode-configuration-guide,diagnosing-plugins}/SKILL.md`:
   убрать `lspServers` из «recorded but not executed».
 
-## 12. Открытые вопросы
+## 12. Решения и открытые вопросы
 
-1. Включать `typescript-lsp` по умолчанию (bundled official root) или только по установке?
-2. Авто-диагностику после правок (фаза 4) включать по умолчанию, как в upstream, или
-   оставить только явную операцию `diagnostics` до замеров шума?
-3. Поддержать несколько серверов на файл (TS + ESLint, Vue + TS) в V2 — объединение диагностик?
+Решено (2026-10-17):
+
+1. **TypeScript включён по умолчанию.** Манифест поставляется как bundled ZCode
+   official plugin и включается через существующий `officialPluginsEnabledByDefault`.
+   Он работает только при найденном бинаре и доверенном workspace (§5.3); без бинаря
+   агент ничего не видит, а подсказка по установке есть в деталях плагина. Диалог
+   рекомендации плагинов, как в upstream, в V1 не делаем: для его состояния
+   («больше не предлагать») понадобилось бы `fork_`-хранилище, а польза невелика.
+   Если пользователь поставит ещё и `typescript-lsp@claude-plugins-official`,
+   diagnostic `lsp_extension_shadowed` будет info-уровня и в чат не попадёт.
+2. **Диагностика после правок включена по умолчанию**, как в upstream: это главная
+   польза. Выключатель есть в самой схеме (`diagnostics: false` на сервере), новый
+   setting не нужен. Шум ограничиваем фильтрами: только новые, сначала `error`,
+   бюджет 20, правило «нет baseline» (фаза 3).
+3. **Порядок фаз:** диагностика (фаза 3) идёт раньше навигационного тула (фаза 4).
+
+Открыто:
+
+- Несколько серверов на файл (TS + ESLint, Vue + TS) в V2 — с объединением диагностик?
