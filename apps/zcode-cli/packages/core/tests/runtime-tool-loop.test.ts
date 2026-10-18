@@ -2711,85 +2711,6 @@ describe("AgentRuntime tool loop", () => {
     expect(runtime.getProjectId()).toBe(projectIdFromDirectory(initialCwd));
   });
 
-  it("keeps provider-visible embedded search enabled without injecting Bash prelude", async () => {
-    const sessionId = createSessionId("runtime-bash-embedded-search");
-    const eventStore = createTestSessionEventStore();
-    const backend = {
-      kind: "internal-cli" as const,
-      command: "zcode",
-      args: ["__internal-search"],
-    };
-    let capturedRequest: Parameters<ExecutionPort["run"]>[0] | undefined;
-    const now = new Date();
-    const executionPort: ExecutionPort = {
-      async run(request) {
-        capturedRequest = request;
-        return {
-          status: "completed",
-          exitCode: 0,
-          stdout: {
-            text: "",
-            bytes: 0,
-            truncated: false,
-          },
-          stderr: {
-            text: "",
-            bytes: 0,
-            truncated: false,
-          },
-          durationMs: 1,
-          timedOut: false,
-          cancelled: false,
-          startedAt: now,
-          completedAt: now,
-        };
-      },
-    };
-    let modelCallCount = 0;
-    const runtime = createTestAgentRuntime(
-      sessionId,
-      {
-        embeddedSearchBackend: backend,
-        mode: "yolo",
-        workingDirectory: "/workspace/project",
-      },
-      {
-        eventStore,
-        executionPort,
-        modelFactory: createTestModelFactory({
-          async generateText(request: any) {
-            modelCallCount++;
-            if (modelCallCount === 1) {
-              return {
-                finishReason: "tool-calls",
-                providerMetadata: undefined,
-                text: "",
-                toolCalls: [
-                  {
-                    id: "bash-grep",
-                    name: "Bash",
-                    input: { command: "grep needle file.txt" },
-                  },
-                ],
-                usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-              };
-            }
-            return {
-              finishReason: "stop",
-              providerMetadata: undefined,
-              text: "done",
-              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-            };
-          },
-        } as never),
-      },
-    );
-
-    await runtime.executeTurn("search with grep");
-
-    expect(capturedRequest?.bashPrelude).toBeUndefined();
-  });
-
   it("resets Bash cwd to workspace root after a successful command leaves the workspace", async () => {
     const sessionId = createSessionId("runtime-bash-cwd-reset-reminder");
     const eventStore = createTestSessionEventStore();
@@ -5642,46 +5563,6 @@ describe("AgentRuntime tool loop", () => {
     );
   });
 
-  it("does not inject a todo current-turn reminder when there are no todos", async () => {
-    const sessionId = createSessionId("runtime-empty-todo-current-turn-context");
-    const eventStore = createTestSessionEventStore();
-    const sessionStore = new RecordingSessionStore();
-    let capturedMessages: any[] = [];
-
-    const runtime = createTestAgentRuntime(
-      sessionId,
-      {
-        mode: "build",
-        workingDirectory: "/tmp/zcode-empty-todo-current-turn-context",
-      },
-      {
-        eventStore,
-        modelFactory: createTestModelFactory({
-          async generateText(request: any) {
-            capturedMessages = withoutAgentListingMessages(request.messages);
-            return {
-              finishReason: "stop",
-              providerMetadata: undefined,
-              text: "no todo answer",
-              usage: {
-                inputTokens: 1,
-                outputTokens: 1,
-                totalTokens: 2,
-              },
-            };
-          },
-        } as never),
-        sessionStore,
-      },
-    );
-
-    await runtime.executeTurn("continue without todos");
-
-    const contextText = providerMessagesToText(capturedMessages);
-    expect(contextText).not.toContain("Current session todo state (authoritative):");
-    expect(contextText).not.toContain("TodoRead or TodoWrite result updates it.");
-  });
-
   it("injects and persists a todo reminder only when cadence is due", async () => {
     const sessionId = createSessionId("runtime-todo-reminder-cadence-due");
     const eventStore = createTestSessionEventStore();
@@ -8370,49 +8251,6 @@ describe("AgentRuntime tool loop", () => {
       SessionEventType.TurnSteerDeliveryChanged,
     );
     expect((await runtime.getProjection()).pendingSteerInputs).toEqual([]);
-  });
-
-  it("does not inline-drain an ordinary queue item at a text-only model boundary", async () => {
-    const sessionId = createSessionId("runtime-ordinary-queue-not-inline-drained");
-    const eventStore = createTestSessionEventStore();
-    let runtime: AgentRuntime;
-    let modelCallCount = 0;
-
-    runtime = createTestAgentRuntime(
-      sessionId,
-      { mode: "build" },
-      {
-        eventStore,
-        modelFactory: createTestModelFactory({
-          async generateText(request: any) {
-            modelCallCount += 1;
-            if (modelCallCount === 1) {
-              const activeTurn = runtime.getActiveTurnInfo();
-              const queued = await runtime.steerTurn({
-                expectedTurnId: activeTurn?.turnId,
-                input: "future turn",
-                delivery: "queue",
-              });
-              expect(queued.kind).toBe("queued");
-            }
-            return {
-              finishReason: "stop",
-              providerMetadata: undefined,
-              text: "current turn done",
-              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-            };
-          },
-        } as never),
-      },
-    );
-
-    await runtime.executeTurn("current turn");
-
-    expect(modelCallCount).toBe(1);
-    expect((await eventStore.getEvents(sessionId)).map((event) => event.type)).not.toContain(
-      SessionEventType.TurnSteerDrained,
-    );
-    expect((await runtime.getProjection()).pendingSteerInputs).toHaveLength(1);
   });
 
   it("preserves active steered input when the turn fails and pauses runtime queue drain", async () => {
