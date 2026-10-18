@@ -29,6 +29,8 @@ export interface SessionSummaryDeriveExtra {
   childSessions?: SessionSummary["childSessions"];
   /** True when the execution worktree directory was absent on disk at the meta source. */
   executionWorktreeMissing?: boolean;
+  /** True for an incognito session (specs/incognito-session.md). */
+  incognito?: boolean;
 }
 
 const MAX_PREVIEW_CHARS = 120;
@@ -124,6 +126,7 @@ export function deriveSessionSummary(
       ? { childSessions: extra.childSessions }
       : {}),
     ...(extra.executionWorktreeMissing ? { executionWorktreeMissing: true } : {}),
+    ...(extra.incognito ? { incognito: true } : {}),
     createdAt: extra.createdAt,
   };
 }
@@ -167,6 +170,7 @@ function summariesEqual(a: SessionSummary, b: SessionSummary): boolean {
     // Normalize absent ≈ false so a producer flipping between omitting the flag and false does not
     // emit a no-op delta, while a real health flip (false ↔ true) always produces one.
     (a.executionWorktreeMissing ?? false) === (b.executionWorktreeMissing ?? false) &&
+    (a.incognito ?? false) === (b.incognito ?? false) &&
     a.createdAt === b.createdAt
   );
 }

@@ -48,6 +48,7 @@ export interface WindowHostControllerSessionOverlay {
   pendingInteraction?: ZCodeTaskMeta["pendingInteraction"];
   executionWorktree?: WindowHostControllerTaskRow["executionWorktree"];
   executionWorktreeMissing?: WindowHostControllerTaskRow["executionWorktreeMissing"];
+  incognito?: WindowHostControllerTaskRow["incognito"];
   worktreePreparation?: WindowHostControllerTaskRow["worktreePreparation"];
   sideChatCount?: ZCodeTaskMeta["sideChatCount"];
   subagentCount?: ZCodeTaskMeta["subagentCount"];
@@ -175,6 +176,7 @@ function buildSourceRows(source: ControllerSource): Map<string, WindowHostContro
       ...(overlay?.executionWorktreeMissing !== undefined
         ? { executionWorktreeMissing: overlay.executionWorktreeMissing }
         : {}),
+      ...(overlay?.incognito ? { incognito: true } : {}),
       ...(overlay?.worktreePreparation ? { worktreePreparation: overlay.worktreePreparation } : {}),
       ...(overlay?.activity ? { activity: overlay.activity } : {}),
       ...(membership.searchSnippets ? { searchSnippets: membership.searchSnippets } : {}),

@@ -118,6 +118,11 @@ export function getProjectId(this: AgentRuntimeInternal): ProjectId {
   return projectIdFromDirectory(this.workspaceRoot);
 }
 
+/** True when this session runs with a frozen incognito profile (drives the sidebar marker). */
+export function isIncognito(this: AgentRuntimeInternal): boolean {
+  return this.config.incognito !== undefined;
+}
+
 export function getExecutionWorktree(
   this: AgentRuntimeInternal,
 ): { path: string; branchName?: string; missing?: boolean } | undefined {

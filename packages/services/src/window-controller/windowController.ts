@@ -36,6 +36,7 @@ export type WindowHostControllerTaskListItem = ZCodeTaskListItem & {
   liveStatus: WindowHostControllerTaskRow["liveStatus"];
   executionWorktree?: WindowHostControllerTaskRow["executionWorktree"];
   executionWorktreeMissing?: WindowHostControllerTaskRow["executionWorktreeMissing"];
+  incognito?: WindowHostControllerTaskRow["incognito"];
   worktreePreparation?: WindowHostControllerTaskRow["worktreePreparation"];
   activity?: WindowHostControllerTaskRow["activity"];
 };

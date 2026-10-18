@@ -382,6 +382,8 @@ export interface ZCodeTaskMeta {
 
   /** True when the execution worktree directory is absent on disk. */
   executionWorktreeMissing?: boolean;
+  /** True for an incognito session (specs/incognito-session.md); session-projection-owned. */
+  incognito?: boolean;
   /** zcode-cli /goal session target; null means it was explicitly cleared. */
   target?: ZCodeTaskGoal | null;
 }

@@ -125,6 +125,7 @@ export const zcodeRuntimeCapabilitiesSchema = z.object({
   // This CLI persists and enforces createSession `incognito`; the Host must not forward it otherwise.
   incognitoSession: z.boolean().optional(),
 });
+export type ZCodeRuntimeCapabilities = z.infer<typeof zcodeRuntimeCapabilitiesSchema>;
 export const zcodeProtocolErrorCodes = {
   sessionUnavailable: -32004,
 } as const;

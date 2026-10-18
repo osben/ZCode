@@ -1974,6 +1974,7 @@ export function createConversationV4Gateway(
               ? { childSessions: childList.map((child) => toWireChildSession(child, false)) }
               : {}),
             ...(executionWorktreeMissing ? { executionWorktreeMissing: true } : {}),
+            ...(session.incognito ? { incognito: true } : {}),
           };
         }),
       );
@@ -2165,6 +2166,7 @@ export function createConversationV4Gateway(
             }
           : {}),
         ...(executionWorktreeMissing ? { executionWorktreeMissing: true } : {}),
+        ...(record.app.runtime.isIncognito() ? { incognito: true } : {}),
         ...childSessionFactsResolver.resolve(sessionId),
       };
     },

@@ -228,6 +228,8 @@ interface SessionIndexMeta {
   childSessions?: SessionSummary["childSessions"];
   /** True when the worktree directory is absent on disk (host-side stat); drives the missing badge. */
   executionWorktreeMissing?: boolean;
+  /** True for an incognito session; drives the sidebar incognito marker. */
+  incognito?: boolean;
 }
 
 export interface V4GatewayHost {
@@ -1290,6 +1292,7 @@ export class ConversationV4Gateway {
         ? { childSessions: meta.childSessions }
         : {}),
       ...(meta?.executionWorktreeMissing ? { executionWorktreeMissing: true } : {}),
+      ...(meta?.incognito ? { incognito: true } : {}),
     };
   }
 

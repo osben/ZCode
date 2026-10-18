@@ -43,6 +43,7 @@ export function areTaskListItemsEquivalent(left: ZCodeTaskMeta[], right: ZCodeTa
       leftTask.unreadAt === rightTask.unreadAt &&
       (leftTask.executionWorktreeMissing ?? false) ===
         (rightTask.executionWorktreeMissing ?? false) &&
+      (leftTask.incognito ?? false) === (rightTask.incognito ?? false) &&
       leftTask.provider === rightTask.provider &&
       leftTask.model === rightTask.model,
     );
