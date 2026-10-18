@@ -32,8 +32,10 @@ export const TID_V4_COMPOSER_INCOGNITO_OFF = "v4-composer-incognito-off";
 /**
  * Draft-only incognito toggle (specs/incognito-session.md "Composer toggle"): the menu turns the
  * mode on from the Settings defaults and lets the user opt capabilities back in for this session.
- * While active the control is a chip with the «Incognito» label (not color-only) whose turn-off
- * button is revealed inline on hover/focus, following the project chip in ChatEmptyState.
+ * It lives in the composer top row after the project and branch chips, so it is not a bottom
+ * toolbar collapse participant. While active the control is a chip with the «Incognito» label
+ * (not color-only) whose turn-off button is revealed inline on hover/focus, following the project
+ * chip in ChatEmptyState.
  */
 
 /** Visible checkbox for a menu row; the row itself stays the menuitemcheckbox. */
@@ -110,10 +112,8 @@ export const V4ComposerIncognitoControl = memo(function V4ComposerIncognitoContr
   return (
     <div
       data-testid={active ? TID_V4_COMPOSER_INCOGNITO_MARKER : undefined}
-      // Compact mode (specs/incognito-session.md "Composer toggle") collapses this wrapper, which hides the label and the turn-off overlay.
-      data-composer-collapse-priority="1"
       className={cn(
-        "group/incognito-chip relative flex shrink-0 items-center rounded-full",
+        "group/incognito-chip relative ml-auto flex shrink-0 items-center rounded-full",
         active && "bg-incognito/10 hover:bg-incognito/15 focus-within:bg-incognito/15",
       )}
     >
@@ -127,7 +127,7 @@ export const V4ComposerIncognitoControl = memo(function V4ComposerIncognitoContr
             onClick={() => deactivate(workspaceKey)}
             aria-label={removeLabel}
             data-testid={TID_V4_COMPOSER_INCOGNITO_OFF}
-            className="pointer-events-none absolute left-1 top-1/2 z-10 -translate-y-1/2 rounded-full text-foreground-subtle opacity-0 transition-opacity group-hover/incognito-chip:pointer-events-auto group-hover/incognito-chip:opacity-100 group-focus-within/incognito-chip:pointer-events-auto group-focus-within/incognito-chip:opacity-100 group-data-[composer-compact=true]/incognito-chip:hidden"
+            className="pointer-events-none absolute left-1 top-1/2 z-10 -translate-y-1/2 rounded-full text-foreground-subtle opacity-0 transition-opacity group-hover/incognito-chip:pointer-events-auto group-hover/incognito-chip:opacity-100 group-focus-within/incognito-chip:pointer-events-auto group-focus-within/incognito-chip:opacity-100"
           >
             <XIcon className="size-3.5" />
           </Button>
@@ -148,7 +148,7 @@ export const V4ComposerIncognitoControl = memo(function V4ComposerIncognitoContr
               className={cn(
                 "h-7",
                 active
-                  ? "gap-1 rounded-full bg-transparent px-2 text-ui-base text-incognito hover:bg-transparent hover:text-incognito group-data-[composer-compact=true]/incognito-chip:w-7 group-data-[composer-compact=true]/incognito-chip:px-0"
+                  ? "gap-1 rounded-full bg-transparent px-2 text-ui-base text-incognito hover:bg-transparent hover:text-incognito"
                   : "w-7 rounded-lg px-0",
               )}
             >
@@ -156,11 +156,11 @@ export const V4ComposerIncognitoControl = memo(function V4ComposerIncognitoContr
                 className={cn(
                   "size-4",
                   showOffButton &&
-                    "transition-opacity group-hover/incognito-chip:opacity-0 group-focus-within/incognito-chip:opacity-0 group-data-[composer-compact=true]/incognito-chip:!opacity-100",
+                    "transition-opacity group-hover/incognito-chip:opacity-0 group-focus-within/incognito-chip:opacity-0",
                 )}
               />
               {active ? (
-                <span className="inline group-data-[composer-compact=true]/incognito-chip:hidden">
+                <span className="inline">
                   {intl.formatMessage({ id: "chat.incognito.marker" })}
                 </span>
               ) : null}
