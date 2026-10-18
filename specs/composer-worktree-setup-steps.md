@@ -127,7 +127,9 @@ that differs from the entry's attempt is newer only when the renderer has not it
 The pipeline store is the single owner of this rule: whenever a session's entry is replaced by
 another attempt — Retry, a Send that restarts a failed prepared session, or a newer Host attempt —
 the replaced attempt is recorded on the entry before Git restarts, and a Host preparation seed
-carrying a superseded attempt is stale and is ignored. The Host accepts the retry before its
+carrying a superseded attempt is stale and is ignored. The marker's attempt id is optional, so once an entry has
+replaced an attempt, a seed without an attempt id cannot be matched to the live attempt and is
+ignored as well (it can neither fail nor replace it); Host cancellation stays authoritative. The Host accepts the retry before its
 snapshot reaches the renderer, so the seed for the failed attempt is still live when the retry
 turns the entry `creating`; treating it as newer rolled the entry back to `failed` for one render,
 which made the queued-send effect abandon the armed submission and left the later `ready` admitting
