@@ -77,6 +77,27 @@ following rows 或其他 flow item。
 | ETS08   | desktop/replayable 得到相同 rows 和 segment terminal fact   | renderer 构建    | 相同 Explore 父状态；不改变 delivery/recovery                             | shared invariant | partial      |
 | ETS09   | Explore 后收到 command 尚未到达的运行中 Shell row           | 流式补全 command | 未分类阶段完全透明；readonly 并入原 Explore；execute 出现后才结束 Explore | UI unit          | covered-unit |
 
+## Completed Duration
+
+Explore 与 Execute 父级收口后在摘要后追加阶段耗时，例如 `Explore · 3 searches, 1 file · 4s`、
+`Execute · 2 commands · 12s`。两者共用同一派生函数与展示规则。
+
+| Rule      | Decision                                                                                                            |
+| --------- | ------------------------------------------------------------------------------------------------------------------- |
+| Source    | 只用已投影 rows：`max(child.endedAt) − min(child.createdAt)`；renderer 不读本地时钟                                 |
+| Visible   | 父级为 completed/stopped，且每个 child row 都有 `endedAt`                                                           |
+| Hidden    | 父级 in_progress；任一 child 缺少 `endedAt`（旧快照、终态未投影）时整段不显示，不估算                               |
+| Format    | 复用 `formatConversationWorkDuration`，与 turn 级 work duration 同单位、同 locale 间距                              |
+| Owner     | V4 projection（CLI）持有 row 时间戳；`buildExploreGroup`/`buildExecuteGroup` 派生 `durationMs`，renderer 只负责展示 |
+| Out scope | Thought token 数：现有 rows 没有逐 reasoning block 的 token 事实，不做估算                                          |
+
+| Case ID | Setup                                       | Assertions                         | Evidence | Status       |
+| ------- | ------------------------------------------- | ---------------------------------- | -------- | ------------ |
+| ETS10   | 两个 completed child 都有 createdAt/endedAt | 父 node `durationMs` 为整段跨度    | UI unit  | covered-unit |
+| ETS11   | 父级 in_progress，或任一 child 缺少 endedAt | 不派生 `durationMs`                | UI unit  | covered-unit |
+| ETS12   | 渲染带 `durationMs` 的 completed Explore    | 摘要显示格式化耗时；running 不显示 | UI unit  | covered-unit |
+| ETS13   | completed Execute 组，children 有时间戳     | 父 node 派生并渲染同格式耗时       | UI unit  | covered-unit |
+
 ## Pruning Decisions
 
 | Decision ID | Pruned combinations            | Guard/invariant                              | Representative coverage       |

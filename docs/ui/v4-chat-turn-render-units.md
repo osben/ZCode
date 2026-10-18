@@ -62,6 +62,7 @@ turn actions 逐行消费 `row.actions`。任何带 action 的 assistant row 都
 - `completedInterrupted`、`failed`、`error` 异常终态必须强制展开 history，即使已经存在 interrupted / failed assistant partial；异常上下文不能隐藏在“已工作”折叠内。`completedSuccess` 继续遵循正常完成的默认折叠规则。
 - 冷恢复发现 transcript assistant message 缺少完成时间时，表示应用或 Agent 在 turn 收口前退出；hydration 必须将该 orphan turn 归一化为 `completedInterrupted`，禁止伪造 `completedSuccess` 后触发正常折叠。
 - assistant work history 的状态标签必须区分运行中、正常完成和中断：运行中显示“工作中 N 秒”，正常结束显示“已工作 N 秒”，`completedInterrupted` 的末段只显示“已停止”/`Stopped`，不得附带耗时。guide turn 优先消费 `turnHeader.workSegments` 的权威分段时间；无分段事实的普通/旧 snapshot 才回退到 turn 级 `activeMs`、`endedAt - startedAt` 或运行时 UI 时钟。
+- 正常完成的 product turn 在**最后一个** work segment 的状态行右侧显示本轮输出 token（如 `Worked for 1m 5s … 12.3K tokens`），与运行中 tok/s 占同一位置。唯一事实是 CLI 投影的 `turnHeader.outputTokens`（主链 ModelComplete 累计，不含子 Agent）；它是 turn 级数值，guide 拆出的前序 segment 不显示，`running`、`interrupted`、highspeed 轮、缺失或为 0 时不显示，UI 不做估算。
 - `turnHeader.executionKind` 是是否存在 Agent 工作生命周期的权威事实。`controlOnly` 轮只承载可见控制输入，不产生 work status；字段缺失的旧 snapshot 只在有真实 work row、running 或正工时时兼容派生。
 - `lightBoundary`（例如 model change）先从 assistant work rows 分离，再计算 work status；边界行本身不能把 control-only query 推成“工作中/已工作”。
 
@@ -85,7 +86,8 @@ turn
 ConversationSnapshot.rows
   -> buildConversationTurnRenderUnits(rows, nowMs)
   -> split leadingBoundaryRows / assistantWorkRows
-  -> unit.workSegments[].workStatus { state, durationMs } | undefined
+  -> unit.workSegments[].workStatus { state, durationMs, outputTokens? } | undefined
+       (outputTokens only on the last segment of a completed turn)
   -> each segment AssistantHistoryStatus
        state=running   => "工作中 N 秒"
        state=completed => "已工作 N 秒"

@@ -5009,6 +5009,8 @@ const ukUA: Record<string, string> = {
   "chat.history.workingThroughputEstimateTitle":
     "Швидкість потокового виводу (оцінка за кількістю символів; точне значення з'явиться після завершення запиту)",
   "chat.history.workedFor": "Робота тривала {duration}",
+  "chat.history.outputTokens": "{count} токенів",
+  "chat.history.outputTokensTitle": "Вихідні токени головного агента за цей хід",
   "chat.history.worked": "Виконано",
   "chat.history.stopped": "Зупинено",
   "chat.history.duration.day": "дн.",

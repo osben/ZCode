@@ -35,6 +35,8 @@ export interface TaskChatToolCall {
   snapshotRefs?: ZCodeTaskSnapshotToolFieldRef[];
   /** Local time when the tool call first entered the current message stream; used only to identify long-running tool calls. */
   startedAt?: number;
+  /** Wall-clock span of a finished aggregate stage (Explore/Execute), derived from projected row timestamps. */
+  durationMs?: number;
 }
 
 export type TaskChatMessagePart = ZCodeAssistantMessagePart;

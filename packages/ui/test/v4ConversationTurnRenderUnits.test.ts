@@ -608,6 +608,41 @@ describe("buildConversationTurnRenderUnits", () => {
     expect(units[0]?.assistantTailRows.map((row) => row.rowId)).toEqual([7]);
   });
 
+  it("attaches turn output tokens only to the last segment of a completed turn", () => {
+    const guidedRows = [
+      userInput(2, "look"),
+      reasoning(3, "checking"),
+      toolCall(4, "Read"),
+      userInput(5, "more", { guided: true, entityId: "guide-1" }),
+      assistantText(6, "done"),
+    ];
+    const completed = buildConversationTurnRenderUnits([
+      turnHeader(1, { outputTokens: 12_345 }),
+      ...guidedRows,
+    ]);
+    const running = buildConversationTurnRenderUnits([
+      turnHeader(1, { state: "running", outputTokens: 12_345 }),
+      ...guidedRows,
+    ]);
+    const zeroTokens = buildConversationTurnRenderUnits([
+      turnHeader(1, { outputTokens: 0 }),
+      ...guidedRows,
+    ]);
+
+    expect(completed[0]?.workSegments?.map((segment) => segment.workStatus?.outputTokens)).toEqual([
+      undefined,
+      12_345,
+    ]);
+    expect(completed[0]?.workStatus?.outputTokens).toBe(12_345);
+    expect(running[0]?.workSegments?.map((segment) => segment.workStatus?.outputTokens)).toEqual([
+      undefined,
+      undefined,
+    ]);
+    expect(zeroTokens[0]?.workSegments?.map((segment) => segment.workStatus?.outputTokens)).toEqual(
+      [undefined, undefined],
+    );
+  });
+
   it("P06：同一 turn 的 guided user 保持 CLI 全序并开启独立视觉工作段", () => {
     const units = buildConversationTurnRenderUnits([
       turnHeader(1, {

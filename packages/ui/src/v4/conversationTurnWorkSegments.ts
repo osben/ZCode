@@ -15,6 +15,20 @@ import type { AssistantWorkRow, ConversationTurnFlowItem } from "@/v4/conversati
 export interface ConversationTurnWorkStatus {
   state: "running" | "completed" | "interrupted";
   durationMs?: number;
+  /** Turn-level main-chain output tokens; set only on the last segment of a completed turn. */
+  outputTokens?: number;
+}
+
+/** `turnHeader.outputTokens` is a whole-turn total, so callers attach it only to the turn's final segment. */
+export function withTurnOutputTokens(
+  status: ConversationTurnWorkStatus | undefined,
+  header: TurnHeaderRow | undefined,
+): ConversationTurnWorkStatus | undefined {
+  const outputTokens = header?.outputTokens;
+  if (status?.state !== "completed" || outputTokens === undefined || outputTokens <= 0) {
+    return status;
+  }
+  return { ...status, outputTokens };
 }
 
 export interface ConversationTurnWorkSegment {
@@ -187,13 +201,17 @@ export function buildConversationTurnWorkSegments(options: {
       segmentCount: visualDrafts.length,
       nowMs: options.nowMs,
     });
-    const segmentWorkStatus = resolveConversationTurnWorkStatus(
+    const isLastSegment = segmentIndex === visualDrafts.length - 1;
+    const resolvedSegmentWorkStatus = resolveConversationTurnWorkStatus(
       options.header,
       segmentFlowRows,
       segmentRunning,
       segmentDurationMs,
-      options.isInterrupted && segmentIndex === visualDrafts.length - 1,
+      options.isInterrupted && isLastSegment,
     );
+    const segmentWorkStatus = isLastSegment
+      ? withTurnOutputTokens(resolvedSegmentWorkStatus, options.header)
+      : resolvedSegmentWorkStatus;
     const segmentKey =
       segmentIndex === 0
         ? options.key

@@ -1292,6 +1292,30 @@ describe("ConversationTurnGroup assistant history status", () => {
     expect(renderUnit(interruptedUnit, { locale: "zh-CN" })).not.toContain("已工作 5 秒");
   });
 
+  it("shows turn output tokens next to a completed work status", () => {
+    const row = reasoningRow();
+    const unit = (outputTokens?: number) =>
+      baseUnit({
+        key: "turn-complete:tokens",
+        turnId: "turn-complete",
+        isLastTurn: false,
+        workStatus: {
+          state: "completed",
+          durationMs: 65_000,
+          ...(outputTokens !== undefined ? { outputTokens } : {}),
+        },
+        assistantWorkRows: [row],
+        assistantHistoryRows: [row],
+        renderRows: [row],
+      });
+
+    const html = renderUnit(unit(12_345), { locale: "en-US" });
+    expect(html).toContain("Worked for 1m 5s");
+    expect(html).toContain('data-testid="chat-worked-output-tokens"');
+    expect(html).toContain("12.3K tokens");
+    expect(renderUnit(unit(), { locale: "en-US" })).not.toContain("chat-worked-output-tokens");
+  });
+
   it("按语言格式化工作时长的单位间距", () => {
     const row = reasoningRow();
     const completedUnit = baseUnit({
