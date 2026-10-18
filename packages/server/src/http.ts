@@ -197,7 +197,6 @@ export interface HttpServerOptions {
   serverId?: string;
   name?: string;
   host?: string;
-  authRequired?: boolean;
   authToken?: string;
   spaFallback?: boolean;
   staticRoot?: string;
@@ -239,7 +238,8 @@ function createServerInfo(
       : {}),
     version: ZCODE_VERSION,
     protocolVersion: SERVER_REMOTE_PROTOCOL_VERSION,
-    authRequired: options.authRequired ?? Boolean(authToken),
+    // Derived from the token only, so the advertised state cannot diverge from enforcement.
+    authRequired: Boolean(authToken),
     workspaces: resolveServerWorkspaces(options),
     capabilities: {
       desktopContinuous: true,

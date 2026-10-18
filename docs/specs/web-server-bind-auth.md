@@ -21,8 +21,7 @@ capabilities:
 
 1. **The token is the single source of truth for auth.** Auth is enforced only when
    `options.authToken?.trim()` is non-empty (`entry-http.ts` reads it from
-   `ZCODE_SERVER_AUTH_TOKEN`). The `authRequired` flag passed to the guard is never used
-   to decide enforcement.
+   `ZCODE_SERVER_AUTH_TOKEN`). No other option or flag decides enforcement.
 2. **With a token, auth is deny-by-default.** A request may skip the token only when its
    method is `GET` or `HEAD` and none of its path forms falls under `/api` or `/ws`.
    The middleware decides this on the path forms the router could see, not only on the
@@ -48,8 +47,9 @@ capabilities:
    creates any local service. The error names `ZCODE_SERVER_HOST` / `HOST` and
    `ZCODE_SERVER_AUTH_TOKEN`. No "allow unauthenticated" escape hatch exists.
 5. **Reported auth matches enforced auth.** `/api/server-info.authRequired` is
-   `options.authRequired ?? Boolean(authToken)`. `http.ts` does not read an auth
-   env var.
+   `Boolean(authToken)`, the same token that drives enforcement. There is no separate
+   `authRequired` option that could advertise a state different from what is enforced.
+   `http.ts` does not read an auth env var.
 6. **The log prints the real bound address.** The listen callback logs
    `server.address()` (IPv6 in brackets), not the requested host or a hardcoded
    `localhost`.

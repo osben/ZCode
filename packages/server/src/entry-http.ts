@@ -29,7 +29,7 @@ async function main(): Promise<void> {
     topicResourcePeers,
     ...(host ? { host } : {}),
     ...(staticRoot ? { staticRoot, spaFallback: true } : {}),
-    ...(authToken ? { authToken, authRequired: true } : {}),
+    ...(authToken ? { authToken } : {}),
   });
 }
 

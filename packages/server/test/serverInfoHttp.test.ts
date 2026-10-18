@@ -219,12 +219,6 @@ describe("server info HTTP endpoint", () => {
     },
   );
 
-  it("does not treat authRequired without a token as authentication", () => {
-    expect(() =>
-      createHttpServer(new ServiceCollection(), 0, { host: "0.0.0.0", authRequired: true }),
-    ).toThrow(/Refusing to listen on non-loopback host/);
-  });
-
   it("listens on a non-loopback host when a token is configured", async () => {
     const server = createHttpServer(new ServiceCollection(), 0, {
       host: "0.0.0.0",
