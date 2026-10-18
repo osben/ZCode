@@ -23,7 +23,7 @@ import { isStaleBranchRuntimeTaskEvent } from "../methods/runtime-command-genera
 import { resolveEnabledProjectMemoryRoot } from "./project-memory.js";
 import { sessionHasLoadedSkill } from "../../agent/loaded-skills.js";
 import { getMissingExecutionWorktreeToolError } from "./execution-worktree-guard.js";
-import type { ToolMetadata } from "../../tool/types.js";
+import type { ToolMetadata, ToolRuntimeScope } from "../../tool/types.js";
 
 const DEFAULT_SUBAGENT_BACKGROUND_BASH_MAX_MS = 3_600_000;
 const EMPTY_RUNTIME_HOOK_CONFIG = {
@@ -244,13 +244,17 @@ function createRuntimeToolExecutor(
     deliveryKind: runtime.config.deliveryKind,
     getMemoryRoot: () =>
       deps.memoryRoot ?? resolveEnabledProjectMemoryRoot(runtime.config, runtime.workspaceRoot),
-    runtimeScope: runtime.config.taskType === "subagent_child" ? "subagent" : "main",
+    runtimeScope: resolveRuntimeToolScope(runtime),
     permissionTimeoutMs: runtime.config.permissionTimeoutMs,
     sessionId: runtime.sessionId,
     traceContext: runtime.rootTraceContext,
     getMode: () => runtime.config.mode ?? "build",
     maxConcurrency: runtime.config.toolConcurrency?.maxConcurrency,
   });
+}
+
+export function resolveRuntimeToolScope(runtime: AgentRuntimeInternal): ToolRuntimeScope {
+  return runtime.config.taskType === "subagent_child" ? "subagent" : "main";
 }
 
 function resolveRuntimeBrowserUseEnabled(

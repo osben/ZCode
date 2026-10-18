@@ -1,5 +1,22 @@
 # Tool Change Chain Spec
 
+## 只读 Bash 按输入并发调度（2026-10-17）
+
+`scheduleTools` 不再只读静态 metadata：每个 tool call 的 `readOnly`、`destructive`、`concurrentSafe`、
+`sideEffectScope` 通过与权限检查相同的 `resolvePermissionCapability(input, context)` 解析
+（context 含 mode、runtimeScope、workingDirectory、workspaceRoot）。优先级为 runtime capability >
+`entry.permission` > `entry.metadata`；没有 runtime resolver 的工具调度结果不变。
+Bash 的 runtime capability 在命令通过 readonly validation 且不含 `cd`/`pushd`/`popd` 时声明
+`concurrentSafe: true`，与相邻的并发安全调用（Read、只读 Bash 等）进入同一 parallel group，
+仍受 scheduler/executor 的 `maxConcurrency` 上限约束。含目录切换的只读命令保持串行，因为成功后
+捕获的 cwd 会写回 session，并行写回的先后顺序不可预测。
+边界：调度基于模型给出的 input；PreToolUse hook 改写后的 input 会重走权限检查，但不重新调度。
+streaming 期间的提前执行仍只看静态 metadata，Bash 不参与（后续单独设计）。
+工具 schema、权限决策、执行、结果格式与 UI/V4 投影不变；`tool_call_scheduled` 的
+`canRunParallel` / `parallelGroupIndex` 如实反映新的分组。cwd 捕获文件按调用随机命名，后台任务
+按 taskId 登记，均无会话级单槽状态。测试见 `packages/core/tests/bash-permission.test.ts` 与
+`packages/core/tests/runtime-bash-concurrent-schedule.test.ts`。
+
 ## 工具内部模型请求的会话归因（2026-09-30）
 
 WebSearch、WebFetch processing、ReadSessionContext 的内部模型请求继承发起工具的宿主

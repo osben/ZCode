@@ -415,6 +415,8 @@ export interface ToolPersistedModelContentInput {
 export interface ToolRuntimePermissionCapability {
   userApprovalRule?: string;
   allowedInPlanMode?: boolean;
+  /** Input-aware override of `metadata.concurrentSafe`, consumed by tool scheduling. */
+  concurrentSafe?: boolean;
   destructive?: boolean;
   needsApproval?: boolean;
   readOnly?: boolean;

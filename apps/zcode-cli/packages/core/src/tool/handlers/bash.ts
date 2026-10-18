@@ -63,6 +63,7 @@ import {
 } from "./tool-perf.js";
 import { applyBashReadFileStateEffects } from "./bash-read-file-state.js";
 import {
+  bashCommandChangesDirectory,
   prepareBashPermissionMatcherForCommand,
   isBashReadOnlyCommand,
   isRuntimeReadOnlyBashCommand,
@@ -99,7 +100,10 @@ export function isBashInputReadOnly(input: unknown): boolean {
 }
 
 export function isBashInputConcurrencySafe(input: unknown): boolean {
-  return isBashInputReadOnly(input);
+  const command = readStringProperty(input, "command");
+  return command
+    ? isBashReadOnlyCommand(command) && !bashCommandChangesDirectory(command)
+    : false;
 }
 
 export function checkBashInputPermissions(input: unknown): { behavior: "allow" } | undefined {
@@ -127,6 +131,7 @@ export function resolveBashPermissionCapability(
   }
   if (!command || !isRuntimeReadOnlyBashCommand(command, context)) return undefined;
   return {
+    concurrentSafe: !bashCommandChangesDirectory(command),
     destructive: false,
     needsApproval: false,
     readOnly: true,

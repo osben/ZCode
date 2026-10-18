@@ -102,7 +102,7 @@ provider-visible output 以本文“模型 result 映射规则”为基线。
 核心流程：
 
 1. 校验输入 schema。
-2. 动态判断是否只读。只有通过 readonly command validation 的命令才并发安全。
+2. 动态判断是否只读。只有通过 readonly command validation 且不切换目录的命令才并发安全。
 3. 解析命令用于权限匹配。复杂、不可解析或可疑命令默认进入 ask。
 4. 根据 sandbox 配置、排除规则和 `dangerouslyDisableSandbox` 决定是否 sandbox。
 5. 将 session cwd 规范化为绝对路径并作为命令工作目录；Bash tool 输入不接受自定义 `cwd`。
@@ -140,7 +140,10 @@ ZCode prompt 可以更短，但这些约束应变成 tool policy 和 tests，而
 `Bash` 是动态权限工具：
 
 - `isReadOnly(input)` 通过命令解析和 readonly validation 判断。
-- `isConcurrencySafe(input)` 等于只读判断。
+- `isConcurrencySafe(input)` 等于只读判断，且命令不含 `cd`/`pushd`/`popd`：前台命令成功后会把
+  `pwd -P` 写回 session cwd，并行的目录切换会让最终 cwd 取决于完成顺序。runtime capability 以
+  `concurrentSafe` 字段返回该结论，`scheduleTools` 据此把只读 Bash 与相邻并发安全调用放入同一
+  parallel group；其余 Bash 保持串行。
 - command permission 支持 exact、prefix、wildcard。
 - compound command 必须拆分子命令，任一子命令匹配 hook 或 deny 规则都要触发。
 - 无法安全解析、过于复杂、包含危险语义时 fail closed 到 ask。
