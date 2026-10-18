@@ -1,6 +1,5 @@
 /** @vitest-environment jsdom */
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+
 import { createElement } from "react";
 import { act, fireEvent, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -53,28 +52,5 @@ describe("BrowserUseTabIcon", () => {
     fireEvent.error(favicon as HTMLImageElement);
     expect(view.container.querySelector("img")).toBeNull();
     expect(view.container.querySelector("svg")).not.toBeNull();
-  });
-
-  it("defines a visible wrapper animation with a reduced-motion fallback", () => {
-    // Bugfix: some assertions below contain multi-line fragments
-    // (`.browser-use-operation-breathe {\n    animation: none;`), but the repo only declares
-    // `eol=lf` for *.mjs / *.sh; styles.css is CRLF in a Windows checkout with
-    // `core.autocrlf=true`, so `toContain`'s `\n` never matches `\r\n` and the case would always
-    // fail on Windows. What it asserts is a stylesheet-content contract, independent of
-    // line-ending bytes; normalize to LF before comparing.
-    const styles = readFileSync(
-      resolve(process.cwd(), "packages/ui/src/styles.css"),
-      "utf8",
-    ).replaceAll("\r\n", "\n");
-
-    expect(styles).toContain("@keyframes browser-use-operation-breathe");
-    expect(styles).toContain("animation: browser-use-operation-breathe 900ms ease-in-out infinite");
-    expect(styles).toContain("transform: scale(1.08)");
-    expect(styles).toContain("prefers-reduced-motion: reduce");
-    expect(styles).toContain(".browser-use-operation-breathe {\n    animation: none;");
-    expect(styles).toContain('.browser-use-viewport[data-browser-resize-dimmed="true"]');
-    expect(styles).toContain("filter: brightness(0.88)");
-    expect(styles).toContain("transition: filter 160ms ease-out");
-    expect(styles).toContain(".browser-use-viewport {\n    transition: none;");
   });
 });

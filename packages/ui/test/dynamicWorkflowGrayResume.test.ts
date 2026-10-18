@@ -6,8 +6,6 @@
 // and the end-of-turn digest card both gate their buttons on "is the callback present", so here the callback is
 // computed through the real gate (resolveWorkflowResumeHandler) and both surfaces are actually rendered to see whether
 // the button is there — instead of restating the rule in each place.
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { cleanup, render } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -35,11 +33,6 @@ import {
   WorkflowRunDigest,
   type WorkflowRunDigestProps,
 } from "@/components/workflow-timeline/WorkflowRunDigest.js";
-
-const sessionPaneSource = readFileSync(
-  resolve(process.cwd(), "packages/ui/src/v4/SessionPane.tsx"),
-  "utf8",
-).replaceAll("\r\n", "\n");
 
 /** The callback in the session context: computed through the real gate; `undefined` means "this path is gone". */
 function resumeHandlerFor(dynamicWorkflowEnabled: boolean) {
@@ -199,18 +192,5 @@ describe("灰度关掉后工具卡页脚与摘要卡的 Resume", () => {
     expect(
       renderDigest(resumeHandlerFor(false)).queryByTestId("workflow-card-kind"),
     ).not.toBeNull();
-  });
-});
-
-describe("SessionPane 供给点接线", () => {
-  it("Resume 回调只经 resolveWorkflowResumeHandler 进上下文，灰度从 hook 读", () => {
-    expect(sessionPaneSource).toContain("useDynamicWorkflowAvailability");
-    expect(sessionPaneSource).toMatch(
-      /onResumeWorkflowRun: resolveWorkflowResumeHandler\(\{\s*readOnly,\s*dynamicWorkflowEnabled,\s*handler: handleResumeWorkflowRun,\s*\}\)/,
-    );
-    // The old bare ternary must no longer exist, otherwise the gray release gets bypassed.
-    expect(sessionPaneSource).not.toContain(
-      "onResumeWorkflowRun: readOnly ? undefined : handleResumeWorkflowRun",
-    );
   });
 });

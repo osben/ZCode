@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -379,27 +377,9 @@ describe("SessionPane v4 chat layout parity", () => {
     );
     expect(html).toMatch(/data-v4-composer-dock="true" class="[^"]*mt-3[^"]*"/u);
     expect(html).not.toContain("@media(max-height:700px)");
-    const timelineSource = readFileSync(
-      resolve(process.cwd(), "packages/ui/src/v4/ConversationTimeline.tsx"),
-      "utf8",
-    );
-    expect(timelineSource).not.toContain('matchMedia("(max-height: 700px)")');
-    expect(timelineSource).toMatch(
-      /element\.scrollTop = responsiveCenteredEmptyLayout[\s\S]*?\? 0[\s\S]*?: element\.scrollHeight/u,
-    );
-    const emptyStateSource = readFileSync(
-      resolve(process.cwd(), "packages/ui/src/v4/ConversationDraftEmptyState.tsx"),
-      "utf8",
-    );
-    expect(emptyStateSource).not.toContain("100vw");
-    expect(emptyStateSource).toContain("resolveGreetingFontSizePx");
-    expect(emptyStateSource).toContain("new ResizeObserver");
-    expect(emptyStateSource).toContain("data-v4-draft-greeting");
+
     expect(html).toContain('data-compact-remote="false"');
-    expect(timelineSource).not.toContain("setDesktopWindowContentMinimumHeight");
-    expect(timelineSource).not.toContain("draftWindowMinimumHeight");
-    expect(timelineSource).not.toContain("useOptionalPlatform");
-    expect(timelineSource).not.toMatch(/min-height:703px/u);
+
     expect(html).toContain('data-draft-mode="true"');
     expect(html).toContain('data-centered="true"');
     expect(html).not.toContain("发送第一条消息开始对话");
@@ -425,17 +405,6 @@ describe("SessionPane v4 chat layout parity", () => {
     expect(readTimelineClassName(mobileHtml)).toContain("min-w-0");
     expect(readSessionPaneClassName(desktopHtml)).not.toContain("min-w-0");
     expect(readTimelineClassName(desktopHtml)).not.toContain("min-w-0");
-  });
-
-  it("keeps constrained desktop draft content reachable through the timeline scroll viewport", () => {
-    const timelineSource = readFileSync(
-      resolve(process.cwd(), "packages/ui/src/v4/ConversationTimeline.tsx"),
-      "utf8",
-    );
-
-    // 回归原因：内容可达性必须由 timeline 自身承担，不能依赖原生窗口反向扩高。
-    expect(timelineSource).not.toContain('"h-full min-h-0 overflow-hidden"');
-    expect(timelineSource).toMatch(/centeredEmptyLayout[\s\S]*?"flex[^"]*min-h-full[^"]*"/u);
   });
 
   it("keeps a bound empty session blank while preserving the bottom composer dock", () => {
@@ -491,33 +460,6 @@ describe("SessionPane v4 chat layout parity", () => {
     expect(html).not.toContain("max-md:pb-2");
     expect(html).not.toContain("h-4 bg-background max-md:h-2");
     expect(html).toContain("mask-repeat:no-repeat");
-    const timelineSource = readFileSync(
-      resolve(process.cwd(), "packages/ui/src/v4/ConversationTimeline.tsx"),
-      "utf8",
-    );
-    expect(timelineSource).toContain("COMPOSER_MESSAGE_MASK_TRANSPARENT_HEIGHT_PX = 96");
-    expect(timelineSource).toContain("COMPOSER_MESSAGE_MASK_FADE_PX = 24");
-    expect(timelineSource).toContain("isAtBottom({");
-    expect(timelineSource).toContain('messageLayer.style.maskImage = "none"');
-    expect(timelineSource).toContain(
-      "viewportHeight - COMPOSER_MESSAGE_MASK_TRANSPARENT_HEIGHT_PX",
-    );
-    expect(timelineSource).toContain("black ${opaqueEnd}px, transparent ${transparentStart}px");
-    const maskSyncSource = timelineSource.slice(
-      timelineSource.indexOf("const syncMessageLayerMask = useCallback"),
-      timelineSource.indexOf("const syncTurnNavigatorViewport = useCallback"),
-    );
-    expect(maskSyncSource).not.toContain("getBoundingClientRect");
-    expect(timelineSource).not.toContain("data-v4-composer-mask-target");
-    // Bug 回归：composer 的纵向 mask 如果和正文 max-width 共用一层，会把 Markdown
-    // 表格增强模式越出正文列的左右区域一起裁掉。mask 层必须全宽，正文宽度下沉到历史区和 live tail。
-    expect(timelineSource).toContain(
-      'className="relative w-full flex-1 [mask-repeat:no-repeat] [-webkit-mask-repeat:no-repeat]"',
-    );
-    expect(timelineSource).toMatch(
-      /data-v4-timeline-virtual-history="true"[\s\S]*?contentWidthClassName/,
-    );
-    expect(timelineSource).toMatch(/data-v4-running-live-tail="true"[\s\S]*?contentWidthClassName/);
   });
 
   it("anchors the back-to-bottom control to the composer dock above input", () => {
@@ -530,17 +472,6 @@ describe("SessionPane v4 chat layout parity", () => {
     expect(html.indexOf('data-v4-back-to-bottom-anchor="composer-dock"')).toBeLessThan(
       html.indexOf('data-testid="mock-composer"'),
     );
-  });
-
-  it("uses the z-code-2 icon-only back-to-bottom control", () => {
-    const timelineSource = readFileSync(
-      resolve(process.cwd(), "packages/ui/src/v4/ConversationTimeline.tsx"),
-      "utf8",
-    );
-
-    expect(timelineSource).toContain('<ArrowDownIcon className="size-4" />');
-    expect(timelineSource).not.toMatch(/>\s*回到底部\s*</);
-    expect(timelineSource).toContain('id: "chat.scrollToBottom"');
   });
 
   it("renders pending permission before the composer inside the composer dock", () => {

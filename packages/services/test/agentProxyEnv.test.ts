@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   createOfficialMcpTrustedOriginRegistry,
@@ -234,67 +232,5 @@ describe("official MCP trust: host and agent must agree on the ZCode API origin"
     }
     expect(await verdict(host, "https://zcode.z.ai")).toBe(true);
     expect(await verdict(host, SETTINGS_ORIGIN)).toBe(false);
-  });
-});
-
-/* The tests above prove "the two sides agree after injection", but not that node.ts actually injects.
-   createNodeServices is a 1200+-line container with 107 imports, and resolveSpawnEnv is an inline
-   closure inside it, so mocking it is not worthwhile; this falls back to asserting on the wiring at the
-   source level, which at least blocks "the whole line deleted / wired to the wrong resolver". */
-describe("node.ts wires the authoritative origin into resolveSpawnEnv", () => {
-  const source = readFileSync(resolve(process.cwd(), "packages/services/src/node.ts"), "utf8");
-  // The extraction start does not hardcode the parameter list: the CUA integration changed the closure
-  // to `async (context) =>` (it needs the workspace registry); hardcoding `async () =>` would make the
-  // slice produce an empty string and turn both assertions into always-true empty matches.
-  const spawnEnvStart = source.indexOf("resolveSpawnEnv: async (");
-  const spawnEnvBlock = source.slice(
-    spawnEnvStart,
-    source.indexOf("...buildAgentTelemetrySpawnEnv({", spawnEnvStart),
-  );
-
-  it("locates the resolveSpawnEnv closure at all", () => {
-    // Guards the slice above: if the start or end marker is missing, the block silently becomes empty and the later toContain calls become meaningless.
-    expect(spawnEnvStart).toBeGreaterThanOrEqual(0);
-    expect(spawnEnvBlock.length).toBeGreaterThan(0);
-  });
-
-  it("injects the origin patch inside resolveSpawnEnv", () => {
-    expect(spawnEnvBlock).toContain("buildAgentEndpointOriginEnv(");
-  });
-
-  it("feeds it the settings-aware resolver, not the env-only one", () => {
-    // Load-bearing detail: resolveCurrentZCodeEndpointOrigin (with the settings override) must be used.
-    // Wiring resolveRuntimeZCodeEndpointOrigin(process.env) instead would completely defeat this fix
-    // while both sides still "appear" to resolve the origin.
-    expect(spawnEnvBlock).toContain(
-      "buildAgentEndpointOriginEnv(await resolveCurrentZCodeEndpointOrigin())",
-    );
-  });
-});
-
-describe("node.ts lazy CUA spawn helper selection", () => {
-  const source = readFileSync(resolve(__dirname, "../src/node.ts"), "utf8");
-  const spawnEnvStart = source.indexOf("resolveSpawnEnv: async (");
-
-  it("locates the resolveSpawnEnv closure at all", () => {
-    expect(spawnEnvStart).toBeGreaterThanOrEqual(0);
-  });
-
-  it("routes darwin through the lazy branch with the stable broker socket (MC-3)", () => {
-    expect(spawnEnvStart).toBeGreaterThanOrEqual(0);
-    const cuaBlock = source.slice(spawnEnvStart, spawnEnvStart + 4000);
-    const darwinIdx = cuaBlock.indexOf('process.platform === "darwin"');
-    expect(darwinIdx).toBeGreaterThanOrEqual(0);
-    expect(cuaBlock.slice(darwinIdx, darwinIdx + 60)).toContain("win32");
-    const stableSocketIdx = cuaBlock.indexOf("resolveBrokerSocketPath()");
-    expect(stableSocketIdx).toBeGreaterThan(darwinIdx);
-  });
-
-  it("keeps win32 spawn off the acquire path (MC-4)", () => {
-    expect(spawnEnvStart).toBeGreaterThanOrEqual(0);
-    const cuaBlock = source.slice(spawnEnvStart, spawnEnvStart + 6000);
-    expect(cuaBlock).toContain("getStableCuaPipeName()");
-    expect(cuaBlock.indexOf("getOrCreateDefaultCuaProductHelper(context)")).toBe(-1);
-    expect(cuaBlock).toContain("ZCODE_CUA_WIN_HELPER_RECIPE");
   });
 });

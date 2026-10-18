@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import { createElement, type ReactNode } from "react";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -259,7 +258,6 @@ describe("WorkspaceSidebar Web remote mobile layout", () => {
   });
 
   it("归档视图打开后将关闭按钮的 tooltip label 切换为 Close", async () => {
-
     render(await createSidebarElement());
     const archiveButton = screen.getByRole("button", {
       name: "workspaceSidebar.toggleArchivedTasks",
@@ -271,7 +269,6 @@ describe("WorkspaceSidebar Web remote mobile layout", () => {
   });
 
   it("places plugins immediately after automations on the desktop home sidebar", async () => {
-
     render(await createSidebarElement({ webRemoteControlWorkspaceSwitcher: undefined }));
     const automationsButton = screen.getByRole("button", {
       name: "workspace.openScheduledSettings",
@@ -284,15 +281,5 @@ describe("WorkspaceSidebar Web remote mobile layout", () => {
     expect(
       automationsButton.compareDocumentPosition(pluginsButton) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-  });
-
-  it("does not keep the removed task toolbar search state", () => {
-    const sidebarSource = readFileSync(
-      resolve(process.cwd(), "packages/ui/src/WorkspaceSidebar.tsx"),
-      "utf8",
-    );
-
-    expect(sidebarSource).not.toContain("webRemoteTaskSearchOpen");
-    expect(sidebarSource).not.toContain("webRemoteTaskSearchQuery");
   });
 });

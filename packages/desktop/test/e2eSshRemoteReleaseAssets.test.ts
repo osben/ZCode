@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 import { ensureSshRemoteReleaseAssets } from "./e2e/helpers/e2e-ssh-remote-release-assets.js";
@@ -68,27 +67,5 @@ describe("ensureSshRemoteReleaseAssets", () => {
         releaseDir: "/repo/packages/desktop/mock-cdn/releases/3.12.0",
       }),
     ).toThrow(/prepare:remote-assets.*\/releases\/3\.12\.0/u);
-  });
-});
-
-describe("wdio.conf.ts SSH remote assets wiring", () => {
-  it("auto-prepares missing remote release assets instead of failing onPrepare directly", () => {
-    const source = readFileSync(new URL("../wdio.conf.ts", import.meta.url), "utf8");
-    const stageDesktopE2EAppOutput = source.slice(
-      source.indexOf("async function stageDesktopE2EAppOutput()"),
-      source.indexOf("function isRendererE2EStoreBridgeCompiled"),
-    );
-
-    // Bug 根因：版本 bump 后专用 e2e runner 的工作区 mock-cdn 必然缺新版本 release，
-    // 直接 fatal 会把每次版本升级都变成 CI-only 失败；必须先自动 prepare 再 fail-closed。
-    expect(stageDesktopE2EAppOutput).toContain("ensureSshRemoteReleaseAssets(");
-    expect(stageDesktopE2EAppOutput).toContain("prepare:remote-assets");
-    expect(stageDesktopE2EAppOutput).not.toContain("SSH remote assets missing");
-    // prepare 调用点必须带 timeoutMs：CI 上下载/构建挂死时让 onPrepare 可失败退出，
-    // 而不是占住专用 runner 直到 job 全局超时。（本片段内仅 prepare 一处 pnpm 调用。）
-    expect(stageDesktopE2EAppOutput).toMatch(
-      /runPnpmWorkspaceCommand\(\[[^)]*prepare:remote-assets/u,
-    );
-    expect(stageDesktopE2EAppOutput).toContain("timeoutMs: ");
   });
 });

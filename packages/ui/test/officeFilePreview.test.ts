@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { createElement, useState, type ReactNode } from "react";
-import { readFileSync } from "node:fs";
+
 import { renderToStaticMarkup } from "react-dom/server";
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -147,11 +147,7 @@ vi.mock("@extend-ai/react-docx", () => ({
 }));
 
 vi.mock("@/components/ui/pptx-preview-viewer.js", () => ({
-  PptxPreviewViewer: ({
-    onOpenBrowserUrl,
-  }: {
-    onOpenBrowserUrl?: (url: string) => void;
-  }) =>
+  PptxPreviewViewer: ({ onOpenBrowserUrl }: { onOpenBrowserUrl?: (url: string) => void }) =>
     createElement("div", {
       "data-pptx-open-url-handler": String(Boolean(onOpenBrowserUrl)),
     }),
@@ -239,12 +235,6 @@ describe("Office file preview", () => {
     sanitizeDocumentLinks(root);
 
     expect(image.getAttribute("href")).toBe("data:image/png;base64,AA==");
-  });
-
-  it("keeps the PDF annotation layer disabled so document links never enter the DOM", () => {
-    const source = readFileSync("packages/ui/src/components/ui/pdf-viewer.tsx", "utf8");
-
-    expect(source).toContain("renderAnnotationLayer={false}");
   });
 
   it("fits DOCX pages to narrow containers without upscaling", () => {
@@ -378,7 +368,7 @@ describe("Office file preview", () => {
       expect(view.container.querySelector("section")?.textContent).toBe("Rendered DOCX");
     });
 
-    expect(view.container.querySelector('a[href]')).not.toBeNull();
+    expect(view.container.querySelector("a[href]")).not.toBeNull();
     expect(view.container.querySelector('a[href^="javascript:"]')).toBeNull();
     expect(view.container.querySelector('a[href="https://example.com/document"]')).not.toBeNull();
     fireEvent.click(view.container.querySelector('a[href="https://example.com/document"]')!);

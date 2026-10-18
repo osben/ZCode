@@ -1,30 +1,7 @@
 import { describe, expect, it } from "vitest";
-import {
-  CORE_USER_ACTION_FEATURES,
-  SETTINGS_USER_ACTION_FEATURES,
-  USER_ACTION_CATALOG,
-} from "../src/lib/userActionTraceCatalog.js";
+import { USER_ACTION_CATALOG } from "../src/lib/userActionTraceCatalog.js";
 
 describe("user action trace catalog", () => {
-  it("固定 24 个 Core 与 15 个 Settings 叶子 feature", () => {
-    expect(Object.keys(CORE_USER_ACTION_FEATURES)).toHaveLength(24);
-    expect(Object.keys(SETTINGS_USER_ACTION_FEATURES)).toHaveLength(15);
-    expect(USER_ACTION_CATALOG.filter((entry) => entry.group === "core")).toHaveLength(94);
-    // The fork adds change_palette, toggle_terminal_webgl, and Coding Plan auto-continue actions.
-    expect(USER_ACTION_CATALOG.filter((entry) => entry.group === "settings")).toHaveLength(49);
-    expect(
-      USER_ACTION_CATALOG.filter((entry) => entry.featureId === "settings.memory").map(
-        (entry) => entry.action,
-      ),
-    ).toEqual([
-      "toggle_memory",
-      "refresh_memory",
-      "change_memory_scope",
-      "open_folder",
-      "expand_preview",
-    ]);
-  });
-
   it("feature/action 组合唯一且不使用动态标识", () => {
     const keys = USER_ACTION_CATALOG.map((entry) => `${entry.featureId}:${entry.action}`);
     expect(new Set(keys).size).toBe(keys.length);

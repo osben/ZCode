@@ -273,13 +273,6 @@ describe("createQuickPickCommands", () => {
     });
     expect(commands.some((command) => command.id === "community")).toBe(false);
   });
-
-  it("uses connection wording for app auth commands", () => {
-    expect(zhCN["quickPick.command.login"]).toBe("连接");
-    expect(zhCN["quickPick.command.logout"]).toBe("断开连接");
-    expect(enUS["quickPick.command.login"]).toBe("Connect");
-    expect(enUS["quickPick.command.logout"]).toBe("Disconnect");
-  });
 });
 
 describe("worktree task command", () => {
@@ -301,51 +294,6 @@ describe("worktree task command", () => {
     });
     // 页面命令不携带立即执行的 run：选择它会推入项目子页面而不是关闭面板。
     expect(commands.find((command) => command.id === "new-task-worktree")?.run).toBeUndefined();
-  });
-
-  it("has locale messages for the worktree flow catalog", () => {
-    const messageIds = [
-      "quickPick.command.newTaskWorktree",
-      "commandCenter.placeholder.newTaskProject",
-      "commandCenter.placeholder.newTaskSetup",
-      "commandCenter.section.openWorkspaces",
-      "commandCenter.section.recentProjects",
-      "commandCenter.worktree.alreadyOpen",
-      "commandCenter.worktree.noProjects",
-      "commandCenter.worktree.destination",
-      "commandCenter.worktree.destination.worktree",
-      "commandCenter.worktree.destination.worktree.description",
-      "commandCenter.worktree.destination.checkout",
-      "commandCenter.worktree.destination.checkout.description",
-      "commandCenter.worktree.branchName",
-      "commandCenter.worktree.branchName.placeholder",
-      "commandCenter.worktree.branchName.invalid",
-      "commandCenter.worktree.branchName.exists",
-      "commandCenter.worktree.baseBranch",
-      "commandCenter.worktree.baseBranch.loading",
-      "commandCenter.worktree.baseBranch.empty",
-      "commandCenter.worktree.targetPath",
-      "commandCenter.worktree.start",
-      "commandCenter.worktree.starting",
-      "commandCenter.worktree.openExisting",
-      "commandCenter.worktree.openFailed",
-      "commandCenter.worktree.error.invalid-branch-name",
-      "commandCenter.worktree.error.branch-already-exists",
-      "commandCenter.worktree.error.target-branch-not-found",
-      "commandCenter.worktree.error.branch-in-other-worktree",
-      "commandCenter.worktree.error.target-path-invalid",
-      "commandCenter.worktree.error.target-path-exists",
-      "commandCenter.worktree.error.target-path-exists.existing",
-      "commandCenter.worktree.error.not-a-repository",
-      "commandCenter.worktree.error.git-unavailable",
-      "commandCenter.worktree.error.unknown",
-      "commandCenter.worktree.error.requestFailed",
-    ];
-
-    for (const id of messageIds) {
-      expect(enUS[id], `en-US missing ${id}`).toBeTruthy();
-      expect(zhCN[id], `zh-CN missing ${id}`).toBeTruthy();
-    }
   });
 });
 

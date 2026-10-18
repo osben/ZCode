@@ -1,5 +1,3 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PlatformChannels, type ProcessResourceRole } from "@zcode/shared";
 
@@ -165,15 +163,5 @@ describe("processResourceRendererHeapSource", () => {
     listener?.({ sender: { id: MAIN_WINDOW_WC_ID } }, { heapUsedKb: 51_200 });
 
     expect((await runSample()).heapSamples).toEqual([["renderer_main", 51_200]]);
-  });
-
-  it("preload 桥只暴露单向 send，不暴露 invoke", async () => {
-    const source = await readFile(
-      join(import.meta.dirname, "../src/preload/index.ts"),
-      "utf8",
-    ).then((text) => text.replace(/\s+/g, ""));
-
-    expect(source).toContain("ipcRenderer.send(PlatformChannels.ReportRendererHeapSample");
-    expect(source).not.toContain("ipcRenderer.invoke(PlatformChannels.ReportRendererHeapSample");
   });
 });

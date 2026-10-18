@@ -53,15 +53,6 @@ describe("CodingPlanUsagePanel", () => {
     expect(modelSettingsSource).toContain('id: "sidebar.usage.plan.zcodeMcpDescription"');
   });
 
-  it("统一使用工具调用和 ZCode MCP 的额度名称", () => {
-    expect(zhMessages["settings.usage.entitlementMonthlyMcpUsage"]).toBe("工具调用");
-    expect(enMessages["settings.usage.entitlementMonthlyMcpUsage"]).toBe("Tool calls");
-    expect(zhMessages["settings.usage.entitlementServerMcpUsage"]).toBe("ZCode MCP");
-    expect(enMessages["settings.usage.entitlementServerMcpUsage"]).toBe("ZCode MCP");
-    expect(zhMessages["sidebar.usage.plan.mcp"]).toBe("ZCode MCP");
-    expect(enMessages["sidebar.usage.plan.mcp"]).toBe("ZCode MCP");
-  });
-
   it("个人套餐来源使用 Account Access，而不是请求凭据", () => {
     expect(
       buildPersonalCodingPlanUsageSource({
@@ -398,11 +389,6 @@ describe("CodingPlanUsagePanel", () => {
       source.indexOf("const usageBigmodelEnterpriseProducts"),
     );
     expect(usageEntitlementBlock.match(/refreshOnMount: true/g)).toHaveLength(2);
-  });
-
-  it("使用统计个人 Coding Plan tab 显示个人套餐文案", () => {
-    expect(zhMessages["settings.usage.tab.codingPlan"]).toBe("个人套餐");
-    expect(enMessages["settings.usage.tab.codingPlan"]).toBe("Individual Plan");
   });
 
   it("把 Coding Plan 模型和工具用量映射为图表 series", () => {

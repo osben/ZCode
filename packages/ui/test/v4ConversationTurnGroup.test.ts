@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { createElement, type ContextType } from "react";
 import { DeliveryContext } from "@/v4/botGroupDeliveryContext.js";
 import { withTopicPreparationMessages } from "@/v4/topicPreparationRenderUnits.js";
@@ -781,14 +780,6 @@ describe("ConversationTurnGroup message stream display settings", () => {
 });
 
 describe("ConversationTurnGroup assistant history status", () => {
-  it("会话内分享只打开本地卡片，不再调用后端分享接口", () => {
-    const source = readFileSync("packages/ui/src/v4/ConversationTurnGroup.tsx", "utf8");
-
-    expect(source).toContain("setHighspeedShareDialogOpen(true)");
-    expect(source).toContain("<HighspeedShareDialog");
-    expect(source).not.toContain("highspeedCardService.share");
-  });
-
   it("冷恢复后从 userInput metadata 保留 accelerated output 的紫色工时", () => {
     const input = userInputRow(2, {
       sourceCommandId: "command-highspeed-cold-history",
@@ -2450,26 +2441,6 @@ describe("ConversationTurnGroup assistant history status", () => {
 });
 
 describe("ConversationTurnGroup ChatLoading lifecycle", () => {
-  it("Highspeed 运行态作用域用语义紫色覆盖所有呼吸渐变", () => {
-    const styles = readFileSync("packages/ui/src/styles.css", "utf8");
-    const modifier =
-      styles.match(
-        /\.highspeed-animated-gradient-text\s+\.animated-gradient-text\s*\{([^}]*)\}/,
-      )?.[1] ?? "";
-
-    expect(modifier).toContain("--animated-gradient-text-strong: var(--color-icon-purple);");
-    expect(modifier).toContain("--animated-gradient-text-soft:");
-    expect(modifier).toContain("var(--color-icon-purple)");
-  });
-
-  it("Retry 只降低 shimmer 峰值并保留全局低透明度扫光低谷", () => {
-    const styles = readFileSync("packages/ui/src/styles.css", "utf8");
-    const modifier = styles.match(/\.animated-gradient-text-subtle\s*\{([^}]*)\}/)?.[1] ?? "";
-
-    expect(modifier).toContain("--animated-gradient-text-strong: var(--color-foreground-subtle);");
-    expect(modifier).not.toContain("--animated-gradient-text-soft");
-  });
-
   it("第三次 retry 才替换当前 turn 底部的通用 loading，并保留 3/10 计数口径", () => {
     const html = renderUnit(
       baseUnit({

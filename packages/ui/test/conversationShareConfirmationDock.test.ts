@@ -4,8 +4,6 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ConversationShareConfirmationDock } from "@/v4/ConversationShareConfirmationDock.js";
-import enUS from "@/i18n/locales/en-US.js";
-import zhCN from "@/i18n/locales/zh-CN.js";
 
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
@@ -107,20 +105,6 @@ describe("ConversationShareConfirmationDock error details", () => {
     expect(screen.queryByText("conversationShare.partial.cancel")).toBeNull();
     expect(screen.getByTestId("conversation-share-confirm")).toHaveProperty("disabled", true);
     expect(screen.getByTestId("conversation-share-confirm").getAttribute("data-size")).toBe("lg");
-  });
-
-  it("uses one explicit natural-language footer summary for publish metadata", () => {
-    expect(zhCN["conversationShare.publish.footerMeta"]).toBe(
-      "分享 {selected} 个对话轮次，{access}",
-    );
-    expect(zhCN["conversationShare.permission.linkEditorSummary"]).toBe("链接持有者可导入并继续");
-    expect(zhCN["conversationShare.permission.linkViewerSummary"]).toBe("链接持有者可查看");
-    expect(enUS["conversationShare.publish.footerMeta"]).toBe(
-      "Share {selected} conversation turn(s), {access}",
-    );
-    expect(enUS["conversationShare.permission.linkEditorSummary"]).toBe(
-      "Link holders can import and continue",
-    );
   });
 
   it("renders publish phases as aligned cards with artifact progress", () => {

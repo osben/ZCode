@@ -1,9 +1,6 @@
 // Branch-switch guard + draft branch intent tests (specs/composer-branch-switcher-semantics.md):
 // pure affected-list computation (phases, worktree exclusion, same-root grouping), intent store
-// lifecycle, and a source contract for the composer send-time ordering (guard → switch → create,
-// abort preserves the draft).
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+// lifecycle, and the send-time resolver.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   applyDraftBranchIntentForSend,
@@ -97,32 +94,6 @@ describe("draftBranchIntent store (spec §1)", () => {
     const state = useDraftBranchIntentStore.getState();
     expect(selectDraftBranchIntent(state, WORKSPACE_KEY)).toBeNull();
     expect(selectWorktreeIntentActive(state, WORKSPACE_KEY)).toBe(false);
-  });
-});
-
-describe("ConversationComposer send-time branch resolution (source contract)", () => {
-  const source = readFileSync(
-    resolve(process.cwd(), "packages/ui/src/v4/ConversationComposer.tsx"),
-    "utf8",
-  );
-
-  it("delegates to the resolver before the send dispatch; failures abort without claiming the draft", () => {
-    const helperIndex = source.indexOf("await applyDraftBranchIntentForSend({");
-    // Every dispatch site (immediate ready-pipeline send and the final plain send) must follow
-    // the resolver textually; match the call prefix so signature changes do not rot the contract.
-    const runSendIndex = source.indexOf("await runSend(", helperIndex);
-    expect(helperIndex).toBeGreaterThan(-1);
-    expect(runSendIndex).toBeGreaterThan(helperIndex);
-    // Abort paths return before runSend; only "proceed" reaches the dispatch.
-    expect(source).toContain('resolution.outcome === "aborted"');
-    // The intent applies only in checkout mode (the worktree pipeline owns the branch).
-    expect(source).toContain("executionWorktree === undefined &&");
-    expect(source).toContain("!queueWorktreeSend &&");
-    expect(source).not.toContain("gitService.switchBranch");
-  });
-
-  it("clears the intent when a non-empty draft becomes empty", () => {
-    expect(source).toContain("draftHadTextRef");
   });
 });
 

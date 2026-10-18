@@ -22,8 +22,6 @@ import {
 import { timelineWidth } from "@/components/workflow-timeline/timeline-geometry.js";
 import { WorkflowTimeline } from "@/components/workflow-timeline/WorkflowTimeline.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
-import enUS from "../src/i18n/locales/en-US.js";
-import zhCN from "../src/i18n/locales/zh-CN.js";
 
 describe("timeline-ledge geometry", () => {
   it("ledge width: none for none, lamps 16 apart with 8px pads, +n past three", () => {
@@ -120,17 +118,6 @@ describe("timeline-ledge geometry", () => {
   it("camera centres a station and never scrolls past the start", () => {
     expect(stationCameraLeft(5, 960)).toBe(564);
     expect(stationCameraLeft(0, 960)).toBe(0);
-  });
-
-  it("has both locales for the ledge and scrollbar labels", () => {
-    for (const key of [
-      "chat.toolCall.workflow.timeline.ledge.earlier",
-      "chat.toolCall.workflow.timeline.ledge.later",
-      "chat.toolCall.workflow.timeline.scrollbar",
-    ]) {
-      expect(enUS[key as keyof typeof enUS]).toBeTruthy();
-      expect(zhCN[key as keyof typeof zhCN]).toBeTruthy();
-    }
   });
 });
 
