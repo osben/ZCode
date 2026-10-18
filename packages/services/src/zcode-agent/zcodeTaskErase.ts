@@ -30,6 +30,10 @@ export interface TaskEraseOperations {
   eraseHiddenTaskContent(): Promise<ZCodeTaskEraseResult | null>;
 }
 
+type SessionEraseOutcome = NonNullable<
+  Awaited<ReturnType<NonNullable<IZCodeAgentService["eraseSessionTrees"]>>>
+>;
+
 function chunk<T>(items: readonly T[], size: number): T[][] {
   const chunks: T[][] = [];
   for (let index = 0; index < items.length; index += size) {
@@ -45,6 +49,7 @@ function emptyResult(): ZCodeTaskEraseResult {
     blockedRunningTaskIds: [],
     failedTaskIds: [],
     fileFailureCount: 0,
+    filesRetainedCount: 0,
   };
 }
 
@@ -98,7 +103,10 @@ export function createTaskEraseOperations(options: {
    * was recorded so the caller may retry the same ids through another client.
    */
   async function eraseChunk(
-    scope: WorkspaceScope,
+    /** Workspace whose agent answers. */
+    clientScope: WorkspaceScope,
+    /** Workspace that owns the task-index rows of these ids (differs when a client is shared). */
+    taskScope: WorkspaceScope,
     taskIds: string[],
     result: ZCodeTaskEraseResult,
     runtimePolicy: ZCodeAgentRuntimePolicy,
@@ -107,7 +115,7 @@ export function createTaskEraseOperations(options: {
     const erase = async (ids: string[]) => {
       try {
         return await agent.eraseSessionTrees!({
-          workspacePath: scope.workspacePath,
+          workspacePath: clientScope.workspacePath,
           sessionIds: ids,
           runtimePolicy,
         });
@@ -124,27 +132,48 @@ export function createTaskEraseOperations(options: {
         return undefined;
       }
     };
+    // Erased sessions lose the conversation text the task index kept for them; the tombstone stays.
+    const recordErased = async (ids: string[], outcome: SessionEraseOutcome) => {
+      result.erasedTaskIds.push(...ids);
+      result.fileFailureCount += outcome.fileFailureCount;
+      result.filesRetainedCount += outcome.filesRetainedCount;
+      await taskIndexRepo.scrubDeletedTaskContent({
+        workspacePath: taskScope.workspacePath,
+        workspaceIdentity: taskScope.workspaceIdentity,
+        taskIds: ids,
+      });
+    };
+    // Files are removed before the rows, so a file failure erases nothing and the tasks stay retryable.
+    const needsRetryPerRoot = (outcome: SessionEraseOutcome) =>
+      outcome.blockedRunningSessionIds.length > 0 ||
+      (outcome.erasedSessionIds.length === 0 && outcome.fileFailureCount > 0);
     const outcome = await erase(taskIds);
     if (unavailable) return "unavailable";
     if (outcome === undefined) return "done";
     if (outcome === null) return "unsupported";
-    if (outcome.blockedRunningSessionIds.length === 0) {
-      result.erasedTaskIds.push(...taskIds);
-      result.fileFailureCount += outcome.fileFailureCount;
+    if (!needsRetryPerRoot(outcome)) {
+      await recordErased(taskIds, outcome);
       return "done";
     }
     if (taskIds.length === 1) {
-      result.blockedRunningTaskIds.push(...taskIds);
+      if (outcome.blockedRunningSessionIds.length > 0) {
+        result.blockedRunningTaskIds.push(...taskIds);
+      } else {
+        result.failedTaskIds.push(...taskIds);
+        result.fileFailureCount += outcome.fileFailureCount;
+      }
       return "done";
     }
     for (const taskId of taskIds) {
       const single = await erase([taskId]);
       if (single === undefined) continue;
       if (single === null) return "unsupported";
-      if (single.blockedRunningSessionIds.length > 0) {
+      if (!needsRetryPerRoot(single)) {
+        await recordErased([taskId], single);
+      } else if (single.blockedRunningSessionIds.length > 0) {
         result.blockedRunningTaskIds.push(taskId);
       } else {
-        result.erasedTaskIds.push(taskId);
+        result.failedTaskIds.push(taskId);
         result.fileFailureCount += single.fileFailureCount;
       }
     }
@@ -166,7 +195,7 @@ export function createTaskEraseOperations(options: {
     const eligible = requested.filter((taskId) => hidden.has(taskId));
     result.skippedTaskIds = requested.filter((taskId) => !hidden.has(taskId));
     for (const taskIds of chunk(eligible, ERASE_CHUNK_SIZE)) {
-      const outcome = await eraseChunk(params, taskIds, result, "start-if-needed");
+      const outcome = await eraseChunk(params, params, taskIds, result, "start-if-needed");
       if (outcome === "unsupported") return null;
     }
     logger.info(undefined, "[TaskErase] batch completed", {
@@ -176,6 +205,7 @@ export function createTaskEraseOperations(options: {
       blockedRunning: result.blockedRunningTaskIds.length,
       failed: result.failedTaskIds.length,
       fileFailures: result.fileFailureCount,
+      filesRetained: result.filesRetainedCount,
     });
     return result;
   }
@@ -233,7 +263,13 @@ export function createTaskEraseOperations(options: {
           withoutRuntime.push({ workspacePath, taskIds: ids });
           continue;
         }
-        const outcome = await eraseChunk({ workspacePath }, ids, result, "existing-only");
+        const outcome = await eraseChunk(
+          { workspacePath },
+          { workspacePath },
+          ids,
+          result,
+          "existing-only",
+        );
         if (outcome === "unsupported") return null;
         if (outcome === "unavailable") {
           unavailable = true;
@@ -241,21 +277,25 @@ export function createTaskEraseOperations(options: {
         }
       }
     }
-    const remaining = withoutRuntime.flatMap((entry) => entry.taskIds);
     const candidates = [...new Set(withoutRuntime.map((entry) => entry.workspacePath))];
     let scopeIndex = 0;
-    for (const ids of chunk(remaining, ERASE_CHUNK_SIZE)) {
+    for (const entry of withoutRuntime) {
       let handled = false;
       while (!handled && scopeIndex < candidates.length) {
         const before = result.failedTaskIds.length;
+        const fileFailuresBefore = result.fileFailureCount;
         const outcome = await eraseChunk(
           { workspacePath: candidates[scopeIndex]! },
-          ids,
+          { workspacePath: entry.workspacePath },
+          entry.taskIds,
           result,
           "start-if-needed",
         );
         if (outcome === "unsupported") return null;
-        if (result.failedTaskIds.length > before) {
+        if (
+          result.failedTaskIds.length > before &&
+          result.fileFailureCount === fileFailuresBefore
+        ) {
           // The client could not be started here: drop the failures and try the next workspace.
           result.failedTaskIds.length = before;
           scopeIndex += 1;
@@ -263,7 +303,7 @@ export function createTaskEraseOperations(options: {
         }
         handled = true;
       }
-      if (!handled) result.failedTaskIds.push(...ids);
+      if (!handled) result.failedTaskIds.push(...entry.taskIds);
     }
     return result;
   }

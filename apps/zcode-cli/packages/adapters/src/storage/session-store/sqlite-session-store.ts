@@ -323,6 +323,12 @@ export class SqliteSessionStore
     return sessionTreeRepository.listSessionTreeIds(this.db, input.rootIds);
   }
 
+  async listSessionTreeIdsWithSurvivingChildren(input: {
+    rootIds: readonly SessionId[];
+  }): Promise<SessionId[]> {
+    return sessionTreeRepository.listSessionTreeIdsWithSurvivingChildren(this.db, input.rootIds);
+  }
+
   async deleteSessionTree(input: {
     rootIds: readonly SessionId[];
   }): Promise<{ erasedIds: SessionId[] }> {

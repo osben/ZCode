@@ -88,8 +88,10 @@ export interface ZCodeTaskEraseResult {
   /** Left untouched because a session in the tree is running. */
   blockedRunningTaskIds: string[];
   failedTaskIds: string[];
-  /** Per-session directories that could not be removed after the database rows were erased. */
+  /** Per-session directories that could not be removed; the affected tasks are in failedTaskIds and can be retried. */
   fileFailureCount: number;
+  /** Sessions whose files were kept because a surviving fork still references them. */
+  filesRetainedCount: number;
 }
 
 /** A message content part from one model request (text / tool call / tool result / other raw structure). */

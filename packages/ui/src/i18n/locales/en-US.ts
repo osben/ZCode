@@ -8180,6 +8180,8 @@ const enUS: Record<string, string> = {
   "sessionManager.erase.confirm": "Erase {count}",
   "sessionManager.erase.result": "Erased {erased}. Kept hidden: {kept}.",
   "sessionManager.erase.unsupported": "Permanent erase isn't available here.",
+  "sessionManager.erase.filesFailed":
+    "Some session folders could not be removed. Those sessions stay hidden; erase again to retry.",
   "sessionManager.hidden.count.one": "{count} hidden session is still stored on disk.",
   "sessionManager.hidden.count.other": "{count} hidden sessions are still stored on disk.",
   "sessionManager.hidden.erase": "Erase hidden sessions",

@@ -7832,6 +7832,8 @@ const zhCN: Record<string, string> = {
   "sessionManager.erase.confirm": "清除 {count} 个",
   "sessionManager.erase.result": "已清除 {erased} 个，仍保持隐藏：{kept} 个。",
   "sessionManager.erase.unsupported": "此处不支持永久清除。",
+  "sessionManager.erase.filesFailed":
+    "部分会话文件夹无法删除。这些会话仍保持隐藏，请再次清除以重试。",
   "sessionManager.hidden.count.one": "磁盘上仍存有 {count} 个已隐藏的会话。",
   "sessionManager.hidden.count.other": "磁盘上仍存有 {count} 个已隐藏的会话。",
   "sessionManager.hidden.erase": "清除已隐藏的会话",

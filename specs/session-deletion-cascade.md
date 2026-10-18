@@ -57,7 +57,7 @@ Hide remains the default everywhere. The sidebar, archived section and web remot
 
 ### 4. Erase semantics
 
-Owner split (unchanged ownership): CLI session store owns content; `tasks-index.sqlite` owns list visibility. The tombstone is never removed by Erase: `saveSession` in the CLI (`sessions.ts`, `insert into session … on conflict(id) do update`) is an upsert, so any resident runtime that writes after the erase can recreate the `session` row. Keeping the tombstone is what keeps such a row hidden. The cost is one small index row per erased session.
+Owner split: the CLI session store owns content; `tasks-index.sqlite` owns list visibility. The tombstone is never removed by Erase: `saveSession` in the CLI (`sessions.ts`, `insert into session … on conflict(id) do update`) is an upsert, so any resident runtime that writes after the erase can recreate the `session` row. Keeping the tombstone is what keeps such a row hidden. The cost is one small index row per erased session, which holds no conversation text (see the scrub rule below).
 
 ```
 Session Manager (confirm, Erase checked)
@@ -70,18 +70,23 @@ Host: close resident runtimes in the tree (closeSession), then request
    ▼
 CLI protocol method session/eraseTree({ sessionIds })
    │ 3. recursive walk by parent_id over child task types (root always included)
-   │ 4. one transaction, in this order:
+   │ 4. remove session-scoped directories (§6) for tree sessions that no surviving fork points at
+   │      any failure ──▶ stop: rows stay, result reports fileFailureCount, retry finds the same tree
+   │ 5. one transaction, in this order:
    │      a. delete workflow_run rows whose parent_session_id is in the tree
    │      b. delete dwf_run rows whose parent_session_id is in the tree (dwf_* children cascade)
    │      c. delete input_history rows of the tree's sessions (typed prompts, no foreign key)
    │      d. delete the tree's session rows (FK cascade removes message/part/entry/input/task links/usage)
-   │ 5. remove session-scoped directories (§6); result lists erased ids and a failure count
    ▼
-result ──▶ UI toast (erased / failed counts). No index write: the tombstone stays.
+result ──▶ Services: scrub title and body text from the tombstoned index rows of the erased tasks
+       ──▶ UI toast (erased / kept counts, plus a file-failure warning). The tombstone stays.
 ```
 
 Rules:
 
+- **Files before rows.** Directories are removed first and the rows only after every removal succeeded, so a failed or interrupted cleanup leaves the tree discoverable (the maintenance count still includes it) and a retry finishes it. A file failure erases nothing for that request; Services marks those tasks as failed and retries root by root so clean roots are still erased.
+- **Surviving forks keep their files.** A fork copies message parts but keeps attachment and artifact URLs, which resolve to the source session's directory. Directories of tree sessions that still have a child outside the tree (`listSessionTreeIdsWithSurvivingChildren`) are kept and counted in `filesRetainedCount`; ids that cannot be mapped to a plain directory name are kept the same way.
+- **Scrub the index copy.** The task index keeps up to 200 000 characters of chat text per task (`tasks.searchable_text`) plus the title. After a successful erase Services calls `scrubDeletedTaskContent` for the erased tasks, which blanks both in the tombstoned rows (identity columns and `deleted` stay). `writeRecord` also never stores text or a title for a tombstoned row, so a late syncer write cannot bring them back. This also applies to a plain Hide.
 - **Hide first, erase second.** If any step after Hide fails, the session is still hidden and nothing resurrects. A retry is safe because every step is idempotent.
 - **Workflow tables are deleted explicitly, before the sessions.** `workflow_run` references sessions with `on delete set null` and `dwf_run` has no foreign key at all, so a plain `session` delete would leave both behind with their journals.
 - **In-memory state.** The Host closes resident runtimes through `closeSession`, which also releases their `InMemorySessionEventStore` entries (the existing `eventStore.deleteSession` calls). Erase adds no second in-memory cleanup path.
@@ -117,7 +122,7 @@ No schema change, no migration, no new `setting.json` key. Erase is a data opera
 
 Only directories whose name is exactly an erased session id, under known roots, are removed, never by glob. Any category whose per-session path cannot be confirmed in the code is left in place, reported in the result as "files kept", and recorded below.
 
-Removed after the database rows are erased (best effort; failures are counted in the result, never block the erase), each as `<storageRoot>/cli/<dir>/<sessionId>` where the id must match `[A-Za-z0-9._-]{1,120}` (the artifact store's own sanitizer leaves such ids unchanged) and the resolved path must be a direct child of the root:
+Removed before the database rows (a failure keeps the rows so the erase can be retried), each as `<storageRoot>/cli/<dir>/<sessionId>` where the id must match `[A-Za-z0-9._-]{1,120}` (the artifact store's own sanitizer leaves such ids unchanged) and the resolved path must be a direct child of the root:
 
 - `artifacts` — tool result artifacts (`NodeToolArtifactStore`)
 - `image-cache`, `pdf-cache`, `video-cache` — derived media attachments

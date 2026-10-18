@@ -72,6 +72,26 @@ export function listSessionTreeIds(db: DatabaseSync, rootIds: readonly SessionId
   return [...resolveTreeIds(db, rootIds).keys()] as SessionId[];
 }
 
+/** Tree sessions with a child outside the tree, i.e. a fork whose copied parts still point at their files. */
+export function listSessionTreeIdsWithSurvivingChildren(
+  db: DatabaseSync,
+  rootIds: readonly SessionId[],
+): SessionId[] {
+  const tree = resolveTreeIds(db, rootIds);
+  const retained = new Set<string>();
+  for (const ids of chunk([...tree.keys()])) {
+    const rows = db
+      .prepare(
+        `select id, parent_id from session where parent_id in (${placeholders(ids.length)})`,
+      )
+      .all(...ids) as unknown as Array<{ id: string; parent_id: string }>;
+    for (const row of rows) {
+      if (!tree.has(row.id)) retained.add(row.parent_id);
+    }
+  }
+  return [...retained] as SessionId[];
+}
+
 export function countSessionTree(
   db: DatabaseSync,
   rootIds: readonly SessionId[],

@@ -2411,8 +2411,13 @@ export const zcodeSessionEraseTreeResultSchema = z
     erasedSessionIds: z.array(nonEmptyString),
     /** Non-empty means nothing was erased: these sessions are running in the answering CLI process. */
     blockedRunningSessionIds: z.array(nonEmptyString),
-    /** Per-session directories that could not be removed after the database rows were erased. */
+    /**
+     * Per-session directories that could not be removed. Files are removed before the database rows, so a
+     * non-zero count with no erased sessions means the rows were kept and the erase can be retried.
+     */
     fileFailureCount: z.number().int().nonnegative(),
+    /** Sessions whose directories were kept because a surviving fork still references their files. */
+    filesRetainedCount: z.number().int().nonnegative(),
   })
   .strict();
 export type ZCodeSessionEraseTreeResult = z.infer<typeof zcodeSessionEraseTreeResultSchema>;

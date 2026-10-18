@@ -61,6 +61,7 @@ export async function eraseHiddenRows(
   let erased = 0;
   let kept = 0;
   let unsupported = 0;
+  let fileFailures = 0;
   for (const group of groupByWorkspace(hiddenRows)) {
     const first = group[0]!;
     const service = deps.resolveRowServices(first);
@@ -78,6 +79,7 @@ export async function eraseHiddenRows(
         continue;
       }
       erased += result.erasedTaskIds.length;
+      fileFailures += result.fileFailureCount;
       kept +=
         result.skippedTaskIds.length +
         result.blockedRunningTaskIds.length +
@@ -96,5 +98,10 @@ export async function eraseHiddenRows(
         kept: String(kept + unsupported),
       }),
     );
+  }
+  // File cleanup failures are reported separately from retained sessions: the affected tasks are in
+  // `kept` (their rows are still stored) and can be retried, but the user needs to know why.
+  if (fileFailures > 0) {
+    toast(deps.formatMessage("sessionManager.erase.filesFailed"));
   }
 }

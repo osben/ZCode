@@ -150,6 +150,13 @@ async function seedFamily(h: Awaited<ReturnType<typeof openStore>>) {
   return { parent, fork, other };
 }
 
+/** A second family without any fork, so its tree has no surviving children. */
+async function seedFamily2(h: Awaited<ReturnType<typeof openStore>>) {
+  const other = await seedSession(h.store, "plain-root", "interactive");
+  await seedSession(h.store, "plain-chat", "selection_side_chat", "plain-root");
+  return { other };
+}
+
 describe("session tree count and erase", () => {
   it("counts descendants through child task types only, archived and nested included, forks excluded", async () => {
     const h = await openStore();
@@ -172,6 +179,22 @@ describe("session tree count and erase", () => {
         workflowSessions: 0,
         workflowRuns: 0,
       });
+    } finally {
+      h.close();
+    }
+  });
+
+  it("reports tree sessions that a surviving fork still points at", async () => {
+    const h = await openStore();
+    try {
+      const { parent } = await seedFamily(h);
+      await expect(
+        h.store.listSessionTreeIdsWithSurvivingChildren!({ rootIds: [parent] }),
+      ).resolves.toEqual([parent]);
+      const { other } = await seedFamily2(h);
+      await expect(
+        h.store.listSessionTreeIdsWithSurvivingChildren!({ rootIds: [other] }),
+      ).resolves.toEqual([]);
     } finally {
       h.close();
     }

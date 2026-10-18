@@ -1502,7 +1502,13 @@ export class TaskIndexRepo {
     }
   }
 
-  private writeRecord(record: TaskIndexWriteRecord): ZCodeTaskMeta {
+  private writeRecord(input: TaskIndexWriteRecord): ZCodeTaskMeta {
+    // A tombstoned row is never listed or searched, so it must not accumulate conversation text: a late
+    // syncer write after a permanent erase (specs/session-deletion-cascade.md §4) would otherwise bring
+    // the erased title and body back into this index.
+    const record: TaskIndexWriteRecord = input.deleted
+      ? { ...input, meta: { ...input.meta, title: "" }, searchableText: "" }
+      : input;
     // searchable_text = undefined means “leave the current value unchanged.” Read the existing row once;
     // otherwise ON CONFLICT could set excluded.searchable_text to an empty string and clear indexed body text.
     const existing =
@@ -2084,6 +2090,34 @@ export class TaskIndexRepo {
         archived: typeof params.archived === "boolean" ? (params.archived ? 1 : 0) : null,
       }) as unknown as TaskIndexMetaRow[];
     return rows.map(rowToMeta);
+  }
+
+  /**
+   * Drop the conversation text kept in tombstoned rows (body index and title) after their sessions were
+   * permanently erased. Identity columns and the deletion marker stay: they keep the session hidden.
+   */
+  async scrubDeletedTaskContent(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    taskIds: string[];
+  }): Promise<void> {
+    if (params.taskIds.length === 0) return;
+    await this.ensureReady();
+    const key = workspaceKey(params);
+    for (const taskId of params.taskIds) {
+      // Same per-task write chain as every other task write, so a pending syncer write lands first.
+      await this.enqueueWrite({ ...params, taskId }, () => {
+        this.getDatabase()
+          .prepare(
+            `UPDATE tasks
+            SET searchable_text = '',
+                title = '',
+                meta_json = CASE WHEN json_valid(meta_json) THEN json_set(meta_json, '$.title', '') ELSE meta_json END
+            WHERE workspace_key = ? AND task_id = ? AND deleted = 1`,
+          )
+          .run(key, taskId);
+      });
+    }
   }
 
   /** Tombstones of local workspaces (no remote identity), for permanent-erase maintenance. */

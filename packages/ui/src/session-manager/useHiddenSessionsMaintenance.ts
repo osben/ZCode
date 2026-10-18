@@ -49,6 +49,9 @@ export function useHiddenSessionsMaintenance(
         result.skippedTaskIds.length +
         result.blockedRunningTaskIds.length +
         result.failedTaskIds.length;
+      if (result.fileFailureCount > 0) {
+        toast(formatMessage("sessionManager.erase.filesFailed"));
+      }
       if (kept > 0) {
         toast(
           formatMessage("sessionManager.erase.result", {

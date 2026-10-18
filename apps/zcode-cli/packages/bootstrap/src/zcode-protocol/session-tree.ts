@@ -34,6 +34,11 @@ const PER_SESSION_DIRECTORIES = [
 /** Matches what the artifact store's path sanitizer leaves unchanged, so the segment equals the id. */
 const SAFE_SEGMENT = /^[A-Za-z0-9._-]{1,120}$/u;
 
+/** Ids whose directory name is the id itself; anything else cannot be located safely and is left alone. */
+function isPlainSegment(sessionId: string): boolean {
+  return SAFE_SEGMENT.test(sessionId) && sessionId !== "." && sessionId !== "..";
+}
+
 function requireTreeStore(context: ZCodeProtocolAgentServerContext) {
   const store = context.deps.sessionStore;
   if (!store?.countSessionTree || !store.listSessionTreeIds || !store.deleteSessionTree) {
@@ -78,13 +83,11 @@ async function removeSessionDirectories(
   storageRoot: string | undefined,
   sessionIds: readonly string[],
 ): Promise<number> {
-  if (!storageRoot) return sessionIds.length;
+  // Without a storage root (embedded callers) there is nothing to resolve; the rows are still erased.
+  if (!storageRoot) return 0;
   let failures = 0;
   for (const sessionId of sessionIds) {
-    if (!SAFE_SEGMENT.test(sessionId) || sessionId === "." || sessionId === "..") {
-      failures += 1;
-      continue;
-    }
+    if (!isPlainSegment(sessionId)) continue;
     for (const directory of PER_SESSION_DIRECTORIES) {
       // Same join as the writers (create-app.ts, script-workflow-tool-port.ts); not getCliStorageRoot().
       const root = join(storageRoot, "cli", directory);
@@ -112,13 +115,18 @@ export async function eraseSessionTrees(
   const params = parseParams(zcodeSessionEraseTreeParamsSchema, rawParams);
   const store = requireTreeStore(context);
   const rootIds = params.sessionIds as SessionId[];
-  const treeIds = await store.listSessionTreeIds!({ rootIds });
+  const treeIds = (await store.listSessionTreeIds!({ rootIds })).map(String);
 
   // The running guard is process-local: the session database has no lease, so a turn running in
   // another window's CLI process is not visible here (spec §4).
   const running = findRunningSessionIds(context, treeIds);
   if (running.length > 0) {
-    return { erasedSessionIds: [], blockedRunningSessionIds: running, fileFailureCount: 0 };
+    return {
+      erasedSessionIds: [],
+      blockedRunningSessionIds: running,
+      fileFailureCount: 0,
+      filesRetainedCount: 0,
+    };
   }
 
   // Close idle resident runtimes first so no late write can recreate a row after the delete.
@@ -126,11 +134,35 @@ export async function eraseSessionTrees(
     if (context.sessions.has(sessionId)) await closeSession(context, { sessionId });
   }
 
-  const { erasedIds } = await store.deleteSessionTree!({ rootIds });
-  const erasedSessionIds = erasedIds.map(String);
+  // Files go before the rows. If removal fails or the process dies midway, the rows still exist, so a
+  // retry finds the same tree and finishes the cleanup instead of losing track of the directories.
+  // Directories of sessions that a surviving fork points at are kept: the fork's copied parts still
+  // resolve artifact and media URLs to the source session's directory.
+  const retained = new Set(
+    (await store.listSessionTreeIdsWithSurvivingChildren?.({ rootIds }))?.map(String) ?? [],
+  );
+  for (const sessionId of treeIds) {
+    if (!isPlainSegment(sessionId)) retained.add(sessionId);
+  }
   const fileFailureCount = await removeSessionDirectories(
     context.deps.storageRoot,
-    erasedSessionIds,
+    treeIds.filter((sessionId) => !retained.has(sessionId)),
+  );
+  if (fileFailureCount > 0) {
+    return {
+      erasedSessionIds: [],
+      blockedRunningSessionIds: [],
+      fileFailureCount,
+      filesRetainedCount: retained.size,
+    };
+  }
+
+  const { erasedIds } = await store.deleteSessionTree!({ rootIds });
+  const erasedSessionIds = erasedIds.map(String);
+  // A child created between the listing and the delete is erased too; its directory is best effort.
+  const lateFailures = await removeSessionDirectories(
+    context.deps.storageRoot,
+    erasedSessionIds.filter((sessionId) => !treeIds.includes(sessionId)),
   );
   context.logger?.info("ZCode Protocol session tree erased", {
     event: "zcode_protocol.session.tree_erased",
@@ -138,7 +170,13 @@ export async function eraseSessionTrees(
     operation: "session_erase_tree",
     requestedRootCount: rootIds.length,
     erasedSessionCount: erasedSessionIds.length,
-    fileFailureCount,
+    fileFailureCount: lateFailures,
+    filesRetainedCount: retained.size,
   });
-  return { erasedSessionIds, blockedRunningSessionIds: [], fileFailureCount };
+  return {
+    erasedSessionIds,
+    blockedRunningSessionIds: [],
+    fileFailureCount: lateFailures,
+    filesRetainedCount: retained.size,
+  };
 }

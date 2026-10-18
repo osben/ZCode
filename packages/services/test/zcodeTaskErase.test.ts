@@ -25,11 +25,13 @@ function setup(options: {
     erasedSessionIds: string[];
     blockedRunningSessionIds: string[];
     fileFailureCount: number;
+    filesRetainedCount: number;
   } | null;
   count?: (ids: string[]) => ReturnType<typeof counts> | null;
 }) {
   const repo = {
     listDeletedTaskIds: vi.fn(async () => options.hidden),
+    scrubDeletedTaskContent: vi.fn(async () => undefined),
     listLocalDeletedTaskRefs: vi.fn(async () =>
       Object.entries(options.hiddenByWorkspace ?? { "/work/a": options.hidden }).flatMap(
         ([workspacePath, taskIds]) => taskIds.map((taskId) => ({ workspacePath, taskId })),
@@ -55,6 +57,7 @@ function setup(options: {
               erasedSessionIds: params.sessionIds,
               blockedRunningSessionIds: [],
               fileFailureCount: 0,
+              filesRetainedCount: 0,
             };
       },
     ),
@@ -81,6 +84,7 @@ describe("createTaskEraseOperations", () => {
       blockedRunningTaskIds: [],
       failedTaskIds: [],
       fileFailureCount: 0,
+      filesRetainedCount: 0,
     });
     expect(agent.eraseSessionTrees).toHaveBeenCalledTimes(1);
     expect(agent.eraseSessionTrees).toHaveBeenCalledWith({
@@ -107,8 +111,18 @@ describe("createTaskEraseOperations", () => {
       hidden: ["t1", "t2", "t3"],
       erase: (ids) =>
         ids.length > 1 || ids[0] === "t2"
-          ? { erasedSessionIds: [], blockedRunningSessionIds: ["t2"], fileFailureCount: 0 }
-          : { erasedSessionIds: ids, blockedRunningSessionIds: [], fileFailureCount: 2 },
+          ? {
+              erasedSessionIds: [],
+              blockedRunningSessionIds: ["t2"],
+              fileFailureCount: 0,
+              filesRetainedCount: 0,
+            }
+          : {
+              erasedSessionIds: ids,
+              blockedRunningSessionIds: [],
+              fileFailureCount: 2,
+              filesRetainedCount: 1,
+            },
     });
     const result = await operations.eraseTasks({ ...workspace, taskIds: ["t1", "t2", "t3"] });
     expect(result).toMatchObject({
@@ -200,8 +214,75 @@ describe("createTaskEraseOperations", () => {
     const started = vi
       .mocked(agent.eraseSessionTrees!)
       .mock.calls.filter(([params]) => params.runtimePolicy !== "existing-only");
-    // Both runtime-less workspaces share one started client rather than one process each.
-    expect(started).toHaveLength(1);
-    expect(started[0]![0].sessionIds).toEqual(["a1", "g1"]);
+    // Both runtime-less workspaces are served by one started client (one workspace scope), not one each.
+    expect(new Set(started.map(([params]) => params.workspacePath)).size).toBe(1);
+    expect(started.flatMap(([params]) => params.sessionIds)).toEqual(["a1", "g1"]);
+  });
+
+  it("scrubs the task-index text of every erased task, under the task's own workspace", async () => {
+    const { operations, repo } = setup({ hidden: ["t1", "t2"] });
+    await operations.eraseTasks({ ...workspace, taskIds: ["t1", "t2"] });
+    expect(repo.scrubDeletedTaskContent).toHaveBeenCalledWith({
+      workspacePath: "/work/a",
+      workspaceIdentity: undefined,
+      taskIds: ["t1", "t2"],
+    });
+  });
+
+  it("scrubs hidden content under the owning workspace even when a shared client answered", async () => {
+    const { operations, repo } = setup({
+      hidden: [],
+      hiddenByWorkspace: { "/work/a": ["a1"], "/work/gone": ["g1"] },
+      runtimes: [],
+    });
+    await operations.eraseHiddenTaskContent();
+    const scrubbed = vi
+      .mocked(repo.scrubDeletedTaskContent)
+      .mock.calls.map(([params]) => [params.workspacePath, params.taskIds]);
+    expect(scrubbed).toEqual([
+      ["/work/a", ["a1"]],
+      ["/work/gone", ["g1"]],
+    ]);
+  });
+
+  it("treats a file-removal failure as a retryable failure and scrubs nothing", async () => {
+    const { operations, repo } = setup({
+      hidden: ["t1"],
+      erase: () => ({
+        erasedSessionIds: [],
+        blockedRunningSessionIds: [],
+        fileFailureCount: 2,
+        filesRetainedCount: 0,
+      }),
+    });
+    const result = await operations.eraseTasks({ ...workspace, taskIds: ["t1"] });
+    expect(result).toMatchObject({
+      erasedTaskIds: [],
+      failedTaskIds: ["t1"],
+      fileFailureCount: 2,
+    });
+    expect(repo.scrubDeletedTaskContent).not.toHaveBeenCalled();
+  });
+
+  it("retries root by root after a file failure and keeps the clean roots erased", async () => {
+    const { operations } = setup({
+      hidden: ["t1", "t2"],
+      erase: (ids) =>
+        ids.length > 1 || ids[0] === "t2"
+          ? {
+              erasedSessionIds: [],
+              blockedRunningSessionIds: [],
+              fileFailureCount: 1,
+              filesRetainedCount: 0,
+            }
+          : {
+              erasedSessionIds: ids,
+              blockedRunningSessionIds: [],
+              fileFailureCount: 0,
+              filesRetainedCount: 0,
+            },
+    });
+    const result = await operations.eraseTasks({ ...workspace, taskIds: ["t1", "t2"] });
+    expect(result).toMatchObject({ erasedTaskIds: ["t1"], failedTaskIds: ["t2"] });
   });
 });

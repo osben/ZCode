@@ -7,6 +7,21 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SessionId, SessionStorePort } from "@zcode/contracts";
 
 const closeSessionMock = vi.hoisted(() => vi.fn(async () => ({ closed: true })));
+// Lets one test make a directory removal fail; every other call is the real rm.
+const rmControl = vi.hoisted(() => ({ failNext: false }));
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    rm: async (...args: Parameters<typeof actual.rm>) => {
+      if (rmControl.failNext) {
+        rmControl.failNext = false;
+        throw new Error("EBUSY");
+      }
+      return actual.rm(...args);
+    },
+  };
+});
 vi.mock("../src/zcode-protocol/server-operations.js", () => ({
   closeSession: closeSessionMock,
 }));
@@ -55,6 +70,7 @@ function createContext(options: {
             workflowRuns: 0,
           })),
           listSessionTreeIds: vi.fn(async () => options.treeIds as SessionId[]),
+          listSessionTreeIdsWithSurvivingChildren: vi.fn(async () => [] as SessionId[]),
           deleteSessionTree: vi.fn(async () => ({ erasedIds: options.treeIds as SessionId[] })),
           ...options.store,
         } as unknown as SessionStorePort);
@@ -112,6 +128,7 @@ describe("session tree protocol handlers", () => {
       erasedSessionIds: [],
       blockedRunningSessionIds: ["busy-child"],
       fileFailureCount: 0,
+      filesRetainedCount: 0,
     });
     expect(store!.deleteSessionTree).not.toHaveBeenCalled();
     expect(closeSessionMock).not.toHaveBeenCalled();
@@ -127,7 +144,7 @@ describe("session tree protocol handlers", () => {
     expect(store!.deleteSessionTree).not.toHaveBeenCalled();
   });
 
-  it("closes idle resident runtimes before deleting, then removes only exact-name directories", async () => {
+  it("closes idle resident runtimes, removes exact-name directories, then deletes the rows", async () => {
     const root = await mkdtemp(join(tmpdir(), "zcode-tree-files-"));
     tempRoots.push(root);
     for (const directory of ["artifacts", "image-cache", "pdf-cache", "video-cache", "sessions"]) {
@@ -141,6 +158,7 @@ describe("session tree protocol handlers", () => {
       order.push("close");
       return { closed: true };
     });
+    let directoryGoneAtDelete = false;
     const { context, store } = createContext({
       treeIds: ["sess_a"],
       sessions: { sess_a: liveRecord(false) },
@@ -148,6 +166,7 @@ describe("session tree protocol handlers", () => {
       store: {
         deleteSessionTree: vi.fn(async () => {
           order.push("delete");
+          directoryGoneAtDelete = !(await readdir(join(root, "cli", "artifacts"))).includes("sess_a");
           return { erasedIds: ["sess_a" as SessionId] };
         }),
       },
@@ -157,12 +176,59 @@ describe("session tree protocol handlers", () => {
       erasedSessionIds: ["sess_a"],
       blockedRunningSessionIds: [],
       fileFailureCount: 0,
+      filesRetainedCount: 0,
     });
     expect(order).toEqual(["close", "delete"]);
+    // Files are removed before the rows so a failed or interrupted cleanup can be retried from the rows.
+    expect(directoryGoneAtDelete).toBe(true);
     expect(store!.deleteSessionTree).toHaveBeenCalledWith({ rootIds: ["sess_a"] });
     for (const directory of ["artifacts", "image-cache", "pdf-cache", "video-cache", "sessions"]) {
       expect((await readdir(join(root, "cli", directory))).sort()).toEqual(["sess_a-sibling", "sess_keep"]);
     }
+  });
+
+  it("keeps the rows and reports a failure when a directory cannot be removed", async () => {
+    const root = await mkdtemp(join(tmpdir(), "zcode-tree-files-"));
+    tempRoots.push(root);
+    await mkdir(join(root, "cli", "artifacts", "sess_a"), { recursive: true });
+    const { context, store } = createContext({ treeIds: ["sess_a"], storageRoot: root });
+    rmControl.failNext = true;
+    await expect(eraseSessionTrees(context, { sessionIds: ["sess_a"] })).resolves.toEqual({
+      erasedSessionIds: [],
+      blockedRunningSessionIds: [],
+      fileFailureCount: 1,
+      filesRetainedCount: 0,
+    });
+    // The rows stay, so retrying finds the same tree and finishes the cleanup.
+    expect(store!.deleteSessionTree).not.toHaveBeenCalled();
+    const retry = await eraseSessionTrees(context, { sessionIds: ["sess_a"] });
+    expect(retry).toMatchObject({ erasedSessionIds: ["sess_a"], fileFailureCount: 0 });
+    expect(await readdir(join(root, "cli", "artifacts"))).toEqual([]);
+  });
+
+  it("keeps directories that a surviving fork still references", async () => {
+    const root = await mkdtemp(join(tmpdir(), "zcode-tree-files-"));
+    tempRoots.push(root);
+    await mkdir(join(root, "cli", "artifacts", "sess_parent"), { recursive: true });
+    await mkdir(join(root, "cli", "artifacts", "sess_child"), { recursive: true });
+    const { context, store } = createContext({
+      treeIds: ["sess_parent", "sess_child"],
+      storageRoot: root,
+      store: {
+        listSessionTreeIdsWithSurvivingChildren: vi.fn(async () => ["sess_parent" as SessionId]),
+        deleteSessionTree: vi.fn(async () => ({
+          erasedIds: ["sess_parent", "sess_child"] as SessionId[],
+        })),
+      },
+    });
+    const result = await eraseSessionTrees(context, { sessionIds: ["sess_parent"] });
+    expect(result).toMatchObject({
+      erasedSessionIds: ["sess_parent", "sess_child"],
+      fileFailureCount: 0,
+      filesRetainedCount: 1,
+    });
+    expect(store!.deleteSessionTree).toHaveBeenCalled();
+    expect(await readdir(join(root, "cli", "artifacts"))).toEqual(["sess_parent"]);
   });
 
   it("never builds a path from an id that is not a plain segment", async () => {
@@ -175,14 +241,18 @@ describe("session tree protocol handlers", () => {
       storageRoot: root,
     });
     const result = await eraseSessionTrees(context, { sessionIds: ["../keep"] });
-    expect(result.erasedSessionIds).toEqual(["../keep", ".."]);
-    expect(result.fileFailureCount).toBe(2);
+    // Such ids cannot be located safely: their files are left alone and reported as retained.
+    expect(result).toMatchObject({
+      erasedSessionIds: ["../keep", ".."],
+      fileFailureCount: 0,
+      filesRetainedCount: 2,
+    });
     expect(await readdir(join(root, "cli"))).toEqual(expect.arrayContaining(["artifacts", "keep"]));
   });
 
-  it("reports directories as not removed when the storage root is unknown", async () => {
+  it("erases the rows without touching the filesystem when no storage root is known", async () => {
     const { context } = createContext({ treeIds: ["sess_a"] });
     const result = await eraseSessionTrees(context, { sessionIds: ["sess_a"] });
-    expect(result).toMatchObject({ erasedSessionIds: ["sess_a"], fileFailureCount: 1 });
+    expect(result).toMatchObject({ erasedSessionIds: ["sess_a"], fileFailureCount: 0 });
   });
 });

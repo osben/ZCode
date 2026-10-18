@@ -1158,6 +1158,13 @@ export interface SessionStorePort {
   /** Session ids of the roots that exist plus their descendants (same scope as countSessionTree). Read-only. */
   listSessionTreeIds?(input: { rootIds: readonly SessionId[] }): Promise<SessionId[]>;
   /**
+   * Tree sessions that still have a child outside the tree (a fork of an erased session). Their per-session
+   * files may be referenced by that surviving child, so callers must not delete them. Read-only.
+   */
+  listSessionTreeIdsWithSurvivingChildren?(input: {
+    rootIds: readonly SessionId[];
+  }): Promise<SessionId[]>;
+  /**
    * Permanently remove the roots and their descendants (same scope as countSessionTree) in one
    * transaction, including workflow_run / dwf_run rows that foreign keys would otherwise orphan.
    * Idempotent: ids that no longer exist are skipped. Returns the session ids that were removed.

@@ -8312,6 +8312,8 @@ const ukUA: Record<string, string> = {
   "sessionManager.erase.confirm": "Стерти {count}",
   "sessionManager.erase.result": "Стерто: {erased}. Залишаються прихованими: {kept}.",
   "sessionManager.erase.unsupported": "Остаточне стирання тут недоступне.",
+  "sessionManager.erase.filesFailed":
+    "Деякі теки сесій не вдалося видалити. Ці сесії залишаються прихованими; повторіть стирання.",
   "sessionManager.hidden.erase": "Стерти приховані сесії",
   "sessionManager.hidden.confirmTitle": "Стерти всі приховані сесії?",
   "sessionManager.hidden.confirm": "Стерти",
