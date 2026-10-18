@@ -10,6 +10,16 @@ const enUS: Record<string, string> = {
   "worktreeSetup.connectionUnavailable":
     "Reconnect to this workspace's Host to continue worktree setup.",
   "worktreeSetup.created": "Worktree created",
+  "worktreeSetup.stepCreating": "Preparing worktree {branch}…",
+  "worktreeSetup.stepCreating.baseHead": "Using HEAD as the base branch",
+  "worktreeSetup.stepReady": "Worktree ready: {path}",
+  "worktreeSetup.stepExisting": "Using existing worktree: {path}",
+  "worktreeSetup.stepFailed": "Worktree setup failed: {reason}",
+  "worktreeSetup.retry": "Retry",
+  "worktreeSetup.discard": "Discard",
+  "worktreeSetup.queuedMessageLabel": "Queued message",
+  "worktreeSetup.orphanedNote":
+    "This setup no longer belongs to an active session and can be discarded.",
   "composerRecovery.editorOccupied": "Send or clear the current draft before restoring.",
   "composerRecovery.reattach": "Reattach the listed missing files, or explicitly remove them.",
   "composerRecovery.restore": "Restore",
