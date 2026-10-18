@@ -43,3 +43,4 @@ export * from "./node/process-tree/windowsProcessListAsync.js";
 export * from "./node/process-tree/windowsTaskkillRunner.js";
 export * from "./node/process-tree/processTreeSnapshotAsync.js";
 export * from "./node/process-tree/processTreeWaiter.js";
+export { RefreshSingleflight } from "./node/refreshSingleflight.js";

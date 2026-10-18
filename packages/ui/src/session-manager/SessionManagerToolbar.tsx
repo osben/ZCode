@@ -206,9 +206,19 @@ export function SessionManagerToolbar(props: SessionManagerToolbarProps) {
         />
         <Button
           type="button"
-          variant={props.viewState.pinnedOnly ? "secondary" : "outline"}
+          variant={
+            props.viewState.status !== "archived" && props.viewState.pinnedOnly
+              ? "secondary"
+              : "outline"
+          }
           size="sm"
-          aria-pressed={props.viewState.pinnedOnly}
+          aria-pressed={props.viewState.status !== "archived" && props.viewState.pinnedOnly}
+          disabled={props.viewState.status === "archived"}
+          title={
+            props.viewState.status === "archived"
+              ? intl.formatMessage({ id: "sessionManager.pinnedArchived" })
+              : undefined
+          }
           className="gap-1"
           onClick={() => props.onViewStateChange({ pinnedOnly: !props.viewState.pinnedOnly })}
         >

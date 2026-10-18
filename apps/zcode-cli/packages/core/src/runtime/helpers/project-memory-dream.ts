@@ -10,6 +10,7 @@ import {
 } from "../../agent/message-history.js";
 import {
   acquireDreamLock,
+  type DreamLockLease,
   buildMemoryDreamPrompt,
   collectDreamTouchedPaths,
   evaluateAutoDreamTiming,
@@ -198,7 +199,7 @@ export async function launchManualProjectMemoryDream(
       description: "Dream failed to start",
       completedAt: new Date(),
     });
-    await restoreDreamSlot(runtime, context.memoryRoot, slot.priorMtimeMs);
+    await restoreDreamSlot(runtime, context.memoryRoot, slot.lease);
     runtime.backgroundDreamRuns.delete(taskId);
     runtime.runtimeTaskRegistry.remove(taskId);
     settle({ status: "failed", error });
@@ -233,7 +234,7 @@ export async function launchManualProjectMemoryDream(
               status: "running",
             });
           },
-          priorMtimeMs: slot.priorMtimeMs,
+          lease: slot.lease,
           transcriptSessionIds: slot.transcriptSessionIds,
         }),
       );
@@ -249,7 +250,7 @@ export async function launchManualProjectMemoryDream(
       else telemetry.finishFailed("execute", "internal", outcome.error);
     } catch (error) {
       logDreamFailure(runtime, "Dream background execution failed", error);
-      await restoreDreamSlot(runtime, context.memoryRoot, slot.priorMtimeMs);
+      await restoreDreamSlot(runtime, context.memoryRoot, slot.lease);
       outcome = { status: "failed", error };
       status = controller.signal.aborted ? "cancelled" : "failed";
     }
@@ -341,10 +342,10 @@ export async function drainBackgroundDreams(
 async function restoreDreamSlot(
   runtime: AgentRuntimeInternal,
   memoryRoot: string,
-  priorMtimeMs: number,
+  lease: DreamLockLease,
 ): Promise<void> {
   try {
-    await restoreDreamLockAfterFailure({ memoryRoot, priorMtimeMs });
+    await restoreDreamLockAfterFailure({ memoryRoot, lease });
   } catch (error) {
     logDreamFailure(runtime, "Dream lock restore failed", error);
   }
@@ -368,7 +369,7 @@ export function consumePendingProjectMemoryUpdate(
 
 type DreamRunSlot =
   | { kind: "skip"; reason: ProjectMemoryDreamSkipReason }
-  | { kind: "ready"; transcriptSessionIds: string[]; priorMtimeMs: number };
+  | { kind: "ready"; transcriptSessionIds: string[]; lease: DreamLockLease };
 
 /** Shared gate phase: timing (auto), transcript freshness, and lock acquisition. */
 async function acquireDreamRunSlot(
@@ -409,11 +410,11 @@ async function acquireDreamRunSlot(
     return { kind: "skip", reason: "no-fresh-transcripts" };
   }
 
-  const priorMtimeMs = await acquireDreamLock({ memoryRoot: context.memoryRoot, nowMs });
-  if (priorMtimeMs === null) {
+  const lease = await acquireDreamLock({ memoryRoot: context.memoryRoot, nowMs });
+  if (lease === null) {
     return { kind: "skip", reason: "lock-held" };
   }
-  return { kind: "ready", transcriptSessionIds, priorMtimeMs };
+  return { kind: "ready", transcriptSessionIds, lease };
 }
 
 /** Shared run phase: prompt → Memory agent loop → usage facts → pending update → marker. */
@@ -423,7 +424,7 @@ async function runDreamConsolidation(
   input: {
     abortSignal?: AbortSignal;
     onActivity?: (activity: string) => void;
-    priorMtimeMs: number;
+    lease: DreamLockLease;
     transcriptSessionIds: string[];
   },
 ): Promise<Exclude<ProjectMemoryDreamOutcome, { status: "skipped" }>> {
@@ -464,13 +465,13 @@ async function runDreamConsolidation(
     });
     // Cancellation before this commit boundary must not stamp a successful consolidation.
     input.abortSignal?.throwIfAborted();
-    await writeDreamConsolidatedAt(context.memoryRoot);
 
     const paths = [...touchedPaths];
     if (paths.length > 0) {
       runtime.pendingMemoryUpdate = createProjectMemoryUpdate(runtime, paths);
       invalidateProjectMemoryRecallPaths(runtime, paths);
     }
+    await writeDreamConsolidatedAt(context.memoryRoot, input.lease);
     return {
       status: "consolidated",
       summary: finalAssistantText(loopResult.messages) ?? memoryUpdateSummary(paths),
@@ -478,7 +479,7 @@ async function runDreamConsolidation(
     };
   } catch (error) {
     logDreamFailure(runtime, "Dream consolidation failed", error);
-    await restoreDreamSlot(runtime, context.memoryRoot, input.priorMtimeMs);
+    await restoreDreamSlot(runtime, context.memoryRoot, input.lease);
     return { status: "failed", error };
   }
 }
@@ -506,7 +507,7 @@ async function executeProjectMemoryDream(
     }
     const outcome = await runDreamConsolidation(runtime, context, {
       abortSignal: options.abortSignal,
-      priorMtimeMs: slot.priorMtimeMs,
+      lease: slot.lease,
       transcriptSessionIds: slot.transcriptSessionIds,
     });
     if (outcome.status === "failed") {
@@ -591,9 +592,7 @@ function dreamNotificationText(
 ): string {
   if (outcome.status === "consolidated") {
     const filesLine =
-      outcome.touchedPaths.length > 0
-        ? `\nFiles changed: ${outcome.touchedPaths.join(", ")}`
-        : "";
+      outcome.touchedPaths.length > 0 ? `\nFiles changed: ${outcome.touchedPaths.join(", ")}` : "";
     return `Background memory consolidation (dream) finished.\n${outcome.summary}${filesLine}`;
   }
   const message =

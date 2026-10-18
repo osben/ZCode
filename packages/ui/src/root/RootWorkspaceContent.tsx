@@ -1,3 +1,4 @@
+import type { OpenExistingSessionTarget } from "@/hooks/useOpenExistingSession.js";
 import { memo, useEffect } from "react";
 import { App } from "@/App.js";
 import { ScopedErrorBoundary } from "@/ErrorBoundary.js";
@@ -12,6 +13,7 @@ import { ConversationTelemetryWorkspaceAttachment } from "@/v4/telemetry/Convers
 const StableWorkspaceApp = memo(App);
 
 interface RootWorkspaceContentProps {
+  onOpenSession?: (target: OpenExistingSessionTarget) => Promise<void>;
   workspaceScopedServices: IServiceAccessor;
   baseFeedbackService: IFeedbackService;
   workspaceShellPath: string;
@@ -54,6 +56,7 @@ interface RootWorkspaceContentProps {
 }
 
 export function RootWorkspaceContent({
+  onOpenSession,
   workspaceScopedServices,
   baseFeedbackService,
   workspaceShellPath,
@@ -205,6 +208,7 @@ export function RootWorkspaceContent({
           className="absolute inset-0 z-10"
         >
           <WorkspaceSettingsLayer
+            onOpenSession={onOpenSession}
             workspaceScopedServices={workspaceScopedServices}
             isDesktop={isDesktop}
             isMacDesktop={isMacDesktop}

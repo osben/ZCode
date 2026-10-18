@@ -1,3 +1,4 @@
+import type { OpenExistingSessionTarget } from "@/hooks/useOpenExistingSession.js";
 import type {
   IPlatformService,
   UserInfo,
@@ -94,6 +95,7 @@ export interface RootProps {
 }
 
 export interface WorkspaceSettingsLayerProps {
+  onOpenSession?: (target: OpenExistingSessionTarget) => Promise<void>;
   workspaceScopedServices?: IServiceAccessor;
   isDesktop?: boolean;
   isMacDesktop?: boolean;

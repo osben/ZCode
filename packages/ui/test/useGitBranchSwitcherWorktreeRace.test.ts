@@ -2,15 +2,18 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { gitService } = vi.hoisted(() => ({
+const { gitService, intlValue } = vi.hoisted(() => ({
   gitService: {
     getLocalBranches: vi.fn(async () => ({ branches: [] })),
     listWorktrees: vi.fn(async () => ({ worktrees: [] })),
   },
+  // A stable intl object: a fresh one per render changes loadBranches identity and re-runs the
+  // open-list effect on every render, looping forever once its promises resolve.
+  intlValue: { intl: { formatMessage: () => "" }, locale: "en" },
 }));
 vi.mock("@/hooks/useServices.js", () => ({ useServices: () => ({ gitService }) }));
 vi.mock("@/i18n/IntlProvider.js", () => ({
-  useZCodeIntl: () => ({ intl: { formatMessage: () => "" }, locale: "en" }),
+  useZCodeIntl: () => intlValue,
 }));
 
 import { useGitBranchSwitcher } from "@/hooks/useGitBranchSwitcher.js";
@@ -46,6 +49,38 @@ describe("useGitBranchSwitcher worktree occupancy", () => {
         worktrees: [{ branchName: "stale", isCurrent: false, path: "/repo/one/.worktrees/stale" }],
       });
     });
+    expect(result.current.worktreeOccupancy.size).toBe(0);
+  });
+
+  it("uses the injected git service and resets state when that target changes at the same path", async () => {
+    const makeService = () => ({
+      getLocalBranches: vi.fn(async () => ({ branches: [] })),
+      listWorktrees: vi.fn(),
+    });
+    const first = makeService();
+    first.listWorktrees.mockResolvedValue({
+      worktrees: [{ branchName: "feat", isCurrent: false, path: "/repo/.worktrees/feat" }],
+    });
+    const second = makeService();
+    second.listWorktrees.mockImplementation(() => new Promise(() => {}));
+    const { result, rerender } = renderHook(
+      ({ service }) =>
+        useGitBranchSwitcher({
+          gitService: service as never,
+          workspacePath: "/repo",
+          currentBranchName: "main",
+          headRefType: "branch",
+          onRefreshGit: vi.fn(),
+        }),
+      { initialProps: { service: first } },
+    );
+    await act(async () => result.current.setOpen(true));
+    expect(first.listWorktrees).toHaveBeenCalledWith({ workspacePath: "/repo" });
+    expect(gitService.listWorktrees).not.toHaveBeenCalled();
+    expect(result.current.worktreeOccupancy.size).toBe(1);
+
+    await act(async () => rerender({ service: second }));
+    expect(result.current.open).toBe(false);
     expect(result.current.worktreeOccupancy.size).toBe(0);
   });
 });

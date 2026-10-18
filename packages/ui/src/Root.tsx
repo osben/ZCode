@@ -1,3 +1,4 @@
+import { useOpenExistingSession } from "@/hooks/useOpenExistingSession.js";
 import {
   RequestSecurityHost,
   RequestSecurityWorkspaceBridge,
@@ -1185,7 +1186,11 @@ function RootInner({
     previousRemoteConnectionInProgressRef.current = remoteConnectionInProgress;
   }, [remoteConnectionInProgress, resetRemoteConnectionLogs]);
 
+  const handleOpenExistingSession = useOpenExistingSession(
+    webRemoteControlWorkspaceSwitcher?.openWorkspace,
+  );
   const settingsLayerProps = {
+    onOpenSession: handleOpenExistingSession,
     isDesktop,
     isMacDesktop,
     isWindowsDesktop,
@@ -1276,6 +1281,7 @@ function RootInner({
           ) : null
         ) : (
           <RootWorkspaceContent
+            onOpenSession={handleOpenExistingSession}
             workspaceScopedServices={workspaceScopedServices}
             baseFeedbackService={services.feedbackService}
             workspaceShellPath={workspaceShellPath}

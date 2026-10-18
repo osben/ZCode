@@ -92,6 +92,55 @@ export function createCuaPipSessionService(options: {
   const REPLAY_RETRY_MS = 250;
   const REPLAY_DEADLINE_MS = 30_000;
   let replayDeadline = 0;
+  /**
+   * Skip-streak aggregation for delivery-skip logging. Focus events fire on every window-focus change, so a Helper
+   * without credentials spammed one warn per event (554 warns/day, log triage 2026-10-15). While skips continue for
+   * the same reason, only the first skip logs at warn, repeats go to debug with a running total, and delivery
+   * recovery emits a single warn carrying the aggregate. Replay behavior is not affected.
+   */
+  let skipStreak: {
+    reason: "credentials-unavailable" | "transport-disabled";
+    dropped: number;
+  } | null = null;
+  let deliveryFailureStreak = 0;
+
+  // Any successful send ends the streak, including the retry-timer replay of a deferred
+  // turn-started: transport recovered there too, so a later skip must start a new warn
+  // streak instead of continuing the previous debug-only streak.
+  const reportDeliveryRecovered = (): void => {
+    if (skipStreak !== null) {
+      logger.warn(undefined, "[cua-pip-session] event delivery recovered", {
+        skipReason: skipStreak.reason,
+        skippedEvents: skipStreak.dropped,
+      });
+      skipStreak = null;
+    }
+    if (deliveryFailureStreak > 0) {
+      logger.info(undefined, "[cua-pip-session] event delivery recovered after send failures", {
+        failureStreak: deliveryFailureStreak,
+      });
+      deliveryFailureStreak = 0;
+    }
+  };
+
+  const reportDeliveryFailed = (event: PipSessionEvent, error: unknown, message: string): void => {
+    deliveryFailureStreak += 1;
+    const log = deliveryFailureStreak === 1 ? logger.warn : logger.debug;
+    log(undefined, message, {
+      ...eventLogContext(event),
+      failureStreak: deliveryFailureStreak,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
+  };
+
+  const closesPendingTurn = (
+    event: PipSessionEvent,
+    pending: { event: PipSessionEvent; turnId: string },
+  ): boolean =>
+    (event.kind === "turn-ended" || event.kind === "session-closed") &&
+    ("turnId" in event
+      ? pending.turnId === event.turnId
+      : pending.event.sessionId === event.sessionId);
 
   const cancelReplayRetry = () => {
     if (replayTimer !== null) {
@@ -173,11 +222,16 @@ export function createCuaPipSessionService(options: {
             applied: result.applied,
             reason: result.reason,
           });
+          reportDeliveryRecovered();
         } catch (error) {
-          logger.warn(undefined, "[cua-pip-session] replay of deferred turn-started failed", {
-            ...eventLogContext(replay.event),
-            errorMessage: error instanceof Error ? error.message : String(error),
-          });
+          // Keep the event staged so the next bounded poll can retry after a transient send failure.
+          pendingTurnStarted = replay;
+          scheduleReplayRetry();
+          reportDeliveryFailed(
+            replay.event,
+            error,
+            "[cua-pip-session] replay of deferred turn-started failed",
+          );
         }
       });
       tail = operation;
@@ -204,21 +258,29 @@ export function createCuaPipSessionService(options: {
               replayDeadline = Date.now() + REPLAY_DEADLINE_MS;
               scheduleReplayRetry();
             } else if (
-              (event.kind === "turn-ended" || event.kind === "session-closed") &&
               pendingTurnStarted !== null &&
-              ("turnId" in event
-                ? pendingTurnStarted.turnId === event.turnId
-                : pendingTurnStarted.event.sessionId === event.sessionId)
+              closesPendingTurn(event, pendingTurnStarted)
             ) {
               pendingTurnStarted = null;
               cancelReplayRetry();
             }
             // Bug diagnosis: when the Helper was running but credential handoff failed, turn-started used to be silently dropped, leaving PiP
-            // permanently on the previous completed turn. Lifecycle events are constant per turn, so production warnings do not create per-frame disk writes.
-            logger.warn(undefined, "[cua-pip-session] event delivery skipped", {
-              ...eventLogContext(event),
-              skipReason: resolution.skipReason,
-            });
+            // permanently on the previous completed turn. The first skip of a streak stays at warn so a real outage remains visible; repeats are
+            // demoted to debug (see skipStreak) and a recovery warn reports the aggregated count.
+            if (skipStreak !== null && skipStreak.reason === resolution.skipReason) {
+              skipStreak.dropped += 1;
+              logger.debug(undefined, "[cua-pip-session] event delivery skipped", {
+                ...eventLogContext(event),
+                skipReason: resolution.skipReason,
+                droppedTotal: skipStreak.dropped,
+              });
+            } else {
+              skipStreak = { reason: resolution.skipReason, dropped: 1 };
+              logger.warn(undefined, "[cua-pip-session] event delivery skipped", {
+                ...eventLogContext(event),
+                skipReason: resolution.skipReason,
+              });
+            }
           } else {
             // service-disabled / service-disposed used to return silently,
             // making "no PiP event was sent" indistinguishable in logs from "sent but rejected"—troubleshooting had to infer four silent early returns in the delivery path.
@@ -244,14 +306,21 @@ export function createCuaPipSessionService(options: {
               reason: replayed.reason,
             });
           } catch (error) {
-            // A replay failure must not block the current event: still send it, falling back to turn-mismatch at worst.
-            logger.warn(undefined, "[cua-pip-session] replay of deferred turn-started failed", {
-              ...eventLogContext(replay.event),
-              errorMessage: error instanceof Error ? error.message : String(error),
-            });
+            // Keep retrying the opening event while still delivering the current event, unless the
+            // current event ends that turn or closes that session: a later replay would reopen it.
+            if (!closesPendingTurn(event, replay)) {
+              pendingTurnStarted = replay;
+              scheduleReplayRetry();
+            }
+            reportDeliveryFailed(
+              replay.event,
+              error,
+              "[cua-pip-session] replay of deferred turn-started failed",
+            );
           }
         }
         const result = await resolution.client.send(event);
+        reportDeliveryRecovered();
         // Bug diagnosis: PiP group switching crosses Main, Host, and broker processes; if successful and idempotently rejected ACKs are logged only at
         // debug, packaged builds cannot distinguish an unsent turn-started from stale-sequence/turn-mismatch.
         // These are low-frequency lifecycle logs and contain no screenshots, tokens, or prompts, so they are safe to keep in production.
@@ -261,10 +330,7 @@ export function createCuaPipSessionService(options: {
           reason: result.reason,
         });
       } catch (error) {
-        logger.warn(undefined, "[cua-pip-session] event delivery failed", {
-          ...eventLogContext(event),
-          errorMessage: error instanceof Error ? error.message : String(error),
-        });
+        reportDeliveryFailed(event, error, "[cua-pip-session] event delivery failed");
       }
     });
     tail = operation;

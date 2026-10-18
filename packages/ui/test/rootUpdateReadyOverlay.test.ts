@@ -208,6 +208,12 @@ vi.mock("@/store/zcodeSessionStore.js", () => ({
   ),
 }));
 
+// Root now mounts task navigation for the Settings session manager; the minimal session-store
+// mock above has no navigation history, so stub the hook instead of the whole store surface.
+vi.mock("@/hooks/useOpenExistingSession.js", () => ({
+  useOpenExistingSession: () => async () => {},
+}));
+
 vi.mock("@/store/TabStoreProvider.js", () => ({
   TabStoreProvider: ({ children }: { children: unknown }) => children,
   useTabStore: (selector: (state: unknown) => unknown) => selector(tabStoreState),
