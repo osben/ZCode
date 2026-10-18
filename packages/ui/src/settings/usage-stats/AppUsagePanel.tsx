@@ -4,10 +4,13 @@ import type { AppUsageFilters, AppUsageSnapshot } from "@zcode/shared";
 import { Button } from "@/components/ui/button.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { type AppUsageStatsQuery, useAppUsageStats } from "@/hooks/useUsageStats.js";
+import { AppUsageActivityPatterns } from "@/settings/usage-stats/AppUsageActivityPatterns.js";
 import { AppUsageDetailMetrics } from "@/settings/usage-stats/AppUsageDetailMetrics.js";
+import { AppUsageExportButtons } from "@/settings/usage-stats/AppUsageExportButtons.js";
 import { AppUsageFilterBar } from "@/settings/usage-stats/AppUsageFilterBar.js";
 import { AppUsageRangeControls } from "@/settings/usage-stats/AppUsageRangeControls.js";
 import { AppUsageToolsTable } from "@/settings/usage-stats/AppUsageToolsTable.js";
+import { AppUsageTopSessions } from "@/settings/usage-stats/AppUsageTopSessions.js";
 import { UsageChartLoadBoundary } from "@/settings/usage-stats/UsageChartLoadBoundary.js";
 import { UsageHeatmap } from "@/settings/usage-stats/UsageHeatmap.js";
 import { UsageStatsErrorNotice } from "@/settings/usage-stats/UsageStatsErrorNotice.js";
@@ -55,7 +58,19 @@ export function AppUsagePanel() {
   const [granularityOverride, setGranularityOverride] = useState<AppUsageGranularity | null>(null);
   const [filters, setFilters] = useState<AppUsageFilters>({});
 
-  const builtQuery = buildAppUsageQuery({ preset, customFrom, customTo, compare, today, filters });
+  const { snapshot: lifetimeSnapshot, refresh: refreshLifetime } = useAppUsageStats("all");
+  // Hosts that return facets also understand the extra breakdowns; older hosts never see the field.
+  const supportsExtras = Boolean(lifetimeSnapshot?.facets);
+
+  const builtQuery = buildAppUsageQuery({
+    preset,
+    customFrom,
+    customTo,
+    compare,
+    today,
+    filters,
+    withBreakdowns: supportsExtras,
+  });
   const builtQueryKey = JSON.stringify(builtQuery);
   // An invalid custom range must not blank the page: keep requesting (and showing) the last valid query.
   const [query, setQuery] = useState<AppUsageStatsQuery>(() => builtQuery ?? { range: "7d" });
@@ -66,7 +81,6 @@ export function AppUsagePanel() {
     }
   }, [builtQueryKey]);
 
-  const { snapshot: lifetimeSnapshot, refresh: refreshLifetime } = useAppUsageStats("all");
   const { snapshot, loading, error, refresh } = useAppUsageStats(query);
 
   // Drilling into a heatmap day is just a one-day custom range.
@@ -204,8 +218,11 @@ export function AppUsagePanel() {
         <AppUsageModelUsagePieChart snapshot={snapshot} />
       </UsageChartLoadBoundary>
       <AppUsageToolsTable snapshot={snapshot} />
+      <AppUsageActivityPatterns hourlyTokens={snapshot.hourlyTokens} />
+      <AppUsageTopSessions snapshot={snapshot} />
 
-      <div className="flex justify-end">
+      <div className="flex flex-wrap justify-end gap-2">
+        <AppUsageExportButtons snapshot={snapshot} query={query} />
         <Button
           type="button"
           variant="outline"

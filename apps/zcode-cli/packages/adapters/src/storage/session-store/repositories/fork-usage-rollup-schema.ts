@@ -38,6 +38,7 @@ const FORK_USAGE_ROLLUP_SCHEMA = `
     turn_count integer not null,
     completed_duration_sum_ms integer not null,
     completed_count integer not null,
+    total_tokens integer not null default 0,
     primary key (bucket_start, session_id)
   ) without rowid;
 
@@ -65,6 +66,7 @@ export function ensureForkUsageRollupSchema(db: DatabaseSync): void {
     return;
   }
   db.exec(FORK_USAGE_ROLLUP_SCHEMA);
+  upgradeForkUsageRollupColumns(db);
   const applied = db
     .prepare("select 1 from schema_migration where id = ?")
     .get(FORK_USAGE_ROLLUP_MIGRATION_ID);
@@ -79,4 +81,19 @@ export function ensureForkUsageRollupSchema(db: DatabaseSync): void {
     );
   }
   ensuredDatabases.add(db);
+}
+
+/**
+ * Columns added after the first rollout. `create table if not exists` never alters an existing table,
+ * so add what is missing and reset the watermark: the next recompute then backfills the new column
+ * for every bucket whose raw rows still exist (older buckets keep the column default of 0).
+ */
+function upgradeForkUsageRollupColumns(db: DatabaseSync): void {
+  const turnColumns = db.prepare("pragma table_info(fork_usage_turn)").all() as Array<{
+    name: string;
+  }>;
+  if (!turnColumns.some((column) => column.name === "total_tokens")) {
+    db.exec("alter table fork_usage_turn add column total_tokens integer not null default 0");
+    db.prepare("delete from fork_usage_meta where key = 'watermark_ms'").run();
+  }
 }

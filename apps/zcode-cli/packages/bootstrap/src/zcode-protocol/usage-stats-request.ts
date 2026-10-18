@@ -1,4 +1,9 @@
-import type { AppUsageFilters, AppUsageRange, AppUsageWindow } from "@zcode/shared";
+import type {
+  AppUsageFilters,
+  AppUsageInclude,
+  AppUsageRange,
+  AppUsageWindow,
+} from "@zcode/shared";
 import { dayIndexToDate, resolveTzOffsetMs } from "./usage-stats-builder.js";
 
 const DAY_MS = 86_400_000;
@@ -10,6 +15,7 @@ export interface UsageStatsRequestParams {
   window?: AppUsageWindow;
   compare?: boolean;
   filters?: AppUsageFilters;
+  include?: AppUsageInclude[];
 }
 
 export interface UsageQuerySpan {

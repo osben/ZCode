@@ -368,6 +368,13 @@ describe("AppUsagePanel filters and day drill-down", () => {
       ),
     );
 
+    // Facets in the all-time snapshot signal a host that understands the extra breakdowns.
+    await waitFor(() =>
+      expect(getAppUsageSnapshot).toHaveBeenCalledWith(
+        expect.objectContaining({ range: "7d", include: ["hourly", "sessions"] }),
+      ),
+    );
+
     fireEvent.click(await screen.findByRole("button", { name: "Models" }));
     fireEvent.click(await screen.findByRole("checkbox", { name: "glm" }));
     await waitFor(() =>

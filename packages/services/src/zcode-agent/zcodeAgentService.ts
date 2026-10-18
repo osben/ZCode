@@ -4090,6 +4090,7 @@ export function createZCodeAgentService(
           ...(params.window ? { window: params.window } : {}),
           ...(params.compare ? { compare: true } : {}),
           ...(params.filters ? { filters: params.filters } : {}),
+          ...(params.include?.length ? { include: params.include } : {}),
         },
         v4UsageStatsResultSchema,
       );

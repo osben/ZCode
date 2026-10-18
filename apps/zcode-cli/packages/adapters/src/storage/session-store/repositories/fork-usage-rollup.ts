@@ -69,7 +69,7 @@ export function recomputeForkUsageRollup(db: DatabaseSync, nowMs: number): void 
       insertSql: (from) => `
         insert into fork_usage_turn (
           bucket_start, session_id, workspace_key, turn_count,
-          completed_duration_sum_ms, completed_count
+          completed_duration_sum_ms, completed_count, total_tokens
         )
         select
           ${BUCKET_EXPR("t.started_at")},
@@ -77,7 +77,8 @@ export function recomputeForkUsageRollup(db: DatabaseSync, nowMs: number): void 
           coalesce(s.directory, ''),
           count(*),
           coalesce(sum(case when t.status = 'completed' then coalesce(t.duration_ms, 0) else 0 end), 0),
-          coalesce(sum(case when t.status = 'completed' and t.duration_ms is not null then 1 else 0 end), 0)
+          coalesce(sum(case when t.status = 'completed' and t.duration_ms is not null then 1 else 0 end), 0),
+          coalesce(sum(t.computed_total_tokens), 0)
         from turn_usage t
         left join session s on s.id = t.session_id
         where t.started_at >= ${from}

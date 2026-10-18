@@ -2,6 +2,7 @@ import {
   APP_USAGE_MAX_WINDOW_DAYS,
   type AppUsageDailyModelUsage,
   type AppUsageFilters,
+  type AppUsageInclude,
 } from "@zcode/shared";
 import type { AppUsageStatsQuery } from "@/hooks/useUsageStats.js";
 
@@ -66,10 +67,15 @@ export function buildAppUsageQuery(input: {
   compare: boolean;
   today: string;
   filters?: AppUsageFilters;
+  /** Ask for the hour grid and busiest sessions; only for hosts known to support them. */
+  withBreakdowns?: boolean;
 }): AppUsageStatsQuery | null {
   const { preset, compare, today } = input;
   const filters = compactFilters(input.filters);
-  const extras = filters ? { filters } : {};
+  const extras = {
+    ...(filters ? { filters } : {}),
+    ...(input.withBreakdowns ? { include: ["hourly", "sessions"] as AppUsageInclude[] } : {}),
+  };
   if (preset === "all") {
     return { range: "all", ...extras };
   }

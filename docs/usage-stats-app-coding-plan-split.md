@@ -47,6 +47,10 @@ Coding Plan:                         [ today / 7d / 30d ]
 
 [ Tools table ]
   tool | calls | errors | avg duration      // top 8, expandable
+
+[ Activity by hour ]   7 x 24 weekday/hour grid, busiest cell caption
+[ Busiest sessions ]   top 10 by tokens
+[ Refresh ] [ Export CSV ] [ Export JSON ]
 ```
 
 - 趋势图的绘图区左右各保留 24px 安全区，确保首尾日期刻度在桌面端和手机 Web 端都完整显示，不被 SVG 边界裁切；下方时间范围 tabs 使用 pill 样式，尺寸对齐 task tabs。

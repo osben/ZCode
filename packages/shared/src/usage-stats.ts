@@ -242,10 +242,15 @@ export const appUsageFiltersSchema = z
  * `range` keeps its three values, and a request without these fields behaves exactly as before.
  * With `window`, the bounds come from the window and `range` is only echoed back.
  */
+export const APP_USAGE_INCLUDES = ["hourly", "sessions"] as const;
+export type AppUsageInclude = (typeof APP_USAGE_INCLUDES)[number];
+
 export const appUsageRequestExtrasShape = {
   window: appUsageWindowSchema.optional(),
   compare: z.boolean().optional(),
   filters: appUsageFiltersSchema.optional(),
+  /** Extra breakdowns to compute for the window (hour/weekday grid, busiest sessions). */
+  include: z.array(z.enum(APP_USAGE_INCLUDES)).max(APP_USAGE_INCLUDES.length).optional(),
 } as const;
 
 export const appUsageFavoriteModelSchema = z.object({
@@ -339,6 +344,15 @@ export const appUsageFacetsSchema = z.object({
   workspaces: z.array(z.string()),
 });
 
+export const appUsageSessionSchema = z.object({
+  sessionId: z.string(),
+  title: z.string().nullable(),
+  workspaceKey: z.string(),
+  totalTokens: z.number(),
+  turnCount: z.number(),
+  durationMs: z.number(),
+});
+
 export const appUsageSnapshotSchema = z.object({
   range: z.enum(APP_USAGE_RANGES),
   generatedAt: z.number(),
@@ -354,6 +368,12 @@ export const appUsageSnapshotSchema = z.object({
   previous: appUsageComparisonSchema.optional(),
   /** Only on the all-time snapshot, and only when the host reads the rollup. */
   facets: appUsageFacetsSchema.optional(),
+  /** 168 cells, index = weekday * 24 + hour in the request time zone, Sunday = 0; present on request. */
+  hourlyTokens: z
+    .array(z.number())
+    .length(7 * 24)
+    .optional(),
+  topSessions: z.array(appUsageSessionSchema).optional(),
 });
 
 export type AppUsageSummary = z.infer<typeof appUsageSummarySchema>;
@@ -371,6 +391,7 @@ export type AppUsageWindow = z.infer<typeof appUsageWindowSchema>;
 export type AppUsageFilters = z.infer<typeof appUsageFiltersSchema>;
 export type AppUsageComparison = z.infer<typeof appUsageComparisonSchema>;
 export type AppUsageFacets = z.infer<typeof appUsageFacetsSchema>;
+export type AppUsageSession = z.infer<typeof appUsageSessionSchema>;
 
 export interface AppUsageRequest {
   range: AppUsageRange;
@@ -380,6 +401,7 @@ export interface AppUsageRequest {
   /** Also return the previous period of equal length. Ignored for the all-time range. */
   compare?: boolean;
   filters?: AppUsageFilters;
+  include?: AppUsageInclude[];
 }
 
 export interface CodingPlanUsageSnapshot {

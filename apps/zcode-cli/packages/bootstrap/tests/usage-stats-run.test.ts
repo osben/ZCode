@@ -160,6 +160,35 @@ describe("runUsageStats", () => {
     expect(queryAppUsage.mock.lastCall?.[0]).not.toHaveProperty("includeFacets");
   });
 
+  it("requests the hourly and session breakdowns only for the main span", async () => {
+    const hourlyTokens = Array.from({ length: 168 }, (_, index) => index);
+    const topSessions = [
+      { sessionId: "s1", title: "A", workspaceKey: "/w", totalTokens: 9, turnCount: 2, durationMs: 5 },
+    ];
+    const { store, queryAppUsage } = fakeStore((input) => ({
+      ...resultWithDay(0, 1),
+      ...(input.include?.hourly ? { hourlyTokens } : {}),
+      ...(input.include?.sessions ? { topSessions } : {}),
+    }));
+
+    const snapshot = await runUsageStats(
+      store,
+      { range: "7d", timeZone: "UTC", compare: true, include: ["hourly", "sessions"] },
+      NOW,
+    );
+
+    expect(queryAppUsage).toHaveBeenCalledTimes(2);
+    expect(queryAppUsage.mock.calls[0]?.[0].include).toEqual({ hourly: true, sessions: true });
+    expect(queryAppUsage.mock.calls[1]?.[0]).not.toHaveProperty("include");
+    expect(snapshot.hourlyTokens).toEqual(hourlyTokens);
+    expect(snapshot.topSessions).toEqual(topSessions);
+
+    const plain = await runUsageStats(store, { range: "7d", timeZone: "UTC" }, NOW);
+    expect(queryAppUsage.mock.lastCall?.[0]).not.toHaveProperty("include");
+    expect(plain.hourlyTokens).toBeUndefined();
+    expect(plain.topSessions).toBeUndefined();
+  });
+
   it("falls back to an empty result when no usage store is available", async () => {
     const snapshot = await runUsageStats(undefined, { range: "30d" }, NOW);
     expect(snapshot.summary.totalTokens).toBe(0);

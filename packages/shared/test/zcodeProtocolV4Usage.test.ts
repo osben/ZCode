@@ -57,6 +57,21 @@ describe("zcode protocol v4 usage query", () => {
     expect(v4UsageStatsParamsSchema.parse({ range: "7d" })).toEqual({ range: "7d" });
   });
 
+  it("accepts only known include values and a full 168-cell hourly grid", () => {
+    expect(
+      v4UsageStatsParamsSchema.parse({ range: "all", include: ["hourly", "sessions"] }).include,
+    ).toEqual(["hourly", "sessions"]);
+    expect(v4UsageStatsParamsSchema.safeParse({ range: "all", include: ["tokens"] }).success).toBe(
+      false,
+    );
+    expect(
+      v4UsageStatsParamsSchema.safeParse({
+        range: "all",
+        include: ["hourly", "hourly", "sessions"],
+      }).success,
+    ).toBe(false);
+  });
+
   it("parses snapshots with and without the additive window, previous, and facets fields", () => {
     const summary = {
       totalTokens: 1,

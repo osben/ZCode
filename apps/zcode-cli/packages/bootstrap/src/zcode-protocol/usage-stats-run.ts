@@ -62,7 +62,14 @@ export async function runUsageStats(
   });
   // Filter options are only needed alongside the lifetime snapshot, which feeds the filter menus.
   const wantsFacets = params.range === "all" && !params.window;
-  const query = async (span: UsageQuerySpan, withFacets = false): Promise<AppUsageQueryResult> => {
+  const include = {
+    ...(params.include?.includes("hourly") ? { hourly: true } : {}),
+    ...(params.include?.includes("sessions") ? { sessions: true } : {}),
+  };
+  const query = async (
+    span: UsageQuerySpan,
+    extras: { withFacets?: boolean; withInclude?: boolean } = {},
+  ): Promise<AppUsageQueryResult> => {
     if (!usageStore?.queryAppUsage) {
       // No usage store (should not happen): an empty result lets the UI show its empty state.
       return EMPTY_RESULT;
@@ -72,14 +79,17 @@ export async function runUsageStats(
       until: span.until,
       tzOffsetMs: plan.tzOffsetMs,
       ...(params.filters ? { filters: params.filters } : {}),
-      ...(withFacets ? { includeFacets: true } : {}),
+      ...(extras.withFacets ? { includeFacets: true } : {}),
+      ...(extras.withInclude && Object.keys(include).length > 0 ? { include } : {}),
     });
   };
 
-  const result = await query(plan, wantsFacets);
+  const result = await query(plan, { withFacets: wantsFacets, withInclude: true });
   const snapshot = {
     ...buildAppUsageSnapshot(result, optionsFor(plan)),
     ...(result.facets ? { facets: result.facets } : {}),
+    ...(result.hourlyTokens ? { hourlyTokens: result.hourlyTokens } : {}),
+    ...(result.topSessions ? { topSessions: result.topSessions } : {}),
   };
   if (!plan.window && !plan.previous) {
     return snapshot;

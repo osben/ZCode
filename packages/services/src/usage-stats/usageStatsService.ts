@@ -90,6 +90,7 @@ export function createUsageStatsService(
         window: request.window,
         compare: request.compare,
         filters: request.filters,
+        include: request.include,
       });
     },
     async getCodingPlanUsageSnapshot(

@@ -8,6 +8,7 @@ import type { Event, IDisposable } from "@zcode/rpc";
 import { ServiceChannels } from "@zcode/shared";
 import type {
   AppUsageFilters,
+  AppUsageInclude,
   AppUsageRange,
   AppUsageSnapshot,
   AppUsageWindow,
@@ -265,6 +266,7 @@ export interface ZCodeAgentAppUsageParams {
   window?: AppUsageWindow;
   compare?: boolean;
   filters?: AppUsageFilters;
+  include?: AppUsageInclude[];
 }
 
 export interface ZCodeAgentTaskTokenUsageParams extends ZCodeAgentSessionTarget {}

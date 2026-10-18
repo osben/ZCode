@@ -16,7 +16,10 @@ import {
   queryAppUsageWithRollup,
 } from "../src/storage/session-store/repositories/fork-usage-query.js";
 import { recomputeForkUsageRollup } from "../src/storage/session-store/repositories/fork-usage-rollup.js";
-import { FORK_USAGE_ROLLUP_MIGRATION_ID } from "../src/storage/session-store/repositories/fork-usage-rollup-schema.js";
+import {
+  FORK_USAGE_ROLLUP_MIGRATION_ID,
+  ensureForkUsageRollupSchema,
+} from "../src/storage/session-store/repositories/fork-usage-rollup-schema.js";
 import * as usage from "../src/storage/session-store/repositories/usage.js";
 
 const MINUTE = 60_000;
@@ -244,6 +247,89 @@ describe("fork usage rollup", () => {
     const filtered = queryAppUsageFromRollup(db, { ...base, filters: { modelIds: ["model-a"] } });
     expect(filtered.facets).toEqual(unfiltered.facets);
     expect(queryAppUsageFromRollup(db, { ...base, includeFacets: false }).facets).toBeUndefined();
+  });
+
+  it("buckets tokens by local weekday and hour for fractional-offset zones", async () => {
+    // 2030-07-22T12:00:00Z is a Monday; a future date keeps the repository's real-clock prune away.
+    await usage.recordModelUsage(db, {
+      id: "h1",
+      logicalRequestId: "r-h1",
+      sessionID: createSessionId("s1"),
+      querySource: "main_turn",
+      providerId: "p1",
+      modelId: "model-a",
+      status: "completed",
+      startedAt: Date.UTC(2030, 6, 22, 12, 0),
+      inputTokens: 100,
+      outputTokens: 0,
+    });
+    recomputeForkUsageRollup(db, Date.UTC(2030, 6, 22, 13, 0));
+    const base = { since: 0, until: Date.UTC(2030, 6, 23), include: { hourly: true } };
+
+    const utc = queryAppUsageFromRollup(db, { ...base, tzOffsetMs: 0 }).hourlyTokens!;
+    expect(utc).toHaveLength(168);
+    expect(utc[1 * 24 + 12]).toBe(100);
+    expect(utc.reduce((sum, value) => sum + value, 0)).toBe(100);
+
+    const kolkata = queryAppUsageFromRollup(db, { ...base, tzOffsetMs: 5.5 * 60 * MINUTE })
+      .hourlyTokens!;
+    expect(kolkata[1 * 24 + 17]).toBe(100);
+
+    // Crossing local midnight moves the cell to the previous weekday (Sunday 22:00 at UTC-14).
+    const farWest = queryAppUsageFromRollup(db, { ...base, tzOffsetMs: -14 * 60 * MINUTE })
+      .hourlyTokens!;
+    expect(farWest[0 * 24 + 22]).toBe(100);
+    expect(queryAppUsageFromRollup(db, { since: 0, until: NOW, tzOffsetMs: 0 }).hourlyTokens)
+      .toBeUndefined();
+  });
+
+  it("ranks the busiest sessions with titles and honors the workspace filter", async () => {
+    await seedUsage();
+    recomputeForkUsageRollup(db, NOW);
+    const base = { since: 0, until: NOW, tzOffsetMs: 0, include: { sessions: true } };
+
+    const expected = new Map(
+      (
+        db
+          .prepare("select session_id as id, sum(computed_total_tokens) as tokens from turn_usage group by session_id")
+          .all() as Array<{ id: string; tokens: number }>
+      ).map((row) => [row.id, Number(row.tokens)]),
+    );
+    const sessions = queryAppUsageFromRollup(db, base).topSessions!;
+    expect(sessions).toHaveLength(3);
+    expect(sessions.map((row) => row.totalTokens)).toEqual(
+      [...sessions.map((row) => row.totalTokens)].sort((a, b) => b - a),
+    );
+    for (const row of sessions) {
+      expect(row.totalTokens).toBe(expected.get(row.sessionId));
+      expect(row.title).not.toBeNull();
+      expect(row.turnCount).toBeGreaterThan(0);
+    }
+
+    const alpha = queryAppUsageFromRollup(db, {
+      ...base,
+      filters: { workspaceKeys: ["/work/alpha"] },
+    }).topSessions!;
+    expect(alpha.every((row) => row.workspaceKey === "/work/alpha")).toBe(true);
+    expect(alpha).toHaveLength(2);
+  });
+
+  it("adds columns introduced after the first rollout and resets the watermark", () => {
+    db.exec(`
+      create table fork_usage_turn (
+        bucket_start integer not null, session_id text not null, workspace_key text not null,
+        turn_count integer not null, completed_duration_sum_ms integer not null,
+        completed_count integer not null, primary key (bucket_start, session_id)
+      ) without rowid;
+      create table fork_usage_meta (key text primary key, value text not null) without rowid;
+      insert into fork_usage_meta (key, value) values ('watermark_ms', '123');
+    `);
+    ensureForkUsageRollupSchema(db);
+
+    const columns = (db.prepare("pragma table_info(fork_usage_turn)").all() as Array<{ name: string }>)
+      .map((column) => column.name);
+    expect(columns).toContain("total_tokens");
+    expect(db.prepare("select 1 from fork_usage_meta where key = 'watermark_ms'").get()).toBeUndefined();
   });
 
   it("falls back to raw tables for unfiltered reads and fails filtered reads when the rollup is gone", async () => {

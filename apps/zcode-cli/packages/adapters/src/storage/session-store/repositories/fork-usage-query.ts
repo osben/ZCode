@@ -7,6 +7,7 @@ import type {
   AppUsageModelRow,
   AppUsageQueryInput,
   AppUsageQueryResult,
+  AppUsageSessionRow,
   AppUsageToolRow,
 } from "@zcode/contracts";
 import { alignDownToBucket, refreshForkUsageRollupForRead } from "./fork-usage-rollup.js";
@@ -207,6 +208,10 @@ export function queryAppUsageFromRollup(
 
   return {
     ...(input.includeFacets ? { facets: queryFacets(db, since, until) } : {}),
+    ...(input.include?.hourly
+      ? { hourlyTokens: queryHourlyTokens(db, bucket, tzOffsetMs) }
+      : {}),
+    ...(input.include?.sessions ? { topSessions: queryTopSessions(db, scoped) } : {}),
     totals: {
       totalTokens: Number(totals.totalTokens),
       inputTokens: Number(totals.inputTokens),
@@ -281,4 +286,63 @@ function queryFacets(db: DatabaseSync, since: number, until: number): AppUsageFa
       [...range, ...range, ...range],
     ),
   };
+}
+
+const HOUR_MS = 3_600_000;
+const HOURLY_CELLS = 7 * 24;
+const TOP_SESSIONS_LIMIT = 10;
+
+/** Tokens per local weekday and hour. 15-minute buckets never straddle a local hour boundary. */
+function queryHourlyTokens(db: DatabaseSync, bucket: WhereClause, tzOffsetMs: number): number[] {
+  const rows = db
+    .prepare(
+      `select
+         (cast((bucket_start + ?) / ? as integer) + 4) % 7 as weekday,
+         cast(((bucket_start + ?) % ?) / ? as integer) as hour,
+         coalesce(sum(computed_total_tokens), 0) as totalTokens
+       from fork_usage_bucket where ${bucket.sql}
+       group by weekday, hour`,
+    )
+    .all(tzOffsetMs, DAY_MS, tzOffsetMs, DAY_MS, HOUR_MS, ...bucket.params) as Array<{
+    weekday: number;
+    hour: number;
+    totalTokens: number;
+  }>;
+  const cells = Array.from({ length: HOURLY_CELLS }, () => 0);
+  for (const row of rows) {
+    const index = Number(row.weekday) * 24 + Number(row.hour);
+    if (index >= 0 && index < HOURLY_CELLS) {
+      cells[index] = Number(row.totalTokens);
+    }
+  }
+  return cells;
+}
+
+function queryTopSessions(db: DatabaseSync, scoped: WhereClause): AppUsageSessionRow[] {
+  const rows = db
+    .prepare(
+      `select
+         t.session_id as sessionId,
+         s.title as title,
+         max(t.workspace_key) as workspaceKey,
+         coalesce(sum(t.total_tokens), 0) as totalTokens,
+         coalesce(sum(t.turn_count), 0) as turnCount,
+         coalesce(sum(t.completed_duration_sum_ms), 0) as durationMs
+       from fork_usage_turn t
+       left join session s on s.id = t.session_id
+       where ${scoped.sql.replace(/bucket_start/g, "t.bucket_start").replace(/workspace_key/g, "t.workspace_key")}
+       group by t.session_id
+       having totalTokens > 0
+       order by totalTokens desc
+       limit ${TOP_SESSIONS_LIMIT}`,
+    )
+    .all(...scoped.params) as unknown as Array<AppUsageSessionRow & { title: string | null }>;
+  return rows.map((row) => ({
+    sessionId: String(row.sessionId),
+    title: row.title === null ? null : String(row.title),
+    workspaceKey: String(row.workspaceKey),
+    totalTokens: Number(row.totalTokens),
+    turnCount: Number(row.turnCount),
+    durationMs: Number(row.durationMs),
+  }));
 }

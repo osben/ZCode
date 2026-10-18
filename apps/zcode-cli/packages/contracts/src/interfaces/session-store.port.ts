@@ -1028,6 +1028,25 @@ export interface AppUsageQueryInput {
   filters?: AppUsageFilters;
   /** Also list the filter values present in the window (ignoring filters). Rollup read path only. */
   includeFacets?: boolean;
+  /** Optional extra breakdowns for the window. Rollup read path only. */
+  include?: AppUsageInclude;
+}
+
+export interface AppUsageInclude {
+  /** Tokens by local weekday and hour (168 cells, index = weekday * 24 + hour, Sunday = 0). */
+  hourly?: boolean;
+  /** Busiest sessions of the window by token count. */
+  sessions?: boolean;
+}
+
+export interface AppUsageSessionRow {
+  sessionId: string;
+  /** Null when the session row no longer exists. */
+  title: string | null;
+  workspaceKey: string;
+  totalTokens: number;
+  turnCount: number;
+  durationMs: number;
 }
 
 /** Distinct values per filter dimension; `workspaces` entries are session directories ('' = unknown). */
@@ -1099,6 +1118,8 @@ export interface AppUsageQueryResult {
   days: AppUsageDayRow[];
   dayModels: AppUsageDayModelRow[];
   facets?: AppUsageFacets;
+  hourlyTokens?: number[];
+  topSessions?: AppUsageSessionRow[];
 }
 
 export interface TaskUsageQueryInput {

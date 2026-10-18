@@ -195,6 +195,12 @@ plan: `docs/specs/usage-stats-history-and-filters.md`.
   the turn and tool tables carry only the workspace dimension, so they follow only the workspace
   filter. `includeFacets` additionally returns the distinct values per dimension for the window,
   ignoring the active filters (the host asks for it only on the unfiltered all-time request).
+- Breakdowns: `include.hourly` returns tokens for 168 local weekday x hour cells (15-minute buckets
+  never straddle a local hour boundary, including +5:30 / +5:45 zones); `include.sessions` returns the
+  ten busiest sessions by `fork_usage_turn.total_tokens` (sum of `turn_usage.computed_total_tokens`)
+  joined to the live `session` row for the title. `total_tokens` was added after the first rollout;
+  `ensureForkUsageRollupSchema` adds the missing column and resets the watermark so the next recompute
+  backfills it for every bucket whose raw rows still exist (older buckets keep 0).
 - Known limitation: raw rows that live and are pruned entirely while no fork build runs are never
   rolled up. History starts when the rollup is first created.
 
