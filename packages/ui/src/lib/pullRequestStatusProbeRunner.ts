@@ -17,7 +17,7 @@ export interface PullRequestStatusTarget {
   tasks: readonly PullRequestStatusTargetTask[];
 }
 
-/** Минимальная поверхность стора, нужная пробе; упрощает юнит-тесты. */
+/** Minimal store surface the probe needs; keeps unit tests simple. */
 export interface PullRequestProbeStore {
   setWorkspacePullRequestStatuses(
     workspaceKey: string,
@@ -27,19 +27,20 @@ export interface PullRequestProbeStore {
 }
 
 /**
- * Оркестрация проб PR-статуса без React/DOM — hook оборачивает её, тесты
- * гоняют напрямую. Каденцией владеет сервис (TTL + forceTaskIds), клиентского
- * TTL-гейта здесь нет.
+ * Pull request status probe orchestration without React/DOM — the hook wraps
+ * it and unit tests drive it directly. The service owns the cadence (TTL +
+ * forceTaskIds); there is no client-side TTL gate.
  *
- * Правила записи:
- * - актуальна только последняя проба на workspace (stale-write guard);
- * - успешная проба мержит записи workspace: сайдбар пробит всеми задачами,
- *   Session manager — только видимыми строками, вычитание чужих записей
- *   запрещено;
- * - ответ обязан быть объектом (web-стаб отвечает {}, старый host reject'ит);
- * - неудачная проба удаляет записи workspace — индикатор гарантированно
- *   пропадает, а не застывает прошлым состоянием;
- * - повторяющиеся неудачи предупреждают один раз на workspace.
+ * Write rules:
+ * - only the newest probe per workspace writes (stale-write guard);
+ * - a successful probe merges its entries: the sidebar probes a workspace
+ *   with all worktree tasks while the Session manager probes only visible
+ *   rows, so one driver must never erase another's entries;
+ * - the response must be an object (the web stub answers {}, an old host
+ *   rejects);
+ * - a failed probe drops the workspace's entries — indicators reliably
+ *   disappear instead of freezing stale;
+ * - repeated failures warn once per workspace.
  */
 export function createPullRequestStatusProber(
   store: PullRequestProbeStore,
