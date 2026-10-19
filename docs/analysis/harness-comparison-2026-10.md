@@ -26,7 +26,7 @@ model, and the argv-level read-only bash policy are stronger than in all three h
 - **[V]** `auto` permission mode is a stub that denies everything (`permission/service.ts:157`, `:374`, `mode.auto.unimplemented`).
 - **[V]** No OS sandbox anywhere (no sandbox-exec / bwrap / Landlock references in `apps` or `packages`).
 - **[V]** Microcompact replaces old results with `[Old tool result content cleared]` (`compact/microcompact.ts:18`) — no head/tail.
-- **[V]** AGENTS.md is discovered only from cwd upward (`adapters/src/context/index.ts:219`), not for nested dirs touched by tools.
+- **[V]** AGENTS.md discovery walks upward from the cwd (`adapters/src/context/index.ts:219`) and also reads a user-level `~/.zcode/AGENTS.md` (`index.ts:229-242`). Nested directories touched by tools are not discovered before PR #163.
 - **[V]** Deferred tools / ToolSearch not finished (`runtime/methods/compact-active.ts:255`).
 - **[V]** Hook events: SessionStart, UserPromptSubmit, PreToolUse, PermissionRequest, PostToolUse, PostToolUseFailure, Stop
   (`contracts/src/hooks/index.ts:7`) — no pre-LLM-request / context-rewrite / pre-compact events.

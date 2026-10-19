@@ -35,11 +35,11 @@ pnpm install
 ```
 
 - Use the Node version from `mise.toml`.
-- Pick the output folder `PERF_OUT=~/zcode-perf/$(date +%Y%m%d-%H%M)` and create it. Never put artifacts in the repo.
+- Pick the output folder `PERF_OUT=~/zcode-perf/$(date +%Y%m%d-%H%M)` and create it. Never put artifacts in the repo. `pnpm install` is the only permitted write to the checkout (it touches `node_modules` and the pnpm store); everything else goes under `$PERF_OUT`.
 
 ### 1.2 Telemetry toggle
 
-`resourceTelemetryEnabled` is a fork setting and is off by default (`specs/resource-telemetry-toggle.md`). **Turn it on for measurement runs.** It brings back the 10 s main-process sampling and the `[memory] role=main` log line every ~60 s. Fork builds have no ARMS endpoint, so nothing leaves the machine.
+`resourceTelemetryEnabled` is a fork setting and is off by default (`specs/resource-telemetry-toggle.md`). The setting and its spec come with PR #157; measure on a build that includes it. **Turn it on for measurement runs.** It brings back the 10 s main-process sampling and the `[memory] role=main` log line every ~60 s. Fork builds have no ARMS endpoint, so nothing leaves the machine.
 
 - In the app: Settings → General → "Resource telemetry".
 - In an isolated home (§1.3), before launch: write `{"resourceTelemetryEnabled": true}` into `<home>/.zcode/v2/fork-settings.json`. Settings follow the home dir, not `ZCODE_DATA_BASE_DIR` (`packages/services/src/setting/settingsPaths.ts`).
@@ -127,7 +127,7 @@ Existing perf work to reuse, not redo: `docs/performance/` (notably `runtime-com
   - Shiki highlighting cost (`lib/shikiHighlighter.ts`).
   - Scroll anchoring and auto-follow (`v4/ConversationTimeline.tsx:1665-1707`, `reasoning.tsx`).
   - Virtualization effectiveness in S3 (row count mounted versus visible).
-- Done: the metrics for S2/S3/S4/S8 per §2, ≥ 3 traces per scenario, and a ranked hot-path list.
+- Done: the metrics for S2/S3/S4/S8 per §2, 5 runs per scenario (§0), and a ranked hot-path list.
 
 ### W2: Main process (S1, S2, S5, S7)
 
