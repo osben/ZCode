@@ -33,6 +33,8 @@ import type {
 export interface V4ChatPaneProps {
   workspacePath: string;
   workspaceIdentity?: string;
+  /** Remote session bound to the workspace identity; required to route a remote worktree opened from a created notice. */
+  remoteSessionId?: string;
   /** Prompt-template telemetry currently covers Desktop only. */
   isDesktop?: boolean;
   readOnly?: boolean;
@@ -96,6 +98,7 @@ export interface V4ChatPaneProps {
 export function V4ChatPane({
   workspacePath,
   workspaceIdentity,
+  remoteSessionId,
   isDesktop = false,
   readOnly = false,
   selectionSideChat = false,
@@ -149,6 +152,7 @@ export function V4ChatPane({
         openTrigger={openTrigger}
         workspacePath={workspacePath}
         workspaceIdentity={workspaceIdentity}
+        remoteSessionId={remoteSessionId}
         isDesktop={isDesktop}
         compactForRemoteControl={compactForRemoteControl}
         provider={provider}
