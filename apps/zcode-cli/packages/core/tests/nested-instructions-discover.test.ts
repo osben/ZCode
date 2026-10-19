@@ -103,6 +103,9 @@ function input(
     fileSystem: fileSystem as unknown as FileSystemPort,
     tracker: new NestedInstructionTracker(),
     now: 0,
+    // Unlimited reminder budget unless a test sets one; the real wrapper is covered by the executor tests.
+    maxReminderBytes: Number.POSITIVE_INFINITY,
+    measureReminderBytes: (lines) => Buffer.byteLength(lines.join("\n"), "utf8"),
     ...overrides,
   };
 }
@@ -586,5 +589,61 @@ describe("discoverNestedInstructions: failure handling", () => {
 
     expect(result).toBeUndefined();
     expect(fileSystem.statPaths).toEqual([]);
+  });
+});
+
+describe("discoverNestedInstructions: reminder budget", () => {
+  it("reads nothing when no bytes are left in the result budget", async () => {
+    const fileSystem = new MemoryFileSystem({ [`${ROOT}/packages/foo/AGENTS.md`]: "foo" });
+
+    const result = await discoverNestedInstructions(input(fileSystem, { maxReminderBytes: 0 }));
+
+    expect(result).toBeUndefined();
+    expect(fileSystem.statPaths).toEqual([]);
+    expect(fileSystem.readPaths).toEqual([]);
+  });
+
+  it("selects nothing and reserves nothing when even the smallest file cannot fit", async () => {
+    const fileSystem = new MemoryFileSystem({ [`${ROOT}/packages/foo/AGENTS.md`]: "foo rules" });
+    const tracker = new NestedInstructionTracker();
+    const base = input(fileSystem, { tracker });
+
+    const result = await discoverNestedInstructions({ ...base, maxReminderBytes: 10 });
+
+    expect(result).toBeUndefined();
+    // Nothing reserved, so the same file is still deliverable by a later call in the same schedule.
+    expect(tracker.reservedBytes).toBe(0);
+    expect(markerPaths(await discoverNestedInstructions({ ...base, maxReminderBytes: Number.POSITIVE_INFINITY }))).toEqual([
+      `${ROOT}/packages/foo/AGENTS.md`,
+    ]);
+  });
+
+  it("keeps the deeper file and drops the broader one when the whole reminder fits only the deeper file", async () => {
+    const deepOnly = await discoverNestedInstructions(
+      input(
+        new MemoryFileSystem({ [`${ROOT}/a/b/AGENTS.md`]: "deep rules" }),
+        { locations: [fileLocation(`${ROOT}/a/b/x.ts`)], touchedFiles: [`${ROOT}/a/b/x.ts`] },
+      ),
+    );
+    const fileSystem = new MemoryFileSystem({
+      [`${ROOT}/a/AGENTS.md`]: "broad rules",
+      [`${ROOT}/a/b/AGENTS.md`]: "deep rules",
+    });
+    const tracker = new NestedInstructionTracker();
+    const budget = Buffer.byteLength((deepOnly ?? []).join("\n"), "utf8");
+
+    const result = await discoverNestedInstructions(
+      input(fileSystem, {
+        tracker,
+        locations: [fileLocation(`${ROOT}/a/b/x.ts`)],
+        touchedFiles: [`${ROOT}/a/b/x.ts`],
+        maxReminderBytes: budget,
+      }),
+    );
+
+    expect(markerPaths(result)).toEqual([`${ROOT}/a/b/AGENTS.md`]);
+    expect(result?.join("\n") ?? "").not.toContain("broad rules");
+    expect(Buffer.byteLength((result ?? []).join("\n"), "utf8")).toBeLessThanOrEqual(budget);
+    expect(tracker.reservedBytes).toBe(Buffer.byteLength("deep rules", "utf8"));
   });
 });

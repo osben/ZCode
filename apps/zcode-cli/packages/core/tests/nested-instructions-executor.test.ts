@@ -10,6 +10,7 @@ import {
 } from "@zcode/contracts";
 import type { RuntimeMessageEntry } from "../src/agent/message-history.js";
 import { readNestedInstructionHistory } from "../src/context/nested-instructions/history.js";
+import { nestedInstructionKey } from "../src/context/nested-instructions/touched-paths.js";
 import { NestedInstructionTracker } from "../src/context/nested-instructions/tracker.js";
 import { PermissionService, defaultPermissionConfig } from "../src/permission/service.js";
 import type { ToolSchedule } from "../src/tool/scheduler.js";
@@ -52,7 +53,9 @@ class MemoryFileSystem {
   }
 }
 
-function readEntry(): ToolEntry {
+function readEntry(options: { text?: string; maxModelBytes?: number } = {}): ToolEntry {
+  const text = options.text ?? FILE_TEXT;
+  const maxModelBytes = options.maxModelBytes ?? 10_000;
   return {
     capability: "Read stub for nested instruction delivery",
     metadata: {
@@ -67,7 +70,7 @@ function readEntry(): ToolEntry {
       riskLevel: "low",
       needsApproval: false,
     },
-    handler: async () => ({ content: FILE_TEXT }),
+    handler: async () => ({ content: text }),
     // The model sees the plain file text, as Read does; the object output only satisfies the executor's object schema.
     formatModelContent: (output) => (output as { content: string }).content,
     inputSchema: { type: "object" },
@@ -81,7 +84,7 @@ function readEntry(): ToolEntry {
       patternSources: ["toolName"],
       denyPriority: "beforeAsk",
     },
-    resultBudget: { maxInlineBytes: 10_000, maxModelBytes: 10_000, strategy: "truncate" },
+    resultBudget: { maxInlineBytes: maxModelBytes, maxModelBytes, strategy: "truncate" },
     timeout: { defaultMs: 1_000, maxMs: 1_000, allowCallOverride: false },
     cancellation: { supported: false, cleanup: "none", userVisibleMessage: "n/a" },
     trace: {
@@ -111,12 +114,16 @@ function createHarness(options: {
   nestedDisabled?: boolean;
   logger?: Logger;
   fileSystem?: Partial<FileSystemPort>;
+  /** Model-visible text of the Read result. Defaults to FILE_TEXT. */
+  readText?: string;
+  /** Result budget of the Read tool, in bytes. Defaults to 10 000. */
+  maxModelBytes?: number;
 }) {
   const sessionId = createSessionId("nested-exec");
   const turnId = createTurnId("nested-exec");
   const traceContext = createRootTraceContext({ sessionId, turnId });
   const registry = createToolRegistry();
-  registry.register(readEntry());
+  registry.register(readEntry({ text: options.readText, maxModelBytes: options.maxModelBytes }));
 
   // History is the owner of "delivered". Tests append each committed result here, as the runtime does.
   const history: RuntimeMessageEntry[] = [];
@@ -362,5 +369,62 @@ describe("nested AGENTS.md delivery through the tool executor", () => {
     });
 
     expect(modelText(result)).toBe(FILE_TEXT);
+  });
+});
+
+describe("nested AGENTS.md reminder under the result budget", () => {
+  // Regression: discovery used to reserve and return the reminder without knowing the tool result budget. The appender
+  // then cut the tool output to make room, or cut the reminder to its head, which kept the marker lines and dropped the
+  // bodies. History counted those markers as delivered, so the file was suppressed for the rest of the context.
+  it("keeps the result whole and delivers nothing when the complete reminder does not fit", async () => {
+    const harness = createHarness({
+      files: { [FOO_AGENTS]: "r".repeat(5_000), [`${ROOT}/packages/foo/src/a.ts`]: "a" },
+      readText: "f".repeat(900),
+      maxModelBytes: 1_000,
+    });
+
+    const [result] = await runSchedule(
+      harness.executor,
+      [readCall("r1", `${ROOT}/packages/foo/src/a.ts`)],
+      harness.traceContext,
+    );
+
+    const text = modelText(result!);
+    expect(text).toBe("f".repeat(900));
+    expect(countMarkers(text)).toBe(0);
+    // Nothing was reserved, so the file is not held back for the rest of this schedule either.
+    expect(harness.tracker.reservedBytes).toBe(0);
+
+    harness.history.push({
+      message: { role: "tool", toolCallId: "r1", content: text, isError: false } as never,
+    });
+    expect(readNestedInstructionHistory(harness.history, process.platform, ROOT).delivered.size).toBe(0);
+  });
+
+  it("appends a fitting reminder whole and records its path as delivered", async () => {
+    const harness = createHarness({
+      files: { [FOO_AGENTS]: "foo rules", [`${ROOT}/packages/foo/src/a.ts`]: "a" },
+      readText: "f".repeat(1_000),
+      maxModelBytes: 4_000,
+    });
+
+    const [result] = await runSchedule(
+      harness.executor,
+      [readCall("r1", `${ROOT}/packages/foo/src/a.ts`)],
+      harness.traceContext,
+    );
+
+    const text = modelText(result!);
+    expect(text.startsWith(`${"f".repeat(1_000)}\n\n<system-reminder>\n`)).toBe(true);
+    expect(text.endsWith("foo rules\n</system-reminder>")).toBe(true);
+    expect(countMarkers(text)).toBe(1);
+    expect(text).toContain(`[nested-agents-md path=${JSON.stringify(FOO_AGENTS)} bytes=9]`);
+
+    harness.history.push({
+      message: { role: "tool", toolCallId: "r1", content: text, isError: false } as never,
+    });
+    const delivered = readNestedInstructionHistory(harness.history, process.platform, ROOT);
+    expect(delivered.delivered.has(nestedInstructionKey(FOO_AGENTS, process.platform))).toBe(true);
+    expect(delivered.bytesDelivered).toBe(9);
   });
 });

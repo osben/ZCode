@@ -41,6 +41,14 @@ export interface NestedInstructionDiscoveryInput extends NestedInstructionContex
   /** Absolute file paths this call read or wrote; a candidate that the call itself returned is not injected again. */
   touchedFiles: readonly string[];
   workspaceRoot: string;
+  /**
+   * Bytes left in the tool result's model budget for the complete reminder: markers, intro, headers, truncation notices
+   * and the system-reminder wrapper. A candidate is selected only if the whole reminder still fits. Discovery never
+   * returns a reminder that the caller would have to cut.
+   */
+  maxReminderBytes: number;
+  /** Byte length of the reminder lines once wrapped exactly as the caller appends them. */
+  measureReminderBytes(lines: readonly string[]): number;
   platform: NodeJS.Platform;
   fileSystem: FileSystemPort;
   now: number;
@@ -77,6 +85,8 @@ export async function discoverNestedInstructions(
   const scope: DiscoveryScope = { input, api, root: api.normalize(input.workspaceRoot) };
 
   if (input.signal?.aborted) return undefined;
+  // No room for any reminder: do not stat or read anything.
+  if (input.maxReminderBytes <= 0) return undefined;
 
   const directories = await resolveDirectories(scope);
   if (directories.length === 0) return undefined;
@@ -121,7 +131,21 @@ export async function discoverNestedInstructions(
       input.logger?.debug("Nested instruction read failed", skipLogContext(scope, candidate.path, error));
       continue;
     }
-    // No await follows for this file, so the budget check, the key reservation and the push below are one step.
+    const file: SelectedFile = {
+      ...candidate,
+      sizeBytes: read.sizeBytes,
+      content: read.content,
+      bytes: read.bytesRead,
+      truncated: read.truncated || read.sizeBytes > read.bytesRead,
+    };
+    // The whole reminder must fit the tool result budget. This check runs before the reservation: a reserved file
+    // that is never delivered would block parallel calls from delivering it until the step settles.
+    if (measureReminder([...selected, file], scope) > input.maxReminderBytes) {
+      skippedForBudget += 1;
+      continue;
+    }
+
+    // No await follows this file, so the fit check, the key reservation and the push below are one step.
     const outcome = input.tracker.reserve(
       candidate.key,
       read.bytesRead,
@@ -133,13 +157,7 @@ export async function discoverNestedInstructions(
       continue;
     }
 
-    selected.push({
-      ...candidate,
-      sizeBytes: read.sizeBytes,
-      content: read.content,
-      bytes: read.bytesRead,
-      truncated: read.truncated || read.sizeBytes > read.bytesRead,
-    });
+    selected.push(file);
   }
 
   if (selected.length === 0) {
@@ -256,6 +274,10 @@ function buildReminderBody(selected: SelectedFile[], { api, root }: DiscoverySco
     }
   }
   return lines;
+}
+
+function measureReminder(files: SelectedFile[], scope: DiscoveryScope): number {
+  return scope.input.measureReminderBytes(buildReminderBody(files, scope));
 }
 
 function toPosixDisplay(relativePath: string): string {

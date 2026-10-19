@@ -42,8 +42,8 @@ A candidate that is already one of the startup `userInstructions.sources[].fileP
 R4. **Delivery.** A found file is delivered inside the **same tool result** that triggered it, as a `<system-reminder>` block
 (source `nested_agents_md`). This is an append to the tool result's model content. It does not touch the system prompt, the
 prompt prefix, `context_prefix`, or the cache-stable request prefix. Delivery goes through the existing hook-context append path
-(`appendHookAdditionalContexts` in `call-runner.ts`), so result-budget truncation, persisted-artifact previews and the CUA
-structured-content path all keep working.
+(`appendHookAdditionalContexts` in `call-runner.ts`) and then the same `appendFormattedContextToSerialization`. Unlike hook
+contexts, the reminder is never cut to fit: it is budgeted before it is read, and it is appended whole or not at all (R6).
 
 R5. **Once per session context.** A file is delivered at most once per provider-visible context. "Provider-visible" is what the
 model currently sees (see R7).
@@ -57,6 +57,16 @@ R6. **Budget.**
   candidates are considered deepest first and the selected ones are emitted root-to-leaf.
 - A dropped candidate is not recorded anywhere. It can be delivered by a later call when budget frees up (after compaction or
   microcompaction).
+- Result budget (effective budget, all-or-nothing). The executor computes the bytes left in the tool result's model budget after
+  serialization and hook contexts: `resolveFormattedContextBudgetBytes` = `maxModelBytes - serialization.returnedBytes - 2` (the
+  `"\n\n"` separator). Discovery receives it as `maxReminderBytes`. Discovery measures the complete reminder, which is the
+  marker lines, intro, `Instructions from:` headers, truncation notices and the `<system-reminder>` wrapper, through
+  `measureReminderBytes`, which wraps the lines exactly as the executor does. A candidate is reserved only if the whole reminder
+  with that candidate still fits. Otherwise it is skipped and not reserved, so a broader candidate may still fit.
+- The reminder is never cut. If the appended result is not exactly `serialization.content + "\n\n" + reminder`, the executor returns
+  the original result unchanged. A marker line without its body would make history count the file as delivered while the
+  model never saw it, so a marker-only head is never produced.
+- Reserved bytes stay under the 64 KiB context cap as before. The result budget is a separate, per-result limit.
 
 R7. **Dedupe source of truth = provider-visible history.** A nested file counts as delivered when either:
 
@@ -140,8 +150,10 @@ runtime.executeTools ─► executor.executeSchedule(calls)   ── tracker: re
   │     │     history.delivered has key ──► skip
   │     │     estimate (history bytes + reserved bytes) ── cannot fit ──► skip, file not read
   │     │     readTextFile(maxBytes) ── fail ──► debug, skip
+  │     │     measure whole reminder (with this file) vs result budget ──► over ──► skip, not reserved
   │     │     reserve(key, bytes, 64 KiB − history bytes) SYNC: duplicate key ──► skip;
   │     │       bytes + reserved bytes > budget ──► skip; else reserve key and bytes (no await until push)
+  │     │     (the fit check runs before reserve(): a reservation without a delivered body would block parallel calls)
   │     ▼  append <system-reminder> to modelContent ──► result A
   │
   ├─ call B (Read a/y.ts)  ── runs concurrently with A
@@ -216,6 +228,10 @@ export interface NestedInstructionDiscoveryInput extends NestedInstructionContex
   locations: readonly NestedInstructionLocation[];
   touchedFiles: readonly string[];
   workspaceRoot: string;
+  /** Bytes left in the tool result's model budget for the complete reminder (R6). */
+  maxReminderBytes: number;
+  /** Byte length of the reminder lines once wrapped as the executor appends them. */
+  measureReminderBytes(lines: readonly string[]): number;
   platform: NodeJS.Platform;
   fileSystem: FileSystemPort;
   signal?: AbortSignal;
@@ -237,7 +253,9 @@ Executor wiring, `tool/executor/types.ts`: `ToolExecutorOptions` / `ToolExecutor
 
 Serialization, `tool/executor/result-serialization.ts`: the hook-context projection is factored into
 `appendFormattedContextToSerialization(serialization, formattedContext, entry)`. `appendHookAdditionalContexts` keeps its current
-behavior and calls it. The nested reminder uses the same function.
+behavior and calls it. The nested reminder uses the same function. Two helpers are exported for the nested path only:
+`FORMATTED_CONTEXT_SEPARATOR` (`"\n\n"`) and `resolveFormattedContextBudgetBytes(serialization, entry)`, which returns the
+budget for one appended block (R6). The shared appender's behavior is unchanged.
 
 System reminder registry, `system-reminder/source.ts`: new source `nested_agents_md`, channel `tool_result`, lifecycle
 `tool_result`, `isMeta: true`, provider-visible. It is listed next to `tool_result_warning` in
@@ -298,6 +316,15 @@ A11. Incognito with `projectInstructions` excluded: no discovery, no stat, ident
 
 A12. Subagent child: its first touch of `packages/foo` delivers the file even if the parent already delivered it.
 
+A13. A Read whose result leaves less room than the complete reminder (markers, intro, header, wrapper). The Read output is
+returned unchanged, no reminder is appended, the file is not reserved, and history does not record its path.
+
+A14. A Read whose result leaves room for the complete reminder. The reminder is appended whole after the output, its marker and
+body are both visible, and history records the path as delivered.
+
+A15. Two candidates in one call and room for the deeper file only: the deeper file is delivered whole, the broader one is
+skipped and not reserved.
+
 A13. Windows: `C:\repo\packages\foo\src\a.ts` with root `c:\repo`, and `/c/repo/packages/foo/AGENTS.md` alias, resolve to one key.
 Git-Bash `/c/...` tool paths are converted to drive paths before containment, so they are not rejected as outside the workspace.
 Covered by the unit tests on `resolveNestedInstructionPath` and `normalizeToolPathForComparison` plus containment.
@@ -321,4 +348,6 @@ before the second starts and the step has not yet settled.
 - Resume and rewind rebuild history from persisted events, so the markers come back with the transcript. This was not verified
   end to end for resumed sessions and needs a test if rewind is in scope.
 - Symlink escape is not checked (see R14).
+- Structured CUA results (official frame protection) count their raster in `returnedBytes`, so the reminder budget there is usually
+  zero and no nested reminder is delivered. This is conservative: a reminder is never cut, but CUA frame results get none.
 - `Glob` / `Grep` without `path` use the live cwd only, not each result's folder.
