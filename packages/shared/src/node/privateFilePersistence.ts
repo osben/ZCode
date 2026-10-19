@@ -85,6 +85,11 @@ export async function withFileLock<T>(
   }
 }
 
+/** SHA-256 hex of raw file bytes: the content revision used for conditional writes and deletes. */
+export function hashBytes(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
 export interface AtomicWriteFileOptions {
   /** Target file permission bits; when omitted, the process default permissions are used (subject to umask). */
   mode?: number;

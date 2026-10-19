@@ -309,10 +309,14 @@ describe("SystemPromptSection", () => {
     expect(screen.queryByTestId("settings-system-prompt-open-folder-cli-prefix")).toBeNull();
   });
 
-  it("renders the assembled prompt preview as approximate", () => {
+  it("renders the assembled prompt preview as approximate, with its text only once opened", () => {
     renderSection();
     const preview = screen.getByTestId("settings-system-prompt-assembled");
     expect(preview.textContent).toContain("settings.systemPrompt.assembled.title");
+    expect(preview.querySelector("pre")).toBeNull();
+
+    preview.setAttribute("open", "");
+    fireEvent(preview, new Event("toggle"));
     expect(preview.querySelector("pre")?.textContent).toBe(
       "The saved prompt\n\nHarness default text",
     );

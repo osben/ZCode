@@ -169,6 +169,7 @@ vi.mock("@/lib/voiceDictationRecorder.js", () => ({
 }));
 
 import { toast } from "@/components/ui/toast.js";
+import { resetIdleUnloadPreferenceForTests } from "@/lib/voiceIdleUnload.js";
 import { playVoiceDictationFeedbackSound } from "@/lib/voiceDictationFeedbackSound.js";
 import { DEFAULT_POST_PROCESS_PROMPT, POST_PROCESS_PROMPT_MAX_LENGTH } from "@zcode/services";
 import {
@@ -185,6 +186,7 @@ class ResizeObserverStub {
 (globalThis as { ResizeObserver?: unknown }).ResizeObserver = ResizeObserverStub;
 
 beforeEach(() => {
+  resetIdleUnloadPreferenceForTests();
   h.descriptors.first.languages = ["en"];
   h.descriptors.second.languages = ["en"];
   h.state.downloadRequested = false;
