@@ -11,18 +11,20 @@ Before starting work, run `node scripts/check-workspace-freshness.mjs` to check 
 
 Run the following commands from the repository root:
 
-| Purpose                     | Command                                              |
-| --------------------------- | ---------------------------------------------------- |
-| Type check                  | `pnpm typecheck`                                     |
-| Lint                        | `pnpm lint` / `pnpm lint:fix`                        |
-| Format check                | `pnpm fmt:check` (fork-changed files only)           |
-| Desktop development         | `pnpm dev:desktop`                                   |
-| Web development             | `pnpm dev:web`                                       |
-| Pre-commit check            | `pnpm verify:pre-push` (Lint and architecture check) |
-| Architecture check          | `pnpm architecture:check --changed`                  |
-| Module reading package      | `pnpm architecture:context <module-id>`              |
-| Unused dependencies/exports | `pnpm knip`                                          |
-| Export reference lookup     | `pnpm dep:refs --list-exports <file>`                |
+| Purpose                     | Command                                               |
+| --------------------------- | ----------------------------------------------------- |
+| Type check                  | `pnpm typecheck`                                      |
+| Lint                        | `pnpm lint` / `pnpm lint:fix`                         |
+| Format check                | `pnpm fmt:check` (fork-changed files only)            |
+| Desktop development         | `pnpm dev:desktop`                                    |
+| Web development             | `pnpm dev:web`                                        |
+| Pre-push check              | `pnpm verify:pre-push` (Lint, architecture and tests) |
+| Architecture check          | `pnpm architecture:check --changed`                   |
+| Module reading package      | `pnpm architecture:context <module-id>`               |
+| Unused dependencies/exports | `pnpm knip`                                           |
+| Export reference lookup     | `pnpm dep:refs --list-exports <file>`                 |
+
+Git hooks use `lefthook.yml`; `pnpm prepare` installs the pinned Lefthook. Hook integration tests run with `pnpm test:git-hooks`.
 
 Test entry points are defined by the target package's current `package.json` and actual test files; do not assume a unified unit test or E2E command exists.
 

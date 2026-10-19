@@ -6,10 +6,11 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { resolveToolBin } from "./run-pre-commit-checks.mjs";
 
 const exec = promisify(execFile);
 const script = fileURLToPath(new URL("./check-staged-file-tokens.mjs", import.meta.url));
-const hook = new URL("../.husky/pre-commit", import.meta.url);
+const hookConfig = new URL("../lefthook.yml", import.meta.url);
 
 async function fixture(t) {
   const cwd = await mkdtemp(path.join(tmpdir(), "zcode-token-gate-"));
@@ -112,13 +113,15 @@ test("generated and vendored attributes use the index rather than unstaged edits
   assert.equal((await f.check()).code, 1);
 });
 
-test("spaces, newlines, quotes and leading dashes in paths are safe", async (t) => {
+test("spaces, quotes, leading dashes and supported newlines in paths are safe", async (t) => {
   const f = await fixture(t);
-  const name = "-some 'odd'\n file.ts";
-  await f.stage(name, "a".repeat(21_000));
+  const names = ["-some 'odd' file.ts"];
+  // Windows rejects control characters in filenames; retain newline coverage on POSIX.
+  if (process.platform !== "win32") names.push("-some 'odd'\n file.ts");
+  for (const name of names) await f.stage(name, "a".repeat(21_000));
   const result = await f.check();
   assert.equal(result.code, 1);
-  assert.ok(result.stderr.includes(JSON.stringify(name)), result.stderr);
+  for (const name of names) assert.ok(result.stderr.includes(JSON.stringify(name)), result.stderr);
 });
 
 test("only staged changes are checked; renames block and deletions pass", async (t) => {
@@ -166,22 +169,36 @@ test("Git errors fail closed", async (t) => {
 });
 
 test("the actual hook rechecks the index after formatter changes", async (t) => {
-  if (process.platform === "win32") return t.skip("POSIX Husky hook");
   const f = await fixture(t);
   await mkdir(path.join(f.cwd, "scripts"));
   await writeFile(path.join(f.cwd, "scripts/check-staged-file-tokens.mjs"), await readFile(script));
-  await mkdir(path.join(f.cwd, ".husky"));
-  await writeFile(path.join(f.cwd, ".husky/pre-commit"), await readFile(hook), { mode: 0o755 });
-  await f.git("config", "core.hooksPath", ".husky");
+  const config = (await readFile(hookConfig, "utf8")).replace(
+    "pnpm exec lint-staged --config lint-staged.pre-commit.config.mjs",
+    "node scripts/fake-formatter.mjs",
+  );
+  const wrapper = fileURLToPath(new URL("./run-lefthook.mjs", import.meta.url)).replaceAll(
+    "\\",
+    "/",
+  );
+  const quotedWrapper = `'${wrapper.replaceAll("'", "'\\''")}'`;
+  await writeFile(
+    path.join(f.cwd, "lefthook.yml"),
+    config.replace("node scripts/run-lefthook.mjs", `node ${quotedWrapper}`),
+  );
+  await writeFile(
+    path.join(f.cwd, "scripts/fake-formatter.mjs"),
+    `
+import { writeFile, copyFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+await writeFile('formatter-ran', 'ran\\n');
+await copyFile('formatted.txt', 'code.ts');
+execFileSync('git', ['add', '--', 'code.ts']);
+`,
+  );
+  await exec(process.execPath, [resolveToolBin("lefthook"), "install"], { cwd: f.cwd });
   await f.stage("code.ts", "small");
   await writeFile(path.join(f.cwd, "formatted.txt"), "a".repeat(21_000));
-  const bin = path.join(f.cwd, "bin");
-  await mkdir(bin);
-  await writeFile(
-    path.join(bin, "pnpm"),
-    "#!/bin/sh\necho ran > formatter-ran\ncp formatted.txt code.ts\ngit add -- code.ts\n",
-    { mode: 0o755 },
-  );
+  const bin = fileURLToPath(new URL("../node_modules/.bin/", import.meta.url));
   const runHook = () =>
     exec("git", ["hook", "run", "pre-commit"], {
       cwd: f.cwd,
