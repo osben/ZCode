@@ -334,11 +334,12 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
   /** Invalidates the current start, aborts capture, and releases the Host stream once its queue drains. */
   const tearDownRecording = useCallback(() => {
     startGenerationRef.current += 1;
-    abortRecording();
+    // Register the pending cancel before abortRecording goes idle, so the lease waits for it.
     const streamId = streamIdRef.current;
     streamIdRef.current = null;
     streamBacklogRef.current = [];
     if (streamId) cancelStreamAfterQueue(streamId);
+    abortRecording();
   }, [abortRecording, cancelStreamAfterQueue]);
 
   /**
