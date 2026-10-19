@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import type { ProviderSettingsFormModel } from "@/lib/providerSettingsFormTypes.js";
-import type { ModelConnectivityResult } from "@zcode/shared";
+import { TID_MODEL_PROVIDER_MODEL_TEST_BUTTON, type ModelConnectivityResult } from "@zcode/shared";
 import { Loader2Icon, Trash2, Unplug } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
 import { ModelInputCapabilityBadge } from "@/components/ModelInputCapabilityBadge.js";
@@ -269,6 +269,7 @@ export function ModelRowInput({
         </div>
         {shouldShowTestButton ? (
           <Button
+            data-testid={TID_MODEL_PROVIDER_MODEL_TEST_BUTTON}
             type="button"
             variant="ghost"
             size="icon-sm"

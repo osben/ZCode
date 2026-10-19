@@ -4,12 +4,13 @@ import { describe, expect, it, vi } from "vitest";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { PendingCommandRecoveryBanner } from "@/v4/PendingCommandRecoveryBanner.js";
 import type { PendingCommandEntry } from "@/v4/pendingCommandRegistry.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 function render(entry: PendingCommandEntry): string {
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(PendingCommandRecoveryBanner, {
         entry,
         onResend: entry.replay.kind === "input" ? vi.fn() : undefined,
@@ -30,8 +31,8 @@ describe("PendingCommandRecoveryBanner", () => {
       recovery: "discarded",
       replay: { kind: "input", type: "sendText", payload: { text: "hello" } },
     });
-    expect(html).toContain("CLI 重启前已提交的输入没有进入对话");
-    expect(html).toContain("重新发送");
+    expect(html).toContain(expectedCopy("chat.pendingCommand.discarded"));
+    expect(html).toContain(expectedCopy("chat.pendingCommand.resend"));
     expect(html).toContain("mb-3");
     expect(html).toContain("w-full");
     expect(html).toContain("shrink-0");

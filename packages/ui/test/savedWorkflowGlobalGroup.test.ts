@@ -23,6 +23,8 @@ import {
 } from "@zcode/shared";
 import type { AutomationWorkspaceOption } from "@/settings/automationWorkspaceOptions.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { expectedCopy, TEST_LOCALE } from "./helpers/uiCopy.js";
+import { buildSavedWorkflowRevisePrompt } from "@/settings/saved-workflows/savedWorkflowLaunchPrompt.js";
 import { resetSavedWorkflowStoreForTests } from "@/store/savedWorkflowStore.js";
 
 const confirmMock = vi.fn(async () => true);
@@ -273,7 +275,7 @@ function mount(props: Partial<Parameters<typeof SavedWorkflowGlobalGroup>[0]> = 
   const utils = render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: TEST_LOCALE },
       createElement(SavedWorkflowGlobalGroup, {
         refreshSeq: 0,
         mode: { kind: "list" },
@@ -317,10 +319,10 @@ describe("SavedWorkflowGlobalGroup", () => {
   it("空也渲染：头行「全局」+ 副标 +「通过对话创建」，正文一行空态；回报 { loaded:true, empty:true }", async () => {
     const { onStateChange } = mount();
     await screen.findByTestId(TID_WORKFLOW_GLOBAL_GROUP);
-    expect(screen.getByText("全局")).toBeTruthy();
-    expect(screen.getByText("对所有项目可见")).toBeTruthy();
+    expect(screen.getByText(expectedCopy("workflows.hub.global.title"))).toBeTruthy();
+    expect(screen.getByText(expectedCopy("workflows.hub.global.hint"))).toBeTruthy();
     expect(screen.getByTestId(testId(TID_WORKFLOWS_CREATE_VIA_CHAT, "global"))).toBeTruthy();
-    expect(screen.getByText(/还没有全局工作流/)).toBeTruthy();
+    expect(screen.getByText(expectedCopy("workflows.hub.global.empty"))).toBeTruthy();
     await waitFor(() =>
       expect(onStateChange).toHaveBeenLastCalledWith("global", {
         loaded: true,
@@ -366,7 +368,14 @@ describe("SavedWorkflowGlobalGroup", () => {
     expect(onCreateViaChat.mock.calls[0]?.[0]).toContain('scope: "global"');
 
     fireEvent.click(screen.getByTestId("revise-research"));
-    expect(onCreateViaChat.mock.calls[1]?.[0]).toContain("请修订已保存的工作流");
+    expect(onCreateViaChat.mock.calls[1]?.[0]).toBe(
+      buildSavedWorkflowRevisePrompt({
+        name: "research",
+        path: "/home/.zcode/workflows/research.dwf.ts",
+        locale: TEST_LOCALE,
+        scope: "global",
+      }),
+    );
     expect(onCreateViaChat.mock.calls[1]?.[1]).toEqual({ workspacePath: "/a" });
   });
 
@@ -400,7 +409,9 @@ describe("SavedWorkflowGlobalGroup", () => {
     await waitFor(() =>
       expect(agent.deleteSavedWorkflow).toHaveBeenCalledWith({ scope: "global", name: "research" }),
     );
-    expect(toastMock).toHaveBeenCalledWith("已删除工作流「research」");
+    expect(toastMock).toHaveBeenCalledWith(
+      expectedCopy("workflows.hub.deleted", { name: "research" }),
+    );
   });
 
   it("移到项目：move 窗提交 → move(目标项目, 无 to) 成功 toast + onMoved", async () => {
@@ -420,7 +431,9 @@ describe("SavedWorkflowGlobalGroup", () => {
       }),
     );
     await waitFor(() => expect(onMoved).toHaveBeenCalledTimes(1));
-    expect(toastMock).toHaveBeenCalledWith("已移到 Alpha");
+    expect(toastMock).toHaveBeenCalledWith(
+      expectedCopy("workflows.hub.move.toast.project", { project: "Alpha" }),
+    );
   });
 
   it("移到项目：target_exists → toast 目标已有同名，不 onMoved", async () => {
@@ -438,7 +451,7 @@ describe("SavedWorkflowGlobalGroup", () => {
     fireEvent.click(screen.getByTestId(testId(TID_WORKFLOW_ACTION_MOVE, "research")));
     fireEvent.click(await screen.findByTestId("move-submit"));
     await waitFor(() => expect(agent.moveSavedWorkflow).toHaveBeenCalledTimes(1));
-    expect(toastMock).toHaveBeenCalledWith("目标位置已有同名工作流");
+    expect(toastMock).toHaveBeenCalledWith(expectedCopy("workflows.hub.move.targetExists"));
     expect(onMoved).not.toHaveBeenCalled();
   });
 
@@ -472,7 +485,7 @@ describe("SavedWorkflowGlobalGroup", () => {
     ];
     mount({ mode: { kind: "detail", name: "research" } });
     const detail = await screen.findByTestId(TID_WORKFLOW_DETAIL);
-    expect(detail.getAttribute("data-project")).toBe("全局");
+    expect(detail.getAttribute("data-project")).toBe(expectedCopy("workflows.hub.global.title"));
     await waitFor(() => expect(screen.getByTestId("run-r-a")).toBeTruthy());
     expect(screen.getByTestId("run-r-a").getAttribute("data-run-project")).toBe("Alpha");
     expect(screen.getByTestId("run-r-a").getAttribute("data-run-canopen")).toBe("yes");
@@ -485,6 +498,8 @@ describe("SavedWorkflowGlobalGroup", () => {
       throw Object.assign(new Error("Invalid params"), { code: -32602 });
     };
     mount();
-    await waitFor(() => expect(screen.getByText(/当前 agent 不支持全局工作流/)).toBeTruthy());
+    await waitFor(() =>
+      expect(screen.getByText(expectedCopy("workflows.hub.global.unsupported"))).toBeTruthy(),
+    );
   });
 });

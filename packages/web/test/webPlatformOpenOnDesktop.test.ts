@@ -27,7 +27,7 @@ async function importCreateWebPlatform() {
     matchMedia: () => ({ matches: false }),
     location: { search: "", pathname: "/" },
   });
-  vi.stubGlobal("navigator", { language: "zh-CN" });
+  vi.stubGlobal("navigator", { language: "en-US" });
 
   const { createWebPlatform } = await import("../src/main.js");
   return createWebPlatform;

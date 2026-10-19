@@ -32,7 +32,7 @@ describe("PLM-LC-001/002 插件商店发现、入口与展示 E2E", () => {
 
     const fixture = await createPluginLifecycleFixture();
     await openPluginSettings();
-    await setPluginPresentation({ locale: "zh-CN", theme: "zai-light", width: 1440, height: 1000 });
+    await setPluginPresentation({ locale: "en-US", theme: "zai-light", width: 1440, height: 1000 });
 
     expect(await isPressed("plugin-store-segment-public")).toBe(true);
     await addLifecycleMarketplaceThroughUi(fixture);

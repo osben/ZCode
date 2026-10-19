@@ -632,7 +632,9 @@ describe("CreateWorkflowToolCallBlock 编译反馈", () => {
     );
     expect(view.getByTestId("workflow-draft-ordinal").textContent).toBe("第 1 稿");
     expect(view.getByTestId("workflow-draft-status").textContent).toBe("2 处待修正 · 未运行");
-    expect(view.getByTestId("workflow-compiler-feedback-title").textContent).toBe("编译反馈");
+    expect(view.getByTestId("workflow-compiler-feedback-title").textContent).toBe(
+      zhCN["chat.toolCall.workflow.feedback"],
+    );
     expect(view.getByTestId("workflow-compiler-feedback-count").textContent).toBe("2 条");
     expect(view.getByTestId("workflow-compiler-feedback-lede").textContent).toBe(
       "类型检查未通过，脚本未运行；反馈已交回模型，由它修改后重新提交。",
@@ -1049,7 +1051,9 @@ describe("CreateWorkflowToolCallBlock 运行态", () => {
   it("zh-CN 下卡面全部本地化", () => {
     const view = renderBlockDom(LOOP_TOOL_CALL, { workflowRun: joined() }, "zh-CN");
     const card = view.getByTestId("workflow-card");
-    expect(view.getByTestId("workflow-card-kind").textContent).toBe("工作流运行中");
+    expect(view.getByTestId("workflow-card-kind").textContent).toBe(
+      zhCN["chat.toolCall.workflow.card.running"],
+    );
     expect(view.getByTestId("workflow-card-status").textContent).toBe("运行中");
     expect(card.textContent).toContain("2 个阶段 · 1 个子代理工作中");
     expect(card.textContent).toContain("1 个子代理工作中");
@@ -1405,22 +1409,22 @@ describe("CreateWorkflowToolCallBlock kind 文案分相", () => {
       { isRunning: true },
       "zh-CN",
     );
-    expect(writing).toContain("正在编写工作流");
-    expect(writing).not.toContain("正在校验工作流");
+    expect(writing).toContain(zhCN["chat.toolCall.workflow.writing"]);
+    expect(writing).not.toContain(zhCN["chat.toolCall.workflow.running"]);
 
     const awaiting = renderBlock(
       { input: IN_FLIGHT_INPUT, raw: { v4Status: "pendingApproval" }, status: "running" },
       { isRunning: true },
       "zh-CN",
     );
-    expect(awaiting).toContain("工作流待确认");
+    expect(awaiting).toContain(zhCN["chat.toolCall.workflow.awaitingConfirmation"]);
 
     const validating = renderBlock(
       { input: IN_FLIGHT_INPUT, raw: { v4Status: "running" }, status: "running" },
       { isRunning: true },
       "zh-CN",
     );
-    expect(validating).toContain("正在校验工作流");
+    expect(validating).toContain(zhCN["chat.toolCall.workflow.running"]);
   });
 
   it("第 2 稿起编写中的种类词是「Revising workflow」、细节槽带稿号；第 1 稿照旧不编号", () => {
@@ -1472,7 +1476,7 @@ describe("CreateWorkflowToolCallBlock kind 文案分相", () => {
       { isRunning: true, workflowDraft: { ordinal: 2, superseded: false } },
       "zh-CN",
     );
-    expect(view.container.textContent).toContain("正在修改工作流");
+    expect(view.container.textContent).toContain(zhCN["chat.toolCall.workflow.revising"]);
     expect(view.getByTestId("workflow-draft-ordinal").textContent).toBe("第 2 稿");
   });
 

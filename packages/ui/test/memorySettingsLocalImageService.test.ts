@@ -7,9 +7,7 @@ import { MarkdownImage } from "@/components/ai-elements/markdown-image.js";
 import { ServiceProvider } from "@/hooks/useServices.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 
-function createServices(
-  readMediaPreview: ReturnType<typeof vi.fn>,
-): IServiceAccessor {
+function createServices(readMediaPreview: ReturnType<typeof vi.fn>): IServiceAccessor {
   return {
     fileService: { readMediaPreview },
   } as unknown as IServiceAccessor;
@@ -31,7 +29,7 @@ describe("Project Memory local image service boundary", () => {
     render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           ServiceProvider,
           { services: createServices(remoteReadMediaPreview) },

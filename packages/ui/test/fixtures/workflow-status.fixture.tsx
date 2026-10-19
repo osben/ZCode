@@ -184,7 +184,7 @@ function Fixture() {
           "situation",
           "situation-stopped",
         ].map((s) => (
-          <button key={s} onClick={() => setState(s)}>
+          <button key={s} data-fixture-state={s} onClick={() => setState(s)}>
             {s}
           </button>
         ))}

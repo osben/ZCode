@@ -48,15 +48,18 @@ import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 // eslint-disable-next-line import/first
 import { WorkflowRunArtifactsSection } from "@/app-shell/WorkflowRunArtifactsSection.js";
 // eslint-disable-next-line import/first
+import { expectedCopy } from "./helpers/uiCopy.js";
+// eslint-disable-next-line import/first
 import type { WorkflowRunArtifactView } from "@/hooks/useWorkflowRunArtifacts.js";
 
 const onOpenArtifact = vi.fn();
+const ARTIFACT_TITLE = "审计报告";
 
 function artifact(overrides: Partial<WorkflowRunArtifactView> = {}): WorkflowRunArtifactView {
   return {
     id: "book",
     kind: "file",
-    title: "审计报告",
+    title: ARTIFACT_TITLE,
     contentType: "application/pdf",
     bytes: 4096,
     sourcePath: "out/book.pdf",
@@ -73,7 +76,7 @@ function renderSection(
   return render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: options.locale ?? "zh-CN" },
+      { initialLocale: options.locale ?? "en-US" },
       createElement(WorkflowRunArtifactsSection, {
         artifacts,
         runId: "dwfrun-1",
@@ -149,7 +152,7 @@ describe("WorkflowRunArtifactsSection", () => {
       "本轮审计的结论与修复建议。",
     );
     expect(within(cards[0]!).getByTestId("workflow-artifact-row-detail").textContent).toBe(
-      "文件·PDF·4.0 KB",
+      `${expectedCopy("chat.toolCall.workflow.run.artifacts.kind.file")}·PDF·4.0 KB`,
     );
     // The preview frame is the button's sibling (controls inside a thumbnail must not nest inside a button), so
     // look inside the row container.
@@ -165,9 +168,13 @@ describe("WorkflowRunArtifactsSection", () => {
     // Index lines draw no frame; the detail sits on the line itself (count for the board, size for documents),
     // and the tooltip holds only kind word · title (+ source).
     expect(within(index).queryByTestId("workflow-artifact-tile-frame")).toBeNull();
-    expect(within(lines[0]!).getByTestId("workflow-run-artifact-items").textContent).toBe("4 条");
+    expect(within(lines[0]!).getByTestId("workflow-run-artifact-items").textContent).toBe(
+      expectedCopy("chat.toolCall.workflow.run.artifacts.preset.items", { count: "4" }),
+    );
     expect(within(lines[1]!).getByTestId("workflow-run-artifact-bytes").textContent).toBe("2.0 KB");
-    expect(lines[0]!.getAttribute("title")).toBe("图表 · 审计报告");
+    expect(lines[0]!.getAttribute("title")).toBe(
+      `${expectedCopy("chat.toolCall.workflow.run.artifacts.kind.chart")} · 审计报告`,
+    );
     // Cadence: the row at 30ms, index lines following.
     expect((cards[0] as HTMLElement).style.animationDelay).toBe("30ms");
     expect((lines[0] as HTMLElement).style.animationDelay).toBe("60ms");
@@ -218,11 +225,15 @@ describe("WorkflowRunArtifactsSection", () => {
     // The tail slot holds the compact v2 (same in both languages); the long form lives in title.
     const version = within(card).getByTestId("workflow-artifact-tile-version");
     expect(version.textContent).toBe("v2");
-    expect(version.getAttribute("title")).toBe("第 2 版");
+    expect(version.getAttribute("title")).toBe(
+      expectedCopy("chat.toolCall.workflow.run.artifacts.version", { version: "2" }),
+    );
     expect(within(card).getByTestId("workflow-run-artifact-badge").textContent).toBe("PDF");
     expect(within(card).getByTestId("workflow-run-artifact-bytes").textContent).toBe("4.0 KB");
     // The source is a path that doesn't fit on the line: it goes into the tooltip together with the kind word.
-    expect(card.getAttribute("title")).toBe("文件 · book\nout/book.pdf");
+    expect(card.getAttribute("title")).toBe(
+      `${expectedCopy("chat.toolCall.workflow.run.artifacts.kind.file")} · book\nout/book.pdf`,
+    );
     expect(view.queryByTestId("workflow-run-artifact-source-path")).toBeNull();
     // The facade's default title is already the id, so the description line falls back to the id rather than
     // staying empty.
@@ -270,7 +281,9 @@ describe("WorkflowRunArtifactsSection", () => {
     expect(card.tagName).toBe("BUTTON");
     expect(card.disabled).toBe(false);
     expect(card.getAttribute("data-artifact-open")).toBe("true");
-    expect(card.getAttribute("aria-label")).toBe("打开产物: 审计报告");
+    expect(card.getAttribute("aria-label")).toBe(
+      `${expectedCopy("chat.toolCall.workflow.run.artifacts.open")}: ${ARTIFACT_TITLE}`,
+    );
   });
 
   it("宿主没注入打开能力时瓦片禁用，但内容照旧在场", () => {
@@ -279,7 +292,7 @@ describe("WorkflowRunArtifactsSection", () => {
     expect(card.disabled).toBe(true);
     expect(card.getAttribute("data-artifact-open")).toBeNull();
     expect(card.getAttribute("aria-label")).toBeNull();
-    expect(within(card).getByText("审计报告")).toBeTruthy();
+    expect(within(card).getByText(ARTIFACT_TITLE)).toBeTruthy();
     fireEvent.click(card);
     expect(onOpenArtifact).not.toHaveBeenCalled();
   });
@@ -359,7 +372,7 @@ describe("WorkflowRunArtifactsSection", () => {
     view.rerender(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(WorkflowRunArtifactsSection, {
           artifacts: [board(3)],
           runId: "dwfrun-1",
@@ -404,11 +417,12 @@ describe("WorkflowRunArtifactsSection", () => {
   });
 
   it("spec 在场但解析不出来时，只有预览框降级成一句话，说明行照旧", async () => {
+    const invalidChartTitle = "坏看板";
     const view = renderSection([
       artifact({
         id: "perf",
         kind: "chart",
-        title: "坏看板",
+        title: invalidChartTitle,
         bytes: undefined,
         sourcePath: undefined,
         contentType: undefined,
@@ -419,6 +433,6 @@ describe("WorkflowRunArtifactsSection", () => {
     await waitFor(() =>
       expect(view.getByTestId("workflow-run-artifact-preset-invalid")).toBeTruthy(),
     );
-    expect(view.getByText("坏看板")).toBeTruthy();
+    expect(view.getByText(invalidChartTitle)).toBeTruthy();
   });
 });

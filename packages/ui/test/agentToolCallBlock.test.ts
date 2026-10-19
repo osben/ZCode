@@ -8,6 +8,7 @@ import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { StoreProvider } from "@/store/StoreProvider.js";
 import { useSubagentsStore } from "@/store/subagentsStore.js";
 import { AgentToolCallBlock } from "../src/ToolCallBlocks/renderers/agent.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const localStorageState = new Map<string, string>();
 
@@ -64,7 +65,7 @@ describe("AgentToolCallBlock", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           ServiceProvider,
           { services: mockServices },
@@ -132,7 +133,7 @@ describe("AgentToolCallBlock", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           ServiceProvider,
           { services: mockServices },
@@ -192,7 +193,7 @@ describe("AgentToolCallBlock", () => {
     );
 
     expect(html).toContain('data-testid="v4-subagent-open-side-pane-child-session"');
-    expect(html).toContain('aria-label="在右侧打开"');
+    expect(html).toContain(`aria-label="${expectedCopy("chat.toolCall.agent.openInSidePane")}"`);
     expect(html).not.toContain("aria-expanded");
     expect(html).not.toContain("lucide-chevron-right");
     expect(html).not.toContain("subagent-output-preview");
@@ -203,7 +204,7 @@ describe("AgentToolCallBlock", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           ServiceProvider,
           { services: mockServices },
@@ -265,7 +266,7 @@ describe("AgentToolCallBlock", () => {
     expect(html).not.toContain("subagent-output-preview");
     expect(html).not.toContain("aria-expanded");
     expect(html).not.toContain("lucide-chevron-right");
-    expect(html).not.toContain("在右侧打开");
+    expect(html).not.toContain(expectedCopy("chat.toolCall.agent.openInSidePane"));
     expect(html).not.toContain("子会话");
   });
 
@@ -289,7 +290,7 @@ describe("AgentToolCallBlock", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           ServiceProvider,
           { services: mockServices },
@@ -350,7 +351,7 @@ describe("AgentToolCallBlock", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           ServiceProvider,
           { services: mockServices },
@@ -411,7 +412,7 @@ describe("AgentToolCallBlock", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           ServiceProvider,
           { services: mockServices },
@@ -476,7 +477,7 @@ describe("AgentToolCallBlock", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           ServiceProvider,
           { services: mockServices },
@@ -553,7 +554,7 @@ describe("AgentToolCallBlock", () => {
     expect(html).toContain("lucide-bot");
     expect(html).toMatch(/>(SubAgent|子智能体)</);
     expect(html).toContain("·");
-    expect(html).toContain("正在读取");
+    expect(html).toContain(expectedCopy("chat.toolCall.read.reading"));
     expect(html).toContain("App.tsx");
     expect(html).toContain("/workspace/src");
     expect(html).not.toContain("读取核心入口文件");
@@ -563,7 +564,7 @@ describe("AgentToolCallBlock", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           ServiceProvider,
           { services: mockServices },
@@ -639,7 +640,7 @@ describe("AgentToolCallBlock", () => {
     // showing the running gradient.
     expect(html).toMatch(/>(SubAgent|子智能体)</);
     expect(html).toContain("Explore");
-    expect(html).not.toContain("正在读取");
+    expect(html).not.toContain(expectedCopy("chat.toolCall.read.reading"));
     expect(html).not.toContain("App.tsx");
     expect(html).not.toContain("animated-gradient-text");
     expect(html).not.toContain("读取核心入口文件");
@@ -649,7 +650,7 @@ describe("AgentToolCallBlock", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           ServiceProvider,
           { services: mockServices },
@@ -721,7 +722,7 @@ describe("AgentToolCallBlock", () => {
       ),
     );
 
-    expect(html).toContain("正在读取");
+    expect(html).toContain(expectedCopy("chat.toolCall.read.reading"));
     expect(html).toContain("App.tsx");
     expect(html).not.toContain("overflow-hidden align-middle");
   });
@@ -730,7 +731,7 @@ describe("AgentToolCallBlock", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           ServiceProvider,
           { services: mockServices },
@@ -803,14 +804,14 @@ describe("AgentToolCallBlock", () => {
 
     expect(html).toContain("·");
     expect(html).toContain("App.tsx");
-    expect(html).toContain("正在读取");
+    expect(html).toContain(expectedCopy("chat.toolCall.read.reading"));
   });
 
   it("summarizes TodoWrite child tools with todo progress and active content", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           ServiceProvider,
           { services: mockServices },
@@ -896,7 +897,7 @@ describe("AgentToolCallBlock", () => {
     );
 
     expect(html).toContain("·");
-    expect(html).toContain("更新待办");
+    expect(html).toContain(expectedCopy("chat.toolCall.todo.updating"));
     expect(html).toContain("1/3");
     expect(html).toContain("补齐待办子工具摘要");
     expect(html).not.toContain("Running TodoWrite");
@@ -906,7 +907,7 @@ describe("AgentToolCallBlock", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           ServiceProvider,
           { services: mockServices },
@@ -981,7 +982,7 @@ describe("AgentToolCallBlock", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           ServiceProvider,
           { services: mockServices },
@@ -1054,7 +1055,7 @@ describe("AgentToolCallBlock", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           ServiceProvider,
           { services: mockServices },
@@ -1116,7 +1117,7 @@ describe("AgentToolCallBlock", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           ServiceProvider,
           { services: mockServices },
@@ -1208,7 +1209,7 @@ describe("AgentToolCallBlock", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           ServiceProvider,
           { services: mockServices },
@@ -1283,7 +1284,7 @@ describe("AgentToolCallBlock", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           ServiceProvider,
           { services: mockServices },
@@ -1353,7 +1354,7 @@ describe("AgentToolCallBlock", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           ServiceProvider,
           { services: mockServices },

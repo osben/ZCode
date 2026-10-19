@@ -10,12 +10,13 @@ describe("WebRemoteControlFailureScreen", () => {
   it("explains DEVICE_OFFLINE as a desktop disconnected state", () => {
     const copy = resolveWebRemoteControlScreenCopy(
       { reason: "desktop-disconnected", message: "Desktop device is offline." },
-      "zh-CN",
+      "en-US",
     );
 
-    expect(copy.title).toBe("桌面端已离线");
-    expect(copy.description).toContain("电脑端已经断开连接");
-    expect(copy.action).toBe("重新连接");
+    expect(copy.tone).toBe("danger");
+    expect(copy.title).toBe("Desktop Offline");
+    expect(copy.description).toContain("The desktop side disconnected.");
+    expect(copy.action).toBe("Try Again");
   });
 
   it("explains mobile recovery timeout without blaming desktop offline", () => {
@@ -24,12 +25,13 @@ describe("WebRemoteControlFailureScreen", () => {
         reason: "connection-recovery-timeout",
         message: "Mobile connection did not recover the RPC bridge in time.",
       },
-      "zh-CN",
+      "en-US",
     );
 
-    expect(copy.title).toBe("连接恢复超时");
-    expect(copy.description).toContain("手机端连接没有及时恢复");
-    expect(copy.description).not.toContain("电脑端已经断开连接");
+    expect(copy.tone).toBe("warning");
+    expect(copy.title).toBe("Connection Recovery Timed Out");
+    expect(copy.description).toContain("did not recover its remote control connection in time");
+    expect(copy.description).not.toContain("The desktop side disconnected.");
   });
 
   it("explains KICKED as another mobile controller taking over", () => {
@@ -38,11 +40,12 @@ describe("WebRemoteControlFailureScreen", () => {
         reason: "session-conflict",
         message: "Another mobile controller replaced this one.",
       },
-      "zh-CN",
+      "en-US",
     );
 
-    expect(copy.title).toBe("已被其他设备接管");
-    expect(copy.description).toContain("另一台远程控制设备");
+    expect(copy.tone).toBe("warning");
+    expect(copy.title).toBe("Taken Over By Another Device");
+    expect(copy.description).toContain("Another remote control device connected");
   });
 
   it("renders structured recovery guidance and the relay detail message", () => {

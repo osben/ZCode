@@ -747,7 +747,8 @@ async function prepareScenario(
   });
   const connectionSelection = parseBigModelConnectionSelection(bigmodelSelectedKey);
   await writeSettings({
-    ...(locale ? { locale, localePreference: locale } : {}),
+    locale: locale ?? "en-US",
+    localePreference: locale ?? "en-US",
     providerFamilyConnectionSelections: {
       bigmodel: connectionSelection,
     },

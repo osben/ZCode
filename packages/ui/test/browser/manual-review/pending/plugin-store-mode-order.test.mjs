@@ -8,6 +8,7 @@ import { createServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { chromium } from "playwright-core";
+import { expectedCopy } from "../../../helpers/uiCopy.js";
 
 const root = fileURLToPath(new URL("../../../../../../", import.meta.url));
 const entry = "/packages/ui/test/browser/manual-review/pending/plugin-store-mode-order.fixture.tsx";
@@ -70,7 +71,7 @@ const config = {
 const artifacts = join(tmpdir(), "zcode-plugin-mode-order");
 for (const [width, locale, theme] of [
   [1200, "en-US", "light"],
-  [390, "zh-CN", "dark"],
+  [390, "en-US", "dark"],
 ]) {
   test(`PSO-01/04/06/07/09 ${width}/${locale}/${theme}`, async () => {
     const page = await browser.newPage({ viewport: { width, height: 900 } });
@@ -189,14 +190,17 @@ for (const [width, locale, theme] of [
       ]);
       assert.equal(requests, 3);
       const categoryTitles = await page.locator("section h2").allTextContents();
-      assert.equal(categoryTitles.includes(locale === "zh-CN" ? "指南" : "Guides"), false);
-      assert.equal(categoryTitles.includes(locale === "zh-CN" ? "法律" : "Legal"), false);
+      assert.equal(categoryTitles.includes("Guides"), false);
+      assert.equal(
+        categoryTitles.includes(expectedCopy("settings.plugins.store.category.legal")),
+        false,
+      );
       const legacyCategory = await page
         .locator(
           '[data-testid="plugin-store-card"][data-plugin-id="legacy-guide@zcode-plugins-official"]',
         )
         .evaluate((element) => element.closest("section").querySelector("h2").textContent);
-      assert.equal(legacyCategory, locale === "zh-CN" ? "实用工具" : "Utilities");
+      assert.equal(legacyCategory, expectedCopy("settings.plugins.store.category.utilities"));
       assert.equal(
         await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
         true,
@@ -219,7 +223,7 @@ for (const [width, locale, theme] of [
         await legalCard.evaluate(
           (element) => element.closest("section").querySelector("h2").textContent,
         ),
-        locale === "zh-CN" ? "法律" : "Legal",
+        expectedCopy("settings.plugins.store.category.legal"),
       );
       await page.waitForFunction(() => {
         const sections = Array.from(document.querySelectorAll("section")).filter((s) =>
@@ -267,93 +271,89 @@ for (const [width, locale, theme] of [
 }
 
 for (const width of [1200, 390]) {
-  for (const locale of ["en-US", "zh-CN"]) {
-    for (const theme of ["light", "dark"]) {
-      test(`PLM-MISSING-CONFIG ${width}/${locale}/${theme}`, async () => {
-        const page = await browser.newPage({ viewport: { width, height: 900 } });
-        const errors = [];
-        page.on("pageerror", (error) => errors.push(error.message));
-        try {
-          await page.route("**/order", (route) => route.fulfill({ json: config }));
-          await page.goto(`${origin}fixture?missingConfig=1&locale=${locale}&theme=${theme}`);
-          const card = (name) =>
-            page.locator(`[data-testid="plugin-store-card"][data-plugin-id="${name}@${official}"]`);
-          await card("documents").waitFor();
-          assert.equal(await card("document-skills").count(), 0);
-          for (const name of ["documents", "pdf", "presentations", "spreadsheets", "image-search"])
-            assert.equal(await card(name).count(), 1, name);
-          assert.equal(
-            await card("repairable")
-              .getByRole("button", { name: locale === "zh-CN" ? "安装" : "Install", exact: true })
-              .count(),
-            1,
+  for (const theme of ["light", "dark"]) {
+    test(`PLM-MISSING-CONFIG ${width}/en-US/${theme}`, async () => {
+      const page = await browser.newPage({ viewport: { width, height: 900 } });
+      const errors = [];
+      page.on("pageerror", (error) => errors.push(error.message));
+      try {
+        await page.route("**/order", (route) => route.fulfill({ json: config }));
+        await page.goto(`${origin}fixture?missingConfig=1&locale=en-US&theme=${theme}`);
+        const card = (name) =>
+          page.locator(`[data-testid="plugin-store-card"][data-plugin-id="${name}@${official}"]`);
+        await card("documents").waitFor();
+        assert.equal(await card("document-skills").count(), 0);
+        for (const name of ["documents", "pdf", "presentations", "spreadsheets", "image-search"])
+          assert.equal(await card(name).count(), 1, name);
+        assert.equal(
+          await card("repairable")
+            .getByRole("button", {
+              name: expectedCopy("settings.plugins.store.install"),
+              exact: true,
+            })
+            .count(),
+          1,
+        );
+        const bundledIcons = [
+          ["plugin-creator", "plugin-creator.png"],
+          ["documents", "documents.png"],
+          ["pdf", "pdf.png"],
+          ["presentations", "presentations.png"],
+          ["spreadsheets", "spreadsheets.png"],
+          ["image-search", "image-search.png"],
+        ];
+        await Promise.all(bundledIcons.map(([name]) => card(name).locator("img").waitFor()));
+        await page.waitForFunction(() => {
+          const images = document.querySelectorAll(
+            '[data-plugin-id$="@zcode-plugins-official"] img',
           );
-          const bundledIcons = [
-            ["plugin-creator", "plugin-creator.png"],
-            ["documents", "documents.png"],
-            ["pdf", "pdf.png"],
-            ["presentations", "presentations.png"],
-            ["spreadsheets", "spreadsheets.png"],
-            ["image-search", "image-search.png"],
-          ];
-          await Promise.all(bundledIcons.map(([name]) => card(name).locator("img").waitFor()));
-          await page.waitForFunction(() => {
-            const images = document.querySelectorAll(
-              '[data-plugin-id$="@zcode-plugins-official"] img',
-            );
-            return [...images].every((image) => image.complete && image.naturalWidth > 0);
-          });
-          for (const [name, assetName] of bundledIcons)
-            assert.match(
-              await card(name).locator("img").getAttribute("src"),
-              new RegExp(assetName),
-            );
-          await mkdir(artifacts, { recursive: true });
-          await page.screenshot({
-            path: join(artifacts, `missing-config-${width}-${locale}-${theme}.png`),
-          });
-          await page.getByRole("searchbox").fill("document-skills");
-          assert.equal(await page.getByTestId("plugin-store-card").count(), 0);
-          assert.deepEqual(errors, []);
-        } finally {
-          await page.close();
-        }
-      });
-    }
+          return [...images].every((image) => image.complete && image.naturalWidth > 0);
+        });
+        for (const [name, assetName] of bundledIcons)
+          assert.match(await card(name).locator("img").getAttribute("src"), new RegExp(assetName));
+        await mkdir(artifacts, { recursive: true });
+        await page.screenshot({
+          path: join(artifacts, `missing-config-${width}-en-US-${theme}.png`),
+        });
+        await page.getByRole("searchbox").fill("document-skills");
+        assert.equal(await page.getByTestId("plugin-store-card").count(), 0);
+        assert.deepEqual(errors, []);
+      } finally {
+        await page.close();
+      }
+    });
   }
 }
 
 for (const width of [1200, 390]) {
-  for (const locale of ["en-US", "zh-CN"]) {
-    for (const theme of ["light", "dark"]) {
-      test(`PLM-DOCUMENT-ORDER ${width}/${locale}/${theme}`, async () => {
-        const page = await browser.newPage({ viewport: { width, height: 900 } });
-        try {
-          await page.route("**/order", (route) => route.fulfill({ json: null }));
-          await page.goto(`${origin}fixture?documentOrder=1&locale=${locale}&theme=${theme}`);
-          await page.getByTestId("plugin-store-installed-item").first().waitFor();
-          const expected = ["pdf", "presentations", "spreadsheets", "documents"].map(
-            (name) => `${name}@${official}`,
-          );
-          for (const mode of ["code", "work"]) {
-            await page.getByTestId(mode).click();
-            for (const testId of ["plugin-store-installed-item", "plugin-store-card"]) {
-              const ids = await page
-                .getByTestId(testId)
-                .evaluateAll((elements) =>
-                  elements.slice(0, 4).map((element) => element.getAttribute("data-plugin-id")),
-                );
-              assert.deepEqual(ids, expected);
-            }
+  for (const theme of ["light", "dark"]) {
+    test(`PLM-DOCUMENT-ORDER ${width}/en-US/${theme}`, async () => {
+      const page = await browser.newPage({ viewport: { width, height: 900 } });
+      try {
+        await page.route("**/order", (route) => route.fulfill({ json: null }));
+        await page.goto(`${origin}fixture?documentOrder=1&locale=en-US&theme=${theme}`);
+        await page.getByTestId("plugin-store-installed-item").first().waitFor();
+        const expected = ["pdf", "presentations", "spreadsheets", "documents"].map(
+          (name) => `${name}@${official}`,
+        );
+        for (const mode of ["code", "work"]) {
+          await page.getByTestId(mode).click();
+          for (const testId of ["plugin-store-installed-item", "plugin-store-card"]) {
+            const ids = await page
+              .getByTestId(testId)
+              .evaluateAll((elements) =>
+                elements.slice(0, 4).map((element) => element.getAttribute("data-plugin-id")),
+              );
+            assert.deepEqual(ids, expected);
           }
-          await mkdir(artifacts, { recursive: true });
-          await page.screenshot({
-            path: join(artifacts, `document-order-${width}-${locale}-${theme}.png`),
-          });
-        } finally {
-          await page.close();
         }
-      });
-    }
+        await mkdir(artifacts, { recursive: true });
+        await page.screenshot({
+          path: join(artifacts, `document-order-${width}-en-US-${theme}.png`),
+        });
+      } finally {
+        await page.close();
+      }
+    });
   }
 }

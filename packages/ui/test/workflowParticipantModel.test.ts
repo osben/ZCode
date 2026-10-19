@@ -22,6 +22,7 @@ import type {
   WorkflowParticipantData,
   WorkflowStepData,
 } from "../src/components/workflow-graph/types.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 /**
  * Pure selectors of the participant layer (docs/dynamic-workflow/presentation.md). The payload's
@@ -943,7 +944,9 @@ describe("phasesOf", () => {
   });
 
   it("falls back to every phase when a branch comes out empty: never hide a running subagent", () => {
-    expect([...phasesOf("留白", graph, true)]).toEqual(["unphased", "phase#1", "phase#2"]);
+    expect([
+      ...phasesOf(expectedCopy("chat.permission.workflow.holes.label"), graph, true),
+    ]).toEqual(["unphased", "phase#1", "phase#2"]);
     // Vocabulary exists but the graph has no unnamed phase (every step sits after the first marker): an unstamped instance would rather show everywhere.
     const named: WorkflowCausalityGraphData = { ...graph, phases: graph.phases!.slice(1) };
     expect([...phasesOf(undefined, named, true)]).toEqual(["phase#1", "phase#2"]);

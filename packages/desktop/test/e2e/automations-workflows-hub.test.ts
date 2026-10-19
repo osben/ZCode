@@ -96,10 +96,9 @@ async function readTestIdText(currentTestId: string): Promise<string | null> {
   }, currentTestId);
 }
 
-// Assertions read literal zh-CN dialog text while the runner machine defaults to en-US, so pin
-// the locale through the real settings file and reload, matching the feishu specs' convention.
-async function ensureZhCnLocale() {
-  await seedSettings({ locale: "zh-CN", localePreference: "zh-CN" });
+// Pin the locale through the real settings file so copy assertions do not depend on the runner.
+async function ensureEnUsLocale() {
+  await seedSettings({ locale: "en-US", localePreference: "en-US" });
   await browser.refresh();
 }
 
@@ -133,7 +132,7 @@ async function leaveAutomationsPage() {
  */
 describe("已保存工作流中枢 E2E", () => {
   before(async () => {
-    await ensureZhCnLocale();
+    await ensureEnUsLocale();
     await mkdir(WORKFLOWS_DIR, { recursive: true });
     await writeFile(WORKFLOW_FILE, SEED, "utf-8");
   });
@@ -277,7 +276,7 @@ const GLOBAL_SEED = [
 
 describe("全局工作流中枢 E2E", () => {
   before(async () => {
-    await ensureZhCnLocale();
+    await ensureEnUsLocale();
     await mkdir(GLOBAL_WORKFLOWS_DIR, { recursive: true });
     await writeFile(GLOBAL_WORKFLOW_FILE, GLOBAL_SEED, "utf-8");
   });
@@ -567,7 +566,7 @@ async function readTimelineText(): Promise<string> {
 
 describe("直接启动 E2E", () => {
   before(async () => {
-    await ensureZhCnLocale();
+    await ensureEnUsLocale();
     await mkdir(WORKFLOWS_DIR, { recursive: true });
     await writeFile(LAUNCH_OK_FILE, LAUNCH_OK_SEED, "utf-8");
     await writeFile(LAUNCH_FAIL_FILE, LAUNCH_FAIL_SEED, "utf-8");
@@ -611,8 +610,8 @@ describe("直接启动 E2E", () => {
     });
     const dialogText = (await readTestIdPrefixText(TID_WORKFLOW_LAUNCH_DIALOG)) ?? "";
     expect(dialogText).toContain(LAUNCH_OK_NAME); // 名字（mono）
-    expect(dialogText).toContain("项目"); // 作用域徽标（scope.project）
-    expect(dialogText).toContain("的新会话中运行"); // 「将立即在 X 的新会话中运行」说明
+    expect(dialogText).toContain("Project"); // Scope badge (scope.project).
+    expect(dialogText).toContain("Starts right away in a new session");
 
     // 3) Fill the arg and submit. Note the task count before submitting; the new session should add one more shortly.
     const tasksBeforeLaunch = await countTaskItems();
@@ -721,7 +720,7 @@ describe("直接启动 E2E", () => {
       timeoutMsg: "编译失败没有在实参窗行内错误区显示",
     });
     const errorText = (await readTestIdPrefixText(TID_WORKFLOW_LAUNCH_ERROR)) ?? "";
-    expect(errorText).toContain("工作流脚本编译失败");
+    expect(errorText).toContain("The workflow script did not compile");
     // The args dialog is still up (failure does not close it).
     await waitForTestIdByDom(TID_WORKFLOW_LAUNCH_DIALOG, {
       timeoutMsg: "编译失败后实参窗被意外关闭",
@@ -774,7 +773,7 @@ describe("直接启动 E2E", () => {
       timeoutMsg: "解不出来的模型没有在实参窗行内错误区显示",
     });
     const errorText = (await readTestIdPrefixText(TID_WORKFLOW_LAUNCH_ERROR)) ?? "";
-    expect(errorText).toContain("工作流脚本编译失败");
+    expect(errorText).toContain("The workflow script did not compile");
     expect(errorText).toMatch(/L\d+:C\d+/);
     expect(
       errorText.includes(LAUNCH_MODEL_UNKNOWN) || errorText.includes("cannot choose models"),

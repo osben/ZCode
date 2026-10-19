@@ -18,6 +18,7 @@ import {
   TID_BROWSER_DEVTOOLS_BUTTON,
   TID_BROWSER_ELEMENT_PICKER_BUTTON,
   TID_BROWSER_FORWARD_BUTTON,
+  TID_BROWSER_GUEST_RETRY,
   TID_BROWSER_LOAD_ERROR,
   TID_BROWSER_LOAD_ERROR_CERT_HINT,
   TID_BROWSER_MORE_BUTTON,
@@ -318,7 +319,13 @@ export function BrowserGuestFailureState({
             { exitCode: guestFailure.exitCode, reason: guestFailure.reason },
           )}
         </p>
-        <Button type="button" variant="outline" className="mt-6" onClick={onRetry}>
+        <Button
+          type="button"
+          variant="outline"
+          className="mt-6"
+          data-testid={TID_BROWSER_GUEST_RETRY}
+          onClick={onRetry}
+        >
           <RefreshCw className="size-4" />
           {formatMessage({ id: "browser.guestFailed.retry" })}
         </Button>

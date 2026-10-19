@@ -10,6 +10,7 @@ import {
 import { Button } from "@/components/ui/button.js";
 import { toast } from "@/components/ui/toast.js";
 import { cn } from "@/components/lib/utils.js";
+import { TID_MODEL_TRAJECTORY_REFRESH } from "@zcode/shared";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useModelTrajectory } from "@/hooks/useModelTrajectory.js";
 import { usePlatform } from "@/hooks/usePlatform.js";
@@ -237,6 +238,7 @@ export function ModelTrajectoryPane({
             type="button"
             variant="ghost"
             size="icon-sm"
+            data-testid={TID_MODEL_TRAJECTORY_REFRESH}
             onClick={refresh}
             aria-label={intl.formatMessage({ id: "modelTrajectory.refresh" })}
             title={intl.formatMessage({ id: "modelTrajectory.refresh" })}

@@ -2,6 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it } from "vitest";
 import { ConversationShareReadonlyTimeline } from "@/v4/ConversationShareReadonlyTimeline.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 // SG-01 injection boundary: the timeline no longer statically imports OpenSplitButton (keeping the
 // open-with subtree out of the public page bundle); consumers inject it via artifactOpenAction. This test verifies the same injection contract with a stub component.
@@ -101,14 +102,14 @@ describe("ConversationShareReadonlyTimeline", () => {
     const html = renderToStaticMarkup(
       createElement(ConversationShareReadonlyTimeline, {
         rows,
-        locale: "zh-CN",
+        locale: "en-US",
       }),
     );
     expect(html).toContain('data-v4-user-input-bubble="true"');
     expect(html).toContain("rounded-tr-xs");
     expect(html).toContain("这是");
     expect(html).toContain('data-conversation-share-turn="turn-1"');
-    expect(html).toContain("搜索");
+    expect(html).toContain("Search");
     expect(html).toContain("tool-summary");
     expect(html).not.toContain("<details");
     expect(html).not.toContain("canEdit");
@@ -169,13 +170,13 @@ describe("ConversationShareReadonlyTimeline", () => {
     const html = renderToStaticMarkup(
       createElement(ConversationShareReadonlyTimeline, {
         rows: historyRows,
-        locale: "zh-CN",
+        locale: "en-US",
       }),
     );
     expect(html.indexOf('data-v4-user-input-bubble="true"')).toBeLessThan(
       html.indexOf('data-conversation-share-history-trigger="true"'),
     );
-    expect(html).toContain("已工作 2 分 45 秒");
+    expect(html).toContain("Worked for 2m 45s");
   });
 
   it("renders headings and tables through the Desktop MessageResponse pipeline", () => {
@@ -206,7 +207,7 @@ describe("ConversationShareReadonlyTimeline", () => {
     const html = renderToStaticMarkup(
       createElement(ConversationShareReadonlyTimeline, {
         rows: markdownRows,
-        locale: "zh-CN",
+        locale: "en-US",
       }),
     );
     expect(html).toContain('data-streamdown="heading-1"');
@@ -255,12 +256,12 @@ describe("ConversationShareReadonlyTimeline", () => {
     const html = renderToStaticMarkup(
       createElement(ConversationShareReadonlyTimeline, {
         rows: executeRows,
-        locale: "zh-CN",
+        locale: "en-US",
       }),
     );
 
     expect(html).toContain('data-conversation-share-work-group="executeGroup"');
-    expect(html).toContain("执行");
+    expect(html).toContain(expectedCopy("chat.toolCall.execute.execute"));
     expect(html).toContain("lucide-square-terminal");
   });
 
@@ -277,7 +278,7 @@ describe("ConversationShareReadonlyTimeline", () => {
     const html = renderToStaticMarkup(
       createElement(ConversationShareReadonlyTimeline, {
         rows: searchRows,
-        locale: "zh-CN",
+        locale: "en-US",
       }),
     );
 
@@ -315,11 +316,11 @@ describe("ConversationShareReadonlyTimeline", () => {
     const html = renderToStaticMarkup(
       createElement(ConversationShareReadonlyTimeline, {
         rows: markerRows as never,
-        locale: "zh-CN",
+        locale: "en-US",
       }),
     );
 
-    expect(html).toContain("上下文已压缩");
+    expect(html).toContain("Context compacted");
     expect(html).not.toContain(">compact<");
     // Unrecognized types render nothing for the row instead of degrading into a printed enum name.
     expect(html).not.toContain("goalVerify");
@@ -350,7 +351,7 @@ describe("ConversationShareReadonlyTimeline", () => {
     const html = renderToStaticMarkup(
       createElement(ConversationShareReadonlyTimeline, {
         rows: artifactRows as never,
-        locale: "zh-CN",
+        locale: "en-US",
         artifactUrls: new Map([["artifact-1", "https://example.invalid/a.pdf"]]),
       }),
     );
@@ -365,7 +366,7 @@ describe("ConversationShareReadonlyTimeline", () => {
     expect(html).toContain("flex size-11 shrink-0 items-center justify-center rounded-md");
     expect(html).toContain("pdf.svg");
     // The subtitle reuses the body's vocabulary and no longer prints raw byte counts.
-    expect(html).toContain("文档 · PDF");
+    expect(html).toContain(expectedCopy("chat.previewCards.pdf"));
     expect(html).toContain("169 KB");
     expect(html).not.toContain("172974 bytes");
     // The action button shares OpenSplitButton's look instead of being a blue text link; semantics are pinned
@@ -399,7 +400,7 @@ describe("ConversationShareReadonlyTimeline", () => {
     const html = renderToStaticMarkup(
       createElement(ConversationShareReadonlyTimeline, {
         rows: artifactRows as never,
-        locale: "zh-CN",
+        locale: "en-US",
         workspacePath: "/workspace",
         artifactWorkspaceRelativePaths: new Map([
           ["artifact-1", ".zcode-share/share-1/shared-artifacts/晨报.pdf"],
@@ -437,7 +438,7 @@ describe("ConversationShareReadonlyTimeline", () => {
     const html = renderToStaticMarkup(
       createElement(ConversationShareReadonlyTimeline, {
         rows: artifactRows as never,
-        locale: "zh-CN",
+        locale: "en-US",
         workspacePath: "/workspace",
         artifactWorkspaceRelativePaths: new Map([
           ["artifact-1", ".zcode-share/share-1/shared-artifacts/晨报.pdf"],
@@ -477,7 +478,7 @@ describe("ConversationShareReadonlyTimeline", () => {
     const html = renderToStaticMarkup(
       createElement(ConversationShareReadonlyTimeline, {
         rows: artifactRows as never,
-        locale: "zh-CN",
+        locale: "en-US",
         workspacePath: "/workspace",
         artifactWorkspaceRelativePaths: new Map([["artifact-1", "../secret.pdf"]]),
         onOpenCodeViewer: () => undefined,
@@ -502,7 +503,7 @@ describe("ConversationShareReadonlyTimeline", () => {
     const html = renderToStaticMarkup(
       createElement(ConversationShareReadonlyTimeline, {
         rows: artifactRows as never,
-        locale: "zh-CN",
+        locale: "en-US",
         workspacePath: "/workspace",
         artifactWorkspaceRelativePaths: new Map([
           ["artifact-1", "/etc/passwd"],
@@ -533,7 +534,7 @@ describe("ConversationShareReadonlyTimeline", () => {
     const html = renderToStaticMarkup(
       createElement(ConversationShareReadonlyTimeline, {
         rows: artifactRows as never,
-        locale: "zh-CN",
+        locale: "en-US",
         workspacePath: "/workspace",
         artifactWorkspaceRelativePaths: new Map([
           // Nested subdirectories: 5 segments.
@@ -631,7 +632,7 @@ describe("ConversationShareReadonlyTimeline", () => {
     const html = renderToStaticMarkup(
       createElement(ConversationShareReadonlyTimeline, {
         rows: remoteImageRows as never,
-        locale: "zh-CN",
+        locale: "en-US",
       }),
     );
 

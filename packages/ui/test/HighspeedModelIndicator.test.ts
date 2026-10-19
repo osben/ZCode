@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { HighspeedModelIndicator } from "@/highspeed/HighspeedModelIndicator.js";
 import { TooltipProvider } from "@/components/ui/tooltip.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { expectedCopy, TEST_LOCALE } from "./helpers/uiCopy.js";
 
 afterEach(cleanup);
 
@@ -13,7 +14,7 @@ function renderIndicator(sweepActive = false, animateEntrance = true) {
   return render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: TEST_LOCALE },
       createElement(
         TooltipProvider,
         null,
@@ -36,14 +37,15 @@ function readFlipContainerOpacity(container: HTMLElement): string | undefined {
 
 describe("HighspeedModelIndicator", () => {
   it("renders the draw model as a read-only Highspeed identity", () => {
-    const { container, getByLabelText } = renderIndicator();
+    const { container } = renderIndicator();
     const modelIcon = container.querySelector('[data-highspeed-model-icon="true"]');
+    const indicator = container.querySelector('[data-highspeed-model-indicator="true"]');
 
-    expect(getByLabelText("GLM-5.3 HighSpeed")).toBeTruthy();
+    expect(indicator?.getAttribute("aria-label")).toBe("GLM-5.3 HighSpeed");
     expect(container.textContent).toContain("GLM-5.3 HighSpeed");
     expect(modelIcon?.tagName).toBe("IMG");
     expect(decodeURIComponent(modelIcon?.getAttribute("src") ?? "")).toContain("stroke='#A888F2'");
-    expect(getByLabelText("GLM-5.3 HighSpeed").className).toContain("@max-xl/composer:size-7");
+    expect(indicator?.className).toContain("@max-xl/composer:size-7");
     expect(container.querySelector(".highspeed-model-trigger-label-sweep")?.className).toContain(
       "@xl/composer:inline-flex",
     );
@@ -52,14 +54,20 @@ describe("HighspeedModelIndicator", () => {
   });
 
   it("在 hover 时展示加速前的原模型", async () => {
-    renderIndicator();
+    const { container } = renderIndicator();
+    const indicator = container.querySelector('[data-highspeed-model-indicator="true"]');
+    expect(indicator).not.toBeNull();
 
-    fireEvent.pointerMove(screen.getByLabelText("GLM-5.3 HighSpeed"), {
-      pointerType: "mouse",
-    });
+    fireEvent.pointerMove(indicator!, { pointerType: "mouse" });
 
-    expect((await screen.findAllByText("原模型：GLM-5.2")).length).toBeGreaterThan(0);
-    expect(screen.queryByText(/剩余时间/)).toBeNull();
+    const tooltips = await screen.findAllByRole("tooltip");
+    expect(
+      tooltips.some((tooltip) =>
+        tooltip.textContent?.includes(
+          expectedCopy("chat.highspeed.originalModel", { model: "GLM-5.2" }),
+        ),
+      ),
+    ).toBe(true);
   });
 
   it("draw 新命中从翻页起点入场；切回或恢复时直接呈现静止标识", () => {

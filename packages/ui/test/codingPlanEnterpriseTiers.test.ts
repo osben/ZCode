@@ -12,7 +12,7 @@ describe("enterprise tier labels", () => {
   ])("localizes %s using the configured messages", (tier, label) => {
     expect(
       formatEnterpriseTier(tier, {
-        locale: "zh-CN",
+        locale: "en-US",
         formatMessage: (id, fallback) => zhCN[id as keyof typeof zhCN] ?? fallback,
       }),
     ).toBe(label);

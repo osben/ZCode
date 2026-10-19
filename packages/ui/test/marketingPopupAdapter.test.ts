@@ -4,6 +4,7 @@ import {
   adaptMarketingPopup,
   marketingLabel,
 } from "@/components/marketing-touch/marketingPopupAdapter.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 describe("marketing popup adapter", () => {
   it.each(["zh-CN", "en-US"] as const)("%s Start 设置入口明确叫查看套餐", (locale) => {
@@ -31,7 +32,9 @@ describe("marketing popup adapter", () => {
       null,
       locale === "zh-CN" ? "查看套餐" : "View plan",
     );
-    expect(popup.dialog.buttons[0]?.label).toBe(locale === "zh-CN" ? "查看套餐" : "View plan");
+    expect(popup.dialog.buttons[0]?.label).toBe(
+      locale === "zh-CN" ? "查看套餐" : expectedCopy("manualClaimPlan.claim.dialog.modelSettings"),
+    );
     expect(popup.dialog.buttons[0]?.formattedLabel?.text).toBe(popup.dialog.buttons[0]?.label);
   });
   it("preserves popup themes and uses default when omitted", () => {

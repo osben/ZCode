@@ -5,6 +5,14 @@ import { Checkbox } from "@/components/ui/checkbox.js";
 import { Input } from "@/components/ui/input.js";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import {
+  testId,
+  TID_VOICE_LANGUAGE_CLEAR,
+  TID_VOICE_LANGUAGE_EMPTY,
+  TID_VOICE_LANGUAGE_OPTION,
+  TID_VOICE_LANGUAGE_SEARCH,
+  TID_VOICE_LANGUAGE_TRIGGER,
+} from "@zcode/shared";
 
 export interface VoiceLanguageOption {
   code: string;
@@ -71,6 +79,7 @@ export function VoiceDictationLanguagePicker({
           type="button"
           variant="outline"
           aria-label={`${ariaLabel}: ${summary}`}
+          data-testid={TID_VOICE_LANGUAGE_TRIGGER}
           className="w-full justify-between"
         >
           <span className="truncate">{summary}</span>
@@ -83,10 +92,14 @@ export function VoiceDictationLanguagePicker({
           onChange={(event) => setQuery(event.target.value)}
           placeholder={intl.formatMessage({ id: "voiceDictation.language.search" })}
           aria-label={intl.formatMessage({ id: "voiceDictation.language.search" })}
+          data-testid={TID_VOICE_LANGUAGE_SEARCH}
         />
         <div className="max-h-64 overflow-y-auto" role="group" aria-label={ariaLabel}>
           {visible.length === 0 ? (
-            <p className="px-2 py-3 text-center text-ui-base text-foreground-subtle">
+            <p
+              data-testid={TID_VOICE_LANGUAGE_EMPTY}
+              className="px-2 py-3 text-center text-ui-base text-foreground-subtle"
+            >
               {intl.formatMessage({ id: "voiceDictation.language.noMatch" })}
             </p>
           ) : (
@@ -97,6 +110,7 @@ export function VoiceDictationLanguagePicker({
               >
                 <Checkbox
                   aria-label={option.label}
+                  data-testid={testId(TID_VOICE_LANGUAGE_OPTION, option.code)}
                   checked={selected.includes(option.code)}
                   onCheckedChange={() => onToggle(option.code)}
                 />
@@ -111,6 +125,7 @@ export function VoiceDictationLanguagePicker({
           variant="ghost"
           size="sm"
           disabled={selected.length === 0}
+          data-testid={TID_VOICE_LANGUAGE_CLEAR}
           onClick={onClear}
         >
           {intl.formatMessage({ id: "voiceDictation.language.clear" })}

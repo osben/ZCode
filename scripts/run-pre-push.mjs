@@ -62,7 +62,7 @@ async function main() {
     throw new Error("Run this gate with pnpm run verify:pre-push.");
   }
   const docsOnly = await isDocumentationOnly();
-  const stages = [["lint"], ["architecture:check", ["--", "--changed"]]];
+  const stages = [["lint"], ["architecture:check", ["--", "--changed"]], ["test-copy:check"]];
   if (!docsOnly) stages.push(["test:unit:affected"], ["test:node"]);
   for (const [task, args] of stages) {
     const status = await runStage(task, args);

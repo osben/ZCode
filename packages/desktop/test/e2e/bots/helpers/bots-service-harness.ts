@@ -191,7 +191,7 @@ export function createBotsServiceHarness(options: BotsServiceHarnessOptions): Bo
     zcodeTaskService,
     settingService: {
       get: async () => ({
-        locale: "zh-CN",
+        locale: "en-US",
         recentProjects: [E2E_BOT_WORKSPACE],
         lastWorkspaceSession: options.lastWorkspaceSession ?? [
           { kind: "local", workspacePath: E2E_BOT_WORKSPACE },

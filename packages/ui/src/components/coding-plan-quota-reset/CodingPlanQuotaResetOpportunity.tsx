@@ -1,4 +1,5 @@
 import { GiftIcon } from "lucide-react";
+import { TID_CODING_PLAN_QUOTA_RESET_OPPORTUNITY } from "@zcode/shared";
 import { useEffect, useState } from "react";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import {
@@ -93,6 +94,7 @@ export function CodingPlanQuotaResetOpportunity({
     const button = (
       <button
         type="button"
+        data-testid={TID_CODING_PLAN_QUOTA_RESET_OPPORTUNITY}
         aria-label={label}
         aria-hidden={!effectiveVisible}
         className={`${commonClassName} hover:bg-interaction-confirmation-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50`}

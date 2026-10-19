@@ -15,12 +15,13 @@ import {
   readAutomationsPageTab,
   writeAutomationsPageTab,
 } from "@/settings/saved-workflows/automationsPageTabMemory.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 function Harness({ initial = "automation" }: { initial?: AutomationsPageTab }) {
   const [tab, setTab] = useState<AutomationsPageTab>(initial);
   return createElement(
     ZCodeIntlProvider,
-    { initialLocale: "zh-CN" },
+    { initialLocale: "en-US" },
     createElement(AutomationsPageTitleSwitch, { value: tab, onValueChange: setTab }),
   );
 }
@@ -34,7 +35,10 @@ describe("AutomationsPageTitleSwitch", () => {
   it("两个标题词是 tablist 里的 tab，选中态跟随 value", () => {
     render(createElement(Harness));
     const tabs = screen.getAllByRole("tab");
-    expect(tabs.map((tab) => tab.textContent)).toEqual(["自动化", "工作流"]);
+    expect(tabs.map((tab) => tab.textContent)).toEqual([
+      expectedCopy("automations.pageTab.automation"),
+      expectedCopy("automations.pageTab.workflow"),
+    ]);
     expect(tabs[0]?.getAttribute("aria-selected")).toBe("true");
     expect(tabs[1]?.getAttribute("aria-selected")).toBe("false");
     // Only the selected item joins the Tab order; unselected items rely on arrow keys.

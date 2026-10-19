@@ -115,6 +115,7 @@ import { WorkflowArtifactSidePane } from "@/app-shell/WorkflowArtifactSidePane.j
 import { encodeBytesToBase64 } from "@/hooks/useWorkflowRunArtifactBytes.js";
 // eslint-disable-next-line import/first
 import { PlatformProvider } from "@/hooks/usePlatform.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const onOpenBrowserUrl = vi.fn();
 const onRevealFileInTree = vi.fn();
@@ -174,7 +175,7 @@ function renderPane(
   return render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: options.locale ?? "zh-CN" },
+      { initialLocale: options.locale ?? "en-US" },
       options.platform === undefined
         ? pane
         : createElement(PlatformProvider, {
@@ -365,7 +366,9 @@ describe("WorkflowArtifactSidePane html 卡", () => {
     fireEvent.click(view.getByTestId("workflow-artifact-open-in-browser"));
     expect(onOpenBrowserUrl).toHaveBeenCalledWith("file:///workspace/out/site.html");
     // The card must state that what opens is the workspace original, not this version's pinned bytes.
-    expect(view.getByTestId("workflow-artifact-note").textContent).toContain("工作区");
+    expect(view.getByTestId("workflow-artifact-note").textContent).toContain(
+      expectedCopy("chat.toolCall.workflow.run.artifacts.openInBrowserNote"),
+    );
   });
 
   it("远程 workspace（有 remoteSessionId）退成「仅本地工作区可预览」", async () => {
@@ -380,7 +383,9 @@ describe("WorkflowArtifactSidePane html 卡", () => {
 
     await waitFor(() => expect(view.getByTestId("workflow-artifact-html-card")).toBeTruthy());
     expect(view.queryByTestId("workflow-artifact-open-in-browser")).toBeNull();
-    expect(view.getByTestId("workflow-artifact-note").textContent).toContain("仅本地工作区");
+    expect(view.getByTestId("workflow-artifact-note").textContent).toContain(
+      expectedCopy("chat.toolCall.workflow.run.artifacts.localOnly"),
+    );
     expect(view.queryByTestId("workflow-artifact-reveal")).toBeNull();
   });
 
@@ -399,7 +404,9 @@ describe("WorkflowArtifactSidePane 版本步进器", () => {
     const view = renderPane();
     await waitFor(() => expect(view.getByTestId("pdf-viewer")).toBeTruthy());
     expect(view.queryByTestId("workflow-artifact-version-stepper")).toBeNull();
-    expect(view.getByTestId("workflow-artifact-version").textContent).toBe("第 1 版");
+    expect(view.getByTestId("workflow-artifact-version").textContent).toBe(
+      expectedCopy("chat.toolCall.workflow.run.artifacts.version", { version: 1 }),
+    );
   });
 
   it("多版时按**已知版本的数组**翻，并按所选版本重读字节", async () => {
@@ -418,12 +425,16 @@ describe("WorkflowArtifactSidePane 版本步进器", () => {
     const view = renderPane();
     await waitFor(() => expect(view.getByTestId("workflow-artifact-version-stepper")).toBeTruthy());
     // The default landing point is the latest version (the chip never carries a version number).
-    expect(view.getByTestId("workflow-artifact-version").textContent).toBe("第 3 版 / 共 3 版");
+    expect(view.getByTestId("workflow-artifact-version").textContent).toBe(
+      expectedCopy("chat.toolCall.workflow.run.artifacts.versionOf", { version: 3, total: 3 }),
+    );
     expect(view.getByTestId("workflow-artifact-version-next").hasAttribute("disabled")).toBe(true);
 
     fireEvent.click(view.getByTestId("workflow-artifact-version-previous"));
     await waitFor(() =>
-      expect(view.getByTestId("workflow-artifact-version").textContent).toBe("第 2 版 / 共 3 版"),
+      expect(view.getByTestId("workflow-artifact-version").textContent).toBe(
+        expectedCopy("chat.toolCall.workflow.run.artifacts.versionOf", { version: 2, total: 3 }),
+      ),
     );
     await waitFor(() => expect(workflowRunArtifactRead.mock.calls.at(-1)?.[0]?.version).toBe(2));
   });
@@ -459,7 +470,9 @@ describe("WorkflowArtifactSidePane 版本步进器", () => {
     const view = renderPane();
     await waitFor(() => expect(view.getByTestId("pdf-viewer")).toBeTruthy());
     expect(view.queryByTestId("workflow-artifact-version-stepper")).toBeNull();
-    expect(view.getByTestId("workflow-artifact-version").textContent).toBe("第 4 版");
+    expect(view.getByTestId("workflow-artifact-version").textContent).toBe(
+      expectedCopy("chat.toolCall.workflow.run.artifacts.version", { version: 4 }),
+    );
   });
 });
 
@@ -503,7 +516,7 @@ describe("WorkflowArtifactSidePane 元数据来源与空态", () => {
     const view = renderPane();
     await waitFor(() =>
       expect(view.getByTestId("workflow-artifact-placeholder").textContent).toBe(
-        "这个产物已经不在了。",
+        expectedCopy("chat.toolCall.workflow.run.artifacts.missing"),
       ),
     );
   });
@@ -513,7 +526,7 @@ describe("WorkflowArtifactSidePane 元数据来源与空态", () => {
     const view = renderPane();
     await waitFor(() =>
       expect(view.getByTestId("workflow-artifact-placeholder").textContent).toBe(
-        "当前会话读不到产物详情。",
+        expectedCopy("chat.toolCall.workflow.run.artifacts.unavailable"),
       ),
     );
   });
@@ -561,7 +574,7 @@ describe("WorkflowArtifactSidePane 头部动作", () => {
   it("没有「下载」按钮——renderer 没有任何把字节存成用户文件的宿主能力", async () => {
     const view = renderPane();
     await waitFor(() => expect(view.getByTestId("pdf-viewer")).toBeTruthy());
-    expect(view.queryByText("下载")).toBeNull();
+    expect(view.queryByText(expectedCopy("voiceDictation.models.download"))).toBeNull();
   });
 });
 
@@ -683,7 +696,9 @@ describe("WorkflowArtifactSidePane 作为文件打开", () => {
 
     fireEvent.click(view.getByTestId("workflow-artifact-version-previous"));
     await waitFor(() =>
-      expect(view.getByTestId("workflow-artifact-version").textContent).toBe("第 1 版 / 共 2 版"),
+      expect(view.getByTestId("workflow-artifact-version").textContent).toBe(
+        expectedCopy("chat.toolCall.workflow.run.artifacts.versionOf", { version: 1, total: 2 }),
+      ),
     );
     await waitFor(() =>
       expect(view.getByTestId("pdf-viewer").getAttribute("data-size")).toBe(
@@ -727,7 +742,11 @@ describe("WorkflowArtifactSidePane 作为文件打开", () => {
 
     await waitFor(() => expect(view.getByTestId("markdown-response")).toBeTruthy());
     fireEvent.click(view.getByTestId("workflow-artifact-open-as-file"));
-    await waitFor(() => expect(toast).toHaveBeenCalledWith("无法作为文件打开此产物"));
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith(
+        expectedCopy("chat.toolCall.workflow.run.artifacts.openAsFileFailed"),
+      ),
+    );
   });
 
   it("副本写失败时同样给 toast", async () => {
@@ -742,7 +761,11 @@ describe("WorkflowArtifactSidePane 作为文件打开", () => {
 
     await waitFor(() => expect(view.getByTestId("markdown-response")).toBeTruthy());
     fireEvent.click(view.getByTestId("workflow-artifact-open-as-file"));
-    await waitFor(() => expect(toast).toHaveBeenCalledWith("无法作为文件打开此产物"));
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith(
+        expectedCopy("chat.toolCall.workflow.run.artifacts.openAsFileFailed"),
+      ),
+    );
     expect(platform.openExternalFile).not.toHaveBeenCalled();
   });
 
@@ -787,7 +810,10 @@ describe("WorkflowArtifactSidePane 作为文件打开", () => {
     );
     const names = view.getAllByRole("menuitem").map((item) => item.textContent);
     // Location actions come after the apps: "reveal in workspace" first, then "copy absolute path".
-    expect(names.slice(-2)).toEqual(["在工作区显示", "复制绝对路径"]);
+    expect(names.slice(-2)).toEqual([
+      expectedCopy("chat.toolCall.workflow.run.artifacts.reveal"),
+      expectedCopy("fileActions.copyAbsolutePath"),
+    ]);
 
     fireEvent.click(view.getByTestId("workflow-artifact-open-as-file-reveal"));
     expect(onRevealFileInTree).toHaveBeenCalledWith("/workspace/out/book.pdf");
@@ -807,7 +833,9 @@ describe("WorkflowArtifactSidePane 作为文件打开", () => {
       button: 0,
       ctrlKey: false,
     });
-    await waitFor(() => expect(markdownView.getByText("复制绝对路径")).toBeTruthy());
+    await waitFor(() =>
+      expect(markdownView.getByText(expectedCopy("fileActions.copyAbsolutePath"))).toBeTruthy(),
+    );
     expect(markdownView.queryByTestId("workflow-artifact-open-as-file-reveal")).toBeNull();
     cleanup();
 
@@ -822,7 +850,9 @@ describe("WorkflowArtifactSidePane 作为文件打开", () => {
       button: 0,
       ctrlKey: false,
     });
-    await waitFor(() => expect(remoteView.getByText("复制绝对路径")).toBeTruthy());
+    await waitFor(() =>
+      expect(remoteView.getByText(expectedCopy("fileActions.copyAbsolutePath"))).toBeTruthy(),
+    );
     expect(remoteView.queryByTestId("workflow-artifact-open-as-file-reveal")).toBeNull();
   });
 
@@ -842,8 +872,10 @@ describe("WorkflowArtifactSidePane 作为文件打开", () => {
       button: 0,
       ctrlKey: false,
     });
-    await waitFor(() => expect(view.getByText("复制绝对路径")).toBeTruthy());
-    fireEvent.click(view.getByText("复制绝对路径"));
+    await waitFor(() =>
+      expect(view.getByText(expectedCopy("fileActions.copyAbsolutePath"))).toBeTruthy(),
+    );
+    fireEvent.click(view.getByText(expectedCopy("fileActions.copyAbsolutePath")));
 
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("/copies/notes.md"));
   });

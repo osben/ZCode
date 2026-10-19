@@ -522,7 +522,7 @@ export function ConversationShareLandingPage({
             {artifactCount ? (
               // This previously hard-coded English artifact/artifacts and pluralization, producing mixed-language text
               // on the Chinese page, such as "Sep 3, 2026 11:55 · 1 artifact".
-              <span aria-label={artifactCountLabel}>· {artifactCountLabel}</span>
+              <span data-share-artifact-count={artifactCount}>· {artifactCountLabel}</span>
             ) : null}
           </div>
         </ShareContentInset>
@@ -627,7 +627,12 @@ export function ConversationShareLandingStatus({
     );
   return (
     <main className="flex h-full min-h-0 items-center justify-center overflow-y-auto bg-background px-4 py-8 text-foreground">
-      <section className="w-full max-w-md rounded-lg border border-card-border bg-card p-6 shadow-sm">
+      <section
+        data-share-status={state.kind}
+        data-share-error={state.kind === "error" ? state.error : undefined}
+        data-share-locale={localeOf(locale)}
+        className="w-full max-w-md rounded-lg border border-card-border bg-card p-6 shadow-sm"
+      >
         <div className="mb-4 text-ui-sm font-medium text-brand">{copy.brand}</div>
         <h1 className="text-ui-xl font-semibold">{content.title}</h1>
         <p className="mt-3 text-ui-base leading-6 text-foreground-subtle">{content.description}</p>

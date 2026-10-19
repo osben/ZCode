@@ -1,11 +1,12 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import zhCN from "@/i18n/locales/zh-CN.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { ExecuteGroupToolCallBlock } from "@/ToolCallBlocks/renderers/execute-group.js";
 
 function renderExecuteGroup(
-  locale: "zh-CN" | "en-US",
+  locale: "en-US" | "zh-CN",
   statuses: Array<"pending" | "completed" | "failed" | "stopped" | "in_progress">,
   options: { forceOpen?: boolean; durationMs?: number } = {},
 ) {
@@ -70,7 +71,7 @@ describe("ExecuteGroupToolCallBlock", () => {
 
     expect(html).toContain(">终端</span>");
     expect(enHtml).toContain(">Terminal</span>");
-    expect(html).toContain("正在执行");
+    expect(html).toContain(zhCN["chat.toolCall.execute.running"]);
     expect(html).toContain("pnpm test");
     expect(html).not.toContain("2 个命令");
     expect(html).toContain(">·</span>");

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { TID_OFFPEAK_CARD, TID_OFFPEAK_CARD_SESSION, type ZCodeOffPeakTask } from "@zcode/shared";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { OffPeakTaskList } from "@/settings/OffPeakTaskList.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 afterEach(cleanup);
 
@@ -23,7 +24,7 @@ function renderList(tasks: ZCodeOffPeakTask[]) {
   return render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(OffPeakTaskList, {
         tasks,
         busyOperationId: null,
@@ -49,7 +50,7 @@ describe("OffPeakTaskList render", () => {
       }),
     ]);
     const card = view.getByTestId(TID_OFFPEAK_CARD);
-    const statusLabel = view.getByText("失败");
+    const statusLabel = view.getByText(expectedCopy("offPeak.status.failed"));
     const badge = statusLabel.parentElement!;
     // Bug 回归：徽章曾是 min-w-0，会被右侧会话标题压到只剩一个字。
     expect(badge.className).toContain("shrink-0");
@@ -69,7 +70,7 @@ describe("OffPeakTaskList render", () => {
     view.rerender(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(OffPeakTaskList, {
           tasks: [...eight, task({ offPeakTaskId: "t-8" })],
           busyOperationId: null,

@@ -7,6 +7,7 @@ import {
   resolveToastAnchorLeft,
   ToastMessageView,
 } from "@/components/ui/toast.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 describe("toast", () => {
   it("同一目标与动作替换旧消息，不同消息保持最新在底部", () => {
@@ -132,24 +133,25 @@ describe("toast", () => {
   });
 
   it("centers a notice action vertically beside multiline content", () => {
+    const pluginLabel = expectedCopy("chat.draft.suggestedPrompt.plugin.documentSkills");
     const html = renderToStaticMarkup(
       createElement(ToastMessageView, {
         item: {
           id: 4,
-          message: "文档技能\n插件未安装",
+          message: `${pluginLabel}\n${expectedCopy("settings.plugins.detail.notInstalled")}`,
           durationMs: 5000,
           position: "top-right",
           variant: "info",
-          actionLabel: "一键安装",
+          actionLabel: expectedCopy("settings.plugins.store.install"),
           onAction: vi.fn(),
         },
         visible: true,
       }),
     );
 
-    expect(html).toContain("文档技能");
-    expect(html).toContain("插件未安装");
-    expect(html).toContain("一键安装");
+    expect(html).toContain(pluginLabel);
+    expect(html).toContain(expectedCopy("settings.plugins.detail.notInstalled"));
+    expect(html).toContain(expectedCopy("settings.plugins.store.install"));
     expect(html).toContain("self-center");
   });
 

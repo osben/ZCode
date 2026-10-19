@@ -412,7 +412,7 @@ async function renderExpiredCardPane(cardId: string, sourceCommandId: string): P
     root.render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(SessionPane, {
           paneId: "workspace-main",
           sessionId: "session-vis",
