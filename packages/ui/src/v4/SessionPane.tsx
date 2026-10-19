@@ -6175,6 +6175,17 @@ export function SessionPane({
                         ) : !isDraft && sessionExecutionWorktree ? (
                           <ConversationWorktreeCreatedNotice
                             branchName={sessionExecutionWorktree.branchName}
+                            // useGitRepository always carries a placeholder summary (isRepository false,
+                            // branchName null) until a status succeeds, and unavailable/failed refreshes
+                            // resolve to the same shape. Only a repository summary may replace the
+                            // creation-time branch; otherwise the notice must fall back to it.
+                            currentBranchName={
+                              worktreeGitState.summary.isRepository
+                                ? worktreeGitState.summary.headRefType === "branch"
+                                  ? worktreeGitState.summary.branchName
+                                  : intl.formatMessage({ id: "git.head.detached" })
+                                : undefined
+                            }
                             path={sessionExecutionWorktree.path}
                           />
                         ) : null}

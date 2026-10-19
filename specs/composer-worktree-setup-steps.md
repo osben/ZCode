@@ -247,8 +247,11 @@ Worktree preparation is timeline context, not an empty-state greeting: render it
 persistent header slot above the message history so the creation status remains at the top after the
 first user or assistant row appears. Once Host activation clears the preparation marker, keep a
 compact created-worktree row in that same position from the live session-index execution-worktree
-fact. Present these rows as restrained tool activity with a clear status icon, branch/path detail,
-and consistent message-column alignment.
+fact. Its branch detail follows the current Git status of that execution worktree so a later branch
+switch does not leave the notice showing the creation-time branch as if it were still current. Until
+the first Git status is available, use the persisted creation-time branch; show `Detached HEAD` when
+the current status is detached. Present these rows as restrained tool activity with a clear status
+icon, branch/path detail, and consistent message-column alignment.
 
 ### Existing worktree and branch-list behavior
 
