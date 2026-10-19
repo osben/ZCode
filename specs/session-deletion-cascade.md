@@ -59,7 +59,7 @@ sequenceDiagram
 
 The task index owns membership and durable execution facts. CLI SQLite owns conversation content and usage. Host owns live preparation. Main owns window inventory, not task state. Services coordinates through injected boundaries; UI keeps presentation and pending confirmation only.
 
-Remote workspaces, Web remote control and read-only states cannot execute permanent Delete. Provide a reason. RPC proxy method presence is not support: use explicit capability. Unsupported peers must not silently degrade Delete into tombstone-only success. Archive follows existing availability.
+Remote workspaces, Web remote control and read-only states cannot execute permanent Delete. The Web remote-control archived bulk action stays disabled even if its base Host advertises local deletion support. Provide a reason. RPC proxy method presence is not support: use explicit capability. Unsupported peers must not silently degrade Delete into tombstone-only success. Archive follows existing availability.
 
 Known running trees block before tombstoning. CLI rechecks at execution; a later race can leave a tombstone with retained content and must be reported. Preserve the accepted process-local running guard; do not add a cross-window session lease.
 

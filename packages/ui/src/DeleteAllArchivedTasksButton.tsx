@@ -30,6 +30,7 @@ export function DeleteAllArchivedTasksButton({
   workspaces,
   count,
   disabled,
+  disabledReason,
   actionsContainer,
   onDeleted,
   onRefresh,
@@ -37,6 +38,7 @@ export function DeleteAllArchivedTasksButton({
   workspaces: ArchivedTaskDeletionWorkspace[];
   count: number;
   disabled: boolean;
+  disabledReason?: string;
   actionsContainer?: HTMLElement | null;
   onDeleted: (target: ArchivedTaskDeletionTarget) => void;
   onRefresh?: () => Promise<void>;
@@ -120,8 +122,8 @@ export function DeleteAllArchivedTasksButton({
   });
   const menu = (
     <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
-      <ControlHintTooltip title={actionLabel}>
-        <DropdownMenuTrigger asChild>
+      <ControlHintTooltip title={disabledReason || actionLabel}>
+        <DropdownMenuTrigger asChild disabled={disabled || busy}>
           <Button
             type="button"
             variant="ghost"

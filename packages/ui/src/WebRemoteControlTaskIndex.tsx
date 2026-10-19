@@ -429,24 +429,9 @@ export function WebRemoteControlTaskIndex({
         <DeleteAllArchivedTasksButton
           actionsContainer={archivedActionsContainer}
           count={result.tasks?.filter((task) => task.archived).length ?? 0}
-          disabled={loading || !result.tasks?.some((task) => task.archived)}
-          workspaces={result.workspaces.map((workspace) => ({
-            workspacePath: workspace.workspacePath,
-            workspaceIdentity: workspace.workspaceIdentity,
-            label: workspace.label,
-            service:
-              workspace.connectionState === "disconnected" ||
-              workspace.connectionState === "reconnecting"
-                ? undefined
-                : workspaceServiceLookup.get(resolveWebRemoteControlWorkspaceKey(workspace))
-                    ?.services.zcodeTaskService,
-            gitService:
-              workspace.connectionState === "disconnected" ||
-              workspace.connectionState === "reconnecting"
-                ? undefined
-                : workspaceServiceLookup.get(resolveWebRemoteControlWorkspaceKey(workspace))
-                    ?.services.gitService,
-          }))}
+          disabled
+          disabledReason={intl.formatMessage({ id: "taskDelete.unsupported" })}
+          workspaces={[]}
           onDeleted={(target) => {
             setResult((current) => ({
               ...current,
