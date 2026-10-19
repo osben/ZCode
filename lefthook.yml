@@ -1,0 +1,20 @@
+min_version: 2.2.2
+assert_lefthook_installed: true
+no_auto_install: true
+lefthook: node scripts/run-lefthook.mjs
+
+pre-commit:
+  piped: true
+  jobs:
+    - name: staged-size-before
+      run: node scripts/check-staged-file-tokens.mjs
+    - name: format-and-lint
+      run: pnpm exec lint-staged --config lint-staged.pre-commit.config.mjs
+    - name: staged-size-after
+      run: node scripts/check-staged-file-tokens.mjs
+
+pre-push:
+  jobs:
+    - name: verify
+      run: sh scripts/pre-push-hook.sh
+      use_stdin: true

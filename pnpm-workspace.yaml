@@ -18,6 +18,8 @@ supportedArchitectures:
     - current
     - glibc
 allowBuilds:
+  # Root prepare installs hooks once, including migration from legacy hooksPath.
+  lefthook: false
   cpu-features: true
   edgedriver: true
   electron: true
