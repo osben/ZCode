@@ -249,3 +249,47 @@ describe("VoiceGhostPreview insertion point without a stored selection", () => {
     expect(parseFloat(ghostLayer().style.top)).toBeCloseTo(59.5);
   });
 });
+
+describe("VoiceGhostPreview with a stored element selection", () => {
+  let rangeAnchors: Array<{ container: Node; offset: number; collapsed: boolean }> = [];
+  let caret = rectAt(0, 0, 20);
+
+  beforeEach(() => {
+    rangeAnchors = [];
+    caret = rectAt(0, 0, 20);
+    Range.prototype.getClientRects = function () {
+      rangeAnchors.push({
+        container: this.startContainer,
+        offset: this.startOffset,
+        collapsed: this.collapsed,
+      });
+      return [caret] as unknown as DOMRectList;
+    };
+    Range.prototype.getBoundingClientRect = function () {
+      return caret;
+    };
+  });
+
+  it("places the ghost before the child the element selection points at", async () => {
+    caret = rectAt(30, 40, 20);
+    renderGhost({ committed: "Hel", tentative: "lo" }, () => {
+      const paragraph = $createParagraphNode();
+      // A line break is not text, so the element offset after it stays an element selection.
+      paragraph.append($createTextNode("one"), $createLineBreakNode(), $createTextNode("two"));
+      $getRoot().clear().append(paragraph);
+      paragraph.select(2, 2);
+    });
+    await waitFor(() => expect(screen.getByTestId("voice-dictation-ghost")).toBeTruthy());
+    const paragraph = document.querySelector('[data-testid="editor-root"]')!.lastElementChild!;
+    const anchor = rangeAnchors.at(-1);
+    expect(anchor?.collapsed).toBe(true);
+    expect(anchor?.container).toBe(paragraph);
+    expect(anchor?.offset).toBe(2);
+    expect(
+      parseFloat(screen.getByTestId("voice-dictation-ghost").firstElementChild!.style.textIndent),
+    ).toBe(30);
+    expect(
+      parseFloat(screen.getByTestId("voice-dictation-ghost").firstElementChild!.style.top),
+    ).toBeCloseTo(39.5);
+  });
+});

@@ -677,6 +677,20 @@ describe("VoiceDictationSection post-processing", () => {
     expect(((await prompt()) as HTMLTextAreaElement).value).toBe(DEFAULT_POST_PROCESS_PROMPT);
   });
 
+  it("Reset stays available for a stored prompt that equals the current default", async () => {
+    // A prompt saved by the old Reset is the default text; it must still be clearable.
+    h.settings.voiceDictation = {
+      modelId: "model-one",
+      postProcessPrompt: DEFAULT_POST_PROCESS_PROMPT,
+    };
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+    fireEvent.click(await resetButton());
+
+    await waitFor(() => expect(confirmMock.confirm).toHaveBeenCalled());
+    await waitFor(() => expect(h.updateSettings).toHaveBeenCalled());
+    expect(h.updateSettings.mock.lastCall?.[0].voiceDictation.postProcessPrompt).toBeUndefined();
+  });
+
   it("Reset does nothing when the user cancels the confirmation", async () => {
     h.settings.voiceDictation = { modelId: "model-one", postProcessPrompt: "Custom {{text}}" };
     confirmMock.confirm.mockResolvedValueOnce(false);

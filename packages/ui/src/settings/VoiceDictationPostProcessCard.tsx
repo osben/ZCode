@@ -60,8 +60,6 @@ export function VoiceDictationPostProcessCard({
   // Saved text, as the runtime reads it: a blank stored value means the default prompt.
   const storedPrompt = voice.postProcessPrompt?.trim() ? voice.postProcessPrompt : undefined;
   const savedText = storedPrompt ?? DEFAULT_POST_PROCESS_PROMPT;
-  const hasCustomPrompt =
-    storedPrompt !== undefined && storedPrompt !== DEFAULT_POST_PROCESS_PROMPT;
   // The draft is null while there are no unsaved edits, so the editor follows the saved value
   // (including a write from elsewhere). Only an edit makes the draft a separate value.
   const [draft, setDraft] = useState<string | null>(null);
@@ -72,7 +70,8 @@ export function VoiceDictationPostProcessCard({
   const blank = editing.trim() === "";
   const hasVariable = editing.includes(POST_PROCESS_TEXT_VARIABLE);
   const canSave = dirty && !blank && hasVariable && !overLimit && !saving;
-  const canReset = hasCustomPrompt || editing !== DEFAULT_POST_PROCESS_PROMPT;
+  // Any stored value (even one equal to the current default) can be cleared, so later default changes apply.
+  const canReset = storedPrompt !== undefined || editing !== DEFAULT_POST_PROCESS_PROMPT;
 
   const [tryItSample, setTryItSample] = useState(POST_PROCESS_TRY_IT_SAMPLE);
   const [tryItRunning, setTryItRunning] = useState(false);

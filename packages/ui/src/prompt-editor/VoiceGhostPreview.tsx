@@ -104,6 +104,27 @@ function readCaret(editor: LexicalEditor, root: HTMLElement): CaretReading | nul
           };
         }
       }
+      // An element selection's offset counts child nodes. Measure the boundary before child[offset]
+      // (or after the last child), so a caret after a line break or on a wrapped line is placed on its own line.
+      const children = element.childNodes;
+      const boundary = document.createRange();
+      if (children.length === 0) {
+        boundary.selectNodeContents(element);
+      } else if (offset < children.length) {
+        boundary.setStartBefore(children[offset]!);
+      } else {
+        boundary.setStartAfter(children[children.length - 1]!);
+      }
+      boundary.collapse(true);
+      const boundaryRect = boundary.getClientRects()[0] ?? boundary.getBoundingClientRect();
+      if (boundaryRect && boundaryRect.height > 0) {
+        return {
+          left: boundaryRect.left,
+          top: boundaryRect.top,
+          height: boundaryRect.height,
+          leadingSpace: false,
+        };
+      }
       const rect = element.getBoundingClientRect();
       const atStart = offset === 0;
       return {
