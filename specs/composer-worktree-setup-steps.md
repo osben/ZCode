@@ -268,6 +268,9 @@ notice binds the worktree identity to the parent's bound remote session before i
 because the identity alone does not route the new tab. A parent identity that
 claims the remote form but does not parse, or a remote parent with no bound session, fails closed: the
 action shows the open-failed toast and never falls back to opening the remote path as a local workspace.
+A kept remote session id is not proof of a live binding: the action also fails closed, with the same
+toast and without binding or calling the open path, when the parent's bound remote session is not
+currently attached to the session registry (for example during a remote disconnect).
 Do not show a worktree duration unless the execution-worktree fact provides one; assistant Thought
 duration is not worktree timing.
 

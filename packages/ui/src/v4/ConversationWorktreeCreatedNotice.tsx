@@ -10,7 +10,10 @@ import {
 } from "@/components/ui/tooltip.js";
 import { toast } from "@/components/ui/toast.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import { bindRemoteWorkspaceIdentity } from "@/store/remoteWorkspaceSessionStore.js";
+import {
+  bindRemoteWorkspaceIdentity,
+  getRemoteWorkspaceSession,
+} from "@/store/remoteWorkspaceSessionStore.js";
 
 /** Persistent first-in-history summary after Host activation clears the preparation marker. */
 export function ConversationWorktreeCreatedNotice({
@@ -60,10 +63,13 @@ export function ConversationWorktreeCreatedNotice({
     // A remote worktree tab resolves its session only through the identity binding. Bind the
     // rebased identity to the parent's session before the open flow starts the draft; without it
     // the new tab stays remote-waiting and cannot run. A remote parent with no bound session fails
-    // closed for the same reason.
+    // closed for the same reason. A non-empty remoteSessionId prop is not proof of a live binding:
+    // during a remote disconnect the tab keeps its identity while the session is unregistered, so
+    // the session must be attached right now. Checking before the bind also keeps a failed open
+    // from leaving a stale identity binding behind.
     const parentRemoteSessionId = remoteSessionId?.trim() ?? "";
     if (worktreeIdentity !== null) {
-      if (!parentRemoteSessionId) {
+      if (!parentRemoteSessionId || !getRemoteWorkspaceSession(parentRemoteSessionId)) {
         openFailed();
         return;
       }
