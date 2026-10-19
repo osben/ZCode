@@ -1214,6 +1214,7 @@ export function AnimatedSidePanePanel({
                           <SelectionSideChatPane
                             tab={tab}
                             focused={isVisible && tab.id === visibleActiveTabId}
+                            isDesktop={isDesktop}
                             onOpenBrowserUrl={onOpenBrowserUrl}
                             onOpenCodeViewer={onOpenCodeViewer}
                             onOpenFileLink={onOpenFileLink}

@@ -584,3 +584,74 @@ These need a real Desktop runtime on macOS with Apple Intelligence available, an
 - VD-E2E-SET: open Voice dictation settings; assert the five card headings in order; open Keyboard Shortcuts from the Dictation card.
 - VD-E2E-PPR: enable post-processing on an available Host; edit and save the prompt; Try it returns text; Reset returns to the default; dictation inserts the processed text and the clipboard holds the raw transcript when copy is on.
 - VD-E2E-PPR-OFF: on an unavailable Host, the switch is Off with the reason and dictation inserts raw text with no rewrite call.
+
+## Composer surfaces and a single dictation session
+
+### Product rules
+
+- Dictation is offered in every Desktop conversation composer that accepts a draft: the main conversation composer, the side conversation composer (the selection side chat opened from the side panel), and the draft composer of a new conversation. The microphone control, its toolbar cluster, the ghost preview, the model status dot and the warm-up on focus behave the same on each surface.
+- Web remote control keeps its own engine (Web Speech, see "Live recording feedback" and the Web remote rules). A side conversation shown in Web remote control is out of scope of this change: its composer keeps the current behavior until a follow-up aligns it with the main remote composer.
+- Only one dictation session may exist app-wide at a time. A session is any non-idle phase (`loading`, `recording`, `transcribing`, `processing`) of any composer's dictation.
+- The dictation shortcut acts only on the composer whose scope contains the keyboard target. Two composers on screen never both start, stop or cancel from one keypress.
+- Starting dictation in a composer while another composer holds the session is refused explicitly: no microphone capture, no Host stream, and a short notice ("Dictation is already in use in another message box. Stop it there first."). The running session is not interrupted. The user stops it in its own composer first.
+- The transcript is inserted only into the composer that started the session, at that composer's caret.
+
+### Root cause of the missing side conversation control (2026-10-18)
+
+- `ConversationComposer` mounts `V4ComposerDictationControl` only when `voiceDictationEnabled` is true (`packages/ui/src/v4/ConversationComposer.tsx`, the `voiceDictationEnabled ? ...` branch in the submit control node).
+- `SessionPane` computes that prop as `isDesktop || compactForRemoteControl` (`packages/ui/src/v4/SessionPane.tsx`, `voiceDictationEnabled={isDesktop || compactForRemoteControl}` in the composer props). Both flags default to `false`.
+- The main pane receives them from `V4ChatPane`, which passes `isDesktop` and `compactForRemoteControl` to `SessionPane`.
+- The side conversation panel renders `SessionPane` from `packages/ui/src/app-shell/SelectionSideChatPane.tsx` without `isDesktop`, so the flag is `false` and the control is never mounted. `AnimatedSidePanePanel` already has `isDesktop` and does not forward it to this pane.
+- Fix: forward `isDesktop` from `AnimatedSidePanePanel` to `SelectionSideChatPane` and into `SessionPane`, the same way `V4ChatPane` does.
+
+### Ownership and interfaces
+
+- `useVoiceDictation` remains the sole owner of one composer's recording phase. A module-level dictation session lease (`packages/ui/src/lib/voiceDictationSessionLease.ts`) is the single owner of "which composer holds the session". The hook acquires the lease when its phase leaves `idle` and releases it when the phase returns to `idle`, on cancel, stop, failure, and unmount.
+- `useVoiceDictationShortcut` keeps its scope check; no scope is shared between composers.
+- `ConversationComposer` owns insertion into its own editor; the transcript callback of each composer is captured per composer.
+- No new setting, persisted state, or Host method is introduced.
+
+```mermaid
+sequenceDiagram
+  participant K as Keyboard target
+  participant A as Main composer hook
+  participant B as Side composer hook
+  participant L as Session lease (module)
+  participant E as Side composer editor
+  K->>B: shortcut (target inside side composer scope only)
+  B->>L: acquire(B)
+  alt lease free
+    L-->>B: granted
+    B->>B: loading -> recording
+  else main composer holds lease
+    L-->>B: refused (owner A)
+    B->>B: stay idle; notice shown; no capture, no stream
+  end
+  Note over B,L: stop, cancel, failure or unmount
+  B->>L: release(B) when phase becomes idle
+  B->>E: insertTextAtSelection(final) into side composer only
+```
+
+### Acceptance cases
+
+| Case       | Setup / action                                                                 | Expected result                                                                                                        |
+| ---------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| VD-SURF-01 | Desktop; open a side conversation from the selection side chat                 | The side conversation composer shows the microphone control next to the send/stop controls, same as the main composer. |
+| VD-SURF-02 | Desktop; focus the side conversation composer and press the shortcut           | Recording starts in the side composer only; the main composer does not react.                                          |
+| VD-SURF-03 | Recording in the main composer; focus the side composer and press the shortcut | The side composer does not start; a "already in use" notice appears; the main recording continues untouched.           |
+| VD-SURF-04 | Recording in the side composer; stop                                           | The final transcript is inserted once at the side composer caret; the main draft is unchanged.                         |
+| VD-SURF-05 | Recording in the side composer; press Escape or click Cancel                   | Capture stops, nothing is inserted; the session lease is released so the main composer can start.                      |
+| VD-SURF-06 | Side composer unmounts (side chat closed) during recording                     | Capture stops, Host stream is released, the lease is released.                                                         |
+| VD-SURF-07 | Main composer focused; press the shortcut                                      | Only the main composer reacts (existing VD-GHO and VD-LIVE behavior is unchanged).                                     |
+
+### Verification plan
+
+- Unit: `packages/ui/test/selectionSideChatDictation.test.ts` asserts that `SelectionSideChatPane` forwards `isDesktop` to `SessionPane` (the flag that gates `voiceDictationEnabled`); `packages/ui/test/voiceDictationSessionLease.test.ts` covers acquire, refusal, owner-only release; `packages/ui/test/useVoiceDictation.test.ts` covers the refusal of a second composer's start and the start after the first composer finishes.
+- Not covered by unit tests: that `AnimatedSidePanePanel` forwards `isDesktop` (checked by typecheck and review only), and the mounted microphone in a real side conversation (E2E below, not run).
+- E2E (written, not run; needs a Desktop runtime with a microphone and a loaded model):
+  1. Open a conversation with a draft, select text, and open the side chat from the selection menu.
+  2. Assert the side composer shows the microphone button with the same position as the main composer.
+  3. Focus the main composer and press the dictation shortcut; assert it records and the side composer stays idle.
+  4. While the main composer records, focus the side composer and press the shortcut; assert the notice appears and the main meter keeps responding.
+  5. Stop in the main composer; assert the transcript is inserted once in the main draft and the side draft is unchanged.
+  6. Start in the side composer, press Escape; assert no insertion and that the main composer can start afterwards.

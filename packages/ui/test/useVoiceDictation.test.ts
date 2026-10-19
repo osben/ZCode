@@ -846,3 +846,66 @@ describe("useVoiceDictation concurrent starts", () => {
     await waitFor(() => expect(hook.result.current.phase).toBe("recording"));
   });
 });
+
+describe("useVoiceDictation across two composers", () => {
+  it("refuses a second composer's start while the first composer holds the session", async () => {
+    const onTranscriptMain = vi.fn();
+    const onTranscriptSide = vi.fn();
+    const main = renderHook(() =>
+      useVoiceDictation({
+        enabled: true,
+        onTranscript: onTranscriptMain,
+        scopeRef: { current: null },
+      }),
+    );
+    const side = renderHook(() =>
+      useVoiceDictation({
+        enabled: true,
+        onTranscript: onTranscriptSide,
+        scopeRef: { current: null },
+      }),
+    );
+
+    await act(async () => main.result.current.start());
+    expect(main.result.current.phase).toBe("recording");
+
+    const recorderStartsBefore = mocks.recorderStartCount;
+    await act(async () => side.result.current.start());
+
+    expect(side.result.current.phase).toBe("idle");
+    expect(mocks.recorderStartCount).toBe(recorderStartsBefore);
+    expect(mocks.service?.beginStream).toHaveBeenCalledTimes(1);
+    expect(toast).toHaveBeenCalledWith("voiceDictation.sessionBusyInOtherComposer");
+    expect(main.result.current.phase).toBe("recording");
+  });
+
+  it("lets the second composer start after the first composer finishes", async () => {
+    const onTranscriptMain = vi.fn();
+    const onTranscriptSide = vi.fn();
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    const main = renderHook(() =>
+      useVoiceDictation({
+        enabled: true,
+        onTranscript: onTranscriptMain,
+        scopeRef: { current: null },
+      }),
+    );
+    const side = renderHook(() =>
+      useVoiceDictation({
+        enabled: true,
+        onTranscript: onTranscriptSide,
+        scopeRef: { current: null },
+      }),
+    );
+
+    await act(async () => main.result.current.start());
+    now.mockReturnValue(1500);
+    await act(async () => main.result.current.stop());
+    expect(onTranscriptMain).toHaveBeenCalledTimes(1);
+    expect(onTranscriptSide).not.toHaveBeenCalled();
+
+    now.mockReturnValue(2000);
+    await act(async () => side.result.current.start());
+    expect(side.result.current.phase).toBe("recording");
+  });
+});

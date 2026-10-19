@@ -7572,6 +7572,7 @@ const zhCN: Record<string, string> = {
   "voiceDictation.tooShort": "录音时间太短。请持续录音，直到说完。",
   "voiceDictation.stillLoading": "语音模型仍在加载。请在开始录音后再说话。",
   "voiceDictation.composer.cancel": "取消语音输入",
+  "voiceDictation.sessionBusyInOtherComposer": "语音输入正在另一个消息框中使用，请先在该处停止。",
   "voiceDictation.microphoneFailed": "无法访问麦克风，请检查输入设备和系统权限。",
   "voiceDictation.transcribeFailed": "语音转写失败。",
   "voiceDictation.downloadFailed": "模型下载失败。",
