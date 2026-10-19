@@ -247,6 +247,8 @@ declare global {
       onOpenWorkspace?(handler: () => void): () => void;
       /** Register a callback for opening a local workspace directory directly through a deep link; return a disposer. */
       onOpenWorkspacePath?(handler: (path: string) => void): () => void;
+      /** Register a callback for `zcode://task/new` drafts (workspace path plus task text); return a disposer. */
+      onOpenTaskDraft?(handler: (payload: { path: string; text: string }) => void): () => void;
       /** Register a callback for window fullscreen state changes; return a disposer. */
       onWindowFullscreenChanged(handler: (isFullscreen: boolean) => void): () => void;
       /** Read the window's maximized state and native system corner support. */

@@ -1,5 +1,6 @@
 import type { BrowserWindow } from "electron";
 import type { ExternalWorkspaceOpenDialogCopy } from "./desktopOAuthDeepLink.js";
+import type { TaskDraftDialogCopy } from "./desktopTaskDraftDeepLink.js";
 import {
   extractDeepLinkUrlFromArgs,
   extractDeepLinkUrlFromSingleInstanceData,
@@ -17,6 +18,7 @@ interface SecondInstanceWorkspaceDeps {
     options: {
       canOpenWorkspace: () => boolean;
       confirmationCopy?: ExternalWorkspaceOpenDialogCopy;
+      taskDraftConfirmationCopy?: TaskDraftDialogCopy;
       onWorkspaceOpenBlocked: () => void;
       resolveApplicationWindow?: () => BrowserWindow | null;
     },
@@ -30,6 +32,7 @@ interface SecondInstanceWorkspaceDeps {
   ) => boolean;
   logger: { warn: (...args: unknown[]) => void };
   workspaceConfirmationCopy?: ExternalWorkspaceOpenDialogCopy;
+  taskDraftConfirmationCopy?: TaskDraftDialogCopy;
   resolveApplicationWindow?: () => BrowserWindow | null;
 }
 
@@ -44,6 +47,7 @@ export function handleSecondInstanceWorkspaceRequest(deps: SecondInstanceWorkspa
     deps.handleDeepLink(url, {
       canOpenWorkspace: () => !deps.forceUpdateBlocked,
       confirmationCopy: deps.workspaceConfirmationCopy,
+      taskDraftConfirmationCopy: deps.taskDraftConfirmationCopy,
       resolveApplicationWindow: deps.resolveApplicationWindow,
       onWorkspaceOpenBlocked: () => {
         deps.logger.warn(

@@ -47,3 +47,5 @@ packages/ui/test/v4ConversationTelemetrySupervisor.test.ts
 specs/nested-agents-md.md
 specs/system-prompt-settings.md
 specs/voice-dictation.md
+# Owned by this PR (already over the limit before this change): split the file into per-section test modules.
+packages/ui/test/v4ConversationFileSummaryPanel.test.ts

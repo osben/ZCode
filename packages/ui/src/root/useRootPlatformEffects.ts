@@ -22,6 +22,7 @@ import {
   resolveShareImportFailurePresentation,
   type ShareImportIntent,
 } from "@/root/shareImportIntent.js";
+import { applyOpenTaskDraft } from "@/root/openTaskDraftIntent.js";
 
 export function useRootPlatformEffects({
   initialWorkspaceAbsPath,
@@ -71,7 +72,7 @@ export function useRootPlatformEffects({
   startDraftInWorkspace: (workspacePath: string, workspaceIdentity?: string) => void;
   startNewTaskFromActiveWorkspace: (source: string) => void;
   openWorkspace: () => void;
-  openWorkspacePath: (workspacePath: string) => void;
+  openWorkspacePath: (workspacePath: string) => void | Promise<void>;
   setWorkspaceActionError: (message: string | null) => void;
   allowOpenWorkspace?: boolean;
   isDesktop?: boolean;
@@ -177,6 +178,23 @@ export function useRootPlatformEffects({
           // Reuse handleSelectProject here instead of adding the path as a chat attachment, preserving tab deduplication,
           // cross-window activation, recentProjects updates, and other existing behavior for manually opened folders.
           openWorkspacePath(path);
+        })
+      : () => {};
+    const disposeOpenTaskDraft = platform.onOpenTaskDraft
+      ? platform.onOpenTaskDraft((payload) => {
+          void applyOpenTaskDraft(payload, {
+            allowOpenWorkspace,
+            openWorkspacePath,
+            activateTabByPath,
+            startDraftInWorkspace,
+            requestComposerTextInsert: (...args) =>
+              useZCodeSessionStore.getState().requestComposerTextInsert(...args),
+            logger,
+          }).catch((error: unknown) => {
+            logger.warn("[Root] task/new 草稿处理失败", {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
         })
       : () => {};
     const disposeShareImport = platform.onShareImport
@@ -285,6 +303,7 @@ export function useRootPlatformEffects({
       disposeNewTask();
       disposeOpenWorkspace();
       disposeOpenWorkspacePath();
+      disposeOpenTaskDraft();
       disposeShareImport();
       disposeNotificationClick();
       disposeUpdateCheckResult();

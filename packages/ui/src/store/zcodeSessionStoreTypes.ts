@@ -138,7 +138,7 @@ export interface ComposerTextInsertRequest {
   requestId: number;
   text: string;
   mention?: ComposerMentionPrefill;
-  mode?: "replace" | "prepend-if-missing";
+  mode?: "replace" | "prepend-if-missing" | "prepend-text";
 }
 
 export interface TimelineBottomRequest {
@@ -246,7 +246,7 @@ export interface ZCodeSessionStoreState {
     text: string,
     workspaceIdentity?: string,
     mention?: ComposerMentionPrefill,
-    mode?: "replace" | "prepend-if-missing",
+    mode?: "replace" | "prepend-if-missing" | "prepend-text",
   ) => number;
   clearComposerTextInsertRequest: (
     workspacePath: string,

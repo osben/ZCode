@@ -312,6 +312,8 @@ export const PlatformChannels = {
   OpenWorkspace: "zcode:open-workspace",
   /** Main → Renderer: a deep link directly opens the specified local workspace directory */
   OpenWorkspacePath: "zcode:open-workspace-path",
+  /** Main → Renderer: a `zcode://task/new` deep link starts a fresh draft in a local workspace with the given text. */
+  OpenTaskDraft: "zcode:open-task-draft",
   /** Main → Renderer: open the built-in feedback dialog */
   OpenFeedbackDialog: "zcode:open-feedback-dialog",
   /** Main → Renderer: open the My Tickets panel */
@@ -826,6 +828,10 @@ export interface PlatformChannelMap {
   };
   [PlatformChannels.OpenWorkspacePath]: {
     request: string;
+    response: void;
+  };
+  [PlatformChannels.OpenTaskDraft]: {
+    request: { path: string; text: string };
     response: void;
   };
   [PlatformChannels.ConnectRemote]: {
