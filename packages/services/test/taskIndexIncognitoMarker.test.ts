@@ -61,6 +61,8 @@ function makeTaskService(target: TaskIndexRepo): IZCodeTaskService {
       target.listTaskMetas({ ...params, archived: true }),
     listTaskList: (params: Parameters<TaskIndexRepo["queryTaskList"]>[0]) =>
       target.queryTaskList(params),
+    persistIncognitoMarkers: (params: Parameters<TaskIndexRepo["persistIncognitoMarkers"]>[0]) =>
+      target.persistIncognitoMarkers(params),
   } as unknown as IZCodeTaskService;
 }
 
@@ -203,11 +205,9 @@ describe("sidebar incognito marker durability (specs/incognito-session.md)", () 
       status: "completed",
     } satisfies ZCodeTaskMeta;
     await repo.syncTaskMeta({ meta: base });
-    await repo.listTaskMetas({
-      workspacePath: WORKSPACE,
-      archived: false,
-      incognitoTaskIds: [TASK_ID],
-    });
+    expect(
+      await repo.persistIncognitoMarkers({ workspacePath: WORKSPACE, taskIds: [TASK_ID] }),
+    ).toEqual([TASK_ID]);
     await repo.syncTaskMeta({ meta: { ...base, updatedAt: 30 } });
     const [after] = await repo.listTaskMetas({ workspacePath: WORKSPACE, archived: false });
     expect(after!.incognito).toBe(true);
@@ -227,13 +227,33 @@ describe("sidebar incognito marker durability (specs/incognito-session.md)", () 
         status: "completed",
       } satisfies ZCodeTaskMeta,
     });
-    // Absent row: no-op, no throw.
-    await repo.listTaskMetas({
-      workspacePath: WORKSPACE,
-      archived: false,
-      incognitoTaskIds: ["missing-task"],
-    });
+    // Absent row: not confirmed, no throw.
+    expect(
+      await repo.persistIncognitoMarkers({ workspacePath: WORKSPACE, taskIds: ["missing-task"] }),
+    ).toEqual([]);
     const [plain] = await repo.listTaskMetas({ workspacePath: WORKSPACE, archived: false });
     expect(plain!.incognito).toBeUndefined();
+  });
+
+  it("acknowledges pinned and archived rows, which the list read excludes", async () => {
+    const base = {
+      taskId: TASK_ID,
+      traceId: `trace-${TASK_ID}`,
+      title: "Archived incognito",
+      workspacePath: WORKSPACE,
+      createdAt: 10,
+      updatedAt: 20,
+      mode: "default",
+      provider: "glm",
+      status: "completed",
+    } satisfies ZCodeTaskMeta;
+    await repo.syncTaskMeta({ meta: base });
+    // updatedAt 20 is long past the cutoff; the row is completed and unread-free, so it archives.
+    await repo.archiveStaleTasks({ workspacePath: WORKSPACE, olderThanDays: 1 });
+    expect(
+      await repo.persistIncognitoMarkers({ workspacePath: WORKSPACE, taskIds: [TASK_ID] }),
+    ).toEqual([TASK_ID]);
+    const [archived] = await repo.listTaskMetas({ workspacePath: WORKSPACE, archived: true });
+    expect(archived!.incognito).toBe(true);
   });
 });
