@@ -515,7 +515,7 @@ export function createSessionPullRequestsService(options: {
       }
       return result;
     } catch (error) {
-      logger.warn(undefined, "session pull requests request failed", {
+      warnOnce(workspaceKey, "request-error", "session pull requests request failed", {
         reason: error instanceof Error ? error.message : String(error),
       });
       for (const task of request.tasks) {
