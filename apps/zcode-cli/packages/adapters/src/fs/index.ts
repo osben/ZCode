@@ -179,7 +179,7 @@ export class NodeFileSystemAdapter implements FileSystemPort {
       const rawBuffer = truncated ? await readFirstBytes(path, maxBytes) : await readFile(path);
       // Only UTF-8 or auto-detected reads may drop a split tail: a caller that names a legacy encoding (gbk, utf16le, ...)
       // owns those bytes, and a lead byte of that encoding can look like an incomplete UTF-8 sequence.
-      const mayTrimUtf8Tail = request.encoding === undefined || request.encoding === "utf8" || request.encoding === "utf-8";
+      const mayTrimUtf8Tail = request.encoding === undefined || request.encoding === "utf8";
       const buffer = truncated && mayTrimUtf8Tail ? trimTruncatedUtf8Tail(rawBuffer) : rawBuffer;
       const decoded = decodeTextBuffer({ buffer, encoding: request.encoding, path });
       const rawContent = decoded.content;

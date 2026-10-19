@@ -93,7 +93,7 @@ function readEntry(): ToolEntry {
   };
 }
 
-function createLogger(): Logger & { debug: ReturnType<typeof vi.fn> } {
+function createLogger(): Logger & { debug: ReturnType<typeof vi.fn>; info: ReturnType<typeof vi.fn> } {
   const logger = {
     debug: vi.fn(),
     info: vi.fn(),
@@ -101,7 +101,7 @@ function createLogger(): Logger & { debug: ReturnType<typeof vi.fn> } {
     error: vi.fn(),
     child: () => logger,
   };
-  return logger as unknown as Logger & { debug: ReturnType<typeof vi.fn> };
+  return logger as unknown as Logger & { debug: ReturnType<typeof vi.fn>; info: ReturnType<typeof vi.fn> };
 }
 
 function createHarness(options: {

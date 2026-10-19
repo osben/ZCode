@@ -217,7 +217,7 @@ describe("readNestedInstructionHistory", () => {
   });
 
   it("returns an empty view once the reminder-carrying result is no longer visible", () => {
-    const visible = readNestedInstructionHistory([reminderResult("c1", [[FILE, 50]])], "linux");
+    const visible = readNestedInstructionHistory([reminderResult("c1", [[FILE, 50]])], "linux", WORKSPACE);
     const afterMicrocompact = readNestedInstructionHistory(
       [toolResult("c1", "[tool result cleared]")],
       "linux",
