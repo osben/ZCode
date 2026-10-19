@@ -43,13 +43,9 @@ function git(args, cwd, input = "") {
 }
 
 async function readExemptions(root) {
-  let text;
-  try {
-    text = await readFile(path.join(root, EXEMPTIONS_FILE), "utf8");
-  } catch (error) {
-    if (error.code === "ENOENT") return new Set();
-    throw error;
-  }
+  const staged = await git(["ls-files", "--stage", "--", EXEMPTIONS_FILE], root);
+  if (!staged.trim()) return new Set();
+  const text = await git(["show", `:${EXEMPTIONS_FILE}`], root);
   return new Set(
     text
       .split("\n")
