@@ -113,13 +113,15 @@ test("generated and vendored attributes use the index rather than unstaged edits
   assert.equal((await f.check()).code, 1);
 });
 
-test("spaces, newlines, quotes and leading dashes in paths are safe", async (t) => {
+test("spaces, quotes, leading dashes and supported newlines in paths are safe", async (t) => {
   const f = await fixture(t);
-  const name = "-some 'odd'\n file.ts";
-  await f.stage(name, "a".repeat(21_000));
+  const names = ["-some 'odd' file.ts"];
+  // Windows rejects control characters in filenames; retain newline coverage on POSIX.
+  if (process.platform !== "win32") names.push("-some 'odd'\n file.ts");
+  for (const name of names) await f.stage(name, "a".repeat(21_000));
   const result = await f.check();
   assert.equal(result.code, 1);
-  assert.ok(result.stderr.includes(JSON.stringify(name)), result.stderr);
+  for (const name of names) assert.ok(result.stderr.includes(JSON.stringify(name)), result.stderr);
 });
 
 test("only staged changes are checked; renames block and deletions pass", async (t) => {
