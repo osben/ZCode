@@ -2,7 +2,7 @@
 // purpose: scripts/run-affected-unit-tests.mjs reuses the shared config via
 // `lint-staged --diff` during pre-push, so tasks added there would also run at
 // push time — and a formatter in write mode would rewrite working-tree files
-// mid-push. This file is only consumed by .husky/pre-commit.
+// mid-push. This file is only consumed by the pre-commit job in lefthook.yml.
 
 // The task is a plain string on purpose: lint-staged appends the matched
 // staged files to string tasks directly as spawn argv — no shell, no
