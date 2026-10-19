@@ -146,6 +146,11 @@ Default light and dark CSS variables still exist as fallback foundations, but ne
   (VenetianMask) is intentionally un-colored, like the worktree marker (specs/incognito-session.md).
 - **Diff Added**: `--color-diff-added` with `--color-diff-added-foreground`
 - **Diff Removed**: `--color-diff-removed` with `--color-diff-removed-foreground`
+- **Pull request status**: `--color-pr-open` / `--color-pr-draft` / `--color-pr-merged` / `--color-pr-closed`
+  GitHub lifecycle colors as aliases of existing semantic tokens (success, foreground-subtle,
+  icon-purple, destructive), theme-aware through var() indirection. Icon = lifecycle stage
+  (GitPullRequestDraft / GitPullRequest / GitMerge / GitPullRequestClosed); the separate health
+  dot reuses Success/Warning/Destructive (specs/sidebar-pr-status.md).
 
 Use semantic colors only for actual semantic states. Do not borrow success, warning, or destructive colors just to make a block feel louder.
 
