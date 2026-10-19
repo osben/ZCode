@@ -483,6 +483,17 @@ export interface IZCodeTaskService {
     }>;
   }): Promise<ZCodeTaskMeta[]>;
 
+  /**
+   * Persist `incognito: true` into the tasks-index meta of the given tasks (specs/incognito-session.md "Sidebar
+   * marker durability"). Covers active, pinned and archived rows; never clears a marker. Resolves the ids whose
+   * row carries the marker after the call, so callers acknowledge from the result rather than re-reading lists.
+   */
+  persistIncognitoMarkers(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    taskIds: ReadonlyArray<string>;
+  }): Promise<string[]>;
+
   /** Read the global pinned task ID list; tasks-index.sqlite is the source of truth. */
   listPinnedTaskIds(): Promise<string[]>;
 

@@ -796,7 +796,7 @@ export class ZCodeProtocolAgentServer {
         return listChildProcesses(this.context.deps.mcpTelemetry?.listProcesses() ?? []);
       case zcodeProtocolMethods.runtimeCapabilities:
         // incognitoSession: see docs/design/v2/incognito-session.md.
-        return { independentPlanState: true, incognitoSession: true };
+        return { independentPlanState: true, incognitoSession: true, incognitoPromptToggles: true };
       case zcodeProtocolMethods.pluginsMarketplaceAdd:
         return await this.withPluginOperationSignal(request, (signal) =>
           addPluginMarketplace(this.context, request.params, signal),

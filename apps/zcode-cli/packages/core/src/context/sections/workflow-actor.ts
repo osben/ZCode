@@ -18,7 +18,12 @@
 
 import type { ContextSection, WorkflowActorContext } from "../types.js";
 import { estimateTokens } from "../utils.js";
-import { buildHarnessBlock, buildSecurityNotice } from "./identity.js";
+import {
+  buildHarnessBlock,
+  buildSecurityNotice,
+  type IdentitySectionOptions,
+} from "./identity.js";
+import { DEFAULT_CONFIRMATION_PARAGRAPH } from "@zcode/shared";
 
 /** Describe the tool surface with one sentence about what is available and one about what is not, so the model does not have to guess. */
 const TOOL_SURFACE =
@@ -45,7 +50,13 @@ function buildWorkflowContract(): string {
   ].join("\n");
 }
 
-function buildWorkflowActorIdentityPrompt(actor: WorkflowActorContext): string {
+/** `harness` toggle; off omits the `# Harness` block and keeps the confirmation floor. */
+export type WorkflowActorSectionOptions = Pick<IdentitySectionOptions, "includeHarness">;
+
+function buildWorkflowActorIdentityPrompt(
+  actor: WorkflowActorContext,
+  options: WorkflowActorSectionOptions,
+): string {
   const name = actor.name?.trim();
   const named = name ? `, named "${name}"` : "";
   const opening = [
@@ -60,15 +71,18 @@ function buildWorkflowActorIdentityPrompt(actor: WorkflowActorContext): string {
     "",
     buildSecurityNotice(),
     "",
-    buildHarnessBlock(),
+    options.includeHarness ? buildHarnessBlock() : DEFAULT_CONFIRMATION_PARAGRAPH,
     "",
     buildWorkflowContract(),
   ];
   return parts.join("\n");
 }
 
-export function buildWorkflowActorIdentitySection(actor: WorkflowActorContext): ContextSection {
-  const content = buildWorkflowActorIdentityPrompt(actor);
+export function buildWorkflowActorIdentitySection(
+  actor: WorkflowActorContext,
+  options: WorkflowActorSectionOptions = { includeHarness: true },
+): ContextSection {
+  const content = buildWorkflowActorIdentityPrompt(actor, options);
   return {
     name: "Workflow Actor Identity",
     source: "workflow_actor_identity",

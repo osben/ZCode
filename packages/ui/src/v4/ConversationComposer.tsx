@@ -3077,6 +3077,7 @@ function ConversationComposerImpl({
       sendShortcut,
       sendTooltipTitle,
       sessionId,
+      workspaceKey,
       showStopControl,
       stopTooltipTitle,
       voiceDictationEnabled,
@@ -3102,9 +3103,6 @@ function ConversationComposerImpl({
           onConfigPickerOpenChange={handleConfigPickerOpenChange}
           onSwitchMode={onSwitchMode}
         />
-        {draftMode && sessionId === null && !isWebRemoteControl ? (
-          <V4ComposerIncognitoControl workspaceKey={workspaceKey} disabled={disabled} />
-        ) : null}
         {/* Bug cause: The attachment gallery rebase once replaced all of leadingActions and removed the
             persistent staging CUA entry. The entry itself still handles platform, remote, and settings
             visibility; do not duplicate those checks in the composer. */}
@@ -3128,7 +3126,6 @@ function ConversationComposerImpl({
       canStop,
       disabled,
       draftConfig,
-      draftMode,
       handleConfigPickerOpenChange,
       isWebRemoteControl,
       backgroundWorkOpenTarget,
@@ -3146,6 +3143,11 @@ function ConversationComposerImpl({
   );
   const isBlockedByInteraction = blockingRequestId !== null;
 
+  // specs/incognito-session.md "Composer toggle": top row, after the project and branch chips.
+  const incognitoComposerControl =
+    draftMode && sessionId === null && !isWebRemoteControl ? (
+      <V4ComposerIncognitoControl workspaceKey={workspaceKey} disabled={disabled} />
+    ) : null;
   // v4 pendingInteractions blocks the bottom dock; keep Composer mounted and hide it only visually and from the accessibility tree,
   // so permission/question cards do not cause the draft or editor state to be lost.
   return (
@@ -3208,10 +3210,15 @@ function ConversationComposerImpl({
             onModelTransitionStart={handleHighspeedModelTransitionStart}
           />
         ) : null}
-        {contextHeader ? (
+        {contextHeader || incognitoComposerControl ? (
           // Same wrapper as the old ChatViewComposer contextHeaderContent (workspace menu + Git branch).
-          <div className="relative z-10 p-1.5 flex min-w-0 flex-wrap items-center gap-0">
+          // specs/incognito-session.md "Composer toggle": the incognito control closes the row after the chips; flex-wrap drops it to a second line when narrow.
+          <div
+            data-composer-context-row=""
+            className="relative z-10 p-1.5 flex min-w-0 flex-wrap items-center gap-0"
+          >
             {contextHeader}
+            {incognitoComposerControl}
           </div>
         ) : null}
         {conversationSelectionLimitReason ? (

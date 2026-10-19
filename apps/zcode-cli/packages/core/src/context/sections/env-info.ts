@@ -60,8 +60,10 @@ export function buildEnvInfoSection(
   model?: Model,
   executionWorktree?: ExecutionWorktreeEnvFact,
 ): ContextSection {
-  const content = buildEnvInfoContent(envInfo, model, executionWorktree);
+  return buildEnvironmentInfoContextSection(buildEnvInfoContent(envInfo, model, executionWorktree));
+}
 
+function buildEnvironmentInfoContextSection(content: string): ContextSection {
   return {
     name: "Environment Info",
     source: "env_info",
@@ -72,6 +74,18 @@ export function buildEnvInfoSection(
     content,
     preview: content.slice(0, 100),
   };
+}
+
+/**
+ * `environment` toggle off: only the execution-worktree isolation bullet survives (specs/incognito-session.md,
+ * "Prompt toggles"). Null when no worktree applies, so the section is omitted entirely.
+ */
+export function buildWorktreeOnlyEnvSection(
+  executionWorktree?: ExecutionWorktreeEnvFact,
+): ContextSection | null {
+  const line = executionWorktree ? formatExecutionWorktreeSentence(executionWorktree) : null;
+  if (!line) return null;
+  return buildEnvironmentInfoContextSection([ENVIRONMENT_HEADING, `- ${line}`].join("\n"));
 }
 
 export function buildGitSystemContextSection(envInfo: EnvInfo): ContextSection | null {

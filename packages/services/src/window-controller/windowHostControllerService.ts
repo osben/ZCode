@@ -178,14 +178,18 @@ export function createWindowHostControllerRuntime(options: {
       observer: WindowHostSessionsIndexObserver;
     }
   >();
-  // BUG-GWT-010: execution-worktree facts already confirmed present in the source's tasks-index, so
-  // repeated sessions-index publishes do not re-issue convergence reads. Acknowledgement is per fact and
-  // bound to the task-service instance that confirmed it: a replaced service starts from an empty set, and a
-  // fact whose task row did not exist yet stays unacknowledged until a later publish finds the row.
-  const sourceWorktreeFactSynced = new Map<
-    string,
-    { taskService: IZCodeTaskService; facts: Set<string>; inFlight: Set<string> }
-  >();
+  // BUG-GWT-010 and incognito markers: facts already confirmed persisted in the source's tasks-index, so repeated
+  // sessions-index publishes do not re-issue convergence writes. Entries are bound to the task-service instance that
+  // confirmed them (persistSourceFacts): a replaced service starts from an empty set.
+  type SourceFactSync = {
+    taskService: IZCodeTaskService;
+    acknowledged: Set<string>;
+    inFlight: Set<string>;
+  };
+  // Execution-worktree facts (BUG-GWT-010): acknowledged per fact signature (task, path, branch).
+  const sourceWorktreeFactSynced = new Map<string, SourceFactSync>();
+  // Incognito markers (specs/incognito-session.md "Sidebar marker durability"): acknowledged per task id.
+  const sourceIncognitoSynced = new Map<string, SourceFactSync>();
   const pendingReplacementByNextSourceKey = new Map<string, WindowHostControllerSourceScope>();
   let disposed = false;
   let activeSourceReads = 0;
@@ -207,8 +211,54 @@ export function createWindowHostControllerRuntime(options: {
     sourceSessionObservers.delete(key);
     sourceLiveOverlays.delete(key);
     sourceWorktreeFactSynced.delete(key);
+    sourceIncognitoSynced.delete(key);
     sourceRefreshGenerations.set(key, (sourceRefreshGenerations.get(key) ?? 0) + 1);
     sourceRefreshFlights.delete(key);
+  }
+
+  // Shared in-flight/acknowledgement bookkeeping for the sessions-index convergence writes. `persist` writes one batch
+  // of facts and resolves the signatures it confirmed as persisted. A failed batch stays unacknowledged, so the next
+  // publish retries it; failures surface through onSourceError and never disturb the live overlay.
+  function persistSourceFacts<F>(args: {
+    synced: Map<string, SourceFactSync>;
+    resolved: ResolvedWindowHostControllerSource;
+    taskService: IZCodeTaskService;
+    facts: ReadonlyArray<F>;
+    signature: (fact: F) => string;
+    persist: (pending: F[]) => Promise<ReadonlyArray<string>>;
+  }): void {
+    const { synced, resolved, taskService, facts, signature, persist } = args;
+    const key = sourceKey(resolved.scope);
+    let entry = synced.get(key);
+    if (entry?.taskService !== taskService) {
+      entry = { taskService, acknowledged: new Set(), inFlight: new Set() };
+      synced.set(key, entry);
+    }
+    const { acknowledged, inFlight } = entry;
+    // Facts already sent by an overlapping publish are excluded until that request settles.
+    const pending = facts.filter((fact) => {
+      const id = signature(fact);
+      return !acknowledged.has(id) && !inFlight.has(id);
+    });
+    if (pending.length === 0) return;
+    for (const fact of pending) inFlight.add(signature(fact));
+    void persist(pending)
+      .then((confirmed) => {
+        for (const id of confirmed) acknowledged.add(id);
+      })
+      .catch((error) => {
+        if (!disposed) options.onSourceError?.(resolved.scope, "refresh", error);
+      })
+      .finally(() => {
+        for (const fact of pending) inFlight.delete(signature(fact));
+      });
+  }
+
+  function sourceWorkspaceRequest(scope: WindowHostControllerSourceScope) {
+    return {
+      workspacePath: scope.workspacePath,
+      ...(scope.workspaceIdentity ? { workspaceIdentity: scope.workspaceIdentity } : {}),
+    };
   }
 
   // BUG-GWT-010 (docs/testing/git-worktree-qa/bugs/BUG-GWT-010.md): the execution-worktree fact reaches the
@@ -229,55 +279,64 @@ export function createWindowHostControllerRuntime(options: {
     );
     // An empty overlay (runtime restart gap) must not erase persisted facts; durability is meta's job.
     if (facts.length === 0) return;
-    const key = sourceKey(resolved.scope);
     const taskService = resolved.taskService;
     const factSignature = (fact: (typeof facts)[number]) =>
       `${fact.taskId}\n${fact.executionWorktree.path}\n${fact.executionWorktree.branchName ?? ""}`;
-    let synced = sourceWorktreeFactSynced.get(key);
-    if (synced?.taskService !== taskService) {
-      synced = { taskService, facts: new Set(), inFlight: new Set() };
-      sourceWorktreeFactSynced.set(key, synced);
-    }
-    const { facts: acknowledged, inFlight } = synced;
-    // Facts already sent by an overlapping publish are excluded until that request settles.
-    const pending = facts.filter((fact) => {
-      const signature = factSignature(fact);
-      return !acknowledged.has(signature) && !inFlight.has(signature);
+    persistSourceFacts({
+      synced: sourceWorktreeFactSynced,
+      resolved,
+      taskService,
+      facts,
+      signature: factSignature,
+      persist: (pending) =>
+        taskService
+          .listTasks({ ...sourceWorkspaceRequest(resolved.scope), executionWorktreeFacts: pending })
+          .then((tasks) => {
+            // listTasks succeeding does not mean a fact was persisted: the repo skips facts whose task-index row
+            // does not exist yet. Acknowledge only facts the returned rows now carry. Pinned/archived rows are
+            // excluded from this read and are retried on the next publish; the repo checks the stored fact
+            // read-only before taking the write lock, so that retry costs a list read, not a write transaction.
+            const persisted = new Map(
+              tasks.map((task) => [task.taskId, task.executionWorktree] as const),
+            );
+            return pending.flatMap((fact) => {
+              const stored = persisted.get(fact.taskId);
+              return stored?.path === fact.executionWorktree.path &&
+                stored?.branchName === fact.executionWorktree.branchName
+                ? [factSignature(fact)]
+                : [];
+            });
+          }),
     });
-    if (pending.length === 0) return;
-    for (const fact of pending) inFlight.add(factSignature(fact));
-    void taskService
-      .listTasks({
-        workspacePath: resolved.scope.workspacePath,
-        ...(resolved.scope.workspaceIdentity
-          ? { workspaceIdentity: resolved.scope.workspaceIdentity }
-          : {}),
-        executionWorktreeFacts: pending,
-      })
-      .then((tasks) => {
-        // listTasks succeeding does not mean a fact was persisted: the repo skips facts whose task-index row
-        // does not exist yet. Acknowledge only facts the returned rows now carry. Pinned/archived rows are
-        // excluded from this read and are retried on the next publish; the repo checks the stored fact
-        // read-only before taking the write lock, so that retry costs a list read, not a write transaction.
-        const persisted = new Map(
-          tasks.map((task) => [task.taskId, task.executionWorktree] as const),
-        );
-        for (const fact of pending) {
-          const stored = persisted.get(fact.taskId);
-          if (
-            stored?.path === fact.executionWorktree.path &&
-            stored?.branchName === fact.executionWorktree.branchName
-          ) {
-            acknowledged.add(factSignature(fact));
-          }
-        }
-      })
-      .catch((error) => {
-        if (!disposed) options.onSourceError?.(resolved.scope, "refresh", error);
-      })
-      .finally(() => {
-        for (const fact of pending) inFlight.delete(factSignature(fact));
-      });
+  }
+
+  // Incognito is frozen per session (specs/incognito-session.md), so the overlay's `true` is converged once into
+  // meta_json and never cleared. Same ownership as the worktree fact: the overlay is the freshness source, the
+  // persisted marker is the durability source that lets clients without a sessions-index observer show it.
+  function convergeIncognitoFacts(
+    resolved: ResolvedWindowHostControllerSource,
+    overlays: WindowHostControllerSessionOverlay[],
+  ): void {
+    // Gate only on the owning tasks index: remote sources also carry a taskService and need the durable marker too.
+    if (!resolved.taskService) return;
+    const taskIds = overlays
+      .filter((overlay) => overlay.incognito)
+      .map((overlay) => overlay.taskId);
+    if (taskIds.length === 0) return;
+    const taskService = resolved.taskService;
+    persistSourceFacts({
+      synced: sourceIncognitoSynced,
+      resolved,
+      taskService,
+      facts: taskIds,
+      signature: (taskId) => taskId,
+      // The repo confirms every id whose row carries the marker, including pinned and archived rows.
+      persist: (pending) =>
+        taskService.persistIncognitoMarkers({
+          ...sourceWorkspaceRequest(resolved.scope),
+          taskIds: pending,
+        }),
+    });
   }
 
   function ensureSourceSessionObserver(
@@ -319,7 +378,10 @@ export function createWindowHostControllerRuntime(options: {
         // convergence failure can never disturb the overlay path (BUG-GWT-010). Resolve the source again:
         // the captured `resolved.taskService` may have been replaced while the agent service stayed the same.
         const current = resolveCurrentSource(resolved.scope);
-        if (current) convergeExecutionWorktreeFacts(current, overlays);
+        if (current) {
+          convergeExecutionWorktreeFacts(current, overlays);
+          convergeIncognitoFacts(current, overlays);
+        }
       },
       onError: (error) => options.onSourceError?.(resolved.scope, "refresh", error),
     });

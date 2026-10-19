@@ -2776,6 +2776,14 @@ export function createZCodeTaskServiceAdapter(
       return tasks.map(rememberIndexedTaskMeta);
     },
 
+    async persistIncognitoMarkers(params): Promise<string[]> {
+      return taskIndexRepo.persistIncognitoMarkers({
+        workspacePath: params.workspacePath,
+        workspaceIdentity: params.workspaceIdentity,
+        taskIds: params.taskIds,
+      });
+    },
+
     async listPinnedTaskIds(): Promise<string[]> {
       const tasks = await taskIndexRepo.listTaskMetas({
         provider: GLM_PROVIDER,

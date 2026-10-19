@@ -1,4 +1,5 @@
 import {
+  incognitoCapabilityGateError,
   INCOGNITO_UNSUPPORTED_ERROR,
   zcodeProtocolMethods,
   zcodeRuntimeCapabilitiesSchema,
@@ -51,6 +52,14 @@ export function ensureIndependentPlanSupport(client: CapabilityClient): Promise<
 }
 
 /** specs/incognito-session.md: an incognito create must never run as a normal session. */
-export function ensureIncognitoSupport(client: CapabilityClient): Promise<void> {
-  return ensureRuntimeCapability(client, "incognitoSession", INCOGNITO_UNSUPPORTED_ERROR);
+export async function ensureIncognitoSupport(client: CapabilityClient): Promise<void> {
+  let capabilities: ZCodeRuntimeCapabilities;
+  try {
+    capabilities = await readRuntimeCapabilities(client);
+  } catch (cause) {
+    // A failed capability read keeps the bare code: the endpoint's flags are unknown.
+    throw new Error(INCOGNITO_UNSUPPORTED_ERROR, { cause });
+  }
+  const gateError = incognitoCapabilityGateError(capabilities);
+  if (gateError) throw new Error(gateError);
 }

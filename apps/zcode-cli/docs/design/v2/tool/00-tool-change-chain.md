@@ -1657,3 +1657,11 @@ interrupted result。修复不改变工具 schema、权限、执行时机、协�
 - **Core**：`LspDocumentSync` 是打开文档、版本与诊断的唯一 owner；Edit/Write 只发布 `FileMutatedEvent`，不直接调用 LSP。`LSP` 工具仅在存在可用 server 时注册（两个注册入口共用 gate），Explore 同步可见。
 - **上下文**：编辑后的新诊断通过既有 `diagnostics` system-reminder source 在下一次模型请求附带，等待上限 `LSP_EDIT_DIAGNOSTICS_WAIT_MS`，超时明确标为 pending。
 - **协议/UI**：`lsp/preferences/get|set`、`lsp/status`；偏好存于 fork sidecar `fork_lsp_preferences.json`，不写 `setting.json`。
+
+## Incognito `automationTools` gate (specs/incognito-session.md)
+
+- Tools affected: `CronCreate`, `CronList`, `CronUpdate`, `CronDelete`, `OffPeakCreate`, `OffPeakList` and the eleven `DYNAMIC_WORKFLOW_TOOL_NAMES` tools (including `ListModels`). Schemas, permissions and execution are unchanged; only registration and the Agent/Task workflow guidance follow the gate.
+- Registration flow: `runtime-tools.ts` (`includeAutomation`, `includeOffPeak`) and `resolveRuntimeDynamicWorkflowToolsIncluded` (`tool-allowlist.ts`) both read `resolveRuntimeAutomationToolsIncluded(config)`. The branch-refresh entry point (`embedded-search-branch.ts`) uses the same dynamic-workflow helper; it omits `includeAutomation`/`includeOffPeak`, so those tools are never added back on refresh.
+- Description flow: `registerBuiltInTools` derives `dynamicWorkflowEnabled` for the Agent and Task descriptions from `includeDynamicWorkflow`, so the workflow instruction disappears with the tools.
+- Inheritance: the gate reads the frozen `config.incognito`; Task-tool children and workflow children receive it through the same config paths as the other incognito toggles.
+- Test: `core/tests/incognito-prompt-toggles.test.ts` ("automationTools runtime gate").

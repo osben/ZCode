@@ -11,6 +11,11 @@ export interface SubagentEnvironmentContextOptions {
   model?: Model;
   /** Worktree isolation notice projected from the parent runtime config; absent for plain sessions. */
   executionWorktree?: ExecutionWorktreeEnvFact;
+  /**
+   * `environment` toggle off: keep only the worktree isolation line inside the `<env>` tags. Returns
+   * an empty string when no worktree applies, so callers omit the section.
+   */
+  worktreeOnly?: boolean;
 }
 
 export function buildSubagentCommonNotes(): string {
@@ -37,6 +42,10 @@ export function buildSubagentEnvironmentContext(
   const executionWorktreeLine = options.executionWorktree
     ? formatExecutionWorktreeSentence(options.executionWorktree)
     : null;
+
+  if (options.worktreeOnly) {
+    return executionWorktreeLine ? ["<env>", executionWorktreeLine, "</env>"].join("\n") : "";
+  }
 
   return [
     "Here is useful information about the environment you are running in:",

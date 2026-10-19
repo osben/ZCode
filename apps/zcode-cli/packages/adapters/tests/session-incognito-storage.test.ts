@@ -95,16 +95,19 @@ describe("session incognito storage", () => {
     expect(getSession(db, id)).toMatchObject({ title: "Renamed", incognito: profile });
   });
 
-  it("reads a stored profile this build cannot parse as lockdown, not as a normal session", () => {
+  it("reads a stored value this build cannot parse as lockdown, not as a normal session", () => {
     const db = openDb();
     const id = createSessionId("damaged");
     createSession(db, sessionInput(id));
-    db.prepare("UPDATE session SET fork_incognito = ? WHERE id = ?").run(
+    // A version-keyed row and a pre-toggle nine-key row both fail the flat strict schema.
+    for (const stored of [
       JSON.stringify({ ...profile, version: 2 }),
-      id,
-    );
-
-    expect(getSession(db, id)?.incognito).toEqual(INCOGNITO_LOCKDOWN_PROFILE);
+      JSON.stringify({ version: 1, skills: true, projectInstructions: false }),
+      "{not json",
+    ]) {
+      db.prepare("UPDATE session SET fork_incognito = ? WHERE id = ?").run(stored, id);
+      expect(getSession(db, id)?.incognito).toEqual(INCOGNITO_LOCKDOWN_PROFILE);
+    }
   });
 
   it("tolerates ledger rows from another build and does not rerun its own migration", () => {

@@ -7,6 +7,7 @@ import {
   RESUME_WORKFLOW_RUN_TOOL_NAME,
   SAVE_WORKFLOW_TOOL_NAME,
 } from "@zcode/contracts";
+import { incognitoExcludes } from "@zcode/shared";
 import { EXPLORE_AGENT_ALLOWED_TOOLS } from "../../subagent/explore-tools.js";
 import type { AgentRuntimeConfig } from "../types.js";
 import { normalizeToolNameAlias } from "../../tool/tool-visibility.js";
@@ -81,7 +82,21 @@ export function resolveRuntimeDynamicWorkflowToolsIncluded(runtime: {
 }): boolean {
   // enabled ∧ (¬onDemand ∨ activated): activation state belongs to the runtime (launch.md, “On demand: activation”);
   // sessions that are not on-demand start activated, so alwaysOn / TUI / headless still depend only on enabled here.
-  return runtime.config.dynamicWorkflowEnabled !== false && runtime.dynamicWorkflowToolsActivated;
+  // The incognito automationTools toggle (specs/incognito-session.md) is part of the same gate, so both registration
+  // entry points and the Agent/Task workflow guidance (which follows this value) stay consistent.
+  return (
+    runtime.config.dynamicWorkflowEnabled !== false &&
+    runtime.dynamicWorkflowToolsActivated &&
+    resolveRuntimeAutomationToolsIncluded(runtime.config)
+  );
+}
+
+/**
+ * `automationTools` toggle (specs/incognito-session.md): gates the Cron and OffPeak tools here and, through
+ * resolveRuntimeDynamicWorkflowToolsIncluded, the dynamic-workflow tools. Absent profile means included.
+ */
+export function resolveRuntimeAutomationToolsIncluded(config: AgentRuntimeConfig): boolean {
+  return !incognitoExcludes(config.incognito, "automationTools");
 }
 
 /**

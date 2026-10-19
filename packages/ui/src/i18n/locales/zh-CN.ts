@@ -7926,17 +7926,17 @@ const zhCN: Record<string, string> = {
   // Incognito session (specs/incognito-session.md)
   "taskList.incognitoTaskLabel": "无痕会话",
   "chat.incognito.toggle": "无痕会话",
-  "chat.incognito.toggleDescription": "下一个会话默认不加载额外能力（可在新会话中重新开启）",
   "chat.incognito.marker": "无痕",
-  "chat.incognito.removeMarker": "关闭无痕模式",
+  "chat.incognito.turnOff": "关闭无痕模式",
   "chat.incognito.includeHeading": "本次会话包含",
-  "chat.incognito.settingsLink": "无痕设置…",
   "chat.incognito.unsupported": "当前 Agent 版本无法启动无痕会话。请更新应用或远程 Agent 后重试。",
   "settings.incognito": "无痕",
   "settings.incognito.description":
     "新无痕会话的默认设置。打开某项能力即默认包含它；仍可在输入框中为每个会话单独调整。",
+  "chat.incognito.agentOutdated":
+    "Agent 版本过旧。请重启应用或更新远程 Agent（开发环境：重新运行 dev:desktop 以重建 Agent）后重试。",
   "settings.incognito.scopeHint":
-    "无痕模式默认会启动一个不含下列能力的干净会话；你可以在新建会话时重新开启其中任意一项。它不是隐私模式：用量统计、遥测、输入历史和模型日志仍会被记录。",
+    "无痕模式默认会启动一个不含下列能力的干净会话（包括 Agent 身份、Harness、运行环境和自动化工具）；你可以在新建会话时重新开启其中任意一项。它不是隐私模式：用量统计、遥测、输入历史和模型日志仍会被记录。",
   "incognito.capability.projectInstructions.label": "项目指令",
   "incognito.capability.projectInstructions.description": "主目录和项目中的 AGENTS.md",
   "incognito.capability.skills.label": "技能列表",
@@ -7956,6 +7956,14 @@ const zhCN: Record<string, string> = {
   "incognito.capability.outputStyle.description": "当前启用的输出风格",
   "incognito.capability.systemPromptOverrides.label": "系统提示词覆盖",
   "incognito.capability.systemPromptOverrides.description": "你编辑过的系统提示词片段",
+  "incognito.capability.identity.label": "Agent 身份",
+  "incognito.capability.identity.description": "CLI 前缀和身份介绍；安全提示始终保留",
+  "incognito.capability.harness.label": "Harness 与工具指引",
+  "incognito.capability.harness.description": "Harness 规则、桌面上下文、沟通与会话指引",
+  "incognito.capability.environment.label": "运行环境",
+  "incognito.capability.environment.description": "工作目录、平台、Git 状态与最近提交",
+  "incognito.capability.automationTools.label": "自动化与工作流工具",
+  "incognito.capability.automationTools.description": "定时任务、错峰任务和动态工作流工具",
 };
 
 export default zhCN;

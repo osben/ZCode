@@ -1,5 +1,10 @@
 import { LocalTtftObserver, setLocalTtftObserver } from "../src/v4/telemetry/localTtftObserver.js";
-import { INCOGNITO_LOCKDOWN_PROFILE, INCOGNITO_UNSUPPORTED_ERROR } from "@zcode/shared";
+import {
+  INCOGNITO_LOCKDOWN_PROFILE,
+  INCOGNITO_PROMPT_TOGGLES_UNSUPPORTED_ERROR,
+  INCOGNITO_SESSION_UNSUPPORTED_ERROR,
+  INCOGNITO_UNSUPPORTED_ERROR,
+} from "@zcode/shared";
 import { Emitter } from "@zcode/rpc";
 import type {
   ConversationTopicFrame,
@@ -138,6 +143,50 @@ it("incognito create is never sent to a Host that would drop the profile", async
   expect(agent.sendConversationCommandV4).not.toHaveBeenCalled();
   await transport.sendCommand({ ...envelope, payload: { workspaceId: "/work" } });
   expect(agent.sendConversationCommandV4).toHaveBeenCalledOnce();
+});
+
+it("incognito create needs the prompt-toggle shape flag on the Host hello, not only incognitoSession", async () => {
+  const envelope = createCommandEnvelope({
+    type: "createSession",
+    sessionId: null,
+    payload: { workspaceId: "/work", incognito: INCOGNITO_LOCKDOWN_PROFILE },
+  });
+  // The handshake is cached per agent service, so each Host hello gets its own agent.
+  const v1Host = setupAgent();
+  const v1Hello = await v1Host.helloConversationV4();
+  v1Host.helloConversationV4.mockResolvedValue({
+    ...v1Hello,
+    capabilities: { ...v1Hello.capabilities, incognitoSession: true },
+  } as never);
+  const rejected = createAgentConversationTransport(v1Host as never, { workspacePath: "/work" });
+  await expect(rejected.sendCommand(envelope)).rejects.toThrow(
+    INCOGNITO_PROMPT_TOGGLES_UNSUPPORTED_ERROR,
+  );
+  expect(v1Host.sendConversationCommandV4).not.toHaveBeenCalled();
+
+  const noIncognitoHost = setupAgent();
+  const noIncognitoHello = await noIncognitoHost.helloConversationV4();
+  noIncognitoHost.helloConversationV4.mockResolvedValue({
+    ...noIncognitoHello,
+    capabilities: { ...noIncognitoHello.capabilities, incognitoSession: undefined },
+  } as never);
+  const unsupported = createAgentConversationTransport(noIncognitoHost as never, {
+    workspacePath: "/work",
+  });
+  await expect(unsupported.sendCommand(envelope)).rejects.toThrow(
+    INCOGNITO_SESSION_UNSUPPORTED_ERROR,
+  );
+  expect(noIncognitoHost.sendConversationCommandV4).not.toHaveBeenCalled();
+
+  const v2Host = setupAgent();
+  const v2Hello = await v2Host.helloConversationV4();
+  v2Host.helloConversationV4.mockResolvedValue({
+    ...v2Hello,
+    capabilities: { ...v2Hello.capabilities, incognitoSession: true, incognitoPromptToggles: true },
+  } as never);
+  const accepted = createAgentConversationTransport(v2Host as never, { workspacePath: "/work" });
+  await accepted.sendCommand(envelope);
+  expect(v2Host.sendConversationCommandV4).toHaveBeenCalledOnce();
 });
 
 function emptyFrame(topic: string, subscriptionId: string): ConversationTopicFrame {

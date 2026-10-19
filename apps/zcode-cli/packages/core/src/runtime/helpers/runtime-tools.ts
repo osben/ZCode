@@ -17,6 +17,7 @@ import { shouldSuppressSealedSubagentBashNotification } from "../../runtime-task
 import {
   resolveBuiltInToolAllowlist,
   resolveRuntimeDisallowedTools,
+  resolveRuntimeAutomationToolsIncluded,
   resolveRuntimeDynamicWorkflowToolsIncluded,
   resolveRuntimeLspToolIncluded,
 } from "./tool-allowlist.js";
@@ -50,6 +51,10 @@ export function initializeRuntimeTooling(
 function registerRuntimeBuiltInTools(runtime: AgentRuntimeInternal, deps: AgentRuntimeDeps): void {
   const nodeReplEnabled = runtime.config.runtimeFeatures?.nodeRepl === true;
   const browserUseEnabled = resolveRuntimeBrowserUseEnabled(runtime, deps);
+  // Cron and OffPeak are main-session automation; both also follow the `automationTools` toggle.
+  const mainAutomationToolsIncluded =
+    runtime.config.taskType !== "subagent_child" &&
+    resolveRuntimeAutomationToolsIncluded(runtime.config);
   registerBuiltInTools(runtime.registry, {
     bashTimeoutPolicy: runtime.config.bashTimeoutPolicy,
     includeSkill: Boolean(runtime.skillPort),
@@ -68,10 +73,10 @@ function registerRuntimeBuiltInTools(runtime: AgentRuntimeInternal, deps: AgentR
     // hit a blocker is the one the author did not mark).
     includeEscalate: Boolean(deps.workflowEscalatePort),
     includeWorkflow: Boolean(deps.workflowPort),
-    includeAutomation: Boolean(deps.automationPort) && runtime.config.taskType !== "subagent_child",
+    includeAutomation: Boolean(deps.automationPort) && mainAutomationToolsIncluded,
     // offPeakPort is injected only when the host enables offPeakToolEnabled (rollout/remote gate is on the host), so port presence
     // means exposure is allowed. Do not expose it in subagent sessions, matching automation.
-    includeOffPeak: Boolean(deps.offPeakPort) && runtime.config.taskType !== "subagent_child",
+    includeOffPeak: Boolean(deps.offPeakPort) && mainAutomationToolsIncluded,
     // Dynamic-workflow rollout gate: unlike off-peak, port presence cannot be the criterion here; all ten tool ports are wired in
     // every CLI, and rollout is a Host decision. The value is defined in tool-allowlist.ts and shared with the branch-refresh entry point.
     includeDynamicWorkflow: resolveRuntimeDynamicWorkflowToolsIncluded(runtime),

@@ -372,3 +372,31 @@ describe("buildTaskListResult", () => {
     expect(deriveTaskLeadingIndicator(item, activity)).toBe("loading");
   });
 });
+
+describe('incognito marker join (specs/incognito-session.md "Sidebar marker durability")', () => {
+  it("keeps a persisted incognito marker when the live session summary does not project it", () => {
+    const persisted = task("s1", { incognito: true });
+    const sessionWithoutMarker = task("s1", { title: "live" });
+    const { items } = buildTaskListResult({
+      taskIndexItems: [persisted],
+      sessions: [sessionWithoutMarker],
+      kind: "timeline",
+      pinnedIds: new Set(),
+      archivedIds: new Set(),
+      sortBy: "updated",
+    });
+    expect(items[0]!.incognito).toBe(true);
+  });
+
+  it("does not add a marker to a normal session", () => {
+    const { items } = buildTaskListResult({
+      taskIndexItems: [task("s2")],
+      sessions: [task("s2")],
+      kind: "timeline",
+      pinnedIds: new Set(),
+      archivedIds: new Set(),
+      sortBy: "updated",
+    });
+    expect(items[0]!.incognito).toBeUndefined();
+  });
+});

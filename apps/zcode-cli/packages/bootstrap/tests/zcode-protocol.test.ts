@@ -221,7 +221,7 @@ describe("ZCodeProtocolAgentServer", () => {
       } as ZCodeProtocolMessage),
     ).resolves.toMatchObject({
       id: "runtime-capabilities",
-      result: { independentPlanState: true, incognitoSession: true },
+      result: { independentPlanState: true, incognitoSession: true, incognitoPromptToggles: true },
     });
   });
 
