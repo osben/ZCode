@@ -134,9 +134,18 @@ const branchFetch = vi.hoisted(() => ({
   getLocalBranches: vi.fn(),
   getWorktreeStorageInfo: vi.fn(async () => ({ globalWorktreesDir: null })),
   listWorktrees: vi.fn(async () => ({ worktrees: [] })),
+  // The popover-open probe feeding the main-branch Base default; defaults to "no default".
+  getBranchMergeStatus: vi.fn(async () => ({
+    state: "unknown",
+    baseRef: null,
+    headRef: null,
+    lastCommitAt: null,
+  })),
 }));
 // Stable reference: the component's effects depend on gitService identity.
 const stableGitService = vi.hoisted(() => branchFetch);
+// Mutable settings source so per-project worktree overrides can vary per test.
+const settingsBox = vi.hoisted(() => ({ value: {} as Record<string, unknown> }));
 const switcherStub = vi.hoisted(() => ({
   setOpen: vi.fn(),
   setCreateDialogOpen: vi.fn(),
@@ -159,7 +168,7 @@ vi.mock("@/hooks/useWorkspaceServices.js", () => ({
   }),
 }));
 vi.mock("@/hooks/useSettingService.js", () => ({
-  useSettings: () => ({ settings: {}, loading: false, error: null }),
+  useSettings: () => ({ settings: settingsBox.value, loading: false, error: null }),
 }));
 vi.mock("@/hooks/useGitBranchSwitcher.js", () => ({
   useGitBranchSwitcher: () => switcherStub,
@@ -294,5 +303,124 @@ describe("destination popover branch list reloads on every open (render)", () =>
 
     expect(await screen.findByRole("option", { name: "main" })).toBeTruthy();
     expect(branchFetch.getLocalBranches).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ---- Render behavior: switching worktree mode ON selects the repository main branch as the Base ----
+
+function mergeStatus(baseRef: string | null) {
+  return { state: "unknown" as const, baseRef, headRef: null, lastCommitAt: null };
+}
+
+function worktreeSwitch() {
+  return screen.getByRole("switch", { name: "destination.worktreeLabel" });
+}
+
+/** The branch row's shown value: the text of the row button carrying the row label. */
+function branchRowValue(labelId: string): string {
+  return screen.getByText(labelId).closest("button")?.textContent ?? "";
+}
+
+async function openPopoverAndWaitForLoads() {
+  fireEvent.click(trigger());
+  await waitFor(() => expect(branchFetch.getLocalBranches).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(branchFetch.getBranchMergeStatus).toHaveBeenCalledTimes(1));
+}
+
+describe("worktree mode ON selects the repository main branch as the Base (render)", () => {
+  beforeAll(() => {
+    // Same jsdom gaps as the reload suite above (Radix popper, cmdk).
+    class ResizeObserverStub {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    (globalThis as { ResizeObserver?: unknown }).ResizeObserver = ResizeObserverStub;
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+
+  beforeEach(() => {
+    branchFetch.getLocalBranches.mockReset();
+    branchFetch.getBranchMergeStatus.mockReset();
+    branchFetch.getBranchMergeStatus.mockResolvedValue(mergeStatus(null));
+    switcherStub.createBranchAndSwitch.mockClear();
+    settingsBox.value = {};
+  });
+
+  afterEach(() => {
+    cleanup();
+    settingsBox.value = {};
+    useDraftBranchIntentStore.getState().setWorktreeIntentActive("/repo", false);
+    useDraftBranchIntentStore.getState().clearDraftBranchIntent("/repo");
+  });
+
+  it("(a) ON derives the Base from origin/HEAD and issues no branch switch", async () => {
+    branchFetch.getLocalBranches.mockResolvedValue(branchList(["feature/x", "main"], "feature/x"));
+    branchFetch.getBranchMergeStatus.mockResolvedValue(mergeStatus("origin/main"));
+    renderDestination("feature/x");
+
+    await openPopoverAndWaitForLoads();
+    fireEvent.click(worktreeSwitch());
+
+    await screen.findByText("destination.baseBranch");
+    expect(branchRowValue("destination.baseBranch")).toContain("main");
+    expect(switcherStub.createBranchAndSwitch).not.toHaveBeenCalled();
+  });
+
+  it("(b) the project override wins over origin/HEAD", async () => {
+    settingsBox.value = {
+      worktreeProjectOverrides: { "/repo": { defaultBaseBranch: "release" } },
+    };
+    branchFetch.getLocalBranches.mockResolvedValue(
+      branchList(["feature/x", "main", "release"], "feature/x"),
+    );
+    branchFetch.getBranchMergeStatus.mockResolvedValue(mergeStatus("origin/main"));
+    renderDestination("feature/x");
+
+    await openPopoverAndWaitForLoads();
+    fireEvent.click(worktreeSwitch());
+
+    await screen.findByText("destination.baseBranch");
+    expect(branchRowValue("destination.baseBranch")).toContain("release");
+  });
+
+  it("(c) an unresolvable main default keeps the live current branch as the Base", async () => {
+    // origin/HEAD names "master", which does not exist locally.
+    branchFetch.getLocalBranches.mockResolvedValue(branchList(["feature/x", "main"], "feature/x"));
+    branchFetch.getBranchMergeStatus.mockResolvedValue(mergeStatus("origin/master"));
+    renderDestination("feature/x");
+
+    await openPopoverAndWaitForLoads();
+    fireEvent.click(worktreeSwitch());
+
+    await screen.findByText("destination.baseBranch");
+    expect(branchRowValue("destination.baseBranch")).toContain("feature/x");
+  });
+
+  it("(d) a manual pick survives while ON; OFF→ON re-selects the main branch", async () => {
+    branchFetch.getLocalBranches.mockResolvedValue(
+      branchList(["dev", "feature/x", "main"], "feature/x"),
+    );
+    branchFetch.getBranchMergeStatus.mockResolvedValue(mergeStatus("origin/main"));
+    renderDestination("feature/x");
+
+    await openPopoverAndWaitForLoads();
+    fireEvent.click(worktreeSwitch());
+    await screen.findByText("destination.baseBranch");
+    expect(branchRowValue("destination.baseBranch")).toContain("main");
+
+    // Manual base pick from the inline list overrides the default while the mode stays on.
+    fireEvent.click(screen.getByText("destination.baseBranch").closest("button")!);
+    fireEvent.click(await screen.findByRole("option", { name: "dev" }));
+    await screen.findByText("destination.baseBranch");
+    expect(branchRowValue("destination.baseBranch")).toContain("dev");
+
+    // Toggling OFF keeps the picked value (re-labeled Task ↔ Base); ON re-defaults to main.
+    fireEvent.click(worktreeSwitch());
+    await screen.findByText("destination.taskBranch");
+    expect(branchRowValue("destination.taskBranch")).toContain("dev");
+    fireEvent.click(worktreeSwitch());
+    await screen.findByText("destination.baseBranch");
+    expect(branchRowValue("destination.baseBranch")).toContain("main");
   });
 });

@@ -383,6 +383,34 @@ export function resolveDefaultBaseBranch(
   return branchesResult.branches[0]?.name ?? "";
 }
 
+/**
+ * Main-branch base default selected when the composer worktree mode switches ON (spec
+ * composer-branch-switcher-semantics.md §4): the project override when present in the loaded
+ * local list, else the repository default from origin/HEAD (merge-status `baseRef`, e.g.
+ * "origin/main") with the remote prefix stripped, again only when it exists locally. Null when
+ * no signal names a local branch — the caller keeps the live current-branch fallback.
+ */
+export function resolveWorktreeMainBaseBranch({
+  branches,
+  preferredDefaultBranch,
+  defaultRef,
+}: {
+  branches: readonly { name: string }[];
+  preferredDefaultBranch?: string | null;
+  /** Remote-prefixed default branch from origin/HEAD, e.g. "origin/main"; null when unknown. */
+  defaultRef?: string | null;
+}): string | null {
+  const branchNames = new Set(branches.map((branch) => branch.name));
+  const preferred = preferredDefaultBranch?.trim();
+  if (preferred && branchNames.has(preferred)) {
+    return preferred;
+  }
+  const ref = defaultRef?.trim() ?? "";
+  const separatorIndex = ref.indexOf("/");
+  const derived = (separatorIndex > 0 ? ref.slice(separatorIndex + 1) : ref).trim();
+  return derived && branchNames.has(derived) ? derived : null;
+}
+
 /** Find the worktree already checked out at `branchName`; used by the target-path-exists recovery (WT-04). */
 export function findWorktreeForBranch(
   worktrees: readonly GitWorktreeEntry[],
