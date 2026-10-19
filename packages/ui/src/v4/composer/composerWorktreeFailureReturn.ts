@@ -209,10 +209,11 @@ export function initiateComposerWorktreeFailureReturn(
         sessionId,
         error: getErrorMessage(error),
       });
+      moveRecoveryRecord(pendingScope, sessionRecoveryScope);
       handledFailureKeys.delete(key);
       useComposerWorktreePipelineStore
         .getState()
-        .setReturningToDraft(workspaceKey, sessionId, attemptId, false);
+        .setReturningToDraft(workspaceKey, sessionId, attemptId, false)
       return;
     }
     // Tombstone through the existing Hide path (session-deletion-cascade.md): tasks.deleted=1
