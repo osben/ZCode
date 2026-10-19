@@ -5995,6 +5995,7 @@ export function SessionPane({
               workspacePath={workspacePath}
               gitWorkspacePath={executionGitPath}
               workspaceIdentity={workspaceIdentity}
+              activeTaskId={rootSessionId ?? sessionId ?? null}
               gitSummary={sessionExecutionWorktree ? worktreeGitState.summary : gitSummary}
               gitDirtyFileCount={
                 sessionExecutionWorktree ? worktreeGitDirtyFileCount : gitDirtyFileCount
