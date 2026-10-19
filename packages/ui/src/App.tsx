@@ -220,6 +220,24 @@ export function App({
     (state) => state.getWorkspaceState(workspaceAbsPath, workspaceIdentity).draftSessionId,
   );
   const sidePaneOwnerId = activeTaskId ?? draftSessionId ?? null;
+  const {
+    resolvedActiveTaskMeta,
+    activeTraceId,
+    activeSessionId,
+    activeTaskProvider,
+    workspaceHeaderProvider,
+    activeTaskChangeSummary,
+    activeTaskTitle,
+    taskNativeSessionLogFile,
+    taskSessionFile,
+  } = useWorkspaceActiveTaskState({
+    workspaceAbsPath,
+    activeTaskId,
+    workspaceRemoteSessionId,
+    workspaceIdentity,
+    selectedProvider: workspaceShellZCodeState.selectedProvider,
+    intl,
+  });
   const [summaryPanelVariantOverride, setSummaryPanelVariantOverride] =
     useState<ChatViewSummaryPanelVariant | null>(null);
   const draftFocusVersion = workspaceShellZCodeState.draftFocusVersion;
@@ -273,6 +291,7 @@ export function App({
     handleBrowserPageMetadataChange,
   } = useAppPanels({
     workspaceAbsPath,
+    terminalCwd: resolvedActiveTaskMeta?.executionWorktree?.path ?? workspaceAbsPath,
     workspaceIdentity,
     workspaceRemoteSessionId,
     activeTaskId,
@@ -426,24 +445,6 @@ export function App({
   const addTab = useTabStore((s) => s.addTab);
   const activateTabByPath = useTabStore((s) => s.activateTabByPath);
 
-  const {
-    resolvedActiveTaskMeta,
-    activeTraceId,
-    activeSessionId,
-    activeTaskProvider,
-    workspaceHeaderProvider,
-    activeTaskChangeSummary,
-    activeTaskTitle,
-    taskNativeSessionLogFile,
-    taskSessionFile,
-  } = useWorkspaceActiveTaskState({
-    workspaceAbsPath,
-    activeTaskId,
-    workspaceRemoteSessionId,
-    workspaceIdentity,
-    selectedProvider: workspaceShellZCodeState.selectedProvider,
-    intl,
-  });
   const gitRepositoryWorkspacePath =
     gitReviewExecutionTarget?.sessionId === activeTaskId
       ? gitReviewExecutionTarget.workspacePath
