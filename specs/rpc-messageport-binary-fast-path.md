@@ -1,6 +1,6 @@
 # MessagePort RPC: check binary payloads before control objects
 
-Status: implemented (2026-10-18). Found by the desktop performance pass (`docs/performance/2026-10-18-perf-pass.md`), gated by `specs/performance-benchmark.md`.
+Status: implemented (2026-10-18). Found by the desktop performance pass and verified with an interleaved A/B benchmark against a per-metric noise floor; the numbers are in the pull request description.
 
 ## Problem
 
@@ -23,4 +23,4 @@ A binary payload (`ArrayBuffer` view) is never treated as a control object, and 
 
 1. Unit (`packages/rpc/test/messagePortBinaryFastPath.test.ts`): delivering a large `Uint8Array` never calls `Object.keys` on it, and the payload still reaches `onMessage` unchanged.
 2. Unit: a valid control object still fires `onFlowState`; a forged control object and a plain object fire nothing. The existing test in `packages/rpc/test/protocol.test.ts` still passes.
-3. Benchmark A/B (`specs/performance-benchmark.md`): S4 renderer script time or CPU improves beyond its noise floor, and no gating metric regresses.
+3. Benchmark A/B (desktop performance benchmark, E2E production build): S4 renderer script time or CPU improves beyond its noise floor, and no gating metric regresses.
