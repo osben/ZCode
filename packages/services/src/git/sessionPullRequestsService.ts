@@ -384,10 +384,14 @@ export function createSessionPullRequestsService(options: {
       return { outcome: "error", nodesByBranch: new Map(), resetAt: null };
     }
     const rateLimitInfo = parsed.data?.rateLimit ?? null;
-    const rateLimitedError = parsed.errors?.some((error) => error.type === "RATE_LIMITED") ?? false;
-    if (rateLimitedError && !parsed.data?.repository) {
+    const errors = parsed.errors ?? [];
+    const rateLimitedError = errors.some((error) => error.type === "RATE_LIMITED");
+    if (rateLimitedError) {
       const resetAt = rateLimitInfo?.resetAt ?? null;
       return { outcome: "rate_limited", nodesByBranch: new Map(), resetAt };
+    }
+    if (errors.length > 0 || !parsed.data?.repository) {
+      return { outcome: "error", nodesByBranch: new Map(), resetAt: null };
     }
     if (
       !rateLimitedError &&
