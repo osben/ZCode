@@ -54,3 +54,10 @@ export function computeGhostLayout({
   const leading = Math.max(0, (lineHeight - caret.height) / 2);
   return { top: Math.max(0, caretTopInEditor - leading), indent };
 }
+
+/** The composer placeholder must yield while ghost text is drawn, otherwise the two overlap on an empty editor. */
+export function hasVoicePreviewText(
+  preview: { committed: string; tentative: string } | null | undefined,
+): boolean {
+  return Boolean(preview && (preview.committed.length > 0 || preview.tentative.length > 0));
+}
