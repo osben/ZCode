@@ -2968,7 +2968,7 @@ slash 建议构建与门禁细节由 focused 单测覆盖；locale 只验证中�
 | PSC04 | existing session，任意 mode                             | 提交 `/plan 帮我做 X`               | planShortcutModeBeforeSend           | mode CAS 完成后才发送普通 `sendText(帮我做 X)`；已处于 plan 时 noop 后继续                     | accepted |
 | PSC05 | existing session running 或已有 queue                   | 提交 `/plan 帮我做 X`               | planShortcutUsesCanonicalInbox       | 不创建 renderer/host 第二队列；任务沿现有 CLI `CommandInbox` FIFO admission                    | accepted |
 | PSC06 | existing session，mode CAS stale/failed/transport error | 提交 `/plan 帮我做 X`               | planShortcutFailurePreservesComposer | 返回 blocked；原文本、附件和 context 保留；不发送 task                                         | accepted |
-| PSC07 | draft 或 existing session                               | 提交带附件或 context 的 `/plan ...` | planShortcutTextOnlyGuard            | 显示本地化不支持提示；不切模式、不发送；保留完整 Composer 状态                                 | accepted |
+| PSC07 | draft 或 existing session                               | 提交带附件或 context 的 `/plan ...` | planShortcutPreservesPayload         | 开启 Plan 并发送原附件/context；无正文但有 payload 也发送，不丢弃长粘贴文件或 shared context   | accepted |
 | PSC08 | slash picker 打开                                       | 选择 `/plan`                        | planShortcutCatalogInsert            | 显示 `/plan [task]`，选择后插入 `/plan ` 而不是立即执行                                        | accepted |
 
 PSC01-08 使用 desktop continuous 作为代表，PSC04/PSC05 额外以 shared-host 的
@@ -2976,7 +2976,7 @@ PSC01-08 使用 desktop continuous 作为代表，PSC04/PSC05 额外以 shared-h
 provider/model 或所有 queue 状态做笛卡尔积。
 
 当前正式 desktop E2E `conversation-session-v4-plan-shortcut.test.ts`（PL）覆盖 PSC01、PSC02、PSC04
-和 PSC07；任务请求使用 case-local replay fixture，并断言 provider 最后一条 user message 不含
+和 PSC07；PSC07 的附件发送语义于 2026-10-18 更新；早期 run `desktop-e2e-20261019-051629-352` 在 onboarding 初始化超时；当前证据为 run `desktop-e2e-20261019-053827-193` 5/5 通过（空草稿／既有会话快捷、普通任务、任务+附件、仅附件）。independent-new-chat worktree 场景已加入 pending spec，尚未重放，不计为通过。任务请求使用 case-local replay fixture，并断言 provider 最后一条 user message 不含
 `/plan`。PSC03/PSC05/PSC06 继续由 SessionPane focused tests 与现有 queue/failure
 覆盖链路承接，待后续需要真实 remote/controlled-stream 证据时再拆分独立 case。
 
@@ -3617,3 +3617,4 @@ Accepted by the implementation request; evidence remains pending manual review.
 | REL-WT-05  | A late reservation ACK after navigating away never switches the active chat or overwrites the next draft; the prepared session and its recovery record survive                                                                           | v4ConversationComposerWorktreeLateAck mounted composer tests; worktree-chat-first pending desktop navigation case                   |
 | REL-WT-06  | Host preparation updates stay authoritative over renderer pipeline entries: newer attempts replace stale ones, cancellation stops delivery, and stale Git registrations fail recoverably instead of turning ready                        | composerWorktreePipeline restore/reconcile tests; gitCliRepo verifyWorktreeUsable test; SetupSteps mounted behavior tests           |
 | REL-WT-07  | Recovery records snapshot the full frozen submission (quotes, code comments, web/PPTX/plugin contexts); Restore re-establishes exactly that submission, and Command Center refuses to delete a prepared session's worktree (incl. force) | composerRecoveryContexts store/dispatch tests; worktreeProtection pure guard tests; windowControllerWorktreePreparation schema test |
+| REL-WT-08  | A new chat with New Worktree enabled reserves its own session and directory despite another creating/ready pipeline in the workspace; only the same frozen submission may share a reservation                                            | composerWorktreePipeline concurrent-reservation and mounted-composer regression; Desktop E2E pending                                |

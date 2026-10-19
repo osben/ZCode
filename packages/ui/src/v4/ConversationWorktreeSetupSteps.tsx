@@ -55,12 +55,16 @@ const setupCardClassName =
 /** Persistent first-in-history summary after Host activation clears the preparation marker. */
 export function ConversationWorktreeCreatedNotice({
   branchName,
+  currentBranchName,
   path,
 }: {
   branchName?: string;
+  /** Undefined until Git status loads; null when the current worktree has no branch. */
+  currentBranchName?: string | null;
   path: string;
 }) {
   const { intl } = useZCodeIntl();
+  const displayBranchName = currentBranchName === undefined ? branchName : currentBranchName;
 
   return (
     <div
@@ -71,8 +75,8 @@ export function ConversationWorktreeCreatedNotice({
       <Check className="mt-0.5 size-3.5 shrink-0 text-success" />
       <div className="flex min-w-0 flex-col gap-0.5">
         <span className="font-medium">{intl.formatMessage({ id: "worktreeSetup.created" })}</span>
-        {branchName ? (
-          <span className="text-ui-caption text-foreground-subtle">{branchName}</span>
+        {displayBranchName ? (
+          <span className="text-ui-caption text-foreground-subtle">{displayBranchName}</span>
         ) : null}
         <span className="break-all text-ui-caption text-foreground-subtle">{path}</span>
       </div>

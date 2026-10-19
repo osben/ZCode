@@ -5,19 +5,26 @@ import {
   isSystemPromptOverrideKey,
   normalizeSystemPromptText,
 } from "@zcode/shared";
-import { atomicWriteFile, withFileLock } from "@zcode/shared/node";
+import { atomicWriteFile, hashBytes, withFileLock } from "@zcode/shared/node";
 import type {
   ISystemPromptService,
   SystemPromptSection,
   SystemPromptWriteResult,
 } from "./systemPrompt.js";
 import { createServiceLogger } from "../logger/serviceLogger.js";
-import { createHash } from "node:crypto";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 const log = createServiceLogger("system-prompt");
+
+/**
+ * The memory-guidance default shown in Settings. It must match what the runtime renders for the
+ * active retrieval branch (default-index inserts the MEMORY.md index pointer paragraph), or the
+ * Settings default/diff preview would disagree with the restored prompt. Known limit: the runtime
+ * picks its branch per session, so this value cannot match every session (specs/system-prompt-settings.md).
+ */
+const MEMORY_GUIDANCE_SETTINGS_DEFAULT = composeMemoryGuidanceDefault("default-index");
 
 function resolveUserHomeDir(): string {
   const envHome = process.env.HOME?.trim() || process.env.USERPROFILE?.trim();
@@ -32,10 +39,6 @@ function getOverridesDir(): string {
 /** Key whitelist is the only filename source; unknown keys are rejected, not sanitized. */
 function overrideFilePath(key: string): string | null {
   return isSystemPromptOverrideKey(key) ? join(getOverridesDir(), `${key}.md`) : null;
-}
-
-function hashBytes(bytes: Uint8Array): string {
-  return createHash("sha256").update(bytes).digest("hex");
 }
 
 /** Revision of the current file bytes; null when the file is missing. Other read errors propagate. */
@@ -84,12 +87,9 @@ export function createSystemPromptService(): ISystemPromptService {
         const { content: overrideContent, revision } = await readOverride(key);
         return {
           key,
-          // The memory-guidance default must match what the runtime renders for the active
-          // retrieval branch (default-index inserts the MEMORY.md index pointer paragraph),
-          // or the Settings default/diff preview would disagree with the restored prompt.
           defaultContent:
             key === "memory-guidance"
-              ? composeMemoryGuidanceDefault("default-index")
+              ? MEMORY_GUIDANCE_SETTINGS_DEFAULT
               : SYSTEM_PROMPT_DEFAULTS[key],
           overrideContent,
           filePath: join(getOverridesDir(), `${key}.md`),

@@ -207,9 +207,29 @@ describe("useSystemPromptOverrides revisions and in-place refresh", () => {
       result.current.setDraft("custom");
     });
     await act(() => result.current.saveEditor());
-    await waitFor(() => expect(service.listSections).toHaveBeenCalledTimes(2));
+    // The saved row is patched from the write result, so no second listing is made.
+    expect(service.listSections).toHaveBeenCalledTimes(1);
     expect(result.current.status).toBe("ready");
-    expect(result.current.sections).toHaveLength(1);
+    expect(result.current.sections[0]).toMatchObject({
+      overrideContent: "custom",
+      isOverridden: true,
+      revision: "rev-2",
+    });
+  });
+
+  it("relists after a save when the host does not report the written revision", async () => {
+    const service = revisionedService("rev-1");
+    service.writeOverride.mockResolvedValueOnce(undefined as never);
+    mocks.useBaseWorkspaceServices.mockReturnValue({ systemPromptService: service });
+    const { result } = renderHook(() => useSystemPromptOverrides(localTarget));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    act(() => {
+      result.current.openEditor("cli-prefix", "default:cli-prefix");
+      result.current.setDraft("custom");
+    });
+    await act(() => result.current.saveEditor());
+    await waitFor(() => expect(service.listSections).toHaveBeenCalledTimes(2));
   });
 
   it("sends the editor's captured revision and skips the check on hosts without revisions", async () => {
@@ -270,13 +290,114 @@ describe("useSystemPromptOverrides revisions and in-place refresh", () => {
     expect(result.current.editor?.draft).toBe("mine");
     await waitFor(() => expect(result.current.editorDiskChanged).toBe(true));
 
-    await act(() => result.current.saveEditor({ overwrite: true }));
+    await act(() => result.current.saveEditor({ overwrite: { reviewedRevision: "rev-external" } }));
     expect(service.writeOverride).toHaveBeenLastCalledWith({
       key: "cli-prefix",
       content: "mine",
       expectedRevision: "rev-external",
     });
     expect(mocks.toast).toHaveBeenCalledWith("settings.systemPrompt.saved");
+  });
+
+  it("reports the disk revision a conflicting save found, and nothing for a saved write", async () => {
+    const service = revisionedService("rev-1");
+    mocks.useBaseWorkspaceServices.mockReturnValue({ systemPromptService: service });
+    const { result } = renderHook(() => useSystemPromptOverrides(localTarget));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    act(() => {
+      result.current.openEditor("cli-prefix", "default:cli-prefix");
+      result.current.setDraft("mine");
+    });
+
+    service.writeOverride.mockResolvedValueOnce({
+      kind: "conflict",
+      currentRevision: "rev-external",
+    });
+    let conflict: unknown;
+    await act(async () => {
+      conflict = await result.current.saveEditor();
+    });
+    expect(conflict).toEqual({ currentRevision: "rev-external" });
+
+    let saved: unknown = "not-called";
+    await act(async () => {
+      saved = await result.current.saveEditor();
+    });
+    expect(saved).toBeUndefined();
+  });
+
+  it("overwrites against the reviewed revision, not a newer disk revision read at click time", async () => {
+    const service = revisionedService("rev-1");
+    mocks.useBaseWorkspaceServices.mockReturnValue({ systemPromptService: service });
+    const { result } = renderHook(() => useSystemPromptOverrides(localTarget));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    act(() => {
+      result.current.openEditor("cli-prefix", "default:cli-prefix");
+      result.current.setDraft("mine");
+    });
+    service.setDisk({ revision: "rev-external", content: "theirs" });
+    await act(() => result.current.reload());
+    await waitFor(() => expect(result.current.editorDiskChanged).toBe(true));
+
+    // A newer external edit lands before the user presses Overwrite.
+    service.setDisk({ revision: "rev-newer", content: "even newer" });
+    await act(() => result.current.reload());
+    service.writeOverride.mockResolvedValueOnce({
+      kind: "conflict",
+      currentRevision: "rev-newer",
+    });
+    await act(() => result.current.saveEditor({ overwrite: { reviewedRevision: "rev-external" } }));
+    expect(service.writeOverride).toHaveBeenLastCalledWith({
+      key: "cli-prefix",
+      content: "mine",
+      expectedRevision: "rev-external",
+    });
+    expect(result.current.editor?.draft).toBe("mine");
+    expect(mocks.toast).toHaveBeenCalledWith("settings.systemPrompt.changedOnDisk");
+  });
+
+  it("discards a listing that was in flight when a save patched the row", async () => {
+    const service = revisionedService("rev-1");
+    mocks.useBaseWorkspaceServices.mockReturnValue({ systemPromptService: service });
+    const { result } = renderHook(() => useSystemPromptOverrides(localTarget));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    act(() => {
+      result.current.openEditor("cli-prefix", "default:cli-prefix");
+      result.current.setDraft("custom");
+    });
+
+    // A focus refresh read the file before the save; its response arrives after the save finished.
+    const stale = deferred<Awaited<ReturnType<typeof service.listSections>>>();
+    service.listSections.mockImplementationOnce(() => stale.promise);
+    act(() => {
+      void result.current.reload();
+    });
+    await act(() => result.current.saveEditor());
+    expect(result.current.sections[0]).toMatchObject({
+      overrideContent: "custom",
+      revision: "rev-2",
+    });
+
+    await act(async () => {
+      stale.resolve({
+        sections: [
+          {
+            key: "cli-prefix",
+            defaultContent: "default:cli-prefix",
+            overrideContent: null,
+            filePath: "/host/.zcode/system-prompt/cli-prefix.md",
+            isOverridden: false,
+            revision: "rev-1",
+          },
+        ],
+      });
+      await stale.promise;
+    });
+    expect(result.current.sections[0]).toMatchObject({
+      overrideContent: "custom",
+      isOverridden: true,
+      revision: "rev-2",
+    });
   });
 
   it("treats an undefined write result from an older host as success", async () => {
@@ -334,6 +455,44 @@ describe("useSystemPromptOverrides revisions and in-place refresh", () => {
     expect(mocks.toast).toHaveBeenCalledWith("settings.systemPrompt.resetAllPartial");
   });
 
+  it("throttles focus refreshes to one per two seconds", async () => {
+    const service = revisionedService("rev-1");
+    mocks.useBaseWorkspaceServices.mockReturnValue({ systemPromptService: service });
+    const { result } = renderHook(() => useSystemPromptOverrides(localTarget));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    const before = service.listSections.mock.calls.length;
+
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+      window.dispatchEvent(new Event("focus"));
+    });
+    await waitFor(() => expect(service.listSections.mock.calls.length).toBe(before + 1));
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(service.listSections.mock.calls.length).toBe(before + 1);
+  });
+
+  it("counts a rejected reset entry as failed and still deletes the others", async () => {
+    const service = revisionedService("rev-1");
+    service.deleteOverride
+      .mockRejectedValueOnce(new Error("disk gone"))
+      .mockResolvedValueOnce({ kind: "ok", revision: null });
+    mocks.useBaseWorkspaceServices.mockReturnValue({ systemPromptService: service });
+    const { result } = renderHook(() => useSystemPromptOverrides(localTarget));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    await act(() =>
+      result.current.resetAllCustomized([
+        { key: "cli-prefix", expectedRevision: "rev-1" },
+        { key: "harness", expectedRevision: "rev-h" },
+      ]),
+    );
+    expect(service.deleteOverride).toHaveBeenCalledTimes(2);
+    expect(mocks.toast).toHaveBeenCalledWith("settings.systemPrompt.resetAllPartial");
+  });
+
   it("refreshes silently when the window regains focus", async () => {
     const service = revisionedService("rev-1");
     mocks.useBaseWorkspaceServices.mockReturnValue({ systemPromptService: service });
@@ -373,12 +532,58 @@ describe("useSystemPromptOverrides revisions and in-place refresh", () => {
     await act(() => result.current.saveEditor());
     expect(service.writeOverride).toHaveBeenCalledTimes(1);
 
-    await act(() => result.current.saveEditor({ overwrite: true }));
+    await act(() => result.current.saveEditor({ overwrite: { reviewedRevision: "rev-external" } }));
     expect(service.writeOverride).toHaveBeenLastCalledWith({
       key: "cli-prefix",
       content: "mine",
       expectedRevision: "rev-external",
     });
+  });
+
+  it("drops the conflict revision once a listing reports a different revision", async () => {
+    const service = revisionedService("rev-1");
+    mocks.useBaseWorkspaceServices.mockReturnValue({ systemPromptService: service });
+    const { result } = renderHook(() => useSystemPromptOverrides(localTarget));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    act(() => {
+      result.current.openEditor("cli-prefix", "default:cli-prefix");
+      result.current.setDraft("mine");
+    });
+
+    service.writeOverride.mockResolvedValueOnce({
+      kind: "conflict",
+      currentRevision: "rev-external",
+    });
+    service.setDisk({ revision: "rev-newer", content: "even newer" });
+    await act(() => result.current.saveEditor());
+    await waitFor(() => expect(result.current.editor?.conflictRevision).toBeUndefined());
+
+    // The listing describes the disk now, so the state is the listing-based Changed-on-disk state.
+    expect(result.current.editorDiskChanged).toBe(true);
+    expect(result.current.canSaveEditor).toBe(false);
+  });
+
+  it("keeps the conflict revision while a listing still reports it", async () => {
+    const service = revisionedService("rev-1");
+    mocks.useBaseWorkspaceServices.mockReturnValue({ systemPromptService: service });
+    const { result } = renderHook(() => useSystemPromptOverrides(localTarget));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    act(() => {
+      result.current.openEditor("cli-prefix", "default:cli-prefix");
+      result.current.setDraft("mine");
+    });
+
+    service.writeOverride.mockResolvedValueOnce({
+      kind: "conflict",
+      currentRevision: "rev-external",
+    });
+    service.setDisk({ revision: "rev-external", content: "theirs" });
+    await act(() => result.current.saveEditor());
+    await waitFor(() => expect(service.listSections).toHaveBeenCalledTimes(2));
+    await act(async () => {});
+
+    expect(result.current.editor?.conflictRevision).toBe("rev-external");
+    expect(result.current.canSaveEditor).toBe(false);
   });
 
   it("overwrites with a conflict revision of null when the file was removed on disk", async () => {
@@ -397,7 +602,7 @@ describe("useSystemPromptOverrides revisions and in-place refresh", () => {
     await waitFor(() => expect(service.listSections).toHaveBeenCalledTimes(2));
     expect(result.current.editorDiskChanged).toBe(true);
 
-    await act(() => result.current.saveEditor({ overwrite: true }));
+    await act(() => result.current.saveEditor({ overwrite: { reviewedRevision: null } }));
     expect(service.writeOverride).toHaveBeenLastCalledWith({
       key: "cli-prefix",
       content: "mine",

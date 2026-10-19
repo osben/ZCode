@@ -16,6 +16,7 @@ import { V4PaneConversationProvider } from "@/v4/V4ConversationContext.js";
 export const SelectionSideChatPane = memo(function SelectionSideChatPane({
   tab,
   focused,
+  isDesktop,
   onOpenBrowserUrl,
   onOpenCodeViewer,
   onOpenFileLink,
@@ -28,6 +29,8 @@ export const SelectionSideChatPane = memo(function SelectionSideChatPane({
 }: {
   tab: SelectionSideChatPaneTab;
   focused: boolean;
+  /** Desktop enables the local voice dictation control in this side conversation composer. */
+  isDesktop?: boolean;
   onOpenBrowserUrl?: (url: string) => void;
   onOpenCodeViewer?: (source: CodeViewerSource) => void;
   onOpenFileLink?: (target: MessageFileLinkTarget) => void;
@@ -66,6 +69,7 @@ export const SelectionSideChatPane = memo(function SelectionSideChatPane({
         selectionSideChat
         focused={focused}
         telemetryVisible={focused}
+        isDesktop={isDesktop}
         workspacePath={tab.workspacePath}
         workspaceIdentity={tab.workspaceIdentity}
         remoteSessionId={tab.remoteSessionId}

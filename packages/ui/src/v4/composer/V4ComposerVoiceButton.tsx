@@ -1,7 +1,6 @@
 import { memo } from "react";
 import { LoaderCircle, Mic, Square, X } from "lucide-react";
 import { TID_V4_COMPOSER_VOICE_ENTRY } from "@zcode/shared";
-import type { VoiceTranscriptionPreview } from "@zcode/services";
 import { Button } from "@/components/ui/button.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -9,10 +8,26 @@ import { useShortcutCommandLabel } from "@/shortcuts/useShortcutBindings.js";
 import type { VoiceDictationPhase } from "@/hooks/useVoiceDictation.js";
 import type { VoiceModelStatus } from "@/lib/voiceModelStatus.js";
 
+/** i18n id of the button label: the action the button performs in this phase. */
+function phaseLabelId(phase: VoiceDictationPhase, loadingLabelId: string | undefined): string {
+  if (phase === "loading") return loadingLabelId ?? "voiceDictation.composer.loading";
+  if (phase === "recording") return "voiceDictation.composer.stop";
+  if (phase === "processing") return "voiceDictation.composer.processing";
+  return "voiceDictation.composer.start";
+}
+
+/** i18n id of the live-region status: the same phases worded as state, not as an action. */
+function phaseStatusId(phase: VoiceDictationPhase, loadingLabelId: string | undefined): string {
+  if (phase === "loading") return loadingLabelId ?? "voiceDictation.composer.loading";
+  if (phase === "recording") return "voiceDictation.composer.listening";
+  if (phase === "processing") return "voiceDictation.composer.status.processing";
+  if (phase === "transcribing") return "voiceDictation.composer.status.transcribing";
+  return "voiceDictation.composer.status.idle";
+}
+
 interface V4ComposerVoiceButtonProps {
   phase: VoiceDictationPhase;
   level: number;
-  preview: VoiceTranscriptionPreview | null;
   /** i18n id for the loading phase; desktop loads a model, the web engine only starts the recognizer. */
   loadingLabelId?: string;
   disabled?: boolean;
@@ -23,11 +38,14 @@ interface V4ComposerVoiceButtonProps {
   onCancel?: () => void;
 }
 
-/** Voice input button inside the composer: click to start/stop recording (shares the same recording state as the shortcut). */
+/**
+ * Voice input button inside the composer: click to start/stop recording (shares the same recording
+ * state as the shortcut). While recording, the level meter and Cancel sit in a toolbar cluster to
+ * the left of the stop button. The transcript preview is drawn in the editor (ghost preview), not here.
+ */
 function V4ComposerVoiceButtonImpl({
   phase,
   level,
-  preview,
   loadingLabelId,
   disabled,
   onToggle,
@@ -38,41 +56,23 @@ function V4ComposerVoiceButtonImpl({
   const shortcutLabel = useShortcutCommandLabel("voiceDictation");
   const recording = phase === "recording";
   const busy = phase === "loading" || phase === "transcribing" || phase === "processing";
-  const label = intl.formatMessage({
-    id:
-      phase === "loading"
-        ? (loadingLabelId ?? "voiceDictation.composer.loading")
-        : recording
-          ? "voiceDictation.composer.stop"
-          : phase === "processing"
-            ? "voiceDictation.composer.processing"
-            : "voiceDictation.composer.start",
-  });
+  const label = intl.formatMessage({ id: phaseLabelId(phase, loadingLabelId) });
   // The dot only adds information while the button is otherwise idle.
   const statusDot =
     phase === "idle" && (modelStatus === "loading" || modelStatus === "loaded")
       ? modelStatus
       : null;
-  const statusText = statusDot
-    ? intl.formatMessage({ id: `voiceDictation.composer.modelStatus.${statusDot}` })
-    : null;
+  // Only the loading dot has tooltip/aria text. The loaded dot is a non-essential hint: it is
+  // decorative (aria-hidden) and carries no text, so the tooltip and description stay silent.
+  const statusText =
+    statusDot === "loading"
+      ? intl.formatMessage({ id: "voiceDictation.composer.modelStatus.loading" })
+      : null;
   const Icon = recording ? Square : busy ? LoaderCircle : Mic;
   const levelPercent = Math.round(Math.max(0, Math.min(1, level)) * 100);
   // Persistent polite live region: announces phase changes even when focus is elsewhere
-  // (e.g. while recording); the preview panel only renders while recording with text, so it
-  // cannot cover the idle/transcribing announcements.
-  const statusAnnouncement = intl.formatMessage({
-    id:
-      phase === "loading"
-        ? (loadingLabelId ?? "voiceDictation.composer.loading")
-        : recording
-          ? "voiceDictation.composer.listening"
-          : phase === "processing"
-            ? "voiceDictation.composer.status.processing"
-            : phase === "transcribing"
-              ? "voiceDictation.composer.status.transcribing"
-              : "voiceDictation.composer.status.idle",
-  });
+  // (e.g. while recording); it is not the ghost preview, so transcript words are never announced.
+  const statusAnnouncement = intl.formatMessage({ id: phaseStatusId(phase, loadingLabelId) });
 
   return (
     <div
@@ -80,62 +80,46 @@ function V4ComposerVoiceButtonImpl({
       data-testid="voice-dictation-control"
     >
       {recording ? (
+        // Toolbar cluster (VD-CLU-*): in the toolbar flow, never an overlay, so no covered actions.
+        // The mousedown default is prevented so pressing it never moves focus out of the editor,
+        // which the composer-scoped dictation shortcut depends on.
         <div
-          className="pointer-events-none absolute right-full top-1/2 z-20 mr-2 w-56 -translate-y-1/2 overflow-hidden rounded-xl bg-popover p-2 text-popover-foreground shadow-lg ring-1 ring-border/60 animate-in fade-in slide-in-from-right-2 duration-150 ease-out motion-reduce:animate-none"
-          data-testid="voice-dictation-feedback"
+          className="inline-flex shrink-0 items-center gap-1.5 pr-1 text-destructive animate-in fade-in duration-150 ease-out motion-reduce:animate-none"
+          data-testid="voice-dictation-cluster"
+          onMouseDown={(event) => event.preventDefault()}
         >
-          <div className="flex items-center gap-2">
-            <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-destructive">
-              <Mic className="size-3.5" aria-hidden />
-            </span>
-            <span className="min-w-0 flex-1 truncate text-ui-sm font-medium">
-              {intl.formatMessage({ id: "voiceDictation.composer.listening" })}
-            </span>
-            <div
-              className="inline-flex h-6 shrink-0 items-center gap-0.5 text-destructive"
-              role="meter"
-              aria-label={intl.formatMessage({ id: "voiceDictation.composer.level" })}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={levelPercent}
-              data-testid="voice-dictation-level"
-            >
-              {[0, 1, 2, 3, 4, 5, 6].map((index) => {
-                const barLevel = Math.max(0.1, level - Math.abs(index - 3) * 0.055);
-                return (
-                  <span
-                    key={index}
-                    className="w-0.5 rounded-full bg-current transition-[height] duration-100"
-                    style={{ height: `${Math.max(2, Math.round(barLevel * 20))}px` }}
-                  />
-                );
-              })}
-            </div>
-            {onCancel ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                className="pointer-events-auto shrink-0"
-                aria-label={intl.formatMessage({ id: "voiceDictation.composer.cancel" })}
-                data-testid="voice-dictation-cancel"
-                onClick={onCancel}
-              >
-                <X aria-hidden />
-              </Button>
-            ) : null}
+          <div
+            className="inline-flex h-6 shrink-0 items-center gap-0.5"
+            role="meter"
+            aria-label={intl.formatMessage({ id: "voiceDictation.composer.level" })}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={levelPercent}
+            data-testid="voice-dictation-level"
+          >
+            {[0, 1, 2, 3, 4, 5, 6].map((index) => {
+              const barLevel = Math.max(0.1, level - Math.abs(index - 3) * 0.055);
+              return (
+                <span
+                  key={index}
+                  className="w-0.5 rounded-full bg-current transition-[height] duration-100"
+                  style={{ height: `${Math.max(2, Math.round(barLevel * 20))}px` }}
+                />
+              );
+            })}
           </div>
-          {preview && (preview.committed || preview.tentative) ? (
-            <div
-              className="mt-2 border-t border-border/70 pt-1.5 text-ui-sm leading-5 text-muted-foreground"
-              data-testid="voice-dictation-preview"
-              role="status"
-              aria-live="polite"
-              title={`${preview.committed}${preview.tentative}`}
+          {onCancel ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="shrink-0"
+              aria-label={intl.formatMessage({ id: "voiceDictation.composer.cancel" })}
+              data-testid="voice-dictation-cancel"
+              onClick={onCancel}
             >
-              <span className="line-clamp-2">{preview.committed}</span>
-              <span className="line-clamp-1 italic opacity-70">{preview.tentative}</span>
-            </div>
+              <X aria-hidden />
+            </Button>
           ) : null}
         </div>
       ) : null}
@@ -165,21 +149,21 @@ function V4ComposerVoiceButtonImpl({
         </Button>
       </ControlHintTooltip>
       {statusDot ? (
-        <>
-          <span
-            aria-hidden
-            data-testid="voice-model-status-dot"
-            data-status={statusDot}
-            className={`pointer-events-none absolute right-1 top-1 size-1.5 rounded-full ${
-              statusDot === "loading"
-                ? "animate-pulse bg-warning motion-reduce:animate-none"
-                : "bg-success"
-            }`}
-          />
-          <span id="voice-model-status-text" className="sr-only">
-            {statusText}
-          </span>
-        </>
+        <span
+          aria-hidden
+          data-testid="voice-model-status-dot"
+          data-status={statusDot}
+          className={`pointer-events-none absolute right-1 top-1 size-1.5 rounded-full ${
+            statusDot === "loading"
+              ? "animate-pulse bg-warning motion-reduce:animate-none"
+              : "bg-success"
+          }`}
+        />
+      ) : null}
+      {statusText ? (
+        <span id="voice-model-status-text" className="sr-only">
+          {statusText}
+        </span>
       ) : null}
       <span className="sr-only" role="status" aria-live="polite">
         {statusAnnouncement}

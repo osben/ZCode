@@ -3,6 +3,7 @@ import { createElement, type ReactNode } from "react";
 
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { GitRepositorySummary } from "@zcode/shared";
 import type { ConversationSnapshot } from "@zcode/shared/zcode-protocol-v4";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { SessionPane } from "@/v4/SessionPane.js";
@@ -59,6 +60,37 @@ vi.mock("@/store/conversationShareSelectionStore.js", async (importOriginal) => 
   return {
     ...actual,
     useConversationShareSelectionStore: Object.assign(hook, { getState: fakeState }),
+  };
+});
+
+// Worktree notice inputs: the session's live sessions-index row (owns executionWorktree) and the
+// Git summary the pane reads. The real useGitRepository runs in SSR with its initial state, which is
+// the pre-status placeholder; a test may override only the summary to model a settled refresh.
+const worktreeState = vi.hoisted(() => ({
+  items: [] as Array<{
+    taskId: string;
+    executionWorktree?: { path: string; branchName: string };
+  }>,
+  gitSummary: null as GitRepositorySummary | null,
+}));
+
+vi.mock("@/v4/useWorkspaceSessionsIndexItems.js", () => ({
+  useWorkspaceSessionsIndexItems: () => ({ items: worktreeState.items }),
+}));
+
+// The auto-refresh watcher needs live workspace services; SSR cannot run its effects anyway.
+vi.mock("@/hooks/useGitAutoRefresh.js", () => ({
+  useGitAutoRefresh: () => undefined,
+}));
+
+vi.mock("@/hooks/useGitRepository.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/hooks/useGitRepository.js")>();
+  return {
+    ...actual,
+    useGitRepository: (options: Parameters<typeof actual.useGitRepository>[0]) => {
+      const state = actual.useGitRepository(options);
+      return worktreeState.gitSummary ? { ...state, summary: worktreeState.gitSummary } : state;
+    },
   };
 });
 
@@ -133,6 +165,7 @@ vi.mock("@/v4/ConversationTimeline.js", async () => {
       apiRetry,
       backgroundScrollLocked,
       bottomDock,
+      headerSlot,
       rowContext,
       selectionActions,
       scrollToQueryActionRef,
@@ -140,6 +173,7 @@ vi.mock("@/v4/ConversationTimeline.js", async () => {
       apiRetry?: ConversationSnapshot["control"]["apiRetry"];
       backgroundScrollLocked?: boolean;
       bottomDock?: ReactNode;
+      headerSlot?: ReactNode;
       rowContext?: ConversationRowRenderContext;
       selectionActions?: { enabled: boolean };
       scrollToQueryActionRef?: { current: unknown };
@@ -149,7 +183,7 @@ vi.mock("@/v4/ConversationTimeline.js", async () => {
       timelineState.backgroundScrollLocked = backgroundScrollLocked ?? false;
       timelineState.selectionActionsEnabled = selectionActions?.enabled ?? null;
       timelineState.scrollToQueryActionRef = scrollToQueryActionRef ?? null;
-      return React.createElement("div", { "data-testid": "mock-timeline" }, bottomDock);
+      return React.createElement("div", { "data-testid": "mock-timeline" }, headerSlot, bottomDock);
     },
   };
 });
@@ -189,6 +223,23 @@ vi.mock("@/request-security-edition/V4ProviderRuntimeHeadersController.js", asyn
       React.createElement("div", { "data-testid": "mock-runtime-headers" }),
   };
 });
+
+function createUnavailableSummary(workspacePath: string): GitRepositorySummary {
+  return {
+    workspacePath,
+    repoRoot: workspacePath,
+    workspaceInRepoPath: ".",
+    autoRefreshWatchPaths: [],
+    branchName: null,
+    trackingBranchName: null,
+    headRefType: "branch",
+    ahead: 0,
+    behind: 0,
+    isDirty: false,
+    isGitAvailable: false,
+    isRepository: false,
+  };
+}
 
 function makeSnapshot(
   lastError: ConversationSnapshot["control"]["lastError"] = null,
@@ -289,6 +340,53 @@ describe("SessionPane read-only mode", () => {
   afterEach(() => {
     timelineState.apiRetry = null;
     timelineState.rowContext = null;
+    worktreeState.items = [];
+    worktreeState.gitSummary = null;
+  });
+
+  // Regression: the placeholder summary used before a successful Git status has branchName null and
+  // headRefType "branch". Treating it as a live branch hid the persisted creation branch.
+  describe("worktree created notice branch", () => {
+    const WORKTREE = { path: "/workspace/wt-quiet", branchName: "zcode/quiet-otter" };
+
+    it("falls back to the creation branch before any Git status has succeeded", () => {
+      worktreeState.items = [{ taskId: "child-session", executionWorktree: WORKTREE }];
+
+      const html = renderReadOnlyPane();
+
+      expect(html).toContain('data-worktree-created="true"');
+      expect(html).toContain("zcode/quiet-otter");
+    });
+
+    it("falls back to the creation branch when the refresh reports no repository", () => {
+      worktreeState.items = [{ taskId: "child-session", executionWorktree: WORKTREE }];
+      worktreeState.gitSummary = {
+        ...createUnavailableSummary(WORKTREE.path),
+        headRefType: "branch",
+        branchName: null,
+      };
+
+      const html = renderReadOnlyPane();
+
+      expect(html).toContain('data-worktree-created="true"');
+      expect(html).toContain("zcode/quiet-otter");
+    });
+
+    it("shows the live branch once Git status reports a repository", () => {
+      worktreeState.items = [{ taskId: "child-session", executionWorktree: WORKTREE }];
+      worktreeState.gitSummary = {
+        ...createUnavailableSummary(WORKTREE.path),
+        isGitAvailable: true,
+        isRepository: true,
+        branchName: "feat/live-branch",
+      };
+
+      const html = renderReadOnlyPane();
+
+      expect(html).toContain('data-worktree-created="true"');
+      expect(html).toContain("feat/live-branch");
+      expect(html).not.toContain("zcode/quiet-otter");
+    });
   });
 
   it("renders subagent child panes without composer or queue input affordances", () => {

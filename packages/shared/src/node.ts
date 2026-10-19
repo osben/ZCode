@@ -19,6 +19,7 @@ export {
   atomicWriteFile,
   atomicWritePrivateTextFile,
   backupCorruptFile,
+  hashBytes,
   withFileLock,
   type AtomicWriteFileOptions,
   type SharedFileLockOptions,

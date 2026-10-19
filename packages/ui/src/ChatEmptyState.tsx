@@ -55,7 +55,10 @@ import {
   type ComposerWorktreePreparationSync,
   type ComposerWorktreeBeginResult,
 } from "@/v4/composer/composerDraftWorktreeIntent.js";
-import { beginWorktreePipelineCreation } from "@/v4/composer/composerWorktreePipeline.js";
+import {
+  beginWorktreePipelineCreation,
+  isComposerWorktreeNameReserved,
+} from "@/v4/composer/composerWorktreePipeline.js";
 import {
   selectComposerWorktreePipeline,
   useComposerWorktreePipelineStore,
@@ -732,10 +735,21 @@ export function ChatEmptyWorktreeTaskToggle({
   const generateComposedBranchName = useCallback((): string => {
     const branchNameSet = new Set(branchesResult?.branches.map((branch) => branch.name) ?? []);
     const generated = generateWorktreeBranchName({
-      isTaken: (raw) => branchNameSet.has(composeBranchName(effectiveLocation.prefix, raw)),
+      isTaken: (raw) => {
+        const composed = composeBranchName(effectiveLocation.prefix, raw);
+        return (
+          branchNameSet.has(composed) ||
+          isComposerWorktreeNameReserved({
+            workspaceKey,
+            workspacePath,
+            branchName: composed,
+            effectiveLocation,
+          })
+        );
+      },
     });
     return composeBranchName(effectiveLocation.prefix, generated);
-  }, [branchesResult, effectiveLocation]);
+  }, [branchesResult, effectiveLocation, workspaceKey, workspacePath]);
 
   const beginCreation = useCallback(
     (

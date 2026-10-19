@@ -18,12 +18,16 @@ vi.mock("@/hooks/useSettingService.js", () => ({
 }));
 vi.mock("@/logger.js", () => ({ logger: { warn: mocks.warn, info: mocks.info } }));
 
-import { useVoiceModelWarmUp } from "@/hooks/useVoiceModelWarmUp.js";
+import {
+  resetVoiceModelWarmUpThrottleForTests,
+  useVoiceModelWarmUp,
+} from "@/hooks/useVoiceModelWarmUp.js";
 
 let scope: HTMLDivElement;
 let input: HTMLInputElement;
 
 beforeEach(() => {
+  resetVoiceModelWarmUpThrottleForTests();
   scope = document.createElement("div");
   input = document.createElement("input");
   scope.append(input);
@@ -167,6 +171,37 @@ describe("useVoiceModelWarmUp", () => {
 
     expect(mocks.service!.warmUp).toHaveBeenCalledTimes(1);
     expect(mocks.warn).not.toHaveBeenCalled();
+  });
+
+  it("sends an unchanged idle-unload preference once per Host service", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(3_000_000);
+    render();
+    focusComposer();
+    await flush();
+    vi.setSystemTime(3_000_000 + 31_000);
+    focusComposer();
+    await flush();
+
+    expect(mocks.service!.warmUp).toHaveBeenCalledTimes(2);
+    expect(mocks.service!.setIdleUnloadMinutes).toHaveBeenCalledTimes(1);
+  });
+
+  it("shares the warm-up throttle across composers in the window", async () => {
+    const otherScope = document.createElement("div");
+    const otherInput = document.createElement("input");
+    otherScope.append(otherInput);
+    document.body.append(otherScope);
+    try {
+      render();
+      renderHook(() => useVoiceModelWarmUp({ enabled: true, scopeRef: { current: otherScope } }));
+      focusComposer();
+      fireEvent.focusIn(otherInput);
+      await flush();
+      expect(mocks.service!.warmUp).toHaveBeenCalledTimes(1);
+    } finally {
+      otherScope.remove();
+    }
   });
 
   it("tolerates an older Host without the idle preference method", async () => {

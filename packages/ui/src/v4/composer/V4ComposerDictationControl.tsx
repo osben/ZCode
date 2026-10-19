@@ -1,4 +1,5 @@
-import { useCallback, type RefObject } from "react";
+import { useCallback, useEffect, type RefObject } from "react";
+import type { VoiceTranscriptionPreview } from "@zcode/services";
 import { useDictationTranscriptHandler } from "@/hooks/useDictationTranscriptHandler.js";
 import { useVoiceModelStatus } from "@/hooks/useVoiceModelStatus.js";
 import { useVoiceModelWarmUp } from "@/hooks/useVoiceModelWarmUp.js";
@@ -16,11 +17,14 @@ import { V4ComposerVoiceButton } from "@/v4/composer/V4ComposerVoiceButton.js";
 export function V4ComposerDictationControl({
   disabled,
   onTranscript,
+  onPreviewChange,
   scopeRef,
   webRemote,
 }: {
   disabled: boolean;
   onTranscript: (text: string) => void;
+  /** Receives the streaming ghost preview (null when none); the editor draws it, never the document. */
+  onPreviewChange?: (preview: VoiceTranscriptionPreview | null) => void;
   scopeRef: RefObject<HTMLElement | null>;
   webRemote: boolean;
 }) {
@@ -34,6 +38,12 @@ export function V4ComposerDictationControl({
   useVoiceModelWarmUp({ enabled: !webRemote, scopeRef });
   const modelStatus = useVoiceModelStatus({ enabled: !webRemote });
   const engine = webRemote ? webSpeech : voiceDictation;
+  const enginePreview = engine.preview;
+  // Hand the preview to the editor layer; clearing on unmount keeps no ghost after the composer goes away.
+  useEffect(() => {
+    onPreviewChange?.(enginePreview);
+    return () => onPreviewChange?.(null);
+  }, [enginePreview, onPreviewChange]);
   // V4ComposerVoiceButton is a memo component; an inline arrow function would defeat the memo (see the reactStableReferences tests).
   const handleToggle = useCallback(() => void engine.toggle(), [engine.toggle]);
   if (webRemote && !webSpeech.supported) {
@@ -44,7 +54,6 @@ export function V4ComposerDictationControl({
     <V4ComposerVoiceButton
       phase={engine.phase}
       level={engine.level}
-      preview={engine.preview}
       loadingLabelId={webRemote ? "voiceDictation.composer.starting" : undefined}
       disabled={disabled}
       onToggle={handleToggle}

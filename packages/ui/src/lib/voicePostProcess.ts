@@ -5,7 +5,10 @@ import {
 } from "@zcode/services";
 import type { VoiceDictationSettings } from "@zcode/shared";
 
-/** Safety net above the Host's own 15 s limit, so a hung Host call can never strand the busy state. */
+/**
+ * Safety net above the Host's own 15 s limit, so a hung Host call can never strand the busy state.
+ * The Host gives up after 15 s; this client wrapper gives up after 20 s if the Host never answers.
+ */
 export const POST_PROCESS_CLIENT_TIMEOUT_MS = 20_000;
 
 /**
