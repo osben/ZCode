@@ -315,7 +315,7 @@ function renderComposerElement(
     });
   return createElement(
     ZCodeIntlProvider,
-    { initialLocale: "zh-CN" },
+    { initialLocale: "en-US" },
     createElement(ConversationComposer, {
       draftMode: sessionId === null,
       onSelectModel: vi.fn(),

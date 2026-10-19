@@ -501,8 +501,9 @@ describe("OffPeakNewTaskEntry", () => {
 
   it.each([
     {
-      locale: "zh-CN",
+      locale: "en-US",
       messages: zhCN,
+      templateCopyKey: "en" as const,
       bannerText: "订阅用户新功能体验：创建“闲时任务”，我们将免费在算力富余时段为你完成指派任务。",
       bannerTipText: "本功能不消耗订阅用户套餐额度、本功能仅面向订阅用户开放",
       fullCopy:
@@ -512,6 +513,7 @@ describe("OffPeakNewTaskEntry", () => {
     {
       locale: "en-US",
       messages: enUS,
+      templateCopyKey: "en" as const,
       bannerText:
         'New feature for subscribers: Create "Idle-time task" , We will complete your assigned task for free during periods of surplus computing power.',
       bannerTipText:
@@ -522,7 +524,7 @@ describe("OffPeakNewTaskEntry", () => {
     },
   ])(
     "$locale 首页展示、提示与模板预填使用同一种语言",
-    ({ locale, messages, bannerText, bannerTipText, fullCopy, copySeparator }) => {
+    ({ locale, messages, templateCopyKey, bannerText, bannerTipText, fullCopy, copySeparator }) => {
       h.messages.current = messages;
       h.locale.current = locale;
       h.providerSettingsState.view = {
@@ -554,7 +556,7 @@ describe("OffPeakNewTaskEntry", () => {
         ],
       };
 
-      const copy = h.remoteTemplateCopy.standupGitSummary[locale === "zh-CN" ? "cn" : "en"];
+      const copy = h.remoteTemplateCopy.standupGitSummary[templateCopyKey];
       const { title, description, prompt } = copy;
       const onOpenAutomations = vi.fn();
 

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { TID_ASSISTANT_CODE_COMMENT_ITEM, TID_ASSISTANT_CODE_COMMENT_TOGGLE } from "@zcode/shared";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import type { AssistantCodeCommentCard } from "@/lib/assistantCodeComment.js";
@@ -62,6 +63,7 @@ export function AssistantCodeCommentCards({
       >
         <button
           type="button"
+          data-testid={TID_ASSISTANT_CODE_COMMENT_TOGGLE}
           className="flex h-full min-w-0 flex-1 items-center gap-2 px-1 text-left"
           aria-expanded={isOpen}
           aria-label={intl.formatMessage(
@@ -131,6 +133,7 @@ export function AssistantCodeCommentCards({
                   <div
                     role="button"
                     tabIndex={0}
+                    data-testid={TID_ASSISTANT_CODE_COMMENT_ITEM}
                     data-code-comment-path={card.displayPath}
                     // Git file rows place the translucent base surface on the parent and hover on the inner layer.
                     // Putting both backgrounds on one element would replace the base on hover instead of layering over it,

@@ -10,6 +10,7 @@ import {
   TicketsView,
 } from "@/feedback/TicketsView.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 function createFeedbackService(): IFeedbackService {
   return {
@@ -29,7 +30,7 @@ function createFeedbackService(): IFeedbackService {
   } as unknown as IFeedbackService;
 }
 
-function renderTicketsView(locale: "zh-CN" | "en-US") {
+function renderTicketsView(locale: "en-US" | "en-US") {
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
@@ -46,9 +47,8 @@ describe("TicketsView", () => {
   it("uses English copy for the initial feedback list loading state without a detail placeholder", () => {
     const html = renderTicketsView("en-US");
 
-    expect(html).toContain("Loading...");
-    expect(html).not.toContain("Select feedback to view details");
-    expect(html).not.toContain("加载中");
+    expect(html).toContain(expectedCopy("common.loading"));
+    expect(html).not.toContain(expectedCopy("feedback.tickets.placeholder.title"));
   });
 
   it("renders ticket IDs with a copy action in the list", () => {
@@ -74,8 +74,8 @@ describe("TicketsView", () => {
     );
 
     expect(html).toContain("ZC-123");
-    expect(html).toContain("Issue #");
-    expect(html).toContain("Copy issue ID");
+    expect(html).toContain(expectedCopy("feedback.tickets.issuePrefix"));
+    expect(html).toContain(expectedCopy("feedback.detail.issueCopy"));
     expect(html).toContain("Cannot submit prompt");
   });
 
@@ -83,12 +83,12 @@ describe("TicketsView", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(TicketsInitialLoadingState),
       ),
     );
 
-    expect(html).toContain("加载中...");
+    expect(html).toContain(expectedCopy("common.loading"));
     expect(html).toContain("flex-1");
     expect(html).toContain("items-center");
     expect(html).toContain("justify-center");

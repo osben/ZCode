@@ -25,12 +25,13 @@ test("有 run 时立即显示下方卡片，不等主代理回复结束", async 
       await page.setViewportSize({ width, height: 800 });
       await page.goto(`${origin}/__workflow_hover`);
       const card = page.locator('[data-workflow-run-digest="true"]');
-      await page.getByRole("button", { name: "Join run" }).waitFor();
+      const joinRun = page.locator('[data-fixture-action="join-run"]');
+      await joinRun.waitFor();
       assert.equal(await card.count(), 0);
-      await page.getByRole("button", { name: "Join run" }).click();
+      await joinRun.click();
       await card.waitFor();
       assert.equal(await card.count(), 1);
-      await page.getByRole("button", { name: "Finish reply" }).click();
+      await page.locator('[data-fixture-action="finish-reply"]').click();
       assert.equal(await card.count(), 1);
     }
   } finally {

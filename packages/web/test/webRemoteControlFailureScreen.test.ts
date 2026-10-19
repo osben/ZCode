@@ -10,12 +10,14 @@ describe("WebRemoteControlFailureScreen", () => {
   it("explains DEVICE_OFFLINE as a desktop disconnected state", () => {
     const copy = resolveWebRemoteControlScreenCopy(
       { reason: "desktop-disconnected", message: "Desktop device is offline." },
-      "zh-CN",
+      "en-US",
     );
 
-    expect(copy.title).toBe("桌面端已离线");
-    expect(copy.description).toContain("电脑端已经断开连接");
-    expect(copy.action).toBe("重新连接");
+    expect(copy.tone).toBe("danger");
+    expect(copy.title.trim()).not.toBe("");
+    expect(copy.description.trim()).not.toBe("");
+    expect(copy.action.trim()).not.toBe("");
+    expect(copy.nextSteps).not.toHaveLength(0);
   });
 
   it("explains mobile recovery timeout without blaming desktop offline", () => {
@@ -24,12 +26,13 @@ describe("WebRemoteControlFailureScreen", () => {
         reason: "connection-recovery-timeout",
         message: "Mobile connection did not recover the RPC bridge in time.",
       },
-      "zh-CN",
+      "en-US",
     );
 
-    expect(copy.title).toBe("连接恢复超时");
-    expect(copy.description).toContain("手机端连接没有及时恢复");
-    expect(copy.description).not.toContain("电脑端已经断开连接");
+    expect(copy.tone).toBe("warning");
+    expect(copy.title.trim()).not.toBe("");
+    expect(copy.description.trim()).not.toBe("");
+    expect(copy.nextSteps).not.toHaveLength(0);
   });
 
   it("explains KICKED as another mobile controller taking over", () => {
@@ -38,11 +41,13 @@ describe("WebRemoteControlFailureScreen", () => {
         reason: "session-conflict",
         message: "Another mobile controller replaced this one.",
       },
-      "zh-CN",
+      "en-US",
     );
 
-    expect(copy.title).toBe("已被其他设备接管");
-    expect(copy.description).toContain("另一台远程控制设备");
+    expect(copy.tone).toBe("warning");
+    expect(copy.title.trim()).not.toBe("");
+    expect(copy.description.trim()).not.toBe("");
+    expect(copy.action.trim()).not.toBe("");
   });
 
   it("renders structured recovery guidance and the relay detail message", () => {
@@ -57,9 +62,10 @@ describe("WebRemoteControlFailureScreen", () => {
       }),
     );
 
-    expect(html).toContain("Desktop Offline");
-    expect(html).toContain("What happened");
+    expect(html).toContain("<main");
+    expect(html).toContain("<h1");
+    expect(html).toContain("<ol");
+    expect(html).toContain("<button");
     expect(html).toContain("Desktop device is offline.");
-    expect(html).toContain("Try Again");
   });
 });

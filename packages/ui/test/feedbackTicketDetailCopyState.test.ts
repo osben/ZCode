@@ -50,7 +50,7 @@ describe("TicketDetailView issue copy state", () => {
     renderToStaticMarkup(
       React.createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         React.createElement(TicketDetailView, {
           ticket: createTicket("ticket-1"),
           feedbackService: {} as IFeedbackService,

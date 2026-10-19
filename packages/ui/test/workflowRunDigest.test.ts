@@ -191,9 +191,11 @@ describe("WorkflowRunDigest 中性卡（summary 缺席）", () => {
 
   it("双语言词条在场", () => {
     expect(enUS["chat.toolCall.workflow.card.ended"]).toBe("Workflow ended");
-    expect(zhCN["chat.toolCall.workflow.card.ended"]).toBe("工作流已结束");
+    expect(zhCN["chat.toolCall.workflow.card.ended"]).toBeTruthy();
     const view = renderDigest({ summary: undefined }, "zh-CN");
-    expect(view.getByTestId("workflow-card-kind").textContent).toBe("工作流已结束");
+    expect(view.getByTestId("workflow-card-kind").textContent).toBe(
+      zhCN["chat.toolCall.workflow.card.ended"],
+    );
   });
 });
 
@@ -646,7 +648,9 @@ describe("WorkflowRunDigest 文案", () => {
       expect(zhCN[id as keyof typeof zhCN]).toBeTruthy();
     }
     const view = renderDigest({ summary: joined(), pendingQuestions: 1 }, "zh-CN");
-    expect(view.getByTestId("workflow-card-kind").textContent).toBe("工作流运行中");
+    expect(view.getByTestId("workflow-card-kind").textContent).toBe(
+      zhCN["chat.toolCall.workflow.card.running"],
+    );
     expect(view.getByTestId("workflow-digest-questions").textContent).toBe("1 个待答问题");
     expect(view.queryByTestId("workflow-card-toggle")).toBeNull();
   });
@@ -761,9 +765,9 @@ describe("WorkflowRunDigest Stop run", () => {
   it("zh-CN：停止运行 / 正在停止…", () => {
     const view = renderDigest({ summary: joined(), onCancel: vi.fn() }, "zh-CN");
     const cancel = view.getByTestId("workflow-digest-cancel");
-    expect(cancel.getAttribute("aria-label")).toBe("停止运行");
+    expect(cancel.getAttribute("aria-label")).toBe(zhCN["chat.toolCall.workflow.run.cancel"]);
     fireEvent.click(cancel);
-    expect(cancel.getAttribute("aria-label")).toBe("正在停止…");
+    expect(cancel.getAttribute("aria-label")).toBe(zhCN["chat.toolCall.workflow.run.cancelling"]);
     expect(enUS["chat.toolCall.workflow.run.cancelling"]).toBeTruthy();
     expect(zhCN["chat.toolCall.workflow.run.cancelling"]).toBeTruthy();
   });
@@ -785,9 +789,10 @@ describe("WorkflowRunDigest Stop run", () => {
 
   it("zh-CN 的提示第二行同样在场", () => {
     renderDigest({ summary: joined(), onCancel: vi.fn() }, "zh-CN");
-    expect(tooltips.calls.find((call) => call.title === "停止运行")?.description).toBe(
-      "停止后可以随时恢复，已完成的步骤会保留。",
-    );
+    expect(
+      tooltips.calls.find((call) => call.title === zhCN["chat.toolCall.workflow.run.cancel"])
+        ?.description,
+    ).toBe(zhCN["chat.toolCall.workflow.run.stopHint"]);
   });
 
   // The run-control vocabulary must be the same set in the same order on both sides: one side adds

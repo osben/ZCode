@@ -32,7 +32,7 @@ test("完成通知产物链接样式与点击", async () => {
         await summary.innerText(),
         /Workflow completed\s*·\s*Desktop workflow\s*·\s*Desktop startup/s,
       );
-      const link = summary.getByRole("button", { name: "Desktop startup" });
+      const link = page.getByTestId("chat-workflow-notification-row-link").getByRole("button");
       assert.match(await link.locator("img").getAttribute("src"), /markdown/i);
       await link.hover();
       assert.equal(await link.evaluate((n) => getComputedStyle(n).textDecorationLine), "underline");
@@ -45,7 +45,7 @@ test("完成通知产物链接样式与点击", async () => {
       assert.equal(await summary.getAttribute("aria-expanded"), "false");
       await summary.click();
       const result = page.getByTestId("workflow-notification-result");
-      const copy = result.getByRole("button", { name: "Copy code" });
+      const copy = result.getByRole("button");
       await copy.waitFor();
       await page.waitForFunction(() => {
         const n = document.querySelector('[data-testid="workflow-notification-result"] .max-h-80');

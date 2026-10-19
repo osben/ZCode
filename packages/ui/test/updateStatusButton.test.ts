@@ -18,6 +18,7 @@ import { PlatformProvider } from "@/hooks/usePlatform.js";
 import { ServiceProvider } from "@/hooks/useServices.js";
 import type { IServiceAccessor } from "@zcode/services";
 import type { IPlatformService, UpdateStatePayload } from "@zcode/shared";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const noopPlatform = {
   openExternal: () => undefined,
@@ -54,7 +55,7 @@ function renderUpdateStatusButton(
           { platform: noopPlatform },
           createElement(
             ZCodeIntlProvider,
-            { initialLocale: "zh-CN" },
+            { initialLocale: "en-US" },
             createElement(UpdateStatusButton, {
               platform: noopPlatform,
               version,
@@ -653,7 +654,9 @@ describe("UpdateStatusButton release notes", () => {
     expect(downloadingHtml).toContain("text-success-foreground");
     expect(downloadingHtml).toContain("animate-spin");
     expect(downloadingHtml).not.toContain('disabled=""');
-    expect(downloadingHtml).not.toContain("下载中");
+    expect(downloadingHtml).not.toMatch(
+      new RegExp(`>${expectedCopy("updateDialog.downloadingAction")}<`),
+    );
     expect(downloadingHtml).not.toContain("topoverlayer:w-auto");
     expect(downloadingHtml).not.toContain("topoverlayer:hidden");
     expect(downloadedHtml).toContain("bg-success");

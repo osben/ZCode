@@ -8,6 +8,7 @@ import { createServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { chromium } from "playwright-core";
+import { expectedCopy } from "../../../helpers/uiCopy.js";
 
 const root = fileURLToPath(new URL("../../../../../../", import.meta.url));
 const entry = "/packages/ui/test/browser/manual-review/pending/topic-preparation.fixture.tsx";
@@ -129,7 +130,7 @@ for (const width of [390, 1200]) {
           }
           const waiting = page.locator('[data-topic-preparation="waiting"]');
           const expand = waiting.getByRole("button", {
-            name: locale === "zh-CN" ? "展开" : "Expand",
+            name: locale === "zh-CN" ? expectedCopy("chat.message.expand") : "Expand",
             exact: true,
           });
           await expand.waitFor();

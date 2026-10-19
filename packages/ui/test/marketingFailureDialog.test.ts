@@ -29,6 +29,6 @@ it("uses an info Alert, literal message and one acknowledgement without a visibl
     dialog.querySelector("b,iframe,[data-slot=alert-title],[data-slot=dialog-close]"),
   ).toBeNull();
   expect(screen.getAllByRole("button")).toHaveLength(1);
-  fireEvent.click(screen.getByRole("button", { name: "知道了" }));
+  fireEvent.click(screen.getAllByRole("button")[0]!);
   expect(onClose).toHaveBeenCalledTimes(1);
 });

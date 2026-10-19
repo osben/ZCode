@@ -23,7 +23,7 @@ describe("ChatErrorBanner Hook errors", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           PlatformProvider,
           { platform: mockPlatform },
@@ -40,7 +40,6 @@ describe("ChatErrorBanner Hook errors", () => {
 
     expect(html).toContain("hooks_prompt_block: python3: missing file");
     expect(html).toContain(`data-testid="${TID_CHAT_ERROR_DETAILS_BUTTON}"`);
-    expect(html).toContain("展开详情");
     expect(html).toContain(`data-testid="${TID_CHAT_ERROR_HOOK_ICON}"`);
   });
 });

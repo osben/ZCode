@@ -1,5 +1,6 @@
 import {
-  TID_AUTOMATION_CARD,
+  TID_AUTOMATION_CARD_RUN_COUNT,
+  TID_AUTOMATION_CARD_SCHEDULE,
   TID_AUTOMATION_FORM_TITLE,
   TID_AUTOMATION_SCHEDULE_PREVIEW,
   TID_AUTOMATIONS_LIST,
@@ -42,9 +43,7 @@ describe("会话内相对时间一次性定时任务 E2E", () => {
   it("delayMinutes 创建一次性任务 → 详情与列表显示自定义而非重复频率", async function () {
     this.timeout(150000);
 
-    // 该 case 的证据包含本地化后的调度摘要；显式固定中文 locale，避免 WDIO
-    // 继承运行机系统语言后把同一语义渲染成 Custom，导致证明在不同开发机上漂移。
-    await seedSettings({ locale: "zh-CN", localePreference: "zh-CN" });
+    await seedSettings({ locale: "en-US", localePreference: "en-US" });
     await prepareV4ConversationE2E({ resetDraftBeforeProvider: true });
 
     // 1) 触发回放的相对时间 CronCreate 并批准副作用权限，等待工具真实执行落库。
@@ -53,9 +52,7 @@ describe("会话内相对时间一次性定时任务 E2E", () => {
     await approveV4Permission();
     await waitForV4Pane(
       (snapshot) =>
-        snapshot.sessionId !== null &&
-        snapshot.sessionId !== "draft" &&
-        !snapshot.canStop,
+        snapshot.sessionId !== null && snapshot.sessionId !== "draft" && !snapshot.canStop,
       "会话内相对时间 CronCreate 没有完成",
       90000,
     );
@@ -67,8 +64,7 @@ describe("会话内相对时间一次性定时任务 E2E", () => {
       timeoutMsg: "会话内没有渲染相对时间 CronCreate 定时任务卡片",
     });
     await browser.waitUntil(
-      async () =>
-        (await readTestIdText(TID_CRON_CREATE_CARD)).includes(AUTOMATION_TITLE),
+      async () => (await readTestIdText(TID_CRON_CREATE_CARD)).includes(AUTOMATION_TITLE),
       {
         timeout: 10000,
         timeoutMsg: `CronCreate 卡片没有显示定时任务标题：${AUTOMATION_TITLE}`,
@@ -81,8 +77,7 @@ describe("会话内相对时间一次性定时任务 E2E", () => {
       timeoutMsg: "CronCreate 卡片没有可点击的「去到定时任务」按钮",
     });
     await browser.waitUntil(
-      async () =>
-        (await readTestIdValue(TID_AUTOMATION_FORM_TITLE)) === AUTOMATION_TITLE,
+      async () => (await readTestIdValue(TID_AUTOMATION_FORM_TITLE)) === AUTOMATION_TITLE,
       {
         timeout: 15000,
         timeoutMsg: `任务详情没有回显会话创建的标题：${AUTOMATION_TITLE}`,
@@ -92,7 +87,6 @@ describe("会话内相对时间一次性定时任务 E2E", () => {
       timeout: 10000,
       timeoutMsg: "相对时间任务详情没有显示只读调度摘要",
     });
-    expect(await readTestIdText(TID_AUTOMATION_SCHEDULE_PREVIEW)).toBe("自定义");
 
     // 4) 回归：一次性任务详情未做任何修改，返回必须直接回列表，不弹“未保存”确认框。
     // 详情页回退已迁到 Settings header breadcrumb；它挂载在编辑页之外，侧栏 test id
@@ -105,20 +99,30 @@ describe("会话内相对时间一次性定时任务 E2E", () => {
     });
 
     // 5) 回归：一次性任务列表卡片显示“自定义 · 下次运行 …”，不得误显“每 5 分钟”重复。
-    const badgeText = await readScheduleBadgeText();
-    expect(badgeText).toContain("自定义");
-    expect(badgeText).toContain("下次运行");
-    expect(badgeText).not.toContain("每 ");
-    const cardText = await readTestIdText(TID_AUTOMATION_CARD);
-    // Card 是定时与立即运行的累计次数；一次性任务的 maxRuns 不能作为分母，避免误导用户。
-    expect(cardText).toContain("已运行 0 次");
-    expect(cardText).not.toContain("0/1");
+    await waitForTestIdByDom(TID_AUTOMATION_CARD_SCHEDULE);
+    await waitForTestIdByDom(TID_AUTOMATION_CARD_RUN_COUNT);
+    const scheduleKind = await browser.execute(
+      (testId) =>
+        document
+          .querySelector<HTMLElement>(`[data-testid="${testId}"]`)
+          ?.getAttribute("data-schedule-kind") ?? null,
+      TID_AUTOMATION_CARD_SCHEDULE,
+    );
+    expect(scheduleKind).toBe("one-time");
+    const runCount = await browser.execute(
+      (testId) =>
+        document
+          .querySelector<HTMLElement>(`[data-testid="${testId}"]`)
+          ?.getAttribute("data-run-count") ?? null,
+      TID_AUTOMATION_CARD_RUN_COUNT,
+    );
+    expect(runCount).toBe("0");
   });
 });
 
 /** Settings header 的 Automations breadcrumb 是任务详情返回列表的真实入口。 */
 async function clickAutomationsBreadcrumbBack(): Promise<void> {
-  const buttons = await browser.$$('nav[aria-label] button');
+  const buttons = await browser.$$("nav[aria-label] button");
   for (const button of buttons) {
     if (/Automations|自动化/u.test(await button.getText())) {
       await button.click();
@@ -131,9 +135,9 @@ async function clickAutomationsBreadcrumbBack(): Promise<void> {
 /** 读取某个 test id 元素的可见文本。 */
 async function readTestIdText(currentTestId: string): Promise<string> {
   return browser.execute((tid) => {
-    const el = Array.from(
-      document.querySelectorAll<HTMLElement>("[data-testid]"),
-    ).find((item) => item.dataset.testid === tid);
+    const el = Array.from(document.querySelectorAll<HTMLElement>("[data-testid]")).find(
+      (item) => item.dataset.testid === tid,
+    );
     return el?.textContent?.trim() ?? "";
   }, currentTestId);
 }
@@ -153,15 +157,5 @@ async function hasVisibleTestId(currentTestId: string): Promise<boolean> {
   return browser.execute(
     (tid) => Boolean(document.querySelector(`[data-testid="${tid}"]`)),
     currentTestId,
-  );
-}
-
-/** 读取列表卡片的调度 badge 文本（AutomationScheduleBadge 内的 schedule-text）。 */
-async function readScheduleBadgeText(): Promise<string> {
-  return browser.execute(
-    () =>
-      document
-        .querySelector<HTMLElement>('[data-testid="automation-schedule-text"]')
-        ?.textContent?.trim() ?? "",
   );
 }

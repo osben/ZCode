@@ -52,11 +52,11 @@ test("WFS03 snippet 三态内容与展开交互", async () => {
         "Workflow snippet · 427ms",
       );
       await page.getByTestId("snippet-result").waitFor();
-      await page
-        .getByTestId("snippet-result")
-        .getByText(/package.json/)
-        .first()
-        .waitFor();
+      await page.waitForFunction(() =>
+        document
+          .querySelector('[data-testid="snippet-result"]')
+          ?.textContent?.includes("package.json"),
+      );
       assert.equal(
         await page
           .getByTestId("workflow-snippet-body")
@@ -80,7 +80,7 @@ test("WFS03 snippet 三态内容与展开交互", async () => {
         await page.getByTestId("workflow-snippet-body").locator(".max-h-80").getAttribute("class"),
         /max-h-80/,
       );
-      const copy = page.getByTestId("snippet-result").getByRole("button", { name: "Copy code" });
+      const copy = page.getByTestId("snippet-result").getByRole("button");
       assert.equal(await copy.count(), 1);
       if (process.env.ZCODE_E2E_SCREENSHOT_PREFIX) {
         await page.screenshot({
@@ -92,11 +92,11 @@ test("WFS03 snippet 三态内容与展开交互", async () => {
       await page.getByTestId("fail").click();
       assert.match(await summary.innerText(), /Failed|Execution failed/);
       assert.doesNotMatch(await summary.innerText(), /427ms|TIMEOUT/);
-      await page
-        .getByTestId("snippet-result")
-        .getByText(/deadline exceeded/)
-        .first()
-        .waitFor();
+      await page.waitForFunction(() =>
+        document
+          .querySelector('[data-testid="snippet-result"]')
+          ?.textContent?.includes("deadline exceeded"),
+      );
       assert.equal(
         (await page.getByTestId("workflow-snippet-body").innerText()).match(/read 2 files/g)
           ?.length,

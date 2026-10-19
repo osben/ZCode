@@ -38,70 +38,23 @@ import {
   resolveSortableProviderModelRowClassName,
   SortableProviderModelList,
 } from "@/settings/model-provider-section/SortableProviderModelList.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
-vi.mock("@/i18n/IntlProvider.js", () => ({
-  useZCodeIntl: () => ({
-    locale: "zh-CN",
-    intl: {
-      formatMessage: ({ id }: { id: string }, values?: Record<string, string>) => {
-        const messages: Record<string, string> = {
-          "settings.modelProvider.addModel": "添加模型",
-          "model.capability.vision": "视觉",
-          "settings.modelProvider.contextWindow": "上下文窗口",
-          "settings.modelProvider.contextWindowBadgeLabel": "上下文窗口：{value}",
-          "settings.modelProvider.delete": "删除",
-          "settings.modelProvider.disableAction": "停用",
-          "settings.modelProvider.enableAction": "启用",
-          "settings.modelProvider.restoreDefaultAction": "恢复默认",
-          "settings.modelProvider.followRecommendedConfig": "跟随推荐配置",
-          "settings.modelProvider.editModel": "编辑模型配置",
-          "settings.modelProvider.apiFormat": "API 格式",
-          "settings.modelProvider.apiFormat.anthropicMessages": "Anthropic Messages (/v1/messages)",
-          "settings.modelProvider.apiFormat.chatCompletions":
-            "Chat Completions (/chat/completions)",
-          "settings.modelProvider.apiFormat.responses": "Responses (/responses)",
-          "settings.modelProvider.apiFormat.short.anthropicMessages": "Anthropic",
-          "settings.modelProvider.apiFormat.short.chatCompletions": "Chat",
-          "settings.modelProvider.apiFormat.short.responses": "Responses",
-          "settings.modelProvider.apiFormat.title.anthropicMessages": "Anthropic Messages",
-          "settings.modelProvider.baseUrl": "Base URL",
-          "settings.modelProvider.baseUrlPlaceholder": "https://api.example.com",
-          "settings.modelProvider.readOnlyField": "{field}（只读）",
-          "settings.modelProvider.maxOutputTokens": "最大输出 Token",
-          "settings.modelProvider.inputModalities": "输入类型",
-          "settings.modelProvider.outputModalities": "输出类型",
-          "settings.modelProvider.modelDisplayName": "显示名称",
-          "settings.modelProvider.modelId": "模型 ID",
-          "settings.modelProvider.modelApiFormat.anthropic": "Anthropic Messages",
-          "settings.modelProvider.modelApiFormat.openaiCompatible": "OpenAI Compatible",
-          "settings.modelProvider.modelApiFormat.openaiResponses": "OpenAI Responses",
-          "settings.modelProvider.models": "模型列表",
-          "settings.modelProvider.modelsEmpty": "当前没有配置模型，添加模型后可在聊天中使用。",
-          "settings.modelProvider.testModel": "测试模型",
-          "settings.modelProvider.testModel.connectingWithIdentity":
-            "{provider} / {model} 正在连接",
-          "settings.modelProvider.testModel.successWithIdentity": "{provider} / {model} 连接成功",
-          "settings.modelProvider.testModel.failedWithIdentity":
-            "{provider} / {model} 连接失败：{reason}",
-          "settings.modelProvider.providerSaving": "{provider} 正在保存",
-          "settings.modelProvider.providerSaveSuccess": "{provider} 保存成功",
-          "settings.modelProvider.providerSaveFailure": "{provider} 保存失败：{error}",
-          "settings.modelProvider.modelSaving": "{provider} / {model} 正在保存",
-          "settings.modelProvider.modelSaveSuccess": "{provider} / {model} 保存成功",
-          "settings.modelProvider.modelSaveFailure": "{provider} / {model} 保存失败：{error}",
-          "common.retry": "重试",
-          "common.close": "关闭",
-          "common.save": "保存",
-          "common.cancel": "取消",
-        };
-        return (messages[id] ?? id).replace(
-          /\{(\w+)\}/g,
-          (_match, key: string) => values?.[key] ?? `{${key}}`,
-        );
+vi.mock("@/i18n/IntlProvider.js", async () => {
+  const enUS = (await import("@/i18n/locales/en-US.js")).default as Record<string, string>;
+  return {
+    useZCodeIntl: () => ({
+      locale: "en-US",
+      intl: {
+        formatMessage: ({ id }: { id: string }, values?: Record<string, string | number>) =>
+          Object.entries(values ?? {}).reduce(
+            (result, [name, value]) => result.replaceAll(`{${name}}`, String(value)),
+            enUS[id] ?? id,
+          ),
       },
-    },
-  }),
-}));
+    }),
+  };
+});
 
 const settingsService = vi.hoisted(() => ({ resolveModelConfig: vi.fn() }));
 vi.mock("@/hooks/useServices.js", () => ({
@@ -263,7 +216,9 @@ describe("ProviderModelsSection compact model rows", () => {
         return model;
       });
       render(createElement(InlineEditableProviderCard, { provider, onSave: vi.fn() }));
-      expect(screen.getAllByText("视觉")).toHaveLength(mode === "standard" ? 2 : 1);
+      expect(screen.getAllByText(expectedCopy("model.capability.vision"))).toHaveLength(
+        mode === "standard" ? 2 : 1,
+      );
       expect(provider.models[0]!.config.properties?.inputFormat?.supportsImage).toBe(true);
     },
   );
@@ -272,7 +227,9 @@ describe("ProviderModelsSection compact model rows", () => {
     const view = render(
       createElement(InlineEditableProviderCard, { provider: initial, onSave: vi.fn() }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "编辑模型配置" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: expectedCopy("settings.modelProvider.editModel") }),
+    );
     fireEvent.change(document.querySelector('input[inputmode="numeric"]')!, {
       target: { value: "123456" },
     });
@@ -283,7 +240,9 @@ describe("ProviderModelsSection compact model rows", () => {
       }),
     );
     expect(screen.queryByRole("dialog")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "编辑模型配置" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: expectedCopy("settings.modelProvider.editModel") }),
+    );
     expect(
       (document.querySelector('input[inputmode="numeric"]') as HTMLInputElement).value,
     ).not.toBe("123456");
@@ -346,19 +305,31 @@ describe("ProviderModelsSection compact model rows", () => {
     });
     fireEvent.blur(document.querySelector('[data-model-identity-row="true"] input')!);
     await waitFor(() => expect(settingsService.resolveModelConfig).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole("button", { name: "保存", exact: true }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: expectedCopy("settings.modelProvider.save"),
+        exact: true,
+      }),
+    );
     await waitFor(() => expect(onAddModel).toHaveBeenCalledTimes(1));
     expect(document.querySelector('[data-model-identity-row="true"] input')).not.toBeNull();
     await act(async () => {
       rejectSave(new Error("disk write failed"));
     });
     expect(screen.getByText("disk write failed")).not.toBeNull();
-    expect(screen.queryByRole("button", { name: "重试", exact: true })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: expectedCopy("common.retry"), exact: true }),
+    ).toBeNull();
     expect(
       (document.querySelector('[data-model-identity-row="true"] input') as HTMLInputElement).value,
     ).toBe("new-model");
     onAddModel.mockResolvedValueOnce();
-    fireEvent.click(screen.getByRole("button", { name: "保存", exact: true }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: expectedCopy("settings.modelProvider.save"),
+        exact: true,
+      }),
+    );
     await waitFor(() =>
       expect(document.querySelector('[data-model-identity-row="true"] input')).toBeNull(),
     );
@@ -369,7 +340,7 @@ describe("ProviderModelsSection compact model rows", () => {
     const onCommit = vi.fn().mockRejectedValue(new Error("revision conflict"));
     const props = { model, providerId: "test", onCommit, settingsRevision: 7 };
     const rendered = renderWithProviderFeedback(createElement(ModelRowInput, props));
-    fireEvent.click(screen.getByLabelText("编辑模型配置"));
+    fireEvent.click(screen.getByLabelText(expectedCopy("settings.modelProvider.editModel")));
     fireEvent.change(document.querySelector<HTMLInputElement>('input[inputmode="numeric"]')!, {
       target: { value: "123456" },
     });
@@ -388,7 +359,9 @@ describe("ProviderModelsSection compact model rows", () => {
       (document.querySelector<HTMLInputElement>('input[inputmode="numeric"]')! as HTMLInputElement)
         .value,
     ).toBe("123456");
-    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: expectedCopy("settings.modelProvider.save") }),
+    );
     await waitFor(() => expect(onCommit).toHaveBeenCalled());
     expect(onCommit.mock.calls[0]?.[1]).toBe(7);
     expect(await screen.findByText("revision conflict")).toBeTruthy();
@@ -396,8 +369,10 @@ describe("ProviderModelsSection compact model rows", () => {
       (document.querySelector<HTMLInputElement>('input[inputmode="numeric"]')! as HTMLInputElement)
         .value,
     ).toBe("123456");
-    fireEvent.click(screen.getByRole("button", { name: "取消" }));
-    fireEvent.click(screen.getByLabelText("编辑模型配置"));
+    fireEvent.click(
+      screen.getByRole("button", { name: expectedCopy("settings.modelProvider.cancel") }),
+    );
+    fireEvent.click(screen.getByLabelText(expectedCopy("settings.modelProvider.editModel")));
     expect(
       (document.querySelector<HTMLInputElement>('input[inputmode="numeric"]')! as HTMLInputElement)
         .value,
@@ -418,10 +393,10 @@ describe("ProviderModelsSection compact model rows", () => {
         onAddModel: vi.fn(),
       }),
     );
-    expect(screen.getByLabelText("编辑模型配置")).toBeTruthy();
+    expect(screen.getByLabelText(expectedCopy("settings.modelProvider.editModel"))).toBeTruthy();
     expect(screen.getByRole("switch")).toBeTruthy();
     expect(screen.getByTestId(testId(TID_MODEL_PROVIDER_MODEL_DELETE_BUTTON, "0"))).toBeTruthy();
-    fireEvent.click(screen.getByLabelText("编辑模型配置"));
+    fireEvent.click(screen.getByLabelText(expectedCopy("settings.modelProvider.editModel")));
     expect(
       (document.querySelector<HTMLInputElement>('input[inputmode="numeric"]')! as HTMLInputElement)
         .value,
@@ -440,7 +415,7 @@ describe("ProviderModelsSection compact model rows", () => {
     );
 
     const addButton = screen.getByTestId(TID_MODEL_PROVIDER_ADD_MODEL_BUTTON);
-    const modelsLabel = screen.getByText("模型列表");
+    const modelsLabel = screen.getByText(expectedCopy("settings.modelProvider.models"));
     expect(addButton.parentElement).toBe(modelsLabel.parentElement);
     expect(addButton.dataset.variant).toBe("secondary");
     expect(addButton.dataset.size).toBe("default");
@@ -522,12 +497,26 @@ describe("ProviderModelsSection compact model rows", () => {
       }),
     );
 
-    fireEvent.click(screen.getByTitle("测试模型"));
+    fireEvent.click(screen.getByTitle(expectedCopy("settings.modelProvider.testModel")));
 
-    expect(screen.getByText("deepseek / deepseek-v4-flash 正在连接")).toBeTruthy();
-    await screen.findByText("deepseek / deepseek-v4-flash 连接成功");
+    expect(
+      screen.getByText(
+        expectedCopy("settings.modelProvider.testModel.connectingWithIdentity", {
+          provider: "deepseek",
+          model: "deepseek-v4-flash",
+        }),
+      ),
+    ).toBeTruthy();
+    await screen.findByText(
+      expectedCopy("settings.modelProvider.testModel.successWithIdentity", {
+        provider: "deepseek",
+        model: "deepseek-v4-flash",
+      }),
+    );
     expect(screen.getByTestId("provider-detail-feedback-viewport")).toBeTruthy();
-    expect(screen.queryByText("连接成功！")).toBeNull();
+    expect(
+      screen.queryByText(expectedCopy("settings.modelProvider.testModel.successWithIdentity")),
+    ).toBeNull();
     expect(screen.getByRole("status").className).toContain("bg-success/10");
     expect(screen.getByRole("status").className).toContain("text-success");
     expect(screen.getByRole("status").querySelector("button")).not.toBeNull();
@@ -546,11 +535,30 @@ describe("ProviderModelsSection compact model rows", () => {
       renderWithProviderFeedback(
         createElement(InlineEditableProviderCard, { provider, onSave: vi.fn(), onTestModel }),
       );
-      fireEvent.click(screen.getAllByTitle("测试模型")[0]!);
-      expect(screen.getByText(/DeepSeek .*正在连接/)).toBeTruthy();
+      fireEvent.click(screen.getAllByTitle(expectedCopy("settings.modelProvider.testModel"))[0]!);
+      const modelId = provider.models[0]!.modelId;
+      expect(
+        screen.getByText(
+          expectedCopy("settings.modelProvider.testModel.connectingWithIdentity", {
+            provider: "DeepSeek",
+            model: modelId,
+          }),
+        ),
+      ).toBeTruthy();
       await waitFor(() =>
         expect(
-          screen.getByText(outcome === "success" ? /DeepSeek .*连接成功/ : /DeepSeek .*连接失败/),
+          screen.getByText(
+            outcome === "success"
+              ? expectedCopy("settings.modelProvider.testModel.successWithIdentity", {
+                  provider: "DeepSeek",
+                  model: modelId,
+                })
+              : expectedCopy("settings.modelProvider.testModel.failedWithIdentity", {
+                  provider: "DeepSeek",
+                  model: modelId,
+                  reason: outcome === "throw" ? "network-error" : "auth-error",
+                }),
+          ),
         ).toBeTruthy(),
       );
       expect(onTestModel).toHaveBeenCalledWith(provider.providerId, provider.models[0]!.modelId);
@@ -565,7 +573,7 @@ describe("ProviderModelsSection compact model rows", () => {
       createElement(InlineEditableProviderCard, { provider, onSave, onTestModel }),
     );
     const testButton = screen.getAllByTitle(
-      "settings.modelProvider.testModel.enableProviderFirst",
+      expectedCopy("settings.modelProvider.testModel.enableProviderFirst"),
     )[0] as HTMLButtonElement;
     expect(testButton.disabled).toBe(true);
     fireEvent.click(testButton);
@@ -581,7 +589,7 @@ describe("ProviderModelsSection compact model rows", () => {
         }),
       ),
     );
-    fireEvent.click(screen.getAllByTitle("测试模型")[0]!);
+    fireEvent.click(screen.getAllByTitle(expectedCopy("settings.modelProvider.testModel"))[0]!);
     await waitFor(() => expect(onTestModel).toHaveBeenCalledTimes(1));
   });
 
@@ -604,10 +612,13 @@ describe("ProviderModelsSection compact model rows", () => {
           }),
         ),
       );
-      fireEvent.click(screen.getAllByTitle("测试模型")[0]!);
+      fireEvent.click(screen.getAllByTitle(expectedCopy("settings.modelProvider.testModel"))[0]!);
       expect(
         await screen.findByText(
-          `${name || provider.providerId} / ${provider.models[0]!.modelId} 连接成功`,
+          expectedCopy("settings.modelProvider.testModel.successWithIdentity", {
+            provider: name || provider.providerId,
+            model: provider.models[0]!.modelId,
+          }),
         ),
       ).toBeTruthy();
     }
@@ -630,10 +641,18 @@ describe("ProviderModelsSection compact model rows", () => {
           })),
         }),
       );
-      fireEvent.click(screen.getByTitle("测试模型"));
+      fireEvent.click(screen.getByTitle(expectedCopy("settings.modelProvider.testModel")));
       expect(
         await screen.findByText(
-          `p / m 连接失败：settings.modelProvider.testModel.${code === "provider-unavailable" ? "providerUnavailable" : "modelUnavailable"}`,
+          expectedCopy("settings.modelProvider.testModel.failedWithIdentity", {
+            provider: "p",
+            model: "m",
+            reason: expectedCopy(
+              code === "provider-unavailable"
+                ? "settings.modelProvider.testModel.providerUnavailable"
+                : "settings.modelProvider.testModel.modelUnavailable",
+            ),
+          }),
         ),
       ).toBeTruthy();
     },
@@ -650,7 +669,9 @@ describe("ProviderModelsSection compact model rows", () => {
     renderWithProviderFeedback(
       createElement(InlineEditableProviderCard, { provider: createProvider(), onSave }),
     );
-    const baseUrl = screen.getByPlaceholderText("https://api.example.com");
+    const baseUrl = screen.getByPlaceholderText(
+      expectedCopy("settings.modelProvider.baseUrlPlaceholder"),
+    );
 
     expect(baseUrl.getAttribute("data-testid")).toBe(TID_MODEL_PROVIDER_BASE_URL_INPUT);
     expect(screen.getByTestId(TID_MODEL_PROVIDER_API_FORMAT_TRIGGER)).toBeTruthy();
@@ -659,10 +680,16 @@ describe("ProviderModelsSection compact model rows", () => {
     expect(screen.queryByTestId("model-provider-save-status")).toBeNull();
     fireEvent.blur(baseUrl);
     expect(screen.queryByTestId("model-provider-save-status")).toBeNull();
-    expect(screen.getByText("DeepSeek 正在保存")).toBeTruthy();
+    expect(
+      screen.getByText(
+        expectedCopy("settings.modelProvider.providerSaving", { provider: "DeepSeek" }),
+      ),
+    ).toBeTruthy();
     resolveSave?.();
 
-    const successMessage = await screen.findByText("DeepSeek 保存成功");
+    const successMessage = await screen.findByText(
+      expectedCopy("settings.modelProvider.providerSaveSuccess", { provider: "DeepSeek" }),
+    );
     const successFeedback = successMessage.closest<HTMLElement>(
       '[data-provider-detail-feedback-state="success"]',
     );
@@ -677,14 +704,20 @@ describe("ProviderModelsSection compact model rows", () => {
     expect(successFeedback?.className).not.toContain("border-success/30");
     expect(successFeedback?.className).not.toContain("bg-success/10");
     expect(successFeedback?.querySelector("svg")?.classList.contains("text-success")).toBe(true);
-    expect(screen.queryByText("DeepSeek 正在保存")).toBeNull();
+    expect(
+      screen.queryByText(
+        expectedCopy("settings.modelProvider.providerSaving", { provider: "DeepSeek" }),
+      ),
+    ).toBeNull();
   });
 
   it("Provider 文本输入停顿后自动保存，失焦会 flush 且不重复提交", async () => {
     vi.useFakeTimers();
     const onSave = vi.fn(async () => undefined);
     render(createElement(InlineEditableProviderCard, { provider: createProvider(), onSave }));
-    const baseUrl = screen.getByPlaceholderText("https://api.example.com");
+    const baseUrl = screen.getByPlaceholderText(
+      expectedCopy("settings.modelProvider.baseUrlPlaceholder"),
+    );
 
     fireEvent.change(baseUrl, { target: { value: "https://idle.example.com" } });
     await act(async () => {
@@ -822,7 +855,7 @@ describe("ProviderModelsSection compact model rows", () => {
       }),
     );
     fireEvent.keyDown(screen.getByTestId("model-provider-actions-button"), { key: "Enter" });
-    fireEvent.click(screen.getByRole("menuitem", { name: "common.delete" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: expectedCopy("common.delete") }));
     await waitFor(() => expect(confirmDialog).toHaveBeenCalledTimes(1));
     expect(deleteProvider).toHaveBeenCalledTimes(confirmed ? 1 : 0);
     if (confirmed) expect(deleteProvider).toHaveBeenCalledWith(provider.providerId);
@@ -843,8 +876,13 @@ describe("ProviderModelsSection compact model rows", () => {
     const input = screen.getByTestId(TID_MODEL_PROVIDER_NAME_INPUT);
     fireEvent.change(input, { target: { value: "Retry name" } });
     fireEvent.blur(input);
-    await screen.findByText("DeepSeek 保存失败：disk full");
-    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    await screen.findByText(
+      expectedCopy("settings.modelProvider.providerSaveFailure", {
+        provider: "DeepSeek",
+        error: "disk full",
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: expectedCopy("common.retry") }));
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2));
     expect(onSave.mock.calls[0]?.[0]).toEqual(onSave.mock.calls[1]?.[0]);
     fireEvent.keyDown(screen.getByTestId("model-provider-actions-button"), { key: "Enter" });
@@ -872,7 +910,9 @@ describe("ProviderModelsSection compact model rows", () => {
     const view = render(
       createElement(InlineEditableProviderCard, { provider: initial, onSave: vi.fn() }),
     );
-    const baseUrl = screen.getByPlaceholderText("https://api.example.com") as HTMLInputElement;
+    const baseUrl = screen.getByPlaceholderText(
+      expectedCopy("settings.modelProvider.baseUrlPlaceholder"),
+    ) as HTMLInputElement;
 
     fireEvent.change(baseUrl, { target: { value: "https://draft.example.com" } });
     view.rerender(
@@ -902,7 +942,9 @@ describe("ProviderModelsSection compact model rows", () => {
   it("Base URL 按 Enter 会结束编辑并提交完整草稿", async () => {
     const onSave = vi.fn(async () => {});
     render(createElement(InlineEditableProviderCard, { provider: createProvider(), onSave }));
-    const baseUrl = screen.getByPlaceholderText("https://api.example.com");
+    const baseUrl = screen.getByPlaceholderText(
+      expectedCopy("settings.modelProvider.baseUrlPlaceholder"),
+    );
 
     baseUrl.focus();
     fireEvent.change(baseUrl, { target: { value: "https://enter.example.com" } });
@@ -915,7 +957,9 @@ describe("ProviderModelsSection compact model rows", () => {
   it("中文输入法用 Enter 确认 Base URL 候选时不会提交", async () => {
     const onSave = vi.fn(async () => {});
     render(createElement(InlineEditableProviderCard, { provider: createProvider(), onSave }));
-    const baseUrl = screen.getByPlaceholderText("https://api.example.com");
+    const baseUrl = screen.getByPlaceholderText(
+      expectedCopy("settings.modelProvider.baseUrlPlaceholder"),
+    );
 
     baseUrl.focus();
     fireEvent.change(baseUrl, { target: { value: "https://中文.example.com" } });
@@ -951,9 +995,21 @@ describe("ProviderModelsSection compact model rows", () => {
     expect(screen.queryByTestId(TID_MODEL_PROVIDER_BASE_URL_INPUT)).toBeNull();
     expect(screen.queryByTestId(TID_MODEL_PROVIDER_API_FORMAT_TRIGGER)).toBeNull();
     expect(screen.getByText("https://api.deepseek.com")).toBeTruthy();
-    expect(screen.getByText("Anthropic Messages (/v1/messages)")).toBeTruthy();
-    expect(screen.getByRole("img", { name: "Base URL（只读）" })).toBeTruthy();
-    expect(screen.getByRole("img", { name: "API 格式（只读）" })).toBeTruthy();
+    expect(screen.getByText(/Anthropic messages/i)).toBeTruthy();
+    expect(
+      screen.getByRole("img", {
+        name: expectedCopy("settings.modelProvider.readOnlyField", {
+          field: expectedCopy("settings.modelProvider.baseUrl"),
+        }),
+      }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("img", {
+        name: expectedCopy("settings.modelProvider.readOnlyField", {
+          field: expectedCopy("settings.modelProvider.apiFormat"),
+        }),
+      }),
+    ).toBeTruthy();
     expect(screen.queryByTestId("model-provider-name-edit-button")).toBeNull();
     expect(screen.queryByTestId("model-provider-actions-button")).toBeNull();
     expect(screen.getByTestId(TID_MODEL_PROVIDER_API_KEY_INPUT)).toBeTruthy();
@@ -968,12 +1024,19 @@ describe("ProviderModelsSection compact model rows", () => {
     renderWithProviderFeedback(
       createElement(InlineEditableProviderCard, { provider: createProvider(), onSave }),
     );
-    const baseUrl = screen.getByPlaceholderText("https://api.example.com");
+    const baseUrl = screen.getByPlaceholderText(
+      expectedCopy("settings.modelProvider.baseUrlPlaceholder"),
+    );
 
     fireEvent.change(baseUrl, { target: { value: "https://next.example.com" } });
     fireEvent.blur(baseUrl);
-    await screen.findByText("DeepSeek 保存失败：disk full");
-    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    await screen.findByText(
+      expectedCopy("settings.modelProvider.providerSaveFailure", {
+        provider: "DeepSeek",
+        error: "disk full",
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: expectedCopy("common.retry") }));
 
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2));
   });
@@ -1003,7 +1066,7 @@ describe("ProviderModelsSection compact model rows", () => {
       }),
     );
 
-    const rows = screen.getAllByLabelText("settings.modelProvider.reorderModel");
+    const rows = screen.getAllByLabelText(expectedCopy("settings.modelProvider.reorderModel"));
     const list = rows[0]!.parentElement;
     expect(list?.className).not.toContain("divide-y");
     expect(rows[0]!.className).toContain("border-b");
@@ -1072,7 +1135,7 @@ describe("ProviderModelsSection compact model rows", () => {
       expect(fireEvent.keyDown(control, { key: " ", code: "Space" })).toBe(true);
       expect(
         screen
-          .getAllByLabelText("settings.modelProvider.reorderModel")[0]!
+          .getAllByLabelText(expectedCopy("settings.modelProvider.reorderModel"))[0]!
           .getAttribute("aria-pressed"),
       ).not.toBe("true");
       expect(onReorder).not.toHaveBeenCalled();
@@ -1088,7 +1151,7 @@ describe("ProviderModelsSection compact model rows", () => {
         renderModel: (id) => id,
       }),
     );
-    const row = screen.getAllByLabelText("settings.modelProvider.reorderModel")[0]!;
+    const row = screen.getAllByLabelText(expectedCopy("settings.modelProvider.reorderModel"))[0]!;
     expect(fireEvent.keyDown(row, { key: " ", code: "Space" })).toBe(false);
     expect(row.getAttribute("aria-pressed")).toBe("true");
     expect(onReorder).not.toHaveBeenCalled();
@@ -1100,7 +1163,7 @@ describe("ProviderModelsSection compact model rows", () => {
     const { rerender } = render(
       createElement(ModelRowInput, { providerId: "provider-demo", model, onCommit: vi.fn() }),
     );
-    expect(screen.getByLabelText("视觉")).toBeTruthy();
+    expect(screen.getByLabelText(expectedCopy("model.capability.vision"))).toBeTruthy();
     const textOnly = createModelProviderModelConfig({ id: "GLM-5.3" });
     rerender(
       createElement(ModelRowInput, {
@@ -1109,7 +1172,7 @@ describe("ProviderModelsSection compact model rows", () => {
         onCommit: vi.fn(),
       }),
     );
-    expect(screen.queryByLabelText("视觉")).toBeNull();
+    expect(screen.queryByLabelText(expectedCopy("model.capability.vision"))).toBeNull();
   });
 
   it("Model Draft 等待 Host 原子保存成功后才关闭弹窗", async () => {
@@ -1129,14 +1192,22 @@ describe("ProviderModelsSection compact model rows", () => {
       }),
     );
 
-    fireEvent.click(screen.getByLabelText("编辑模型配置"));
-    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    fireEvent.click(screen.getByLabelText(expectedCopy("settings.modelProvider.editModel")));
+    fireEvent.click(
+      screen.getByRole("button", { name: expectedCopy("settings.modelProvider.save") }),
+    );
 
     await waitFor(() =>
       expect(onCommit).toHaveBeenCalledWith(expect.objectContaining({ modelId: "draft-model" }), 9),
     );
     expect(screen.getByRole("dialog")).toBeTruthy();
-    expect((screen.getByRole("button", { name: "保存" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      (
+        screen.getByRole("button", {
+          name: expectedCopy("settings.modelProvider.save"),
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
 
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     expect(screen.getByRole("dialog")).toBeTruthy();
@@ -1155,7 +1226,7 @@ describe("ProviderModelsSection compact model rows", () => {
       }),
     );
 
-    fireEvent.click(screen.getByLabelText("编辑模型配置"));
+    fireEvent.click(screen.getByLabelText(expectedCopy("settings.modelProvider.editModel")));
     const modelIdInput = screen.getByDisplayValue("draft-model");
     fireEvent.compositionStart(modelIdInput);
     fireEvent.keyDown(modelIdInput, { key: "Enter" });
@@ -1182,11 +1253,13 @@ describe("ProviderModelsSection compact model rows", () => {
       }),
     );
 
-    fireEvent.click(screen.getByLabelText("编辑模型配置"));
+    fireEvent.click(screen.getByLabelText(expectedCopy("settings.modelProvider.editModel")));
     fireEvent.change(screen.getByDisplayValue("draft-model"), {
       target: { value: "renamed-model" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: expectedCopy("settings.modelProvider.save") }),
+    );
 
     await waitFor(() => expect(screen.getByText("revision conflict")).toBeTruthy());
     expect(screen.getByRole("dialog")).toBeTruthy();
@@ -1226,7 +1299,7 @@ describe("ProviderModelsSection compact model rows", () => {
       }),
     );
 
-    fireEvent.click(screen.getByLabelText("编辑模型配置"));
+    fireEvent.click(screen.getByLabelText(expectedCopy("settings.modelProvider.editModel")));
     const modelIdInput = screen.getByDisplayValue("draft-model");
     fireEvent.change(modelIdInput, { target: { value: "first-model" } });
     fireEvent.blur(modelIdInput);
@@ -1261,10 +1334,14 @@ describe("ProviderModelsSection compact model rows", () => {
     const base = createModelProviderModelConfig({ id: "draft-model" });
     const model = { ...base, inheritedConfig: structuredClone(base.config), personalConfig: {} };
     render(createElement(ModelRowInput, { providerId: "provider-demo", model, onCommit: vi.fn() }));
-    fireEvent.click(screen.getByLabelText("编辑模型配置"));
+    fireEvent.click(screen.getByLabelText(expectedCopy("settings.modelProvider.editModel")));
     const context = document.querySelector<HTMLInputElement>('input[inputmode="numeric"]')!;
     fireEvent.change(context, { target: { value: "345000" } });
-    fireEvent.click(screen.getByRole("switch", { name: "跟随推荐配置" }));
+    fireEvent.click(
+      screen.getByRole("switch", {
+        name: expectedCopy("settings.modelProvider.followRecommendedConfig"),
+      }),
+    );
     expect(context.value).toBe("345000");
     expect(context.placeholder).toBe("");
   });
@@ -1303,7 +1380,7 @@ describe("ProviderModelsSection compact model rows", () => {
       }),
     );
 
-    fireEvent.click(screen.getByLabelText("编辑模型配置"));
+    fireEvent.click(screen.getByLabelText(expectedCopy("settings.modelProvider.editModel")));
     fireEvent.change(screen.getByDisplayValue("draft-model"), {
       target: { value: "renamed-model" },
     });
@@ -1314,11 +1391,19 @@ describe("ProviderModelsSection compact model rows", () => {
     );
     await waitFor(() => expect(contextWindowInput?.placeholder).toBe("100000"));
 
-    fireEvent.click(screen.getByRole("switch", { name: "跟随推荐配置" }));
-
-    expect(screen.getByRole("switch", { name: "跟随推荐配置" }).getAttribute("aria-checked")).toBe(
-      "false",
+    fireEvent.click(
+      screen.getByRole("switch", {
+        name: expectedCopy("settings.modelProvider.followRecommendedConfig"),
+      }),
     );
+
+    expect(
+      screen
+        .getByRole("switch", {
+          name: expectedCopy("settings.modelProvider.followRecommendedConfig"),
+        })
+        .getAttribute("aria-checked"),
+    ).toBe("false");
     await waitFor(() =>
       expect(document.querySelector<HTMLInputElement>('input[inputmode="numeric"]')?.value).toBe(
         "300000",
@@ -1369,10 +1454,12 @@ describe("ProviderModelsSection compact model rows", () => {
 
     expect(html).toContain("deepseek-v3.2");
     expect(html).toContain(">128K<");
-    expect(html).toContain('aria-label="上下文窗口：128K"');
-    expect(html).toContain('aria-label="编辑模型配置"');
-    expect(html).not.toContain("显示名称");
-    expect(html).not.toContain("最大输出 Token");
+    expect(html).toContain(
+      `aria-label="${expectedCopy("settings.modelProvider.contextWindowBadgeLabel", { value: "128K" })}"`,
+    );
+    expect(html).toContain(`aria-label="${expectedCopy("settings.modelProvider.editModel")}"`);
+    expect(html).not.toContain(expectedCopy("settings.modelProvider.modelDisplayName"));
+    expect(html).not.toContain(expectedCopy("settings.modelProvider.maxOutputTokens"));
   });
 
   it("只在提供 Personal Model 调序入口时渲染拖动 handle", () => {
@@ -1400,9 +1487,9 @@ describe("ProviderModelsSection compact model rows", () => {
           onReorderModelIds: vi.fn(),
         }),
       ),
-    ).toContain('aria-label="settings.modelProvider.reorderModel"');
+    ).toContain(`aria-label="${expectedCopy("settings.modelProvider.reorderModel")}"`);
     expect(renderToStaticMarkup(createElement(ProviderModelsSection, common))).not.toContain(
-      'aria-label="settings.modelProvider.reorderModel"',
+      `aria-label="${expectedCopy("settings.modelProvider.reorderModel")}"`,
     );
   });
 
@@ -1430,10 +1517,12 @@ describe("ProviderModelsSection compact model rows", () => {
 
     expect(screen.getByText("builtin-model")).toBeTruthy();
     expect(screen.queryByTestId(testId(TID_MODEL_PROVIDER_MODEL_DELETE_BUTTON, "0"))).toBeNull();
-    expect(screen.getByLabelText("settings.modelProvider.reorderModel")).toBeTruthy();
-    expect(screen.getByLabelText("编辑模型配置")).toBeTruthy();
+    expect(screen.getByLabelText(expectedCopy("settings.modelProvider.reorderModel"))).toBeTruthy();
+    expect(screen.getByLabelText(expectedCopy("settings.modelProvider.editModel"))).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("switch", { name: "停用" }));
+    fireEvent.click(
+      screen.getByRole("switch", { name: expectedCopy("settings.modelProvider.acp.disable") }),
+    );
     expect(onModelEnabledChange).toHaveBeenCalledWith("builtin-model", false);
     expect(onModelCommit).not.toHaveBeenCalled();
   });
@@ -1458,7 +1547,9 @@ describe("ProviderModelsSection compact model rows", () => {
       }),
     );
 
-    fireEvent.click(screen.getByRole("switch", { name: "停用" }));
+    fireEvent.click(
+      screen.getByRole("switch", { name: expectedCopy("settings.modelProvider.acp.disable") }),
+    );
 
     await waitFor(() => expect(onSetPersonalModelEnabled).toHaveBeenCalledTimes(1));
     expect(onSetPersonalModelEnabled).toHaveBeenCalledWith(
@@ -1491,10 +1582,10 @@ describe("ProviderModelsSection compact model rows", () => {
 
     expect(html).toContain(">same-id</span>");
     expect(html).not.toContain('<input type="text"');
-    expect(html).not.toContain('aria-label="删除"');
-    expect(html).not.toContain("恢复默认");
-    expect(html).toContain('aria-label="编辑模型配置"');
-    expect(html).toContain('aria-label="settings.modelProvider.reorderModel"');
+    expect(html).not.toContain(`aria-label="${expectedCopy("settings.modelProvider.delete")}"`);
+    expect(html).not.toContain(expectedCopy("settings.modelProvider.restoreDefaultAction"));
+    expect(html).toContain(`aria-label="${expectedCopy("settings.modelProvider.editModel")}"`);
+    expect(html).toContain(`aria-label="${expectedCopy("settings.modelProvider.reorderModel")}"`);
     expect(html).toContain("select-none");
   });
 
@@ -1513,9 +1604,13 @@ describe("ProviderModelsSection compact model rows", () => {
     );
 
     expect(html.indexOf("model-a")).toBeLessThan(html.indexOf(">128K<"));
-    expect(html.indexOf(">128K<")).toBeLessThan(html.indexOf('title="测试模型"'));
-    expect(html.indexOf('aria-label="编辑模型配置"')).toBeLessThan(
-      html.indexOf('aria-label="停用"'),
+    expect(html.indexOf(">128K<")).toBeLessThan(
+      html.indexOf(`title="${expectedCopy("settings.modelProvider.testModel")}"`),
+    );
+    expect(
+      html.indexOf(`aria-label="${expectedCopy("settings.modelProvider.editModel")}"`),
+    ).toBeLessThan(
+      html.indexOf(`aria-label="${expectedCopy("settings.modelProvider.disableAction")}"`),
     );
   });
 
@@ -1540,7 +1635,9 @@ describe("ProviderModelsSection compact model rows", () => {
 
     expect(html).toContain("deepseek-v4-pro[1m]");
     expect(html).toContain(">128K<");
-    expect(html).toContain('aria-label="上下文窗口：128K"');
+    expect(html).toContain(
+      `aria-label="${expectedCopy("settings.modelProvider.contextWindowBadgeLabel", { value: "128K" })}"`,
+    );
   });
 
   it("模型行右侧不展示 API 格式 pill 标签，且不按 kind 禁用测试按钮", () => {
@@ -1575,7 +1672,9 @@ describe("ProviderModelsSection compact model rows", () => {
     expect(html).not.toContain(">Chat<");
     expect(html).not.toContain('data-api-format-active="true"');
     expect(html).not.toContain("grid-template-columns:repeat(2, minmax(max-content, 1fr))");
-    expect(html.match(/title="测试模型"/g)).toHaveLength(2);
+    expect(
+      html.match(new RegExp(`title="${expectedCopy("settings.modelProvider.testModel")}"`, "g")),
+    ).toHaveLength(2);
     expect(html).not.toContain('disabled=""');
   });
 
@@ -1591,8 +1690,8 @@ describe("ProviderModelsSection compact model rows", () => {
       }),
     );
 
-    expect(html).toContain("模型列表");
-    expect(html).toContain("添加模型");
+    expect(html).toContain(expectedCopy("settings.modelProvider.models"));
+    expect(html).toContain(expectedCopy("settings.modelProvider.addModel"));
     expect(html).not.toContain("mt-1 rounded-lg bg-input border border-input-border");
   });
 
@@ -1630,7 +1729,7 @@ describe("ProviderModelsSection compact model rows", () => {
       }),
     );
     expect(screen.queryByText("user-added-model")).toBeNull();
-    const emptyState = screen.getByText("当前没有配置模型，添加模型后可在聊天中使用。");
+    const emptyState = screen.getByText(expectedCopy("settings.modelProvider.modelsEmpty"));
     expect(emptyState.className).toContain("border-dashed");
     expect(emptyState.className).toContain("h-12");
     expect(emptyState.className).not.toContain("h-[50px]");

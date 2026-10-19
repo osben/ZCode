@@ -12,6 +12,7 @@ import {
   readListModelsResult,
 } from "@/ToolCallBlocks/renderers/list-models.js";
 import type { ToolCallBlockRenderContext } from "@/ToolCallBlocks/shared.js";
+import zhCN from "@/i18n/locales/zh-CN.js";
 
 // The team plan's providerId is a UUID. It is this card's most important negative assertion: not a single character of it should appear on screen.
 const TEAM_PROVIDER_UUID = "4fc7f541-2382-4c32-be11-f021b8d7ed1d";
@@ -266,8 +267,10 @@ describe("ListModelsToolCallBlock", () => {
 
   it("renders both locales", () => {
     renderCard(ListModelsToolCallBlock, buildContext(buildListModelsToolCall()), "zh-CN");
-    expect(screen.getByText("可用模型")).toBeTruthy();
-    expect(screen.getByText("4 个模型")).toBeTruthy();
+    expect(screen.getByText(zhCN["chat.toolCall.workflow.models.listed"])).toBeTruthy();
+    expect(
+      screen.getByText(zhCN["chat.toolCall.workflow.models.count.other"].replace("{count}", "4")),
+    ).toBeTruthy();
     expect(document.querySelector('[data-model-current="true"]')?.textContent).toBe("当前");
     expect(rowByModelId(CURRENT_MODEL_ID)?.getAttribute("title")).toContain(
       "思考强度：低 · 中 · 高（默认 高）",
@@ -279,7 +282,7 @@ describe("ListModelsToolCallBlock", () => {
       buildContext(buildListModelsToolCall(), { isRunning: true }),
       "zh-CN",
     );
-    expect(screen.getByText("正在列出模型")).toBeTruthy();
+    expect(screen.getByText(zhCN["chat.toolCall.workflow.models.listing"])).toBeTruthy();
   });
 
   it("uses the singular count for one model", () => {

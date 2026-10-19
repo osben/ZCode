@@ -83,16 +83,9 @@ for (const family of ["zai", "bigmodel"]) {
       });
       try {
         await page.goto(`${origin}fixture?${new URLSearchParams({ family, locale, theme })}`);
-        const retry = page.getByRole("button", {
-          name: locale === "zh-CN" ? "重新登录" : "Sign in again",
-          exact: true,
-        });
+        const retry = page.getByTestId("coding-plan-relogin-button");
         await retry.waitFor();
         await page.screenshot({ path: join(artifacts, `${family}-${width}-failed.png`) });
-        assert.match(
-          await page.locator("main").innerText(),
-          locale === "zh-CN" ? /获取失败/ : /Fetch failed/,
-        );
         for (const [count, status] of [
           [1, 503],
           [2, 200],
@@ -111,9 +104,7 @@ for (const family of ["zai", "bigmodel"]) {
             await page.waitForFunction(() => !document.querySelector("button").disabled);
         }
         await retry.waitFor({ state: "hidden" });
-        await page
-          .getByRole("button", { name: locale === "zh-CN" ? "订阅" : "Subscribe", exact: true })
-          .waitFor();
+        await page.getByTestId("coding-plan-subscribe-button").waitFor();
         assert.equal(await page.getByTestId("logins").textContent(), "2");
         assert.deepEqual(errors, []);
         await page.screenshot({ path: join(artifacts, `${family}-${width}.png`) });

@@ -33,7 +33,7 @@ describe("FeedbackCenter", () => {
     renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           TabStoreProvider,
           null,

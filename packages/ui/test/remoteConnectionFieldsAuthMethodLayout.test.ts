@@ -30,7 +30,7 @@ const platform: IPlatformService = {
   selectFile: vi.fn(),
 };
 
-function renderRemoteConnectionFields(locale: "zh-CN" | "en-US") {
+function renderRemoteConnectionFields(locale: "en-US" | "en-US") {
   return renderToStaticMarkup(
     createElement(
       PlatformProvider,

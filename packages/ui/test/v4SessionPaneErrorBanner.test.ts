@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { ConversationSnapshot } from "@zcode/shared/zcode-protocol-v4";
 import { SessionPane } from "@/v4/SessionPane.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 
 const projectionState = vi.hoisted(() => ({
@@ -222,7 +223,7 @@ function renderPane(): string {
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(SessionPane, {
         paneId: "workspace-main",
         sessionId: "session-1",
@@ -266,7 +267,7 @@ describe("SessionPane error banner wiring", () => {
     const html = renderPane();
 
     expect(html).toContain("EPERM: operation not permitted");
-    expect(html).toContain("反馈问题");
-    expect(html).toContain("重新连接");
+    expect(html).toContain(expectedCopy("chat.error.feedback"));
+    expect(html).toContain(expectedCopy("workspaceSidebar.reconnect"));
   });
 });

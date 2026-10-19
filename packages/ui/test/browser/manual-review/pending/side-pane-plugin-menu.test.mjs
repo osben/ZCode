@@ -71,7 +71,7 @@ after(async () => {
 
 for (const [width, locale, theme] of [
   [1200, "en-US", "light"],
-  [390, "zh-CN", "dark"],
+  [390, "en-US", "dark"],
 ]) {
   test(`SPT-E2E-007 ${width}/${locale}/${theme}`, async () => {
     const page = await browser.newPage({ viewport: { width, height: 800 } });
@@ -98,7 +98,7 @@ for (const [width, locale, theme] of [
         serverName: "plugin:hello:server",
         pluginId: "hello@example",
         resourceUri: "ui://hello/panel.html",
-        title: locale === "zh-CN" ? "Hello 面板" : "Hello panel",
+        title: "Hello panel",
         workspacePath: "/workspace/example",
         workspaceIdentity: "fixture-workspace",
         remoteSessionId: "fixture-remote-session",

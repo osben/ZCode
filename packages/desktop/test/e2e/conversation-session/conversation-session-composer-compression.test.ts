@@ -15,10 +15,7 @@ import {
   setCurrentElectronRendererContentSize,
   restoreElectronRendererContentSize,
 } from "../helpers/desktop-app.js";
-import {
-  UPSTREAM_PROVIDER_ID,
-  UPSTREAM_SECONDARY_MODEL,
-} from "../helpers/upstream-provider.js";
+import { UPSTREAM_PROVIDER_ID, UPSTREAM_SECONDARY_MODEL } from "../helpers/upstream-provider.js";
 import {
   prepareV4ConversationE2E,
   loginWithApiKey,
@@ -193,8 +190,8 @@ describe("Composer 七档压缩", () => {
           JSON.stringify({
             ...settings,
             computerUseComposerEntryHidden: false,
-            locale: "zh-CN",
-            localePreference: "zh-CN",
+            locale: "en-US",
+            localePreference: "en-US",
           }),
         );
         const configFile = join(paths.homeDir, ".zcode", "cli", "config.json");

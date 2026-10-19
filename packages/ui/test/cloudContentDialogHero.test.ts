@@ -11,7 +11,7 @@ import { createWeekendPlanResultDialogMock } from "./helpers/weekendPlanDialogFi
 import weekendPlanResultDialogFixture from "@/components/cloud-content-dialog/mocks/weekendPlanResultDialog.zh-CN.json" with { type: "json" };
 
 const mockInput = {
-  locale: "zh-CN" as const,
+  locale: "en-US" as const,
   planName: "Weekend Plan",
   amountLabel: "300,000,000 Tokens",
   benefits: ["GLM-5.3-Flash 每日额度"],
@@ -33,7 +33,7 @@ describe("cloud content dialog mock", () => {
       id: "weekend-plan-result-dialog",
       revision: 1,
       kind: "campaign",
-      locale: "zh-CN",
+      locale: weekendPlanResultDialogFixture.locale,
       dialog: {
         hero: {
           type: "interactive_bundle",
@@ -60,7 +60,7 @@ describe("cloud content dialog mock", () => {
       id: "weekend-plan-result-dialog",
       revision: 1,
       kind: "campaign",
-      locale: "zh-CN",
+      locale: "en-US",
       dialog: {
         title: mockInput.title,
         description: { format: "plain_text", text: mockInput.description },
@@ -116,7 +116,7 @@ describe("CloudDialogHero", () => {
           onAction,
         }),
       );
-      const frame = screen.getByTitle("Timeout hero") as HTMLIFrameElement;
+      const frame = screen.getByTestId("cloud-dialog-interactive-hero") as HTMLIFrameElement;
       act(() =>
         window.dispatchEvent(
           new MessageEvent("message", {
@@ -144,12 +144,12 @@ describe("CloudDialogHero", () => {
     render(
       createElement(CloudDialogHero, {
         hero: payload.dialog.hero,
-        locale: "zh-CN",
+        locale: "en-US",
         title: "Weekend Hero",
       }),
     );
 
-    const frame = screen.getByTitle("Weekend Hero") as HTMLIFrameElement;
+    const frame = screen.getByTestId("cloud-dialog-interactive-hero") as HTMLIFrameElement;
     expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
     expect(frame.getAttribute("sandbox")).not.toContain("allow-same-origin");
     expect(frame.dataset.heroType).toBe("interactive_bundle");
@@ -162,7 +162,7 @@ describe("CloudDialogHero", () => {
       expect.objectContaining({
         channel: CLOUD_HERO_MESSAGE_CHANNEL,
         type: "init",
-        locale: "zh-CN",
+        locale: "en-US",
         data: expect.objectContaining({ planName: "Weekend Plan" }),
       }),
       "*",
@@ -174,11 +174,11 @@ describe("CloudDialogHero", () => {
     render(
       createElement(CloudDialogHero, {
         hero: payload.dialog.hero,
-        locale: "zh-CN",
+        locale: "en-US",
         title: "Weekend Hero",
       }),
     );
-    const frame = screen.getByTitle("Weekend Hero") as HTMLIFrameElement;
+    const frame = screen.getByTestId("cloud-dialog-interactive-hero") as HTMLIFrameElement;
     const instanceId = frame.dataset.instanceId!;
 
     expect(

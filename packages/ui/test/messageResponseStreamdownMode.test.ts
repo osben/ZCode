@@ -13,6 +13,7 @@ import {
 } from "@/components/ai-elements/message.js";
 import { TooltipProvider } from "@/components/ui/tooltip.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 vi.mock("@/store/StoreProvider.js", () => ({
   useZCodeStore: (selector: (state: unknown) => unknown) =>
@@ -165,7 +166,7 @@ describe("resolveMessageStreamdownMode", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           MessageResponse,
           {
@@ -194,7 +195,7 @@ describe("resolveMessageStreamdownMode", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           MessageResponse,
           {
@@ -221,7 +222,7 @@ describe("resolveMessageStreamdownMode", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           MessageResponse,
           {
@@ -255,7 +256,7 @@ describe("resolveMessageStreamdownMode", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           MessageResponse,
           { onOpenExternalUrl: vi.fn() },
@@ -275,7 +276,7 @@ describe("resolveMessageStreamdownMode", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           MessageResponse,
           {
@@ -294,7 +295,7 @@ describe("resolveMessageStreamdownMode", () => {
     const malformedHtml = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           MessageResponse,
           {
@@ -317,7 +318,7 @@ describe("resolveMessageStreamdownMode", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           MessageResponse,
           {
@@ -359,7 +360,7 @@ describe("resolveMessageStreamdownMode", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           TooltipProvider,
           null,
@@ -403,7 +404,7 @@ describe("resolveMessageStreamdownMode", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           MessageResponse,
           {
@@ -424,7 +425,7 @@ describe("resolveMessageStreamdownMode", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           MessageResponse,
           {
@@ -449,7 +450,7 @@ describe("resolveMessageStreamdownMode", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(MessageResponse, { workspacePath: "C:\\workspace" }, markdown),
       ),
     );
@@ -463,7 +464,7 @@ describe("resolveMessageStreamdownMode", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           MessageResponse,
           { workspacePath: "\\\\server\\share\\repo" },
@@ -481,7 +482,7 @@ describe("resolveMessageStreamdownMode", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           TooltipProvider,
           null,
@@ -630,7 +631,7 @@ describe("resolveMessageStreamdownMode", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           MessageResponse,
           {
@@ -713,7 +714,7 @@ it("通用模式回答保留代码容器和复制入口，锁定换行入口且�
     renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           TooltipProvider,
           null,
@@ -723,9 +724,9 @@ it("通用模式回答保留代码容器和复制入口，锁定换行入口且�
     );
   const general = render(true);
   expect(general).toContain('data-language="python"');
-  expect(general).toContain("复制代码");
-  expect(general).not.toContain("自动换行");
-  expect(render(false)).toContain("自动换行");
+  expect(general).toContain(expectedCopy("codeBlock.copyCode"));
+  expect(general).not.toContain(expectedCopy("codeBlock.wrapLines"));
+  expect(render(false)).toContain(expectedCopy("codeBlock.wrapLines"));
   expect(codePreviewSettings.wrapLongLines).toBe(false);
   expect(
     messageResponsePropsAreEqual(

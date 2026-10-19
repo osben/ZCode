@@ -279,7 +279,7 @@ function renderTimeline(
   root.render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(ConversationTimeline, {
         canLoadOlder: options.canLoadOlder,
         rows,

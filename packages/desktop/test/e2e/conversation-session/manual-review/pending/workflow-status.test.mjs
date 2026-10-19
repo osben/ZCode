@@ -28,29 +28,32 @@ test("Workflow status 查询状态与展开内容", async () => {
       await summary.waitFor();
       assert.match(await summary.innerText(), /Checking workflow status/);
       assert.equal(await summary.getAttribute("role"), null);
-      await page.getByRole("button", { name: "running", exact: true }).click();
-      assert.match(await summary.innerText(), /Workflow status\s*·\s*Status workflow\s*·\s*1\/3 steps/s);
+      await page.locator('[data-fixture-state="running"]').click();
+      assert.match(
+        await summary.innerText(),
+        /Workflow status\s*·\s*Status workflow\s*·\s*1\/3 steps/s,
+      );
       await summary.click();
       const body = page.getByTestId("workflow-status-body");
       await body.waitFor();
       assert.match(await body.innerText(), /1\/3 steps/);
       assert.doesNotMatch(await body.innerText(), /Actors|Usage|No logs/);
-      assert.equal(await summary.getByRole("button", { name: /details/i }).count(), 0);
-      await page.getByRole("button", { name: "completed", exact: true }).click();
-      await body.getByRole("button", { name: "Copy code" }).waitFor();
+      assert.equal(await summary.locator("button").count(), 0);
+      await page.locator('[data-fixture-state="completed"]').click();
+      await body.getByRole("button").waitFor();
       await page.waitForFunction(() => {
         const n = document.querySelector('[data-testid="workflow-status-body"] .max-h-80');
         return n && n.scrollHeight > n.clientHeight;
       });
-      const copy = body.getByRole("button", { name: "Copy code" });
+      const copy = body.getByRole("button");
       const before = await copy.boundingBox();
       await body.locator(".max-h-80").evaluate((n) => {
         n.scrollTop = 100;
       });
       assert.equal((await copy.boundingBox()).y, before.y);
-      await page.getByRole("button", { name: "run-failed", exact: true }).click();
+      await page.locator('[data-fixture-state="run-failed"]').click();
       assert.match(await body.innerText(), /^RUN_ERROR: Actor failed/);
-      await page.getByRole("button", { name: "query-failed", exact: true }).click();
+      await page.locator('[data-fixture-state="query-failed"]').click();
       assert.equal(await body.innerText(), "Query denied");
     }
   } finally {

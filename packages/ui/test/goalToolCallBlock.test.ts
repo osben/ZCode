@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { GoalToolCallBlock } from "../src/ToolCallBlocks/renderers/goal.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const displayModel = {
   inlinePreview: { type: "none" as const },
@@ -20,7 +21,7 @@ describe("GoalToolCallBlock", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(GoalToolCallBlock, {
           toolCallNode: {
             toolCall: {
@@ -65,7 +66,7 @@ describe("GoalToolCallBlock", () => {
           viewerSource: null,
           rawFileSummaries: [],
           isRunning: false,
-          statusLabel: "已执行",
+          statusLabel: "Completed",
           childToolList: null,
           forceOpen: true,
           canToggle: true,
@@ -75,7 +76,7 @@ describe("GoalToolCallBlock", () => {
     );
 
     expect(html).toContain("GoalUpdate");
-    expect(html).toContain("结果");
+    expect(html).toContain(expectedCopy("chat.toolCall.result"));
     expect(html).toContain("completed");
     expect(html).toContain("complete");
     expect(html).toContain("模型额外返回的 content");

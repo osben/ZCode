@@ -99,12 +99,14 @@ import {
   resolveModeOptionIcon,
 } from "@/chat-input-toolbar/display.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import zhCN from "../src/i18n/locales/zh-CN.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 beforeEach(() => {
   mockSelectContentProps.length = 0;
 });
 
-function renderConfigSelect(locale: "zh-CN" | "en-US", props: Parameters<typeof ConfigSelect>[0]) {
+function renderConfigSelect(locale: "en-US" | "en-US", props: Parameters<typeof ConfigSelect>[0]) {
   return renderToStaticMarkup(
     createElement(ZCodeIntlProvider, { initialLocale: locale }, createElement(ConfigSelect, props)),
   );
@@ -306,10 +308,10 @@ describe("ConfigSelect mode options", () => {
       tooltipTitle: "Mode",
     });
 
-    expect(html).toContain("变更前确认");
-    expect(html).toContain("自动编辑");
+    expect(html).toContain(zhCN["mode.label.glm.build"]);
+    expect(html).toContain(zhCN["mode.label.glm.edit"]);
     expect(html).not.toContain("变更前确认 / Build");
-    expect(html).toContain("改文件前先问我。");
+    expect(html).toContain(zhCN["mode.description.glm.build"]);
     expect(html).toContain("pr-8");
   });
 
@@ -337,7 +339,7 @@ describe("ConfigSelect mode options", () => {
       tooltipTitle: "Mode",
     });
 
-    expect(html).toContain("变更前确认");
+    expect(html).toContain(zhCN["mode.label.glm.build"]);
     expect(html).not.toContain(">value<");
   });
 
@@ -367,7 +369,7 @@ describe("ConfigSelect mode options", () => {
 
     expect(html).toContain("Ask before changes");
     expect(html).toContain("Edit automatically");
-    expect(html).not.toContain("默认模式");
+    expect(html).not.toContain(expectedCopy("mode.label.glm.default"));
   });
 
   it("GLM 模式列表只渲染 agent 返回的可用模式", () => {
@@ -390,11 +392,11 @@ describe("ConfigSelect mode options", () => {
       tooltipTitle: "Mode",
     });
 
-    expect(html).toContain("变更前确认");
-    expect(html).toContain("自动编辑");
+    expect(html).toContain(zhCN["mode.label.glm.build"]);
+    expect(html).toContain(zhCN["mode.label.glm.edit"]);
     expect(html).toContain("计划模式");
     expect(html).toContain("完全访问");
-    expect(html).toContain("自动编辑文件。");
+    expect(html).toContain(zhCN["mode.description.glm.edit"]);
     expect(html).not.toContain("Auto");
   });
 
@@ -546,7 +548,7 @@ describe("ConfigSelect mode options", () => {
     expect(html).toContain("完全访问");
     expect(html).toContain("自定义确认说明。");
     expect(html).toContain("更少确认地执行。");
-    expect(html).not.toContain("变更前确认");
+    expect(html).not.toContain(expectedCopy("mode.label.glm.build"));
     // High-privilege warning semantics depend only on entry.value, not on the provider.
     expect(html).toContain("text-warning");
   });

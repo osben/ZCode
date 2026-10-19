@@ -13,6 +13,8 @@ import {
   updateElicitationDraftsForOption,
 } from "../src/ElicitationDialog.js";
 import { ZCodeIntlProvider } from "../src/i18n/IntlProvider.js";
+import zhCN from "../src/i18n/locales/zh-CN.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const SUBAGENT_ORIGIN = {
   kind: "subagent" as const,
@@ -150,7 +152,7 @@ describe("ElicitationDialog", () => {
     const mainHtml = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(Dialog, {
           request,
           onRespond: () => {},
@@ -160,7 +162,7 @@ describe("ElicitationDialog", () => {
     const subagentHtml = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(Dialog, {
           request: {
             ...request,
@@ -173,8 +175,10 @@ describe("ElicitationDialog", () => {
 
     expect(mainHtml).not.toContain('data-interaction-origin-badge="subagent"');
     expect(subagentHtml).toContain('data-interaction-origin-badge="subagent"');
-    expect(subagentHtml).toContain("子智能体");
-    expect(subagentHtml).toContain("来自子智能体：general-purpose");
+    expect(subagentHtml).toContain(expectedCopy("chat.interactionOrigin.subagent"));
+    expect(subagentHtml).toContain(
+      expectedCopy("chat.interactionOrigin.subagent.title", { agentType: "general-purpose" }),
+    );
   });
 
   it("renders the custom answer as an auto-wrapping textarea", () => {
@@ -182,7 +186,7 @@ describe("ElicitationDialog", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(Dialog, {
           request: createMultiQuestionRequest(),
           onRespond: () => {},
@@ -241,7 +245,7 @@ describe("ElicitationDialog", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(Dialog, {
           request: createMultiQuestionRequest(),
           onRespond: () => {},
@@ -266,7 +270,7 @@ describe("ElicitationDialog", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(Dialog, {
           request,
           onRespond: () => {},
@@ -289,7 +293,7 @@ describe("ElicitationDialog", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(Dialog, {
           request,
           onRespond: () => {},
@@ -338,7 +342,7 @@ describe("ElicitationDialog", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(Dialog, {
           request,
           onRespond: () => {},
@@ -350,7 +354,7 @@ describe("ElicitationDialog", () => {
     expect(html).toContain("overflow-y-auto");
     expect(html).toContain("overscroll-contain");
     expect(html).toContain("max-md:line-clamp-4");
-    expect(html).toContain('aria-label="展开问题"');
+    expect(html).toContain(`aria-label="${expectedCopy("chat.elicitation.expandQuestion")}"`);
     expect(html).toContain("flex shrink-0 items-center justify-between");
   });
 
@@ -359,7 +363,7 @@ describe("ElicitationDialog", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(Dialog, {
           request: createMultiQuestionRequest(),
           onRespond: () => {},
@@ -367,7 +371,7 @@ describe("ElicitationDialog", () => {
       ),
     );
 
-    expect(html).toContain('aria-label="折叠问题弹窗"');
+    expect(html).toContain(`aria-label="${expectedCopy("chat.elicitation.collapseDialog")}"`);
     expect(html).toContain('aria-expanded="true"');
     expect(html).toContain("max-md:inline-flex");
     expect(html).toContain('data-elicitation-dialog-body="true"');
@@ -385,7 +389,7 @@ describe("ElicitationDialog", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(Dialog, {
           request,
           onRespond: () => {},
@@ -427,10 +431,10 @@ describe("ElicitationDialog", () => {
     expect(enHtml).not.toContain("Allow only this time");
 
     const zhHtml = render("zh-CN");
-    expect(zhHtml).toContain("需要权限");
-    expect(zhHtml).toContain("实施计划");
+    expect(zhHtml).toContain(zhCN["chat.permission.title"]);
+    expect(zhHtml).toContain(zhCN["chat.permission.switchMode.placeholder"]);
     expect(zhHtml).toContain(">批准</span>");
-    expect(zhHtml).toContain("退出计划模式并开始实施。");
+    expect(zhHtml).toContain(zhCN["chat.elicitation.planApproval.approveDescription"]);
     expect(zhHtml).toContain(">1.</span>");
     expect(zhHtml).toContain(">2.</span>");
     expect(zhHtml).not.toContain(">允许</span>");

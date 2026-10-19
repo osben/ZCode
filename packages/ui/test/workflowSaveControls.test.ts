@@ -60,6 +60,7 @@ import { WorkflowRunSaveSlotsBoundary } from "@/components/workflow-timeline/Wor
 import { ServiceProvider } from "@/hooks/useServices.js";
 // eslint-disable-next-line import/first
 import { WorkflowRunStatusHeader } from "@/app-shell/WorkflowRunSidePaneSections.js";
+import zhCN from "../src/i18n/locales/zh-CN.js";
 
 beforeAll(() => {
   // Radix Popper 量尺寸用 ResizeObserver；jsdom 没有。
@@ -127,17 +128,21 @@ function renderPopover(host: WorkflowSavePopoverHost, locale: "en-US" | "zh-CN" 
 describe("WorkflowSavePopover", () => {
   it("zh：先是整条宽的 ZCode 主路，细线之下才是三个字段；名字按 run 名预填、名字框拿到焦点", () => {
     renderPopover(popoverHost(), "zh-CN");
-    expect(screen.getByText("保存工作流")).toBeTruthy();
-    expect(screen.getByTestId("workflow-save-lead").textContent).toBe("让 ZCode 帮我提炼保存");
-    expect(screen.getByText("ZCode 会帮你提炼出可复用的工作流，再交你确认。")).toBeTruthy();
-    expect(screen.getByText("或按原样直接保存")).toBeTruthy();
+    expect(screen.getByText(zhCN["chat.toolCall.workflow.saveRun.title"])).toBeTruthy();
+    expect(screen.getByTestId("workflow-save-lead").textContent).toBe(
+      zhCN["chat.toolCall.workflow.saveRun.lead"],
+    );
+    expect(screen.getByText(zhCN["chat.toolCall.workflow.saveRun.lead.hint"])).toBeTruthy();
+    expect(screen.getByText(zhCN["chat.toolCall.workflow.saveRun.or"])).toBeTruthy();
     const name = screen.getByTestId<HTMLInputElement>("workflow-save-name");
     expect(name.value).toBe("pr-review");
     expect(document.activeElement).toBe(name);
     expect(screen.getByTestId("workflow-save-consequence").textContent).toContain(
       ".zcode/workflows/pr-review.dwf.ts",
     );
-    expect(screen.getByTestId("workflow-save-submit").textContent).toBe("直接保存");
+    expect(screen.getByTestId("workflow-save-submit").textContent).toBe(
+      zhCN["chat.toolCall.workflow.saveRun.submit"],
+    );
   });
 
   it("ZCode 主路：把填好的字段交出去，然后关掉", async () => {

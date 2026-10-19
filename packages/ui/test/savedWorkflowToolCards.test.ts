@@ -18,16 +18,20 @@ import {
 } from "@/ToolCallBlocks/renderers/list-saved-workflows.js";
 import { SaveWorkflowToolCallBlock } from "@/ToolCallBlocks/renderers/save-workflow.js";
 import type { ToolCallBlockRenderContext } from "@/ToolCallBlocks/shared.js";
+import zhCN from "../src/i18n/locales/zh-CN.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const SCRIPT = 'const r = await agent("a").ask<string>("检查");';
 const SAVED_PATH = "/workspace/.zcode/workflows/release-check.dwf.ts";
+const WORKFLOW_DESCRIPTION = "发布前检查：lint、测试、变更日志";
+const WORKFLOW_WHEN_TO_USE = "用户说要发版时";
 
 const LIST_RESULT = {
   workflows: [
     {
       name: "release-check",
-      description: "发布前检查：lint、测试、变更日志",
-      whenToUse: "用户说要发版时",
+      description: WORKFLOW_DESCRIPTION,
+      whenToUse: WORKFLOW_WHEN_TO_USE,
       args: { target: { type: "string", required: true }, skipTests: { type: "boolean" } },
       scope: "project",
       path: SAVED_PATH,
@@ -95,8 +99,8 @@ function buildSaveToolCall(input: Record<string, unknown> = {}) {
     status: "completed",
     input: {
       name: "release-check",
-      description: "发布前检查：lint、测试、变更日志",
-      whenToUse: "用户说要发版时",
+      description: WORKFLOW_DESCRIPTION,
+      whenToUse: WORKFLOW_WHEN_TO_USE,
       script: SCRIPT,
       path: SAVED_PATH,
       overwrite: false,
@@ -220,14 +224,14 @@ describe("SaveWorkflowToolCallBlock", () => {
     expect(screen.getByText("Saved workflow")).toBeTruthy();
     expect(screen.getByText("release-check")).toBeTruthy();
     // The collapsed row shows no description or path — they are details, not status.
-    expect(screen.queryByText("发布前检查：lint、测试、变更日志")).toBeNull();
+    expect(screen.queryByText(WORKFLOW_DESCRIPTION)).toBeNull();
     expect(screen.queryByText(SAVED_PATH)).toBeNull();
     cleanup();
 
     renderCard(SaveWorkflowToolCallBlock, buildContext(buildSaveToolCall()));
-    expect(screen.getByText("发布前检查：lint、测试、变更日志")).toBeTruthy();
+    expect(screen.getByText(WORKFLOW_DESCRIPTION)).toBeTruthy();
     expect(screen.getByText(SAVED_PATH)).toBeTruthy();
-    expect(screen.getByText("用户说要发版时")).toBeTruthy();
+    expect(screen.getByText(WORKFLOW_WHEN_TO_USE)).toBeTruthy();
     // The script belongs to the confirmation window and is not repeated on the card.
     expect(document.body.textContent).not.toContain('await agent("a")');
   });
@@ -245,7 +249,7 @@ describe("SaveWorkflowToolCallBlock", () => {
 
   it("uses the running phrase while the save is in flight", () => {
     renderCard(SaveWorkflowToolCallBlock, buildContext(buildSaveToolCall(), { isRunning: true }));
-    expect(screen.getByText("Saving workflow")).toBeTruthy();
+    expect(screen.getByText(expectedCopy("chat.toolCall.workflow.save.saving"))).toBeTruthy();
   });
 
   it("renders both locales", () => {
@@ -254,30 +258,32 @@ describe("SaveWorkflowToolCallBlock", () => {
       buildContext(buildSaveToolCall({ overwrite: true })),
       "zh-CN",
     );
-    expect(screen.getByText("已保存工作流")).toBeTruthy();
+    expect(screen.getByText(zhCN["chat.toolCall.workflow.save.saved"])).toBeTruthy();
     expect(document.querySelector('[data-workflow-overwrite-badge="true"]')?.textContent).toBe(
       "覆盖",
     );
     cleanup();
 
     renderCard(SaveWorkflowToolCallBlock, buildContext(buildSaveToolCall()), "en-US");
-    expect(screen.getByText("Saved workflow")).toBeTruthy();
+    expect(screen.getByText(expectedCopy("chat.toolCall.workflow.save.saved"))).toBeTruthy();
   });
 
   // ── docs/dynamic-workflow/launch.md "`SaveWorkflow`" ──
   it("shows a scope row above the path (project vs global) and stays silent on unknown scope", () => {
     renderCard(SaveWorkflowToolCallBlock, buildContext(buildSaveToolCall()));
-    expect(screen.getByText("Scope")).toBeTruthy();
-    expect(screen.getByText("Project")).toBeTruthy();
+    expect(screen.getByText(expectedCopy("chat.toolCall.workflow.save.scope.label"))).toBeTruthy();
+    expect(
+      screen.getByText(expectedCopy("chat.toolCall.workflow.save.scope.project")),
+    ).toBeTruthy();
     // The project copy's collapsed row gets no global badge.
     expect(document.querySelector('[data-workflow-scope-badge="global"]')).toBeNull();
     cleanup();
 
     renderCard(SaveWorkflowToolCallBlock, buildContext(buildSaveToolCall({ scope: "global" })));
-    expect(screen.getByText("Global · visible from every project")).toBeTruthy();
+    expect(screen.getByText(expectedCopy("chat.toolCall.workflow.save.scope.global"))).toBeTruthy();
     // The global copy's collapsed row gets a "Global" badge (on the same row as the overwrite badge).
     expect(document.querySelector('[data-workflow-scope-badge="global"]')?.textContent).toBe(
-      "Global",
+      expectedCopy("chat.toolCall.workflow.scope.global"),
     );
     cleanup();
 
@@ -290,7 +296,7 @@ describe("SaveWorkflowToolCallBlock", () => {
       SaveWorkflowToolCallBlock,
       buildContext({ ...buildSaveToolCall(), input: withoutScope }),
     );
-    expect(screen.queryByText("Scope")).toBeNull();
+    expect(screen.queryByText(expectedCopy("chat.toolCall.workflow.save.scope.label"))).toBeNull();
     expect(document.querySelector('[data-workflow-scope-badge="global"]')).toBeNull();
   });
 
@@ -300,7 +306,7 @@ describe("SaveWorkflowToolCallBlock", () => {
       buildContext(buildSaveToolCall({ scope: "global", shadowing: "hides_global" })),
     );
     expect(
-      screen.getByText("A global workflow with this name will be hidden by this one"),
+      screen.getByText(expectedCopy("chat.toolCall.workflow.save.scope.hidesGlobal")),
     ).toBeTruthy();
     cleanup();
 
@@ -309,9 +315,7 @@ describe("SaveWorkflowToolCallBlock", () => {
       buildContext(buildSaveToolCall({ scope: "project", shadowing: "hidden_by_project" })),
     );
     expect(
-      screen.getByText(
-        "This project already has a workflow with this name, which will hide this one here",
-      ),
+      screen.getByText(expectedCopy("chat.toolCall.workflow.save.scope.hiddenByProject")),
     ).toBeTruthy();
   });
 
@@ -321,10 +325,10 @@ describe("SaveWorkflowToolCallBlock", () => {
       buildContext(buildSaveToolCall({ scope: "global" })),
       "zh-CN",
     );
-    expect(screen.getByText("作用域")).toBeTruthy();
-    expect(screen.getByText("全局 · 对所有项目可见")).toBeTruthy();
+    expect(screen.getByText(zhCN["chat.toolCall.workflow.save.scope.label"])).toBeTruthy();
+    expect(screen.getByText(zhCN["chat.toolCall.workflow.save.scope.global"])).toBeTruthy();
     expect(document.querySelector('[data-workflow-scope-badge="global"]')?.textContent).toBe(
-      "全局",
+      zhCN["chat.toolCall.workflow.scope.global"],
     );
   });
 });
@@ -415,7 +419,7 @@ describe("ListSavedWorkflowsToolCallBlock", () => {
           workflows: [
             {
               name: "release-check",
-              description: "发布前检查：lint、测试、变更日志",
+              description: WORKFLOW_DESCRIPTION,
               scope: "project",
               path: SAVED_PATH,
               argNames: ["target", "skipTests"],
@@ -443,7 +447,7 @@ describe("ListSavedWorkflowsToolCallBlock", () => {
     expect(screen.getByText("2 workflows")).toBeTruthy();
     expect(screen.getByText("release-check")).toBeTruthy();
     expect(screen.getByText("translate-docs")).toBeTruthy();
-    expect(screen.getByText("发布前检查：lint、测试、变更日志")).toBeTruthy();
+    expect(screen.getByText(WORKFLOW_DESCRIPTION)).toBeTruthy();
     expect(screen.getByText("target")).toBeTruthy();
     expect(screen.getByText("skipTests")).toBeTruthy();
 
@@ -486,9 +490,13 @@ describe("ListSavedWorkflowsToolCallBlock", () => {
 
   it("renders both locales", () => {
     renderCard(ListSavedWorkflowsToolCallBlock, buildContext(buildListToolCall()), "zh-CN");
-    expect(screen.getByText("已保存的工作流")).toBeTruthy();
-    expect(screen.getByText("2 个工作流")).toBeTruthy();
-    expect(screen.getByText("1 个文件无法解析")).toBeTruthy();
+    expect(screen.getByText(zhCN["chat.toolCall.workflow.list.listed"])).toBeTruthy();
+    expect(
+      screen.getByText(zhCN["chat.toolCall.workflow.list.count.other"].replace("{count}", "2")),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(zhCN["chat.toolCall.workflow.list.invalid.other"].replace("{count}", "1")),
+    ).toBeTruthy();
     cleanup();
 
     renderCard(ListSavedWorkflowsToolCallBlock, buildContext(buildListToolCall()), "en-US");

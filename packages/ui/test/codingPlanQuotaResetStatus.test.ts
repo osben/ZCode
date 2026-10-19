@@ -5,20 +5,20 @@ import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CodingPlanQuotaResetStatusContent } from "@/components/coding-plan-quota-reset/CodingPlanQuotaResetStatus.js";
 import { burstCodingPlanQuotaResetConfetti } from "@/lib/codingPlanQuotaResetConfetti.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
-    locale: "zh-CN",
+    locale: "en-US",
     intl: {
-      formatMessage: (
-        { id }: { id: string },
-        values?: Record<string, string>,
-      ) => {
+      formatMessage: ({ id }: { id: string }, values?: Record<string, string>) => {
         const messages: Record<string, string> = {
-          "codingPlan.quotaReset.processing": "正在重置 5 小时额度…",
-          "codingPlan.quotaReset.done": "5 小时额度已重置",
-          "codingPlan.quotaReset.completed": "已重置",
-          "codingPlan.quotaReset.completedAt": `${values?.time ?? ""} 已重置`,
+          "codingPlan.quotaReset.processing": expectedCopy("codingPlan.quotaReset.processing"),
+          "codingPlan.quotaReset.done": expectedCopy("codingPlan.quotaReset.done"),
+          "codingPlan.quotaReset.completed": expectedCopy("codingPlan.quotaReset.completed"),
+          "codingPlan.quotaReset.completedAt": expectedCopy("codingPlan.quotaReset.completedAt", {
+            time: values?.time ?? "",
+          }),
         };
         return messages[id] ?? id;
       },
@@ -36,7 +36,9 @@ describe("CodingPlanQuotaResetStatusContent", () => {
       createElement(CodingPlanQuotaResetStatusContent, { status: "processing" }),
     );
 
-    expect(screen.getByRole("status").textContent).toContain("正在重置 5 小时额度…");
+    expect(screen.getByRole("status").textContent).toContain(
+      expectedCopy("codingPlan.quotaReset.processing"),
+    );
     const spinner = container.querySelector(".animate-spin");
     expect(spinner).not.toBeNull();
     expect(spinner?.classList.contains("motion-reduce:animate-none")).toBe(true);
@@ -48,7 +50,7 @@ describe("CodingPlanQuotaResetStatusContent", () => {
     );
 
     const status = screen.getByRole("status");
-    expect(status.textContent).toContain("5 小时额度已重置");
+    expect(status.textContent).toContain(expectedCopy("codingPlan.quotaReset.done"));
     expect(status.className).toContain("text-success");
     expect(container.querySelector(".zoom-in-75")).not.toBeNull();
   });
@@ -71,10 +73,7 @@ describe("burstCodingPlanQuotaResetConfetti", () => {
   });
 
   it("prefers-reduced-motion 时不撒花", () => {
-    vi.stubGlobal(
-      "matchMedia",
-      vi.fn().mockReturnValue({ matches: true }),
-    );
+    vi.stubGlobal("matchMedia", vi.fn().mockReturnValue({ matches: true }));
     const origin = document.createElement("div");
 
     burstCodingPlanQuotaResetConfetti(origin);
@@ -84,10 +83,7 @@ describe("burstCodingPlanQuotaResetConfetti", () => {
   });
 
   it("允许动效时从触发器播放粒子", () => {
-    vi.stubGlobal(
-      "matchMedia",
-      vi.fn().mockReturnValue({ matches: false }),
-    );
+    vi.stubGlobal("matchMedia", vi.fn().mockReturnValue({ matches: false }));
     const origin = document.createElement("div");
 
     burstCodingPlanQuotaResetConfetti(origin);

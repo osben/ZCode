@@ -5,6 +5,7 @@ import {
   DesktopCommandIds,
   TID_LOGIN_MENU_ITEM,
   TID_LOGIN_TRIGGER,
+  TID_SIDEBAR_INTERFACE_ZOOM_TRIGGER,
   TID_LOGOUT_BUTTON,
   TID_TASK_SETTINGS_BUTTON,
 } from "@zcode/shared";
@@ -402,7 +403,7 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
                 submenu. */}
             {isDesktop ? (
               <DropdownMenuSub>
-                <DropdownMenuSubTrigger>
+                <DropdownMenuSubTrigger data-testid={TID_SIDEBAR_INTERFACE_ZOOM_TRIGGER}>
                   <ZoomIn className="size-4" />
                   {intl.formatMessage({ id: "sidebar.settings.interfaceZoom" })}
                 </DropdownMenuSubTrigger>

@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConversationSnapshot } from "@zcode/shared/zcode-protocol-v4";
 import { ConversationComposer } from "@/v4/ConversationComposer.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const captured = vi.hoisted(() => ({
   chatErrorBannerProps: null as Record<string, unknown> | null,
@@ -162,7 +163,7 @@ function renderComposerWithError(
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(AnyConversationComposer, {
         snapshot: null,
         sessionId: "session-1",
@@ -194,7 +195,7 @@ function renderComposerWithSnapshot(
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(AnyConversationComposer, {
         snapshot,
         sessionId: "session-1",
@@ -216,7 +217,7 @@ function renderHighspeedComposer(overrides: Record<string, unknown> = {}): strin
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(AnyConversationComposer, {
         snapshot: makeSnapshot(),
         sessionId: "session-1",
@@ -246,7 +247,7 @@ function renderBlockedComposer(): string {
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(AnyConversationComposer, {
         snapshot: makeSnapshot(),
         sessionId: "session-1",
@@ -385,7 +386,11 @@ describe("ConversationComposer error banner", () => {
     renderComposerWithSnapshot();
     const onModifiedSubmit = captured.chatPromptEditorProps?.onModifiedSubmit;
     expect(onModifiedSubmit).toEqual(expect.any(Function));
-    expect((onModifiedSubmit as (value: string) => boolean)("草稿")).toBe(false);
+    expect(
+      (onModifiedSubmit as (value: string) => boolean)(
+        expectedCopy("chat.toolCall.workflow.hole.draftPath"),
+      ),
+    ).toBe(false);
 
     const snapshot = makeSnapshot();
     snapshot.control = {

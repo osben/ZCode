@@ -144,6 +144,7 @@ function renderPinnedSection() {
 }
 
 import { WorkspacePinnedTasksSection } from "@/WorkspacePinnedTasksSection.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 describe("WorkspacePinnedTasksSection", () => {
   beforeEach(() => {
@@ -170,7 +171,7 @@ describe("WorkspacePinnedTasksSection", () => {
 
     expect(html).toContain("已置顶");
     expect(html).toContain('data-testid="pinned-task-item"');
-    expect(html).not.toContain("正在获取任务...");
+    expect(html).not.toContain(expectedCopy("taskList.loading"));
   });
 
   it("stays hidden while pinned tasks are loading without data", () => {

@@ -48,8 +48,12 @@ function Fixture() {
     <ZCodeIntlProvider initialLocale="en-US">
       <PlatformProvider platform={{} as IPlatformService}>
         <TooltipProvider>
-          <button onClick={() => setJoined(true)}>Join run</button>
-          <button onClick={() => setRunning(false)}>Finish reply</button>
+          <button data-fixture-action="join-run" onClick={() => setJoined(true)}>
+            Join run
+          </button>
+          <button data-fixture-action="finish-reply" onClick={() => setRunning(false)}>
+            Finish reply
+          </button>
           <ConversationTurnGroup
             unit={unit}
             context={{

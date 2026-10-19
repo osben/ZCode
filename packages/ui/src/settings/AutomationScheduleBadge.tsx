@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { TID_AUTOMATION_CARD_SCHEDULE } from "@zcode/shared";
 import { cn } from "@/components/lib/utils.js";
+import type { AutomationCardScheduleKind } from "@/settings/automationCardSchedule.js";
 import {
   Tooltip,
   TooltipContent,
@@ -10,10 +12,12 @@ import {
 export function AutomationScheduleBadge({
   dimmed = false,
   icon,
+  scheduleKind,
   text,
 }: {
   dimmed?: boolean;
   icon: ReactNode;
+  scheduleKind: AutomationCardScheduleKind;
   text: string;
 }) {
   const textRef = useRef<HTMLSpanElement | null>(null);
@@ -55,7 +59,8 @@ export function AutomationScheduleBadge({
             <span className="flex size-5 shrink-0 items-center justify-center">{icon}</span>
             <span
               ref={textRef}
-              data-testid="automation-schedule-text"
+              data-testid={TID_AUTOMATION_CARD_SCHEDULE}
+              data-schedule-kind={scheduleKind}
               className="min-w-0 truncate whitespace-nowrap"
             >
               {text}

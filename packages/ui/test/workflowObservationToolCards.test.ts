@@ -625,8 +625,12 @@ describe("GetWorkflowRunToolCallBlock situation report", () => {
     renderRun(GET_RUN_SITUATION_DISPLAY, "zh-CN");
     const roster = screen.getByTestId("workflow-run-subagents");
     expect(roster.textContent).toContain("执行中");
-    expect(roster.textContent).toContain("停驻");
-    expect(roster.textContent).toContain("退避中");
+    expect(roster.textContent).toContain(
+      zhCN["chat.toolCall.workflow.getRun.subagent.state.parked"],
+    );
+    expect(roster.textContent).toContain(
+      zhCN["chat.toolCall.workflow.getRun.subagent.waitingBackoff"],
+    );
     expect(roster.textContent).toContain("已等 1m 05s");
     expect(roster.textContent).toContain("45s 后重试");
     expect(screen.getByTestId("workflow-run-health").textContent).toContain("最近进展 40s 前");
@@ -931,9 +935,9 @@ describe("ResumeWorkflowRunToolCallBlock", () => {
 
   it("renders the zh-CN card", () => {
     renderCard(ResumeWorkflowRunToolCallBlock, buildContext(buildResumeToolCall()), "zh-CN");
-    expect(screen.getByText("工作流实例已恢复")).toBeTruthy();
-    expect(screen.getByText("后台运行中")).toBeTruthy();
-    expect(screen.getByText(/从 journal 重放/u)).toBeTruthy();
+    expect(screen.getByText(zhCN["chat.toolCall.workflow.resumeRun.label"])).toBeTruthy();
+    expect(screen.getByText(zhCN["chat.toolCall.workflow.resumeRun.inBackground"])).toBeTruthy();
+    expect(document.body.textContent).toContain(zhCN["chat.toolCall.workflow.resumeRun.hint"]);
   });
 
   it("falls back to bounded text output when display is absent", () => {
@@ -1002,8 +1006,11 @@ describe("ResumeWorkflowRunToolCallBlock run-state compact card", () => {
       buildContext(buildResumeToolCall(), { workflowRun: RESUME_RUN_SUMMARY }),
       "zh-CN",
     );
-    expect(screen.getByText("工作流实例已恢复")).toBeTruthy();
-    expect(screen.getByText("运行中")).toBeTruthy();
-    expect(screen.getByText("2/5 步")).toBeTruthy();
+    expect(screen.getByText(zhCN["chat.toolCall.workflow.resumeRun.label"])).toBeTruthy();
+    const card = screen.getByTestId("workflow-run-card");
+    expect(card.textContent).toContain(zhCN["chat.toolCall.workflow.run.status.running"]);
+    expect(card.textContent).toContain(
+      zhCN["chat.toolCall.workflow.card.steps"].replace("{done}", "2").replace("{total}", "5"),
+    );
   });
 });

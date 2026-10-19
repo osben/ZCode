@@ -33,6 +33,12 @@ export const TID_OAUTH_CANCEL = "oauth-cancel";
 /** OAuth error text. */
 export const TID_OAUTH_ERROR = "oauth-error";
 
+// Assistant code comments
+/** Toggle button that expands or collapses all AI code-review cards. */
+export const TID_ASSISTANT_CODE_COMMENT_TOGGLE = "assistant-code-comment-toggle";
+/** AI code-review item in the code review pane. */
+export const TID_ASSISTANT_CODE_COMMENT_ITEM = "assistant-code-comment-item";
+
 // App
 /** Top navigation bar. */
 export const TID_APP_HEADER = "app-header";
@@ -135,6 +141,8 @@ export const TID_BROWSER_PERMISSION_ALLOW_ALWAYS = "browser-permission-allow-alw
 /** Permission bar "deny" button (deny this time, do not remember). */
 export const TID_BROWSER_PERMISSION_DENY = "browser-permission-deny";
 export const TID_BROWSER_PERMISSION_DISMISS = "browser-permission-dismiss";
+/** Browser guest-failure retry button. */
+export const TID_BROWSER_GUEST_RETRY = "browser-guest-retry";
 /** Readable error state when a browser page fails to load. */
 export const TID_BROWSER_LOAD_ERROR = "browser-load-error";
 /** Certificate-bypass guidance in the browser load-failure state. */
@@ -151,6 +159,18 @@ export const TID_PREVIEW_NEXT_BUTTON = "preview-next-button";
 export const TID_TOOL_CODE_VIEWER_BUTTON = "tool-code-viewer-button";
 /** Trigger button in a tool-call summary row (dynamic suffix is toolId). */
 export const TID_TOOL_SUMMARY_TRIGGER = "tool-summary-trigger";
+
+// Voice dictation
+/** Voice dictation language-picker trigger. */
+export const TID_VOICE_LANGUAGE_TRIGGER = "voice-language-trigger";
+/** Voice dictation language-picker search input. */
+export const TID_VOICE_LANGUAGE_SEARCH = "voice-language-search";
+/** Voice dictation language option checkbox (dynamic suffix is the language code). */
+export const TID_VOICE_LANGUAGE_OPTION = "voice-language-option";
+/** Voice dictation language-picker empty-results state. */
+export const TID_VOICE_LANGUAGE_EMPTY = "voice-language-empty";
+/** Voice dictation language-picker clear-selection button. */
+export const TID_VOICE_LANGUAGE_CLEAR = "voice-language-clear";
 
 // Terminal
 /** Terminal container. */
@@ -477,8 +497,24 @@ export const TID_SETTINGS_USAGE_TAB = "settings-usage-tab";
 export const TID_SIDEBAR_USAGE_REMAINING_TRIGGER = "sidebar-usage-remaining-trigger";
 /** Usage-statistics entry in the sidebar avatar menu. */
 export const TID_SIDEBAR_CODING_PLAN_USAGE_BUTTON = "sidebar-coding-plan-usage-button";
+/** Interface zoom submenu trigger in the sidebar account menu. */
+export const TID_SIDEBAR_INTERFACE_ZOOM_TRIGGER = "sidebar-interface-zoom-trigger";
 
 // Model Provider Settings
+/** Re-login action in the Coding Plan status card. */
+export const TID_CODING_PLAN_RELOGIN_BUTTON = "coding-plan-relogin-button";
+/** Subscribe action in the Coding Plan status card. */
+export const TID_CODING_PLAN_SUBSCRIBE_BUTTON = "coding-plan-subscribe-button";
+/** Manual Coding Plan quota reset action button. */
+export const TID_CODING_PLAN_QUOTA_RESET_ACTION = "coding-plan-quota-reset-action";
+/** Completed Coding Plan quota reset label. */
+export const TID_CODING_PLAN_QUOTA_RESET_COMPLETED = "coding-plan-quota-reset-completed";
+/** Coding Plan reset opportunity button. */
+export const TID_CODING_PLAN_QUOTA_RESET_OPPORTUNITY = "coding-plan-quota-reset-opportunity";
+/** Model test action in a model provider model row. */
+export const TID_MODEL_PROVIDER_MODEL_TEST_BUTTON = "model-provider-model-test-button";
+/** Get-API-key action for a model provider. */
+export const TID_MODEL_PROVIDER_GET_API_KEY_BUTTON = "model-provider-get-api-key-button";
 /** Add button at the top of Model Providers. */
 export const TID_MODEL_PROVIDER_ADD_PROVIDER_BUTTON = "model-provider-add-provider-button";
 /** Model Provider Template picker page. */
@@ -516,6 +552,9 @@ export const TID_MODEL_PROVIDER_MODEL_INPUT = "model-provider-model-input";
 export const TID_MODEL_PROVIDER_MODEL_DELETE_BUTTON = "model-provider-model-delete-button";
 /** Add Model Provider model button. */
 export const TID_MODEL_PROVIDER_ADD_MODEL_BUTTON = "model-provider-add-model-button";
+
+/** Visible toast notification item. */
+export const TID_TOAST = "toast";
 
 // Chat Toolbar
 /** Model-selection button in the chat toolbar. */
@@ -708,6 +747,10 @@ export const TID_V4_SPLIT_DIVIDER = "v4-split-divider";
 export const TID_V4_PANE_WORKSPACE_BADGE = "v4-pane-workspace-badge";
 /** "Open in split view" in a sidebar session context menu (Desktop shell only, cleanup). */
 export const TID_V4_TASK_OPEN_IN_SPLIT = "v4-task-open-in-split";
+/** View model trajectory in a task context menu. */
+export const TID_TASK_VIEW_MODEL_TRAJECTORY = "task-view-model-trajectory";
+/** Refresh button in the model trajectory pane. */
+export const TID_MODEL_TRAJECTORY_REFRESH = "model-trajectory-refresh";
 /** v4 timeline "Load older" button (cursor pagination; appears when the first visible row is not the first row in the full order). */
 export const TID_V4_TIMELINE_LOAD_OLDER = "v4-timeline-load-older";
 /** v4 global conversation-turn navigation rail (appears on wide screens when 2+ turns can be navigated). */
@@ -742,6 +785,10 @@ export const TID_AUTOMATION_CARD = "automation-card";
 // Off-peak tasks (separate surface)
 export const TID_OFFPEAK_CREATE_BUTTON = "offpeak-create-button";
 export const TID_OFFPEAK_CARD = "offpeak-card";
+/** Schedule summary badge on an automation card. */
+export const TID_AUTOMATION_CARD_SCHEDULE = "automation-card-schedule";
+/** Run count on an automation card. */
+export const TID_AUTOMATION_CARD_RUN_COUNT = "automation-card-run-count";
 /** Off-peak card footnote: title of the bound session (created within the session). */
 export const TID_OFFPEAK_CARD_SESSION = "offpeak-card-session";
 export const TID_OFFPEAK_CARD_MENU = "offpeak-card-menu";

@@ -2,6 +2,7 @@
 // run, and running it again」）：名字规则的前置回声、落点预览、弹层起点、交给 ZCode 的那条消息、
 // 转写里的候选联接、「再次运行」实参预填，以及「这次 run 存成了哪个工作流」的读缓存。
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { Locale } from "@zcode/shared";
 import type { ConversationRow } from "@zcode/shared/zcode-protocol-v4";
 import { ZCODE_WORKFLOWS_FOR_RUN_MAX_CANDIDATES } from "@zcode/shared";
 
@@ -82,13 +83,15 @@ describe("弹层起点", () => {
   });
 });
 
+const ZH_CN_LOCALE: Locale = "zh-CN";
+
 describe("交给 ZCode 的那条消息", () => {
   const base = { runId: "dwfrun-7", runName: "PR 分层评审", scope: "project" as const };
 
   it("zh：要提炼而不是照抄、带上填好的名字与说明、要求回传 run_id；不带脚本", () => {
     const text = buildWorkflowSaveRequestPrompt({
       ...base,
-      locale: "zh-CN",
+      locale: ZH_CN_LOCALE,
       name: "pr-review",
       description: "三层评审",
     });

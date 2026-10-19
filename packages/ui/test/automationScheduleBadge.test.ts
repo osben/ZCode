@@ -17,6 +17,7 @@ vi.mock("@/components/ui/tooltip.js", () => ({
     createElement("div", { "data-testid": "automation-schedule-tooltip" }, children),
 }));
 
+import { TID_AUTOMATION_CARD_SCHEDULE } from "@zcode/shared";
 import { AutomationScheduleBadge } from "@/settings/AutomationScheduleBadge.js";
 
 class ResizeObserverMock {
@@ -34,14 +35,15 @@ class ResizeObserverMock {
 function renderBadge() {
   render(
     createElement(AutomationScheduleBadge, {
-      text: "每小时的第 05 分 · 下次运行 55 分钟后",
+      text: "At minute 05 each hour · next run in 55 minutes",
+      scheduleKind: "recurring",
       icon: createElement("svg", { "aria-hidden": "true" }),
     }),
   );
 }
 
 function setTextWidths({ clientWidth, scrollWidth }: { clientWidth: number; scrollWidth: number }) {
-  const text = screen.getByTestId("automation-schedule-text");
+  const text = screen.getByTestId(TID_AUTOMATION_CARD_SCHEDULE);
   Object.defineProperties(text, {
     clientWidth: { configurable: true, value: clientWidth },
     scrollWidth: { configurable: true, value: scrollWidth },
@@ -79,7 +81,7 @@ describe("AutomationScheduleBadge", () => {
     notifyResize();
 
     expect(screen.getByTestId("automation-schedule-tooltip").textContent).toBe(
-      "每小时的第 05 分 · 下次运行 55 分钟后",
+      "At minute 05 each hour · next run in 55 minutes",
     );
 
     setTextWidths({ clientWidth: 240, scrollWidth: 240 });

@@ -29,7 +29,7 @@ const stableHookValues = vi.hoisted(() => ({
   selectRegistrations: 0,
   effectiveSelection: undefined as ModelSelection | null | undefined,
   selectionInputs: [] as Array<{ selection: ModelSelection | null } | undefined>,
-  locale: "zh-CN" as "zh-CN" | "en-US",
+  locale: "en-US" as "en-US" | "fr-FR",
   services: { zcodeAgentService: {} },
 }));
 
@@ -241,7 +241,9 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
     intl: {
       formatMessage: ({ id }: { id: string }) => {
         if (id === "automations.edit.titlePlaceholder") {
-          return stableHookValues.locale === "zh-CN" ? "未命名定时任务" : "Untitled Automation";
+          return stableHookValues.locale === "en-US"
+            ? "Untitled Automation"
+            : "Automatisation sans titre";
         }
         return id;
       },
@@ -250,6 +252,7 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
 }));
 
 import { AutomationEditView } from "@/settings/AutomationEditView.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const modelSelectionView = {
   revision: 1,
@@ -328,7 +331,7 @@ const sessionCreatedUiResetAutomation: ZCodeAutomation = {
 
 beforeEach(() => {
   stableHookValues.selectRegistrations = 0;
-  stableHookValues.locale = "zh-CN";
+  stableHookValues.locale = "en-US";
   stableHookValues.projectOptions.length = 0;
   stableHookValues.modelSelectionView = null;
   stableHookValues.modelSelectionTargets.length = 0;
@@ -391,17 +394,17 @@ describe("AutomationEditView session-created dirty state", () => {
     const { rerender } = render(createElement(AutomationEditView, props));
     const titleInput = screen.getByLabelText<HTMLInputElement>("automations.form.title.label");
 
-    expect(titleInput.value).toBe("未命名定时任务");
+    expect(titleInput.value).toBe(expectedCopy("automations.edit.titlePlaceholder"));
 
-    stableHookValues.locale = "en-US";
+    stableHookValues.locale = "fr-FR";
     rerender(createElement(AutomationEditView, props));
-    expect(titleInput.value).toBe("Untitled Automation");
+    expect(titleInput.value).toBe("Automatisation sans titre");
 
     fireEvent.click(screen.getByTestId("automation-edit-breadcrumb-section"));
     expect(props.onBack).toHaveBeenCalledOnce();
 
     fireEvent.change(titleInput, { target: { value: "Keep my title" } });
-    stableHookValues.locale = "zh-CN";
+    stableHookValues.locale = "en-US";
     rerender(createElement(AutomationEditView, props));
     expect(titleInput.value).toBe("Keep my title");
   });

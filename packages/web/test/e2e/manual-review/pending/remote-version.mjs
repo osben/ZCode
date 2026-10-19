@@ -157,11 +157,13 @@ async function scenario({ width, theme, locale, missingVersion = false, oldDeskt
     desktopVersion = "3.12.3";
     send({ type: "pair_status_ack", pair_status: "waiting" });
     send({ type: "pair_status_ack", pair_status: "matched" });
-    const dialog = page.getByRole("dialog", {
-      name: locale === "zh-CN" ? "桌面版本已更新" : "Desktop version changed",
-      exact: true,
-    });
+    const dialog = page.locator("dialog[aria-labelledby='remote-version-title']");
     await dialog.waitFor();
+    assert.ok(
+      (await dialog.innerText()).includes(
+        locale === "zh-CN" ? "桌面版本已更新" : "Desktop version changed",
+      ),
+    );
     const bounds = await dialog.boundingBox();
     assert.ok(bounds && bounds.x >= 15 && Math.abs(bounds.x - (width - bounds.width) / 2) < 2);
     assert.equal(page.url(), readyUrl);
@@ -184,9 +186,7 @@ async function scenario({ width, theme, locale, missingVersion = false, oldDeskt
       path: resolve(artifacts, `${width}-${theme}-${locale}.png`),
       fullPage: true,
     });
-    await dialog
-      .getByRole("button", { name: locale === "zh-CN" ? "重新加载" : "Reload", exact: true })
-      .click();
+    await dialog.getByRole("button").click();
     await page.waitForURL((target) => target.searchParams.get("app_version") === "3.12.3");
     await waitForHome();
     assert.equal(navigationCount, beforeRecovery + 1);
@@ -214,12 +214,12 @@ async function assertEventually(predicate) {
 
 try {
   for (const options of [
-    { width: 390, theme: "zai-light", locale: "zh-CN" },
+    { width: 390, theme: "zai-light", locale: "en-US" },
     { width: 390, theme: "zai-dark", locale: "en-US" },
     { width: 1280, theme: "zai-light", locale: "en-US" },
-    { width: 1280, theme: "zai-dark", locale: "zh-CN" },
-    { width: 390, theme: "zai-dark", locale: "zh-CN", missingVersion: true },
-    { width: 390, theme: "zai-dark", locale: "zh-CN", oldDesktop: true },
+    { width: 1280, theme: "zai-dark", locale: "en-US" },
+    { width: 390, theme: "zai-dark", locale: "en-US", missingVersion: true },
+    { width: 390, theme: "zai-dark", locale: "en-US", oldDesktop: true },
   ]) {
     await scenario(options);
     console.log("PASS RV01–RV03", options);
