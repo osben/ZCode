@@ -3,15 +3,28 @@ import {
   SYSTEM_PROMPT_OVERRIDE_KEYS,
   composeMemoryGuidanceDefault,
   isSystemPromptOverrideKey,
+  normalizeSystemPromptText,
 } from "@zcode/shared";
-import type { ISystemPromptService, SystemPromptSection } from "./systemPrompt.js";
+import { atomicWriteFile, hashBytes, withFileLock } from "@zcode/shared/node";
+import type {
+  ISystemPromptService,
+  SystemPromptSection,
+  SystemPromptWriteResult,
+} from "./systemPrompt.js";
 import { createServiceLogger } from "../logger/serviceLogger.js";
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 const log = createServiceLogger("system-prompt");
+
+/**
+ * The memory-guidance default shown in Settings. It must match what the runtime renders for the
+ * active retrieval branch (default-index inserts the MEMORY.md index pointer paragraph), or the
+ * Settings default/diff preview would disagree with the restored prompt. Known limit: the runtime
+ * picks its branch per session, so this value cannot match every session (specs/system-prompt-settings.md).
+ */
+const MEMORY_GUIDANCE_SETTINGS_DEFAULT = composeMemoryGuidanceDefault("default-index");
 
 function resolveUserHomeDir(): string {
   const envHome = process.env.HOME?.trim() || process.env.USERPROFILE?.trim();
@@ -28,14 +41,27 @@ function overrideFilePath(key: string): string | null {
   return isSystemPromptOverrideKey(key) ? join(getOverridesDir(), `${key}.md`) : null;
 }
 
-async function readOverride(key: string): Promise<string | null> {
-  const filePath = overrideFilePath(key);
-  if (!filePath) return null;
+/** Revision of the current file bytes; null when the file is missing. Other read errors propagate. */
+async function readRevision(filePath: string): Promise<string | null> {
   try {
-    const raw = await readFile(filePath, "utf-8");
-    const trimmed = raw.trim();
-    // Whitespace-only files are ignored, matching the CLI loader's semantics.
-    return trimmed ? trimmed : null;
+    return hashBytes(await readFile(filePath));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+async function readOverride(
+  key: string,
+): Promise<{ content: string | null; revision: string | null }> {
+  const filePath = overrideFilePath(key);
+  if (!filePath) return { content: null, revision: null };
+  try {
+    const bytes = await readFile(filePath);
+    const trimmed = normalizeSystemPromptText(bytes.toString("utf-8"));
+    // Whitespace-only files are ignored, matching the CLI loader's semantics. The revision still
+    // reflects the file bytes, so a save over such a file is checked like any other.
+    return { content: trimmed ? trimmed : null, revision: hashBytes(bytes) };
   } catch (error) {
     // ENOENT is the normal "no override" case; other read failures (permissions, IO) stay
     // visible instead of silently degrading the section to its code default. Mirrors the
@@ -46,7 +72,7 @@ async function readOverride(key: string): Promise<string | null> {
         error: error instanceof Error ? error.message : String(error),
       });
     }
-    return null;
+    return { content: null, revision: null };
   }
 }
 
@@ -58,50 +84,82 @@ export function createSystemPromptService(): ISystemPromptService {
   async function listSections(): Promise<{ sections: SystemPromptSection[] }> {
     const sections = await Promise.all(
       SYSTEM_PROMPT_OVERRIDE_KEYS.map(async (key) => {
-        const overrideContent = await readOverride(key);
+        const { content: overrideContent, revision } = await readOverride(key);
         return {
           key,
-          // The memory-guidance default must match what the runtime renders for the active
-          // retrieval branch (default-index inserts the MEMORY.md index pointer paragraph),
-          // or the Settings default/diff preview would disagree with the restored prompt.
           defaultContent:
             key === "memory-guidance"
-              ? composeMemoryGuidanceDefault("default-index")
+              ? MEMORY_GUIDANCE_SETTINGS_DEFAULT
               : SYSTEM_PROMPT_DEFAULTS[key],
           overrideContent,
           filePath: join(getOverridesDir(), `${key}.md`),
           isOverridden: overrideContent !== null,
+          revision,
         } satisfies SystemPromptSection;
       }),
     );
     return { sections };
   }
 
-  async function writeOverride(params: { key: string; content: string }): Promise<void> {
+  async function writeOverride(params: {
+    key: string;
+    content: string;
+    expectedRevision?: string | null;
+  }): Promise<SystemPromptWriteResult> {
     const filePath = overrideFilePath(params.key);
     if (!filePath) {
       throw new Error(`Unknown system-prompt override key: ${params.key}`);
     }
-    await mkdir(getOverridesDir(), { recursive: true });
-    // Rename within the overrides directory is atomic, so a concurrent runtime reader (new
-    // CLI session) never observes a truncated file; a direct writeFile would expose the
-    // partial override mid-write.
-    const tempPath = join(getOverridesDir(), `.${params.key}.md.${randomUUID()}.tmp`);
-    try {
-      await writeFile(tempPath, params.content, "utf-8");
-      await rename(tempPath, filePath);
-    } catch (error) {
-      await rm(tempPath, { force: true });
-      throw error;
+    // Store the same trimmed text the readers return, so the stored bytes, the effective text and
+    // the revision returned here all describe one value.
+    const normalized = normalizeSystemPromptText(params.content);
+    if (!normalized) {
+      throw new Error(
+        `System-prompt override for ${params.key} is empty; delete the override to restore the default`,
+      );
     }
+    const bytes = Buffer.from(normalized, "utf-8");
+    return withFileLock(filePath, async (): Promise<SystemPromptWriteResult> => {
+      await mkdir(getOverridesDir(), { recursive: true });
+      if (params.expectedRevision !== undefined) {
+        const currentRevision = await readRevision(filePath);
+        if (currentRevision !== params.expectedRevision) {
+          log.info(undefined, "[system-prompt] write rejected by revision conflict", {
+            key: params.key,
+            hasCurrentFile: currentRevision !== null,
+          });
+          return { kind: "conflict", currentRevision };
+        }
+      }
+      // Atomic temp-file rename inside the overrides directory: a concurrent runtime reader
+      // (new CLI session) never observes a truncated file.
+      await atomicWriteFile(filePath, bytes);
+      return { kind: "ok", revision: hashBytes(bytes) };
+    });
   }
 
-  async function deleteOverride(params: { key: string }): Promise<void> {
+  async function deleteOverride(params: {
+    key: string;
+    expectedRevision?: string | null;
+  }): Promise<SystemPromptWriteResult> {
     const filePath = overrideFilePath(params.key);
     if (!filePath) {
       throw new Error(`Unknown system-prompt override key: ${params.key}`);
     }
-    await rm(filePath, { force: true });
+    return withFileLock(filePath, async (): Promise<SystemPromptWriteResult> => {
+      if (params.expectedRevision !== undefined) {
+        const currentRevision = await readRevision(filePath);
+        if (currentRevision !== params.expectedRevision) {
+          log.info(undefined, "[system-prompt] delete rejected by revision conflict", {
+            key: params.key,
+            hasCurrentFile: currentRevision !== null,
+          });
+          return { kind: "conflict", currentRevision };
+        }
+      }
+      await rm(filePath, { force: true });
+      return { kind: "ok", revision: null };
+    });
   }
 
   async function getOverridesDirectory(): Promise<{ path: string }> {

@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { FolderOpen, Split } from "lucide-react";
-import { rebaseRemoteWorkspaceIdentity } from "@zcode/shared";
+import { claimsRemoteWorkspaceIdentity, rebaseRemoteWorkspaceIdentity } from "@zcode/shared";
 import { Button } from "@/components/ui/button.js";
 import {
   Tooltip,
@@ -14,11 +14,14 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 /** Persistent first-in-history summary after Host activation clears the preparation marker. */
 export function ConversationWorktreeCreatedNotice({
   branchName,
+  currentBranchName,
   path,
   workspaceIdentity,
   onOpenWorktree,
 }: {
   branchName?: string;
+  /** Undefined until Git status loads; null when the current worktree has no branch. */
+  currentBranchName?: string | null;
   path: string;
   /** Parent workspace identity; a remote parent yields a remote identity for the worktree path. */
   workspaceIdentity?: string;
@@ -26,21 +29,33 @@ export function ConversationWorktreeCreatedNotice({
 }) {
   const { intl } = useZCodeIntl();
   const openLabel = intl.formatMessage({ id: "commandCenter.worktree.openExisting" });
+  // The creation-time branch stays until Git status is known, so a later branch switch is shown.
+  const displayBranchName = currentBranchName === undefined ? branchName : currentBranchName;
+
+  const openFailed = useCallback(() => {
+    toast(intl.formatMessage({ id: "commandCenter.worktree.openFailed" }, { path }), {
+      durationMs: 10_000,
+    });
+  }, [intl, path]);
 
   const handleOpenWorktree = useCallback(async () => {
     if (!onOpenWorktree) return;
+    const parentIdentity = workspaceIdentity?.trim() ?? "";
     // Remote identities embed the path, so the worktree needs its own identity on the same
-    // authority. Local parents have no remote identity and open by path alone.
-    const worktreeIdentity =
-      rebaseRemoteWorkspaceIdentity(workspaceIdentity ?? "", path) ?? undefined;
-    try {
-      await onOpenWorktree(path, worktreeIdentity);
-    } catch {
-      toast(intl.formatMessage({ id: "commandCenter.worktree.openFailed" }, { path }), {
-        durationMs: 10_000,
-      });
+    // authority. A local parent has no remote identity and opens by path alone. A parent that
+    // claims a remote identity but does not parse must fail closed: falling back to the path
+    // would hand the remote filesystem path to the local workspace opener.
+    const worktreeIdentity = rebaseRemoteWorkspaceIdentity(parentIdentity, path);
+    if (worktreeIdentity === null && claimsRemoteWorkspaceIdentity(parentIdentity)) {
+      openFailed();
+      return;
     }
-  }, [intl, onOpenWorktree, path, workspaceIdentity]);
+    try {
+      await onOpenWorktree(path, worktreeIdentity ?? undefined);
+    } catch {
+      openFailed();
+    }
+  }, [onOpenWorktree, openFailed, path, workspaceIdentity]);
 
   return (
     <div
@@ -56,7 +71,7 @@ export function ConversationWorktreeCreatedNotice({
         <Tooltip>
           <TooltipTrigger asChild>
             <span className="min-w-0 flex-1 truncate text-ui-caption text-foreground-subtle">
-              {branchName ?? path}
+              {displayBranchName || path}
             </span>
           </TooltipTrigger>
           <TooltipContent>{path}</TooltipContent>

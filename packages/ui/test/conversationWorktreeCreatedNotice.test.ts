@@ -39,6 +39,7 @@ function renderNotice(props: {
 
 afterEach(() => {
   cleanup();
+  vi.clearAllMocks();
 });
 
 describe("ConversationWorktreeCreatedNotice open action", () => {
@@ -67,6 +68,18 @@ describe("ConversationWorktreeCreatedNotice open action", () => {
       "/home/dev/repo/.worktrees/feature-a",
       "remote:ssh:devbox:22:dev:/home/dev/repo/.worktrees/feature-a",
     );
+  });
+
+  it("fails closed for an unparseable remote identity instead of opening the path locally", async () => {
+    const path = "/home/dev/repo/.worktrees/feature-a";
+    const onOpenWorktree = vi.fn();
+    renderNotice({ path, workspaceIdentity: "remote:ssh:devbox:22:dev", onOpenWorktree });
+
+    fireEvent.click(screen.getByRole("button", { name: OPEN_LABEL }));
+
+    await waitFor(() => expect(toast).toHaveBeenCalledTimes(1));
+    expect(onOpenWorktree).not.toHaveBeenCalled();
+    expect(String(vi.mocked(toast).mock.calls[0]?.[0])).toContain(path);
   });
 
   it("shows a failure toast with the exact path when the open callback rejects", async () => {

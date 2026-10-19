@@ -818,3 +818,25 @@ export const TID_SETTINGS_SYSTEM_PROMPT_DIFF = "settings-system-prompt-diff";
 export const TID_SETTINGS_SYSTEM_PROMPT_EDITOR = "settings-system-prompt-editor";
 export const TID_SETTINGS_SYSTEM_PROMPT_SAVE = "settings-system-prompt-save";
 export const TID_SETTINGS_SYSTEM_PROMPT_RESTORE = "settings-system-prompt-restore";
+export const TID_SETTINGS_SYSTEM_PROMPT_INFO = "settings-system-prompt-info";
+export const TID_SETTINGS_SYSTEM_PROMPT_PATH = "settings-system-prompt-path";
+export const TID_SETTINGS_SYSTEM_PROMPT_OPEN_FOLDER = "settings-system-prompt-open-folder";
+export const TID_SETTINGS_SYSTEM_PROMPT_DIRTY = "settings-system-prompt-dirty";
+export const TID_SETTINGS_SYSTEM_PROMPT_DIRTY_NOTE = "settings-system-prompt-dirty-note";
+export const TID_SETTINGS_SYSTEM_PROMPT_WARNINGS = "settings-system-prompt-warnings";
+export const TID_SETTINGS_SYSTEM_PROMPT_SAVE_REASON = "settings-system-prompt-save-reason";
+export const TID_SETTINGS_SYSTEM_PROMPT_DISK_CHANGED = "settings-system-prompt-disk-changed";
+export const TID_SETTINGS_SYSTEM_PROMPT_DISK_RELOAD = "settings-system-prompt-disk-reload";
+export const TID_SETTINGS_SYSTEM_PROMPT_DISK_OVERWRITE = "settings-system-prompt-disk-overwrite";
+export const TID_SETTINGS_SYSTEM_PROMPT_DISK_SHOW = "settings-system-prompt-disk-show";
+export const TID_SETTINGS_SYSTEM_PROMPT_DISK_VERSION = "settings-system-prompt-disk-version";
+export const TID_SETTINGS_SYSTEM_PROMPT_DIFF_MODE = "settings-system-prompt-diff-mode";
+export const TID_SETTINGS_SYSTEM_PROMPT_DIFF_TOO_LARGE = "settings-system-prompt-diff-too-large";
+export const TID_SETTINGS_SYSTEM_PROMPT_RESTORE_CONFIRM = "settings-system-prompt-restore-confirm";
+export const TID_SETTINGS_SYSTEM_PROMPT_RESTORE_CONFIRM_ACTION =
+  "settings-system-prompt-restore-confirm-action";
+export const TID_SETTINGS_SYSTEM_PROMPT_RESET_ALL = "settings-system-prompt-reset-all";
+export const TID_SETTINGS_SYSTEM_PROMPT_RESET_ALL_CONFIRM =
+  "settings-system-prompt-reset-all-confirm";
+export const TID_SETTINGS_SYSTEM_PROMPT_ASSEMBLED = "settings-system-prompt-assembled";
+export const TID_SETTINGS_SYSTEM_PROMPT_SIZE = "settings-system-prompt-size";

@@ -270,7 +270,7 @@ export interface VoiceDictationSettings {
   feedbackSounds?: boolean;
   /** Feedback chime volume, integer percent 0–100; absent means 70. */
   feedbackVolume?: number;
-  /** Mute the OS audio output while recording and restore it when recording ends; absent means off. Desktop only. */
+  /** Mute the OS audio output while recording and restore it when recording ends; absent means on (only an explicit false disables it). Desktop only. */
   muteWhileRecording?: boolean;
   /** Also copy each finished transcript to the system clipboard (insertion into the composer is unaffected); absent means off. */
   copyToClipboard?: boolean;

@@ -2,10 +2,21 @@ import { useEffect, useRef, type RefObject } from "react";
 import { useServices } from "@/hooks/useServices.js";
 import { useSettings } from "@/hooks/useSettingService.js";
 import { applyIdleUnloadPreference } from "@/lib/voiceIdleUnload.js";
+import { resolveVoiceDictationPreferences } from "@/lib/voiceDictationPreferences.js";
 import { logger } from "@/logger.js";
 
 /** One request per model per window: refocusing the composer must not hammer the Host. */
 const WARM_UP_THROTTLE_MS = 30_000;
+/**
+ * Last request time per model id. Module scope, so every composer in this renderer window shares
+ * the throttle (the lease is per window for the same reason).
+ */
+const lastWarmUpByModel = new Map<string, number>();
+
+/** Test seam: forgets the per-model throttle between tests. */
+export function resetVoiceModelWarmUpThrottleForTests(): void {
+  lastWarmUpByModel.clear();
+}
 
 interface UseVoiceModelWarmUpOptions {
   /** Desktop-local dictation only; Web remote control and hosts without the voice service never warm up. */
@@ -29,10 +40,8 @@ export function useVoiceModelWarmUp({ enabled, scopeRef }: UseVoiceModelWarmUpOp
   const { settings } = useSettings();
   const voice = settings?.voiceDictation;
   const modelId = voice?.modelId ?? null;
-  const idleUnloadMinutes = voice?.idleUnloadMinutes ?? 5;
-  const warmUpOnFocus = voice?.warmUpOnFocus !== false;
+  const { idleUnloadMinutes, warmUpOnFocus } = resolveVoiceDictationPreferences(voice);
 
-  const lastRequestRef = useRef<{ modelId: string; at: number } | null>(null);
   const inFlightRef = useRef(false);
   /** An older Host without the method: stop asking for the rest of the session. */
   const hostUnsupportedRef = useRef(false);
@@ -43,11 +52,11 @@ export function useVoiceModelWarmUp({ enabled, scopeRef }: UseVoiceModelWarmUpOp
 
     const warmUp = async () => {
       if (hostUnsupportedRef.current || inFlightRef.current) return;
-      const last = lastRequestRef.current;
       const now = Date.now();
-      if (last && last.modelId === modelId && now - last.at < WARM_UP_THROTTLE_MS) return;
+      const last = lastWarmUpByModel.get(modelId);
+      if (last !== undefined && now - last < WARM_UP_THROTTLE_MS) return;
       inFlightRef.current = true;
-      lastRequestRef.current = { modelId, at: now };
+      lastWarmUpByModel.set(modelId, now);
       try {
         await applyIdleUnloadPreference(voiceDictationService, idleUnloadMinutes);
         await voiceDictationService.warmUp({ modelId });

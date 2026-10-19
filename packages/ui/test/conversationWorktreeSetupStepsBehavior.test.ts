@@ -8,6 +8,7 @@ import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { ConversationWorktreeSetupSteps } from "@/v4/ConversationWorktreeSetupSteps.js";
+import { ConversationWorktreeCreatedNotice } from "@/v4/ConversationWorktreeCreatedNotice.js";
 import {
   selectComposerWorktreePipeline,
   useComposerWorktreePipelineStore,
@@ -67,6 +68,46 @@ afterEach(() => {
 });
 
 describe("ConversationWorktreeSetupSteps rendering", () => {
+  it("shows the current Git branch in the created notice and falls back while Git loads", () => {
+    const renderNotice = (currentBranchName?: string | null) =>
+      render(
+        createElement(
+          ZCodeIntlProvider,
+          { initialLocale: "en-US" },
+          createElement(ConversationWorktreeCreatedNotice, {
+            branchName: "zcode/quantum-wizard",
+            ...(currentBranchName !== undefined ? { currentBranchName } : {}),
+            path: "/repo/worktrees/zcode-quantum-wizard",
+          }),
+        ),
+      );
+
+    const view = renderNotice("feat/session-pr-status");
+    expect(screen.getByRole("status").textContent).toContain("feat/session-pr-status");
+    expect(screen.getByRole("status").textContent).not.toContain("zcode/quantum-wizard");
+    view.unmount();
+
+    renderNotice();
+    expect(screen.getByRole("status").textContent).toContain("zcode/quantum-wizard");
+  });
+
+  it("shows Detached HEAD instead of the creation-time branch when the worktree is detached", () => {
+    render(
+      createElement(
+        ZCodeIntlProvider,
+        { initialLocale: "en-US" },
+        createElement(ConversationWorktreeCreatedNotice, {
+          branchName: "zcode/quantum-wizard",
+          currentBranchName: "Detached HEAD",
+          path: "/repo/worktrees/zcode-quantum-wizard",
+        }),
+      ),
+    );
+
+    expect(screen.getByRole("status").textContent).toContain("Detached HEAD");
+    expect(screen.getByRole("status").textContent).not.toContain("zcode/quantum-wizard");
+  });
+
   it("shows the creating row from the Host seed on first paint and materializes the entry", () => {
     renderSteps({ status: "preparing", attemptId: "attempt-1" });
     const card = document.querySelector("[data-worktree-setup-steps]");

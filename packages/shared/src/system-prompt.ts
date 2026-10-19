@@ -254,3 +254,69 @@ export const SYSTEM_PROMPT_DEFAULTS: Record<SystemPromptOverrideKey, string> = {
   "memory-extraction": DEFAULT_MEMORY_EXTRACTION_PROMPT,
   "memory-dream": DEFAULT_MEMORY_DREAM_PROMPT,
 };
+
+/**
+ * Main-prompt sections in runtime assembly order (ContextBuilder.build()). Settings uses this for
+ * the row order and for the assembled-prompt preview, so the two cannot drift from the builder.
+ */
+export const SYSTEM_PROMPT_MAIN_PROMPT_ORDER = [
+  "cli-prefix",
+  "identity-intro",
+  "harness",
+  "communication",
+  "memory-guidance",
+  "context-management",
+] as const satisfies readonly SystemPromptOverrideKey[];
+
+/** Background Memory agent prompts; never part of the main prompt. */
+export const SYSTEM_PROMPT_BACKGROUND_KEYS = [
+  "memory-extraction",
+  "memory-dream",
+] as const satisfies readonly SystemPromptOverrideKey[];
+
+/**
+ * Persisted text is stored and compared trimmed. Reads already trim the override file, so the
+ * service, the UI dirty check and the save path all use this one rule.
+ */
+export function normalizeSystemPromptText(text: string): string {
+  return text.trim();
+}
+
+const SYSTEM_PROMPT_PLACEHOLDER_PATTERN = /\{\{(\w+)\}\}/g;
+
+/** Unique `{{name}}` placeholders in order of first appearance. */
+export function extractSystemPromptPlaceholders(text: string): string[] {
+  const names: string[] = [];
+  for (const match of text.matchAll(SYSTEM_PROMPT_PLACEHOLDER_PATTERN)) {
+    const name = match[1]!;
+    if (!names.includes(name)) names.push(name);
+  }
+  return names;
+}
+
+/**
+ * Keys whose `{{name}}` tokens the runtime actually substitutes (renderSystemPromptTemplate call
+ * sites: memory guidance, memory extraction, dream). Every other key is sent literally, so it has
+ * no placeholder set and the editor must not ask for one.
+ */
+export const SYSTEM_PROMPT_RUNTIME_SUBSTITUTED_KEYS = [
+  "memory-guidance",
+  "memory-extraction",
+  "memory-dream",
+] as const satisfies readonly SystemPromptOverrideKey[];
+
+/**
+ * Placeholders each editable section supports. Keys in SYSTEM_PROMPT_RUNTIME_SUBSTITUTED_KEYS derive
+ * their set from the shared default text (`memory-guidance` from the `default-index` variant, which
+ * carries the same tokens as the semantic-recall variant). Other keys map to an empty list.
+ */
+export const SYSTEM_PROMPT_PLACEHOLDERS: Record<SystemPromptOverrideKey, readonly string[]> = {
+  "cli-prefix": [],
+  "identity-intro": [],
+  harness: [],
+  communication: [],
+  "context-management": [],
+  "memory-guidance": extractSystemPromptPlaceholders(composeMemoryGuidanceDefault("default-index")),
+  "memory-extraction": extractSystemPromptPlaceholders(SYSTEM_PROMPT_DEFAULTS["memory-extraction"]),
+  "memory-dream": extractSystemPromptPlaceholders(SYSTEM_PROMPT_DEFAULTS["memory-dream"]),
+};

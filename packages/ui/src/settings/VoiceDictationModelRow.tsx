@@ -204,7 +204,7 @@ export function VoiceModelRow({
           ) : null}
           {(downloading || startingDownload) && pendingUse ? (
             <SettingsBadge>
-              {intl.formatMessage({ id: "voiceDictation.models.willUseWhenReady" })}
+              {intl.formatMessage({ id: "voiceDictation.models.useWhenReady" })}
             </SettingsBadge>
           ) : null}
         </div>

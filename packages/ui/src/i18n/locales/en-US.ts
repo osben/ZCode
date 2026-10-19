@@ -1467,9 +1467,6 @@ const enUS: Record<string, string> = {
   "sidePane.time.hoursAgo": "{count}h ago",
   "sidePane.time.daysAgo": "{count}d ago",
   "git.action.refresh": "Refresh",
-  "git.fileListLayout.directory": "Directory",
-  "git.fileListLayout.flat": "Flatten",
-  "git.fileListLayout.toggleLabel": "File list layout",
   "git.action.stage": "Stage",
   "git.action.unstage": "Unstage",
   "git.action.discard": "Discard",
@@ -5288,6 +5285,8 @@ const enUS: Record<string, string> = {
     "The registered worktree for {branchName} at {path} is missing or not usable.",
   "worktreeSetup.reconcile.markerSyncUnavailable":
     "Setup finished at a different worktree path and the session record could not be updated",
+  "worktreeSetup.reservation.conflict":
+    "Another chat is already preparing a worktree with this name. Send again to use a new name.",
   "git.branchSwitcher.appliesOnSend": "Applies when you send the first message",
   "git.branchSwitcher.worktreeIntentHint": "The worktree setup sets the branch for this task",
   "branchSwitchGuard.title": "Switch branch?",
@@ -5602,8 +5601,6 @@ const enUS: Record<string, string> = {
   "chat.toolbar.modelSwitch.lockedByRunningTask.short": "busy",
   "chat.goal.runningBlocked": "Set a goal after the current task finishes.",
   "chat.goal.planModeBlocked": "Goal is unavailable in Plan mode. Switch modes to continue.",
-  "chat.plan.attachmentsBlocked":
-    "The /plan shortcut supports text only for now. Remove attachments or context and try again.",
   "chat.compact.runningBlocked": "Compact context after the current task finishes.",
   "chat.compact.queued": "Compaction queued and will run in order.",
   "chat.compact.duplicateBlocked": "A compaction is already running or queued.",
@@ -7795,18 +7792,49 @@ const enUS: Record<string, string> = {
     "Loads the selected model in the background so the first recording starts without waiting. A loaded model uses memory until the unload delay below passes.",
   "voiceDictation.postProcess.title": "Post-processing",
   "voiceDictation.postProcess.description":
-    "Rewrites each finished transcript with a language model before it is inserted. Your raw transcript is what goes to the clipboard.",
+    "Rewrites each finished transcript with a language model before it is inserted. With Copy dictated text to the clipboard on, the clipboard gets the raw transcript.",
   "voiceDictation.postProcess.enabled.title": "Process dictated text",
   "voiceDictation.postProcess.enabled.description":
     "If processing fails or takes too long, the raw transcript is inserted instead.",
-  "voiceDictation.postProcess.provider.title": "Model",
+  "voiceDictation.postProcess.provider.title": "Provider",
   "voiceDictation.postProcess.provider.description":
     "Runs on this device; no text leaves your computer.",
   "voiceDictation.postProcess.provider.appleFm": "System model (Apple Foundation Models)",
   "voiceDictation.postProcess.prompt.title": "Prompt",
   "voiceDictation.postProcess.prompt.description":
-    "Use {variable} where the transcript should go. Without it, the transcript is added after the prompt.",
+    "Use {variable} where the transcript should go. The prompt must contain it to save.",
   "voiceDictation.postProcess.prompt.reset": "Reset to default",
+  "voiceDictation.postProcess.status.checking": "Checking availability…",
+  "voiceDictation.postProcess.status.available":
+    "Available on this Mac. Text is processed on this device.",
+  "voiceDictation.postProcess.prompt.save": "Save",
+  "voiceDictation.postProcess.prompt.cancel": "Cancel",
+  "voiceDictation.postProcess.prompt.unsaved": "Unsaved changes",
+  "voiceDictation.postProcess.prompt.counter": "{count} / {max}",
+  "voiceDictation.postProcess.prompt.tooLong": "Shorten the prompt to {max} characters to save it.",
+  "voiceDictation.postProcess.prompt.blank":
+    "The prompt can't be empty. Use Reset to restore the default.",
+  "voiceDictation.postProcess.prompt.noVariable":
+    "The prompt must contain {variable}; it is replaced by the transcript.",
+  "voiceDictation.postProcess.discard.title": "Discard unsaved changes?",
+  "voiceDictation.postProcess.discard.description":
+    "The prompt will go back to the last saved version.",
+  "voiceDictation.postProcess.discard.confirm": "Discard",
+  "voiceDictation.postProcess.reset.title": "Restore the default prompt?",
+  "voiceDictation.postProcess.reset.description":
+    "Your custom prompt will be removed and the built-in default will be used. Unsaved edits are discarded.",
+  "voiceDictation.postProcess.tryIt.title": "Try it",
+  "voiceDictation.postProcess.tryIt.description":
+    "Runs the prompt above on a sample sentence. Unsaved edits are included; nothing is saved.",
+  "voiceDictation.postProcess.tryIt.sample": "Sample text",
+  "voiceDictation.postProcess.tryIt.run": "Run",
+  "voiceDictation.postProcess.tryIt.running": "Running…",
+  "voiceDictation.postProcess.tryIt.failed": "The prompt could not run: {reason}",
+  "voiceDictation.group.dictation.title": "Dictation",
+  "voiceDictation.group.microphone.title": "Microphone",
+  "voiceDictation.group.output.title": "Output",
+  "voiceDictation.memory.title": "Memory",
+  "voiceDictation.shortcut.open": "Open Keyboard Shortcuts",
   "voiceDictation.postProcess.unavailable.unsupportedPlatform":
     "The system model is only available on macOS.",
   "voiceDictation.postProcess.unavailable.helperMissing":
@@ -7859,8 +7887,7 @@ const enUS: Record<string, string> = {
   "voiceDictation.models.remove": "Delete",
   "voiceDictation.models.startingDownload": "Starting download…",
   "voiceDictation.models.useWhenReady": "Use when ready",
-  "voiceDictation.models.cancelUseWhenReady": "Keep current model",
-  "voiceDictation.models.willUseWhenReady": "Will use when ready",
+  "voiceDictation.models.cancelUseWhenReady": "Cancel use when ready",
   "voiceDictation.models.removeConfirm.title": "Delete this model?",
   "voiceDictation.models.removeConfirm.description":
     "{model} will be removed from this device. You can download it again later.",
@@ -7877,6 +7904,8 @@ const enUS: Record<string, string> = {
   "voiceDictation.tooShort": "Recording too short. Keep recording until you finish speaking.",
   "voiceDictation.stillLoading":
     "The speech model was still loading. Start speaking once recording begins.",
+  "voiceDictation.sessionBusyInOtherComposer":
+    "Dictation is already in use in another message box. Stop it there first.",
   "voiceDictation.composer.cancel": "Cancel voice input",
   "voiceDictation.microphoneFailed":
     "Could not access the microphone. Check the input device and permissions.",
@@ -7908,7 +7937,6 @@ const enUS: Record<string, string> = {
   "voiceDictation.composer.processing": "Processing text",
   "voiceDictation.composer.status.processing": "Processing text",
   "voiceDictation.composer.modelStatus.loading": "Speech model loading",
-  "voiceDictation.composer.modelStatus.loaded": "Speech model loaded, voice input starts instantly",
   "settings.computerUse.title": "Computer Use",
   "settings.computerUse.toggleLabel": "Enable Computer Use",
   "settings.computerUse.toggleDescription":
@@ -8018,13 +8046,10 @@ const enUS: Record<string, string> = {
   "settings.systemPrompt.edit": "Edit",
   "settings.systemPrompt.restoreDefault": "Restore default",
   "settings.systemPrompt.restoreConfirm.title": "Restore built-in prompt?",
-  "settings.systemPrompt.restoreConfirm.description":
-    "This will delete the customized {section} prompt from {host} and restore its built-in default.",
   "settings.systemPrompt.restoreConfirm.confirm": "Restore default",
   "settings.systemPrompt.restored": "System prompt section restored to its default text.",
   "settings.systemPrompt.restoreFailed": "Failed to restore the default text.",
   "settings.systemPrompt.editorLabel": "Prompt text",
-  "settings.systemPrompt.characterCount": "{count} characters",
   "settings.systemPrompt.identityBaselineLoading":
     "Checking the active Output Style before editing…",
   "settings.systemPrompt.identityBaselineUnavailable":
@@ -8057,6 +8082,78 @@ const enUS: Record<string, string> = {
   "settings.outputStyles.title": "Output Styles",
   "settings.outputStyles.description":
     "Choose how the agent shapes its responses. Built-in defaults live in the app; edits are saved as override files you can always restore.",
+  "settings.systemPrompt.defaultBadge": "Default",
+  "settings.systemPrompt.sizeLine": "{characters} characters · ~{tokens} tokens",
+  "settings.systemPrompt.openFolder": "Open folder",
+  "settings.systemPrompt.incognitoNote":
+    "Incognito sessions can ignore these overrides when the incognito profile's System prompt overrides capability is off.",
+  "settings.systemPrompt.unsavedDot": "Unsaved changes",
+  "settings.systemPrompt.blockedByDraft":
+    "Save or discard the open draft first. Only one section can have unsaved changes at a time.",
+  "settings.systemPrompt.dirtyNote":
+    "{section} has an unsaved draft. Save or discard it before you edit or restore other sections.",
+  "settings.systemPrompt.customizedCount": "{count} customized",
+  "settings.systemPrompt.resetAll": "Reset all customized…",
+  "settings.systemPrompt.resetAll.title": "Reset all customized sections?",
+  "settings.systemPrompt.resetAll.description":
+    "The override files for these {count} sections on {host} will be deleted, and the built-in defaults will apply to new sessions:",
+  "settings.systemPrompt.resetAll.confirm": "Reset all",
+  "settings.systemPrompt.resetAllDone": "Restored {count} sections to their built-in defaults.",
+  "settings.systemPrompt.resetAllPartial":
+    "Restored {restored} sections. {conflicts} changed on disk and {failed} failed. The list was refreshed.",
+  "settings.systemPrompt.changedOnDisk":
+    "This section changed on disk. The list was refreshed; review it before trying again.",
+  "settings.systemPrompt.restoreConfirm.description":
+    "The override file for this section on {host} will be deleted. The default below takes effect for new sessions.",
+  "settings.systemPrompt.restoreConfirm.preview": "Built-in default that will be restored",
+  "settings.systemPrompt.diskChanged.title": "Changed on disk",
+  "settings.systemPrompt.diskChanged.description":
+    "This section's file changed outside Settings while you were editing. Reload to discard your draft, or overwrite the file with your draft.",
+  "settings.systemPrompt.diskChanged.reload": "Reload from disk",
+  "settings.systemPrompt.diskChanged.overwrite": "Overwrite",
+  "settings.systemPrompt.diskChanged.show": "Show disk version",
+  "settings.systemPrompt.diskChanged.viewFirst":
+    "Show the disk version before you can overwrite it.",
+  "settings.systemPrompt.diskChanged.diskVersion":
+    "Disk version. Overwrite replaces this text with your draft.",
+  "settings.systemPrompt.diskChanged.noOverride":
+    "The file on disk has no override text; the built-in default applies.",
+  "settings.systemPrompt.saveReason.unchanged": "No changes to save.",
+  "settings.systemPrompt.saveReason.diskChanged":
+    "Choose Reload from disk or Overwrite above before saving.",
+  "settings.systemPrompt.shortcutHint":
+    "Ctrl/Cmd+S saves. Esc cancels, asking before it discards changes.",
+  "settings.systemPrompt.diffMode.saved": "vs saved",
+  "settings.systemPrompt.diffMode.default": "vs built-in default",
+  "settings.systemPrompt.diffNone": "No differences.",
+  "settings.systemPrompt.diffTooLarge":
+    "Too large to diff here ({baselineLines} saved lines, {draftLines} draft lines). Compare the text manually.",
+  "settings.systemPrompt.warning.unknownPlaceholder":
+    "{token} is not a placeholder for this section, so it will be sent as literal text.",
+  "settings.systemPrompt.warning.missingPlaceholder":
+    "{token} is missing. The runtime fills it in only when this placeholder is present.",
+  "settings.systemPrompt.warning.confirmationRemoved":
+    "The paragraph asking the agent to confirm before hard-to-reverse or outward-facing actions is missing.",
+  "settings.systemPrompt.assembled.title": "Assembled prompt (approximate)",
+  "settings.systemPrompt.assembled.description":
+    "Main-prompt blocks in runtime order, using their effective text. Environment, memory index, tools and workspace instructions are added at runtime and are not shown.",
+  "settings.systemPrompt.assembled.tokens": "About {tokens} tokens · {characters} characters",
+  "settings.systemPrompt.info.cliPrefix":
+    "First line of the main prompt. Names ZCode as the agent. Omitted when the incognito profile turns identity off.",
+  "settings.systemPrompt.info.identityIntro":
+    "Second block of the main prompt. Sets the agent's role. With an active Output Style the baseline is the Output Style intro; an override still wins, and the Output Style section is still appended.",
+  "settings.systemPrompt.info.harness":
+    "Describes the tool and display environment: Markdown output, permission modes, hooks and file-tool preferences. Omitted when the incognito profile turns the harness off.",
+  "settings.systemPrompt.info.communication":
+    "How the agent writes for you, including the paragraph on confirming hard-to-reverse actions. Omitted when the incognito profile turns the harness off.",
+  "settings.systemPrompt.info.contextManagement":
+    "Comes after memory guidance in the main prompt. Covers context summaries and autonomous work rules.",
+  "settings.systemPrompt.info.memoryGuidance":
+    "How the agent reads and writes persistent memory. Included only when memory is enabled for the session; {{memoryRoot}} becomes that session's memory directory.",
+  "settings.systemPrompt.info.memoryExtraction":
+    "Instructions for the background agent that saves memories after a turn. Runs only on this computer and never for remote workspaces.",
+  "settings.systemPrompt.info.memoryDream":
+    "Instructions for the manual /dream consolidation. Runs only on this computer; the tool limits and session list are always appended.",
   "settings.outputStyles.defaultPrompt":
     "No additional output-style instructions. ZCode uses its standard system prompt.",
   "settings.outputStyles.desktopOnly": "Output styles can be managed in the desktop app.",

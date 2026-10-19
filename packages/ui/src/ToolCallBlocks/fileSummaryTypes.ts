@@ -247,6 +247,9 @@ export interface ToolCallBlockRenderContext {
     onActivate: () => void;
     testId?: string;
   };
+  /** Live, provider-reported token usage and elapsed time for a paired subagent row. */
+  agentUsageSummary?: ReactNode;
+  agentUsageSummaryVersion?: string;
   /** Runtime-authoritative type from a paired v4 subagentRow projection; preferred while streaming input is incomplete. */
   authoritativeAgentType?: string;
   /** ExitPlanMode plan card: open the Side Pane after the conversation host binds the parent/session scope. */

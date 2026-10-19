@@ -24,6 +24,7 @@ export const SYSTEM_REMINDER_PERSISTED_SOURCES = [
   "todo_reminder",
   "task_status",
   "tool_result_warning",
+  "nested_agents_md",
   "resume_referenced_session_context",
   "plan_file_reference",
   "resume_goal_state",
@@ -86,6 +87,7 @@ const NON_MID_CONVERSATION_SYSTEM_SOURCES = new Set<SystemReminderSource>([
   "plan_file_reference",
   "target_continuation",
   "tool_result_warning",
+  "nested_agents_md",
   "goal_completion_verification",
 ]);
 
@@ -120,6 +122,8 @@ const SYSTEM_REMINDER_DESCRIPTORS: Record<SystemReminderSource, DescriptorShape>
   task_status: descriptor("mid_turn_event", "mid_turn_event", true, "sr.task_status"),
   // Used only for warnings embedded in Read and other tool-result content; do not persist it as a synthetic user notice.
   tool_result_warning: descriptor("tool_result", "tool_result", true, "sr.tool_result_warning"),
+  // Nested AGENTS.md rides inside the tool result that triggered it (tool/executor/call-runner.ts), so it is never a standalone message.
+  nested_agents_md: descriptor("tool_result", "tool_result", true, "sr.nested_agents_md"),
   resume_referenced_session_context: descriptor(
     "history_continuity",
     "resume_history",

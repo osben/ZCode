@@ -19,6 +19,7 @@ const EXPECTED_SOURCES = [
   "todo_reminder",
   "task_status",
   "tool_result_warning",
+  "nested_agents_md",
   "resume_referenced_session_context",
   "plan_file_reference",
   "resume_goal_state",
@@ -67,6 +68,7 @@ describe("system reminder source descriptors", () => {
       "todo_reminder",
       "task_status",
       "tool_result_warning",
+      "nested_agents_md",
       "resume_referenced_session_context",
       "plan_file_reference",
       "resume_goal_state",
@@ -175,6 +177,7 @@ describe("system reminder source descriptors", () => {
       "plan_file_reference",
       "target_continuation",
       "tool_result_warning",
+      "nested_agents_md",
       "goal_completion_verification",
     ]);
     for (const source of EXPECTED_SOURCES) {

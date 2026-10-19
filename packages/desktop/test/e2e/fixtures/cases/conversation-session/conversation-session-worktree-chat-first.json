@@ -35,6 +35,13 @@
       "timingPolicy": "fast-text",
       "source": "synthetic",
       "syntheticReason": "The navigation case must admit the recovered message only after an explicit restore and send."
+    },
+    {
+      "id": "worktree-independent-new-chat",
+      "kind": "main",
+      "source": "synthetic",
+      "timingPolicy": "fast-text",
+      "syntheticReason": "Require the second-chat marker without admitting the detached first input, making workspace-wide reservation reuse observable."
     }
   ]
 }

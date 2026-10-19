@@ -1368,9 +1368,6 @@ const zhCN: Record<string, string> = {
   "sidePane.time.hoursAgo": "{count} 小时前",
   "sidePane.time.daysAgo": "{count} 天前",
   "git.action.refresh": "刷新",
-  "git.fileListLayout.directory": "目录",
-  "git.fileListLayout.flat": "平铺",
-  "git.fileListLayout.toggleLabel": "文件列表布局",
   "git.action.stage": "暂存",
   "git.action.unstage": "取消暂存",
   "git.action.discard": "丢弃",
@@ -4981,6 +4978,8 @@ const zhCN: Record<string, string> = {
     "{branchName} 在 {path} 的已注册 worktree 缺失或不可用。",
   "worktreeSetup.reconcile.markerSyncUnavailable":
     "设置完成于不同的 worktree 路径，且无法更新会话记录",
+  "worktreeSetup.reservation.conflict":
+    "另一个会话已在使用此名称准备 worktree。请重新发送以使用新名称。",
   "git.branchSwitcher.appliesOnSend": "将在发送第一条消息时生效",
   "git.branchSwitcher.worktreeIntentHint": "该任务的分支由 worktree 设置决定",
   "branchSwitchGuard.title": "切换分支？",
@@ -5290,7 +5289,6 @@ const zhCN: Record<string, string> = {
   "chat.toolbar.modelSwitch.lockedByRunningTask.short": "任务运行中",
   "chat.goal.runningBlocked": "请结束任务后设定目标。",
   "chat.goal.planModeBlocked": "Goal 无法在 Plan 模式下使用，请切换模式。",
-  "chat.plan.attachmentsBlocked": "首版 /plan 仅支持纯文本，请移除附件或上下文后重试。",
   "chat.compact.runningBlocked": "运行中不能压缩上下文，请等待当前任务结束。",
   "chat.compact.queued": "已加入队列，将按顺序压缩上下文。",
   "chat.compact.duplicateBlocked": "已有压缩任务正在运行或排队。",
@@ -7478,16 +7476,43 @@ const zhCN: Record<string, string> = {
     "在后台加载所选模型，使首次录音无需等待。已加载的模型会占用内存，直到下方的卸载延迟结束。",
   "voiceDictation.postProcess.title": "后处理",
   "voiceDictation.postProcess.description":
-    "在插入前用语言模型改写每次转写完成的文本。剪贴板中保存的是原始转写文本。",
+    "在插入前用语言模型改写每段完成的转写文本。开启“将听写文本复制到剪贴板”时，剪贴板中保存的是原始转写文本。",
   "voiceDictation.postProcess.enabled.title": "处理听写文本",
   "voiceDictation.postProcess.enabled.description": "如果处理失败或耗时过长，将插入原始转写文本。",
-  "voiceDictation.postProcess.provider.title": "模型",
+  "voiceDictation.postProcess.provider.title": "服务提供方",
   "voiceDictation.postProcess.provider.description": "在本设备上运行，文本不会离开你的电脑。",
   "voiceDictation.postProcess.provider.appleFm": "系统模型（Apple Foundation Models）",
   "voiceDictation.postProcess.prompt.title": "提示词",
   "voiceDictation.postProcess.prompt.description":
-    "在需要放入转写文本的位置使用 {variable}。不含该变量时，转写文本会追加在提示词之后。",
+    "在需要放入转写文本的位置使用 {variable}。提示词必须包含该变量才能保存。",
   "voiceDictation.postProcess.prompt.reset": "恢复默认",
+  "voiceDictation.postProcess.status.checking": "正在检查可用性…",
+  "voiceDictation.postProcess.status.available": "此 Mac 上可用。文本在本设备上处理。",
+  "voiceDictation.postProcess.prompt.save": "保存",
+  "voiceDictation.postProcess.prompt.cancel": "取消",
+  "voiceDictation.postProcess.prompt.unsaved": "有未保存的更改",
+  "voiceDictation.postProcess.prompt.counter": "{count} / {max}",
+  "voiceDictation.postProcess.prompt.tooLong": "请将提示词缩短到 {max} 个字符以保存。",
+  "voiceDictation.postProcess.prompt.blank": "提示词不能为空。使用“恢复默认”可还原。",
+  "voiceDictation.postProcess.prompt.noVariable": "提示词必须包含 {variable}，转写文本会替换它。",
+  "voiceDictation.postProcess.discard.title": "放弃未保存的更改？",
+  "voiceDictation.postProcess.discard.description": "提示词将恢复为上次保存的版本。",
+  "voiceDictation.postProcess.discard.confirm": "放弃",
+  "voiceDictation.postProcess.reset.title": "恢复默认提示词？",
+  "voiceDictation.postProcess.reset.description":
+    "你的自定义提示词将被删除，并使用内置默认值。未保存的编辑将被放弃。",
+  "voiceDictation.postProcess.tryIt.title": "试用",
+  "voiceDictation.postProcess.tryIt.description":
+    "使用上方提示词处理一个示例句子。包含未保存的编辑；不会保存任何内容。",
+  "voiceDictation.postProcess.tryIt.sample": "示例文本",
+  "voiceDictation.postProcess.tryIt.run": "运行",
+  "voiceDictation.postProcess.tryIt.running": "运行中…",
+  "voiceDictation.postProcess.tryIt.failed": "提示词无法运行：{reason}",
+  "voiceDictation.group.dictation.title": "听写",
+  "voiceDictation.group.microphone.title": "麦克风",
+  "voiceDictation.group.output.title": "输出",
+  "voiceDictation.memory.title": "内存",
+  "voiceDictation.shortcut.open": "打开键盘快捷键",
   "voiceDictation.postProcess.unavailable.unsupportedPlatform": "系统模型仅在 macOS 上可用。",
   "voiceDictation.postProcess.unavailable.helperMissing": "此版本未包含系统模型桥接组件。",
   "voiceDictation.postProcess.unavailable.deviceNotEligible":
@@ -7536,8 +7561,7 @@ const zhCN: Record<string, string> = {
   "voiceDictation.models.remove": "删除",
   "voiceDictation.models.startingDownload": "正在启动下载…",
   "voiceDictation.models.useWhenReady": "下载完成后使用",
-  "voiceDictation.models.cancelUseWhenReady": "保留当前模型",
-  "voiceDictation.models.willUseWhenReady": "下载完成后将使用",
+  "voiceDictation.models.cancelUseWhenReady": "取消下载完成后使用",
   "voiceDictation.models.removeConfirm.title": "删除此模型？",
   "voiceDictation.models.removeConfirm.description": "{model} 将从此设备删除。以后可以重新下载。",
   "voiceDictation.models.fromHandy": "Handy 已安装",
@@ -7552,6 +7576,7 @@ const zhCN: Record<string, string> = {
   "voiceDictation.tooShort": "录音时间太短。请持续录音，直到说完。",
   "voiceDictation.stillLoading": "语音模型仍在加载。请在开始录音后再说话。",
   "voiceDictation.composer.cancel": "取消语音输入",
+  "voiceDictation.sessionBusyInOtherComposer": "语音输入正在另一个消息框中使用，请先在该处停止。",
   "voiceDictation.microphoneFailed": "无法访问麦克风，请检查输入设备和系统权限。",
   "voiceDictation.transcribeFailed": "语音转写失败。",
   "voiceDictation.downloadFailed": "模型下载失败。",
@@ -7580,7 +7605,6 @@ const zhCN: Record<string, string> = {
   "voiceDictation.composer.processing": "正在处理文本",
   "voiceDictation.composer.status.processing": "正在处理文本",
   "voiceDictation.composer.modelStatus.loading": "语音模型加载中",
-  "voiceDictation.composer.modelStatus.loaded": "语音模型已加载，语音输入可立即开始",
   "settings.computerUse.title": "电脑控制",
   "settings.computerUse.toggleLabel": "启用电脑控制",
   "settings.computerUse.toggleDescription": "开启后将启用电脑控制及其 MCP 与技能。",
@@ -7681,13 +7705,10 @@ const zhCN: Record<string, string> = {
   "settings.systemPrompt.edit": "编辑",
   "settings.systemPrompt.restoreDefault": "恢复默认",
   "settings.systemPrompt.restoreConfirm.title": "恢复内置提示词？",
-  "settings.systemPrompt.restoreConfirm.description":
-    "这将删除 {host} 上自定义的“{section}”提示词，并恢复内置默认值。",
   "settings.systemPrompt.restoreConfirm.confirm": "恢复默认",
   "settings.systemPrompt.restored": "系统提示词片段已恢复为默认文本。",
   "settings.systemPrompt.restoreFailed": "恢复默认文本失败。",
   "settings.systemPrompt.editorLabel": "提示词文本",
-  "settings.systemPrompt.characterCount": "{count} 个字符",
   "settings.systemPrompt.identityBaselineLoading": "正在确认当前输出风格后再编辑…",
   "settings.systemPrompt.identityBaselineUnavailable":
     "无法加载输出风格。请在设置中打开“输出风格”并重试，然后再编辑此片段。",
@@ -7718,6 +7739,73 @@ const zhCN: Record<string, string> = {
   "settings.outputStyles.title": "输出风格",
   "settings.outputStyles.description":
     "选择智能体组织回复的方式。内置默认值保存在应用代码中；编辑会保存为覆盖文件，随时可以恢复默认。",
+  "settings.systemPrompt.defaultBadge": "默认",
+  "settings.systemPrompt.sizeLine": "{characters} 个字符 · 约 {tokens} tokens",
+  "settings.systemPrompt.openFolder": "打开文件夹",
+  "settings.systemPrompt.incognitoNote":
+    "当隐身配置未启用“系统提示词覆盖”能力时，隐身会话会忽略这些覆盖。",
+  "settings.systemPrompt.unsavedDot": "未保存的更改",
+  "settings.systemPrompt.blockedByDraft":
+    "请先保存或放弃当前打开的草稿。同一时间只能有一个部分存在未保存的更改。",
+  "settings.systemPrompt.dirtyNote":
+    "“{section}”有未保存的草稿。保存或放弃后，才能编辑或恢复其他部分。",
+  "settings.systemPrompt.customizedCount": "已自定义 {count} 项",
+  "settings.systemPrompt.resetAll": "全部恢复默认…",
+  "settings.systemPrompt.resetAll.title": "恢复所有自定义部分的默认内容？",
+  "settings.systemPrompt.resetAll.description":
+    "将删除 {host} 上这 {count} 个部分的覆盖文件，新会话将使用内置默认内容：",
+  "settings.systemPrompt.resetAll.confirm": "全部恢复",
+  "settings.systemPrompt.resetAllDone": "已将 {count} 个部分恢复为内置默认内容。",
+  "settings.systemPrompt.resetAllPartial":
+    "已恢复 {restored} 个部分；{conflicts} 个在磁盘上已被更改，{failed} 个失败。列表已刷新。",
+  "settings.systemPrompt.changedOnDisk": "该部分已在磁盘上被更改。列表已刷新，请检查后再试。",
+  "settings.systemPrompt.restoreConfirm.description":
+    "将删除 {host} 上此部分的覆盖文件。下方的默认内容将在新会话中生效。",
+  "settings.systemPrompt.restoreConfirm.preview": "将恢复的内置默认内容",
+  "settings.systemPrompt.diskChanged.title": "磁盘上已更改",
+  "settings.systemPrompt.diskChanged.description":
+    "你编辑时，此部分的文件在设置之外被更改。重新加载将放弃你的草稿；覆盖则用你的草稿替换文件。",
+  "settings.systemPrompt.diskChanged.reload": "从磁盘重新加载",
+  "settings.systemPrompt.diskChanged.overwrite": "覆盖",
+  "settings.systemPrompt.diskChanged.show": "查看磁盘版本",
+  "settings.systemPrompt.diskChanged.viewFirst": "请先查看磁盘版本，然后才能覆盖。",
+  "settings.systemPrompt.diskChanged.diskVersion": "磁盘版本。覆盖将用你的草稿替换此文本。",
+  "settings.systemPrompt.diskChanged.noOverride": "磁盘上的文件没有覆盖文本；将使用内置默认内容。",
+  "settings.systemPrompt.saveReason.unchanged": "没有可保存的更改。",
+  "settings.systemPrompt.saveReason.diskChanged":
+    "保存前，请先在上方选择“从磁盘重新加载”或“覆盖”。",
+  "settings.systemPrompt.shortcutHint": "Ctrl/Cmd+S 保存。Esc 取消，丢弃更改前会询问。",
+  "settings.systemPrompt.diffMode.saved": "与已保存版本对比",
+  "settings.systemPrompt.diffMode.default": "与内置默认对比",
+  "settings.systemPrompt.diffNone": "没有差异。",
+  "settings.systemPrompt.diffTooLarge":
+    "内容过大，无法在此显示差异（已保存 {baselineLines} 行，草稿 {draftLines} 行）。请手动比较。",
+  "settings.systemPrompt.warning.unknownPlaceholder":
+    "{token} 不是此部分支持的占位符，将按普通文本发送。",
+  "settings.systemPrompt.warning.missingPlaceholder":
+    "缺少 {token}。只有包含此占位符时，运行时才会填入对应内容。",
+  "settings.systemPrompt.warning.confirmationRemoved":
+    "缺少要求智能体在执行难以撤销或对外的操作前先确认的段落。",
+  "settings.systemPrompt.assembled.title": "组装后的提示词（近似）",
+  "settings.systemPrompt.assembled.description":
+    "按运行时顺序列出主提示词各块的生效内容。环境、记忆索引、工具和工作区说明会在运行时添加，此处不显示。",
+  "settings.systemPrompt.assembled.tokens": "约 {tokens} tokens · {characters} 个字符",
+  "settings.systemPrompt.info.cliPrefix":
+    "主提示词的第一行，将智能体命名为 ZCode。隐身配置关闭身份时不包含。",
+  "settings.systemPrompt.info.identityIntro":
+    "主提示词的第二段，设定智能体的角色。启用输出风格时，基线为输出风格的开场；覆盖内容仍然优先，输出风格章节照常追加。",
+  "settings.systemPrompt.info.harness":
+    "说明工具与显示环境：Markdown 输出、权限模式、钩子和文件工具偏好。隐身配置关闭 harness 时不包含。",
+  "settings.systemPrompt.info.communication":
+    "智能体如何向你写作，包括执行难以撤销的操作前先确认的段落。隐身配置关闭 harness 时不包含。",
+  "settings.systemPrompt.info.contextManagement":
+    "位于主提示词的记忆指引之后，涵盖上下文摘要与自主工作规则。",
+  "settings.systemPrompt.info.memoryGuidance":
+    "智能体如何读写持久记忆。仅当会话启用记忆时包含；{{memoryRoot}} 会替换为该会话的记忆目录。",
+  "settings.systemPrompt.info.memoryExtraction":
+    "一轮结束后在后台保存记忆的指令。仅在本机运行，远程工作区从不使用。",
+  "settings.systemPrompt.info.memoryDream":
+    "手动 /dream 整理记忆的指令。仅在本机运行；工具限制和会话列表始终会追加。",
   "settings.outputStyles.defaultPrompt": "没有额外的输出风格指令。ZCode 使用标准系统提示词。",
   "settings.outputStyles.desktopOnly": "输出风格需要在桌面应用中管理。",
   "settings.outputStyles.host.local": "本机",

@@ -11,11 +11,11 @@ import {
 import { Button } from "@/components/ui/button.js";
 import { Input } from "@/components/ui/input.js";
 import { outputStyleFilenameFromName, TID_SETTINGS_OUTPUT_STYLES_SAVE } from "@zcode/shared";
-import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import type { OutputStylesView } from "@/hooks/useOutputStyles.js";
 import { SettingsGroupCard } from "@/settings/SettingsPageParts.js";
 import { SettingsFormActions } from "@/settings/SettingsFormActions.js";
 import { SettingsFormTextarea } from "@/settings/SettingsFormTextarea.js";
+import { DiffLinesPre } from "@/settings/DiffLinesPre.js";
 import {
   baseStyleId,
   detectOutputStyleNameCollision,
@@ -25,7 +25,7 @@ import {
   outputStyleFilePath,
 } from "@/settings/outputStylesEditorModel.js";
 import { useConfirmDialogStore } from "@/store/confirmDialogStore.js";
-import { cn } from "@/components/lib/utils.js";
+import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 
 type Intl = ReturnType<typeof useZCodeIntl>["intl"];
 
@@ -36,7 +36,8 @@ export function OutputStylesEditorCard({ view, intl }: { view: OutputStylesView;
   const { draft, baseline } = editor;
   const collision = detectOutputStyleNameCollision(draft, view.styles);
   const emptyPrompt = isEmptyOutputStylePrompt(draft);
-  const diffLines = diffOutputStylePrompt(baseline?.content ?? "", draft.content);
+  // Null (too large to diff) renders like no changes, as before.
+  const diffLines = diffOutputStylePrompt(baseline?.content ?? "", draft.content) ?? [];
   const showDiff = view.editorDirty && hasDiffChanges(diffLines);
   const style =
     draft.styleId !== null ? view.styles.find((entry) => entry.id === draft.styleId) : undefined;
@@ -156,20 +157,7 @@ export function OutputStylesEditorCard({ view, intl }: { view: OutputStylesView;
             <div className="text-ui-sm font-medium text-foreground">
               {intl.formatMessage({ id: "settings.outputStyles.diffTitle" })}
             </div>
-            <pre className="max-h-64 overflow-auto rounded-lg border border-border bg-surface-muted p-2 font-mono text-ui-xs leading-5">
-              {diffLines.map((line, index) => (
-                <div
-                  key={index}
-                  className={cn(
-                    line.type === "add" && "text-success",
-                    line.type === "remove" && "text-danger line-through",
-                  )}
-                >
-                  {line.type === "add" ? "+ " : line.type === "remove" ? "- " : "  "}
-                  {line.text}
-                </div>
-              ))}
-            </pre>
+            <DiffLinesPre lines={diffLines} />
           </div>
         ) : null}
         <SettingsFormActions>

@@ -76,6 +76,31 @@ export function buildGitPaneRows(changes: readonly GitPaneFileChange[]): GitPane
   return rows;
 }
 
+// Flat mode is a one-to-one list of file rows, so flat row indices equal change indices and
+// the flat list stays byte-identical to the pre-grouping Review list.
+export function buildGitPaneDisplayRows(
+  changes: readonly GitPaneFileChange[],
+  groupByDirectory: boolean,
+): GitPaneRow[] {
+  if (groupByDirectory) {
+    return buildGitPaneRows(changes);
+  }
+  return changes.map((change) => ({ kind: "file", change }));
+}
+
+/**
+ * The checkbox is shown only when the list has rows to group and the list is settled.
+ * useGitRepository keeps the previous dataset while a refresh is loading, so a non-empty
+ * list alone does not mean the rows on screen are current.
+ */
+export function canShowGroupByDirectory(state: {
+  changeCount: number;
+  loading: boolean;
+  error: string | null;
+}): boolean {
+  return state.changeCount > 0 && !state.loading && state.error === null;
+}
+
 export function getGitPaneRowIndexByPath(rows: readonly GitPaneRow[]): Map<string, number> {
   const indexByPath = new Map<string, number>();
   rows.forEach((row, index) => {

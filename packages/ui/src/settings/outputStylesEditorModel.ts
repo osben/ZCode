@@ -110,52 +110,66 @@ export interface DiffLine {
   text: string;
 }
 
+/** LCS table cell budget; past it the diff is skipped instead of computed (see diffOutputStylePrompt). */
+export const MAX_DIFF_CELLS = 4_000_000;
+
 /**
- * Small LCS line diff for the save preview. Style prompts are short; the O(n*m) table is fine
- * and keeps this dependency-free and testable. Identical inputs short-circuit, and oversized
- * bodies (a huge hand-created file) skip the preview instead of freezing the renderer.
+ * Small LCS line diff for the save preview. Style prompts are short; the table is one flat
+ * Int32Array over the lines after the shared leading run, and identical inputs short-circuit.
+ * Returns null when the full line counts exceed MAX_DIFF_CELLS, so an oversized body (a huge
+ * hand-created file) skips the preview instead of freezing the renderer.
  */
-export function diffOutputStylePrompt(previous: string, next: string): DiffLine[] {
+export function diffOutputStylePrompt(previous: string, next: string): DiffLine[] | null {
   if (previous === next) return [];
   const previousLines = previous.length === 0 ? [] : previous.split("\n");
   const nextLines = next.length === 0 ? [] : next.split("\n");
-  const rows = previousLines.length;
-  const cols = nextLines.length;
-  const MAX_DIFF_CELLS = 4_000_000;
-  if ((rows + 1) * (cols + 1) > MAX_DIFF_CELLS) return [];
-  const table: number[][] = Array.from({ length: rows + 1 }, () =>
-    Array.from({ length: cols + 1 }, () => 0),
-  );
+  // The budget uses the full line counts, so the too-large boundary does not move with trimming.
+  if ((previousLines.length + 1) * (nextLines.length + 1) > MAX_DIFF_CELLS) return null;
+  const result: DiffLine[] = [];
+  // A shared leading line is emitted as "same" by the LCS walk below too, so trimming the run
+  // before the table keeps the output identical. Trailing runs are not trimmed: the walk can
+  // order a tied same/add pair differently after trimming, which would change the preview.
+  const sharedLeading = Math.min(previousLines.length, nextLines.length);
+  let start = 0;
+  while (start < sharedLeading && previousLines[start] === nextLines[start]) {
+    result.push({ type: "same", text: previousLines[start]! });
+    start += 1;
+  }
+  const rows = previousLines.length - start;
+  const cols = nextLines.length - start;
+  const width = cols + 1;
+  // table[i * width + j] = LCS length of previousLines[start + i..] and nextLines[start + j..].
+  const table = new Int32Array((rows + 1) * width);
   for (let i = rows - 1; i >= 0; i -= 1) {
     for (let j = cols - 1; j >= 0; j -= 1) {
-      table[i]![j] =
-        previousLines[i] === nextLines[j]
-          ? table[i + 1]![j + 1]! + 1
-          : Math.max(table[i + 1]![j]!, table[i]![j + 1]!);
+      table[i * width + j] =
+        previousLines[start + i] === nextLines[start + j]
+          ? table[(i + 1) * width + j + 1]! + 1
+          : Math.max(table[(i + 1) * width + j]!, table[i * width + j + 1]!);
     }
   }
-  const result: DiffLine[] = [];
   let i = 0;
   let j = 0;
   while (i < rows && j < cols) {
-    if (previousLines[i] === nextLines[j]) {
-      result.push({ type: "same", text: previousLines[i]! });
+    const previousLine = previousLines[start + i]!;
+    if (previousLine === nextLines[start + j]) {
+      result.push({ type: "same", text: previousLine });
       i += 1;
       j += 1;
-    } else if (table[i + 1]![j]! >= table[i]![j + 1]!) {
-      result.push({ type: "remove", text: previousLines[i]! });
+    } else if (table[(i + 1) * width + j]! >= table[i * width + j + 1]!) {
+      result.push({ type: "remove", text: previousLine });
       i += 1;
     } else {
-      result.push({ type: "add", text: nextLines[j]! });
+      result.push({ type: "add", text: nextLines[start + j]! });
       j += 1;
     }
   }
   while (i < rows) {
-    result.push({ type: "remove", text: previousLines[i]! });
+    result.push({ type: "remove", text: previousLines[start + i]! });
     i += 1;
   }
   while (j < cols) {
-    result.push({ type: "add", text: nextLines[j]! });
+    result.push({ type: "add", text: nextLines[start + j]! });
     j += 1;
   }
   return result;

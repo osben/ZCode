@@ -3534,18 +3534,19 @@ export function SessionPane({
         contextAttachmentCount,
       });
 
-      // The first `/plan` version accepts plain text only. Reject attachments/context before provider readiness
-      // and any command admission; otherwise `/plan ...` would degrade into a normal prompt, bypassing the product boundary and clearing the draft.
-      if (slashCommand?.kind === "unsupportedPlanShortcut") {
-        toast(intl.formatMessage({ id: "chat.plan.attachmentsBlocked" }));
-        return "blocked" as const;
-      }
-
       // Bare /plan behaves like the mode menu: edit only the current Composer and do not change Agent execution state early.
       if (slashCommand?.kind === "planShortcut") {
         handleDraftSwitchMode("plan");
         if (submission) submission = { ...submission, planEnabled: true };
-        if (!slashCommand.task) return "sent" as const;
+        // Payload-only input is still a submission; treating it as a mode toggle would discard its context.
+        if (
+          !slashCommand.task &&
+          readyAttachments.length === 0 &&
+          contextAttachmentCount === 0 &&
+          !sharedContextRefs?.length &&
+          !options?.conversationQuotes?.length
+        )
+          return "sent" as const;
       }
 
       if (!(await ensureDraftModelReadyForSend())) {
@@ -6179,6 +6180,17 @@ export function SessionPane({
                         ) : !isDraft && sessionExecutionWorktree ? (
                           <ConversationWorktreeCreatedNotice
                             branchName={sessionExecutionWorktree.branchName}
+                            // useGitRepository always carries a placeholder summary (isRepository false,
+                            // branchName null) until a status succeeds, and unavailable/failed refreshes
+                            // resolve to the same shape. Only a repository summary may replace the
+                            // creation-time branch; otherwise the notice must fall back to it.
+                            currentBranchName={
+                              worktreeGitState.summary.isRepository
+                                ? worktreeGitState.summary.headRefType === "branch"
+                                  ? worktreeGitState.summary.branchName
+                                  : intl.formatMessage({ id: "git.head.detached" })
+                                : undefined
+                            }
                             path={sessionExecutionWorktree.path}
                             workspaceIdentity={workspaceIdentity}
                             onOpenWorktree={onCreateTaskInWorkspace}

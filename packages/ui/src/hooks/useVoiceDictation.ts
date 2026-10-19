@@ -1,7 +1,9 @@
+/* oxlint-disable eslint(max-lines) -- The hook owns the whole recording, stream, and post-processing lifecycle; splitting it is a follow-up, so the one added preview clear is kept here. */
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { toast } from "@/components/ui/toast.js";
 import { resolveEngineLanguage, type VoiceTranscriptionPreview } from "@zcode/services";
 import { applyIdleUnloadPreference } from "@/lib/voiceIdleUnload.js";
+import { resolveVoiceDictationPreferences } from "@/lib/voiceDictationPreferences.js";
 import { postProcessOrRaw, readPostProcessSettings } from "@/lib/voicePostProcess.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useServices } from "@/hooks/useServices.js";
@@ -18,6 +20,10 @@ import {
   samplesToMilliseconds,
 } from "@/lib/voiceDictationAudio.js";
 import { VoiceDictationRecorder } from "@/lib/voiceDictationRecorder.js";
+import {
+  acquireVoiceDictationSession,
+  releaseVoiceDictationSession,
+} from "@/lib/voiceDictationSessionLease.js";
 
 export type VoiceDictationPhase = "idle" | "loading" | "recording" | "transcribing" | "processing";
 
@@ -56,9 +62,8 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
   const microphoneDeviceId = voice?.microphoneDeviceId ?? null;
   // One selected language is forced on the engine; none or several leave detection to the model.
   const language = resolveEngineLanguage(voice ?? {});
-  const pushToTalk = voice?.pushToTalk !== false;
-  const idleUnloadMinutes = voice?.idleUnloadMinutes ?? 5;
-  const muteWhileRecording = voice?.muteWhileRecording === true;
+  const { pushToTalk, idleUnloadMinutes, muteWhileRecording } =
+    resolveVoiceDictationPreferences(voice);
   const {
     enabled: postProcessEnabled,
     prompt: postProcessPrompt,
@@ -78,6 +83,8 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
   const recorderStartPendingRef = useRef(false);
   const streamIdRef = useRef<string | null>(null);
   const streamQueueRef = useRef<Promise<void>>(Promise.resolve());
+  // Host stream cancels that have not settled yet; the lease waits for them before release.
+  const pendingStreamCancelsRef = useRef(0);
   /** PCM chunks awaiting send; merged and sent by the serial flush task, so a transiently slow RPC versus the microphone only backs up and never fails. */
   const streamBacklogRef = useRef<Float32Array[]>([]);
   const streamFlushScheduledRef = useRef(false);
@@ -86,9 +93,16 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
   const heldBindingRef = useRef<string | null>(null);
   const onTranscriptRef = useRef(onTranscript);
   onTranscriptRef.current = onTranscript;
+  /** Identifies this composer in the app-wide session lease; stable for the life of the hook. */
+  const sessionOwnerRef = useRef<symbol>(Symbol("voice-dictation-composer"));
 
   const updatePhase = useCallback((next: VoiceDictationPhase) => {
     phaseRef.current = next;
+    // Idle means this composer no longer uses the session, but a Host stream cancel may still be
+    // pending. The lease is released once that cancel settles (see cancelStreamAfterQueue).
+    if (next === "idle" && pendingStreamCancelsRef.current === 0) {
+      releaseVoiceDictationSession(sessionOwnerRef.current);
+    }
     setPhase(next);
   }, []);
 
@@ -106,12 +120,20 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
   /** Cancels a stream once its queued feed batches have drained, so the Host never sees a feed after the cancel. */
   const cancelStreamAfterQueue = useCallback(
     (streamId: string) => {
+      pendingStreamCancelsRef.current += 1;
       void streamQueueRef.current
         .then(() => voiceDictationService?.cancelStream(streamId))
         .catch((error: unknown) => {
           logger.warn("voice dictation stream cancellation failed", {
             error: error instanceof Error ? error.message : String(error),
           });
+        })
+        .finally(() => {
+          pendingStreamCancelsRef.current -= 1;
+          // Release only if this composer is still idle; a new recording owns the lease again.
+          if (pendingStreamCancelsRef.current === 0 && phaseRef.current === "idle") {
+            releaseVoiceDictationSession(sessionOwnerRef.current);
+          }
         });
     },
     [voiceDictationService],
@@ -196,12 +218,21 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     // cannot abort that request, so a second capture must not begin until it has settled. Only that
     // window is guarded: a stale start still loading the model never reaches the recorder.
     if (recorderStartPendingRef.current) return;
+    // A cancelled stream's Host cancel waits for its queued feeds. The lease lets this composer
+    // re-acquire, so a start here would reach beginStream while the old Host stream is still active.
+    if (pendingStreamCancelsRef.current > 0) return;
     if (!voiceDictationService) return;
     if (!modelId) {
       toast(intl.formatMessage({ id: "voiceDictation.noModelSelected" }), {
         actionLabel: intl.formatMessage({ id: "voiceDictation.openSettings" }),
         onAction: openVoiceSettings,
       });
+      return;
+    }
+    // Another composer holds the app-wide session: refuse before any capture or Host call, and leave
+    // its recording untouched.
+    if (!acquireVoiceDictationSession(sessionOwnerRef.current)) {
+      toast(intl.formatMessage({ id: "voiceDictation.sessionBusyInOtherComposer" }));
       return;
     }
     const generation = ++startGenerationRef.current;
@@ -306,11 +337,12 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
   /** Invalidates the current start, aborts capture, and releases the Host stream once its queue drains. */
   const tearDownRecording = useCallback(() => {
     startGenerationRef.current += 1;
-    abortRecording();
+    // Register the pending cancel before abortRecording goes idle, so the lease waits for it.
     const streamId = streamIdRef.current;
     streamIdRef.current = null;
     streamBacklogRef.current = [];
     if (streamId) cancelStreamAfterQueue(streamId);
+    abortRecording();
   }, [abortRecording, cancelStreamAfterQueue]);
 
   /**
@@ -376,6 +408,9 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
         if (streamErrorRef.current) throw streamErrorRef.current;
         result = await voiceDictationService.finalizeStream(streamId);
         streamIdRef.current = null;
+        // The final transcript replaces the ghost preview; clear it before any rewrite wait so the
+        // preview never lingers next to the processing state.
+        setPreview(null);
       } else {
         result = await voiceDictationService.transcribe({
           modelId: modelId ?? "",
@@ -386,6 +421,8 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
       const rawText = result.text.trim();
       let text = rawText;
       if (rawText && postProcessEnabled && generation === startGenerationRef.current) {
+        // No separate availability pre-check: an unavailable or failed rewrite comes back as the raw
+        // transcript from postProcessOrRaw, so the stop-to-insert path does not wait on a helper probe.
         updatePhase("processing");
         text = await postProcessOrRaw(
           voiceDictationService,

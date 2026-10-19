@@ -1285,9 +1285,6 @@ const ukUA: Record<string, string> = {
   "sidePane.time.hoursAgo": "{count} год тому",
   "sidePane.time.daysAgo": "{count} дн. тому",
   "git.action.refresh": "Оновити",
-  "git.fileListLayout.directory": "Каталог",
-  "git.fileListLayout.flat": "Плоско",
-  "git.fileListLayout.toggleLabel": "Режим списку файлів",
   "git.action.stage": "Індексувати",
   "git.action.unstage": "Скасувати індексування",
   "git.action.discard": "Відкинути",
@@ -4981,6 +4978,8 @@ const ukUA: Record<string, string> = {
     "Зареєстрований worktree для {branchName} у {path} відсутній або непридатний.",
   "worktreeSetup.reconcile.markerSyncUnavailable":
     "Налаштування завершилося в іншому каталозі worktree, і запис сесії не вдалося оновити",
+  "worktreeSetup.reservation.conflict":
+    "Інший чат уже готує worktree з цією назвою. Надішліть ще раз, щоб використати нову назву.",
   "git.branchSwitcher.appliesOnSend": "Застосується під час надсилання першого повідомлення",
   "git.branchSwitcher.worktreeIntentHint":
     "Гілку для цього завдання визначає налаштування worktree",
@@ -5298,8 +5297,6 @@ const ukUA: Record<string, string> = {
   "chat.goal.runningBlocked": "Задати мету можна після завершення поточного завдання.",
   "chat.goal.planModeBlocked":
     "Мета недоступна в режимі планування. Змініть режим, щоб продовжити.",
-  "chat.plan.attachmentsBlocked":
-    "Скорочення /plan поки підтримує лише текст. Вилучіть вкладення або контекст і повторіть спробу.",
   "chat.compact.runningBlocked": "Стиснути контекст можна після завершення поточного завдання.",
   "chat.compact.queued": "Стиснення додано в чергу; його буде виконано за порядком.",
   "chat.compact.duplicateBlocked": "Стиснення вже виконується або перебуває в черзі.",
@@ -7387,18 +7384,50 @@ const ukUA: Record<string, string> = {
     "Завантажує вибрану модель у фоні, щоб перший запис починався без очікування. Завантажена модель займає пам'ять, доки не мине затримка вивантаження нижче.",
   "voiceDictation.postProcess.title": "Постобробка",
   "voiceDictation.postProcess.description":
-    "Переписує кожен готовий текст мовною моделлю перед вставкою. У буфер обміну потрапляє сирий текст розпізнавання.",
+    "Переписує кожен готовий текст мовною моделлю перед вставкою. Якщо ввімкнено «Копіювати надиктований текст у буфер обміну», у буфер потрапляє сирий текст розпізнавання.",
   "voiceDictation.postProcess.enabled.title": "Обробляти надиктований текст",
   "voiceDictation.postProcess.enabled.description":
     "Якщо обробка завершилась помилкою або тривала надто довго, вставляється сирий текст.",
-  "voiceDictation.postProcess.provider.title": "Модель",
+  "voiceDictation.postProcess.provider.title": "Провайдер",
   "voiceDictation.postProcess.provider.description":
     "Працює на цьому пристрої; текст не залишає ваш комп'ютер.",
   "voiceDictation.postProcess.provider.appleFm": "Системна модель (Apple Foundation Models)",
   "voiceDictation.postProcess.prompt.title": "Промпт",
   "voiceDictation.postProcess.prompt.description":
-    "Використайте {variable} там, куди має потрапити розпізнаний текст. Без нього текст додається після промпта.",
+    "Використайте {variable} там, куди має потрапити розпізнаний текст. Без нього промпт не можна зберегти.",
   "voiceDictation.postProcess.prompt.reset": "Скинути до типового",
+  "voiceDictation.postProcess.status.checking": "Перевірка доступності…",
+  "voiceDictation.postProcess.status.available":
+    "Доступно на цьому Mac. Текст обробляється на цьому пристрої.",
+  "voiceDictation.postProcess.prompt.save": "Зберегти",
+  "voiceDictation.postProcess.prompt.cancel": "Скасувати",
+  "voiceDictation.postProcess.prompt.unsaved": "Є незбережені зміни",
+  "voiceDictation.postProcess.prompt.counter": "{count} із {max}",
+  "voiceDictation.postProcess.prompt.tooLong":
+    "Скоротіть промпт до {max} символів, щоб зберегти його.",
+  "voiceDictation.postProcess.prompt.blank":
+    "Промпт не може бути порожнім. Скиньте його, щоб повернути типовий.",
+  "voiceDictation.postProcess.prompt.noVariable":
+    "Промпт має містити {variable}: сюди підставляється розшифровка.",
+  "voiceDictation.postProcess.discard.title": "Відкинути незбережені зміни?",
+  "voiceDictation.postProcess.discard.description":
+    "Промпт повернеться до останньої збереженої версії.",
+  "voiceDictation.postProcess.discard.confirm": "Відкинути",
+  "voiceDictation.postProcess.reset.title": "Повернути типовий промпт?",
+  "voiceDictation.postProcess.reset.description":
+    "Ваш власний промпт буде видалено, і використовуватиметься вбудований типовий. Незбережені зміни буде відкинуто.",
+  "voiceDictation.postProcess.tryIt.title": "Перевірити",
+  "voiceDictation.postProcess.tryIt.description":
+    "Запускає промпт вище на зразковому реченні. Незбережені зміни враховуються; нічого не зберігається.",
+  "voiceDictation.postProcess.tryIt.sample": "Зразок тексту",
+  "voiceDictation.postProcess.tryIt.run": "Запустити",
+  "voiceDictation.postProcess.tryIt.running": "Виконується…",
+  "voiceDictation.postProcess.tryIt.failed": "Промпт не вдалося виконати: {reason}",
+  "voiceDictation.group.dictation.title": "Диктування",
+  "voiceDictation.group.microphone.title": "Мікрофон",
+  "voiceDictation.group.output.title": "Результат",
+  "voiceDictation.memory.title": "Пам'ять",
+  "voiceDictation.shortcut.open": "Відкрити сполучення клавіш",
   "voiceDictation.postProcess.unavailable.unsupportedPlatform":
     "Системна модель доступна лише на macOS.",
   "voiceDictation.postProcess.unavailable.helperMissing":
@@ -7451,8 +7480,7 @@ const ukUA: Record<string, string> = {
   "voiceDictation.models.remove": "Видалити",
   "voiceDictation.models.startingDownload": "Початок завантаження…",
   "voiceDictation.models.useWhenReady": "Використати після завантаження",
-  "voiceDictation.models.cancelUseWhenReady": "Залишити поточну модель",
-  "voiceDictation.models.willUseWhenReady": "Буде вибрана після завантаження",
+  "voiceDictation.models.cancelUseWhenReady": "Скасувати використання після завантаження",
   "voiceDictation.models.removeConfirm.title": "Видалити цю модель?",
   "voiceDictation.models.removeConfirm.description":
     "{model} буде видалено з цього пристрою. Пізніше її можна буде завантажити знову.",
@@ -7469,6 +7497,8 @@ const ukUA: Record<string, string> = {
   "voiceDictation.tooShort": "Запис закороткий. Записуйте, доки не закінчите говорити.",
   "voiceDictation.stillLoading":
     "Модель розпізнавання ще завантажувалась. Говоріть, коли почнеться запис.",
+  "voiceDictation.sessionBusyInOtherComposer":
+    "Диктування вже працює в іншому полі повідомлення. Спочатку зупиніть його там.",
   "voiceDictation.composer.cancel": "Скасувати голосове введення",
   "voiceDictation.microphoneFailed":
     "Не вдалося отримати доступ до мікрофона. Перевірте пристрій введення та дозволи.",
@@ -7503,8 +7533,6 @@ const ukUA: Record<string, string> = {
   "voiceDictation.composer.processing": "Обробка тексту",
   "voiceDictation.composer.status.processing": "Обробка тексту",
   "voiceDictation.composer.modelStatus.loading": "Модель розпізнавання завантажується",
-  "voiceDictation.composer.modelStatus.loaded":
-    "Модель розпізнавання завантажена, голосове введення стартує миттєво",
   "settings.computerUse.title": "Computer Use",
   "settings.computerUse.toggleLabel": "Увімкнути Computer Use",
   "settings.computerUse.toggleDescription": "Вмикає Computer Use — його сервер MCP і навички.",
@@ -7618,13 +7646,10 @@ const ukUA: Record<string, string> = {
   "settings.systemPrompt.edit": "Редагувати",
   "settings.systemPrompt.restoreDefault": "Відновити стандартний",
   "settings.systemPrompt.restoreConfirm.title": "Відновити вбудований промпт?",
-  "settings.systemPrompt.restoreConfirm.description":
-    "Буде видалено змінений промпт «{section}» на хості {host} і відновлено вбудоване стандартне значення.",
   "settings.systemPrompt.restoreConfirm.confirm": "Відновити стандартний",
   "settings.systemPrompt.restored": "Фрагмент системного промпту повернуто до стандартного тексту.",
   "settings.systemPrompt.restoreFailed": "Не вдалося відновити стандартний текст.",
   "settings.systemPrompt.editorLabel": "Текст промпту",
-  "settings.systemPrompt.characterCount": "{count} символів",
   "settings.systemPrompt.identityBaselineLoading":
     "Перевіряємо активний стиль відповідей перед редагуванням…",
   "settings.systemPrompt.identityBaselineUnavailable":
@@ -7657,6 +7682,79 @@ const ukUA: Record<string, string> = {
   "settings.outputStyles.title": "Стилі відповідей",
   "settings.outputStyles.description":
     "Виберіть, як агент формує свої відповіді. Вбудовані стандартні значення зберігаються в коді програми; редагування зберігаються як файли перевизначення, які завжди можна відкотити.",
+  "settings.systemPrompt.defaultBadge": "За замовчуванням",
+  "settings.systemPrompt.sizeLine": "{characters} символів · ~{tokens} токенів",
+  "settings.systemPrompt.openFolder": "Відкрити папку",
+  "settings.systemPrompt.incognitoNote":
+    "Коли в профілі інкогніто вимкнено можливість «Перевизначення системного промпту», сесії інкогніто ігнорують ці перевизначення.",
+  "settings.systemPrompt.unsavedDot": "Незбережені зміни",
+  "settings.systemPrompt.blockedByDraft":
+    "Спершу збережіть або відхиліть відкриту чернетку. Одночасно лише один розділ може мати незбережені зміни.",
+  "settings.systemPrompt.dirtyNote":
+    "У розділі «{section}» є незбережена чернетка. Збережіть або відхиліть її, щоб редагувати чи відновлювати інші розділи.",
+  "settings.systemPrompt.customizedCount": "Змінено: {count}",
+  "settings.systemPrompt.resetAll": "Скинути всі зміни…",
+  "settings.systemPrompt.resetAll.title": "Скинути всі змінені розділи?",
+  "settings.systemPrompt.resetAll.description":
+    "Файли перевизначень для цих {count} розділів на хості {host} буде видалено, і для нових сесій діятимуть вбудовані значення за замовчуванням:",
+  "settings.systemPrompt.resetAll.confirm": "Скинути всі",
+  "settings.systemPrompt.resetAllDone": "Відновлено вбудовані значення для розділів: {count}.",
+  "settings.systemPrompt.resetAllPartial":
+    "Відновлено розділів: {restored}. Змінено на диску: {conflicts}, помилок: {failed}. Список оновлено.",
+  "settings.systemPrompt.changedOnDisk":
+    "Цей розділ змінено на диску. Список оновлено; перегляньте його перед повторною спробою.",
+  "settings.systemPrompt.restoreConfirm.description":
+    "Файл перевизначення для цього розділу на хості {host} буде видалено. Текст за замовчуванням нижче набуде чинності для нових сесій.",
+  "settings.systemPrompt.restoreConfirm.preview":
+    "Вбудований текст за замовчуванням, який буде відновлено",
+  "settings.systemPrompt.diskChanged.title": "Змінено на диску",
+  "settings.systemPrompt.diskChanged.description":
+    "Файл цього розділу було змінено поза налаштуваннями, поки ви редагували. Перезавантаження відхилить вашу чернетку; перезапис замінить файл вашою чернеткою.",
+  "settings.systemPrompt.diskChanged.reload": "Перезавантажити з диска",
+  "settings.systemPrompt.diskChanged.overwrite": "Перезаписати",
+  "settings.systemPrompt.diskChanged.show": "Показати версію з диска",
+  "settings.systemPrompt.diskChanged.viewFirst":
+    "Спочатку перегляньте версію з диска, щоб її перезаписати.",
+  "settings.systemPrompt.diskChanged.diskVersion":
+    "Версія з диска. Перезапис замінить цей текст вашою чернеткою.",
+  "settings.systemPrompt.diskChanged.noOverride":
+    "У файлі на диску немає тексту перевизначення; діє вбудований текст за замовчуванням.",
+  "settings.systemPrompt.saveReason.unchanged": "Немає змін для збереження.",
+  "settings.systemPrompt.saveReason.diskChanged":
+    "Перед збереженням оберіть «Перезавантажити з диска» або «Перезаписати» вище.",
+  "settings.systemPrompt.shortcutHint":
+    "Ctrl/Cmd+S зберігає. Esc скасовує, перед відхиленням змін запитуючи підтвердження.",
+  "settings.systemPrompt.diffMode.saved": "порівняно зі збереженим",
+  "settings.systemPrompt.diffMode.default": "порівняно з вбудованим",
+  "settings.systemPrompt.diffNone": "Відмінностей немає.",
+  "settings.systemPrompt.diffTooLarge":
+    "Занадто великий для порівняння тут ({baselineLines} рядків збережено, {draftLines} рядків у чернетці). Порівняйте текст вручну.",
+  "settings.systemPrompt.warning.unknownPlaceholder":
+    "{token} не є заповнювачем для цього розділу, тому буде надіслано як звичайний текст.",
+  "settings.systemPrompt.warning.missingPlaceholder":
+    "Немає {token}. Середовище заповнює його лише тоді, коли цей заповнювач присутній.",
+  "settings.systemPrompt.warning.confirmationRemoved":
+    "Відсутній абзац, який просить агента підтверджувати дії, що важко відмінити або мають зовнішній вплив.",
+  "settings.systemPrompt.assembled.title": "Зібраний промпт (приблизно)",
+  "settings.systemPrompt.assembled.description":
+    "Блоки основного промпту в порядку виконання з їхнім чинним текстом. Середовище, індекс пам'яті, інструменти та інструкції робочої області додаються під час виконання і тут не показані.",
+  "settings.systemPrompt.assembled.tokens": "Приблизно {tokens} токенів · {characters} символів",
+  "settings.systemPrompt.info.cliPrefix":
+    "Перший рядок основного промпту: називає агента ZCode. Не включається, якщо профіль інкогніто вимикає ідентичність.",
+  "settings.systemPrompt.info.identityIntro":
+    "Другий блок основного промпту: визначає роль агента. За увімкненого стилю виводу базовим є вступ стилю; перевизначення має пріоритет, а розділ стилю виводу додається як і раніше.",
+  "settings.systemPrompt.info.harness":
+    "Описує інструментальне та екранне середовище: Markdown-вивід, режими дозволів, хуки та вподобання щодо файлових інструментів. Не включається, якщо профіль інкогніто вимикає harness.",
+  "settings.systemPrompt.info.communication":
+    "Як агент пише для вас, зокрема абзац про підтвердження дій, що важко відмінити. Не включається, якщо профіль інкогніто вимикає harness.",
+  "settings.systemPrompt.info.contextManagement":
+    "Іде після вказівок щодо пам'яті в основному промпті. Охоплює підсумки контексту та правила автономної роботи.",
+  "settings.systemPrompt.info.memoryGuidance":
+    "Як агент читає та записує постійну пам'ять. Включається лише коли пам'ять увімкнено для сесії; {{memoryRoot}} стає каталогом пам'яті цієї сесії.",
+  "settings.systemPrompt.info.memoryExtraction":
+    "Інструкції фонового агента, що зберігає спогади після ходу. Працює лише на цьому комп'ютері і ніколи для віддалених робочих областей.",
+  "settings.systemPrompt.info.memoryDream":
+    "Інструкції для ручної консолідації /dream. Працює лише на цьому комп'ютері; обмеження інструментів і список сесій додаються завжди.",
   "settings.outputStyles.defaultPrompt":
     "Додаткових інструкцій стилю відповіді немає. ZCode використовує стандартний системний промпт.",
   "settings.outputStyles.desktopOnly":

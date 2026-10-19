@@ -90,6 +90,9 @@ export async function executeTools(
   });
   let results: ToolExecutionResult[] = [];
 
+  // Nested AGENTS.md reservations are not cleared here. Streamed calls run one executeTools per tool while the model is
+  // still responding, and their results only enter history at settleToolResults, so clearing at this call's end would
+  // let a later streamed call in the same step deliver the same file again (context/nested-instructions/tracker.ts).
   while (true) {
     const next = await generator.next();
     if (next.done) {

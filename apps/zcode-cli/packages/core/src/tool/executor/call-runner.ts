@@ -42,6 +42,7 @@ import { snapshotPermissionInput } from "./permission-input.js";
 import { buildToolInputResolutionContext } from "./permission-input-adjustments.js";
 import { createMcpToolDisplay, createToolResultDisplay } from "./result-display.js";
 import { appendHookAdditionalContexts, serializeOutput } from "./result-serialization.js";
+import { appendNestedInstructions } from "./nested-instructions.js";
 import {
   ToolDeadline,
   executeWithTimeout,
@@ -533,6 +534,14 @@ async function executeToolCallImpl(
         serialization,
         [...preToolHookResult.additionalContexts, ...postToolHookResult.additionalContexts],
         modelOutputEntry,
+      );
+      serialization = await appendNestedInstructions(
+        deps,
+        executionInput,
+        output,
+        modelOutputEntry,
+        serialization,
+        executionAbortController.signal,
       );
       const display = createToolResultDisplay(canonicalToolCall.name, output, {
         mcp: entry.metadata.mcpPresentation,
