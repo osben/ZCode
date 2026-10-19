@@ -49,6 +49,9 @@ export type MessagePortPayload = Uint8Array | MessagePortFlowControl;
 
 function isMessagePortFlowControl(value: unknown): value is MessagePortFlowControl {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  // Every RPC message is a Uint8Array; Object.keys on it allocates one string per byte
+  // (specs/rpc-messageport-binary-fast-path.md).
+  if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) return false;
   const record = value as Record<string, unknown>;
   return (
     Object.keys(record).length === 2 &&
