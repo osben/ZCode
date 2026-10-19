@@ -26,7 +26,7 @@ import {
 export function Terminal({
   services,
   cwd,
-  workspaceIdentity,
+  workspaceKey,
   openWorkspaceKeys,
   isVisible,
   isPanelResizing = false,
@@ -36,7 +36,7 @@ export function Terminal({
 }: {
   services: IServiceAccessor;
   cwd?: string;
-  workspaceIdentity?: string;
+  workspaceKey: string;
   openWorkspaceKeys?: string[];
   isVisible: boolean;
   isPanelResizing?: boolean;
@@ -46,7 +46,6 @@ export function Terminal({
 }) {
   const { intl } = useZCodeIntl();
   const isOfficeMode = useIsOfficeMode();
-  const workspaceKey = workspaceIdentity?.trim() || cwd || "__default__";
   const [panelState, setPanelState] = useState<TerminalPanelState>(() => {
     const { session, workspace } = createWorkspaceTerminalState({
       workspaceKey,

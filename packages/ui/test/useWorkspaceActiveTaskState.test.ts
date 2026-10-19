@@ -11,6 +11,8 @@ const { activeWorkspaceState } = vi.hoisted(() => ({
       taskListCache: [] as ZCodeTaskMeta[],
       taskMessagesByTaskId: {} as Record<string, unknown[]>,
     },
+    sessionsIndexItems: [] as ZCodeTaskMeta[],
+    snapshotMeta: null as ZCodeTaskMeta | null,
   },
 }));
 
@@ -30,8 +32,7 @@ vi.mock("@/store/zcodeSessionStore.js", () => ({
     workspaceState.taskListCache?.find((task) => task.taskId === taskId) ??
     null,
   selectWorkspaceZCodeState: () => activeWorkspaceState.current,
-  useZCodeSessionStore: (selector: (state: Record<string, unknown>) => unknown) =>
-    selector({}),
+  useZCodeSessionStore: (selector: (state: Record<string, unknown>) => unknown) => selector({}),
 }));
 
 vi.mock("@/store/taskQueryCacheStore.js", () => ({
@@ -40,7 +41,17 @@ vi.mock("@/store/taskQueryCacheStore.js", () => ({
 }));
 
 vi.mock("@/hooks/useActiveTaskSnapshotMeta.js", () => ({
-  useActiveTaskSnapshotMeta: () => null,
+  useActiveTaskSnapshotMeta: () => activeWorkspaceState.snapshotMeta,
+}));
+
+vi.mock("@/hooks/useServices.js", () => ({
+  useOptionalServices: () => null,
+}));
+
+vi.mock("@/v4/useWorkspaceSessionsIndexItems.js", () => ({
+  useWorkspaceSessionsIndexItems: () => ({
+    items: activeWorkspaceState.sessionsIndexItems,
+  }),
 }));
 
 vi.mock("@/hooks/useTaskNativeSessionLogFile.js", () => ({
@@ -148,6 +159,8 @@ describe("useWorkspaceActiveTaskState", () => {
       taskListCache: [],
       taskMessagesByTaskId: {},
     };
+    activeWorkspaceState.sessionsIndexItems = [];
+    activeWorkspaceState.snapshotMeta = null;
     delete (globalThis as { document?: unknown }).document;
     delete (globalThis as { window?: unknown }).window;
     delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: unknown }).IS_REACT_ACT_ENVIRONMENT;
@@ -192,6 +205,55 @@ describe("useWorkspaceActiveTaskState", () => {
 
     expect(observedMetas).toHaveLength(2);
     expect(observedMetas[1]).toBe(observedMetas[0]);
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("preserves the sessions-index worktree on snapshot metadata for an uncached active task", () => {
+    const observedMetas: Array<ZCodeTaskMeta | null | undefined> = [];
+    const root: Root = createRoot(installMinimalDom());
+    activeWorkspaceState.current = {
+      optimisticTaskListByTaskId: {},
+      taskListCache: [],
+      taskMessagesByTaskId: {},
+    };
+    activeWorkspaceState.snapshotMeta = createTaskMeta({
+      title: "Archived worktree task",
+    });
+
+    function Probe() {
+      const result = useWorkspaceActiveTaskState({
+        activeTaskId: "task-1",
+        intl: {
+          formatMessage: ({ id }: { id: string }) => id,
+        },
+        selectedProvider: "codex",
+        workspaceAbsPath: "/workspace",
+      });
+      observedMetas.push(result.resolvedActiveTaskMeta);
+      return createElement("span", null);
+    }
+
+    act(() => {
+      root.render(createElement(Probe));
+    });
+    expect(observedMetas.at(-1)?.executionWorktree).toBeUndefined();
+
+    activeWorkspaceState.sessionsIndexItems = [
+      createTaskMeta({
+        executionWorktree: { path: "/workspace/.worktrees/task-1" },
+      }),
+    ];
+    act(() => {
+      root.render(createElement(Probe));
+    });
+
+    expect(observedMetas.at(-1)?.executionWorktree).toEqual({
+      path: "/workspace/.worktrees/task-1",
+    });
+    expect(observedMetas.at(-1)?.title).toBe("Archived worktree task");
 
     act(() => {
       root.unmount();
