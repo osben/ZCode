@@ -29,6 +29,7 @@ import {
 import { GitPaneChangeCard } from "@/GitPaneChangeCard.js";
 import {
   buildGitPaneDisplayRows,
+  canShowGroupByDirectory,
   getGitPaneRowIndexByPath,
   type GitPaneRow,
 } from "@/GitPane/directoryRowModel.js";
@@ -494,7 +495,11 @@ export function GitPane({
         </Select>
 
         <div className="flex min-w-0 items-center gap-2">
-          {currentChanges.length > 0 ? (
+          {canShowGroupByDirectory({
+            changeCount: currentChanges.length,
+            loading: gitState.loading,
+            error: gitState.error,
+          }) ? (
             <GroupByDirectoryCheckbox
               checked={groupByDirectory}
               onCheckedChange={handleGroupByDirectoryChange}

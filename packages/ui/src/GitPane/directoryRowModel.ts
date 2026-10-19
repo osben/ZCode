@@ -88,6 +88,19 @@ export function buildGitPaneDisplayRows(
   return changes.map((change) => ({ kind: "file", change }));
 }
 
+/**
+ * The checkbox is shown only when the list has rows to group and the list is settled.
+ * useGitRepository keeps the previous dataset while a refresh is loading, so a non-empty
+ * list alone does not mean the rows on screen are current.
+ */
+export function canShowGroupByDirectory(state: {
+  changeCount: number;
+  loading: boolean;
+  error: string | null;
+}): boolean {
+  return state.changeCount > 0 && !state.loading && state.error === null;
+}
+
 export function getGitPaneRowIndexByPath(rows: readonly GitPaneRow[]): Map<string, number> {
   const indexByPath = new Map<string, number>();
   rows.forEach((row, index) => {

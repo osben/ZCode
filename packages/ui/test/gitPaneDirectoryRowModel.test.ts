@@ -3,9 +3,10 @@ import type { GitPaneFileChange } from "@/hooks/useGitRepository.js";
 import {
   buildGitPaneDisplayRows,
   buildGitPaneRows,
+  canShowGroupByDirectory,
   getChangeDirectory,
   getGitPaneRowIndexByPath,
-} from "./directoryRowModel.js";
+} from "@/GitPane/directoryRowModel.js";
 
 let nextId = 0;
 
@@ -183,5 +184,23 @@ describe("buildGitPaneDisplayRows", () => {
     sampleChanges.forEach((change, index) => {
       expect(indexByPath.get(change.path)).toBe(index);
     });
+  });
+});
+
+describe("canShowGroupByDirectory", () => {
+  it("shows the checkbox for a settled, non-empty list", () => {
+    expect(canShowGroupByDirectory({ changeCount: 2, loading: false, error: null })).toBe(true);
+  });
+
+  it("hides the checkbox for an empty list", () => {
+    expect(canShowGroupByDirectory({ changeCount: 0, loading: false, error: null })).toBe(false);
+  });
+
+  it("hides the checkbox while a refresh is loading, even with stale rows kept", () => {
+    expect(canShowGroupByDirectory({ changeCount: 3, loading: true, error: null })).toBe(false);
+  });
+
+  it("hides the checkbox in the error state", () => {
+    expect(canShowGroupByDirectory({ changeCount: 3, loading: false, error: "boom" })).toBe(false);
   });
 });
