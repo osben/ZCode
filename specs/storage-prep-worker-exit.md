@@ -1,6 +1,6 @@
 # Storage preparation worker exits as soon as it is done
 
-Status: implemented (2026-10-18). Found by the desktop performance pass (`docs/performance/2026-10-18-perf-pass.md`), gated by `specs/performance-benchmark.md`.
+Status: implemented (2026-10-18). Found by the desktop performance pass and verified with an interleaved A/B benchmark against a per-metric noise floor; the numbers are in the pull request description.
 
 ## Problem
 
@@ -31,4 +31,4 @@ After `prepareProtocolStartupStorage` has finished with its input (success or fa
 
 1. Unit (`apps/zcode-cli/packages/bootstrap/tests/storage-startup-input-drain.test.ts`): after `prepareProtocolStartupStorage` resolves, ending the input stream emits `end`. Before the fix it does not, because readline paused the stream.
 2. Unit: the same holds when preparation fails after the acknowledgement.
-3. Benchmark A/B (`specs/performance-benchmark.md`): `S1.launch.inputReadyMs` improves beyond its noise floor, and no gating metric regresses.
+3. Benchmark A/B (desktop performance benchmark, E2E production build): `S1.launch.inputReadyMs` improves beyond its noise floor, and no gating metric regresses.
