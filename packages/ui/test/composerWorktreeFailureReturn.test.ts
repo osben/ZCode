@@ -576,3 +576,35 @@ describe("composerWorktreeFailureReturn", () => {
     ).toBeUndefined();
   });
 });
+
+describe("markFailureSavedNotRestored", () => {
+  const KEY = "/workspace/saved-late";
+
+  afterEach(() => {
+    useWorktreeFailureReturnStore.getState().dropWorkspace(KEY);
+  });
+
+  it("flags an open modal as saved-not-restored once and keeps its other fields", () => {
+    const store = useWorktreeFailureReturnStore.getState();
+    store.openFailureModal(KEY, {
+      workspacePath: KEY,
+      sessionId: "session-late",
+      issueCode: null,
+      message: "failed",
+      rawDetail: null,
+      savedAt: 1,
+    });
+    store.markFailureSavedNotRestored(KEY);
+    const entry = useWorktreeFailureReturnStore.getState().modalByWorkspaceKey[KEY];
+    expect(entry?.savedNotRestored).toBe(true);
+    expect(entry?.sessionId).toBe("session-late");
+    const before = useWorktreeFailureReturnStore.getState().modalByWorkspaceKey;
+    useWorktreeFailureReturnStore.getState().markFailureSavedNotRestored(KEY);
+    expect(useWorktreeFailureReturnStore.getState().modalByWorkspaceKey).toBe(before);
+  });
+
+  it("does nothing when no modal is open for the workspace", () => {
+    useWorktreeFailureReturnStore.getState().markFailureSavedNotRestored(KEY);
+    expect(useWorktreeFailureReturnStore.getState().modalByWorkspaceKey[KEY]).toBeUndefined();
+  });
+});

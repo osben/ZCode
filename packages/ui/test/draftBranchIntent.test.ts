@@ -97,6 +97,32 @@ describe("draftBranchIntent store (spec §1)", () => {
   });
 });
 
+describe("frozen worktree destination (Retry keeps the saved destination)", () => {
+  const KEY = "/dev/frozen";
+
+  beforeEach(() => {
+    useDraftBranchIntentStore.setState({ frozenWorktreeIntentByWorkspaceKey: {} });
+  });
+
+  it("peek leaves the frozen destination in place until it is released", () => {
+    const destination = { branchName: "feature/saved" };
+    useDraftBranchIntentStore.getState().setFrozenWorktreeIntent(KEY, destination);
+    expect(useDraftBranchIntentStore.getState().peekFrozenWorktreeIntent(KEY)).toBe(destination);
+    expect(useDraftBranchIntentStore.getState().peekFrozenWorktreeIntent(KEY)).toBe(destination);
+    useDraftBranchIntentStore.getState().releaseFrozenWorktreeIntent(KEY, destination);
+    expect(useDraftBranchIntentStore.getState().peekFrozenWorktreeIntent(KEY)).toBeUndefined();
+  });
+
+  it("release ignores a newer destination set after the peek", () => {
+    const older = { branchName: "feature/older" };
+    const newer = { branchName: "feature/newer" };
+    useDraftBranchIntentStore.getState().setFrozenWorktreeIntent(KEY, older);
+    useDraftBranchIntentStore.getState().setFrozenWorktreeIntent(KEY, newer);
+    useDraftBranchIntentStore.getState().releaseFrozenWorktreeIntent(KEY, older);
+    expect(useDraftBranchIntentStore.getState().peekFrozenWorktreeIntent(KEY)).toBe(newer);
+  });
+});
+
 describe("applyDraftBranchIntentForSend (no silent git failures)", () => {
   const KEY = "/dev/alpha";
   const getLocalBranches = vi.fn();

@@ -40,6 +40,11 @@ interface WorktreeFailureReturnState {
   destinationOpenRequestByWorkspaceKey: Record<string, number>;
   openFailureModal: (workspaceKey: string, state: WorktreeFailureReturnModalState) => void;
   closeFailureModal: (workspaceKey: string) => void;
+  /**
+   * The draft became occupied after the failure hand-off decided it was empty: the submission stays on
+   * the recovery card, so the modal must stop offering Retry against the newer draft.
+   */
+  markFailureSavedNotRestored: (workspaceKey: string) => void;
   /** Bump the auto-restore request for the workspace's draft composer, naming the record to restore. */
   requestDraftRestore: (workspaceKey: string, recoveryScope: string) => void;
   consumeDraftRestoreRequest: (workspaceKey: string) => void;
@@ -79,6 +84,17 @@ export const useWorktreeFailureReturnStore = create<WorktreeFailureReturnState>(
     })),
   closeFailureModal: (workspaceKey) =>
     set((current) => ({ modalByWorkspaceKey: omitKey(current.modalByWorkspaceKey, workspaceKey) })),
+  markFailureSavedNotRestored: (workspaceKey) =>
+    set((current) => {
+      const modal = current.modalByWorkspaceKey[workspaceKey];
+      if (!modal || modal.savedNotRestored) return current;
+      return {
+        modalByWorkspaceKey: {
+          ...current.modalByWorkspaceKey,
+          [workspaceKey]: { ...modal, savedNotRestored: true },
+        },
+      };
+    }),
   requestDraftRestore: (workspaceKey, recoveryScope) =>
     set((current) => ({
       restoreRequestByWorkspaceKey: request(current.restoreRequestByWorkspaceKey, workspaceKey),

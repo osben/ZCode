@@ -27,8 +27,16 @@ interface DraftBranchIntentState {
    */
   frozenWorktreeIntentByWorkspaceKey: Record<string, FrozenWorktreeDestination>;
   setFrozenWorktreeIntent: (workspaceKey: string, destination: FrozenWorktreeDestination) => void;
-  /** Read and clear the frozen destination; returns undefined when none is pending. */
-  takeFrozenWorktreeIntent: (workspaceKey: string) => FrozenWorktreeDestination | undefined;
+  /** Read the pending frozen destination without consuming it; undefined when none is pending. */
+  peekFrozenWorktreeIntent: (workspaceKey: string) => FrozenWorktreeDestination | undefined;
+  /**
+   * Clear the frozen destination only when it is still the given object. Called once admission has
+   * succeeded, so a failed admission keeps the frozen destination for the next Retry.
+   */
+  releaseFrozenWorktreeIntent: (
+    workspaceKey: string,
+    destination: FrozenWorktreeDestination,
+  ) => void;
 }
 
 export interface FrozenWorktreeDestination {
@@ -47,15 +55,14 @@ export const useDraftBranchIntentStore = create<DraftBranchIntentState>((set, ge
         [workspaceKey]: destination,
       },
     })),
-  takeFrozenWorktreeIntent: (workspaceKey) => {
-    const destination = get().frozenWorktreeIntentByWorkspaceKey[workspaceKey];
-    if (destination === undefined) return undefined;
+  peekFrozenWorktreeIntent: (workspaceKey) =>
+    get().frozenWorktreeIntentByWorkspaceKey[workspaceKey],
+  releaseFrozenWorktreeIntent: (workspaceKey, destination) =>
     set((state) => {
-      const { [workspaceKey]: _taken, ...rest } = state.frozenWorktreeIntentByWorkspaceKey;
+      if (state.frozenWorktreeIntentByWorkspaceKey[workspaceKey] !== destination) return state;
+      const { [workspaceKey]: _released, ...rest } = state.frozenWorktreeIntentByWorkspaceKey;
       return { frozenWorktreeIntentByWorkspaceKey: rest };
-    });
-    return destination;
-  },
+    }),
   setDraftBranchIntent: (workspaceKey, branchName) =>
     set((state) => ({
       intentByWorkspaceKey: { ...state.intentByWorkspaceKey, [workspaceKey]: branchName },

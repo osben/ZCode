@@ -2588,7 +2588,12 @@ function ConversationComposerImpl({
         recoveryScope: saved.scope,
         manifest: saved.draft.recoveryAttachments ?? [],
       });
-      if (failureReturnDraftOccupiedRef.current()) return;
+      if (failureReturnDraftOccupiedRef.current()) {
+        // The draft filled after the hand-off's draftEmpty check. The record stays on the recovery
+        // card, so the modal must not keep Retry (it would submit the newer draft).
+        useWorktreeFailureReturnStore.getState().markFailureSavedNotRestored(workspaceKey);
+        return;
+      }
       moveComposerAttachmentScopeItems(
         `${workspaceKey}\0${saved.scope}`,
         `${workspaceKey}\0${V4_DRAFT_SCOPE_ROOT}`,

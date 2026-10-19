@@ -291,7 +291,7 @@ export function ComposerDestinationControl({
       baseBranch ?? branchIntent ?? (headDefault ? undefined : currentBranchName);
     const intent = {
       workspaceKey,
-      beginCreation: (
+      beginCreation: async (
         queuedPromptPreview: string,
         prepareSession: Parameters<ComposerDraftWorktreeIntent["beginCreation"]>[1],
         syncPreparedWorktree: Parameters<ComposerDraftWorktreeIntent["beginCreation"]>[2],
@@ -299,8 +299,12 @@ export function ComposerDestinationControl({
       ): Promise<ComposerWorktreeBeginResult> => {
         // A restored failed submission creates its frozen branch at its frozen location, once, so
         // Retry keeps the destination the user saw; the next creation generates a new name again.
-        const frozen = useDraftBranchIntentStore.getState().takeFrozenWorktreeIntent(workspaceKey);
-        return beginWorktreePipelineCreation({
+        // The frozen destination is peeked here and released only after admission succeeds: a
+        // preflight, reservation, or prepareSession failure creates nothing, so Retry must still
+        // find the same destination.
+        const draftIntent = useDraftBranchIntentStore.getState();
+        const frozen = draftIntent.peekFrozenWorktreeIntent(workspaceKey);
+        const result = await beginWorktreePipelineCreation({
           gitService: baseServices.gitService,
           workspaceKey,
           workspacePath,
@@ -317,6 +321,10 @@ export function ComposerDestinationControl({
           ...(syncPreparedWorktree ? { syncPreparedWorktree } : {}),
           formatMessage: (id, values) => intl.formatMessage({ id }, values),
         });
+        if (result.ok && frozen) {
+          useDraftBranchIntentStore.getState().releaseFrozenWorktreeIntent(workspaceKey, frozen);
+        }
+        return result;
       },
     };
     intentSlot.current = intent;
