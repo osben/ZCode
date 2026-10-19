@@ -5,7 +5,10 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 import en from "@/i18n/locales/en-US.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { toast } from "@/components/ui/toast.js";
 import { ConversationWorktreeCreatedNotice } from "@/v4/ConversationWorktreeCreatedNotice.js";
+
+vi.mock("@/components/ui/toast.js", () => ({ toast: vi.fn() }));
 
 vi.mock("@/components/ui/tooltip.js", () => ({
   Tooltip: ({ children }: { children: ReactNode }) => children,
@@ -64,6 +67,17 @@ describe("ConversationWorktreeCreatedNotice open action", () => {
       "/home/dev/repo/.worktrees/feature-a",
       "remote:ssh:devbox:22:dev:/home/dev/repo/.worktrees/feature-a",
     );
+  });
+
+  it("shows a failure toast with the exact path when the open callback rejects", async () => {
+    const path = "/Users/dev/repo/.worktrees/feature-a";
+    const onOpenWorktree = vi.fn().mockRejectedValue(new Error("workspace unavailable"));
+    renderNotice({ path, onOpenWorktree });
+
+    fireEvent.click(screen.getByRole("button", { name: OPEN_LABEL }));
+
+    await waitFor(() => expect(toast).toHaveBeenCalledTimes(1));
+    expect(String(vi.mocked(toast).mock.calls[0]?.[0])).toContain(path);
   });
 
   it("renders no open action when no open callback is provided", () => {
