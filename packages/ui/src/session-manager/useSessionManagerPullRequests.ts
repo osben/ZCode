@@ -1,9 +1,10 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type { ZCodeTaskMeta } from "@zcode/shared";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
 import { buildWorkspaceServiceLookup } from "@/lib/workspaceServiceResolver.js";
 import {
   createPullRequestStatusProber,
+  forceTaskIdsForRequestedKeys,
   type PullRequestStatusTarget,
   type PullRequestStatusTargetTask,
 } from "@/lib/pullRequestStatusProbeRunner.js";
@@ -41,6 +42,8 @@ export function useSessionManagerPullRequests(
   const markWorkspaceTasksStale = usePullRequestStatusStore(
     (state) => state.markWorkspaceTasksStale,
   );
+  const refreshVersion = usePullRequestStatusStore((state) => state.refreshVersion);
+  const forceRefresh = usePullRequestStatusStore((state) => state.forceRefresh);
 
   const prober = useMemo(
     () =>
@@ -116,11 +119,17 @@ export function useSessionManagerPullRequests(
     sessionIdByWorkspacePath,
   ]);
 
+  // Same invalidation contract as the sidebar driver (usePullRequestStatuses): a git mutation
+  // (commit/push) forces the visible rows, and an explicit refresh forces only the requested rows.
+  // Both are version signals, so a targets change never replays them.
+  const handledRefreshVersionRef = useRef(refreshVersion);
   useEffect(() => {
     if (!active || targets.length === 0) {
       return;
     }
-    void prober.probe(targets);
+    const gitMutated = handledRefreshVersionRef.current !== refreshVersion;
+    handledRefreshVersionRef.current = refreshVersion;
+    void prober.probe(targets, gitMutated ? { force: true } : undefined);
     const onFocus = () => {
       void prober.probe(targets);
     };
@@ -128,5 +137,18 @@ export function useSessionManagerPullRequests(
     return () => {
       window.removeEventListener("focus", onFocus);
     };
-  }, [prober, targets, active]);
+  }, [prober, targets, active, refreshVersion]);
+
+  const handledForceVersionRef = useRef(forceRefresh.version);
+  useEffect(() => {
+    if (!active || forceRefresh.version === handledForceVersionRef.current) {
+      return;
+    }
+    handledForceVersionRef.current = forceRefresh.version;
+    const forceTaskIds = forceTaskIdsForRequestedKeys(targets, forceRefresh.taskKeys);
+    if (forceTaskIds.length === 0) {
+      return;
+    }
+    void prober.probe(targets, { forceTaskIds });
+  }, [prober, targets, active, forceRefresh]);
 }

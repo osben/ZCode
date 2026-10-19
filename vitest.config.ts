@@ -57,7 +57,8 @@ const forkNodeTestFiles = [
   "packages/services/test/sessionPullRequestsService.test.ts",
   // Real-git + fake-gh integration over the host path; run via test:node.
   "packages/services/test/sessionPullRequestsIntegration.test.ts",
-  "packages/services/test/sessionPullRequestsServiceLogging.test.ts"
+  // Missing comma here made the whole config fail to parse (TransformError at the next entry).
+  "packages/services/test/sessionPullRequestsServiceLogging.test.ts",
   // node:test cases run via test:node; excluded here so Vitest does not collect them.
   "packages/services/test/systemPromptService.test.ts",
   "packages/services/test/outputStyleService.test.ts",

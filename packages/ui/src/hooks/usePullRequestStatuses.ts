@@ -3,6 +3,7 @@ import { usePullRequestStatusStore } from "@/store/pullRequestStatusStore.js";
 import { buildPullRequestTaskKey } from "@/store/pullRequestStatusStore.js";
 import {
   createPullRequestStatusProber,
+  forceTaskIdsForRequestedKeys,
   type PullRequestStatusTarget,
 } from "@/lib/pullRequestStatusProbeRunner.js";
 
@@ -12,8 +13,8 @@ export type { PullRequestStatusTarget };
  * Probes task-level pull request status for the sidebar's workspaces on mount
  * (sidebar open), on window focus, and after in-app git mutations
  * (refreshVersion). The runtime git service owns the observation cadence (TTL
- * cache); this hook only mirrors results into the store — a failed probe drops
- * the workspace's entries so indicators degrade to hidden instead of freezing.
+ * cache); this hook only mirrors results into the store — a failed probe marks
+ * the entries it owns stale (see createPullRequestStatusProber).
  *
  * Invalidating trigger: a worktree task transitions from running to
  * completed/idle (the agent may have just pushed or opened a PR). The
@@ -123,25 +124,16 @@ export function usePullRequestStatuses(
       return;
     }
     handledForceVersionRef.current = forceRefresh.version;
-    const requested = new Set(forceRefresh.taskKeys);
-    const forceTaskIds = [
-      ...new Set(
-        targets.flatMap((target) =>
-          target.tasks
-            .map((task) => task.input.taskId)
-            .filter((taskId) =>
-              requested.has(buildPullRequestTaskKey(target.workspaceKey, taskId)),
-            ),
-        ),
-      ),
-    ];
+    const forceTaskIds = forceTaskIdsForRequestedKeys(targets, forceRefresh.taskKeys);
     if (forceTaskIds.length === 0) {
       return;
     }
     void prober.probe(targets, { forceTaskIds });
   }, [prober, targets, active, forceRefresh]);
 
-  // Drop store entries for workspaces that left the sidebar.
+  // Drop store entries for workspaces that left the sidebar. PullRequestStatusProbes keeps every
+  // open resolved workspace in targets (even with no visible worktree tasks), so this fires only
+  // when the workspace itself closes; the Session manager's rows for it then show "—".
   useEffect(() => {
     const targetKeyList = targetKeys ? targetKeys.split("\u0000") : [];
     const previousKeys = previousKeysRef.current;

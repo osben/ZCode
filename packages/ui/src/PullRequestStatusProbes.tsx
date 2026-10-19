@@ -51,12 +51,12 @@ export function PullRequestStatusProbes({
             candidate.workspacePath === tab.workspacePath &&
             candidate.workspaceIdentity === tab.workspaceIdentity,
         );
-        if (!resolved || !group) {
+        if (!resolved) {
           return [];
         }
         // Task-level only: ordinary sessions never ride the probe, even when
         // the workspace branch itself has a pull request.
-        const tasks = group.items
+        const tasks = (group?.items ?? [])
           .filter((task) => task.executionWorktree !== undefined)
           .map((task) => ({
             input: {
@@ -66,9 +66,9 @@ export function PullRequestStatusProbes({
             },
             running: isTaskListRowRunning(task),
           }));
-        if (tasks.length === 0) {
-          return [];
-        }
+        // Reason: an open workspace stays a target even with no worktree tasks in view. Dropping it
+        // would erase the Session manager's entries for the same workspace. The prober skips
+        // empty targets, so this costs no request.
         return [
           {
             workspaceKey,

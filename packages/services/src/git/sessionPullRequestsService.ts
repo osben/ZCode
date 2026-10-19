@@ -69,7 +69,6 @@ interface BranchEntry {
 interface CoalesceQueue {
   cacheKeys: Set<string>;
   promise: Promise<void>;
-  resolve: () => void;
 }
 
 interface InFlightBranch {
@@ -355,7 +354,8 @@ export function createSessionPullRequestsService(options: {
               retryNotBeforeMs: timestamp + ERROR_RETRY_DELAY_MS,
             });
           }
-          warnOnce(workspaceKey, "gh-error", "session pull request gh call failed", { branch });
+          // No detail: branch names are user data and must not reach warnings.
+          warnOnce(workspaceKey, "gh-error", "session pull request gh call failed");
         }
       }
     } finally {
@@ -387,8 +387,10 @@ export function createSessionPullRequestsService(options: {
       let queue = queueByWorkspace.get(workspaceKey);
       if (!queue) {
         let resolvePromise!: () => void;
-        const promise = new Promise<void>((resolve) => {
+        let rejectPromise!: (error: unknown) => void;
+        const promise = new Promise<void>((resolve, reject) => {
           resolvePromise = resolve;
+          rejectPromise = reject;
         });
         const pendingKeys = new Set<string>();
         // The window opens with the queue; branches arriving before it fires
@@ -396,12 +398,16 @@ export function createSessionPullRequestsService(options: {
         const timer = setTimeout(() => {
           queueByWorkspace.delete(workspaceKey);
           const keys = [...pendingKeys];
-          void flushBranches(workspaceKey, workspacePath, context, keys).finally(() => {
-            resolvePromise();
-          });
+          // Reason: a flush failure must reject the awaiting requests so getSessionPullRequests
+          // takes its request-error fallback. Resolving here would assemble old or empty entries
+          // as if the refresh had completed, and would leave an unhandled rejection behind.
+          flushBranches(workspaceKey, workspacePath, context, keys).then(
+            () => resolvePromise(),
+            (error: unknown) => rejectPromise(error),
+          );
         }, coalesceWindowMs);
         timer.unref?.();
-        queue = { cacheKeys: pendingKeys, promise, resolve: resolvePromise };
+        queue = { cacheKeys: pendingKeys, promise };
         queueByWorkspace.set(workspaceKey, queue);
       }
       queue.cacheKeys.add(key);

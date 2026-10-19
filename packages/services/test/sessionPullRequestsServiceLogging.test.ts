@@ -3,6 +3,7 @@ import test from "node:test";
 import { createSessionPullRequestsService } from "../src/git/sessionPullRequestsService.js";
 import {
   createFakeGh,
+  createFakeRepo,
   createHarness,
   createLoggerCapture,
   GIT_RUNNER,
@@ -81,4 +82,61 @@ test("stage change log carries only the stage transition, not workspace or PR id
   }
   assert.equal(JSON.stringify(harness.logger.infos).includes("secret"), false);
   assert.equal(JSON.stringify(harness.logger.infos).includes("e2e"), false);
+});
+
+test("a gh call failure warn carries no branch name", async () => {
+  const harness = createHarness({ "osben/ZCode": { "feat/x": [OPEN_PR] } });
+  const gh = harness.fakeGh.gh as unknown as {
+    run: (options: { args: string[] }) => Promise<unknown>;
+  };
+  const originalRun = gh.run;
+  gh.run = async (options: { args: string[] }) => {
+    if (options.args[0] === "api") {
+      return { exitCode: 1, stdout: "", stderr: "boom", timedOut: false };
+    }
+    return originalRun(options);
+  };
+
+  const result = await harness.service.getSessionPullRequests({
+    workspacePath: "/private/secret/workspace",
+    tasks: [{ taskId: "t1", branchName: "feat/x", worktreePath: null }],
+  });
+  assert.equal(result.t1?.state, "unavailable");
+  const failures = harness.logger.warns.filter(
+    (args) => args[0] === "session pull request gh call failed",
+  );
+  assert.equal(failures.length, 1, "one warn for the failure class");
+  assert.equal(failures[0]?.[1], undefined, "the warn has no detail argument");
+  assert.equal(JSON.stringify(harness.logger.warns).includes("feat/x"), false);
+});
+
+test("a flush failure rejects the refresh into the request-error fallback", async () => {
+  const logger = createLoggerCapture();
+  const fakeGh = createFakeGh({ "osben/ZCode": { "feat/x": [OPEN_PR] } });
+  const service = createSessionPullRequestsService({
+    repo: createFakeRepo([{ name: "origin", url: "git@github.com:osben/ZCode.git" }]),
+    // Head-owner lookup rejects (spawn failure), which is a flush failure, not a gh result.
+    gitRunner: {
+      run: async () => {
+        throw new Error("spawn failed");
+      },
+    },
+    gh: fakeGh.gh,
+    logger: logger.logger,
+    now: () => 0,
+    coalesceWindowMs: 10,
+  });
+
+  const result = await service.getSessionPullRequests({
+    workspacePath: "/private/secret/workspace",
+    tasks: [{ taskId: "t1", branchName: "feat/x", worktreePath: null }],
+  });
+  assert.equal(result.t1?.state, "unavailable", "no empty ready answer after a failed flush");
+  assert.equal(result.t1?.unavailableReason, "error");
+  assert.deepEqual(fakeGh.apiCalls, [], "no batch is assembled from a failed flush");
+  const requestErrors = logger.warns.filter(
+    (args) => args[0] === "session pull requests request failed",
+  );
+  assert.equal(requestErrors.length, 1, "the request-error fallback warns once");
+  assert.equal(JSON.stringify(logger.warns).includes("secret"), false);
 });

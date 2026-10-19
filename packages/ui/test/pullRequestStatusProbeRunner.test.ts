@@ -9,6 +9,7 @@ import {
 } from "../src/store/pullRequestStatusStore.js";
 import {
   createPullRequestStatusProber,
+  forceTaskIdsForRequestedKeys,
   type PullRequestProbeStore,
   type PullRequestStatusTarget,
 } from "../src/lib/pullRequestStatusProbeRunner.js";
@@ -237,4 +238,44 @@ test("requestRefresh bumps the mutation-signal version", () => {
   const before = usePullRequestStatusStore.getState().refreshVersion;
   usePullRequestStatusStore.getState().requestRefresh();
   assert.equal(usePullRequestStatusStore.getState().refreshVersion, before + 1);
+});
+
+test("warning carries a generic message and the error class, never the workspace key or error text", async () => {
+  const store = createStoreCapture();
+  const warnings: unknown[][] = [];
+  const prober = createPullRequestStatusProber(store, {
+    warn: (...args) => {
+      warnings.push(args);
+    },
+  });
+  await prober.probe([
+    createTarget("/private/ws-key", async () => {
+      throw new TypeError("cannot read /secret/remote https://example.test/owner/repo");
+    }),
+  ]);
+  assert.deepEqual(warnings, [
+    ["session pull request status unavailable", { errorName: "TypeError" }],
+  ]);
+  assert.equal(JSON.stringify(warnings).includes("secret"), false);
+  assert.equal(JSON.stringify(warnings).includes("ws-key"), false);
+});
+
+test("explicit refresh selects only the requested tasks of the given targets", () => {
+  const targets = [
+    createTarget("w", async () => ({}), ["t1", "t2"]),
+    createTarget("v", async () => ({}), ["t1"]),
+  ];
+  assert.deepEqual(forceTaskIdsForRequestedKeys(targets, [buildPullRequestTaskKey("w", "t2")]), [
+    "t2",
+  ]);
+  assert.deepEqual(
+    forceTaskIdsForRequestedKeys(targets, [
+      buildPullRequestTaskKey("w", "t1"),
+      buildPullRequestTaskKey("v", "t1"),
+      buildPullRequestTaskKey("v", "missing"),
+    ]),
+    ["t1"],
+    "ids are deduplicated across workspaces and unknown keys select nothing",
+  );
+  assert.deepEqual(forceTaskIdsForRequestedKeys(targets, []), []);
 });

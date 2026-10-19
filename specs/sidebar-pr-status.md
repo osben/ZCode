@@ -183,10 +183,10 @@ conflict > failing > optional_failing > running > passing > none).
 UI surfaces (row, hover, menu, header chip, Git tools, Session manager)
    │ read one store entry per task key
    ▼
-usePullRequestStatuses (UI hook, single subscriber per task key)
+usePullRequestStatuses (sidebar driver) · useSessionManagerPullRequests (visible rows)
    │ triggers (all gated on window focused + a PR surface visible):
    │   surface becomes visible · window focus · TTL expiry
-   │ invalidating triggers (bypass TTL):
+   │ invalidating triggers (bypass TTL; both drivers):
    │   worktree session turn ends (running → completed/idle) · onRefreshGit (commit/push) ·
    │   explicit Refresh
    ▼
@@ -297,7 +297,9 @@ New keys in `en-US`, `zh-CN`, `uk-UA` under `pullRequest.*`: stage labels (`Draf
 
 `createServiceLogger("session-pull-requests")`: `info` on stage change of a PR, `debug` for raw `gh`
 output, `warn` once per workspace for missing/unauthenticated `gh` or unparsable output. No tokens,
-URLs of private hosts, or PR titles in `info`/`warn`.
+URLs of private hosts, or PR titles in `info`/`warn`. Warn details carry only error classes; a
+flush failure rejects the request into the `request-error` fallback.
+UI drivers mark only their own tasks stale on failure; store entries drop only when a workspace leaves the sidebar.
 
 ## Acceptance scenarios
 

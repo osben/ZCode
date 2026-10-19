@@ -1,6 +1,7 @@
 import type { SessionPullRequestsTaskInput, SessionPullRequestStatus } from "@zcode/shared";
 import type { IGitService } from "@zcode/services";
 import { logger } from "@/logger.js";
+import { buildPullRequestTaskKey } from "@/store/pullRequestStatusStore.js";
 
 export interface PullRequestStatusTargetTask {
   input: SessionPullRequestsTaskInput;
@@ -39,10 +40,32 @@ export interface PullRequestProbeStore {
  *   rows, so one driver must never erase another's entries;
  * - the response must be an object (the web stub answers {}, an old host
  *   rejects);
- * - a failed probe drops the workspace's entries — indicators reliably
- *   disappear instead of freezing stale;
- * - repeated failures warn once per workspace.
+ * - a failed probe marks only its own tasks' entries stale (the other driver's
+ *   entries survive);
+ * - repeated failures warn once per workspace, with a generic message and the
+ *   error class only: workspace keys and error messages carry paths and remotes.
  */
+
+/**
+ * Task ids of the targets whose task key was explicitly requested (context menu "Refresh pull
+ * request status"). Keys are `buildPullRequestTaskKey(workspaceKey, taskId)`; ids come from the
+ * targets, so the composite key is never parsed.
+ */
+export function forceTaskIdsForRequestedKeys(
+  targets: readonly PullRequestStatusTarget[],
+  requestedKeys: readonly string[],
+): string[] {
+  const requested = new Set(requestedKeys);
+  return [
+    ...new Set(
+      targets.flatMap((target) =>
+        target.tasks
+          .map((task) => task.input.taskId)
+          .filter((taskId) => requested.has(buildPullRequestTaskKey(target.workspaceKey, taskId))),
+      ),
+    ),
+  ];
+}
 export function createPullRequestStatusProber(
   store: PullRequestProbeStore,
   warnings: { warn: (message: string, detail: unknown) => void } = { warn: logger.warn },
@@ -87,10 +110,9 @@ export function createPullRequestStatusProber(
           }
           if (!warnedWorkspaceKeys.has(target.workspaceKey)) {
             warnedWorkspaceKeys.add(target.workspaceKey);
-            warnings.warn(
-              `session pull request status unavailable for ${target.workspaceKey}`,
-              error instanceof Error ? error.message : error,
-            );
+            warnings.warn("session pull request status unavailable", {
+              errorName: error instanceof Error ? error.name : "unknown",
+            });
           }
           store.markWorkspaceTasksStale(
             target.workspaceKey,
