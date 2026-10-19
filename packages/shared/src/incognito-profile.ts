@@ -49,6 +49,23 @@ export const INCOGNITO_SESSION_UNSUPPORTED_ERROR =
 export const INCOGNITO_PROMPT_TOGGLES_UNSUPPORTED_ERROR =
   "proto.incognitoUnsupported.promptToggles" as const;
 
+/**
+ * The runtime capabilities an incognito create depends on. Every hop (renderer transport, Host
+ * service) checks them through `incognitoCapabilityGateError`, so the order lives in one place:
+ * `incognitoSession` first (no incognito support at all), then `incognitoPromptToggles` (a stale
+ * build that cannot parse the thirteen-key profile).
+ */
+export function incognitoCapabilityGateError(capabilities: {
+  readonly incognitoSession?: boolean;
+  readonly incognitoPromptToggles?: boolean;
+}): string | null {
+  if (capabilities.incognitoSession !== true) return INCOGNITO_SESSION_UNSUPPORTED_ERROR;
+  if (capabilities.incognitoPromptToggles !== true) {
+    return INCOGNITO_PROMPT_TOGGLES_UNSUPPORTED_ERROR;
+  }
+  return null;
+}
+
 const allCapabilitiesOff = Object.fromEntries(
   INCOGNITO_CAPABILITY_KEYS.map((key) => [key, false]),
 ) as IncognitoCapabilities;

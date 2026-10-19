@@ -60,8 +60,10 @@ export function buildEnvInfoSection(
   model?: Model,
   executionWorktree?: ExecutionWorktreeEnvFact,
 ): ContextSection {
-  const content = buildEnvInfoContent(envInfo, model, executionWorktree);
+  return buildEnvironmentInfoContextSection(buildEnvInfoContent(envInfo, model, executionWorktree));
+}
 
+function buildEnvironmentInfoContextSection(content: string): ContextSection {
   return {
     name: "Environment Info",
     source: "env_info",
@@ -83,18 +85,7 @@ export function buildWorktreeOnlyEnvSection(
 ): ContextSection | null {
   const line = executionWorktree ? formatExecutionWorktreeSentence(executionWorktree) : null;
   if (!line) return null;
-  const content = [ENVIRONMENT_HEADING, `- ${line}`].join("\n");
-
-  return {
-    name: "Environment Info",
-    source: "env_info",
-    injectionTarget: "system",
-    cacheHint: "dynamic",
-    chars: content.length,
-    tokens: estimateTokens(content),
-    content,
-    preview: content.slice(0, 100),
-  };
+  return buildEnvironmentInfoContextSection([ENVIRONMENT_HEADING, `- ${line}`].join("\n"));
 }
 
 export function buildGitSystemContextSection(envInfo: EnvInfo): ContextSection | null {

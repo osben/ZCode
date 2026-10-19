@@ -117,6 +117,44 @@ export const V4ComposerIncognitoControl = memo(function V4ComposerIncognitoContr
     });
   };
 
+  // One trigger for both states: an active trigger opens the checklist through DropdownMenuTrigger,
+  // an inactive one arms the mode on click. Only the active trigger carries the marker label.
+  const toggleButton = (
+    <Button
+      ref={triggerRef}
+      variant="ghost"
+      size="sm"
+      disabled={disabled}
+      aria-label={toggleLabel}
+      aria-pressed={active}
+      data-testid={TID_V4_COMPOSER_INCOGNITO_TRIGGER}
+      onClick={active ? undefined : activate}
+      className={cn(
+        "h-7",
+        active
+          ? "gap-1 rounded-full bg-transparent px-2 text-ui-base text-incognito hover:bg-transparent hover:text-incognito"
+          : "w-7 rounded-lg px-0",
+      )}
+    >
+      <VenetianMask
+        className={cn(
+          "size-4",
+          showOffButton &&
+            "transition-opacity group-hover/incognito-chip:opacity-0 group-focus-within/incognito-chip:opacity-0",
+        )}
+      />
+      {active ? (
+        <span className="inline">{intl.formatMessage({ id: "chat.incognito.marker" })}</span>
+      ) : null}
+    </Button>
+  );
+  const toggleTrigger = (trigger: ReactNode) => (
+    // The hint must stay closed while the menu is open, or its layer dismisses the menu.
+    <ControlHintTooltip title={toggleLabel} open={active && menuOpen ? false : undefined}>
+      {trigger}
+    </ControlHintTooltip>
+  );
+
   return (
     <div
       data-testid={active ? TID_V4_COMPOSER_INCOGNITO_MARKER : undefined}
@@ -143,32 +181,7 @@ export const V4ComposerIncognitoControl = memo(function V4ComposerIncognitoContr
       ) : null}
       {active ? (
         <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
-          {/* The hint must stay closed while the menu is open, or its layer dismisses the menu. */}
-          <ControlHintTooltip title={toggleLabel} open={menuOpen ? false : undefined}>
-            <DropdownMenuTrigger asChild>
-              <Button
-                ref={triggerRef}
-                variant="ghost"
-                size="sm"
-                disabled={disabled}
-                aria-label={toggleLabel}
-                aria-pressed={true}
-                data-testid={TID_V4_COMPOSER_INCOGNITO_TRIGGER}
-                className="h-7 gap-1 rounded-full bg-transparent px-2 text-ui-base text-incognito hover:bg-transparent hover:text-incognito"
-              >
-                <VenetianMask
-                  className={cn(
-                    "size-4",
-                    showOffButton &&
-                      "transition-opacity group-hover/incognito-chip:opacity-0 group-focus-within/incognito-chip:opacity-0",
-                  )}
-                />
-                <span className="inline">
-                  {intl.formatMessage({ id: "chat.incognito.marker" })}
-                </span>
-              </Button>
-            </DropdownMenuTrigger>
-          </ControlHintTooltip>
+          {toggleTrigger(<DropdownMenuTrigger asChild>{toggleButton}</DropdownMenuTrigger>)}
           <DropdownMenuContent
             side="top"
             sideOffset={4}
@@ -197,21 +210,7 @@ export const V4ComposerIncognitoControl = memo(function V4ComposerIncognitoContr
           </DropdownMenuContent>
         </DropdownMenu>
       ) : (
-        <ControlHintTooltip title={toggleLabel}>
-          <Button
-            ref={triggerRef}
-            variant="ghost"
-            size="sm"
-            disabled={disabled}
-            aria-label={toggleLabel}
-            aria-pressed={false}
-            data-testid={TID_V4_COMPOSER_INCOGNITO_TRIGGER}
-            onClick={activate}
-            className="h-7 w-7 rounded-lg px-0"
-          >
-            <VenetianMask className="size-4" />
-          </Button>
-        </ControlHintTooltip>
+        toggleTrigger(toggleButton)
       )}
     </div>
   );

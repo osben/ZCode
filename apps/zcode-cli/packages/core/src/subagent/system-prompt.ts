@@ -11,6 +11,11 @@ export interface SubagentEnvironmentContextOptions {
   model?: Model;
   /** Worktree isolation notice projected from the parent runtime config; absent for plain sessions. */
   executionWorktree?: ExecutionWorktreeEnvFact;
+  /**
+   * `environment` toggle off: keep only the worktree isolation line inside the `<env>` tags. Returns
+   * an empty string when no worktree applies, so callers omit the section.
+   */
+  worktreeOnly?: boolean;
 }
 
 export function buildSubagentCommonNotes(): string {
@@ -22,17 +27,6 @@ export function buildSubagentCommonNotes(): string {
     '- Do not use a colon before tool calls. Text like "Let me read the file:" followed by a read tool call should just be "Let me read the file." with a period.',
     "- Do NOT Write report/summary/findings/analysis .md files. Return findings directly as your final assistant message — the parent agent reads your text output, not files you create.",
   ].join("\n");
-}
-
-/**
- * `environment` toggle off: the subagent environment keeps only the worktree isolation line, inside the
- * same `<env>` tags. Null when no worktree applies.
- */
-export function buildSubagentWorktreeOnlyContext(
-  executionWorktree: ExecutionWorktreeEnvFact | undefined,
-): string | null {
-  const line = executionWorktree ? formatExecutionWorktreeSentence(executionWorktree) : null;
-  return line ? ["<env>", line, "</env>"].join("\n") : null;
 }
 
 export function buildSubagentEnvironmentContext(
@@ -48,6 +42,10 @@ export function buildSubagentEnvironmentContext(
   const executionWorktreeLine = options.executionWorktree
     ? formatExecutionWorktreeSentence(options.executionWorktree)
     : null;
+
+  if (options.worktreeOnly) {
+    return executionWorktreeLine ? ["<env>", executionWorktreeLine, "</env>"].join("\n") : "";
+  }
 
   return [
     "Here is useful information about the environment you are running in:",

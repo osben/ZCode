@@ -7,6 +7,7 @@ import {
   INCOGNITO_SESSION_UNSUPPORTED_ERROR,
   INCOGNITO_UNSUPPORTED_ERROR,
   buildIncognitoProfile,
+  incognitoCapabilityGateError,
   incognitoExcludes,
   incognitoProfileSchema,
   incognitoProfilesEqual,
@@ -247,6 +248,19 @@ describe("incognito protocol fields", () => {
         incognitoPromptToggles: true,
       }).incognitoPromptToggles,
     ).toBe(true);
+  });
+
+  it("the gate helper checks incognitoSession first, then incognitoPromptToggles", () => {
+    expect(incognitoCapabilityGateError({})).toBe(INCOGNITO_SESSION_UNSUPPORTED_ERROR);
+    expect(incognitoCapabilityGateError({ incognitoSession: true })).toBe(
+      INCOGNITO_PROMPT_TOGGLES_UNSUPPORTED_ERROR,
+    );
+    expect(
+      incognitoCapabilityGateError({ incognitoSession: false, incognitoPromptToggles: true }),
+    ).toBe(INCOGNITO_SESSION_UNSUPPORTED_ERROR);
+    expect(
+      incognitoCapabilityGateError({ incognitoSession: true, incognitoPromptToggles: true }),
+    ).toBeNull();
   });
 
   it("gate failures share the base code and carry a subcode that names the missing flag", () => {
