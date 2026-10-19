@@ -10,6 +10,7 @@ import { nanoid } from "nanoid";
  */
 import { getErrorMessage } from "@/lib/errorMessage.js";
 import { logger } from "@/logger.js";
+import type { GitLocalBranchListResult } from "@zcode/shared";
 import {
   ensureWorktreeExclusionSafely,
   executeWorktreeCreation,
@@ -31,11 +32,14 @@ import {
   selectComposerWorktreePipeline,
   type ComposerWorktreeCreationParams,
 } from "@/store/composerWorktreePipelineStore.js";
+import { initiateComposerWorktreeFailureReturn } from "@/v4/composer/composerWorktreeFailureReturn.js";
 
 const inFlightByPipelineKey = new Map<string, Promise<"ready" | "failed">>();
 const beginInFlightByWorkspaceKey = new Map<string, Promise<ComposerWorktreeBeginResult>>();
 /** Sessions whose Retry is waiting on the Host acknowledgement (count per session key). */
 const pendingRetryBySessionKey = new Map<string, number>();
+/** Bound for the advisory queue-time branch probe; a slower RPC degrades to HEAD, never blocks Send. */
+const WORKTREE_PREFLIGHT_PROBE_TIMEOUT_MS = 1500;
 
 function retrySessionKey(workspaceKey: string, sessionId?: string): string {
   return `${workspaceKey}\0${sessionId ?? "unscoped"}`;
@@ -200,7 +204,25 @@ export function startComposerWorktreePipeline({
       }
       useComposerWorktreePipelineStore
         .getState()
-        .markFailed(workspaceKey, outcome.message, sessionId, attemptId);
+        .markFailed(workspaceKey, outcome.message, sessionId, attemptId, {
+          issueCode: outcome.issueCode,
+          rawDetail: outcome.rawDetail,
+        });
+      // Return-to-draft hand-off (live renderer only): when this process still owns the armed
+      // submission, the orchestrator transfers the recovery record and settles the preparing
+      // session so the user lands back on a restored draft with the failure modal. Every abort
+      // inside leaves the failed-row path above intact.
+      if (sessionId) {
+        initiateComposerWorktreeFailureReturn({
+          workspaceKey,
+          sessionId,
+          attemptId,
+          params,
+          failureMessage: outcome.message,
+          issueCode: outcome.issueCode,
+          rawDetail: outcome.rawDetail,
+        });
+      }
       return "failed";
     } catch (error) {
       logger.warn("[WorktreePipeline] creation orchestration threw", {
@@ -230,6 +252,7 @@ export function beginWorktreePipelineCreation({
   gitService,
   workspaceKey,
   workspacePath,
+  workspaceIdentity,
   effectiveLocation,
   branchName,
   baseBranch,
@@ -243,6 +266,7 @@ export function beginWorktreePipelineCreation({
   gitService: WorktreeCreationGitService;
   workspaceKey: string;
   workspacePath: string;
+  workspaceIdentity?: string;
   effectiveLocation: EffectiveWorktreeLocation;
   branchName: string;
   baseBranch?: string;
@@ -265,10 +289,10 @@ export function beginWorktreePipelineCreation({
   }
 
   const attempt = (async (): Promise<ComposerWorktreeBeginResult> => {
-    const failWith = (id: string) => {
+    const failWith = (id: string, values?: Record<string, string>) => {
       useComposerWorktreePipelineStore
         .getState()
-        .markValidationFailed(workspaceKey, formatMessage(id));
+        .markValidationFailed(workspaceKey, formatMessage(id, values));
       return { ok: false } as const;
     };
     if (
@@ -284,13 +308,54 @@ export function beginWorktreePipelineCreation({
     if (!targetPath) {
       return failWith("commandCenter.worktree.error.target-path-invalid");
     }
+    // Preflight with positive evidence only (spec §Return to draft on failure): a successfully
+    // loaded branch list proves unborn HEAD (no branches, but a named unborn default) or a missing
+    // explicit base; a failed, absent, or hung probe must NOT block Send — the base degrades to
+    // HEAD (acceptance scenario 9). The probe is advisory, so it is bounded; a slow RPC degrades
+    // like a failed one instead of stalling the send path. Reuses the target-branch-not-found
+    // message, which already carries the "repository without commits" hint.
+    if (gitService.getLocalBranches) {
+      let branches: GitLocalBranchListResult | null = null;
+      try {
+        branches = await Promise.race([
+          gitService.getLocalBranches({ workspacePath }),
+          new Promise<null>((resolve) =>
+            setTimeout(() => resolve(null), WORKTREE_PREFLIGHT_PROBE_TIMEOUT_MS),
+          ),
+        ]);
+      } catch {
+        branches = null;
+      }
+      if (branches) {
+        if (branches.branches.length === 0 && branches.currentBranchName !== null) {
+          // Unborn HEAD: the repository has no commits, so no base (explicit or defaulted) can
+          // be forked from; name the requested base, or the unborn default when none was.
+          return failWith("commandCenter.worktree.error.target-branch-not-found", {
+            branchName: baseBranch ?? branches.currentBranchName,
+          });
+        }
+        if (
+          baseBranch &&
+          branches.branches.length > 0 &&
+          !branches.branches.some((branch) => branch.name === baseBranch)
+        ) {
+          return failWith("commandCenter.worktree.error.target-branch-not-found", {
+            branchName: baseBranch,
+          });
+        }
+      }
+    }
     const attemptId = nanoid();
     const params = {
       ...(submissionId ? { submissionId } : {}),
       attemptId,
       workspacePath,
+      ...(workspaceIdentity ? { workspaceIdentity } : {}),
       branchName,
       targetPath,
+      ...(effectiveLocation.mode === "custom" && effectiveLocation.customPath
+        ? { customLocationPath: effectiveLocation.customPath }
+        : {}),
       ...(baseBranch ? { baseBranch } : {}),
       baseFromHeadDefault,
     };

@@ -4978,6 +4978,17 @@ const zhCN: Record<string, string> = {
     "{branchName} 在 {path} 的已注册 worktree 缺失或不可用。",
   "worktreeSetup.reconcile.markerSyncUnavailable":
     "设置完成于不同的 worktree 路径，且无法更新会话记录",
+  "worktreeFailure.title": "无法创建 worktree",
+  "worktreeFailure.savedNotRestored":
+    "当前草稿不为空，你的消息已保存在下方的“未发送消息已保存”卡片中。",
+  "worktreeFailure.showDetails": "显示详情",
+  "worktreeFailure.hideDetails": "隐藏详情",
+  "worktreeFailure.copyDetails": "复制详情",
+  "worktreeFailure.dismiss": "关闭",
+  "worktreeFailure.retry": "重试",
+  "worktreeFailure.changeDestination": "更改分支/文件夹",
+  "worktreeFailure.toastTitle": "无法创建 worktree",
+  "worktreeFailure.toastOpen": "打开",
   "git.branchSwitcher.appliesOnSend": "将在发送第一条消息时生效",
   "git.branchSwitcher.worktreeIntentHint": "该任务的分支由 worktree 设置决定",
   "branchSwitchGuard.title": "切换分支？",

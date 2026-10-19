@@ -8,6 +8,7 @@
  * gitService and message formatting are injected so the two entry points (palette, empty-state) share one semantics.
  */
 import type {
+  GitLocalBranchListResult,
   GitWorktreeCreateResult,
   GitWorktreeExcludeResult,
   GitWorktreeListResult,
@@ -29,6 +30,11 @@ export interface WorktreeCreationGitService {
     targetPath: string;
   }): Promise<GitWorktreeCreateResult>;
   listWorktrees(params: { workspacePath: string }): Promise<GitWorktreeListResult>;
+  /**
+   * Optional local-branch probe used by the queue-time preflight (unborn HEAD / missing base
+   * branch). Absent or failing probes never block Send — the base degrades to HEAD instead.
+   */
+  getLocalBranches?(params: { workspacePath: string }): Promise<GitLocalBranchListResult>;
   /** Verify the registered worktree's real directory on the target Host before reuse. */
   verifyWorktreeUsable(params: {
     workspacePath: string;
@@ -53,6 +59,13 @@ export type WorktreeCreationOutcome =
       issueCodes: readonly string[];
       /** Error text from a thrown request (logging only); null when the server rejected. */
       errorDetail: string | null;
+      /** Primary issue code of the rejection; null when the request threw or Git classified nothing. */
+      issueCode: string | null;
+      /**
+       * Raw technical detail (Git stderr, or the thrown request's error text) for the failure
+       * modal's expandable block. Memory-only: callers must not persist or log it.
+       */
+      rawDetail: string | null;
     };
 
 /**
@@ -141,6 +154,8 @@ export async function executeWorktreeCreation({
       }),
       issueCodes: [],
       errorDetail,
+      issueCode: null,
+      rawDetail: errorDetail,
     };
   }
 
@@ -181,6 +196,8 @@ export async function executeWorktreeCreation({
             }),
             issueCodes: [issue.code],
             errorDetail: null,
+            issueCode: issue.code,
+            rawDetail: issue.detail ?? null,
           };
         }
         await ensureWorktreeExclusionSafely(gitService, workspacePath, existing.path);
@@ -219,5 +236,7 @@ export async function executeWorktreeCreation({
         : formatMessage("commandCenter.worktree.error.unknown"),
     issueCodes: result.issues.map((entry) => entry.code),
     errorDetail: null,
+    issueCode: issue?.code ?? null,
+    rawDetail: issue?.detail ?? null,
   };
 }

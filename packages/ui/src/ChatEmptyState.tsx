@@ -751,6 +751,7 @@ export function ChatEmptyWorktreeTaskToggle({
         gitService: baseServices.gitService,
         workspaceKey,
         workspacePath,
+        ...(workspaceIdentity ? { workspaceIdentity } : {}),
         effectiveLocation,
         branchName: generateComposedBranchName(),
         ...(effectiveBaseBranch && hasBranchList ? { baseBranch: effectiveBaseBranch } : {}),

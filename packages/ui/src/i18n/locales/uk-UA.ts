@@ -4978,6 +4978,17 @@ const ukUA: Record<string, string> = {
     "Зареєстрований worktree для {branchName} у {path} відсутній або непридатний.",
   "worktreeSetup.reconcile.markerSyncUnavailable":
     "Налаштування завершилося в іншому каталозі worktree, і запис сесії не вдалося оновити",
+  "worktreeFailure.title": "Не вдалося створити worktree",
+  "worktreeFailure.savedNotRestored":
+    "Поточна чернетка не порожня, тому ваше повідомлення збережено в картці «Незаписане повідомлення збережено» нижче.",
+  "worktreeFailure.showDetails": "Показати деталі",
+  "worktreeFailure.hideDetails": "Сховати деталі",
+  "worktreeFailure.copyDetails": "Копіювати деталі",
+  "worktreeFailure.dismiss": "Закрити",
+  "worktreeFailure.retry": "Повторити",
+  "worktreeFailure.changeDestination": "Змінити гілку/каталог",
+  "worktreeFailure.toastTitle": "Не вдалося створити worktree",
+  "worktreeFailure.toastOpen": "Відкрити",
   "git.branchSwitcher.appliesOnSend": "Застосується під час надсилання першого повідомлення",
   "git.branchSwitcher.worktreeIntentHint":
     "Гілку для цього завдання визначає налаштування worktree",

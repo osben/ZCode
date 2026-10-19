@@ -81,4 +81,41 @@ describe("executeWorktreeCreation failure reason", () => {
       "A repository without commits has no branches yet",
     );
   });
+
+  it("carries the primary issue code and raw detail for the failure modal", async () => {
+    const outcome = await rejectWith({
+      code: "target-branch-not-found",
+      message: "Base branch was not found.",
+      detail: "fatal: invalid reference: main",
+    });
+    if (outcome.kind !== "failed") throw new Error("expected a failed outcome");
+    expect(outcome.issueCode).toBe("target-branch-not-found");
+    expect(outcome.rawDetail).toBe("fatal: invalid reference: main");
+  });
+
+  it("carries the thrown request text as raw detail with no issue code", async () => {
+    const gitService = {
+      createWorktree: vi.fn(async () => {
+        throw new Error("rpc unavailable");
+      }),
+      listWorktrees: vi.fn(),
+      verifyWorktreeUsable: vi.fn(),
+      ensureWorktreeExclusion: vi.fn(),
+    } as unknown as WorktreeCreationGitService;
+    const outcome = await executeWorktreeCreation({
+      gitService,
+      workspacePath: WORKSPACE,
+      branchName: BRANCH,
+      targetPath: TARGET,
+      formatMessage: (id, values) =>
+        Object.entries(values ?? {}).reduce(
+          (text, [key, value]) => text.replace(`{${key}}`, value),
+          enUS[id] ?? id,
+        ),
+    });
+    if (outcome.kind !== "failed") throw new Error("expected a failed outcome");
+    expect(outcome.issueCode).toBeNull();
+    expect(outcome.rawDetail).toBe("rpc unavailable");
+    expect(outcome.errorDetail).toBe("rpc unavailable");
+  });
 });

@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { logger } from "@/logger.js";
 import {
   moveComposerAttachmentScopeItems,
@@ -8,6 +9,7 @@ import { Button } from "@/components/ui/button.js";
 import { toast } from "@/components/ui/toast.js";
 import { getErrorMessage } from "@/lib/errorMessage.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { rehydrateComposerRecoveryAttachments } from "@/v4/composer/composerRecoveryAttachments.js";
 import {
   clearV4ComposerDraft,
   readV4WorktreeRecoveryDrafts,
@@ -46,6 +48,18 @@ export function ComposerWorktreeRecovery({
   const recoveryFiles = useComposerAttachmentUploadStore(
     (state) => state.scopes[`${workspaceIdentity?.trim() || workspacePath}\0${recoveryScope}`],
   );
+  // Clipboard-text attachments that persisted their path metadata re-hydrate from the temporary
+  // file instead of demanding a reattach (spec §Return to draft on failure); idempotent, so it is
+  // safe to run on every record change.
+  const manifest = draft?.recoveryAttachments ?? [];
+  useEffect(() => {
+    if (!draft || !recoveryScope) return;
+    rehydrateComposerRecoveryAttachments({
+      workspaceKey: workspaceIdentity?.trim() || workspacePath,
+      recoveryScope,
+      manifest,
+    });
+  }, [draft, manifest, recoveryScope, workspaceIdentity, workspacePath]);
   if (!draft) return null;
   const missing = (draft.recoveryAttachments ?? []).filter(
     (file) =>

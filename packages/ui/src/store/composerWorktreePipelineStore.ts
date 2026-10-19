@@ -22,8 +22,12 @@ export interface ComposerWorktreeCreationParams {
   submissionId?: string;
   attemptId?: string;
   workspacePath: string;
+  /** Workspace identity of the owning workspace (identity key rule: identity || path). */
+  workspaceIdentity?: string;
   branchName: string;
   targetPath: string;
+  /** Present when the effective location was custom; prefill for recovery intents. */
+  customLocationPath?: string;
   /** Resolved base branch; absent when the branch list had not loaded (server defaults to HEAD). */
   baseBranch?: string;
   /** True when the branch list was absent/failed and the base defaulted to HEAD (row note). */
@@ -49,6 +53,17 @@ export interface ComposerWorktreePipelineEntry {
   /** Present on failed. */
   failureMessage?: string;
   /**
+   * Primary issue code of the failure (Git mutation issue code), for the return-to-draft modal's
+   * error class. In-memory only: the store is never persisted and the code is not logged.
+   */
+  failureIssueCode?: string;
+  /**
+   * Raw Git detail of the failure for the modal's expandable block. Memory-only by contract
+   * (specs/composer-worktree-setup-steps.md §Return to draft on failure): never persisted, never
+   * logged; after a reload only `failureMessage` remains.
+   */
+  failureDetail?: string;
+  /**
    * The user explicitly withdrew (unchecked the box) while the git call was in flight.
    * The call is not cancellable: it runs to completion, the directory is left on disk (orphan note),
    * and the queued send was dropped. An orphaned ready entry is reusable by a later intent.
@@ -61,6 +76,13 @@ export interface ComposerWorktreePipelineEntry {
    * preparation seed carrying one of them is stale and must not roll the entry back.
    */
   supersededAttemptIds?: string[];
+  /**
+   * The live renderer took this failure over for the return-to-draft flow
+   * (specs/composer-worktree-setup-steps.md §Return to draft on failure): the hand-off orchestrator
+   * owns the Host writes, the recovery transfer, and the queued continuation for this attempt, so
+   * the composer's queued-send effect must not run its own failure handling for it.
+   */
+  returningToDraft?: boolean;
 }
 
 interface ComposerWorktreePipelineState {
@@ -82,7 +104,20 @@ interface ComposerWorktreePipelineState {
     failureMessage: string,
     sessionId?: string,
     attemptId?: string,
+    /** Failure classification carried to the return-to-draft modal (memory only). */
+    failure?: { issueCode?: string | null; rawDetail?: string | null },
   ) => void;
+  /**
+   * Mark (or unmark) a failed entry as taken over by the return-to-draft flow. Returns whether the
+   * patch applied; a rejected patch means the entry moved on (stale attempt or terminal) and the
+   * hand-off must not proceed.
+   */
+  setReturningToDraft: (
+    workspaceKey: string,
+    sessionId: string | undefined,
+    attemptId: string | undefined,
+    returningToDraft: boolean,
+  ) => boolean;
   /** Terminal success: the queued/re-committed send was accepted into a session. */
   consume: (workspaceKey: string, sessionId?: string, attemptId?: string) => void;
   discard: (workspaceKey: string, sessionId?: string, attemptId?: string) => void;
@@ -243,10 +278,24 @@ export const useComposerWorktreePipelineStore = create<ComposerWorktreePipelineS
         failureMessage: undefined,
       }),
     ),
-  markFailed: (workspaceKey, failureMessage, sessionId, attemptId) =>
+  markFailed: (workspaceKey, failureMessage, sessionId, attemptId, failure) =>
     set((state) =>
-      patchEntry(state, workspaceKey, sessionId, attemptId, { status: "failed", failureMessage }),
+      patchEntry(state, workspaceKey, sessionId, attemptId, {
+        status: "failed",
+        failureMessage,
+        ...(failure?.issueCode ? { failureIssueCode: failure.issueCode } : {}),
+        ...(failure?.rawDetail ? { failureDetail: failure.rawDetail } : {}),
+      }),
     ),
+  setReturningToDraft: (workspaceKey, sessionId, attemptId, returningToDraft) => {
+    const state = useComposerWorktreePipelineStore.getState();
+    const next = patchEntry(state, workspaceKey, sessionId, attemptId, {
+      returningToDraft: returningToDraft || undefined,
+    });
+    if (next === state) return false;
+    useComposerWorktreePipelineStore.setState(next);
+    return true;
+  },
   markValidationFailed: (workspaceKey, failureMessage) =>
     set((state) => {
       const workspace = state.pipelineByWorkspaceKey[workspaceKey] ?? {

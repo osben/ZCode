@@ -11,7 +11,7 @@
  * branch graph dialog — while list selections write the draft intent instead of switching.
  * ask-codex review adopted: Task/Base labels, dirty-tree cues, HEAD-fallback disclosure.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GitRepositorySummary } from "@zcode/shared";
 import { resolveWorkspaceKey } from "@zcode/shared";
 import type { GitLocalBranchListResult } from "@zcode/shared";
@@ -45,6 +45,7 @@ import {
   selectComposerWorktreePipeline,
   useComposerWorktreePipelineStore,
 } from "@/store/composerWorktreePipelineStore.js";
+import { useWorktreeFailureReturnStore } from "@/store/worktreeFailureReturnStore.js";
 import {
   selectDraftBranchIntent,
   selectWorktreeIntentActive,
@@ -136,6 +137,21 @@ export function ComposerDestinationControl({
     setDefaultBaseRef(null);
     setAppWorktreesDir(null);
   }, [workspaceKey, workspacePath, resolution.remoteSessionId, baseServices.gitService]);
+
+  // "Change branch/folder" from the worktree failure modal requests this popover once; consumed
+  // exactly once per request so a remount after the modal does not re-open it (spec §Return to
+  // draft on failure).
+  const destinationOpenRequest = useWorktreeFailureReturnStore(
+    (state) => state.destinationOpenRequestByWorkspaceKey[workspaceKey],
+  );
+  const appliedDestinationOpenRef = useRef(0);
+  useEffect(() => {
+    if (!destinationOpenRequest) return;
+    if (appliedDestinationOpenRef.current >= destinationOpenRequest) return;
+    appliedDestinationOpenRef.current = destinationOpenRequest;
+    useWorktreeFailureReturnStore.getState().consumeDestinationOpenRequest(workspaceKey);
+    setOpen(true);
+  }, [destinationOpenRequest, workspaceKey]);
 
   // List selections remain draft intent. The create dialog keeps its immediate create-and-switch
   // action, but confirms before it mutates the shared checkout.
@@ -271,6 +287,7 @@ export function ComposerDestinationControl({
           gitService: baseServices.gitService,
           workspaceKey,
           workspacePath,
+          ...(workspaceIdentity ? { workspaceIdentity } : {}),
           effectiveLocation,
           branchName: computeWorktreeBranchName(),
           ...(resolvedBase ? { baseBranch: resolvedBase } : {}),
@@ -318,7 +335,10 @@ export function ComposerDestinationControl({
       return intl.formatMessage({ id: "destination.ready" }, { path: pipeline.worktreePath });
     }
     if (pipeline?.status === "failed") {
-      return intl.formatMessage({ id: "destination.failedRow" });
+      // Queue-time validation and preflight failures carry their cause in the store message
+      // (spec §Return to draft on failure: block Send and explain it); the generic row is the
+      // fallback when no message survived.
+      return pipeline.failureMessage?.trim() || intl.formatMessage({ id: "destination.failedRow" });
     }
     return "";
   }
@@ -429,7 +449,12 @@ export function ComposerDestinationControl({
                 </button>
               </div>
               {worktreeSub ? (
-                <p className="px-2 pb-1 text-ui-xs text-foreground-subtle">{worktreeSub}</p>
+                <p
+                  data-testid="destination-worktree-status"
+                  className="px-2 pb-1 text-ui-xs text-foreground-subtle"
+                >
+                  {worktreeSub}
+                </p>
               ) : null}
               <button
                 type="button"

@@ -242,6 +242,12 @@ export function ConversationWorktreeSetupSteps({
     // resurrect the spinner after the local lifecycle already finished.
     return null;
   }
+  if (entry.status === "failed" && entry.returningToDraft) {
+    // The return-to-draft hand-off owns this failure and is about to settle the session and
+    // navigate back to the restored draft (spec §Return to draft on failure); the transient row
+    // must not offer Retry/Discard actions that would race the hand-off.
+    return null;
+  }
 
   return (
     <div data-worktree-setup-steps="true" className={setupCardClassName}>
