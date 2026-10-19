@@ -1,9 +1,9 @@
-import { createHash } from "node:crypto";
 import { lstat, readFile, readlink, realpath, stat } from "node:fs/promises";
 import {
   atomicWriteFile,
   getClaudeUserInstructionsFilePath,
   getUserZcodeAgentsFilePath,
+  hashBytes,
   withFileLock,
 } from "@zcode/shared/node";
 import { createServiceLogger } from "../logger/serviceLogger.js";
@@ -53,10 +53,6 @@ function getErrorCode(error: unknown): string | undefined {
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function hashBytes(bytes: Uint8Array): string {
-  return createHash("sha256").update(bytes).digest("hex");
 }
 
 /**

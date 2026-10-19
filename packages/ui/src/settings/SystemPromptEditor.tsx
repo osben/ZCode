@@ -1,13 +1,12 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert.js";
 import { Button } from "@/components/ui/button.js";
 import { SettingsFormActions } from "@/settings/SettingsFormActions.js";
 import { SettingsFormTextarea } from "@/settings/SettingsFormTextarea.js";
+import { DiffLinesPre } from "@/settings/DiffLinesPre.js";
 import type { SystemPromptOverridesView } from "@/hooks/useSystemPromptOverrides.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import { cn } from "@/components/lib/utils.js";
 import {
-  normalizeSystemPromptText,
   TID_SETTINGS_SYSTEM_PROMPT_DIFF,
   TID_SETTINGS_SYSTEM_PROMPT_DIFF_MODE,
   TID_SETTINGS_SYSTEM_PROMPT_DIFF_TOO_LARGE,
@@ -28,6 +27,7 @@ import {
   validateSystemPromptDraft,
   type EditableSystemPromptSection,
   type SystemPromptDraftWarning,
+  type SystemPromptIntl,
 } from "@/settings/systemPromptEditorModel.js";
 import { useConfirmDialogStore } from "@/store/confirmDialogStore.js";
 
@@ -56,6 +56,18 @@ export function SystemPromptEditor({
   const containerRef = useRef<HTMLDivElement>(null);
   const [diffMode, setDiffMode] = useState<DiffMode>("saved");
   const key = section.key;
+  const editor = view.editor;
+  // The diff follows the draft a moment later, so typing never waits on the LCS table.
+  const deferredDraft = useDeferredValue(editor?.draft ?? "");
+  const baseline = editor?.baseline ?? "";
+  const diff = useMemo(
+    () =>
+      // Only the selected comparison is computed; the LCS table is the expensive part.
+      diffMode === "saved"
+        ? diffSystemPromptText(baseline, deferredDraft)
+        : diffSystemPromptText(builtInDefault, deferredDraft),
+    [baseline, builtInDefault, deferredDraft, diffMode],
+  );
 
   useEffect(() => {
     const container = containerRef.current;
@@ -64,7 +76,6 @@ export function SystemPromptEditor({
     container.scrollIntoView?.({ block: "nearest" });
   }, []);
 
-  const editor = view.editor;
   if (!editor) return null;
   const busy = editor.saving;
   const sectionTitle = intl.formatMessage({ id: SYSTEM_PROMPT_SECTION_TITLE_IDS[key] });
@@ -105,18 +116,13 @@ export function SystemPromptEditor({
 
   const warnings = validateSystemPromptDraft(key, editor.draft);
   const size = describeSystemPromptSize(editor.draft);
-  // Only the selected comparison is computed; the LCS table is the expensive part.
-  const diff =
-    diffMode === "saved"
-      ? diffSystemPromptText(editor.baseline, editor.draft)
-      : diffSystemPromptText(builtInDefault, editor.draft);
-  const saveBlock = view.editorDiskChanged
-    ? "disk-changed"
-    : resolveSystemPromptSaveBlockReason({
-        baseline: editor.baseline,
-        draft: editor.draft,
-        saving: editor.saving,
-      });
+  // One save decision per render: the reason line and the Save and Overwrite buttons share it.
+  const writeBlock = resolveSystemPromptSaveBlockReason({
+    baseline: editor.baseline,
+    draft: editor.draft,
+    saving: editor.saving,
+  });
+  const saveBlock = view.editorDiskChanged ? "disk-changed" : writeBlock;
   const saveReasonId =
     saveBlock === "empty"
       ? "settings.systemPrompt.emptyHint"
@@ -125,8 +131,6 @@ export function SystemPromptEditor({
         : saveBlock === "disk-changed"
           ? "settings.systemPrompt.saveReason.diskChanged"
           : null;
-  const canOverwrite =
-    view.editorDirty && normalizeSystemPromptText(editor.draft).length > 0 && !busy;
 
   return (
     <div
@@ -135,34 +139,13 @@ export function SystemPromptEditor({
       data-section-editor={key}
     >
       {view.editorDiskChanged ? (
-        <Alert variant="warning" data-testid={TID_SETTINGS_SYSTEM_PROMPT_DISK_CHANGED}>
-          <AlertDescription className="space-y-2">
-            <div className="font-medium">
-              {intl.formatMessage({ id: "settings.systemPrompt.diskChanged.title" })}
-            </div>
-            <p>{intl.formatMessage({ id: "settings.systemPrompt.diskChanged.description" })}</p>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy}
-                data-testid={TID_SETTINGS_SYSTEM_PROMPT_DISK_RELOAD}
-                onClick={() => view.reloadEditor(effectiveContent)}
-              >
-                {intl.formatMessage({ id: "settings.systemPrompt.diskChanged.reload" })}
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!canOverwrite}
-                data-testid={TID_SETTINGS_SYSTEM_PROMPT_DISK_OVERWRITE}
-                onClick={() => void view.saveEditor({ overwrite: true })}
-              >
-                {intl.formatMessage({ id: "settings.systemPrompt.diskChanged.overwrite" })}
-              </Button>
-            </div>
-          </AlertDescription>
-        </Alert>
+        <DiskChangedAlert
+          view={view}
+          section={section}
+          effectiveContent={effectiveContent}
+          canOverwrite={writeBlock === null}
+          busy={busy}
+        />
       ) : null}
       <label className="block space-y-1.5">
         <span className="text-ui-sm font-medium text-foreground">
@@ -180,23 +163,12 @@ export function SystemPromptEditor({
           data-testid={testId(TID_SETTINGS_SYSTEM_PROMPT_EDITOR, key)}
         />
       </label>
-      <p
-        className="text-ui-xs text-foreground-subtle tabular-nums"
-        aria-live="polite"
-        data-testid={`settings-system-prompt-character-count-${key}`}
-      >
+      <p className="text-ui-xs text-foreground-subtle tabular-nums" aria-live="polite">
         {intl.formatMessage(
           { id: "settings.systemPrompt.sizeLine" },
           { characters: size.characters, tokens: size.tokens },
         )}
       </p>
-      {editor.draft.trim().length === 0 ? (
-        <Alert variant="warning">
-          <AlertDescription>
-            {intl.formatMessage({ id: "settings.systemPrompt.emptyHint" })}
-          </AlertDescription>
-        </Alert>
-      ) : null}
       {warnings.length > 0 ? (
         <Alert variant="warning" data-testid={TID_SETTINGS_SYSTEM_PROMPT_WARNINGS}>
           <AlertDescription>
@@ -243,23 +215,10 @@ export function SystemPromptEditor({
             )}
           </p>
         ) : diff.kind === "changed" ? (
-          <pre
-            className="max-h-64 overflow-auto rounded-lg border border-border bg-surface-muted p-2 font-mono text-ui-xs leading-5"
+          <DiffLinesPre
+            lines={diff.lines}
             data-testid={testId(TID_SETTINGS_SYSTEM_PROMPT_DIFF, key)}
-          >
-            {diff.lines.map((line, index) => (
-              <div
-                key={index}
-                className={cn(
-                  line.type === "add" && "text-success",
-                  line.type === "remove" && "text-danger line-through",
-                )}
-              >
-                {line.type === "add" ? "+ " : line.type === "remove" ? "- " : "  "}
-                {line.text}
-              </div>
-            ))}
-          </pre>
+          />
         ) : (
           <p className="text-ui-xs text-foreground-subtle">
             {intl.formatMessage({ id: "settings.systemPrompt.diffNone" })}
@@ -294,9 +253,58 @@ export function SystemPromptEditor({
   );
 }
 
-type Intl = ReturnType<typeof useZCodeIntl>["intl"];
+/**
+ * Changed-on-disk state. The disk revision is captured when this card appears, which is the
+ * revision the user is reviewing; Overwrite checks against it, not against a revision read at click time.
+ */
+function DiskChangedAlert({
+  view,
+  section,
+  effectiveContent,
+  canOverwrite,
+  busy,
+}: {
+  view: SystemPromptOverridesView;
+  section: EditableSystemPromptSection;
+  effectiveContent: string;
+  canOverwrite: boolean;
+  busy: boolean;
+}) {
+  const { intl } = useZCodeIntl();
+  const [reviewedRevision] = useState(section.revision);
+  return (
+    <Alert variant="warning" data-testid={TID_SETTINGS_SYSTEM_PROMPT_DISK_CHANGED}>
+      <AlertDescription className="space-y-2">
+        <div className="font-medium">
+          {intl.formatMessage({ id: "settings.systemPrompt.diskChanged.title" })}
+        </div>
+        <p>{intl.formatMessage({ id: "settings.systemPrompt.diskChanged.description" })}</p>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy}
+            data-testid={TID_SETTINGS_SYSTEM_PROMPT_DISK_RELOAD}
+            onClick={() => view.reloadEditor(effectiveContent)}
+          >
+            {intl.formatMessage({ id: "settings.systemPrompt.diskChanged.reload" })}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!canOverwrite}
+            data-testid={TID_SETTINGS_SYSTEM_PROMPT_DISK_OVERWRITE}
+            onClick={() => void view.saveEditor({ overwrite: { reviewedRevision } })}
+          >
+            {intl.formatMessage({ id: "settings.systemPrompt.diskChanged.overwrite" })}
+          </Button>
+        </div>
+      </AlertDescription>
+    </Alert>
+  );
+}
 
-function formatWarning(intl: Intl, warning: SystemPromptDraftWarning): string {
+function formatWarning(intl: SystemPromptIntl, warning: SystemPromptDraftWarning): string {
   switch (warning.code) {
     case "unknown-placeholder":
       return intl.formatMessage(

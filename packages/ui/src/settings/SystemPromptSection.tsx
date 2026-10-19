@@ -1,10 +1,19 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { Monitor, Server } from "lucide-react";
 import {
   TID_SETTINGS_SYSTEM_PROMPT_DIRTY_NOTE,
   TID_SETTINGS_SYSTEM_PROMPT_RESET_ALL,
   TID_SETTINGS_SYSTEM_PROMPT_RESET_ALL_CONFIRM,
   TID_SETTINGS_SYSTEM_PROMPT_SECTION,
+  type SystemPromptOverrideKey,
 } from "@zcode/shared";
 import { Alert, AlertDescription } from "@/components/ui/alert.js";
 import { Button } from "@/components/ui/button.js";
@@ -22,15 +31,16 @@ import {
   type UserInstructionsHostTarget,
 } from "@/settings/userInstructionsEditorModel.js";
 import {
-  buildAssembledSystemPromptPreview,
+  buildAssembledSystemPromptText,
   describeSystemPromptSize,
-  resolveEffectiveSystemPrompt,
   resolveSystemPromptDefault,
   SYSTEM_PROMPT_SECTION_TITLE_IDS,
   SYSTEM_PROMPT_SECTION_VARIABLE_HINTS,
   isSystemPromptSectionOfferedOnHost,
   type EditableSystemPromptSection,
+  type SystemPromptIntl,
 } from "@/settings/systemPromptEditorModel.js";
+import type { SystemPromptRowData } from "@/settings/SystemPromptRow.js";
 import { useConfirmDialogStore } from "@/store/confirmDialogStore.js";
 
 interface SystemPromptSectionProps {
@@ -38,8 +48,6 @@ interface SystemPromptSectionProps {
   activeTarget: UserInstructionsHostTarget;
   onDirtyChange: (dirty: boolean) => void;
 }
-
-type Intl = ReturnType<typeof useZCodeIntl>["intl"];
 
 export function SystemPromptSection({
   isDesktop,
@@ -72,12 +80,6 @@ function SectionDescription() {
   );
 }
 
-interface PendingRestore {
-  key: EditableSystemPromptSection["key"];
-  /** Revision captured when Restore was pressed; the delete is checked against it. */
-  revision: string | null | undefined;
-}
-
 function DesktopSystemPromptSection({
   activeTarget,
   onDirtyChange,
@@ -89,12 +91,15 @@ function DesktopSystemPromptSection({
   const platform = usePlatform();
   const [pinnedTarget, setPinnedTarget] = useState(activeTarget);
   const view = useSystemPromptOverrides(pinnedTarget);
+  const { getOverridesDirectory, restoreDefault, resetAllCustomized } = view;
   const outputStyles = useOutputStyles(pinnedTarget);
   const activeHostKey = getUserInstructionsHostKey(activeTarget);
   const pinnedHostKey = view.hostKey;
   const declinedHostKeyRef = useRef<string | null>(null);
   const activeTargetRef = useRef(activeTarget);
-  const [pendingRestore, setPendingRestore] = useState<PendingRestore | null>(null);
+  // Key of the row whose Restore confirmation is open. The reviewed revision is captured by that
+  // confirmation itself, when it opens.
+  const [pendingRestoreKey, setPendingRestoreKey] = useState<SystemPromptOverrideKey | null>(null);
   const [pendingReset, setPendingReset] = useState<readonly ResetEntry[] | null>(null);
   useLayoutEffect(() => {
     activeTargetRef.current = activeTarget;
@@ -138,7 +143,7 @@ function DesktopSystemPromptSection({
   // Restore and reset confirmations capture revisions of the previous pinned host, so drop them
   // when the pinned host changes.
   useEffect(() => {
-    setPendingRestore(null);
+    setPendingRestoreKey(null);
     setPendingReset(null);
   }, [pinnedHostKey]);
 
@@ -159,31 +164,38 @@ function DesktopSystemPromptSection({
     : undefined;
   const hostLabel = formatHostLabel(pinnedTarget, intl);
 
-  const rows = view.sections
-    .filter((section) => isSystemPromptSectionOfferedOnHost(section.key, view.isRemote))
-    .map((section) => {
-      const defaultContent = resolveSystemPromptDefault(section, hasActiveOutputStyle);
-      const effectiveContent = resolveEffectiveSystemPrompt(section, defaultContent);
-      return {
-        section,
-        defaultContent,
-        effectiveContent,
-        size: describeSystemPromptSize(effectiveContent),
-        variableHint: SYSTEM_PROMPT_SECTION_VARIABLE_HINTS[section.key],
-      };
-    });
+  // Rows, sizes and the assembled text depend on the listing and the output style only, so a
+  // keystroke in the draft does not recompute them.
+  const { sectionViews, overriddenEntries, assembledText } = useMemo(() => {
+    const built: SystemPromptRowData[] = view.sections
+      .filter((section) => isSystemPromptSectionOfferedOnHost(section.key, view.isRemote))
+      .map((section) => {
+        const defaultContent = resolveSystemPromptDefault(section, hasActiveOutputStyle);
+        const effectiveContent = section.overrideContent ?? defaultContent;
+        return {
+          section,
+          defaultContent,
+          effectiveContent,
+          size: describeSystemPromptSize(effectiveContent),
+          variableHint: SYSTEM_PROMPT_SECTION_VARIABLE_HINTS[section.key],
+        };
+      });
+    return {
+      sectionViews: built,
+      overriddenEntries: built
+        .filter((row) => row.section.isOverridden)
+        .map(
+          (row): ResetEntry => ({ key: row.section.key, expectedRevision: row.section.revision }),
+        ),
+      assembledText: buildAssembledSystemPromptText(
+        new Map(built.map((row) => [row.section.key, row.effectiveContent] as const)),
+      ),
+    };
+  }, [view.sections, view.isRemote, hasActiveOutputStyle]);
 
-  const overriddenEntries: ResetEntry[] = rows
-    .filter((row) => row.section.isOverridden)
-    .map((row) => ({ key: row.section.key, expectedRevision: row.section.revision }));
-
-  const assembled = buildAssembledSystemPromptPreview(
-    new Map(rows.map((row) => [row.section.key, row.effectiveContent] as const)),
-  );
-
-  const openFolder = async () => {
+  const openFolder = useCallback(async () => {
     try {
-      const directory = await view.getOverridesDirectory();
+      const directory = await getOverridesDirectory();
       if ((await platform.openInFileManager(directory)).success) return;
       // The overrides folder is created on the first save, so it can be missing; fall back to its
       // parent (the ZCode data folder) so the action still lands the user in the right place.
@@ -193,10 +205,26 @@ function DesktopSystemPromptSection({
       // Reported through the toast below; the failure details are not shown to the user.
     }
     toast(intl.formatMessage({ id: "appHeader.openInFileManagerFailed" }));
-  };
+  }, [getOverridesDirectory, intl, platform]);
 
   const sectionTitle = (key: EditableSystemPromptSection["key"]) =>
     intl.formatMessage({ id: SYSTEM_PROMPT_SECTION_TITLE_IDS[key] });
+
+  // Stable callbacks let the memoized rows skip re-rendering while only the draft changes.
+  const handleToggleRestore = useCallback(
+    (section: EditableSystemPromptSection) =>
+      setPendingRestoreKey((current) => (current === section.key ? null : section.key)),
+    [],
+  );
+  const handleCancelRestore = useCallback(() => setPendingRestoreKey(null), []);
+  const handleConfirmRestore = useCallback(
+    (key: SystemPromptOverrideKey, reviewedRevision: string | null | undefined) => {
+      setPendingRestoreKey(null);
+      void restoreDefault(key, reviewedRevision);
+    },
+    [restoreDefault],
+  );
+  const handleOpenFolder = useCallback(() => void openFolder(), [openFolder]);
 
   return (
     <div className="space-y-3" data-testid={TID_SETTINGS_SYSTEM_PROMPT_SECTION}>
@@ -206,7 +234,7 @@ function DesktopSystemPromptSection({
           <AlertDescription>
             {intl.formatMessage(
               { id: "settings.systemPrompt.pinnedHostNotice" },
-              { host: formatHostLabel(pinnedTarget, intl) },
+              { host: hostLabel },
             )}
           </AlertDescription>
         </Alert>
@@ -297,7 +325,7 @@ function DesktopSystemPromptSection({
                   onClick={() => {
                     const entries = pendingReset;
                     setPendingReset(null);
-                    void view.resetAllCustomized(entries);
+                    void resetAllCustomized(entries);
                   }}
                 >
                   {intl.formatMessage({ id: "settings.systemPrompt.resetAll.confirm" })}
@@ -309,7 +337,7 @@ function DesktopSystemPromptSection({
             </div>
           ) : null}
           <SettingsGroupCard>
-            {rows.map((row, index) => {
+            {sectionViews.map((row, index) => {
               const isIdentity = row.section.key === "identity-intro";
               const identityWaiting =
                 isIdentity && !row.section.isOverridden && !identityBaselineReady;
@@ -325,31 +353,16 @@ function DesktopSystemPromptSection({
                   }
                   hostLabel={hostLabel}
                   draftBlockReason={draftBlockReason}
-                  restoring={pendingRestore?.key === row.section.key}
-                  onToggleRestore={(section) =>
-                    setPendingRestore(
-                      pendingRestore?.key === section.key
-                        ? null
-                        : { key: section.key, revision: section.revision },
-                    )
-                  }
-                  onCancelRestore={() => setPendingRestore(null)}
-                  onConfirmRestore={(key, revision) => {
-                    setPendingRestore(null);
-                    void view.restoreDefault(key, revision);
-                  }}
-                  onOpenFolder={() => void openFolder()}
+                  restoring={pendingRestoreKey === row.section.key}
+                  onToggleRestore={handleToggleRestore}
+                  onCancelRestore={handleCancelRestore}
+                  onConfirmRestore={handleConfirmRestore}
+                  onOpenFolder={handleOpenFolder}
                 />
               );
             })}
           </SettingsGroupCard>
-          {rows.length > 0 ? (
-            <SystemPromptAssembledPreview
-              text={assembled.text}
-              tokens={assembled.tokens}
-              characters={assembled.text.length}
-            />
-          ) : null}
+          {sectionViews.length > 0 ? <SystemPromptAssembledPreview text={assembledText} /> : null}
         </>
       )}
     </div>
@@ -364,7 +377,7 @@ function StatusCard({ children }: { children: ReactNode }) {
   );
 }
 
-function formatHostLabel(target: UserInstructionsHostTarget, intl: Intl): string {
+function formatHostLabel(target: UserInstructionsHostTarget, intl: SystemPromptIntl): string {
   if (getUserInstructionsHostKey(target) === "local") {
     return intl.formatMessage({ id: "settings.systemPrompt.host.local" });
   }

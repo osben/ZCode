@@ -12,9 +12,13 @@ import type { SystemPromptSection } from "@zcode/services";
 import { estimateStreamingTokens } from "@/v4/conversationStreamingThroughput.js";
 import {
   diffOutputStylePrompt,
-  MAX_DIFF_CELLS,
+  hasDiffChanges,
   type DiffLine,
 } from "@/settings/outputStylesEditorModel.js";
+import type { useZCodeIntl } from "@/i18n/IntlProvider.js";
+
+/** Intl handle type shared by the System Prompts settings components. */
+export type SystemPromptIntl = ReturnType<typeof useZCodeIntl>["intl"];
 
 export interface EditableSystemPromptSection extends SystemPromptSection {
   key: SystemPromptOverrideKey;
@@ -85,6 +89,54 @@ export function isSystemPromptSectionOfferedOnHost(
   return !isRemoteHost || !LOCAL_ONLY_SYSTEM_PROMPT_KEYS.has(key);
 }
 
+export interface SystemPromptEditorState {
+  key: SystemPromptOverrideKey;
+  /** Effective text when the editor opened (or was last rebased onto disk). "Changes vs saved" compares to it. */
+  baseline: string;
+  draft: string;
+  saving: boolean;
+  /**
+   * Section revision the draft was based on. `undefined` on hosts without revisions, which turns
+   * conflict checking off for this editor.
+   */
+  baseRevision: string | null | undefined;
+}
+
+/** A fresh editor on `effectiveContent`; the revision is the one the draft is based on. */
+export function makeEditorState(
+  key: SystemPromptOverrideKey,
+  effectiveContent: string,
+  baseRevision: string | null | undefined,
+): SystemPromptEditorState {
+  return { key, baseline: effectiveContent, draft: effectiveContent, saving: false, baseRevision };
+}
+
+export function revisionOf(
+  sections: readonly EditableSystemPromptSection[],
+  key: SystemPromptOverrideKey,
+): string | null | undefined {
+  return sections.find((candidate) => candidate.key === key)?.revision;
+}
+
+/** Listings compare by the fields the UI renders and the save path reads. */
+function sameSectionState(a: EditableSystemPromptSection, b: EditableSystemPromptSection): boolean {
+  return (
+    a.key === b.key &&
+    a.revision === b.revision &&
+    a.overrideContent === b.overrideContent &&
+    a.defaultContent === b.defaultContent &&
+    a.isOverridden === b.isOverridden &&
+    a.filePath === b.filePath
+  );
+}
+
+export function sameSections(
+  a: readonly EditableSystemPromptSection[],
+  b: readonly EditableSystemPromptSection[],
+): boolean {
+  return a.length === b.length && a.every((section, index) => sameSectionState(section, b[index]!));
+}
+
 export function orderedEditableSystemPromptSections(
   sections: readonly SystemPromptSection[],
 ): EditableSystemPromptSection[] {
@@ -101,13 +153,6 @@ export function resolveSystemPromptDefault(
   return section.key === "identity-intro" && hasActiveOutputStyle
     ? OUTPUT_STYLE_IDENTITY_INTRO_PROMPT
     : section.defaultContent;
-}
-
-export function resolveEffectiveSystemPrompt(
-  section: EditableSystemPromptSection,
-  effectiveDefault: string,
-): string {
-  return section.overrideContent ?? effectiveDefault;
 }
 
 /** Dirty means the normalized text differs, so trailing whitespace alone is not a change. */
@@ -144,9 +189,7 @@ export function resolveSystemPromptSaveBlockReason(params: {
 const systemPromptGraphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 export function countSystemPromptCharacters(text: string): number {
-  let count = 0;
-  for (const _segment of systemPromptGraphemeSegmenter.segment(text)) count += 1;
-  return count;
+  return [...systemPromptGraphemeSegmenter.segment(text)].length;
 }
 
 /** Size line for a block: grapheme characters plus the approximate token estimate. */
@@ -192,31 +235,24 @@ export type SystemPromptDiff =
   | { kind: "changed"; lines: DiffLine[] }
   | { kind: "too-large"; baselineLines: number; draftLines: number };
 
+function countLines(text: string): number {
+  return text.length === 0 ? 0 : text.split("\n").length;
+}
+
 /**
- * Diff for the editor. Identical text is `same`. When the LCS table would exceed the cell budget
+ * Diff for the editor. Text with no changed line is `same`. When the diff exceeds the cell budget
  * the result is `too-large` with the line counts, so the UI can say so instead of showing nothing.
  */
 export function diffSystemPromptText(baseline: string, draft: string): SystemPromptDiff {
-  if (baseline === draft) return { kind: "same" };
-  const baselineLines = baseline.length === 0 ? 0 : baseline.split("\n").length;
-  const draftLines = draft.length === 0 ? 0 : draft.split("\n").length;
-  if ((baselineLines + 1) * (draftLines + 1) > MAX_DIFF_CELLS) {
-    return { kind: "too-large", baselineLines, draftLines };
-  }
   const lines = diffOutputStylePrompt(baseline, draft);
-  return lines.some((line) => line.type !== "same") ? { kind: "changed", lines } : { kind: "same" };
-}
-
-export interface AssembledSystemPromptBlock {
-  key: SystemPromptOverrideKey;
-  text: string;
-  tokens: number;
-}
-
-export interface AssembledSystemPromptPreview {
-  blocks: AssembledSystemPromptBlock[];
-  text: string;
-  tokens: number;
+  if (lines === null) {
+    return {
+      kind: "too-large",
+      baselineLines: countLines(baseline),
+      draftLines: countLines(draft),
+    };
+  }
+  return hasDiffChanges(lines) ? { kind: "changed", lines } : { kind: "same" };
 }
 
 /**
@@ -224,13 +260,11 @@ export interface AssembledSystemPromptPreview {
  * joined by one blank line. Environment, memory index, tools and other runtime parts are not
  * included, so the caller must label the result as approximate.
  */
-export function buildAssembledSystemPromptPreview(
+export function buildAssembledSystemPromptText(
   effectiveTexts: ReadonlyMap<SystemPromptOverrideKey, string>,
-): AssembledSystemPromptPreview {
-  const blocks = SYSTEM_PROMPT_MAIN_PROMPT_ORDER.flatMap((key) => {
+): string {
+  return SYSTEM_PROMPT_MAIN_PROMPT_ORDER.flatMap((key) => {
     const text = effectiveTexts.get(key);
-    return text === undefined ? [] : [{ key, text, tokens: estimateStreamingTokens(text) }];
-  });
-  const text = blocks.map((block) => block.text).join("\n\n");
-  return { blocks, text, tokens: estimateStreamingTokens(text) };
+    return text === undefined ? [] : [text];
+  }).join("\n\n");
 }

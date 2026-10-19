@@ -33,6 +33,7 @@ Make the existing local desktop dictation flow easier to understand and avoid do
 - If an older local Host reports `Method not found: setIdleUnloadMinutes`, continue dictation using that Host's default unload delay. Do not treat this one missing preference method as a transcription failure.
 - Other errors while applying the preference remain fatal and keep the existing transcription error handling.
 - The Settings save path for the unload delay uses the same `applyIdleUnloadPreference` helper as recording and warm-up. The setting is persisted first; an older Host therefore shows no "save failed" toast (VD-COMPAT-01).
+- `applyIdleUnloadPreference` skips the RPC when the last applied value for the same Host service object is unchanged. Known gap: the Host keeps the delay in memory only and does not read it at startup, so a Host that restarts behind the same service object keeps its default until the value changes. Re-applying on Host restart needs a Host-side signal; it is not part of this change.
 - Older Hosts without `getPostProcessAvailability` or `warmUp` keep their existing handling: post-processing is unavailable with reason `unknown`; warm-up disables itself for the session.
 
 ```mermaid
@@ -379,7 +380,7 @@ Streaming facts, confirmed by running the models with `transcribe-cpp` 0.3.1 on 
 
 - `IVoiceDictationService.warmUp({ modelId })` is new. `VoiceTranscriber` still owns which model is loaded (`load()` already serializes through its queue); `VoiceDictationService` owns the idle timer and the stream-lease guard.
 - Service rules: no-op while a dictation stream is active (never unload or swap a model under a stream); otherwise load the model, then (re)start the idle-unload timer unless a stream or transcription started meanwhile. A model that is not downloaded rejects with the store's existing error.
-- UI: `useVoiceModelWarmUp` (renderer) listens for focus entering the composer scope, applies the idle-unload preference, and calls `warmUp`. It requests at most once per model per 30 seconds, never while a request is in flight, and tolerates `Method not found: warmUp` from an older Host by disabling itself for the session.
+- UI: `useVoiceModelWarmUp` (renderer) listens for focus entering the composer scope, applies the idle-unload preference, and calls `warmUp`. It requests at most once per model per 30 seconds for the whole renderer window (a module-scope throttle keyed by model id, shared by every composer), never while a request is in flight, and tolerates `Method not found: warmUp` from an older Host by disabling itself for the session.
 - Settings UI owns only the toggle; the service stays authoritative for what is loaded (the existing runtime state shows the `Loaded` badge).
 
 ```mermaid
@@ -425,7 +426,7 @@ sequenceDiagram
 ### Ownership and interfaces
 
 - The Host stays the only owner of what is loaded. `VoiceTranscriber.load()` now reports the `loading` phase and the model id through the existing runtime snapshot (it did not before: only transcription and streaming did, so a warm-up load was invisible).
-- The renderer derives the status with the pure `deriveVoiceModelStatus(runtimeState, selectedModelId)` and polls the existing `getRuntimeState()` once per second, only while Desktop dictation is enabled and the window is visible. There is no second source of truth and no UI timer.
+- The renderer derives the status with the pure `deriveVoiceModelStatus(runtimeState, selectedModelId)` and polls the existing `getRuntimeState()` once per second, only while Desktop dictation is enabled and the window is visible. There is no second source of truth. One poller per renderer window (`useVoiceDictationRuntimeState`) is shared by every mounted composer and settings view: it runs while at least one view subscribes, and it notifies views only when the snapshot fields change, so an unchanged poll does not re-render.
 - The snapshot is a poll, so the dot can lag the Host by up to one poll interval.
 
 ### Acceptance scenarios
@@ -591,7 +592,7 @@ These need a real Desktop runtime on macOS with Apple Intelligence available, an
 
 - Dictation is offered in every Desktop conversation composer that accepts a draft: the main conversation composer, the side conversation composer (the selection side chat opened from the side panel), and the draft composer of a new conversation. The microphone control, its toolbar cluster, the ghost preview, the model status dot and the warm-up on focus behave the same on each surface.
 - Web remote control keeps its own engine (Web Speech, see "Live recording feedback" and the Web remote rules). A side conversation shown in Web remote control is out of scope of this change: its composer keeps the current behavior until a follow-up aligns it with the main remote composer.
-- Only one dictation session may exist app-wide at a time. A session is any non-idle phase (`loading`, `recording`, `transcribing`, `processing`) of any composer's dictation.
+- Only one dictation session may exist per renderer window at a time. A session is any non-idle phase (`loading`, `recording`, `transcribing`, `processing`) of any composer's dictation in that window. Cross-window concurrency is a known gap: the microphone is OS-global, so Main or the Host would be the real owner. Two windows can each hold a session today; the lease is not moved out of the renderer in this change.
 - The dictation shortcut acts only on the composer whose scope contains the keyboard target. Two composers on screen never both start, stop or cancel from one keypress.
 - Starting dictation in a composer while another composer holds the session is refused explicitly: no microphone capture, no Host stream, and a short notice ("Dictation is already in use in another message box. Stop it there first."). The running session is not interrupted. The user stops it in its own composer first.
 - The transcript is inserted only into the composer that started the session, at that composer's caret.
@@ -606,7 +607,7 @@ These need a real Desktop runtime on macOS with Apple Intelligence available, an
 
 ### Ownership and interfaces
 
-- `useVoiceDictation` remains the sole owner of one composer's recording phase. A module-level dictation session lease (`packages/ui/src/lib/voiceDictationSessionLease.ts`) is the single owner of "which composer holds the session". The hook acquires the lease when its phase leaves `idle` and releases it when the phase returns to `idle`, on cancel, stop, failure, and unmount.
+- `useVoiceDictation` remains the sole owner of one composer's recording phase. A module-level dictation session lease (`packages/ui/src/lib/voiceDictationSessionLease.ts`) is the single owner of "which composer holds the session" within one renderer window. The hook acquires the lease when its phase leaves `idle` and releases it when the phase returns to `idle`, on cancel, stop, failure, and unmount.
 - `useVoiceDictationShortcut` keeps its scope check; no scope is shared between composers.
 - `ConversationComposer` owns insertion into its own editor; the transcript callback of each composer is captured per composer.
 - No new setting, persisted state, or Host method is introduced.
@@ -646,7 +647,7 @@ sequenceDiagram
 
 ### Verification plan
 
-- Unit: `packages/ui/test/selectionSideChatDictation.test.ts` asserts that `SelectionSideChatPane` forwards `isDesktop` to `SessionPane` (the flag that gates `voiceDictationEnabled`); `packages/ui/test/voiceDictationSessionLease.test.ts` covers acquire, refusal, owner-only release; `packages/ui/test/useVoiceDictation.test.ts` covers the refusal of a second composer's start and the start after the first composer finishes.
+- Unit: `packages/ui/test/selectionSideChatDictation.test.ts` asserts that `SelectionSideChatPane` forwards `isDesktop` to `SessionPane` (the flag that gates `voiceDictationEnabled`) and that side chat mounts its child session, so the draft-creation path that reports `clientKind` (derived from `isDesktop`) cannot run from side chat; `packages/ui/test/voiceDictationSessionLease.test.ts` covers acquire, refusal, owner-only release; `packages/ui/test/useVoiceDictation.test.ts` covers the refusal of a second composer's start and the start after the first composer finishes.
 - Not covered by unit tests: that `AnimatedSidePanePanel` forwards `isDesktop` (checked by typecheck and review only), and the mounted microphone in a real side conversation (E2E below, not run).
 - E2E (written, not run; needs a Desktop runtime with a microphone and a loaded model):
   1. Open a conversation with a draft, select text, and open the side chat from the selection menu.

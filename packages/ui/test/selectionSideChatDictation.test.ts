@@ -52,6 +52,10 @@ describe("SelectionSideChatPane dictation surface", () => {
     );
     expect(paneState.props?.selectionSideChat).toBe(true);
     expect(paneState.props?.isDesktop).toBe(true);
+    // Side chat always mounts its child session, so SessionPane never takes the draft-creation path
+    // that reports session creation with clientKind derived from isDesktop. Forwarding isDesktop
+    // therefore cannot change the clientKind of sessions created from side chat.
+    expect(paneState.props?.sessionId).toBe(tab.childSessionId);
   });
 
   it("keeps the desktop flag off when the shell is not desktop", () => {

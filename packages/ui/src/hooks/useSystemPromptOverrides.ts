@@ -9,10 +9,14 @@ import {
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
 import {
-  canSaveSystemPromptDraft,
   type EditableSystemPromptSection,
   isSystemPromptDraftDirty,
   orderedEditableSystemPromptSections,
+  resolveSystemPromptSaveBlockReason,
+  makeEditorState,
+  revisionOf,
+  sameSections,
+  type SystemPromptEditorState,
 } from "@/settings/systemPromptEditorModel.js";
 import {
   getUserInstructionsHostKey,
@@ -21,25 +25,14 @@ import {
   type UserInstructionsHostTarget,
 } from "@/settings/userInstructionsEditorModel.js";
 
+export type { SystemPromptEditorState } from "@/settings/systemPromptEditorModel.js";
+
 export type SystemPromptOverridesStatus =
   | "waiting"
   | "loading"
   | "ready"
   | "unsupported"
   | "failed";
-
-export interface SystemPromptEditorState {
-  key: SystemPromptOverrideKey;
-  /** Effective text when the editor opened (or was last rebased onto disk). "Changes vs saved" compares to it. */
-  baseline: string;
-  draft: string;
-  saving: boolean;
-  /**
-   * Section revision the draft was based on. `undefined` on hosts without revisions, which turns
-   * conflict checking off for this editor.
-   */
-  baseRevision: string | null | undefined;
-}
 
 export interface ResetEntry {
   key: SystemPromptOverrideKey;
@@ -61,8 +54,11 @@ export interface SystemPromptOverridesView {
   openEditor: (key: SystemPromptOverrideKey, effectiveContent: string) => void;
   closeEditor: () => void;
   setDraft: (draft: string) => void;
-  /** Save the draft. `overwrite` replaces a disk change by using the current disk revision. */
-  saveEditor: (options?: { overwrite?: boolean }) => Promise<void>;
+  /**
+   * Save the draft. `overwrite` replaces a disk change: it is checked against `reviewedRevision`, the
+   * disk revision the user saw in the conflict card, so a newer external edit is never replaced unseen.
+   */
+  saveEditor: (options?: { overwrite?: { reviewedRevision: string | null } }) => Promise<void>;
   /** Discard the draft and rebase the editor onto the current disk text and revision. */
   reloadEditor: (effectiveContent: string) => void;
   /** Override directory on the pinned host (the service's pure lookup). */
@@ -70,6 +66,11 @@ export interface SystemPromptOverridesView {
   restoreDefault: (key: SystemPromptOverrideKey, expectedRevision?: string | null) => Promise<void>;
   resetAllCustomized: (entries: readonly ResetEntry[]) => Promise<void>;
 }
+
+/** Focus refreshes are at most this often; a list already in flight also suppresses one. */
+const FOCUS_REFRESH_MIN_INTERVAL_MS = 2_000;
+
+type DeleteOutcome = "ok" | "conflict" | "failed";
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -106,6 +107,8 @@ export function useSystemPromptOverrides(
   // overwrite a fresher one.
   const listVersionRef = useRef(0);
   const loadedHostKeyRef = useRef<string | null>(null);
+  const listsInFlightRef = useRef(0);
+  const lastFocusRefreshAtRef = useRef(0);
 
   const resetForHost = useCallback(() => {
     epochRef.current += 1;
@@ -122,11 +125,18 @@ export function useSystemPromptOverrides(
       const epoch = epochRef.current;
       const version = listVersionRef.current + 1;
       listVersionRef.current = version;
-      const result = await targetService.listSections();
-      if (epoch !== epochRef.current || version !== listVersionRef.current) return;
-      loadedHostKeyRef.current = key;
-      setSections(orderedEditableSystemPromptSections(result.sections));
-      setStatus("ready");
+      listsInFlightRef.current += 1;
+      try {
+        const result = await targetService.listSections();
+        if (epoch !== epochRef.current || version !== listVersionRef.current) return;
+        loadedHostKeyRef.current = key;
+        const next = orderedEditableSystemPromptSections(result.sections);
+        // An unchanged listing keeps the previous array, so consumers do not re-render for nothing.
+        setSections((previous) => (sameSections(previous, next) ? previous : next));
+        setStatus("ready");
+      } finally {
+        listsInFlightRef.current -= 1;
+      }
     },
     [],
   );
@@ -183,6 +193,10 @@ export function useSystemPromptOverrides(
     if (!rpcReady) return undefined;
     const handleFocus = () => {
       if (loadedHostKeyRef.current !== hostKey) return;
+      if (listsInFlightRef.current > 0) return;
+      const now = Date.now();
+      if (now - lastFocusRefreshAtRef.current < FOCUS_REFRESH_MIN_INTERVAL_MS) return;
+      lastFocusRefreshAtRef.current = now;
       void refreshInPlace(serviceRef.current, hostKey);
     };
     window.addEventListener("focus", handleFocus);
@@ -201,14 +215,7 @@ export function useSystemPromptOverrides(
 
   const openEditor = useCallback(
     (key: SystemPromptOverrideKey, effectiveContent: string) => {
-      const section = sections.find((candidate) => candidate.key === key);
-      setEditor({
-        key,
-        baseline: effectiveContent,
-        draft: effectiveContent,
-        saving: false,
-        baseRevision: section?.revision,
-      });
+      setEditor(makeEditorState(key, effectiveContent, revisionOf(sections, key)));
     },
     [sections],
   );
@@ -219,60 +226,112 @@ export function useSystemPromptOverrides(
     setEditor((current) => (current ? { ...current, draft } : current));
   }, []);
 
+  // Reload discards the draft, so adopting the disk text current at click time cannot replace
+  // anything the user has typed or seen.
   const reloadEditor = useCallback(
     (effectiveContent: string) => {
-      setEditor((current) => {
-        if (!current) return current;
-        const section = sections.find((candidate) => candidate.key === current.key);
-        return {
-          key: current.key,
-          baseline: effectiveContent,
-          draft: effectiveContent,
-          saving: false,
-          baseRevision: section?.revision,
-        };
-      });
+      setEditor((current) =>
+        current
+          ? makeEditorState(current.key, effectiveContent, revisionOf(sections, current.key))
+          : current,
+      );
     },
     [sections],
   );
 
+  /**
+   * Delete each entry under its own file lock, concurrently (one file per key). The outcome list
+   * matches `entries` by index. A rejected call is logged and reported as `failed`.
+   */
+  const deleteEntries = useCallback(
+    async (
+      targetService: ISystemPromptService,
+      entries: readonly ResetEntry[],
+    ): Promise<DeleteOutcome[]> => {
+      const settled = await Promise.allSettled(
+        entries.map((entry) =>
+          targetService.deleteOverride({
+            key: entry.key,
+            expectedRevision: entry.expectedRevision,
+          }),
+        ),
+      );
+      return settled.map((outcome, index): DeleteOutcome => {
+        if (outcome.status === "rejected") {
+          logger.warn("[SystemPrompt] Failed to remove prompt override", {
+            key: entries[index]!.key,
+            error: errorMessage(outcome.reason),
+          });
+          return "failed";
+        }
+        const result = outcome.value;
+        return result && result.kind === "conflict" ? "conflict" : "ok";
+      });
+    },
+    [],
+  );
+
   const saveEditor = useCallback(
-    async (options?: { overwrite?: boolean }) => {
+    async (options?: { overwrite?: { reviewedRevision: string | null } }) => {
       const current = editor;
       if (current === null || !rpcReady) return;
       if (
-        !canSaveSystemPromptDraft({
+        resolveSystemPromptSaveBlockReason({
           baseline: current.baseline,
           draft: current.draft,
           saving: current.saving,
-        })
+        }) !== null
       ) {
         return;
       }
       const key = hostKey;
       const epoch = epochRef.current;
       const targetService = serviceRef.current;
-      const section = sections.find((candidate) => candidate.key === current.key);
-      const expectedRevision = options?.overwrite ? section?.revision : current.baseRevision;
+      const expectedRevision = options?.overwrite
+        ? options.overwrite.reviewedRevision
+        : current.baseRevision;
       const content = normalizeSystemPromptText(current.draft);
-      const params =
-        expectedRevision === undefined
-          ? { key: current.key, content }
-          : { key: current.key, content, expectedRevision };
-      setEditor({ ...current, saving: true });
+      setEditor((latest) => (latest ? { ...latest, saving: true } : latest));
       try {
-        const result = await targetService.writeOverride(params);
+        const result = await targetService.writeOverride({
+          key: current.key,
+          content,
+          expectedRevision,
+        });
         if (epoch !== epochRef.current) return;
         if (result && result.kind === "conflict") {
           // The file changed after the draft's revision. Nothing was written; the refreshed list
           // makes the editor show the disk-changed choices.
+          if (options?.overwrite) {
+            // The card already shows; a second change since review needs an explicit signal.
+            toast(intl.formatMessage({ id: "settings.systemPrompt.changedOnDisk" }));
+          }
           setEditor((latest) => (latest ? { ...latest, saving: false } : latest));
           void refreshInPlace(targetService, key);
           return;
         }
         toast(intl.formatMessage({ id: "settings.systemPrompt.saved" }));
         setEditor(null);
-        void refreshInPlace(targetService, key);
+        if (result && result.kind === "ok") {
+          // The write result carries the stored text and its revision, so the saved row updates
+          // without a second listing.
+          const savedRevision = result.revision;
+          setSections((previous) =>
+            previous.map((section) =>
+              section.key === current.key
+                ? {
+                    ...section,
+                    overrideContent: content,
+                    isOverridden: true,
+                    revision: savedRevision,
+                  }
+                : section,
+            ),
+          );
+        } else {
+          // Hosts that do not report the written revision are relisted.
+          void refreshInPlace(targetService, key);
+        }
       } catch (error) {
         if (epoch !== epochRef.current) return;
         logger.warn("[SystemPrompt] Failed to save prompt override", {
@@ -283,7 +342,7 @@ export function useSystemPromptOverrides(
         setEditor((latest) => (latest ? { ...latest, saving: false } : latest));
       }
     },
-    [editor, hostKey, intl, refreshInPlace, rpcReady, sections],
+    [editor, hostKey, intl, refreshInPlace, rpcReady],
   );
 
   const restoreDefault = useCallback(
@@ -292,28 +351,22 @@ export function useSystemPromptOverrides(
       const host = hostKey;
       const epoch = epochRef.current;
       const targetService = serviceRef.current;
-      const params = expectedRevision === undefined ? { key } : { key, expectedRevision };
-      try {
-        const result = await targetService.deleteOverride(params);
-        if (epoch !== epochRef.current) return;
-        if (result && result.kind === "conflict") {
-          toast(intl.formatMessage({ id: "settings.systemPrompt.changedOnDisk" }));
-          void refreshInPlace(targetService, host);
-          return;
-        }
-        toast(intl.formatMessage({ id: "settings.systemPrompt.restored" }));
-        if (editor?.key === key) setEditor(null);
-        void refreshInPlace(targetService, host);
-      } catch (error) {
-        if (epoch !== epochRef.current) return;
-        logger.warn("[SystemPrompt] Failed to restore prompt default", {
-          key,
-          error: errorMessage(error),
-        });
+      const [outcome] = await deleteEntries(targetService, [{ key, expectedRevision }]);
+      if (epoch !== epochRef.current) return;
+      if (outcome === "failed") {
         toast(intl.formatMessage({ id: "settings.systemPrompt.restoreFailed" }));
+        return;
       }
+      if (outcome === "conflict") {
+        toast(intl.formatMessage({ id: "settings.systemPrompt.changedOnDisk" }));
+        void refreshInPlace(targetService, host);
+        return;
+      }
+      toast(intl.formatMessage({ id: "settings.systemPrompt.restored" }));
+      setEditor((current) => (current?.key === key ? null : current));
+      void refreshInPlace(targetService, host);
     },
-    [editor?.key, hostKey, intl, refreshInPlace, rpcReady],
+    [deleteEntries, hostKey, intl, refreshInPlace, rpcReady],
   );
 
   const resetAllCustomized = useCallback(
@@ -322,33 +375,15 @@ export function useSystemPromptOverrides(
       const host = hostKey;
       const epoch = epochRef.current;
       const targetService = serviceRef.current;
-      let restored = 0;
-      let conflicts = 0;
-      let failed = 0;
-      const restoredKeys = new Set<SystemPromptOverrideKey>();
-      for (const entry of entries) {
-        const params =
-          entry.expectedRevision === undefined
-            ? { key: entry.key }
-            : { key: entry.key, expectedRevision: entry.expectedRevision };
-        try {
-          const result = await targetService.deleteOverride(params);
-          if (result && result.kind === "conflict") {
-            conflicts += 1;
-          } else {
-            restored += 1;
-            restoredKeys.add(entry.key);
-          }
-        } catch (error) {
-          failed += 1;
-          logger.warn("[SystemPrompt] Failed to reset prompt override", {
-            key: entry.key,
-            error: errorMessage(error),
-          });
-        }
-      }
+      const outcomes = await deleteEntries(targetService, entries);
       if (epoch !== epochRef.current) return;
-      if (editor && restoredKeys.has(editor.key)) setEditor(null);
+      const restoredKeys = new Set(
+        entries.filter((_, index) => outcomes[index] === "ok").map((entry) => entry.key),
+      );
+      const restored = restoredKeys.size;
+      const conflicts = outcomes.filter((outcome) => outcome === "conflict").length;
+      const failed = outcomes.filter((outcome) => outcome === "failed").length;
+      setEditor((current) => (current && restoredKeys.has(current.key) ? null : current));
       void refreshInPlace(targetService, host);
       if (conflicts === 0 && failed === 0) {
         toast(
@@ -363,7 +398,7 @@ export function useSystemPromptOverrides(
         );
       }
     },
-    [editor, hostKey, intl, refreshInPlace, rpcReady],
+    [deleteEntries, hostKey, intl, refreshInPlace, rpcReady],
   );
 
   const getOverridesDirectory = useCallback(async () => {
@@ -372,7 +407,16 @@ export function useSystemPromptOverrides(
   }, []);
 
   const effectiveStatus: SystemPromptOverridesStatus = rpcReady ? status : "waiting";
+  // Dirty and the save block reason are computed once per render and reused below.
   const editorDirty = editor !== null && isSystemPromptDraftDirty(editor.baseline, editor.draft);
+  const editorSaveBlock =
+    editor === null
+      ? null
+      : resolveSystemPromptSaveBlockReason({
+          baseline: editor.baseline,
+          draft: editor.draft,
+          saving: editor.saving,
+        });
   const editorSection =
     editor === null ? undefined : sections.find((candidate) => candidate.key === editor.key);
   const editorDiskChanged =
@@ -384,11 +428,7 @@ export function useSystemPromptOverrides(
     editor !== null &&
     effectiveStatus === "ready" &&
     !editorDiskChanged &&
-    canSaveSystemPromptDraft({
-      baseline: editor.baseline,
-      draft: editor.draft,
-      saving: editor.saving,
-    });
+    editorSaveBlock === null;
 
   return {
     hostKey,
