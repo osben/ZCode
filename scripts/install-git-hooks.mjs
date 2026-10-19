@@ -5,7 +5,7 @@ import { resolveToolBin } from "./run-pre-commit-checks.mjs";
 const exec = promisify(execFile);
 let hooksPath = "";
 try {
-  hooksPath = (await exec("git", ["config", "--get", "core.hooksPath"])).stdout.trim();
+  hooksPath = (await exec("git", ["config", "--local", "--get", "core.hooksPath"])).stdout.trim();
 } catch (error) {
   if (error.code !== 1) throw error;
 }
