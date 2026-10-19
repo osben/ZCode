@@ -1,4 +1,4 @@
-// `/plan` Composer E2E：覆盖 draft 空命令、任务发送、Plan noop 组合和附件拒绝。
+// `/plan` Composer E2E：覆盖 draft 空命令、任务发送、Plan noop 组合和附件发送。
 import { clearAppData, setInputValueByTestIdDom } from "../helpers/desktop-app.js";
 import { TID_V4_COMPOSER_INPUT } from "@zcode/shared";
 import {
@@ -136,34 +136,40 @@ describe("v4 `/plan` Composer shortcut", () => {
     await assertVisibleV4UserMessagesNotContaining("/plan");
   });
 
-  it("附件拒绝时保留 `/plan <task>` 草稿、附件和当前模式", async function () {
-    this.timeout(120000);
-    await prepareV4ConversationE2E();
-    await startNewV4Draft();
-    await switchV4Mode("build");
-    const modeBefore = (await getV4ConfigProjection()).mode;
-    const requestCountBefore = await getUpstreamRequestRecordCount();
-    const attachmentName = "e2e-plan-shortcut-rejected.png";
-    const draft = "/plan plan-shortcut-attachment-reject";
+  for (const withTask of [true, false]) {
+    it(`/plan sends attachments with Plan enabled (task=${withTask})`, async function () {
+      this.timeout(180000);
+      await establishBuildSession();
+      const attachmentName = withTask
+        ? "e2e-plan-context.png"
+        : "E2E_V4_PLAN_SHORTCUT_PAYLOAD_ONLY.png";
+      const task = withTask ? "E2E_V4_PLAN_SHORTCUT_ATTACHMENT inspect the context" : "";
+      const reply = withTask ? "V4_PLAN_ATTACHMENT_OK" : "V4_PLAN_PAYLOAD_ONLY_OK";
+      const draft = task ? `/plan ${task}` : "/plan";
 
-    await pasteV4ComposerImageAttachment(attachmentName);
-    await waitForReadyComposerAttachment(attachmentName);
-    await setInputValueByTestIdDom(TID_V4_COMPOSER_INPUT, draft, {
-      timeout: 15000,
-      timeoutMsg: "附件拒绝 case 没有写入 `/plan` 草稿",
+      await pasteV4ComposerImageAttachment(attachmentName);
+      await waitForReadyComposerAttachment(attachmentName);
+      await setInputValueByTestIdDom(TID_V4_COMPOSER_INPUT, draft, {
+        timeout: 15000,
+        timeoutMsg: "Could not fill the Plan submission",
+      });
+      await clickV4Send();
+      await waitForUpstreamRequest(
+        {
+          lastUserMessageIncludes: [
+            ...(task ? [task] : []),
+            `[Attached image/png: ${attachmentName}]`,
+          ],
+          lastUserMessageExcludes: ["/plan"],
+        },
+        "Plan submission did not preserve the attachment in the provider request",
+        60000,
+      );
+      await waitForV4TimelineContaining(reply, 60000);
+      await waitForPlanMode();
+      await waitForV4ComposerText("", "Accepted Plan submission did not clear the composer");
+      expect(await getV4ComposerAttachments()).toHaveLength(0);
+      await assertVisibleV4UserMessagesNotContaining("/plan");
     });
-    await waitForV4ComposerText(draft, "附件拒绝 case 没有写入 `/plan` 草稿");
-
-    await clickV4Send();
-    await waitForV4ComposerText(draft, "附件拒绝后 composer 草稿没有保留");
-    expect((await getV4ConfigProjection()).mode).toBe(modeBefore);
-    expect(await getUpstreamRequestRecordCount()).toBe(requestCountBefore);
-    expect(await getV4ComposerAttachments()).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          uploadStatus: "ready",
-        }),
-      ]),
-    );
-  });
+  }
 });

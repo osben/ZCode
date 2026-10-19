@@ -74,6 +74,45 @@ describe("recovery context snapshot persistence", () => {
     });
   });
 
+  it("keeps a shared-context-only recovery record and its reference", () => {
+    // Without the shared reference counted as a context, persist drops a record whose text is empty.
+    const scope = getV4WorktreeRecoveryScope("session-shared", "submission-shared");
+    expect(
+      persistV4ComposerDraft(WORKSPACE, undefined, scope, {
+        text: "",
+        recoveryContexts: {
+          sharedContextRefs: [{ kind: "shared_context_import", context_id: "context-shared" }],
+        },
+      }),
+    ).toBe(true);
+    expect(readV4ComposerDraft(WORKSPACE, undefined, scope)?.recoveryContexts).toEqual({
+      sharedContextRefs: [{ kind: "shared_context_import", context_id: "context-shared" }],
+    });
+  });
+
+  it("drops malformed shared-context references instead of restoring them", () => {
+    const scope = getV4WorktreeRecoveryScope("session-shared-bad", "submission-shared-bad");
+    localStorage.setItem(
+      "zcode-v4-composer-drafts:v1:%2Frecovery-contexts",
+      JSON.stringify({
+        version: 1,
+        scopes: {
+          [scope]: {
+            text: "",
+            recoveryContexts: {
+              sharedContextRefs: [
+                { kind: "other", context_id: "x" },
+                { kind: "shared_context_import", context_id: "" },
+              ],
+            },
+            updatedAt: 1,
+          },
+        },
+      }),
+    );
+    expect(readV4ComposerDraft(WORKSPACE, undefined, scope)?.recoveryContexts).toBeUndefined();
+  });
+
   it("keeps records written before the context snapshot readable", () => {
     const legacy = {
       version: 1,

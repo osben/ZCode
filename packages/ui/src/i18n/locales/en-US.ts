@@ -5285,6 +5285,8 @@ const enUS: Record<string, string> = {
     "The registered worktree for {branchName} at {path} is missing or not usable.",
   "worktreeSetup.reconcile.markerSyncUnavailable":
     "Setup finished at a different worktree path and the session record could not be updated",
+  "worktreeSetup.reservation.conflict":
+    "Another chat is already preparing a worktree with this name. Send again to use a new name.",
   "git.branchSwitcher.appliesOnSend": "Applies when you send the first message",
   "git.branchSwitcher.worktreeIntentHint": "The worktree setup sets the branch for this task",
   "branchSwitchGuard.title": "Switch branch?",
@@ -5599,8 +5601,6 @@ const enUS: Record<string, string> = {
   "chat.toolbar.modelSwitch.lockedByRunningTask.short": "busy",
   "chat.goal.runningBlocked": "Set a goal after the current task finishes.",
   "chat.goal.planModeBlocked": "Goal is unavailable in Plan mode. Switch modes to continue.",
-  "chat.plan.attachmentsBlocked":
-    "The /plan shortcut supports text only for now. Remove attachments or context and try again.",
   "chat.compact.runningBlocked": "Compact context after the current task finishes.",
   "chat.compact.queued": "Compaction queued and will run in order.",
   "chat.compact.duplicateBlocked": "A compaction is already running or queued.",
