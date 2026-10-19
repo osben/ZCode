@@ -248,7 +248,12 @@ persistent header slot above the message history so the creation status remains 
 first user or assistant row appears. Once Host activation clears the preparation marker, keep a
 compact created-worktree row in that same position from the live session-index execution-worktree
 fact. Present these rows as restrained tool activity with a clear status icon, branch/path detail,
-and consistent message-column alignment.
+and consistent message-column alignment. The created row is a single compact line: use the existing
+muted Git worktree marker, the created label and branch, followed by an icon-only open action with a
+tooltip and accessible name. The action opens the exact worktree path through the existing
+path-aware workspace-open contract; it must not simulate a click on the generic Open workspace
+picker. Do not show a worktree duration unless the execution-worktree fact provides one; assistant
+Thought duration is not worktree timing.
 
 ### Existing worktree and branch-list behavior
 

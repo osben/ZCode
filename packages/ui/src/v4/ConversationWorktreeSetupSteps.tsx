@@ -52,34 +52,6 @@ function stepGlyphClassName(entry: ComposerWorktreePipelineEntry): string {
 const setupCardClassName =
   "mx-4 my-3 flex w-auto max-w-2xl flex-col items-start gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-ui-sm text-foreground";
 
-/** Persistent first-in-history summary after Host activation clears the preparation marker. */
-export function ConversationWorktreeCreatedNotice({
-  branchName,
-  path,
-}: {
-  branchName?: string;
-  path: string;
-}) {
-  const { intl } = useZCodeIntl();
-
-  return (
-    <div
-      data-worktree-created="true"
-      className="mx-4 my-3 flex w-auto max-w-2xl items-start gap-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-ui-sm text-foreground"
-      role="status"
-    >
-      <Check className="mt-0.5 size-3.5 shrink-0 text-success" />
-      <div className="flex min-w-0 flex-col gap-0.5">
-        <span className="font-medium">{intl.formatMessage({ id: "worktreeSetup.created" })}</span>
-        {branchName ? (
-          <span className="text-ui-caption text-foreground-subtle">{branchName}</span>
-        ) : null}
-        <span className="break-all text-ui-caption text-foreground-subtle">{path}</span>
-      </div>
-    </div>
-  );
-}
-
 export function ConversationWorktreeSetupSteps({
   workspacePath,
   workspaceIdentity,

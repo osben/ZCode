@@ -40,6 +40,8 @@ export interface V4ChatPaneProps {
   compactForRemoteControl?: boolean;
   /** CLI session ID; null = first send from a draft. */
   sessionId: string | null;
+  /** Open a path through the app's existing workspace + draft flow. */
+  onCreateTaskInWorkspace?: (workspacePath: string) => void | Promise<void>;
   /** Open entry point for the current workspace's primary pane; count as sidebar when not provided. */
   openTrigger?: SessionOpenTrigger;
   provider?: ZCodeProvider;
@@ -96,6 +98,7 @@ export function V4ChatPane({
   selectionSideChat = false,
   compactForRemoteControl = false,
   sessionId,
+  onCreateTaskInWorkspace,
   openTrigger = "sidebar",
   provider,
   onSessionCreated,
@@ -139,6 +142,7 @@ export function V4ChatPane({
         readOnly={readOnly}
         selectionSideChat={selectionSideChat}
         sessionId={sessionId}
+        onCreateTaskInWorkspace={onCreateTaskInWorkspace}
         openTrigger={openTrigger}
         workspacePath={workspacePath}
         workspaceIdentity={workspaceIdentity}
