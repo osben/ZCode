@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { createElement } from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import {
@@ -118,5 +118,48 @@ describe("WorktreeFailureModalHost", () => {
 
     expect(screen.queryByText("Could not create the worktree")).toBeNull();
     expect(toastSpy).toHaveBeenCalledOnce();
+  });
+
+  it("announces a Retry failure for the same session again while the user is away", () => {
+    const failure = {
+      workspacePath: "/repo",
+      sessionId: "prepared-session",
+      issueCode: "git-unavailable",
+      message: "Could not create the worktree",
+      rawDetail: null,
+      savedAt: Date.now(),
+    };
+    useWorktreeFailureReturnStore
+      .getState()
+      .openFailureModal("/repo", { ...failure, attemptId: "attempt-1" });
+
+    render(
+      createElement(
+        ZCodeIntlProvider,
+        { initialLocale: "en-US" },
+        createElement(WorktreeFailureModalHost),
+      ),
+    );
+    expect(toastSpy).toHaveBeenCalledTimes(1);
+
+    // Same announced attempt re-written (for example by a draft-state update): no second toast.
+    act(() => {
+      useWorktreeFailureReturnStore.getState().markFailureSavedNotRestored("/repo");
+    });
+    expect(toastSpy).toHaveBeenCalledTimes(1);
+
+    // Retry creates a new failed attempt for the same prepared session: announced again.
+    act(() => {
+      useWorktreeFailureReturnStore
+        .getState()
+        .openFailureModal("/repo", { ...failure, attemptId: "attempt-2" });
+    });
+    expect(toastSpy).toHaveBeenCalledTimes(2);
+    expect(toastSpy.mock.calls[0]?.[1]?.dedupeKey).toBe(
+      "worktree-failure:prepared-session:attempt-1",
+    );
+    expect(toastSpy.mock.calls[1]?.[1]?.dedupeKey).toBe(
+      "worktree-failure:prepared-session:attempt-2",
+    );
   });
 });

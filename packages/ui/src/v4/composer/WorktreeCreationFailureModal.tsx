@@ -197,13 +197,16 @@ export function WorktreeFailureModalHost() {
       toastAnnouncedRef.current = null;
       return;
     }
-    if (toastAnnouncedRef.current === entry.sessionId) return;
-    toastAnnouncedRef.current = entry.sessionId;
+    // Key by the failed attempt: a Retry on the same prepared session produces a new failure that
+    // must be announced again, even when the user is still away from the draft screen.
+    const announceKey = `${entry.sessionId}\0${entry.attemptId ?? ""}`;
+    if (toastAnnouncedRef.current === announceKey) return;
+    toastAnnouncedRef.current = announceKey;
     const workspacePath = activeWorkspacePath ?? "";
     const workspaceIdentity = activeWorkspaceIdentity?.trim() || undefined;
     toast(intl.formatMessage({ id: "worktreeFailure.toastTitle" }), {
       variant: "warning",
-      dedupeKey: `worktree-failure:${entry.sessionId}`,
+      dedupeKey: `worktree-failure:${entry.sessionId}:${entry.attemptId ?? ""}`,
       actionLabel: intl.formatMessage({ id: "worktreeFailure.toastOpen" }),
       onAction: () => {
         tabStoreApi
