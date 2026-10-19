@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeGhostLayout } from "@/lib/voiceGhostPreviewLayout.js";
+import { computeGhostLayout, hasVoicePreviewText } from "@/lib/voiceGhostPreviewLayout.js";
 
 const editor = { left: 100, top: 50, width: 400, height: 120 };
 
@@ -56,5 +56,18 @@ describe("computeGhostLayout (VD-GHO-04)", () => {
       lineHeight: 16,
     });
     expect(layout?.top).toBe(0);
+  });
+});
+
+describe("hasVoicePreviewText (VD-GHO-08)", () => {
+  it("is true when either committed or tentative text exists", () => {
+    expect(hasVoicePreviewText({ committed: "hello", tentative: "" })).toBe(true);
+    expect(hasVoicePreviewText({ committed: "", tentative: "wor" })).toBe(true);
+  });
+
+  it("is false for no preview or an empty preview so the placeholder returns", () => {
+    expect(hasVoicePreviewText(null)).toBe(false);
+    expect(hasVoicePreviewText(undefined)).toBe(false);
+    expect(hasVoicePreviewText({ committed: "", tentative: "" })).toBe(false);
   });
 });

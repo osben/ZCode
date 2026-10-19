@@ -189,26 +189,27 @@ sequenceDiagram
 
 ### Acceptance scenarios for implementation
 
-| Case       | Action                                                  | Expected result                                                                                                                                   |
-| ---------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| VD-LIVE-01 | Start recording and speak                               | Composer level meter responds to microphone input; no raw waveform is stored or shown.                                                            |
-| VD-LIVE-02 | Use a runtime-verified streaming model                  | Preview updates during recording; committed and tentative text are visually distinct and cannot be submitted as draft text.                       |
-| VD-LIVE-03 | Stop a streaming recording                              | Stream finalizes; preview becomes one final insertion with no duplicate text.                                                                     |
-| VD-LIVE-04 | Cancel, blur, unmount, or fail during streaming         | Capture stops, preview disappears, existing draft remains intact, and the model stream lease is released.                                         |
-| VD-LIVE-05 | Use an unsupported or unverified model                  | Existing one-shot transcription behavior remains available; no streaming UI is advertised.                                                        |
-| VD-LIVE-06 | Edit the composer while a preview is visible            | User edits are preserved; final dictation text is inserted once according to the existing append behavior.                                        |
-| VD-LIVE-07 | Start a second transcription while one stream is active | The service serializes or rejects it explicitly; no concurrent model use or silent audio loss occurs.                                             |
-| VD-LIVE-08 | Start recording while composer toolbar is visible       | Stop button stays in its original position; the meter and Cancel cluster appears immediately to its left and does not overlay toolbar actions.    |
-| VD-CLU-01  | Hover or click the toolbar cluster while recording      | Nothing overlays the toolbar: actions remain clickable and keep their positions; the cluster never covers the stop or send button.                |
-| VD-CLU-02  | Click Cancel in the toolbar cluster while recording     | Cancel fires (same as VD-OUT-03); the editor keeps focus and the draft is unchanged.                                                              |
-| VD-CLU-03  | Mousedown on the cluster while the editor has focus     | Editor focus and caret are kept (default prevented); the dictation shortcut still stops recording afterwards.                                     |
-| VD-GHO-01  | Stream a runtime-verified model; preview updates        | Committed and tentative text appear as grey ghost text at the caret, visually distinct; the layer is aria-hidden.                                 |
-| VD-GHO-02  | Ghost visible; press Enter, click Send, or undo         | The ghost is never submitted, never saved in the draft, and never added to undo history.                                                          |
-| VD-GHO-03  | Move the caret or edit real text while ghost is visible | Ghost follows the caret; user edits are preserved (VD-LIVE-06).                                                                                   |
-| VD-GHO-04  | Long preview wraps; narrow width; dark theme            | First line starts at the caret, wrapped lines use the full editor width, nothing shifts layout, colors follow theme tokens on mobile and desktop. |
-| VD-GHO-05  | Stop with a streaming model                             | Ghost is cleared before post-processing; the final text is inserted once via the existing insertion path (VD-LIVE-03).                            |
-| VD-GHO-06  | Cancel, blur, failure, or unmount during ghost          | Ghost disappears with the stream; the existing draft is intact (VD-LIVE-04).                                                                      |
-| VD-GHO-07  | Model without streaming support                         | No ghost text; the toolbar meter and Cancel still show while recording (VD-LIVE-05).                                                              |
+| Case       | Action                                                  | Expected result                                                                                                                                             |
+| ---------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| VD-LIVE-01 | Start recording and speak                               | Composer level meter responds to microphone input; no raw waveform is stored or shown.                                                                      |
+| VD-LIVE-02 | Use a runtime-verified streaming model                  | Preview updates during recording; committed and tentative text are visually distinct and cannot be submitted as draft text.                                 |
+| VD-LIVE-03 | Stop a streaming recording                              | Stream finalizes; preview becomes one final insertion with no duplicate text.                                                                               |
+| VD-LIVE-04 | Cancel, blur, unmount, or fail during streaming         | Capture stops, preview disappears, existing draft remains intact, and the model stream lease is released.                                                   |
+| VD-LIVE-05 | Use an unsupported or unverified model                  | Existing one-shot transcription behavior remains available; no streaming UI is advertised.                                                                  |
+| VD-LIVE-06 | Edit the composer while a preview is visible            | User edits are preserved; final dictation text is inserted once according to the existing append behavior.                                                  |
+| VD-LIVE-07 | Start a second transcription while one stream is active | The service serializes or rejects it explicitly; no concurrent model use or silent audio loss occurs.                                                       |
+| VD-LIVE-08 | Start recording while composer toolbar is visible       | Stop button stays in its original position; the meter and Cancel cluster appears immediately to its left and does not overlay toolbar actions.              |
+| VD-CLU-01  | Hover or click the toolbar cluster while recording      | Nothing overlays the toolbar: actions remain clickable and keep their positions; the cluster never covers the stop or send button.                          |
+| VD-CLU-02  | Click Cancel in the toolbar cluster while recording     | Cancel fires (same as VD-OUT-03); the editor keeps focus and the draft is unchanged.                                                                        |
+| VD-CLU-03  | Mousedown on the cluster while the editor has focus     | Editor focus and caret are kept (default prevented); the dictation shortcut still stops recording afterwards.                                               |
+| VD-GHO-01  | Stream a runtime-verified model; preview updates        | Committed and tentative text appear as grey ghost text at the caret, visually distinct; the layer is aria-hidden.                                           |
+| VD-GHO-02  | Ghost visible; press Enter, click Send, or undo         | The ghost is never submitted, never saved in the draft, and never added to undo history.                                                                    |
+| VD-GHO-03  | Move the caret or edit real text while ghost is visible | Ghost follows the caret; user edits are preserved (VD-LIVE-06).                                                                                             |
+| VD-GHO-04  | Long preview wraps; narrow width; dark theme            | First line starts at the caret, wrapped lines use the full editor width, nothing shifts layout, colors follow theme tokens on mobile and desktop.           |
+| VD-GHO-05  | Stop with a streaming model                             | Ghost is cleared before post-processing; the final text is inserted once via the existing insertion path (VD-LIVE-03).                                      |
+| VD-GHO-06  | Cancel, blur, failure, or unmount during ghost          | Ghost disappears with the stream; the existing draft is intact (VD-LIVE-04).                                                                                |
+| VD-GHO-08  | Empty composer, ghost has text                          | The composer placeholder is hidden while the ghost preview has any committed or tentative text, so the two never overlap; it returns when the ghost clears. |
+| VD-GHO-07  | Model without streaming support                         | No ghost text; the toolbar meter and Cancel still show while recording (VD-LIVE-05).                                                                        |
 
 ### E2E validation handoff
 
