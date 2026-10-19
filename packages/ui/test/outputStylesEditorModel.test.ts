@@ -240,10 +240,65 @@ describe("diffOutputStylePrompt", () => {
 
   it("short-circuits identical prompts and skips oversized bodies", () => {
     expect(diffOutputStylePrompt("same", "same")).toEqual([]);
-    // Two ~2100-line bodies exceed the cell cap; the preview degrades to "no diff" instead
-    // of allocating a quadratic table in the renderer.
+    // Two ~2100-line bodies exceed the cell cap; the diff is reported as too large (null)
+    // instead of allocating a quadratic table in the renderer.
     const big = `${Array.from({ length: 2100 }, (_, i) => `line-${i}`).join("\n")}`;
     const bigChanged = `${big}\nextra`;
-    expect(diffOutputStylePrompt(big, bigChanged)).toEqual([]);
+    expect(diffOutputStylePrompt(big, bigChanged)).toBeNull();
+  });
+
+  it("matches the reference LCS walk on randomized inputs", () => {
+    // Reference: the full-table walk this module used before the shared-prefix trim and the flat table.
+    const reference = (previous: string, next: string) => {
+      if (previous === next) return [];
+      const a = previous.length === 0 ? [] : previous.split("\n");
+      const b = next.length === 0 ? [] : next.split("\n");
+      const table = Array.from({ length: a.length + 1 }, () =>
+        Array.from({ length: b.length + 1 }, () => 0),
+      );
+      for (let i = a.length - 1; i >= 0; i -= 1) {
+        for (let j = b.length - 1; j >= 0; j -= 1) {
+          table[i]![j] =
+            a[i] === b[j]
+              ? table[i + 1]![j + 1]! + 1
+              : Math.max(table[i + 1]![j]!, table[i]![j + 1]!);
+        }
+      }
+      const out: { type: string; text: string }[] = [];
+      let i = 0;
+      let j = 0;
+      while (i < a.length && j < b.length) {
+        if (a[i] === b[j]) {
+          out.push({ type: "same", text: a[i]! });
+          i += 1;
+          j += 1;
+        } else if (table[i + 1]![j]! >= table[i]![j + 1]!) {
+          out.push({ type: "remove", text: a[i]! });
+          i += 1;
+        } else {
+          out.push({ type: "add", text: b[j]! });
+          j += 1;
+        }
+      }
+      while (i < a.length) out.push({ type: "remove", text: a[i++]! });
+      while (j < b.length) out.push({ type: "add", text: b[j++]! });
+      return out;
+    };
+    // Deterministic generator so failures reproduce.
+    let seed = 12345;
+    const next = () => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed;
+    };
+    const alphabet = ["a", "b", "c", "d", ""];
+    const randomText = () => {
+      const lines = Array.from({ length: next() % 9 }, () => alphabet[next() % alphabet.length]!);
+      return lines.join("\n");
+    };
+    for (let round = 0; round < 2000; round += 1) {
+      const previous = randomText();
+      const current = randomText();
+      expect(diffOutputStylePrompt(previous, current)).toEqual(reference(previous, current));
+    }
   });
 });

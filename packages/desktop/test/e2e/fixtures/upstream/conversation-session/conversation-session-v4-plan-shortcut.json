@@ -34,9 +34,9 @@
         "kind": "main",
         "timingPolicy": "fast-text",
         "source": "synthetic",
-        "syntheticReason": "空命令和附件拒绝不需要 provider；任务组合需要稳定的已有 session。"
+        "syntheticReason": "Empty mode commands do not request the provider; task and attachment submissions reuse a deterministic existing session."
       },
-      "maxMatches": 2,
+      "maxMatches": 4,
       "match": {
         "method": "POST",
         "pathIncludes": "/messages",
@@ -104,6 +104,63 @@
           "inputTokens": 112,
           "outputTokens": 8,
           "text": "V4_PLAN_SHORTCUT_TASK_TWO_OK"
+        }
+      }
+    },
+    {
+      "id": "v4-plan-shortcut-attachment",
+      "description": "Plan shortcut preserves attachment input through ordinary admission.",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "Require the attachment placeholder and exclude the consumed /plan prefix to verify provider-visible payload preservation."
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "lastUserMessageIncludes": [
+          "E2E_V4_PLAN_SHORTCUT_ATTACHMENT",
+          "[Attached image/png: e2e-plan-context.png]"
+        ],
+        "lastUserMessageExcludes": ["/plan"],
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": {
+          "id": "v4-plan-shortcut-attachment",
+          "inputTokens": 120,
+          "outputTokens": 8,
+          "text": "V4_PLAN_ATTACHMENT_OK"
+        }
+      }
+    },
+    {
+      "id": "v4-plan-shortcut-payload-only",
+      "description": "Plan shortcut preserves payload-only input through ordinary admission.",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "Require the attachment placeholder and exclude the consumed /plan prefix to verify provider-visible payload preservation."
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "lastUserMessageIncludes": ["[Attached image/png: E2E_V4_PLAN_SHORTCUT_PAYLOAD_ONLY.png]"],
+        "lastUserMessageExcludes": ["/plan"],
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": {
+          "id": "v4-plan-shortcut-payload-only",
+          "inputTokens": 120,
+          "outputTokens": 8,
+          "text": "V4_PLAN_PAYLOAD_ONLY_OK"
         }
       }
     }

@@ -117,6 +117,9 @@ let latestReadyUpdateVersion: string | null = null;
 let latestUpdateState: UpdateStatePayload | null = null;
 let latestPostUpdateReleaseNotes: PostUpdateReleaseNotesPayload | null = null;
 const pendingOpenWorkspacePaths: string[] = [];
+type OpenTaskDraftPayload = { path: string; text: string };
+const openTaskDraftCallbacks = new Set<(payload: OpenTaskDraftPayload) => void>();
+const pendingOpenTaskDrafts: OpenTaskDraftPayload[] = [];
 const shareImportCallbacks = new Set<(payload: { shareCode: string }) => void>();
 const pendingShareImports: { shareCode: string }[] = [];
 const MACOS_WINDOW_CONTROLS_BASE_LEFT_PADDING_PX = 96;
@@ -204,6 +207,17 @@ ipcRenderer.on(PlatformChannels.OpenWorkspacePath, (_event: unknown, path: strin
 
   for (const callback of openWorkspacePathCallbacks) {
     callback(path);
+  }
+});
+
+ipcRenderer.on(PlatformChannels.OpenTaskDraft, (_event: unknown, payload: OpenTaskDraftPayload) => {
+  if (openTaskDraftCallbacks.size === 0) {
+    // Same cold-start race as OpenWorkspacePath: hold the draft until the UI subscribes.
+    pendingOpenTaskDrafts.push(payload);
+    return;
+  }
+  for (const callback of openTaskDraftCallbacks) {
+    callback(payload);
   }
 });
 
@@ -609,6 +623,17 @@ contextBridge.exposeInMainWorld("zcode", {
       }
     }
     return () => openWorkspacePathCallbacks.delete(callback);
+  },
+  /** Register a callback for `zcode://task/new` drafts; replays drafts that arrived before subscription. */
+  onOpenTaskDraft: (callback: (payload: OpenTaskDraftPayload) => void): (() => void) => {
+    openTaskDraftCallbacks.add(callback);
+    while (pendingOpenTaskDrafts.length > 0) {
+      const payload = pendingOpenTaskDrafts.shift();
+      if (payload) {
+        callback(payload);
+      }
+    }
+    return () => openTaskDraftCallbacks.delete(callback);
   },
   onOpenFeedbackDialog: (callback: () => void): (() => void) => {
     const handler = () => callback();

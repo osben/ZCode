@@ -4978,6 +4978,8 @@ const ukUA: Record<string, string> = {
     "Зареєстрований worktree для {branchName} у {path} відсутній або непридатний.",
   "worktreeSetup.reconcile.markerSyncUnavailable":
     "Налаштування завершилося в іншому каталозі worktree, і запис сесії не вдалося оновити",
+  "worktreeSetup.reservation.conflict":
+    "Інший чат уже готує worktree з цією назвою. Надішліть ще раз, щоб використати нову назву.",
   "git.branchSwitcher.appliesOnSend": "Застосується під час надсилання першого повідомлення",
   "git.branchSwitcher.worktreeIntentHint":
     "Гілку для цього завдання визначає налаштування worktree",
@@ -5295,8 +5297,6 @@ const ukUA: Record<string, string> = {
   "chat.goal.runningBlocked": "Задати мету можна після завершення поточного завдання.",
   "chat.goal.planModeBlocked":
     "Мета недоступна в режимі планування. Змініть режим, щоб продовжити.",
-  "chat.plan.attachmentsBlocked":
-    "Скорочення /plan поки підтримує лише текст. Вилучіть вкладення або контекст і повторіть спробу.",
   "chat.compact.runningBlocked": "Стиснути контекст можна після завершення поточного завдання.",
   "chat.compact.queued": "Стиснення додано в чергу; його буде виконано за порядком.",
   "chat.compact.duplicateBlocked": "Стиснення вже виконується або перебуває в черзі.",
@@ -7384,18 +7384,50 @@ const ukUA: Record<string, string> = {
     "Завантажує вибрану модель у фоні, щоб перший запис починався без очікування. Завантажена модель займає пам'ять, доки не мине затримка вивантаження нижче.",
   "voiceDictation.postProcess.title": "Постобробка",
   "voiceDictation.postProcess.description":
-    "Переписує кожен готовий текст мовною моделлю перед вставкою. У буфер обміну потрапляє сирий текст розпізнавання.",
+    "Переписує кожен готовий текст мовною моделлю перед вставкою. Якщо ввімкнено «Копіювати надиктований текст у буфер обміну», у буфер потрапляє сирий текст розпізнавання.",
   "voiceDictation.postProcess.enabled.title": "Обробляти надиктований текст",
   "voiceDictation.postProcess.enabled.description":
     "Якщо обробка завершилась помилкою або тривала надто довго, вставляється сирий текст.",
-  "voiceDictation.postProcess.provider.title": "Модель",
+  "voiceDictation.postProcess.provider.title": "Провайдер",
   "voiceDictation.postProcess.provider.description":
     "Працює на цьому пристрої; текст не залишає ваш комп'ютер.",
   "voiceDictation.postProcess.provider.appleFm": "Системна модель (Apple Foundation Models)",
   "voiceDictation.postProcess.prompt.title": "Промпт",
   "voiceDictation.postProcess.prompt.description":
-    "Використайте {variable} там, куди має потрапити розпізнаний текст. Без нього текст додається після промпта.",
+    "Використайте {variable} там, куди має потрапити розпізнаний текст. Без нього промпт не можна зберегти.",
   "voiceDictation.postProcess.prompt.reset": "Скинути до типового",
+  "voiceDictation.postProcess.status.checking": "Перевірка доступності…",
+  "voiceDictation.postProcess.status.available":
+    "Доступно на цьому Mac. Текст обробляється на цьому пристрої.",
+  "voiceDictation.postProcess.prompt.save": "Зберегти",
+  "voiceDictation.postProcess.prompt.cancel": "Скасувати",
+  "voiceDictation.postProcess.prompt.unsaved": "Є незбережені зміни",
+  "voiceDictation.postProcess.prompt.counter": "{count} із {max}",
+  "voiceDictation.postProcess.prompt.tooLong":
+    "Скоротіть промпт до {max} символів, щоб зберегти його.",
+  "voiceDictation.postProcess.prompt.blank":
+    "Промпт не може бути порожнім. Скиньте його, щоб повернути типовий.",
+  "voiceDictation.postProcess.prompt.noVariable":
+    "Промпт має містити {variable}: сюди підставляється розшифровка.",
+  "voiceDictation.postProcess.discard.title": "Відкинути незбережені зміни?",
+  "voiceDictation.postProcess.discard.description":
+    "Промпт повернеться до останньої збереженої версії.",
+  "voiceDictation.postProcess.discard.confirm": "Відкинути",
+  "voiceDictation.postProcess.reset.title": "Повернути типовий промпт?",
+  "voiceDictation.postProcess.reset.description":
+    "Ваш власний промпт буде видалено, і використовуватиметься вбудований типовий. Незбережені зміни буде відкинуто.",
+  "voiceDictation.postProcess.tryIt.title": "Перевірити",
+  "voiceDictation.postProcess.tryIt.description":
+    "Запускає промпт вище на зразковому реченні. Незбережені зміни враховуються; нічого не зберігається.",
+  "voiceDictation.postProcess.tryIt.sample": "Зразок тексту",
+  "voiceDictation.postProcess.tryIt.run": "Запустити",
+  "voiceDictation.postProcess.tryIt.running": "Виконується…",
+  "voiceDictation.postProcess.tryIt.failed": "Промпт не вдалося виконати: {reason}",
+  "voiceDictation.group.dictation.title": "Диктування",
+  "voiceDictation.group.microphone.title": "Мікрофон",
+  "voiceDictation.group.output.title": "Результат",
+  "voiceDictation.memory.title": "Пам'ять",
+  "voiceDictation.shortcut.open": "Відкрити сполучення клавіш",
   "voiceDictation.postProcess.unavailable.unsupportedPlatform":
     "Системна модель доступна лише на macOS.",
   "voiceDictation.postProcess.unavailable.helperMissing":
@@ -7448,8 +7480,7 @@ const ukUA: Record<string, string> = {
   "voiceDictation.models.remove": "Видалити",
   "voiceDictation.models.startingDownload": "Початок завантаження…",
   "voiceDictation.models.useWhenReady": "Використати після завантаження",
-  "voiceDictation.models.cancelUseWhenReady": "Залишити поточну модель",
-  "voiceDictation.models.willUseWhenReady": "Буде вибрана після завантаження",
+  "voiceDictation.models.cancelUseWhenReady": "Скасувати використання після завантаження",
   "voiceDictation.models.removeConfirm.title": "Видалити цю модель?",
   "voiceDictation.models.removeConfirm.description":
     "{model} буде видалено з цього пристрою. Пізніше її можна буде завантажити знову.",
@@ -7466,6 +7497,8 @@ const ukUA: Record<string, string> = {
   "voiceDictation.tooShort": "Запис закороткий. Записуйте, доки не закінчите говорити.",
   "voiceDictation.stillLoading":
     "Модель розпізнавання ще завантажувалась. Говоріть, коли почнеться запис.",
+  "voiceDictation.sessionBusyInOtherComposer":
+    "Диктування вже працює в іншому полі повідомлення. Спочатку зупиніть його там.",
   "voiceDictation.composer.cancel": "Скасувати голосове введення",
   "voiceDictation.microphoneFailed":
     "Не вдалося отримати доступ до мікрофона. Перевірте пристрій введення та дозволи.",
@@ -7500,8 +7533,6 @@ const ukUA: Record<string, string> = {
   "voiceDictation.composer.processing": "Обробка тексту",
   "voiceDictation.composer.status.processing": "Обробка тексту",
   "voiceDictation.composer.modelStatus.loading": "Модель розпізнавання завантажується",
-  "voiceDictation.composer.modelStatus.loaded":
-    "Модель розпізнавання завантажена, голосове введення стартує миттєво",
   "settings.computerUse.title": "Computer Use",
   "settings.computerUse.toggleLabel": "Увімкнути Computer Use",
   "settings.computerUse.toggleDescription": "Вмикає Computer Use — його сервер MCP і навички.",
@@ -7681,6 +7712,13 @@ const ukUA: Record<string, string> = {
     "Файл цього розділу було змінено поза налаштуваннями, поки ви редагували. Перезавантаження відхилить вашу чернетку; перезапис замінить файл вашою чернеткою.",
   "settings.systemPrompt.diskChanged.reload": "Перезавантажити з диска",
   "settings.systemPrompt.diskChanged.overwrite": "Перезаписати",
+  "settings.systemPrompt.diskChanged.show": "Показати версію з диска",
+  "settings.systemPrompt.diskChanged.viewFirst":
+    "Спочатку перегляньте версію з диска, щоб її перезаписати.",
+  "settings.systemPrompt.diskChanged.diskVersion":
+    "Версія з диска. Перезапис замінить цей текст вашою чернеткою.",
+  "settings.systemPrompt.diskChanged.noOverride":
+    "У файлі на диску немає тексту перевизначення; діє вбудований текст за замовчуванням.",
   "settings.systemPrompt.saveReason.unchanged": "Немає змін для збереження.",
   "settings.systemPrompt.saveReason.diskChanged":
     "Перед збереженням оберіть «Перезавантажити з диска» або «Перезаписати» вище.",

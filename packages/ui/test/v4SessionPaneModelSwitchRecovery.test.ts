@@ -2850,33 +2850,151 @@ describe("SessionPane /plan shortcut", () => {
     }
   });
 
-  it("blocks an attachment-bearing shortcut before changing mode", async () => {
+  it.each([
+    {
+      label: "task with pasted text",
+      text: "/plan inspect the context",
+      attachment: true,
+      context: false,
+    },
+    { label: "attachment-only task", text: "/plan", attachment: true, context: false },
+    {
+      label: "task with shared context",
+      text: "/plan inspect the context",
+      attachment: false,
+      context: true,
+    },
+    { label: "shared-context-only task", text: "/plan", attachment: false, context: true },
+  ])(
+    "sends $label with Plan enabled and the complete payload",
+    async ({ text, attachment, context }) => {
+      projectionState.current = {
+        status: "live",
+        snapshot: makeSnapshot(),
+        subscriptionId: "sub-1",
+        lastError: null,
+        optimisticCommands: [],
+        loadingOlder: false,
+      };
+      mocks.sendCommand.mockImplementation(async (envelope: CommandEnvelope) =>
+        ackFor(envelope, { status: "accepted" }),
+      );
+      const attachments = attachment
+        ? [
+            {
+              ref: "zcode-artifact://pasted",
+              fileName: "pasted-text.txt",
+              mime: "text/plain",
+              bytes: 20000,
+            },
+          ]
+        : [];
+      const sharedContextRefs = context
+        ? [{ kind: "shared_context_import" as const, context_id: "plan-context" }]
+        : [];
+      const root = await renderPane();
+      try {
+        const callsBeforeSubmit = mocks.sendCommand.mock.calls.length;
+        let sendResult: unknown;
+        await act(async () => {
+          sendResult = await captured.composerProps?.onSendText(text, {
+            attachments,
+            sharedContextRefs,
+            ...(context && text !== "/plan" ? { contextAttachmentCount: 1 } : {}),
+          });
+          await flushMicrotasks();
+        });
+        expect(sendResult).toBe("sent");
+        const submitted = mocks.sendCommand.mock.calls.slice(callsBeforeSubmit);
+        expect(submitted).toHaveLength(1);
+        expect(submitted[0]?.[0]).toMatchObject({
+          type: "sendText",
+          payload: {
+            text: text.slice("/plan".length).trim(),
+            mode: "build",
+            planEnabled: true,
+            ...(attachment ? { attachments } : {}),
+            ...(context ? { context_refs: sharedContextRefs } : {}),
+          },
+        });
+        expect(mocks.toast).not.toHaveBeenCalled();
+      } finally {
+        await act(async () => root.unmount());
+      }
+    },
+  );
+
+  it("activates the prepared worktree with Plan, attachments and context in the same submission", async () => {
+    const snapshot = makeSnapshot();
     projectionState.current = {
       status: "live",
-      snapshot: makeSnapshot(),
+      snapshot,
       subscriptionId: "sub-1",
       lastError: null,
       optimisticCommands: [],
       loadingOlder: false,
     };
-
+    const attachments = [
+      {
+        ref: "zcode-artifact://pasted",
+        fileName: "pasted-text.txt",
+        mime: "text/plain",
+        bytes: 20000,
+      },
+    ];
+    const contextRefs = [{ kind: "shared_context_import" as const, context_id: "plan-context" }];
+    const conversationQuotes = [{ text: "Planning requirements", messageId: "quoted-message" }];
+    const executionWorktree = { path: "/workspace-worktrees/plan", branchName: "zcode/plan" };
+    const reuploadAttachmentsForSession = vi.fn(async () => attachments);
+    mocks.sendCommand.mockImplementation(async (envelope: CommandEnvelope) =>
+      ackFor(envelope, {
+        status: "accepted",
+        ...(envelope.type === "createSession"
+          ? { result: { type: "createSession" as const, sessionId: snapshot.sessionId } }
+          : {}),
+      }),
+    );
     const root = await renderPane();
-    const callsBeforeSubmit = mocks.sendCommand.mock.calls.length;
-    let sendResult: unknown;
-    await act(async () => {
-      sendResult = await captured.composerProps?.onSendText("/plan 检查附件", {
-        attachments: [
-          { ref: "zcode-artifact://a", fileName: "a.txt", mime: "text/plain", bytes: 1 },
-        ],
+    try {
+      const callsBeforeSubmit = mocks.sendCommand.mock.calls.length;
+      await act(async () => {
+        await captured.composerProps?.onSendText("/plan inspect the context", {
+          attachments,
+          sharedContextRefs: contextRefs,
+          conversationQuotes,
+          contextAttachmentCount: 2,
+          executionWorktree,
+          preparedSessionId: snapshot.sessionId,
+          preparedAttemptId: "plan-attempt",
+          reuploadAttachmentsForSession,
+        });
+        await flushMicrotasks();
       });
-      await flushMicrotasks();
-    });
-
-    expect(sendResult).toBe("blocked");
-    expect(mocks.sendCommand.mock.calls.length).toBe(callsBeforeSubmit);
-    expect(mocks.toast).toHaveBeenCalledWith(expectedCopy("chat.plan.attachmentsBlocked"));
-
-    await act(async () => root.unmount());
+      const submitted = mocks.sendCommand.mock.calls
+        .slice(callsBeforeSubmit)
+        .map(([command]) => command);
+      expect(submitted.map((command) => command.type)).toEqual(["createSession", "sendText"]);
+      expect(submitted[0]).toMatchObject({
+        payload: {
+          preparedSessionId: snapshot.sessionId,
+          expectedAttemptId: "plan-attempt",
+          executionWorktree,
+        },
+      });
+      expect(submitted[1]).toMatchObject({
+        sessionId: snapshot.sessionId,
+        payload: {
+          text: "inspect the context",
+          planEnabled: true,
+          attachments,
+          context_refs: contextRefs,
+          conversationQuotes,
+        },
+      });
+      expect(reuploadAttachmentsForSession).toHaveBeenCalledExactlyOnceWith(snapshot.sessionId);
+    } finally {
+      await act(async () => root.unmount());
+    }
   });
 });
 

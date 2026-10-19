@@ -1,0 +1,49 @@
+name: Git hooks
+
+on:
+  pull_request:
+    branches: [integration]
+    paths:
+      - .github/workflows/git-hooks.yml
+      - lefthook.yml
+      - lint-staged*.mjs
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - scripts/*git-hooks*
+      - scripts/*lefthook*
+      - scripts/*pre-commit*
+      - scripts/*pre-push*
+      - scripts/*staged-file*
+      - scripts/fork-format*
+      - scripts/test/lefthook*
+
+permissions:
+  contents: read
+
+concurrency:
+  group: git-hooks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  hooks:
+    name: Git hooks (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-26.04, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - name: Install dependencies and hooks
+        run: pnpm install --frozen-lockfile
+      - name: Hook integration tests
+        run: pnpm test:git-hooks
+      - name: Existing formatter and staged-size regressions
+        run: node --test scripts/run-pre-commit-checks.test.mjs scripts/check-staged-file-tokens.test.mjs

@@ -1,3 +1,4 @@
+import { memo, useMemo, useState } from "react";
 import { FolderOpen, RotateCcw } from "lucide-react";
 import {
   TID_SETTINGS_SYSTEM_PROMPT_CUSTOMIZED,
@@ -13,6 +14,7 @@ import {
   TID_SETTINGS_SYSTEM_PROMPT_ROW,
   TID_SETTINGS_SYSTEM_PROMPT_SIZE,
   testId,
+  type SystemPromptOverrideKey,
 } from "@zcode/shared";
 import { Button } from "@/components/ui/button.js";
 import { SystemPromptEditor } from "@/settings/SystemPromptEditor.js";
@@ -20,6 +22,7 @@ import type { SystemPromptOverridesView } from "@/hooks/useSystemPromptOverrides
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { cn } from "@/components/lib/utils.js";
 import {
+  describeSystemPromptSize,
   SYSTEM_PROMPT_SECTION_INFO_IDS,
   SYSTEM_PROMPT_SECTION_TITLE_IDS,
   type EditableSystemPromptSection,
@@ -48,12 +51,15 @@ export interface SystemPromptRowProps {
   restoring: boolean;
   onToggleRestore: (section: EditableSystemPromptSection) => void;
   onCancelRestore: () => void;
-  onConfirmRestore: (key: EditableSystemPromptSection["key"]) => void;
+  onConfirmRestore: (
+    key: EditableSystemPromptSection["key"],
+    revision: string | null | undefined,
+  ) => void;
   onOpenFolder: () => void;
 }
 
 /** One section row: description, size, badge, path, actions, and the inline restore and editor panels. */
-export function SystemPromptRow({
+function SystemPromptRowBase({
   view,
   row,
   index,
@@ -194,39 +200,14 @@ export function SystemPromptRow({
         </div>
       </div>
       {restoring ? (
-        <div
-          className="space-y-2 border-t border-border px-4 py-3"
-          data-testid={testId(TID_SETTINGS_SYSTEM_PROMPT_RESTORE_CONFIRM, section.key)}
-        >
-          <div className="text-ui-sm font-medium text-foreground">
-            {intl.formatMessage({ id: "settings.systemPrompt.restoreConfirm.title" })}
-          </div>
-          <p className="text-ui-xs text-foreground-subtle">
-            {intl.formatMessage(
-              { id: "settings.systemPrompt.restoreConfirm.description" },
-              { host: hostLabel },
-            )}
-          </p>
-          <div className="text-ui-xs font-medium text-foreground-subtle">
-            {intl.formatMessage({ id: "settings.systemPrompt.restoreConfirm.preview" })}
-          </div>
-          <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-surface-muted p-2 font-mono text-ui-xs leading-5">
-            {defaultContent}
-          </pre>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              variant="destructive"
-              data-testid={testId(TID_SETTINGS_SYSTEM_PROMPT_RESTORE_CONFIRM_ACTION, section.key)}
-              onClick={() => onConfirmRestore(section.key)}
-            >
-              {intl.formatMessage({ id: "settings.systemPrompt.restoreConfirm.confirm" })}
-            </Button>
-            <Button size="sm" variant="outline" onClick={onCancelRestore}>
-              {intl.formatMessage({ id: "common.cancel" })}
-            </Button>
-          </div>
-        </div>
+        <RestoreConfirmPanel
+          sectionKey={section.key}
+          revision={section.revision}
+          defaultContent={defaultContent}
+          hostLabel={hostLabel}
+          onConfirm={onConfirmRestore}
+          onCancel={onCancelRestore}
+        />
       ) : null}
       {editing && view.editor ? (
         <SystemPromptEditor
@@ -240,21 +221,111 @@ export function SystemPromptRow({
   );
 }
 
-/** Approximate assembled main prompt. The caller labels it approximate; runtime parts are not included. */
-export function SystemPromptAssembledPreview({
-  text,
-  tokens,
-  characters,
+/**
+ * Inline restore confirmation. The revision the user reviewed is captured when the panel opens and
+ * is the one Confirm checks against, so a refresh while the panel is open cannot widen the delete.
+ */
+function RestoreConfirmPanel({
+  sectionKey,
+  revision,
+  defaultContent,
+  hostLabel,
+  onConfirm,
+  onCancel,
 }: {
-  text: string;
-  tokens: number;
-  characters: number;
+  sectionKey: SystemPromptOverrideKey;
+  revision: string | null | undefined;
+  defaultContent: string;
+  hostLabel: string;
+  onConfirm: SystemPromptRowProps["onConfirmRestore"];
+  onCancel: () => void;
 }) {
   const { intl } = useZCodeIntl();
+  const [reviewedRevision] = useState(revision);
+  return (
+    <div
+      className="space-y-2 border-t border-border px-4 py-3"
+      data-testid={testId(TID_SETTINGS_SYSTEM_PROMPT_RESTORE_CONFIRM, sectionKey)}
+    >
+      <div className="text-ui-sm font-medium text-foreground">
+        {intl.formatMessage({ id: "settings.systemPrompt.restoreConfirm.title" })}
+      </div>
+      <p className="text-ui-xs text-foreground-subtle">
+        {intl.formatMessage(
+          { id: "settings.systemPrompt.restoreConfirm.description" },
+          { host: hostLabel },
+        )}
+      </p>
+      <div className="text-ui-xs font-medium text-foreground-subtle">
+        {intl.formatMessage({ id: "settings.systemPrompt.restoreConfirm.preview" })}
+      </div>
+      <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-surface-muted p-2 font-mono text-ui-xs leading-5">
+        {defaultContent}
+      </pre>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          size="sm"
+          variant="destructive"
+          data-testid={testId(TID_SETTINGS_SYSTEM_PROMPT_RESTORE_CONFIRM_ACTION, sectionKey)}
+          onClick={() => onConfirm(sectionKey, reviewedRevision)}
+        >
+          {intl.formatMessage({ id: "settings.systemPrompt.restoreConfirm.confirm" })}
+        </Button>
+        <Button size="sm" variant="outline" onClick={onCancel}>
+          {intl.formatMessage({ id: "common.cancel" })}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Rows re-render only when their own inputs change. While a row is being edited it re-renders on
+ * every draft change, because the editor is part of it; the other rows skip the draft keystrokes.
+ */
+function areRowPropsEqual(prev: SystemPromptRowProps, next: SystemPromptRowProps): boolean {
+  if (next.view.editor?.key === next.row.section.key) return false;
+  if (
+    prev.row !== next.row ||
+    prev.index !== next.index ||
+    prev.identityWaiting !== next.identityWaiting ||
+    prev.identityNoteId !== next.identityNoteId ||
+    prev.hostLabel !== next.hostLabel ||
+    prev.draftBlockReason !== next.draftBlockReason ||
+    prev.restoring !== next.restoring ||
+    prev.onToggleRestore !== next.onToggleRestore ||
+    prev.onCancelRestore !== next.onCancelRestore ||
+    prev.onConfirmRestore !== next.onConfirmRestore ||
+    prev.onOpenFolder !== next.onOpenFolder
+  ) {
+    return false;
+  }
+  const a = prev.view;
+  const b = next.view;
+  return (
+    a.isRemote === b.isRemote &&
+    a.editorDirty === b.editorDirty &&
+    a.openEditor === b.openEditor &&
+    a.editor?.key === b.editor?.key &&
+    a.editor?.saving === b.editor?.saving
+  );
+}
+
+export const SystemPromptRow = memo(SystemPromptRowBase, areRowPropsEqual);
+
+/**
+ * Approximate assembled main prompt. The caller labels it approximate; runtime parts are not included.
+ * The text is rendered only while the panel is open, so a closed panel costs nothing per keystroke.
+ */
+export function SystemPromptAssembledPreview({ text }: { text: string }) {
+  const { intl } = useZCodeIntl();
+  const [open, setOpen] = useState(false);
+  const size = useMemo(() => describeSystemPromptSize(text), [text]);
   return (
     <details
       className="rounded-xl border border-border px-4 py-3 text-ui-sm"
       data-testid={TID_SETTINGS_SYSTEM_PROMPT_ASSEMBLED}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
     >
       <summary className="cursor-pointer font-medium text-foreground">
         {intl.formatMessage({ id: "settings.systemPrompt.assembled.title" })}
@@ -266,12 +337,14 @@ export function SystemPromptAssembledPreview({
         <p className="text-ui-xs text-foreground-subtle tabular-nums">
           {intl.formatMessage(
             { id: "settings.systemPrompt.assembled.tokens" },
-            { tokens, characters },
+            { tokens: size.tokens, characters: size.characters },
           )}
         </p>
-        <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-surface-muted p-2 font-mono text-ui-xs leading-5">
-          {text}
-        </pre>
+        {open ? (
+          <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-surface-muted p-2 font-mono text-ui-xs leading-5">
+            {text}
+          </pre>
+        ) : null}
       </div>
     </details>
   );

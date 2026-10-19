@@ -424,7 +424,7 @@ export function createWorkspaceSlice(set: SetFn) {
       text: string,
       workspaceIdentity?: string,
       mention?: ComposerMentionPrefill,
-      mode?: "replace" | "prepend-if-missing",
+      mode?: "replace" | "prepend-if-missing" | "prepend-text",
     ) => {
       let nextRequestId = 0;
       set((state) =>

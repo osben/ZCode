@@ -4,6 +4,7 @@ const OAUTH_CALLBACK_HOSTS = new Set(["oauth"]);
 const PAYMENT_CALLBACK_HOST = "payment";
 const WORKSPACE_OPEN_HOST = "workspace";
 const SHARE_IMPORT_HOST = "share";
+const TASK_NEW_HOST = "task";
 const DEEP_LINK_ADDITIONAL_DATA_KEY = "deepLinkUrl";
 const OPEN_WORKSPACE_ADDITIONAL_DATA_KEY = "openWorkspacePath";
 const OPEN_WORKSPACE_ARG = "--open-workspace";
@@ -77,6 +78,49 @@ export function extractWorkspaceOpenPath(parsedUrl: URL): string | null {
 
   const path = parsedUrl.searchParams.get("path");
   return path && path.length > 0 ? path : null;
+}
+
+export function isTaskNewUrl(parsedUrl: URL): boolean {
+  if (parsedUrl.protocol !== `${DEEP_LINK_SCHEME}:`) {
+    return false;
+  }
+
+  const normalizedPath = normalizeOAuthCallbackPath(parsedUrl.pathname);
+  if (parsedUrl.hostname === TASK_NEW_HOST) {
+    return normalizedPath === "/new";
+  }
+
+  if (parsedUrl.hostname) {
+    return false;
+  }
+
+  const [, host, ...pathParts] = normalizedPath.split("/");
+  return Boolean(host === TASK_NEW_HOST && `/${pathParts.join("/")}` === "/new");
+}
+
+export interface TaskNewRequest {
+  path: string;
+  prompt?: string;
+  promptFile?: string;
+}
+
+/**
+ * Structural validation only: `path` plus exactly one of `prompt` / `promptFile`. Text limits and file
+ * checks live in desktopTaskDraftDeepLink.ts so every rejection shares one reason vocabulary.
+ */
+export function extractTaskNewRequest(parsedUrl: URL): TaskNewRequest | null {
+  if (!isTaskNewUrl(parsedUrl)) {
+    return null;
+  }
+
+  const path = parsedUrl.searchParams.get("path");
+  const prompt = parsedUrl.searchParams.get("prompt");
+  const promptFile = parsedUrl.searchParams.get("promptFile");
+  if (!path || (prompt === null) === (promptFile === null)) {
+    return null;
+  }
+
+  return prompt !== null ? { path, prompt } : { path, promptFile: promptFile as string };
 }
 
 export function isShareImportUrl(parsedUrl: URL): boolean {
@@ -178,6 +222,10 @@ function isCompleteDeepLinkUrl(value: string): boolean {
 
   if (isShareImportUrl(parsedUrl)) {
     return extractShareImportCode(parsedUrl) !== null;
+  }
+
+  if (isTaskNewUrl(parsedUrl)) {
+    return extractTaskNewRequest(parsedUrl) !== null;
   }
 
   return true;

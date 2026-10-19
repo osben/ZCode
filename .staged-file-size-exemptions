@@ -1,0 +1,21 @@
+# Files allowed to exceed the staged-file size limit (scripts/check-staged-file-tokens.mjs).
+# Add one repo-relative path per line.
+packages/ui/src/ChatEmptyState.tsx
+packages/ui/src/i18n/locales/en-US.ts
+packages/ui/src/i18n/locales/uk-UA.ts
+packages/ui/src/i18n/locales/zh-CN.ts
+packages/ui/src/v4/ConversationComposer.tsx
+packages/ui/src/v4/composer/ComposerDestinationControl.tsx
+packages/ui/src/v4/composer/composerDraftStore.ts
+packages/ui/src/v4/composer/composerWorktreePipeline.ts
+packages/ui/test/composerWorktreePipeline.test.ts
+packages/ui/test/composerRecoveryContexts.test.ts
+specs/composer-worktree-setup-steps.md
+docs/conversation-session-case-catalog.md
+docs/testing/conversation-session-e2e-coverage-matrix.md
+packages/ui/src/v4/ConversationComposer.tsx
+packages/ui/src/v4/SessionPane.tsx
+packages/ui/test/v4SessionPaneModelSwitchRecovery.test.ts
+
+# Owned by this PR (already over the limit before this change): split the file into per-section test modules.
+packages/ui/test/v4ConversationFileSummaryPanel.test.ts

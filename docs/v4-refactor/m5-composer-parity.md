@@ -241,6 +241,15 @@ workspace-default 旧 RPC 的 buildWorkspaceState 热路径）；工具条读会
   `listThoughtLevels()` 与 `provider/model/thought` 同一 snapshot/event 原子投影。GLM-5.2 这类由
   CLI 默认策略动态补齐的模型不能依赖 legacy task config cache，也不能借用源模型目录或退回
   客户端写死的通用五档。
+- **fork 后模型继续可用**：fork 创建 child session 后，child Composer 必须从该 session 的
+  `SessionConfigState.modelSelection` 恢复父会话在 fork 点的 provider/model/options。首次打开 child
+  时不得显示空的“Choose model”状态或禁用发送；已存在的 child Composer draft 中若模型选择缺失，
+  则以该 child session 的权威配置补齐，即使较早的 snapshot 已初始化 mode。若用户在此期间已选了
+  模型，迟到的 snapshot 不得覆盖它。Renderer 的 session-scoped Composer draft 是本地选择的唯一
+  owner，snapshot 只提供初始值。
+  Порядок событий: fork принят → частичная конфигурация child → инициализация draft → полная
+  конфигурация child → заполнение отсутствующего `modelSelection` → отправка.
+  E2E 比较 fork 前后的 provider/model，并确认 child 的发送请求使用继承的模型。
 - **投影确认与持久化**：预热 projection 只负责确认 runtime 实际配置；只有 projection 与最新
   intent 的 provider/model（以及显式 thought）匹配后，才整体持久化 model + thought 元组。
   迟到 projection 不得覆盖更新的草稿 intent。预热未就绪时 intent 随 `createSession.config`

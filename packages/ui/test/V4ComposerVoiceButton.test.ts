@@ -16,8 +16,8 @@ import { V4ComposerVoiceButton } from "@/v4/composer/V4ComposerVoiceButton.js";
 
 afterEach(cleanup);
 
-describe("V4ComposerVoiceButton live feedback", () => {
-  it("shows microphone level and keeps the stream preview out of the editable input", () => {
+describe("V4ComposerVoiceButton toolbar cluster", () => {
+  it("shows the microphone level in the toolbar cluster; the transcript preview is not rendered here (VD-LIVE-01, VD-GHO-01)", () => {
     render(
       createElement(
         TooltipProvider,
@@ -25,27 +25,42 @@ describe("V4ComposerVoiceButton live feedback", () => {
         createElement(V4ComposerVoiceButton, {
           phase: "recording",
           level: 0.6,
-          preview: { committed: "Hello ", tentative: "world" },
           onToggle: () => undefined,
         }),
       ),
     );
 
     expect(screen.getByRole("meter").getAttribute("aria-valuenow")).toBe("60");
-    expect(screen.getByTestId("voice-dictation-preview").textContent).toContain("Hello ");
-    expect(screen.getByTestId("voice-dictation-preview").textContent).toContain("world");
-    // Вариант "listening" теперь встречается дважды: видимый лейбл панели и sr-only live region.
-    expect(screen.getByTestId("voice-dictation-feedback").textContent).toContain(
-      "voiceDictation.composer.listening",
-    );
-    expect(screen.getAllByRole("status").length).toBe(2);
-    expect(screen.getByTestId("voice-dictation-feedback").className).toContain("absolute");
-    expect(screen.getByTestId("voice-dictation-feedback").className).toContain("w-56");
-    expect(screen.getByTestId("voice-dictation-control").className).toContain("relative");
+    // The ghost preview lives in the editor layer; the button must never render transcript text.
+    expect(screen.queryByTestId("voice-dictation-preview")).toBeNull();
+    // Only the persistent live region is a status; the cluster adds no second announcement.
+    expect(screen.getAllByRole("status").length).toBe(1);
+    expect(screen.getByRole("status").textContent).toBe("voiceDictation.composer.listening");
     expect(screen.queryByRole("textbox")).toBeNull();
   });
 
-  it("hides the level meter and preview after recording stops", () => {
+  it("does not render an overlay: the cluster is in flow and never absolutely positioned (VD-CLU-01)", () => {
+    render(
+      createElement(
+        TooltipProvider,
+        null,
+        createElement(V4ComposerVoiceButton, {
+          phase: "recording",
+          level: 0.2,
+          onToggle: () => undefined,
+          onCancel: () => undefined,
+        }),
+      ),
+    );
+    const cluster = screen.getByTestId("voice-dictation-cluster");
+    expect(cluster.className).not.toContain("absolute");
+    expect(cluster.className).not.toContain("pointer-events-auto");
+    expect(cluster.className).not.toContain("w-56");
+    // The stop/mic button is a sibling of the cluster, not inside it.
+    expect(screen.getByTestId("v4-composer-voice-entry").contains(cluster)).toBe(false);
+  });
+
+  it("hides the level meter and cluster after recording stops", () => {
     render(
       createElement(
         TooltipProvider,
@@ -53,21 +68,20 @@ describe("V4ComposerVoiceButton live feedback", () => {
         createElement(V4ComposerVoiceButton, {
           phase: "idle",
           level: 0,
-          preview: null,
           onToggle: () => undefined,
         }),
       ),
     );
 
     expect(screen.queryByRole("meter")).toBeNull();
-    expect(screen.queryByTestId("voice-dictation-preview")).toBeNull();
-    // Постоянный live region объявляет и не-Recording фазы; без превью он единственный role="status".
+    expect(screen.queryByTestId("voice-dictation-cluster")).toBeNull();
+    // Постоянный live region объявляет и не-Recording фазы.
     expect(screen.getByRole("status").textContent).toBe("voiceDictation.composer.status.idle");
   });
 
-  it("offers a clickable Cancel inside the recording panel only when a handler is given", () => {
+  it("offers a clickable Cancel in the cluster only when a handler is given (VD-CLU-02)", () => {
     const onCancel = vi.fn();
-    const renderPanel = (handler?: () => void) =>
+    const renderCluster = (handler?: () => void) =>
       render(
         createElement(
           TooltipProvider,
@@ -75,24 +89,53 @@ describe("V4ComposerVoiceButton live feedback", () => {
           createElement(V4ComposerVoiceButton, {
             phase: "recording",
             level: 0.2,
-            preview: null,
             onToggle: () => undefined,
             onCancel: handler,
           }),
         ),
       );
 
-    renderPanel();
+    renderCluster();
     expect(screen.queryByTestId("voice-dictation-cancel")).toBeNull();
     cleanup();
 
-    renderPanel(onCancel);
+    renderCluster(onCancel);
     const cancel = screen.getByTestId("voice-dictation-cancel");
     expect(cancel.getAttribute("aria-label")).toBe("voiceDictation.composer.cancel");
-    // The panel itself ignores pointer events so it never blocks the toolbar; the button opts back in.
-    expect(cancel.className).toContain("pointer-events-auto");
     fireEvent.click(cancel);
     expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps editor focus when the cluster is pressed (VD-CLU-03)", () => {
+    render(
+      createElement(
+        TooltipProvider,
+        null,
+        createElement(
+          "div",
+          null,
+          createElement("textarea", { "data-testid": "editor-stub" }),
+          createElement(V4ComposerVoiceButton, {
+            phase: "recording",
+            level: 0.2,
+            onToggle: () => undefined,
+            onCancel: () => undefined,
+          }),
+        ),
+      ),
+    );
+    const editor = screen.getByTestId("editor-stub") as HTMLTextAreaElement;
+    editor.focus();
+    expect(document.activeElement).toBe(editor);
+
+    const cluster = screen.getByTestId("voice-dictation-cluster");
+    const notPrevented = fireEvent.mouseDown(cluster);
+    // fireEvent returns false when the handler called preventDefault.
+    expect(notPrevented).toBe(false);
+    expect(document.activeElement).toBe(editor);
+
+    // The cluster is passive status UI: it must not become a focus target itself.
+    expect(cluster.hasAttribute("tabindex")).toBe(false);
   });
 
   const renderStatus = (phase: "idle" | "recording" | "loading", modelStatus?: string) =>
@@ -103,7 +146,6 @@ describe("V4ComposerVoiceButton live feedback", () => {
         createElement(V4ComposerVoiceButton, {
           phase,
           level: 0,
-          preview: null,
           modelStatus: modelStatus as never,
           onToggle: () => undefined,
         }),
@@ -126,14 +168,24 @@ describe("V4ComposerVoiceButton live feedback", () => {
     expect(loaded.className).not.toContain("animate-pulse");
   });
 
-  it("describes the status in text for assistive technology, not only by color", () => {
-    renderStatus("idle", "loaded");
+  it("describes the loading status in text for assistive technology", () => {
+    renderStatus("idle", "loading");
     const button = screen.getByTestId("v4-composer-voice-entry");
     const describedBy = button.getAttribute("aria-describedby");
     expect(describedBy).toBeTruthy();
     expect(document.getElementById(describedBy!)?.textContent).toBe(
-      "voiceDictation.composer.modelStatus.loaded",
+      "voiceDictation.composer.modelStatus.loading",
     );
+  });
+
+  it("gives the loaded dot no text: decorative, no description, no tooltip text (non-essential hint)", () => {
+    renderStatus("idle", "loaded");
+    const dot = screen.getByTestId("voice-model-status-dot");
+    expect(dot.getAttribute("aria-hidden")).toBe("true");
+    const button = screen.getByTestId("v4-composer-voice-entry");
+    expect(button.getAttribute("aria-describedby")).toBeNull();
+    expect(document.getElementById("voice-model-status-text")).toBeNull();
+    expect(button.getAttribute("aria-label")).toBe("voiceDictation.composer.start");
   });
 
   it("shows no dot when idle, without a model, or while recording or busy", () => {
@@ -158,7 +210,6 @@ describe("V4ComposerVoiceButton live feedback", () => {
         createElement(V4ComposerVoiceButton, {
           phase: "processing",
           level: 0,
-          preview: null,
           onToggle,
         }),
       ),

@@ -15,6 +15,7 @@ import {
   TID_SETTINGS_SYSTEM_PROMPT_DIRTY_NOTE,
   TID_SETTINGS_SYSTEM_PROMPT_DISK_OVERWRITE,
   TID_SETTINGS_SYSTEM_PROMPT_DISK_RELOAD,
+  TID_SETTINGS_SYSTEM_PROMPT_DISK_SHOW,
   TID_SETTINGS_SYSTEM_PROMPT_RESTORE,
   TID_SETTINGS_SYSTEM_PROMPT_RESTORE_CONFIRM,
   TID_SETTINGS_SYSTEM_PROMPT_RESTORE_CONFIRM_ACTION,
@@ -253,6 +254,8 @@ describe("System Prompt Settings E2E", () => {
       timeout: 10_000,
       timeoutMsg: "Disk-changed state did not appear after the file changed",
     });
+    // Overwrite is enabled only after the disk version has been shown.
+    await clickTestIdByDom(TID_SETTINGS_SYSTEM_PROMPT_DISK_SHOW);
     await clickTestIdByDom(TID_SETTINGS_SYSTEM_PROMPT_DISK_OVERWRITE);
     await browser.waitUntil(
       async () => {

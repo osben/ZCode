@@ -25,6 +25,9 @@ ZCode Desktop 支持 `zcode://workspace/open?path=...` 打开本地工作区，�
 - deep link 传入的 workspace path 必须在任何 filesystem probe 前拒绝 UNC / 网络路径。
 - deep link 打开本地目录前必须有用户确认；用户取消时不得缓存或投递 workspace path。
 - deep-link 确认只授权打开路径，不建立 Workspace Hook Trust。
+- `zcode://task/new`（见 `specs/deeplink-new-task.md`）是同级别的外部输入：必须复用上述确认流程并在确认中展示任务文本预览；
+  只填充新草稿，永不自动发送；`promptFile` 由 main 读取，`realpath` 后必须位于项目目录内，拒绝 UNC、符号链接逃逸、
+  超限与非 UTF-8 文件；日志不得记录任务文本或文件内容。
 - 项目级 `zcode.json` 与 `.zcode/config.json` Hook 声明视为未信任代码，默认不能进入可执行路径。
 - discovery 只生成 immutable `WorkspaceHookBundleSnapshot`；Runtime admission 必须在 Hook lifecycle 和进程启动前完成。
 - 持久 Trust 只按 `workspaceIdentity + hookDeclarationDigest` 命中；bundle digest 用于保证审核和执行快照一致。

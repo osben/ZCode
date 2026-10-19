@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -51,6 +51,35 @@ describe("useVoiceModelStatus", () => {
     renderHook(() => useVoiceModelStatus({ enabled: true }));
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(mocks.service!.getRuntimeState).not.toHaveBeenCalled();
+  });
+
+  it("shares one Host poll across mounted views", async () => {
+    renderHook(() => useVoiceModelStatus({ enabled: true }));
+    renderHook(() => useVoiceModelStatus({ enabled: true }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mocks.service!.getRuntimeState).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not re-render when later polls return an equal snapshot", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    try {
+      let renders = 0;
+      renderHook(() => {
+        renders += 1;
+        return useVoiceModelStatus({ enabled: true });
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      const afterFirstPoll = renders;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3_000);
+      });
+      expect(mocks.service!.getRuntimeState.mock.calls.length).toBeGreaterThan(2);
+      expect(renders).toBe(afterFirstPoll);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("is none without a selected model", async () => {
