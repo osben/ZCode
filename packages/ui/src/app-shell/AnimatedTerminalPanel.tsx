@@ -138,7 +138,7 @@ export function AnimatedTerminalPanel({
                 <Terminal
                   services={services}
                   cwd={terminalCwd}
-                  workspaceIdentity={workspaceIdentity}
+                  workspaceKey={workspaceKey}
                   openWorkspaceKeys={openWorkspaceKeys}
                   isVisible={isVisible}
                   isPanelResizing={isTerminalPanelResizing}
