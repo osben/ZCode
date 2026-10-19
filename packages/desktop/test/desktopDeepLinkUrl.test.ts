@@ -299,3 +299,62 @@ describe("desktop deep link url helpers", () => {
     });
   });
 });
+
+describe("desktop deep link task/new url helpers", () => {
+  it("recognizes task/new urls and extracts path plus inline prompt", async () => {
+    const { extractTaskNewRequest, isTaskNewUrl } =
+      await import("../src/main/desktopDeepLinkUrl.js");
+
+    const url = new URL(
+      `zcode://task/new?path=${encodeURIComponent("/Users/demo/Проект A&B")}&prompt=${encodeURIComponent("Сделай 100% & #1\nвторая строка")}`,
+    );
+    expect(isTaskNewUrl(url)).toBe(true);
+    expect(extractTaskNewRequest(url)).toEqual({
+      path: "/Users/demo/Проект A&B",
+      prompt: "Сделай 100% & #1\nвторая строка",
+    });
+  });
+
+  it("extracts promptFile and accepts Linux one-slash form", async () => {
+    const { extractTaskNewRequest, isTaskNewUrl } =
+      await import("../src/main/desktopDeepLinkUrl.js");
+
+    const url = new URL("zcode:/task/new?path=%2Ftmp%2Fp&promptFile=%2Ftmp%2Fp%2Fplan.md");
+    expect(isTaskNewUrl(url)).toBe(true);
+    expect(extractTaskNewRequest(url)).toEqual({ path: "/tmp/p", promptFile: "/tmp/p/plan.md" });
+  });
+
+  it("rejects links with neither or both of prompt/promptFile, or without path", async () => {
+    const { extractTaskNewRequest } = await import("../src/main/desktopDeepLinkUrl.js");
+
+    expect(extractTaskNewRequest(new URL("zcode://task/new?path=%2Ftmp"))).toBeNull();
+    expect(
+      extractTaskNewRequest(new URL("zcode://task/new?path=%2Ftmp&prompt=a&promptFile=%2Ftmp%2Fb")),
+    ).toBeNull();
+    expect(extractTaskNewRequest(new URL("zcode://task/new?prompt=a"))).toBeNull();
+    expect(extractTaskNewRequest(new URL("zcode://task/new?path=&prompt=a"))).toBeNull();
+  });
+
+  it("does not match other routes or schemes and ignores unknown params", async () => {
+    const { extractTaskNewRequest, isTaskNewUrl } =
+      await import("../src/main/desktopDeepLinkUrl.js");
+
+    expect(isTaskNewUrl(new URL("zcode://task/other?path=%2Ftmp&prompt=a"))).toBe(false);
+    expect(isTaskNewUrl(new URL("https://task/new?path=%2Ftmp&prompt=a"))).toBe(false);
+    expect(isTaskNewUrl(new URL("zcode://workspace/open?path=%2Ftmp"))).toBe(false);
+    expect(
+      extractTaskNewRequest(new URL("zcode://task/new?path=%2Ftmp&prompt=a&model=x&mode=plan")),
+    ).toEqual({ path: "/tmp", prompt: "a" });
+  });
+
+  it("extractDeepLinkUrlFromArgs only accepts a complete task/new url", async () => {
+    const { extractDeepLinkUrlFromArgs } = await import("../src/main/desktopDeepLinkUrl.js");
+
+    const complete = "zcode://task/new?path=%2Ftmp%2Fp&prompt=hello";
+    expect(extractDeepLinkUrlFromArgs(["--", complete])).toBe(complete);
+    // A fragment split across argv entries is rejoined before it is accepted.
+    expect(extractDeepLinkUrlFromArgs(["zcode://task/new?path=%2Ftmp%2Fp", "&prompt=hello"])).toBe(
+      complete,
+    );
+  });
+});

@@ -1,3 +1,0 @@
-node scripts/check-staged-file-tokens.mjs || exit $?
-pnpm exec lint-staged --config lint-staged.pre-commit.config.mjs || exit $?
-node scripts/check-staged-file-tokens.mjs

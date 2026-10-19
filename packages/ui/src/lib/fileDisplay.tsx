@@ -30,6 +30,8 @@ export interface FileDisplayOptions {
   kind?: "file" | "directory";
   showIcon?: boolean;
   showFilePath?: boolean;
+  /** Render the directory before the name so the label reads as one path (dir/name). */
+  pathBeforeName?: boolean;
   iconSize?: number;
   className?: string;
   fileNameClassName?: string;
@@ -200,6 +202,24 @@ export function FileDisplayInline({
     setFileIconSrc(descriptor.fileIconSrc);
   }, [descriptor.fileIconSrc]);
 
+  const fileName = (
+    <span
+      className={options?.fileNameClassName ?? "truncate text-ui-base font-medium text-foreground"}
+    >
+      {descriptor.fileName}
+    </span>
+  );
+  const filePath =
+    options?.showFilePath && descriptor.filePath ? (
+      <span
+        className={options.filePathClassName ?? "truncate text-ui-base text-foreground-subtlest"}
+      >
+        {/* Bidi-isolate the path text: leading-ellipsis styles (direction: rtl) must not
+            reorder leading/trailing slashes when the path fits on one line. */}
+        <bdi>{descriptor.filePath}</bdi>
+      </span>
+    ) : null;
+
   return (
     <span className={options?.className ?? "inline-flex max-w-full items-center gap-1 "}>
       {options?.showIcon !== false ? (
@@ -219,20 +239,17 @@ export function FileDisplayInline({
           }}
         />
       ) : null}
-      <span
-        className={
-          options?.fileNameClassName ?? "truncate text-ui-base font-medium text-foreground"
-        }
-      >
-        {descriptor.fileName}
-      </span>
-      {options?.showFilePath && descriptor.filePath ? (
-        <span
-          className={options.filePathClassName ?? "truncate text-ui-base text-foreground-subtlest"}
-        >
-          {descriptor.filePath}
-        </span>
-      ) : null}
+      {options?.pathBeforeName ? (
+        <>
+          {filePath}
+          {fileName}
+        </>
+      ) : (
+        <>
+          {fileName}
+          {filePath}
+        </>
+      )}
     </span>
   );
 }

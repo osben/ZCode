@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { selectDefaultBranchRef } from "./affected-unit-test-baseline.mjs";
 
@@ -25,8 +26,7 @@ function resolvePnpmCliPath(env) {
   const npmExecPath = env.npm_execpath;
   if (
     npmExecPath &&
-    (npmExecPath.toLowerCase().includes("\\pnpm\\") ||
-      npmExecPath.toLowerCase().includes("/pnpm/"))
+    (npmExecPath.toLowerCase().includes("\\pnpm\\") || npmExecPath.toLowerCase().includes("/pnpm/"))
   ) {
     return npmExecPath;
   }
@@ -187,7 +187,7 @@ function resolveUpstreamTarget(root) {
   };
 }
 
-function resolveDiffTarget(root) {
+export function resolveDiffTarget(root) {
   const explicitBase =
     process.env.ZCODE_PRE_PUSH_BASE?.trim() || process.env.ZCODE_AFFECTED_TEST_BASE?.trim();
   if (explicitBase) {
@@ -342,11 +342,13 @@ function main() {
   return runLintStaged(root, comparisonBase, target.head);
 }
 
-try {
-  process.exitCode = main();
-} catch (error) {
-  console.error(
-    `[pre-push affected tests] ${error instanceof Error ? error.message : String(error)}`,
-  );
-  process.exitCode = 1;
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    process.exitCode = main();
+  } catch (error) {
+    console.error(
+      `[pre-push affected tests] ${error instanceof Error ? error.message : String(error)}`,
+    );
+    process.exitCode = 1;
+  }
 }

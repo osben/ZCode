@@ -151,6 +151,7 @@ export function createDesktopPlatform(options: {
       return window.zcode.onOpenWorkspace?.(handler) ?? (() => {});
     },
     onOpenWorkspacePath: (handler) => window.zcode.onOpenWorkspacePath?.(handler) ?? (() => {}),
+    onOpenTaskDraft: (handler) => window.zcode.onOpenTaskDraft?.(handler) ?? (() => {}),
     onOpenFeedbackDialog: (handler) => window.zcode.onOpenFeedbackDialog?.(handler) ?? (() => {}),
     onOpenTicketsPanel: (handler) => window.zcode.onOpenTicketsPanel?.(handler) ?? (() => {}),
     onWindowFullscreenChanged: (handler) => window.zcode.onWindowFullscreenChanged(handler),

@@ -21,3 +21,5 @@ packages/ui/src/command-center/CommandCenterDialog.tsx
 docs/v4-refactor/m5-composer-parity.md
 packages/ui/src/v4/composer/useDraftConfigControl.ts
 packages/ui/test/useDraftConfigControl.test.ts
+# Owned by this PR (already over the limit before this change): split the file into per-section test modules.
+packages/ui/test/v4ConversationFileSummaryPanel.test.ts
