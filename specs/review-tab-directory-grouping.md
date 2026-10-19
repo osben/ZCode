@@ -67,18 +67,36 @@ Non-interactive `div`, no `tabIndex`, no button semantics. Folder icon `size-3.5
 
 ## E2E scenario (interaction change)
 
-Case: open a workspace with mixed changes (a modified file and an untracked file in the same directory, plus a file in another directory). Open the Review pane. Check "Group by directory", assert one header per directory run and the header count, uncheck, assert flat rows, reload, assert the preference is restored. Status: written here as the case definition; the desktop E2E harness (`packages/desktop/test/e2e/`) has not been extended yet, so this case is unrun.
+Case: open a workspace with mixed changes (a modified file and an untracked file in the same directory, plus a file in another directory). Open the Review pane. Check "Group by directory", assert one header per directory run and the header count, uncheck, assert flat rows, reload, assert the preference is restored. Status: unrun. This is the case definition only; the desktop E2E harness (`packages/desktop/test/e2e/`) has not been extended yet and no desktop E2E run has been performed for this feature. The component test in `packages/ui/test/gitPaneGroupByDirectoryView.test.ts` covers the same checkbox, grouping and persistence behavior in jsdom and is not a substitute for this E2E case.
 
 ## Tests
 
-- `packages/ui/src/GitPane/directoryRowModel.test.ts`:
-  - grouped runs and section splitting (existing);
+- `packages/ui/test/gitPaneDirectoryRowModel.test.ts` (pure row model):
+  - grouped runs and section splitting;
   - `buildGitPaneDisplayRows(changes, false)` returns file rows only, in input order, and has no directory rows;
   - `buildGitPaneDisplayRows(changes, true)` equals `buildGitPaneRows(changes)`;
-  - `getGitPaneRowIndexByPath` covers exactly the file rows in both modes and points at the right row index.
+  - `getGitPaneRowIndexByPath` covers exactly the file rows in both modes and points at the right row index;
+  - `canShowGroupByDirectory` hides the checkbox for empty, loading and error states.
 - `packages/ui/test/gitPaneGroupByDirectoryPreference.test.ts`: default off on empty and invalid values, `"true"` reads on, writing off removes the key, storage that throws reads off and does not throw on write, and the Review key does not collide with the chat key.
+- `packages/ui/test/gitPaneGroupByDirectoryView.test.ts` (jsdom, real `GitPane` render; services, store, i18n, file-context hooks and `GitPaneChangeCard` are stubbed; a 800px viewport is stubbed so the virtualizer renders the fixture rows):
+  - Scenario 1: fresh state is flat, unchecked, no headers, files in change order, `hideDirectoryPart` false.
+  - Scenario 2: checking the box shows one header per consecutive directory run per section (`packages/ui/src` appears twice across sections), with file count and `+a −d` aggregate, file order unchanged, `hideDirectoryPart` true, stored value `"true"`.
+  - Scenario 3: unchecking returns to flat order and removes the stored key; a flat-mode expanded card stays expanded across grouping toggles.
+  - Scenario 4: remount restores the checked state from storage; an invalid stored value reads unchecked; the chat key is neither read nor written.
+  - Scenario 5 (partial): an active find match auto-expands its card and its row `data-index` equals the grouped row index after toggling. The scroll request itself is not asserted.
+  - Visibility: checkbox hidden for empty, loading (with stale rows) and error states; shown when settled.
+  - Source switch: the checkbox state survives a `selectedSourceId` change.
 - `packages/ui/test/changeSummaryTree.test.ts` keeps covering the chat preference via the shared helper.
 - `packages/ui/test/v4ConversationFileSummaryPanel.test.ts` keeps covering the chat flat path (Radix checkbox mocked).
+
+### Not covered by the unit or component tests
+
+- Real `GitPaneChangeCard` rendering, including basename-only display in grouped mode (only the `hideDirectoryPart` prop wiring is checked).
+- Real scroll position, "toggling does not jump to the top", and find scrolling to the correct on-screen row (only the row index mapping is checked).
+- Real row measurement and header/expanded-card overlap.
+- Narrow and mobile layout (scenario 8).
+- Real app reload and `localStorage` in the desktop renderer.
+- The desktop E2E case above.
 
 ## Non-goals
 
