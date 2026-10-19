@@ -19,10 +19,32 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * prev when fully equal; on partial equality builds a new shell re-attaching prev's child
  * values (including old string references with identical content). Never mutates next — it
  * may share structure with other snapshots produced by apply. Recurses only through JSON
- * shapes (plain objects / arrays).
+ * shapes (plain objects / arrays) and Maps (derived UI join tables; rows never contain Maps).
  */
 export function shareStructure<T>(prev: unknown, next: T): T {
   if (Object.is(prev, next)) return prev as T;
+  if (next instanceof Map) {
+    if (!(prev instanceof Map)) return next;
+    // Key order is part of equality: consumers may iterate the Map.
+    const prevEntries = [...prev.entries()];
+    let allPrev = prevEntries.length === next.size;
+    let changed = false;
+    const out = new Map<unknown, unknown>();
+    let index = 0;
+    for (const [key, item] of next) {
+      const prevEntry = prevEntries[index];
+      index += 1;
+      const hasPrev = prev.has(key);
+      const shared = hasPrev ? shareStructure(prev.get(key), item) : item;
+      if (shared !== item) changed = true;
+      if (prevEntry === undefined || prevEntry[0] !== key || shared !== prevEntry[1]) {
+        allPrev = false;
+      }
+      out.set(key, shared);
+    }
+    if (allPrev) return prev as T;
+    return (changed ? out : next) as T;
+  }
   if (Array.isArray(next)) {
     if (!Array.isArray(prev)) return next;
     let allPrev = prev.length === next.length;

@@ -149,8 +149,8 @@ export function updateWorkspaceState(
 
   if (nextWorkspaceState === current) {
     // After migration to a single ZCode Agent, legacy provider selections normalize to glm, so many calls do not actually change state.
-    // Writing the merged overlay snapshot back to the identity bucket would break the selector's reference cache and trigger pointless rerenders.
-    return { workspaces: state.workspaces };
+    // Return `state` itself: any new wrapper fails zustand's Object.is check and rerenders every subscriber.
+    return state;
   }
 
   if (workspaceKey === workspacePath) {

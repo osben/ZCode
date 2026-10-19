@@ -16,6 +16,7 @@ import type {
   ConfigOptionsStatus,
   ElicitationFormDraft,
   ZCodeSessionStoreState,
+  TaskRuntimeState,
   TaskUsageState,
 } from "@/store/zcodeSessionStoreTypes.js";
 import { getDefaultWorkspaceState } from "@/store/zcodeSessionStoreTypes.js";
@@ -195,6 +196,13 @@ function updateWorkspaceStateForIdentityScopedTaskState(
   };
 }
 
+/** `next` is a spread of `stored` plus overrides, so its keys cover every key of `stored`. */
+function isTaskRuntimeUnchanged(stored: TaskRuntimeState, next: TaskRuntimeState): boolean {
+  return (Object.keys(next) as (keyof TaskRuntimeState)[]).every((key) =>
+    Object.is(next[key], stored[key]),
+  );
+}
+
 export function createTaskSlice(set: SetFn) {
   return {
     setTaskRuntimeState: (
@@ -205,8 +213,12 @@ export function createTaskSlice(set: SetFn) {
       workspaceIdentity?: string,
       provider?: ZCodeProvider,
     ) => {
-      set((state) =>
-        updateWorkspaceState(
+      set((state) => {
+        // Only an entry already stored in its own bucket may short-circuit: a missing bucket or entry must still be created.
+        const storedTaskRuntime =
+          state.workspaces[resolveWorkspaceStateKey(workspacePath, workspaceIdentity)]
+            ?.taskRuntimeByTaskId[taskId];
+        return updateWorkspaceState(
           state,
           workspacePath,
           (current) => {
@@ -228,6 +240,13 @@ export function createTaskSlice(set: SetFn) {
                 ? currentTaskRuntime.activeInputOwnerClientId
                 : undefined,
             };
+            // Bot broadcasts repeat "streaming" on every chunk; an identical write must not notify every subscriber.
+            if (
+              storedTaskRuntime !== undefined &&
+              isTaskRuntimeUnchanged(storedTaskRuntime, nextTaskRuntime)
+            ) {
+              return current;
+            }
             return {
               ...current,
               taskRuntimeByTaskId: {
@@ -237,8 +256,8 @@ export function createTaskSlice(set: SetFn) {
             };
           },
           workspaceIdentity,
-        ),
-      );
+        );
+      });
     },
 
     setTaskUsage: (

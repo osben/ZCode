@@ -25,6 +25,47 @@ function bigToolRow(rowId: number, status: ToolCallRow["status"] = "running"): T
 }
 
 describe("shareStructure", () => {
+  it("returns prev for a rebuilt Map with equal entries, including nested Maps", () => {
+    const prev = new Map([
+      ["run-1", { graph: { steps: ["a"] }, holeLabels: new Map([["h1", { name: "Hole" }]]) }],
+    ]);
+    const next = new Map([
+      ["run-1", { graph: { steps: ["a"] }, holeLabels: new Map([["h1", { name: "Hole" }]]) }],
+    ]);
+    expect(shareStructure(prev, next)).toBe(prev);
+  });
+
+  it("returns a new Map when an entry, the key set or the key order changes", () => {
+    const prev = new Map([
+      ["a", { ordinal: 1, superseded: false }],
+      ["b", { ordinal: 2, superseded: false }],
+    ]);
+    const changed = shareStructure(
+      prev,
+      new Map([
+        ["a", { ordinal: 1, superseded: true }],
+        ["b", { ordinal: 2, superseded: false }],
+      ]),
+    );
+    expect(changed).not.toBe(prev);
+    expect(changed.get("a")).toEqual({ ordinal: 1, superseded: true });
+    expect(changed.get("b")).toBe(prev.get("b"));
+
+    expect(shareStructure(prev, new Map([["a", { ordinal: 1, superseded: false }]]))).not.toBe(
+      prev,
+    );
+    const reordered = shareStructure(
+      prev,
+      new Map([
+        ["b", { ordinal: 2, superseded: false }],
+        ["a", { ordinal: 1, superseded: false }],
+      ]),
+    );
+    expect(reordered).not.toBe(prev);
+    expect([...reordered.keys()]).toEqual(["b", "a"]);
+    expect(shareStructure(undefined, prev)).toBe(prev);
+  });
+
   it("深相等时返回 prev 本身", () => {
     const prev = { a: 1, b: { c: ["x", { d: null }] } };
     expect(shareStructure(prev, fresh(prev))).toBe(prev);
