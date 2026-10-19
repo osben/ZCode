@@ -13,6 +13,7 @@ import {
   V4_WORKTREE_RECOVERY_PENDING_SCOPE,
 } from "@/v4/composer/composerDraftStore.js";
 import { useWorktreeFailureReturnStore } from "@/store/worktreeFailureReturnStore.js";
+import { useDraftBranchIntentStore } from "@/v4/composer/draftBranchIntent.js";
 import {
   selectComposerWorktreePipeline,
   useComposerWorktreePipelineStore,
@@ -179,6 +180,11 @@ describe("late worktree reservation ACK after navigation", () => {
       text: "latest failed text",
       mode: "build",
       planEnabled: false,
+      worktreeIntent: {
+        branchName: "feature-frozen",
+        baseBranch: "main",
+        customLocationPath: "/custom/frozen",
+      },
     });
     // The current draft is in Plan mode; the frozen submission was not.
     persistV4ComposerDraft("/workspace", undefined, V4_DRAFT_SCOPE_ROOT, {
@@ -191,10 +197,21 @@ describe("late worktree reservation ACK after navigation", () => {
       useWorktreeFailureReturnStore.getState().requestDraftRestore("/workspace", failedScope);
       await flushAsyncWork();
     });
-    // The frozen plan state replaces the live one (updateComposerContent would keep Plan mode on).
-    expect(replaceComposerDraftSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ text: "latest failed text", planEnabled: false, mode: "build" }),
-    );
+    // The restore runs in a later animation frame, after the scope-switch restore.
+    await vi.waitFor(() => {
+      // The frozen plan state replaces the live one (updateComposerContent would keep Plan mode on).
+      expect(replaceComposerDraftSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "latest failed text", planEnabled: false, mode: "build" }),
+      );
+    });
+    // Retry re-creates the frozen branch at the frozen location, not a newly generated name.
+    expect(
+      useDraftBranchIntentStore.getState().frozenWorktreeIntentByWorkspaceKey["/workspace"],
+    ).toEqual({
+      branchName: "feature-frozen",
+      customLocationPath: "/custom/frozen",
+    });
+    expect(useDraftBranchIntentStore.getState().intentByWorkspaceKey["/workspace"]).toBe("main");
     expect(readV4ComposerDraft("/workspace", undefined, failedScope)).toBeNull();
     expect(readV4ComposerDraft("/workspace", undefined, olderScope)?.text).toBe(
       "older failed text",

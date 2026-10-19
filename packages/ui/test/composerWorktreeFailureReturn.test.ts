@@ -317,6 +317,81 @@ describe("composerWorktreeFailureReturn", () => {
     ).toBeUndefined();
   });
 
+  it("does not hand off a remote workspace whose session is not registered (no local fallback)", () => {
+    const { services, commands, deleteTask } = createMockServices();
+    registerBaseWorkspaceServices(services);
+    const workspacePath = "/proj/return-remote";
+    const identity = "remote-identity-return";
+    const sessionId = "session-return-remote";
+    const submissionId = "submission-return-remote";
+    const attemptId = "attempt-1";
+    const params = {
+      submissionId,
+      attemptId,
+      workspacePath,
+      workspaceIdentity: identity,
+      branchName: "feature-branch",
+      targetPath: "/tmp/worktrees/feature-branch",
+      baseBranch: "main",
+      baseFromHeadDefault: false,
+    };
+    // The same failed submission keyed by the remote identity, with its continuation armed.
+    useComposerWorktreePipelineStore.setState({
+      pipelineByWorkspaceKey: {
+        [identity]: {
+          activeSessionKey: sessionId,
+          entriesBySessionKey: {
+            [sessionId]: {
+              status: "failed",
+              attemptId,
+              sessionId,
+              params,
+              createdAt: Date.now(),
+              failureMessage: "Could not create the worktree",
+            },
+          },
+        },
+      },
+    });
+    armWorktreeSendContinuation({
+      workspaceKey: identity,
+      preparedSessionId: sessionId,
+      attemptId,
+      hasBoundPreparedSession: true,
+      dispatch: vi.fn(),
+      restore: vi.fn(),
+      restoreForRetry: vi.fn(),
+    });
+    persistV4ComposerDraft(
+      workspacePath,
+      identity,
+      getV4WorktreeRecoveryScope(sessionId, submissionId),
+      { text: "frozen remote text", mode: "build", planEnabled: true },
+    );
+
+    expect(
+      initiateComposerWorktreeFailureReturn({
+        workspaceKey: identity,
+        sessionId,
+        attemptId,
+        params,
+        failureMessage: "Could not create the worktree",
+        issueCode: "unknown",
+        rawDetail: null,
+      }),
+    ).toBe(false);
+    // Nothing moved, no Host command went through the local base services, no tombstone.
+    expect(
+      readV4ComposerDraft(
+        workspacePath,
+        identity,
+        getV4WorktreeRecoveryScope(sessionId, submissionId),
+      ),
+    ).not.toBeNull();
+    expect(commands).toHaveLength(0);
+    expect(deleteTask).not.toHaveBeenCalled();
+  });
+
   it("keeps a non-empty main draft untouched and marks the modal saved-not-restored (scenario 20)", async () => {
     const { services } = createMockServices();
     registerBaseWorkspaceServices(services);

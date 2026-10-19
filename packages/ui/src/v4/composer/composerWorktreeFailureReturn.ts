@@ -16,7 +16,6 @@
  */
 import { createCommandEnvelope } from "@/v4/commandFactory.js";
 import { ensureAgentV4ConnectionHandshake } from "@/v4/agentV4ConnectionHandshake.js";
-import { getErrorMessage } from "@/lib/errorMessage.js";
 import { logger } from "@/logger.js";
 import {
   moveComposerAttachmentScopeItems,
@@ -29,7 +28,10 @@ import {
   useComposerWorktreePipelineStore,
   type ComposerWorktreeCreationParams,
 } from "@/store/composerWorktreePipelineStore.js";
-import { resolveRegisteredWorkspaceServices } from "@/store/remoteWorkspaceSessionStore.js";
+import {
+  getRemoteWorkspaceServicesForIdentity,
+  resolveRegisteredWorkspaceServices,
+} from "@/store/remoteWorkspaceSessionStore.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { useWorktreeFailureReturnStore } from "@/store/worktreeFailureReturnStore.js";
 import {
@@ -42,6 +44,23 @@ import {
 } from "@/v4/composer/composerDraftStore.js";
 import { buildV4WorktreeIntentFromParams } from "@/v4/composer/composerRecoveryRecord.js";
 import type { IServiceAccessor } from "@zcode/services";
+
+/** Error class only: raw messages can carry Git/RPC or transport detail and must not reach logs. */
+function errorClassName(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error;
+}
+
+/**
+ * Services for the hand-off, bound before any transfer. A remote workspace (identity present) must
+ * resolve to its own registered session: the base-services fallback would send this session's
+ * writes through the local Host. Local workspaces keep the registered base services.
+ */
+function resolveHandOffServices(params: ComposerWorktreeCreationParams): IServiceAccessor | null {
+  if (params.workspaceIdentity?.trim()) {
+    return getRemoteWorkspaceServicesForIdentity(params.workspaceIdentity);
+  }
+  return resolveRegisteredWorkspaceServices({ workspacePath: params.workspacePath });
+}
 
 /** Failures already taken over by the hand-off (idempotency across runner re-entry). */
 const handledFailureKeys = new Set<string>();
@@ -133,6 +152,8 @@ export function initiateComposerWorktreeFailureReturn(
   );
   // Nothing safely transferable yet: the queue-time write is missing, so keep the failed-row path.
   if (!record) return false;
+  const services = resolveHandOffServices(params);
+  if (!services) return false;
 
   const attachmentIds = (record.recoveryAttachments ?? []).map((item) => item.id);
   const draftEmpty = isMainDraftEmpty(workspaceKey, params);
@@ -178,13 +199,7 @@ export function initiateComposerWorktreeFailureReturn(
   handledFailureKeys.add(key);
 
   void (async () => {
-    let services: IServiceAccessor | null = null;
     try {
-      services = resolveRegisteredWorkspaceServices({
-        workspacePath: params.workspacePath,
-        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
-      });
-      if (!services) throw new Error("workspace-services-unavailable");
       // Sequence failed → cancelled so the preparation guard never observes a failed mutation
       // after cancellation; a rejected failure report is tolerated (the marker may already hold it).
       try {
@@ -197,7 +212,7 @@ export function initiateComposerWorktreeFailureReturn(
         logger.warn("[WorktreeFailureReturn] preparation failure report was rejected", {
           workspaceKey,
           sessionId,
-          error: getErrorMessage(error),
+          errorName: errorClassName(error),
         });
       }
       await sendPreparationUpdate(services, context, {
@@ -211,7 +226,7 @@ export function initiateComposerWorktreeFailureReturn(
       logger.warn("[WorktreeFailureReturn] hand-off was rejected by the Host; falling back", {
         workspaceKey,
         sessionId,
-        error: getErrorMessage(error),
+        errorName: errorClassName(error),
       });
       moveRecoveryRecord(pendingScope, sessionRecoveryScope);
       handledFailureKeys.delete(key);
@@ -224,7 +239,7 @@ export function initiateComposerWorktreeFailureReturn(
     // hides the preparing session from every sidebar list while the CLI session row is retained.
     // A failure here is logged and tolerated: the return UX proceeds, the row may linger.
     try {
-      await services?.zcodeTaskService.deleteTask({
+      await services.zcodeTaskService.deleteTask({
         taskId: sessionId,
         workspacePath: params.workspacePath,
         ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
@@ -233,12 +248,14 @@ export function initiateComposerWorktreeFailureReturn(
       logger.warn("[WorktreeFailureReturn] preparing-session tombstone failed", {
         workspaceKey,
         sessionId,
-        error: getErrorMessage(error),
+        errorName: errorClassName(error),
       });
     }
     useComposerWorktreePipelineStore.getState().discard(workspaceKey, sessionId, attemptId);
     releaseWorktreeSendContinuation(workspaceKey, sessionId);
     useWorktreeFailureReturnStore.getState().openFailureModal(workspaceKey, {
+      workspacePath: params.workspacePath,
+      ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
       sessionId,
       ...(attemptId ? { attemptId } : {}),
       submissionId,

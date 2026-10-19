@@ -4980,7 +4980,7 @@ const ukUA: Record<string, string> = {
     "Налаштування завершилося в іншому каталозі worktree, і запис сесії не вдалося оновити",
   "worktreeFailure.title": "Не вдалося створити worktree",
   "worktreeFailure.savedNotRestored":
-    "Поточна чернетка не порожня, тому ваше повідомлення збережено в картці «Незаписане повідомлення збережено» нижче.",
+    "Поточна чернетка не порожня, тому ваше повідомлення збережено в картці «Ненадіслане повідомлення збережено» нижче.",
   "worktreeFailure.showDetails": "Показати деталі",
   "worktreeFailure.hideDetails": "Сховати деталі",
   "worktreeFailure.copyDetails": "Копіювати деталі",

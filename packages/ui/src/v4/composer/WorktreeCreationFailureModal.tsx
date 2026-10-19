@@ -212,6 +212,40 @@ export function WorktreeFailureModalHost() {
     });
   }, [activeWorkspaceIdentity, activeWorkspacePath, displayable, entry, intl]);
 
+  // A failure in another workspace is announced with an action toast that opens that workspace
+  // (decision 4); its modal waits for the user's return to that workspace's draft screen. Each
+  // failed attempt is announced once.
+  const awayAnnouncedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const liveKeys = new Set<string>();
+    for (const [workspaceKey, pending] of Object.entries(modalByWorkspaceKey)) {
+      if (workspaceKey === activeWorkspaceKey) continue;
+      const announceKey = `${workspaceKey}\0${pending.sessionId}\0${pending.attemptId ?? ""}`;
+      liveKeys.add(announceKey);
+      if (awayAnnouncedRef.current.has(announceKey)) continue;
+      awayAnnouncedRef.current.add(announceKey);
+      const { workspacePath, workspaceIdentity } = pending;
+      toast(intl.formatMessage({ id: "worktreeFailure.toastTitle" }), {
+        variant: "warning",
+        dedupeKey: `worktree-failure:${pending.sessionId}`,
+        actionLabel: intl.formatMessage({ id: "worktreeFailure.toastOpen" }),
+        onAction: () => {
+          tabStoreApi
+            .getState()
+            .activateTabByPath(
+              workspacePath,
+              workspaceIdentity ? { workspaceIdentity } : undefined,
+            );
+          useZCodeSessionStore.getState().startDraft(workspacePath, undefined, workspaceIdentity);
+        },
+      });
+    }
+    // Forget announcements of entries that were closed, so a later failure is announced again.
+    for (const announceKey of awayAnnouncedRef.current) {
+      if (!liveKeys.has(announceKey)) awayAnnouncedRef.current.delete(announceKey);
+    }
+  }, [activeWorkspaceKey, intl, modalByWorkspaceKey, tabStoreApi]);
+
   const close = useCallback(() => {
     useWorktreeFailureReturnStore.getState().closeFailureModal(activeWorkspaceKey);
   }, [activeWorkspaceKey]);

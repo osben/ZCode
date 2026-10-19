@@ -12,6 +12,9 @@ import { create } from "zustand";
  */
 
 export interface WorktreeFailureReturnModalState {
+  /** Workspace the failed session belongs to; the away-user toast opens exactly this workspace. */
+  workspacePath: string;
+  workspaceIdentity?: string;
   sessionId: string;
   attemptId?: string;
   submissionId?: string;

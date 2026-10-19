@@ -21,11 +21,41 @@ interface DraftBranchIntentState {
   setDraftBranchIntent: (workspaceKey: string, branchName: string) => void;
   clearDraftBranchIntent: (workspaceKey: string) => void;
   setWorktreeIntentActive: (workspaceKey: string, active: boolean) => void;
+  /**
+   * Frozen destination of a restored failed submission (branch name and custom location). The next
+   * worktree creation for the workspace uses it once, so Retry keeps the frozen destination.
+   */
+  frozenWorktreeIntentByWorkspaceKey: Record<string, FrozenWorktreeDestination>;
+  setFrozenWorktreeIntent: (workspaceKey: string, destination: FrozenWorktreeDestination) => void;
+  /** Read and clear the frozen destination; returns undefined when none is pending. */
+  takeFrozenWorktreeIntent: (workspaceKey: string) => FrozenWorktreeDestination | undefined;
 }
 
-export const useDraftBranchIntentStore = create<DraftBranchIntentState>((set) => ({
+export interface FrozenWorktreeDestination {
+  branchName: string;
+  customLocationPath?: string;
+}
+
+export const useDraftBranchIntentStore = create<DraftBranchIntentState>((set, get) => ({
   intentByWorkspaceKey: {},
   worktreeIntentActiveByWorkspaceKey: {},
+  frozenWorktreeIntentByWorkspaceKey: {},
+  setFrozenWorktreeIntent: (workspaceKey, destination) =>
+    set((state) => ({
+      frozenWorktreeIntentByWorkspaceKey: {
+        ...state.frozenWorktreeIntentByWorkspaceKey,
+        [workspaceKey]: destination,
+      },
+    })),
+  takeFrozenWorktreeIntent: (workspaceKey) => {
+    const destination = get().frozenWorktreeIntentByWorkspaceKey[workspaceKey];
+    if (destination === undefined) return undefined;
+    set((state) => {
+      const { [workspaceKey]: _taken, ...rest } = state.frozenWorktreeIntentByWorkspaceKey;
+      return { frozenWorktreeIntentByWorkspaceKey: rest };
+    });
+    return destination;
+  },
   setDraftBranchIntent: (workspaceKey, branchName) =>
     set((state) => ({
       intentByWorkspaceKey: { ...state.intentByWorkspaceKey, [workspaceKey]: branchName },

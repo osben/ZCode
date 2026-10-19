@@ -1486,7 +1486,10 @@ function ConversationComposerImpl({
         // §Return to draft on failure): it reports to the Host, transfers the recovery record into
         // the draft pending scope, and settles the session. Running the local failure handling here
         // would re-create the session-scope recovery record the transfer just moved.
-        detachQueued();
+        // Keep the armed continuation registered: a Host-rejected hand-off falls back to the failed
+        // row, where Retry must still admit the frozen submission. A successful hand-off releases it.
+        pendingWorktreeSendRef.current = null;
+        setWorktreeQueued(false);
         return;
       }
       const failureKey = `${queued.preparedSessionId}\0${worktreePipeline.params?.attemptId ?? ""}\0${worktreePipeline.failureMessage ?? ""}`;
@@ -2495,12 +2498,19 @@ function ConversationComposerImpl({
       });
       const intent = draft.worktreeIntent;
       if (intent) {
-        useDraftBranchIntentStore.getState().setWorktreeIntentActive(workspaceKey, true);
+        const destinationStore = useDraftBranchIntentStore.getState();
+        destinationStore.setWorktreeIntentActive(workspaceKey, true);
         if (intent.baseBranch) {
-          useDraftBranchIntentStore
-            .getState()
-            .setDraftBranchIntent(workspaceKey, intent.baseBranch);
+          destinationStore.setDraftBranchIntent(workspaceKey, intent.baseBranch);
+        } else if (intent.baseFromHeadDefault) {
+          // A HEAD-default base must not keep a live base choice made after the failure.
+          destinationStore.clearDraftBranchIntent(workspaceKey);
         }
+        // Retry creates the frozen branch at the frozen location instead of generating a new name.
+        destinationStore.setFrozenWorktreeIntent(workspaceKey, {
+          branchName: intent.branchName,
+          ...(intent.customLocationPath ? { customLocationPath: intent.customLocationPath } : {}),
+        });
       }
     },
     [
@@ -2544,30 +2554,40 @@ function ConversationComposerImpl({
     if (sessionId !== null || !failureReturnRestoreRequest) return;
     if (appliedFailureReturnRestoreRef.current >= failureReturnRestoreRequest) return;
     appliedFailureReturnRestoreRef.current = failureReturnRestoreRequest;
-    useWorktreeFailureReturnStore.getState().consumeDraftRestoreRequest(workspaceKey);
-    // The request names the failed submission's recovery scope. Never fall back to another pending
-    // record: the oldest one may belong to an earlier failure, and this failure would stay stranded.
-    if (!failureReturnRestoreScope) return;
-    const savedDraft = readV4ComposerDraft(
-      workspacePath,
-      workspaceIdentity,
-      failureReturnRestoreScope,
-    );
-    if (!savedDraft) return;
-    const saved = { scope: failureReturnRestoreScope, draft: savedDraft };
-    rehydrateComposerRecoveryAttachments({
-      workspaceKey,
-      recoveryScope: saved.scope,
-      manifest: saved.draft.recoveryAttachments ?? [],
-    });
-    if (failureReturnDraftOccupiedRef.current()) return;
-    moveComposerAttachmentScopeItems(
-      `${workspaceKey}\0${saved.scope}`,
-      `${workspaceKey}\0${V4_DRAFT_SCOPE_ROOT}`,
-      (saved.draft.recoveryAttachments ?? []).map((item) => item.id),
-    );
-    applyWorktreeRecoveryDraft(saved.draft);
-    clearV4ComposerDraft(workspacePath, workspaceIdentity, saved.scope);
+    // The scope-switch draft restore is queued on the next animation frame and would overwrite a
+    // restore applied now. Apply this restore in a later frame. It is not cancelled by effect
+    // cleanup: the applied ref is already set, so a cancelled frame would never be retried.
+    const restore = () => {
+      useWorktreeFailureReturnStore.getState().consumeDraftRestoreRequest(workspaceKey);
+      // The request names the failed submission's recovery scope. Never fall back to another pending
+      // record: the oldest one may belong to an earlier failure, and this failure would stay stranded.
+      if (!failureReturnRestoreScope) return;
+      const savedDraft = readV4ComposerDraft(
+        workspacePath,
+        workspaceIdentity,
+        failureReturnRestoreScope,
+      );
+      if (!savedDraft) return;
+      const saved = { scope: failureReturnRestoreScope, draft: savedDraft };
+      rehydrateComposerRecoveryAttachments({
+        workspaceKey,
+        recoveryScope: saved.scope,
+        manifest: saved.draft.recoveryAttachments ?? [],
+      });
+      if (failureReturnDraftOccupiedRef.current()) return;
+      moveComposerAttachmentScopeItems(
+        `${workspaceKey}\0${saved.scope}`,
+        `${workspaceKey}\0${V4_DRAFT_SCOPE_ROOT}`,
+        (saved.draft.recoveryAttachments ?? []).map((item) => item.id),
+      );
+      applyWorktreeRecoveryDraft(saved.draft);
+      clearV4ComposerDraft(workspacePath, workspaceIdentity, saved.scope);
+    };
+    if (typeof requestAnimationFrame !== "function") {
+      restore();
+      return;
+    }
+    requestAnimationFrame(restore);
   }, [
     applyWorktreeRecoveryDraft,
     failureReturnRestoreRequest,
