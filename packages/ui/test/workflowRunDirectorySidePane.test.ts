@@ -13,6 +13,7 @@ import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { V4ConversationWorkflowRunSummary } from "@zcode/shared/zcode-protocol-v4";
 import type { WorkflowRunDirectorySidePaneTab } from "@/lib/workspaceSidePane.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 vi.mock("@/logger.js", () => ({
   logger: { debug: vi.fn(), warn: vi.fn() },
@@ -345,14 +346,14 @@ describe("WorkflowRunDirectorySidePane", () => {
       summary({ runId: "r-run", status: "running" }),
       summary({ runId: "r-fail", status: "errored" }),
     ];
-    const pane = renderPane("zh-CN");
+    const pane = renderPane();
 
     // The section title is a combined "title · count" node, so match by substring (the count itself has its own
     // testid).
-    expect(pane.getByText(/正在运行/)).toBeTruthy();
-    expect(pane.getByText(/已结束/)).toBeTruthy();
+    expect(pane.container.textContent).toContain(expectedCopy("workflowDirectory.running"));
+    expect(pane.container.textContent).toContain(expectedCopy("workflowDirectory.ended"));
     expect(
       (pane.container.querySelector("[data-run-id='r-fail']") as HTMLElement).textContent,
-    ).toContain("出错");
+    ).toContain(expectedCopy("chat.toolCall.workflow.run.status.errored"));
   });
 });

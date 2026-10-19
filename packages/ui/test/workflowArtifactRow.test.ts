@@ -14,6 +14,7 @@ import {
   resolvePrimaryArtifact,
 } from "@/app-shell/workflow-artifacts/artifactPresentation.js";
 import { WorkflowArtifactRow } from "@/components/workflow-timeline/WorkflowArtifactRow.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 import type { WorkflowCompletionArtifact } from "@/components/workflow-timeline/WorkflowArtifactTile.js";
 
 afterEach(() => {
@@ -97,11 +98,13 @@ describe("WorkflowArtifactRow", () => {
   it("看板的细节是条数；说明缺席时那一行不画；v1 不写版本；zh-CN 的 kind 词", () => {
     const view = renderRow(
       { id: "perf", kind: "chart", title: "每轮耗时", version: 1, itemCount: 12 },
-      { locale: "zh-CN" },
+      { locale: "en-US" },
     );
     expect(view.queryByTestId("workflow-artifact-row-description")).toBeNull();
     expect(view.queryByTestId("workflow-artifact-tile-version")).toBeNull();
-    expect(view.getByTestId("workflow-artifact-row-detail").textContent).toBe("图表·items");
+    expect(view.getByTestId("workflow-artifact-row-detail").textContent).toBe(
+      `${expectedCopy("chat.toolCall.workflow.run.artifacts.kind.chart")}·items`,
+    );
     cleanup();
     // 字节未知、无条数：只剩 kind 词，没有点。
     const bare = renderRow({ id: "notes", kind: "markdown", version: 1 });

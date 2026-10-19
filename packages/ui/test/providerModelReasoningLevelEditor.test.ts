@@ -14,8 +14,8 @@ describe("ProviderModelReasoningLevelEditor", () => {
       createElement(ProviderModelReasoningLevelEditor, {
         values: ["low", "high"],
         overridden: false,
-        addLabel: "添加档位",
-        deleteLabel: "删除档位",
+        addLabel: "Add level",
+        deleteLabel: "Delete level",
         onChange,
       }),
     );
@@ -29,8 +29,8 @@ describe("ProviderModelReasoningLevelEditor", () => {
       return createElement(ProviderModelReasoningLevelEditor, {
         values,
         overridden: true,
-        addLabel: "添加档位",
-        deleteLabel: "删除档位",
+        addLabel: "Add level",
+        deleteLabel: "Delete level",
         onChange: setValues,
       });
     }
@@ -45,10 +45,15 @@ describe("ProviderModelReasoningLevelEditor", () => {
     expect(screen.getByRole("button", { name: "low" }).className).not.toContain("font-mono");
     expect(screen.getByRole("button", { name: "low" }).dataset.variant).toBe("outline");
     expect(screen.getByRole("button", { name: "low" }).dataset.size).toBe("lg");
-    const addButton = screen.getByRole("button", { name: "添加档位" });
+    const addButton = container.querySelector<HTMLButtonElement>(
+      '[data-model-reasoning-level-add="true"]',
+    )!;
     expect(addButton.dataset.variant).toBe("outline");
     expect(addButton.dataset.size).toBe("icon-lg");
-    expect(screen.getByRole("button", { name: "删除档位: low" }).className).toContain("opacity-0");
+    const deleteButton = container.querySelector<HTMLButtonElement>(
+      '[data-model-reasoning-chip="true"] button:nth-of-type(2)',
+    );
+    expect(deleteButton?.className).toContain("opacity-0");
 
     const readValues = () =>
       Array.from(
@@ -80,12 +85,15 @@ describe("ProviderModelReasoningLevelEditor", () => {
     fireEvent.keyDown(screen.getByDisplayValue("medium"), { key: "Enter" });
     expect(readValues()).toEqual(["low", "medium"]);
 
-    fireEvent.click(screen.getByRole("button", { name: "添加档位" }));
+    fireEvent.click(addButton);
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "max" } });
     fireEvent.keyDown(screen.getByDisplayValue("max"), { key: "Enter" });
     expect(readValues()).toEqual(["low", "medium", "max"]);
 
-    fireEvent.click(screen.getByRole("button", { name: "删除档位: low" }));
+    const firstChipDeleteButton = container.querySelector<HTMLButtonElement>(
+      '[data-model-reasoning-chip="true"] button:nth-of-type(2)',
+    );
+    fireEvent.click(firstChipDeleteButton!);
     expect(readValues()).toEqual(["medium", "max"]);
     expect(container.querySelector('[data-personal-override="true"]')).toBeTruthy();
   });

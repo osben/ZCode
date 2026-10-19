@@ -49,13 +49,14 @@ import { foldWorkflowRunRail } from "@/lib/workflowRunLine.js";
 import { WorkflowToolSummary } from "@/v4/WorkflowToolSummary.js";
 // eslint-disable-next-line import/first -- Ditto.
 import { workflowFillCounts } from "@/ToolCallBlocks/renderers/createWorkflowHoleInput.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 // Hole ids are name-keyed `hole#<8 hex digits>` (docs/analysis.md "Sites"); the renderer only checks shape.
 const H1 = "hole#a0000001"; // grouping decision
 const H2 = "hole#a0000002"; // verdict
 const H11 = "hole#a0000011"; // pick (inside H1's body)
 
-function html(node: ReactNode, locale: "zh-CN" | "en-US" = "zh-CN"): string {
+function html(node: ReactNode, locale: "en-US" | "zh-CN" = "en-US"): string {
   return renderToStaticMarkup(createElement(ZCodeIntlProvider, { initialLocale: locale }, node));
 }
 
@@ -158,7 +159,7 @@ describe("时间线上的留白站", () => {
     );
     expect(out).toContain('data-lamp="hole-waiting"');
     expect(out).toContain("wf-lamp-hole-waiting");
-    expect(out).toContain("等待补全");
+    expect(out).toContain(expectedCopy("chat.toolCall.workflow.hole.waiting"));
     // The waiting lamp is not a running lamp: no heartbeat.
     expect(out).not.toContain("wf-lamp-running");
   });
@@ -186,7 +187,7 @@ describe("时间线上的留白站", () => {
     expect(out).toContain('data-testid="workflow-timeline-fill-head"');
     expect(out).toContain("决定分组");
     expect(out).not.toContain("Plan");
-    expect(out).toContain("由主代理补全");
+    expect(out).toContain("filled by the agent");
     // The region became a frame (docs/dynamic-workflow/presentation.md "Filled with phases"): one path with pathLength 1.
     expect(out).not.toContain("workflow-timeline-fill-region");
     expect(out).toContain('data-testid="workflow-timeline-fill-frame"');
@@ -214,7 +215,7 @@ describe("侧板的等待体", () => {
         now,
       }),
     );
-    expect(out).toContain("等待主代理补全");
+    expect(out).toContain(expectedCopy("chat.toolCall.workflow.run.hole.waitingFor"));
     expect(out).toContain('data-testid="workflow-run-hole-prompt"');
     expect(out).toContain("侦察结果如下，请补全这一段。");
     const bare = html(
@@ -321,7 +322,7 @@ describe("run 卡与确认窗", () => {
       }),
     );
     expect(out).toContain('data-testid="workflow-digest-holes"');
-    expect(out).toContain("1 处留白待补全");
+    expect(out).toContain(expectedCopy("chat.toolCall.workflow.digest.hole", { count: 1 }));
     expect(out).toContain('data-testid="workflow-digest-questions"');
   });
 
@@ -341,7 +342,7 @@ describe("run 卡与确认窗", () => {
     const out = html(createElement(WorkflowPermissionHoles, { holes: OPEN.holes }));
     expect(out).toContain('data-testid="workflow-permission-holes"');
     expect(out.match(/data-testid="workflow-permission-hole"/gu)).toHaveLength(2);
-    expect(out).toContain("运行到留白处会暂停，等主代理补全后继续。");
+    expect(out).toContain(expectedCopy("chat.permission.workflow.holes.note"));
     expect(out).not.toContain("Plan");
     expect(html(createElement(WorkflowPermissionHoles, { holes: [] }))).toBe("");
   });
@@ -356,10 +357,10 @@ describe("run 卡与确认窗", () => {
         fill: { name: "决定分组", ...counts },
       }),
     );
-    expect(out).toContain("留白已补全");
+    expect(out).toContain(expectedCopy("chat.toolCall.workflow.hole.filled"));
     expect(out).toContain("决定分组");
-    expect(out).toContain("1 个阶段");
-    expect(out).toContain("1 个子代理");
+    expect(out).toContain(expectedCopy("chat.toolCall.workflow.script.summary.phases.one"));
+    expect(out).toContain(expectedCopy("chat.toolCall.workflow.card.agents.one", { count: 1 }));
   });
 });
 

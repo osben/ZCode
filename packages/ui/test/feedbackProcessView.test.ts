@@ -6,6 +6,7 @@ import type { IFeedbackService } from "@zcode/services";
 
 import { FeedbackProcessView } from "@/feedback/FeedbackProcessView.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 function createTicket(): FeedbackTicketDetail {
   return {
@@ -55,7 +56,6 @@ describe("FeedbackProcessView", () => {
     );
 
     expect(html).toContain("Latest:");
-    expect(html).toContain("You added information");
-    expect(html).not.toContain("你补充了信息");
+    expect(html).toContain(expectedCopy("feedback.timeline.yourSupplement"));
   });
 });

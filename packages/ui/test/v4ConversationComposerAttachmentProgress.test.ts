@@ -9,6 +9,7 @@ import {
 } from "@zcode/shared";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { ConversationComposer } from "@/v4/ConversationComposer.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const attachmentState = vi.hoisted(() => ({
   attachments: [] as Array<Record<string, unknown>>,
@@ -131,7 +132,7 @@ function renderComposer(overrides: Record<string, unknown> = {}) {
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(AnyConversationComposer, {
         draftMode: true,
         onSelectModel: vi.fn(),
@@ -358,7 +359,7 @@ describe("ConversationComposer attachment upload progress", () => {
     expect(html).toContain('role="alert"');
     expect(html).toContain("network unavailable");
     expect(html).toContain(`data-testid="${testId(TID_V4_ATTACHMENT_UPLOAD_RETRY, "file-1")}"`);
-    expect(html).toContain('aria-label="重试上传"');
+    expect(html).toContain(`aria-label="${expectedCopy("chat.attachments.upload.retry")}"`);
     expect(html).toContain("flex-wrap");
     expect(html).toContain("max-w-full");
     expect(html).toContain("text-destructive");

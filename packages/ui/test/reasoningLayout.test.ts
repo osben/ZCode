@@ -20,6 +20,7 @@ import {
   scrollReasoningSummaryToEnd,
   shouldAutoCollapseReasoning,
 } from "../src/components/ai-elements/reasoning.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const mockServices = {} as IServiceAccessor;
 const mockPlatform = {
@@ -62,7 +63,7 @@ function renderReasoningContent(
   content: string,
   reasoningProps: Partial<ComponentProps<typeof Reasoning>> = {},
   contentProps: Partial<ComponentProps<typeof ReasoningContent>> = {},
-  locale: "zh-CN" | "en-US" = "zh-CN",
+  locale: "en-US" | "zh-CN" = "en-US",
 ) {
   return renderToStaticMarkup(
     createElement(
@@ -172,8 +173,8 @@ describe("Reasoning layout", () => {
       isStreaming: true,
     });
 
-    expect(html).toContain("正在思考");
-    expect(html).not.toContain("思考过程");
+    expect(html).toContain(expectedCopy("chat.reasoning.thinking"));
+    expect(html).not.toContain(expectedCopy("modelTrajectory.reasoning"));
     expect(html).toContain("animated-gradient-text");
     expect(html).not.toContain("正在分析输入。");
     expect(html).toContain("继续检查实现。");
@@ -215,9 +216,9 @@ describe("Reasoning layout", () => {
       isStreaming: true,
     });
 
-    expect(html).toContain("思考");
-    expect(html).not.toContain("思考过程");
-    expect(html).toContain("持续了 7 秒");
+    expect(html).toContain(expectedCopy("chat.reasoning.thought"));
+    expect(html).not.toContain(expectedCopy("modelTrajectory.reasoning"));
+    expect(html).toContain(expectedCopy("chat.reasoning.durationSeconds", { seconds: 7 }));
     expect(html).toContain('data-state="open"');
     expect(html).not.toContain("animated-gradient-text");
     expect(html).not.toContain('data-reasoning-streaming-line="true"');
@@ -245,12 +246,8 @@ describe("Reasoning layout", () => {
   });
 
   it("adds a two-sided fade mask only while the streaming summary overflows", () => {
-    expect(
-      isReasoningSummaryOverflowing({ clientWidth: 240, scrollWidth: 240 }),
-    ).toBe(false);
-    expect(
-      isReasoningSummaryOverflowing({ clientWidth: 240, scrollWidth: 420 }),
-    ).toBe(true);
+    expect(isReasoningSummaryOverflowing({ clientWidth: 240, scrollWidth: 240 })).toBe(false);
+    expect(isReasoningSummaryOverflowing({ clientWidth: 240, scrollWidth: 420 })).toBe(true);
     expect(getReasoningSummaryMaskStyle(false)).toBeUndefined();
     expect(getReasoningSummaryMaskStyle(true)).toMatchObject({
       WebkitMaskImage:
@@ -266,18 +263,24 @@ describe("Reasoning layout", () => {
       isStreaming: false,
     });
 
-    expect(html).toContain("思考");
-    expect(html).not.toContain("思考过程");
+    expect(html).toContain(expectedCopy("chat.reasoning.thought"));
+    expect(html).not.toContain(expectedCopy("modelTrajectory.reasoning"));
     expect(html).toMatch(
-      /class="inline-flex items-center gap-2"><span class="font-medium[^>]*">思考<\/span><span class="font-normal[^>]*">·<\/span><span class="font-normal/,
+      new RegExp(
+        `class="inline-flex items-center gap-2"><span class="font-medium[^>]*">${expectedCopy("chat.reasoning.thought")}<\\/span><span class="font-normal[^>]*">·<\\/span><span class="font-normal`,
+      ),
     );
     expect(html).toMatch(
-      /class="[^"]*\bfont-medium\b[^"]*">思考<\/span>/,
+      new RegExp(
+        `class="[^"]*\\bfont-medium\\b[^"]*">${expectedCopy("chat.reasoning.thought")}<\\/span>`,
+      ),
     );
     expect(html).not.toMatch(
-      /class="[^"]*\bfont-semibold\b[^"]*">思考<\/span>/,
+      new RegExp(
+        `class="[^"]*\\bfont-semibold\\b[^"]*">${expectedCopy("chat.reasoning.thought")}<\\/span>`,
+      ),
     );
-    expect(html).toContain("持续了");
+    expect(html).toContain(expectedCopy("chat.reasoning.durationFewSeconds"));
     expect(html).not.toContain("animated-gradient-text");
     expect(html).not.toContain("已经完成的思考。");
     expect(html).toContain('data-state="closed"');

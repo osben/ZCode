@@ -369,7 +369,7 @@ function renderTurnWithContext(
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(ConversationTurnGroup, {
         unit,
         context,
@@ -385,7 +385,7 @@ function renderTurnWithCodeComments(
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(
         AssistantCodeCommentFeatureProvider,
         { enabled: true },
@@ -707,7 +707,7 @@ describe("SessionPane assistant preview card handler wiring", () => {
     renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(SessionPane, {
           paneId: "workspace-main",
           sessionId: "session-1",

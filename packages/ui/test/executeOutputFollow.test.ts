@@ -13,7 +13,7 @@ afterEach(() => {
 function view(text: string, running = true) {
   return createElement(
     ZCodeIntlProvider,
-    { initialLocale: "zh-CN" },
+    { initialLocale: "en-US" },
     createElement(ExecuteOutput, { text, running }),
   );
 }
@@ -89,5 +89,4 @@ describe("foreground Bash output following", () => {
     expect(reopened.queryByTestId("bash-output-resume")).toBeNull();
     expect(reopened.getByTestId("bash-output-scroll").scrollTop).toBe(500);
   });
-
 });

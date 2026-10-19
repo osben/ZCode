@@ -61,6 +61,7 @@ vi.mock("@/components/ui/popover.js", async () => {
 import { PlatformProvider } from "@/hooks/usePlatform.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { RemoteConnectionFields } from "@/RemoteConnectionFields.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 type RemoteConnectionFieldsTestProps = {
   kind: RemoteTarget["kind"];
@@ -209,11 +210,7 @@ function renderDockerFields({
     createElement(
       PlatformProvider,
       { platform },
-      createElement(
-        ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
-        createElement(Component, props),
-      ),
+      createElement(ZCodeIntlProvider, { initialLocale: "en-US" }, createElement(Component, props)),
     ),
   );
 }
@@ -241,7 +238,7 @@ describe("RemoteConnectionFields Docker refresh", () => {
       refreshDockerContainers: vi.fn(),
     });
 
-    expect(html).toContain("正在检测运行中的容器");
+    expect(html).toContain(expectedCopy("docker.loading"));
     expect(html).toContain("animate-spin");
   });
 
@@ -251,7 +248,7 @@ describe("RemoteConnectionFields Docker refresh", () => {
       refreshDockerContainers: vi.fn(),
     });
 
-    expect(html).toContain("未检测到运行中容器");
+    expect(html).toContain(expectedCopy("docker.noContainers"));
   });
 
   it("shows the same short hint when Docker availability detection reports unavailable", () => {
@@ -261,7 +258,7 @@ describe("RemoteConnectionFields Docker refresh", () => {
       refreshDockerContainers: vi.fn(),
     });
 
-    expect(html).toContain("未检测到运行中容器");
+    expect(html).toContain(expectedCopy("docker.noContainers"));
     expect(html).not.toContain("当前环境未检测到可用的 Docker 运行环境");
   });
 
@@ -283,8 +280,6 @@ describe("RemoteConnectionFields Docker refresh", () => {
       refreshDockerContainers: vi.fn(),
     });
 
-    expect(html).toContain(
-      "如果运行中的容器列表不完整，可以手动输入容器名或 ID 连接。",
-    );
+    expect(html).toContain(expectedCopy("docker.manualContainerHint"));
   });
 });

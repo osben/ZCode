@@ -8,7 +8,6 @@ import {
   AttachmentRemove,
   Attachments,
 } from "@/components/ai-elements/attachments.js";
-
 function renderAttachmentWithOpen(openable: boolean) {
   return renderToStaticMarkup(
     createElement(

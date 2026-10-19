@@ -2,6 +2,8 @@ import { CodingPlanEntryButton } from "@/settings/CodingPlanEntryButton.js";
 /* eslint-disable max-lines -- Coding Plan/Start Plan status cards coordinate state, actions, and plan sections. Keep them in one file for now so the state semantics stay together. */
 import {
   BIGMODEL_PROVIDER_ID,
+  TID_CODING_PLAN_RELOGIN_BUTTON,
+  TID_CODING_PLAN_SUBSCRIBE_BUTTON,
   isStartPlanModelProviderId,
   resolveModelProviderFamilySpecByProviderId,
   type UsageEntitlementSubscriptionDetail,
@@ -398,6 +400,7 @@ export function CodingPlanStatusPanel({
   const buyAction =
     !isStartPlanProvider && !canUpgrade && isNotPurchased && !isChecking && !isUnsupported ? (
       <CodingPlanEntryButton
+        data-testid={TID_CODING_PLAN_SUBSCRIBE_BUTTON}
         type="button"
         size="lg"
         // A not-purchased state may still be waiting for the entitlement API response. It must be disabled just like the Upgrade
@@ -520,6 +523,7 @@ export function CodingPlanStatusPanel({
   // When the same family is signed in, the default sign-in action only refreshes; explicit recovery after credential failure must force OAuth.
   const trailingAction = reloginVisible ? (
     <Button
+      data-testid={TID_CODING_PLAN_RELOGIN_BUTTON}
       type="button"
       size="lg"
       onClick={() => onLogin?.({ forceOAuth: true })}

@@ -13,6 +13,7 @@ import {
 } from "@zcode/shared";
 import {
   readSettings,
+  seedSettings,
   setCurrentElectronRendererContentSize,
   restoreElectronRendererContentSize,
 } from "./helpers/desktop-app.js";
@@ -82,6 +83,7 @@ describe("供应商真实应用响应式回归", () => {
   it("CTP-12: 长团队名宽窄布局、体验套餐提示和切换持久化", async function () {
     this.timeout(180000);
     await setScenario(true);
+    await seedSettings({ locale: "en-US", localePreference: "en-US" });
     // 仅准备阶段重启以读取业务 fixture；后续持久化断言不回填或改写配置。
     await restartIntoWorkspacePreservingProfile();
     // 本例验证宽度断点；1000px 高度会被 Pro 屏幕工作区裁到 876px，阻断全部业务断言。

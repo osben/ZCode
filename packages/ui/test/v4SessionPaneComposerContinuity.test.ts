@@ -515,7 +515,7 @@ function renderPane(root: Root, sessionId: string | null): void {
     root.render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(SessionPane, {
           paneId: "workspace-main",
           sessionId,
@@ -772,7 +772,7 @@ describe("SessionPane composer continuity", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(SessionPane, {
             paneId: "workspace-main",
             sessionId: null,
@@ -794,7 +794,7 @@ describe("SessionPane composer continuity", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(SessionPane, {
             paneId: "workspace-main",
             sessionId: null,

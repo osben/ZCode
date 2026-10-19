@@ -151,7 +151,7 @@ describe("WorkflowTimeline · 生长的滑动", () => {
   function view(model: ReturnType<typeof buildWorkflowTimeline>) {
     return createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(WorkflowTimeline, { model }),
     );
   }

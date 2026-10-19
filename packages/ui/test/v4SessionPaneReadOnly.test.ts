@@ -323,7 +323,7 @@ function renderReadOnlyPane({
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(SessionPane, {
         allowWorkspaceFileRewind,
         paneId: "pane-1",
@@ -528,7 +528,7 @@ describe("SessionPane 分享模式接线", () => {
     return renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(SessionPane, {
           paneId: "pane-1",
           readOnly: false,

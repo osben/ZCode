@@ -18,6 +18,7 @@ vi.mock("@/ControlHintTooltip.js", () => ({
 
 // eslint-disable-next-line import/first -- The component under test must be imported after the mocks.
 import { PermissionDialog } from "@/PermissionDialog.js";
+import zhCN from "../src/i18n/locales/zh-CN.js";
 
 const SCRIPT = 'const x = 1;\nconst r = await agent("a").ask<string>("do");';
 // The CLI-side ask reason is protocol diagnostics text; the confirmation window must not display it.
@@ -132,8 +133,8 @@ describe("WorkflowPermissionBlock", () => {
 
   it("renders the localized question in both locales", () => {
     renderDialog(buildWorkflowRequest(), "zh-CN");
-    expect(screen.getByText("运行此工作流？")).toBeTruthy();
-    expect(screen.getByText("显示完整脚本")).toBeTruthy();
+    expect(screen.getByText(zhCN["chat.permission.workflow.title"])).toBeTruthy();
+    expect(screen.getByText(zhCN["chat.permission.workflow.showScript"])).toBeTruthy();
     cleanup();
 
     renderDialog(buildWorkflowRequest(), "en-US");
@@ -287,11 +288,13 @@ describe("WorkflowPermissionBlock", () => {
       "zh-CN",
     );
 
-    expect(screen.getByTestId("workflow-card-kind").textContent).toBe("调整此工作流？");
+    expect(screen.getByTestId("workflow-card-kind").textContent).toBe(
+      zhCN["chat.permission.workflow.amend.title"],
+    );
     const lineage = document.querySelector('[data-workflow-amends="true"]');
     expect(lineage?.textContent).toContain("调整 run");
     expect(lineage?.textContent).toContain("dwfrun-prev");
-    expect(lineage?.textContent).toContain("仍在运行，将被停止");
+    expect(lineage?.textContent).toContain(zhCN["chat.permission.workflow.amends.running"]);
   });
 
   // An amend omitting script (docs/dynamic-workflow/launch.md "Keeping the predecessor's script"): the CLI has
@@ -738,8 +741,12 @@ describe("PermissionDialog workflow refine", () => {
 
   it("双语渲染 Refine 行文案", () => {
     renderDialog(buildRefineRequest(), "zh-CN");
-    expect(queryRefineInput()!.placeholder).toBe("描述这个工作流应该怎么改…");
-    expect(queryRefineInput()!.getAttribute("aria-label")).toBe("提出修改");
+    expect(queryRefineInput()!.placeholder).toBe(
+      zhCN["chat.permission.workflow.refine.placeholder"],
+    );
+    expect(queryRefineInput()!.getAttribute("aria-label")).toBe(
+      zhCN["chat.permission.workflow.refine"],
+    );
     cleanup();
 
     renderDialog(buildRefineRequest(), "en-US");

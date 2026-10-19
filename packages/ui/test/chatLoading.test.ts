@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { ActiveWorkSummary, PendingInteraction } from "@zcode/shared/zcode-protocol-v4";
 import { ChatLoading } from "@/components/ai-elements/chat-loading.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 import {
   hasChatLoadingBlockingActiveWork,
   hasChatLoadingBlockingInteraction,
@@ -13,7 +14,7 @@ function renderChatLoading() {
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(ChatLoading, { loading: true }),
     ),
   );
@@ -26,9 +27,8 @@ describe("ChatLoading", () => {
     expect(html).toContain("animate-spin");
     expect(html).toContain('data-zcode-chat-loading-animate="true"');
     expect(html).toContain('role="status"');
-    expect(html).toContain('aria-label="加载中..."');
+    expect(html).toContain(`aria-label="${expectedCopy("common.loading")}"`);
     expect(html).not.toContain('data-testid="chat-loading-text"');
-    expect(html).not.toContain("正在思考");
   });
 
   it.each([

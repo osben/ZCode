@@ -15,6 +15,7 @@ import {
   resolveLatestReviewScopeTarget,
 } from "@/settings/HooksSection.js";
 import { useHooksStore } from "@/store/hooksStore.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 afterEach(() => {
   useHooksStore.setState({
@@ -338,7 +339,7 @@ describe("Hooks settings page", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           TooltipProvider,
           null,
@@ -355,10 +356,10 @@ describe("Hooks settings page", () => {
       ),
     );
 
-    expect(html).toContain("已安装");
-    expect(html).toContain("旧版");
-    expect(html).not.toContain(">Installed<");
-    expect(html).not.toContain(">Legacy<");
+    expect(html).toContain(expectedCopy("settings.hooks.group.installed"));
+    expect(html).toContain(expectedCopy("settings.hooks.group.legacy"));
+    expect(html).not.toContain(">已安装<");
+    expect(html).not.toContain(">旧版<");
   });
 
   it("renders an existing status message as an editable typed field", () => {

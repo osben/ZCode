@@ -8,6 +8,7 @@ import type {
 } from "@zcode/shared";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { InstalledPluginDetailPanel } from "../src/settings/InstalledPluginManagement.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 describe("InstalledPluginDetailPanel", () => {
   it("renders plugin hook event, matcher, and command details", () => {
@@ -37,7 +38,7 @@ describe("InstalledPluginDetailPanel", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(InstalledPluginDetailPanel, {
           getPluginOptionValue: (
             _plugin: ZCodePluginInfo,
@@ -55,7 +56,7 @@ describe("InstalledPluginDetailPanel", () => {
 
     expect(html).toContain("Stop");
     expect(html).toContain("stop-hook.sh");
-    expect(html).toContain("可运行");
+    expect(html).toContain(expectedCopy("settings.plugins.detail.hook.runnable"));
     expect(html).not.toContain("暂未暴露 Hook 明细");
   });
 
@@ -89,7 +90,7 @@ describe("InstalledPluginDetailPanel", () => {
       const html = renderToStaticMarkup(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(InstalledPluginDetailPanel, {
             getPluginOptionValue: (
               _plugin: ZCodePluginInfo,
@@ -111,7 +112,7 @@ describe("InstalledPluginDetailPanel", () => {
       expect(html).toContain("superpowers-skill-14");
       expect(html).toContain("Brainstorming ideas into designs");
       // 不应再落到「启用后查看组件」的空态。
-      expect(html).not.toContain("启用插件后查看其组件。");
+      expect(html).not.toContain(expectedCopy("settings.plugins.detail.componentsWhenEnabled"));
     }
   });
 
@@ -137,7 +138,7 @@ describe("InstalledPluginDetailPanel", () => {
       renderToStaticMarkup(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(InstalledPluginDetailPanel, {
             diagnostics,
             getPluginOptionValue: (
@@ -175,13 +176,13 @@ describe("InstalledPluginDetailPanel", () => {
         severity: "error",
       },
     ]);
-    expect(withWarnings).toContain("警告");
+    expect(withWarnings).toContain(expectedCopy("settings.plugins.detail.warnings"));
     expect(withWarnings).toContain("./skills/engineering/tdd");
     expect(withWarnings).not.toContain("./other");
     expect(withWarnings).not.toContain("boom");
 
     // 无匹配 warning 时不渲染空区块。
-    expect(renderPanel([])).not.toContain("警告");
+    expect(renderPanel([])).not.toContain(expectedCopy("settings.plugins.detail.warnings"));
   });
 
   it("renders a details empty state for a plugin that declares no components", () => {
@@ -206,7 +207,7 @@ describe("InstalledPluginDetailPanel", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(InstalledPluginDetailPanel, {
           getPluginOptionValue: (
             _plugin: ZCodePluginInfo,
@@ -222,7 +223,7 @@ describe("InstalledPluginDetailPanel", () => {
       ),
     );
 
-    expect(html).toContain("详情");
-    expect(html).toContain("无组件");
+    expect(html).toContain(expectedCopy("settings.plugins.detail.details"));
+    expect(html).toContain(expectedCopy("settings.plugins.detail.componentsEmpty"));
   });
 });

@@ -13,12 +13,16 @@ import zh from "@/i18n/locales/zh-CN.js";
 // (en-US) lacks the key, so a missing translation leaks the id straight into the UI. Guard that
 // every intl.formatMessage id used by the component exists in all shipped locale catalogs.
 
-const COMPONENT_PATH = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "../src/v4/ConversationWorktreeSetupSteps.tsx",
-);
+// The created notice renders its own worktreeSetup ids, so both components are scanned.
+const COMPONENT_PATHS = [
+  resolve(dirname(fileURLToPath(import.meta.url)), "../src/v4/ConversationWorktreeSetupSteps.tsx"),
+  resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    "../src/v4/ConversationWorktreeCreatedNotice.tsx",
+  ),
+];
 
-const componentSource = readFileSync(COMPONENT_PATH, "utf8");
+const componentSource = COMPONENT_PATHS.map((path) => readFileSync(path, "utf8")).join("\n");
 
 // Every literal formatMessage({ id: "..." }) call site in the component. Dynamic helpers that
 // forward ids from other modules (reconcile.*) are owned by those modules and verified there.

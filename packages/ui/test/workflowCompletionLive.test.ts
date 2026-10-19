@@ -39,6 +39,10 @@ import { ConversationWorkflowCompletion } from "@/v4/ConversationWorkflowComplet
 import type { ConversationRowRenderContext } from "@/v4/conversationRowContext.js";
 // eslint-disable-next-line import/first
 import type { WorkflowTurnCompletion } from "@/v4/workflowTurnCompletion.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
+
+const moreArtifacts = (count: number | string) =>
+  expectedCopy("chat.toolCall.workflow.completion.moreArtifacts", { count });
 
 afterEach(() => {
   cleanup();
@@ -128,7 +132,7 @@ function renderCompletion(
   return render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(ConversationWorkflowCompletion, { completion, context, turnKey: "t1" }),
     ),
   );
@@ -139,7 +143,7 @@ describe("ConversationWorkflowCompletion · 载荷砍过之后的 `+N`", () => {
     workflowRunArtifacts.mockResolvedValue({ artifacts: journalArtifacts });
     const view = renderCompletion(true);
     await waitFor(() =>
-      expect(view.getByTestId("workflow-completion-more").textContent).toBe("还有 6 个"),
+      expect(view.getByTestId("workflow-completion-more").textContent).toBe(moreArtifacts(6)),
     );
     expect(view.getAllByTestId("workflow-completion-line")).toHaveLength(5);
     expect(view.getByTestId("workflow-completion-card-t1").textContent).not.toContain("…");
@@ -151,10 +155,10 @@ describe("ConversationWorkflowCompletion · 载荷砍过之后的 `+N`", () => {
       () => new Promise<{ artifacts: WorkflowRunArtifact[] }>((r) => (resolve = r)),
     );
     const view = renderCompletion(true);
-    expect(view.getByTestId("workflow-completion-more").textContent).toBe("还有 … 个");
+    expect(view.getByTestId("workflow-completion-more").textContent).toBe(moreArtifacts("…"));
     resolve({ artifacts: journalArtifacts });
     await waitFor(() =>
-      expect(view.getByTestId("workflow-completion-more").textContent).toBe("还有 6 个"),
+      expect(view.getByTestId("workflow-completion-more").textContent).toBe(moreArtifacts(6)),
     );
     cleanup();
 
@@ -162,22 +166,22 @@ describe("ConversationWorkflowCompletion · 载荷砍过之后的 `+N`", () => {
     const old = renderCompletion(true);
     await waitFor(() => expect(workflowRunArtifacts).toHaveBeenCalled());
     await new Promise((r) => setTimeout(r, 0));
-    expect(old.getByTestId("workflow-completion-more").textContent).toBe("还有 … 个");
+    expect(old.getByTestId("workflow-completion-more").textContent).toBe(moreArtifacts("…"));
   });
 
   it("冷渲染（没有会话上下文）只有载荷：省略号是诚实的", () => {
     hasConversation = false;
     const view = renderCompletion(true);
-    expect(view.getByTestId("workflow-completion-more").textContent).toBe("还有 … 个");
+    expect(view.getByTestId("workflow-completion-more").textContent).toBe(moreArtifacts("…"));
     expect(workflowRunArtifacts).not.toHaveBeenCalled();
   });
 
   it("没砍过的载荷：数字从一开始就对，journal 补齐后也不变", async () => {
     workflowRunArtifacts.mockResolvedValue({ artifacts: journalArtifacts.slice(0, 8) });
     const view = renderCompletion(false);
-    expect(view.getByTestId("workflow-completion-more").textContent).toBe("还有 2 个");
+    expect(view.getByTestId("workflow-completion-more").textContent).toBe(moreArtifacts(2));
     await waitFor(() => expect(workflowRunArtifacts).toHaveBeenCalled());
-    expect(view.getByTestId("workflow-completion-more").textContent).toBe("还有 2 个");
+    expect(view.getByTestId("workflow-completion-more").textContent).toBe(moreArtifacts(2));
   });
 });
 

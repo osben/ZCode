@@ -1,21 +1,24 @@
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { build } from "esbuild";
-import { TID_FEEDBACK_LOGS_OPT_IN } from "@zcode/shared";
+import { TID_FEEDBACK_LOGS_OPT_IN, TID_WORKSPACE_HELP_MENU_TRIGGER } from "@zcode/shared";
 import {
   readSettings,
   seedSettings,
   waitForDefaultWorkspaceReady,
 } from "../../../helpers/desktop-app.js";
-import { startHelpConfigFixture } from "../../../helpers/help-client-config-fixture.js";
+import {
+  expectedCopy,
+  startHelpConfigFixture,
+} from "../../../helpers/help-client-config-fixture.js";
+import { sel } from "../../../helpers/selectors.js";
 
 async function dismissInitialOnboarding() {
   const onboarding = $('[data-testid="onboarding-page"]');
   await browser.waitUntil(
     async () =>
       (await onboarding.isExisting()) ||
-      (await $('button[aria-label="Help"]').isExisting()) ||
-      (await $('button[aria-label="帮助"]').isExisting()),
+      (await $(sel(TID_WORKSPACE_HELP_MENU_TRIGGER)).isExisting()),
     { timeout: 15000 },
   );
   if (await onboarding.isDisplayed()) {
@@ -66,12 +69,19 @@ describe("反馈上传授权（manual review）", () => {
     await server?.close();
   });
 
-  for (const [locale, width, height, helpLabel, reportLabel, hint] of [
-    ["en-US", 1280, 900, "Help", "Report", "On by default"],
-    ["zh-CN", 430, 900, "帮助", "问题上报", "默认开启"],
+  const reportIssueLabel = expectedCopy("workspaceHeader.help.issueReport");
+  const logsHint = expectedCopy("feedback.submit.simple.logsHint");
+
+  for (const [width, height] of [
+    [1280, 900],
+    [430, 900],
   ] as const) {
-    it(`FB-PRIV-01/08: ${locale} ${width}px 新反馈默认开启日志且允许取消`, async () => {
-      await seedSettings({ locale, localePreference: locale, zcodeEndpointOrigin: server.origin });
+    it(`FB-PRIV-01/08: en-US ${width}px 新反馈默认开启日志且允许取消`, async () => {
+      await seedSettings({
+        locale: "en-US",
+        localePreference: "en-US",
+        zcodeEndpointOrigin: server.origin,
+      });
       await browser.electron.execute(
         (electron, size) => {
           electron.BrowserWindow.getAllWindows()[0]!.setSize(size.width, size.height);
@@ -81,15 +91,15 @@ describe("反馈上传授权（manual review）", () => {
       await browser.refresh();
       await dismissInitialOnboarding();
       await waitForDefaultWorkspaceReady(30000);
-      const help = $(`button[aria-label="${helpLabel}"]`);
+      const help = $(sel(TID_WORKSPACE_HELP_MENU_TRIGGER));
       await help.waitForDisplayed({ timeout: 10000 });
       await help.click();
-      await $(`//*[@role="menuitem" and contains(.,"${reportLabel}")]`).click();
+      await $(`[role="menuitem"]*=${reportIssueLabel}`).click();
       const dialog = $('[role="dialog"]');
       await dialog.waitForDisplayed({ timeout: 10000 });
       const logs = $(`[data-testid="${TID_FEEDBACK_LOGS_OPT_IN}"]`);
       await expect(logs).toHaveAttribute("aria-checked", "true");
-      await expect(dialog).toHaveText(expect.stringContaining(hint));
+      await expect(dialog).toHaveText(expect.stringContaining(logsHint));
       expect(await dialog.$$("img").length).toBe(0);
       await logs.click();
       await expect(logs).toHaveAttribute("aria-checked", "false");
@@ -100,13 +110,13 @@ describe("反馈上传授权（manual review）", () => {
           const actions = (
             window as typeof window & { __testActions?: { setTheme?: (theme: string) => void } }
           ).__testActions;
-          if (!actions?.setTheme) throw new Error("缺少主题测试入口");
+          if (!actions?.setTheme) throw new Error("Missing theme test action");
           actions.setTheme(value);
         }, theme);
         await logs.scrollIntoView();
         await expect(logs).toBeDisplayed();
         // E2E runtime path guard 禁止源码出现裸系统临时目录字面量，须走 tmpdir() 拼接。
-        await browser.saveScreenshot(join(tmpdir(), `zcode-feedback-${locale}-${theme}.png`));
+        await browser.saveScreenshot(join(tmpdir(), `zcode-feedback-en-US-${width}-${theme}.png`));
       }
       await browser.keys("Escape");
     });

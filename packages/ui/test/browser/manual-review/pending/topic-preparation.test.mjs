@@ -128,10 +128,8 @@ for (const width of [390, 1200]) {
             assert.equal(await el.evaluate((node) => node.scrollWidth <= node.clientWidth), true);
           }
           const waiting = page.locator('[data-topic-preparation="waiting"]');
-          const expand = waiting.getByRole("button", {
-            name: locale === "zh-CN" ? "展开" : "Expand",
-            exact: true,
-          });
+          // Select by the collapsed state: the zh-CN fixture renders the Chinese label, which expectedCopy cannot provide.
+          const expand = waiting.getByRole("button", { expanded: false });
           await expand.waitFor();
           await expand.click();
           await page.waitForFunction(() => {

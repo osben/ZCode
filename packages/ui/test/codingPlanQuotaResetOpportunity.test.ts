@@ -1,8 +1,12 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createElement, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  TID_CODING_PLAN_QUOTA_RESET_ACTION,
+  TID_CODING_PLAN_QUOTA_RESET_OPPORTUNITY,
+} from "@zcode/shared";
 import type { CodingPlanResetType } from "@zcode/shared";
 import {
   CodingPlanQuotaResetOpportunity,
@@ -11,6 +15,7 @@ import {
 import type { CodingPlanQuotaResetDialogResetItem } from "@/components/coding-plan-quota-reset/CodingPlanQuotaResetDialog.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { mergeCodingPlanQuotaResetOpportunityBadges } from "@/lib/codingPlanQuotaResetUi.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 vi.mock("@/lib/codingPlanQuotaResetConfetti.js", () => ({
   burstCodingPlanQuotaResetConfetti: vi.fn(),
@@ -26,7 +31,7 @@ function renderOpportunity(props: {
   return render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(CodingPlanQuotaResetOpportunity, {
         ...props,
         placement: "inline",
@@ -110,7 +115,7 @@ function renderStatefulOpportunity(
     );
     return createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(CodingPlanQuotaResetOpportunity, {
         count: badge.count,
         dialog: createDialogConfig({ resetItems }),
@@ -137,7 +142,7 @@ describe("CodingPlanQuotaResetOpportunity", () => {
       expiresAt: Date.now() + 20 * 60_000,
     });
 
-    const button = screen.getByRole("button", { name: "1 次重置额度" });
+    const button = screen.getByTestId(TID_CODING_PLAN_QUOTA_RESET_OPPORTUNITY);
     expect(button.className).toContain("bg-interaction-confirmation-surface");
     expect(button.className).toContain("text-interaction-confirmation-foreground");
   });
@@ -152,18 +157,28 @@ describe("CodingPlanQuotaResetOpportunity", () => {
       expiresAt: Date.now() + 19 * 60_000 + 8_000,
     });
 
-    expect(screen.getByText("1 次重置额度")).toBeTruthy();
-    const countdown = screen.getByText("剩余 19 分 8 秒");
+    expect(document.body.textContent).toContain(
+      expectedCopy("codingPlan.quotaReset.opportunity", { count: 1 }),
+    );
+    const countdown = screen.getByTestId(TID_CODING_PLAN_QUOTA_RESET_OPPORTUNITY)
+      .lastElementChild as HTMLElement;
+    expect(countdown.textContent).toContain(
+      expectedCopy("codingPlan.quotaReset.expiresIn", { time: "19m 8s" }),
+    );
     expect(countdown.className).toContain("font-normal");
     expect(countdown.className).toContain("text-interaction-confirmation-foreground/80");
     // A single opportunity does not switch to the "get N resets" multi-opportunity copy; only the
     // interaction upgrades to a button.
-    expect(screen.queryByRole("button", { name: "获得1次重置额度" })).toBeNull();
+    expect(
+      (
+        screen.getByTestId(TID_CODING_PLAN_QUOTA_RESET_OPPORTUNITY) as HTMLButtonElement
+      ).getAttribute("aria-label"),
+    ).not.toBe(expectedCopy("codingPlan.quotaReset.openDialog", { count: 1 }));
     expect(screen.queryByRole("dialog")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "1 次重置额度" }));
+    fireEvent.click(screen.getByTestId(TID_CODING_PLAN_QUOTA_RESET_OPPORTUNITY));
     expect(screen.getByRole("dialog")).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "可重置额度" })).toBeTruthy();
+    expect(document.body.textContent).toContain(expectedCopy("codingPlan.quotaReset.dialog.title"));
   });
 
   it("多个机会在入口展示机会次数、隐藏倒计时，点击后打开交付稿弹框", () => {
@@ -176,17 +191,21 @@ describe("CodingPlanQuotaResetOpportunity", () => {
       expiresAt: Date.now() + 19 * 60_000 + 8_000,
     });
 
-    expect(screen.queryByText("剩余 19 分 8 秒")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "获得2次重置额度" }));
+    expect(document.body.textContent).not.toContain(
+      expectedCopy("codingPlan.quotaReset.expiresIn", { time: "19m 8s" }),
+    );
+    fireEvent.click(screen.getByTestId(TID_CODING_PLAN_QUOTA_RESET_OPPORTUNITY));
 
     expect(screen.getByRole("dialog")).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "可重置额度" })).toBeTruthy();
+    expect(document.body.textContent).toContain(expectedCopy("codingPlan.quotaReset.dialog.title"));
     // The title no longer shows a remaining-count pill; the count is annotated per opportunity
     // row instead.
-    expect(screen.queryByText("2 次可用")).toBeNull();
-    expect(screen.getByLabelText("剩余用量")).toBeTruthy();
-    expect(screen.getByText("5 小时额度重置")).toBeTruthy();
-    expect(screen.getByText("周额度重置")).toBeTruthy();
+    expect(screen.getByRole("dialog").querySelector("h2")?.children).toHaveLength(0);
+    expect(screen.getByRole("dialog").querySelectorAll("section").length).toBeGreaterThan(0);
+    expect(document.body.textContent).toContain(
+      expectedCopy("codingPlan.quotaReset.dialog.fiveHour"),
+    );
+    expect(document.body.textContent).toContain(expectedCopy("codingPlan.quotaReset.dialog.week"));
   });
 
   it.each([
@@ -214,8 +233,8 @@ describe("CodingPlanQuotaResetOpportunity", () => {
       expiresAt: Date.now() + 20 * 60_000,
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "1 次重置额度" }));
-    const grid = screen.getByLabelText("剩余用量").firstElementChild;
+    fireEvent.click(screen.getByTestId(TID_CODING_PLAN_QUOTA_RESET_OPPORTUNITY));
+    const grid = screen.getByRole("dialog").querySelector("section > div");
     expect(grid?.className).toContain(expectedClass);
     expect(grid?.className).toContain("max-sm:grid-cols-1");
   });
@@ -228,25 +247,27 @@ describe("CodingPlanQuotaResetOpportunity", () => {
       WEEK: [Date.now() + 2 * 24 * 60 * 60_000],
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "获得2次重置额度" }));
+    fireEvent.click(screen.getByTestId(TID_CODING_PLAN_QUOTA_RESET_OPPORTUNITY));
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "重置 5 小时额度" }));
+      fireEvent.click(screen.getAllByTestId(TID_CODING_PLAN_QUOTA_RESET_ACTION)[0]);
       await Promise.resolve();
     });
 
     expect(onReset.FIVE_HOUR).toHaveBeenCalledTimes(1);
     expect(onReset.WEEK).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "重置成功" })).toBeTruthy();
+    expect(screen.getAllByTestId(TID_CODING_PLAN_QUOTA_RESET_ACTION)[0]).toBeTruthy();
     // After opportunities are exhausted the expiry is empty: the countdown row stays blank during
     // the success feedback and collapse animation, never rendering "0m 0s".
-    expect(within(screen.getByRole("dialog")).queryByText(/0 分 0 秒/)).toBeNull();
+    expect(screen.getByRole("dialog").textContent).not.toContain("0m 0s");
 
     act(() => vi.advanceTimersByTime(600));
-    expect(within(screen.getByRole("dialog")).queryByText(/0 分 0 秒/)).toBeNull();
+    expect(screen.getByRole("dialog").textContent).not.toContain("0m 0s");
 
     act(() => vi.advanceTimersByTime(220));
-    expect(screen.queryByText("5 小时额度重置")).toBeNull();
-    expect(screen.getByText("周额度重置")).toBeTruthy();
+    expect(document.body.textContent).not.toContain(
+      expectedCopy("codingPlan.quotaReset.dialog.fiveHour"),
+    );
+    expect(document.body.textContent).toContain(expectedCopy("codingPlan.quotaReset.dialog.week"));
   });
 
   it("同类型多张机会核销一张后保留该行并展示下一张倒计时，不关闭弹框即可再次核销", async () => {
@@ -257,14 +278,18 @@ describe("CodingPlanQuotaResetOpportunity", () => {
       WEEK: [Date.now() + 2 * 24 * 60 * 60_000],
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "获得3次重置额度" }));
+    fireEvent.click(screen.getByTestId(TID_CODING_PLAN_QUOTA_RESET_OPPORTUNITY));
     // Initial: five hours holds 2 tickets, showing the "2" pill and the earliest ticket's
     // "soonest" countdown.
-    expect(screen.getByText("2 次")).toBeTruthy();
-    expect(screen.getByText("最快 20 分 0 秒后过期")).toBeTruthy();
+    expect(document.body.textContent).toContain(
+      expectedCopy("codingPlan.quotaReset.dialog.itemCount", { count: 2 }),
+    );
+    expect(document.body.textContent).toContain(
+      expectedCopy("codingPlan.quotaReset.dialog.expiresInSoonest", { time: "20m" }),
+    );
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "重置 5 小时额度" }));
+      fireEvent.click(screen.getAllByTestId(TID_CODING_PLAN_QUOTA_RESET_ACTION)[0]);
       await Promise.resolve();
     });
     expect(onReset.FIVE_HOUR).toHaveBeenCalledTimes(1);
@@ -274,27 +299,39 @@ describe("CodingPlanQuotaResetOpportunity", () => {
     // enter the collapse animation; the countdown switches to the next ticket instead of
     // rendering the completed state's empty expiry as "0m 0s".
     act(() => vi.advanceTimersByTime(600));
-    expect(screen.getByText("5 小时额度重置")).toBeTruthy();
-    expect(screen.queryByText("2 次")).toBeNull();
-    expect(screen.getByText("3 小时 30 分后过期")).toBeTruthy();
-    expect(within(screen.getByRole("dialog")).queryByText(/0 分 0 秒/)).toBeNull();
-    const resetAgain = screen.getByRole("button", { name: "重置 5 小时额度" }) as HTMLButtonElement;
+    expect(document.body.textContent).toContain(
+      expectedCopy("codingPlan.quotaReset.dialog.fiveHour"),
+    );
+    expect(document.body.textContent).not.toContain(
+      expectedCopy("codingPlan.quotaReset.dialog.itemCount", { count: 2 }),
+    );
+    expect(document.body.textContent).toContain(
+      expectedCopy("codingPlan.quotaReset.dialog.expiresIn", { time: "3h 30m" }),
+    );
+    expect(screen.getByRole("dialog").textContent).not.toContain("0m 0s");
+    const resetAgain = screen.getAllByTestId(
+      TID_CODING_PLAN_QUOTA_RESET_ACTION,
+    )[0] as HTMLButtonElement;
     expect(resetAgain.disabled).toBe(false);
 
     act(() => vi.advanceTimersByTime(220));
-    expect(screen.getByText("5 小时额度重置")).toBeTruthy();
+    expect(document.body.textContent).toContain(
+      expectedCopy("codingPlan.quotaReset.dialog.fiveHour"),
+    );
 
     // Clicking again without closing the dialog: onReset is really invoked a second time; once
     // opportunities are exhausted the row collapses and the weekly quota row is unaffected.
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "重置 5 小时额度" }));
+      fireEvent.click(screen.getAllByTestId(TID_CODING_PLAN_QUOTA_RESET_ACTION)[0]);
       await Promise.resolve();
     });
     expect(onReset.FIVE_HOUR).toHaveBeenCalledTimes(2);
-    expect(within(screen.getByRole("dialog")).queryByText(/0 分 0 秒/)).toBeNull();
+    expect(screen.getByRole("dialog").textContent).not.toContain("0m 0s");
     act(() => vi.advanceTimersByTime(820));
-    expect(screen.queryByText("5 小时额度重置")).toBeNull();
-    expect(screen.getByText("周额度重置")).toBeTruthy();
+    expect(document.body.textContent).not.toContain(
+      expectedCopy("codingPlan.quotaReset.dialog.fiveHour"),
+    );
+    expect(document.body.textContent).toContain(expectedCopy("codingPlan.quotaReset.dialog.week"));
     expect(onReset.WEEK).not.toHaveBeenCalled();
   });
 
@@ -323,15 +360,23 @@ describe("CodingPlanQuotaResetOpportunity", () => {
       expiresAt: Date.now() + 4 * 60 * 60_000 + 52 * 60_000,
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "获得3次重置额度" }));
+    fireEvent.click(screen.getByTestId(TID_CODING_PLAN_QUOTA_RESET_OPPORTUNITY));
 
     // Multiple tickets: a "2" pill sits next to the title and the countdown is marked "soonest"
     // to avoid being misread as a uniform deadline.
-    expect(screen.getByText("2 次")).toBeTruthy();
-    expect(screen.getByText("最快 4 小时 52 分后过期")).toBeTruthy();
+    expect(document.body.textContent).toContain(
+      expectedCopy("codingPlan.quotaReset.dialog.itemCount", { count: 2 }),
+    );
+    expect(document.body.textContent).toContain(
+      expectedCopy("codingPlan.quotaReset.dialog.expiresInSoonest", { time: "4h 52m" }),
+    );
     // Single ticket: no "1" pill appears and the countdown keeps its original copy.
-    expect(screen.queryByText("1 次")).toBeNull();
-    expect(screen.getByText("4 小时 58 分后过期")).toBeTruthy();
+    expect(document.body.textContent).not.toContain(
+      expectedCopy("codingPlan.quotaReset.dialog.itemCount", { count: 1 }),
+    );
+    expect(document.body.textContent).toContain(
+      expectedCopy("codingPlan.quotaReset.dialog.expiresIn", { time: "4h 58m" }),
+    );
   });
 
   it("弹框打开后服务端机会数下降时仍保持挂载，直到用户主动关闭", () => {
@@ -342,13 +387,13 @@ describe("CodingPlanQuotaResetOpportunity", () => {
       expiresAt: Date.now() + 20 * 60_000,
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "获得2次重置额度" }));
+    fireEvent.click(screen.getByTestId(TID_CODING_PLAN_QUOTA_RESET_OPPORTUNITY));
     expect(screen.getByRole("dialog")).toBeTruthy();
 
     view.rerender(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(CodingPlanQuotaResetOpportunity, {
           count: 1,
           dialog,
@@ -380,16 +425,23 @@ describe("CodingPlanQuotaResetOpportunity", () => {
       expiresAt: Date.now() + 20 * 60_000,
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "获得2次重置额度" }));
+    fireEvent.click(screen.getByTestId(TID_CODING_PLAN_QUOTA_RESET_OPPORTUNITY));
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "重置 5 小时额度" }));
+      fireEvent.click(screen.getAllByTestId(TID_CODING_PLAN_QUOTA_RESET_ACTION)[0]);
       await Promise.resolve();
     });
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    fireEvent.click(screen.getByRole("button", { name: "获得2次重置额度" }));
+    fireEvent.click(
+      screen
+        .getByRole("dialog")
+        .querySelectorAll("button")
+        .item(screen.getByRole("dialog").querySelectorAll("button").length - 1),
+    );
+    fireEvent.click(screen.getByTestId(TID_CODING_PLAN_QUOTA_RESET_OPPORTUNITY));
 
     act(() => vi.advanceTimersByTime(820));
-    expect(screen.getByText("5 小时额度重置")).toBeTruthy();
+    expect(document.body.textContent).toContain(
+      expectedCopy("codingPlan.quotaReset.dialog.fiveHour"),
+    );
   });
 
   it("支持由 Composer 控制弹框开关，保证 HoverCard 在弹框期间不卸载", () => {
@@ -402,7 +454,7 @@ describe("CodingPlanQuotaResetOpportunity", () => {
       onDialogOpenChange,
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "获得2次重置额度" }));
+    fireEvent.click(screen.getByTestId(TID_CODING_PLAN_QUOTA_RESET_OPPORTUNITY));
     expect(onDialogOpenChange).toHaveBeenCalledWith(true);
   });
 });

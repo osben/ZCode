@@ -2,6 +2,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 import {
   COLLAPSED_USER_INPUT_CONTENT_MAX_HEIGHT_PX,
   ConversationUserInputBody,
@@ -140,7 +141,7 @@ async function renderBody(root: Root, rowId: number, contentText: string) {
     root.render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           ConversationUserInputBody,
           { contentText, rowId },
@@ -178,14 +179,14 @@ describe("ConversationUserInputBody", () => {
     await renderBody(root, 1, "long");
 
     expect(latestButtonProps()?.["aria-expanded"]).toBe(false);
-    expect(latestButtonProps()?.["aria-label"]).toBe("展开");
+    expect(latestButtonProps()?.["aria-label"]).toBe(expectedCopy("chat.message.expand"));
 
     await act(async () => {
       (latestButtonProps()?.onClick as (() => void) | undefined)?.();
     });
 
     expect(latestButtonProps()?.["aria-expanded"]).toBe(true);
-    expect(latestButtonProps()?.["aria-label"]).toBe("收起");
+    expect(latestButtonProps()?.["aria-label"]).toBe(expectedCopy("chat.message.collapse"));
 
     await act(async () => {
       root.unmount();

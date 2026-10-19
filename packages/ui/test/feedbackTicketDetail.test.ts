@@ -6,6 +6,7 @@ import type { IFeedbackService } from "@zcode/services";
 
 import { TicketDetailView } from "@/feedback/TicketDetail.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 function createTicket(): FeedbackTicketDetail {
   return {
@@ -54,15 +55,14 @@ describe("TicketDetailView", () => {
       ),
     );
 
-    expect(html).toContain("You added information");
-    expect(html).not.toContain("你补充了信息");
+    expect(html).toContain(expectedCopy("feedback.timeline.yourSupplement"));
   });
 
   it("shows the localized issue id prefix with a copy action", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(TicketDetailView, {
           ticket: createTicket(),
           feedbackService: {} as IFeedbackService,
@@ -74,7 +74,7 @@ describe("TicketDetailView", () => {
 
     expect(html).toContain("ID");
     expect(html).toContain("ticket-1");
-    expect(html).toContain('aria-label="复制 issue 编号"');
+    expect(html).toContain(`aria-label="${expectedCopy("feedback.detail.issueCopy")}"`);
   });
 
   it("uses the English issue id prefix in English", () => {

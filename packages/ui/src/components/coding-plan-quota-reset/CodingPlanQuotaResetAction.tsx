@@ -1,5 +1,9 @@
 import { CheckIcon, Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import {
+  TID_CODING_PLAN_QUOTA_RESET_ACTION,
+  TID_CODING_PLAN_QUOTA_RESET_COMPLETED,
+} from "@zcode/shared";
 import type { CodingPlanResetType } from "@zcode/shared";
 import { Button } from "@/components/ui/button.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
@@ -179,6 +183,7 @@ export function CodingPlanQuotaResetAction({
         type="button"
         variant="ghost"
         size="xs"
+        data-testid={TID_CODING_PLAN_QUOTA_RESET_ACTION}
         aria-label={successLabel}
         disabled
         className="rounded-md px-1 text-ui-sm text-success hover:text-success"
@@ -195,6 +200,7 @@ export function CodingPlanQuotaResetAction({
     const completedText = (
       <span
         ref={completedTextRef}
+        data-testid={TID_CODING_PLAN_QUOTA_RESET_COMPLETED}
         // Match min-h to the Reset button's xs size (h-5) so all three states have equal height.
         // This prevents the completed state from growing the quota bar's label row and misaligning values/progress bars in the same row.
         className="inline-flex min-h-5 items-center text-ui-xs text-foreground-subtlest tabular-nums"
@@ -216,6 +222,7 @@ export function CodingPlanQuotaResetAction({
       type="button"
       variant="ghost"
       size="xs"
+      data-testid={TID_CODING_PLAN_QUOTA_RESET_ACTION}
       aria-label={effectiveProcessing ? processingLabel : ariaLabel}
       disabled={effectiveProcessing}
       className="rounded-md bg-interaction-confirmation-surface px-1 text-ui-sm text-interaction-confirmation-foreground hover:bg-interaction-confirmation-surface hover:text-interaction-confirmation-foreground"

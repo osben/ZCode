@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { TID_V4_COMPOSER_INPUT } from "@zcode/shared";
 import {
   getE2EAppDataPaths,
+  seedSettings,
   setInputValueByTestIdDom,
   switchToNewestWindow,
   waitForDefaultWorkspaceReady,
@@ -14,6 +15,7 @@ const root = join(getE2EAppDataPaths().workspace, ".zcode-e2e", "file-mention-ho
 
 describe("MFH01：@ 文件候选由 Host 查询", () => {
   before(async () => {
+    await seedSettings({ locale: "en-US", localePreference: "en-US" });
     await mkdir(root, { recursive: true });
     await writeFile(join(root, `${marker}.ts`), "export const marker = true;\n");
     // 冷启动可能先连接到过渡窗口；切到产品窗口后，再退出隔离用户目录的首次引导。

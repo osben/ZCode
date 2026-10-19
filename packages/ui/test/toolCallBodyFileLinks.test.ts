@@ -43,7 +43,7 @@ describe("ToolCallBody markdown file links", () => {
     renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ToolCallBody, {
           childToolList: null,
           displayModel,

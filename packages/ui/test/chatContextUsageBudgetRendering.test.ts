@@ -30,6 +30,7 @@ vi.mock("@/chat-input-toolbar/contextQuotaResetOpportunityReminder.js", async (i
 
 import { ChatContextUsage } from "@/chat-input-toolbar/contextUsage.js";
 import { ZCodeIntlProvider, useZCodeIntl } from "@/i18n/IntlProvider.js";
+import zhCN from "@/i18n/locales/zh-CN.js";
 
 function renderContextUsage(
   taskUsage: {
@@ -157,7 +158,7 @@ describe("ChatContextUsage runtime compaction budget rendering", () => {
         },
         "zh-CN",
       ),
-    ).toContain("严重：已达到自动压缩阈值。");
+    ).toContain(zhCN["chat.contextUsage.tone.critical"]);
   });
 
   it("keeps a quota opportunity tone ahead of the steady context tone", () => {

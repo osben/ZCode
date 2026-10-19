@@ -64,7 +64,7 @@ const collections = {
 // settings 故意没有 onboardingOccupation，确保通过来自真实记录 owner 的判定进入任务。
 for (const services of Object.values(collections)) {
   services.register(ISettingService, {
-    get: async () => ({ locale: "zh-CN" }),
+    get: async () => ({ locale: "en-US" }),
     update: async () => {},
   });
   services.register(IBroadcastService, broadcastService);
@@ -92,7 +92,7 @@ function Fixture() {
     setBridge({services, id: crypto.randomUUID()});
   };
   return h(React.Fragment, null,
-    h('button', {onClick: open}, '新建远程任务'),
+    h('button', { 'data-testid': 'open-remote-task', onClick: open }, 'New remote task'),
     bridge && h(ServiceProvider, {key: bridge.id, services: bridge.services},
       h(PlatformProvider, {platform}, h(StoreProvider, {broadcastService: broadcast},
         h(ZCodeIntlProvider, null,
@@ -178,7 +178,7 @@ try {
         });
       const context = await browser.newContext({
         viewport: { width: 390, height: 844 },
-        locale: "zh-CN",
+        locale: "en-US",
       });
       const page = await context.newPage();
       const errors = [];
@@ -190,7 +190,7 @@ try {
       page.setDefaultTimeout(15_000);
       try {
         await page.goto(`${origin}/onboarding-fixture?kind=${kind}`);
-        await page.getByRole("button", { name: "新建远程任务", exact: true }).click();
+        await page.getByTestId("open-remote-task").click();
         const onboarding = page.getByTestId("onboarding-page");
         const draft = page.getByTestId("task-draft");
         if (!completed) {
@@ -201,7 +201,7 @@ try {
         // 关闭的 RPC 已落盘后再重新挂载，避免把写入途中的第二次点击混进本次接线回归。
         await assertEventually(async () => !(await owner.shouldOnboard("browser-onboarding")));
         const previousBridgeId = await draft.getAttribute("data-bridge-id");
-        await page.getByRole("button", { name: "新建远程任务", exact: true }).click();
+        await page.getByTestId("open-remote-task").click();
         await page.waitForFunction((previous) => {
           const current = document
             .querySelector('[data-testid="task-draft"]')

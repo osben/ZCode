@@ -30,6 +30,7 @@ import type {
   SavedWorkflowGroupMode,
   SavedWorkflowGroupState,
 } from "@/settings/saved-workflows/savedWorkflowContract.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 interface FakeTab {
   id: string;
@@ -214,7 +215,7 @@ function mount(props: Partial<Parameters<typeof SavedWorkflowsSection>[0]> = {})
   const utils = render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(SavedWorkflowsSection, {
         workspacePath: tabStoreState.activeWorkspacePath,
         onNavigateToLaunchedRun,
@@ -262,7 +263,7 @@ describe("SavedWorkflowsSection（全局 + 多项目页）", () => {
     expect(groups[2]?.getAttribute("data-testid")).toBe(
       testId(TID_WORKFLOW_PROJECT_GROUP, keyOf("/b")),
     );
-    expect(screen.getByText("已保存的工作流").textContent).toContain("9");
+    expect(screen.getByText(expectedCopy("workflows.hub.sectionTitle")).textContent).toContain("9");
   });
 
   it("全局组接收本机项目候选（过滤远程）与活动项目 key", async () => {
@@ -291,7 +292,7 @@ describe("SavedWorkflowsSection（全局 + 多项目页）", () => {
     const empty = screen.getByTestId(TID_WORKFLOWS_EMPTY);
     expect(global.compareDocumentPosition(empty) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // Total count includes global
-    expect(screen.getByText("已保存的工作流").textContent).toContain("3");
+    expect(screen.getByText(expectedCopy("workflows.hub.sectionTitle")).textContent).toContain("3");
   });
 
   it("项目全空且全局也空：空态卡照旧出现在全局组之下", async () => {
@@ -303,7 +304,9 @@ describe("SavedWorkflowsSection（全局 + 多项目页）", () => {
     await screen.findByTestId(TID_WORKFLOWS_EMPTY);
     fireEvent.click(screen.getByTestId(TID_WORKFLOWS_CREATE_VIA_CHAT));
     expect(onCreateViaChat.mock.calls[0]?.[1]).toEqual({ workspacePath: "/a" });
-    expect(onCreateViaChat.mock.calls[0]?.[0]).toEqual(expect.stringContaining("保存到本项目"));
+    expect(onCreateViaChat.mock.calls[0]?.[0]).toEqual(
+      expect.stringContaining("save it to this project"),
+    );
   });
 
   it("spinner：全局与所有项目组都未就绪时显示，不显示空态卡", async () => {
@@ -329,7 +332,7 @@ describe("SavedWorkflowsSection（全局 + 多项目页）", () => {
     groupReadiness.global = { loaded: true, empty: true, count: 0 };
     mount();
     await screen.findByTestId(TID_WORKFLOW_GLOBAL_GROUP);
-    expect(screen.getByText("打开一个项目以查看它的工作流。")).toBeTruthy();
+    expect(screen.getByText(expectedCopy("workflows.hub.noWorkspace"))).toBeTruthy();
     expect(screen.getByTestId(TID_WORKFLOWS_REFRESH)).toBeTruthy();
     // With no candidates the empty-state card is not shown (that is "all projects empty"; here there are no project groups at all)
     expect(screen.queryByTestId(TID_WORKFLOWS_EMPTY)).toBeNull();
@@ -349,8 +352,8 @@ describe("SavedWorkflowsSection（全局 + 多项目页）", () => {
     groupReadiness.global = { loaded: true, empty: true, count: 0 };
     mount();
     const button = await screen.findByTestId(TID_WORKFLOWS_OPEN_SETTINGS);
-    expect(button.textContent).toContain("工作流设置");
-    expect(button.textContent).toContain("通过命令启用");
+    expect(button.textContent).toContain(expectedCopy("workflows.hub.openSettings"));
+    expect(button.textContent).toContain(expectedCopy("settings.dynamicWorkflow.option.onDemand"));
     fireEvent.click(button);
     expect(settingsNavigation.setPendingSettingsSectionIntent).toHaveBeenCalledWith("general");
     expect(tabStoreState.openSettingsTab).toHaveBeenCalledTimes(1);

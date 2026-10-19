@@ -23,6 +23,17 @@ function scheduleRuleToBuilder(rule: ZCodeAutomationScheduleRule): CronBuilderSt
   };
 }
 
+export type AutomationCardScheduleKind = "one-time" | "recurring";
+
+export function getAutomationCardScheduleKind(automation: {
+  recurring?: boolean;
+  maxRuns?: number;
+}): AutomationCardScheduleKind {
+  return automation.recurring === false && (automation.maxRuns ?? 1) <= 1
+    ? "one-time"
+    : "recurring";
+}
+
 /** Cards prefer the authoritative scheduleRule; generate a summary from the compatibility cron only when older data lacks the rule. */
 export function describeAutomationCardSchedule(
   automation: {
@@ -36,7 +47,7 @@ export function describeAutomationCardSchedule(
   // Relative-time one-off tasks (such as "remind in 4 minutes") are stored as minute scheduleRules for compatibility display,
   // but describeCronBuilder would misrepresent them as repeating "every 4 minutes." One-off tasks run once and have no frequency,
   // so display them as "Custom," like one-off fixed-calendar cron tasks, and show the actual time in "Next run."
-  if (automation.recurring === false && (automation.maxRuns ?? 1) <= 1) {
+  if (getAutomationCardScheduleKind(automation) === "one-time") {
     return intl.formatMessage({ id: "automations.frequency.custom" });
   }
   // Compatibility cron for a long monthly interval is fixed as a monthly candidate; parsing cron alone would misdisplay "every 30 months" as "monthly."

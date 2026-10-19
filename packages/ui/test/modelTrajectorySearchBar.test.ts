@@ -4,13 +4,14 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ModelTrajectorySearchBar } from "@/ModelTrajectorySearchBar.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const labels: Record<string, string> = {
-  "modelTrajectory.search": "搜索调用轨迹",
-  "modelTrajectory.searchPlaceholder": "搜索调用轨迹内容…",
-  "modelTrajectory.searchPrevious": "上一个匹配项",
-  "modelTrajectory.searchNext": "下一个匹配项",
-  "modelTrajectory.searchClose": "关闭搜索",
+  "modelTrajectory.search": expectedCopy("modelTrajectory.search"),
+  "modelTrajectory.searchPlaceholder": expectedCopy("modelTrajectory.searchPlaceholder"),
+  "modelTrajectory.searchPrevious": expectedCopy("modelTrajectory.searchPrevious"),
+  "modelTrajectory.searchNext": expectedCopy("modelTrajectory.searchNext"),
+  "modelTrajectory.searchClose": expectedCopy("modelTrajectory.searchClose"),
 };
 
 afterEach(() => vi.restoreAllMocks());
@@ -34,7 +35,7 @@ describe("ModelTrajectorySearchBar", () => {
       }),
     );
 
-    const input = screen.getByRole("searchbox", { name: "搜索调用轨迹" });
+    const input = screen.getByRole("searchbox", { name: expectedCopy("modelTrajectory.search") });
     expect(document.activeElement).toBe(input);
     expect(screen.getByText("2/3")).toBeTruthy();
     fireEvent.change(input, { target: { value: "next" } });

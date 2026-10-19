@@ -189,10 +189,8 @@ import type {
   ComposerWorktreePreparationParams,
   ComposerWorktreePreparationSyncParams,
 } from "@/v4/composer/composerDraftWorktreeIntent.js";
-import {
-  ConversationWorktreeCreatedNotice,
-  ConversationWorktreeSetupSteps,
-} from "@/v4/ConversationWorktreeSetupSteps.js";
+import { ConversationWorktreeCreatedNotice } from "@/v4/ConversationWorktreeCreatedNotice.js";
+import { ConversationWorktreeSetupSteps } from "@/v4/ConversationWorktreeSetupSteps.js";
 import { ConversationDraftSuggestedPromptsContainer } from "@/v4/ConversationDraftSuggestedPromptsContainer.js";
 import { ConversationHeader, type PaneWorkspaceBadge } from "@/v4/ConversationHeader.js";
 import { ConversationQueuePanel } from "@/v4/ConversationQueuePanel.js";
@@ -376,6 +374,11 @@ export interface SessionPaneProps {
   activeSelectionSideChatSessionId?: string | null;
   workspacePath: string;
   workspaceIdentity?: string;
+  /** Open a worktree path through the app's shared workspace + draft flow. */
+  onCreateTaskInWorkspace?: (
+    workspacePath: string,
+    workspaceIdentity?: string,
+  ) => void | Promise<void>;
   remoteSessionId?: string | null;
   /** Prompt-template telemetry currently covers only Desktop; Web/mobile remote control keeps the UI behavior without emitting this event. */
   isDesktop?: boolean;
@@ -593,6 +596,7 @@ export function SessionPane({
   activeSelectionSideChatSessionId = null,
   workspacePath,
   workspaceIdentity,
+  onCreateTaskInWorkspace,
   remoteSessionId,
   isDesktop = false,
   compactForRemoteControl = false,
@@ -6189,6 +6193,9 @@ export function SessionPane({
                                 : undefined
                             }
                             path={sessionExecutionWorktree.path}
+                            workspaceIdentity={workspaceIdentity}
+                            remoteSessionId={remoteSessionId}
+                            onOpenWorktree={onCreateTaskInWorkspace}
                           />
                         ) : null}
                         {/* unsupportedRowCount must also open this gate: if every row is skipped,

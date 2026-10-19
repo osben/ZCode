@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { ConversationShareImportNotice } from "@/v4/ConversationShareImportNotice.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 vi.mock("@/OpenSplitButton.js", async () => {
   const React = await import("react");
@@ -72,20 +73,20 @@ describe("conversation share import notice", () => {
   });
 
   it("渲染只读的分享对话与分割线", () => {
-    const html = render({ rows, locale: "zh-CN", onOpenShareUrl: () => {} });
+    const html = render({ rows, locale: "en-US", onOpenShareUrl: () => {} });
     expect(html).toContain('data-conversation-share-import-notice="true"');
     expect(html).toContain('data-conversation-share-import-divider="true"');
     // Reuses the share page renderer: both the user bubble and assistant body should appear.
     expect(html).toContain("帮我看下这个报错");
     expect(html).toContain("根因是 signer 被提前释放");
-    expect(html).toContain("已从分享导入");
+    expect(html).toContain(expectedCopy("conversationShare.import.dividerLabel"));
   });
 
   it("可点击时分割线是 button，不可点击时退化为静态行", () => {
-    expect(render({ rows, locale: "zh-CN", onOpenShareUrl: () => {} })).toContain(
+    expect(render({ rows, locale: "en-US", onOpenShareUrl: () => {} })).toContain(
       '<button type="button" data-conversation-share-import-divider="true"',
     );
-    const staticHtml = render({ rows, locale: "zh-CN" });
+    const staticHtml = render({ rows, locale: "en-US" });
     expect(staticHtml).toContain('data-conversation-share-import-divider="true"');
     expect(staticHtml).not.toContain(
       '<button type="button" data-conversation-share-import-divider="true"',
@@ -120,7 +121,7 @@ describe("conversation share import notice", () => {
           state: "current" as const,
         },
       ],
-      locale: "zh-CN",
+      locale: "en-US",
     });
     expect(html).toContain("报告.pdf");
     expect(html).not.toContain("预览文件");
@@ -148,7 +149,7 @@ describe("conversation share import notice", () => {
           state: "current" as const,
         },
       ],
-      locale: "zh-CN",
+      locale: "en-US",
       workspacePath: "/workspace",
       artifactWorkspaceRelativePaths: new Map([
         ["artifact-1", ".zcode-share/share-1/shared-artifacts/报告.pdf"],

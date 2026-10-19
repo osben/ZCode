@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, waitFor } from "@testing-library/react";
 import { createElement, isValidElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -20,6 +20,9 @@ import {
   resolveDefaultRemoteSkillSyncSelection,
   shouldToggleRemoteSkillSyncCardSelection,
 } from "../src/settings/RemoteSkillSyncDialog.js";
+import zhCN from "../src/i18n/locales/zh-CN.js";
+
+const LOCALE_ZH = "zh-CN";
 
 const controlHintTooltipMockState = vi.hoisted(() => ({
   latest: null as null | {
@@ -346,16 +349,15 @@ describe("RemoteSkillSyncDialog", () => {
     };
 
     const view = render(createElement(RemoteSkillSyncDialog, props));
-    remoteSkillSyncIntlMockState.locale = "zh-CN";
+    remoteSkillSyncIntlMockState.locale = LOCALE_ZH;
     view.rerender(createElement(RemoteSkillSyncDialog, props));
     rejectFirstLoad(sizeLimitError);
 
+    const expectedMessage = zhCN["settings.skills.remoteSync.sizeLimit.selectedContent"]
+      .replace("{actualSize}", "53.6 MiB")
+      .replace("{maxSize}", "20 MiB");
     await waitFor(() => {
-      expect(
-        screen.getByText(
-          "同步失败：所选 Skills 的内容总大小约为 53.6 MiB，超过单次同步上限 20 MiB。请取消选择部分 Skills 后重试；远端未写入任何内容。",
-        ),
-      ).toBeTruthy();
+      expect(document.body.textContent).toContain(expectedMessage);
     });
   });
 

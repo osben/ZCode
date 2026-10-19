@@ -5,21 +5,26 @@ import {
   formatMemoryLastDreamLabel,
   formatMemoryUpdatedAt,
 } from "@/settings/memoryUpdatedAt.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
-const messages: Record<string, string> = {
-  "settings.memory.viewer.updated.justNow": "刚刚",
-  "settings.memory.viewer.updated.minutesAgo": "{count} 分钟前",
-  "settings.memory.viewer.updated.today": "今天 {time}",
-  "settings.memory.viewer.updated.yesterday": "昨天 {time}",
-  "settings.memory.viewer.updated.weekday": "{weekday} {time}",
-  "settings.memory.viewer.updated.weekdayZh": "周{weekday}",
-  "settings.memory.viewer.updated.date": "{date} {time}",
-  "settings.memory.viewer.updated.dateMonthDay": "{month} 月 {day} 日",
-  "settings.memory.viewer.updated.dateYearMonthDay": "{year} 年 {month} 月 {day} 日",
-  "settings.memory.viewer.group.today": "今天",
-  "settings.memory.viewer.group.yesterday": "昨天",
-  "settings.memory.viewer.lastDream": "上次整理：{time}",
-};
+const messageIds = [
+  "settings.memory.viewer.updated.justNow",
+  "settings.memory.viewer.updated.minutesAgo",
+  "settings.memory.viewer.updated.today",
+  "settings.memory.viewer.updated.yesterday",
+  "settings.memory.viewer.updated.weekday",
+  "settings.memory.viewer.updated.weekdayZh",
+  "settings.memory.viewer.updated.date",
+  "settings.memory.viewer.updated.dateMonthDay",
+  "settings.memory.viewer.updated.dateYearMonthDay",
+  "settings.memory.viewer.group.today",
+  "settings.memory.viewer.group.yesterday",
+  "settings.memory.viewer.lastDream",
+] as const;
+
+const messages: Record<string, string> = Object.fromEntries(
+  messageIds.map((id) => [id, expectedCopy(id)]),
+);
 
 const formatMessage: IntlInstance["formatMessage"] = ({ id }, values) => {
   let message = messages[id] ?? id;
@@ -34,7 +39,7 @@ const now = new Date(2026, 7, 7, 22, 32).getTime();
 function format(value: Date): string {
   return formatMemoryUpdatedAt({
     formatMessage,
-    locale: "zh-CN",
+    locale: "en-US",
     now,
     updatedAt: value.getTime(),
   });
@@ -42,24 +47,44 @@ function format(value: Date): string {
 
 describe("formatMemoryUpdatedAt", () => {
   it.each([
-    [new Date(2026, 7, 7, 22, 31, 31), "刚刚"],
-    [new Date(2026, 7, 7, 22, 20), "12 分钟前"],
-    [new Date(2026, 7, 7, 22, 2), "今天 22:02"],
-    [new Date(2026, 7, 6, 22, 32), "昨天 22:32"],
-    [new Date(2026, 7, 3, 9, 5), "周一 09:05"],
-    [new Date(2026, 6, 20, 9, 5), "7 月 20 日 09:05"],
-    [new Date(2025, 11, 18, 9, 5), "2025 年 12 月 18 日 09:05"],
+    [new Date(2026, 7, 7, 22, 31, 31), expectedCopy("settings.memory.viewer.updated.justNow")],
+    [
+      new Date(2026, 7, 7, 22, 20),
+      expectedCopy("settings.memory.viewer.updated.minutesAgo", { count: 12 }),
+    ],
+    [
+      new Date(2026, 7, 7, 22, 2),
+      expectedCopy("settings.memory.viewer.updated.today", { time: "22:02" }),
+    ],
+    [
+      new Date(2026, 7, 6, 22, 32),
+      expectedCopy("settings.memory.viewer.updated.yesterday", { time: "22:32" }),
+    ],
+    [
+      new Date(2026, 7, 3, 9, 5),
+      expectedCopy("settings.memory.viewer.updated.weekday", { weekday: "Mon", time: "09:05" }),
+    ],
+    [
+      new Date(2026, 6, 20, 9, 5),
+      expectedCopy("settings.memory.viewer.updated.date", { date: "Jul 20", time: "09:05" }),
+    ],
+    [
+      new Date(2025, 11, 18, 9, 5),
+      expectedCopy("settings.memory.viewer.updated.date", { date: "Dec 18, 2025", time: "09:05" }),
+    ],
   ])("按时间分段格式化 %s", (updatedAt, expected) => {
     expect(format(updatedAt)).toBe(expected);
   });
 
   it("未来时间按刚刚处理", () => {
-    expect(format(new Date(2026, 7, 7, 22, 40))).toBe("刚刚");
+    expect(format(new Date(2026, 7, 7, 22, 40))).toBe(
+      expectedCopy("settings.memory.viewer.updated.justNow"),
+    );
   });
 });
 
 describe("formatMemoryDayGroupLabel", () => {
-  function label(value: Date, locale: "zh-CN" | "en-US" = "zh-CN"): string {
+  function label(value: Date, locale: "en-US" | "zh-CN" = "en-US"): string {
     return formatMemoryDayGroupLabel({
       formatMessage,
       locale,
@@ -69,11 +94,11 @@ describe("formatMemoryDayGroupLabel", () => {
   }
 
   it.each([
-    [new Date(2026, 7, 7, 22, 32), "今天"],
-    [new Date(2026, 7, 7, 0, 0), "今天"],
-    [new Date(2026, 7, 6, 23, 59), "昨天"],
-    [new Date(2026, 7, 3, 9, 5), "8 月 3 日"],
-    [new Date(2025, 11, 18, 9, 5), "2025 年 12 月 18 日"],
+    [new Date(2026, 7, 7, 22, 32), expectedCopy("settings.memory.viewer.group.today")],
+    [new Date(2026, 7, 7, 0, 0), expectedCopy("settings.memory.viewer.group.today")],
+    [new Date(2026, 7, 6, 23, 59), expectedCopy("settings.memory.viewer.group.yesterday")],
+    [new Date(2026, 7, 3, 9, 5), "Aug 3"],
+    [new Date(2025, 11, 18, 9, 5), "Dec 18, 2025"],
   ])("groups memory files by local day %s", (updatedAt, expected) => {
     expect(label(updatedAt)).toBe(expected);
   });
@@ -88,14 +113,22 @@ describe("formatMemoryLastDreamLabel", () => {
     return formatMemoryLastDreamLabel({
       formatMessage,
       lastDreamConsolidatedAt,
-      locale: "zh-CN",
+      locale: "en-US",
       now,
     });
   }
 
   it("interpolates the shared updated-time formatter into the last-dream message", () => {
-    expect(label(new Date(2026, 7, 7, 22, 31, 31).getTime())).toBe("上次整理：刚刚");
-    expect(label(new Date(2026, 7, 7, 22, 2).getTime())).toBe("上次整理：今天 22:02");
+    expect(label(new Date(2026, 7, 7, 22, 31, 31).getTime())).toBe(
+      expectedCopy("settings.memory.viewer.lastDream", {
+        time: expectedCopy("settings.memory.viewer.updated.justNow"),
+      }),
+    );
+    expect(label(new Date(2026, 7, 7, 22, 2).getTime())).toBe(
+      expectedCopy("settings.memory.viewer.lastDream", {
+        time: expectedCopy("settings.memory.viewer.updated.today", { time: "22:02" }),
+      }),
+    );
   });
 
   it("returns undefined without a completed dream", () => {

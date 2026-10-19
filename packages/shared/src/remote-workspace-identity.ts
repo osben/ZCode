@@ -155,3 +155,30 @@ export function parseRemoteWorkspaceIdentity(
 export function isRemoteWorkspaceIdentity(identity: string): boolean {
   return parseRemoteWorkspaceIdentity(identity) !== null;
 }
+
+/**
+ * Whether the identity claims to be remote by its prefix, even when it does not parse. Callers that
+ * fall back to a local path must check this first: an unparseable remote identity has to fail closed.
+ */
+export function claimsRemoteWorkspaceIdentity(identity: string): boolean {
+  return identity.trim().startsWith(REMOTE_IDENTITY_PREFIX);
+}
+
+/**
+ * Re-point a remote identity at another path on the same remote authority (for example a worktree
+ * of a remote workspace). The path is part of the identity, so the parent identity cannot be reused
+ * verbatim: that would keep the parent path and route the new workspace's sessions to the parent
+ * checkout. Returns null when the identity is not a remote identity.
+ */
+export function rebaseRemoteWorkspaceIdentity(
+  identity: string,
+  workspacePath: string,
+): string | null {
+  const trimmed = identity.trim();
+  const parsed = parseRemoteWorkspaceIdentity(trimmed);
+  if (!parsed) {
+    return null;
+  }
+  const authorityPrefix = trimmed.slice(0, trimmed.length - parsed.workspacePath.length);
+  return `${authorityPrefix}${normalizeWorkspacePathForIdentity(workspacePath)}`;
+}
