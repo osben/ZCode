@@ -1,3 +1,4 @@
+import { createElement, Fragment, type ReactNode } from "react";
 import type { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import type { ToolCallBlockRenderContext } from "@/ToolCallBlocks/shared.js";
 import { isSubagentColor } from "@/lib/subagentColors.js";
@@ -5,6 +6,21 @@ import { isSubagentColor } from "@/lib/subagentColors.js";
 type AgentIntl = ReturnType<typeof useZCodeIntl>["intl"];
 type AgentToolCall = ToolCallBlockRenderContext["toolCallNode"]["toolCall"];
 const DEFAULT_AGENT_TYPE_LABEL = "general-purpose";
+
+export function combineAgentSecondarySummary(
+  childSummary: ReactNode,
+  usageSummary: ReactNode,
+): ReactNode | undefined {
+  if (!childSummary) return usageSummary || undefined;
+  if (!usageSummary) return childSummary;
+  return createElement(
+    Fragment,
+    null,
+    childSummary,
+    createElement("span", { className: "shrink-0" }, "·"),
+    usageSummary,
+  );
+}
 
 export function formatAgentMessage(intl: AgentIntl, id: string, fallback: string) {
   const message = intl.formatMessage({ id });

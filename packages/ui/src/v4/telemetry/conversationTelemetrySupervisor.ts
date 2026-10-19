@@ -25,10 +25,12 @@ import {
   type PromptMessageSource,
   buildCompactionTelemetryExtraDetail,
   discardPromptTelemetry,
+  discardSubagentToolUsageSession,
   discardQueuedPromptTelemetry,
   finalizePromptTelemetry,
   getActivePromptModelName,
   getActivePromptMessageId,
+  buildSubagentUsageSessionKey,
   queuePromptTelemetry,
   recordAgentStepTelemetryEvent,
   recordComposerFocus,
@@ -548,6 +550,7 @@ export class ConversationTelemetrySupervisor {
     string,
     ForegroundSubagentUsage
   >();
+  private readonly subagentUsageSessionKeys = new Set<string>();
   /** Subagent sessions registered for each in-flight run (settled individually at run-settled). */
   private readonly workflowActorsByRun = new Map<string, Set<string>>();
   private readonly backgroundSubagentTelemetryByChildSession = new Map<
@@ -569,6 +572,10 @@ export class ConversationTelemetrySupervisor {
     this.workspaceTelemetryDetail = options.workspaceTelemetryDetail ?? null;
     this.workspaceScopeKey = options.workspaceScopeKey;
     this.now = options.now ?? Date.now;
+  }
+
+  getSubagentUsageSessionKey(sessionId: string): string {
+    return buildSubagentUsageSessionKey(this.workspaceScopeKey, sessionId);
   }
 
   recordComposerFocus(): void {
@@ -976,8 +983,11 @@ export class ConversationTelemetrySupervisor {
   private syncForegroundSubagentToolAttribution(child: ForegroundSubagentUsage): void {
     const lifecycle = this.lifecyclesByCommandId.get(child.parentCommandId);
     if (!lifecycle?.active) return;
+    const usageSessionKey = this.getSubagentUsageSessionKey(lifecycle.sessionId);
+    this.subagentUsageSessionKeys.add(usageSessionKey);
     recordSubagentToolAttribution({
       taskId: lifecycle.taskKey,
+      usageSessionKey,
       toolCallId: child.parentToolCallId,
       requestIds: child.requestIds,
       requestCount: child.requestCount,
@@ -1156,9 +1166,13 @@ export class ConversationTelemetrySupervisor {
       },
       now: child.startedAt,
     });
+    const usageSessionKey = this.getSubagentUsageSessionKey(child.parentSessionId);
+    this.subagentUsageSessionKeys.add(usageSessionKey);
     recordSubagentToolAttribution({
       taskId: child.taskKey,
+      usageSessionKey,
       toolCallId: toolId,
+      displayToolCallId: child.parentToolCallId,
       agentId: child.agentId,
       agentRole: childAgentRole(child),
       requestIds: child.requestIds,
@@ -1343,6 +1357,10 @@ export class ConversationTelemetrySupervisor {
     for (const child of this.backgroundSubagentTelemetryByChildSession.values()) {
       discardPromptTelemetry(child.taskKey);
     }
+    for (const sessionKey of this.subagentUsageSessionKeys) {
+      discardSubagentToolUsageSession(sessionKey);
+    }
+    this.subagentUsageSessionKeys.clear();
     // If pending-render timers are not cleared, they keep running after unmount and finalize meaningless render_timeout events.
     for (const wait of this.pendingSendRenderWaits.values()) {
       clearTimeout(wait.timer);
