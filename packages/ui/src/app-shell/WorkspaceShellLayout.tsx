@@ -2811,6 +2811,9 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                           )}
                           services={services}
                           workspaceAbsPath={workspaceAbsPath}
+                          terminalCwd={
+                            resolvedActiveTaskMeta?.executionWorktree?.path ?? workspaceAbsPath
+                          }
                           workspaceIdentity={workspaceIdentity}
                           openWorkspaceKeys={openWorkspaceKeys}
                           isVisible={isTerminalVisible}

@@ -11,6 +11,7 @@ import { ResizableHandle, ResizablePanel } from "@/components/ui/resizable.js";
 export function AnimatedTerminalPanel({
   services,
   workspaceAbsPath,
+  terminalCwd,
   workspaceIdentity,
   openWorkspaceKeys,
   isVisible,
@@ -23,6 +24,7 @@ export function AnimatedTerminalPanel({
 }: {
   services: IServiceAccessor;
   workspaceAbsPath: string;
+  terminalCwd: string;
   workspaceIdentity?: string;
   openWorkspaceKeys?: string[];
   isVisible: boolean;
@@ -135,7 +137,7 @@ export function AnimatedTerminalPanel({
               >
                 <Terminal
                   services={services}
-                  cwd={workspaceAbsPath}
+                  cwd={terminalCwd}
                   workspaceIdentity={workspaceIdentity}
                   openWorkspaceKeys={openWorkspaceKeys}
                   isVisible={isVisible}
