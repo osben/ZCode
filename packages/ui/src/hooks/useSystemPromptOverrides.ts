@@ -39,6 +39,12 @@ export interface SystemPromptEditorState {
    * conflict checking off for this editor.
    */
   baseRevision: string | null | undefined;
+  /**
+   * Disk revision returned by a save conflict. Kept on the editor so the Changed-on-disk state does
+   * not depend on the follow-up list refresh succeeding. `undefined` means no conflict; `null` means
+   * the file was missing on disk. Cleared by `reloadEditor`, which rebases onto the listing.
+   */
+  conflictRevision?: string | null;
 }
 
 export interface ResetEntry {
@@ -252,8 +258,14 @@ export function useSystemPromptOverrides(
       const key = hostKey;
       const epoch = epochRef.current;
       const targetService = serviceRef.current;
+      if (!options?.overwrite && current.conflictRevision !== undefined) return;
       const section = sections.find((candidate) => candidate.key === current.key);
-      const expectedRevision = options?.overwrite ? section?.revision : current.baseRevision;
+      // Overwrite targets the disk revision the user was shown. A failed refresh leaves
+      // `section.revision` stale, so the conflict revision wins whenever it is set. `null` is a real
+      // value (file removed), hence the explicit `undefined` check instead of `??`.
+      const overwriteRevision =
+        current.conflictRevision !== undefined ? current.conflictRevision : section?.revision;
+      const expectedRevision = options?.overwrite ? overwriteRevision : current.baseRevision;
       const content = normalizeSystemPromptText(current.draft);
       const params =
         expectedRevision === undefined
@@ -264,9 +276,14 @@ export function useSystemPromptOverrides(
         const result = await targetService.writeOverride(params);
         if (epoch !== epochRef.current) return;
         if (result && result.kind === "conflict") {
-          // The file changed after the draft's revision. Nothing was written; the refreshed list
-          // makes the editor show the disk-changed choices.
-          setEditor((latest) => (latest ? { ...latest, saving: false } : latest));
+          // The file changed after the draft's revision. Nothing was written. The conflict revision is
+          // kept on the editor, so the disk-changed choices show even if the refresh below fails.
+          const currentRevision = result.currentRevision;
+          setEditor((latest) =>
+            latest?.key === current.key
+              ? { ...latest, saving: false, conflictRevision: currentRevision }
+              : latest,
+          );
           void refreshInPlace(targetService, key);
           return;
         }
@@ -292,6 +309,7 @@ export function useSystemPromptOverrides(
       const host = hostKey;
       const epoch = epochRef.current;
       const targetService = serviceRef.current;
+      const startEditor = editor;
       const params = expectedRevision === undefined ? { key } : { key, expectedRevision };
       try {
         const result = await targetService.deleteOverride(params);
@@ -302,7 +320,12 @@ export function useSystemPromptOverrides(
           return;
         }
         toast(intl.formatMessage({ id: "settings.systemPrompt.restored" }));
-        if (editor?.key === key) setEditor(null);
+        // Close only the editor that was open when Restore started. The delete is async and the
+        // editor is not busy, so the user may reopen this section or edit a draft meanwhile; those
+        // states are new objects and must survive.
+        if (startEditor?.key === key) {
+          setEditor((latest) => (latest === startEditor ? null : latest));
+        }
         void refreshInPlace(targetService, host);
       } catch (error) {
         if (epoch !== epochRef.current) return;
@@ -313,7 +336,7 @@ export function useSystemPromptOverrides(
         toast(intl.formatMessage({ id: "settings.systemPrompt.restoreFailed" }));
       }
     },
-    [editor?.key, hostKey, intl, refreshInPlace, rpcReady],
+    [editor, hostKey, intl, refreshInPlace, rpcReady],
   );
 
   const resetAllCustomized = useCallback(
@@ -322,6 +345,7 @@ export function useSystemPromptOverrides(
       const host = hostKey;
       const epoch = epochRef.current;
       const targetService = serviceRef.current;
+      const startEditor = editor;
       let restored = 0;
       let conflicts = 0;
       let failed = 0;
@@ -350,7 +374,10 @@ export function useSystemPromptOverrides(
         }
       }
       if (epoch !== epochRef.current) return;
-      if (editor && restoredKeys.has(editor.key)) setEditor(null);
+      // Same rule as restoreDefault: only the editor that was open when the reset started may close.
+      if (startEditor && restoredKeys.has(startEditor.key)) {
+        setEditor((latest) => (latest === startEditor ? null : latest));
+      }
       void refreshInPlace(targetService, host);
       if (conflicts === 0 && failed === 0) {
         toast(
@@ -379,9 +406,10 @@ export function useSystemPromptOverrides(
     editor === null ? undefined : sections.find((candidate) => candidate.key === editor.key);
   const editorDiskChanged =
     editor !== null &&
-    editorSection !== undefined &&
-    editorSection.revision !== undefined &&
-    editorSection.revision !== editor.baseRevision;
+    (editor.conflictRevision !== undefined ||
+      (editorSection !== undefined &&
+        editorSection.revision !== undefined &&
+        editorSection.revision !== editor.baseRevision));
   const canSaveEditor =
     editor !== null &&
     effectiveStatus === "ready" &&

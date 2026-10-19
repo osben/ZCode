@@ -180,6 +180,7 @@ Active-condition notes that must be in the descriptions:
   list says why and names the section holding the draft. Disabled Save shows its reason (empty, no changes,
   or disk changed).
 - Save writes with `expectedRevision` = the revision captured when the editor opened (or last rebased).
+- While a save conflict is active, plain Save is blocked; only Overwrite (below) writes.
 
 ## Restore and reset
 
@@ -191,14 +192,24 @@ Active-condition notes that must be in the descriptions:
 - Restore on a conflicting file refreshes the list and shows a toast; the user repeats the restore if still
   wanted (it is not offered as Overwrite, because the user confirmed a different default-restore than what
   is now on disk).
+- On success the editor closes only if it is still the editor that was open when Restore started. The delete
+  is async and the editor is not busy, so the user may reopen the section or edit a draft meanwhile; a newer
+  editor state is left alone. Reset all applies the same rule to each row it restored.
 
 ## Changed on disk
 
-When the editor is open and the section's current revision differs from the editor's captured revision (a
-refresh after window focus, or a save conflict), the editor shows a warning state:
+When the editor is open and either the section's current revision differs from the editor's captured revision
+(a refresh after window focus), or a save conflict is active, the editor shows a warning state:
 
 - "Reload from disk" discards the draft and rebases the editor onto the current disk text and revision.
 - "Overwrite" keeps the draft and saves it with the current disk revision.
+
+A save conflict stores the `currentRevision` returned by the host on the editor state (`conflictRevision`;
+`null` means the file was missing on disk). The state therefore does not depend on the follow-up list refresh
+succeeding: if that refresh fails, the warning and the blocked Save remain, and the list keeps its last
+revision. Overwrite saves with the conflict's `currentRevision` when one is set, otherwise with the section's
+current revision. Reload clears the conflict and rebases onto the listing, so its revision is the listing's,
+not the conflict's.
 
 Closing the editor by Cancel still follows the discard guard. The list refreshes silently on window focus when
 the target is ready. Older hosts without revisions never show this state.
@@ -241,9 +252,11 @@ Settings page (pinned target)
       focus:   listSections  →  sections in place              [no loading card]
       save:    writeOverride{expectedRevision}
                  ok        → toast, close editor, listSections in place
-                 conflict  → listSections in place; editor shows Changed on disk
+                 conflict  → editor.conflictRevision = currentRevision (Save blocked, Changed on disk);
+                             listSections in place (failure keeps the conflict state)
+                 Overwrite → writeOverride{expectedRevision = conflictRevision if set, else section revision}
       restore: deleteOverride{expectedRevision}
-                 ok        → toast, listSections in place
+                 ok        → toast, close editor only if it is still the one open at start, listSections in place
                  conflict  → toast, listSections in place
   → SystemPromptEditor (inline): model.validate / diff / dirty (pure)
 Host (service): withFileLock(path) → read bytes → sha256 → compare → atomic write (trimmed) or delete

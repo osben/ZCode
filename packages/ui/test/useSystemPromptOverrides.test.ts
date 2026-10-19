@@ -347,4 +347,147 @@ describe("useSystemPromptOverrides revisions and in-place refresh", () => {
     await waitFor(() => expect(service.listSections.mock.calls.length).toBe(before + 1));
     expect(result.current.status).toBe("ready");
   });
+
+  it("keeps the Changed-on-disk state from a save conflict when the follow-up refresh fails", async () => {
+    const service = revisionedService("rev-1");
+    mocks.useBaseWorkspaceServices.mockReturnValue({ systemPromptService: service });
+    const { result } = renderHook(() => useSystemPromptOverrides(localTarget));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    act(() => {
+      result.current.openEditor("cli-prefix", "default:cli-prefix");
+      result.current.setDraft("mine");
+    });
+
+    service.writeOverride.mockResolvedValueOnce({
+      kind: "conflict",
+      currentRevision: "rev-external",
+    });
+    service.listSections.mockRejectedValueOnce(new Error("offline"));
+    await act(() => result.current.saveEditor());
+    await waitFor(() => expect(service.listSections).toHaveBeenCalledTimes(2));
+
+    expect(result.current.editorDiskChanged).toBe(true);
+    expect(result.current.canSaveEditor).toBe(false);
+    expect(result.current.editor?.draft).toBe("mine");
+
+    await act(() => result.current.saveEditor());
+    expect(service.writeOverride).toHaveBeenCalledTimes(1);
+
+    await act(() => result.current.saveEditor({ overwrite: true }));
+    expect(service.writeOverride).toHaveBeenLastCalledWith({
+      key: "cli-prefix",
+      content: "mine",
+      expectedRevision: "rev-external",
+    });
+  });
+
+  it("overwrites with a conflict revision of null when the file was removed on disk", async () => {
+    const service = revisionedService("rev-1");
+    mocks.useBaseWorkspaceServices.mockReturnValue({ systemPromptService: service });
+    const { result } = renderHook(() => useSystemPromptOverrides(localTarget));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    act(() => {
+      result.current.openEditor("cli-prefix", "default:cli-prefix");
+      result.current.setDraft("mine");
+    });
+
+    service.writeOverride.mockResolvedValueOnce({ kind: "conflict", currentRevision: null });
+    service.listSections.mockRejectedValueOnce(new Error("offline"));
+    await act(() => result.current.saveEditor());
+    await waitFor(() => expect(service.listSections).toHaveBeenCalledTimes(2));
+    expect(result.current.editorDiskChanged).toBe(true);
+
+    await act(() => result.current.saveEditor({ overwrite: true }));
+    expect(service.writeOverride).toHaveBeenLastCalledWith({
+      key: "cli-prefix",
+      content: "mine",
+      expectedRevision: null,
+    });
+  });
+
+  it("keeps a draft the user reopened or edited while a restore was in flight", async () => {
+    const service = revisionedService("rev-1");
+    const pendingDelete = deferred<{ kind: "ok"; revision: string | null }>();
+    service.deleteOverride.mockImplementation(() => pendingDelete.promise);
+    mocks.useBaseWorkspaceServices.mockReturnValue({ systemPromptService: service });
+    const { result } = renderHook(() => useSystemPromptOverrides(localTarget));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    act(() => result.current.openEditor("cli-prefix", "default:cli-prefix"));
+
+    let restore!: Promise<void>;
+    act(() => {
+      restore = result.current.restoreDefault("cli-prefix", "rev-1");
+    });
+    act(() => {
+      result.current.openEditor("cli-prefix", "default:cli-prefix");
+      result.current.setDraft("newer");
+    });
+    await act(async () => {
+      pendingDelete.resolve({ kind: "ok", revision: null });
+      await restore;
+    });
+
+    expect(result.current.editor?.draft).toBe("newer");
+    expect(result.current.editorDirty).toBe(true);
+  });
+
+  it("keeps a draft edited in the same editor while a restore was in flight", async () => {
+    const service = revisionedService("rev-1");
+    const pendingDelete = deferred<{ kind: "ok"; revision: string | null }>();
+    service.deleteOverride.mockImplementation(() => pendingDelete.promise);
+    mocks.useBaseWorkspaceServices.mockReturnValue({ systemPromptService: service });
+    const { result } = renderHook(() => useSystemPromptOverrides(localTarget));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    act(() => result.current.openEditor("cli-prefix", "default:cli-prefix"));
+
+    let restore!: Promise<void>;
+    act(() => {
+      restore = result.current.restoreDefault("cli-prefix", "rev-1");
+    });
+    act(() => result.current.setDraft("typed during restore"));
+    await act(async () => {
+      pendingDelete.resolve({ kind: "ok", revision: null });
+      await restore;
+    });
+
+    expect(result.current.editor?.draft).toBe("typed during restore");
+  });
+
+  it("closes the editor when a restore completes without a newer edit", async () => {
+    const service = revisionedService("rev-1");
+    mocks.useBaseWorkspaceServices.mockReturnValue({ systemPromptService: service });
+    const { result } = renderHook(() => useSystemPromptOverrides(localTarget));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    act(() => result.current.openEditor("cli-prefix", "default:cli-prefix"));
+
+    await act(() => result.current.restoreDefault("cli-prefix", "rev-1"));
+    expect(result.current.editor).toBeNull();
+  });
+
+  it("keeps a draft reopened while a reset-all was in flight", async () => {
+    const service = revisionedService("rev-1");
+    const pendingDelete = deferred<{ kind: "ok"; revision: string | null }>();
+    service.deleteOverride.mockImplementation(() => pendingDelete.promise);
+    mocks.useBaseWorkspaceServices.mockReturnValue({ systemPromptService: service });
+    const { result } = renderHook(() => useSystemPromptOverrides(localTarget));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    act(() => result.current.openEditor("cli-prefix", "default:cli-prefix"));
+
+    let resetAll!: Promise<void>;
+    act(() => {
+      resetAll = result.current.resetAllCustomized([
+        { key: "cli-prefix", expectedRevision: "rev-1" },
+      ]);
+    });
+    act(() => {
+      result.current.openEditor("cli-prefix", "default:cli-prefix");
+      result.current.setDraft("newer");
+    });
+    await act(async () => {
+      pendingDelete.resolve({ kind: "ok", revision: null });
+      await resetAll;
+    });
+
+    expect(result.current.editor?.draft).toBe("newer");
+  });
 });
