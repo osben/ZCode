@@ -223,14 +223,17 @@ vi.mock("@/store/taskQueryCacheStore.js", () => ({
 }));
 
 vi.mock("@/store/zcodeSessionStore.js", () => ({
-  useZCodeSessionStore: (selector: (state: Record<string, unknown>) => unknown) =>
-    selector({
-      startDraft: () => {},
-      removeTaskState: () => {},
-      upsertOptimisticTaskListItem: () => {},
-      removeOptimisticTaskListItem: () => {},
-      setTaskUnreadIndicator: () => {},
-    }),
+  useZCodeSessionStore: Object.assign(
+    (selector: (state: Record<string, unknown>) => unknown) =>
+      selector({
+        startDraft: () => {},
+        removeTaskState: () => {},
+        upsertOptimisticTaskListItem: () => {},
+        removeOptimisticTaskListItem: () => {},
+        setTaskUnreadIndicator: () => {},
+      }),
+    { getState: () => ({}) },
+  ),
   selectWorkspaceZCodeState: () => ({
     activeTaskId: null,
     draftRuntime: { status: workspaceRuntimeState.draftStatus, error: null },

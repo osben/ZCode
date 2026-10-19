@@ -34,7 +34,7 @@ host frame ──► ConversationProjectionStore.handleFrame
 - **只用 `WeakRef`。** 池本身不延长任何行的寿命。行被 GC 后，由 `FinalizationRegistry` 删除对应条目；删除前要确认条目仍是同一个 `WeakRef`，防止误删后来登记的新行。
 - **key 为 `topic + rowId`。** 不同 session 之间不共享。rewind 之后 rowId 可能被复用、内容也可能不同，但共享只发生在值深相等的地方，所以语义是安全的。
 - **`shareStructure(prev, next)`：**
-  - 只递归 plain object 和数组；其余类型直接返回 `next`。
+  - 只递归 plain object、数组和 Map；其余类型直接返回 `next`。Map 分支服务于 UI 派生的 join 表（`useStructurallySharedMemo`，例如 SessionPane 的 workflow 表），键顺序也算作相等的一部分；会话行本身不含 Map。
   - 原始值用 `Object.is` 比较。内容相同但引用不同的字符串会返回 prev 的字符串，这样 next 的副本就能被 GC。
   - 绝不修改 `next`：`next` 可能来自 apply.ts 的结构复用，被其他地方引用着。
 - **snapshot 帧**：每一行都做共享。如果共享后的每一行都和当前 window 的对应行 `===`、而且长度相同，就连 window 数组也复用。

@@ -216,10 +216,11 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
   isDragging?: boolean;
 }) {
   const { intl } = useZCodeIntl();
-  const workspaceZCodeState = useZCodeSessionStore((state) =>
-    selectWorkspaceZCodeState(state, tab.workspacePath, tab.workspaceIdentity),
+  // Select the primitive only: the whole bucket changes on every runtime/usage write of this workspace.
+  const activeTaskId = useZCodeSessionStore(
+    (state) =>
+      selectWorkspaceZCodeState(state, tab.workspacePath, tab.workspaceIdentity).activeTaskId,
   );
-  const activeTaskId = workspaceZCodeState.activeTaskId;
   const removeTaskState = useZCodeSessionStore((state) => state.removeTaskState);
   const upsertOptimisticTaskListItem = useZCodeSessionStore(
     (state) => state.upsertOptimisticTaskListItem,
@@ -240,8 +241,6 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
   const zcodeTaskService = services.zcodeTaskService;
   const taskItemsRef = useRef(taskItems);
   taskItemsRef.current = taskItems;
-  const workspaceZCodeStateRef = useRef(workspaceZCodeState);
-  workspaceZCodeStateRef.current = workspaceZCodeState;
   const findCurrentTaskItem = useCallback((taskId: string) => {
     // Streaming refreshes rebuild the taskItems array, so task-operation callbacks that depend on it directly
     // get new references even when task semantics have not changed, bypassing TaskListItem memoization.
@@ -434,7 +433,11 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
 
     if (
       hasRunningWorkspaceChat({
-        workspaceState: workspaceZCodeStateRef.current,
+        workspaceState: selectWorkspaceZCodeState(
+          useZCodeSessionStore.getState(),
+          tab.workspacePath,
+          tab.workspaceIdentity,
+        ),
         taskItems: taskItemsRef.current,
       })
     ) {
