@@ -69,6 +69,8 @@ const forkNodeTestFiles = [
   "packages/ui/test/voiceDictation.test.ts",
   "packages/ui/test/chatErrorResume.test.ts",
   "packages/ui/test/branchMergeStatusProbeRunner.test.ts",
+  // session PR status prober node:test cases; run via test:node.
+  "packages/ui/test/pullRequestStatusProbeRunner.test.ts",
   "packages/ui/test/i18nCatalogParity.test.ts",
   "packages/ui/test/intlPlural.test.ts",
   "packages/ui/test/localeContentCatalogs.test.ts",
