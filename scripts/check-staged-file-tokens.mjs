@@ -29,7 +29,11 @@ function git(args, cwd, input = "") {
         else resolve(stdout);
       },
     );
-    child.stdin.on("error", reject);
+    // git may exit before it reads stdin (EPIPE). The exit callback still reports the real outcome,
+    // so only other stdin errors reject here.
+    child.stdin.on("error", (error) => {
+      if (error.code !== "EPIPE") reject(error);
+    });
     child.stdin.end(input);
   });
 }
