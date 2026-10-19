@@ -2,7 +2,7 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { createElement } from "react";
 import { cleanup, render } from "@testing-library/react";
-import type { SessionPullRequest, SessionPullRequestStatus, ZCodeTaskMeta } from "@zcode/shared";
+import type { SessionPullRequest, SessionPullRequestStatus } from "@zcode/shared";
 import {
   ConversationStatusPanelPullRequests,
   PrimaryPullRequestTrailingIcon,

@@ -6,7 +6,6 @@ import { selectPrimarySessionPullRequest } from "@/store/pullRequestStatusStore.
 import {
   PullRequestStatusIcon,
   formatPullRequestHealthText,
-  pullRequestStageMessageId,
 } from "@/components/PullRequestStatusIcon.js";
 import { formatTaskRelativeTime } from "@/lib/taskListItemPresentation.js";
 import { cn } from "@/components/lib/utils.js";
