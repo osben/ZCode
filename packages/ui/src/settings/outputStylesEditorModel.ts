@@ -115,13 +115,15 @@ export interface DiffLine {
  * and keeps this dependency-free and testable. Identical inputs short-circuit, and oversized
  * bodies (a huge hand-created file) skip the preview instead of freezing the renderer.
  */
+/** LCS table cell budget; past it the diff is skipped instead of computed (see diffOutputStylePrompt). */
+export const MAX_DIFF_CELLS = 4_000_000;
+
 export function diffOutputStylePrompt(previous: string, next: string): DiffLine[] {
   if (previous === next) return [];
   const previousLines = previous.length === 0 ? [] : previous.split("\n");
   const nextLines = next.length === 0 ? [] : next.split("\n");
   const rows = previousLines.length;
   const cols = nextLines.length;
-  const MAX_DIFF_CELLS = 4_000_000;
   if ((rows + 1) * (cols + 1) > MAX_DIFF_CELLS) return [];
   const table: number[][] = Array.from({ length: rows + 1 }, () =>
     Array.from({ length: cols + 1 }, () => 0),
