@@ -549,6 +549,58 @@ describe("ConversationFileSummaryPanel", () => {
     await act(async () => root.unmount());
   });
 
+  it("flat row spaces a workspace-root file from its icon when there is no directory span", async () => {
+    const container = installMinimalDom();
+    const root: Root = createRoot(container);
+    const context: ConversationRowRenderContext = {
+      workspacePath: "/workspace",
+      theme: "system",
+      codePreviewSettings: DEFAULT_CODE_PREVIEW_SETTINGS,
+      fetchFileChanges: async () => ({
+        files: 1,
+        additions: 1,
+        deletions: 0,
+        items: [
+          {
+            path: "/workspace/README.md",
+            additions: 1,
+            deletions: 0,
+            writeCount: 1,
+            toolNames: ["Write"],
+            patches: [],
+          },
+        ],
+      }),
+    };
+
+    await act(async () => {
+      root.render(
+        createElement(
+          ZCodeIntlProvider,
+          { initialLocale: "zh-CN" },
+          createElement(ConversationFileSummaryPanel, {
+            header: header(),
+            context,
+          }),
+        ),
+      );
+    });
+    await act(async () => {
+      collapsibleOpenChanges.at(-1)?.(true);
+      await Promise.resolve();
+    });
+
+    const text = collectText(container);
+    expect(text).toContain("README.md");
+    // No directory span exists for a root-level file, so the spacing class sits on the label
+    // wrapper and applies to the first text span after the icon.
+    const classNames = collectClassNames(container);
+    expect(classNames).toContain("inline-flex min-w-0 max-w-full items-center [&>img+*]:ml-1.5");
+    expect(classNames.some((name) => name.includes("min-w-[2ch]"))).toBe(false);
+
+    await act(async () => root.unmount());
+  });
+
   it("运行中详情进入终态后丢弃旧 revision 结果并重新读取", async () => {
     const container = installMinimalDom();
     const root: Root = createRoot(container);
