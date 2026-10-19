@@ -138,6 +138,10 @@ export async function prepareProtocolStartupStorage(options: {
   } finally {
     clearTimeout(timer!);
     lines.close();
+    // readline.close() pauses the input. In a Host Worker a paused stdin never reads the Host's EOF,
+    // so the worker stdio port stays referenced and the worker only exits via the 1 s exit watchdog
+    // (specs/storage-prep-worker-exit.md). Let it flow to its end; later lines carry no protocol.
+    options.input.resume();
     try {
       store?.close();
     } catch (error) {
