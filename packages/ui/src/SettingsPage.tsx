@@ -1300,6 +1300,23 @@ export function SettingsPage({
     },
     [updateSharedSettings],
   );
+  // Fork setting (specs/resource-telemetry-toggle.md): useSettings persists to fork-settings.json, then
+  // syncAppSettings lets main start or stop sampling without a restart.
+  const handleResourceTelemetryEnabledChange = useCallback(
+    async (enabled: boolean) => {
+      await runSettingsActionAsync({
+        featureId: "settings.desktop",
+        action: "toggle_resource_telemetry",
+        trigger: "switch",
+        operation: () => updateSharedSettings({ resourceTelemetryEnabled: enabled }),
+        completed: {
+          resultSource: "shared_settings",
+          stateAfter: enabled ? "enabled" : "disabled",
+        },
+      });
+    },
+    [updateSharedSettings],
+  );
   const handleDesktopChromiumHardwareAccelerationChange = useCallback(
     async (enabled: boolean) => {
       await runSettingsActionAsync({
@@ -1895,6 +1912,9 @@ export function SettingsPage({
                             notificationSoundEnabled={notificationSoundEnabled}
                             closeToTrayOnWindows={closeToTrayOnWindows}
                             keepAwakeWhileRunning={sharedSettings?.keepAwakeWhileRunning ?? false}
+                            resourceTelemetryEnabled={
+                              sharedSettings?.resourceTelemetryEnabled ?? false
+                            }
                             desktopChromiumHardwareAccelerationEnabled={
                               desktopChromiumHardwareAccelerationEnabled
                             }
@@ -1995,6 +2015,7 @@ export function SettingsPage({
                             }
                             onCloseToTrayOnWindowsChange={handleCloseToTrayOnWindowsChange}
                             onKeepAwakeWhileRunningChange={handleKeepAwakeWhileRunningChange}
+                            onResourceTelemetryEnabledChange={handleResourceTelemetryEnabledChange}
                             onDesktopChromiumHardwareAccelerationChange={
                               handleDesktopChromiumHardwareAccelerationChange
                             }

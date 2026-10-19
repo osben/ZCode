@@ -2622,6 +2622,9 @@ const zhCN: Record<string, string> = {
   "settings.keepAwakeWhileRunning": "保持电脑运行",
   "settings.keepAwakeWhileRunningDescription":
     "打开后阻止系统因空闲进入休眠（仍可手动睡眠/合盖休眠）。桌面端全局生效。",
+  "settings.resourceTelemetryEnabled": "资源遥测",
+  "settings.resourceTelemetryEnabledDescription":
+    "每 10 秒采样应用各进程的 CPU 与内存，并在构建配置了监控端点时发送聚合资源报告。默认关闭。仅桌面端。",
   "settings.messageStreamShowReasoning": "显示思考过程",
   "settings.messageStreamShowReasoningDescription":
     "在消息流中展示完整的模型思考内容；关闭时每轮仍展示第一次思考。",

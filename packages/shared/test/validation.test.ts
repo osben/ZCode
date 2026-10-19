@@ -6,6 +6,7 @@ import {
   appSettingsPatchSchema,
   forkAppSettingsPatchSchema,
   forkAppSettingsSchema,
+  forkAppSettingsStoredSchema,
   hostIncomingMessageSchema,
   hostResponseMessageSchema,
   wslConnectOptionsSchema,
@@ -564,6 +565,24 @@ describe("hostResponseMessageSchema", () => {
     expect(validPatch.codingPlanLimitAutoContinueDefaultEnabled).toBe(false);
     expect(invalidPatch.success).toBe(false);
     expect(strippedFromMainSchema).not.toHaveProperty("codingPlanLimitAutoContinueDefaultEnabled");
+  });
+
+  it("defaults resource telemetry to off and keeps it out of setting.json", () => {
+    // specs/resource-telemetry-toggle.md: fork-owned key, materialised default false, never stored.
+    expect(forkAppSettingsSchema.parse({}).resourceTelemetryEnabled).toBe(false);
+    expect(
+      forkAppSettingsSchema.parse({ resourceTelemetryEnabled: "yes" }).resourceTelemetryEnabled,
+    ).toBe(false);
+    expect(forkAppSettingsStoredSchema.parse({})).not.toHaveProperty("resourceTelemetryEnabled");
+    expect(
+      forkAppSettingsSchema.parse({ resourceTelemetryEnabled: true }).resourceTelemetryEnabled,
+    ).toBe(true);
+    expect(forkAppSettingsPatchSchema.safeParse({ resourceTelemetryEnabled: "true" }).success).toBe(
+      false,
+    );
+    expect(appSettingsSchema.parse({ resourceTelemetryEnabled: true })).not.toHaveProperty(
+      "resourceTelemetryEnabled",
+    );
   });
 
   it("首次统一开启消息流 reasoning，迁移后保留用户选择", () => {

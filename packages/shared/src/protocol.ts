@@ -401,6 +401,9 @@ export interface AppSettings {
   /** Default capability set for new incognito sessions (specs/incognito-session.md). Fork-only:
    *  stored in fork-settings.json. Writes send every capability; a missing one reads as off. */
   incognitoDefaults?: IncognitoDefaults;
+  /** Main-process resource sampling and ARMS resource events (specs/resource-telemetry-toggle.md).
+   *  Fork-only: stored in fork-settings.json. Default false. */
+  resourceTelemetryEnabled?: boolean;
   onboardingOccupation?:
     | "office"
     | "developer"

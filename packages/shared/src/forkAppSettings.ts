@@ -24,6 +24,7 @@ export const FORK_SETTING_KEYS = [
   "worktreeProjectOverrides",
   "memoryIndexAsContext",
   "incognitoDefaults",
+  "resourceTelemetryEnabled",
 ] as const satisfies readonly (keyof AppSettings)[];
 
 export type ForkSettingKey = (typeof FORK_SETTING_KEYS)[number];
@@ -81,6 +82,7 @@ export const forkAppSettingsStoredSchema = z.object({
     .catch(undefined),
   memoryIndexAsContext: z.boolean().optional().catch(undefined),
   incognitoDefaults: incognitoDefaultsStoredSchema.optional().catch(undefined),
+  resourceTelemetryEnabled: z.boolean().optional().catch(undefined),
 });
 
 export type ForkAppSettingsStored = z.infer<typeof forkAppSettingsStoredSchema>;
@@ -88,6 +90,7 @@ export type ForkAppSettingsStored = z.infer<typeof forkAppSettingsStoredSchema>;
 /** Effective view of the sidecar: stored values plus materialized defaults. Never persisted back. */
 export const forkAppSettingsSchema = forkAppSettingsStoredSchema.extend({
   codingPlanLimitAutoContinueDefaultEnabled: z.boolean().default(true).catch(true),
+  resourceTelemetryEnabled: z.boolean().default(false).catch(false),
 });
 
 export type ForkAppSettings = z.infer<typeof forkAppSettingsSchema>;
@@ -101,6 +104,7 @@ export const forkAppSettingsPatchSchema = z.object({
   worktreeProjectOverrides: z.record(z.string(), worktreeProjectOverrideSchema).optional(),
   memoryIndexAsContext: z.boolean().optional(),
   incognitoDefaults: incognitoDefaultsPatchSchema.optional(),
+  resourceTelemetryEnabled: z.boolean().optional(),
 });
 
 /**

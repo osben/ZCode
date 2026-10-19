@@ -2454,6 +2454,9 @@ const ukUA: Record<string, string> = {
   "settings.keepAwakeWhileRunning": "Не давати комп'ютеру засинати",
   "settings.keepAwakeWhileRunningDescription":
     "Запобігає переходу системи в режим сну через бездіяльність. Ви однаково можете перевести її в сон вручну або закривши кришку. Лише для настільного застосунку.",
+  "settings.resourceTelemetryEnabled": "Телеметрія ресурсів",
+  "settings.resourceTelemetryEnabledDescription":
+    "Кожні 10 секунд вимірює CPU і пам'ять процесів застосунку та надсилає зведені звіти, якщо в збірці налаштовано адресу моніторингу. Типово вимкнено. Лише для настільного застосунку.",
   "settings.messageStreamShowReasoning": "Показувати міркування",
   "settings.messageStreamShowReasoningDescription":
     "Показувати повні міркування в потоці повідомлень. Якщо вимкнено, перший блок міркувань у кожному ході залишається видимим.",

@@ -7,6 +7,7 @@ import { readZCodeStdioTapDevState } from "@zcode/services/node";
 import {
   DesktopCommandIds,
   appSettingsPatchSchema,
+  forkAppSettingsPatchSchema,
   formatZodError,
   localeSchema,
   nonEmptyStringSchema,
@@ -66,6 +67,12 @@ import { registerDesktopSaveFileIpcHandler } from "./desktopSaveFile.js";
 import { registerDesktopPrintToPdfIpcHandler } from "./desktopPrintToPdf.js";
 import { registerDesktopDictationSystemAudioIpc } from "./desktopDictationSystemAudio.js";
 import { registerCuaPipActiveSessionIpc } from "./desktopCuaPipIpc.js";
+
+// appSettingsPatchSchema strips fork-only keys; main reacts to this one live, so admit exactly it
+// (specs/resource-telemetry-toggle.md). Without it the switch would persist but never reach main.
+const appSettingsSyncPatchSchema = appSettingsPatchSchema.extend({
+  resourceTelemetryEnabled: forkAppSettingsPatchSchema.shape.resourceTelemetryEnabled,
+});
 
 export function registerPlatformIpcHandlers(options: {
   fetchHelpConfig?: () => Promise<unknown>;
@@ -359,7 +366,7 @@ export function registerPlatformIpcHandlers(options: {
   );
 
   ipcMain.on(PlatformChannels.SyncAppSettings, (_event, payload: unknown) => {
-    const result = appSettingsPatchSchema.safeParse(payload);
+    const result = appSettingsSyncPatchSchema.safeParse(payload);
     if (!result.success) {
       options.logger.warn(
         "[settings] invalid app settings sync payload:",
