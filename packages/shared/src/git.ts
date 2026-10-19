@@ -126,6 +126,79 @@ export interface GitBranchMergeStatusRequest extends GitRepositoryRequest {
   workspaceIdentity?: string;
 }
 
+export type PullRequestStage = "draft" | "open" | "merged" | "closed";
+
+export type PullRequestChecks = "passing" | "running" | "failing" | "optional_failing" | "none";
+
+export type SessionPullRequestReviewDecision = "approved" | "changes_requested" | "review_required";
+
+/** One GitHub pull request linked to a worktree session branch (specs/sidebar-pr-status.md). */
+export interface SessionPullRequest {
+  number: number;
+  url: string;
+  title: string;
+  /** "owner/name" display label of the base repository the pull request lives in. */
+  repository: string;
+  headRefName: string;
+  stage: PullRequestStage;
+  checks: PullRequestChecks;
+  failingCheckCount: number;
+  totalCheckCount: number;
+  /** mergeable === "CONFLICTING". */
+  hasConflict: boolean;
+  reviewDecision: SessionPullRequestReviewDecision | null;
+  additions: number;
+  deletions: number;
+  /** ISO timestamp of the last update. */
+  updatedAt: string;
+  /** ISO timestamp; null while unmerged. */
+  mergedAt: string | null;
+}
+
+/**
+ * Derived health of a task's open/draft pull requests (specs/sidebar-pr-status.md):
+ * the worst value wins, severity conflict > failing > optional_failing > running > passing > none.
+ */
+export type SessionPullRequestHealth =
+  | "conflict"
+  | "failing"
+  | "optional_failing"
+  | "running"
+  | "passing"
+  | "none";
+
+export interface SessionPullRequestStatus {
+  state: "ready" | "unavailable" | "rate_limited";
+  unavailableReason: "no_gh" | "auth" | "not_github" | "error" | null;
+  /** v1 links pull requests by branch; a later pinned source adds "pinned". */
+  source: "branch";
+  /** Sorted, primary first. */
+  pullRequests: SessionPullRequest[];
+  primaryNumber: number | null;
+  /** ISO timestamp of the last successful fetch; null when never fetched. */
+  fetchedAt: string | null;
+  /** true when serving the last in-memory value after a failed or rate-limited refresh. */
+  stale: boolean;
+}
+
+export interface SessionPullRequestsTaskInput {
+  taskId: string;
+  /** Persisted executionWorktree.branchName; null when absent. */
+  branchName: string | null;
+  /** executionWorktree.path; null when absent. */
+  worktreePath: string | null;
+}
+
+export interface SessionPullRequestsRequest extends GitRepositoryRequest {
+  workspaceIdentity?: string;
+  tasks: SessionPullRequestsTaskInput[];
+  /** Bypass the TTL for these tasks (turn end, git refresh, explicit Refresh). */
+  forceTaskIds?: string[];
+}
+
+/** One status entry per requested task; tasks never requested are absent. */
+export type SessionPullRequestsResult = Record<string, SessionPullRequestStatus>;
+
 export type GitCommitGraphRefKind = "branch" | "remote" | "tag" | "head";
 
 export interface GitCommitGraphRef {

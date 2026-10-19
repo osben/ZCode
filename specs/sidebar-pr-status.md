@@ -78,7 +78,7 @@ This covers an agent switching branches inside the worktree. `gh` runs with cwd 
 
 ```ts
 type PullRequestStage = "draft" | "open" | "merged" | "closed";
-type PullRequestChecks = "passing" | "running" | "failing" | "none";
+type PullRequestChecks = "passing" | "running" | "failing" | "optional_failing" | "none";
 
 type SessionPullRequest = {
   number: number;
@@ -167,11 +167,15 @@ Branch names are passed as GraphQL variables, never interpolated into the query 
 
 - `checks` mapping over `statusCheckRollup`: `failing` if any CheckRun conclusion is `FAILURE`,
   `ERROR`, `TIMED_OUT`, `CANCELLED`, `ACTION_REQUIRED`, or any StatusContext state is `FAILURE` /
-  `ERROR`; else `running` if any item is not completed (`QUEUED`, `IN_PROGRESS`, `PENDING`,
-  `EXPECTED`); else `passing` when the rollup is non-empty; else `none`.
+  `ERROR` — except `optional_failing` when exactly those conclusions are present and
+  `mergeStateStatus === "UNSTABLE"` (all failing checks are non-required); else `running` if any
+  item is not completed (`QUEUED`, `IN_PROGRESS`, `PENDING`, `EXPECTED`); else `passing` when the
+  rollup is non-empty; else `none`.
 
 **Primary PR:** open (non-draft) > draft > merged > closed; ties by newest `updatedAt`.
-**Row health:** the worst `checks`/`hasConflict` across all open and draft PRs, not only the primary.
+**Row health:** the worst `checks`/`hasConflict` across all open and draft PRs, not only the primary
+(shared pure helper `worstSessionPullRequestHealth`, reused by the UI selectors; severity order
+conflict > failing > optional_failing > running > passing > none).
 
 ## Owner and event order
 
@@ -214,7 +218,8 @@ no indicator until the next successful fetch.
 Only required checks make the row red. `mergeStateStatus === "UNSTABLE"` means the failing checks are
 all non-required: the dot is warning and the text is `{count} optional failing`. Any other failing
 state (`BLOCKED`, or `mergeStateStatus` unavailable) stays destructive. The query adds
-`mergeStateStatus` to the `Pr` fragment.
+`mergeStateStatus` to the `Pr` fragment. The distinction is carried in the contract as
+`checks: "optional_failing"`.
 
 ## Proposed additions (not decided)
 

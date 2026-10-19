@@ -39,6 +39,8 @@ import type {
   GitWorktreeVerifyResult,
   GitFileChange,
   GitSwitchBranchRequest,
+  SessionPullRequestsRequest,
+  SessionPullRequestsResult,
 } from "@zcode/shared";
 import { ServiceChannels } from "@zcode/shared";
 import { createServiceDescriptor } from "../descriptors.js";
@@ -69,6 +71,8 @@ export interface IGitService {
   getDiff(params: GitDiffQuery): Promise<GitDiffResult>;
   getBranchComparison(params: GitRepositoryRequest): Promise<GitBranchComparison>;
   getBranchMergeStatus(params: GitBranchMergeStatusRequest): Promise<GitBranchMergeStatus>;
+  /** Task-level pull request status of worktree sessions via the gh CLI (specs/sidebar-pr-status.md). */
+  getSessionPullRequests(params: SessionPullRequestsRequest): Promise<SessionPullRequestsResult>;
   stagePaths(params: GitPathMutationRequest): Promise<void>;
   unstagePaths(params: GitPathMutationRequest): Promise<void>;
   discardPaths(params: GitDiscardPathsRequest): Promise<void>;
