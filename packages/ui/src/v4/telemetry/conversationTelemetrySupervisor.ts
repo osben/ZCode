@@ -964,12 +964,13 @@ export class ConversationTelemetrySupervisor {
       return;
     }
     if (fact.kind !== "usage.delta") return;
+    // Replay can deliver the same completed request under a new event id; counting it again would
+    // inflate the cumulative snapshot. Same request-id rule as the background path.
+    if (fact.requestId && child.requestIds.includes(fact.requestId)) return;
 
     child.usage = mergeUsage(child.usage, toUsage(fact));
     child.requestCount += 1;
-    if (fact.requestId && !child.requestIds.includes(fact.requestId)) {
-      child.requestIds.push(fact.requestId);
-    }
+    if (fact.requestId) child.requestIds.push(fact.requestId);
     // A Subagent's runtime model is fixed during one synchronous Agent call. The request identity in a usage fact
     // is closer to the actual provider request than spawned configuration, so overwrite the earlier same-source value when it arrives.
     if (fact.providerId || fact.modelId) {

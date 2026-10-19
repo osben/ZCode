@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildCustomSupplierKey,
   buildGhostSupplierKey,
@@ -22,7 +22,11 @@ import {
   recordPromptPermissionResponse,
   recordPromptTokenUsageDelta,
   rekeyQueuedPromptTelemetry,
+  buildSubagentUsageSessionKey,
+  discardSubagentToolUsageSession,
+  getSubagentToolUsage,
   resetMessageTelemetryForTest,
+  subscribeSubagentToolUsage,
 } from "../src/lib/messageTelemetry.js";
 
 afterEach(() => {
@@ -2284,5 +2288,120 @@ describe("composeAgentComposition：fg / bg / wf 三维组合", () => {
     expect(compose(true, false, true)).toBe("main_plus_fg_wf");
     expect(compose(false, true, true)).toBe("main_plus_bg_wf");
     expect(compose(true, true, true)).toBe("main_plus_fg_bg_wf");
+  });
+});
+
+describe("subagent tool usage snapshot store", () => {
+  const usage = (inputTokens: number, outputTokens: number) => ({
+    inputTokens,
+    outputTokens,
+    totalTokens: inputTokens + outputTokens,
+  });
+
+  const attribute = (
+    input: {
+      taskId?: string;
+      usageSessionKey: string;
+      toolCallId: string;
+      displayToolCallId?: string;
+    },
+    snapshot: ReturnType<typeof usage>,
+  ) =>
+    recordSubagentToolAttribution({
+      taskId: input.taskId ?? "task-usage",
+      usageSessionKey: input.usageSessionKey,
+      toolCallId: input.toolCallId,
+      ...(input.displayToolCallId ? { displayToolCallId: input.displayToolCallId } : {}),
+      requestIds: [],
+      requestCount: 1,
+      modelName: "qwen-provider/qwen3.7-max",
+      modelProvider: "qwen-provider",
+      providerName: "provider.example.com",
+      agentId: "agent-1",
+      usage: snapshot,
+    });
+
+  it("keeps concurrent rows independent by tool call and by session key", () => {
+    const keyA = buildSubagentUsageSessionKey("scope-a", "parent-session");
+    const keyB = buildSubagentUsageSessionKey("scope-b", "parent-session");
+    expect(keyA).not.toBe(keyB);
+
+    attribute({ usageSessionKey: keyA, toolCallId: "agent-1" }, usage(10, 1));
+    attribute({ usageSessionKey: keyA, toolCallId: "agent-2" }, usage(20, 2));
+    attribute({ usageSessionKey: keyB, toolCallId: "agent-1" }, usage(300, 30));
+
+    expect(getSubagentToolUsage(keyA, "agent-1")).toEqual(usage(10, 1));
+    expect(getSubagentToolUsage(keyA, "agent-2")).toEqual(usage(20, 2));
+    expect(getSubagentToolUsage(keyB, "agent-1")).toEqual(usage(300, 30));
+    expect(getSubagentToolUsage(keyA, "missing")).toBeNull();
+  });
+
+  it("publishes the display tool call id, not the child tool id, for paired rows", () => {
+    const key = buildSubagentUsageSessionKey("scope-display", "parent-session");
+
+    attribute(
+      {
+        usageSessionKey: key,
+        toolCallId: "tool_subagent_agent-1_child",
+        displayToolCallId: "call-parent-agent",
+      },
+      usage(5, 6),
+    );
+
+    expect(getSubagentToolUsage(key, "call-parent-agent")).toEqual(usage(5, 6));
+    expect(getSubagentToolUsage(key, "tool_subagent_agent-1_child")).toBeNull();
+  });
+
+  it("notifies once per changed snapshot and skips duplicate usage", () => {
+    const key = buildSubagentUsageSessionKey("scope-notify", "parent-session");
+    const listener = vi.fn();
+    const unsubscribe = subscribeSubagentToolUsage(key, "agent-1", listener);
+
+    attribute({ usageSessionKey: key, toolCallId: "agent-1" }, usage(10, 1));
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    // Duplicate notification with identical counts must not re-render the row.
+    attribute({ usageSessionKey: key, toolCallId: "agent-1" }, usage(10, 1));
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    // A changed cumulative snapshot notifies and replaces the stored value.
+    attribute({ usageSessionKey: key, toolCallId: "agent-1" }, usage(25, 4));
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect(getSubagentToolUsage(key, "agent-1")).toEqual(usage(25, 4));
+
+    // Other rows in the same session do not notify this row's listener.
+    attribute({ usageSessionKey: key, toolCallId: "agent-2" }, usage(1, 1));
+    expect(listener).toHaveBeenCalledTimes(2);
+
+    unsubscribe();
+    attribute({ usageSessionKey: key, toolCallId: "agent-1" }, usage(30, 5));
+    expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  it("discard clears snapshots, notifies listeners once, and drops them", () => {
+    const key = buildSubagentUsageSessionKey("scope-discard", "parent-session");
+    const otherKey = buildSubagentUsageSessionKey("scope-discard", "other-session");
+    const listener = vi.fn();
+    const otherListener = vi.fn();
+    subscribeSubagentToolUsage(key, "agent-1", listener);
+    subscribeSubagentToolUsage(otherKey, "agent-1", otherListener);
+    attribute({ usageSessionKey: key, toolCallId: "agent-1" }, usage(10, 1));
+    attribute({ usageSessionKey: otherKey, toolCallId: "agent-1" }, usage(7, 7));
+    listener.mockClear();
+    otherListener.mockClear();
+
+    discardSubagentToolUsageSession(key);
+
+    expect(getSubagentToolUsage(key, "agent-1")).toBeNull();
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(otherListener).not.toHaveBeenCalled();
+    expect(getSubagentToolUsage(otherKey, "agent-1")).toEqual(usage(7, 7));
+
+    // Listeners were released: a later snapshot for the discarded session notifies nobody.
+    attribute({ usageSessionKey: key, toolCallId: "agent-1" }, usage(40, 2));
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(getSubagentToolUsage(key, "agent-1")).toEqual(usage(40, 2));
+    discardSubagentToolUsageSession(key);
+    expect(getSubagentToolUsage(key, "agent-1")).toBeNull();
   });
 });
