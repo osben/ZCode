@@ -127,7 +127,7 @@ export function ConversationFileSummaryList({
                   pathBeforeName: true,
                   className: inTree
                     ? "inline-flex min-w-0 max-w-full items-center gap-1.5"
-                    : "inline-flex min-w-0 max-w-full items-center",
+                    : "inline-flex min-w-0 max-w-full items-center [&>img+span]:ml-1.5",
                   fileNameClassName: "truncate text-ui-base font-medium text-foreground",
                   filePathClassName:
                     "ml-1.5 min-w-[2ch] shrink-[10000] truncate text-ui-base text-foreground-subtlest [direction:rtl] [text-align:left]",
