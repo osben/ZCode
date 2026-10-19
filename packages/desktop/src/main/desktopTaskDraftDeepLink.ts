@@ -66,11 +66,20 @@ async function readPromptFile(
     }
 
     const buffer = Buffer.alloc(Math.min(stats.size, TASK_DRAFT_FILE_MAX_BYTES));
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    // FileHandle.read may return fewer bytes than requested without an error. Read until the buffer is full or EOF,
+    // otherwise a short read decodes a truncated prefix and reports valid text as invalid_encoding.
+    let filled = 0;
+    while (filled < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, filled, buffer.length - filled, filled);
+      if (bytesRead === 0) {
+        break;
+      }
+      filled += bytesRead;
+    }
     try {
       return {
         ok: true,
-        text: new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, bytesRead)),
+        text: new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, filled)),
       };
     } catch {
       return { ok: false, reason: "invalid_encoding" };

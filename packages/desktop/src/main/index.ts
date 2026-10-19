@@ -2210,6 +2210,13 @@ app.on("open-url", (event, url) => {
   }
   const dispatchOpenUrl = () =>
     handleDeepLink(url, logger, {
+      // Same process-level gate as second-instance: handleDeepLink checks it for both workspace/open and task/new,
+      // so a forced upgrade cannot open a task draft through the macOS open-url path.
+      canOpenWorkspace: () => !forceUpdateMainWindowCreationBlocked,
+      onWorkspaceOpenBlocked: () => {
+        logger.warn("[force-update] 已忽略强制升级期间的 open-url deep link 请求");
+        focusForceUpdateGateWindow();
+      },
       confirmationCopy: resolveExternalWorkspaceConfirmationCopy(),
       taskDraftConfirmationCopy: resolveTaskDraftConfirmationCopy(),
       resolveApplicationWindow: () => getApplicationWindowsExcludingCuaIndicator()[0] ?? null,
