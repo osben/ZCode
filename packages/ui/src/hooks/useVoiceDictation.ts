@@ -3,11 +3,8 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
 import { toast } from "@/components/ui/toast.js";
 import { resolveEngineLanguage, type VoiceTranscriptionPreview } from "@zcode/services";
 import { applyIdleUnloadPreference } from "@/lib/voiceIdleUnload.js";
-import {
-  isPostProcessAvailable,
-  postProcessOrRaw,
-  readPostProcessSettings,
-} from "@/lib/voicePostProcess.js";
+import { resolveVoiceDictationPreferences } from "@/lib/voiceDictationPreferences.js";
+import { postProcessOrRaw, readPostProcessSettings } from "@/lib/voicePostProcess.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useServices } from "@/hooks/useServices.js";
 import { useSettings } from "@/hooks/useSettingService.js";
@@ -61,9 +58,8 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
   const microphoneDeviceId = voice?.microphoneDeviceId ?? null;
   // One selected language is forced on the engine; none or several leave detection to the model.
   const language = resolveEngineLanguage(voice ?? {});
-  const pushToTalk = voice?.pushToTalk !== false;
-  const idleUnloadMinutes = voice?.idleUnloadMinutes ?? 5;
-  const muteWhileRecording = voice?.muteWhileRecording !== false;
+  const { pushToTalk, idleUnloadMinutes, muteWhileRecording } =
+    resolveVoiceDictationPreferences(voice);
   const {
     enabled: postProcessEnabled,
     prompt: postProcessPrompt,
@@ -394,20 +390,17 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
       const rawText = result.text.trim();
       let text = rawText;
       if (rawText && postProcessEnabled && generation === startGenerationRef.current) {
-        // The Host decides availability at dictation time: a stale settings-screen answer must never
-        // start a rewrite on a machine where the provider is now unavailable.
-        const available = await isPostProcessAvailable(voiceDictationService);
-        if (available && generation === startGenerationRef.current) {
-          updatePhase("processing");
-          text = await postProcessOrRaw(
-            voiceDictationService,
-            { text: rawText, prompt: postProcessPrompt, provider: postProcessProvider },
-            (error) =>
-              logger.warn("voice dictation post-processing failed; inserting the raw transcript", {
-                error: error instanceof Error ? error.message : String(error),
-              }),
-          );
-        }
+        // No separate availability pre-check: an unavailable or failed rewrite comes back as the raw
+        // transcript from postProcessOrRaw, so the stop-to-insert path does not wait on a helper probe.
+        updatePhase("processing");
+        text = await postProcessOrRaw(
+          voiceDictationService,
+          { text: rawText, prompt: postProcessPrompt, provider: postProcessProvider },
+          (error) =>
+            logger.warn("voice dictation post-processing failed; inserting the raw transcript", {
+              error: error instanceof Error ? error.message : String(error),
+            }),
+        );
       }
       if (rawText && generation === startGenerationRef.current) {
         onTranscriptRef.current(text, rawText);

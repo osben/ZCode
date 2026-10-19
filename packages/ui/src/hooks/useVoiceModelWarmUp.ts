@@ -2,6 +2,7 @@ import { useEffect, useRef, type RefObject } from "react";
 import { useServices } from "@/hooks/useServices.js";
 import { useSettings } from "@/hooks/useSettingService.js";
 import { applyIdleUnloadPreference } from "@/lib/voiceIdleUnload.js";
+import { resolveVoiceDictationPreferences } from "@/lib/voiceDictationPreferences.js";
 import { logger } from "@/logger.js";
 
 /** One request per model per window: refocusing the composer must not hammer the Host. */
@@ -29,8 +30,7 @@ export function useVoiceModelWarmUp({ enabled, scopeRef }: UseVoiceModelWarmUpOp
   const { settings } = useSettings();
   const voice = settings?.voiceDictation;
   const modelId = voice?.modelId ?? null;
-  const idleUnloadMinutes = voice?.idleUnloadMinutes ?? 5;
-  const warmUpOnFocus = voice?.warmUpOnFocus !== false;
+  const { idleUnloadMinutes, warmUpOnFocus } = resolveVoiceDictationPreferences(voice);
 
   const lastRequestRef = useRef<{ modelId: string; at: number } | null>(null);
   const inFlightRef = useRef(false);

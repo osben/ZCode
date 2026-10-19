@@ -129,6 +129,7 @@ This behavior applies to Desktop voice dictation. Web continues to show the exis
 - `useVoiceDictation` (and `useWebSpeechDictation`) owns the preview value. `V4ComposerDictationControl` reports it upward through `onPreviewChange`; `ConversationComposer` holds it and passes it to `ChatPromptEditor`, which passes it to `LexicalChatInput`.
 - `LexicalChatInput` renders a `VoiceGhostPreview` layer inside the editor's positioning box. It reads the caret from Lexical's selection (not from `window.getSelection`), so the position stays correct while the editor is blurred after a click on the toolbar.
 - Pure geometry (text-indent for the first line, vertical alignment, visibility when the caret is outside the editor box) lives in `lib/voiceGhostPreviewLayout.ts` and is unit tested.
+- Editor updates, scroll, and resize requests coalesce into one animation frame. Preview changes apply synchronously. Editor box metrics (font, padding) are cached and re-read after a resize or when the ghost was hidden, and the layer re-renders only when its position or metrics change.
 
 ```mermaid
 sequenceDiagram
@@ -445,35 +446,35 @@ sequenceDiagram
 
 - **Name:** "Post-processing". An optional step that rewrites the finished transcript with a language model according to a user-editable prompt, then inserts the result.
 - **Setting:** `voiceDictation.postProcessEnabled` (default off) with `postProcessPrompt` (default below) and `postProcessProvider`.
-- **Provider (first version):** a single system provider, shown in settings as read-only text "System model (Apple Foundation Models)" under the label "Provider" (no selector while there is one option). It is offered only when the Host reports it available (macOS with Apple Intelligence enabled and a supported device); otherwise the status line explains why it is unavailable and the switch shows Off. When unavailable at dictation time, the raw transcript is inserted unchanged, and post-processing is not attempted (see "Post-processing settings" below).
+- **Provider (first version):** a single system provider, shown in settings as read-only text "System model (Apple Foundation Models)" under the label "Provider" (no selector while there is one option). It is offered only when the Host reports it available (macOS with Apple Intelligence enabled and a supported device); otherwise the status line explains why it is unavailable and the switch shows Off. When unavailable at dictation time, the rewrite call fails and the raw transcript is inserted unchanged, with no error toast (see "Post-processing settings" below).
 - **TODO (next version):** let the user pick another provider and model from ZCode's configured providers instead of only the system model. The provider setting is an enum so adding values is additive; no other code may assume a single provider.
 - **Prompt variable:** `{{text}}` is replaced by the raw transcript. If the prompt contains no `{{text}}`, the transcript is appended after the prompt on a new line. Only this one variable exists.
 - **Default prompt (English, language-preserving):** the transcript is fenced in `<transcript>{{text}}</transcript>` tags and the prompt says it is dictated data, never a request to follow or answer; it asks for punctuation, capitalization, recognition fixes and filler removal; it requires the output language to equal the input language ("Translating is a failure") and carries three short examples (English, Ukrainian, Russian). The examples are load-bearing: tuned against the real system model, a plain "never translate" instruction still translated Ukrainian and Russian to English in about half of the runs, and examples in only one language pushed English into that language. The helper requests greedy sampling so the same transcript always gives the same output. A single prompt is kept (no presets, no prompt library). Reset removes the stored prompt key so the built-in default applies, including after the default changes in a later version; see "Post-processing settings".
-- **Flow:** transcribe, then (when enabled and the Host reports the provider available at dictation time) process, then insert. While processing the microphone button shows its busy state and the tooltip says "Processing". If processing fails, returns empty text, or does not finish in time (the Host stops after 15 s; the client wrapper `runPostProcess` gives up after 20 s, whichever comes first), the raw transcript is inserted instead and the failure is logged (no error toast).
+- **Flow:** transcribe, then (when enabled) process, then insert. While processing the microphone button shows its busy state and the tooltip says "Processing". If processing fails, returns empty text, or does not finish in time (the Host stops after 15 s; the client wrapper `runPostProcess` gives up after 20 s, whichever comes first), the raw transcript is inserted instead and the failure is logged (no error toast).
 - **Clipboard:** only when `copyToClipboard` is on, the clipboard receives the **raw** transcript, even when the inserted text is the processed one. When the setting is off, post-processing never touches the clipboard. Esc during processing discards the result (nothing inserted or copied).
 - **Privacy:** the on-device system model is the only provider in this version, so no transcript leaves the machine.
 
 ### Ownership and interfaces
 
-- A Host service owns availability and execution (`getPostProcessAvailability()`, `postProcess({ text, prompt })`); the renderer owns the prompt and the toggle. `useVoiceDictation` owns the phase (a new `processing` phase after `transcribing`) and the fallback to raw text. Availability is re-read at dictation time before the processing phase starts, so a stale settings-screen answer can never run an unavailable provider.
+- A Host service owns availability and execution (`getPostProcessAvailability()`, `postProcess({ text, prompt })`); the renderer owns the prompt and the toggle. `useVoiceDictation` owns the phase (a new `processing` phase after `transcribing`) and the fallback to raw text. There is no availability probe on the stop-to-insert path. The Host's `postProcess` decides at call time: an unavailable or failing provider rejects, and the raw transcript is inserted. The probe that used to run there spawned a helper process with no cache, so it sat on the critical path for no benefit. The settings card keeps `getPostProcessAvailability()` for display only. Known tradeoff: on an unavailable provider the `processing` phase is entered briefly before the raw insert.
 - The client wraps `postProcess` with `runPostProcess` (`lib/voicePostProcess.ts`): a 20 s client timeout above the Host's 15 s limit, so a hung Host call cannot strand the busy state. The Try-it control uses the same wrapper; no new Host method is added.
 - Apple Foundation Models are reached through a small bundled Swift helper built like `zcode-window-bounds` (`packages/desktop/native/`, a `prepare:` script, `electron-builder` extra resource). It reads JSON from stdin and writes JSON to stdout, checks `SystemLanguageModel.default.availability`, and is spawned per request with a timeout. Main injects the helper path into the Host.
 - Settings live in the fork sidecar (`forkAppSettings.ts`), same rules as the other `voiceDictation` fields.
 
 ### Acceptance scenarios
 
-| Case      | Setup / action                                                    | Expected result                                                                                |
-| --------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| VD-PPR-01 | Post-processing on, system model available; dictate               | The processed text is inserted; the clipboard (if enabled) holds the raw transcript.           |
-| VD-PPR-02 | The prompt has `{{text}}` in the middle                           | The transcript is substituted at that position.                                                |
-| VD-PPR-03 | The prompt has no `{{text}}`                                      | The transcript is appended after the prompt.                                                   |
-| VD-PPR-04 | The model errors, times out, or returns empty                     | The raw transcript is inserted; the failure is logged, no error toast.                         |
-| VD-PPR-05 | System model unavailable (no Apple Intelligence, non-macOS)       | The setting explains why and stays off; dictation inserts raw text.                            |
-| VD-PPR-06 | Esc while processing                                              | Nothing is inserted or copied.                                                                 |
-| VD-PPR-07 | Dictate in Ukrainian with the default prompt                      | The output stays Ukrainian (not translated).                                                   |
-| VD-PPR-08 | Reset the prompt                                                  | The default prompt is restored.                                                                |
-| VD-PPR-09 | Preference on, but the Host reports unavailable at dictation time | No post-processing call is made; the raw transcript is inserted.                               |
-| VD-PPR-10 | Availability answer still loading on the settings screen          | The switch is disabled and shows no reason text; no Off-then-On flicker from a guessed answer. |
+| Case      | Setup / action                                               | Expected result                                                                                             |
+| --------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| VD-PPR-01 | Post-processing on, system model available; dictate          | The processed text is inserted; the clipboard (if enabled) holds the raw transcript.                        |
+| VD-PPR-02 | The prompt has `{{text}}` in the middle                      | The transcript is substituted at that position.                                                             |
+| VD-PPR-03 | The prompt has no `{{text}}`                                 | The transcript is appended after the prompt.                                                                |
+| VD-PPR-04 | The model errors, times out, or returns empty                | The raw transcript is inserted; the failure is logged, no error toast.                                      |
+| VD-PPR-05 | System model unavailable (no Apple Intelligence, non-macOS)  | The setting explains why and stays off; dictation inserts raw text.                                         |
+| VD-PPR-06 | Esc while processing                                         | Nothing is inserted or copied.                                                                              |
+| VD-PPR-07 | Dictate in Ukrainian with the default prompt                 | The output stays Ukrainian (not translated).                                                                |
+| VD-PPR-08 | Reset the prompt                                             | The default prompt is restored.                                                                             |
+| VD-PPR-09 | Preference on, but the Host cannot rewrite at dictation time | No availability probe runs; the rewrite call fails and the raw transcript is inserted, with no error toast. |
+| VD-PPR-10 | Availability answer still loading on the settings screen     | The switch is disabled and shows no reason text; no Off-then-On flicker from a guessed answer.              |
 
 ## Settings information architecture
 
@@ -488,6 +489,7 @@ Desktop Voice dictation settings are five cards in this order. Each card has a h
 Rules:
 
 - Every card writes through the existing single optimistic patch path. No card keeps a second copy of a setting.
+- Default values live in one place: `resolveVoiceDictationPreferences` (`lib/voiceDictationPreferences.ts`). The settings card, the dictation hook, the recording-audio hook, and the warm-up hook all read effective values through it; none repeats a `?? default` or `!== false` of its own.
 - The shared `SettingsRow` uses a fixed 192 px control column. That is not changed here because every Settings section depends on it; on narrow Web it can squeeze labels. This is a follow-up that needs a cross-section check.
 
 ## Post-processing settings
@@ -498,7 +500,7 @@ Rules:
   - **Checking** (before the first answer): the switch is disabled and unchecked, and no reason text is shown.
   - **Available:** the switch reflects the saved preference and is enabled.
   - **Unavailable:** the switch shows Off and is disabled; the status line gives the localized reason. An unknown reason and a Host without the method both use the generic message.
-- Runtime gate: the rewrite runs only when the saved preference is on **and** `getPostProcessAvailability()` reports `available` at dictation time. A check that fails counts as unavailable (logged at warn, raw transcript inserted).
+- Runtime gate: the rewrite runs only when the saved preference is on. The Host's `postProcess` is the single decision point at dictation time. An unavailable provider, a failure, or a timeout rejects, and the raw transcript is inserted (logged at warn, no toast). The dictation path does not call `getPostProcessAvailability()`.
 
 ```mermaid
 sequenceDiagram
@@ -508,13 +510,17 @@ sequenceDiagram
   S->>H: getPostProcessAvailability() on mount
   Note over S: checking until answered; switch disabled
   R->>R: transcription done, postProcessEnabled true?
-  R->>H: getPostProcessAvailability() at dictation time
-  alt available and still same recording
+  alt still same recording
     R->>R: phase = processing
     R->>H: postProcess(text, prompt), 20 s client / 15 s Host
-    H-->>R: processed text, or failure / timeout
-  else unavailable, error, or cancelled
-    Note over R: no rewrite call; raw transcript or nothing
+    alt provider runs
+      H-->>R: processed text
+    else unavailable, error, or timeout
+      H-->>R: rejects
+      Note over R: log warn; insert raw transcript, no toast
+    end
+  else cancelled
+    Note over R: nothing inserted
   end
 ```
 

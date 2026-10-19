@@ -1,8 +1,15 @@
-import { useCallback, useEffect, useLayoutEffect, useState, type CSSProperties } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $getSelection, $isRangeSelection, type LexicalEditor } from "lexical";
 import type { VoiceTranscriptionPreview } from "@zcode/services";
-import { computeGhostLayout } from "@/lib/voiceGhostPreviewLayout.js";
+import { computeGhostLayout, hasVoicePreviewText } from "@/lib/voiceGhostPreviewLayout.js";
 
 interface VoiceGhostPreviewProps {
   preview: VoiceTranscriptionPreview | null;
@@ -17,26 +24,55 @@ interface CaretReading {
   leadingSpace: boolean;
 }
 
-interface GhostRender {
-  top: number;
-  indent: number;
-  leadingSpace: boolean;
+/** Editor box metrics copied from computed style. Reused across caret updates until a resize. */
+interface GhostMetrics {
   font: CSSProperties;
   paddingLeft: number;
   paddingRight: number;
   paddingTop: number;
+  paddingBottom: number;
+  lineHeight: number;
 }
 
-/** Reads the caret from Lexical's selection so the position stays right while the editor is blurred. */
-interface CaretPoint {
-  key: string;
-  type: string;
-  offset: number;
-  charBefore: string;
+interface GhostRender {
+  top: number;
+  indent: number;
+  leadingSpace: boolean;
+  metrics: GhostMetrics;
 }
 
-function readCaretPoint(editor: LexicalEditor): CaretPoint | null {
-  return editor.getEditorState().read(() => {
+function readMetrics(root: HTMLElement): GhostMetrics {
+  const style = window.getComputedStyle(root);
+  const fontSize = parseFloat(style.fontSize) || 14;
+  return {
+    font: {
+      fontFamily: style.fontFamily,
+      fontSize: style.fontSize,
+      fontWeight: style.fontWeight,
+      letterSpacing: style.letterSpacing,
+      lineHeight: style.lineHeight,
+    },
+    paddingLeft: parseFloat(style.paddingLeft) || 0,
+    paddingRight: parseFloat(style.paddingRight) || 0,
+    paddingTop: parseFloat(style.paddingTop) || 0,
+    paddingBottom: parseFloat(style.paddingBottom) || 0,
+    lineHeight: parseFloat(style.lineHeight) || fontSize * 1.5,
+  };
+}
+
+function sameRender(previous: GhostRender | null, next: GhostRender): boolean {
+  return (
+    previous !== null &&
+    previous.top === next.top &&
+    previous.indent === next.indent &&
+    previous.leadingSpace === next.leadingSpace &&
+    previous.metrics === next.metrics
+  );
+}
+
+function readCaret(editor: LexicalEditor, root: HTMLElement): CaretReading | null {
+  // Read from Lexical's selection so the position stays right while the editor is blurred.
+  const point = editor.getEditorState().read(() => {
     const selection = $getSelection();
     if (!$isRangeSelection(selection)) return null;
     // Insertion replaces a selection, so the ghost sits at its start.
@@ -49,10 +85,6 @@ function readCaretPoint(editor: LexicalEditor): CaretPoint | null {
       charBefore: start.type === "text" ? text.charAt(start.offset - 1) : "",
     };
   });
-}
-
-function readCaret(editor: LexicalEditor, root: HTMLElement): CaretReading | null {
-  const point = readCaretPoint(editor);
   if (point) {
     const { key, type, offset, charBefore } = point;
     const element = editor.getElementByKey(key);
@@ -104,11 +136,15 @@ function readCaret(editor: LexicalEditor, root: HTMLElement): CaretReading | nul
 export function VoiceGhostPreview({ preview }: VoiceGhostPreviewProps) {
   const [editor] = useLexicalComposerContext();
   const [render, setRender] = useState<GhostRender | null>(null);
-  const hasText = Boolean(preview && (preview.committed || preview.tentative));
+  const hasText = hasVoicePreviewText(preview);
+  /** Null means "read again": cleared when the ghost hides and on every resize. */
+  const metricsRef = useRef<GhostMetrics | null>(null);
+  const frameRef = useRef<number | null>(null);
 
   const update = useCallback(() => {
     const root = editor.getRootElement();
     if (!root || !hasText) {
+      metricsRef.current = null;
       setRender(null);
       return;
     }
@@ -117,45 +153,43 @@ export function VoiceGhostPreview({ preview }: VoiceGhostPreviewProps) {
       setRender(null);
       return;
     }
-    const style = window.getComputedStyle(root);
-    const paddingLeft = parseFloat(style.paddingLeft) || 0;
-    const paddingRight = parseFloat(style.paddingRight) || 0;
-    const paddingTop = parseFloat(style.paddingTop) || 0;
-    const paddingBottom = parseFloat(style.paddingBottom) || 0;
-    const fontSize = parseFloat(style.fontSize) || 14;
-    const lineHeight = parseFloat(style.lineHeight) || fontSize * 1.5;
+    if (!metricsRef.current) metricsRef.current = readMetrics(root);
+    const metrics = metricsRef.current;
     const box = root.getBoundingClientRect();
     const layout = computeGhostLayout({
       caret: { left: caret.left, top: caret.top, height: caret.height },
       editor: {
-        left: box.left + paddingLeft,
-        top: box.top + paddingTop,
-        width: box.width - paddingLeft - paddingRight,
-        height: box.height - paddingTop - paddingBottom,
+        left: box.left + metrics.paddingLeft,
+        top: box.top + metrics.paddingTop,
+        width: box.width - metrics.paddingLeft - metrics.paddingRight,
+        height: box.height - metrics.paddingTop - metrics.paddingBottom,
       },
-      lineHeight,
+      lineHeight: metrics.lineHeight,
     });
     if (!layout) {
       setRender(null);
       return;
     }
-    setRender({
+    const next: GhostRender = {
       top: layout.top,
       indent: layout.indent,
       leadingSpace: caret.leadingSpace,
-      paddingLeft,
-      paddingRight,
-      paddingTop,
-      font: {
-        fontFamily: style.fontFamily,
-        fontSize: style.fontSize,
-        fontWeight: style.fontWeight,
-        letterSpacing: style.letterSpacing,
-        lineHeight: style.lineHeight,
-      },
-    });
+      metrics,
+    };
+    // Keep the previous object when nothing visible changed, so React skips the re-render.
+    setRender((previous) => (sameRender(previous, next) ? previous : next));
   }, [editor, hasText]);
 
+  /** Lexical updates, scrolls and resizes arrive in bursts; they collapse into one frame. */
+  const scheduleUpdate = useCallback(() => {
+    if (frameRef.current !== null) return;
+    frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = null;
+      update();
+    });
+  }, [update]);
+
+  // Preview changes are synchronous so the ghost never paints with a stale preview.
   useLayoutEffect(() => {
     update();
   }, [update, preview]);
@@ -163,19 +197,30 @@ export function VoiceGhostPreview({ preview }: VoiceGhostPreviewProps) {
   useEffect(() => {
     const root = editor.getRootElement();
     if (!root || !hasText) return;
-    const unregister = editor.registerUpdateListener(() => update());
-    const onScroll = () => update();
+    const unregister = editor.registerUpdateListener(() => scheduleUpdate());
+    const onScroll = () => scheduleUpdate();
     root.addEventListener("scroll", onScroll, { passive: true });
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(onScroll);
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(() => {
+            metricsRef.current = null;
+            scheduleUpdate();
+          });
     observer?.observe(root);
     return () => {
       unregister();
       root.removeEventListener("scroll", onScroll);
       observer?.disconnect();
+      if (frameRef.current !== null) {
+        cancelAnimationFrame(frameRef.current);
+        frameRef.current = null;
+      }
     };
-  }, [editor, hasText, update]);
+  }, [editor, hasText, scheduleUpdate]);
 
-  if (!preview || !hasText || !render) return null;
+  if (!preview || !render) return null;
+  const { metrics } = render;
   return (
     <div
       aria-hidden="true"
@@ -185,10 +230,10 @@ export function VoiceGhostPreview({ preview }: VoiceGhostPreviewProps) {
       <div
         className="absolute whitespace-pre-wrap break-words text-foreground-subtle"
         style={{
-          ...render.font,
-          top: render.paddingTop + render.top,
-          left: render.paddingLeft,
-          right: render.paddingRight,
+          ...metrics.font,
+          top: metrics.paddingTop + render.top,
+          left: metrics.paddingLeft,
+          right: metrics.paddingRight,
           textIndent: render.indent,
         }}
       >
