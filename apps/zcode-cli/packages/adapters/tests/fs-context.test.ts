@@ -1215,6 +1215,49 @@ describe("byte-limited UTF-8 reads", () => {
     }
   });
 
+  // Regression: the UTF-8 tail trim ran for every byte-limited read. A GBK lead byte at the cut looks like an incomplete
+  // UTF-8 sequence, so the trim dropped a byte the caller explicitly asked to decode as GBK.
+  it("keeps every requested byte when the caller names a legacy encoding", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "utf8-cut-"));
+    try {
+      const path = join(dir, "AGENTS.md");
+      // 16383 ASCII bytes, then the GBK lead byte of 中 (0xD6 0xD0) at the cut position.
+      await writeFile(path, Buffer.concat([Buffer.from("a".repeat(16_383)), Buffer.from([0xd6, 0xd0])]));
+
+      const read = await createNodeFileSystemAdapter().readTextFile({
+        path,
+        maxBytes: 16_384,
+        encoding: "gbk",
+      });
+
+      expect(read.encoding).toBe("gbk");
+      expect(read.bytesRead).toBe(16_384);
+      expect(read.truncated).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("still trims a split UTF-8 tail when the caller names UTF-8", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "utf8-cut-"));
+    try {
+      const path = join(dir, "AGENTS.md");
+      await writeFile(path, "中".repeat(10_000), "utf8");
+
+      const read = await createNodeFileSystemAdapter().readTextFile({
+        path,
+        maxBytes: 16_384,
+        encoding: "utf8",
+      });
+
+      expect(read.encoding).toBe("utf8");
+      expect(read.bytesRead).toBe(16_383);
+      expect(read.content).not.toContain("�");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("keeps a byte-aligned ASCII cut at the full limit", async () => {
     const dir = await mkdtemp(join(tmpdir(), "utf8-cut-"));
     try {

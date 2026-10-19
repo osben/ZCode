@@ -132,6 +132,16 @@ describe("isStrictlyInsideWorkspace", () => {
     expect(isStrictlyInsideWorkspace("/repo/../etc", "/repo", "linux")).toBe(false);
   });
 
+  it("accepts a darwin path whose case differs from the workspace root", () => {
+    // APFS is case-insensitive by default, so /Repo/packages/foo is inside the /repo workspace.
+    expect(isStrictlyInsideWorkspace("/Repo/packages/foo", "/repo", "darwin")).toBe(true);
+    expect(isStrictlyInsideWorkspace("/REPO", "/repo", "darwin")).toBe(false);
+  });
+
+  it("keeps the case-sensitive containment on linux", () => {
+    expect(isStrictlyInsideWorkspace("/Repo/packages/foo", "/repo", "linux")).toBe(false);
+  });
+
   it("handles Windows drive paths and drive-letter case", () => {
     expect(isStrictlyInsideWorkspace("C:\\repo\\packages\\foo", "c:\\repo", "win32")).toBe(true);
     expect(isStrictlyInsideWorkspace("D:\\other", "C:\\repo", "win32")).toBe(false);

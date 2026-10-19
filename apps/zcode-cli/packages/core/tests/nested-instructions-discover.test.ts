@@ -415,6 +415,51 @@ describe("discoverNestedInstructions: budget and truncation", () => {
     expect(markerPaths(result)).toEqual([`${ROOT}/a/b/AGENTS.md`]);
     expect(fileSystem.readPaths).toEqual([`${ROOT}/a/b/AGENTS.md`]);
   });
+
+  // Regression: each call used to compare against its own local byte count, so two calls racing in one schedule both
+  // saw the full remaining budget and together injected more than the 64 KiB context limit.
+  it("does not let two concurrent calls spend the same remaining budget", async () => {
+    const fileSystem = new MemoryFileSystem({
+      [`${ROOT}/a/AGENTS.md`]: "x".repeat(10_000),
+      [`${ROOT}/b/AGENTS.md`]: "y".repeat(10_000),
+    });
+    const tracker = new NestedInstructionTracker();
+    const history: NestedInstructionHistory = {
+      delivered: new Set(),
+      bytesDelivered: NESTED_INSTRUCTION_MAX_CONTEXT_BYTES - 15_000,
+    };
+    const base = input(fileSystem, { tracker, readHistory: () => history });
+
+    const [first, second] = await Promise.all([
+      discoverNestedInstructions({
+        ...base,
+        locations: [fileLocation(`${ROOT}/a/x.ts`)],
+        touchedFiles: [`${ROOT}/a/x.ts`],
+      }),
+      discoverNestedInstructions({
+        ...base,
+        locations: [fileLocation(`${ROOT}/b/x.ts`)],
+        touchedFiles: [`${ROOT}/b/x.ts`],
+      }),
+    ]);
+
+    expect([first, second].filter((result) => result !== undefined)).toHaveLength(1);
+    expect(tracker.reservedBytes).toBe(10_000);
+  });
+
+  it("finds folder instructions for a darwin path whose case differs from the workspace root", async () => {
+    const fileSystem = new MemoryFileSystem({ "/Repo/packages/foo/AGENTS.md": "foo" });
+
+    const result = await discoverNestedInstructions(
+      input(fileSystem, {
+        platform: "darwin",
+        locations: [fileLocation("/Repo/packages/foo/src/a.ts")],
+        touchedFiles: ["/Repo/packages/foo/src/a.ts"],
+      }),
+    );
+
+    expect(markerPaths(result)).toEqual(["/Repo/packages/foo/AGENTS.md"]);
+  });
 });
 
 describe("discoverNestedInstructions: concurrency and caching", () => {

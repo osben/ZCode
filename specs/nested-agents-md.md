@@ -96,7 +96,9 @@ R14. **Paths.** Dedupe and containment keys use `normalizeToolPathForComparison(
 - darwin: keys are case-folded too (the default APFS volume is case-insensitive). Reads use the caller's spelling, which stat resolves
   on a case-insensitive volume.
 - linux: keys are case-sensitive.
-  Containment uses `relative()` from `getToolPathApi(platform)`.
+  Containment compares the same folded keys: `relative()` from `getToolPathApi(platform)` runs on
+  `nestedInstructionKey(root)` and `nestedInstructionKey(path)`, so on darwin `/Repo/packages/foo` is inside `/repo`. The
+  folder depth used for ordering is computed from the same keys.
 
 Known limit: symlinks are checked lexically. A symlinked folder inside the workspace that points outside it is treated as inside.
 This matches the existing path policy, which does not hard-block outside paths.
@@ -106,7 +108,7 @@ This matches the existing path policy, which does not hard-block outside paths.
 | State                              | Owner                                                                                            | Lifetime                                                                       |
 | ---------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
 | Delivered set and budget           | Provider-visible history (`messageHistory.borrowReadOnlyRuntimeEntries()`), read through a probe | Exactly as long as the history entries                                         |
-| Schedule reservations              | `NestedInstructionTracker`, one per runtime                                                      | Cleared by `settleToolResults` after the step's results are committed (see §4) |
+| Schedule reservations and bytes    | `NestedInstructionTracker`, one per runtime (keys plus injected bytes of this schedule)          | Cleared by `settleToolResults` after the step's results are committed (see §4) |
 | Stat miss cache                    | `NestedInstructionTracker`                                                                       | 30 s TTL per candidate path, so an AGENTS.md created mid-session is found soon |
 | Workspace root and startup sources | Runtime (`workspaceRoot`, `contextSourceSnapshot`)                                               | Session                                                                        |
 
@@ -131,9 +133,10 @@ runtime.executeTools ─► executor.executeSchedule(calls)   ── tracker: re
   │     │   no file found ──► return (transcript never scanned)
   │     │   discover(A), phase 2 (history read here), deepest first:
   │     │     history.delivered has key ──► skip
-  │     │     budget ── over ──► skip
+  │     │     estimate (history bytes + reserved bytes) ── cannot fit ──► skip, file not read
   │     │     readTextFile(maxBytes) ── fail ──► debug, skip
-  │     │     reserve(key) SYNC (no await until push) ── already reserved ──► skip
+  │     │     reserve(key, bytes, 64 KiB − history bytes) SYNC: duplicate key ──► skip;
+  │     │       bytes + reserved bytes > budget ──► skip; else reserve key and bytes (no await until push)
   │     ▼  append <system-reminder> to modelContent ──► result A
   │
   ├─ call B (Read a/y.ts)  ── runs concurrently with A
@@ -185,7 +188,13 @@ export function readNestedInstructionHistory(
 
 // tracker.ts
 export class NestedInstructionTracker {
-  reserve(key: string): boolean; // synchronous check-and-add; false when already reserved this schedule
+  reserve(
+    key: string,
+    bytes: number,
+    availableBytes: number,
+  ): "reserved" | "duplicate" | "over_budget";
+  // synchronous check-and-add of key and bytes; availableBytes = budget left after history; reserved bytes are subtracted here
+  reservedBytes: number; // bytes reserved by this schedule and not yet in history; used only for the pre-read estimate
   clearReservations(): void; // called by settleToolResults after the step's results are committed to history
   isKnownMiss(key: string, now: number): boolean;
   recordMiss(key: string, now: number): void; // TTL 30 s; expired entries swept once the cache is large

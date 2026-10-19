@@ -96,16 +96,17 @@ export async function discoverNestedInstructions(
   // Phase 2: only now read history, then apply dedupe and budget to the files that exist.
   const history = input.readHistory();
   const selected: SelectedFile[] = [];
-  let plannedBytes = 0;
   let skippedForBudget = 0;
 
   for (const candidate of found) {
     if (input.signal?.aborted) return undefined;
     if (history.delivered.has(candidate.key)) continue;
 
-    const remaining = NESTED_INSTRUCTION_MAX_CONTEXT_BYTES - history.bytesDelivered - plannedBytes;
-    // Estimate before reading so a file that cannot fit is never read.
-    if (Math.min(candidate.sizeBytes, NESTED_INSTRUCTION_MAX_FILE_BYTES) > remaining) {
+    // Estimate before reading so a file that cannot fit is never read. This is only an optimization: the budget is
+    // enforced atomically by tracker.reserve below, because other calls may reserve bytes while this one is reading.
+    const estimatedRemaining =
+      NESTED_INSTRUCTION_MAX_CONTEXT_BYTES - history.bytesDelivered - input.tracker.reservedBytes;
+    if (Math.min(candidate.sizeBytes, NESTED_INSTRUCTION_MAX_FILE_BYTES) > estimatedRemaining) {
       skippedForBudget += 1;
       continue;
     }
@@ -120,14 +121,18 @@ export async function discoverNestedInstructions(
       input.logger?.debug("Nested instruction read failed", skipLogContext(scope, candidate.path, error));
       continue;
     }
-    if (read.bytesRead > remaining) {
+    // No await follows for this file, so the budget check, the key reservation and the push below are one step.
+    const outcome = input.tracker.reserve(
+      candidate.key,
+      read.bytesRead,
+      NESTED_INSTRUCTION_MAX_CONTEXT_BYTES - history.bytesDelivered,
+    );
+    if (outcome === "duplicate") continue;
+    if (outcome === "over_budget") {
       skippedForBudget += 1;
       continue;
     }
-    // No await follows for this file, so reserving here is atomic with the push below.
-    if (!input.tracker.reserve(candidate.key)) continue;
 
-    plannedBytes += read.bytesRead;
     selected.push({
       ...candidate,
       sizeBytes: read.sizeBytes,
@@ -156,7 +161,7 @@ export async function discoverNestedInstructions(
     event: "instructions.nested.discovered",
     module: "core.tool.executor",
     deliveredCount: selected.length,
-    deliveredBytes: plannedBytes,
+    deliveredBytes: selected.reduce((total, file) => total + file.bytes, 0),
     truncatedCount: selected.filter((file) => file.truncated).length,
     skippedForBudget,
   });
@@ -224,7 +229,9 @@ async function resolveDirectories(scope: DiscoveryScope): Promise<DirectoryCandi
       const key = nestedInstructionKey(current, input.platform);
       if (!seen.has(key)) {
         seen.add(key);
-        result.push({ path: current, depth: api.relative(root, current).split(api.sep).length });
+        // Depth uses the folded keys too, so a case-only spelling difference does not inflate the count.
+        const depth = api.relative(nestedInstructionKey(root, input.platform), key).split(api.sep).length;
+        result.push({ path: current, depth });
       }
       const parent = api.dirname(current);
       if (parent === current) break;

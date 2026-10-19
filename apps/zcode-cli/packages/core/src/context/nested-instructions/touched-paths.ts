@@ -115,7 +115,12 @@ export function isStrictlyInsideWorkspace(
   platform: NodeJS.Platform,
 ): boolean {
   const api = getToolPathApi(platform);
-  const relativePath = api.relative(api.normalize(root), api.normalize(candidate));
+  // Compare the same folded keys that dedupe uses. path.posix.relative is case-sensitive, so on darwin `/Repo/foo` would
+  // otherwise be rejected as outside `/repo` while its key matches the workspace.
+  const relativePath = api.relative(
+    nestedInstructionKey(root, platform),
+    nestedInstructionKey(candidate, platform),
+  );
   return relativePath !== "" && !isPathOutsideParent(relativePath, api);
 }
 
