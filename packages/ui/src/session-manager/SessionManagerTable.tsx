@@ -12,7 +12,11 @@ import {
   sessionManagerColumnLabelId,
 } from "./sessionManagerColumns.js";
 import { useSessionManagerPullRequests } from "./useSessionManagerPullRequests.js";
-import type { FlattenedSessionManagerRow, SessionManagerRow } from "./sessionManagerModel.js";
+import {
+  buildSessionManagerVisibleRowSignature,
+  type FlattenedSessionManagerRow,
+  type SessionManagerRow,
+} from "./sessionManagerModel.js";
 import type {
   SessionManagerSortColumn,
   SessionManagerSortDirection,
@@ -92,23 +96,20 @@ export function SessionManagerTable(props: SessionManagerTableProps) {
   const visibleColumns = props.columns;
 
   // PR status is requested only for the virtualizer's visible rows; keyed by
-  // the visible task-id set so scroll frames without membership changes do
-  // not re-fire probes (the service TTL absorbs the rest).
-  const visibleTaskIds = virtualizer
-    .getVirtualItems()
-    .map((virtualItem) => {
-      const item = props.flatRows[virtualItem.index];
-      return item?.kind === "row" ? item.row.task.taskId : "";
-    })
-    .join("\u0000");
+  // the visible composite row keys so scroll frames without membership changes
+  // do not re-fire probes (the service TTL absorbs the rest).
+  const visibleRowSignature = buildSessionManagerVisibleRowSignature(
+    props.flatRows,
+    virtualizer.getVirtualItems().map((virtualItem) => virtualItem.index),
+  );
   const visibleRows = useMemo(
     () =>
       virtualizer.getVirtualItems().flatMap((virtualItem) => {
         const item = props.flatRows[virtualItem.index];
         return item?.kind === "row" ? [item.row] : [];
       }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- content-addressed by the visible id set; the virtualizer re-reads during render
-    [visibleTaskIds, props.flatRows],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- content-addressed by the visible row-key set; the virtualizer re-reads during render
+    [visibleRowSignature, props.flatRows],
   );
   useSessionManagerPullRequests(visibleRows, {
     active: props.columns.includes("pullRequests"),

@@ -45,6 +45,23 @@ export function buildSessionManagerRowKey(
 }
 
 /**
+ * Signature of the row keys at the given flat indexes (group rows are skipped). Uses the composite
+ * row key: the same task id in two workspaces must change the signature, or memoized PR probe
+ * targets keep the previous workspace's rows.
+ */
+export function buildSessionManagerVisibleRowSignature(
+  flatRows: readonly FlattenedSessionManagerRow[],
+  indexes: readonly number[],
+): string {
+  return indexes
+    .flatMap((index) => {
+      const item = flatRows[index];
+      return item?.kind === "row" ? [item.row.taskKey] : [];
+    })
+    .join("\u0000");
+}
+
+/**
  * Merge kind-tagged list results into rows. Membership flags do not ride the wire items,
  * so `archived` comes from the source kind and `pinned` from the pinned-kind key set.
  */
