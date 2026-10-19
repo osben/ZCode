@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import { FolderOpen, Split } from "lucide-react";
+import { rebaseRemoteWorkspaceIdentity } from "@zcode/shared";
 import { Button } from "@/components/ui/button.js";
 import {
   Tooltip,
@@ -14,25 +15,32 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 export function ConversationWorktreeCreatedNotice({
   branchName,
   path,
+  workspaceIdentity,
   onOpenWorktree,
 }: {
   branchName?: string;
   path: string;
-  onOpenWorktree?: (path: string) => void | Promise<void>;
+  /** Parent workspace identity; a remote parent yields a remote identity for the worktree path. */
+  workspaceIdentity?: string;
+  onOpenWorktree?: (path: string, workspaceIdentity?: string) => void | Promise<void>;
 }) {
   const { intl } = useZCodeIntl();
   const openLabel = intl.formatMessage({ id: "commandCenter.worktree.openExisting" });
 
   const handleOpenWorktree = useCallback(async () => {
     if (!onOpenWorktree) return;
+    // Remote identities embed the path, so the worktree needs its own identity on the same
+    // authority. Local parents have no remote identity and open by path alone.
+    const worktreeIdentity =
+      rebaseRemoteWorkspaceIdentity(workspaceIdentity ?? "", path) ?? undefined;
     try {
-      await onOpenWorktree(path);
+      await onOpenWorktree(path, worktreeIdentity);
     } catch {
       toast(intl.formatMessage({ id: "commandCenter.worktree.openFailed" }, { path }), {
         durationMs: 10_000,
       });
     }
-  }, [intl, onOpenWorktree, path]);
+  }, [intl, onOpenWorktree, path, workspaceIdentity]);
 
   return (
     <div

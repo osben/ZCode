@@ -375,7 +375,10 @@ export interface SessionPaneProps {
   workspacePath: string;
   workspaceIdentity?: string;
   /** Open a worktree path through the app's shared workspace + draft flow. */
-  onCreateTaskInWorkspace?: (workspacePath: string) => void | Promise<void>;
+  onCreateTaskInWorkspace?: (
+    workspacePath: string,
+    workspaceIdentity?: string,
+  ) => void | Promise<void>;
   remoteSessionId?: string | null;
   /** Prompt-template telemetry currently covers only Desktop; Web/mobile remote control keeps the UI behavior without emitting this event. */
   isDesktop?: boolean;
@@ -6177,6 +6180,7 @@ export function SessionPane({
                           <ConversationWorktreeCreatedNotice
                             branchName={sessionExecutionWorktree.branchName}
                             path={sessionExecutionWorktree.path}
+                            workspaceIdentity={workspaceIdentity}
                             onOpenWorktree={onCreateTaskInWorkspace}
                           />
                         ) : null}

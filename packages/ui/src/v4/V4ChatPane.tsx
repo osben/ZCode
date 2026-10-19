@@ -41,7 +41,10 @@ export interface V4ChatPaneProps {
   /** CLI session ID; null = first send from a draft. */
   sessionId: string | null;
   /** Open a path through the app's existing workspace + draft flow. */
-  onCreateTaskInWorkspace?: (workspacePath: string) => void | Promise<void>;
+  onCreateTaskInWorkspace?: (
+    workspacePath: string,
+    workspaceIdentity?: string,
+  ) => void | Promise<void>;
   /** Open entry point for the current workspace's primary pane; count as sidebar when not provided. */
   openTrigger?: SessionOpenTrigger;
   provider?: ZCodeProvider;

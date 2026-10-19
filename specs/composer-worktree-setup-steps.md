@@ -252,8 +252,10 @@ and consistent message-column alignment. The created row is a single compact lin
 muted Git worktree marker, the created label and branch, followed by an icon-only open action with a
 tooltip and accessible name. The action opens the exact worktree path through the existing
 path-aware workspace-open contract; it must not simulate a click on the generic Open workspace
-picker. Do not show a worktree duration unless the execution-worktree fact provides one; assistant
-Thought duration is not worktree timing.
+picker. For a remote parent workspace the action also passes the worktree's own remote identity
+(the parent identity re-pointed at the worktree path), because remote identities embed the path.
+Do not show a worktree duration unless the execution-worktree fact provides one; assistant Thought
+duration is not worktree timing.
 
 ### Existing worktree and branch-list behavior
 

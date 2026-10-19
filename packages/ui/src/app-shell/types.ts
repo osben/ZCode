@@ -129,7 +129,10 @@ export type WorkspaceMainView = "chat" | "automations" | "plugin-store";
 
 export interface WorkspaceShellLayoutProps extends Omit<AppProps, "baseFeedbackService"> {
   /** Open a worktree path through the app's shared workspace + draft flow. */
-  onCreateTaskInWorkspace?: (workspacePath: string) => void | Promise<void>;
+  onCreateTaskInWorkspace?: (
+    workspacePath: string,
+    workspaceIdentity?: string,
+  ) => void | Promise<void>;
   workspaceReadOnlyReason?: string;
   workspaceMainView: WorkspaceMainView;
   pluginStoreOpenVersion: number;
