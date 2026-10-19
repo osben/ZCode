@@ -11,9 +11,9 @@
 
 | 输入                                       | 结果                                                                                              |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------- |
-| `/plan`                                    | draft 更新 renderer draft mode；已有 session 发送 `switchCollaborationMode(plan)`；不发模型请求。 |
-| `/plan <task>`                             | 先完成 mode CAS，再按普通 `sendText(<task>)` 发送；provider 和 transcript 只看到 `<task>`。       |
-| `/plan` 或 `/plan <task>` 携带附件/context | 显式提示首版不支持，保留输入、附件和 context，不切换模式、不发送。                                |
+| `/plan`                                    | 只开启当前 Composer 的 Plan 标记，不改变权限、不发模型请求。 |
+| `/plan <task>`                             | 同一冻结 Submission 携带 `planEnabled=true` 并普通发送任务；provider 和 transcript 只看到 `<task>`。 |
+| `/plan` 或 `/plan <task>` 携带附件/context | 开启 Plan，沿普通发送路径提交任务、全部附件和 context；只有无正文且无 payload 的 `/plan` 才只切换标记。 |
 | 其他文本（例如 `/planner`）                | 按普通文本处理。                                                                                  |
 
 参数名称大小写不敏感，任务正文去除首尾空白但保留内部换行与内容。
@@ -25,25 +25,25 @@
 ```text
 Composer submit
       │
-      ├─ attachments/context -> unsupported toast -> keep draft
-      │
-      └─ text only
-           ├─ draft
-           │    ├─ update current Composer Draft mode to plan
-           │    └─ task present -> create/prewarm config mode=plan -> send task
-           └─ existing session
-                ├─ switchCollaborationMode(plan)
-                ├─ accepted/noop/duplicate
-                ├─ no task -> done
-                └─ task -> ordinary sendText(task)
+      └─ /plan -> current Composer Draft Plan flag + frozen Submission.planEnabled=true
+           ├─ no task, attachments or context -> mode-only, no model request
+           └─ task or payload -> ordinary sendText(task, frozen attachments/context)
+                ├─ worktree preparation -> same prepared session -> activate once
+                └─ existing/draft session -> canonical CommandInbox admission
 ```
 
-配置命令与发送命令继续使用现有 config barrier。CAS stale 使用已有有界重试；如果最终不是
-`accepted`、`noop` 或 `duplicate`，返回 `blocked`，不清空 Composer，也不发送任务。
-已处于 Plan 模式时，mode CAS 以 noop 收敛后仍允许发送任务。
+发送继续使用现有 config barrier，并在同一冻结 Submission 中携带 Plan 标记；不新增独立配置
+写入路径。真正的配置或 admission 失败仍保留完整 Composer 状态。已开启 Plan 时仍允许发送任务。
 
-draft 的 `/plan` 与工具栏模式切换共享 renderer draft preference；已有 session 的切换不会改写
-后续 draft 默认值。running/queued 输入仍由 CLI runtime `CommandInbox` 按现有 FIFO 接纳，
+长文本粘贴自动生成的 `clipboard-text` 附件与普通文件、图片、引用、代码和插件 context 一样保真传递。
+`/plan` 只移除正文开头的快捷命令；不丢弃或重新序列化 payload。附件读取、上传和模型能力校验沿用普通发送。
+空正文但有附件或 context 是有效任务，不能误当作 mode-only 成功清空输入。`sharedContextRefs` 也属于 payload。
+
+worktree 流程的冻结输入仍由 renderer 拥有，Host 继续拥有 prepared session 和 admission：Git ready
+后，同一 session 接纳带 `planEnabled=true` 的输入一次；成功才 consume pipeline 并清除 recovery。
+
+`/plan` 与工具栏共用当前 Composer 的 Plan 标记和冻结 Submission；不改写权限或新任务的默认值。
+running/queued 输入仍由 CLI runtime `CommandInbox` 按现有 FIFO 接纳，
 不会创建 `/plan` 专用队列或 mode snapshot。
 
 ## 跨端边界
@@ -58,6 +58,8 @@ relay、desktop main、Host、workspace identity、remoteSessionId 或 replayabl
 
 - slash catalog 显示 `/plan [task]`，选择后插入 `/plan `。
 - draft 空命令只改变模式；已有 session 空命令不产生模型请求或 user row。
-- 带任务时 mode CAS 先于 `sendText`，provider/transcript 只出现任务正文。
-- CAS 失败、附件/context 拒绝均保留完整 Composer 状态。
+- 带任务时同一 `sendText` 携带 Plan 标记，provider/transcript 只出现任务正文。
+- `/plan <task>` 保留附件和结构化 context；长文本粘贴与手动附件等价。
+- `/plan` 加附件/context（包括 shared context）仍提交 payload；完全空的 `/plan` 不发模型请求。
+- worktree ready 后接纳一次 Plan 输入，清除 queued preview 和 recovery；普通 admission 失败仍保留完整状态。
 - desktop continuous 与 mobile replayable 只在 delivery profile 上不同，最终命令语义一致。
