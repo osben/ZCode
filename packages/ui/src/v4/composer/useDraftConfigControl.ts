@@ -163,8 +163,16 @@ export function useDraftConfigControl(params: {
             ...draft,
             mode: mode.success && mode.data !== "plan" ? mode.data : "build",
             planEnabled: resolveExecutionState(sessionConfig ?? {}).planEnabled,
-            modelSelection: sessionConfig?.modelSelection,
+            // Reason: a model chosen before the first snapshot (mode still missing) must survive the initializer;
+            // the inherited selection only fills a draft that has none.
+            modelSelection: draft.modelSelection ?? sessionConfig?.modelSelection,
           };
+  }
+  if (sessionId !== null && !draft.modelSelection && sessionConfig?.modelSelection) {
+    // A fork child can first hydrate with mode only, then receive its inherited model selection
+    // in a later snapshot. Fill only the missing selection so the user can send immediately, while
+    // preserving any model choice already made in this session-scoped draft.
+    draft = { ...draft, modelSelection: sessionConfig.modelSelection };
   }
   if (sessionConfig) {
     draft = applyComposerPlanTransition(draft, sessionConfig.planTransition);
