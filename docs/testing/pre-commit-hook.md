@@ -6,12 +6,44 @@ The repository runs a Husky `pre-commit` hook that formats and lints the
 ```text
 git commit
     → .husky/pre-commit
+    → scripts/check-staged-file-tokens.mjs (index size gate)
     → pnpm exec lint-staged --config lint-staged.pre-commit.config.mjs
     → scripts/run-pre-commit-checks.mjs <staged code files>
     → oxfmt (write mode, fixes are re-staged) then oxlint
+    → scripts/check-staged-file-tokens.mjs (check formatter output)
 ```
 
 ## Behavior
+
+The size gate applies to every added, copied, modified or renamed regular file
+in the Git index, including CLI files. The limit is **5,000 tokens = 20,000
+bytes**, inclusive; this is a byte estimate, not a tokenizer. Git blob sizes
+measure the staged snapshot, never the working copy. Deleted files, symlinks
+and submodule pointers do not contain regular file content and are skipped.
+Git errors block the commit. No HEAD commit is required.
+
+Git cannot identify whether uncommitted code was written by an agent or a
+human. All manually maintained files are therefore checked. Exclusions are:
+
+- Lock files by exact basename: `pnpm-lock.yaml`, `package-lock.json`,
+  `npm-shrinkwrap.json`, `yarn.lock`, `bun.lock`, `bun.lockb`, `Cargo.lock`,
+  `poetry.lock`, `uv.lock`, `Pipfile.lock`, `composer.lock`, `Gemfile.lock`,
+  `go.sum`.
+- Generated names containing `.generated.` or `.gen.`.
+- Files with `linguist-generated=true` or `linguist-vendored=true` (or the
+  corresponding bare attribute) in **staged** `.gitattributes`. This is the
+  explicit declaration for other generated output or third-party code; do
+  not mark manually maintained code as generated to evade the limit.
+
+Oversize errors list each path, byte size and estimated tokens, then instruct
+the author to extract cohesive modules or document sections, preserve imports
+and exports, and stage the split files again. Both checks read only the index:
+the first prevents unnecessary formatter edits; the second catches a formatter
+that increases a staged file beyond the limit.
+
+Acceptance cases include the exact limit, UTF-8 bytes, partially staged files
+with smaller/larger working copies, deleted working copies, renames, filenames
+with whitespace/newlines, staged exclusions, and formatter-induced overflow.
 
 - **Scope**: staged files matching
   `**/*.{js,mjs,cjs,jsx,ts,tsx,mts,cts,json,md,mdx}`.
@@ -48,7 +80,7 @@ percent signs intact.
 
 | Gate       | Scope                 | Runs                                                                             |
 | ---------- | --------------------- | -------------------------------------------------------------------------------- |
-| pre-commit | staged files, seconds | oxfmt (write) + oxlint                                                           |
+| pre-commit | staged files, seconds | 20,000-byte size gate + oxfmt (write) + oxlint + final size gate                 |
 | pre-push   | pushed diff           | `pnpm run verify:pre-push` (lint, architecture, affected unit tests, node tests) |
 | CI         | PR diff               | typecheck, lint, format check, architecture, unit tests                          |
 
@@ -58,9 +90,4 @@ it on purpose — they are too slow for an interactive commit.
 
 The separate `apps/zcode-cli` pre-commit hook (its own `pnpm lint` +
 `pnpm test`, see `apps/zcode-cli/docs/design/v2/pre-commit-quality-gate.md`)
-is unaffected; the root hook skips CLI files entirely.
-
-## Bypassing
-
-`HUSKY=0 git commit ...` disables the hook for one command (emergency use
-only; CI still enforces the same checks on the PR).
+is unaffected; root formatting skips CLI files, but the size gate checks them.
