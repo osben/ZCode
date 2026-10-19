@@ -38,3 +38,16 @@ packages/ui/test/useVoiceDictation.test.ts
 packages/ui/test/v4ConversationTelemetrySupervisor.test.ts
 specs/system-prompt-settings.md
 specs/voice-dictation.md
+packages/client/src/globals.d.ts
+packages/desktop/src/main/desktopOAuthDeepLink.ts
+packages/desktop/src/main/index.ts
+packages/desktop/src/preload/index.ts
+packages/shared/src/channels.ts
+packages/shared/src/platform.ts
+packages/ui/src/Root.tsx
+packages/ui/src/root/useRootPlatformEffects.ts
+packages/ui/src/store/zcodeSessionStoreTypes.ts
+packages/ui/src/store/zcodeSessionStoreWorkspaceSlice.ts
+
+# Owned by this PR (already over the limit before this change): split the file into per-section test modules.
+packages/ui/test/v4ConversationFileSummaryPanel.test.ts

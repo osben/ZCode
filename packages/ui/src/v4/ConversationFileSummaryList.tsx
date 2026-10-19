@@ -119,9 +119,20 @@ export function ConversationFileSummaryList({
                 options={{
                   basePath: context.workspacePath,
                   showFilePath: !inTree,
-                  className: "inline-flex min-w-0 max-w-full items-center gap-1.5",
+                  // Row label reads as one continuous path: [icon] dir/name with no flex gap
+                  // between directory and basename. The directory goes first, carries the
+                  // whole shrink weight and ellipsizes from its start (leading "…"), keeping
+                  // the segments closest to the file; the basename never competes for width
+                  // (truncate is only degradation for oversized names).
+                  pathBeforeName: true,
+                  // A workspace-root file has no directory span to carry the icon spacing, so the
+                  // first text span after the icon gets it; the directory/basename gap stays zero.
+                  className: inTree
+                    ? "inline-flex min-w-0 max-w-full items-center gap-1.5"
+                    : "inline-flex min-w-0 max-w-full items-center [&>img+*]:ml-1.5",
                   fileNameClassName: "truncate text-ui-base font-medium text-foreground",
-                  filePathClassName: "truncate text-ui-base text-foreground-subtlest",
+                  filePathClassName:
+                    "ml-1.5 min-w-[2ch] shrink-[10000] truncate text-ui-base text-foreground-subtlest [direction:rtl] [text-align:left]",
                 }}
               />
             </div>
