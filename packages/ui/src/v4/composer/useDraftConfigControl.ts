@@ -163,7 +163,7 @@ export function useDraftConfigControl(params: {
             ...draft,
             mode: mode.success && mode.data !== "plan" ? mode.data : "build",
             planEnabled: resolveExecutionState(sessionConfig ?? {}).planEnabled,
-            modelSelection: sessionConfig?.modelSelection,
+            modelSelection: draft.modelSelection ?? sessionConfig?.modelSelection
           };
   }
   if (sessionId !== null && !draft.modelSelection && sessionConfig?.modelSelection) {
