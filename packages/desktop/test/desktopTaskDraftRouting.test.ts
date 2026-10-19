@@ -62,6 +62,7 @@ function createMockWindow(webContentsId: number) {
   return {
     webContents: { id: webContentsId, send: vi.fn() },
     focus: vi.fn(),
+    isDestroyed: vi.fn(() => false),
     isMinimized: vi.fn(() => false),
     isVisible: vi.fn(() => true),
     restore: vi.fn(),
@@ -106,6 +107,34 @@ describe("desktopOAuthDeepLink task/new routing", () => {
       path: workspacePath,
       text: "Сделай план реализации",
     });
+  });
+
+  it("routes the draft to the window that already owns the project", async () => {
+    const workspacePath = createTempWorkspace();
+    const firstWindow = createMockWindow(31);
+    const ownerWindow = createMockWindow(32);
+    electronMocks.getFocusedWindow.mockReturnValue(firstWindow);
+    electronMocks.getAllWindows.mockReturnValue([firstWindow, ownerWindow]);
+    const { deliverPendingDeepLink, handleTaskNewDeepLink, setTaskDraftOwnerWindowResolver } =
+      await import("../src/main/desktopOAuthDeepLink.js");
+    deliverPendingDeepLink(firstWindow.webContents);
+    deliverPendingDeepLink(ownerWindow.webContents);
+    firstWindow.webContents.send.mockClear();
+    ownerWindow.webContents.send.mockClear();
+    setTaskDraftOwnerWindowResolver((path) => (path === workspacePath ? ownerWindow : null));
+
+    await handleTaskNewDeepLink(
+      buildTaskNewUrl(workspacePath, { prompt: "plan" }),
+      createLogger(),
+      { resolveApplicationWindow: () => firstWindow as never },
+    );
+
+    expect(firstWindow.webContents.send).not.toHaveBeenCalled();
+    expect(ownerWindow.webContents.send).toHaveBeenCalledWith(PlatformChannels.OpenTaskDraft, {
+      path: workspacePath,
+      text: "plan",
+    });
+    expect(ownerWindow.focus).toHaveBeenCalled();
   });
 
   it("reads promptFile in main and sends its text", async () => {

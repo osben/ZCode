@@ -193,6 +193,7 @@ import {
   clearOAuthRoutesForWindow,
   handleDeepLink,
   handleOpenWorkspacePath,
+  setTaskDraftOwnerWindowResolver,
   registerDeepLinkProtocol,
   resolveExternalWorkspaceOpenDialogCopy,
 } from "./desktopOAuthDeepLink.js";
@@ -2178,6 +2179,18 @@ function createWindowInstance(startupBootstrap: StartupWindowBootstrap = {}) {
 }
 
 registerDeepLinkProtocol(logger, { iconPath: linuxDesktopIntegrationIconPath });
+setTaskDraftOwnerWindowResolver((workspacePath) => {
+  for (const [windowId, paths] of windowWorkspaceMap) {
+    if (!paths.has(workspacePath)) {
+      continue;
+    }
+    const win = BrowserWindow.fromId(windowId);
+    if (win && !win.isDestroyed()) {
+      return win;
+    }
+  }
+  return null;
+});
 app.on("open-url", (event, url) => {
   event.preventDefault();
   const workspacePath = extractOpenWorkspacePathFromDeepLinkUrl(url);

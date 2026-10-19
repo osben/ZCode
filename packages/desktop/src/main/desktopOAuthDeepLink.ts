@@ -219,6 +219,15 @@ export function confirmExternalWorkspaceOpen(
   return confirmed;
 }
 
+let taskDraftOwnerWindowResolver: ((workspacePath: string) => BrowserWindow | null) | null = null;
+
+/** Lets Main route `task/new` to the window that already has the project open (side-effect free lookup). */
+export function setTaskDraftOwnerWindowResolver(
+  resolver: ((workspacePath: string) => BrowserWindow | null) | null,
+): void {
+  taskDraftOwnerWindowResolver = resolver;
+}
+
 export function handleOpenWorkspacePath(
   path: string,
   logger: { info: (...args: unknown[]) => void; warn: (...args: unknown[]) => void },
@@ -331,9 +340,13 @@ export async function handleTaskNewDeepLink(
     return false;
   }
 
-  const targetWindow = options.resolveApplicationWindow
-    ? options.resolveApplicationWindow()
-    : (BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null);
+  const ownerWindow = taskDraftOwnerWindowResolver?.(request.path) ?? null;
+  const targetWindow =
+    ownerWindow && !ownerWindow.isDestroyed()
+      ? ownerWindow
+      : options.resolveApplicationWindow
+        ? options.resolveApplicationWindow()
+        : (BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null);
   const dialogCopy = options.taskDraftConfirmationCopy ?? resolveTaskDraftDialogCopy("en-US");
   const preview = buildTaskDraftPreview(resolved.text);
   if (

@@ -59,6 +59,12 @@ with the request and is delivered after renderer ready. Warm start goes through 
 R9. **Logging.** `info` for accepted/rejected route with reason codes, prompt length, and file size. Never log prompt text, file contents
 or full file paths beyond the project path already logged by the workspace route.
 
+R10. **Window routing.** The default target is the first application window. When another window already lists the project in Main's
+`windowWorkspaceMap` (the same registry `ActivateOrSetWorkspace` uses), that window is the target instead: the confirmation dialog is parented
+to it, the `OpenTaskDraft` payload is sent to it (or bound to its webContents id until its renderer is ready), and it is focused.
+Main only chooses the destination; it still holds no task state, and the receiving renderer remains the single owner of draft state.
+The owner lookup has no side effects (no `FocusTab`); the renderer's own `openWorkspacePath` activates the tab. Only exact path matches count.
+
 ## 3. Interfaces
 
 - `packages/desktop/src/main/desktopDeepLinkUrl.ts`: `isTaskNewUrl`, `extractTaskNewRequest(parsedUrl) -> { path, prompt? , promptFile? } | null`;
@@ -69,8 +75,8 @@ or full file paths beyond the project path already logged by the workspace route
 - `packages/ui/src/root/useRootPlatformEffects.ts`: handler runs, in this order: `openWorkspacePath(path)` (tab dedup, recent projects) ->
   `startDraftInWorkspace(path)` -> `requestComposerTextInsert(path, text, undefined, undefined, "prepend-text")`.
   `prepend-text` is a new `ComposerTextInsertRequest` mode implemented in `applyExternalTextInsertRequestToComposer`.
-  If another window already owns the folder (`activateOrSetWorkspace`), this window has no tab, the insert is skipped and a warning is logged
-  (known limitation of v1; the link is not re-routed to the owning window).
+  Main routes the draft to the window that already has the folder open (R10), so the owning window's tab is always present and the insert is not skipped.
+  If the tab is still missing in the receiving window (for example it was just closed), the insert is skipped and a warning is logged.
   The insert request is held in the workspace slice (`composerTextInsertRequest`) until the composer consumes it, so it survives a late mount.
 
 ## 4. Owners and event order
@@ -108,6 +114,7 @@ Idempotency: a repeated link creates another draft (no dedup id in v1).
 8. Cyrillic, spaces, `%`, `&`, `#` in `prompt` and in paths survive URL encoding, second-instance encoding and Windows `--` argv.
 9. `allowOpenWorkspace=false`: ignored. Web / mobile: route not registered.
 10. Workspace Hook Trust is unchanged after confirming.
+11. Folder already open in a second window: the draft is delivered to that window, not to the first window.
 
 ## 6. Tests
 
