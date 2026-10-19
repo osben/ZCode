@@ -89,3 +89,11 @@ Test entry points are defined by the target package's current `package.json` and
 - `info` is for production-usable events such as process and session lifecycle, permission results, and one-time initialization.
 - `warn` is for recoverable exceptions; `error` is for unrecoverable errors such as crashes, handshake failures, and lost authentication.
 - Do not write credentials, real user data, or internal service addresses in logs, examples, or commits.
+
+## Cursor Cloud specific instructions
+
+- Prepend `/usr/local/bin` to `PATH` before `node`, `pnpm`, or repository scripts. Cloud Agent shells resolve `node` to `/exec-daemon/node` (Node 22). This repo requires Node **26.11.1** and pnpm **10.33.2**, installed under `/usr/local` (`mise.toml`).
+- Boot `start` launches `pnpm dev:web` in tmux session `zcode-web` unless the API and Vite app already respond. The API is `http://127.0.0.1:3030` (`/api/server-info`). Vite listens on IPv6 localhost at `http://localhost:5173`; `127.0.0.1:5173` does not connect.
+- The web server uses `ZCODE_DATA_BASE_DIR` (`$HOME/.zcode-dev-home` on boot) for the tasks index and onboarding. `setting.json` still lives at `~/.zcode/v2/setting.json`.
+- Open `http://localhost:5173/`, choose **Use API key**, then **Skip for now** to reach the workspace without an account. Creating a task needs a configured model provider; until then the Agent runtime stays stopped.
+- `ssh2`'s optional native crypto binding does not compile on Node 26. `pnpm install` still exits 0.
