@@ -1018,6 +1018,9 @@ export interface IPlatformService {
   /** Register a callback for the main process to open a local workspace directory directly from a deep link; returns a disposer. */
   onOpenWorkspacePath?(handler: (path: string) => void): () => void;
 
+  /** Register a callback for `zcode://task/new`: open the local workspace and fill a fresh, unsent draft. Desktop only; returns a disposer. */
+  onOpenTaskDraft?(handler: (payload: { path: string; text: string }) => void): () => void;
+
   /** Register a callback for window fullscreen-state changes; returns a disposer. */
   onWindowFullscreenChanged(handler: (isFullscreen: boolean) => void): () => void;
 

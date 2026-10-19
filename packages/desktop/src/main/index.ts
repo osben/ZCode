@@ -205,7 +205,9 @@ import {
   extractDeepLinkUrlFromArgs,
   extractOpenWorkspacePathFromArgs,
   isWorkspaceOpenUrl,
+  isTaskNewUrl,
 } from "./desktopDeepLinkUrl.js";
+import { resolveTaskDraftDialogCopy } from "./desktopTaskDraftDeepLink.js";
 import { createRemoteWorkspaceSessionManager } from "./desktopRemoteSessions.js";
 import {
   reportRemoteConnectionStateChangedToArms,
@@ -910,6 +912,14 @@ const webRemoteControlUrlEnvOverride = process.env["ZCODE_WEB_REMOTE_CONTROL_URL
 const webRemoteControlReleaseRelayWsUrl = ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL_DEFAULT || null;
 const webRemoteControlReleaseWebUrl = ZCODE_WEB_REMOTE_CONTROL_URL_DEFAULT || null;
 
+function isTaskNewDeepLinkUrl(url: string): boolean {
+  try {
+    return isTaskNewUrl(new URL(url));
+  } catch {
+    return false;
+  }
+}
+
 function extractOpenWorkspacePathFromDeepLinkUrl(url: string): string | null {
   try {
     const parsedUrl = new URL(url);
@@ -1039,12 +1049,18 @@ webRemoteControlManagerRef.current = webRemoteControlManager;
 
 let forceUpdateMainWindowCreationBlocked = false;
 
+function resolveEffectiveConfirmationLocale() {
+  return currentApplicationLocale === DEFAULT_LOCALE && app.isReady()
+    ? resolveSystemApplicationLocale()
+    : currentApplicationLocale;
+}
+
 function resolveExternalWorkspaceConfirmationCopy() {
-  const effectiveLocale =
-    currentApplicationLocale === DEFAULT_LOCALE && app.isReady()
-      ? resolveSystemApplicationLocale()
-      : currentApplicationLocale;
-  return resolveExternalWorkspaceOpenDialogCopy(effectiveLocale);
+  return resolveExternalWorkspaceOpenDialogCopy(resolveEffectiveConfirmationLocale());
+}
+
+function resolveTaskDraftConfirmationCopy() {
+  return resolveTaskDraftDialogCopy(resolveEffectiveConfirmationLocale());
 }
 
 function focusForceUpdateGateWindow() {
@@ -2179,10 +2195,19 @@ app.on("open-url", (event, url) => {
     }
     return;
   }
-  handleDeepLink(url, logger, {
-    confirmationCopy: resolveExternalWorkspaceConfirmationCopy(),
-    resolveApplicationWindow: () => getApplicationWindowsExcludingCuaIndicator()[0] ?? null,
-  });
+  const dispatchOpenUrl = () =>
+    handleDeepLink(url, logger, {
+      confirmationCopy: resolveExternalWorkspaceConfirmationCopy(),
+      taskDraftConfirmationCopy: resolveTaskDraftConfirmationCopy(),
+      resolveApplicationWindow: () => getApplicationWindowsExcludingCuaIndicator()[0] ?? null,
+    });
+  if (!app.isReady() && isTaskNewDeepLinkUrl(url)) {
+    // task/new shows a confirmation dialog and reads files; wait for ready so the dialog is safe to show and
+    // the application locale is resolved.
+    void app.whenReady().then(dispatchOpenUrl);
+    return;
+  }
+  dispatchOpenUrl();
 });
 const gotTheLock = app.requestSingleInstanceLock(createDeepLinkSingleInstanceData(process.argv));
 if (!gotTheLock) {
@@ -2210,6 +2235,7 @@ app.on("second-instance", (_event, argv, _workingDirectory, additionalData) => {
       resolveApplicationWindow: () => getApplicationWindowsExcludingCuaIndicator()[0] ?? null,
       logger,
       workspaceConfirmationCopy: resolveExternalWorkspaceConfirmationCopy(),
+      taskDraftConfirmationCopy: resolveTaskDraftConfirmationCopy(),
     })
   ) {
     return;
@@ -2718,6 +2744,7 @@ app.whenReady().then(async () => {
   if (startupDeepLinkConsumptionGate.shouldHandleReadyProtocolUrl(protocolUrl)) {
     handleDeepLink(protocolUrl, logger, {
       confirmationCopy: resolveExternalWorkspaceConfirmationCopy(),
+      taskDraftConfirmationCopy: resolveTaskDraftConfirmationCopy(),
       resolveApplicationWindow: () => getApplicationWindowsExcludingCuaIndicator()[0] ?? null,
     });
   }
