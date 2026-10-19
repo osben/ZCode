@@ -83,6 +83,8 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
   const recorderStartPendingRef = useRef(false);
   const streamIdRef = useRef<string | null>(null);
   const streamQueueRef = useRef<Promise<void>>(Promise.resolve());
+  // Host stream cancels that have not settled yet; the lease waits for them before release.
+  const pendingStreamCancelsRef = useRef(0);
   /** PCM chunks awaiting send; merged and sent by the serial flush task, so a transiently slow RPC versus the microphone only backs up and never fails. */
   const streamBacklogRef = useRef<Float32Array[]>([]);
   const streamFlushScheduledRef = useRef(false);
@@ -96,8 +98,11 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
 
   const updatePhase = useCallback((next: VoiceDictationPhase) => {
     phaseRef.current = next;
-    // Idle means this composer no longer uses the session; release it so another composer may start.
-    if (next === "idle") releaseVoiceDictationSession(sessionOwnerRef.current);
+    // Idle means this composer no longer uses the session, but a Host stream cancel may still be
+    // pending. The lease is released once that cancel settles (see cancelStreamAfterQueue).
+    if (next === "idle" && pendingStreamCancelsRef.current === 0) {
+      releaseVoiceDictationSession(sessionOwnerRef.current);
+    }
     setPhase(next);
   }, []);
 
@@ -115,12 +120,20 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
   /** Cancels a stream once its queued feed batches have drained, so the Host never sees a feed after the cancel. */
   const cancelStreamAfterQueue = useCallback(
     (streamId: string) => {
+      pendingStreamCancelsRef.current += 1;
       void streamQueueRef.current
         .then(() => voiceDictationService?.cancelStream(streamId))
         .catch((error: unknown) => {
           logger.warn("voice dictation stream cancellation failed", {
             error: error instanceof Error ? error.message : String(error),
           });
+        })
+        .finally(() => {
+          pendingStreamCancelsRef.current -= 1;
+          // Release only if this composer is still idle; a new recording owns the lease again.
+          if (pendingStreamCancelsRef.current === 0 && phaseRef.current === "idle") {
+            releaseVoiceDictationSession(sessionOwnerRef.current);
+          }
         });
     },
     [voiceDictationService],
