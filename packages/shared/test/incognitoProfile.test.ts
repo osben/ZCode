@@ -3,6 +3,9 @@ import { z } from "zod";
 import {
   INCOGNITO_CAPABILITY_KEYS,
   INCOGNITO_LOCKDOWN_PROFILE,
+  INCOGNITO_PROMPT_TOGGLES_UNSUPPORTED_ERROR,
+  INCOGNITO_SESSION_UNSUPPORTED_ERROR,
+  INCOGNITO_UNSUPPORTED_ERROR,
   buildIncognitoProfile,
   incognitoExcludes,
   incognitoProfileSchema,
@@ -18,38 +21,31 @@ import {
 } from "../src/zcode-protocol/index.js";
 import { hostCapabilitiesSchema, parseCommandEnvelope } from "../src/zcode-protocol-v4/index.js";
 
-const { version: _version, ...allOff } = INCOGNITO_LOCKDOWN_PROFILE;
-const allOn = Object.fromEntries(INCOGNITO_CAPABILITY_KEYS.map((key) => [key, true]));
+const allOff = { ...INCOGNITO_LOCKDOWN_PROFILE };
+const PROMPT_TOGGLE_KEYS = ["identity", "harness", "environment", "automationTools"] as const;
+const PRE_TOGGLE_KEYS = INCOGNITO_CAPABILITY_KEYS.filter(
+  (key) => !(PROMPT_TOGGLE_KEYS as readonly string[]).includes(key),
+);
 
 describe("incognito profile", () => {
-  it("lockdown profile has every capability off", () => {
-    expect(INCOGNITO_LOCKDOWN_PROFILE.version).toBe(2);
+  it("is a flat strict profile with the thirteen capability keys and no version field", () => {
     expect(INCOGNITO_CAPABILITY_KEYS).toHaveLength(13);
+    expect(INCOGNITO_CAPABILITY_KEYS).not.toContain("version");
+    expect(Object.keys(INCOGNITO_LOCKDOWN_PROFILE).sort()).toEqual(
+      [...INCOGNITO_CAPABILITY_KEYS].sort(),
+    );
+    expect(incognitoProfileSchema.safeParse({ ...allOff, version: 2 }).success).toBe(false);
+    expect(incognitoProfileSchema.safeParse({ ...allOff, extra: true }).success).toBe(false);
+    expect(incognitoProfileSchema.safeParse({ skills: true }).success).toBe(false);
+  });
+
+  it("lockdown profile has every capability off", () => {
     for (const key of INCOGNITO_CAPABILITY_KEYS) {
       expect(INCOGNITO_LOCKDOWN_PROFILE[key]).toBe(false);
     }
     expect(incognitoProfileSchema.parse(INCOGNITO_LOCKDOWN_PROFILE)).toEqual(
       INCOGNITO_LOCKDOWN_PROFILE,
     );
-  });
-
-  it("requires every capability explicitly and rejects unknown keys", () => {
-    expect(incognitoProfileSchema.safeParse({ version: 1, skills: true }).success).toBe(false);
-    expect(
-      incognitoProfileSchema.safeParse({ ...INCOGNITO_LOCKDOWN_PROFILE, extra: true }).success,
-    ).toBe(false);
-    expect(
-      incognitoProfileSchema.safeParse({ ...INCOGNITO_LOCKDOWN_PROFILE, version: 3 }).success,
-    ).toBe(false);
-    // v2 requires the four v2 toggles; a v1-shaped object is not a v2 profile.
-    const {
-      identity: _i,
-      harness: _h,
-      environment: _e,
-      automationTools: _a,
-      ...v1Shape
-    } = INCOGNITO_LOCKDOWN_PROFILE;
-    expect(incognitoProfileSchema.safeParse({ ...v1Shape, version: 2 }).success).toBe(false);
   });
 
   it("resolves Settings defaults to every capability off and keeps explicit values", () => {
@@ -65,9 +61,9 @@ describe("incognito profile", () => {
     expect(incognitoProfilesEqual(INCOGNITO_LOCKDOWN_PROFILE, INCOGNITO_LOCKDOWN_PROFILE)).toBe(
       true,
     );
-    expect(
-      incognitoProfilesEqual(INCOGNITO_LOCKDOWN_PROFILE, { ...allOff, version: 1, skills: true }),
-    ).toBe(false);
+    expect(incognitoProfilesEqual(INCOGNITO_LOCKDOWN_PROFILE, { ...allOff, skills: true })).toBe(
+      false,
+    );
     expect(incognitoProfilesEqual(INCOGNITO_LOCKDOWN_PROFILE, undefined)).toBe(false);
     expect(incognitoProfilesEqual(undefined, undefined)).toBe(true);
   });
@@ -88,19 +84,21 @@ describe("incognito profile", () => {
     );
   });
 
-  it("reads an unparsable stored profile as lockdown, never as a normal session", () => {
+  it("reads any stored value that is not the exact flat profile as lockdown, never as a normal session", () => {
     expect(parseStoredIncognitoProfile("{not json")).toEqual(INCOGNITO_LOCKDOWN_PROFILE);
+    // A version-era row (the version key is unknown to the flat schema) is not a current profile.
     expect(
-      parseStoredIncognitoProfile(JSON.stringify({ ...INCOGNITO_LOCKDOWN_PROFILE, version: 3 })),
+      parseStoredIncognitoProfile(JSON.stringify({ ...INCOGNITO_LOCKDOWN_PROFILE, version: 2 })),
     ).toEqual(INCOGNITO_LOCKDOWN_PROFILE);
-    expect(parseStoredIncognitoProfile(JSON.stringify({ version: 2, skills: true }))).toEqual(
+    expect(parseStoredIncognitoProfile(JSON.stringify({ skills: true }))).toEqual(
       INCOGNITO_LOCKDOWN_PROFILE,
     );
+    expect(parseStoredIncognitoProfile(JSON.stringify(allOff))).toEqual(allOff);
     expect(parseStoredIncognitoProfile(null)).toBeUndefined();
   });
 
-  it("upgrades a stored v1 profile to v2 with the four v2 toggles included (v1 always ran with them)", () => {
-    const v1Stored = JSON.stringify({
+  it("reads a pre-toggle nine-key row as lockdown, with no upgrade-on-read", () => {
+    const preToggleStored = JSON.stringify({
       version: 1,
       projectInstructions: false,
       skills: true,
@@ -112,31 +110,38 @@ describe("incognito profile", () => {
       outputStyle: false,
       systemPromptOverrides: false,
     });
-    expect(parseStoredIncognitoProfile(v1Stored)).toEqual({
-      ...INCOGNITO_LOCKDOWN_PROFILE,
-      version: 2,
-      skills: true,
-      identity: true,
-      harness: true,
-      environment: true,
-      automationTools: true,
-    });
-    // A v1 object with an unknown key is not a v1 profile: fail closed.
-    expect(
-      parseStoredIncognitoProfile(JSON.stringify({ ...JSON.parse(v1Stored), extra: true })),
-    ).toEqual(INCOGNITO_LOCKDOWN_PROFILE);
+    expect(parseStoredIncognitoProfile(preToggleStored)).toEqual(INCOGNITO_LOCKDOWN_PROFILE);
+    const withoutVersion = Object.fromEntries(
+      Object.entries(JSON.parse(preToggleStored) as Record<string, unknown>).filter(
+        ([key]) => key !== "version",
+      ),
+    );
+    // Missing the four toggle keys: not a current profile either.
+    expect(parseStoredIncognitoProfile(JSON.stringify(withoutVersion))).toEqual(
+      INCOGNITO_LOCKDOWN_PROFILE,
+    );
   });
 
-  it("v1 readers reject a v2 profile (an older build falls back to its own lockdown)", () => {
-    const v1Reader = {
-      version: z.literal(1),
-      ...Object.fromEntries(
-        INCOGNITO_CAPABILITY_KEYS.filter(
-          (key) => !["identity", "harness", "environment", "automationTools"].includes(key),
-        ).map((key) => [key, z.boolean()]),
-      ),
-    };
-    expect(z.object(v1Reader).strict().safeParse(INCOGNITO_LOCKDOWN_PROFILE).success).toBe(false);
+  it("pins the pre-change readers: strict shapes reject a thirteen-key row with a version key or without one", () => {
+    // Reproduces the shape the nine-key reader used (`.strict()` capabilities, then `.extend({ version })`).
+    // zod 4 keeps `.strict()` through `.extend()`, so unknown keys and a missing version both fail.
+    const preToggleReader = z
+      .object(Object.fromEntries(PRE_TOGGLE_KEYS.map((key) => [key, z.boolean()])))
+      .strict()
+      .extend({ version: z.literal(1) });
+    expect(preToggleReader.safeParse(INCOGNITO_LOCKDOWN_PROFILE).success).toBe(false);
+    expect(preToggleReader.safeParse({ ...INCOGNITO_LOCKDOWN_PROFILE, version: 1 }).success).toBe(
+      false,
+    );
+    // The toggle-era reader required `version: 2`, so a versionless row fails it too.
+    const toggleEraReader = z
+      .object(Object.fromEntries(INCOGNITO_CAPABILITY_KEYS.map((key) => [key, z.boolean()])))
+      .strict()
+      .extend({ version: z.literal(2) });
+    expect(toggleEraReader.safeParse(INCOGNITO_LOCKDOWN_PROFILE).success).toBe(false);
+    expect(toggleEraReader.safeParse({ ...INCOGNITO_LOCKDOWN_PROFILE, version: 2 }).success).toBe(
+      true,
+    );
   });
 });
 
@@ -157,7 +162,7 @@ describe("incognitoDefaults fork setting", () => {
       false,
     );
     expect(
-      forkAppSettingsPatchSchema.safeParse({ incognitoDefaults: { ...allOff, version: 1 } })
+      forkAppSettingsPatchSchema.safeParse({ incognitoDefaults: { ...allOff, version: 2 } })
         .success,
     ).toBe(false);
   });
@@ -178,12 +183,13 @@ describe("incognito protocol fields", () => {
     });
   }
 
-  it("v4 createSession carries a strict resolved profile", () => {
+  it("v4 createSession carries a strict flat profile and rejects the versioned shape", () => {
     const result = createEnvelope({ incognito: profile });
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect((result.envelope.payload as { incognito?: unknown }).incognito).toEqual(profile);
     }
+    expect(createEnvelope({ incognito: { ...profile, version: 2 } }).ok).toBe(false);
     expect(createEnvelope({ incognito: { version: 1, skills: true } }).ok).toBe(false);
     expect(createEnvelope({}).ok).toBe(true);
   });
@@ -218,17 +224,19 @@ describe("incognito protocol fields", () => {
     ).toThrow();
   });
 
-  it("CLI and Host advertise incognito support as an optional capability", () => {
+  it("CLI and Host advertise incognito support as optional capabilities", () => {
     expect(zcodeRuntimeCapabilitiesSchema.parse({ incognitoSession: true }).incognitoSession).toBe(
       true,
     );
     expect(zcodeRuntimeCapabilitiesSchema.parse({}).incognitoSession).toBeUndefined();
-    // The version gate: a CLI without incognitoProfileV2 cannot persist or enforce the v2 toggles.
+    // The shape gate: a CLI without incognitoPromptToggles cannot persist or enforce the four prompt toggles.
     expect(
-      zcodeRuntimeCapabilitiesSchema.parse({ incognitoSession: true, incognitoProfileV2: true })
-        .incognitoProfileV2,
+      zcodeRuntimeCapabilitiesSchema.parse({
+        incognitoSession: true,
+        incognitoPromptToggles: true,
+      }).incognitoPromptToggles,
     ).toBe(true);
-    expect(zcodeRuntimeCapabilitiesSchema.parse({}).incognitoProfileV2).toBeUndefined();
+    expect(zcodeRuntimeCapabilitiesSchema.parse({}).incognitoPromptToggles).toBeUndefined();
     expect(
       hostCapabilitiesSchema.parse({
         nativeDialogs: true,
@@ -236,8 +244,19 @@ describe("incognito protocol fields", () => {
         binaryFrames: true,
         compression: "none",
         incognitoSession: true,
-        incognitoProfileV2: true,
-      }).incognitoProfileV2,
+        incognitoPromptToggles: true,
+      }).incognitoPromptToggles,
     ).toBe(true);
+  });
+
+  it("gate failures share the base code and carry a subcode that names the missing flag", () => {
+    expect(INCOGNITO_SESSION_UNSUPPORTED_ERROR.startsWith(INCOGNITO_UNSUPPORTED_ERROR)).toBe(true);
+    expect(INCOGNITO_PROMPT_TOGGLES_UNSUPPORTED_ERROR.startsWith(INCOGNITO_UNSUPPORTED_ERROR)).toBe(
+      true,
+    );
+    expect(INCOGNITO_SESSION_UNSUPPORTED_ERROR).not.toBe(
+      INCOGNITO_PROMPT_TOGGLES_UNSUPPORTED_ERROR,
+    );
+    expect(PROMPT_TOGGLE_KEYS.every((key) => INCOGNITO_CAPABILITY_KEYS.includes(key))).toBe(true);
   });
 });

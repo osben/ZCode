@@ -13,7 +13,7 @@ import { createTestAgentRuntime } from "./test-agent-runtime.js";
 import { createTestSessionEventStore } from "./test-event-store.js";
 import { createTestModelFactory } from "./test-runtime-model.js";
 
-// specs/incognito-session.md "Prompt toggles (v2)": each toggle owns its sections; the markers
+// specs/incognito-session.md "Prompt toggles": each toggle owns its sections; the markers
 // below identify those sections in the built provider-visible text.
 const MARKERS = {
   cliPrefix: "You are ZCode, an interactive coding agent",
@@ -90,7 +90,7 @@ describe("main agent prompt toggles", () => {
     expectMarkers(text, [...ALL_MARKERS, SAFETY_NOTICE, CONTEXT_MANAGEMENT], []);
   });
 
-  it("incognito with every v2 toggle off keeps only the safety floor and context management", () => {
+  it("incognito with every prompt toggle off keeps only the safety floor and context management", () => {
     const { system, text } = buildMain(INCOGNITO_LOCKDOWN_PROFILE);
     expectMarkers(text, [SAFETY_NOTICE, CONFIRMATION_PARAGRAPH, CONTEXT_MANAGEMENT], [
       ...ALL_MARKERS,
@@ -203,7 +203,7 @@ describe("subagent prompt toggles", () => {
     expect(text).toContain("Working directory: /workspace/app");
   });
 
-  it("an incognito subagent with all v2 toggles off keeps only its task prompt and the confirmation floor", () => {
+  it("an incognito subagent with all prompt toggles off keeps only its task prompt and the confirmation floor", () => {
     const text = subagentSystem(INCOGNITO_LOCKDOWN_PROFILE);
     expect(text).toContain("SUBAGENT_TASK_PROMPT");
     expect(text).toContain(CONFIRMATION_PARAGRAPH);

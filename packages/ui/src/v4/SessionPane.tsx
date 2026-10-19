@@ -2,6 +2,7 @@ import {
   selectComposerWorktreePipeline,
   useComposerWorktreePipelineStore,
 } from "@/store/composerWorktreePipelineStore.js";
+import { incognitoUnsupportedMessageId } from "@/lib/incognitoUnsupportedMessage.js";
 import { resolveSelectionSideInheritedModel } from "@/lib/selectionSideInheritedModel.js";
 import { useStartPlanRecommendation } from "@/hooks/useStartPlanRecommendation.js";
 import type { SessionCreateSource } from "@zcode/shared";
@@ -25,7 +26,6 @@ import { Hand } from "lucide-react";
 import {
   BUILTIN_MODEL_PROVIDER_IDS,
   buildCustomSupplierKey,
-  INCOGNITO_UNSUPPORTED_ERROR,
   TID_CHAT_EMPTY,
   TID_V4_SESSION_PANE,
   testId,
@@ -4027,9 +4027,10 @@ export function SessionPane({
         return "sent";
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
-        if (detail.includes(INCOGNITO_UNSUPPORTED_ERROR)) {
+        const incognitoMessageId = incognitoUnsupportedMessageId(detail);
+        if (incognitoMessageId) {
           // The Host or agent cannot honor incognito; keep the draft and its incognito selection.
-          toast(intl.formatMessage({ id: "chat.incognito.unsupported" }), { variant: "warning" });
+          toast(intl.formatMessage({ id: incognitoMessageId }), { variant: "warning" });
           return "blocked";
         }
         const runtimeModelUnavailable = detail.includes("provider.notInRegistry");

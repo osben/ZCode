@@ -5900,7 +5900,7 @@ export function createZCodeAgentService(
           workspaceHookReview: true,
           independentPlanState: true,
           incognitoSession: true,
-          incognitoProfileV2: true,
+          incognitoPromptToggles: true,
           // Use the same capability set as the connection-scope hello so internal consumers that call the base service directly
           // can also receive `workflowRun.*` deltas (their own clientHello determines whether they actually receive them).
           workflowRunDeltas: true,

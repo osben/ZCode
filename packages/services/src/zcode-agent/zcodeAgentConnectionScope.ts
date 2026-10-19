@@ -219,7 +219,7 @@ function createHello(context: ZCodeAgentV4ConnectionContext): HelloMessage {
       workspaceHookReview: true,
       independentPlanState: true,
       incognitoSession: true,
-      incognitoProfileV2: true,
+      incognitoPromptToggles: true,
       // This Host forwards `workflowRun.*` key-level deltas, so clients can see them and declare support in clientHello
       // (that capabilities object is .strict(), which would otherwise prevent handshakes with older Hosts).
       workflowRunDeltas: true,

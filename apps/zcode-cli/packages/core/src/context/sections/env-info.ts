@@ -76,7 +76,7 @@ export function buildEnvInfoSection(
 
 /**
  * `environment` toggle off: only the execution-worktree isolation bullet survives (specs/incognito-session.md,
- * "Prompt toggles (v2)"). Null when no worktree applies, so the section is omitted entirely.
+ * "Prompt toggles"). Null when no worktree applies, so the section is omitted entirely.
  */
 export function buildWorktreeOnlyEnvSection(
   executionWorktree?: ExecutionWorktreeEnvFact,
