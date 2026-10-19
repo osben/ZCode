@@ -15,7 +15,7 @@ export interface SystemPromptSection {
    * SHA-256 hex of the override file's raw bytes, or null when the file is missing. Older hosts
    * omit this field; the UI then skips conflict checking for the section.
    */
-  revision: string | null;
+  revision?: string | null;
 }
 
 /** Result of a conditional write or delete. A conflict means the file changed since `expectedRevision`. */
