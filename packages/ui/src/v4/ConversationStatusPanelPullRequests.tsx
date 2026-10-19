@@ -72,7 +72,7 @@ export function ConversationStatusPanelPullRequests({
         <PullRequestToolsRow
           key={`${pullRequest.repository}#${pullRequest.number}`}
           pullRequest={pullRequest}
-          failingCheckCount={failingCheckCount}
+          failingCheckCount={pullRequest.failingCheckCount}
           onOpen={() => platform?.openExternal(pullRequest.url)}
         />
       ))}
