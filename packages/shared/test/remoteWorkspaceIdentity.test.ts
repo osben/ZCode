@@ -5,6 +5,7 @@ import {
   buildRemoteWorkspaceIdentity,
   isRemoteWorkspaceIdentity,
   parseRemoteWorkspaceIdentity,
+  rebaseRemoteWorkspaceIdentity,
 } from "../src/remote-workspace-identity.js";
 
 describe("parseRemoteWorkspaceIdentity", () => {
@@ -103,5 +104,36 @@ describe("parseRemoteWorkspaceIdentity", () => {
   it("isRemoteWorkspaceIdentity 与 parse 判定一致", () => {
     expect(isRemoteWorkspaceIdentity("remote:ssh:host:22:root:/srv/app")).toBe(true);
     expect(isRemoteWorkspaceIdentity("/Users/dev/ws")).toBe(false);
+  });
+});
+
+describe("rebaseRemoteWorkspaceIdentity", () => {
+  it("keeps the authority and re-points the path at a worktree of the same remote", () => {
+    const parent = buildRemoteWorkspaceIdentity("/home/dev/repo", {
+      kind: "ssh",
+      host: "devbox",
+      port: 22,
+      username: "dev",
+    });
+    const rebased = rebaseRemoteWorkspaceIdentity(parent, "/home/dev/repo/.worktrees/feature-a/");
+    expect(rebased).toBe("remote:ssh:devbox:22:dev:/home/dev/repo/.worktrees/feature-a");
+    expect(parseRemoteWorkspaceIdentity(rebased!)).toEqual({
+      kind: "ssh",
+      workspacePath: "/home/dev/repo/.worktrees/feature-a",
+    });
+  });
+
+  it("handles WSL identities with an explicit user and server identities", () => {
+    expect(rebaseRemoteWorkspaceIdentity("remote:wsl:Ubuntu:dev:/work/demo", "/work/demo-wt")).toBe(
+      "remote:wsl:Ubuntu:dev:/work/demo-wt",
+    );
+    expect(rebaseRemoteWorkspaceIdentity("remote:server:lab:/work/demo", "/work/demo/wt")).toBe(
+      "remote:server:lab:/work/demo/wt",
+    );
+  });
+
+  it("returns null for non-remote identities so callers open by path alone", () => {
+    expect(rebaseRemoteWorkspaceIdentity("", "/Users/dev/repo-wt")).toBeNull();
+    expect(rebaseRemoteWorkspaceIdentity("/Users/dev/repo", "/Users/dev/repo-wt")).toBeNull();
   });
 });

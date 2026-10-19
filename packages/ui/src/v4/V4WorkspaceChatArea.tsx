@@ -114,6 +114,11 @@ export interface V4WorkspaceChatAreaProps {
     capabilities?: { selectionSideChat?: boolean },
   ) => void;
   onOpenBrowserUrl?: (url: string) => void;
+  /** Opens a created worktree through the shared workspace + draft flow; forwarded to every pane through the shell binding. */
+  onCreateTaskInWorkspace?: (
+    workspacePath: string,
+    workspaceIdentity?: string,
+  ) => void | Promise<void>;
   onOpenAutomationsMain?: OpenAutomationsMain;
   onOpenCodeViewer?: (source: CodeViewerSource) => void;
   onAutoOpenAssistantPptx?: (request: AssistantPreviewCardsAutoOpenRequest) => void;
@@ -177,6 +182,7 @@ export function V4WorkspaceChatArea({
   onOpenGitReview,
   onPaneActiveSessionChange,
   onOpenBrowserUrl,
+  onCreateTaskInWorkspace,
   onOpenAutomationsMain,
   onOpenCodeViewer,
   onAutoOpenAssistantPptx,
@@ -297,6 +303,7 @@ export function V4WorkspaceChatArea({
       workspacePath,
       ...(workspaceIdentity ? { workspaceIdentity } : {}),
       ...(remoteSessionId ? { remoteSessionId } : {}),
+      onCreateTaskInWorkspace,
       isDesktop,
       compactForRemoteControl,
       readOnlySessionId,
@@ -348,6 +355,7 @@ export function V4WorkspaceChatArea({
       workspacePath,
       workspaceIdentity,
       remoteSessionId,
+      onCreateTaskInWorkspace,
       isDesktop,
       compactForRemoteControl,
       readOnlySessionId,

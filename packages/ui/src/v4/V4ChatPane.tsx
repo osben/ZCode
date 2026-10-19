@@ -33,6 +33,8 @@ import type {
 export interface V4ChatPaneProps {
   workspacePath: string;
   workspaceIdentity?: string;
+  /** Remote session bound to the workspace identity; required to route a remote worktree opened from a created notice. */
+  remoteSessionId?: string;
   /** Prompt-template telemetry currently covers Desktop only. */
   isDesktop?: boolean;
   readOnly?: boolean;
@@ -40,6 +42,11 @@ export interface V4ChatPaneProps {
   compactForRemoteControl?: boolean;
   /** CLI session ID; null = first send from a draft. */
   sessionId: string | null;
+  /** Open a path through the app's existing workspace + draft flow. */
+  onCreateTaskInWorkspace?: (
+    workspacePath: string,
+    workspaceIdentity?: string,
+  ) => void | Promise<void>;
   /** Open entry point for the current workspace's primary pane; count as sidebar when not provided. */
   openTrigger?: SessionOpenTrigger;
   provider?: ZCodeProvider;
@@ -91,11 +98,13 @@ export interface V4ChatPaneProps {
 export function V4ChatPane({
   workspacePath,
   workspaceIdentity,
+  remoteSessionId,
   isDesktop = false,
   readOnly = false,
   selectionSideChat = false,
   compactForRemoteControl = false,
   sessionId,
+  onCreateTaskInWorkspace,
   openTrigger = "sidebar",
   provider,
   onSessionCreated,
@@ -139,9 +148,11 @@ export function V4ChatPane({
         readOnly={readOnly}
         selectionSideChat={selectionSideChat}
         sessionId={sessionId}
+        onCreateTaskInWorkspace={onCreateTaskInWorkspace}
         openTrigger={openTrigger}
         workspacePath={workspacePath}
         workspaceIdentity={workspaceIdentity}
+        remoteSessionId={remoteSessionId}
         isDesktop={isDesktop}
         compactForRemoteControl={compactForRemoteControl}
         provider={provider}

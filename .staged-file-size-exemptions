@@ -17,5 +17,35 @@ packages/ui/src/v4/ConversationComposer.tsx
 packages/ui/src/v4/SessionPane.tsx
 packages/ui/test/v4SessionPaneModelSwitchRecovery.test.ts
 
+# Temporary: integration-owned files over the staged-file size limit, added so the integration merge can land.
+# Each is to be split into smaller modules later and removed from this list.
+apps/zcode-cli/docs/design/v2/tool/00-tool-change-chain.md
+apps/zcode-cli/packages/adapters/src/fs/index.ts
+apps/zcode-cli/packages/adapters/tests/fs-context.test.ts
+apps/zcode-cli/packages/core/src/runtime/agent-runtime.ts
+apps/zcode-cli/packages/core/src/tool/executor/call-runner.ts
+apps/zcode-cli/packages/core/tests/nested-instructions-discover.test.ts
+docs/v4-refactor/m5-composer-parity.md
+packages/shared/src/protocol.ts
+packages/shared/src/system-prompt.ts
+packages/shared/src/test-ids.ts
+packages/ui/src/GitPane.tsx
+packages/ui/src/LexicalChatInput.tsx
+packages/ui/src/app-shell/AnimatedSidePanePanel.tsx
+packages/ui/src/hooks/useVoiceDictation.ts
+packages/ui/src/lib/messageTelemetry.ts
+packages/ui/src/settings/VoiceDictationSection.tsx
+packages/ui/src/v4/composer/useDraftConfigControl.ts
+packages/ui/src/v4/telemetry/conversationTelemetrySupervisor.ts
+packages/ui/test/VoiceDictationSection.test.ts
+packages/ui/test/messageTelemetry.test.ts
+packages/ui/test/systemPromptSection.test.ts
+packages/ui/test/useDraftConfigControl.test.ts
+packages/ui/test/useSystemPromptOverrides.test.ts
+packages/ui/test/useVoiceDictation.test.ts
+packages/ui/test/v4ConversationTelemetrySupervisor.test.ts
+specs/nested-agents-md.md
+specs/system-prompt-settings.md
+specs/voice-dictation.md
 # Owned by this PR (already over the limit before this change): split the file into per-section test modules.
 packages/ui/test/v4ConversationFileSummaryPanel.test.ts

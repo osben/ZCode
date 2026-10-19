@@ -301,6 +301,7 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
   reconnectingRemoteWorkspaceLogsByWorkspaceKey = EMPTY_RECONNECTING_REMOTE_WORKSPACE_LOGS_BY_WORKSPACE_KEY,
   onCreateTask,
   onCreateConversationTask,
+  onCreateTaskInWorkspace,
   onResolveConversationWorkspace,
   onOpenWorkspace,
   onOpenFolderFromWorkspaceMenu,
@@ -2236,6 +2237,8 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                     provider={activeTaskProvider ?? undefined}
                     onSessionCreated={handleV4SessionCreated}
                     onSessionDeleted={handleV4SessionDeleted}
+                    onCreateTaskInWorkspace={onCreateTaskInWorkspace}
+                    remoteSessionId={workspaceRemoteSessionId ?? undefined}
                     draftComposerHeader={draftComposerHeader}
                     gitSummary={gitState.summary}
                     gitDirtyFileCount={gitDirtyFileCount}
@@ -2752,6 +2755,7 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                                     onOpenGitReview={handleOpenGitReview}
                                     onPaneActiveSessionChange={handlePaneActiveSessionChange}
                                     onOpenBrowserUrl={handleOpenBrowserUrl}
+                                    onCreateTaskInWorkspace={onCreateTaskInWorkspace}
                                     onOpenAutomationsMain={handleOpenAutomations}
                                     onOpenCodeViewer={handleOpenCodeViewer}
                                     onAutoOpenAssistantPptx={

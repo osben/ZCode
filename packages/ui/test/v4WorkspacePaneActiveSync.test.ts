@@ -201,6 +201,22 @@ describe("V4WorkspaceChatArea pane active sync", () => {
     );
   });
 
+  it("forwards the worktree-open callback through the shell binding to the primary pane", () => {
+    leafPaneCapture.props = [];
+    const onCreateTaskInWorkspace = vi.fn();
+    renderClient(
+      createElement(V4WorkspaceChatArea, {
+        sessionId: "main-session",
+        workspacePath: "/workspace",
+        onCreateTaskInWorkspace,
+      }),
+    );
+
+    const primaryPane = leafPaneCapture.props.find((props) => props.paneId === V4_PRIMARY_PANE_ID);
+    expect(primaryPane).toBeTruthy();
+    expect(primaryPane!.shell.onCreateTaskInWorkspace).toBe(onCreateTaskInWorkspace);
+  });
+
   it("does not sync read-only subagent pane focus into the shell active task", () => {
     createGroupedWorkbenchState({ readOnlyChild: true });
     const groupId = useWorkbenchGroupStore.getState().activeGroupId;

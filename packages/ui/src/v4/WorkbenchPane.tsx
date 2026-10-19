@@ -326,6 +326,11 @@ export interface WorkbenchShellBinding {
     executionSessionId?: string,
   ) => void;
   onOpenBrowserUrl?: (url: string) => void;
+  /** Opens a created worktree through the shared workspace + draft flow; the created notice hides its open action without it. */
+  onCreateTaskInWorkspace?: (
+    workspacePath: string,
+    workspaceIdentity?: string,
+  ) => void | Promise<void>;
   onOpenAutomationsMain?: OpenAutomationsMain;
   onOpenCodeViewer?: (source: CodeViewerSource) => void;
   onAutoOpenAssistantPptx?: (request: AssistantPreviewCardsAutoOpenRequest) => void;
@@ -650,6 +655,7 @@ export function WorkbenchLeafPane({
           onRefreshGit={shouldUseShellStatusPanel ? shell.onRefreshGit : undefined}
           onOpenGitReview={shouldUseShellStatusPanel ? shell.onOpenGitReview : undefined}
           onOpenBrowserUrl={shell.onOpenBrowserUrl}
+          onCreateTaskInWorkspace={shell.onCreateTaskInWorkspace}
           onOpenAutomationsMain={shell.onOpenAutomationsMain}
           onOpenCodeViewer={shell.onOpenCodeViewer}
           onAutoOpenAssistantPptx={shell.onAutoOpenAssistantPptx}
