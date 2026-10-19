@@ -7678,13 +7678,10 @@ const zhCN: Record<string, string> = {
   "settings.systemPrompt.edit": "编辑",
   "settings.systemPrompt.restoreDefault": "恢复默认",
   "settings.systemPrompt.restoreConfirm.title": "恢复内置提示词？",
-  "settings.systemPrompt.restoreConfirm.description":
-    "这将删除 {host} 上自定义的“{section}”提示词，并恢复内置默认值。",
   "settings.systemPrompt.restoreConfirm.confirm": "恢复默认",
   "settings.systemPrompt.restored": "系统提示词片段已恢复为默认文本。",
   "settings.systemPrompt.restoreFailed": "恢复默认文本失败。",
   "settings.systemPrompt.editorLabel": "提示词文本",
-  "settings.systemPrompt.characterCount": "{count} 个字符",
   "settings.systemPrompt.identityBaselineLoading": "正在确认当前输出风格后再编辑…",
   "settings.systemPrompt.identityBaselineUnavailable":
     "无法加载输出风格。请在设置中打开“输出风格”并重试，然后再编辑此片段。",
@@ -7715,6 +7712,69 @@ const zhCN: Record<string, string> = {
   "settings.outputStyles.title": "输出风格",
   "settings.outputStyles.description":
     "选择智能体组织回复的方式。内置默认值保存在应用代码中；编辑会保存为覆盖文件，随时可以恢复默认。",
+  "settings.systemPrompt.defaultBadge": "默认",
+  "settings.systemPrompt.sizeLine": "{characters} 个字符 · 约 {tokens} tokens",
+  "settings.systemPrompt.openFolder": "打开文件夹",
+  "settings.systemPrompt.incognitoNote":
+    "当隐身配置未启用“系统提示词覆盖”能力时，隐身会话会忽略这些覆盖。",
+  "settings.systemPrompt.unsavedDot": "未保存的更改",
+  "settings.systemPrompt.blockedByDraft":
+    "请先保存或放弃当前打开的草稿。同一时间只能有一个部分存在未保存的更改。",
+  "settings.systemPrompt.dirtyNote":
+    "“{section}”有未保存的草稿。保存或放弃后，才能编辑或恢复其他部分。",
+  "settings.systemPrompt.customizedCount": "已自定义 {count} 项",
+  "settings.systemPrompt.resetAll": "全部恢复默认…",
+  "settings.systemPrompt.resetAll.title": "恢复所有自定义部分的默认内容？",
+  "settings.systemPrompt.resetAll.description":
+    "将删除 {host} 上这 {count} 个部分的覆盖文件，新会话将使用内置默认内容：",
+  "settings.systemPrompt.resetAll.confirm": "全部恢复",
+  "settings.systemPrompt.resetAllDone": "已将 {count} 个部分恢复为内置默认内容。",
+  "settings.systemPrompt.resetAllPartial":
+    "已恢复 {restored} 个部分；{conflicts} 个在磁盘上已被更改，{failed} 个失败。列表已刷新。",
+  "settings.systemPrompt.changedOnDisk": "该部分已在磁盘上被更改。列表已刷新，请检查后再试。",
+  "settings.systemPrompt.restoreConfirm.description":
+    "将删除 {host} 上此部分的覆盖文件。下方的默认内容将在新会话中生效。",
+  "settings.systemPrompt.restoreConfirm.preview": "将恢复的内置默认内容",
+  "settings.systemPrompt.diskChanged.title": "磁盘上已更改",
+  "settings.systemPrompt.diskChanged.description":
+    "你编辑时，此部分的文件在设置之外被更改。重新加载将放弃你的草稿；覆盖则用你的草稿替换文件。",
+  "settings.systemPrompt.diskChanged.reload": "从磁盘重新加载",
+  "settings.systemPrompt.diskChanged.overwrite": "覆盖",
+  "settings.systemPrompt.saveReason.unchanged": "没有可保存的更改。",
+  "settings.systemPrompt.saveReason.diskChanged":
+    "保存前，请先在上方选择“从磁盘重新加载”或“覆盖”。",
+  "settings.systemPrompt.shortcutHint": "Ctrl/Cmd+S 保存。Esc 取消，丢弃更改前会询问。",
+  "settings.systemPrompt.diffMode.saved": "与已保存版本对比",
+  "settings.systemPrompt.diffMode.default": "与内置默认对比",
+  "settings.systemPrompt.diffNone": "没有差异。",
+  "settings.systemPrompt.diffTooLarge":
+    "内容过大，无法在此显示差异（已保存 {baselineLines} 行，草稿 {draftLines} 行）。请手动比较。",
+  "settings.systemPrompt.warning.unknownPlaceholder":
+    "{token} 不是此部分支持的占位符，将按普通文本发送。",
+  "settings.systemPrompt.warning.missingPlaceholder":
+    "缺少 {token}。只有包含此占位符时，运行时才会填入对应内容。",
+  "settings.systemPrompt.warning.confirmationRemoved":
+    "缺少要求智能体在执行难以撤销或对外的操作前先确认的段落。",
+  "settings.systemPrompt.assembled.title": "组装后的提示词（近似）",
+  "settings.systemPrompt.assembled.description":
+    "按运行时顺序列出主提示词各块的生效内容。环境、记忆索引、工具和工作区说明会在运行时添加，此处不显示。",
+  "settings.systemPrompt.assembled.tokens": "约 {tokens} tokens · {characters} 个字符",
+  "settings.systemPrompt.info.cliPrefix":
+    "主提示词的第一行，将智能体命名为 ZCode。隐身配置关闭身份时不包含。",
+  "settings.systemPrompt.info.identityIntro":
+    "主提示词的第二段，设定智能体的角色。启用输出风格时，基线为输出风格的开场；覆盖内容仍然优先，输出风格章节照常追加。",
+  "settings.systemPrompt.info.harness":
+    "说明工具与显示环境：Markdown 输出、权限模式、钩子和文件工具偏好。隐身配置关闭 harness 时不包含。",
+  "settings.systemPrompt.info.communication":
+    "智能体如何向你写作，包括执行难以撤销的操作前先确认的段落。隐身配置关闭 harness 时不包含。",
+  "settings.systemPrompt.info.contextManagement":
+    "位于主提示词的记忆指引之后，涵盖上下文摘要与自主工作规则。",
+  "settings.systemPrompt.info.memoryGuidance":
+    "智能体如何读写持久记忆。仅当会话启用记忆时包含；{{memoryRoot}} 会替换为该会话的记忆目录。",
+  "settings.systemPrompt.info.memoryExtraction":
+    "一轮结束后在后台保存记忆的指令。仅在本机运行，远程工作区从不使用。",
+  "settings.systemPrompt.info.memoryDream":
+    "手动 /dream 整理记忆的指令。仅在本机运行；工具限制和会话列表始终会追加。",
   "settings.outputStyles.defaultPrompt": "没有额外的输出风格指令。ZCode 使用标准系统提示词。",
   "settings.outputStyles.desktopOnly": "输出风格需要在桌面应用中管理。",
   "settings.outputStyles.host.local": "本机",

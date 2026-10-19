@@ -7615,13 +7615,10 @@ const ukUA: Record<string, string> = {
   "settings.systemPrompt.edit": "Редагувати",
   "settings.systemPrompt.restoreDefault": "Відновити стандартний",
   "settings.systemPrompt.restoreConfirm.title": "Відновити вбудований промпт?",
-  "settings.systemPrompt.restoreConfirm.description":
-    "Буде видалено змінений промпт «{section}» на хості {host} і відновлено вбудоване стандартне значення.",
   "settings.systemPrompt.restoreConfirm.confirm": "Відновити стандартний",
   "settings.systemPrompt.restored": "Фрагмент системного промпту повернуто до стандартного тексту.",
   "settings.systemPrompt.restoreFailed": "Не вдалося відновити стандартний текст.",
   "settings.systemPrompt.editorLabel": "Текст промпту",
-  "settings.systemPrompt.characterCount": "{count} символів",
   "settings.systemPrompt.identityBaselineLoading":
     "Перевіряємо активний стиль відповідей перед редагуванням…",
   "settings.systemPrompt.identityBaselineUnavailable":
@@ -7654,6 +7651,72 @@ const ukUA: Record<string, string> = {
   "settings.outputStyles.title": "Стилі відповідей",
   "settings.outputStyles.description":
     "Виберіть, як агент формує свої відповіді. Вбудовані стандартні значення зберігаються в коді програми; редагування зберігаються як файли перевизначення, які завжди можна відкотити.",
+  "settings.systemPrompt.defaultBadge": "За замовчуванням",
+  "settings.systemPrompt.sizeLine": "{characters} символів · ~{tokens} токенів",
+  "settings.systemPrompt.openFolder": "Відкрити папку",
+  "settings.systemPrompt.incognitoNote":
+    "Коли в профілі інкогніто вимкнено можливість «Перевизначення системного промпту», сесії інкогніто ігнорують ці перевизначення.",
+  "settings.systemPrompt.unsavedDot": "Незбережені зміни",
+  "settings.systemPrompt.blockedByDraft":
+    "Спершу збережіть або відхиліть відкриту чернетку. Одночасно лише один розділ може мати незбережені зміни.",
+  "settings.systemPrompt.dirtyNote":
+    "У розділі «{section}» є незбережена чернетка. Збережіть або відхиліть її, щоб редагувати чи відновлювати інші розділи.",
+  "settings.systemPrompt.customizedCount": "Змінено: {count}",
+  "settings.systemPrompt.resetAll": "Скинути всі зміни…",
+  "settings.systemPrompt.resetAll.title": "Скинути всі змінені розділи?",
+  "settings.systemPrompt.resetAll.description":
+    "Файли перевизначень для цих {count} розділів на хості {host} буде видалено, і для нових сесій діятимуть вбудовані значення за замовчуванням:",
+  "settings.systemPrompt.resetAll.confirm": "Скинути всі",
+  "settings.systemPrompt.resetAllDone": "Відновлено вбудовані значення для розділів: {count}.",
+  "settings.systemPrompt.resetAllPartial":
+    "Відновлено розділів: {restored}. Змінено на диску: {conflicts}, помилок: {failed}. Список оновлено.",
+  "settings.systemPrompt.changedOnDisk":
+    "Цей розділ змінено на диску. Список оновлено; перегляньте його перед повторною спробою.",
+  "settings.systemPrompt.restoreConfirm.description":
+    "Файл перевизначення для цього розділу на хості {host} буде видалено. Текст за замовчуванням нижче набуде чинності для нових сесій.",
+  "settings.systemPrompt.restoreConfirm.preview":
+    "Вбудований текст за замовчуванням, який буде відновлено",
+  "settings.systemPrompt.diskChanged.title": "Змінено на диску",
+  "settings.systemPrompt.diskChanged.description":
+    "Файл цього розділу було змінено поза налаштуваннями, поки ви редагували. Перезавантаження відхилить вашу чернетку; перезапис замінить файл вашою чернеткою.",
+  "settings.systemPrompt.diskChanged.reload": "Перезавантажити з диска",
+  "settings.systemPrompt.diskChanged.overwrite": "Перезаписати",
+  "settings.systemPrompt.saveReason.unchanged": "Немає змін для збереження.",
+  "settings.systemPrompt.saveReason.diskChanged":
+    "Перед збереженням оберіть «Перезавантажити з диска» або «Перезаписати» вище.",
+  "settings.systemPrompt.shortcutHint":
+    "Ctrl/Cmd+S зберігає. Esc скасовує, перед відхиленням змін запитуючи підтвердження.",
+  "settings.systemPrompt.diffMode.saved": "порівняно зі збереженим",
+  "settings.systemPrompt.diffMode.default": "порівняно з вбудованим",
+  "settings.systemPrompt.diffNone": "Відмінностей немає.",
+  "settings.systemPrompt.diffTooLarge":
+    "Занадто великий для порівняння тут ({baselineLines} рядків збережено, {draftLines} рядків у чернетці). Порівняйте текст вручну.",
+  "settings.systemPrompt.warning.unknownPlaceholder":
+    "{token} не є заповнювачем для цього розділу, тому буде надіслано як звичайний текст.",
+  "settings.systemPrompt.warning.missingPlaceholder":
+    "Немає {token}. Середовище заповнює його лише тоді, коли цей заповнювач присутній.",
+  "settings.systemPrompt.warning.confirmationRemoved":
+    "Відсутній абзац, який просить агента підтверджувати дії, що важко відмінити або мають зовнішній вплив.",
+  "settings.systemPrompt.assembled.title": "Зібраний промпт (приблизно)",
+  "settings.systemPrompt.assembled.description":
+    "Блоки основного промпту в порядку виконання з їхнім чинним текстом. Середовище, індекс пам'яті, інструменти та інструкції робочої області додаються під час виконання і тут не показані.",
+  "settings.systemPrompt.assembled.tokens": "Приблизно {tokens} токенів · {characters} символів",
+  "settings.systemPrompt.info.cliPrefix":
+    "Перший рядок основного промпту: називає агента ZCode. Не включається, якщо профіль інкогніто вимикає ідентичність.",
+  "settings.systemPrompt.info.identityIntro":
+    "Другий блок основного промпту: визначає роль агента. За увімкненого стилю виводу базовим є вступ стилю; перевизначення має пріоритет, а розділ стилю виводу додається як і раніше.",
+  "settings.systemPrompt.info.harness":
+    "Описує інструментальне та екранне середовище: Markdown-вивід, режими дозволів, хуки та вподобання щодо файлових інструментів. Не включається, якщо профіль інкогніто вимикає harness.",
+  "settings.systemPrompt.info.communication":
+    "Як агент пише для вас, зокрема абзац про підтвердження дій, що важко відмінити. Не включається, якщо профіль інкогніто вимикає harness.",
+  "settings.systemPrompt.info.contextManagement":
+    "Іде після вказівок щодо пам'яті в основному промпті. Охоплює підсумки контексту та правила автономної роботи.",
+  "settings.systemPrompt.info.memoryGuidance":
+    "Як агент читає та записує постійну пам'ять. Включається лише коли пам'ять увімкнено для сесії; {{memoryRoot}} стає каталогом пам'яті цієї сесії.",
+  "settings.systemPrompt.info.memoryExtraction":
+    "Інструкції фонового агента, що зберігає спогади після ходу. Працює лише на цьому комп'ютері і ніколи для віддалених робочих областей.",
+  "settings.systemPrompt.info.memoryDream":
+    "Інструкції для ручної консолідації /dream. Працює лише на цьому комп'ютері; обмеження інструментів і список сесій додаються завжди.",
   "settings.outputStyles.defaultPrompt":
     "Додаткових інструкцій стилю відповіді немає. ZCode використовує стандартний системний промпт.",
   "settings.outputStyles.desktopOnly":

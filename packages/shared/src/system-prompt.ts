@@ -254,3 +254,60 @@ export const SYSTEM_PROMPT_DEFAULTS: Record<SystemPromptOverrideKey, string> = {
   "memory-extraction": DEFAULT_MEMORY_EXTRACTION_PROMPT,
   "memory-dream": DEFAULT_MEMORY_DREAM_PROMPT,
 };
+
+/**
+ * Main-prompt sections in runtime assembly order (ContextBuilder.build()). Settings uses this for
+ * the row order and for the assembled-prompt preview, so the two cannot drift from the builder.
+ */
+export const SYSTEM_PROMPT_MAIN_PROMPT_ORDER = [
+  "cli-prefix",
+  "identity-intro",
+  "harness",
+  "communication",
+  "memory-guidance",
+  "context-management",
+] as const satisfies readonly SystemPromptOverrideKey[];
+
+/** Background Memory agent prompts; never part of the main prompt. */
+export const SYSTEM_PROMPT_BACKGROUND_KEYS = [
+  "memory-extraction",
+  "memory-dream",
+] as const satisfies readonly SystemPromptOverrideKey[];
+
+/**
+ * Persisted text is stored and compared trimmed. Reads already trim the override file, so the
+ * service, the UI dirty check and the save path all use this one rule.
+ */
+export function normalizeSystemPromptText(text: string): string {
+  return text.trim();
+}
+
+const SYSTEM_PROMPT_PLACEHOLDER_PATTERN = /\{\{(\w+)\}\}/g;
+
+/** Unique `{{name}}` placeholders in order of first appearance. */
+export function extractSystemPromptPlaceholders(text: string): string[] {
+  const names: string[] = [];
+  for (const match of text.matchAll(SYSTEM_PROMPT_PLACEHOLDER_PATTERN)) {
+    const name = match[1]!;
+    if (!names.includes(name)) names.push(name);
+  }
+  return names;
+}
+
+/**
+ * Placeholders each editable section supports, derived from its shared default text. A default
+ * that carries `{{name}}` means the runtime substitutes it, so an edited draft must keep it to
+ * receive the runtime value. Sections with no placeholders map to an empty list.
+ */
+export const SYSTEM_PROMPT_PLACEHOLDERS: Record<SystemPromptOverrideKey, readonly string[]> = {
+  "cli-prefix": extractSystemPromptPlaceholders(SYSTEM_PROMPT_DEFAULTS["cli-prefix"]),
+  "identity-intro": extractSystemPromptPlaceholders(SYSTEM_PROMPT_DEFAULTS["identity-intro"]),
+  harness: extractSystemPromptPlaceholders(SYSTEM_PROMPT_DEFAULTS.harness),
+  communication: extractSystemPromptPlaceholders(SYSTEM_PROMPT_DEFAULTS.communication),
+  "context-management": extractSystemPromptPlaceholders(
+    SYSTEM_PROMPT_DEFAULTS["context-management"],
+  ),
+  "memory-guidance": extractSystemPromptPlaceholders(composeMemoryGuidanceDefault("default-index")),
+  "memory-extraction": extractSystemPromptPlaceholders(SYSTEM_PROMPT_DEFAULTS["memory-extraction"]),
+  "memory-dream": extractSystemPromptPlaceholders(SYSTEM_PROMPT_DEFAULTS["memory-dream"]),
+};

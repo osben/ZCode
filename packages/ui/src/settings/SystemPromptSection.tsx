@@ -1,32 +1,35 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { Monitor, RotateCcw, Server } from "lucide-react";
+import { Monitor, Server } from "lucide-react";
 import {
-  TID_SETTINGS_SYSTEM_PROMPT_CUSTOMIZED,
-  TID_SETTINGS_SYSTEM_PROMPT_EDIT,
-  TID_SETTINGS_SYSTEM_PROMPT_RESTORE,
-  TID_SETTINGS_SYSTEM_PROMPT_ROW,
+  TID_SETTINGS_SYSTEM_PROMPT_DIRTY_NOTE,
+  TID_SETTINGS_SYSTEM_PROMPT_RESET_ALL,
+  TID_SETTINGS_SYSTEM_PROMPT_RESET_ALL_CONFIRM,
   TID_SETTINGS_SYSTEM_PROMPT_SECTION,
-  testId,
 } from "@zcode/shared";
 import { Alert, AlertDescription } from "@/components/ui/alert.js";
 import { Button } from "@/components/ui/button.js";
+import { toast } from "@/components/ui/toast.js";
 import { SettingsGroupCard } from "@/settings/SettingsPageParts.js";
-import { SystemPromptEditor } from "@/settings/SystemPromptEditor.js";
-import { useSystemPromptOverrides } from "@/hooks/useSystemPromptOverrides.js";
+import { SystemPromptAssembledPreview, SystemPromptRow } from "@/settings/SystemPromptRow.js";
+import { useSystemPromptOverrides, type ResetEntry } from "@/hooks/useSystemPromptOverrides.js";
 import { useOutputStyles } from "@/hooks/useOutputStyles.js";
+import { usePlatform } from "@/hooks/usePlatform.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { formatRemoteWorkspaceHeaderHostLabel } from "@/lib/remoteWorkspaceHistory.js";
-import { cn } from "@/components/lib/utils.js";
 import {
   getUserInstructionsHostKey,
+  getUserInstructionsRevealDirectory,
   type UserInstructionsHostTarget,
 } from "@/settings/userInstructionsEditorModel.js";
 import {
+  buildAssembledSystemPromptPreview,
+  describeSystemPromptSize,
   resolveEffectiveSystemPrompt,
   resolveSystemPromptDefault,
   SYSTEM_PROMPT_SECTION_TITLE_IDS,
   SYSTEM_PROMPT_SECTION_VARIABLE_HINTS,
   isSystemPromptSectionOfferedOnHost,
+  type EditableSystemPromptSection,
 } from "@/settings/systemPromptEditorModel.js";
 import { useConfirmDialogStore } from "@/store/confirmDialogStore.js";
 
@@ -69,6 +72,12 @@ function SectionDescription() {
   );
 }
 
+interface PendingRestore {
+  key: EditableSystemPromptSection["key"];
+  /** Revision captured when Restore was pressed; the delete is checked against it. */
+  revision: string | null | undefined;
+}
+
 function DesktopSystemPromptSection({
   activeTarget,
   onDirtyChange,
@@ -77,6 +86,7 @@ function DesktopSystemPromptSection({
   onDirtyChange: (dirty: boolean) => void;
 }) {
   const { intl } = useZCodeIntl();
+  const platform = usePlatform();
   const [pinnedTarget, setPinnedTarget] = useState(activeTarget);
   const view = useSystemPromptOverrides(pinnedTarget);
   const outputStyles = useOutputStyles(pinnedTarget);
@@ -84,6 +94,8 @@ function DesktopSystemPromptSection({
   const pinnedHostKey = view.hostKey;
   const declinedHostKeyRef = useRef<string | null>(null);
   const activeTargetRef = useRef(activeTarget);
+  const [pendingRestore, setPendingRestore] = useState<PendingRestore | null>(null);
+  const [pendingReset, setPendingReset] = useState<readonly ResetEntry[] | null>(null);
   useLayoutEffect(() => {
     activeTargetRef.current = activeTarget;
   }, [activeTarget]);
@@ -123,6 +135,13 @@ function DesktopSystemPromptSection({
   }, [onDirtyChange, view.editorDirty]);
   useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
 
+  // Restore and reset confirmations capture revisions of the previous pinned host, so drop them
+  // when the pinned host changes.
+  useEffect(() => {
+    setPendingRestore(null);
+    setPendingReset(null);
+  }, [pinnedHostKey]);
+
   const hasActiveOutputStyle =
     outputStyles.status === "ready" &&
     outputStyles.activeStyleId !== null &&
@@ -131,17 +150,53 @@ function DesktopSystemPromptSection({
       outputStyles.styles.find((style) => style.id === outputStyles.activeStyleId)?.content.trim(),
     );
   const identityBaselineReady = outputStyles.status === "ready";
+  const identityUnavailableId =
+    outputStyles.status === "failed" || outputStyles.status === "unsupported"
+      ? "settings.systemPrompt.identityBaselineUnavailable"
+      : "settings.systemPrompt.identityBaselineLoading";
+  const draftBlockReason = view.editorDirty
+    ? intl.formatMessage({ id: "settings.systemPrompt.blockedByDraft" })
+    : undefined;
+  const hostLabel = formatHostLabel(pinnedTarget, intl);
 
   const rows = view.sections
     .filter((section) => isSystemPromptSectionOfferedOnHost(section.key, view.isRemote))
     .map((section) => {
       const defaultContent = resolveSystemPromptDefault(section, hasActiveOutputStyle);
+      const effectiveContent = resolveEffectiveSystemPrompt(section, defaultContent);
       return {
         section,
-        effectiveContent: resolveEffectiveSystemPrompt(section, defaultContent),
+        defaultContent,
+        effectiveContent,
+        size: describeSystemPromptSize(effectiveContent),
         variableHint: SYSTEM_PROMPT_SECTION_VARIABLE_HINTS[section.key],
       };
     });
+
+  const overriddenEntries: ResetEntry[] = rows
+    .filter((row) => row.section.isOverridden)
+    .map((row) => ({ key: row.section.key, expectedRevision: row.section.revision }));
+
+  const assembled = buildAssembledSystemPromptPreview(
+    new Map(rows.map((row) => [row.section.key, row.effectiveContent] as const)),
+  );
+
+  const openFolder = async () => {
+    try {
+      const directory = await view.getOverridesDirectory();
+      if ((await platform.openInFileManager(directory)).success) return;
+      // The overrides folder is created on the first save, so it can be missing; fall back to its
+      // parent (the ZCode data folder) so the action still lands the user in the right place.
+      const parent = getUserInstructionsRevealDirectory(directory);
+      if ((await platform.openInFileManager(parent)).success) return;
+    } catch {
+      // Reported through the toast below; the failure details are not shown to the user.
+    }
+    toast(intl.formatMessage({ id: "appHeader.openInFileManagerFailed" }));
+  };
+
+  const sectionTitle = (key: EditableSystemPromptSection["key"]) =>
+    intl.formatMessage({ id: SYSTEM_PROMPT_SECTION_TITLE_IDS[key] });
 
   return (
     <div className="space-y-3" data-testid={TID_SETTINGS_SYSTEM_PROMPT_SECTION}>
@@ -162,8 +217,21 @@ function DesktopSystemPromptSection({
         ) : (
           <Monitor className="size-3.5 shrink-0" aria-hidden="true" />
         )}
-        <span className="break-all">{formatHostLabel(pinnedTarget, intl)}</span>
+        <span className="break-all">{hostLabel}</span>
       </div>
+      <p className="text-ui-xs leading-5 text-foreground-subtle">
+        {intl.formatMessage({ id: "settings.systemPrompt.incognitoNote" })}
+      </p>
+      {view.editorDirty && view.editor ? (
+        <Alert variant="warning">
+          <AlertDescription data-testid={TID_SETTINGS_SYSTEM_PROMPT_DIRTY_NOTE}>
+            {intl.formatMessage(
+              { id: "settings.systemPrompt.dirtyNote" },
+              { section: sectionTitle(view.editor.key) },
+            )}
+          </AlertDescription>
+        </Alert>
+      ) : null}
       {view.status === "waiting" ? (
         <StatusCard>{intl.formatMessage({ id: "settings.systemPrompt.waitingRemote" })}</StatusCard>
       ) : view.status === "unsupported" ? (
@@ -183,125 +251,105 @@ function DesktopSystemPromptSection({
         <StatusCard>{intl.formatMessage({ id: "common.loading" })}</StatusCard>
       ) : (
         <>
-          <SettingsGroupCard>
-            {rows.map(({ section, effectiveContent, variableHint }, index) => (
-              <div
-                key={section.key}
-                className={cn(index > 0 && "border-t border-border")}
-                data-testid={testId(TID_SETTINGS_SYSTEM_PROMPT_ROW, section.key)}
-                data-section-key={section.key}
-              >
-                <div className="flex flex-wrap items-center gap-2 px-4 py-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-ui-base font-medium text-foreground">
-                        {intl.formatMessage({
-                          id: SYSTEM_PROMPT_SECTION_TITLE_IDS[section.key],
-                        })}
-                      </span>
-                      {section.isOverridden ? (
-                        <span className="rounded-full bg-surface-muted px-2 py-0.5 text-ui-xs text-foreground-subtle">
-                          <span
-                            data-testid={testId(TID_SETTINGS_SYSTEM_PROMPT_CUSTOMIZED, section.key)}
-                          >
-                            {intl.formatMessage({ id: "settings.systemPrompt.customized" })}
-                          </span>
-                        </span>
-                      ) : null}
-                    </div>
-                    {variableHint ? (
-                      <p className="mt-1 text-ui-xs leading-5 text-foreground-subtle">
-                        {intl.formatMessage({ id: variableHint.id }, variableHint.values)}
-                      </p>
-                    ) : null}
-                    {section.key === "identity-intro" && !identityBaselineReady ? (
-                      <p className="mt-1 text-ui-xs leading-5 text-foreground-subtle">
-                        {intl.formatMessage({
-                          id:
-                            outputStyles.status === "failed" ||
-                            outputStyles.status === "unsupported"
-                              ? "settings.systemPrompt.identityBaselineUnavailable"
-                              : "settings.systemPrompt.identityBaselineLoading",
-                        })}
-                      </p>
-                    ) : null}
-                    {view.editor?.key !== section.key ? (
-                      <details className="mt-1 text-ui-sm text-foreground-subtle">
-                        <summary className="cursor-pointer">
-                          {intl.formatMessage({ id: "settings.systemPrompt.effectivePreview" })}
-                        </summary>
-                        <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-surface-muted p-2 font-mono text-ui-xs leading-5">
-                          {section.key === "identity-intro" &&
-                          !identityBaselineReady &&
-                          !section.isOverridden
-                            ? intl.formatMessage({
-                                id:
-                                  outputStyles.status === "failed" ||
-                                  outputStyles.status === "unsupported"
-                                    ? "settings.systemPrompt.identityBaselineUnavailable"
-                                    : "settings.systemPrompt.identityBaselineLoading",
-                              })
-                            : effectiveContent}
-                        </pre>
-                      </details>
-                    ) : null}
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={
-                      view.editor?.saving ||
-                      view.editorDirty ||
-                      (section.key === "identity-intro" &&
-                        !section.isOverridden &&
-                        !identityBaselineReady)
-                    }
-                    data-testid={testId(TID_SETTINGS_SYSTEM_PROMPT_EDIT, section.key)}
-                    onClick={() => view.openEditor(section.key, effectiveContent)}
-                  >
-                    {intl.formatMessage({ id: "settings.systemPrompt.edit" })}
-                  </Button>
-                  {section.isOverridden ? (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={view.editor?.saving || view.editorDirty}
-                      data-testid={testId(TID_SETTINGS_SYSTEM_PROMPT_RESTORE, section.key)}
-                      onClick={() => {
-                        void useConfirmDialogStore
-                          .getState()
-                          .requestConfirmation({
-                            title: intl.formatMessage({
-                              id: "settings.systemPrompt.restoreConfirm.title",
-                            }),
-                            description: intl.formatMessage(
-                              { id: "settings.systemPrompt.restoreConfirm.description" },
-                              {
-                                section: intl.formatMessage({
-                                  id: SYSTEM_PROMPT_SECTION_TITLE_IDS[section.key],
-                                }),
-                                host: formatHostLabel(pinnedTarget, intl),
-                              },
-                            ),
-                            confirmLabel: intl.formatMessage({
-                              id: "settings.systemPrompt.restoreConfirm.confirm",
-                            }),
-                            confirmVariant: "destructive",
-                          })
-                          .then((confirmed) => {
-                            if (confirmed) void view.restoreDefault(section.key);
-                          });
-                      }}
-                    >
-                      <RotateCcw className="mr-1.5 size-3.5" aria-hidden="true" />
-                      {intl.formatMessage({ id: "settings.systemPrompt.restoreDefault" })}
-                    </Button>
-                  ) : null}
-                </div>
+          {overriddenEntries.length > 0 ? (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-ui-xs text-foreground-subtle">
+                {intl.formatMessage(
+                  { id: "settings.systemPrompt.customizedCount" },
+                  { count: overriddenEntries.length },
+                )}
               </div>
-            ))}
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={view.editor?.saving || view.editorDirty}
+                title={draftBlockReason}
+                data-testid={TID_SETTINGS_SYSTEM_PROMPT_RESET_ALL}
+                onClick={() => setPendingReset(overriddenEntries)}
+              >
+                {intl.formatMessage({ id: "settings.systemPrompt.resetAll" })}
+              </Button>
+            </div>
+          ) : null}
+          {pendingReset ? (
+            <div
+              className="space-y-2 rounded-xl border border-border px-4 py-3"
+              data-testid={TID_SETTINGS_SYSTEM_PROMPT_RESET_ALL_CONFIRM}
+            >
+              <div className="text-ui-base font-medium text-foreground">
+                {intl.formatMessage({ id: "settings.systemPrompt.resetAll.title" })}
+              </div>
+              <p className="text-ui-sm text-foreground-subtle">
+                {intl.formatMessage(
+                  { id: "settings.systemPrompt.resetAll.description" },
+                  { host: hostLabel, count: pendingReset.length },
+                )}
+              </p>
+              <ul className="list-disc space-y-0.5 pl-5 text-ui-sm text-foreground">
+                {pendingReset.map((entry) => (
+                  <li key={entry.key}>{sectionTitle(entry.key)}</li>
+                ))}
+              </ul>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  onClick={() => {
+                    const entries = pendingReset;
+                    setPendingReset(null);
+                    void view.resetAllCustomized(entries);
+                  }}
+                >
+                  {intl.formatMessage({ id: "settings.systemPrompt.resetAll.confirm" })}
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setPendingReset(null)}>
+                  {intl.formatMessage({ id: "common.cancel" })}
+                </Button>
+              </div>
+            </div>
+          ) : null}
+          <SettingsGroupCard>
+            {rows.map((row, index) => {
+              const isIdentity = row.section.key === "identity-intro";
+              const identityWaiting =
+                isIdentity && !row.section.isOverridden && !identityBaselineReady;
+              return (
+                <SystemPromptRow
+                  key={row.section.key}
+                  view={view}
+                  row={row}
+                  index={index}
+                  identityWaiting={identityWaiting}
+                  identityNoteId={
+                    isIdentity && !identityBaselineReady ? identityUnavailableId : null
+                  }
+                  hostLabel={hostLabel}
+                  draftBlockReason={draftBlockReason}
+                  restoring={pendingRestore?.key === row.section.key}
+                  onToggleRestore={(section) =>
+                    setPendingRestore(
+                      pendingRestore?.key === section.key
+                        ? null
+                        : { key: section.key, revision: section.revision },
+                    )
+                  }
+                  onCancelRestore={() => setPendingRestore(null)}
+                  onConfirmRestore={(key, revision) => {
+                    setPendingRestore(null);
+                    void view.restoreDefault(key, revision);
+                  }}
+                  onOpenFolder={() => void openFolder()}
+                />
+              );
+            })}
           </SettingsGroupCard>
-          {view.editor ? <SystemPromptEditor view={view} /> : null}
+          {rows.length > 0 ? (
+            <SystemPromptAssembledPreview
+              text={assembled.text}
+              tokens={assembled.tokens}
+              characters={assembled.text.length}
+            />
+          ) : null}
         </>
       )}
     </div>

@@ -8015,13 +8015,10 @@ const enUS: Record<string, string> = {
   "settings.systemPrompt.edit": "Edit",
   "settings.systemPrompt.restoreDefault": "Restore default",
   "settings.systemPrompt.restoreConfirm.title": "Restore built-in prompt?",
-  "settings.systemPrompt.restoreConfirm.description":
-    "This will delete the customized {section} prompt from {host} and restore its built-in default.",
   "settings.systemPrompt.restoreConfirm.confirm": "Restore default",
   "settings.systemPrompt.restored": "System prompt section restored to its default text.",
   "settings.systemPrompt.restoreFailed": "Failed to restore the default text.",
   "settings.systemPrompt.editorLabel": "Prompt text",
-  "settings.systemPrompt.characterCount": "{count} characters",
   "settings.systemPrompt.identityBaselineLoading":
     "Checking the active Output Style before editing…",
   "settings.systemPrompt.identityBaselineUnavailable":
@@ -8054,6 +8051,71 @@ const enUS: Record<string, string> = {
   "settings.outputStyles.title": "Output Styles",
   "settings.outputStyles.description":
     "Choose how the agent shapes its responses. Built-in defaults live in the app; edits are saved as override files you can always restore.",
+  "settings.systemPrompt.defaultBadge": "Default",
+  "settings.systemPrompt.sizeLine": "{characters} characters · ~{tokens} tokens",
+  "settings.systemPrompt.openFolder": "Open folder",
+  "settings.systemPrompt.incognitoNote":
+    "Incognito sessions can ignore these overrides when the incognito profile's System prompt overrides capability is off.",
+  "settings.systemPrompt.unsavedDot": "Unsaved changes",
+  "settings.systemPrompt.blockedByDraft":
+    "Save or discard the open draft first. Only one section can have unsaved changes at a time.",
+  "settings.systemPrompt.dirtyNote":
+    "{section} has an unsaved draft. Save or discard it before you edit or restore other sections.",
+  "settings.systemPrompt.customizedCount": "{count} customized",
+  "settings.systemPrompt.resetAll": "Reset all customized…",
+  "settings.systemPrompt.resetAll.title": "Reset all customized sections?",
+  "settings.systemPrompt.resetAll.description":
+    "The override files for these {count} sections on {host} will be deleted, and the built-in defaults will apply to new sessions:",
+  "settings.systemPrompt.resetAll.confirm": "Reset all",
+  "settings.systemPrompt.resetAllDone": "Restored {count} sections to their built-in defaults.",
+  "settings.systemPrompt.resetAllPartial":
+    "Restored {restored} sections. {conflicts} changed on disk and {failed} failed. The list was refreshed.",
+  "settings.systemPrompt.changedOnDisk":
+    "This section changed on disk. The list was refreshed; review it before trying again.",
+  "settings.systemPrompt.restoreConfirm.description":
+    "The override file for this section on {host} will be deleted. The default below takes effect for new sessions.",
+  "settings.systemPrompt.restoreConfirm.preview": "Built-in default that will be restored",
+  "settings.systemPrompt.diskChanged.title": "Changed on disk",
+  "settings.systemPrompt.diskChanged.description":
+    "This section's file changed outside Settings while you were editing. Reload to discard your draft, or overwrite the file with your draft.",
+  "settings.systemPrompt.diskChanged.reload": "Reload from disk",
+  "settings.systemPrompt.diskChanged.overwrite": "Overwrite",
+  "settings.systemPrompt.saveReason.unchanged": "No changes to save.",
+  "settings.systemPrompt.saveReason.diskChanged":
+    "Choose Reload from disk or Overwrite above before saving.",
+  "settings.systemPrompt.shortcutHint":
+    "Ctrl/Cmd+S saves. Esc cancels, asking before it discards changes.",
+  "settings.systemPrompt.diffMode.saved": "vs saved",
+  "settings.systemPrompt.diffMode.default": "vs built-in default",
+  "settings.systemPrompt.diffNone": "No differences.",
+  "settings.systemPrompt.diffTooLarge":
+    "Too large to diff here ({baselineLines} saved lines, {draftLines} draft lines). Compare the text manually.",
+  "settings.systemPrompt.warning.unknownPlaceholder":
+    "{token} is not a placeholder for this section, so it will be sent as literal text.",
+  "settings.systemPrompt.warning.missingPlaceholder":
+    "{token} is missing. The runtime fills it in only when this placeholder is present.",
+  "settings.systemPrompt.warning.confirmationRemoved":
+    "The paragraph asking the agent to confirm before hard-to-reverse or outward-facing actions is missing.",
+  "settings.systemPrompt.assembled.title": "Assembled prompt (approximate)",
+  "settings.systemPrompt.assembled.description":
+    "Main-prompt blocks in runtime order, using their effective text. Environment, memory index, tools and workspace instructions are added at runtime and are not shown.",
+  "settings.systemPrompt.assembled.tokens": "About {tokens} tokens · {characters} characters",
+  "settings.systemPrompt.info.cliPrefix":
+    "First line of the main prompt. Names ZCode as the agent. Omitted when the incognito profile turns identity off.",
+  "settings.systemPrompt.info.identityIntro":
+    "Second block of the main prompt. Sets the agent's role. With an active Output Style the baseline is the Output Style intro; an override still wins, and the Output Style section is still appended.",
+  "settings.systemPrompt.info.harness":
+    "Describes the tool and display environment: Markdown output, permission modes, hooks and file-tool preferences. Omitted when the incognito profile turns the harness off.",
+  "settings.systemPrompt.info.communication":
+    "How the agent writes for you, including the paragraph on confirming hard-to-reverse actions. Omitted when the incognito profile turns the harness off.",
+  "settings.systemPrompt.info.contextManagement":
+    "Comes after memory guidance in the main prompt. Covers context summaries and autonomous work rules.",
+  "settings.systemPrompt.info.memoryGuidance":
+    "How the agent reads and writes persistent memory. Included only when memory is enabled for the session; {{memoryRoot}} becomes that session's memory directory.",
+  "settings.systemPrompt.info.memoryExtraction":
+    "Instructions for the background agent that saves memories after a turn. Runs only on this computer and never for remote workspaces.",
+  "settings.systemPrompt.info.memoryDream":
+    "Instructions for the manual /dream consolidation. Runs only on this computer; the tool limits and session list are always appended.",
   "settings.outputStyles.defaultPrompt":
     "No additional output-style instructions. ZCode uses its standard system prompt.",
   "settings.outputStyles.desktopOnly": "Output styles can be managed in the desktop app.",
