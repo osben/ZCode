@@ -8,6 +8,7 @@ import type {
   ReactNode,
 } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { VoiceTranscriptionPreview } from "@zcode/services";
 import { TID_CHAT_SEND_BUTTON } from "@zcode/shared";
 import { ArrowUpIcon, Hand, XIcon } from "lucide-react";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
@@ -39,6 +40,7 @@ function runAfterFrame(callback: () => void) {
 }
 
 export function ChatPromptEditor({
+  voicePreview,
   workspacePath,
   workspaceIdentity,
   taskId,
@@ -126,6 +128,8 @@ export function ChatPromptEditor({
   /** For inline editing only: the second action, fixed between Cancel and the primary submit action. */
   betweenCancelAndSubmitAction?: ReactNode;
   submitControl?: ReactNode;
+  /** Streaming voice ghost preview drawn at the caret; display only (see LexicalChatInput). */
+  voicePreview?: VoiceTranscriptionPreview | null;
   inputTestId?: string;
   submitTestId?: string;
   cancelTestId?: string;
@@ -338,6 +342,7 @@ export function ChatPromptEditor({
 
   const editorNode = (
     <LexicalChatInput
+      voicePreview={voicePreview}
       placeholder={placeholder}
       disabled={disabled}
       submitDisabled={submitDisabled}

@@ -85,6 +85,7 @@ Rules:
    same case before calling the service.
 5. Unknown key: throws (unchanged). Keys remain a fixed whitelist; no user-derived filename.
 6. `deleteOverride` with a missing file is `ok` with `revision: null`.
+7. The `ok` result keeps `revision` (the hash of the stored bytes). The UI patches the saved row from it, so a save does not relist (see "Save path"). A host whose write returns no result, or no revision, is relisted instead.
 
 Compatibility:
 
@@ -100,6 +101,11 @@ Compatibility:
 
 `packages/shared/src/system-prompt.ts` exports, in addition to the existing constants:
 
+- `SYSTEM_PROMPT_RUNTIME_SUBSTITUTED_KEYS`: `memory-guidance`, `memory-extraction`, `memory-dream`, the keys whose
+  `{{name}}` tokens the runtime substitutes (`renderSystemPromptTemplate` call sites). Only these keys have
+  placeholders; every other key is sent literally. Drift test:
+  `apps/zcode-cli/packages/core/tests/context-system-prompt-order.test.ts` checks this and the order below.
+
 - `SYSTEM_PROMPT_MAIN_PROMPT_ORDER`: the six main-prompt keys in runtime assembly order (`cli-prefix`,
   `identity-intro`, `harness`, `communication`, `memory-guidance`, `context-management`). The CLI builder
   order in `ContextBuilder.build()` is the reference. The UI display order and the assembled preview both
@@ -107,20 +113,30 @@ Compatibility:
 - `SYSTEM_PROMPT_BACKGROUND_KEYS`: `memory-extraction`, `memory-dream`.
 - `normalizeSystemPromptText(text)`: `text.trim()`. Used by the service, the UI dirty check and save checks.
 - `extractSystemPromptPlaceholders(text)`: unique `{{name}}` tokens in order of appearance.
-- `SYSTEM_PROMPT_PLACEHOLDERS`: per key, the placeholders derived from the default text
-  (`extractSystemPromptPlaceholders` on `SYSTEM_PROMPT_DEFAULTS`, with `memory-guidance` taken from
-  `composeMemoryGuidanceDefault("default-index")`). Derivation means the required set follows the shared
-  defaults and is not hard-coded in the UI. Sections whose default has no placeholders have an empty set.
+- `SYSTEM_PROMPT_PLACEHOLDERS`: per key, the placeholders. Substituted keys derive their set from the shared
+  defaults (`extractSystemPromptPlaceholders` on `SYSTEM_PROMPT_DEFAULTS`, with `memory-guidance` taken from
+  `composeMemoryGuidanceDefault("default-index")`), so the required set follows the defaults and is not
+  hard-coded in the UI. The other keys have an empty set.
+- `hashBytes(bytes)` (`@zcode/shared/node`, next to `withFileLock` and `atomicWriteFile`): SHA-256 hex of raw bytes,
+  used by the system-prompt service and by the user-instructions service for their revisions.
+
+## Known limit: memory-guidance default
+
+The Settings default and diff for `memory-guidance` use the `default-index` variant, which inserts the
+`MEMORY.md` index pointer. The runtime renders the retrieval branch chosen per session
+(`ACTIVE_PROJECT_MEMORY_RETRIEVAL_BRANCH`), so for a session on the other branch the shown default differs from
+the rendered text. The drift guard covers the section order, not this branch. Which variant Settings should show
+is a product decision that is still open, so this is documented, not changed.
 
 ## Validation (pure, `systemPromptEditorModel.ts`)
 
 Warnings never block a save. The only blocking rule is empty text (after trimming).
 
-| Code                   | Condition                                                                       | Applies to                                                                                                 |
-| ---------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `unknown-placeholder`  | a `{{name}}` in the draft that is not in that key's placeholder set             | all editable keys (for sections without placeholders the token is sent literally, and the warning says so) |
-| `missing-placeholder`  | a placeholder in the key's required set (derived) that is absent from the draft | keys with placeholders: `memory-guidance`, `memory-extraction`, `memory-dream`                             |
-| `confirmation-removed` | the draft does not contain `DEFAULT_CONFIRMATION_PARAGRAPH` (normalized)        | `communication` only                                                                                       |
+| Code                   | Condition                                                                       | Applies to                                                                                    |
+| ---------------------- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `unknown-placeholder`  | a `{{name}}` in the draft that is not in that key's placeholder set             | all editable keys (for sections without placeholders the token stays literal text at runtime) |
+| `missing-placeholder`  | a placeholder in the key's required set (derived) that is absent from the draft | keys with placeholders: `memory-guidance`, `memory-extraction`, `memory-dream`                |
+| `confirmation-removed` | the draft does not contain `DEFAULT_CONFIRMATION_PARAGRAPH` (normalized)        | `communication` only                                                                          |
 
 `memory-guidance` requires `{{memoryRoot}}`. Extraction requires `{{messageCount}}` and `{{existingMemories}}`.
 Dream requires `{{memoryRoot}}` and `{{transcriptRoot}}`.
@@ -136,13 +152,18 @@ Dream requires `{{memoryRoot}}` and `{{transcriptRoot}}`.
   line counts. It never shows an empty diff for a non-identical draft.
 - The diff area is visible whenever the editor is open, so a customized section can be compared with its
   built-in default before any edit. A selected comparison with no differences shows "No differences.". Only
-  the selected comparison is computed.
+  the selected comparison is computed, from the deferred draft, so typing is not blocked by the LCS table.
+- `diffOutputStylePrompt` returns `null` for too-large inputs (full line counts over the cell budget), and
+  `diffSystemPromptText` maps `null` to `too-large`. The table is one flat `Int32Array` over the lines after the
+  shared leading run. Only the leading run is trimmed: trimming the trailing run can order a tied same/add pair
+  differently, so the output would change. A randomized test pins the output to the reference walk.
 
 ## Assembled prompt preview
 
 A collapsible panel at the bottom of the list. It concatenates the effective text of the six main-prompt
-blocks in `SYSTEM_PROMPT_MAIN_PROMPT_ORDER`, separated by a blank line, and shows an approximate token
-total. It is labeled approximate: environment, memory index, tools, workspace instructions and other dynamic
+blocks in `SYSTEM_PROMPT_MAIN_PROMPT_ORDER`, separated by a blank line, and shows an approximate character
+(grapheme) and token total from `describeSystemPromptSize`. The text is rendered only while the panel is open,
+and the assembled text is recomputed only when the listing or the output style changes. It is labeled approximate: environment, memory index, tools, workspace instructions and other dynamic
 parts are added at runtime and are not shown. `identity-intro` uses the same resolved default as its row,
 and `{{memoryRoot}}` stays literal. Tokens use the existing estimator in
 `packages/ui/src/v4/conversationStreamingThroughput.ts` (`estimateStreamingTokens`), imported, not copied.
@@ -157,6 +178,10 @@ Open folder is offered only for local workspaces. A remote section's path is on 
 action is hidden there and the path is still shown. The action asks the service for the overrides directory
 (`getOverridesDirectory`, a pure lookup) and opens it through `IPlatformService.openInFileManager`. The folder
 is created by the first save, so when it does not exist yet the action opens its parent, the ZCode data folder.
+
+Rows are memoized. A row re-renders only when its own inputs change (its section, its index, the editor
+key or saving state, the dirty flag, the host kind, and its callbacks). The row being edited re-renders on each
+draft change, because the editor is part of it. The other rows do not re-render on draft keystrokes.
 
 Active-condition notes that must be in the descriptions:
 
@@ -180,6 +205,8 @@ Active-condition notes that must be in the descriptions:
   list says why and names the section holding the draft. Disabled Save shows its reason (empty, no changes,
   or disk changed).
 - Save writes with `expectedRevision` = the revision captured when the editor opened (or last rebased).
+- The empty-draft state has one visible reason: the save-reason line under the editor. There is no second alert.
+- The character count under the editor counts graphemes, the same as the row size line.
 - While a save conflict is active, plain Save is blocked; only Overwrite (below) writes.
 
 ## Restore and reset
@@ -187,8 +214,10 @@ Active-condition notes that must be in the descriptions:
 - Restore shows an inline confirmation panel inside the row. It shows the built-in default text that will be
   restored and says the override file will be deleted. Declining performs no write.
 - Reset all customized lists the affected blocks (localized titles) in an inline panel above the list. On
-  confirm it deletes each overridden file in order with its loaded `expectedRevision`. If one entry conflicts,
-  the remaining entries are still attempted, and the list refreshes and reports how many conflicted.
+  confirm it deletes each overridden file with its loaded `expectedRevision`. The deletes run concurrently,
+  one file per key, each under its own file lock. If one entry conflicts or fails, the remaining entries are
+  still attempted, and the list refreshes and reports how many conflicted or failed. A single Restore uses the
+  same delete path with one entry.
 - Restore on a conflicting file refreshes the list and shows a toast; the user repeats the restore if still
   wanted (it is not offered as Overwrite, because the user confirmed a different default-restore than what
   is now on disk).
@@ -201,15 +230,34 @@ Active-condition notes that must be in the descriptions:
 When the editor is open and either the section's current revision differs from the editor's captured revision
 (a refresh after window focus), or a save conflict is active, the editor shows a warning state:
 
-- "Reload from disk" discards the draft and rebases the editor onto the current disk text and revision.
-- "Overwrite" keeps the draft and saves it with the current disk revision.
+- "Reload from disk" discards the draft and rebases the editor onto the listing's text and revision. The draft is
+  discarded anyway, so this is safe. After a failed refresh the listing can be behind the conflict: the rebase then
+  uses that older revision, and the next Save conflicts again, which is the normal conflict check, not data loss.
+- "Show disk version" captures the disk version from the latest listing (its revision and override text) and
+  shows that text read-only, with a note that Overwrite replaces it. The draft is not touched. The captured
+  version counts as viewed only while its revision is the disk revision the card describes (below). When the
+  listing does not yet carry that revision (a conflict whose follow-up refresh failed), Show refreshes the list
+  instead of capturing text that belongs to an older revision.
+- "Overwrite" is disabled until a disk version has been shown. It keeps the draft and saves it against the
+  revision of the shown disk version (see "Conflict revisions"), so the content replaced is the content the
+  user looked at. If the file changed again since, the write is refused, nothing is replaced, the list refreshes,
+  the shown version is dropped, and a toast reports the change; the user must show the newer version before
+  Overwrite is enabled again. A host that reports no revision has no conflict check, so Overwrite stays enabled
+  there without a view.
 
 A save conflict stores the `currentRevision` returned by the host on the editor state (`conflictRevision`;
 `null` means the file was missing on disk). The state therefore does not depend on the follow-up list refresh
 succeeding: if that refresh fails, the warning and the blocked Save remain, and the list keeps its last
-revision. Overwrite saves with the conflict's `currentRevision` when one is set, otherwise with the section's
-current revision. Reload clears the conflict and rebases onto the listing, so its revision is the listing's,
-not the conflict's.
+revision. The card's disk revision is the conflict's `conflictRevision` when one is set, otherwise the listing's
+revision. A listing that reports a different revision than the conflict's supersedes the conflict (it then
+describes the disk, and the listing-based state applies); a listing that reports the same revision keeps it.
+A failed listing never clears it. Reload clears the conflict and rebases onto the listing, so its revision is
+the listing's, not the conflict's.
+
+Overwrite never takes a revision from the conflict or the listing at click time. The conflict revision only
+gates plain Save and names the disk revision the card shows, so the revision Overwrite sends is always one the
+user was shown. The hook's `saveEditor` returns the conflict (`{ currentRevision }`) so the card can drop the
+version it showed.
 
 Closing the editor by Cancel still follows the discard guard. The list refreshes silently on window focus when
 the target is ready. Older hosts without revisions never show this state.
@@ -220,6 +268,37 @@ the target is ready. Older hosts without revisions never show this state.
   mounted, so scroll position and open editors are kept.
 - Save, restore, reset and focus refresh update sections in place. A failed refresh keeps the last list and logs
   a warning. A failed first load shows the failed card with Retry.
+- A focus refresh runs at most once every two seconds, and not while a listing is already in flight.
+- A listing that matches the current sections (same revisions, override text, defaults, paths) keeps the
+  previous array, so unchanged refreshes do not re-render the list.
+
+## Conflict revisions (decision)
+
+Every conditional call checks against the revision the user reviewed, never against a revision read at the
+moment of the click:
+
+| Action           | Checked against                                                                                     |
+| ---------------- | --------------------------------------------------------------------------------------------------- |
+| Save             | The editor's base revision: captured when the editor opened, or when it was last rebased by Reload. |
+| Restore          | The revision captured when the Restore confirmation panel opened.                                   |
+| Overwrite        | The revision of the disk version the user chose to show (Show disk version).                        |
+| Reset all        | The revision each entry had in the listing the user confirmed.                                      |
+| Reload from disk | Not a write. It discards the draft and adopts the disk text current at click time.                  |
+
+A newer external edit that lands after review therefore produces a conflict, not a silent replacement. The
+captured revisions live in the row or the card that shows them (`RestoreConfirmPanel`, `DiskChangedAlert`); the
+hook does not keep a second copy. The card's captured disk version is the only source of the Overwrite revision;
+the conflict revision is never sent by itself.
+
+## Save path
+
+- Save sends `{ key, content, expectedRevision }`. An `undefined` `expectedRevision` is dropped by the RPC
+  serializer (JSON), so an older or remote host receives no check, the same as a direct call.
+- On `ok`, the saved section is patched from the write result (`overrideContent`, `isOverridden`, `revision`)
+  and no listing is made. On `conflict`, nothing is written: the list refreshes, the editor shows the
+  Changed-on-disk card, and Overwrite (if pressed) reports the change with a toast.
+- Dirty and the save block reason are computed once per render. `canSave` is `resolveSystemPromptSaveBlockReason`
+  returning `null`; Overwrite uses the same rule with the disk-changed check left out.
 
 ## Host routing (unchanged)
 
@@ -237,8 +316,16 @@ Unit and component tests cover the rules above. The desktop E2E scenarios are wr
   Edit on another row is disabled, Cmd/Ctrl+S saves, and Esc on a dirty draft asks before discarding (dismissing
   keeps the draft).
 - SP-03: an external write to the open section's override file while the editor is open produces the
-  "Changed on disk" state; Overwrite writes the draft to disk.
+  "Changed on disk" state; after Show disk version, Overwrite writes the draft to disk.
 - SP-04: the same external write followed by Reload from disk discards the draft and adopts the disk text.
+
+Unit coverage added with the cleanup: the hook tests cover the patch-from-write save (no relist), the relist for hosts
+that return no revision, Overwrite against the reviewed revision while a newer disk revision exists, the focus
+throttle, and a rejected reset entry. They also cover the conflict revision kept when the follow-up refresh fails,
+its release by a listing that reports another revision, and restore or reset closing only the editor that was open
+when they started. The card tests cover Show refreshing instead of showing a stale listing, and Overwrite sending the
+shown revision. The model tests cover the too-large mapping and the prefix-trim diff against the reference walk
+(randomized).
 
 These E2E scenarios are not run in this round (the desktop E2E harness needs a built app); this is stated in
 the report.
@@ -251,10 +338,11 @@ Settings page (pinned target)
       load:    listSections  →  sections (revision per key)   [first load: loading card]
       focus:   listSections  →  sections in place              [no loading card]
       save:    writeOverride{expectedRevision}
-                 ok        → toast, close editor, listSections in place
+                 ok        → toast, close editor, patch the saved section in place (relist only when no revision is returned)
                  conflict  → editor.conflictRevision = currentRevision (Save blocked, Changed on disk);
-                             listSections in place (failure keeps the conflict state)
-                 Overwrite → writeOverride{expectedRevision = conflictRevision if set, else section revision}
+                             listSections in place (failure keeps the conflict state; a listing with another
+                             revision clears it)
+                 Overwrite → writeOverride{expectedRevision = reviewed revision of the shown disk version}
       restore: deleteOverride{expectedRevision}
                  ok        → toast, close editor only if it is still the one open at start, listSections in place
                  conflict  → toast, listSections in place
