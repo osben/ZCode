@@ -129,6 +129,7 @@ import type {
   WorkspaceForkResult,
 } from "./types.js";
 import type { AgentRuntimeInternal } from "./internal.js";
+import { NestedInstructionTracker } from "../context/nested-instructions/tracker.js";
 import { InMemoryRuntimeTaskRegistry, type RuntimeTaskRegistry } from "../runtime-task/registry.js";
 import { createMemoryRecallState } from "../memory/recall/index.js";
 import type { MemoryRecallState } from "../memory/recall/index.js";
@@ -171,6 +172,7 @@ export class AgentRuntime {
   private sessionModelSelection: ModelSelection | undefined;
   private messageHistory: MessageHistory;
   private readFileState: ReadFileStateMap;
+  private readonly nestedInstructionTracker = new NestedInstructionTracker();
   private cachedTools: ModelToolContract[] | null = null;
   /** launch.md, “On demand: activation”: onDemand sessions start as false; `activateDynamicWorkflowTools` changes this to true. */
   private dynamicWorkflowToolsActivated: boolean;

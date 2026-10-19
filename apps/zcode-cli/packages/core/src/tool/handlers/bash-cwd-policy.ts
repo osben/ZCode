@@ -3,6 +3,7 @@ import { platform as currentPlatform } from "node:process";
 import type { ExecutionResult } from "@zcode/contracts";
 import {
   getToolPathApi,
+  isPathOutsideParent,
   normalizeToolPathForComparison,
   type ToolPathApi,
   type ToolPathPlatform,
@@ -125,13 +126,6 @@ function isInsideOrSamePath(child: string, parent: string, pathApi: ToolPathApi)
   return relativePath === "" || !isPathOutsideParent(relativePath, pathApi);
 }
 
-function isPathOutsideParent(relativePath: string, pathApi: ToolPathApi): boolean {
-  return (
-    relativePath === ".." ||
-    relativePath.startsWith(`..${pathApi.sep}`) ||
-    pathApi.isAbsolute(relativePath)
-  );
-}
 
 function normalizeCwdBoundary(value: string, isWindows: boolean): string {
   let normalized = normalizeToolPathForComparison(value, isWindows ? "win32" : "linux");

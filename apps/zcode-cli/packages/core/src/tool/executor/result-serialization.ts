@@ -236,19 +236,31 @@ export function appendHookAdditionalContexts(
     return omittedFrameCredential ? { ...serialization, truncated: true } : serialization;
   }
   const hookContext = formatHookAdditionalContexts(filteredAdditionalContexts);
-  const suffix = `\n\n${hookContext}`;
+  const projected = appendFormattedContextToSerialization(serialization, hookContext, entry);
+  return omittedFrameCredential ? { ...projected, truncated: true } : projected;
+}
+
+/**
+ * Appends an already-formatted context block to the model-visible result, keeping the result budget, persisted-artifact
+ * previews and the official CUA structured-content path. Shared by PostToolUse hook contexts and nested AGENTS.md reminders.
+ */
+export function appendFormattedContextToSerialization(
+  serialization: ToolResultSerialization,
+  formattedContext: string,
+  entry: ToolEntry,
+): ToolResultSerialization {
+  const suffix = `\n\n${formattedContext}`;
   const maxModelBytes = resolveMaxModelBytes(entry);
   if (
     entry.modelContentProtection === OFFICIAL_CUA_FRAME_MODEL_CONTENT_PROTECTION &&
     hasImageBlock(serialization.modelContent ?? serialization.content)
   ) {
-    const projected = appendHookWithoutReorderingStructuredContent(
+    return appendHookWithoutReorderingStructuredContent(
       serialization,
-      hookContext,
+      formattedContext,
       suffix,
       maxModelBytes,
     );
-    return omittedFrameCredential ? { ...projected, truncated: true } : projected;
   }
   const previewDirection = entry.resultBudget?.preview?.direction ?? "head";
   const artifactPreview = isPersistedArtifactPreview(serialization);
@@ -256,13 +268,13 @@ export function appendHookAdditionalContexts(
     ? appendHookToPersistedArtifactPreview(serialization.content, suffix, maxModelBytes)
     : appendHookToStringContent(serialization.content, suffix, maxModelBytes, previewDirection);
 
-  const projected = {
+  return {
     ...serialization,
     content: contentProjection.content,
     modelContent: projectHookAugmentedModelContent({
       artifactPreview,
       contentProjection,
-      hookContext,
+      hookContext: formattedContext,
       maxModelBytes,
       modelContent: serialization.modelContent ?? serialization.content,
       previewDirection,
@@ -271,7 +283,6 @@ export function appendHookAdditionalContexts(
     returnedBytes: Buffer.byteLength(contentProjection.content, "utf8"),
     truncated: serialization.truncated || contentProjection.truncated,
   };
-  return omittedFrameCredential ? { ...projected, truncated: true } : projected;
 }
 
 function hasImageBlock(content: ModelMessageContent): content is ModelMessageContentBlock[] {
