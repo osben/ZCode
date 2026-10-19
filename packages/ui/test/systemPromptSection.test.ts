@@ -9,12 +9,15 @@ const mocks = vi.hoisted(() => ({
   restoreDefault: vi.fn(),
   resetAllCustomized: vi.fn(),
   reloadEditor: vi.fn(),
+  reload: vi.fn(),
   openInFileManager: vi.fn(),
   lastTarget: null as { workspacePath: string | null; workspaceIdentity?: string } | null,
   diskChanged: false,
   // The latest listing for cli-prefix; tests move it to simulate an external write.
   cliRevision: "rev-cli" as string | null | undefined,
   cliText: "The saved prompt" as string | null,
+  // Revision a conflicting save reported; undefined when no conflict is active.
+  conflictRevision: undefined as string | null | undefined,
   // Re-lists the mocked sections, as the hook's refreshInPlace does after a conflict.
   relist: null as (() => void) | null,
 }));
@@ -78,11 +81,14 @@ vi.mock("@/hooks/useSystemPromptOverrides.js", async () => {
         isRemote: Boolean(target.workspaceIdentity),
         status: "ready",
         sections,
-        editor,
+        editor:
+          editor && mocks.conflictRevision !== undefined
+            ? { ...editor, conflictRevision: mocks.conflictRevision }
+            : editor,
         editorDirty,
         editorDiskChanged,
         canSaveEditor: editorDirty && !editorDiskChanged,
-        reload: vi.fn(),
+        reload: mocks.reload,
         openEditor,
         closeEditor: () => setEditor(null),
         setDraft,
@@ -152,6 +158,8 @@ beforeEach(() => {
   mocks.diskChanged = false;
   mocks.cliRevision = "rev-cli";
   mocks.cliText = "The saved prompt";
+  mocks.conflictRevision = undefined;
+  mocks.reload.mockReset();
 });
 
 afterEach(() => cleanup());
@@ -306,6 +314,70 @@ describe("SystemPromptSection", () => {
     expect(screen.getByTestId("settings-system-prompt-disk-version").textContent).toBe(
       "The saved prompt",
     );
+    expect(mocks.saveEditor).not.toHaveBeenCalled();
+  });
+
+  it("shows the conflict's disk version once the listing reports the conflict revision", async () => {
+    mocks.diskChanged = true;
+    mocks.conflictRevision = "rev-newer";
+    mocks.cliRevision = "rev-newer";
+    mocks.cliText = "Newer disk text";
+    renderSection();
+    openCliDraft();
+
+    fireEvent.click(screen.getByTestId("settings-system-prompt-disk-show"));
+    expect(screen.getByTestId("settings-system-prompt-disk-version").textContent).toBe(
+      "Newer disk text",
+    );
+    fireEvent.click(overwriteButton());
+    await waitFor(() => expect(mocks.saveEditor).toHaveBeenCalledTimes(1));
+    expect(mocks.saveEditor).toHaveBeenCalledWith({ overwrite: { reviewedRevision: "rev-newer" } });
+  });
+
+  it("refreshes instead of showing an older revision while the listing lacks the conflict revision", () => {
+    mocks.diskChanged = true;
+    mocks.conflictRevision = "rev-newer";
+    // The refresh after the conflict failed, so the listing still reports the pre-conflict revision.
+    mocks.cliRevision = "rev-cli";
+    mocks.cliText = "Stale disk text";
+    renderSection();
+    openCliDraft();
+
+    fireEvent.click(screen.getByTestId("settings-system-prompt-disk-show"));
+    expect(mocks.reload).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("settings-system-prompt-disk-version")).toBeNull();
+    expect(overwriteButton().disabled).toBe(true);
+    expect(mocks.saveEditor).not.toHaveBeenCalled();
+  });
+
+  it("treats a conflict revision of null as a missing file, not as no conflict", async () => {
+    mocks.diskChanged = true;
+    mocks.conflictRevision = null;
+    mocks.cliRevision = null;
+    mocks.cliText = null;
+    renderSection();
+    openCliDraft();
+
+    fireEvent.click(screen.getByTestId("settings-system-prompt-disk-show"));
+    expect(screen.getByText("settings.systemPrompt.diskChanged.noOverride")).toBeTruthy();
+    fireEvent.click(overwriteButton());
+    await waitFor(() => expect(mocks.saveEditor).toHaveBeenCalledTimes(1));
+    expect(mocks.saveEditor).toHaveBeenCalledWith({ overwrite: { reviewedRevision: null } });
+  });
+
+  it("does not fall back to a listing revision when the conflict revision is null", () => {
+    mocks.diskChanged = true;
+    mocks.conflictRevision = null;
+    // The listing still shows a file, so it is not the disk version the conflict describes.
+    mocks.cliRevision = "rev-cli";
+    mocks.cliText = "Stale disk text";
+    renderSection();
+    openCliDraft();
+
+    fireEvent.click(screen.getByTestId("settings-system-prompt-disk-show"));
+    expect(mocks.reload).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("settings-system-prompt-disk-version")).toBeNull();
+    expect(overwriteButton().disabled).toBe(true);
     expect(mocks.saveEditor).not.toHaveBeenCalled();
   });
 

@@ -16,6 +16,9 @@ import {
   makeEditorState,
   revisionOf,
   sameSections,
+  settleConflictAgainstListing,
+  tallyOverrideResets,
+  type DeleteOutcome,
   type SystemPromptEditorState,
 } from "@/settings/systemPromptEditorModel.js";
 import {
@@ -78,8 +81,6 @@ export interface SystemPromptOverridesView {
 /** Focus refreshes are at most this often; a list already in flight also suppresses one. */
 const FOCUS_REFRESH_MIN_INTERVAL_MS = 2_000;
 
-type DeleteOutcome = "ok" | "conflict" | "failed";
-
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -109,6 +110,12 @@ export function useSystemPromptOverrides(
   const [status, setStatus] = useState<SystemPromptOverridesStatus>("loading");
   const [sections, setSections] = useState<readonly EditableSystemPromptSection[]>([]);
   const [editor, setEditor] = useState<SystemPromptEditorState | null>(null);
+  // Restore and reset read the editor from here, not from a dependency: their identity must not change
+  // on every keystroke, because the memoized rows receive them.
+  const editorRef = useRef<SystemPromptEditorState | null>(null);
+  useLayoutEffect(() => {
+    editorRef.current = editor;
+  }, [editor]);
   // Bumped on every host reset; async work captured under an older epoch must not touch state.
   const epochRef = useRef(0);
   // Bumped per listing; only the newest listing for an epoch may apply, so an older response cannot
@@ -141,6 +148,8 @@ export function useSystemPromptOverrides(
         const next = orderedEditableSystemPromptSections(result.sections);
         // An unchanged listing keeps the previous array, so consumers do not re-render for nothing.
         setSections((previous) => (sameSections(previous, next) ? previous : next));
+        // A failed listing never reaches here, so the conflict state survives it.
+        setEditor((current) => (current ? settleConflictAgainstListing(current, next) : current));
         setStatus("ready");
       } finally {
         listsInFlightRef.current -= 1;
@@ -283,18 +292,15 @@ export function useSystemPromptOverrides(
     async (options?: { overwrite?: { reviewedRevision: string | null | undefined } }) => {
       const current = editor;
       if (current === null || !rpcReady) return;
-      if (
-        resolveSystemPromptSaveBlockReason({
-          baseline: current.baseline,
-          draft: current.draft,
-          saving: current.saving,
-        }) !== null
-      ) {
-        return;
-      }
+      if (resolveSystemPromptSaveBlockReason(current) !== null) return;
       const key = hostKey;
       const epoch = epochRef.current;
       const targetService = serviceRef.current;
+      // While a conflict is active only Overwrite writes. A plain save would replace a disk version
+      // the user has not reviewed.
+      if (!options?.overwrite && current.conflictRevision !== undefined) return;
+      // Overwrite targets the disk revision the user reviewed (the card passes it). It is never read
+      // from the listing at click time, which may be newer than what the user was shown.
       const expectedRevision = options?.overwrite
         ? options.overwrite.reviewedRevision
         : current.baseRevision;
@@ -308,13 +314,17 @@ export function useSystemPromptOverrides(
         });
         if (epoch !== epochRef.current) return;
         if (result && result.kind === "conflict") {
-          // The file changed after the draft's revision. Nothing was written; the refreshed list
-          // makes the editor show the disk-changed choices.
+          // The file changed after the draft's revision. Nothing was written. The conflict revision is
+          // kept on the editor, so the disk-changed choices show even if the refresh below fails.
           if (options?.overwrite) {
             // The card already shows; a second change since review needs an explicit signal.
             toast(intl.formatMessage({ id: "settings.systemPrompt.changedOnDisk" }));
           }
-          setEditor((latest) => (latest ? { ...latest, saving: false } : latest));
+          setEditor((latest) =>
+            latest?.key === current.key
+              ? { ...latest, saving: false, conflictRevision: result.currentRevision }
+              : latest,
+          );
           void refreshInPlace(targetService, key);
           return { currentRevision: result.currentRevision };
         }
@@ -362,6 +372,7 @@ export function useSystemPromptOverrides(
       const host = hostKey;
       const epoch = epochRef.current;
       const targetService = serviceRef.current;
+      const startEditor = editorRef.current;
       const [outcome] = await deleteEntries(targetService, [{ key, expectedRevision }]);
       if (epoch !== epochRef.current) return;
       if (outcome === "failed") {
@@ -374,7 +385,8 @@ export function useSystemPromptOverrides(
         return;
       }
       toast(intl.formatMessage({ id: "settings.systemPrompt.restored" }));
-      setEditor((current) => (current?.key === key ? null : current));
+      // Close only the editor open when Restore started; a reopened or edited one is a new object.
+      if (startEditor?.key === key) setEditor((latest) => (latest === startEditor ? null : latest));
       void refreshInPlace(targetService, host);
     },
     [deleteEntries, hostKey, intl, refreshInPlace, rpcReady],
@@ -386,25 +398,27 @@ export function useSystemPromptOverrides(
       const host = hostKey;
       const epoch = epochRef.current;
       const targetService = serviceRef.current;
+      const startEditor = editorRef.current;
       const outcomes = await deleteEntries(targetService, entries);
       if (epoch !== epochRef.current) return;
-      const restoredKeys = new Set(
-        entries.filter((_, index) => outcomes[index] === "ok").map((entry) => entry.key),
-      );
-      const restored = restoredKeys.size;
-      const conflicts = outcomes.filter((outcome) => outcome === "conflict").length;
-      const failed = outcomes.filter((outcome) => outcome === "failed").length;
-      setEditor((current) => (current && restoredKeys.has(current.key) ? null : current));
+      const { restoredKeys, conflicts, failed } = tallyOverrideResets(entries, outcomes);
+      // Same rule as restoreDefault: only the editor that was open when the reset started may close.
+      if (startEditor && restoredKeys.has(startEditor.key)) {
+        setEditor((latest) => (latest === startEditor ? null : latest));
+      }
       void refreshInPlace(targetService, host);
       if (conflicts === 0 && failed === 0) {
         toast(
-          intl.formatMessage({ id: "settings.systemPrompt.resetAllDone" }, { count: restored }),
+          intl.formatMessage(
+            { id: "settings.systemPrompt.resetAllDone" },
+            { count: restoredKeys.size },
+          ),
         );
       } else {
         toast(
           intl.formatMessage(
             { id: "settings.systemPrompt.resetAllPartial" },
-            { restored, conflicts, failed },
+            { restored: restoredKeys.size, conflicts, failed },
           ),
         );
       }
@@ -420,21 +434,15 @@ export function useSystemPromptOverrides(
   const effectiveStatus: SystemPromptOverridesStatus = rpcReady ? status : "waiting";
   // Dirty and the save block reason are computed once per render and reused below.
   const editorDirty = editor !== null && isSystemPromptDraftDirty(editor.baseline, editor.draft);
-  const editorSaveBlock =
-    editor === null
-      ? null
-      : resolveSystemPromptSaveBlockReason({
-          baseline: editor.baseline,
-          draft: editor.draft,
-          saving: editor.saving,
-        });
+  const editorSaveBlock = editor === null ? null : resolveSystemPromptSaveBlockReason(editor);
   const editorSection =
     editor === null ? undefined : sections.find((candidate) => candidate.key === editor.key);
   const editorDiskChanged =
     editor !== null &&
-    editorSection !== undefined &&
-    editorSection.revision !== undefined &&
-    editorSection.revision !== editor.baseRevision;
+    (editor.conflictRevision !== undefined ||
+      (editorSection !== undefined &&
+        editorSection.revision !== undefined &&
+        editorSection.revision !== editor.baseRevision));
   const canSaveEditor =
     editor !== null &&
     effectiveStatus === "ready" &&

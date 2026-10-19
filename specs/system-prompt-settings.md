@@ -207,6 +207,7 @@ Active-condition notes that must be in the descriptions:
 - Save writes with `expectedRevision` = the revision captured when the editor opened (or last rebased).
 - The empty-draft state has one visible reason: the save-reason line under the editor. There is no second alert.
 - The character count under the editor counts graphemes, the same as the row size line.
+- While a save conflict is active, plain Save is blocked; only Overwrite (below) writes.
 
 ## Restore and reset
 
@@ -220,23 +221,43 @@ Active-condition notes that must be in the descriptions:
 - Restore on a conflicting file refreshes the list and shows a toast; the user repeats the restore if still
   wanted (it is not offered as Overwrite, because the user confirmed a different default-restore than what
   is now on disk).
+- On success the editor closes only if it is still the editor that was open when Restore started. The delete
+  is async and the editor is not busy, so the user may reopen the section or edit a draft meanwhile; a newer
+  editor state is left alone. Reset all applies the same rule to each row it restored.
 
 ## Changed on disk
 
-When the editor is open and the section's current revision differs from the editor's captured revision (a
-refresh after window focus, or a save conflict), the editor shows a warning state:
+When the editor is open and either the section's current revision differs from the editor's captured revision
+(a refresh after window focus), or a save conflict is active, the editor shows a warning state:
 
-- "Reload from disk" discards the draft and rebases the editor onto the current disk text and revision. It
-  adopts the disk text current at click time, which is safe because the draft is discarded anyway.
-- "Show disk version" captures the disk version from the current listing (its revision and override text) and
-  shows that text read-only, with a note that Overwrite replaces it. The draft is not touched. A view that no
-  longer matches the listing's revision is not treated as viewed.
+- "Reload from disk" discards the draft and rebases the editor onto the listing's text and revision. The draft is
+  discarded anyway, so this is safe. After a failed refresh the listing can be behind the conflict: the rebase then
+  uses that older revision, and the next Save conflicts again, which is the normal conflict check, not data loss.
+- "Show disk version" captures the disk version from the latest listing (its revision and override text) and
+  shows that text read-only, with a note that Overwrite replaces it. The draft is not touched. The captured
+  version counts as viewed only while its revision is the disk revision the card describes (below). When the
+  listing does not yet carry that revision (a conflict whose follow-up refresh failed), Show refreshes the list
+  instead of capturing text that belongs to an older revision.
 - "Overwrite" is disabled until a disk version has been shown. It keeps the draft and saves it against the
   revision of the shown disk version (see "Conflict revisions"), so the content replaced is the content the
   user looked at. If the file changed again since, the write is refused, nothing is replaced, the list refreshes,
   the shown version is dropped, and a toast reports the change; the user must show the newer version before
   Overwrite is enabled again. A host that reports no revision has no conflict check, so Overwrite stays enabled
   there without a view.
+
+A save conflict stores the `currentRevision` returned by the host on the editor state (`conflictRevision`;
+`null` means the file was missing on disk). The state therefore does not depend on the follow-up list refresh
+succeeding: if that refresh fails, the warning and the blocked Save remain, and the list keeps its last
+revision. The card's disk revision is the conflict's `conflictRevision` when one is set, otherwise the listing's
+revision. A listing that reports a different revision than the conflict's supersedes the conflict (it then
+describes the disk, and the listing-based state applies); a listing that reports the same revision keeps it.
+A failed listing never clears it. Reload clears the conflict and rebases onto the listing, so its revision is
+the listing's, not the conflict's.
+
+Overwrite never takes a revision from the conflict or the listing at click time. The conflict revision only
+gates plain Save and names the disk revision the card shows, so the revision Overwrite sends is always one the
+user was shown. The hook's `saveEditor` returns the conflict (`{ currentRevision }`) so the card can drop the
+version it showed.
 
 Closing the editor by Cancel still follows the discard guard. The list refreshes silently on window focus when
 the target is ready. Older hosts without revisions never show this state.
@@ -266,7 +287,8 @@ moment of the click:
 
 A newer external edit that lands after review therefore produces a conflict, not a silent replacement. The
 captured revisions live in the row or the card that shows them (`RestoreConfirmPanel`, `DiskChangedAlert`); the
-hook does not keep a second copy. The card's captured disk version is the only source of the Overwrite revision.
+hook does not keep a second copy. The card's captured disk version is the only source of the Overwrite revision;
+the conflict revision is never sent by itself.
 
 ## Save path
 
@@ -299,8 +321,11 @@ Unit and component tests cover the rules above. The desktop E2E scenarios are wr
 
 Unit coverage added with the cleanup: the hook tests cover the patch-from-write save (no relist), the relist for hosts
 that return no revision, Overwrite against the reviewed revision while a newer disk revision exists, the focus
-throttle, and a rejected reset entry. The model tests cover the too-large mapping and the prefix-trim diff against
-the reference walk (randomized).
+throttle, and a rejected reset entry. They also cover the conflict revision kept when the follow-up refresh fails,
+its release by a listing that reports another revision, and restore or reset closing only the editor that was open
+when they started. The card tests cover Show refreshing instead of showing a stale listing, and Overwrite sending the
+shown revision. The model tests cover the too-large mapping and the prefix-trim diff against the reference walk
+(randomized).
 
 These E2E scenarios are not run in this round (the desktop E2E harness needs a built app); this is stated in
 the report.
@@ -314,9 +339,12 @@ Settings page (pinned target)
       focus:   listSections  →  sections in place              [no loading card]
       save:    writeOverride{expectedRevision}
                  ok        → toast, close editor, listSections in place
-                 conflict  → listSections in place; editor shows Changed on disk
+                 conflict  → editor.conflictRevision = currentRevision (Save blocked, Changed on disk);
+                             listSections in place (failure keeps the conflict state; a listing with another
+                             revision clears it)
+                 Overwrite → writeOverride{expectedRevision = reviewed revision of the shown disk version}
       restore: deleteOverride{expectedRevision}
-                 ok        → toast, listSections in place
+                 ok        → toast, close editor only if it is still the one open at start, listSections in place
                  conflict  → toast, listSections in place
   → SystemPromptEditor (inline): model.validate / diff / dirty (pure)
 Host (service): withFileLock(path) → read bytes → sha256 → compare → atomic write (trimmed) or delete

@@ -100,6 +100,13 @@ export interface SystemPromptEditorState {
    * conflict checking off for this editor.
    */
   baseRevision: string | null | undefined;
+  /**
+   * Disk revision returned by a save conflict. Kept on the editor so the Changed-on-disk state does
+   * not depend on the follow-up list refresh succeeding. `undefined` means no conflict; `null` means
+   * the file was missing on disk. Cleared by a rebase (`makeEditorState`), and by a listing that
+   * reports a different revision for the section, because that listing then describes the disk.
+   */
+  conflictRevision?: string | null;
 }
 
 /** A fresh editor on `effectiveContent`; the revision is the one the draft is based on. */
@@ -116,6 +123,38 @@ export function revisionOf(
   key: SystemPromptOverrideKey,
 ): string | null | undefined {
   return sections.find((candidate) => candidate.key === key)?.revision;
+}
+
+/** Result of one override delete: removed, left in place by a disk conflict, or rejected. */
+export type DeleteOutcome = "ok" | "conflict" | "failed";
+
+/** Which reset entries were removed, plus the counts the reset toast reports. */
+export function tallyOverrideResets(
+  entries: readonly { key: SystemPromptOverrideKey }[],
+  outcomes: readonly DeleteOutcome[],
+): { restoredKeys: Set<SystemPromptOverrideKey>; conflicts: number; failed: number } {
+  return {
+    restoredKeys: new Set(
+      entries.filter((_, index) => outcomes[index] === "ok").map((entry) => entry.key),
+    ),
+    conflicts: outcomes.filter((outcome) => outcome === "conflict").length,
+    failed: outcomes.filter((outcome) => outcome === "failed").length,
+  };
+}
+
+/**
+ * A listing that reports another revision than the editor's conflict supersedes the conflict: the listing
+ * then describes the disk and the editor's own revision check takes over. The same revision keeps it.
+ */
+export function settleConflictAgainstListing(
+  editor: SystemPromptEditorState,
+  sections: readonly EditableSystemPromptSection[],
+): SystemPromptEditorState {
+  if (editor.conflictRevision === undefined) return editor;
+  const listed = sections.find((section) => section.key === editor.key);
+  return listed?.revision === editor.conflictRevision
+    ? editor
+    : { ...editor, conflictRevision: undefined };
 }
 
 /** Listings compare by the fields the UI renders and the save path reads. */

@@ -263,8 +263,8 @@ interface CapturedDiskVersion {
 
 /**
  * Changed-on-disk state. Overwrite replaces the disk version the user has looked at: "Show disk version"
- * captures that version's revision and text from the latest listing, and Overwrite sends exactly that
- * revision. A captured version that no longer matches the listing is not treated as viewed.
+ * captures that version's revision and text, and Overwrite sends exactly that revision. A captured
+ * version is only viewed while its revision is the disk revision this card is about.
  * A conflicting Overwrite drops the captured version, so the newer disk version has to be shown again
  * before the next Overwrite.
  */
@@ -283,12 +283,19 @@ function DiskChangedAlert({
 }) {
   const { intl } = useZCodeIntl();
   const [captured, setCaptured] = useState<CapturedDiskVersion | null>(null);
-  const viewed = captured !== null && captured.revision === section.revision ? captured : null;
+  // A save conflict names the disk revision it found, which can be newer than the listing when the
+  // follow-up refresh failed. Without a conflict, the listing's revision is the disk revision.
+  const conflictRevision = view.editor?.conflictRevision;
+  const diskRevision = conflictRevision !== undefined ? conflictRevision : section.revision;
+  // The listing has the disk text only when its revision is the disk revision. Until a refresh brings
+  // it, Show refreshes the list instead of capturing text that belongs to an older revision.
+  const listingCurrent = section.revision === diskRevision;
+  const viewed = captured !== null && captured.revision === diskRevision ? captured : null;
   // Hosts without revisions run no conflict check, so Overwrite stays available there without a view.
-  const overwriteReady = viewed !== null || section.revision === undefined;
+  const overwriteReady = viewed !== null || diskRevision === undefined;
   const overwrite = async () => {
     const conflict = await view.saveEditor({
-      overwrite: { reviewedRevision: viewed ? viewed.revision : section.revision },
+      overwrite: { reviewedRevision: viewed ? viewed.revision : diskRevision },
     });
     if (conflict) setCaptured(null);
   };
@@ -305,9 +312,13 @@ function DiskChangedAlert({
             variant="outline"
             disabled={busy}
             data-testid={TID_SETTINGS_SYSTEM_PROMPT_DISK_SHOW}
-            onClick={() =>
-              setCaptured({ revision: section.revision, text: section.overrideContent })
-            }
+            onClick={() => {
+              if (!listingCurrent) {
+                view.reload();
+                return;
+              }
+              setCaptured({ revision: section.revision, text: section.overrideContent });
+            }}
           >
             {intl.formatMessage({ id: "settings.systemPrompt.diskChanged.show" })}
           </Button>
