@@ -174,6 +174,9 @@ async function findFolderInstructionFile(
   for (const name of input.priorityFiles) {
     if (input.signal?.aborted) return undefined;
     const file = api.join(dir.path, name);
+    // `priorityFiles` is user config and may contain `../`. Check the candidate's folder before any I/O. Using the
+    // folder rather than the file keeps the workspace root's own files out of reach too.
+    if (!isStrictlyInsideWorkspace(api.dirname(file), scope.root, input.platform)) continue;
     const key = nestedInstructionKey(file, input.platform);
     if (skipKeys.has(key)) return undefined;
     if (input.tracker.isKnownMiss(key, input.now)) continue;
@@ -199,7 +202,9 @@ async function resolveDirectories(scope: DiscoveryScope): Promise<DirectoryCandi
     } else if (location.kind === "directory") {
       starts.push(location.path);
     } else {
-      // Glob/Grep `path` may name a file or a folder. A missing path has nothing to discover.
+      // Glob/Grep `path` may name a file or a folder. Containment is checked before the stat so an out-of-scope
+      // path gets no filesystem I/O (R3, A5). A missing path has nothing to discover.
+      if (!isStrictlyInsideWorkspace(location.path, root, input.platform)) continue;
       try {
         const stat = await input.fileSystem.stat({ path: location.path }, { signal: input.signal });
         if (stat.kind === "directory") starts.push(location.path);
@@ -229,10 +234,14 @@ async function resolveDirectories(scope: DiscoveryScope): Promise<DirectoryCandi
   return result;
 }
 
+/**
+ * Layout: every marker line first, then the intro, then the bodies. The history probe reads only the leading marker
+ * lines of the block, so AGENTS.md text can never be parsed as a marker.
+ */
 function buildReminderBody(selected: SelectedFile[], { api, root }: DiscoveryScope): string[] {
-  const lines: string[] = [REMINDER_INTRO];
+  const lines: string[] = selected.map((file) => formatNestedInstructionMarker(file.file, file.bytes));
+  lines.push(REMINDER_INTRO);
   for (const file of selected) {
-    lines.push(formatNestedInstructionMarker(file.file, file.bytes));
     lines.push(`Instructions from: ${toPosixDisplay(api.relative(root, file.file))}`);
     lines.push(file.content.replace(/\n+$/, ""));
     if (file.truncated) {

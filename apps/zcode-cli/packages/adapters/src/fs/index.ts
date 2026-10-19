@@ -44,6 +44,7 @@ import {
   encodeTextContent,
   normalizeLineEndings,
   shouldNormalizeLineEndings,
+  trimTruncatedUtf8Tail,
 } from "./text-metadata.js";
 import { readTextFileRangeFromNode } from "./text-range-reader.js";
 import { maybeThrowStorageFsFault } from "../storage/fs-fault-injection.js";
@@ -175,7 +176,8 @@ export class NodeFileSystemAdapter implements FileSystemPort {
 
       const maxBytes = request.maxBytes;
       const truncated = maxBytes !== undefined && info.size > maxBytes;
-      const buffer = truncated ? await readFirstBytes(path, maxBytes) : await readFile(path);
+      const rawBuffer = truncated ? await readFirstBytes(path, maxBytes) : await readFile(path);
+      const buffer = truncated ? trimTruncatedUtf8Tail(rawBuffer) : rawBuffer;
       const decoded = decodeTextBuffer({ buffer, encoding: request.encoding, path });
       const rawContent = decoded.content;
       const encoding = decoded.encoding;

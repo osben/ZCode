@@ -26,10 +26,12 @@ export function createRuntimeNestedInstructionContext(
         ...(runtime.config.subagentContext?.userInstructions?.sources ?? []),
       ].map((source) => source.filePath);
     },
+    // The live cwd is read at call time: relative `file_path`s in history resolve the same way the Read handler does now.
     readHistory: () =>
       readNestedInstructionHistory(
         runtime.messageHistory.borrowReadOnlyRuntimeEntries(),
         process.platform,
+        runtime.workingDirectory,
       ),
     tracker: runtime.nestedInstructionTracker,
   };

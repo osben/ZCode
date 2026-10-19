@@ -25,8 +25,9 @@ export class NestedInstructionTracker {
   }
 
   /**
-   * Called by the runtime when a tool schedule finishes. Its results are committed to history before the next model step,
-   * so from that point history is the single source of truth and the reservations are no longer needed.
+   * Called by settleToolResults right after the step's tool results are committed to provider-visible history. Clearing
+   * earlier (for example when one streamed tool's executeTools ends) would open a window where a later call in the same
+   * step sees neither the reservation nor the result, and delivers the same file twice.
    */
   clearReservations(): void {
     this.reservations.clear();

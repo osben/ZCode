@@ -166,6 +166,24 @@ describe("discoverNestedInstructions: nested discovery", () => {
     ).toEqual([`${ROOT}/packages/foo/CLAUDE.md`]);
   });
 
+  it("lists every marker line before any instruction body", async () => {
+    const fileSystem = new MemoryFileSystem({
+      [`${ROOT}/a/AGENTS.md`]: "a rules",
+      [`${ROOT}/a/b/AGENTS.md`]: "b rules",
+    });
+
+    const result = await discoverNestedInstructions(
+      input(fileSystem, {
+        locations: [fileLocation(`${ROOT}/a/b/c/x.ts`)],
+        touchedFiles: [`${ROOT}/a/b/c/x.ts`],
+      }),
+    );
+
+    const markerLines = (result ?? []).filter((line) => line.startsWith("[nested-agents-md "));
+    expect(markerLines).toHaveLength(2);
+    expect(result?.slice(0, markerLines.length)).toEqual(markerLines);
+  });
+
   it("delivers nothing when no folder between the touched file and the root has instructions", async () => {
     const fileSystem = new MemoryFileSystem({ [`${ROOT}/src/other.ts`]: "x" });
 
@@ -183,6 +201,39 @@ describe("discoverNestedInstructions: scope and root exclusion", () => {
       input(fileSystem, {
         locations: [fileLocation("/elsewhere/x/y.ts")],
         touchedFiles: ["/elsewhere/x/y.ts"],
+      }),
+    );
+
+    expect(result).toBeUndefined();
+    expect(fileSystem.statPaths).toEqual([]);
+  });
+
+  it("ignores an out-of-workspace or root-level priority file reached by traversal, without stat", async () => {
+    const fileSystem = new MemoryFileSystem({
+      "/outside/AGENTS.md": "outside",
+      [`${ROOT}/AGENTS.md`]: "root",
+    });
+
+    const result = await discoverNestedInstructions(
+      input(fileSystem, {
+        locations: [fileLocation(`${ROOT}/packages/foo/x.ts`)],
+        touchedFiles: [`${ROOT}/packages/foo/x.ts`],
+        priorityFiles: ["../../AGENTS.md", "../../../../outside/AGENTS.md"],
+      }),
+    );
+
+    expect(result).toBeUndefined();
+    expect(fileSystem.statPaths).not.toContain(`${ROOT}/AGENTS.md`);
+    expect(fileSystem.statPaths).not.toContain("/outside/AGENTS.md");
+  });
+
+  it("does not stat an explicit Glob/Grep path outside the workspace", async () => {
+    const fileSystem = new MemoryFileSystem({ "/elsewhere/AGENTS.md": "outside" });
+
+    const result = await discoverNestedInstructions(
+      input(fileSystem, {
+        locations: [{ path: "/elsewhere", kind: "unknown" }],
+        touchedFiles: [],
       }),
     );
 
@@ -379,6 +430,23 @@ describe("discoverNestedInstructions: concurrency and caching", () => {
 
     const deliveries = [first, second].filter((result) => result !== undefined);
     expect(deliveries).toHaveLength(1);
+  });
+
+  it("keeps a reservation until the step's results are committed, across a later streamed call", async () => {
+    const fileSystem = new MemoryFileSystem({ [`${ROOT}/packages/foo/AGENTS.md`]: "foo" });
+    const tracker = new NestedInstructionTracker();
+    const base = input(fileSystem, { tracker });
+
+    // First streamed call selects the file; its result is not in history yet.
+    expect(markerPaths((await discoverNestedInstructions(base)))).toEqual([`${ROOT}/packages/foo/AGENTS.md`]);
+    // A later call in the same step still sees no history entry, but must not deliver the file again.
+    expect((await discoverNestedInstructions(base))).toBeUndefined();
+
+    // Settlement commits the result to history, then clears reservations. Only then is history the source of truth.
+    tracker.clearReservations();
+    expect(markerPaths((await discoverNestedInstructions({ ...base, readHistory: () => NO_HISTORY })))).toEqual([
+      `${ROOT}/packages/foo/AGENTS.md`,
+    ]);
   });
 
   it("does not reserve a candidate that was skipped, so a later call can deliver it", async () => {

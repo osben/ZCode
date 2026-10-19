@@ -2,18 +2,25 @@ import { describe, expect, it } from "vitest";
 import {
   isStrictlyInsideWorkspace,
   nestedInstructionKey,
+  resolveNestedInstructionPath,
   resolveNestedInstructionTargets,
 } from "../src/context/nested-instructions/touched-paths.js";
 
 const CWD = "/repo";
 
-function targets(toolName: string, toolInput: unknown, workingDirectory = CWD, toolOutput?: unknown) {
+function targets(
+  toolName: string,
+  toolInput: unknown,
+  workingDirectory = CWD,
+  toolOutput?: unknown,
+  platform: NodeJS.Platform = "linux",
+) {
   return resolveNestedInstructionTargets({
     toolName,
     toolInput,
     toolOutput,
     workingDirectory,
-    platform: "linux",
+    platform,
   });
 }
 
@@ -56,6 +63,30 @@ describe("resolveNestedInstructionTargets", () => {
       locations: [],
       touchedFiles: [],
     });
+  });
+
+  it("turns a Git-Bash /c/ file path into a drive path that is inside a Windows workspace", () => {
+    const result = targets(
+      "Read",
+      { file_path: "/c/repo/packages/foo/a.ts" },
+      "C:\\repo",
+      undefined,
+      "win32",
+    );
+
+    expect(result.locations).toEqual([{ path: "C:\\repo\\packages\\foo\\a.ts", kind: "file" }]);
+    expect(isStrictlyInsideWorkspace(result.locations[0]!.path, "C:\\repo", "win32")).toBe(true);
+  });
+
+  it("resolves a relative Windows path against a Git-Bash style cwd", () => {
+    expect(
+      resolveNestedInstructionPath("packages\\foo\\a.ts", "/c/repo", "win32"),
+    ).toBe("C:\\repo\\packages\\foo\\a.ts");
+  });
+
+  it("keeps posix path bytes unchanged, including non-NFC names, so a stat hits the real file", () => {
+    const decomposed = "/repo/cafe\u0301/AGENTS.md";
+    expect(resolveNestedInstructionPath(decomposed, "/repo", "linux")).toBe(decomposed);
   });
 
   it("uses an explicit Glob/Grep path with unknown kind so discovery can stat it", () => {

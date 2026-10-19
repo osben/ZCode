@@ -90,38 +90,35 @@ export async function executeTools(
   });
   let results: ToolExecutionResult[] = [];
 
-  try {
-    while (true) {
-      const next = await generator.next();
-      if (next.done) {
-        results = next.value;
-        break;
-      }
-
-      if (next.value.type === "batch_start") {
-        await options?.onBatchStart?.(next.value.toolCallIds);
-        continue;
-      }
-
-      if (next.value.type === "batch_complete") {
-        const batchResults = next.value.results;
-        const batchCompleteEvent = this.createEvent(
-          SessionEventType.ToolBatchComplete,
-          {
-            toolCallIds: batchResults.map((result) => result.toolCallId as ToolCallId),
-            successCount: batchResults.filter((result) => result.success).length,
-            errorCount: batchResults.filter((result) => !result.success).length,
-          },
-          traceContext,
-        );
-        await this.appendEvent(batchCompleteEvent, traceContext);
-        events.push(batchCompleteEvent);
-      }
+  // Nested AGENTS.md reservations are not cleared here. Streamed calls run one executeTools per tool while the model is
+  // still responding, and their results only enter history at settleToolResults, so clearing at this call's end would
+  // let a later streamed call in the same step deliver the same file again (context/nested-instructions/tracker.ts).
+  while (true) {
+    const next = await generator.next();
+    if (next.done) {
+      results = next.value;
+      break;
     }
-  } finally {
-    // The caller commits these results to history before the next model step, so from here on history alone answers
-    // which nested AGENTS.md files the model has seen (context/nested-instructions/tracker.ts).
-    this.nestedInstructionTracker.clearReservations();
+
+    if (next.value.type === "batch_start") {
+      await options?.onBatchStart?.(next.value.toolCallIds);
+      continue;
+    }
+
+    if (next.value.type === "batch_complete") {
+      const batchResults = next.value.results;
+      const batchCompleteEvent = this.createEvent(
+        SessionEventType.ToolBatchComplete,
+        {
+          toolCallIds: batchResults.map((result) => result.toolCallId as ToolCallId),
+          successCount: batchResults.filter((result) => result.success).length,
+          errorCount: batchResults.filter((result) => !result.success).length,
+        },
+        traceContext,
+      );
+      await this.appendEvent(batchCompleteEvent, traceContext);
+      events.push(batchCompleteEvent);
+    }
   }
 
   this.logger?.debug("executeTools: completed", { resultCount: results.length });

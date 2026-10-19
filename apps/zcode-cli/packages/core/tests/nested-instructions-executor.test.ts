@@ -125,7 +125,7 @@ function createHarness(options: {
     priorityFiles: ["AGENTS.md"],
     rootSourcePaths: [],
     // Same platform source as the executor helper; discovery and history keys must agree.
-    readHistory: () => readNestedInstructionHistory(history, process.platform),
+    readHistory: () => readNestedInstructionHistory(history, process.platform, ROOT),
     tracker,
     ...options.nested,
   };

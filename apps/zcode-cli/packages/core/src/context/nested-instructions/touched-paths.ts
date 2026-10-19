@@ -41,7 +41,7 @@ export function resolveNestedInstructionTargets(input: {
   const api = getToolPathApi(input.platform);
   const record = isRecord(input.toolInput) ? input.toolInput : undefined;
   const resolveInput = (value: string) =>
-    api.isAbsolute(value) ? api.normalize(value) : api.resolve(input.workingDirectory, value);
+    resolveNestedInstructionPath(value, input.workingDirectory, input.platform);
   const fileTargets = (paths: string[]): NestedInstructionTargets => ({
     locations: paths.map((path) => ({ path, kind: "file" })),
     touchedFiles: paths,
@@ -71,6 +71,29 @@ export function resolveNestedInstructionTargets(input: {
   if (input.toolName === "Bash") return cwdTargets();
 
   return { locations: [], touchedFiles: [] };
+}
+
+/**
+ * Absolute form of a tool-supplied path, used for containment checks, stats and history keys. On win32, Git-Bash
+ * `/c/...` paths must become drive-letter paths before resolution: `path.win32.resolve` would otherwise treat `/c/repo`
+ * as a rooted path on the current drive. Posix paths are only normalized, not NFC-rewritten, because a stat on a
+ * renamed path would miss the file.
+ */
+export function resolveNestedInstructionPath(
+  value: string,
+  workingDirectory: string,
+  platform: NodeJS.Platform,
+): string {
+  const api = getToolPathApi(platform);
+  const normalizedValue = normalizeForLookup(value, platform);
+  if (api.isAbsolute(normalizedValue)) return normalizedValue;
+  return api.resolve(normalizeForLookup(workingDirectory, platform), normalizedValue);
+}
+
+function normalizeForLookup(value: string, platform: NodeJS.Platform): string {
+  return platform === "win32"
+    ? normalizeToolPathForComparison(value, platform)
+    : getToolPathApi(platform).normalize(value);
 }
 
 /**

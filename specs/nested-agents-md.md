@@ -33,8 +33,10 @@ anything above it, is a candidate. Candidate file names are the loader's priorit
 directory the first existing priority file wins, the same rule the upward walk uses. The workspace root and everything above it are
 owned by the startup loader and are never walked here.
 
-R3. **Ignored paths.** A triggered path outside `workspaceRoot` (lexical containment check) produces no candidates.
-A path equal to the workspace root produces none.
+R3. **Ignored paths.** A triggered path outside `workspaceRoot` (lexical containment check) produces no candidates, and an
+explicit `Glob` / `Grep` path outside it is rejected before any stat. A path equal to the workspace root produces none.
+A candidate is checked by its folder before any I/O: a `priorityFiles` entry containing `..` that leaves the workspace, or
+resolves to a file in the workspace root, is never stat'ed.
 A candidate that is already one of the startup `userInstructions.sources[].filePath` values is never re-injected.
 
 R4. **Delivery.** A found file is delivered inside the **same tool result** that triggered it, as a `<system-reminder>` block
@@ -59,8 +61,9 @@ R6. **Budget.**
 R7. **Dedupe source of truth = provider-visible history.** A nested file counts as delivered when either:
 
 - a visible tool result contains a reminder marker for it (`[nested-agents-md path=<json-string> bytes=<n>]`), or
-- a visible successful `Read` of that exact file was a full read (no `offset` / `limit`).
-  This matches the `agent/loaded-skills.ts` precedent. Compaction, microcompaction (`runtime/methods/microcompact.ts` clears
+- a visible successful `Read` of that exact file was a full read (no `offset` / `limit`) and its result still carries the
+  numbered body. A fresh-cache `file_unchanged` stub or a cleared result does not count. A relative `file_path` resolves against
+  the live cwd before keying. This matches the `agent/loaded-skills.ts` precedent. Compaction, microcompaction (`runtime/methods/microcompact.ts` clears
   old tool-result bodies), resume and rewind therefore need no extra synchronization. When the model no longer sees the content,
   the file can be delivered again.
 
@@ -103,11 +106,11 @@ This matches the existing path policy, which does not hard-block outside paths.
 | State                              | Owner                                                                                            | Lifetime                                                                       |
 | ---------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
 | Delivered set and budget           | Provider-visible history (`messageHistory.borrowReadOnlyRuntimeEntries()`), read through a probe | Exactly as long as the history entries                                         |
-| Schedule reservations              | `NestedInstructionTracker`, one per runtime                                                      | Cleared by `executeTools` when the current tool schedule finishes (see §4)     |
+| Schedule reservations              | `NestedInstructionTracker`, one per runtime                                                      | Cleared by `settleToolResults` after the step's results are committed (see §4) |
 | Stat miss cache                    | `NestedInstructionTracker`                                                                       | 30 s TTL per candidate path, so an AGENTS.md created mid-session is found soon |
 | Workspace root and startup sources | Runtime (`workspaceRoot`, `contextSourceSnapshot`)                                               | Session                                                                        |
 
-No component keeps a second accepted "delivered" set. The tracker holds only transient schedule reservations and a miss cache.
+No component keeps a second accepted "delivered" set. The tracker holds only transient reservations and a miss cache.
 
 ## 4. Event order
 
@@ -136,19 +139,21 @@ runtime.executeTools ─► executor.executeSchedule(calls)   ── tracker: re
   ├─ call B (Read a/y.ts)  ── runs concurrently with A
   │     discover(B): may stat/read a/AGENTS.md too, but reserve() fails ──► skip (no duplicate)
   │
-  ▼  schedule finishes ── executeTools finally: tracker.clearReservations()
+  ▼  call A's schedule finishes; call C (streamed, same step) starts ── reserve() still holds a/AGENTS.md ──► skip
   │
-  ▼  runtime commits results to history (markers now visible)
+  ▼  settleToolResults: commitTurnRequestEntries (markers now visible), then tracker.clearReservations()
   │
   ▼  next model step: probe sees markers, so a later call in a/ skips
   │
   ▼  microcompact / compaction removes the result ──► markers gone ──► re-deliverable
 ```
 
-Why reservations end at schedule boundaries: results are committed to history after the whole schedule returns
-(`runtime/methods/tools.ts`), so a reservation is needed only until the marker becomes visible. The runtime owns both the
-tracker and that boundary, so the clear lives in `executeTools`, not in the shared executor. Skipped candidates are never
-reserved, so nothing has to be released on error paths.
+Why reservations end at settlement, not at the end of an `executeTools` call: the streaming coordinator runs one
+`executeTools([call])` per streamed tool while the model is still responding, and their results enter history only at
+`settleToolResults` (`runtime/methods/tool-result-settlement.ts`). Clearing when one call ends would let a later streamed call
+in the same step see neither the reservation nor the marker, and deliver the same file twice. The clear runs right after the
+synchronous commit, so no window opens between them. Skipped candidates are never reserved, so nothing has to be released on
+error paths.
 
 ## 5. Interfaces
 
@@ -181,7 +186,7 @@ export function readNestedInstructionHistory(
 // tracker.ts
 export class NestedInstructionTracker {
   reserve(key: string): boolean; // synchronous check-and-add; false when already reserved this schedule
-  clearReservations(): void; // called by runtime executeTools at schedule end
+  clearReservations(): void; // called by settleToolResults after the step's results are committed to history
   isKnownMiss(key: string, now: number): boolean;
   recordMiss(key: string, now: number): void; // TTL 30 s; expired entries swept once the cache is large
 }
@@ -229,18 +234,23 @@ that contains a `<system-reminder>` tag.
 Reminder body format:
 
 ```text
-Nested AGENTS.md for packages/foo/. Apply it to files under that folder. It is more specific than the workspace instructions.
-It does not override system, developer or direct user instructions.
+<system-reminder>
 [nested-agents-md path="/abs/repo/packages/foo/AGENTS.md" bytes=1234]
+Nested AGENTS.md instructions apply to the folders this tool call touched. Each applies to files under its own folder ...
 Instructions from: packages/foo/AGENTS.md
 <content>
+</system-reminder>
 ```
 
-Several files in one call form one body, root-to-leaf. The marker line is the only machine-readable part. The history probe
-parses it with `/\[nested-agents-md path=("(?:[^"\\\n]|\\.)*") bytes=(\d+)\]/g`, and `path` is a JSON string.
+All marker lines come first, then the intro, then each file's `Instructions from:` line and content, root-to-leaf. The history
+probe reads only the marker lines at the head of each `<system-reminder>\n` block: a line-by-line match of
+`/^\[nested-agents-md path=("(?:[^"\\\n]|\\.)*") bytes=(\d+)\]$/`, stopping at the first line that is not a marker. The
+repository-controlled body is never parsed, so AGENTS.md text cannot fake a delivered path or inflate `bytesDelivered`. `path` is a
+JSON string. Marker-shaped text outside a reminder block does not count.
 
-Runtime wiring: `runtime/agent-runtime.ts` constructs one `NestedInstructionTracker`, and `runtime/helpers/runtime-tools.ts`
-builds the `NestedInstructionContext`. `readHistory` calls `readNestedInstructionHistory(runtime.messageHistory.borrowReadOnlyRuntimeEntries(), platform)`.
+Runtime wiring: `runtime/agent-runtime.ts` constructs one `NestedInstructionTracker`, and `runtime/helpers/nested-instructions-context.ts`
+builds the `NestedInstructionContext`. `readHistory` calls `readNestedInstructionHistory(runtime.messageHistory.borrowReadOnlyRuntimeEntries(), platform, runtime.workingDirectory)`,
+so the cwd is read at call time.
 `rootSourcePaths` comes from `contextSourceSnapshot.userInstructions.sources` plus `subagentContext.userInstructions.sources`.
 `priorityFiles` comes from `config.userInstructions?.priorityFiles`, defaulting to `["AGENTS.md"]`.
 
@@ -275,7 +285,11 @@ A11. Incognito with `projectInstructions` excluded: no discovery, no stat, ident
 A12. Subagent child: its first touch of `packages/foo` delivers the file even if the parent already delivered it.
 
 A13. Windows: `C:\repo\packages\foo\src\a.ts` with root `c:\repo`, and `/c/repo/packages/foo/AGENTS.md` alias, resolve to one key.
-Covered by the unit tests on `normalizeToolPathForComparison` plus containment.
+Git-Bash `/c/...` tool paths are converted to drive paths before containment, so they are not rejected as outside the workspace.
+Covered by the unit tests on `resolveNestedInstructionPath` and `normalizeToolPathForComparison` plus containment.
+
+A14. Two streamed calls in one model step deliver `packages/foo/AGENTS.md` once, even when the first call's schedule has ended
+before the second starts and the step has not yet settled.
 
 ## 7. Cost
 
@@ -287,6 +301,9 @@ Covered by the unit tests on `normalizeToolPathForComparison` plus containment.
 
 - Bash command text is not parsed. `cat packages/foo/x.ts` alone does not trigger discovery. Only the live cwd does.
 - A candidate file that the model reads with a `Read` range (`offset` / `limit`) is not counted as delivered. It is injected once more.
+- The reminder probe trusts any text that contains a `<system-reminder>` line followed by marker lines. A repository file that the
+  model reads (`Read`, or `Bash` output such as `cat`) can contain that text and fake a delivered path. The effect is suppression of
+  one nested file, not injection. Closing this needs the probe to ignore non-reminder tool output, which is a separate change.
 - Resume and rewind rebuild history from persisted events, so the markers come back with the transcript. This was not verified
   end to end for resumed sessions and needs a test if rewind is in scope.
 - Symlink escape is not checked (see R14).

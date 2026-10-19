@@ -1193,6 +1193,45 @@ async function hasGitCli(): Promise<boolean> {
   }
 }
 
+describe("byte-limited UTF-8 reads", () => {
+  // Regression: a byte cut inside a multibyte character made UTF-8 validation fail, and detection then decoded the whole
+  // file as GBK. The cut must land on a character boundary and keep the UTF-8 decoding.
+  it("cuts a multibyte file at a character boundary and keeps UTF-8 decoding", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "utf8-cut-"));
+    try {
+      const path = join(dir, "AGENTS.md");
+      // Each character is 3 bytes, so a 16384-byte limit splits one after 5461 whole characters.
+      await writeFile(path, "中".repeat(10_000), "utf8");
+
+      const read = await createNodeFileSystemAdapter().readTextFile({ path, maxBytes: 16_384 });
+
+      expect(read.encoding).toBe("utf8");
+      expect(read.content).toBe("中".repeat(5_461));
+      expect(read.content).not.toContain("\uFFFD");
+      expect(read.bytesRead).toBe(16_383);
+      expect(read.truncated).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a byte-aligned ASCII cut at the full limit", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "utf8-cut-"));
+    try {
+      const path = join(dir, "AGENTS.md");
+      await writeFile(path, "a".repeat(20_000), "utf8");
+
+      const read = await createNodeFileSystemAdapter().readTextFile({ path, maxBytes: 16_384 });
+
+      expect(read.content).toHaveLength(16_384);
+      expect(read.bytesRead).toBe(16_384);
+      expect(read.truncated).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 async function runGit(cwd: string, args: string[]): Promise<void> {
   await execFile("git", args, {
     cwd,
