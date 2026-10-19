@@ -34,6 +34,7 @@ import { useShortcutCommandLabelParts } from "@/shortcuts/useShortcutBindings.js
 import { listAudioInputDevices, VoiceDictationRecorder } from "@/lib/voiceDictationRecorder.js";
 import { playVoiceDictationFeedbackSound } from "@/lib/voiceDictationFeedbackSound.js";
 import { applyIdleUnloadPreference } from "@/lib/voiceIdleUnload.js";
+import { resolveVoiceDictationPreferences } from "@/lib/voiceDictationPreferences.js";
 import { SettingsGroupCard, SettingsRow } from "@/settings/SettingsPageParts.js";
 import { VoiceDictationPostProcessCard } from "@/settings/VoiceDictationPostProcessCard.js";
 import { VoiceDictationLanguagePicker } from "@/settings/VoiceDictationLanguagePicker.js";
@@ -48,7 +49,6 @@ const MIC_TEST_DURATION_MS = 3000;
 /** Peaks below this count as no valid sound (about -40 dBFS). */
 const MIC_SILENT_PEAK = 0.01;
 const MODEL_REFRESH_INTERVAL_MS = 500;
-const DEFAULT_FEEDBACK_VOLUME = 70;
 
 /**
  * Voice input settings in five cards: Dictation, Microphone, Transcription models (with Memory),
@@ -118,13 +118,15 @@ function DesktopVoiceDictationSection() {
   );
   const modelId = voice.modelId ?? null;
   const microphoneDeviceId = voice.microphoneDeviceId ?? null;
-  const pushToTalk = voice.pushToTalk !== false;
-  const idleUnloadMinutes = voice.idleUnloadMinutes ?? 5;
-  const feedbackSounds = voice.feedbackSounds === true;
-  const savedFeedbackVolume = voice.feedbackVolume ?? DEFAULT_FEEDBACK_VOLUME;
-  const muteWhileRecording = voice.muteWhileRecording !== false;
-  const copyToClipboard = voice.copyToClipboard === true;
-  const warmUpOnFocus = voice.warmUpOnFocus !== false;
+  const {
+    pushToTalk,
+    idleUnloadMinutes,
+    feedbackSounds,
+    feedbackVolume: savedFeedbackVolume,
+    muteWhileRecording,
+    copyToClipboard,
+    warmUpOnFocus,
+  } = resolveVoiceDictationPreferences(voice);
 
   const [models, setModels] = useState<VoiceModelListItem[]>([]);
   const [startingDownloadIds, setStartingDownloadIds] = useState<Set<string>>(() => new Set());

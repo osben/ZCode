@@ -8,6 +8,23 @@ import { useShortcutCommandLabel } from "@/shortcuts/useShortcutBindings.js";
 import type { VoiceDictationPhase } from "@/hooks/useVoiceDictation.js";
 import type { VoiceModelStatus } from "@/lib/voiceModelStatus.js";
 
+/** i18n id of the button label: the action the button performs in this phase. */
+function phaseLabelId(phase: VoiceDictationPhase, loadingLabelId: string | undefined): string {
+  if (phase === "loading") return loadingLabelId ?? "voiceDictation.composer.loading";
+  if (phase === "recording") return "voiceDictation.composer.stop";
+  if (phase === "processing") return "voiceDictation.composer.processing";
+  return "voiceDictation.composer.start";
+}
+
+/** i18n id of the live-region status: the same phases worded as state, not as an action. */
+function phaseStatusId(phase: VoiceDictationPhase, loadingLabelId: string | undefined): string {
+  if (phase === "loading") return loadingLabelId ?? "voiceDictation.composer.loading";
+  if (phase === "recording") return "voiceDictation.composer.listening";
+  if (phase === "processing") return "voiceDictation.composer.status.processing";
+  if (phase === "transcribing") return "voiceDictation.composer.status.transcribing";
+  return "voiceDictation.composer.status.idle";
+}
+
 interface V4ComposerVoiceButtonProps {
   phase: VoiceDictationPhase;
   level: number;
@@ -39,22 +56,13 @@ function V4ComposerVoiceButtonImpl({
   const shortcutLabel = useShortcutCommandLabel("voiceDictation");
   const recording = phase === "recording";
   const busy = phase === "loading" || phase === "transcribing" || phase === "processing";
-  const label = intl.formatMessage({
-    id:
-      phase === "loading"
-        ? (loadingLabelId ?? "voiceDictation.composer.loading")
-        : recording
-          ? "voiceDictation.composer.stop"
-          : phase === "processing"
-            ? "voiceDictation.composer.processing"
-            : "voiceDictation.composer.start",
-  });
+  const label = intl.formatMessage({ id: phaseLabelId(phase, loadingLabelId) });
   // The dot only adds information while the button is otherwise idle.
   const statusDot =
     phase === "idle" && (modelStatus === "loading" || modelStatus === "loaded")
       ? modelStatus
       : null;
-  // Only the loading state has tooltip/aria text. The loaded dot is a non-essential hint: it is
+  // Only the loading dot has tooltip/aria text. The loaded dot is a non-essential hint: it is
   // decorative (aria-hidden) and carries no text, so the tooltip and description stay silent.
   const statusText =
     statusDot === "loading"
@@ -64,18 +72,7 @@ function V4ComposerVoiceButtonImpl({
   const levelPercent = Math.round(Math.max(0, Math.min(1, level)) * 100);
   // Persistent polite live region: announces phase changes even when focus is elsewhere
   // (e.g. while recording); it is not the ghost preview, so transcript words are never announced.
-  const statusAnnouncement = intl.formatMessage({
-    id:
-      phase === "loading"
-        ? (loadingLabelId ?? "voiceDictation.composer.loading")
-        : recording
-          ? "voiceDictation.composer.listening"
-          : phase === "processing"
-            ? "voiceDictation.composer.status.processing"
-            : phase === "transcribing"
-              ? "voiceDictation.composer.status.transcribing"
-              : "voiceDictation.composer.status.idle",
-  });
+  const statusAnnouncement = intl.formatMessage({ id: phaseStatusId(phase, loadingLabelId) });
 
   return (
     <div
@@ -152,23 +149,21 @@ function V4ComposerVoiceButtonImpl({
         </Button>
       </ControlHintTooltip>
       {statusDot ? (
-        <>
-          <span
-            aria-hidden
-            data-testid="voice-model-status-dot"
-            data-status={statusDot}
-            className={`pointer-events-none absolute right-1 top-1 size-1.5 rounded-full ${
-              statusDot === "loading"
-                ? "animate-pulse bg-warning motion-reduce:animate-none"
-                : "bg-success"
-            }`}
-          />
-          {statusText ? (
-            <span id="voice-model-status-text" className="sr-only">
-              {statusText}
-            </span>
-          ) : null}
-        </>
+        <span
+          aria-hidden
+          data-testid="voice-model-status-dot"
+          data-status={statusDot}
+          className={`pointer-events-none absolute right-1 top-1 size-1.5 rounded-full ${
+            statusDot === "loading"
+              ? "animate-pulse bg-warning motion-reduce:animate-none"
+              : "bg-success"
+          }`}
+        />
+      ) : null}
+      {statusText ? (
+        <span id="voice-model-status-text" className="sr-only">
+          {statusText}
+        </span>
       ) : null}
       <span className="sr-only" role="status" aria-live="polite">
         {statusAnnouncement}

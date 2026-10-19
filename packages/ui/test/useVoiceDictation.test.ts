@@ -611,21 +611,23 @@ describe("useVoiceDictation post-processing", () => {
     expect(onTranscript).toHaveBeenCalledTimes(1);
   });
 
-  it("never starts a rewrite when the Host reports the provider unavailable at dictation time", async () => {
-    // A settings-screen answer can be stale; the runtime re-reads availability before processing.
-    mocks.service!.getPostProcessAvailability!.mockResolvedValue({
-      status: "unavailable",
-      reason: "appleIntelligenceNotEnabled",
-    });
+  it("inserts the raw transcript without an availability probe when the provider is unavailable (VD-PPR-09)", async () => {
+    // No pre-check on the stop-to-insert path: the Host call decides, and its failure falls back to raw.
+    mocks.service!.postProcess!.mockRejectedValue(
+      new Error("post-processing provider is unavailable"),
+    );
     const onTranscript = vi.fn();
     const hook = renderDictation(onTranscript);
     await speak(hook);
 
     await act(async () => hook.result.current.stop());
 
-    expect(mocks.service!.postProcess).not.toHaveBeenCalled();
+    expect(mocks.service!.getPostProcessAvailability).not.toHaveBeenCalled();
+    expect(mocks.service!.postProcess).toHaveBeenCalledTimes(1);
     expect(hook.result.current.phase).toBe("idle");
+    expect(onTranscript).toHaveBeenCalledTimes(1);
     expect(onTranscript).toHaveBeenCalledWith("Hello there", "Hello there");
+    expect(toast).not.toHaveBeenCalled();
   });
 
   it("uses the user's prompt and provider", async () => {

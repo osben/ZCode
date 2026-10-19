@@ -4,28 +4,12 @@ import {
   type VoicePostProcessProvider,
 } from "@zcode/services";
 import type { VoiceDictationSettings } from "@zcode/shared";
-import { logger } from "@/logger.js";
 
 /**
  * Safety net above the Host's own 15 s limit, so a hung Host call can never strand the busy state.
  * The Host gives up after 15 s; this client wrapper gives up after 20 s if the Host never answers.
  */
 export const POST_PROCESS_CLIENT_TIMEOUT_MS = 20_000;
-
-/**
- * Re-reads provider availability right before a rewrite is attempted. Fails closed: a Host error or
- * a missing method counts as unavailable, so the raw transcript is inserted and nothing is run.
- */
-export async function isPostProcessAvailable(service: IVoiceDictationService): Promise<boolean> {
-  try {
-    return (await service.getPostProcessAvailability()).status === "available";
-  } catch (error) {
-    logger.warn("voice post-processing availability check failed; inserting the raw transcript", {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return false;
-  }
-}
 
 /**
  * Runs the transcript through the Host's post-processing provider. Rejects on any failure or when the

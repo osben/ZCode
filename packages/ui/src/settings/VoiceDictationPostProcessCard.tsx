@@ -36,7 +36,7 @@ const KNOWN_UNAVAILABLE_REASONS = new Set<string>([
   "unknown",
 ]);
 /** Fixed sample for the Try-it control; it is user-visible test input, not localized copy. */
-export const POST_PROCESS_TRY_IT_SAMPLE = "um so can you explain why this test fails";
+const POST_PROCESS_TRY_IT_SAMPLE = "um so can you explain why this test fails";
 
 /**
  * Post-processing settings: the enable switch with its availability status, the single provider
