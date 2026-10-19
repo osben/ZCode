@@ -7802,7 +7802,7 @@ const enUS: Record<string, string> = {
   "voiceDictation.postProcess.provider.appleFm": "System model (Apple Foundation Models)",
   "voiceDictation.postProcess.prompt.title": "Prompt",
   "voiceDictation.postProcess.prompt.description":
-    "Use {variable} where the transcript should go. Without it, the transcript is added after the prompt.",
+    "Use {variable} where the transcript should go. The prompt must contain it to save.",
   "voiceDictation.postProcess.prompt.reset": "Reset to default",
   "voiceDictation.postProcess.status.checking": "Checking availability…",
   "voiceDictation.postProcess.status.available":

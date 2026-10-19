@@ -7475,7 +7475,7 @@ const zhCN: Record<string, string> = {
     "在后台加载所选模型，使首次录音无需等待。已加载的模型会占用内存，直到下方的卸载延迟结束。",
   "voiceDictation.postProcess.title": "后处理",
   "voiceDictation.postProcess.description":
-    "在插入前用语言模型改写每段完成的转写文本。开启“复制听写文本到剪贴板”时，剪贴板中保存的是原始转写文本。",
+    "在插入前用语言模型改写每段完成的转写文本。开启“将听写文本复制到剪贴板”时，剪贴板中保存的是原始转写文本。",
   "voiceDictation.postProcess.enabled.title": "处理听写文本",
   "voiceDictation.postProcess.enabled.description": "如果处理失败或耗时过长，将插入原始转写文本。",
   "voiceDictation.postProcess.provider.title": "服务提供方",
@@ -7483,7 +7483,7 @@ const zhCN: Record<string, string> = {
   "voiceDictation.postProcess.provider.appleFm": "系统模型（Apple Foundation Models）",
   "voiceDictation.postProcess.prompt.title": "提示词",
   "voiceDictation.postProcess.prompt.description":
-    "在需要放入转写文本的位置使用 {variable}。不含该变量时，转写文本会追加在提示词之后。",
+    "在需要放入转写文本的位置使用 {variable}。提示词必须包含该变量才能保存。",
   "voiceDictation.postProcess.prompt.reset": "恢复默认",
   "voiceDictation.postProcess.status.checking": "正在检查可用性…",
   "voiceDictation.postProcess.status.available": "此 Mac 上可用。文本在本设备上处理。",

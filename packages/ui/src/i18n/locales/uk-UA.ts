@@ -7394,7 +7394,7 @@ const ukUA: Record<string, string> = {
   "voiceDictation.postProcess.provider.appleFm": "Системна модель (Apple Foundation Models)",
   "voiceDictation.postProcess.prompt.title": "Промпт",
   "voiceDictation.postProcess.prompt.description":
-    "Використайте {variable} там, куди має потрапити розпізнаний текст. Без нього текст додається після промпта.",
+    "Використайте {variable} там, куди має потрапити розпізнаний текст. Без нього промпт не можна зберегти.",
   "voiceDictation.postProcess.prompt.reset": "Скинути до типового",
   "voiceDictation.postProcess.status.checking": "Перевірка доступності…",
   "voiceDictation.postProcess.status.available":

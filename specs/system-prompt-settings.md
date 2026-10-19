@@ -338,7 +338,7 @@ Settings page (pinned target)
       load:    listSections  →  sections (revision per key)   [first load: loading card]
       focus:   listSections  →  sections in place              [no loading card]
       save:    writeOverride{expectedRevision}
-                 ok        → toast, close editor, listSections in place
+                 ok        → toast, close editor, patch the saved section in place (relist only when no revision is returned)
                  conflict  → editor.conflictRevision = currentRevision (Save blocked, Changed on disk);
                              listSections in place (failure keeps the conflict state; a listing with another
                              revision clears it)
