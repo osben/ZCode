@@ -20,6 +20,10 @@ import {
   samplesToMilliseconds,
 } from "@/lib/voiceDictationAudio.js";
 import { VoiceDictationRecorder } from "@/lib/voiceDictationRecorder.js";
+import {
+  acquireVoiceDictationSession,
+  releaseVoiceDictationSession,
+} from "@/lib/voiceDictationSessionLease.js";
 
 export type VoiceDictationPhase = "idle" | "loading" | "recording" | "transcribing" | "processing";
 
@@ -87,9 +91,13 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
   const heldBindingRef = useRef<string | null>(null);
   const onTranscriptRef = useRef(onTranscript);
   onTranscriptRef.current = onTranscript;
+  /** Identifies this composer in the app-wide session lease; stable for the life of the hook. */
+  const sessionOwnerRef = useRef<symbol>(Symbol("voice-dictation-composer"));
 
   const updatePhase = useCallback((next: VoiceDictationPhase) => {
     phaseRef.current = next;
+    // Idle means this composer no longer uses the session; release it so another composer may start.
+    if (next === "idle") releaseVoiceDictationSession(sessionOwnerRef.current);
     setPhase(next);
   }, []);
 
@@ -203,6 +211,12 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
         actionLabel: intl.formatMessage({ id: "voiceDictation.openSettings" }),
         onAction: openVoiceSettings,
       });
+      return;
+    }
+    // Another composer holds the app-wide session: refuse before any capture or Host call, and leave
+    // its recording untouched.
+    if (!acquireVoiceDictationSession(sessionOwnerRef.current)) {
+      toast(intl.formatMessage({ id: "voiceDictation.sessionBusyInOtherComposer" }));
       return;
     }
     const generation = ++startGenerationRef.current;

@@ -7497,6 +7497,8 @@ const ukUA: Record<string, string> = {
   "voiceDictation.tooShort": "Запис закороткий. Записуйте, доки не закінчите говорити.",
   "voiceDictation.stillLoading":
     "Модель розпізнавання ще завантажувалась. Говоріть, коли почнеться запис.",
+  "voiceDictation.sessionBusyInOtherComposer":
+    "Диктування вже працює в іншому полі повідомлення. Спочатку зупиніть його там.",
   "voiceDictation.composer.cancel": "Скасувати голосове введення",
   "voiceDictation.microphoneFailed":
     "Не вдалося отримати доступ до мікрофона. Перевірте пристрій введення та дозволи.",

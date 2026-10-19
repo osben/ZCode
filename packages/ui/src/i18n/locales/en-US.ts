@@ -7904,6 +7904,8 @@ const enUS: Record<string, string> = {
   "voiceDictation.tooShort": "Recording too short. Keep recording until you finish speaking.",
   "voiceDictation.stillLoading":
     "The speech model was still loading. Start speaking once recording begins.",
+  "voiceDictation.sessionBusyInOtherComposer":
+    "Dictation is already in use in another message box. Stop it there first.",
   "voiceDictation.composer.cancel": "Cancel voice input",
   "voiceDictation.microphoneFailed":
     "Could not access the microphone. Check the input device and permissions.",
