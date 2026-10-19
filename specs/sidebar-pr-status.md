@@ -1,6 +1,6 @@
 # Session pull request status
 
-Status: agreed design (2026-10-18), not implemented. Supersedes the "Merged" badge idea in
+Status: implemented (2026-10-18). Supersedes the "Merged" badge idea in
 `merged-session-highlight.md`: that probe was workspace-level; this contract is task-level.
 
 ## Problem
