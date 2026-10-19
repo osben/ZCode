@@ -147,6 +147,14 @@ function DesktopSystemPromptSection({
     setPendingReset(null);
   }, [pinnedHostKey]);
 
+  // A confirmation opened on a clean draft must not survive an edit: confirming would discard the draft.
+  useEffect(() => {
+    if (view.editorDirty) {
+      setPendingRestoreKey(null);
+      setPendingReset(null);
+    }
+  }, [view.editorDirty]);
+
   const hasActiveOutputStyle =
     outputStyles.status === "ready" &&
     outputStyles.activeStyleId !== null &&
