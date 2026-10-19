@@ -50,7 +50,10 @@ export function ConversationWorktreeCreatedNotice({
     // claims a remote identity but does not parse must fail closed: falling back to the path
     // would hand the remote filesystem path to the local workspace opener.
     const worktreeIdentity = rebaseRemoteWorkspaceIdentity(parentIdentity, path);
-    if (worktreeIdentity === null && claimsRemoteWorkspaceIdentity(parentIdentity)) {
+    if (
+      (worktreeIdentity === null && claimsRemoteWorkspaceIdentity(parentIdentity)) ||
+      (worktreeIdentity === null && Boolean(remoteSessionId?.trim()))
+    ) {
       openFailed();
       return;
     }
