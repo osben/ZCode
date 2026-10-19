@@ -183,12 +183,6 @@ export function sortSessionPullRequests(
   );
 }
 
-export function primarySessionPullRequest(
-  pullRequests: readonly SessionPullRequest[],
-): SessionPullRequest | null {
-  return sortSessionPullRequests(pullRequests)[0] ?? null;
-}
-
 /** TTL tier of a branch's pull requests: 60s active, 10min none, 30min settled. */
 export function sessionPullRequestsTtlTier(
   pullRequests: readonly SessionPullRequest[],

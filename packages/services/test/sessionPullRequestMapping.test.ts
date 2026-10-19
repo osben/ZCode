@@ -5,7 +5,6 @@ import {
   buildSessionPullRequestsQuery,
   mapGraphqlPullRequest,
   parseGhGraphqlResponse,
-  primarySessionPullRequest,
   sessionPullRequestsTtlTier,
   sortSessionPullRequests,
 } from "../src/git/sessionPullRequestMapping.js";
@@ -199,8 +198,7 @@ test("sorting and primary selection: open > draft > merged > closed, ties by new
     sorted.map((pullRequest) => pullRequest.number),
     [12, 11, 13, 10, 14],
   );
-  assert.equal(primarySessionPullRequest(pullRequests)?.number, 12);
-  assert.equal(primarySessionPullRequest([]), null);
+  assert.deepEqual(sortSessionPullRequests([]), []);
 });
 
 test("TTL tier follows open/draft presence", () => {

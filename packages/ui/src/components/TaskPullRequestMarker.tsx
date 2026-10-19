@@ -5,8 +5,8 @@ import { useTaskPullRequestStatus } from "@/hooks/useTaskPullRequestStatus.js";
 import { selectPrimarySessionPullRequest } from "@/store/pullRequestStatusStore.js";
 import {
   PullRequestStatusIcon,
-  formatPullRequestHealthText,
-  pullRequestStageMessageId,
+  maxOpenDraftFailingCheckCount,
+  pullRequestLabelParts,
 } from "@/components/PullRequestStatusIcon.js";
 
 /**
@@ -28,22 +28,16 @@ export function TaskPullRequestMarker({ task }: { task: ZCodeTaskMeta }) {
   if (!primary) {
     return null;
   }
-  const openDraft = status.pullRequests.filter(
-    (pullRequest) => pullRequest.stage === "open" || pullRequest.stage === "draft",
-  );
   const health = worstSessionPullRequestHealth(status.pullRequests);
-  const failingCheckCount = openDraft.reduce(
-    (maximum, pullRequest) => Math.max(maximum, pullRequest.failingCheckCount),
-    0,
-  );
   const label = [
-    intl.formatMessage({ id: "pullRequest.prLabel" }, { number: String(primary.number) }),
-    intl.formatMessage({ id: pullRequestStageMessageId(primary.stage) }),
-    formatPullRequestHealthText(intl, health, failingCheckCount),
-    status.stale ? intl.formatMessage({ id: "pullRequest.stale" }) : null,
-  ]
-    .filter((part) => part !== null)
-    .join(" · ");
+    ...pullRequestLabelParts(
+      intl,
+      primary,
+      health,
+      maxOpenDraftFailingCheckCount(status.pullRequests),
+    ),
+    ...(status.stale ? [intl.formatMessage({ id: "pullRequest.stale" })] : []),
+  ].join(" · ");
   return (
     <PullRequestStatusIcon
       data-task-pr-stage={primary.stage}

@@ -9,6 +9,7 @@ import { WorktreeTaskMarker } from "@/components/WorktreeTaskMarker.js";
 import {
   PullRequestStatusIcon,
   formatPullRequestHealthText,
+  pullRequestReviewMessageId,
   pullRequestStageMessageId,
 } from "@/components/PullRequestStatusIcon.js";
 import { thoughtLevelLabelId } from "@/chat-input-toolbar/thoughtLevelOptions.js";
@@ -169,14 +170,7 @@ function PullRequestHoverSection({
       ) : null}
       {primary?.reviewDecision ? (
         <div className="text-ui-sm text-foreground-subtle">
-          {intl.formatMessage({
-            id:
-              primary.reviewDecision === "approved"
-                ? "pullRequest.approved"
-                : primary.reviewDecision === "changes_requested"
-                  ? "pullRequest.changesRequested"
-                  : "pullRequest.reviewRequired",
-          })}
+          {intl.formatMessage({ id: pullRequestReviewMessageId(primary.reviewDecision) })}
         </div>
       ) : null}
       {status.stale ? (

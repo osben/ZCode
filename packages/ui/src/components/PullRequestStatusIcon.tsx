@@ -6,7 +6,12 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { ComponentPropsWithoutRef } from "react";
-import type { PullRequestStage, SessionPullRequestHealth } from "@zcode/shared";
+import type {
+  PullRequestStage,
+  SessionPullRequest,
+  SessionPullRequestHealth,
+  SessionPullRequestReviewDecision,
+} from "@zcode/shared";
 import { cn } from "@/components/lib/utils.js";
 
 /**
@@ -87,6 +92,41 @@ export function formatPullRequestHealthText(
     return intl.formatMessage({ id: "pullRequest.checksRunning" });
   }
   return null;
+}
+
+export function pullRequestReviewMessageId(decision: SessionPullRequestReviewDecision): string {
+  if (decision === "approved") return "pullRequest.approved";
+  if (decision === "changes_requested") return "pullRequest.changesRequested";
+  return "pullRequest.reviewRequired";
+}
+
+/** Highest failing-check count among the open/draft pull requests; drives the "{count} failing" label. */
+export function maxOpenDraftFailingCheckCount(pullRequests: readonly SessionPullRequest[]): number {
+  let maximum = 0;
+  for (const pullRequest of pullRequests) {
+    if (pullRequest.stage === "open" || pullRequest.stage === "draft") {
+      maximum = Math.max(maximum, pullRequest.failingCheckCount);
+    }
+  }
+  return maximum;
+}
+
+/**
+ * Accessible-label parts for the primary pull request ("PR #N", stage, health
+ * text). Callers join with " · " and append the stale note where applicable,
+ * so every surface announces the same sequence.
+ */
+export function pullRequestLabelParts(
+  intl: PullRequestIntl,
+  primary: SessionPullRequest,
+  health: SessionPullRequestHealth,
+  failingCheckCount: number,
+): string[] {
+  return [
+    intl.formatMessage({ id: "pullRequest.prLabel" }, { number: String(primary.number) }),
+    intl.formatMessage({ id: pullRequestStageMessageId(primary.stage) }),
+    formatPullRequestHealthText(intl, health, failingCheckCount),
+  ].filter((part): part is string => part !== null);
 }
 
 export function PullRequestStatusIcon({

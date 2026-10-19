@@ -37,8 +37,8 @@ import { useTaskPullRequestStatus } from "@/hooks/useTaskPullRequestStatus.js";
 import { selectPrimarySessionPullRequest } from "@/store/pullRequestStatusStore.js";
 import {
   PullRequestStatusIcon,
-  formatPullRequestHealthText,
-  pullRequestStageMessageId,
+  maxOpenDraftFailingCheckCount,
+  pullRequestLabelParts,
 } from "@/components/PullRequestStatusIcon.js";
 import type { IntlInstance } from "@/i18n/createIntl.js";
 import { buildSessionManagerGridTemplate } from "./sessionManagerColumns.js";
@@ -143,20 +143,12 @@ export function PullRequestCell({ row, intl }: { row: SessionManagerRow; intl: I
     return <span className="text-ui-sm text-foreground-subtlest">—</span>;
   }
   const health = worstSessionPullRequestHealth(status.pullRequests);
-  const openDraft = status.pullRequests.filter(
-    (pullRequest) => pullRequest.stage === "open" || pullRequest.stage === "draft",
-  );
-  const failingCheckCount = openDraft.reduce(
-    (maximum, pullRequest) => Math.max(maximum, pullRequest.failingCheckCount),
-    0,
-  );
-  const label = [
-    intl.formatMessage({ id: "pullRequest.prLabel" }, { number: String(primary.number) }),
-    intl.formatMessage({ id: pullRequestStageMessageId(primary.stage) }),
-    formatPullRequestHealthText(intl, health, failingCheckCount),
-  ]
-    .filter((part) => part !== null)
-    .join(" · ");
+  const label = pullRequestLabelParts(
+    intl,
+    primary,
+    health,
+    maxOpenDraftFailingCheckCount(status.pullRequests),
+  ).join(" · ");
   return (
     <span className="flex min-w-0 items-center gap-1.5 font-mono text-ui-xs">
       <PullRequestStatusIcon

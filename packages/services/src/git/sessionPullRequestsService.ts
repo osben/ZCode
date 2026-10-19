@@ -80,7 +80,6 @@ interface BranchEntry {
 
 interface CoalesceQueue {
   cacheKeys: Set<string>;
-  timer: NodeJS.Timeout;
   promise: Promise<void>;
   resolve: () => void;
 }
@@ -610,12 +609,8 @@ export function createSessionPullRequestsService(options: {
           resolvePromise = resolve;
         });
         const pendingKeys = new Set<string>();
-        queue = {
-          cacheKeys: pendingKeys,
-          timer: undefined as unknown as NodeJS.Timeout,
-          promise,
-          resolve: resolvePromise,
-        };
+        // The window opens with the queue; branches arriving before it fires
+        // join this batch, later ones start the next queue.
         const timer = setTimeout(() => {
           queueByWorkspace.delete(workspaceKey);
           const keys = [...pendingKeys];
@@ -624,7 +619,7 @@ export function createSessionPullRequestsService(options: {
           });
         }, coalesceWindowMs);
         timer.unref?.();
-        queue.timer = timer;
+        queue = { cacheKeys: pendingKeys, promise, resolve: resolvePromise };
         queueByWorkspace.set(workspaceKey, queue);
       }
       queue.cacheKeys.add(key);
@@ -652,63 +647,31 @@ export function createSessionPullRequestsService(options: {
     const entries = branches
       .map((branch) => branchEntries.get(cacheKey(workspaceKey, branch)))
       .filter((entry): entry is BranchEntry => entry !== undefined);
-    if (entries.length === 0) {
-      // Branches whose refresh was blocked by rate-limit backoff before any
-      // successful fetch report rate_limited instead of an empty ready state.
-      if (rateLimitActive()) {
-        return {
-          state: "rate_limited",
-          unavailableReason: null,
-          source: "branch",
-          pullRequests: [],
-          primaryNumber: null,
-          fetchedAt: null,
-          stale: false,
-        };
-      }
-      return {
-        state: "ready",
-        unavailableReason: null,
-        source: "branch",
-        pullRequests: [],
-        primaryNumber: null,
-        fetchedAt: null,
-        stale: false,
-      };
-    }
     const pullRequests = sortSessionPullRequests(entries.flatMap((entry) => entry.pullRequests));
     const primary = pullRequests[0] ?? null;
     const anyReady = entries.some((entry) => entry.state === "ready");
     const stale =
       entries.some((entry) => entry.stale) ||
       (servingStaleDueToRateLimit && pullRequests.length > 0);
-    const fetchedAtMs = Math.max(...entries.map((entry) => entry.fetchedAtMs));
-    if (!anyReady) {
-      if (entries.every((entry) => entry.state === "rate_limited")) {
-        return {
-          state: "rate_limited",
-          unavailableReason: null,
-          source: "branch",
-          pullRequests,
-          primaryNumber: primary?.number ?? null,
-          fetchedAt: fetchedAtMs > 0 ? new Date(fetchedAtMs).toISOString() : null,
-          stale,
-        };
-      }
-      return {
-        state: "unavailable",
-        unavailableReason:
-          entries.find((entry) => entry.unavailableReason !== null)?.unavailableReason ?? "error",
-        source: "branch",
-        pullRequests,
-        primaryNumber: primary?.number ?? null,
-        fetchedAt: fetchedAtMs > 0 ? new Date(fetchedAtMs).toISOString() : null,
-        stale,
-      };
+    const fetchedAtMs =
+      entries.length > 0 ? Math.max(...entries.map((entry) => entry.fetchedAtMs)) : 0;
+    // A branch set with no entry at all means "never fetched": rate_limited
+    // while backoff blocks the refresh, otherwise a plain empty ready state.
+    let state: SessionPullRequestStatus["state"] = "ready";
+    if (entries.length === 0) {
+      state = servingStaleDueToRateLimit ? "rate_limited" : "ready";
+    } else if (!anyReady) {
+      state = entries.every((entry) => entry.state === "rate_limited")
+        ? "rate_limited"
+        : "unavailable";
     }
     return {
-      state: "ready",
-      unavailableReason: null,
+      state,
+      unavailableReason:
+        state === "unavailable"
+          ? (entries.find((entry) => entry.unavailableReason !== null)?.unavailableReason ??
+            "error")
+          : null,
       source: "branch",
       pullRequests,
       primaryNumber: primary?.number ?? null,
