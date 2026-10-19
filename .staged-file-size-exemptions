@@ -13,3 +13,6 @@ packages/ui/test/composerRecoveryContexts.test.ts
 specs/composer-worktree-setup-steps.md
 docs/conversation-session-case-catalog.md
 docs/testing/conversation-session-e2e-coverage-matrix.md
+packages/ui/src/v4/ConversationComposer.tsx
+packages/ui/src/v4/SessionPane.tsx
+packages/ui/test/v4SessionPaneModelSwitchRecovery.test.ts
