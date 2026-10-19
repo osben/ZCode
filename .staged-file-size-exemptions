@@ -16,3 +16,6 @@ docs/testing/conversation-session-e2e-coverage-matrix.md
 packages/ui/src/v4/ConversationComposer.tsx
 packages/ui/src/v4/SessionPane.tsx
 packages/ui/test/v4SessionPaneModelSwitchRecovery.test.ts
+
+# Owned by this PR (already over the limit before this change): split the file into per-section test modules.
+packages/ui/test/v4ConversationFileSummaryPanel.test.ts
