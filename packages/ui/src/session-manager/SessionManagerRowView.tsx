@@ -32,6 +32,14 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { IncognitoTaskMarker } from "@/components/IncognitoTaskMarker.js";
 import { getTaskChangeSummary } from "@/lib/taskChangeSummary.js";
 import { formatTaskRelativeTime } from "@/lib/taskListItemPresentation.js";
+import { worstSessionPullRequestHealth } from "@zcode/shared";
+import { useTaskPullRequestStatus } from "@/hooks/useTaskPullRequestStatus.js";
+import { selectPrimarySessionPullRequest } from "@/store/pullRequestStatusStore.js";
+import {
+  PullRequestStatusIcon,
+  formatPullRequestHealthText,
+  pullRequestStageMessageId,
+} from "@/components/PullRequestStatusIcon.js";
 import type { IntlInstance } from "@/i18n/createIntl.js";
 import { buildSessionManagerGridTemplate } from "./sessionManagerColumns.js";
 import { sessionManagerTaskType, type SessionManagerRow } from "./sessionManagerModel.js";
@@ -123,6 +131,42 @@ function BranchCell({ row }: { row: SessionManagerRow }) {
     <span className="flex min-w-0 items-center gap-1.5 font-mono text-ui-xs text-foreground-subtle">
       <GitBranch className="size-3 shrink-0" />
       <span className="truncate">{worktree.branchName ?? worktree.path}</span>
+    </span>
+  );
+}
+
+export function PullRequestCell({ row, intl }: { row: SessionManagerRow; intl: IntlInstance }) {
+  const status = useTaskPullRequestStatus(row.task);
+  const primary = status ? selectPrimarySessionPullRequest(status) : null;
+  if (!row.task.executionWorktree || !status || !primary) {
+    // Unknown: never requested (scrolled out, unreachable workspace) or no PR.
+    return <span className="text-ui-sm text-foreground-subtlest">—</span>;
+  }
+  const health = worstSessionPullRequestHealth(status.pullRequests);
+  const openDraft = status.pullRequests.filter(
+    (pullRequest) => pullRequest.stage === "open" || pullRequest.stage === "draft",
+  );
+  const failingCheckCount = openDraft.reduce(
+    (maximum, pullRequest) => Math.max(maximum, pullRequest.failingCheckCount),
+    0,
+  );
+  const label = [
+    intl.formatMessage({ id: "pullRequest.prLabel" }, { number: String(primary.number) }),
+    intl.formatMessage({ id: pullRequestStageMessageId(primary.stage) }),
+    formatPullRequestHealthText(intl, health, failingCheckCount),
+  ]
+    .filter((part) => part !== null)
+    .join(" · ");
+  return (
+    <span className="flex min-w-0 items-center gap-1.5 font-mono text-ui-xs">
+      <PullRequestStatusIcon
+        data-session-manager-pr={primary.stage}
+        stage={primary.stage}
+        health={health}
+        dotVariant="row"
+        label={label}
+      />
+      <span className="truncate text-foreground-subtle">{`#${primary.number}`}</span>
     </span>
   );
 }
@@ -260,6 +304,8 @@ export const SessionManagerRowView = memo(function SessionManagerRowView({
         return <ChangesCell row={row} />;
       case "branch":
         return <BranchCell row={row} />;
+      case "pullRequests":
+        return <PullRequestCell row={row} intl={intl} />;
       case "environment":
         return (
           <span className="inline-flex items-center gap-1.5">

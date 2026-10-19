@@ -17,6 +17,7 @@ const COLUMN_MIN_WIDTHS: Record<SessionManagerToggleableColumn, number> = {
   type: 100,
   changes: 92,
   branch: 150,
+  pullRequests: 84,
   environment: 102,
   model: 112,
   updated: 92,
@@ -60,6 +61,11 @@ export function buildSessionManagerMinTableWidth(
 }
 
 export function sessionManagerColumnLabelId(column: SessionManagerToggleableColumn): string {
+  // Shares the "PR" label with the sidebar surfaces instead of duplicating a
+  // sessionManager-specific catalog key.
+  if (column === "pullRequests") {
+    return "pullRequest.columnTitle";
+  }
   return `sessionManager.column.${column}`;
 }
 

@@ -22,7 +22,12 @@ interface PullRequestStatusState {
    * status").
    */
   forceRefresh: { version: number; taskKeys: string[] };
-  /** Replaces every entry of one workspace; probes answer per workspace RPC. */
+  /**
+   * Merges one probe answer into the workspace's entries. Two drivers probe
+   * the same workspace with different task sets (sidebar: all worktree tasks;
+   * Session manager: visible rows only), so a write must never remove entries
+   * another driver just reported; departures are cleaned by dropWorkspaceTasks.
+   */
   setWorkspacePullRequestStatuses(
     workspaceKey: string,
     entries: Record<string, SessionPullRequestStatus>,
@@ -45,16 +50,16 @@ export const usePullRequestStatusStore = create<PullRequestStatusState>((set) =>
   setWorkspacePullRequestStatuses: (workspaceKey, entries) =>
     set((state) => {
       const prefix = `${workspaceKey}${TASK_KEY_SEPARATOR}`;
-      const next: Record<string, SessionPullRequestStatus> = {};
-      for (const [taskKey, status] of Object.entries(state.statusByTaskKey)) {
-        if (!taskKey.startsWith(prefix)) {
+      let changed = false;
+      const next: Record<string, SessionPullRequestStatus> = { ...state.statusByTaskKey };
+      for (const [taskId, status] of Object.entries(entries)) {
+        const taskKey = `${prefix}${taskId}`;
+        if (next[taskKey] !== status) {
           next[taskKey] = status;
+          changed = true;
         }
       }
-      for (const [taskId, status] of Object.entries(entries)) {
-        next[`${prefix}${taskId}`] = status;
-      }
-      return { statusByTaskKey: next };
+      return changed ? { statusByTaskKey: next } : state;
     }),
   dropWorkspaceTasks: (workspaceKey) =>
     set((state) => {

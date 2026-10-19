@@ -193,15 +193,16 @@ test("forget clears per-workspace bookkeeping", async () => {
   assert.equal(warnings.length, 2);
 });
 
-test("store replaces a workspace's entries wholesale and prunes departed tasks", () => {
+test("store merges probe answers so visible-row probes keep other drivers' entries", () => {
   const store = usePullRequestStatusStore.getState();
+  // The sidebar probed all tasks; the Session manager re-probes only visible t1.
   store.setWorkspacePullRequestStatuses("w", { t1: READY, t2: EMPTY });
   store.setWorkspacePullRequestStatuses("w", { t1: READY });
   const state = usePullRequestStatusStore.getState();
   assert.deepEqual(
-    Object.keys(state.statusByTaskKey),
-    [buildPullRequestTaskKey("w", "t1")],
-    "t2 pruned when the next probe no longer reports it",
+    Object.keys(state.statusByTaskKey).sort(),
+    [buildPullRequestTaskKey("w", "t1"), buildPullRequestTaskKey("w", "t2")],
+    "t2 survives a probe that did not include it",
   );
 
   store.dropWorkspaceTasks("w");
