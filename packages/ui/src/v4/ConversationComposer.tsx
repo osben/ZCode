@@ -1809,7 +1809,7 @@ function ConversationComposerImpl({
           };
           preparedSessionIdForSend = currentPreparedSessionId ?? pipeline.sessionId;
         } else if (pipeline?.status === "creating") {
-          // Already queued: exactly one pipeline and one queued send per workspace.
+          // Continue only the preparation bound to this session.
           if (!currentPreparedSessionId && !pipeline.sessionId) return;
           preparedSessionIdForSend = currentPreparedSessionId ?? pipeline.sessionId;
           queueWorktreeSend = true;
@@ -2290,8 +2290,7 @@ function ConversationComposerImpl({
           joinedPipeline.worktreePath &&
           joinedPipeline.params
         ) {
-          // A begin that joined an already-ready pipeline (a New-task send reusing a stuck-ready
-          // entry, or an orphaned-ready reuse) must dispatch immediately: no store transition will
+          // A repeat of this submission can find its own pipeline already ready. Dispatch immediately: no store transition will
           // re-run the queued-send effect, so arming the ref would strand the claimed submission
           // with the editor already cleared and no recovery card in the current view.
           clearQueuedSubmissionState();

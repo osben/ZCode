@@ -109,6 +109,36 @@
           "text": "upstream-e2e-ok"
         }
       }
+    },
+    {
+      "id": "worktree-independent-new-chat",
+      "description": "A second new worktree chat admits its own input while the earlier preparation stays recoverable.",
+      "metadata": {
+        "kind": "main",
+        "source": "synthetic",
+        "timingPolicy": "fast-text",
+        "syntheticReason": "Require the second-chat marker without admitting the detached first input, making workspace-wide reservation reuse observable."
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "lastUserMessageIncludes": ["E2E_WORKTREE_NEW_CHAT_B"],
+        "bodyExcludes": [
+          "Generate a concise title",
+          "CRITICAL: Respond with TEXT ONLY",
+          "E2E_WORKTREE_NEW_CHAT_A"
+        ]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": {
+          "id": "worktree-independent-new-chat",
+          "inputTokens": 128,
+          "outputTokens": 12,
+          "text": "WORKTREE_NEW_CHAT_B_OK"
+        }
+      }
     }
   ]
 }

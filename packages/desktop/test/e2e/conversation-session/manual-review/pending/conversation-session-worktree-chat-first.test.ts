@@ -157,6 +157,46 @@ describe("会话区 Worktree 首发真实会话 E2E", () => {
     expect((await getV4ComposerDraftScopeSnapshot(DEFAULT_WORKSPACE, null)).text).toBe(next);
   });
 
+  it("a new worktree chat stays independent of an earlier preparation", async function () {
+    this.timeout(180000);
+    const enableWorktree = async () => {
+      const destination = await $('button[aria-label="Choose where this task runs"]');
+      await destination.waitForClickable({ timeout: 15000 });
+      await destination.click();
+      const toggle = await $('button[role="switch"][aria-label="Worktree"]');
+      await toggle.waitForDisplayed({ timeout: 10000 });
+      if ((await toggle.getAttribute("aria-checked")) !== "true") await toggle.click();
+      await destination.click();
+    };
+    await startNewV4Draft();
+    await enableWorktree();
+    const first = "E2E_WORKTREE_NEW_CHAT_A preserve this pending input";
+    await sendV4Prompt(first);
+    await $('[data-worktree-setup-step="creating"]').waitForDisplayed({ timeout: 15000 });
+    const firstSessionId = (await getV4PaneSnapshot()).sessionId!;
+    expect(firstSessionId).not.toBe("draft");
+
+    await startNewV4Draft();
+    await enableWorktree();
+    const second = "E2E_WORKTREE_NEW_CHAT_B create an independent session";
+    await sendV4Prompt(second);
+    await $('[data-worktree-setup-step="creating"]').waitForDisplayed({ timeout: 15000 });
+    const secondSessionId = (await getV4PaneSnapshot()).sessionId!;
+    expect(secondSessionId).not.toBe("draft");
+    expect(secondSessionId).not.toBe(firstSessionId);
+    await waitForV4UserMessageContaining(second);
+    await waitForV4AssistantMessageContaining("WORKTREE_NEW_CHAT_B_OK");
+
+    await selectV4TaskById(firstSessionId);
+    await $('[data-worktree-setup-step="ready"]').waitForDisplayed({ timeout: 30000 });
+    const recovery = await $('[data-testid="composer-worktree-recovery"]');
+    await recovery.waitForDisplayed({ timeout: 15000 });
+    expect(await recovery.getText()).toContain(first);
+    expect((await getV4Messages("user")).some((message) => message.text.includes(second))).toBe(
+      false,
+    );
+  });
+
   it("opens sessions from Settings and ignores Pinned in Archived without losing the preference", async function () {
     this.timeout(90000);
     const currentId = (await getV4PaneSnapshot()).sessionId;

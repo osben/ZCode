@@ -5,7 +5,7 @@ import { nanoid } from "nanoid";
  *
  * Wraps the shared executeWorktreeCreation orchestration (request shape, issue→message mapping,
  * WT-04 recovery) and writes the outcome into composerWorktreePipelineStore. Reservation is
- * idempotent per workspace, and starts/retries for a prepared session reuse the same promise. The
+ * idempotent per workspace/submission, and starts/retries for a prepared session reuse the same promise. The
  * store is the UI-facing state machine; this module owns the async side effects.
  */
 import { getErrorMessage } from "@/lib/errorMessage.js";
@@ -33,7 +33,7 @@ import {
 } from "@/store/composerWorktreePipelineStore.js";
 
 const inFlightByPipelineKey = new Map<string, Promise<"ready" | "failed">>();
-const beginInFlightByWorkspaceKey = new Map<string, Promise<ComposerWorktreeBeginResult>>();
+const beginInFlightBySubmissionKey = new Map<string, Promise<ComposerWorktreeBeginResult>>();
 /** Sessions whose Retry is waiting on the Host acknowledgement (count per session key). */
 const pendingRetryBySessionKey = new Map<string, number>();
 
@@ -253,14 +253,21 @@ export function beginWorktreePipelineCreation({
   submissionId?: string;
   formatMessage: (id: string, values?: Record<string, string>) => string;
 }): Promise<ComposerWorktreeBeginResult> {
-  const reservationKey = workspaceKey;
-  const inFlight = beginInFlightByWorkspaceKey.get(reservationKey);
+  const reservationKey = `${workspaceKey}\0${submissionId ?? "legacy"}`;
+  const inFlight = beginInFlightBySubmissionKey.get(reservationKey);
   if (inFlight) return inFlight;
-  const existing = selectComposerWorktreePipeline(
-    useComposerWorktreePipelineStore.getState(),
-    workspaceKey,
-  );
-  if (existing?.sessionId && (existing.status === "creating" || existing.status === "ready")) {
+  // A workspace can contain several new chats. Only the same frozen submission may reuse a reservation.
+  const existing = submissionId
+    ? Object.values(
+        useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey[workspaceKey]
+          ?.entriesBySessionKey ?? {},
+      ).find(
+        (entry) =>
+          entry.params?.submissionId === submissionId &&
+          (entry.status === "creating" || entry.status === "ready"),
+      )
+    : undefined;
+  if (existing?.sessionId) {
     return Promise.resolve({ ok: true, sessionId: existing.sessionId });
   }
 
@@ -326,10 +333,10 @@ export function beginWorktreePipelineCreation({
     });
     return { ok: true, sessionId } as const;
   })();
-  beginInFlightByWorkspaceKey.set(reservationKey, attempt);
+  beginInFlightBySubmissionKey.set(reservationKey, attempt);
   const clearInFlight = () => {
-    if (beginInFlightByWorkspaceKey.get(reservationKey) === attempt) {
-      beginInFlightByWorkspaceKey.delete(reservationKey);
+    if (beginInFlightBySubmissionKey.get(reservationKey) === attempt) {
+      beginInFlightBySubmissionKey.delete(reservationKey);
     }
   };
   void attempt.then(clearInFlight, clearInFlight);
