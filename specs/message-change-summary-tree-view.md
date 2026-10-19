@@ -50,6 +50,17 @@ Note: the live panel is `packages/ui/src/v4/ConversationFileSummaryPanel.tsx` (f
 - Component: `v4ConversationFileSummaryPanel.test.ts` keeps covering the flat path (Radix checkbox mocked, minimal DOM).
 - E2E: add a scenario for toggle + collapse (interaction change).
 
+## Flat row truncation (approved 2026-10-19; label order revised 2026-10-19)
+
+In flat mode the row previously truncated the basename and the directory with equal flex priority, and the directory ellipsized at its end (`/Users/osben/…`), hiding the segments that identify the file. Product rules for the file row (`ConversationFileSummaryList`, both flat and tree modes share the renderer):
+
+1. The label reads as one path — **directory first, basename last**, with no flex gap between them: `[icon] dir/name +added −removed [Review] [Open]` (the icon keeps its spacing via the directory span's margin; tree-mode rows keep the regular gap). `FileDisplayInline` gets `pathBeforeName`; other consumers keep the name-first order.
+2. The **basename is never truncated** while it fits next to the other row elements. The directory absorbs the width deficit first (it carries a far higher flex-shrink weight); the basename keeps `truncate` only as graceful degradation for names that alone exceed the row.
+3. The **directory truncates from its start** (leading `…`), keeping the segments closest to the file: `…emlin/packages/ui/src/v4/ session.ts`. Implemented in CSS on the path span: `direction: rtl` + `text-align: left` move the text-overflow ellipsis to the inline-end (left) edge, and the path text is wrapped in `<bdi>` inside `FileDisplayInline` so bidi reordering cannot move leading/trailing slashes when the path fits.
+4. The directory span keeps a `min-width` (2ch) so on very narrow (mobile) widths it degrades to a visible `…`-sliver instead of disappearing, and the full path stays available via the row `title`.
+
+Acceptance: fit rendering is byte-identical to the untruncated path (`packages/ui/src/v4/ session.ts`, including the trailing slash); tight rendering shows the full basename after the path tail with a leading ellipsis; the full path remains in the row tooltip.
+
 ## Non-goals
 
 - A Settings entry for the default (would need fork-safe `fork_` storage; the inline checkbox already persists the choice).

@@ -491,6 +491,64 @@ describe("ConversationFileSummaryPanel", () => {
     });
   });
 
+  it("flat row keeps the basename visible and collapses the directory with a leading ellipsis", async () => {
+    const container = installMinimalDom();
+    const root: Root = createRoot(container);
+    const context: ConversationRowRenderContext = {
+      workspacePath: "/workspace",
+      theme: "system",
+      codePreviewSettings: DEFAULT_CODE_PREVIEW_SETTINGS,
+      fetchFileChanges: async () => ({
+        files: 1,
+        additions: 11,
+        deletions: 0,
+        items: [
+          {
+            path: "/workspace/src/v4/input.html",
+            additions: 11,
+            deletions: 0,
+            writeCount: 1,
+            toolNames: ["Write"],
+            patches: [],
+          },
+        ],
+      }),
+    };
+
+    await act(async () => {
+      root.render(
+        createElement(
+          ZCodeIntlProvider,
+          { initialLocale: "zh-CN" },
+          createElement(ConversationFileSummaryPanel, {
+            header: header(),
+            context,
+          }),
+        ),
+      );
+    });
+    await act(async () => {
+      collapsibleOpenChanges.at(-1)?.(true);
+      await Promise.resolve();
+    });
+
+    // The label reads as one path: the directory goes before the basename.
+    const text = collectText(container);
+    expect(text).toContain("input.html");
+    expect(text).toContain("src/v4/");
+    expect(text.indexOf("src/v4/")).toBeLessThan(text.indexOf("input.html"));
+    // The directory span carries the leading-ellipsis (rtl) truncation and absorbs the width
+    // deficit before the basename; ml-1.5 keeps the icon spacing while the label has no flex
+    // gap between directory and basename; the basename keeps truncate only as degradation.
+    const classNames = collectClassNames(container);
+    expect(classNames).toContain(
+      "ml-1.5 min-w-[2ch] shrink-[10000] truncate text-ui-base text-foreground-subtlest [direction:rtl] [text-align:left]",
+    );
+    expect(classNames).toContain("truncate text-ui-base font-medium text-foreground");
+
+    await act(async () => root.unmount());
+  });
+
   it("运行中详情进入终态后丢弃旧 revision 结果并重新读取", async () => {
     const container = installMinimalDom();
     const root: Root = createRoot(container);
