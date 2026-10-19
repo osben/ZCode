@@ -3,12 +3,29 @@ import { createElement } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
-import { WorktreeCreationFailureModalDialog } from "@/v4/composer/WorktreeCreationFailureModal.js";
+import {
+  WorktreeCreationFailureModalDialog,
+  WorktreeFailureModalHost,
+} from "@/v4/composer/WorktreeCreationFailureModal.js";
+import type { TabStoreState } from "@/store/tabStore.js";
+import { useWorktreeFailureReturnStore } from "@/store/worktreeFailureReturnStore.js";
+
+const modalHost = vi.hoisted(() => ({
+  state: {
+    activeWorkspacePath: "/repo",
+    activeWorkspaceIdentity: null,
+    activeTabId: "__settings__",
+    tabs: [{ id: "__settings__", kind: "settings" }],
+  },
+  activateTabByPath: vi.fn(),
+}));
+const toastSpy = vi.hoisted(() => vi.fn());
 
 vi.mock("@/components/ui/dialog.js", () => {
   const Passthrough = ({ children }: { children?: unknown }) =>
     createElement("div", null, children as never);
   return {
+    Dialog: Passthrough,
     DialogContent: Passthrough,
     DialogDescription: Passthrough,
     DialogFooter: Passthrough,
@@ -17,10 +34,19 @@ vi.mock("@/components/ui/dialog.js", () => {
   };
 });
 
-vi.mock("@/components/ui/toast.js", () => ({ toast: vi.fn() }));
+vi.mock("@/components/ui/toast.js", () => ({ toast: toastSpy }));
+vi.mock("@/store/TabStoreProvider.js", () => ({
+  useTabStore: (selector: (state: TabStoreState) => unknown) =>
+    selector(modalHost.state as unknown as TabStoreState),
+  useTabStoreApi: () => ({
+    getState: () => ({ activateTabByPath: modalHost.activateTabByPath }),
+  }),
+}));
 
 afterEach(() => {
   cleanup();
+  useWorktreeFailureReturnStore.getState().closeFailureModal("/repo");
+  toastSpy.mockReset();
 });
 
 function renderDialog(props: {
@@ -67,5 +93,30 @@ describe("WorktreeCreationFailureModalDialog Retry", () => {
     renderDialog({ issueCode: "target-branch-not-found", savedNotRestored: true });
     expect(screen.queryByRole("button", { name: RETRY_LABEL })).toBeNull();
     expect(screen.getByRole("button", { name: "Change branch/folder" })).toBeTruthy();
+  });
+});
+
+describe("WorktreeFailureModalHost", () => {
+  it("defers the failure modal while workspace Settings is active", () => {
+    useWorktreeFailureReturnStore.getState().openFailureModal("/repo", {
+      workspacePath: "/repo",
+      sessionId: "failed-session",
+      submissionId: "failed-submission",
+      issueCode: "git-unavailable",
+      message: "Could not create the worktree",
+      rawDetail: null,
+      savedAt: Date.now(),
+    });
+
+    render(
+      createElement(
+        ZCodeIntlProvider,
+        { initialLocale: "en-US" },
+        createElement(WorktreeFailureModalHost),
+      ),
+    );
+
+    expect(screen.queryByText("Could not create the worktree")).toBeNull();
+    expect(toastSpy).toHaveBeenCalledOnce();
   });
 });

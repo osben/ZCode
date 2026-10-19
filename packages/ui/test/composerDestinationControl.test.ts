@@ -18,6 +18,13 @@ import {
   readComposerDestinationControlEnabled,
 } from "@/v4/composer/ComposerDestinationControl.js";
 import { shouldRenderComposerDestinationControl } from "@/v4/composer/destinationControlVisibility.js";
+import type { ComposerDraftWorktreeIntent } from "@/v4/composer/composerDraftWorktreeIntent.js";
+
+const pipelineCreation = vi.hoisted(() => ({ begin: vi.fn() }));
+vi.mock("@/v4/composer/composerWorktreePipeline.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/v4/composer/composerWorktreePipeline.js")>()),
+  beginWorktreePipelineCreation: pipelineCreation.begin,
+}));
 
 const WORKSPACE_KEY = "/dev/alpha";
 
@@ -215,10 +222,11 @@ function gitSummaryOn(branchName: string): GitRepositorySummary {
 }
 
 function renderDestination(branchName: string) {
+  const slot: { current: ComposerDraftWorktreeIntent | null } = { current: null };
   const element = (name: string) =>
     createElement(
       ComposerDraftWorktreeIntentContext.Provider,
-      { value: undefined },
+      { value: slot },
       createElement(ComposerDestinationControl, {
         workspacePath: "/repo",
         gitSummary: gitSummaryOn(name),
@@ -229,6 +237,7 @@ function renderDestination(branchName: string) {
   const view = render(element(branchName));
   return {
     rerenderOn: (name: string) => view.rerender(element(name)),
+    slot,
   };
 }
 
@@ -343,6 +352,8 @@ describe("worktree mode ON selects the repository main branch as the Base (rende
     branchFetch.getLocalBranches.mockReset();
     branchFetch.getBranchMergeStatus.mockReset();
     branchFetch.getBranchMergeStatus.mockResolvedValue(mergeStatus(null));
+    pipelineCreation.begin.mockReset();
+    pipelineCreation.begin.mockResolvedValue({ ok: false });
     switcherStub.createBranchAndSwitch.mockClear();
     settingsBox.value = {};
   });
@@ -435,5 +446,34 @@ describe("worktree mode ON selects the repository main branch as the Base (rende
     fireEvent.click(worktreeSwitch());
     await screen.findByText("destination.baseBranch");
     expect(branchRowValue("destination.baseBranch")).toContain("main");
+  });
+
+  it("(e) restores a frozen destination when worktree admission fails", async () => {
+    useDraftBranchIntentStore.getState().setWorktreeIntentActive("/repo", true);
+    useDraftBranchIntentStore.getState().setFrozenWorktreeIntent("/repo", {
+      branchName: "feature-frozen",
+      customLocationPath: "/custom/frozen",
+    });
+    const { slot } = renderDestination("main");
+
+    await waitFor(() => expect(slot.current).not.toBeNull());
+    const outcome = await slot.current!.beginCreation("frozen prompt", async () => "session");
+
+    expect(outcome).toEqual({ ok: false });
+    expect(pipelineCreation.begin).toHaveBeenCalledWith(
+      expect.objectContaining({
+        branchName: "feature-frozen",
+        effectiveLocation: expect.objectContaining({
+          mode: "custom",
+          customPath: "/custom/frozen",
+        }),
+      }),
+    );
+    expect(
+      useDraftBranchIntentStore.getState().frozenWorktreeIntentByWorkspaceKey["/repo"],
+    ).toEqual({
+      branchName: "feature-frozen",
+      customLocationPath: "/custom/frozen",
+    });
   });
 });

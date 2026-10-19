@@ -150,6 +150,10 @@ export interface LateAckHarness {
   capturedPrepareSession: () =>
     | ((params: ComposerWorktreePreparationParams) => Promise<string>)
     | null;
+  controls: {
+    beginOutcome: { ok: true; sessionId: string } | { ok: false };
+    rejectSend: boolean;
+  };
   onPrepareWorktreeSession: ReturnType<typeof vi.fn>;
   sessionActivated: ReturnType<typeof vi.fn>;
   onSendText: ReturnType<typeof vi.fn>;

@@ -3,12 +3,22 @@
 // and the retry scenarios). Split from v4ConversationComposerWorktreeLateAck.test.ts for file size.
 import { act, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readV4WorktreeRecoveryDrafts } from "@/v4/composer/composerDraftStore.js";
+import {
+  persistV4ComposerDraft,
+  readV4ComposerDraft,
+  readV4WorktreeRecoveryDrafts,
+  V4_WORKTREE_RECOVERY_PENDING_SCOPE,
+} from "@/v4/composer/composerDraftStore.js";
 import {
   selectComposerWorktreePipeline,
   useComposerWorktreePipelineStore,
 } from "@/store/composerWorktreePipelineStore.js";
-import { flushAsyncWork, renderLateAckComposer } from "./v4ConversationComposerLateAckHarness.js";
+import { useWorktreeFailureReturnStore } from "@/store/worktreeFailureReturnStore.js";
+import {
+  flushAsyncWork,
+  replaceComposerDraftSpy,
+  renderLateAckComposer,
+} from "./v4ConversationComposerLateAckHarness.js";
 
 const { attachmentState, chatPromptEditorProps, editorApi } = vi.hoisted(() => ({
   attachmentState: {
@@ -146,6 +156,47 @@ afterEach(() => {
 });
 
 describe("late worktree reservation ACK: dispatch and retry", () => {
+  it("marks the saved submission as not restored when the draft becomes occupied before restore", async () => {
+    useWorktreeFailureReturnStore.setState({
+      modalByWorkspaceKey: {},
+      restoreRequestByWorkspaceKey: {},
+      restoreScopeByWorkspaceKey: {},
+    });
+    replaceComposerDraftSpy.mockClear();
+    const harness = renderLateAckComposer();
+    const recoveryScope = `${V4_WORKTREE_RECOVERY_PENDING_SCOPE}:submission-late-occupancy`;
+    persistV4ComposerDraft("/workspace", undefined, recoveryScope, {
+      text: "frozen submission",
+      worktreeIntent: { branchName: "feature-frozen" },
+    });
+    await act(async () => {
+      useWorktreeFailureReturnStore.getState().openFailureModal("/workspace", {
+        workspacePath: "/workspace",
+        sessionId: "failed-session",
+        submissionId: "submission-late-occupancy",
+        issueCode: "git-unavailable",
+        message: "Could not create the worktree",
+        rawDetail: null,
+        savedAt: Date.now(),
+      });
+      harness.rerender(null, "new draft text");
+    });
+
+    await act(async () => {
+      useWorktreeFailureReturnStore.getState().requestDraftRestore("/workspace", recoveryScope);
+      await flushAsyncWork();
+    });
+
+    expect(
+      useWorktreeFailureReturnStore.getState().modalByWorkspaceKey["/workspace"]?.savedNotRestored,
+    ).toBe(true);
+    expect(readV4ComposerDraft("/workspace", undefined, recoveryScope)?.text).toBe(
+      "frozen submission",
+    );
+    expect(replaceComposerDraftSpy).not.toHaveBeenCalled();
+    harness.root.unmount();
+  });
+
   it("dispatches the queued send exactly once on ready with its telemetry seed, consuming only on success", async () => {
     const harness = renderLateAckComposer();
     await act(async () => {

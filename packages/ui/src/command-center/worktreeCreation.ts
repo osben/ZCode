@@ -144,7 +144,7 @@ export async function executeWorktreeCreation({
       targetPath,
     });
   } catch (error) {
-    // The raw text stays memory-only in rawDetail (modal details); it is never logged.
+    // The raw text stays memory-only in rawDetail (modal details); it is never surfaced in the summary.
     const errorDetail = getErrorMessage(error);
     return {
       kind: "failed",

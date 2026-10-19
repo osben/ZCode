@@ -23,6 +23,7 @@ import { CopyIcon, RotateCcw, SlidersHorizontal } from "lucide-react";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { getErrorMessage } from "@/lib/errorMessage.js";
 import { useTabStore, useTabStoreApi } from "@/store/TabStoreProvider.js";
+import { SETTINGS_TAB_ID } from "@/store/tabStore.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import {
   isWorktreeConfigurationFailure,
@@ -176,6 +177,7 @@ export function WorktreeFailureModalHost() {
   const modalByWorkspaceKey = useWorktreeFailureReturnStore((state) => state.modalByWorkspaceKey);
   const activeWorkspacePath = useTabStore((state) => state.activeWorkspacePath);
   const activeWorkspaceIdentity = useTabStore((state) => state.activeWorkspaceIdentity);
+  const activeTabId = useTabStore((state) => state.activeTabId);
   const activeWorkspaceKey = activeWorkspaceIdentity?.trim() || activeWorkspacePath || "";
   const entry = modalByWorkspaceKey[activeWorkspaceKey] ?? null;
   // Defensive selector: fallback/test stores may lack the workspace slice entirely.
@@ -189,7 +191,7 @@ export function WorktreeFailureModalHost() {
 
   // The modal is displayable only on the entry workspace's draft screen; while the user is
   // elsewhere, announce the failure once with an action toast and defer the modal (decision 4).
-  const displayable = Boolean(entry && activeTaskId === null);
+  const displayable = Boolean(entry && activeTaskId === null && activeTabId !== SETTINGS_TAB_ID);
   useEffect(() => {
     if (!entry || displayable) {
       toastAnnouncedRef.current = null;

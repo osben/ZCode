@@ -10,9 +10,9 @@
  * fallbacks (no armed continuation, stale attempt, rejected Host cancellation).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { IServiceAccessor } from "@zcode/services";
 import {
   armWorktreeSendContinuation,
+  peekWorktreeSendContinuation,
   useComposerWorktreePipelineStore,
 } from "@/store/composerWorktreePipelineStore.js";
 import {
@@ -29,128 +29,7 @@ import {
   V4_WORKTREE_RECOVERY_PENDING_SCOPE,
 } from "@/v4/composer/composerDraftStore.js";
 import { initiateComposerWorktreeFailureReturn } from "@/v4/composer/composerWorktreeFailureReturn.js";
-import { restoreComposerWorktreePipelineFromPreparation } from "@/v4/composer/composerWorktreePipeline.js";
-
-function createMockServices(options?: { cancelRejected?: boolean; deleteRejected?: boolean }) {
-  const commands: Array<Record<string, unknown>> = [];
-  const deleteTask = vi.fn(async () => {
-    if (options?.deleteRejected) throw new Error("delete rejected");
-  });
-  const services = {
-    zcodeAgentService: {
-      helloConversationV4: vi.fn(async () => ({
-        kind: "hello",
-        protocolVersion: 3,
-        connectionId: "test-connection",
-        clientMode: "desktop-continuous",
-        deliveryProfile: "continuous",
-        serverTime: 1,
-        capabilities: {
-          nativeDialogs: true,
-          localTerminal: true,
-          binaryFrames: false,
-          compression: "none",
-        },
-        auth: {},
-      })),
-      initializeConversationV4: vi.fn(async () => undefined),
-      sendConversationCommandV4: vi.fn(
-        async ({ envelope }: { envelope: Record<string, unknown> }) => {
-          commands.push(envelope as Record<string, unknown>);
-          const payload = envelope.payload as Record<string, unknown> | undefined;
-          if (options?.cancelRejected && payload?.status === "cancelled") {
-            return { status: "rejected", reasonCode: "guard.worktreePreparationStale" };
-          }
-          return { status: "accepted" };
-        },
-      ),
-    },
-    zcodeTaskService: { deleteTask },
-  };
-  return { services: services as unknown as IServiceAccessor, commands, deleteTask };
-}
-
-interface SeedOptions {
-  workspacePath: string;
-  sessionId: string;
-  submissionId: string;
-  attemptId: string;
-  recordText?: string;
-  planEnabled?: boolean;
-  withContinuation?: boolean;
-  mainDraftText?: string;
-  activeTaskOnSession?: boolean;
-  failure?: { issueCode: string | null; rawDetail: string | null };
-}
-
-function seedFailure(options: SeedOptions) {
-  const workspaceKey = options.workspacePath;
-  const params = {
-    submissionId: options.submissionId,
-    attemptId: options.attemptId,
-    workspacePath: options.workspacePath,
-    branchName: "feature-branch",
-    targetPath: "/tmp/worktrees/feature-branch",
-    baseBranch: "main",
-    baseFromHeadDefault: false,
-  };
-  useComposerWorktreePipelineStore.setState({
-    pipelineByWorkspaceKey: {
-      [workspaceKey]: {
-        activeSessionKey: options.sessionId,
-        entriesBySessionKey: {
-          [options.sessionId]: {
-            status: "failed",
-            attemptId: options.attemptId,
-            sessionId: options.sessionId,
-            params,
-            createdAt: Date.now(),
-            failureMessage: "Could not create the worktree",
-          },
-        },
-      },
-    },
-  });
-  persistV4ComposerDraft(
-    options.workspacePath,
-    undefined,
-    getV4WorktreeRecoveryScope(options.sessionId, options.submissionId),
-    {
-      text: options.recordText ?? "frozen submission text",
-      ...(options.planEnabled === false ? {} : { mode: "build", planEnabled: true }),
-      recoveryAttachments: [
-        {
-          id: "att-1",
-          filename: "paste-1.txt",
-          localPath: "/tmp/paste-attachments/paste-1.txt",
-          mimeType: "text/plain",
-          sizeBytes: 20480,
-          sourceKind: "clipboard-text" as const,
-        },
-      ],
-    },
-  );
-  if (options.mainDraftText !== undefined) {
-    persistV4ComposerDraft(options.workspacePath, undefined, V4_DRAFT_SCOPE_ROOT, {
-      text: options.mainDraftText,
-    });
-  }
-  if (options.withContinuation !== false) {
-    armWorktreeSendContinuation({
-      workspaceKey,
-      preparedSessionId: options.sessionId,
-      attemptId: options.attemptId,
-      hasBoundPreparedSession: true,
-      dispatch: vi.fn(),
-      restore: vi.fn(),
-      restoreForRetry: vi.fn(),
-    });
-  }
-  if (options.activeTaskOnSession !== false) {
-    useZCodeSessionStore.getState().setActiveTaskId(options.workspacePath, options.sessionId);
-  }
-  return { params };
-}
+import { createMockServices, seedFailure } from "./composerWorktreeFailureReturnTestUtils.js";
 
 describe("composerWorktreeFailureReturn", () => {
   beforeEach(() => {
@@ -535,6 +414,7 @@ describe("composerWorktreeFailureReturn", () => {
       useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey[workspacePath]
         ?.entriesBySessionKey[sessionId]?.status,
     ).toBe("failed");
+    expect(peekWorktreeSendContinuation(workspacePath, sessionId)).not.toBeNull();
   });
 
   it("falls back to the failed row when the Host rejects the cancellation", async () => {
@@ -577,95 +457,6 @@ describe("composerWorktreeFailureReturn", () => {
     expect(
       useWorktreeFailureReturnStore.getState().modalByWorkspaceKey[workspacePath],
     ).toBeUndefined();
-  });
-
-  it("keeps the failed row and session recovery when the tombstone fails", async () => {
-    const { services, deleteTask } = createMockServices({ deleteRejected: true });
-    registerBaseWorkspaceServices(services);
-    const workspacePath = "/proj/return-delete-rejected";
-    const sessionId = "session-return-delete-rejected";
-    const submissionId = "submission-return-delete-rejected";
-    const { params } = seedFailure({
-      workspacePath,
-      sessionId,
-      submissionId,
-      attemptId: "attempt-1",
-    });
-
-    expect(
-      initiateComposerWorktreeFailureReturn({
-        workspaceKey: workspacePath,
-        sessionId,
-        attemptId: "attempt-1",
-        params,
-        failureMessage: "Could not create the worktree",
-        issueCode: "unknown",
-        rawDetail: null,
-      }),
-    ).toBe(true);
-
-    restoreComposerWorktreePipelineFromPreparation({
-      workspaceKey: workspacePath,
-      workspacePath,
-      sessionId,
-      preparation: {
-        status: "cancelled",
-        branchName: params.branchName,
-        targetPath: params.targetPath,
-        attemptId: "attempt-1",
-      },
-    });
-    expect(
-      useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey[workspacePath]
-        ?.entriesBySessionKey[sessionId]?.status,
-    ).toBe("failed");
-
-    await vi.waitFor(() => expect(deleteTask).toHaveBeenCalledOnce());
-    await vi.waitFor(() =>
-      expect(
-        useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey[workspacePath]
-          ?.entriesBySessionKey[sessionId]?.tombstoneFailed,
-      ).toBe(true),
-    );
-
-    const entry =
-      useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey[workspacePath]
-        ?.entriesBySessionKey[sessionId];
-    expect(entry).toMatchObject({ status: "failed", tombstoneFailed: true });
-    expect(entry?.returningToDraft).toBeUndefined();
-    expect(
-      readV4ComposerDraft(
-        workspacePath,
-        undefined,
-        getV4WorktreeRecoveryScope(sessionId, submissionId),
-      ),
-    ).not.toBeNull();
-    expect(
-      readV4ComposerDraft(
-        workspacePath,
-        undefined,
-        `${V4_WORKTREE_RECOVERY_PENDING_SCOPE}:${submissionId}`,
-      ),
-    ).toBeNull();
-    expect(
-      useWorktreeFailureReturnStore.getState().modalByWorkspaceKey[workspacePath],
-    ).toBeUndefined();
-
-    restoreComposerWorktreePipelineFromPreparation({
-      workspaceKey: workspacePath,
-      workspacePath,
-      sessionId,
-      preparation: {
-        status: "cancelled",
-        branchName: params.branchName,
-        targetPath: params.targetPath,
-        attemptId: "attempt-1",
-      },
-    });
-    expect(
-      useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey[workspacePath]
-        ?.entriesBySessionKey[sessionId]?.status,
-    ).toBe("failed");
   });
 });
 

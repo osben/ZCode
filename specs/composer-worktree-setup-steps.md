@@ -503,6 +503,8 @@ Ordering constraints:
   hand-off coexist without unhandled rejections (same-attempt rewrites are benign).
 - The tombstone reuses the `deleteTask` Hide path exactly; it does not touch the CLI session row,
   the Host session store, or the worktree directory.
+- If the tombstone fails, the hand-off attempts to return the recovery record to the failed session
+  scope and keeps the failed-row pipeline and continuation; it does not open the return modal.
 
 ### Failure modal
 
