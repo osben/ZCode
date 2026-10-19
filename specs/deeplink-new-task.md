@@ -125,5 +125,10 @@ Idempotency: a repeated link creates another draft (no dedup id in v1).
 
 ## 7. Out of scope (future)
 
-`model`, `mode`, `branch`/`worktree`, `attachments`, dedup `id`, a `zcode handoff` CLI, a harness skill that builds the link,
+`model`, `mode`, `branch`/`worktree`, `attachments`, dedup `id`, a `zcode handoff` CLI,
 and the parser route-table refactor (touches OAuth/payment parsing; separate PR).
+
+## 8. Harness skill
+
+`.agents/skills/handoff-to-zcode` tells other harnesses to write the plan to `<project>/.zcode/handoff/<id>.md`, build the link with
+`scripts/build-link.mjs` (encodes paths, refuses plans outside the project) and print it with an `open` command for macOS.
