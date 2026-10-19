@@ -1,5 +1,5 @@
 import type { Model, ModelInputMessage } from "@zcode/contracts";
-import { DEFAULT_CONFIRMATION_PARAGRAPH, incognitoExcludes, type IncognitoProfile } from "@zcode/shared";
+import { DEFAULT_CONFIRMATION_PARAGRAPH, type IncognitoProfile } from "@zcode/shared";
 import { ContextBuilder } from "../context/builder.js";
 import {
   buildContextMetaUserBody,
@@ -10,16 +10,13 @@ import {
   type EnvInfo,
 } from "../context/index.js";
 import { buildCliPrefixSection } from "../context/sections/cli-prefix.js";
+import { resolveIncognitoPromptToggles } from "../context/sections/prompt-toggles.js";
 import { buildCurrentDateSection } from "../context/sections/current-date.js";
 import { buildRequestUserContextSection } from "../context/sections/request-user-context.js";
 import type { ExecutionWorktreeEnvFact } from "../context/sections/env-info.js";
 import { buildSkillsSection } from "../context/sections/skills.js";
 import { estimateTokens } from "../context/utils.js";
-import {
-  buildSubagentCommonNotes,
-  buildSubagentEnvironmentContext,
-  buildSubagentWorktreeOnlyContext,
-} from "./system-prompt.js";
+import { buildSubagentCommonNotes, buildSubagentEnvironmentContext } from "./system-prompt.js";
 
 export interface SubagentContextBuilderConfig {
   agentPrompt: string;
@@ -119,9 +116,9 @@ export function createSubagentContextBuilder(
 }
 
 function buildSubagentContextSections(config: SubagentContextBuilderConfig): ContextSection[] {
-  const identityOff = incognitoExcludes(config.incognito, "identity");
-  const harnessOff = incognitoExcludes(config.incognito, "harness");
-  const environmentOff = incognitoExcludes(config.incognito, "environment");
+  const { identityOff, harnessOff, environmentOff } = resolveIncognitoPromptToggles(
+    config.incognito,
+  );
   const sections: ContextSection[] = identityOff ? [] : [buildCliPrefixSection()];
   const agentPrompt = config.agentPrompt.trimEnd();
   if (agentPrompt) {
@@ -149,14 +146,13 @@ function buildSubagentContextSections(config: SubagentContextBuilderConfig): Con
         : `\n\n${buildSubagentCommonNotes()}`,
     }),
   );
-  const environmentContext = environmentOff
-    ? buildSubagentWorktreeOnlyContext(config.executionWorktree)
-    : buildSubagentEnvironmentContext({
-        agentPrompt: config.agentPrompt,
-        envInfo: config.envInfo,
-        model: config.model,
-        executionWorktree: config.executionWorktree,
-      });
+  const environmentContext = buildSubagentEnvironmentContext({
+    agentPrompt: config.agentPrompt,
+    envInfo: config.envInfo,
+    model: config.model,
+    executionWorktree: config.executionWorktree,
+    worktreeOnly: environmentOff,
+  });
   if (environmentContext) {
     sections.push(
       createSubagentSection({

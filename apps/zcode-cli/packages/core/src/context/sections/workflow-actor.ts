@@ -18,7 +18,11 @@
 
 import type { ContextSection, WorkflowActorContext } from "../types.js";
 import { estimateTokens } from "../utils.js";
-import { buildHarnessBlock, buildSecurityNotice } from "./identity.js";
+import {
+  buildHarnessBlock,
+  buildSecurityNotice,
+  type IdentitySectionOptions,
+} from "./identity.js";
 import { DEFAULT_CONFIRMATION_PARAGRAPH } from "@zcode/shared";
 
 /** Describe the tool surface with one sentence about what is available and one about what is not, so the model does not have to guess. */
@@ -46,10 +50,8 @@ function buildWorkflowContract(): string {
   ].join("\n");
 }
 
-export interface WorkflowActorSectionOptions {
-  /** `harness` toggle; off omits the `# Harness` block and keeps the confirmation floor. */
-  includeHarness?: boolean;
-}
+/** `harness` toggle; off omits the `# Harness` block and keeps the confirmation floor. */
+export type WorkflowActorSectionOptions = Pick<IdentitySectionOptions, "includeHarness">;
 
 function buildWorkflowActorIdentityPrompt(
   actor: WorkflowActorContext,
@@ -63,14 +65,13 @@ function buildWorkflowActorIdentityPrompt(
   const persona = actor.persona?.trim();
   // There is no longer a CLI prefix before this section ("You are ZCode, an interactive coding agent" is the wrong identity for a subagent),
   // so this is the first line of the system prompt and no longer starts with a blank line.
-  const includeHarness = options.includeHarness !== false;
   const parts = [
     opening.join("\n"),
     ...(persona ? ["", persona] : []),
     "",
     buildSecurityNotice(),
     "",
-    includeHarness ? buildHarnessBlock() : DEFAULT_CONFIRMATION_PARAGRAPH,
+    options.includeHarness ? buildHarnessBlock() : DEFAULT_CONFIRMATION_PARAGRAPH,
     "",
     buildWorkflowContract(),
   ];
@@ -79,7 +80,7 @@ function buildWorkflowActorIdentityPrompt(
 
 export function buildWorkflowActorIdentitySection(
   actor: WorkflowActorContext,
-  options: WorkflowActorSectionOptions = {},
+  options: WorkflowActorSectionOptions = { includeHarness: true },
 ): ContextSection {
   const content = buildWorkflowActorIdentityPrompt(actor, options);
   return {

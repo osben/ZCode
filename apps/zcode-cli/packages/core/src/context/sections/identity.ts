@@ -30,12 +30,15 @@ export function buildHarnessBlock(override?: string): string {
   return override?.trim() ? override.trim() : DEFAULT_HARNESS_PROMPT;
 }
 
-/** Which toggle-owned parts of the identity section are rendered (specs/incognito-session.md). */
+/**
+ * Which toggle-owned parts of the identity section are rendered (specs/incognito-session.md).
+ * Also the options type of the workflow-subagent identity (`sections/workflow-actor.ts`).
+ */
 export interface IdentitySectionOptions {
   /** `identity` toggle: the identity intro sentence. */
-  includeIntro?: boolean;
+  includeIntro: boolean;
   /** `harness` toggle: the `# Harness` block. */
-  includeHarness?: boolean;
+  includeHarness: boolean;
 }
 
 function buildIdentityPrompt(
@@ -57,7 +60,7 @@ function buildIdentityPrompt(
   // The safety notice is never toggled; without an intro it is the first line of the section.
   const identityLines = (intro ? ["", intro, "", SECURITY_NOTICE] : [SECURITY_NOTICE]).join("\n");
   // Harness off: the confirmation paragraph (normally inside Dynamic Behavior) stays as the safety floor.
-  if (options.includeHarness === false) {
+  if (!options.includeHarness) {
     return [identityLines, "", DEFAULT_CONFIRMATION_PARAGRAPH].join("\n");
   }
 
@@ -67,13 +70,13 @@ function buildIdentityPrompt(
 export function buildIdentitySection(
   outputStyle?: OutputStylePromptConfig,
   overrides?: { "identity-intro"?: string; harness?: string },
-  options: IdentitySectionOptions = {},
+  options: IdentitySectionOptions = { includeIntro: true, includeHarness: true },
 ): ContextSection {
   const content = buildIdentityPrompt(
     outputStyle,
     overrides?.["identity-intro"],
     overrides?.harness,
-    { includeIntro: options.includeIntro ?? true, includeHarness: options.includeHarness ?? true },
+    options,
   );
 
   return {

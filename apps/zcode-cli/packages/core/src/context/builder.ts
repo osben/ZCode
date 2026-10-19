@@ -3,7 +3,6 @@
 // ============================================================
 
 import type { ModelInputMessage } from "@zcode/contracts";
-import { incognitoExcludes } from "@zcode/shared";
 import type {
   ContextMetaUserAttachment,
   ContextSection,
@@ -14,6 +13,7 @@ import type {
 import type { ToolRegistry } from "../tool/registry.js";
 import { estimateTokens } from "./utils.js";
 import { buildCliPrefixSection } from "./sections/cli-prefix.js";
+import { resolveIncognitoPromptToggles } from "./sections/prompt-toggles.js";
 import { buildIdentitySection } from "./sections/identity.js";
 import { buildWorkflowActorIdentitySection } from "./sections/workflow-actor.js";
 import {
@@ -105,9 +105,7 @@ export class ContextBuilder {
     const promptOverrides = isWorkflowActor ? undefined : this.config.systemPromptOverrides;
     // Incognito toggles for prompt text (specs/incognito-session.md, "Prompt toggles"). Absent profile = all included.
     const incognito = this.config.incognito;
-    const identityOff = incognitoExcludes(incognito, "identity");
-    const harnessOff = incognitoExcludes(incognito, "harness");
-    const environmentOff = incognitoExcludes(incognito, "environment");
+    const { identityOff, harnessOff, environmentOff } = resolveIncognitoPromptToggles(incognito);
 
     // 1. CLI / product prefix. Keep this as the short leading identity block.
     // "You are ZCode, an interactive coding agent" is the wrong identity for a subagent that speaks only to a script
