@@ -271,6 +271,31 @@ describe("SystemPromptSection", () => {
     expect(mocks.saveEditor).not.toHaveBeenCalled();
   });
 
+  it("reviews the revision a conflicting Overwrite reported before the next Overwrite", async () => {
+    mocks.diskChanged = true;
+    mocks.saveEditor
+      .mockResolvedValueOnce({ currentRevision: "rev-newer" })
+      .mockResolvedValueOnce(undefined);
+    renderSection();
+    fireEvent.click(screen.getByTestId("settings-system-prompt-edit-cli-prefix"));
+    fireEvent.change(screen.getByTestId("settings-system-prompt-editor-cli-prefix"), {
+      target: { value: "mine" },
+    });
+
+    fireEvent.click(screen.getByTestId("settings-system-prompt-disk-overwrite"));
+    await waitFor(() => expect(mocks.saveEditor).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByTestId("settings-system-prompt-disk-overwrite"));
+    await waitFor(() => expect(mocks.saveEditor).toHaveBeenCalledTimes(2));
+
+    expect(mocks.saveEditor).toHaveBeenNthCalledWith(1, {
+      overwrite: { reviewedRevision: "rev-cli" },
+    });
+    expect(mocks.saveEditor).toHaveBeenNthCalledWith(2, {
+      overwrite: { reviewedRevision: "rev-newer" },
+    });
+    expect(mocks.reloadEditor).not.toHaveBeenCalled();
+  });
+
   it("offers Open folder for local hosts only and reveals the parent directory", async () => {
     renderSection({ workspacePath: "/local/repo" });
     fireEvent.click(screen.getByTestId("settings-system-prompt-open-folder-cli-prefix"));

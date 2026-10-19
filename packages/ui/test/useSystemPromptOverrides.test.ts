@@ -299,6 +299,33 @@ describe("useSystemPromptOverrides revisions and in-place refresh", () => {
     expect(mocks.toast).toHaveBeenCalledWith("settings.systemPrompt.saved");
   });
 
+  it("reports the disk revision a conflicting save found, and nothing for a saved write", async () => {
+    const service = revisionedService("rev-1");
+    mocks.useBaseWorkspaceServices.mockReturnValue({ systemPromptService: service });
+    const { result } = renderHook(() => useSystemPromptOverrides(localTarget));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    act(() => {
+      result.current.openEditor("cli-prefix", "default:cli-prefix");
+      result.current.setDraft("mine");
+    });
+
+    service.writeOverride.mockResolvedValueOnce({
+      kind: "conflict",
+      currentRevision: "rev-external",
+    });
+    let conflict: unknown;
+    await act(async () => {
+      conflict = await result.current.saveEditor();
+    });
+    expect(conflict).toEqual({ currentRevision: "rev-external" });
+
+    let saved: unknown = "not-called";
+    await act(async () => {
+      saved = await result.current.saveEditor();
+    });
+    expect(saved).toBeUndefined();
+  });
+
   it("overwrites against the reviewed revision, not a newer disk revision read at click time", async () => {
     const service = revisionedService("rev-1");
     mocks.useBaseWorkspaceServices.mockReturnValue({ systemPromptService: service });
@@ -327,6 +354,50 @@ describe("useSystemPromptOverrides revisions and in-place refresh", () => {
     });
     expect(result.current.editor?.draft).toBe("mine");
     expect(mocks.toast).toHaveBeenCalledWith("settings.systemPrompt.changedOnDisk");
+  });
+
+  it("discards a listing that was in flight when a save patched the row", async () => {
+    const service = revisionedService("rev-1");
+    mocks.useBaseWorkspaceServices.mockReturnValue({ systemPromptService: service });
+    const { result } = renderHook(() => useSystemPromptOverrides(localTarget));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    act(() => {
+      result.current.openEditor("cli-prefix", "default:cli-prefix");
+      result.current.setDraft("custom");
+    });
+
+    // A focus refresh read the file before the save; its response arrives after the save finished.
+    const stale = deferred<Awaited<ReturnType<typeof service.listSections>>>();
+    service.listSections.mockImplementationOnce(() => stale.promise);
+    act(() => {
+      void result.current.reload();
+    });
+    await act(() => result.current.saveEditor());
+    expect(result.current.sections[0]).toMatchObject({
+      overrideContent: "custom",
+      revision: "rev-2",
+    });
+
+    await act(async () => {
+      stale.resolve({
+        sections: [
+          {
+            key: "cli-prefix",
+            defaultContent: "default:cli-prefix",
+            overrideContent: null,
+            filePath: "/host/.zcode/system-prompt/cli-prefix.md",
+            isOverridden: false,
+            revision: "rev-1",
+          },
+        ],
+      });
+      await stale.promise;
+    });
+    expect(result.current.sections[0]).toMatchObject({
+      overrideContent: "custom",
+      isOverridden: true,
+      revision: "rev-2",
+    });
   });
 
   it("treats an undefined write result from an older host as success", async () => {

@@ -256,6 +256,8 @@ export function SystemPromptEditor({
 /**
  * Changed-on-disk state. The disk revision is captured when this card appears, which is the
  * revision the user is reviewing; Overwrite checks against it, not against a revision read at click time.
+ * After an Overwrite conflicts, the card adopts the revision that conflict reported, since the user
+ * has been told the file changed again; without this, every retry would conflict with the old revision.
  */
 function DiskChangedAlert({
   view,
@@ -271,7 +273,11 @@ function DiskChangedAlert({
   busy: boolean;
 }) {
   const { intl } = useZCodeIntl();
-  const [reviewedRevision] = useState(section.revision);
+  const [reviewedRevision, setReviewedRevision] = useState(section.revision);
+  const overwrite = async () => {
+    const conflict = await view.saveEditor({ overwrite: { reviewedRevision } });
+    if (conflict) setReviewedRevision(conflict.currentRevision);
+  };
   return (
     <Alert variant="warning" data-testid={TID_SETTINGS_SYSTEM_PROMPT_DISK_CHANGED}>
       <AlertDescription className="space-y-2">
@@ -294,7 +300,7 @@ function DiskChangedAlert({
             variant="outline"
             disabled={!canOverwrite}
             data-testid={TID_SETTINGS_SYSTEM_PROMPT_DISK_OVERWRITE}
-            onClick={() => void view.saveEditor({ overwrite: { reviewedRevision } })}
+            onClick={() => void overwrite()}
           >
             {intl.formatMessage({ id: "settings.systemPrompt.diskChanged.overwrite" })}
           </Button>

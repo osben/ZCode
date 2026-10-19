@@ -688,6 +688,47 @@ describe("VoiceDictationSection post-processing", () => {
     expect(((await prompt()) as HTMLTextAreaElement).value).toBe("Custom {{text}}");
   });
 
+  it("locks the prompt editor and Reset while a Save is writing", async () => {
+    h.settings.voiceDictation = { modelId: "model-one" };
+    let finishWrite!: () => void;
+    h.updateSettings.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishWrite = resolve;
+        }),
+    );
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+    const field = (await prompt()) as HTMLTextAreaElement;
+
+    fireEvent.change(field, { target: { value: "Shorten: {{text}}" } });
+    fireEvent.click(await saveButton());
+    // Text typed while the write is in flight would be cleared by the success handler, so editing waits.
+    await waitFor(() => expect(field.disabled).toBe(true));
+    expect((await resetButton()).hasAttribute("disabled")).toBe(true);
+
+    finishWrite();
+    await waitFor(() => expect(field.disabled).toBe(false));
+  });
+
+  it("locks the prompt editor while Reset is writing", async () => {
+    h.settings.voiceDictation = { modelId: "model-one", postProcessPrompt: "Custom {{text}}" };
+    let finishWrite!: () => void;
+    h.updateSettings.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishWrite = resolve;
+        }),
+    );
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+    const field = (await prompt()) as HTMLTextAreaElement;
+
+    fireEvent.click(await resetButton());
+    await waitFor(() => expect(field.disabled).toBe(true));
+
+    finishWrite();
+    await waitFor(() => expect(field.disabled).toBe(false));
+  });
+
   it("Escape with unsaved edits asks to discard; confirming reverts the draft", async () => {
     render(createElement(VoiceDictationSection, { isDesktop: true }));
     const field = (await prompt()) as HTMLTextAreaElement;

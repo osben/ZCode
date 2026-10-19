@@ -39,6 +39,29 @@ describe("computeGhostLayout (VD-GHO-04)", () => {
     ).toBeNull();
   });
 
+  it("keeps a fully visible last-line caret whose line box would overflow the editor", () => {
+    // Only the caret glyph box must fit; the line box's leading below it is not visible.
+    const shortEditor = { left: 100, top: 50, width: 400, height: 40 };
+    expect(
+      computeGhostLayout({
+        caret: { left: 180, top: 72, height: 16 },
+        editor: shortEditor,
+        lineHeight: 20,
+      }),
+    ).toEqual({ top: 20, indent: 80 });
+  });
+
+  it("hides the ghost when the caret glyph itself extends past the editor bottom", () => {
+    const shortEditor = { left: 100, top: 50, width: 400, height: 40 };
+    expect(
+      computeGhostLayout({
+        caret: { left: 180, top: 75, height: 16 },
+        editor: shortEditor,
+        lineHeight: 20,
+      }),
+    ).toBeNull();
+  });
+
   it("returns null for an editor with no usable width", () => {
     expect(
       computeGhostLayout({

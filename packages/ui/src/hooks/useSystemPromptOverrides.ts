@@ -34,6 +34,11 @@ export type SystemPromptOverridesStatus =
   | "unsupported"
   | "failed";
 
+export interface SystemPromptSaveConflict {
+  /** Disk revision found by the conflicting save; the card reviews it before the next Overwrite. */
+  currentRevision: string | null;
+}
+
 export interface ResetEntry {
   key: SystemPromptOverrideKey;
   /** Revision the user saw when confirming; `undefined` skips the check (older hosts). */
@@ -57,10 +62,11 @@ export interface SystemPromptOverridesView {
   /**
    * Save the draft. `overwrite` replaces a disk change: it is checked against `reviewedRevision`, the
    * disk revision the user saw in the conflict card, so a newer external edit is never replaced unseen.
+   * A conflicting save resolves to the disk revision it found; any other outcome resolves to undefined.
    */
   saveEditor: (options?: {
     overwrite?: { reviewedRevision: string | null | undefined };
-  }) => Promise<void>;
+  }) => Promise<SystemPromptSaveConflict | undefined>;
   /** Discard the draft and rebase the editor onto the current disk text and revision. */
   reloadEditor: (effectiveContent: string) => void;
   /** Override directory on the pinned host (the service's pure lookup). */
@@ -310,7 +316,7 @@ export function useSystemPromptOverrides(
           }
           setEditor((latest) => (latest ? { ...latest, saving: false } : latest));
           void refreshInPlace(targetService, key);
-          return;
+          return { currentRevision: result.currentRevision };
         }
         toast(intl.formatMessage({ id: "settings.systemPrompt.saved" }));
         setEditor(null);
@@ -318,6 +324,9 @@ export function useSystemPromptOverrides(
           // The write result carries the stored text and its revision, so the saved row updates
           // without a second listing.
           const savedRevision = result.revision;
+          // A listing already in flight read the file before this write; invalidate it so its stale
+          // rows cannot replace the row patched here.
+          listVersionRef.current += 1;
           setSections((previous) =>
             previous.map((section) =>
               section.key === current.key

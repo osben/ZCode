@@ -146,9 +146,16 @@ export function VoiceDictationPostProcessCard({
       showKeyboardHints: false,
     });
     if (!confirmed) return;
-    // Removing the key (not writing the default text) lets the runtime's default apply.
-    const ok = await patchVoice({ postProcessPrompt: undefined });
-    if (ok) setDraft(null);
+    // Same in-flight lock as Save: the editor is disabled while the write runs, so the success clear
+    // below cannot discard text typed during it.
+    setSaving(true);
+    try {
+      // Removing the key (not writing the default text) lets the runtime's default apply.
+      const ok = await patchVoice({ postProcessPrompt: undefined });
+      if (ok) setDraft(null);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const runTryIt = async () => {
@@ -235,6 +242,7 @@ export function VoiceDictationPostProcessCard({
           aria-describedby={`${counterId} ${hintId}`}
           aria-invalid={overLimit || undefined}
           value={editing}
+          disabled={saving}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={handleEditorKeyDown}
         />
@@ -276,7 +284,7 @@ export function VoiceDictationPostProcessCard({
           <Button
             variant="outline"
             size="sm"
-            disabled={!canReset}
+            disabled={!canReset || saving}
             onClick={() => void resetPrompt()}
           >
             {intl.formatMessage({ id: "voiceDictation.postProcess.prompt.reset" })}

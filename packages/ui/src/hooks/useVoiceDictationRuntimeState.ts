@@ -65,6 +65,9 @@ function subscribeRuntimeState(
 ): () => void {
   sharedPoller.listeners.add(listener);
   sharedPoller.service = service;
+  // A view that re-subscribes missed the changes made while it was off, and later polls equal the
+  // shared snapshot, so it would never be notified. Replay the snapshot the poller holds now.
+  listener(sharedPoller.latest);
   if (sharedPoller.listeners.size === 1) {
     sharedPoller.generation += 1;
     void pollOnce(sharedPoller.generation);

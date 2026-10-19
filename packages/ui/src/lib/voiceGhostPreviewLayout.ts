@@ -41,10 +41,12 @@ export function computeGhostLayout({
   if (!(editor.width > 0) || !(editor.height > 0)) return null;
   // Hide while the caret is scrolled out of the editor's visible area; the ghost is clipped to the
   // editor box and would otherwise float over unrelated content.
+  // Checked against the caret glyph box, not a full line box: the line box's leading below the
+  // glyph is never painted, so a fully visible last-line caret must keep its ghost.
   const caretTopInEditor = caret.top - editor.top;
   if (
     caretTopInEditor < 0 ||
-    caretTopInEditor > editor.height - Math.min(lineHeight, editor.height)
+    caretTopInEditor + Math.min(caret.height, editor.height) > editor.height
   ) {
     return null;
   }
