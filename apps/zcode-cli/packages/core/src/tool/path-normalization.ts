@@ -12,6 +12,15 @@ export function getToolPathApi(platform: ToolPathPlatform): ToolPathApi {
   return platform === "win32" ? path.win32 : path.posix;
 }
 
+/** Lexical containment: whether a `pathApi.relative(parent, child)` result points at or above `parent`'s parent. */
+export function isPathOutsideParent(relativePath: string, pathApi: ToolPathApi): boolean {
+  return (
+    relativePath === ".." ||
+    relativePath.startsWith(`..${pathApi.sep}`) ||
+    pathApi.isAbsolute(relativePath)
+  );
+}
+
 export function normalizeToolPathForComparison(
   filePath: string,
   platform: ToolPathPlatform = currentPlatform,

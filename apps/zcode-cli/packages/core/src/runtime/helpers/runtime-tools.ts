@@ -24,6 +24,7 @@ import {
 import { isStaleBranchRuntimeTaskEvent } from "../methods/runtime-command-generation.js";
 import { resolveEnabledProjectMemoryRoot } from "./project-memory.js";
 import { sessionHasLoadedSkill } from "../../agent/loaded-skills.js";
+import { createRuntimeNestedInstructionContext } from "./nested-instructions-context.js";
 import { getMissingExecutionWorktreeToolError } from "./execution-worktree-guard.js";
 import type { ToolMetadata, ToolRuntimeScope } from "../../tool/types.js";
 
@@ -210,6 +211,7 @@ function createRuntimeToolExecutor(
     modelCatalogPort: deps.modelCatalogPort,
     runtimeTaskRegistry: runtime.runtimeTaskRegistry,
     readFileState: runtime.readFileState,
+    nestedInstructions: createRuntimeNestedInstructionContext(runtime),
     // Skill gate for workflow-authoring tools (tool/handlers/workflow-skill-gate.ts): answer “has the skill been read?” from history
     // currently visible to the model. Add the probe only when this session has a Skill tool; a session without skillPort cannot load the
     // skill, so leaving the gate enabled would create an impassable wall.

@@ -1665,3 +1665,14 @@ interrupted result。修复不改变工具 schema、权限、执行时机、协�
 - Description flow: `registerBuiltInTools` derives `dynamicWorkflowEnabled` for the Agent and Task descriptions from `includeDynamicWorkflow`, so the workflow instruction disappears with the tools.
 - Inheritance: the gate reads the frozen `config.incognito`; Task-tool children and workflow children receive it through the same config paths as the other incognito toggles.
 - Test: `core/tests/incognito-prompt-toggles.test.ts` ("automationTools runtime gate").
+
+## Nested AGENTS.md reminders (specs/nested-agents-md.md)
+
+- **Trigger:** after a successful `Read`, `Edit`, `Write`, `ApplyPatch`, `Glob`, `Grep` or `Bash` call (see the trigger table in the spec). Discovery walks from the touched path up to, not including, the workspace root and never reads outside it.
+- **Delivery:** the found files are appended to the same tool result as one `<system-reminder>` block. The marker lines come first, so the history parser reads only them and never the AGENTS.md body.
+- **Budget:** a per-session context budget (64 KiB) is reserved atomically with the per-file key. A file that does not fit is skipped and can be delivered by a later call.
+- **Settlement:** reservations are cleared in `settleToolResults`, after the streamed results are committed to history. Clearing earlier would let the same file be delivered twice.
+- **Dedupe:** a file counts as delivered only when a visible, full `Read` result or a visible reminder marker carries it. A `file_unchanged` stub does not count.
+- **Known limitation (v1):** a relative `Read` is keyed against the cwd at history-read time, so a later `cd` can re-deliver the same file once. See the spec.
+- Code: `core/src/context/nested-instructions/`, `core/src/runtime/methods/tool-result-settlement.ts`, `core/src/runtime/helpers/nested-instructions-context.ts`.
+- Tests: `core/tests/nested-instructions-*.test.ts`, `core/tests/system-reminder-source.test.ts`.

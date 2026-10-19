@@ -33,7 +33,7 @@ import {
 } from "@zcode/contracts";
 import { resolveWorkspacePath } from "../path-policy.js";
 import { createReadFileStateKey, normalizeReadFileStateMtimeMs } from "../read-file-state.js";
-import { createReadFileStateMetadata } from "../read-file-state-metadata.js";
+import { FILE_UNCHANGED_STUB, createReadFileStateMetadata } from "../read-file-state-metadata.js";
 import { inferImageMimeFromPath, readImageFile } from "./read-image.js";
 import { inferVideoMimeFromPath } from "../../runtime/helpers/attachment-video.js";
 import { readVideoFile } from "./read-video.js";
@@ -52,8 +52,6 @@ import {
 
 export { addReadLineNumbers } from "./read-text.js";
 
-const FILE_UNCHANGED_STUB =
-  "Wasted call — file unchanged since your last Read. Refer to that earlier tool_result instead.";
 const READ_PROVIDER_DESCRIPTION = [
   "Reads a file from the local filesystem.",
   "",

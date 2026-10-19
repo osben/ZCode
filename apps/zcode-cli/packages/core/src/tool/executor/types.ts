@@ -40,6 +40,7 @@ import type { PermissionService } from "../../permission/service.js";
 import type { LspService } from "../../lsp/service.js";
 import type { RuntimeTaskRegistry } from "../../runtime-task/registry.js";
 import type { ToolRegistry } from "../registry.js";
+import type { NestedInstructionContext } from "../../context/nested-instructions/discover.js";
 import type { ToolMetadata } from "../types.js";
 import type { ToolSchedule } from "../scheduler.js";
 import type {
@@ -121,6 +122,8 @@ export interface ToolExecutorOptions {
   modelCatalogPort?: ModelCatalogPort;
   runtimeTaskRegistry?: RuntimeTaskRegistry;
   readFileState?: ReadFileStateMap;
+  /** Nested AGENTS.md discovery; the runtime owns the tracker and answers history from provider-visible messages. */
+  nestedInstructions?: NestedInstructionContext;
   /** Skill-gate probe (ToolInputResolutionContext.hasLoadedSkill); the runtime answers from provider-visible history. */
   hasLoadedSkill?: (skillName: string) => boolean;
   subagentBackgroundBashMaxMs?: number;
@@ -194,6 +197,8 @@ export interface ToolBatchExecuteOptions extends ToolExecuteOptions {
   maxConcurrency?: number;
 }
 
+export type { NestedInstructionContext };
+
 export interface ToolExecutorDeps {
   agentTelemetry?: AgentExecutionTelemetryPort;
   agentTelemetryActorKind?: AgentTelemetryActorKind;
@@ -240,6 +245,8 @@ export interface ToolExecutorDeps {
   modelCatalogPort?: ModelCatalogPort;
   runtimeTaskRegistry?: RuntimeTaskRegistry;
   readFileState: ReadFileStateMap;
+  /** Nested AGENTS.md discovery; absent (e.g. incognito) means tool results are unchanged. */
+  nestedInstructions?: NestedInstructionContext;
   hasLoadedSkill?: (skillName: string) => boolean;
   subagentBackgroundBashMaxMs?: number;
   bashShellSelection?: ExecutionShellSelection;

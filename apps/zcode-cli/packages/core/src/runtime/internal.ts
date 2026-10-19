@@ -1,4 +1,5 @@
 import type { LspService } from "../lsp/service.js";
+import type { NestedInstructionTracker } from "../context/nested-instructions/tracker.js";
 import { PermissionService, ToolScheduler } from "./deps.js";
 import type {
   Logger,
@@ -90,6 +91,7 @@ export interface AgentRuntimeInternal
   sessionModelSelection: ModelSelection | undefined;
   messageHistory: MessageHistory;
   readFileState: ReadFileStateMap;
+  nestedInstructionTracker: NestedInstructionTracker;
   cachedTools: ModelToolContract[] | null;
   /** 工作流工具面是否已注册（launch.md「On demand: activation」）；非 onDemand 会话出生即 true。 */
   dynamicWorkflowToolsActivated: boolean;

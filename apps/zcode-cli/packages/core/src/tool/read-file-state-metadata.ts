@@ -3,6 +3,10 @@ import { createReadFileStateKey } from "./read-file-state.js";
 import type { ReadFileStateEntry, ReadFileStateMap } from "./types.js";
 
 export const READ_FILE_STATE_METADATA_SCHEMA_VERSION = 1;
+// Model-visible result of a Read whose cached view is still fresh. It carries no file body, so the nested AGENTS.md
+// history probe must not treat it as the model having seen the file (context/nested-instructions/history.ts).
+export const FILE_UNCHANGED_STUB =
+  "Wasted call — file unchanged since your last Read. Refer to that earlier tool_result instead.";
 // `CreateWorkflow` / `AmendWorkflow` / `FillWorkflowHole`: bytes from an inline draft (or fill file) are the `script` input from the model's call;
 // like Write, record them as a complete view (handlers/workflow-draft-read-state.ts).
 export type PersistedReadFileStateTool =
