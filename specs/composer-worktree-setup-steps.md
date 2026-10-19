@@ -268,9 +268,13 @@ notice binds the worktree identity to the parent's bound remote session before i
 because the identity alone does not route the new tab. A parent identity that
 claims the remote form but does not parse, or a remote parent with no bound session, fails closed: the
 action shows the open-failed toast and never falls back to opening the remote path as a local workspace.
-A kept remote session id is not proof of a live binding: the action also fails closed, with the same
-toast and without binding or calling the open path, when the parent's bound remote session is not
-currently attached to the session registry (for example during a remote disconnect).
+The parent's session is resolved with the same order the pane uses for its own routing: the pane's remote
+session id when present, then the parent identity's binding. Restored and split remote panes omit the id and
+resolve through the binding. Only a session currently attached to the session registry counts, so the action
+fails closed, with the same toast and without binding or calling the open path, when neither source yields an
+attached session (for example during a remote disconnect). If the open callback rejects after the action bound
+the worktree identity, the action restores the identity's prior binding, or removes the binding if none existed,
+before showing the toast.
 On the Web remote-control path, the desktop open handler fails closed for any remote worktree identity (including an
 unparseable `remote:` form): it rejects the workspace-open request before the path-only local open runs, so the
 action shows the open-failed toast. Routing a remote worktree on desktop needs the identity-to-session binding in the

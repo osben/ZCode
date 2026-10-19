@@ -10,9 +10,11 @@ import {
 } from "@/components/ui/tooltip.js";
 import { toast } from "@/components/ui/toast.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { resolveWorkspaceRemoteSessionId } from "@/lib/workspaceServiceResolver.js";
 import {
   bindRemoteWorkspaceIdentity,
-  getRemoteWorkspaceSession,
+  unbindRemoteWorkspaceIdentity,
+  useRemoteWorkspaceSessionStore,
 } from "@/store/remoteWorkspaceSessionStore.js";
 
 /** Persistent first-in-history summary after Host activation clears the preparation marker. */
@@ -30,7 +32,7 @@ export function ConversationWorktreeCreatedNotice({
   path: string;
   /** Parent workspace identity; a remote parent yields a remote identity for the worktree path. */
   workspaceIdentity?: string;
-  /** Remote session bound to the parent identity; required to route a remote worktree. */
+  /** Pane's remote session id when it has one; the parent identity binding is the fallback, as in the pane's own routing. */
   remoteSessionId?: string | null;
   onOpenWorktree?: (path: string, workspaceIdentity?: string) => void | Promise<void>;
 }) {
@@ -60,24 +62,42 @@ export function ConversationWorktreeCreatedNotice({
       openFailed();
       return;
     }
-    // A remote worktree tab resolves its session only through the identity binding. Bind the
-    // rebased identity to the parent's session before the open flow starts the draft; without it
-    // the new tab stays remote-waiting and cannot run. A remote parent with no bound session fails
-    // closed for the same reason. A non-empty remoteSessionId prop is not proof of a live binding:
-    // during a remote disconnect the tab keeps its identity while the session is unregistered, so
-    // the session must be attached right now. Checking before the bind also keeps a failed open
-    // from leaving a stale identity binding behind.
-    const parentRemoteSessionId = remoteSessionId?.trim() ?? "";
+    // A remote worktree tab resolves its session only through the identity binding. Resolve the
+    // parent's session with the same resolver the pane uses for its own routing: the remoteSessionId
+    // prop first, then the parent identity binding (restored and split panes omit the prop). Only an
+    // attached session counts, so a remote disconnect fails closed. Failing before any bind keeps a
+    // failed open from leaving a stale identity binding behind.
+    let previousIdentityBinding: string | undefined;
     if (worktreeIdentity !== null) {
-      if (!parentRemoteSessionId || !getRemoteWorkspaceSession(parentRemoteSessionId)) {
+      const parentRemoteSessionId = resolveWorkspaceRemoteSessionId(
+        {
+          // The identity is non-empty here, so the resolver's path fallback never applies.
+          workspacePath: path,
+          workspaceIdentity: parentIdentity,
+          ...(remoteSessionId?.trim() ? { remoteSessionId: remoteSessionId.trim() } : {}),
+        },
+        useRemoteWorkspaceSessionStore.getState(),
+      );
+      if (!parentRemoteSessionId) {
         openFailed();
         return;
       }
+      const bindings = useRemoteWorkspaceSessionStore.getState().sessionIdByWorkspaceIdentity;
+      previousIdentityBinding = bindings[worktreeIdentity];
       bindRemoteWorkspaceIdentity(worktreeIdentity, parentRemoteSessionId);
     }
     try {
       await onOpenWorktree(path, worktreeIdentity ?? undefined);
     } catch {
+      // Restore the prior binding on a rejected open: remove a binding this click created, or put
+      // back the session an existing binding pointed to.
+      if (worktreeIdentity !== null) {
+        if (previousIdentityBinding) {
+          bindRemoteWorkspaceIdentity(worktreeIdentity, previousIdentityBinding);
+        } else {
+          unbindRemoteWorkspaceIdentity(worktreeIdentity);
+        }
+      }
       openFailed();
     }
   }, [onOpenWorktree, openFailed, path, remoteSessionId, workspaceIdentity]);

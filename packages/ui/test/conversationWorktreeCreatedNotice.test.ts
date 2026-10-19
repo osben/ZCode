@@ -8,6 +8,7 @@ import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { toast } from "@/components/ui/toast.js";
 import { ConversationWorktreeCreatedNotice } from "@/v4/ConversationWorktreeCreatedNotice.js";
 import {
+  bindRemoteWorkspaceIdentity,
   registerRemoteWorkspaceSession,
   unregisterRemoteWorkspaceSession,
   useRemoteWorkspaceSessionStore,
@@ -79,6 +80,7 @@ describe("ConversationWorktreeCreatedNotice open action", () => {
 
   it("opens a remote-workspace worktree with a remote identity for its own path", async () => {
     registerAttachedSession("session-devbox");
+    bindRemoteWorkspaceIdentity(REMOTE_PARENT_IDENTITY, "session-devbox");
     const onOpenWorktree = vi.fn();
     renderNotice({
       path: REMOTE_WORKTREE_PATH,
@@ -117,6 +119,110 @@ describe("ConversationWorktreeCreatedNotice open action", () => {
     expect(onOpenWorktree).not.toHaveBeenCalled();
     expect(String(vi.mocked(toast).mock.calls[0]?.[0])).toContain(REMOTE_WORKTREE_PATH);
     // The attachment check runs before the bind, so a failed open leaves no identity binding.
+    expect(
+      useRemoteWorkspaceSessionStore.getState().sessionIdByWorkspaceIdentity[
+        REMOTE_WORKTREE_IDENTITY
+      ],
+    ).toBeUndefined();
+  });
+
+  it("resolves the parent session from its identity binding when the pane omits remoteSessionId", async () => {
+    // Restored and split remote panes carry only the parent identity; the live binding routes them.
+    registerAttachedSession("session-devbox");
+    bindRemoteWorkspaceIdentity(REMOTE_PARENT_IDENTITY, "session-devbox");
+    const onOpenWorktree = vi.fn();
+    renderNotice({
+      path: REMOTE_WORKTREE_PATH,
+      workspaceIdentity: REMOTE_PARENT_IDENTITY,
+      onOpenWorktree,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: OPEN_LABEL }));
+
+    await waitFor(() => expect(onOpenWorktree).toHaveBeenCalledTimes(1));
+    expect(onOpenWorktree).toHaveBeenCalledWith(REMOTE_WORKTREE_PATH, REMOTE_WORKTREE_IDENTITY);
+    expect(toast).not.toHaveBeenCalled();
+    expect(
+      useRemoteWorkspaceSessionStore.getState().sessionIdByWorkspaceIdentity[
+        REMOTE_WORKTREE_IDENTITY
+      ],
+    ).toBe("session-devbox");
+  });
+
+  it("opens with a pane's attached remoteSessionId even when no identity binding exists, as the pane routes", async () => {
+    // The pane resolves its services from the prop first, so the notice resolves the same session.
+    registerAttachedSession("session-devbox");
+    const onOpenWorktree = vi.fn();
+    renderNotice({
+      path: REMOTE_WORKTREE_PATH,
+      workspaceIdentity: REMOTE_PARENT_IDENTITY,
+      remoteSessionId: "session-devbox",
+      onOpenWorktree,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: OPEN_LABEL }));
+
+    await waitFor(() => expect(onOpenWorktree).toHaveBeenCalledTimes(1));
+    expect(onOpenWorktree).toHaveBeenCalledWith(REMOTE_WORKTREE_PATH, REMOTE_WORKTREE_IDENTITY);
+  });
+
+  it("fails closed when the pane's remoteSessionId is no longer attached and no binding exists", async () => {
+    registerAttachedSession("session-devbox");
+    unregisterRemoteWorkspaceSession("session-devbox");
+    const onOpenWorktree = vi.fn();
+    renderNotice({
+      path: REMOTE_WORKTREE_PATH,
+      workspaceIdentity: REMOTE_PARENT_IDENTITY,
+      remoteSessionId: "session-devbox",
+      onOpenWorktree,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: OPEN_LABEL }));
+
+    await waitFor(() => expect(toast).toHaveBeenCalledTimes(1));
+    expect(onOpenWorktree).not.toHaveBeenCalled();
+    expect(
+      useRemoteWorkspaceSessionStore.getState().sessionIdByWorkspaceIdentity[
+        REMOTE_WORKTREE_IDENTITY
+      ],
+    ).toBeUndefined();
+  });
+
+  it("restores a prior worktree binding when the open callback rejects", async () => {
+    registerAttachedSession("session-devbox");
+    bindRemoteWorkspaceIdentity(REMOTE_PARENT_IDENTITY, "session-devbox");
+    bindRemoteWorkspaceIdentity(REMOTE_WORKTREE_IDENTITY, "session-earlier");
+    const onOpenWorktree = vi.fn().mockRejectedValue(new Error("workspace unavailable"));
+    renderNotice({
+      path: REMOTE_WORKTREE_PATH,
+      workspaceIdentity: REMOTE_PARENT_IDENTITY,
+      onOpenWorktree,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: OPEN_LABEL }));
+
+    await waitFor(() => expect(toast).toHaveBeenCalledTimes(1));
+    expect(
+      useRemoteWorkspaceSessionStore.getState().sessionIdByWorkspaceIdentity[
+        REMOTE_WORKTREE_IDENTITY
+      ],
+    ).toBe("session-earlier");
+  });
+
+  it("removes the worktree identity binding it created when the open callback rejects", async () => {
+    registerAttachedSession("session-devbox");
+    bindRemoteWorkspaceIdentity(REMOTE_PARENT_IDENTITY, "session-devbox");
+    const onOpenWorktree = vi.fn().mockRejectedValue(new Error("workspace unavailable"));
+    renderNotice({
+      path: REMOTE_WORKTREE_PATH,
+      workspaceIdentity: REMOTE_PARENT_IDENTITY,
+      onOpenWorktree,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: OPEN_LABEL }));
+
+    await waitFor(() => expect(toast).toHaveBeenCalledTimes(1));
+    expect(onOpenWorktree).toHaveBeenCalledTimes(1);
     expect(
       useRemoteWorkspaceSessionStore.getState().sessionIdByWorkspaceIdentity[
         REMOTE_WORKTREE_IDENTITY
