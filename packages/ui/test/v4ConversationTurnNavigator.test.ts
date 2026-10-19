@@ -391,7 +391,7 @@ describe("conversation turn navigator helpers", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ConversationTurnNavigator, {
           onJumpToQuery: () => {},
           renderUnits: units([
@@ -429,7 +429,7 @@ describe("conversation turn navigator helpers", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ConversationTurnNavigator, {
           onJumpToQuery: () => {},
           renderUnits: units([

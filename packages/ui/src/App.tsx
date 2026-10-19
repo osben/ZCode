@@ -1354,6 +1354,7 @@ export function App({
           remoteConnectionLogs={remoteConnectionLogs}
           onCreateTask={handleCreateTaskIfWritable}
           onCreateConversationTask={onCreateConversationTask}
+          onCreateTaskInWorkspace={handleCreateTaskInWorkspace}
           onResolveConversationWorkspace={onResolveConversationWorkspace}
           onOpenWorkspace={onOpenWorkspace}
           onOpenFolderFromWorkspaceMenu={onOpenFolderFromWorkspaceMenu}

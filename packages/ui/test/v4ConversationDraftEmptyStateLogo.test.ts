@@ -16,7 +16,7 @@ describe("ConversationDraftEmptyState logo", () => {
     const { container } = render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ConversationDraftEmptyState),
       ),
     );

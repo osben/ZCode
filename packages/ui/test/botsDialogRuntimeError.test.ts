@@ -6,6 +6,7 @@ import { ALL_BOT_WORKSPACES } from "@zcode/shared";
 import { BotSummaryCard } from "@/BotsDialog/BotSummaryCard.js";
 import { ProviderSettingsCard } from "@/BotsDialog/ProviderSettingsCard.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const bot: BotConfig = {
   id: "feishu-bot",
@@ -29,7 +30,7 @@ const runtime: BotRuntimeInfo = {
 
 function renderZh(element: ReturnType<typeof createElement>): string {
   return renderToStaticMarkup(
-    createElement(ZCodeIntlProvider, { initialLocale: "zh-CN" }, element),
+    createElement(ZCodeIntlProvider, { initialLocale: "en-US" }, element),
   );
 }
 
@@ -51,8 +52,8 @@ describe("BotsDialog runtime error", () => {
       }),
     );
 
-    expect(markup).toContain("飞书连接失败");
-    expect(markup).not.toContain("未绑定");
+    expect(markup).toContain(expectedCopy("bots.runtime.feishuConnectionFailed"));
+    expect(markup).not.toContain(expectedCopy("bots.unbound"));
   });
 
   it("shows delivery errors independently of an active connection", () => {
@@ -93,10 +94,10 @@ describe("BotsDialog runtime error", () => {
       }),
     );
 
-    expect(markup).toContain("机器人回复发送失败");
+    expect(markup).toContain(expectedCopy("bots.runtime.deliveryFailed"));
     expect(markup).toContain("230101");
     expect(markup).toContain("delivery-log");
-    expect(markup).not.toContain("无法连接飞书");
+    expect(markup).not.toContain(expectedCopy("bots.runtime.cannotConnectFeishu"));
   });
 
   it("replaces an active bind command with the persistent connection error", () => {
@@ -133,11 +134,11 @@ describe("BotsDialog runtime error", () => {
       }),
     );
 
-    expect(markup).toContain("无法连接飞书");
+    expect(markup).toContain(expectedCopy("bots.runtime.cannotConnectFeishu"));
     expect(markup).toContain("1000040351");
     expect(markup).toContain("system busy");
     expect(markup).not.toContain("/bind BB2549");
-    expect(markup).not.toContain("刷新绑定码");
+    expect(markup).not.toContain(expectedCopy("bots.setup.refreshBindCode"));
   });
 
   it("keeps an existing binding while showing that its connection is interrupted", () => {
@@ -168,10 +169,9 @@ describe("BotsDialog runtime error", () => {
       }),
     );
 
-    expect(markup).toContain("连接中断");
-    expect(markup).toContain("长连接数可能已达上限或飞书服务繁忙");
-    expect(markup).toContain("若持续失败，可绑定新的机器人");
-    expect(markup).toContain("解绑");
+    expect(markup).toContain(expectedCopy("bots.runtime.boundConnectionInterrupted"));
+    expect(markup).toContain(expectedCopy("bots.runtime.boundConnectionInterruptedDescription"));
+    expect(markup).toContain(expectedCopy("bots.unbind"));
     expect(markup).not.toContain(">已连通<");
     expect(markup).not.toContain("暂时不能完成绑定");
   });

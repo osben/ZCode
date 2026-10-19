@@ -24,6 +24,7 @@ import {
 } from "@zcode/shared";
 import type { AutomationWorkspaceOption } from "@/settings/automationWorkspaceOptions.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 import { resetSavedWorkflowStoreForTests } from "@/store/savedWorkflowStore.js";
 
 const confirmMock = vi.fn(async () => true);
@@ -208,7 +209,7 @@ function mount(props: Partial<Parameters<typeof SavedWorkflowProjectGroup>[0]> =
   const result = render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(SavedWorkflowProjectGroup, {
         project: BETA,
         isCurrent: false,
@@ -332,7 +333,7 @@ describe("SavedWorkflowProjectGroup", () => {
     const { container } = mount();
     await screen.findByTestId(testId(TID_WORKFLOW_CARD, "ok"));
     const strip = container.querySelector('[data-workflows-invalid="true"]');
-    expect(strip?.textContent).toContain("1 个文件无法读取");
+    expect(strip?.textContent).toContain(expectedCopy("workflows.hub.invalid.one", { count: 1 }));
     expect(strip?.textContent).toContain("/beta/.zcode/workflows/bad.dwf.ts");
   });
 
@@ -345,7 +346,7 @@ describe("SavedWorkflowProjectGroup", () => {
     rerender(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(SavedWorkflowProjectGroup, {
           project: BETA,
           isCurrent: false,
@@ -391,7 +392,7 @@ describe("SavedWorkflowProjectGroup", () => {
     );
     expect(agentRepo.deleteSavedWorkflow).not.toHaveBeenCalled();
     await waitFor(() => expect(agentBeta.listSavedWorkflows).toHaveBeenCalledTimes(2));
-    expect(toastMock).toHaveBeenCalledWith("已删除工作流「x」");
+    expect(toastMock).toHaveBeenCalledWith(expectedCopy("workflows.hub.deleted", { name: "x" }));
   });
 
   it("修订：带本项目 target 预填草稿", async () => {
@@ -400,7 +401,7 @@ describe("SavedWorkflowProjectGroup", () => {
     await screen.findByTestId(testId(TID_WORKFLOW_CARD, "x"));
     fireEvent.click(screen.getByTestId("revise-x"));
     expect(onCreateViaChat).toHaveBeenCalledTimes(1);
-    expect(onCreateViaChat.mock.calls[0]?.[0]).toContain("请修订已保存的工作流「x」");
+    expect(onCreateViaChat.mock.calls[0]?.[0]).toContain('Please revise the saved workflow "x"');
     expect(onCreateViaChat.mock.calls[0]?.[1]).toEqual({ workspacePath: "/beta" });
   });
 
@@ -410,7 +411,7 @@ describe("SavedWorkflowProjectGroup", () => {
     await screen.findByTestId(testId(TID_WORKFLOW_CARD, "x"));
     fireEvent.click(screen.getByTestId(testId(TID_WORKFLOWS_CREATE_VIA_CHAT, "/beta")));
     expect(onCreateViaChat.mock.calls[0]?.[1]).toEqual({ workspacePath: "/beta" });
-    expect(onCreateViaChat.mock.calls[0]?.[0]).toContain("帮我设计一个工作流");
+    expect(onCreateViaChat.mock.calls[0]?.[0]).toContain("Help me design a workflow");
   });
 
   // "Promote to global" (docs/dynamic-workflow/launch.md "Promote to global"): no files are moved; a new session in
@@ -429,7 +430,7 @@ describe("SavedWorkflowProjectGroup", () => {
     expect(promoteMock.mock.calls[0]?.[1]).toEqual({
       name: "x",
       path: "/beta/.zcode/workflows/x.dwf.ts",
-      locale: "zh-CN",
+      locale: "en-US",
     });
     expect(toastMock).not.toHaveBeenCalled();
     // The list is not refetched: the source file was untouched, and the global entry appears via the global group's
@@ -452,7 +453,11 @@ describe("SavedWorkflowProjectGroup", () => {
     await screen.findByTestId(testId(TID_WORKFLOW_CARD, "x"));
     fireEvent.click(screen.getByTestId(testId(TID_WORKFLOW_ACTION_MOVE, "x")));
     await waitFor(() => expect(promoteMock).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(toastMock).toHaveBeenCalledWith("提升失败：workspace is read-only"));
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith(
+        expectedCopy("workflows.hub.promote.failed", { reason: "workspace is read-only" }),
+      ),
+    );
   });
 
   it("远程项目不提供「提升为全局」（不变式 4：远端 home 不进中枢）", async () => {

@@ -14,6 +14,7 @@ import type {
 import enUS from "@/i18n/locales/en-US.js";
 import zhCN from "@/i18n/locales/zh-CN.js";
 import { getStatusPanelTodoFocusWindow } from "@/v4/ConversationStatusPanel.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const statusPanelCapture = vi.hoisted(() => ({
   collapsibles: [] as Array<{
@@ -163,6 +164,7 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
           "chat.summaryPanel.duration.hours": "小时",
           "chat.summaryPanel.duration.minutes": "分",
           "chat.summaryPanel.duration.seconds": "秒",
+          "chat.statusPanel.endedWorkflows": "Ended workflows",
         };
         return (
           durationUnits[descriptor.id] ??
@@ -170,7 +172,7 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
         );
       },
     },
-    locale: "zh-CN",
+    locale: "en-US",
   }),
 }));
 
@@ -1066,7 +1068,7 @@ describe("ConversationStatusPanel", () => {
 
     expect(trigger).not.toBeNull();
     // The bucket name is deliberately not "completed": this bucket also holds failed and cancelled runs.
-    expect(trigger?.textContent).toContain("chat.statusPanel.endedWorkflows");
+    expect(trigger?.textContent).toContain(expectedCopy("chat.statusPanel.endedWorkflows"));
     expect(trigger?.textContent).toContain("3");
     await act(async () => trigger?.click());
     expect(onOpenWorkflowRunDirectory).toHaveBeenCalledWith({ parentSessionId: "parent-a" });
@@ -1151,7 +1153,7 @@ describe("ConversationStatusPanel", () => {
     expect(html).toContain('data-workflow-pill="dwfrun-1"');
     expect(html).toContain("chat.toolCall.workflow.fallbackName");
     expect(html).not.toContain("chat.summaryPanel.runningBackgroundTasksMiniValue");
-    expect(html).not.toContain("chat.statusPanel.endedWorkflows");
+    expect(html).not.toContain(expectedCopy("chat.statusPanel.endedWorkflows"));
   });
 
   // A live workflow sorts first in the pill: while running it is what the session is doing; todo / goal / git all yield.
@@ -1269,7 +1271,7 @@ describe("ConversationStatusPanel", () => {
     });
 
     expect(html).toContain('data-state="collapsed"');
-    expect(html).toContain("chat.statusPanel.endedWorkflows");
+    expect(html).toContain(expectedCopy("chat.statusPanel.endedWorkflows"));
     expect(html).toContain("3");
   });
 
@@ -1285,7 +1287,7 @@ describe("ConversationStatusPanel", () => {
       parentSessionId: "parent-a",
     });
 
-    expect(html).not.toContain("chat.statusPanel.endedWorkflows");
+    expect(html).not.toContain(expectedCopy("chat.statusPanel.endedWorkflows"));
     expect(html).not.toContain('data-state="collapsed"');
   });
 

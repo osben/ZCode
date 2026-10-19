@@ -13,6 +13,7 @@ import {
   resolveAppUsageDetailValues,
   resolveVisibleAppUsageTools,
 } from "@/settings/usage-stats/appUsageDetailViewModel.js";
+import zhCN from "../src/i18n/locales/zh-CN.js";
 
 function createSnapshot(
   summary: Partial<AppUsageSnapshot["summary"]> = {},
@@ -161,8 +162,8 @@ describe("AppUsageDetailMetrics", () => {
     const zh = renderToStaticMarkup(
       renderIntl("zh-CN", createElement(AppUsageDetailMetrics, { snapshot: createSnapshot() })),
     );
-    expect(zh).toContain("缓存命中率");
-    expect(zh).toContain("平均单轮耗时");
+    expect(zh).toContain(zhCN["settings.usage.detail.cacheHitRate"]);
+    expect(zh).toContain(zhCN["settings.usage.detail.avgTurnDuration"]);
   });
 });
 

@@ -69,10 +69,9 @@ Todo126 新增两个 coding plan vision badge 用例：相同双尺寸/主题下
 
 2026-09-10 原用例两条通过；2026-09-11 按 Todo116 将双入口断言改为上述单入口及空 Key 断言，新结果以 Todo116 为准。截图位于测试输出临时目录 `zcode-provider-settings-batch`。保持 pending 分类，未擅自晋级正式 Electron 回归。
 
-运行：`CHROME_EXECUTABLE_PATH=<Chromium> node --test packages/ui/test/browser/manual-review/pending/provider-settings-batch.test.mjs`。Linux 需 Chromium 运行依赖及中文字库。本次使用环境已有隔离共享库和临时官方发行版 Noto CJK 字库。
+运行：`CHROME_EXECUTABLE_PATH=<Chromium> TSX_TSCONFIG_PATH=packages/ui/tsconfig.json node --import tsx --test packages/ui/test/browser/manual-review/pending/provider-settings-batch.test.mjs`（`tsx` 加载器用于解析 `helpers/uiCopy.ts` 与 `@/` 别名，见 [UI 测试文案约定](ui-test-copy-convention.md)）。Linux 需 Chromium 运行依赖及中文字库。本次使用环境已有隔离共享库和临时官方发行版 Noto CJK 字库。
 
 既有 Electron `settings-ui-polish` 已按最终 DeepSeek 两成员、菜单与帮助标题更新并在 Pro 实跑通过，`provider-settings-write-recovery` 也已在 Pro 合批通过。前者 SSH 分支仍跳过；二者不等于手机 shared-host 联合验证。原生控制台打开由 K116-N01 单独证明，不借此宣称官方登录态通过。
-
 
 2026-09-12 Todo137 已确认新增覆盖：现有 vision badge 浏览器用例增加 Z.ai／BigModel Start Plan。两个尺寸/语言/主题下，设置列表和模型菜单均隐藏 GLM-5.3 视觉标，Flash 仍显示；只验证共用展示组件，实际图片能力由单测验证不变。先红后绿，2项浏览器用例通过；保持 pending 分类。
 

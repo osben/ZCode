@@ -6,6 +6,7 @@ import { ServiceProvider } from "@/hooks/useServices.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { StoreProvider } from "@/store/StoreProvider.js";
 import { PlanGuidanceToolCallBlock } from "../src/ToolCallBlocks/renderers/plan-guidance.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const localStorageState = new Map<string, string>();
 
@@ -59,7 +60,7 @@ function renderPlanGuidanceBlock(
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(
         ServiceProvider,
         { services: mockServices },
@@ -107,8 +108,7 @@ describe("PlanGuidanceToolCallBlock", () => {
       kind: "other",
       title: "EnterPlanMode",
       input: {},
-      output:
-        "Entered plan mode.\n\n1. Thoroughly explore the codebase\n2. Consider trade-offs",
+      output: "Entered plan mode.\n\n1. Thoroughly explore the codebase\n2. Consider trade-offs",
       status: "completed",
       raw: {
         _meta: {
@@ -119,7 +119,7 @@ describe("PlanGuidanceToolCallBlock", () => {
       },
     });
 
-    expect(html).toContain("已开启 Plan Mode");
+    expect(html).toContain(expectedCopy("planTool.guidance.enterMode"));
     expect(html).toContain("EnterPlanMode");
     expect(html).toContain("Entered plan mode.");
     expect(html).toContain("Thoroughly explore the codebase");

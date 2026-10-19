@@ -17,6 +17,8 @@ import {
   TID_AUTOMATION_ACTION_TOGGLE,
   TID_AUTOMATION_CARD,
   TID_AUTOMATION_CARD_MENU,
+  TID_AUTOMATION_CARD_RUN_COUNT,
+  TID_AUTOMATION_CARD_SCHEDULE,
   TID_AUTOMATIONS_LIST,
   TID_AUTOMATIONS_STATUS_FILTER,
   TID_OFFPEAK_CREATE_BUTTON,
@@ -81,7 +83,10 @@ import {
   resolveAutomationStatusKind,
   type AutomationStatusKind,
 } from "@/settings/automationFormat.js";
-import { describeAutomationCardSchedule } from "@/settings/automationCardSchedule.js";
+import {
+  describeAutomationCardSchedule,
+  getAutomationCardScheduleKind,
+} from "@/settings/automationCardSchedule.js";
 import { AutomationEditView, type AutomationEditSubmit } from "@/settings/AutomationEditView.js";
 import { AutomationScheduleBadge } from "@/settings/AutomationScheduleBadge.js";
 import {
@@ -1669,6 +1674,7 @@ export function AutomationsSection({
                         const statusMeta = STATUS_META[status];
                         const StatusIcon = statusMeta.icon;
                         const scheduleText = describeAutomationCardSchedule(automation, intl);
+                        const scheduleKind = getAutomationCardScheduleKind(automation);
                         const formattedNextRun = formatAutomationCardNextRun(
                           automation.nextRunAt,
                           now,
@@ -1749,12 +1755,19 @@ export function AutomationsSection({
                                             aria-hidden="true"
                                           />
                                         </span>
-                                        <span className="truncate pl-1">{scheduleCardText}</span>
+                                        <span
+                                          data-testid={TID_AUTOMATION_CARD_SCHEDULE}
+                                          data-schedule-kind={scheduleKind}
+                                          className="truncate pl-1"
+                                        >
+                                          {scheduleCardText}
+                                        </span>
                                       </span>
                                     </>
                                   ) : status === "active" ? (
                                     <AutomationScheduleBadge
                                       text={scheduleCardText}
+                                      scheduleKind={scheduleKind}
                                       icon={
                                         <StatusIcon
                                           className="size-4 shrink-0"
@@ -1787,6 +1800,7 @@ export function AutomationsSection({
                                         <AutomationScheduleBadge
                                           dimmed
                                           text={scheduleCardText}
+                                          scheduleKind={scheduleKind}
                                           icon={
                                             <AutomationClockIcon
                                               className="size-4"
@@ -1799,6 +1813,8 @@ export function AutomationsSection({
                                   )}
                                 </div>
                                 <span
+                                  data-testid={TID_AUTOMATION_CARD_RUN_COUNT}
+                                  data-run-count={automation.runCount}
                                   className={cn(
                                     "inline-flex shrink-0 items-center whitespace-nowrap rounded-md bg-surface px-1.5 py-0.5 text-ui-base font-normal text-foreground-subtle",
                                     (hasFailure || status === "paused") && "opacity-40",

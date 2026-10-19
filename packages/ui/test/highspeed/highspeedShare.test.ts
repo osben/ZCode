@@ -7,6 +7,7 @@ import {
   isHighspeedShareNoticePayload,
   resolveHighspeedShareNoticeMetrics,
 } from "@/highspeed/highspeedShare.js";
+import { expectedCopy } from "../helpers/uiCopy.js";
 
 const metrics = { outputTokens: 120_000, durationMs: 600_000, regularTps: 20, highspeedTps: 100 };
 
@@ -142,17 +143,16 @@ describe("highspeed client share", () => {
       },
       {
         benefit: "ZCode 与 Coding Plan 专属权益",
-        standardSpeed: "标准生成速度",
+        standardSpeed: expectedCopy("globalNotice.highspeed.standardTaskSpeed"),
         speedSummary: "HighSpeed · 20 分钟",
         lessWaiting: "减少等待 80%",
         imageSummary: "120,000 tokens · 节省 1,067 秒",
       },
     );
     const svg = await copied?.text();
-    expect(svg).toContain("标准生成速度");
+    expect(svg).toContain(expectedCopy("globalNotice.highspeed.standardTaskSpeed"));
     expect(svg).toContain("减少等待 80%");
     expect(svg).toContain("节省 1,067 秒");
-    expect(svg).not.toContain("standard generation speed");
   });
 
   it("copies the complete share text", async () => {

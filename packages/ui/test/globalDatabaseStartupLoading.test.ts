@@ -5,12 +5,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it, vi } from "vitest";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { GlobalDatabaseStartupLoading } from "@/root/GlobalDatabaseStartupLoading.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 it("explains FULL, provides manual recovery, and never claims all changes rolled back", () => {
   const html = renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(GlobalDatabaseStartupLoading, {
         state: {
           schemaVersion: 1,
@@ -30,16 +31,15 @@ it("explains FULL, provides manual recovery, and never claims all changes rolled
       }),
     ),
   );
-  expect(html).toContain("存储空间不足或已达到容量限制");
-  expect(html).toContain("系统临时目录");
+  expect(html).toContain(expectedCopy("startup.global.error.storage_full"));
   expect(html).toContain("diagnostic-1");
-  expect(html).toContain("重试");
-  expect(html).not.toContain("原数据库已保留");
+  expect(html).toContain(expectedCopy("common.retry"));
+  expect(html).not.toContain(expectedCopy("startup.database.failedHelp"));
 });
 
 function renderStartup(
   state: import("@zcode/shared").DatabaseStartupState | null,
-  locale: "zh-CN" | "en-US" = "zh-CN",
+  locale: "en-US" | "zh-CN" = "en-US",
 ) {
   return renderToStaticMarkup(
     createElement(
@@ -93,7 +93,7 @@ it("SILENTDB-02/05: migration facts control initialization, upgrade, saving and 
       migration,
       currentMigration: migration,
     }),
-  ).toContain("正在升级本地数据");
+  ).toContain(expectedCopy("startup.global.upgrading"));
   expect(
     renderStartup({
       ...baseState,
@@ -102,21 +102,21 @@ it("SILENTDB-02/05: migration facts control initialization, upgrade, saving and 
       migration,
       currentMigration: migration,
     }),
-  ).toContain("正在保存更新");
+  ).toContain(expectedCopy("startup.global.saving"));
   expect(
     renderStartup({
       ...baseState,
       phase: "starting_services",
       migration: { ...migration, committedCount: 1 },
     }),
-  ).toContain("正在完成启动");
+  ).toContain(expectedCopy("startup.global.finishing"));
   expect(
     renderStartup({
       ...baseState,
       databasePhase: "checking",
       migration: { ...migration, committedCount: 1 },
     }),
-  ).not.toContain("正在完成启动");
+  ).not.toContain(expectedCopy("startup.global.finishing"));
   expect(
     renderStartup({
       ...baseState,
@@ -124,7 +124,7 @@ it("SILENTDB-02/05: migration facts control initialization, upgrade, saving and 
       migration: { ...migration, kind: "initialize" },
       currentMigration: { ...migration, kind: "initialize" },
     }),
-  ).toContain("正在初始化本地数据");
+  ).toContain(expectedCopy("startup.global.initializing"));
   expect(
     renderStartup({
       ...baseState,
@@ -132,7 +132,7 @@ it("SILENTDB-02/05: migration facts control initialization, upgrade, saving and 
       migration,
       currentMigration: migration,
     }),
-  ).toContain("正在等待数据库准备");
+  ).toContain(expectedCopy("startup.global.waiting"));
 });
 
 it("SILENTDB-01: silent UI mounts no timer and migration-to-failure clears the progress timer", async () => {
@@ -145,7 +145,7 @@ it("SILENTDB-01: silent UI mounts no timer and migration-to-failure clears the p
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(GlobalDatabaseStartupLoading, {
             state,
             onRetry() {},
@@ -167,10 +167,10 @@ it("SILENTDB-01: silent UI mounts no timer and migration-to-failure clears the p
       migration,
       currentMigration: migration,
     });
-    expect(container.textContent).toContain("正在升级本地数据");
+    expect(container.textContent).toContain(expectedCopy("startup.global.upgrading"));
     expect(interval).toHaveBeenCalledTimes(1);
     await show({ ...baseState, phase: "failed", errorCode: "storage_full", migration });
-    expect(container.textContent).toContain("存储空间不足");
+    expect(container.textContent).toContain(expectedCopy("startup.global.error.storage_full"));
     expect(vi.getTimerCount()).toBe(0);
     await show({ ...baseState, attemptId: "retry" });
     expect(container.textContent).toBe("");
@@ -192,9 +192,9 @@ it("SILENTDB-05: intermediate database commits and maintenance never announce gl
       currentMigration: migration,
       finalDatabase: false,
     });
-    expect(html).toContain("正在升级本地数据");
-    expect(html).not.toContain("正在保存更新");
-    expect(html).not.toContain("正在完成启动");
+    expect(html).toContain(expectedCopy("startup.global.upgrading"));
+    expect(html).not.toContain(expectedCopy("startup.global.saving"));
+    expect(html).not.toContain(expectedCopy("startup.global.finishing"));
   }
   expect(
     renderStartup({
@@ -204,5 +204,5 @@ it("SILENTDB-05: intermediate database commits and maintenance never announce gl
       currentMigration: migration,
       finalDatabase: true,
     }),
-  ).toContain("正在完成启动");
+  ).toContain(expectedCopy("startup.global.finishing"));
 });

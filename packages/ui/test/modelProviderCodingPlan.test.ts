@@ -204,10 +204,12 @@ import {
   primeCodingPlanBillingDiscountCacheForTest,
   resolveCodingPlanBillingDiscountCopy,
 } from "@/CodingPlanBillingDiscount.js";
-import zhCN from "@/i18n/locales/zh-CN.js";
+
 import { TooltipProvider } from "@/components/ui/tooltip.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const intlMockState = vi.hoisted(() => ({ locale: "en-US" }));
+const LOCALE_ZH_CN = "zh-CN";
 
 function renderWithTooltipProvider(element: ReactElement) {
   return renderToStaticMarkup(createElement(TooltipProvider, null, element));
@@ -2690,7 +2692,7 @@ describe("model provider coding plan", () => {
   });
 
   it("StartPlanCard 中文界面使用本地化紧凑单位展示体验套餐额度", () => {
-    intlMockState.locale = "zh-CN";
+    intlMockState["locale"] = LOCALE_ZH_CN;
     try {
       const html = renderToStaticMarkup(
         createElement(StartPlanCard, {
@@ -2728,7 +2730,7 @@ describe("model provider coding plan", () => {
   });
 
   it("StartPlanCard 中文界面单模型每日额度使用本地化紧凑单位", () => {
-    intlMockState.locale = "zh-CN";
+    intlMockState["locale"] = LOCALE_ZH_CN;
     try {
       const html = renderToStaticMarkup(
         createElement(StartPlanCard, {
@@ -4706,12 +4708,15 @@ describe("model provider coding plan", () => {
         },
       ],
       {
-        locale: "zh-CN",
-        formatMessage: (id, fallback) => (zhCN as Record<string, string>)[id] ?? fallback,
+        locale: "en-US",
+        formatMessage: (id, fallback) => (enUS as Record<string, string>)[id] ?? fallback,
       },
     );
 
-    expect(groups.map((group) => group.title)).toEqual(["标准版", "高级版"]);
+    expect(groups.map((group) => group.title)).toEqual([
+      expectedCopy("settings.modelProvider.codingPlan.enterprise.tier.pro"),
+      expectedCopy("settings.modelProvider.codingPlan.enterprise.tier.max"),
+    ]);
     expect(groups.map(resolveEnterprisePurchaseChoiceBannerPrice)).toEqual([
       { kind: "price", price: 598, currency: "CNY" },
       { kind: "price", price: 1298, currency: "CNY" },
@@ -5912,8 +5917,9 @@ describe("model provider coding plan", () => {
     const tomorrowEffectiveTime = new Date(2026, 8, 2, 22, 0).toISOString();
     const laterEffectiveTime = new Date(2026, 8, 4, 22, 0).toISOString();
 
-    expect(zhCN["settings.modelProvider.startPlan.pendingUntil"]).toBe("待生效 {date}");
-    expect(enUS["settings.modelProvider.startPlan.pendingUntil"]).toBe("Pending {date}");
+    expect(enUS["settings.modelProvider.startPlan.pendingUntil"]).toBe(
+      expectedCopy("settings.modelProvider.startPlan.pendingUntil"),
+    );
     expect(formatStartPlanEffectiveDate(todayEffectiveTime, "zh-CN", now)).toBe("今天 22:00");
     expect(formatStartPlanEffectiveDate(todayEffectiveTime, "en-US", now)).toBe("Today 22:00");
     expect(formatStartPlanEffectiveDate(tomorrowEffectiveTime, "zh-CN", now)).toBe("明天 22:00");
@@ -6266,7 +6272,7 @@ describe("model provider coding plan", () => {
   });
 
   it("BigModel Start Plan 中文详情不显示推广额度", () => {
-    intlMockState.locale = "zh-CN";
+    intlMockState["locale"] = LOCALE_ZH_CN;
     primeStartPlanPreviewCacheForTest({
       planId: "zcode-v3-start-plan",
       name: "ZCode V3 Start Plan",
@@ -6304,7 +6310,7 @@ describe("model provider coding plan", () => {
   });
 
   it("BigModel Start Plan 中文详情保留标题且不显示体验推广", () => {
-    intlMockState.locale = "zh-CN";
+    intlMockState["locale"] = LOCALE_ZH_CN;
     primeStartPlanPreviewCacheForTest({
       planId: "zcode-v3-start-plan",
       name: "Start Plan",

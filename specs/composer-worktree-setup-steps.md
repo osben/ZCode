@@ -254,11 +254,33 @@ Worktree preparation is timeline context, not an empty-state greeting: render it
 persistent header slot above the message history so the creation status remains at the top after the
 first user or assistant row appears. Once Host activation clears the preparation marker, keep a
 compact created-worktree row in that same position from the live session-index execution-worktree
-fact. Its branch detail follows the current Git status of that execution worktree so a later branch
-switch does not leave the notice showing the creation-time branch as if it were still current. Until
-the first Git status is available, use the persisted creation-time branch; show `Detached HEAD` when
-the current status is detached. Present these rows as restrained tool activity with a clear status
-icon, branch/path detail, and consistent message-column alignment.
+fact. Its branch detail follows the current Git status of that execution worktree, so a later branch switch
+does not leave the notice showing the creation-time branch as if it were still current. Until the first Git
+status is available, use the persisted creation-time branch; show `Detached HEAD` when the current status is
+detached. Present these rows as restrained tool activity with a clear status icon, branch/path detail, and
+consistent message-column alignment. The created row is a single compact line: use the existing
+muted Git worktree marker, the created label and branch, followed by an icon-only open action with a
+tooltip and accessible name. The action opens the exact worktree path through the existing
+path-aware workspace-open contract; it must not simulate a click on the generic Open workspace
+picker. For a remote parent workspace the action also passes the worktree's own remote identity
+(the parent identity re-pointed at the worktree path), because remote identities embed the path. The
+notice binds the worktree identity to the parent's bound remote session before it calls the open path,
+because the identity alone does not route the new tab. A parent identity that
+claims the remote form but does not parse, or a remote parent with no bound session, fails closed: the
+action shows the open-failed toast and never falls back to opening the remote path as a local workspace.
+The parent's session is resolved with the same order the pane uses for its own routing: the pane's remote
+session id when present, then the parent identity's binding. Restored and split remote panes omit the id and
+resolve through the binding. Only a session currently attached to the session registry counts, so the action
+fails closed, with the same toast and without binding or calling the open path, when neither source yields an
+attached session (for example during a remote disconnect). If the open callback rejects after the action bound
+the worktree identity, the action restores the identity's prior binding, or removes the binding if none existed,
+before showing the toast.
+On the Web remote-control path, the desktop open handler fails closed for any remote worktree identity (including an
+unparseable `remote:` form): it rejects the workspace-open request before the path-only local open runs, so the
+action shows the open-failed toast. Routing a remote worktree on desktop needs the identity-to-session binding in the
+desktop renderer and is not part of this contract.
+Do not show a worktree duration unless the execution-worktree fact provides one; assistant Thought
+duration is not worktree timing.
 
 ### Existing worktree and branch-list behavior
 

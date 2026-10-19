@@ -352,7 +352,7 @@ function renderPane({
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(SessionPane, {
         paneId: "workspace-main",
         sessionId,

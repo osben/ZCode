@@ -105,7 +105,7 @@ function run(filledAt = 1): WorkflowRunState {
 }
 
 function wrap(node: ReturnType<typeof createElement>) {
-  return render(createElement(ZCodeIntlProvider, { initialLocale: "zh-CN" }, node));
+  return render(createElement(ZCodeIntlProvider, { initialLocale: "en-US" }, node));
 }
 
 afterEach(cleanup);

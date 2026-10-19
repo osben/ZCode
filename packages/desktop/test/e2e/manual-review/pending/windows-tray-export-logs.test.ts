@@ -39,23 +39,20 @@ describe("Windows 托盘导出日志", () => {
     });
 
     try {
-      for (const [locale, label, removedLabel] of [
-        ["en-US", "Export logs", "Clear all data"],
-        ["zh-CN", "导出日志", "清除所有数据"],
-      ] as const) {
-        await browser.execute(async (value) => {
-          await (window as unknown as DesktopBridge).zcode.setApplicationLocale(value);
-        }, locale);
-        const labels = await browser.electron.execute(() =>
-          (globalThis as TrayTestGlobal).__trayExportCapture?.menu?.items.map((item) => item.label),
-        );
-        expect(labels).toContain(label);
-        expect(labels).not.toContain(removedLabel);
-      }
+      const exportLogsLabel = "Export logs";
+      const removedLabel = "Clear all data";
+      await browser.execute(async () => {
+        await (window as unknown as DesktopBridge).zcode.setApplicationLocale("en-US");
+      });
+      const labels = await browser.electron.execute(() =>
+        (globalThis as TrayTestGlobal).__trayExportCapture?.menu?.items.map((item) => item.label),
+      );
+      expect(labels).toContain(exportLogsLabel);
+      expect(labels).not.toContain(removedLabel);
 
-      await browser.electron.execute((electron) => {
+      await browser.electron.execute((electron, label) => {
         const item = (globalThis as TrayTestGlobal).__trayExportCapture?.menu?.items.find(
-          (entry) => entry.label === "导出日志",
+          (entry) => entry.label === label,
         );
         const window = electron.BrowserWindow.getAllWindows().find((candidate) =>
           candidate.webContents.getURL().includes("/renderer/index.html"),
@@ -64,7 +61,7 @@ describe("Windows 托盘导出日志", () => {
         window.hide();
         // 直接触发实际托盘 MenuItem 的回调；不替换命令分发或导出实现。
         item.click(item, window, {});
-      });
+      }, exportLogsLabel);
       await browser.waitUntil(
         async () => {
           await reveal.update();

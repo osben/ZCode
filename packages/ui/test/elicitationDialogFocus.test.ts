@@ -45,7 +45,7 @@ describe("ElicitationDialog custom answer focus", () => {
       const { container } = render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ElicitationDialog, { request, onRespond }),
         ),
       );

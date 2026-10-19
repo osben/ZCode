@@ -42,15 +42,8 @@ vi.mock("@/hooks/useWorkspaceServices.js", () => ({
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
     intl: {
-      formatMessage: ({ id }: { id: string }) => {
-        const messages: Record<string, string> = {
-          "taskList.loading": "正在获取任务...",
-          "taskList.pinnedSection": "已置顶",
-          "taskList.showLess": "显示更少",
-          "taskList.showMore": "显示更多",
-        };
-        return messages[id] ?? id;
-      },
+      // Resolve through the en-US catalog so the loading-copy negative assertion sees the same text the component renders.
+      formatMessage: ({ id }: { id: string }) => expectedCopy(id),
     },
   }),
 }));
@@ -144,6 +137,7 @@ function renderPinnedSection() {
 }
 
 import { WorkspacePinnedTasksSection } from "@/WorkspacePinnedTasksSection.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 describe("WorkspacePinnedTasksSection", () => {
   beforeEach(() => {
@@ -158,7 +152,7 @@ describe("WorkspacePinnedTasksSection", () => {
 
     const html = renderPinnedSection();
 
-    expect(html).toContain("已置顶");
+    expect(html).toContain(expectedCopy("taskList.pinnedSection"));
     expect(html).toContain('data-testid="pinned-task-item"');
   });
 
@@ -168,9 +162,9 @@ describe("WorkspacePinnedTasksSection", () => {
 
     const html = renderPinnedSection();
 
-    expect(html).toContain("已置顶");
+    expect(html).toContain(expectedCopy("taskList.pinnedSection"));
     expect(html).toContain('data-testid="pinned-task-item"');
-    expect(html).not.toContain("正在获取任务...");
+    expect(html).not.toContain(expectedCopy("taskList.loading"));
   });
 
   it("stays hidden while pinned tasks are loading without data", () => {

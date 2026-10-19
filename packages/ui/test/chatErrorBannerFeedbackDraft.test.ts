@@ -6,6 +6,7 @@ import { ChatErrorBanner } from "@/ChatErrorBanner.js";
 import { useFeedbackStore } from "@/feedback/feedbackStore.js";
 import { PlatformProvider } from "@/hooks/usePlatform.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const buttonMock = vi.hoisted(() => ({
   props: [] as Array<Record<string, unknown>>,
@@ -46,7 +47,7 @@ function renderErrorBanner() {
   renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(
         PlatformProvider,
         { platform: mockPlatform },
@@ -64,7 +65,9 @@ function renderErrorBanner() {
 }
 
 async function openFeedbackFromBanner() {
-  const feedbackButton = buttonMock.props.find((props) => props["aria-label"] === "反馈问题");
+  const feedbackButton = buttonMock.props.find(
+    (props) => props["aria-label"] === expectedCopy("chat.error.feedback"),
+  );
   expect(feedbackButton).toBeDefined();
   if (!feedbackButton) {
     throw new Error("Feedback issue button was not rendered");
@@ -90,9 +93,21 @@ describe("ChatErrorBanner feedback draft", () => {
     expect(mockPlatform.captureWindowScreenshot).not.toHaveBeenCalled();
     expect(useFeedbackStore.getState().submitDraft?.includeLogs).toBe(true);
     const description = useFeedbackStore.getState().submitDraft?.description;
-    expect(description).toContain("报错摘要：Provider authentication failed.");
-    expect(description).toContain("TraceID: trace-auth-failed");
-    expect(description).not.toContain("我在使用过程中遇到了报错，请帮忙排查。");
-    expect(description).not.toContain("报错摘要\nProvider authentication failed.");
+    expect(description).toContain(
+      expectedCopy("feedback.submit.template.section.errorSummaryLine", {
+        message: "Provider authentication failed.",
+      }),
+    );
+    expect(description).toContain(
+      expectedCopy("feedback.submit.template.section.errorTraceId", {
+        traceId: "trace-auth-failed",
+      }),
+    );
+    expect(description).not.toContain(
+      expectedCopy("feedback.submit.template.section.errorHeading"),
+    );
+    expect(description).not.toContain(
+      `${expectedCopy("feedback.submit.template.section.errorSummary")}\nProvider authentication failed.`,
+    );
   });
 });

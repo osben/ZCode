@@ -12,33 +12,23 @@ try {
         await context.addInitScript((value) => localStorage.setItem("zcode-theme", value), theme);
         const page = await context.newPage();
         const chinese = locale === "cn/share";
-        const home = page.getByRole("link", {
-          name: chinese ? "回到首页" : "Back to home",
-          exact: true,
-        });
+        const home = page.locator('a[href="https://zcode.z.ai"]');
         await page.goto(`${baseUrl}/${locale}/mock-not-found`);
-        await page
-          .getByRole("heading", {
-            name: chinese ? "登录后查看分享" : "Sign in to view this share",
-            exact: true,
-          })
-          .waitFor();
+        await page.locator('[data-share-status="login_required"]').waitFor();
         assert.equal(await home.count(), 0);
         await page.locator('[data-share-login-provider="zai"]').click();
-        await page
-          .getByRole("heading", {
-            name: chinese ? "找不到分享内容" : "Share not found",
-            exact: true,
-          })
-          .waitFor();
-        await page
-          .getByText(
+        const notFound = page.locator('[data-share-status="error"][data-share-error="not_found"]');
+        await notFound.waitFor();
+        const notFoundText = await notFound.innerText();
+        assert.ok(notFoundText.includes(chinese ? "找不到分享内容" : "Share not found"));
+        assert.match(
+          notFoundText,
+          new RegExp(
             chinese
-              ? "Z.ai 与 BigModel 的账号数据不互通。"
-              : "Z.ai and BigModel do not share account data.",
-            { exact: false },
-          )
-          .waitFor();
+              ? "Z\\.ai 与 BigModel 的账号数据不互通。"
+              : "Z\\.ai and BigModel do not share account data\\.",
+          ),
+        );
         await home.waitFor();
         assert.equal(await home.getAttribute("href"), "https://zcode.z.ai");
         assert.equal(await home.getAttribute("target"), null);
@@ -46,10 +36,7 @@ try {
           await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
           true,
         );
-        const retry = page.getByRole("button", {
-          name: chinese ? "重试" : "Try again",
-          exact: true,
-        });
+        const retry = notFound.getByRole("button");
         // After clearing the mock login state, retry must land back on the login
         // page, proving the button actually re-reads the token and requests.
         await page.evaluate(() => sessionStorage.removeItem("zcode:share:mock-auth"));
@@ -64,9 +51,9 @@ try {
         await page.waitForURL("https://zcode.z.ai/");
         assert.equal(context.pages().length, 1);
         await page.goto(`${baseUrl}/${locale}/mock-expired`);
-        await page
-          .getByRole("heading", { name: chinese ? "分享已过期" : "Share expired", exact: true })
-          .waitFor();
+        const expired = page.locator('[data-share-status="error"][data-share-error="expired"]');
+        await expired.waitFor();
+        assert.ok((await expired.innerText()).includes(chinese ? "分享已过期" : "Share expired"));
         assert.equal(await home.count(), 0);
         await context.close();
         console.log(`PASS SHARE-NF01 ${locale} ${width} ${theme}`);

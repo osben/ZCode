@@ -429,7 +429,7 @@ async function renderPane(root: Root, sessionId: string): Promise<void> {
     root.render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(SessionPane, {
           paneId: "workspace-main",
           sessionId,

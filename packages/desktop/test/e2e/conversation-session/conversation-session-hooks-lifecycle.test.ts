@@ -72,9 +72,7 @@ describe("Hooks full-chain E2E", () => {
   before(async function () {
     this.timeout(120000);
     await installHooksLifecycleFixture();
-    // Hook detail assertions verify Chinese aria-label/summary text; locale is a case fixture and must not
-    // depend on the runner's system language, otherwise the same Hook evidence would become "Hooks" in an English environment.
-    await seedSettings({ locale: "zh-CN", localePreference: "zh-CN" });
+    await seedSettings({ locale: "en-US", localePreference: "en-US" });
     // The new isolated profile's three-step onboarding overwrites the workspace; finish the real UI first, then enter Hook acceptance.
     await skipOccupationOnboardingIfPresent();
     await prepareV4ConversationE2E();
@@ -567,7 +565,7 @@ async function assertHookTurnDetails(
   await browser.saveScreenshot(
     join(HOOK_BLOCK_SCREENSHOT_DIR, `${finalAssistantMarker}-single-hook-action.png`),
   );
-  expect(await trigger.getAttribute("aria-label")).toBe("钩子");
+  expect(await trigger.getAttribute("aria-label")).toBe("Hooks");
   await trigger.click();
 
   const detailsSelector = `[data-testid^="${TID_V4_HOOK_DETAILS_CONTENT}-"]`;
@@ -580,11 +578,11 @@ async function assertHookTurnDetails(
     join(HOOK_BLOCK_SCREENSHOT_DIR, `${finalAssistantMarker}-hook-details.png`),
   );
   const text = await details.getText();
-  expect(text).toContain("钩子");
+  expect(text).toContain("Hooks");
   for (const event of expectedEvents) {
     expect(text).toContain(event);
   }
-  expect(text).toContain("用户");
+  expect(text).toContain("User");
   expect(text).not.toContain("node");
   expect(text).not.toContain(".mjs");
   expect(text).not.toContain("Write");

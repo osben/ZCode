@@ -1,6 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const oauthState = vi.hoisted(() => ({
   status: "idle",
@@ -34,13 +35,21 @@ vi.mock("@/hooks/useOAuth.js", () => ({
   }),
 }));
 
-vi.mock("@/i18n/IntlProvider.js", () => ({
-  useZCodeIntl: () => ({
-    intl: {
-      formatMessage: ({ id }: { id: string }) => id,
-    },
-  }),
-}));
+vi.mock("@/i18n/IntlProvider.js", async () => {
+  const enUS = (await import("@/i18n/locales/en-US.js")).default as Record<string, string>;
+  return {
+    useZCodeIntl: () => ({
+      locale: "en-US",
+      intl: {
+        formatMessage: ({ id }: { id: string }, values?: Record<string, string | number>) =>
+          Object.entries(values ?? {}).reduce(
+            (result, [name, value]) => result.replaceAll(`{${name}}`, String(value)),
+            enUS[id] ?? id,
+          ),
+      },
+    }),
+  };
+});
 
 vi.mock("@/store/StoreProvider.js", () => ({
   useZCodeStore: (selector: (state: unknown) => unknown) =>
@@ -88,7 +97,7 @@ describe("WelcomeScreen", () => {
 
   it("登录报错使用 warning 样式并居中文案", async () => {
     oauthState.status = "error";
-    oauthState.error = "登录失败，请重试";
+    oauthState.error = expectedCopy("login.oauth.loginFailure");
     oauthState.loadingProviders = false;
 
     const { WelcomeScreen } = await import("@/WelcomeScreen.js");
@@ -98,7 +107,7 @@ describe("WelcomeScreen", () => {
     expect(html).toContain("bg-warning/10");
     expect(html).toContain("text-warning");
     expect(html).toContain("text-center");
-    expect(html).toContain("登录失败，请重试");
+    expect(html).toContain(expectedCopy("login.oauth.loginFailure"));
     expect(html).not.toContain("bg-destructive text-destructive-foreground");
   });
 

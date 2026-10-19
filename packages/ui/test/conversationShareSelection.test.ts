@@ -490,8 +490,13 @@ describe("ConversationShareSelectionPanel", () => {
     const scrollShell = scrollArea.parentElement;
     expect(scrollShell?.className).toContain("flex-1");
 
-    const summaryButton = screen.getByRole("button", { name: "第一条用户问题" });
-    const firstItem = summaryButton.parentElement;
+    const selectionItems = panel.querySelectorAll(
+      '[data-conversation-share-selection-item="true"]',
+    );
+    const firstItem = selectionItems[0] as HTMLElement;
+    const summaryButton = firstItem.querySelector(
+      "button.flex.min-w-0.flex-1",
+    ) as HTMLButtonElement;
     expect(firstItem?.getAttribute("data-conversation-share-selection-state")).toBe("selected");
     expect(firstItem?.className).not.toContain("min-h-16");
     expect(firstItem?.className).toContain("items-center");
@@ -501,10 +506,10 @@ describe("ConversationShareSelectionPanel", () => {
     expect(selectedPreviewLines[0]?.className).toContain("text-foreground");
     expect(selectedPreviewLines[1]?.className).toContain("text-foreground-subtle");
 
-    const secondSummaryButton = screen.getByRole("button", {
-      name: "第二条用户问题",
-    });
-    const secondItem = secondSummaryButton.parentElement;
+    const secondItem = selectionItems[1] as HTMLElement;
+    const secondSummaryButton = secondItem.querySelector(
+      "button.flex.min-w-0.flex-1",
+    ) as HTMLButtonElement;
     expect(secondItem?.getAttribute("data-conversation-share-selection-state")).toBe("unselected");
     expect(secondItem?.className).toContain("items-center");
     expect(secondItem?.className).toContain("gap-2");
@@ -513,13 +518,15 @@ describe("ConversationShareSelectionPanel", () => {
     expect(unselectedPreviewLines[0]?.className).toContain("text-foreground-subtlest");
     expect(unselectedPreviewLines[1]?.className).toContain("text-foreground-subtlest");
 
-    const selectedCheckbox = screen.getByRole("checkbox", { name: "第一条用户问题" });
+    const selectedCheckbox = firstItem.querySelector('[role="checkbox"]') as HTMLElement;
+    expect(selectedCheckbox).not.toBeNull();
     const selectedCheckIcon = selectedCheckbox.querySelector('[data-slot="checkbox-checked-icon"]');
     expect(selectedCheckIcon?.getAttribute("stroke-width")).toBe("1.33");
     expect(selectedCheckIcon?.getAttribute("class")).toContain(
       "[&_path]:[vector-effect:non-scaling-stroke]",
     );
-    const unselectedCheckbox = screen.getByRole("checkbox", { name: "第二条用户问题" });
+    const unselectedCheckbox = secondItem.querySelector('[role="checkbox"]') as HTMLElement;
+    expect(unselectedCheckbox).not.toBeNull();
     expect(unselectedCheckbox.className.split(/\s+/u)).toContain("border-foreground");
     expect(unselectedCheckbox.className.split(/\s+/u)).not.toContain("border-foreground-subtle");
     const checkboxHitAreas = panel.querySelectorAll(

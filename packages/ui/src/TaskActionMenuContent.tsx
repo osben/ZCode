@@ -1,4 +1,4 @@
-import { TID_V4_TASK_OPEN_IN_SPLIT } from "@zcode/shared";
+import { TID_TASK_VIEW_MODEL_TRAJECTORY, TID_V4_TASK_OPEN_IN_SPLIT } from "@zcode/shared";
 
 interface TaskActionMenuItemProps {
   children: React.ReactNode;
@@ -210,6 +210,7 @@ export function TaskActionMenuContent({
           {/* View the call trace: reconstruct this task's model requests/responses/tool calls from model-io in ~/.zcode/cli,
               and visualize them in the right sidebar. This depends only on taskId (sessionId), not on whether a snapshot file has been written. */}
           <Item
+            data-testid={TID_TASK_VIEW_MODEL_TRAJECTORY}
             disabled={taskTargetActionsDisabled || !activeSessionId}
             title={taskTargetActionsDisabled ? disabledReason : undefined}
             onSelect={onViewModelTrajectory}

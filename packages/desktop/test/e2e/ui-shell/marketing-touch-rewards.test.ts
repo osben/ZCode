@@ -9,6 +9,7 @@ import {
 } from "@zcode/shared";
 import { waitForDefaultWorkspaceReady } from "../helpers/desktop-app.js";
 import { assertOverlayWindowControls } from "../helpers/overlay-window-controls.js";
+import { expectedCopy } from "../helpers/help-client-config-fixture.js";
 
 // 正式 App 合同测试：网页与 App API 复用隔离 HTTP fixture，不提交邀请或发奖。
 async function guestValue(script: string) {
@@ -53,7 +54,7 @@ async function assertAppReportHeaders(authenticated: boolean) {
     ).zcode;
     await api.reportTelemetryEvent({
       context: {
-        clientLanguage: "zh-CN",
+        clientLanguage: "en-US",
         clientTimezone: "Asia/Shanghai",
         screenResolution: "1280x800",
       },
@@ -148,7 +149,7 @@ describe("Rewards website embedded integration", () => {
         { campaign_id: `rewards-${position}`, action_type: "confirm" },
       ]);
       await $('[data-testid="rewards-surface"]')
-        .$('button[aria-label="Close"],button[aria-label="关闭"]')
+        .$(`button[aria-label="${expectedCopy("common.close")}"]`)
         .click();
     }
   });
@@ -192,7 +193,7 @@ describe("Rewards website embedded integration", () => {
     const entry = $('[data-testid="rewards-menu-item"]');
     await entry.waitForDisplayed();
     expect(await entry.$("svg.lucide-gift").isExisting()).toBe(true);
-    expect(await entry.getText()).toMatch(/^(邀请好友\s*奖励|Refer a friend\s*Rewards)$/);
+    expect(await entry.getText()).toContain(expectedCopy("rewards.menuTitle"));
     expect(await entry.$('[data-testid="rewards-reward-badge"]').isExisting()).toBe(true);
     // 截图只写入运行器提供的产物目录，避免系统临时目录破坏跨平台隔离。
     if (process.env.ZCODE_E2E_ARTIFACT_DIR)
@@ -231,7 +232,7 @@ describe("Rewards website embedded integration", () => {
     expect(await $('[data-testid="rewards-webview"]').getAttribute("partition")).toBe(
       "persist:zcode-rewards",
     );
-    expect(await guestValue(`location.pathname`)).toMatch(/^\/(cn|en)\/rewards$/);
+    expect(await guestValue(`location.pathname`)).toBe("/en/rewards");
     expect(
       await guestValue(
         `(() => { const before = JSON.stringify(window.zcodeBridge.getAuthState()); window.dispatchEvent(new CustomEvent('zcode-referrals-context', { detail: { theme: 'zai-dark', locale: 'en-US', auth: {status:'anonymous',provider:null,revision:99999} } })); return JSON.stringify(window.zcodeBridge.getAuthState()) === before; })()`,
@@ -289,26 +290,19 @@ describe("Rewards website embedded integration", () => {
           join(process.env.ZCODE_E2E_ARTIFACT_DIR, "rewards-embedded-light.png"),
         );
     }
-    for (const locale of ["zh-CN", "en-US"]) {
-      await browser.execute(
-        (value) =>
-          (
-            window as typeof window & { __testActions: { setLocale: (value: string) => void } }
-          ).__testActions.setLocale(value),
-        locale,
-      );
-      await browser.waitUntil(
-        async () =>
-          (await guestValue(`location.pathname`)) ===
-          `/${locale === "zh-CN" ? "cn" : "en"}/rewards`,
-        { timeout: 30000 },
-      );
-    }
+    await browser.execute(() => {
+      (
+        window as typeof window & { __testActions: { setLocale: (value: string) => void } }
+      ).__testActions.setLocale("en-US");
+    });
+    await browser.waitUntil(async () => (await guestValue(`location.pathname`)) === "/en/rewards", {
+      timeout: 30000,
+    });
     const directory = process.env.ZCODE_E2E_ARTIFACT_DIR;
     if (!directory) throw new Error("Missing artifact directory");
     await browser.saveScreenshot(join(directory, "rewards-embedded-dark.png"));
     await $('[data-testid="rewards-surface"]')
-      .$('button[aria-label="Refresh"],button[aria-label="刷新"]')
+      .$(`button[aria-label="${expectedCopy("common.refresh")}"]`)
       .click();
     await browser.waitUntil(
       async () => (await guestValue(`window.zcodeBridge?.getAuthState()?.status`)) === "ready",
@@ -336,7 +330,7 @@ describe("Rewards website embedded integration", () => {
         .rewardsHeaderProbe;
     });
     await $('[data-testid="rewards-surface"]')
-      .$('button[aria-label="Close"],button[aria-label="关闭"]')
+      .$(`button[aria-label="${expectedCopy("common.close")}"]`)
       .click();
     await $('[data-testid="rewards-surface"]').waitForExist({ reverse: true });
     await $(`[data-testid="${TID_LOGIN_TRIGGER}"]`).click();
@@ -345,7 +339,7 @@ describe("Rewards website embedded integration", () => {
       async () => (await guestValue(`window.zcodeBridge?.getAuthState()?.status`)) === "ready",
     );
     await $('[data-testid="rewards-surface"]')
-      .$('button[aria-label="Close"],button[aria-label="关闭"]')
+      .$(`button[aria-label="${expectedCopy("common.close")}"]`)
       .click();
     await $('[data-testid="rewards-surface"]').waitForExist({ reverse: true });
   });

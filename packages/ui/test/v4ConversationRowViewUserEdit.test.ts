@@ -23,6 +23,7 @@ import { ConversationRowView } from "@/v4/ConversationRowView.js";
 import type { ConversationRowRenderContext } from "@/v4/conversationRowContext.js";
 import { serializeComposerPromptContexts } from "@/v4/composer/composerPromptContexts.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const {
   attachmentPropsById,
@@ -437,7 +438,7 @@ describe("ConversationRowView reasoning summary", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationRowView, { context: { ...rowContext, readAttachment }, row }),
         ),
       );
@@ -461,7 +462,7 @@ describe("ConversationRowView reasoning summary", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationRowView, { context: rowContext, row }),
         ),
       );
@@ -513,7 +514,7 @@ describe("ConversationRowView user query editing", () => {
         root.render(
           createElement(
             ZCodeIntlProvider,
-            { initialLocale: "zh-CN" },
+            { initialLocale: "en-US" },
             createElement(ConversationRowView, {
               context: { ...rowContext, compactForRemoteControl },
               row,
@@ -562,7 +563,7 @@ describe("ConversationRowView user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationRowView, { context: rowContext, row }),
         ),
       );
@@ -599,7 +600,7 @@ describe("ConversationRowView user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationRowView, {
             context: rowContext,
             row: userInputRow({ sourceCommandId }),
@@ -615,7 +616,7 @@ describe("ConversationRowView user query editing", () => {
     );
     expect(Boolean(origin)).toBe(visible);
     if (origin) {
-      expect(collectText(origin)).toBe("由定时任务发送");
+      expect(collectText(origin)).toBe(expectedCopy("chat.message.sentByScheduledTask"));
       expect(findElementByAttribute(origin, "data-cron-task-icon", "true")).not.toBeNull();
     }
 
@@ -644,7 +645,7 @@ describe("ConversationRowView user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationRowView, {
             context: rowContext,
             row: userInputRow({ text, attachments }),
@@ -693,7 +694,7 @@ describe("ConversationRowView user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationRowView, {
             context: rowContext,
             row: userInputRow({ text: "" }),
@@ -796,7 +797,7 @@ describe("ConversationRowView user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationRowView, {
             context: { ...rowContext, readAttachment },
             row,
@@ -835,10 +836,22 @@ describe("ConversationRowView user query editing", () => {
     );
     const video = mediaCards[1] ?? null;
     const file = findElementByAttribute(pillRow, "data-v4-user-input-attachment-pill", "true");
-    const web = findElementByAttribute(pillRow, "aria-label", "1 个网页元素");
-    const codeComment = findElementByAttribute(pillRow, "aria-label", "1 条评论");
-    const pptx = findElementByAttribute(pillRow, "aria-label", "1 个幻灯片元素");
-    const conversation = findElementByAttribute(pillRow, "aria-label", "1 条对话引用");
+    const web = findElementByAttribute(pillRow, "aria-label", expectedCopy("chat.webElements.one"));
+    const codeComment = findElementByAttribute(
+      pillRow,
+      "aria-label",
+      expectedCopy("chat.codeComments.one"),
+    );
+    const pptx = findElementByAttribute(
+      pillRow,
+      "aria-label",
+      expectedCopy("chat.pptxElements.one"),
+    );
+    const conversation = findElementByAttribute(
+      pillRow,
+      "aria-label",
+      expectedCopy("chat.selections.count", { count: 1 }),
+    );
     expect(imageRow?.parentNode).toBe(attachmentArea);
     expect(pillRow?.parentNode).toBe(attachmentArea);
     expect(image?.parentNode).toBe(imageRow);
@@ -931,7 +944,7 @@ describe("ConversationRowView user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationRowView, {
             context: { ...rowContext, readAttachment },
             row,
@@ -941,7 +954,9 @@ describe("ConversationRowView user query editing", () => {
     });
 
     expect(attachmentPropsById.get("42-0")?.onOpen).toBeTypeOf("function");
-    expect(attachmentPropsById.get("42-0")?.openLabel).toBe("打开图片预览");
+    expect(attachmentPropsById.get("42-0")?.openLabel).toBe(
+      expectedCopy("chat.attachments.preview.open"),
+    );
     expect(attachmentPropsById.get("42-1")?.onOpen).toBeTypeOf("function");
     expect(attachmentPropsById.get("42-2")?.onOpen).toBeUndefined();
 
@@ -1012,7 +1027,7 @@ describe("ConversationRowView user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationRowView, {
             context: { ...rowContext, readAttachment },
             row,
@@ -1022,9 +1037,13 @@ describe("ConversationRowView user query editing", () => {
     });
 
     expect(attachmentPropsById.get("42-0")?.onOpen).toBeTypeOf("function");
-    expect(attachmentPropsById.get("42-0")?.openLabel).toBe("打开图片预览");
+    expect(attachmentPropsById.get("42-0")?.openLabel).toBe(
+      expectedCopy("chat.attachments.preview.open"),
+    );
     expect(attachmentPropsById.get("42-1")?.onOpen).toBeTypeOf("function");
-    expect(attachmentPropsById.get("42-1")?.openLabel).toBe("打开视频预览");
+    expect(attachmentPropsById.get("42-1")?.openLabel).toBe(
+      expectedCopy("chat.attachments.preview.openVideo"),
+    );
     expect(attachmentPropsById.get("42-2")?.onOpen).toBeUndefined();
 
     const openPreview = attachmentPropsById.get("42-1")?.onOpen;
@@ -1118,7 +1137,7 @@ describe("ConversationRowView user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationRowView, {
             context: { ...rowContext, readAttachment },
             row,
@@ -1192,7 +1211,7 @@ describe("ConversationRowView user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationRowView, {
             context: { ...rowContext, readAttachment },
             row,
@@ -1270,7 +1289,7 @@ describe("ConversationRowView user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationRowView, {
             context: { ...rowContext, readAttachment },
             row,
@@ -1339,7 +1358,7 @@ describe("ConversationRowView user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationRowView, {
             context: { ...rowContext, readAttachment },
             row,
@@ -1373,7 +1392,7 @@ describe("ConversationRowView user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationRowView, {
             context: { ...rowContext, readAttachment },
             row,
@@ -1388,7 +1407,9 @@ describe("ConversationRowView user query editing", () => {
       signal: expect.any(AbortSignal),
     });
     expect(attachmentPropsById.get("42-0")?.onOpen).toBeUndefined();
-    expect(attachmentPropsById.get("42-0")?.title).toBe("这张图片已无法预览。");
+    expect(attachmentPropsById.get("42-0")?.title).toBe(
+      expectedCopy("chat.attachments.preview.unavailable"),
+    );
     await act(async () => root.unmount());
   });
 
@@ -1441,7 +1462,7 @@ describe("ConversationRowView user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationRowView, {
             context: { ...rowContext, compactForRemoteControl: true },
             row,
@@ -1473,7 +1494,7 @@ describe("ConversationRowView user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationRowView, {
             context: { ...rowContext, compactForRemoteControl: true },
             row,
@@ -1527,7 +1548,7 @@ describe("ConversationRowView user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationRowView, {
             context: rowContext,
             row,
@@ -1556,7 +1577,7 @@ describe("ConversationRowView user query editing", () => {
         root.render(
           createElement(
             ZCodeIntlProvider,
-            { initialLocale: "zh-CN" },
+            { initialLocale: "en-US" },
             createElement(ConversationRowView, {
               context: rowContext,
               row,
@@ -1591,7 +1612,7 @@ describe("ConversationRowView user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationRowView, {
             context: {
               ...rowContext,
@@ -1643,7 +1664,7 @@ describe("ConversationRowView user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationRowView, {
             context: rowContext,
             onEdit: vi.fn(),
@@ -1655,7 +1676,7 @@ describe("ConversationRowView user query editing", () => {
 
     const text = collectText(container);
     expect(text).toContain("帮我看这个按钮");
-    expect(text).toContain("1 个网页元素");
+    expect(text).toContain(expectedCopy("chat.webElements.one"));
     expect(text).not.toContain("# Web page elements:");
 
     const attachmentArea = findElementByAttribute(
@@ -1665,14 +1686,18 @@ describe("ConversationRowView user query editing", () => {
     );
     const messageBubble = findElementByAttribute(container, "data-v4-user-input-bubble", "true");
     expect(collectText(attachmentArea)).toContain("note.txt");
-    expect(collectText(attachmentArea)).toContain("1 个网页元素");
+    expect(collectText(attachmentArea)).toContain(expectedCopy("chat.webElements.one"));
     expect(collectText(messageBubble)).toBe("帮我看这个按钮");
     const fileAttachmentPill = findElementByAttribute(
       attachmentArea,
       "data-v4-user-input-attachment-pill",
       "true",
     );
-    const webElementChip = findElementByAttribute(attachmentArea, "aria-label", "1 个网页元素");
+    const webElementChip = findElementByAttribute(
+      attachmentArea,
+      "aria-label",
+      expectedCopy("chat.webElements.one"),
+    );
     const pillRow = findElementByAttribute(
       attachmentArea,
       "data-v4-user-input-attachment-pills",
@@ -1729,7 +1754,7 @@ describe("ConversationRowView user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationRowView, {
             context: rowContext,
             onEdit: vi.fn(),
@@ -1765,7 +1790,7 @@ describe("ConversationRowView user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationRowView, {
             context: rowContext,
             row: userInputRow({
@@ -1796,7 +1821,7 @@ describe("ConversationRowView user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationRowView, {
             context: rowContext,
             row,
@@ -1824,7 +1849,7 @@ describe("ConversationRowView user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationRowView, {
             context: rowContext,
             onEdit,
@@ -1895,7 +1920,7 @@ describe("ConversationRowView user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationRowView, {
             context: rowContext,
             onEdit,
@@ -1934,7 +1959,7 @@ describe("ConversationRowView user query editing", () => {
     expect(attachmentRemovePropsByTestId.get(firstRemoveId)).toMatchObject({
       alwaysVisible: undefined,
       className: expect.stringContaining("size-3.5"),
-      label: "移除附件",
+      label: expectedCopy("chat.attachments.remove"),
       placement: "corner",
       variant: "default",
     });
@@ -1981,7 +2006,7 @@ describe("ConversationRowView user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationRowView, {
             context: rowContext,
             onEdit,
@@ -2005,7 +2030,7 @@ describe("ConversationRowView user query editing", () => {
       "true",
     );
     expect(contextRow).not.toBeNull();
-    expect(collectText(contextRow)).toContain("1 个网页元素");
+    expect(collectText(contextRow)).toContain(expectedCopy("chat.webElements.one"));
 
     await act(async () => {
       await (chatPromptEditorProps.at(-1)!.onSubmit as (value: string) => Promise<void>)("更新");
@@ -2029,7 +2054,7 @@ describe("ConversationRowView user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationRowView, {
             context: rowContext,
             onEdit,
@@ -2083,7 +2108,7 @@ describe("ConversationRowView user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationRowView, {
             context: rowContext,
             onEdit,
@@ -2146,7 +2171,7 @@ describe("ConversationRowView user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationRowView, {
             context: rowContext,
             onEdit,
@@ -2206,7 +2231,7 @@ describe("ConversationRowView user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationRowView, { context: rowContext, onEdit, row }),
         ),
       );
@@ -2271,7 +2296,7 @@ describe("ConversationRowView user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationRowView, {
             context: rowContext,
             editWorkspaceRewindAvailability: {
@@ -2301,8 +2326,10 @@ describe("ConversationRowView user query editing", () => {
     const rewindButton = disabledTooltipTrigger.props.children as ReactElement<
       Record<string, unknown>
     >;
-    expect(slot.props.title).toBe("与文件一起重置");
-    expect(slot.props.description).toBe("本轮没有可安全恢复的文件改动");
+    expect(slot.props.title).toBe(expectedCopy("chat.edit.resetConversationAndFiles.tooltip"));
+    expect(slot.props.description).toBe(
+      expectedCopy("chat.edit.resetConversationAndFiles.noFiles"),
+    );
     expect(disabledTooltipTrigger.type).toBe("span");
     expect(disabledTooltipTrigger.props["data-disabled-tooltip-trigger"]).toBe("true");
     expect(rewindButton.props.disabled).toBe(true);
@@ -2353,7 +2380,7 @@ describe("ConversationRowView user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationRowView, {
             context: rowContext,
             editWorkspaceRewindAvailability: {
@@ -2379,7 +2406,7 @@ describe("ConversationRowView user query editing", () => {
       children: ReactElement<Record<string, unknown>>;
     }>;
     const rewindButton = slot.props.children;
-    expect(slot.props.title).toBe("与文件一起重置");
+    expect(slot.props.title).toBe(expectedCopy("chat.edit.resetConversationAndFiles.tooltip"));
     expect(slot.props.description).toBeUndefined();
     expect(rewindButton.props["data-testid"]).toBe(
       testId(TID_V4_EDIT_REWIND_WORKSPACE, String(row.rowId)),

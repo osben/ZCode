@@ -3,6 +3,19 @@ import { once } from "node:events";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { build } from "esbuild";
+import enUS from "../../../../ui/src/i18n/locales/en-US.js";
+
+export function expectedCopy(key: string, values?: Record<string, string | number>): string {
+  const message = enUS[key];
+  if (message === undefined) {
+    throw new Error(`Missing en-US UI copy for catalog key: ${key}`);
+  }
+
+  return Object.entries(values ?? {}).reduce(
+    (result, [name, value]) => result.replaceAll(`{${name}}`, String(value)),
+    message,
+  );
+}
 
 export const HELP_FIXTURE_PATH = resolve(
   import.meta.dirname,

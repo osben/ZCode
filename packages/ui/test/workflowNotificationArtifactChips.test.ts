@@ -34,6 +34,7 @@ import { ConversationTurnGroup } from "@/v4/ConversationTurnGroup.js";
 import type { ConversationRowRenderContext } from "@/v4/conversationRowContext.js";
 // eslint-disable-next-line import/first
 import { buildConversationTurnRenderUnits } from "@/v4/conversationTurnRenderUnits.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const onOpenArtifact = vi.fn();
 
@@ -60,7 +61,7 @@ function renderRow(notification: WorkflowNotificationMeta, options: { openable?:
   return render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(
         TooltipProvider,
         null,
@@ -130,7 +131,9 @@ describe("通知行的产物 chips", () => {
     const view = renderRow(terminal([{ id: "book", kind: "file", title: long, version: 1 }]));
     const chip = view.getByTestId(TID_CHAT_WORKFLOW_ARTIFACT_CHIP);
     expect(chip.textContent?.endsWith("…")).toBe(true);
-    expect(chip.getAttribute("title")).toBe(`文件 · ${long}`);
+    expect(chip.getAttribute("title")).toBe(
+      `${expectedCopy("chat.toolCall.workflow.run.artifacts.kind.file")} · ${long}`,
+    );
   });
 
   it("宿主没注入打开能力时 chip 不可点，点了也什么都不发生", () => {
@@ -234,7 +237,7 @@ describe("ConversationTurnGroup 把通知行的 chip 变成打开请求", () => 
     return render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           PlatformProvider,
           { platform: noopPlatform },

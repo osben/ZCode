@@ -8,6 +8,7 @@ import { StoreProvider } from "@/store/StoreProvider.js";
 import { ToolCallBlock } from "@/ToolCallBlocks.js";
 import { NodeReplToolCallBlock } from "@/ToolCallBlocks/renderers/node-repl.js";
 import { TooltipProvider } from "@/components/ui/tooltip.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const localStorageState = new Map<string, string>();
 
@@ -53,7 +54,7 @@ function renderWithProviders(element: ReactElement) {
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(
         StoreProvider,
         { broadcastService: mockBroadcastService },
@@ -149,7 +150,7 @@ describe("node repl tool display", () => {
         viewerSource: null,
         rawFileSummaries: [],
         isRunning: false,
-        statusLabel: "已执行",
+        statusLabel: expectedCopy("chat.toolCall.status.completed"),
         childToolList: null,
         forceOpen: true,
         canToggle: true,
@@ -194,7 +195,7 @@ describe("node repl tool display", () => {
         viewerSource: null,
         rawFileSummaries: [],
         isRunning: false,
-        statusLabel: "已执行",
+        statusLabel: expectedCopy("chat.toolCall.status.completed"),
         childToolList: null,
         forceOpen: false,
         canToggle: true,
@@ -252,7 +253,7 @@ describe("node repl tool display", () => {
         viewerSource: null,
         rawFileSummaries: [],
         isRunning: false,
-        statusLabel: "已执行",
+        statusLabel: expectedCopy("chat.toolCall.status.completed"),
         childToolList: null,
         showIcon: true,
       }),
@@ -262,8 +263,8 @@ describe("node repl tool display", () => {
     expect(html).toContain('src="data:image/png;base64,AAAA"');
     expect(html).toContain("w-fit max-w-1/2 cursor-zoom-in overflow-hidden rounded-xl");
     expect(html).toContain("h-auto max-h-90 max-w-full rounded-xl");
-    expect(html).not.toContain("查看执行详情");
-    expect(html).not.toContain("执行 JavaScript");
+    expect(html).not.toContain(expectedCopy("chat.toolCall.nodeRepl.details"));
+    expect(html).not.toContain(expectedCopy("chat.toolCall.kind.nodeRepl"));
   });
 
   it("removes internal completion markers from projected results", () => {
@@ -363,7 +364,7 @@ describe("node repl tool display", () => {
         viewerSource: null,
         rawFileSummaries: [],
         isRunning: false,
-        statusLabel: "已执行",
+        statusLabel: expectedCopy("chat.toolCall.status.completed"),
         childToolList: null,
         forceOpen: true,
         canToggle: true,
@@ -372,12 +373,12 @@ describe("node repl tool display", () => {
     );
 
     expect(html).toContain("选择浏览器并读取操作说明");
-    expect(html).toContain("已完成");
-    expect(html).not.toContain("操作已完成");
+    expect(html).toContain(expectedCopy("chat.toolCall.nodeRepl.completed"));
+    expect(html).not.toContain(expectedCopy("chat.toolCall.nodeRepl.finished"));
     expect(html).toContain("已选择应用内浏览器，并读取操作说明。");
-    expect(html).not.toContain(">结果</span>");
-    expect(html).not.toContain('aria-label="复制结果"');
-    expect(html).toContain("查看执行细节");
+    expect(html).not.toContain(`>${expectedCopy("chat.toolCall.nodeRepl.result")}</span>`);
+    expect(html).not.toContain(`aria-label="${expectedCopy("chat.toolCall.nodeRepl.copyResult")}"`);
+    expect(html).toContain(expectedCopy("chat.toolCall.nodeRepl.details"));
     expect(html).toContain("text-foreground-subtlest");
     expect(html).toContain("hover:bg-transparent");
     expect(html).toContain("hover:text-foreground");
@@ -447,9 +448,9 @@ describe("node repl tool display", () => {
       }),
     );
 
-    expect(resetHtml).toContain("已重置操作环境");
+    expect(resetHtml).toContain(expectedCopy("chat.toolCall.nodeRepl.reset"));
     expect(resetHtml).not.toContain("&quot;ok&quot;");
-    expect(configureHtml).toContain("已配置运行目录");
+    expect(configureHtml).toContain(expectedCopy("chat.toolCall.nodeRepl.configured"));
     expect(configureHtml).toContain("/workspace/node_modules");
     expect(configureHtml).not.toContain("&quot;dirs&quot;");
   });
@@ -490,8 +491,8 @@ describe("node repl tool display", () => {
       }),
     );
 
-    expect(resetHtml).toContain("已重置操作环境");
-    expect(configureHtml).toContain("已配置运行目录");
+    expect(resetHtml).toContain(expectedCopy("chat.toolCall.nodeRepl.reset"));
+    expect(configureHtml).toContain(expectedCopy("chat.toolCall.nodeRepl.configured"));
     expect(configureHtml).toContain("/workspace/node_modules");
   });
 
