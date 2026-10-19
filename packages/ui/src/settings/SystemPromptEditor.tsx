@@ -13,6 +13,8 @@ import {
   TID_SETTINGS_SYSTEM_PROMPT_DISK_CHANGED,
   TID_SETTINGS_SYSTEM_PROMPT_DISK_OVERWRITE,
   TID_SETTINGS_SYSTEM_PROMPT_DISK_RELOAD,
+  TID_SETTINGS_SYSTEM_PROMPT_DISK_SHOW,
+  TID_SETTINGS_SYSTEM_PROMPT_DISK_VERSION,
   TID_SETTINGS_SYSTEM_PROMPT_EDITOR,
   TID_SETTINGS_SYSTEM_PROMPT_SAVE,
   TID_SETTINGS_SYSTEM_PROMPT_SAVE_REASON,
@@ -253,11 +255,18 @@ export function SystemPromptEditor({
   );
 }
 
+/** A disk version the user has looked at: its revision and override text from one listing. */
+interface CapturedDiskVersion {
+  revision: string | null | undefined;
+  text: string | null;
+}
+
 /**
- * Changed-on-disk state. The disk revision is captured when this card appears, which is the
- * revision the user is reviewing; Overwrite checks against it, not against a revision read at click time.
- * After an Overwrite conflicts, the card adopts the revision that conflict reported, since the user
- * has been told the file changed again; without this, every retry would conflict with the old revision.
+ * Changed-on-disk state. Overwrite replaces the disk version the user has looked at: "Show disk version"
+ * captures that version's revision and text from the latest listing, and Overwrite sends exactly that
+ * revision. A captured version that no longer matches the listing is not treated as viewed.
+ * A conflicting Overwrite drops the captured version, so the newer disk version has to be shown again
+ * before the next Overwrite.
  */
 function DiskChangedAlert({
   view,
@@ -273,10 +282,15 @@ function DiskChangedAlert({
   busy: boolean;
 }) {
   const { intl } = useZCodeIntl();
-  const [reviewedRevision, setReviewedRevision] = useState(section.revision);
+  const [captured, setCaptured] = useState<CapturedDiskVersion | null>(null);
+  const viewed = captured !== null && captured.revision === section.revision ? captured : null;
+  // Hosts without revisions run no conflict check, so Overwrite stays available there without a view.
+  const overwriteReady = viewed !== null || section.revision === undefined;
   const overwrite = async () => {
-    const conflict = await view.saveEditor({ overwrite: { reviewedRevision } });
-    if (conflict) setReviewedRevision(conflict.currentRevision);
+    const conflict = await view.saveEditor({
+      overwrite: { reviewedRevision: viewed ? viewed.revision : section.revision },
+    });
+    if (conflict) setCaptured(null);
   };
   return (
     <Alert variant="warning" data-testid={TID_SETTINGS_SYSTEM_PROMPT_DISK_CHANGED}>
@@ -290,6 +304,17 @@ function DiskChangedAlert({
             size="sm"
             variant="outline"
             disabled={busy}
+            data-testid={TID_SETTINGS_SYSTEM_PROMPT_DISK_SHOW}
+            onClick={() =>
+              setCaptured({ revision: section.revision, text: section.overrideContent })
+            }
+          >
+            {intl.formatMessage({ id: "settings.systemPrompt.diskChanged.show" })}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy}
             data-testid={TID_SETTINGS_SYSTEM_PROMPT_DISK_RELOAD}
             onClick={() => view.reloadEditor(effectiveContent)}
           >
@@ -298,13 +323,30 @@ function DiskChangedAlert({
           <Button
             size="sm"
             variant="outline"
-            disabled={!canOverwrite}
+            disabled={!canOverwrite || !overwriteReady}
             data-testid={TID_SETTINGS_SYSTEM_PROMPT_DISK_OVERWRITE}
             onClick={() => void overwrite()}
           >
             {intl.formatMessage({ id: "settings.systemPrompt.diskChanged.overwrite" })}
           </Button>
         </div>
+        {viewed ? (
+          viewed.text === null ? (
+            <p>{intl.formatMessage({ id: "settings.systemPrompt.diskChanged.noOverride" })}</p>
+          ) : (
+            <div className="space-y-1">
+              <p>{intl.formatMessage({ id: "settings.systemPrompt.diskChanged.diskVersion" })}</p>
+              <pre
+                className="max-h-48 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-surface-muted p-2 font-mono text-ui-xs leading-5 text-foreground"
+                data-testid={TID_SETTINGS_SYSTEM_PROMPT_DISK_VERSION}
+              >
+                {viewed.text}
+              </pre>
+            </div>
+          )
+        ) : !overwriteReady ? (
+          <p>{intl.formatMessage({ id: "settings.systemPrompt.diskChanged.viewFirst" })}</p>
+        ) : null}
       </AlertDescription>
     </Alert>
   );

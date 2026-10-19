@@ -228,9 +228,15 @@ refresh after window focus, or a save conflict), the editor shows a warning stat
 
 - "Reload from disk" discards the draft and rebases the editor onto the current disk text and revision. It
   adopts the disk text current at click time, which is safe because the draft is discarded anyway.
-- "Overwrite" keeps the draft and saves it against the disk revision the user reviewed: the revision captured
-  when the Changed-on-disk card appeared (see "Conflict revisions"). If the file changed again since, the write
-  is refused, nothing is replaced, the list refreshes, and a toast reports the change.
+- "Show disk version" captures the disk version from the current listing (its revision and override text) and
+  shows that text read-only, with a note that Overwrite replaces it. The draft is not touched. A view that no
+  longer matches the listing's revision is not treated as viewed.
+- "Overwrite" is disabled until a disk version has been shown. It keeps the draft and saves it against the
+  revision of the shown disk version (see "Conflict revisions"), so the content replaced is the content the
+  user looked at. If the file changed again since, the write is refused, nothing is replaced, the list refreshes,
+  the shown version is dropped, and a toast reports the change; the user must show the newer version before
+  Overwrite is enabled again. A host that reports no revision has no conflict check, so Overwrite stays enabled
+  there without a view.
 
 Closing the editor by Cancel still follows the discard guard. The list refreshes silently on window focus when
 the target is ready. Older hosts without revisions never show this state.
@@ -254,13 +260,13 @@ moment of the click:
 | ---------------- | --------------------------------------------------------------------------------------------------- |
 | Save             | The editor's base revision: captured when the editor opened, or when it was last rebased by Reload. |
 | Restore          | The revision captured when the Restore confirmation panel opened.                                   |
-| Overwrite        | The revision captured when the Changed-on-disk card appeared.                                       |
+| Overwrite        | The revision of the disk version the user chose to show (Show disk version).                        |
 | Reset all        | The revision each entry had in the listing the user confirmed.                                      |
 | Reload from disk | Not a write. It discards the draft and adopts the disk text current at click time.                  |
 
 A newer external edit that lands after review therefore produces a conflict, not a silent replacement. The
 captured revisions live in the row or the card that shows them (`RestoreConfirmPanel`, `DiskChangedAlert`); the
-hook does not keep a second copy.
+hook does not keep a second copy. The card's captured disk version is the only source of the Overwrite revision.
 
 ## Save path
 
@@ -288,7 +294,7 @@ Unit and component tests cover the rules above. The desktop E2E scenarios are wr
   Edit on another row is disabled, Cmd/Ctrl+S saves, and Esc on a dirty draft asks before discarding (dismissing
   keeps the draft).
 - SP-03: an external write to the open section's override file while the editor is open produces the
-  "Changed on disk" state; Overwrite writes the draft to disk.
+  "Changed on disk" state; after Show disk version, Overwrite writes the draft to disk.
 - SP-04: the same external write followed by Reload from disk discards the draft and adopts the disk text.
 
 Unit coverage added with the cleanup: the hook tests cover the patch-from-write save (no relist), the relist for hosts

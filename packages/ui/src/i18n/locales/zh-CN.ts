@@ -7766,6 +7766,10 @@ const zhCN: Record<string, string> = {
     "你编辑时，此部分的文件在设置之外被更改。重新加载将放弃你的草稿；覆盖则用你的草稿替换文件。",
   "settings.systemPrompt.diskChanged.reload": "从磁盘重新加载",
   "settings.systemPrompt.diskChanged.overwrite": "覆盖",
+  "settings.systemPrompt.diskChanged.show": "查看磁盘版本",
+  "settings.systemPrompt.diskChanged.viewFirst": "请先查看磁盘版本，然后才能覆盖。",
+  "settings.systemPrompt.diskChanged.diskVersion": "磁盘版本。覆盖将用你的草稿替换此文本。",
+  "settings.systemPrompt.diskChanged.noOverride": "磁盘上的文件没有覆盖文本；将使用内置默认内容。",
   "settings.systemPrompt.saveReason.unchanged": "没有可保存的更改。",
   "settings.systemPrompt.saveReason.diskChanged":
     "保存前，请先在上方选择“从磁盘重新加载”或“覆盖”。",

@@ -12,31 +12,39 @@ const mocks = vi.hoisted(() => ({
   openInFileManager: vi.fn(),
   lastTarget: null as { workspacePath: string | null; workspaceIdentity?: string } | null,
   diskChanged: false,
+  // The latest listing for cli-prefix; tests move it to simulate an external write.
+  cliRevision: "rev-cli" as string | null | undefined,
+  cliText: "The saved prompt" as string | null,
+  // Re-lists the mocked sections, as the hook's refreshInPlace does after a conflict.
+  relist: null as (() => void) | null,
 }));
 
 vi.mock("@/hooks/useSystemPromptOverrides.js", async () => {
   const React = await import("react");
-  const sections = [
-    {
-      key: "cli-prefix",
-      defaultContent: "The default prompt",
-      overrideContent: "The saved prompt",
-      filePath: "/remote/.zcode/system-prompt/cli-prefix.md",
-      isOverridden: true,
-      revision: "rev-cli",
-    },
-    {
-      key: "harness",
-      defaultContent: "Harness default text",
-      overrideContent: null,
-      filePath: "/remote/.zcode/system-prompt/harness.md",
-      isOverridden: false,
-      revision: null,
-    },
-  ];
   return {
     useSystemPromptOverrides(target: { workspacePath: string | null; workspaceIdentity?: string }) {
       mocks.lastTarget = target;
+      const [, relistRender] = React.useReducer((count: number) => count + 1, 0);
+      mocks.relist = relistRender;
+      // Rebuilt on every render, like a fresh listing from the hook.
+      const sections = [
+        {
+          key: "cli-prefix",
+          defaultContent: "The default prompt",
+          overrideContent: mocks.cliText,
+          filePath: "/remote/.zcode/system-prompt/cli-prefix.md",
+          isOverridden: true,
+          revision: mocks.cliRevision,
+        },
+        {
+          key: "harness",
+          defaultContent: "Harness default text",
+          overrideContent: null,
+          filePath: "/remote/.zcode/system-prompt/harness.md",
+          isOverridden: false,
+          revision: null,
+        },
+      ];
       const [editor, setEditor] = React.useState<{
         key: "cli-prefix" | "harness";
         baseline: string;
@@ -142,6 +150,8 @@ beforeEach(() => {
   mocks.openInFileManager.mockResolvedValue({ success: true });
   mocks.requestConfirmation.mockResolvedValue(false);
   mocks.diskChanged = false;
+  mocks.cliRevision = "rev-cli";
+  mocks.cliText = "The saved prompt";
 });
 
 afterEach(() => cleanup());
@@ -271,20 +281,87 @@ describe("SystemPromptSection", () => {
     expect(mocks.saveEditor).not.toHaveBeenCalled();
   });
 
-  it("reviews the revision a conflicting Overwrite reported before the next Overwrite", async () => {
-    mocks.diskChanged = true;
-    mocks.saveEditor
-      .mockResolvedValueOnce({ currentRevision: "rev-newer" })
-      .mockResolvedValueOnce(undefined);
-    renderSection();
+  function openCliDraft(draft = "mine") {
     fireEvent.click(screen.getByTestId("settings-system-prompt-edit-cli-prefix"));
     fireEvent.change(screen.getByTestId("settings-system-prompt-editor-cli-prefix"), {
-      target: { value: "mine" },
+      target: { value: draft },
     });
+  }
 
-    fireEvent.click(screen.getByTestId("settings-system-prompt-disk-overwrite"));
+  function overwriteButton() {
+    return screen.getByTestId("settings-system-prompt-disk-overwrite") as HTMLButtonElement;
+  }
+
+  it("keeps Overwrite disabled until the disk version has been shown", () => {
+    mocks.diskChanged = true;
+    renderSection();
+    openCliDraft();
+
+    expect(overwriteButton().disabled).toBe(true);
+    expect(screen.queryByTestId("settings-system-prompt-disk-version")).toBeNull();
+    expect(screen.getByText("settings.systemPrompt.diskChanged.viewFirst")).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("settings-system-prompt-disk-show"));
+    expect(overwriteButton().disabled).toBe(false);
+    expect(screen.getByTestId("settings-system-prompt-disk-version").textContent).toBe(
+      "The saved prompt",
+    );
+    expect(mocks.saveEditor).not.toHaveBeenCalled();
+  });
+
+  it("overwrites with the revision of the disk version that was shown, not the earlier one", async () => {
+    mocks.diskChanged = true;
+    mocks.cliRevision = "rev-old";
+    mocks.cliText = "Old disk text";
+    renderSection();
+    openCliDraft();
+
+    // The listing moves on after the card appeared, then the user looks at the new disk version.
+    mocks.cliRevision = "rev-cli";
+    mocks.cliText = "Newer disk text";
+    fireEvent.change(screen.getByTestId("settings-system-prompt-editor-cli-prefix"), {
+      target: { value: "mine again" },
+    });
+    fireEvent.click(screen.getByTestId("settings-system-prompt-disk-show"));
+    expect(screen.getByTestId("settings-system-prompt-disk-version").textContent).toBe(
+      "Newer disk text",
+    );
+
+    fireEvent.click(overwriteButton());
     await waitFor(() => expect(mocks.saveEditor).toHaveBeenCalledTimes(1));
-    fireEvent.click(screen.getByTestId("settings-system-prompt-disk-overwrite"));
+    expect(mocks.saveEditor).toHaveBeenCalledWith({ overwrite: { reviewedRevision: "rev-cli" } });
+    expect(mocks.reloadEditor).not.toHaveBeenCalled();
+  });
+
+  it("drops the shown version after a conflict and requires viewing the newer one again", async () => {
+    mocks.diskChanged = true;
+    mocks.saveEditor
+      .mockImplementationOnce(async () => {
+        // The file changes again before the write lands; the listing then reports the newer revision.
+        mocks.cliRevision = "rev-newer";
+        mocks.cliText = "Newer disk text";
+        act(() => mocks.relist?.());
+        return { currentRevision: "rev-newer" };
+      })
+      .mockResolvedValueOnce(undefined);
+    renderSection();
+    openCliDraft();
+
+    fireEvent.click(screen.getByTestId("settings-system-prompt-disk-show"));
+    fireEvent.click(overwriteButton());
+    await waitFor(() => expect(mocks.saveEditor).toHaveBeenCalledTimes(1));
+
+    await waitFor(() => expect(overwriteButton().disabled).toBe(true));
+    expect(screen.queryByTestId("settings-system-prompt-disk-version")).toBeNull();
+    expect(
+      (screen.getByTestId("settings-system-prompt-editor-cli-prefix") as HTMLTextAreaElement).value,
+    ).toBe("mine");
+
+    fireEvent.click(screen.getByTestId("settings-system-prompt-disk-show"));
+    expect(screen.getByTestId("settings-system-prompt-disk-version").textContent).toBe(
+      "Newer disk text",
+    );
+    fireEvent.click(overwriteButton());
     await waitFor(() => expect(mocks.saveEditor).toHaveBeenCalledTimes(2));
 
     expect(mocks.saveEditor).toHaveBeenNthCalledWith(1, {
@@ -294,6 +371,64 @@ describe("SystemPromptSection", () => {
       overwrite: { reviewedRevision: "rev-newer" },
     });
     expect(mocks.reloadEditor).not.toHaveBeenCalled();
+  });
+
+  it("clears the shown version on a conflict even when the listing still reports the same revision", async () => {
+    mocks.diskChanged = true;
+    mocks.saveEditor.mockResolvedValueOnce({ currentRevision: "rev-cli" });
+    renderSection();
+    openCliDraft();
+
+    fireEvent.click(screen.getByTestId("settings-system-prompt-disk-show"));
+    fireEvent.click(overwriteButton());
+    await waitFor(() => expect(mocks.saveEditor).toHaveBeenCalledTimes(1));
+
+    await waitFor(() => expect(overwriteButton().disabled).toBe(true));
+    expect(screen.queryByTestId("settings-system-prompt-disk-version")).toBeNull();
+  });
+
+  it("leaves the draft untouched when showing the disk version and after a conflict", async () => {
+    mocks.diskChanged = true;
+    mocks.saveEditor.mockResolvedValueOnce({ currentRevision: "rev-newer" });
+    renderSection();
+    openCliDraft("my draft");
+    const draftField = () =>
+      screen.getByTestId("settings-system-prompt-editor-cli-prefix") as HTMLTextAreaElement;
+
+    fireEvent.click(screen.getByTestId("settings-system-prompt-disk-show"));
+    expect(draftField().value).toBe("my draft");
+
+    fireEvent.click(overwriteButton());
+    await waitFor(() => expect(mocks.saveEditor).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(overwriteButton().disabled).toBe(true));
+    expect(draftField().value).toBe("my draft");
+    expect(mocks.reloadEditor).not.toHaveBeenCalled();
+  });
+
+  it("shows an explicit note when the disk file has no override text", () => {
+    mocks.diskChanged = true;
+    mocks.cliText = null;
+    renderSection();
+    openCliDraft();
+
+    fireEvent.click(screen.getByTestId("settings-system-prompt-disk-show"));
+    expect(screen.queryByTestId("settings-system-prompt-disk-version")).toBeNull();
+    expect(screen.getByText("settings.systemPrompt.diskChanged.noOverride")).toBeTruthy();
+    expect(overwriteButton().disabled).toBe(false);
+  });
+
+  it("keeps Overwrite available without a view on hosts that report no revision", () => {
+    mocks.diskChanged = true;
+    mocks.cliRevision = undefined;
+    renderSection();
+    openCliDraft();
+
+    expect(overwriteButton().disabled).toBe(false);
+    fireEvent.click(overwriteButton());
+    expect(mocks.saveEditor).toHaveBeenCalledTimes(1);
+    expect(mocks.saveEditor.mock.calls[0]?.[0]).toEqual({
+      overwrite: { reviewedRevision: undefined },
+    });
   });
 
   it("offers Open folder for local hosts only and reveals the parent directory", async () => {

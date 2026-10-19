@@ -8111,6 +8111,13 @@ const enUS: Record<string, string> = {
     "This section's file changed outside Settings while you were editing. Reload to discard your draft, or overwrite the file with your draft.",
   "settings.systemPrompt.diskChanged.reload": "Reload from disk",
   "settings.systemPrompt.diskChanged.overwrite": "Overwrite",
+  "settings.systemPrompt.diskChanged.show": "Show disk version",
+  "settings.systemPrompt.diskChanged.viewFirst":
+    "Show the disk version before you can overwrite it.",
+  "settings.systemPrompt.diskChanged.diskVersion":
+    "Disk version. Overwrite replaces this text with your draft.",
+  "settings.systemPrompt.diskChanged.noOverride":
+    "The file on disk has no override text; the built-in default applies.",
   "settings.systemPrompt.saveReason.unchanged": "No changes to save.",
   "settings.systemPrompt.saveReason.diskChanged":
     "Choose Reload from disk or Overwrite above before saving.",

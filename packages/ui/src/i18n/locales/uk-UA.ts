@@ -7712,6 +7712,13 @@ const ukUA: Record<string, string> = {
     "Файл цього розділу було змінено поза налаштуваннями, поки ви редагували. Перезавантаження відхилить вашу чернетку; перезапис замінить файл вашою чернеткою.",
   "settings.systemPrompt.diskChanged.reload": "Перезавантажити з диска",
   "settings.systemPrompt.diskChanged.overwrite": "Перезаписати",
+  "settings.systemPrompt.diskChanged.show": "Показати версію з диска",
+  "settings.systemPrompt.diskChanged.viewFirst":
+    "Спочатку перегляньте версію з диска, щоб її перезаписати.",
+  "settings.systemPrompt.diskChanged.diskVersion":
+    "Версія з диска. Перезапис замінить цей текст вашою чернеткою.",
+  "settings.systemPrompt.diskChanged.noOverride":
+    "У файлі на диску немає тексту перевизначення; діє вбудований текст за замовчуванням.",
   "settings.systemPrompt.saveReason.unchanged": "Немає змін для збереження.",
   "settings.systemPrompt.saveReason.diskChanged":
     "Перед збереженням оберіть «Перезавантажити з диска» або «Перезаписати» вище.",
