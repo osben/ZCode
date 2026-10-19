@@ -55,6 +55,8 @@ const forkNodeTestFiles = [
   // session PR status node:test cases (mapping + service); run via test:node.
   "packages/services/test/sessionPullRequestMapping.test.ts",
   "packages/services/test/sessionPullRequestsService.test.ts",
+  // Real-git + fake-gh integration over the host path; run via test:node.
+  "packages/services/test/sessionPullRequestsIntegration.test.ts",
   // node:test cases run via test:node; excluded here so Vitest does not collect them.
   "packages/services/test/systemPromptService.test.ts",
   "packages/services/test/outputStyleService.test.ts",
