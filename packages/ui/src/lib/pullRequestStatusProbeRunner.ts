@@ -100,6 +100,47 @@ export function forceTaskIdsForRequestedKeys(
   }
   return result;
 }
+/** Task keys of the targets whose live running flag is set (the turn-end diff's current side). */
+export function runningPullRequestTaskKeys(
+  targets: readonly PullRequestStatusTarget[],
+): Set<string> {
+  return new Set(
+    targets.flatMap((target) =>
+      target.tasks
+        .filter((task) => task.running)
+        .map((task) => buildPullRequestTaskKey(target.workspaceKey, task.input.taskId)),
+    ),
+  );
+}
+
+/**
+ * Turn-end diff shared by both drivers: a task that was running at the previous diff and is not
+ * running now yields one forced target. A task absent from `targets` (scrolled out of the Session
+ * manager's virtualizer, or left the list) yields nothing, because it has no row to refresh.
+ * The first diff has no previous set, so nothing is forced on activation.
+ */
+export function collectPullRequestTurnEndTargets(
+  targets: readonly PullRequestStatusTarget[],
+  previousRunningKeys: ReadonlySet<string>,
+): { runningKeys: Set<string>; finishedTargets: PullRequestStatusTarget[] } {
+  const runningKeys = runningPullRequestTaskKeys(targets);
+  const finished = new Set([...previousRunningKeys].filter((key) => !runningKeys.has(key)));
+  const finishedTargets =
+    finished.size === 0
+      ? []
+      : targets
+          .map((target) => ({
+            ...target,
+            tasks: target.tasks.filter((task) =>
+              finished.has(buildPullRequestTaskKey(target.workspaceKey, task.input.taskId)),
+            ),
+          }))
+          .filter((target) => target.tasks.length > 0);
+  return { runningKeys, finishedTargets };
+}
+
+export type PullRequestStatusProber = ReturnType<typeof createPullRequestStatusProber>;
+
 export function createPullRequestStatusProber(
   store: PullRequestProbeStore,
   warnings: { warn: (message: string, detail: unknown) => void } = { warn: logger.warn },

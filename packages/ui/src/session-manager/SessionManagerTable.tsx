@@ -101,16 +101,16 @@ export function SessionManagerTable(props: SessionManagerTableProps) {
       return item?.kind === "row" ? item.row.task.taskId : "";
     })
     .join("\u0000");
-  const visibleTasks = useMemo(
+  const visibleRows = useMemo(
     () =>
       virtualizer.getVirtualItems().flatMap((virtualItem) => {
         const item = props.flatRows[virtualItem.index];
-        return item?.kind === "row" ? [item.row.task] : [];
+        return item?.kind === "row" ? [item.row] : [];
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- content-addressed by the visible id set; the virtualizer re-reads during render
     [visibleTaskIds, props.flatRows],
   );
-  useSessionManagerPullRequests(visibleTasks, {
+  useSessionManagerPullRequests(visibleRows, {
     active: props.columns.includes("pullRequests"),
   });
 

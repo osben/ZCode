@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { usePullRequestStatusStore } from "@/store/pullRequestStatusStore.js";
-import { buildPullRequestTaskKey } from "@/store/pullRequestStatusStore.js";
 import { usePullRequestStatusPolling } from "@/hooks/usePullRequestStatusPolling.js";
+import { usePullRequestTurnEndInvalidation } from "@/hooks/usePullRequestTurnEndInvalidation.js";
 import {
   createPullRequestStatusProber,
   forceTaskIdsForRequestedKeys,
@@ -55,14 +55,6 @@ export function usePullRequestStatuses(
   const targetKeys = targets.map((target) => target.workspaceKey).join("\u0000");
   const previousKeysRef = useRef<string[] | null>(null);
 
-  const runningTaskKeys = targets
-    .flatMap((target) =>
-      target.tasks
-        .filter((task) => task.running)
-        .map((task) => buildPullRequestTaskKey(target.workspaceKey, task.input.taskId)),
-    )
-    .sort();
-  const runningTaskKeysSignature = runningTaskKeys.join("\u0000");
   usePullRequestStatusPolling(() => {
     void prober.probe(targets);
   }, active);
@@ -80,36 +72,7 @@ export function usePullRequestStatuses(
     void prober.probe(targets, gitMutated ? { force: true } : undefined);
   }, [prober, targets, active, refreshVersion]);
 
-  // Turn-end invalidation: running → completed/idle of a worktree task forces
-  // a refresh that bypasses the service TTL.
-  const previousRunningRef = useRef<Set<string> | null>(null);
-  useEffect(() => {
-    if (!active) {
-      // Freeze the diff while no surface is visible; the transition is
-      // detected on the next activation instead of being silently consumed.
-      return;
-    }
-    const currentRunning = new Set(runningTaskKeys);
-    const previousRunning = previousRunningRef.current ?? new Set<string>();
-    previousRunningRef.current = currentRunning;
-
-    const finishedTaskKeys = [...previousRunning].filter((key) => !currentRunning.has(key));
-    if (finishedTaskKeys.length === 0) {
-      return;
-    }
-    const finished = new Set(finishedTaskKeys);
-    const forcedTargets = targets
-      .map((target) => ({
-        ...target,
-        tasks: target.tasks.filter((task) =>
-          finished.has(buildPullRequestTaskKey(target.workspaceKey, task.input.taskId)),
-        ),
-      }))
-      .filter((target) => target.tasks.length > 0);
-    if (forcedTargets.length > 0) {
-      void prober.probe(forcedTargets, { force: true });
-    }
-  }, [prober, targets, active, runningTaskKeysSignature]);
+  usePullRequestTurnEndInvalidation(prober, targets, active);
 
   // Explicit refresh: only the requested tasks bypass the service TTL, once per request. The
   // version is the signal; a targets change re-runs this effect but must not replay the request.

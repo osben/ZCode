@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef } from "react";
-import type { ZCodeTaskMeta } from "@zcode/shared";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
 import { buildWorkspaceServiceLookup } from "@/lib/workspaceServiceResolver.js";
 import {
@@ -12,6 +11,8 @@ import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { useRemoteWorkspaceSessionStore } from "@/store/remoteWorkspaceSessionStore.js";
 import { usePullRequestStatusStore } from "@/store/pullRequestStatusStore.js";
 import { usePullRequestStatusPolling } from "@/hooks/usePullRequestStatusPolling.js";
+import { usePullRequestTurnEndInvalidation } from "@/hooks/usePullRequestTurnEndInvalidation.js";
+import type { SessionManagerRow } from "./sessionManagerModel.js";
 
 /**
  * Probes pull request status for the Session manager's visible worktree rows
@@ -22,9 +23,7 @@ import { usePullRequestStatusPolling } from "@/hooks/usePullRequestStatusPolling
  * re-renders do not re-fire probes; the service TTL absorbs the rest.
  */
 export function useSessionManagerPullRequests(
-  visibleTasks: ReadonlyArray<
-    Pick<ZCodeTaskMeta, "taskId" | "workspacePath" | "workspaceIdentity" | "executionWorktree">
-  >,
+  visibleRows: ReadonlyArray<SessionManagerRow>,
   options?: { active?: boolean },
 ): void {
   const active = options?.active ?? true;
@@ -65,7 +64,8 @@ export function useSessionManagerPullRequests(
         taskInputs: PullRequestStatusTargetTask[];
       }
     >();
-    for (const task of visibleTasks) {
+    for (const row of visibleRows) {
+      const task = row.task;
       const worktree = task.executionWorktree;
       if (!worktree) {
         continue;
@@ -82,7 +82,8 @@ export function useSessionManagerPullRequests(
           branchName: worktree.branchName ?? null,
           worktreePath: worktree.path ?? null,
         },
-        running: false,
+        // The row's live running flag (liveStatus running or waiting) drives the turn-end diff.
+        running: row.running,
       });
       inputsByWorkspace.set(workspaceKey, entry);
     }
@@ -113,7 +114,7 @@ export function useSessionManagerPullRequests(
     }
     return resolved;
   }, [
-    visibleTasks,
+    visibleRows,
     baseServices,
     sessionsById,
     sessionIdByWorkspaceIdentity,
@@ -126,9 +127,11 @@ export function useSessionManagerPullRequests(
     active && targets.length > 0,
   );
 
-  // Same invalidation contract as the sidebar driver (usePullRequestStatuses): a git mutation
-  // (commit/push) forces the visible rows, and an explicit refresh forces only the requested rows.
-  // Both are version signals, so a targets change never replays them.
+  // Same invalidation contract as the sidebar driver (usePullRequestStatuses): a turn end, a git
+  // mutation (commit/push) or an explicit refresh force the affected rows. The turn-end diff is the
+  // shared hook; the version signals are not replayed by a targets change.
+  usePullRequestTurnEndInvalidation(prober, targets, active);
+
   const handledRefreshVersionRef = useRef(refreshVersion);
   useEffect(() => {
     if (!active || targets.length === 0) {

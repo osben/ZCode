@@ -9,6 +9,7 @@ import {
 } from "../src/store/pullRequestStatusStore.js";
 import {
   collectPullRequestStatusTaskCandidates,
+  collectPullRequestTurnEndTargets,
   createPullRequestStatusProber,
   forceTaskIdsForRequestedKeys,
   type PullRequestProbeStore,
@@ -341,4 +342,68 @@ test("candidate collection includes every task list and deduplicates worktree ta
     ]),
     [timelineTask, sameIdInAnotherWorkspace, pinnedTask, archivedTask],
   );
+});
+
+test("turn end: a running task that goes idle forces only that task, in its workspace", () => {
+  const targetWithRunning = (workspaceKey: string, running: Record<string, boolean>) => ({
+    workspaceKey,
+    workspacePath: `/${workspaceKey}`,
+    gitService: {} as PullRequestStatusTarget["gitService"],
+    tasks: Object.entries(running).map(([taskId, isRunning]) => ({
+      input: { taskId, branchName: "feat/x", worktreePath: `/wt/${taskId}` },
+      running: isRunning,
+    })),
+  });
+  const runningKey = (workspaceKey: string, taskId: string) =>
+    buildPullRequestTaskKey(workspaceKey, taskId);
+
+  const first = collectPullRequestTurnEndTargets(
+    [targetWithRunning("w", { t1: true, t2: true }), targetWithRunning("v", { t1: true })],
+    new Set(),
+  );
+  assert.deepEqual(
+    first.finishedTargets,
+    [],
+    "first diff has no previous set, so nothing is forced",
+  );
+
+  const second = collectPullRequestTurnEndTargets(
+    [targetWithRunning("w", { t1: false, t2: true }), targetWithRunning("v", { t1: true })],
+    first.runningKeys,
+  );
+  assert.deepEqual(
+    second.finishedTargets.map((target) => ({
+      workspaceKey: target.workspaceKey,
+      taskIds: target.tasks.map((task) => task.input.taskId),
+    })),
+    [{ workspaceKey: "w", taskIds: ["t1"] }],
+  );
+  assert.equal(second.runningKeys.has(runningKey("w", "t2")), true);
+  assert.equal(second.runningKeys.has(runningKey("v", "t1")), true);
+});
+
+test("turn end: running-to-running and a finished task outside the targets force nothing", () => {
+  const previous = new Set([
+    buildPullRequestTaskKey("w", "t1"),
+    buildPullRequestTaskKey("w", "gone"),
+  ]);
+  const stillRunning = collectPullRequestTurnEndTargets(
+    [
+      {
+        workspaceKey: "w",
+        workspacePath: "/w",
+        gitService: {} as PullRequestStatusTarget["gitService"],
+        tasks: [
+          {
+            input: { taskId: "t1", branchName: "feat/x", worktreePath: "/wt/t1" },
+            running: true,
+          },
+        ],
+      },
+    ],
+    previous,
+  );
+  // "gone" left the targets (scrolled out of the Session manager) and has no row to refresh.
+  assert.deepEqual(stillRunning.finishedTargets, []);
+  assert.deepEqual([...stillRunning.runningKeys], [buildPullRequestTaskKey("w", "t1")]);
 });
