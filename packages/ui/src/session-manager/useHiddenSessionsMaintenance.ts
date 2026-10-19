@@ -1,3 +1,4 @@
+import { formatTaskDeletionResult } from "@/task-deletion/taskDeletion.js";
 import { useCallback, useEffect, useState } from "react";
 import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { logger } from "@/logger.js";
@@ -15,16 +16,19 @@ export function useHiddenSessionsMaintenance(
 ) {
   const service = useBaseWorkspaceServices().zcodeTaskService;
   const [sessions, setSessions] = useState<number | null>(null);
+  const [worktrees, setWorktrees] = useState(0);
   const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!enabled) {
       setSessions(null);
+      setWorktrees(0);
       return;
     }
     try {
       const result = await service.countHiddenTaskContent?.();
       setSessions(result ? result.sessions : null);
+      setWorktrees(result?.worktrees ?? 0);
     } catch (error) {
       logger.warn("[SessionManager] hidden content count failed", {
         message: error instanceof Error ? error.message : String(error),
@@ -44,6 +48,28 @@ export function useHiddenSessionsMaintenance(
       if (!result) {
         toast(formatMessage("sessionManager.erase.unsupported"));
         return;
+      }
+      if (
+        result.worktreeCleanup.removedCount ||
+        result.worktreeCleanup.retainedCount ||
+        result.worktreeCleanup.failedCount
+      ) {
+        toast(
+          formatTaskDeletionResult(
+            {
+              tombstoned: 0,
+              erased: result.erasedTaskIds.length,
+              skipped: result.skippedTaskIds.length,
+              running: result.blockedRunningTaskIds.length,
+              unsupported: 0,
+              failed: result.failedTaskIds.length,
+              sessionFileFailures: result.fileFailureCount,
+              filesRetained: result.filesRetainedCount,
+              worktreeCleanup: result.worktreeCleanup,
+            },
+            formatMessage,
+          ),
+        );
       }
       const kept =
         result.skippedTaskIds.length +
@@ -71,5 +97,5 @@ export function useHiddenSessionsMaintenance(
     }
   }, [formatMessage, refresh, service]);
 
-  return { sessions, busy, refresh, erase };
+  return { sessions, worktrees, busy, refresh, erase };
 }

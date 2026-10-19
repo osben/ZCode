@@ -1,4 +1,5 @@
 /* eslint-disable max-lines -- The timeline handles local scoped queries, active remote caching, and task-action dispatch; keep the flow together for clarity. */
+import { useTaskDeleteDialog } from "@/hooks/useTaskDeleteDialog.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import type { ZCodeTaskMeta } from "@zcode/shared";
@@ -67,6 +68,7 @@ export function WorkspaceTimelineTasksSection({
   ) => void;
 }) {
   const { intl, locale } = useZCodeIntl();
+  const taskDeletion = useTaskDeleteDialog();
   const baseServices = useBaseWorkspaceServices();
   const scopedWorkspaceTabs = useLocalWorkspaceScopes({
     workspaceTabs,
@@ -605,6 +607,7 @@ export function WorkspaceTimelineTasksSection({
 
   return (
     <div className="flex min-h-0 flex-col">
+      {taskDeletion.dialog}
       {renamingItemKey !== null ? (
         <TaskRenameDialog
           open
@@ -732,6 +735,7 @@ export function WorkspaceTimelineTasksSection({
         </ContextMenuTrigger>
         {contextMenuItem && contextMenuWorkspaceServices && contextMenuItemKey ? (
           <TaskListItemContextMenuContent
+            onDeleteTask={() => taskDeletion.open(contextMenuItem, false)}
             workspacePath={contextMenuItem.workspacePath}
             remoteSessionId={contextMenuWorkspaceServices.remoteSessionId}
             task={contextMenuItem}

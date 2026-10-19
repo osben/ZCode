@@ -169,6 +169,13 @@ plan: `docs/specs/usage-stats-history-and-filters.md`.
     and `workspace_key`.
   - `fork_usage_tool(bucket_start, workspace_key, tool_name)` with call/error counts and duration sum + count.
   - `fork_usage_meta(key, value)` for the recompute watermark.
+  - `fork_usage_detached_turn` for per-deleted-session turn aggregates under a fresh opaque identity;
+    detached rows retain bucket, workspace, turn count, completed-duration sum/count and tokens, but
+    no original session identity or title.
+  - `fork_usage_protected_bucket` plus fork-owned raw-row snapshots for model and tool groups touched
+    by permanent session deletion. Existing aggregates remain the baseline, including already-pruned
+    contributions. Raw-row snapshots track later insert/update deltas without guessing which part of
+    a partial bucket the baseline contains.
 - `bucket_start` is a UTC 15-minute boundary in ms. Every modern IANA zone offset is a multiple of 15
   minutes, so local-day bucketing at read time stays exact. `workspace_key` is the session
   `directory` (empty when the session row is gone). `model_id` is `NOT NULL` in the raw table and kept as is.
@@ -179,14 +186,26 @@ plan: `docs/specs/usage-stats-history-and-filters.md`.
   bucket)`; the oldest surviving raw bucket itself is rebuilt only when the raw table still holds at least
   as many rows for it as the rollup already counted (otherwise earlier rows were pruned and the
   rollup keeps its value; a brand-new history therefore keeps refreshing its first bucket), so buckets whose raw rows were already
-  pruned (by either build) are never rewritten. Deleting a session cascades its raw rows away, so a
-  recent deletion leaves the replace window, while older rolled-up buckets keep that usage. First run has no watermark and backfills the whole surviving raw span from real usage
+  pruned (by either build) are never rewritten. First run has no watermark and backfills the whole surviving raw span from real usage
   facts; nothing is estimated or imported from session snapshots.
+- Permanent session-tree deletion preserves usage in the same SQLite `begin immediate` transaction
+  as content deletion. It first synchronizes raw-backed complete groups, then protects affected
+  model/tool aggregate buckets in place. Existing totals remain the baseline, so partial-prune
+  history is never subtracted or counted a second time. Fork-owned snapshots of current raw
+  model/tool rows in those groups let later repository writes and reads compare before/after row
+  values and apply exact deltas to the protected aggregate. New rows add their full contribution;
+  updated rows apply the field-by-field difference. A raw row disappearing through retention or
+  session deletion never subtracts from the preserved aggregate. Recompute skips protected groups;
+  query refresh notices writes made through another process sharing the SQLite database.
+- Turn aggregates move from `fork_usage_turn` to `fork_usage_detached_turn` with a new random opaque
+  identity and no mapping to the deleted session ID. These rows continue to contribute to exact
+  distinct session counts and longest-session duration, but Top Sessions only selects live sessions.
+  Detached accounting follows the same 2-year bucket retention as the existing rollups.
 - Triggers: debounced (>= 5 min) and deferred with `setImmediate` after usage writes, and before
   every App Usage query so a read never misses rows written just before it (the replace window is
   bounded to 7 days, so this stays cheap). A busy database or a surrounding transaction skips the round.
 - Rollup rows older than 2 years are pruned during recompute.
-- Read path: `queryAppUsage` reads only the rollup. Fallback to the legacy raw query happens when the
+- Read path: `queryAppUsage` reads the rollup and detached turn aggregates. Fallback to the legacy raw query happens when the
   rollup tables are missing, were never computed (no watermark: the first recompute was skipped by a
   busy lock or a surrounding transaction), or the rollup read throws; the result then carries
   `rollupFallbackReason` and the host logs a `warn`. Requests the raw tables cannot answer correctly
@@ -201,8 +220,9 @@ plan: `docs/specs/usage-stats-history-and-filters.md`.
   ignoring the active filters (the host asks for it only on the unfiltered all-time request).
 - Breakdowns: `include.hourly` returns tokens for 168 local weekday x hour cells (15-minute buckets
   never straddle a local hour boundary, including +5:30 / +5:45 zones); `include.sessions` returns the
-  ten busiest sessions by `fork_usage_turn.total_tokens` (sum of `turn_usage.computed_total_tokens`)
-  joined to the live `session` row for the title. `total_tokens` was added after the first rollout;
+  ten busiest live sessions by `fork_usage_turn.total_tokens` (sum of `turn_usage.computed_total_tokens`)
+  joined to the live `session` row for the title. Anonymous detached sessions are excluded.
+  `total_tokens` was added after the first rollout;
   `ensureForkUsageRollupSchema` adds the missing column and resets the watermark so the next recompute
   backfills it for every bucket whose raw rows still exist (older buckets keep 0).
 - Known limitation: raw rows that live and are pruned entirely while no fork build runs are never
@@ -215,6 +235,10 @@ plan: `docs/specs/usage-stats-history-and-filters.md`.
   time zones, including +5:30, +5:45 and -3:30; recompute is idempotent; an upstream-style prune of
   raw rows keeps older rollup buckets; schema ensure is idempotent and records the ledger row.
 - SQLite usage repository upserts model, turn, and tool rows and prunes old rows.
+- Permanent deletion preserves aggregate tokens, errors, tool metrics, day/hour facets, exact
+  distinct session counts and longest-session duration across complete and partially-pruned buckets;
+  recompute, reopen, retention and repeated deletion do not duplicate detached data or expose
+  deleted sessions in Top Sessions.
 - Runtime records main-turn model usage, turn usage, and tool usage.
 - Runtime records non-transcript model calls such as session title generation and compact through
   the same `model_usage` path.

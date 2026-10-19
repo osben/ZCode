@@ -168,6 +168,7 @@ export function spawnHostProcess(
     };
     broadcastHub: BroadcastHub;
     taskRealtimeBus?: TaskRealtimeBus;
+    getOpenWorkspaceInventory?: () => { available: boolean; paths: string[] };
     windowHostProcessMap: Map<number, ElectronUtilityProcess>;
     hostRunningTaskCountMap: Map<ElectronUtilityProcess, number>;
     onWorkspaceRunningTaskCountChanged?: (
@@ -478,6 +479,21 @@ export function spawnHostProcess(
             error: error instanceof Error ? error.message : String(error),
           });
         });
+      return;
+    }
+
+    if (result.data.type === HostResponseTypes.OpenWorkspaceInventoryRequest) {
+      let inventory = { available: false, paths: [] as string[] };
+      try {
+        inventory = dependencies.getOpenWorkspaceInventory?.() ?? inventory;
+      } catch {
+        // Missing all-window inventory must make worktree cleanup retain its target.
+      }
+      child.postMessage({
+        type: HostMessageTypes.OpenWorkspaceInventoryResult,
+        requestId: result.data.requestId,
+        ...inventory,
+      });
       return;
     }
 

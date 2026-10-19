@@ -71,6 +71,7 @@ interface TaskListItemProps {
   onTogglePinTask: (taskId: string, pinned: boolean) => void;
   onStartRenameTask: (taskId: string, currentTitle: string) => void;
   onArchiveTask: (taskId: string) => void;
+  onDeleteTask?: (taskId: string) => void;
   onMarkTaskAsUnread: (taskId: string) => void;
   onOpenTaskContextMenu?: (taskId: string) => void;
   onOpenFileTree?: (task: ZCodeTaskMeta) => void;
@@ -133,6 +134,7 @@ function areTaskListItemPropsEqual(left: TaskListItemProps, right: TaskListItemP
     left.onTogglePinTask === right.onTogglePinTask &&
     left.onStartRenameTask === right.onStartRenameTask &&
     left.onArchiveTask === right.onArchiveTask &&
+    left.onDeleteTask === right.onDeleteTask &&
     left.onMarkTaskAsUnread === right.onMarkTaskAsUnread &&
     left.onOpenTaskContextMenu === right.onOpenTaskContextMenu &&
     left.onOpenFileTree === right.onOpenFileTree
@@ -151,6 +153,7 @@ export const MemoTaskItem = memo(function TaskListItem({
   onCancelArchiveConfirm,
   isArchiveConfirming,
   onTogglePinTask,
+  onDeleteTask,
   onOpenTaskContextMenu,
   onOpenFileTree,
   variant = "default",
@@ -829,6 +832,7 @@ export function TaskListItemContextMenuContent({
   onTogglePinTask,
   onStartRenameTask,
   onArchiveTask,
+  onDeleteTask,
   onMarkTaskAsUnread,
   disableTaskActions = false,
   disabledReason,
@@ -841,6 +845,7 @@ export function TaskListItemContextMenuContent({
   onTogglePinTask: (taskId: string, pinned: boolean) => void;
   onStartRenameTask: (taskId: string, currentTitle: string) => void;
   onArchiveTask: (taskId: string) => void;
+  onDeleteTask?: (taskId: string) => void;
   onMarkTaskAsUnread: (taskId: string) => void;
   disableTaskActions?: boolean;
   disabledReason?: string;
@@ -950,6 +955,12 @@ export function TaskListItemContextMenuContent({
       onArchiveTask={() => {
         onArchiveTask(task.taskId);
       }}
+      onDeleteTask={onDeleteTask ? () => onDeleteTask(task.taskId) : undefined}
+      deleteDisabledReason={
+        task.workspaceIdentity?.trim()
+          ? intl.formatMessage({ id: "taskDelete.remoteUnavailable" })
+          : undefined
+      }
       onMarkTaskAsUnread={() => {
         onMarkTaskAsUnread(task.taskId);
       }}

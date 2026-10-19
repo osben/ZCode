@@ -28,6 +28,18 @@ function setup(options: {
     filesRetainedCount: number;
   } | null;
   count?: (ids: string[]) => ReturnType<typeof counts> | null;
+  taskMetas?: Array<{
+    taskId: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+    deleted: boolean;
+    executionWorktree?: { path: string; branchName?: string };
+  }>;
+  openPaths?: string[];
+  openInventoryFails?: boolean;
+  preparations?: Array<{ targetPath: string; status: "preparing" | "failed" | "cancelled" }>;
+  removeWorktree?: (workspacePath: string, targetPath: string) => { ok: boolean };
+  repoRoots?: Record<string, string>;
 }) {
   const repo = {
     listDeletedTaskIds: vi.fn(async () => options.hidden),
@@ -37,6 +49,7 @@ function setup(options: {
         ([workspacePath, taskIds]) => taskIds.map((taskId) => ({ workspacePath, taskId })),
       ),
     ),
+    listLocalWorktreeOwnerFacts: vi.fn(async () => options.taskMetas ?? []),
   } as unknown as TaskIndexRepo;
   const requireRuntime = (params: { workspacePath: string; runtimePolicy?: string }) => {
     if (
@@ -68,9 +81,43 @@ function setup(options: {
       },
     ),
   } as unknown as IZCodeAgentService;
-  const operations = createTaskEraseOperations({ agent, taskIndexRepo: repo, provider: "glm" });
-  return { operations, agent, repo };
+  const gitService = {
+    resolveWorktreePathIdentities: vi.fn(async ({ paths }: { paths: string[] }) => paths),
+    getRepositorySummary: vi.fn(async ({ workspacePath }: { workspacePath: string }) => ({
+      workspacePath,
+      repoRoot: options.repoRoots?.[workspacePath] ?? "/repo",
+      isRepository: true,
+    })),
+    removeWorktree: vi.fn(
+      async ({ workspacePath, targetPath }: { workspacePath: string; targetPath: string }) =>
+        options.removeWorktree?.(workspacePath, targetPath) ?? { ok: true },
+    ),
+  };
+  const taskIndexSyncer = {
+    listWorktreePreparations: vi.fn(async () => options.preparations ?? []),
+  };
+  const operations = createTaskEraseOperations({
+    agent,
+    taskIndexRepo: repo,
+    provider: "glm",
+    gitService: gitService as never,
+    getOpenWorkspacePaths: async () => {
+      if (options.openInventoryFails) throw new Error("inventory unavailable");
+      return options.openPaths ?? [];
+    },
+    taskIndexSyncer: taskIndexSyncer as never,
+  });
+  return { operations, agent, repo, gitService };
 }
+
+const emptyWorktreeCleanup = {
+  removed: [],
+  retained: [],
+  failed: [],
+  removedCount: 0,
+  retainedCount: 0,
+  failedCount: 0,
+};
 
 const workspace = { workspacePath: "/work/a" };
 
@@ -85,6 +132,7 @@ describe("createTaskEraseOperations", () => {
       failedTaskIds: [],
       fileFailureCount: 0,
       filesRetainedCount: 0,
+      worktreeCleanup: emptyWorktreeCleanup,
     });
     expect(agent.eraseSessionTrees).toHaveBeenCalledTimes(1);
     expect(agent.eraseSessionTrees).toHaveBeenCalledWith({
@@ -104,6 +152,26 @@ describe("createTaskEraseOperations", () => {
     ).resolves.toBeNull();
     expect(agent.eraseSessionTrees).not.toHaveBeenCalled();
     expect(agent.countSessionTrees).not.toHaveBeenCalled();
+    await expect(
+      operations.getDeletionCapability({ ...workspace, workspaceIdentity: "ssh://host" }),
+    ).resolves.toEqual({
+      supported: false,
+    });
+  });
+
+  it("probes peer support instead of treating method presence as capability", async () => {
+    const { operations, agent } = setup({ hidden: [] });
+    await expect(operations.getDeletionCapability(workspace)).resolves.toEqual({ supported: true });
+    expect(agent.countSessionTrees).toHaveBeenCalledWith({
+      workspacePath: workspace.workspacePath,
+      sessionIds: ["__zcode_deletion_capability_probe__"],
+      runtimePolicy: "start-if-needed",
+    });
+
+    vi.mocked(agent.countSessionTrees!).mockResolvedValueOnce(null);
+    await expect(operations.getDeletionCapability(workspace)).resolves.toEqual({
+      supported: false,
+    });
   });
 
   it("retries root by root when a running session blocks the chunk", async () => {
@@ -153,7 +221,10 @@ describe("createTaskEraseOperations", () => {
       hidden: ["t1", "t2"],
       count: (ids) => counts(ids.length + 3),
     });
-    await expect(operations.countHiddenTaskContent()).resolves.toEqual({ sessions: 5 });
+    await expect(operations.countHiddenTaskContent()).resolves.toEqual({
+      sessions: 5,
+      worktrees: 0,
+    });
     const result = await operations.eraseHiddenTaskContent();
     expect(result).toMatchObject({ erasedTaskIds: ["t1", "t2"], failedTaskIds: [] });
     expect(agent.eraseSessionTrees).toHaveBeenCalledWith({
@@ -178,7 +249,10 @@ describe("createTaskEraseOperations", () => {
       hiddenByWorkspace: { "/work/a": ["a1"], "/work/b": ["b1", "b2"], "/work/gone": ["g1"] },
       runtimes: ["/work/b"],
     });
-    await expect(operations.countHiddenTaskContent()).resolves.toEqual({ sessions: 4 });
+    await expect(operations.countHiddenTaskContent()).resolves.toEqual({
+      sessions: 4,
+      worktrees: 0,
+    });
     const calls = vi.mocked(agent.countSessionTrees!).mock.calls.map(([params]) => params);
     // /work/a has no runtime (existing-only rejects), /work/b has one and answers for every id.
     expect(calls.map((params) => params.workspacePath)).toEqual(["/work/a", "/work/b"]);
@@ -192,7 +266,10 @@ describe("createTaskEraseOperations", () => {
       hiddenByWorkspace: { "/work/a": ["a1"], "/work/gone": ["g1"] },
       runtimes: [],
     });
-    await expect(operations.countHiddenTaskContent()).resolves.toEqual({ sessions: 2 });
+    await expect(operations.countHiddenTaskContent()).resolves.toEqual({
+      sessions: 2,
+      worktrees: 0,
+    });
     const started = vi
       .mocked(agent.countSessionTrees!)
       .mock.calls.filter(([params]) => params.runtimePolicy !== "existing-only");
@@ -284,5 +361,151 @@ describe("createTaskEraseOperations", () => {
     });
     const result = await operations.eraseTasks({ ...workspace, taskIds: ["t1", "t2"] });
     expect(result).toMatchObject({ erasedTaskIds: ["t1"], failedTaskIds: ["t2"] });
+  });
+
+  it("removes a deleted task's registered execution worktree after its content is erased", async () => {
+    const { operations, gitService } = setup({
+      hidden: ["t1"],
+      count: () => counts(0),
+      taskMetas: [
+        {
+          taskId: "t1",
+          workspacePath: "/repo",
+          deleted: true,
+          executionWorktree: { path: "/repo/.worktrees/task-1", branchName: "task-1" },
+        },
+      ],
+    });
+    const result = await operations.eraseTasks({ ...workspace, taskIds: ["t1"] });
+    expect(result?.worktreeCleanup).toEqual({
+      removed: ["/repo/.worktrees/task-1"],
+      retained: [],
+      failed: [],
+      removedCount: 1,
+      retainedCount: 0,
+      failedCount: 0,
+    });
+    expect(gitService.removeWorktree).toHaveBeenCalledWith({
+      workspacePath: "/repo",
+      targetPath: "/repo/.worktrees/task-1",
+      force: true,
+    });
+  });
+
+  it.each([
+    [
+      "surviving archived task",
+      {
+        taskId: "owner",
+        workspacePath: "/repo",
+        deleted: false,
+        executionWorktree: { path: "/repo/.worktrees/shared" },
+      },
+    ],
+    ["noncancelled preparation", null],
+  ])("retains a shared worktree with a %s", async (label, survivingTask) => {
+    const taskMetas = [
+      {
+        taskId: "deleted",
+        workspacePath: "/repo",
+        deleted: true,
+        executionWorktree: { path: "/repo/.worktrees/shared" },
+      },
+      ...(survivingTask ? [survivingTask] : []),
+    ];
+    const { operations, gitService } = setup({
+      hidden: ["deleted"],
+      taskMetas,
+      preparations:
+        label === "noncancelled preparation"
+          ? [{ targetPath: "/repo/.worktrees/shared", status: "preparing" }]
+          : [],
+    });
+    const result = await operations.eraseTasks({ ...workspace, taskIds: ["deleted"] });
+    expect(result?.worktreeCleanup.retained).toHaveLength(1);
+    expect(gitService.removeWorktree).not.toHaveBeenCalled();
+  });
+
+  it("retains a target open in another window and fails closed when the inventory is unavailable", async () => {
+    const facts = [
+      {
+        taskId: "deleted",
+        workspacePath: "/repo",
+        deleted: true,
+        executionWorktree: { path: "/repo/.worktrees/task-1" },
+      },
+    ];
+    const open = setup({
+      hidden: ["deleted"],
+      taskMetas: facts,
+      openPaths: ["/repo/.worktrees/task-1"],
+    });
+    expect(
+      (await open.operations.eraseTasks({ ...workspace, taskIds: ["deleted"] }))?.worktreeCleanup
+        .retained,
+    ).toHaveLength(1);
+    expect(open.gitService.removeWorktree).not.toHaveBeenCalled();
+
+    const unavailable = setup({ hidden: ["deleted"], taskMetas: facts, openInventoryFails: true });
+    const result = await unavailable.operations.eraseTasks({ ...workspace, taskIds: ["deleted"] });
+    expect(result?.worktreeCleanup.retained).toHaveLength(1);
+    expect(unavailable.gitService.removeWorktree).not.toHaveBeenCalled();
+  });
+
+  it("protects a surviving branch owner in the same repository but ignores equal names elsewhere", async () => {
+    const candidate = {
+      taskId: "deleted",
+      workspacePath: "/repo",
+      deleted: true,
+      executionWorktree: { path: "/repo/.worktrees/deleted", branchName: "feature/shared" },
+    };
+    const owner = {
+      taskId: "survivor",
+      workspacePath: "/repo/.worktrees/other",
+      deleted: false,
+      executionWorktree: { path: "/repo/.worktrees/other", branchName: "feature/shared" },
+    };
+    const sameRepo = setup({
+      hidden: ["deleted"],
+      count: () => counts(0),
+      taskMetas: [candidate, owner],
+    });
+    const retained = await sameRepo.operations.eraseTasks({ ...workspace, taskIds: ["deleted"] });
+    expect(retained?.worktreeCleanup.retained).toHaveLength(1);
+    expect(sameRepo.gitService.removeWorktree).not.toHaveBeenCalled();
+
+    const otherRepo = setup({
+      hidden: ["deleted"],
+      count: () => counts(0),
+      taskMetas: [
+        candidate,
+        {
+          ...owner,
+          workspacePath: "/other",
+          executionWorktree: { path: "/other/worktrees/other", branchName: "feature/shared" },
+        },
+      ],
+      repoRoots: { "/other": "/other" },
+    });
+    const removed = await otherRepo.operations.eraseTasks({ ...workspace, taskIds: ["deleted"] });
+    expect(removed?.worktreeCleanup.removed).toEqual(["/repo/.worktrees/deleted"]);
+  });
+
+  it("retries worktree-only maintenance after the session row is already gone", async () => {
+    const { operations, gitService } = setup({
+      hidden: ["t1"],
+      count: () => counts(0),
+      taskMetas: [
+        {
+          taskId: "t1",
+          workspacePath: "/repo",
+          deleted: true,
+          executionWorktree: { path: "/repo/.worktrees/t1" },
+        },
+      ],
+    });
+    const result = await operations.eraseHiddenTaskContent();
+    expect(result?.worktreeCleanup.removed).toEqual(["/repo/.worktrees/t1"]);
+    expect(gitService.removeWorktree).toHaveBeenCalledOnce();
   });
 });

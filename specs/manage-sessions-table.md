@@ -113,7 +113,7 @@ Context menu on the row / `⋯` button:
 - **Copy path** — workspace path copy idiom.
 - _separator_
 - **Archive** / **Restore** (archived rows) — `archiveTask` / `unarchiveTask`; reversible, no confirmation.
-- **Delete** — destructive, always confirmed via the §8 dialog (single-row preselection). Semantics (review-corrected): non-archived row → `deleteTask` = **index tombstone** (row hidden; CLI session content retained on disk); archived row → `deleteArchivedTask` = the same **index tombstone** (`deleted = 1`, not a row removal — `taskIndexRepo.ts` `deleteArchivedTask`; CLI session content still retained — `zcodeTaskService.ts:748-757`). Permanent removal is specified in `specs/session-deletion-cascade.md`. Neither path deletes files in v1.
+- **Delete** — destructive and always confirmed via the §8 dialog. The existing task mutation first persists an internal tombstone, then permanently erases the conversation tree and removes eligible execution worktree folders. Branches and aggregate usage remain. Full ownership, running guards, remote gating and partial-result semantics are specified in `specs/session-deletion-cascade.md`. There is no optional erase checkbox.
 
 ### 8. Bulk selection
 
@@ -121,10 +121,10 @@ Context menu on the row / `⋯` button:
 - With ≥1 selected, a floating bulk bar (`bg-card border border-border rounded-lg shadow-lg`, bottom-center) shows: "N selected" · **Archive** · **Delete** · clear (✕).
 - **Bulk Archive**: no confirmation (reversible). Loops `archiveTask`; partial failures surface one error toast and keep the bar.
 - **Bulk Delete**: always opens the confirm dialog (Copilot `BulkDeleteSessionsDialog` parity — verified in its bundle: `bulk-delete.includePinned` flag, "Include N pinned session(s)" checkbox, pinned excluded by default):
-  - Title "Delete N sessions?"; body states the corrected rule: "Sessions are removed from this list. Session files stay on disk."
+  - Title "Delete N sessions?"; body explains permanent conversation-tree deletion, eligible worktree cleanup, retained Git branches and aggregate usage. Child counts and dirty-file previews follow the shared deletion spec.
   - Compact list of up to 5 selected rows (icon: star when pinned / git-branch when worktree / message-square otherwise) + "+N more".
   - Pinned rows in the selection: checkbox "Include N pinned session(s)", **unchecked by default**; confirming with it unchecked deletes only the non-pinned subset (counts update). Pinned rows cannot be deleted without the explicit opt-in.
-  - Execution (review-corrected): non-archived rows → loop `deleteTask` (no plural tombstone op exists; per-task failures are collected); archived rows → `deleteArchivedTasks` batch per workspace (its still-archived guard makes it race-safe: rows restored elsewhere are skipped and reported, `zcodeTaskService.ts:752-757`). Partial failures surface one error toast naming the count; the dialog closes and the table reflects whatever succeeded.
+  - Execution (review-corrected): non-archived rows → loop `deleteTask` (no plural tombstone op exists; per-task failures are collected); archived rows → `deleteArchivedTasks` batch per workspace (its still-archived guard makes it race-safe: rows restored elsewhere are skipped and reported, `zcodeTaskService.ts:752-757`). Successfully tombstoned rows then pass through the shared permanent erase and worktree-cleanup flow. Known running trees block before the mutation; late failures are reported by category and remain retryable. Remote/read-only/unsupported selections cannot silently fall back to hiding. The table reflects persisted tombstones.
   - Confirm button label "Delete K" (K = rows actually deleted), destructive styling.
 
 ### 9. i18n

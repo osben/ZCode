@@ -337,6 +337,9 @@ export const TID_TASK_EMPTY = "task-empty";
 export const TID_TASK_ARCHIVE = "task-archive";
 /** Settings entry button below the task list. */
 export const TID_TASK_SETTINGS_BUTTON = "task-settings-button";
+export const TID_TASK_DELETE = "task-delete";
+export const TID_TASK_DELETE_DIALOG = "task-delete-dialog";
+export const TID_TASK_DELETE_CONFIRM = "task-delete-confirm";
 
 // Settings
 /** Settings page container. */

@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { TID_CONFIRM_DIALOG_CONFIRM } from "@zcode/shared";
+import { TID_TASK_DELETE_CONFIRM } from "@zcode/shared";
 import {
   DEFAULT_WORKSPACE,
   clearAppData,
@@ -19,7 +19,7 @@ describe("TSL39：一键删除全部归档任务", () => {
     await clearAppData();
   });
 
-  it("取消不写入，确认删除全部 25 条并保留普通任务和 CLI 会话", async function () {
+  it("取消不写入，确认永久删除全部 25 条并保留普通任务", async function () {
     this.timeout(120_000);
     await waitForWorkspaceApp(DEFAULT_WORKSPACE, 45_000);
     const original = readCounts();
@@ -66,7 +66,7 @@ describe("TSL39：一键删除全部归档任务", () => {
     await $(`[data-testid="${DELETE_ALL}"]`).waitForDisplayed();
     await $(`[data-testid="${DELETE_ALL}"]`).click();
     await browser.waitUntil(async () => (await $("[role='dialog']").getText()).includes("25"));
-    await clickTestIdByDom(TID_CONFIRM_DIALOG_CONFIRM, { timeout: 15_000 });
+    await clickTestIdByDom(TID_TASK_DELETE_CONFIRM, { timeout: 15_000 });
     await browser.waitUntil(() => readCounts().archived === 0, { timeout: 30_000 });
     await browser.waitUntil(
       async () => !(await $(`[data-testid="${ARCHIVED_ACTIONS}"]`).isEnabled()),
@@ -75,7 +75,7 @@ describe("TSL39：一键删除全部归档任务", () => {
       },
     );
     expect(readCounts()).toEqual({ ...original, archived: 0, deleted: 25 });
-    expect(readCliSessionCount()).toBe(1);
+    expect(readCliSessionCount()).toBe(0);
     expect(await $("body").getText()).toMatch(/暂无归档任务|No archived tasks/);
     await browser.saveScreenshot(
       join(process.cwd(), ".e2e-artifacts", "delete-all-archived-tasks.png"),

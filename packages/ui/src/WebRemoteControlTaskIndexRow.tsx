@@ -1,6 +1,7 @@
 import { Archive, ArchiveX, CloudDownload, LoaderIcon, Pin, Trash2 } from "lucide-react";
 import {
   TID_TASK_ARCHIVE,
+  TID_TASK_DELETE,
   TID_TASK_ITEM,
   resolveWebRemoteControlWorkspaceKey,
   testId,
@@ -27,7 +28,6 @@ export function WebRemoteControlTaskIndexRow({
   intl,
   mutatingTaskKey,
   onArchiveTask,
-  onDeleteArchivedTask,
   onOpenTask,
   onToggleTaskPin,
   onUnarchiveTask,
@@ -43,7 +43,6 @@ export function WebRemoteControlTaskIndexRow({
   intl: WebRemoteControlTaskIndexRowIntl;
   mutatingTaskKey: string | null;
   onArchiveTask: (event: ReactMouseEvent, task: WebRemoteControlTaskTarget) => void;
-  onDeleteArchivedTask: (event: ReactMouseEvent, task: WebRemoteControlTaskTarget) => void;
   onOpenTask: (task: WebRemoteControlTaskTarget) => void;
   onToggleTaskPin: (event: ReactMouseEvent, task: WebRemoteControlTaskTarget) => void;
   onUnarchiveTask: (event: ReactMouseEvent, task: WebRemoteControlTaskTarget) => void;
@@ -63,7 +62,7 @@ export function WebRemoteControlTaskIndexRow({
   const canPinTask = canMutateTask && !task.archived;
   const canArchiveTask = canMutateTask && !task.archived;
   const canUnarchiveTask = canMutateTask && Boolean(task.archived);
-  const canDeleteArchivedTask = canMutateTask && Boolean(task.archived);
+  const canDeleteArchivedTask = Boolean(task.archived);
   const showPinnedState = Boolean(task.pinned && !task.archived);
   const rowDisabled = Boolean(switchingTaskKey);
   // Bugfix: the wide-screen Web remote task row's open button covers the whole row body; pure CSS
@@ -84,7 +83,7 @@ export function WebRemoteControlTaskIndexRow({
     id: isArchiveConfirming ? "common.confirm" : "taskList.archive",
   });
   const unarchiveLabel = intl.formatMessage({ id: "taskList.unarchive" });
-  const deleteLabel = intl.formatMessage({ id: "taskList.delete" });
+  const deleteLabel = intl.formatMessage({ id: "taskDelete.remoteUnavailable" });
   const isRemoteTask = Boolean(task.workspaceIdentity?.trim() || task.workspaceKind === "remote");
   const handleMouseEnter = useCallback(() => {
     setHoverActionsVisible(true);
@@ -256,21 +255,19 @@ export function WebRemoteControlTaskIndexRow({
           ) : null}
           {canDeleteArchivedTask ? (
             <ControlHintTooltip title={deleteLabel} side="right" align="center">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                disabled={rowDisabled || isMutating}
-                onMouseDown={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                }}
-                onClick={(event) => onDeleteArchivedTask(event, task)}
-                className="shrink-0 text-destructive hover:text-destructive"
-                aria-label={deleteLabel}
-              >
-                <Trash2 className="size-3.5" />
-              </Button>
+              <span className="inline-flex shrink-0">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  disabled
+                  data-testid={testId(TID_TASK_DELETE, task.taskId)}
+                  className="shrink-0 text-foreground-subtlest"
+                  aria-label={deleteLabel}
+                >
+                  <Trash2 className="size-3.5" />
+                </Button>
+              </span>
             </ControlHintTooltip>
           ) : null}
         </>

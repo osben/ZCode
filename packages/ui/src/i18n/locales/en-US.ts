@@ -1,6 +1,52 @@
 import { requestSecurityMessagesEnUS } from "@/request-security-edition/messages.js";
 /** English translations */
 const enUS: Record<string, string> = {
+  "taskDelete.reasonUnavailable": "Safety information unavailable",
+  "taskDelete.reasonContent": "Session content remains",
+  "taskDelete.reasonInUse": "Still in use",
+  "taskDelete.reasonFailed": "Cleanup failed",
+
+  "taskDelete.body":
+    "Permanently delete these conversations and their attached sessions. Eligible execution worktree folders will also be removed. This cannot be undone.",
+  "taskDelete.includes": "Includes {items}.",
+  "taskDelete.includesGeneric":
+    "This may also include attached side chats, subagents and workflow sessions.",
+  "taskDelete.worktreeUnknown":
+    "Worktree changes could not be checked. Removing a worktree permanently discards its uncommitted files.",
+  "taskDelete.retainedNotice":
+    "Git branches and aggregate usage statistics are preserved. Worktrees still in use will be retained.",
+  "taskDelete.unsupported": "Permanent deletion is unavailable for this selection.",
+  "taskDelete.remoteUnavailable": "Delete is available only in the local desktop app.",
+  "taskDelete.tagActive": "Active",
+  "taskDelete.tagArchived": "Archived",
+  "taskDelete.error": "Deletion failed. Check the result and retry from Sessions settings.",
+  "taskDelete.result":
+    "Sessions deleted: {erased}; skipped: {skipped}; running: {running}; unsupported: {unsupported}; failed: {failed}.",
+  "taskDelete.sessionFileFailures": "Session directory cleanup failures: {count}.",
+  "taskDelete.filesRetained": "Session directories retained: {count}.",
+  "taskDelete.worktreeRemoved": "Worktrees removed: {paths}",
+  "taskDelete.worktreeRetained": "Worktrees retained: {paths}",
+  "taskDelete.worktreeFailed": "Worktree cleanup failed: {paths}",
+  "taskDelete.title.one": "Delete {count} session?",
+  "taskDelete.title.other": "Delete {count} sessions?",
+  "taskDelete.confirm.one": "Delete {count}",
+  "taskDelete.confirm.other": "Delete {count}",
+  "taskDelete.deleteAnyway.one": "Delete anyway",
+  "taskDelete.deleteAnyway.other": "Delete anyway",
+  "taskDelete.more.one": "{count} more",
+  "taskDelete.more.other": "{count} more",
+  "taskDelete.includePinned.one": "Include {count} pinned session",
+  "taskDelete.includePinned.other": "Include {count} pinned sessions",
+  "taskDelete.running.one": "Stop {count} running session before deleting.",
+  "taskDelete.running.other": "Stop {count} running sessions before deleting.",
+  "taskDelete.dirtyWarning.one":
+    "Uncommitted changes in {count} worktree will be permanently discarded if its folder is removed.",
+  "taskDelete.dirtyWarning.other":
+    "Uncommitted changes in {count} worktrees will be permanently discarded if their folders are removed.",
+  "taskDelete.worktreeMore.one": "{count} more file",
+  "taskDelete.worktreeMore.other": "{count} more files",
+  "sessionManager.hidden.worktrees": "Pending worktree cleanup: {count}",
+
   "sessionManager.openUnavailable":
     "The session workspace is unavailable. Reconnect or open the project and retry.",
   "sessionManager.pinnedArchived": "Pinned does not filter archived sessions.",
@@ -8344,19 +8390,19 @@ const enUS: Record<string, string> = {
   "sessionManager.erase.blocked.one": "Stop {count} running session before erasing.",
   "sessionManager.erase.blocked.other": "Stop {count} running sessions before erasing.",
   "sessionManager.erase.confirm": "Erase {count}",
-  "sessionManager.erase.result": "Erased {erased}. Kept hidden: {kept}.",
-  "sessionManager.erase.unsupported": "Permanent erase isn't available here.",
+  "sessionManager.erase.result": "Deleted {erased}. Retained for retry: {kept}.",
+  "sessionManager.erase.unsupported": "Permanent deletion is unavailable here.",
   "sessionManager.erase.filesFailed":
-    "Some session folders could not be removed. Those sessions stay hidden; erase again to retry.",
+    "Some session directories could not be deleted. Retry from Sessions settings.",
   "sessionManager.hidden.count.one": "{count} hidden session is still stored on disk.",
   "sessionManager.hidden.count.other": "{count} hidden sessions are still stored on disk.",
-  "sessionManager.hidden.erase": "Erase hidden sessions",
-  "sessionManager.hidden.confirmTitle": "Erase all hidden sessions?",
+  "sessionManager.hidden.erase": "Delete previously hidden sessions",
+  "sessionManager.hidden.confirmTitle": "Delete previously hidden sessions?",
   "sessionManager.hidden.confirmBody.one":
-    "This permanently erases {count} stored session, including side chats and subagents, and can't be undone. Tool output and cache files may remain on disk.",
+    "Permanently delete {count} stored session and eligible worktree folders. Uncommitted worktree changes will be discarded. Git branches and aggregate usage remain.",
   "sessionManager.hidden.confirmBody.other":
-    "This permanently erases {count} stored sessions, including side chats and subagents, and can't be undone. Tool output and cache files may remain on disk.",
-  "sessionManager.hidden.confirm": "Erase",
+    "Permanently delete {count} stored sessions and eligible worktree folders. Uncommitted worktree changes will be discarded. Git branches and aggregate usage remain.",
+  "sessionManager.hidden.confirm": "Delete permanently",
   "sessionManager.delete.partialFailure": "Deleted {succeeded}, failed: {failed}",
   "sessionManager.mutationFailed": "Action failed. Please try again.",
   "sessionManager.bulk.ariaLabel": "Bulk actions",
