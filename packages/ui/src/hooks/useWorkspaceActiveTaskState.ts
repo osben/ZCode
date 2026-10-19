@@ -1,4 +1,5 @@
 import { useMemo, useRef } from "react";
+import { useShallow } from "zustand/react/shallow";
 import type { ZCodeProvider, ZCodeTaskMeta } from "@zcode/shared";
 import { useActiveTaskSnapshotMeta } from "@/hooks/useActiveTaskSnapshotMeta.js";
 import { useTaskNativeSessionLogFile } from "@/hooks/useTaskNativeSessionLogFile.js";
@@ -93,8 +94,17 @@ export function useWorkspaceActiveTaskState({
   selectedProvider,
   intl,
 }: UseWorkspaceActiveTaskStateParams) {
-  const workspaceState = useZCodeSessionStore((state) =>
-    selectWorkspaceZCodeState(state, workspaceAbsPath, workspaceIdentity),
+  // Subscribe to the active task's meta only. App calls this hook, and a whole-bucket subscription re-rendered App
+  // on every runtime/usage write. getTaskMeta may merge into a fresh object, so useShallow keeps the result stable.
+  const activeTaskMetaFromStore = useZCodeSessionStore(
+    useShallow((state) =>
+      activeTaskId
+        ? getTaskMeta(
+            selectWorkspaceZCodeState(state, workspaceAbsPath, workspaceIdentity),
+            activeTaskId,
+          )
+        : null,
+    ),
   );
   const activeTaskQueryMeta = useTaskQueryCacheStore((state) => {
     if (!activeTaskId) {
@@ -124,11 +134,8 @@ export function useWorkspaceActiveTaskState({
     // query cache, which may still contain a manually overridden title. The Header must merge both
     // using the same title authority; otherwise the current task can appear to revert to a generated
     // title or its first query.
-    return (
-      mergeTaskMetaCandidates(getTaskMeta(workspaceState, activeTaskId), activeTaskQueryMeta) ??
-      null
-    );
-  }, [activeTaskId, activeTaskQueryMeta, workspaceState]);
+    return mergeTaskMetaCandidates(activeTaskMetaFromStore, activeTaskQueryMeta) ?? null;
+  }, [activeTaskId, activeTaskQueryMeta, activeTaskMetaFromStore]);
 
   const activeTaskSnapshotMeta = useActiveTaskSnapshotMeta(
     workspaceAbsPath,

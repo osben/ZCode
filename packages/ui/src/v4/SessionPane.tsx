@@ -252,6 +252,7 @@ import {
   buildWorkflowGraphByToolCallId,
 } from "@/v4/workflowRunCardJoin.js";
 import { buildWorkflowDraftByToolCallId } from "@/v4/workflowDraftJoin.js";
+import { useStructurallySharedMemo } from "@/v4/useStructurallySharedMemo.js";
 import {
   WORKFLOW_RUN_DIRECTORY_LIMIT,
   countEndedWorkflowRuns,
@@ -2573,27 +2574,27 @@ export function SessionPane({
   );
   // Initiating toolCallId to static graph: the graph belongs to the run, and all three sources of end-of-turn run cards use this table.
   // Build it once per row window and rebuild it when the window changes.
-  const workflowGraphByToolCallId = useMemo(
-    () => buildWorkflowGraphByToolCallId(snapshot?.rows.window),
-    [snapshot?.rows.window],
+  const workflowGraphByToolCallId = useStructurallySharedMemo(
+    buildWorkflowGraphByToolCallId,
+    snapshot?.rows.window,
   );
   // runId → latest completed valid script graph (docs/dynamic-workflow/presentation.md, “Holes on the timeline”):
   // run cards and the side pane use it after completion. Built once per row window and rebuilt with the window.
-  const workflowFillGraphByRunId = useMemo(
-    () => buildWorkflowFillGraphByRunId(snapshot?.rows.window),
-    [snapshot?.rows.window],
+  const workflowFillGraphByRunId = useStructurallySharedMemo(
+    buildWorkflowFillGraphByRunId,
+    snapshot?.rows.window,
   );
   // Workflow tool row to draft position: both the draft number and whether a newer draft follows
   // can be determined only from row order. Build this once per row window and rebuild it when the window changes.
-  const workflowDraftByToolCallId = useMemo(
-    () => buildWorkflowDraftByToolCallId(snapshot?.rows.window),
-    [snapshot?.rows.window],
+  const workflowDraftByToolCallId = useStructurallySharedMemo(
+    buildWorkflowDraftByToolCallId,
+    snapshot?.rows.window,
   );
   // runId → SaveWorkflow candidate claimed by the transcript (docs/dynamic-workflow/transcript-and-notifications.md,
   // “Which workflow a run is saved as”, rule 1). Built once per row window and rebuilt with the window.
-  const workflowSaveCandidatesByRunId = useMemo(
-    () => buildWorkflowSaveCandidatesByRunId(snapshot?.rows.window),
-    [snapshot?.rows.window],
+  const workflowSaveCandidatesByRunId = useStructurallySharedMemo(
+    buildWorkflowSaveCandidatesByRunId,
+    snapshot?.rows.window,
   );
   // Join table for Workflow notification manifest upgrade entries from Waiting to Answered (runId to parked question IDs).
   const workflowRunPendingQuestionsByRunId = useMemo(
