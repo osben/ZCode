@@ -2772,10 +2772,16 @@ export function createZCodeTaskServiceAdapter(
         ...(params.executionWorktreeFacts
           ? { executionWorktreeFacts: params.executionWorktreeFacts }
           : {}),
-        // Incognito overlays converge into meta_json (specs/incognito-session.md "Sidebar marker durability").
-        ...(params.incognitoTaskIds ? { incognitoTaskIds: params.incognitoTaskIds } : {}),
       });
       return tasks.map(rememberIndexedTaskMeta);
+    },
+
+    async persistIncognitoMarkers(params): Promise<string[]> {
+      return taskIndexRepo.persistIncognitoMarkers({
+        workspacePath: params.workspacePath,
+        workspaceIdentity: params.workspaceIdentity,
+        taskIds: params.taskIds,
+      });
     },
 
     async listPinnedTaskIds(): Promise<string[]> {

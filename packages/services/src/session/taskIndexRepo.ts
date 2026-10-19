@@ -53,6 +53,13 @@ function appendZCodeAgentIndexedProviderFilter(
   args.push(provider);
 }
 type DatabaseSyncInstance = InstanceType<typeof DatabaseSync>;
+
+/** One task row's meta_json convergence: see TaskIndexRepo.convergeTaskMetas. */
+type TaskMetaConvergence = {
+  taskId: string;
+  converged: (meta: Record<string, unknown>) => boolean;
+  patch: (meta: Record<string, unknown>) => Record<string, unknown>;
+};
 type SQLInputValue = import("node:sqlite").SQLInputValue;
 
 interface TaskIndexRow {
@@ -2055,11 +2062,6 @@ export class TaskIndexRepo {
       taskId: string;
       executionWorktree: ZCodeExecutionWorktree;
     }>;
-    /**
-     * Host sessions-index convergence input (specs/incognito-session.md "Sidebar marker durability"): task ids
-     * whose live overlay is incognito. Persists `incognito: true` into meta_json; never clears it.
-     */
-    incognitoTaskIds?: ReadonlyArray<string>;
   }): Promise<ZCodeTaskMeta[]> {
     await this.ensureReady();
     if (params.workspacePath && params.executionWorktreeFacts?.length) {
@@ -2069,15 +2071,6 @@ export class TaskIndexRepo {
           ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
         },
         params.executionWorktreeFacts,
-      );
-    }
-    if (params.workspacePath && params.incognitoTaskIds?.length) {
-      await this.applyIncognitoFacts(
-        {
-          workspacePath: params.workspacePath,
-          ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
-        },
-        params.incognitoTaskIds,
       );
     }
     // listTaskMetas supports querying all tasks when workspacePath is omitted, but workspaceKey requires a path.
@@ -2187,65 +2180,6 @@ export class TaskIndexRepo {
    * entry (draft sessions) and rows whose meta_json cannot be parsed are skipped: convergence must never
    * rewrite or replace data it does not understand.
    */
-  /**
-   * Converge incognito overlays into meta_json (specs/incognito-session.md "Sidebar marker durability").
-   * The profile is frozen per session, so a stored `true` never goes stale: the write only ever adds the
-   * marker. Rows that already carry it, are deleted, or hold unreadable meta_json are left untouched.
-   */
-  private async applyIncognitoFacts(
-    scope: { workspacePath: string; workspaceIdentity?: string },
-    taskIds: ReadonlyArray<string>,
-  ): Promise<void> {
-    await Promise.all(
-      taskIds.map((taskId) =>
-        this.enqueueWrite({ ...scope, taskId }, () => {
-          // Read-only fast path: skip the write lock when the marker is already stored.
-          const peek = this.getTaskRow({ ...scope, taskId });
-          if (!peek || peek.deleted === 1) return;
-          try {
-            if (
-              (JSON.parse(peek.meta_json) as { incognito?: boolean } | null)?.incognito === true
-            ) {
-              return;
-            }
-          } catch {
-            return;
-          }
-          // BEGIN IMMEDIATE before re-reading, the same pattern as applyExecutionWorktreeFacts.
-          const database = this.getDatabase();
-          database.exec("BEGIN IMMEDIATE");
-          try {
-            const row = this.getTaskRow({ ...scope, taskId });
-            if (!row || row.deleted === 1) {
-              database.exec("COMMIT");
-              return;
-            }
-            let parsed: unknown;
-            try {
-              parsed = JSON.parse(row.meta_json);
-            } catch {
-              database.exec("COMMIT");
-              return;
-            }
-            if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-              database.exec("COMMIT");
-              return;
-            }
-            if ((parsed as { incognito?: boolean }).incognito !== true) {
-              database
-                .prepare("UPDATE tasks SET meta_json = ? WHERE workspace_key = ? AND task_id = ?")
-                .run(JSON.stringify({ ...parsed, incognito: true }), workspaceKey(scope), taskId);
-            }
-            database.exec("COMMIT");
-          } catch (error) {
-            database.exec("ROLLBACK");
-            throw error;
-          }
-        }),
-      ),
-    );
-  }
-
   private async applyExecutionWorktreeFacts(
     scope: { workspacePath: string; workspaceIdentity?: string },
     facts: ReadonlyArray<{ taskId: string; executionWorktree: ZCodeExecutionWorktree }>,
@@ -2253,70 +2187,115 @@ export class TaskIndexRepo {
     await Promise.all(
       facts.map((fact) =>
         this.enqueueWrite({ ...scope, taskId: fact.taskId }, () => {
-          // enqueueWrite only serializes writers inside this process; another Host sharing the database can
-          // update the row between the read and the UPDATE. BEGIN IMMEDIATE takes the write lock before the
-          // read so meta_json is never replaced with a stale copy (same pattern as deleteArchivedTask).
-          const database = this.getDatabase();
-          // Read-only fast path: when the stored fact already matches (or the row is absent/unreadable),
-          // skip the write lock entirely so repeated publishes never contend with other Hosts.
-          const peek = this.getTaskRow({ ...scope, taskId: fact.taskId });
-          if (!peek || peek.deleted === 1) return;
-          try {
-            const stored = (
-              JSON.parse(peek.meta_json) as { executionWorktree?: ZCodeExecutionWorktree } | null
-            )?.executionWorktree;
-            if (
-              stored?.path === fact.executionWorktree.path &&
-              stored?.branchName === fact.executionWorktree.branchName
-            ) {
-              return;
-            }
-          } catch {
-            return;
-          }
-          database.exec("BEGIN IMMEDIATE");
-          try {
-            const row = this.getTaskRow({ ...scope, taskId: fact.taskId });
-            if (!row || row.deleted === 1) {
-              database.exec("COMMIT");
-              return;
-            }
-            let parsed: unknown;
-            try {
-              parsed = JSON.parse(row.meta_json);
-            } catch {
-              database.exec("COMMIT");
-              return;
-            }
-            if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-              database.exec("COMMIT");
-              return;
-            }
-            const existing = (parsed as { executionWorktree?: ZCodeExecutionWorktree })
-              .executionWorktree;
-            if (
-              existing?.path !== fact.executionWorktree.path ||
-              existing?.branchName !== fact.executionWorktree.branchName
-            ) {
-              database
-                .prepare("UPDATE tasks SET meta_json = ? WHERE workspace_key = ? AND task_id = ?")
-                .run(
-                  JSON.stringify({
-                    ...parsed,
-                    executionWorktree: fact.executionWorktree,
-                  }),
-                  workspaceKey(scope),
-                  fact.taskId,
+          this.convergeTaskMetas(scope, [
+            {
+              taskId: fact.taskId,
+              converged: (meta) => {
+                const stored = meta.executionWorktree as ZCodeExecutionWorktree | undefined;
+                return (
+                  stored?.path === fact.executionWorktree.path &&
+                  stored?.branchName === fact.executionWorktree.branchName
                 );
-            }
-            database.exec("COMMIT");
-          } catch (error) {
-            database.exec("ROLLBACK");
-            throw error;
-          }
+              },
+              patch: (meta) => ({ ...meta, executionWorktree: fact.executionWorktree }),
+            },
+          ]);
         }),
       ),
     );
+  }
+
+  /**
+   * Persist incognito markers into meta_json (specs/incognito-session.md "Sidebar marker durability"). The profile
+   * is frozen per session, so a stored `true` never goes stale: the write only ever adds the marker. Returns the ids
+   * whose row carries the marker after the call. Absent, deleted and unreadable rows are not confirmed; pinned and
+   * archived rows are included, because this method has no membership filter.
+   */
+  async persistIncognitoMarkers(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    taskIds: ReadonlyArray<string>;
+  }): Promise<string[]> {
+    if (params.taskIds.length === 0) return [];
+    await this.ensureReady();
+    const scope = {
+      workspacePath: params.workspacePath,
+      ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+    };
+    // Queued per-task writes (for example a pending syncer write) must land before the marker is read.
+    // Their completions never reject, so waiting on them cannot fail this call.
+    await Promise.all(
+      params.taskIds.map((taskId) => this.writeChains.get(this.writeKey({ ...scope, taskId }))),
+    );
+    // The convergence below is synchronous on the single node:sqlite connection, so one transaction covers every id.
+    const confirmed = this.convergeTaskMetas(
+      scope,
+      params.taskIds.map((taskId) => ({
+        taskId,
+        converged: (meta) => meta.incognito === true,
+        patch: (meta) => ({ ...meta, incognito: true }),
+      })),
+    );
+    return Array.from(confirmed);
+  }
+
+  /**
+   * Shared meta_json convergence protocol for the sessions-index overlay writers (worktree facts, incognito markers).
+   * Each update targets one task row: `converged` reports that the stored meta already carries the fact, `patch`
+   * builds the replacement meta. Only meta_json changes; absent, deleted and non-object meta_json rows are skipped.
+   * A read-only pass runs first so repeated publishes never take the write lock. The write pass re-reads after
+   * BEGIN IMMEDIATE: enqueueWrite only serializes writers inside this process, and another Host sharing the database
+   * can update the row between the read and the UPDATE. Returns the task ids whose row carries the fact afterwards.
+   */
+  private convergeTaskMetas(
+    scope: { workspacePath: string; workspaceIdentity?: string },
+    updates: ReadonlyArray<TaskMetaConvergence>,
+  ): Set<string> {
+    const database = this.getDatabase();
+    const confirmed = new Set<string>();
+    const readMeta = (taskId: string): Record<string, unknown> | null => {
+      const row = this.getTaskRow({ ...scope, taskId });
+      if (!row || row.deleted === 1) return null;
+      try {
+        const parsed: unknown = JSON.parse(row.meta_json);
+        return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+          ? (parsed as Record<string, unknown>)
+          : null;
+      } catch {
+        return null;
+      }
+    };
+    const stale = updates.filter((update) => {
+      const meta = readMeta(update.taskId);
+      if (!meta) return false;
+      if (update.converged(meta)) {
+        confirmed.add(update.taskId);
+        return false;
+      }
+      return true;
+    });
+    if (stale.length === 0) return confirmed;
+
+    const write = database.prepare(
+      "UPDATE tasks SET meta_json = ? WHERE workspace_key = ? AND task_id = ?",
+    );
+    const key = workspaceKey(scope);
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      for (const update of stale) {
+        const meta = readMeta(update.taskId);
+        if (!meta) continue;
+        if (!update.converged(meta)) {
+          write.run(JSON.stringify(update.patch(meta)), key, update.taskId);
+        }
+        confirmed.add(update.taskId);
+      }
+      database.exec("COMMIT");
+    } catch (error) {
+      database.exec("ROLLBACK");
+      throw error;
+    }
+    return confirmed;
   }
 
   /**
