@@ -357,7 +357,7 @@ function DesktopSystemPromptSection({
             <SystemPromptAssembledPreview
               text={assembled.text}
               tokens={assembled.tokens}
-              characters={assembled.text.length}
+              characters={describeSystemPromptSize(assembled.text).characters}
             />
           ) : null}
         </>
