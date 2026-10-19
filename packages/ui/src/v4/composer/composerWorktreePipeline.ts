@@ -36,6 +36,98 @@ const inFlightByPipelineKey = new Map<string, Promise<"ready" | "failed">>();
 const beginInFlightBySubmissionKey = new Map<string, Promise<ComposerWorktreeBeginResult>>();
 /** Sessions whose Retry is waiting on the Host acknowledgement (count per session key). */
 const pendingRetryBySessionKey = new Map<string, number>();
+/**
+ * Branch names and target paths claimed by an admission before its store entry exists. Admission
+ * claims them synchronously in beginWorktreePipelineCreation (before its first await), so a name
+ * generator running later in the same tick already sees them; the claim is released once
+ * startPipeline owns the names, or when admission fails.
+ */
+const admissionClaimByNameKey = new Map<string, string>();
+/**
+ * Store entries whose frozen params still reserve their names. Retry re-runs those params, so a
+ * failed entry keeps its names reserved as well.
+ */
+const NAME_RESERVING_STATUSES: ReadonlySet<string> = new Set(["creating", "ready", "failed"]);
+
+function nameClaimKeys(
+  workspaceKey: string,
+  branchName: string,
+  targetPath: string | null,
+): string[] {
+  return [
+    `${workspaceKey}\0branch\0${branchName}`,
+    ...(targetPath === null ? [] : [`${workspaceKey}\0path\0${targetPath}`]),
+  ];
+}
+
+function claimNameKeys(keys: string[], attemptId: string): () => void {
+  for (const key of keys) admissionClaimByNameKey.set(key, attemptId);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    for (const key of keys) {
+      if (admissionClaimByNameKey.get(key) === attemptId) admissionClaimByNameKey.delete(key);
+    }
+  };
+}
+
+/**
+ * Whether a generated branch name or its target path is already reserved in this workspace, by an
+ * admission still in progress or by a live store entry. Name generators check this together with
+ * the Git branch list, so two same-tick or overlapping submissions never choose the same name.
+ */
+export function isComposerWorktreeNameReserved({
+  workspaceKey,
+  workspacePath,
+  branchName,
+  effectiveLocation,
+}: {
+  workspaceKey: string;
+  workspacePath: string;
+  branchName: string;
+  effectiveLocation: EffectiveWorktreeLocation;
+}): boolean {
+  const targetPath = computeWorktreeTargetPath(workspacePath, branchName, effectiveLocation);
+  if (
+    nameClaimKeys(workspaceKey, branchName, targetPath).some((key) =>
+      admissionClaimByNameKey.has(key),
+    )
+  )
+    return true;
+  const workspace =
+    useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey[workspaceKey];
+  return Object.values(workspace?.entriesBySessionKey ?? {}).some(
+    (entry) =>
+      entry.params !== undefined &&
+      NAME_RESERVING_STATUSES.has(entry.status) &&
+      (entry.params.branchName === branchName ||
+        (targetPath !== null && entry.params.targetPath === targetPath)),
+  );
+}
+
+/**
+ * Whether another session's live entry already owns this branch or worktree directory. An
+ * existing-worktree outcome for such a path is another pipeline's directory, not a reusable one.
+ */
+function isWorktreeOwnedByOtherEntry(
+  workspaceKey: string,
+  sessionId: string | undefined,
+  branchName: string,
+  worktreePath: string,
+): boolean {
+  const workspace =
+    useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey[workspaceKey];
+  return Object.values(workspace?.entriesBySessionKey ?? {}).some(
+    (entry) =>
+      (entry.sessionId ?? undefined) !== (sessionId ?? undefined) &&
+      entry.params !== undefined &&
+      (entry.status === "creating" || entry.status === "ready") &&
+      (entry.params.branchName === branchName ||
+        entry.params.targetPath === worktreePath ||
+        entry.worktreePath === worktreePath),
+  );
+}
 
 function retrySessionKey(workspaceKey: string, sessionId?: string): string {
   return `${workspaceKey}\0${sessionId ?? "unscoped"}`;
@@ -177,6 +269,31 @@ export function startComposerWorktreePipeline({
         return await settleReady(outcome.worktreePath, false);
       }
       if (outcome.kind === "existing-worktree") {
+        // A directory owned by another live pipeline is not WT-04 reuse: two sessions must never
+        // execute in one worktree, so this attempt fails instead of settling ready.
+        if (
+          isWorktreeOwnedByOtherEntry(
+            workspaceKey,
+            sessionId,
+            params.branchName,
+            outcome.worktreePath,
+          )
+        ) {
+          logger.warn("[WorktreePipeline] existing worktree belongs to another pipeline", {
+            workspaceKey,
+            branchName: params.branchName,
+            targetPath: outcome.worktreePath,
+          });
+          useComposerWorktreePipelineStore
+            .getState()
+            .markFailed(
+              workspaceKey,
+              formatMessage("worktreeSetup.reservation.conflict"),
+              sessionId,
+              attemptId,
+            );
+          return "failed";
+        }
         // WT-04 unified: consume the existing directory in place (no draft transfer, no second one).
         logger.info("[WorktreePipeline] reusing existing worktree", {
           workspaceKey,
@@ -291,7 +408,14 @@ export function beginWorktreePipelineCreation({
     if (!targetPath) {
       return failWith("commandCenter.worktree.error.target-path-invalid");
     }
+    // Claim the names before the first await: the generator for the next submission runs in a
+    // later task and must see them even while prepareSession is still pending.
+    const nameKeys = nameClaimKeys(workspaceKey, branchName, targetPath);
+    if (nameKeys.some((key) => admissionClaimByNameKey.has(key))) {
+      return failWith("worktreeSetup.reservation.conflict");
+    }
     const attemptId = nanoid();
+    const releaseNames = claimNameKeys(nameKeys, attemptId);
     const params = {
       ...(submissionId ? { submissionId } : {}),
       attemptId,
@@ -311,6 +435,7 @@ export function beginWorktreePipelineCreation({
         ...(baseBranch ? { baseBranch } : {}),
       });
     } catch (error) {
+      releaseNames();
       useComposerWorktreePipelineStore
         .getState()
         .markValidationFailed(workspaceKey, getErrorMessage(error));
@@ -323,6 +448,8 @@ export function beginWorktreePipelineCreation({
       createdAt: Date.now(),
       queuedPromptPreview,
     });
+    // The store entry now holds the names (NAME_RESERVING_STATUSES); the claim is no longer needed.
+    releaseNames();
     void startComposerWorktreePipeline({
       gitService,
       workspaceKey,

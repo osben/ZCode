@@ -1,7 +1,11 @@
 import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 const MAX_BYTES = 5_000 * 4;
+// Repo-relative paths that may exceed the limit. One path per line, `#` starts a comment.
+// Add a file here (and stage the list) instead of using --no-verify.
+const EXEMPTIONS_FILE = ".staged-file-size-exemptions";
 const LOCK_FILES = new Set([
   "pnpm-lock.yaml",
   "package-lock.json",
@@ -36,6 +40,22 @@ function git(args, cwd, input = "") {
     });
     child.stdin.end(input);
   });
+}
+
+async function readExemptions(root) {
+  let text;
+  try {
+    text = await readFile(path.join(root, EXEMPTIONS_FILE), "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT") return new Set();
+    throw error;
+  }
+  return new Set(
+    text
+      .split("\n")
+      .map((line) => line.replace(/#.*$/, "").trim())
+      .filter(Boolean),
+  );
 }
 
 async function main() {
@@ -73,7 +93,10 @@ async function main() {
       throw new Error(`Invalid staged blob metadata: ${line}`);
     sizes.set(oid, Number(bytes));
   }
-  const candidates = files.filter((file) => sizes.get(file.oid) > MAX_BYTES);
+  const exemptions = await readExemptions(cwd);
+  const candidates = files.filter(
+    (file) => sizes.get(file.oid) > MAX_BYTES && !exemptions.has(file.name),
+  );
   if (!candidates.length) return;
 
   const attributes = await git(

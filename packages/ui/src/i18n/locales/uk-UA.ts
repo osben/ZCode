@@ -4981,6 +4981,8 @@ const ukUA: Record<string, string> = {
     "Зареєстрований worktree для {branchName} у {path} відсутній або непридатний.",
   "worktreeSetup.reconcile.markerSyncUnavailable":
     "Налаштування завершилося в іншому каталозі worktree, і запис сесії не вдалося оновити",
+  "worktreeSetup.reservation.conflict":
+    "Інший чат уже готує worktree з цією назвою. Надішліть ще раз, щоб використати нову назву.",
   "git.branchSwitcher.appliesOnSend": "Застосується під час надсилання першого повідомлення",
   "git.branchSwitcher.worktreeIntentHint":
     "Гілку для цього завдання визначає налаштування worktree",

@@ -5288,6 +5288,8 @@ const enUS: Record<string, string> = {
     "The registered worktree for {branchName} at {path} is missing or not usable.",
   "worktreeSetup.reconcile.markerSyncUnavailable":
     "Setup finished at a different worktree path and the session record could not be updated",
+  "worktreeSetup.reservation.conflict":
+    "Another chat is already preparing a worktree with this name. Send again to use a new name.",
   "git.branchSwitcher.appliesOnSend": "Applies when you send the first message",
   "git.branchSwitcher.worktreeIntentHint": "The worktree setup sets the branch for this task",
   "branchSwitchGuard.title": "Switch branch?",

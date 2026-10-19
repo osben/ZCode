@@ -4981,6 +4981,8 @@ const zhCN: Record<string, string> = {
     "{branchName} 在 {path} 的已注册 worktree 缺失或不可用。",
   "worktreeSetup.reconcile.markerSyncUnavailable":
     "设置完成于不同的 worktree 路径，且无法更新会话记录",
+  "worktreeSetup.reservation.conflict":
+    "另一个会话已在使用此名称准备 worktree。请重新发送以使用新名称。",
   "git.branchSwitcher.appliesOnSend": "将在发送第一条消息时生效",
   "git.branchSwitcher.worktreeIntentHint": "该任务的分支由 worktree 设置决定",
   "branchSwitchGuard.title": "切换分支？",

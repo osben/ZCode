@@ -194,3 +194,15 @@ test("the actual hook rechecks the index after formatter changes", async (t) => 
   await assert.rejects(runHook(), (error) => error.code === 1 && /21000/.test(error.stderr));
   assert.equal(await readFile(path.join(f.cwd, "formatter-ran"), "utf8"), "ran\n");
 });
+
+test("a staged file listed in the exemptions file may exceed the limit", async (t) => {
+  const f = await fixture(t);
+  await f.stage("locale.ts", "a".repeat(20_001));
+  assert.equal((await f.check()).code, 1);
+  await writeFile(
+    path.join(f.cwd, ".staged-file-size-exemptions"),
+    "# generated catalog\nlocale.ts # trailing comment\n",
+  );
+  await f.git("add", "--", ".staged-file-size-exemptions");
+  assert.equal((await f.check()).code, 0);
+});

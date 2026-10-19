@@ -433,3 +433,17 @@ Six decisions closed by the worktree lifecycle review:
 6. Occupied branches and `target-path-exists` both reuse an existing registered worktree, but only
    after the real directory and its Git binding are verified on the target Host; stale
    registrations fail recoverably without pruning.
+
+## Concurrent submission reservation revision (2026-10-19)
+
+- Destination names are reserved per workspace. An admission claims its generated branch name and
+  target path synchronously, before its first await, and keeps them until its store entry holds the
+  frozen params. Live entries (`creating`, `ready`, `failed`) keep their names reserved, because
+  Retry re-runs those params. Name generators check the reservation together with the Git branch
+  list, so two same-tick submissions never select the same name.
+- A name already claimed by an in-flight admission fails that admission instead of reusing it.
+- An existing-worktree outcome for a branch or directory owned by another session's live entry is
+  a conflict, not WT-04 reuse: the attempt fails and the other session's worktree stays untouched.
+- The recovery record also carries the shared-context reference. Restore re-attaches it when the
+  session snapshot no longer offers the pending import; the restored reference is scoped to the
+  draft scope it was restored into and is cleared after an accepted send.
