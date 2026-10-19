@@ -276,7 +276,7 @@ export interface ExternalTextInsertRequest {
   requestId: number;
   text: string;
   mention?: ComposerMentionPrefill;
-  mode?: "replace" | "prepend-if-missing";
+  mode?: "replace" | "prepend-if-missing" | "prepend-text";
 }
 
 export function restorePersistedComposerDraftIntoInput({
@@ -344,6 +344,20 @@ export function applyExternalTextInsertRequestToComposer({
     // Bug cause: replaying the old prompt saved at click time after installation would overwrite edits made during installation.
     // Prepending nodes preserves the editor's current mentions and paragraph structure, then reads the canonical draft from the editor.
     updateText(inputApi.getMarkdown());
+    scheduleDraftPersist();
+    requestFocus();
+    return request.requestId;
+  }
+  if (request.mode === "prepend-text") {
+    // zcode://task/new fills a draft the user may already have typed into; keep their unsent text after the task text.
+    const existing = inputApi.getMarkdown();
+    const combined = existing.trim() === "" ? request.text : `${request.text}\n\n${existing}`;
+    if (combined.includes("](plugin://")) {
+      inputApi.setTextWithPluginMentions(combined);
+    } else {
+      inputApi.setText(combined);
+    }
+    updateText(combined);
     scheduleDraftPersist();
     requestFocus();
     return request.requestId;

@@ -10,18 +10,28 @@ import {
   PlatformChannels,
 } from "@zcode/shared";
 import {
+  extractTaskNewRequest,
   extractWorkspaceOpenPath,
   extractShareImportCode,
   isOAuthCallbackUrl,
   isPaymentCallbackUrl,
   isWorkspaceOpenUrl,
   isShareImportUrl,
+  isTaskNewUrl,
 } from "./desktopDeepLinkUrl.js";
+import {
+  buildTaskDraftPreview,
+  resolveTaskDraftDialogCopy,
+  resolveTaskDraftText,
+  type TaskDraftDialogCopy,
+} from "./desktopTaskDraftDeepLink.js";
 import { registerLinuxDeepLinkProtocol } from "./desktopLinuxDeepLinkRegistration.js";
 
 interface DeepLinkWorkspaceGateOptions {
   canOpenWorkspace?: (workspacePath: string) => boolean;
   confirmationCopy?: ExternalWorkspaceOpenDialogCopy;
+  /** Copy for `zcode://task/new`; defaults to en-US. */
+  taskDraftConfirmationCopy?: TaskDraftDialogCopy;
   onWorkspaceOpenBlocked?: (workspacePath: string) => void;
   /** Business-window resolver; must exclude Main auxiliary windows such as the CUA indicator. */
   resolveApplicationWindow?: () => BrowserWindow | null;
@@ -49,6 +59,20 @@ let pendingOpenWorkspaceRequest: {
 } | null = null;
 const pendingShareImports: { shareCode: string; targetWebContentsId?: number }[] = [];
 const MAX_PENDING_SHARE_IMPORTS = 8;
+interface PendingTaskDraft {
+  path: string;
+  text: string;
+  targetWebContentsId?: number;
+}
+const pendingTaskDrafts: PendingTaskDraft[] = [];
+const MAX_PENDING_TASK_DRAFTS = 8;
+
+function enqueuePendingTaskDraft(draft: PendingTaskDraft): void {
+  pendingTaskDrafts.push(draft);
+  if (pendingTaskDrafts.length > MAX_PENDING_TASK_DRAFTS) {
+    pendingTaskDrafts.shift();
+  }
+}
 
 function enqueuePendingShareImport(
   payload: { shareCode: string },
@@ -195,6 +219,15 @@ export function confirmExternalWorkspaceOpen(
   return confirmed;
 }
 
+let taskDraftOwnerWindowResolver: ((workspacePath: string) => BrowserWindow | null) | null = null;
+
+/** Lets Main route `task/new` to the window that already has the project open (side-effect free lookup). */
+export function setTaskDraftOwnerWindowResolver(
+  resolver: ((workspacePath: string) => BrowserWindow | null) | null,
+): void {
+  taskDraftOwnerWindowResolver = resolver;
+}
+
 export function handleOpenWorkspacePath(
   path: string,
   logger: { info: (...args: unknown[]) => void; warn: (...args: unknown[]) => void },
@@ -246,6 +279,115 @@ export function handleOpenWorkspacePath(
   pendingOpenWorkspaceRequest = { path };
   logger.warn("[deep-link] 工作区打开请求暂未命中窗口，先缓存等待 renderer ready", { path });
   return false;
+}
+
+/**
+ * `zcode://task/new`: validate, read the prompt in main, confirm with a preview, then deliver a draft payload.
+ * Owner of validation and file reading is Main; the renderer only inserts text into a fresh draft and never sends it.
+ */
+export async function handleTaskNewDeepLink(
+  url: string,
+  logger: { info: (...args: unknown[]) => void; warn: (...args: unknown[]) => void },
+  options: DeepLinkWorkspaceGateOptions = {},
+): Promise<boolean> {
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    logger.warn("[deep-link] 无法解析 task/new URL");
+    return false;
+  }
+
+  const request = extractTaskNewRequest(parsedUrl);
+  if (!request) {
+    logger.warn("[deep-link] task/new 参数无效，已忽略", { reason: "invalid_params" });
+    return false;
+  }
+
+  // Reject network paths before any filesystem probe: a UNC path can trigger SMB authentication.
+  if (isNetworkWorkspacePath(request.path)) {
+    logger.warn("[deep-link] 网络工作区路径已拒绝", { path: request.path });
+    return false;
+  }
+  if (request.promptFile !== undefined && isNetworkWorkspacePath(request.promptFile)) {
+    logger.warn("[deep-link] task/new promptFile 网络路径已拒绝", {
+      reason: "network_prompt_file",
+    });
+    return false;
+  }
+
+  if (options.canOpenWorkspace && !options.canOpenWorkspace(request.path)) {
+    logger.warn("[deep-link] task/new 被当前启动 gate 阻止", { path: request.path });
+    options.onWorkspaceOpenBlocked?.(request.path);
+    return true;
+  }
+
+  if (!isValidLocalWorkspaceDirectory(request.path)) {
+    logger.warn("[deep-link] task/new 工作区路径无效，已忽略", { path: request.path });
+    return false;
+  }
+
+  const resolved = await resolveTaskDraftText({
+    projectPath: request.path,
+    ...(request.prompt !== undefined ? { prompt: request.prompt } : {}),
+    ...(request.promptFile !== undefined ? { promptFile: request.promptFile } : {}),
+  });
+  if (!resolved.ok) {
+    logger.warn("[deep-link] task/new 任务文本无效，已忽略", {
+      path: request.path,
+      reason: resolved.reason,
+    });
+    return false;
+  }
+
+  const ownerWindow = taskDraftOwnerWindowResolver?.(request.path) ?? null;
+  const targetWindow =
+    ownerWindow && !ownerWindow.isDestroyed()
+      ? ownerWindow
+      : options.resolveApplicationWindow
+        ? options.resolveApplicationWindow()
+        : (BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null);
+  const dialogCopy = options.taskDraftConfirmationCopy ?? resolveTaskDraftDialogCopy("en-US");
+  const preview = buildTaskDraftPreview(resolved.text);
+  if (
+    !confirmExternalWorkspaceOpen(request.path, logger, targetWindow, {
+      buttons: dialogCopy.buttons,
+      title: dialogCopy.title,
+      message: dialogCopy.message,
+      detail: (path) => dialogCopy.detail(path, preview),
+    })
+  ) {
+    return true;
+  }
+
+  const draft = { path: request.path, text: resolved.text };
+  const logFields = {
+    path: request.path,
+    textLength: resolved.text.length,
+    source: request.promptFile !== undefined ? "file" : "inline",
+  };
+  if (!targetWindow) {
+    enqueuePendingTaskDraft(draft);
+    logger.info("[deep-link] task/new 等待主窗口", logFields);
+    return true;
+  }
+
+  const targetWebContentsId = targetWindow.webContents.id;
+  if (!rendererReadyWebContentsIds.has(targetWebContentsId)) {
+    // Bind to the target window: in a multi-window setup another ready renderer must not receive the draft.
+    enqueuePendingTaskDraft({ ...draft, targetWebContentsId });
+    focusDeepLinkTargetWindow(targetWindow);
+    logger.info("[deep-link] task/new 等待 renderer ready", {
+      ...logFields,
+      windowId: targetWebContentsId,
+    });
+    return true;
+  }
+
+  targetWindow.webContents.send(PlatformChannels.OpenTaskDraft, draft);
+  focusDeepLinkTargetWindow(targetWindow);
+  logger.info("[deep-link] task/new 路由成功", { ...logFields, windowId: targetWebContentsId });
+  return true;
 }
 
 export function handleDeepLink(
@@ -301,6 +443,17 @@ export function handleDeepLink(
       allowWithoutReadyWindow: true,
       resolveApplicationWindow: options.resolveApplicationWindow,
     });
+  }
+
+  if (isTaskNewUrl(parsedUrl)) {
+    // The route reads files and shows a blocking dialog, so it runs async; the caller only needs to know
+    // the URL was recognized and consumed.
+    void handleTaskNewDeepLink(url, logger, options).catch((error: unknown) => {
+      logger.warn("[deep-link] task/new 处理失败", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+    return true;
   }
 
   if (isPaymentCallbackUrl(parsedUrl)) {
@@ -487,6 +640,15 @@ export function deliverPendingDeepLink(webContents: WebContents): boolean {
     }
   }
   pendingShareImports.push(...undeliveredShareImports);
+  const undeliveredTaskDrafts: PendingTaskDraft[] = [];
+  for (const pending of pendingTaskDrafts.splice(0)) {
+    if (pending.targetWebContentsId == null || pending.targetWebContentsId === webContents.id) {
+      webContents.send(PlatformChannels.OpenTaskDraft, { path: pending.path, text: pending.text });
+    } else {
+      undeliveredTaskDrafts.push(pending);
+    }
+  }
+  pendingTaskDrafts.push(...undeliveredTaskDrafts);
   if (hasPendingOAuthCallback) {
     webContents.send(PlatformChannels.OAuthCallback, pendingDeepLinkUrl);
     pendingDeepLinkUrl = null;
@@ -517,6 +679,12 @@ export function clearOAuthRoutesForWindow(windowId: number): void {
   for (let index = pendingShareImports.length - 1; index >= 0; index -= 1) {
     if (pendingShareImports[index]!.targetWebContentsId === windowId) {
       pendingShareImports.splice(index, 1);
+    }
+  }
+
+  for (let index = pendingTaskDrafts.length - 1; index >= 0; index -= 1) {
+    if (pendingTaskDrafts[index]!.targetWebContentsId === windowId) {
+      pendingTaskDrafts.splice(index, 1);
     }
   }
 
