@@ -35,7 +35,11 @@ import { useWorkspaceServicesResolution } from "@/hooks/useWorkspaceServices.js"
 import { useSettings } from "@/hooks/useSettingService.js";
 import { logger } from "@/logger.js";
 import { getErrorMessage } from "@/lib/errorMessage.js";
-import { composeBranchName, resolveWorktreeLocation } from "@/command-center/worktreeTaskFlow.js";
+import {
+  composeBranchName,
+  resolveWorktreeLocation,
+  resolveWorktreeMainBaseBranch,
+} from "@/command-center/worktreeTaskFlow.js";
 import { generateWorktreeBranchName } from "@/command-center/worktreeNameGenerator.js";
 import {
   selectComposerWorktreePipeline,
@@ -113,6 +117,9 @@ export function ComposerDestinationControl({
   const [baseBranch, setBaseBranch] = useState<string | null>(null);
   const [branchesResult, setBranchesResult] = useState<GitLocalBranchListResult | null>(null);
   const [branchListFailed, setBranchListFailed] = useState(false);
+  // Remote-prefixed repository default (origin/HEAD) from the merge-status probe; feeds the
+  // main-branch Base default selected when the worktree mode switches ON (spec §4, 2026-10-18).
+  const [defaultBaseRef, setDefaultBaseRef] = useState<string | null>(null);
   const [graphDialogOpen, setGraphDialogOpen] = useState(false);
   const [appWorktreesDir, setAppWorktreesDir] = useState<string | null>(null);
 
@@ -126,6 +133,7 @@ export function ComposerDestinationControl({
     setBaseBranch(null);
     setBranchesResult(null);
     setBranchListFailed(false);
+    setDefaultBaseRef(null);
     setAppWorktreesDir(null);
   }, [workspaceKey, workspacePath, resolution.remoteSessionId, baseServices.gitService]);
 
@@ -188,7 +196,9 @@ export function ComposerDestinationControl({
   // rendered while the reload runs (no loading flicker). The effect must not depend on
   // branchesResult or branchListFailed: a result would then retrigger the fetch in a loop. A
   // response from a superseded open or workspace is dropped by the cancelled flag. A failure is
-  // disclosed (base defaults to HEAD) and retried on the next open.
+  // disclosed (base defaults to HEAD) and retried on the next open. The same open also probes the
+  // merge status for the repository default (origin/HEAD) feeding the main-branch Base default;
+  // its failure is silent (the service TTL-caches the probe, and the default simply stays null).
   useEffect(() => {
     if (!resolution.rpcReady || !open) return;
     let cancelled = false;
@@ -209,6 +219,20 @@ export function ComposerDestinationControl({
             error: getErrorMessage(error),
           });
           setBranchListFailed(true);
+        }
+      },
+    );
+    baseServices.gitService.getBranchMergeStatus({ workspacePath }).then(
+      ({ baseRef }) => {
+        if (!cancelled) setDefaultBaseRef(baseRef);
+      },
+      (error: unknown) => {
+        if (!cancelled) {
+          logger.debug("[DestinationControl] merge status failed; main base default unavailable", {
+            workspacePath,
+            error: getErrorMessage(error),
+          });
+          setDefaultBaseRef(null);
         }
       },
     );
@@ -379,6 +403,17 @@ export function ComposerDestinationControl({
                     useDraftBranchIntentStore
                       .getState()
                       .setWorktreeIntentActive(workspaceKey, !worktreeActive);
+                    // Spec §4 (2026-10-18): switching ON immediately selects the repository's
+                    // main branch as the Base — a selection only (no git RPC); an unresolved
+                    // default keeps the live current-branch fallback. Every OFF→ON re-defaults.
+                    if (!worktreeActive) {
+                      const mainBase = resolveWorktreeMainBaseBranch({
+                        branches: branchesResult?.branches ?? [],
+                        preferredDefaultBranch: effectiveLocation.baseBranchDefault,
+                        defaultRef: defaultBaseRef,
+                      });
+                      if (mainBase) setBaseBranch(mainBase);
+                    }
                   }}
                   className={cn(
                     "relative h-[18px] w-[30px] cursor-pointer rounded-full border-0 transition-colors",

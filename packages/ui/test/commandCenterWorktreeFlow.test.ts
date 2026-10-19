@@ -24,6 +24,7 @@ import {
   resolveDefaultBaseBranch,
   resolveWorktreeIssueMessageId,
   resolveWorktreeLocation,
+  resolveWorktreeMainBaseBranch,
   sanitizeWorktreePathSegment,
   tildifyAppWorktreesPath,
   validateNewWorktreeBranchName,
@@ -404,6 +405,53 @@ describe("resolveDefaultBaseBranch", () => {
     // An override branch that is not in the list cannot become the default.
     expect(resolveDefaultBaseBranch(branchesResult, "missing")).toBe("main");
     expect(resolveDefaultBaseBranch(branchesResult, "  ")).toBe("main");
+  });
+});
+
+describe("resolveWorktreeMainBaseBranch", () => {
+  const branches = [{ name: "main" }, { name: "dev" }, { name: "feature/x" }];
+
+  it("prefers the project override when present in the loaded list", () => {
+    expect(
+      resolveWorktreeMainBaseBranch({
+        branches,
+        preferredDefaultBranch: "dev",
+        defaultRef: "origin/main",
+      }),
+    ).toBe("dev");
+  });
+
+  it("derives the main branch from origin/HEAD by stripping the remote prefix", () => {
+    expect(resolveWorktreeMainBaseBranch({ branches, defaultRef: "origin/main" })).toBe("main");
+  });
+
+  it("returns null when no signal names a local branch", () => {
+    // An override absent from the list degrades to the origin/HEAD-derived branch.
+    expect(
+      resolveWorktreeMainBaseBranch({
+        branches,
+        preferredDefaultBranch: "release",
+        defaultRef: "origin/main",
+      }),
+    ).toBe("main");
+    expect(resolveWorktreeMainBaseBranch({ branches, defaultRef: "origin/master" })).toBeNull();
+    expect(resolveWorktreeMainBaseBranch({ branches })).toBeNull();
+    expect(resolveWorktreeMainBaseBranch({ branches: [] })).toBeNull();
+  });
+
+  it("trims inputs and keeps hierarchical derived names intact", () => {
+    expect(
+      resolveWorktreeMainBaseBranch({
+        branches: [{ name: "release/next" }],
+        preferredDefaultBranch: "  release/next  ",
+      }),
+    ).toBe("release/next");
+    expect(
+      resolveWorktreeMainBaseBranch({
+        branches: [{ name: "feat/x" }],
+        defaultRef: " origin/feat/x ",
+      }),
+    ).toBe("feat/x");
   });
 });
 
