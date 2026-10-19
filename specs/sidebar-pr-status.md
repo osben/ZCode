@@ -115,7 +115,9 @@ service surface (same as `getBranchMergeStatus`); no `zcode-protocol` entry, bec
 on-demand observation, not a session event.
 
 **Request shape (one RPC per workspace per refresh, decided 2026-10-18):** the UI sends the full
-list of that workspace's worktree tasks; the host answers one entry per task.
+list of that workspace's worktree tasks across timeline, pinned, and archived membership (not only
+the currently rendered page); the host answers one entry per task. `forceTaskIds` is scoped to that
+workspace's request and must not force a same-named task in another workspace.
 
 ```ts
 type SessionPullRequestsTaskInput = {
@@ -185,7 +187,7 @@ UI surfaces (row, hover, menu, header chip, Git tools, Session manager)
    ▼
 usePullRequestStatuses (sidebar driver) · useSessionManagerPullRequests (visible rows)
    │ triggers (all gated on window focused + a PR surface visible):
-   │   surface becomes visible · window focus · TTL expiry
+   │   surface becomes visible · window focus · TTL expiry (checked every 30 s while visible/focused)
    │ invalidating triggers (bypass TTL; both drivers):
    │   worktree session turn ends (running → completed/idle) · onRefreshGit (commit/push) ·
    │   explicit Refresh

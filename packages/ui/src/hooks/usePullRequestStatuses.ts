@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { usePullRequestStatusStore } from "@/store/pullRequestStatusStore.js";
 import { buildPullRequestTaskKey } from "@/store/pullRequestStatusStore.js";
+import { usePullRequestStatusPolling } from "@/hooks/usePullRequestStatusPolling.js";
 import {
   createPullRequestStatusProber,
   forceTaskIdsForRequestedKeys,
@@ -62,6 +63,9 @@ export function usePullRequestStatuses(
     )
     .sort();
   const runningTaskKeysSignature = runningTaskKeys.join("\u0000");
+  usePullRequestStatusPolling(() => {
+    void prober.probe(targets);
+  }, active);
 
   // A git mutation (commit/push) may have opened or updated a PR, so its refresh signal bypasses
   // the service TTL for every worktree task in view. A plain targets change keeps the TTL.
@@ -74,14 +78,6 @@ export function usePullRequestStatuses(
     const gitMutated = handledRefreshVersionRef.current !== refreshVersion;
     handledRefreshVersionRef.current = refreshVersion;
     void prober.probe(targets, gitMutated ? { force: true } : undefined);
-
-    const onFocus = () => {
-      void prober.probe(targets);
-    };
-    window.addEventListener("focus", onFocus);
-    return () => {
-      window.removeEventListener("focus", onFocus);
-    };
   }, [prober, targets, active, refreshVersion]);
 
   // Turn-end invalidation: running → completed/idle of a worktree task forces
@@ -124,11 +120,11 @@ export function usePullRequestStatuses(
       return;
     }
     handledForceVersionRef.current = forceRefresh.version;
-    const forceTaskIds = forceTaskIdsForRequestedKeys(targets, forceRefresh.taskKeys);
-    if (forceTaskIds.length === 0) {
+    const forceTaskIdsByWorkspace = forceTaskIdsForRequestedKeys(targets, forceRefresh.taskKeys);
+    if (forceTaskIdsByWorkspace.size === 0) {
       return;
     }
-    void prober.probe(targets, { forceTaskIds });
+    void prober.probe(targets, { forceTaskIdsByWorkspace });
   }, [prober, targets, active, forceRefresh]);
 
   // Drop store entries for workspaces that left the sidebar. PullRequestStatusProbes keeps every

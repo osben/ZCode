@@ -11,6 +11,7 @@ import {
 import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { useRemoteWorkspaceSessionStore } from "@/store/remoteWorkspaceSessionStore.js";
 import { usePullRequestStatusStore } from "@/store/pullRequestStatusStore.js";
+import { usePullRequestStatusPolling } from "@/hooks/usePullRequestStatusPolling.js";
 
 /**
  * Probes pull request status for the Session manager's visible worktree rows
@@ -118,6 +119,12 @@ export function useSessionManagerPullRequests(
     sessionIdByWorkspaceIdentity,
     sessionIdByWorkspacePath,
   ]);
+  usePullRequestStatusPolling(
+    () => {
+      void prober.probe(targets);
+    },
+    active && targets.length > 0,
+  );
 
   // Same invalidation contract as the sidebar driver (usePullRequestStatuses): a git mutation
   // (commit/push) forces the visible rows, and an explicit refresh forces only the requested rows.
@@ -130,13 +137,6 @@ export function useSessionManagerPullRequests(
     const gitMutated = handledRefreshVersionRef.current !== refreshVersion;
     handledRefreshVersionRef.current = refreshVersion;
     void prober.probe(targets, gitMutated ? { force: true } : undefined);
-    const onFocus = () => {
-      void prober.probe(targets);
-    };
-    window.addEventListener("focus", onFocus);
-    return () => {
-      window.removeEventListener("focus", onFocus);
-    };
   }, [prober, targets, active, refreshVersion]);
 
   const handledForceVersionRef = useRef(forceRefresh.version);
@@ -145,10 +145,10 @@ export function useSessionManagerPullRequests(
       return;
     }
     handledForceVersionRef.current = forceRefresh.version;
-    const forceTaskIds = forceTaskIdsForRequestedKeys(targets, forceRefresh.taskKeys);
-    if (forceTaskIds.length === 0) {
+    const forceTaskIdsByWorkspace = forceTaskIdsForRequestedKeys(targets, forceRefresh.taskKeys);
+    if (forceTaskIdsByWorkspace.size === 0) {
       return;
     }
-    void prober.probe(targets, { forceTaskIds });
+    void prober.probe(targets, { forceTaskIdsByWorkspace });
   }, [prober, targets, active, forceRefresh]);
 }

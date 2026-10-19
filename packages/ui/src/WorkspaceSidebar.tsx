@@ -1730,7 +1730,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
                   reads one store entry per workspace task. */}
               <PullRequestStatusProbes
                 workspaceTabs={workspaceTabs}
-                groups={workspaceTaskLists.groups}
+                sortBy={taskSortBy}
                 active={isSidebarVisible}
               />
               {shouldShowPinnedTasks ? (

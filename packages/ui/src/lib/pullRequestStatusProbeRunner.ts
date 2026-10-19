@@ -1,7 +1,18 @@
 import type { SessionPullRequestsTaskInput, SessionPullRequestStatus } from "@zcode/shared";
 import type { IGitService } from "@zcode/services";
 import { logger } from "@/logger.js";
+import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
 import { buildPullRequestTaskKey } from "@/store/pullRequestStatusStore.js";
+
+export interface PullRequestStatusTaskCandidate {
+  workspacePath: string;
+  workspaceIdentity?: string;
+  taskId: string;
+  executionWorktree?: {
+    branchName?: string | null;
+    path?: string | null;
+  };
+}
 
 export interface PullRequestStatusTargetTask {
   input: SessionPullRequestsTaskInput;
@@ -16,6 +27,25 @@ export interface PullRequestStatusTarget {
   gitService: IGitService;
   /** Worktree tasks of this workspace; ordinary sessions never ride the probe. */
   tasks: readonly PullRequestStatusTargetTask[];
+}
+
+export function collectPullRequestStatusTaskCandidates<T extends PullRequestStatusTaskCandidate>(
+  taskLists: readonly (readonly T[])[],
+): T[] {
+  const candidatesByTaskKey = new Map<string, T>();
+  for (const task of taskLists.flat()) {
+    if (task.executionWorktree === undefined) {
+      continue;
+    }
+    candidatesByTaskKey.set(
+      buildPullRequestTaskKey(
+        buildTaskWorkspaceKey(task.workspacePath, task.workspaceIdentity),
+        task.taskId,
+      ),
+      task,
+    );
+  }
+  return [...candidatesByTaskKey.values()];
 }
 
 /** Minimal store surface the probe needs; keeps unit tests simple. */
@@ -48,23 +78,27 @@ export interface PullRequestProbeStore {
 
 /**
  * Task ids of the targets whose task key was explicitly requested (context menu "Refresh pull
- * request status"). Keys are `buildPullRequestTaskKey(workspaceKey, taskId)`; ids come from the
- * targets, so the composite key is never parsed.
+ * request status"), grouped by workspace because task IDs are not globally unique.
  */
 export function forceTaskIdsForRequestedKeys(
   targets: readonly PullRequestStatusTarget[],
   requestedKeys: readonly string[],
-): string[] {
+): Map<string, string[]> {
   const requested = new Set(requestedKeys);
-  return [
-    ...new Set(
-      targets.flatMap((target) =>
+  const result = new Map<string, string[]>();
+  for (const target of targets) {
+    const taskIds = [
+      ...new Set(
         target.tasks
           .map((task) => task.input.taskId)
           .filter((taskId) => requested.has(buildPullRequestTaskKey(target.workspaceKey, taskId))),
       ),
-    ),
-  ];
+    ];
+    if (taskIds.length > 0) {
+      result.set(target.workspaceKey, taskIds);
+    }
+  }
+  return result;
 }
 export function createPullRequestStatusProber(
   store: PullRequestProbeStore,
@@ -75,7 +109,10 @@ export function createPullRequestStatusProber(
 
   async function probe(
     targets: readonly PullRequestStatusTarget[],
-    options?: { force?: boolean; forceTaskIds?: string[] },
+    options?: {
+      force?: boolean;
+      forceTaskIdsByWorkspace?: ReadonlyMap<string, readonly string[]>;
+    },
   ): Promise<void> {
     await Promise.allSettled(
       targets.map(async (target) => {
@@ -84,7 +121,7 @@ export function createPullRequestStatusProber(
         }
         const forceTaskIds = options?.force
           ? target.tasks.map((task) => task.input.taskId)
-          : (options?.forceTaskIds ?? []).filter((taskId) =>
+          : (options?.forceTaskIdsByWorkspace?.get(target.workspaceKey) ?? []).filter((taskId) =>
               target.tasks.some((task) => task.input.taskId === taskId),
             );
         const sequence = (writeSequenceByWorkspaceKey.get(target.workspaceKey) ?? 0) + 1;

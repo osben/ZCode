@@ -1,30 +1,55 @@
 import { useMemo } from "react";
 import type { WorkspaceTabState } from "@/store/tabStore.js";
-import type { WorkspaceTaskListGroup } from "@/hooks/workspaceTaskListDisplayGroups.js";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
 import { buildWorkspaceServiceLookup } from "@/lib/workspaceServiceResolver.js";
 import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { usePullRequestStatuses } from "@/hooks/usePullRequestStatuses.js";
+import { useGlobalTaskList } from "@/hooks/useGlobalTaskList.js";
 import { useRemoteWorkspaceSessionStore } from "@/store/remoteWorkspaceSessionStore.js";
 import { isTaskListRowRunning } from "@/v4/taskListRowActivity.js";
+import { collectPullRequestStatusTaskCandidates } from "@/lib/pullRequestStatusProbeRunner.js";
 
 /**
  * Invisible mount that probes task-level pull request status for every open
- * workspace (specs/sidebar-pr-status.md). Lives once in the sidebar beside
- * BranchMergeStatusProbes so grouped, flat, archived, and hover surfaces share
- * the same store entries. The sidebar panel is hidden with CSS and never
- * unmounts, so reopening is reported through `active`.
+ * workspace (specs/sidebar-pr-status.md). It reads unbounded timeline, pinned,
+ * and archived task lists so status is not limited to rendered sidebar rows.
+ * The sidebar panel is hidden with CSS and never unmounts, so reopening is
+ * reported through `active`.
  */
 export function PullRequestStatusProbes({
   workspaceTabs,
-  groups,
+  sortBy,
   active,
 }: {
   workspaceTabs: WorkspaceTabState[];
-  groups: WorkspaceTaskListGroup[];
+  sortBy: "created" | "updated";
   active: boolean;
 }) {
   const baseServices = useBaseWorkspaceServices();
+  const timelineTasks = useGlobalTaskList({
+    kind: "timeline",
+    workspaceTabs,
+    sortBy,
+    searchQuery: "",
+    expanded: true,
+    collapsedLimit: 20,
+  });
+  const pinnedTasks = useGlobalTaskList({
+    kind: "pinned",
+    workspaceTabs,
+    sortBy,
+    searchQuery: "",
+    expanded: true,
+    collapsedLimit: 20,
+  });
+  const archivedTasks = useGlobalTaskList({
+    kind: "archived",
+    workspaceTabs,
+    sortBy,
+    searchQuery: "",
+    expanded: true,
+    collapsedLimit: 20,
+  });
   const sessionsById = useRemoteWorkspaceSessionStore((state) => state.sessionsById);
   const sessionIdByWorkspaceIdentity = useRemoteWorkspaceSessionStore(
     (state) => state.sessionIdByWorkspaceIdentity,
@@ -40,24 +65,31 @@ export function PullRequestStatusProbes({
     () => buildWorkspaceServiceLookup(workspaceTabs, baseServices, serviceResolverState),
     [baseServices, serviceResolverState, workspaceTabs],
   );
+  const taskCandidates = useMemo(
+    () =>
+      collectPullRequestStatusTaskCandidates([
+        timelineTasks.items,
+        pinnedTasks.items,
+        archivedTasks.items,
+      ]),
+    [archivedTasks.items, pinnedTasks.items, timelineTasks.items],
+  );
 
   const targets = useMemo(
     () =>
       workspaceTabs.flatMap((tab) => {
         const workspaceKey = buildTaskWorkspaceKey(tab.workspacePath, tab.workspaceIdentity);
         const resolved = workspaceServiceLookup.get(workspaceKey);
-        const group = groups.find(
-          (candidate) =>
-            candidate.workspacePath === tab.workspacePath &&
-            candidate.workspaceIdentity === tab.workspaceIdentity,
-        );
         if (!resolved) {
           return [];
         }
         // Task-level only: ordinary sessions never ride the probe, even when
         // the workspace branch itself has a pull request.
-        const tasks = (group?.items ?? [])
-          .filter((task) => task.executionWorktree !== undefined)
+        const tasks = taskCandidates
+          .filter(
+            (task) =>
+              buildTaskWorkspaceKey(task.workspacePath, task.workspaceIdentity) === workspaceKey,
+          )
           .map((task) => ({
             input: {
               taskId: task.taskId,
@@ -79,7 +111,7 @@ export function PullRequestStatusProbes({
           },
         ];
       }),
-    [groups, workspaceServiceLookup, workspaceTabs],
+    [taskCandidates, workspaceServiceLookup, workspaceTabs],
   );
 
   usePullRequestStatuses(targets, { active });

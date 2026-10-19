@@ -8,6 +8,7 @@ import {
   selectTaskPullRequestStatus,
 } from "../src/store/pullRequestStatusStore.js";
 import {
+  collectPullRequestStatusTaskCandidates,
   createPullRequestStatusProber,
   forceTaskIdsForRequestedKeys,
   type PullRequestProbeStore,
@@ -260,22 +261,84 @@ test("warning carries a generic message and the error class, never the workspace
   assert.equal(JSON.stringify(warnings).includes("ws-key"), false);
 });
 
-test("explicit refresh selects only the requested tasks of the given targets", () => {
+test("explicit refresh keeps requested task IDs scoped to their workspace", () => {
   const targets = [
     createTarget("w", async () => ({}), ["t1", "t2"]),
     createTarget("v", async () => ({}), ["t1"]),
   ];
-  assert.deepEqual(forceTaskIdsForRequestedKeys(targets, [buildPullRequestTaskKey("w", "t2")]), [
-    "t2",
-  ]);
+  assert.deepEqual(
+    forceTaskIdsForRequestedKeys(targets, [buildPullRequestTaskKey("w", "t2")]),
+    new Map([["w", ["t2"]]]),
+  );
   assert.deepEqual(
     forceTaskIdsForRequestedKeys(targets, [
       buildPullRequestTaskKey("w", "t1"),
       buildPullRequestTaskKey("v", "t1"),
       buildPullRequestTaskKey("v", "missing"),
     ]),
-    ["t1"],
-    "ids are deduplicated across workspaces and unknown keys select nothing",
+    new Map([
+      ["w", ["t1"]],
+      ["v", ["t1"]],
+    ]),
+    "same-named tasks remain scoped to their workspaces and unknown keys select nothing",
   );
-  assert.deepEqual(forceTaskIdsForRequestedKeys(targets, []), []);
+  assert.deepEqual(forceTaskIdsForRequestedKeys(targets, []), new Map());
+});
+
+test("forced request IDs are not applied to same-named tasks in another workspace", async () => {
+  const store = createStoreCapture();
+  const prober = createPullRequestStatusProber(store);
+  const requestsByWorkspace = new Map<string, SessionPullRequestsRequest>();
+  const targets = ["w", "v"].map((workspaceKey) =>
+    createTarget(
+      workspaceKey,
+      async (request) => {
+        requestsByWorkspace.set(workspaceKey, request);
+        return { t1: READY };
+      },
+      ["t1"],
+    ),
+  );
+
+  await prober.probe(targets, {
+    forceTaskIdsByWorkspace: forceTaskIdsForRequestedKeys(targets, [
+      buildPullRequestTaskKey("w", "t1"),
+    ]),
+  });
+
+  assert.deepEqual(requestsByWorkspace.get("w")?.forceTaskIds, ["t1"]);
+  assert.equal(requestsByWorkspace.get("v")?.forceTaskIds, undefined);
+});
+
+test("candidate collection includes every task list and deduplicates worktree tasks by workspace", () => {
+  const timelineTask = {
+    workspacePath: "/workspace",
+    taskId: "timeline",
+    executionWorktree: { branchName: "feat/timeline", path: "/wt/timeline" },
+  };
+  const pinnedTask = {
+    workspacePath: "/workspace",
+    taskId: "pinned",
+    executionWorktree: { branchName: "feat/pinned", path: "/wt/pinned" },
+  };
+  const archivedTask = {
+    workspacePath: "/workspace",
+    taskId: "archived",
+    executionWorktree: { branchName: "feat/archived", path: "/wt/archived" },
+  };
+  const sameIdInAnotherWorkspace = {
+    workspacePath: "/other-workspace",
+    taskId: "timeline",
+    executionWorktree: { branchName: "feat/other", path: "/other-wt/timeline" },
+  };
+  const ordinaryTask = { workspacePath: "/workspace", taskId: "ordinary" };
+
+  assert.deepEqual(
+    collectPullRequestStatusTaskCandidates([
+      [timelineTask, ordinaryTask, sameIdInAnotherWorkspace],
+      [pinnedTask, timelineTask],
+      [archivedTask],
+    ]),
+    [timelineTask, sameIdInAnotherWorkspace, pinnedTask, archivedTask],
+  );
 });
