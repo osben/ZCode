@@ -234,7 +234,7 @@ function RestoreConfirmPanel({
   onCancel,
 }: {
   sectionKey: SystemPromptOverrideKey;
-  revision: string | null;
+  revision: string | null | undefined;
   defaultContent: string;
   hostLabel: string;
   onConfirm: SystemPromptRowProps["onConfirmRestore"];

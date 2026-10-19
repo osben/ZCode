@@ -58,7 +58,9 @@ export interface SystemPromptOverridesView {
    * Save the draft. `overwrite` replaces a disk change: it is checked against `reviewedRevision`, the
    * disk revision the user saw in the conflict card, so a newer external edit is never replaced unseen.
    */
-  saveEditor: (options?: { overwrite?: { reviewedRevision: string | null } }) => Promise<void>;
+  saveEditor: (options?: {
+    overwrite?: { reviewedRevision: string | null | undefined };
+  }) => Promise<void>;
   /** Discard the draft and rebase the editor onto the current disk text and revision. */
   reloadEditor: (effectiveContent: string) => void;
   /** Override directory on the pinned host (the service's pure lookup). */
@@ -272,7 +274,7 @@ export function useSystemPromptOverrides(
   );
 
   const saveEditor = useCallback(
-    async (options?: { overwrite?: { reviewedRevision: string | null } }) => {
+    async (options?: { overwrite?: { reviewedRevision: string | null | undefined } }) => {
       const current = editor;
       if (current === null || !rpcReady) return;
       if (
