@@ -512,13 +512,20 @@ summarized message, the raw Git detail, and the worktree path when one is known.
 lives only in this memory state: it is not persisted and not logged; after a reload only the
 summary message remains. The modal reuses the shared dialog primitives and the existing
 `commandCenter.worktree.error.*` message ids; new strings are added once to en-US, zh-CN, and
-uk-UA.
+uk-UA. When the Git request throws instead of returning an issue, its raw error text is used only
+for the expandable detail; the primary message is the generic localized worktree-failure summary.
 
 "Retry" closes the modal and runs the ordinary `submit()` over the restored submission — the
 worktree intent and its parameters are part of the restored draft — through the mounted draft
 composer. There is no second dispatch path: the per-workspace idempotency guard still applies and
 a double activation must not double-submit. "Change branch/folder" closes the modal, keeps the
-restored draft, and opens the destination control for the user to pick different parameters.
+restored draft, and opens the destination control for the user to pick different parameters. An
+explicit branch/base selection or turning worktree mode off clears the frozen destination so it
+cannot override the user's new choice; failed admissions and ordinary Retry retain it.
+
+If the preparing-session tombstone fails, the hand-off must not discard its pipeline entry or open
+the return modal. It restores the recovery record to the failed session's scope and leaves the
+failed-row Retry/Discard path available until the tombstone succeeds.
 
 ### Recovery record extensions (additive)
 

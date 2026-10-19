@@ -237,7 +237,7 @@ export function initiateComposerWorktreeFailureReturn(
     }
     // Tombstone through the existing Hide path (session-deletion-cascade.md): tasks.deleted=1
     // hides the preparing session from every sidebar list while the CLI session row is retained.
-    // A failure here is logged and tolerated: the return UX proceeds, the row may linger.
+    // Do not remove the local recovery surface unless the existing Hide/tombstone succeeded.
     try {
       await services.zcodeTaskService.deleteTask({
         taskId: sessionId,
@@ -250,6 +250,14 @@ export function initiateComposerWorktreeFailureReturn(
         sessionId,
         errorName: errorClassName(error),
       });
+      moveRecoveryRecord(pendingScope, sessionRecoveryScope);
+      useComposerWorktreePipelineStore
+        .getState()
+        .setTombstoneFailed(workspaceKey, sessionId, attemptId, true);
+      useComposerWorktreePipelineStore
+        .getState()
+        .setReturningToDraft(workspaceKey, sessionId, attemptId, false);
+      return;
     }
     useComposerWorktreePipelineStore.getState().discard(workspaceKey, sessionId, attemptId);
     releaseWorktreeSendContinuation(workspaceKey, sessionId);

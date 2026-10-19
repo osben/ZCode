@@ -27,6 +27,7 @@ interface DraftBranchIntentState {
    */
   frozenWorktreeIntentByWorkspaceKey: Record<string, FrozenWorktreeDestination>;
   setFrozenWorktreeIntent: (workspaceKey: string, destination: FrozenWorktreeDestination) => void;
+  clearFrozenWorktreeIntent: (workspaceKey: string) => void;
   /** Read the pending frozen destination without consuming it; undefined when none is pending. */
   peekFrozenWorktreeIntent: (workspaceKey: string) => FrozenWorktreeDestination | undefined;
   /**
@@ -55,6 +56,12 @@ export const useDraftBranchIntentStore = create<DraftBranchIntentState>((set, ge
         [workspaceKey]: destination,
       },
     })),
+  clearFrozenWorktreeIntent: (workspaceKey) =>
+    set((state) => {
+      if (!(workspaceKey in state.frozenWorktreeIntentByWorkspaceKey)) return state;
+      const { [workspaceKey]: _removed, ...rest } = state.frozenWorktreeIntentByWorkspaceKey;
+      return { frozenWorktreeIntentByWorkspaceKey: rest };
+    }),
   peekFrozenWorktreeIntent: (workspaceKey) =>
     get().frozenWorktreeIntentByWorkspaceKey[workspaceKey],
   releaseFrozenWorktreeIntent: (workspaceKey, destination) =>

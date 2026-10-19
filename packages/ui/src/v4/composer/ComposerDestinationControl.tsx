@@ -448,6 +448,11 @@ export function ComposerDestinationControl({
                     ) {
                       useComposerWorktreePipelineStore.getState().withdraw(workspaceKey);
                     }
+                    if (worktreeActive) {
+                      useDraftBranchIntentStore
+                        .getState()
+                        .clearFrozenWorktreeIntent(workspaceKey);
+                    }
                     useDraftBranchIntentStore
                       .getState()
                       .setWorktreeIntentActive(workspaceKey, !worktreeActive);
@@ -544,6 +549,9 @@ export function ComposerDestinationControl({
                         data-checked={isSelected ? "true" : undefined}
                         disabled={!worktreeMode && occupiedDirectory !== undefined}
                         onSelect={() => {
+                          useDraftBranchIntentStore
+                            .getState()
+                            .clearFrozenWorktreeIntent(workspaceKey);
                           if (worktreeMode) {
                             setBaseBranch(branch.name);
                           } else {

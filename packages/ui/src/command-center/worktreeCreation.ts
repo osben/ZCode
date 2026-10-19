@@ -148,9 +148,7 @@ export async function executeWorktreeCreation({
     const errorDetail = getErrorMessage(error);
     return {
       kind: "failed",
-      message: formatMessage("commandCenter.worktree.error.requestFailed", {
-        error: errorDetail,
-      }),
+      message: formatMessage("commandCenter.worktree.error.unknown"),
       issueCodes: [],
       issueCode: null,
       rawDetail: errorDetail,

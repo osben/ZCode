@@ -83,6 +83,8 @@ export interface ComposerWorktreePipelineEntry {
    * the composer's queued-send effect must not run its own failure handling for it.
    */
   returningToDraft?: boolean;
+  /** A failed Hide tombstone leaves the local failed-row recovery surface active. */
+  tombstoneFailed?: boolean;
 }
 
 interface ComposerWorktreePipelineState {
@@ -117,6 +119,12 @@ interface ComposerWorktreePipelineState {
     sessionId: string | undefined,
     attemptId: string | undefined,
     returningToDraft: boolean,
+  ) => boolean;
+  setTombstoneFailed: (
+    workspaceKey: string,
+    sessionId: string | undefined,
+    attemptId: string | undefined,
+    tombstoneFailed: boolean,
   ) => boolean;
   /** Terminal success: the queued/re-committed send was accepted into a session. */
   consume: (workspaceKey: string, sessionId?: string, attemptId?: string) => void;
@@ -291,6 +299,15 @@ export const useComposerWorktreePipelineStore = create<ComposerWorktreePipelineS
     const state = useComposerWorktreePipelineStore.getState();
     const next = patchEntry(state, workspaceKey, sessionId, attemptId, {
       returningToDraft: returningToDraft || undefined,
+    });
+    if (next === state) return false;
+    useComposerWorktreePipelineStore.setState(next);
+    return true;
+  },
+  setTombstoneFailed: (workspaceKey, sessionId, attemptId, tombstoneFailed) => {
+    const state = useComposerWorktreePipelineStore.getState();
+    const next = patchEntry(state, workspaceKey, sessionId, attemptId, {
+      tombstoneFailed: tombstoneFailed || undefined,
     });
     if (next === state) return false;
     useComposerWorktreePipelineStore.setState(next);

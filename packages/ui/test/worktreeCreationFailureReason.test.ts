@@ -93,7 +93,7 @@ describe("executeWorktreeCreation failure reason", () => {
     expect(outcome.rawDetail).toBe("fatal: invalid reference: main");
   });
 
-  it("carries the thrown request text as raw detail with no issue code", async () => {
+  it("keeps thrown request text in raw detail and uses a generic summary", async () => {
     const gitService = {
       createWorktree: vi.fn(async () => {
         throw new Error("rpc unavailable");
@@ -115,6 +115,7 @@ describe("executeWorktreeCreation failure reason", () => {
     });
     if (outcome.kind !== "failed") throw new Error("expected a failed outcome");
     expect(outcome.issueCode).toBeNull();
+    expect(outcome.message).toBe("Could not create the worktree.");
     expect(outcome.rawDetail).toBe("rpc unavailable");
   });
 });
