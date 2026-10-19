@@ -936,6 +936,7 @@ export function TaskListItemContextMenuContent({
   return (
     <TaskListItemContextMenu
       intl={intl}
+      task={task}
       isPinned={isPinned}
       fileManagerLabel={fileManagerLabel}
       taskSessionFile={taskSessionFile}
@@ -944,6 +945,7 @@ export function TaskListItemContextMenuContent({
       providerConfigFile={providerConfigFile}
       disableTaskActions={workspaceActionsDisabled}
       disabledReason={workspaceActionsDisabledReason}
+      onCopyText={handleCopyText}
       onTogglePinTask={() => {
         onTogglePinTask(task.taskId, !isPinned);
       }}

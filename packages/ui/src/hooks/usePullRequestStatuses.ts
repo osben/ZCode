@@ -35,6 +35,7 @@ export function usePullRequestStatuses(
   );
   const dropWorkspaceTasks = usePullRequestStatusStore((state) => state.dropWorkspaceTasks);
   const refreshVersion = usePullRequestStatusStore((state) => state.refreshVersion);
+  const forceRefresh = usePullRequestStatusStore((state) => state.forceRefresh);
 
   const prober = useMemo(
     () => createPullRequestStatusProber({ setWorkspacePullRequestStatuses, dropWorkspaceTasks }),
@@ -98,6 +99,20 @@ export function usePullRequestStatuses(
       void prober.probe(forcedTargets, { force: true });
     }
   }, [prober, targets, active, runningTaskKeysSignature]);
+
+  // Explicit refresh: only the requested task keys bypass the service TTL.
+  const forceTaskIdList = useMemo(() => {
+    const separator = "::";
+    return forceRefresh.taskKeys
+      .map((taskKey) => taskKey.slice(taskKey.indexOf(separator) + separator.length))
+      .filter((taskId) => taskId.length > 0);
+  }, [forceRefresh]);
+  useEffect(() => {
+    if (!active || forceTaskIdList.length === 0) {
+      return;
+    }
+    void prober.probe(targets, { forceTaskIds: forceTaskIdList });
+  }, [prober, targets, active, forceTaskIdList]);
 
   // Drop store entries for workspaces that left the sidebar.
   useEffect(() => {

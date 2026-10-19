@@ -48,13 +48,18 @@ export function createPullRequestStatusProber(
 
   async function probe(
     targets: readonly PullRequestStatusTarget[],
-    options?: { force?: boolean },
+    options?: { force?: boolean; forceTaskIds?: string[] },
   ): Promise<void> {
     await Promise.allSettled(
       targets.map(async (target) => {
         if (target.tasks.length === 0) {
           return;
         }
+        const forceTaskIds = options?.force
+          ? target.tasks.map((task) => task.input.taskId)
+          : (options?.forceTaskIds ?? []).filter((taskId) =>
+              target.tasks.some((task) => task.input.taskId === taskId),
+            );
         const sequence = (writeSequenceByWorkspaceKey.get(target.workspaceKey) ?? 0) + 1;
         writeSequenceByWorkspaceKey.set(target.workspaceKey, sequence);
         try {
@@ -62,9 +67,7 @@ export function createPullRequestStatusProber(
             workspacePath: target.workspacePath,
             ...(target.workspaceIdentity ? { workspaceIdentity: target.workspaceIdentity } : {}),
             tasks: target.tasks.map((task) => task.input),
-            ...(options?.force
-              ? { forceTaskIds: target.tasks.map((task) => task.input.taskId) }
-              : {}),
+            ...(forceTaskIds.length > 0 ? { forceTaskIds } : {}),
           });
           if (writeSequenceByWorkspaceKey.get(target.workspaceKey) !== sequence) {
             return;

@@ -16,6 +16,12 @@ interface PullRequestStatusState {
    * untouched tasks land in its TTL and stay cheap.
    */
   refreshVersion: number;
+  /**
+   * Explicit refresh signal: bumps a version with the task keys whose next
+   * probe must bypass the service TTL (context menu "Refresh pull request
+   * status").
+   */
+  forceRefresh: { version: number; taskKeys: string[] };
   /** Replaces every entry of one workspace; probes answer per workspace RPC. */
   setWorkspacePullRequestStatuses(
     workspaceKey: string,
@@ -23,6 +29,7 @@ interface PullRequestStatusState {
   ): void;
   dropWorkspaceTasks(workspaceKey: string): void;
   requestRefresh(): void;
+  requestForceRefresh(taskKeys: string[]): void;
 }
 
 const TASK_KEY_SEPARATOR = "::";
@@ -34,6 +41,7 @@ export function buildPullRequestTaskKey(workspaceKey: string, taskId: string): s
 export const usePullRequestStatusStore = create<PullRequestStatusState>((set) => ({
   statusByTaskKey: {},
   refreshVersion: 0,
+  forceRefresh: { version: 0, taskKeys: [] },
   setWorkspacePullRequestStatuses: (workspaceKey, entries) =>
     set((state) => {
       const prefix = `${workspaceKey}${TASK_KEY_SEPARATOR}`;
@@ -66,6 +74,8 @@ export const usePullRequestStatusStore = create<PullRequestStatusState>((set) =>
       return { statusByTaskKey: next };
     }),
   requestRefresh: () => set((state) => ({ refreshVersion: state.refreshVersion + 1 })),
+  requestForceRefresh: (taskKeys) =>
+    set((state) => ({ forceRefresh: { version: state.forceRefresh.version + 1, taskKeys } })),
 }));
 
 export function selectTaskPullRequestStatus(
