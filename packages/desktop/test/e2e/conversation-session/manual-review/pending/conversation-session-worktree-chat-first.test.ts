@@ -188,10 +188,11 @@ describe("会话区 Worktree 首发真实会话 E2E", () => {
     await waitForV4AssistantMessageContaining("WORKTREE_NEW_CHAT_B_OK");
 
     await selectV4TaskById(firstSessionId);
-    await $('[data-worktree-setup-step="ready"]').waitForDisplayed({ timeout: 30000 });
     const recovery = await $('[data-testid="composer-worktree-recovery"]');
     await recovery.waitForDisplayed({ timeout: 15000 });
+    await $('[data-worktree-setup-step="ready"]').waitForDisplayed({ timeout: 30000 });
     expect(await recovery.getText()).toContain(first);
+    expect(await recovery.getText()).not.toContain(second);
     expect((await getV4Messages("user")).some((message) => message.text.includes(second))).toBe(
       false,
     );

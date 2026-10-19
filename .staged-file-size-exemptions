@@ -11,3 +11,5 @@ packages/ui/src/v4/composer/composerWorktreePipeline.ts
 packages/ui/test/composerWorktreePipeline.test.ts
 packages/ui/test/composerRecoveryContexts.test.ts
 specs/composer-worktree-setup-steps.md
+docs/conversation-session-case-catalog.md
+docs/testing/conversation-session-e2e-coverage-matrix.md

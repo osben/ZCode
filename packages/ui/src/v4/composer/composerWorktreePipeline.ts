@@ -370,8 +370,8 @@ export function beginWorktreePipelineCreation({
   submissionId?: string;
   formatMessage: (id: string, values?: Record<string, string>) => string;
 }): Promise<ComposerWorktreeBeginResult> {
-  const reservationKey = `${workspaceKey}\0${submissionId ?? "legacy"}`;
-  const inFlight = beginInFlightBySubmissionKey.get(reservationKey);
+  const reservationKey = submissionId ? `${workspaceKey}\0${submissionId}` : null;
+  const inFlight = reservationKey ? beginInFlightBySubmissionKey.get(reservationKey) : undefined;
   if (inFlight) return inFlight;
   // A workspace can contain several new chats. Only the same frozen submission may reuse a reservation.
   const existing = submissionId
@@ -460,6 +460,9 @@ export function beginWorktreePipelineCreation({
     });
     return { ok: true, sessionId } as const;
   })();
+  // Reason: without a submission id there is no frozen submission to dedupe against, so a shared
+  // "legacy" key would hand one new chat another chat's in-flight admission and sessionId.
+  if (reservationKey === null) return attempt;
   beginInFlightBySubmissionKey.set(reservationKey, attempt);
   const clearInFlight = () => {
     if (beginInFlightBySubmissionKey.get(reservationKey) === attempt) {

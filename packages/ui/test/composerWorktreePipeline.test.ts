@@ -874,6 +874,53 @@ describe("startComposerWorktreePipeline runner", () => {
     expect(new Set(createWorktree.mock.calls.map(([params]) => params.targetPath)).size).toBe(3);
   });
 
+  it("does not share an in-flight admission between calls that carry no submission id", async () => {
+    createWorktree.mockImplementation(
+      async ({ targetPath, branchName }) =>
+        ({
+          ok: true,
+          worktreePath: targetPath,
+          branchName,
+          issues: [],
+        }) satisfies GitWorktreeCreateResult,
+    );
+    const input = {
+      gitService,
+      workspaceKey: WORKSPACE_KEY,
+      workspacePath: WORKSPACE_KEY,
+      effectiveLocation: {
+        mode: "sibling" as const,
+        customPath: null,
+        appWorktreesDir: null,
+        prefix: "zcode/",
+        baseBranchDefault: null,
+        hasProjectOverride: false,
+      },
+      baseBranch: PARAMS.baseBranch,
+      baseFromHeadDefault: false,
+      queuedPromptPreview: "legacy input",
+      formatMessage: (id: string) => id,
+    };
+    const firstPrepareSession = vi.fn(async () => "session-legacy-1");
+    const secondPrepareSession = vi.fn(async () => "session-legacy-2");
+    const first = beginWorktreePipelineCreation({
+      ...input,
+      branchName: "zcode/legacy-first",
+      prepareSession: firstPrepareSession,
+    });
+    const second = beginWorktreePipelineCreation({
+      ...input,
+      branchName: "zcode/legacy-second",
+      prepareSession: secondPrepareSession,
+    });
+
+    expect(second).not.toBe(first);
+    await expect(first).resolves.toEqual({ ok: true, sessionId: "session-legacy-1" });
+    await expect(second).resolves.toEqual({ ok: true, sessionId: "session-legacy-2" });
+    expect(firstPrepareSession).toHaveBeenCalledTimes(1);
+    expect(secondPrepareSession).toHaveBeenCalledTimes(1);
+  });
+
   it("gives concurrent admissions different generated names so neither reuses the other's worktree", async () => {
     const effectiveLocation = {
       mode: "sibling" as const,

@@ -34,6 +34,9 @@ human. All manually maintained files are therefore checked. Exclusions are:
   corresponding bare attribute) in **staged** `.gitattributes`. This is the
   explicit declaration for other generated output or third-party code; do
   not mark manually maintained code as generated to evade the limit.
+- Exact repo-relative paths listed in `.staged-file-size-exemptions`, one path
+  per line; `#` starts a comment. Stage the list with the change. Entries are
+  temporary: remove an entry when the file is split below the limit.
 
 Oversize errors list each path, byte size and estimated tokens, then instruct
 the author to extract cohesive modules or document sections, preserve imports

@@ -2976,7 +2976,7 @@ PSC01-08 使用 desktop continuous 作为代表，PSC04/PSC05 额外以 shared-h
 provider/model 或所有 queue 状态做笛卡尔积。
 
 当前正式 desktop E2E `conversation-session-v4-plan-shortcut.test.ts`（PL）覆盖 PSC01、PSC02、PSC04
-和 PSC07；PSC07 的附件发送语义于 2026-10-18 更新；run `desktop-e2e-20261019-051629-352` 在 onboarding 初始化超时，未到达快捷命令验收。任务请求使用 case-local replay fixture，并断言 provider 最后一条 user message 不含
+和 PSC07；PSC07 的附件发送语义于 2026-10-18 更新；早期 run `desktop-e2e-20261019-051629-352` 在 onboarding 初始化超时；当前证据为 run `desktop-e2e-20261019-053827-193` 5/5 通过（空草稿／既有会话快捷、普通任务、任务+附件、仅附件）。independent-new-chat worktree 场景已加入 pending spec，尚未重放，不计为通过。任务请求使用 case-local replay fixture，并断言 provider 最后一条 user message 不含
 `/plan`。PSC03/PSC05/PSC06 继续由 SessionPane focused tests 与现有 queue/failure
 覆盖链路承接，待后续需要真实 remote/controlled-stream 证据时再拆分独立 case。
 
