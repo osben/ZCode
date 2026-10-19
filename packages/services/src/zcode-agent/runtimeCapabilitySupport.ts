@@ -1,4 +1,6 @@
 import {
+  INCOGNITO_PROMPT_TOGGLES_UNSUPPORTED_ERROR,
+  INCOGNITO_SESSION_UNSUPPORTED_ERROR,
   INCOGNITO_UNSUPPORTED_ERROR,
   zcodeProtocolMethods,
   zcodeRuntimeCapabilitiesSchema,
@@ -32,12 +34,13 @@ async function ensureRuntimeCapability(
   client: CapabilityClient,
   capability: keyof ZCodeRuntimeCapabilities,
   errorCode: string,
+  readFailureCode: string = errorCode,
 ): Promise<void> {
   let capabilities: ZCodeRuntimeCapabilities;
   try {
     capabilities = await readRuntimeCapabilities(client);
   } catch (cause) {
-    throw new Error(errorCode, { cause });
+    throw new Error(readFailureCode, { cause });
   }
   if (capabilities[capability] !== true) throw new Error(errorCode);
 }
@@ -52,7 +55,19 @@ export function ensureIndependentPlanSupport(client: CapabilityClient): Promise<
 
 /** specs/incognito-session.md: an incognito create must never run as a normal session. */
 export async function ensureIncognitoSupport(client: CapabilityClient): Promise<void> {
-  // Both flags are required: incognitoProfileV2 gates the v2 profile (identity/harness/environment/automationTools).
-  await ensureRuntimeCapability(client, "incognitoSession", INCOGNITO_UNSUPPORTED_ERROR);
-  await ensureRuntimeCapability(client, "incognitoProfileV2", INCOGNITO_UNSUPPORTED_ERROR);
+  // Both flags are required. incognitoSession is checked first: a CLI without it has no incognito
+  // support at all. A CLI with it but without incognitoPromptToggles is a stale build that cannot
+  // parse the thirteen-key profile. A failed capability read keeps the bare code.
+  await ensureRuntimeCapability(
+    client,
+    "incognitoSession",
+    INCOGNITO_SESSION_UNSUPPORTED_ERROR,
+    INCOGNITO_UNSUPPORTED_ERROR,
+  );
+  await ensureRuntimeCapability(
+    client,
+    "incognitoPromptToggles",
+    INCOGNITO_PROMPT_TOGGLES_UNSUPPORTED_ERROR,
+    INCOGNITO_UNSUPPORTED_ERROR,
+  );
 }

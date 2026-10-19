@@ -7930,6 +7930,8 @@ const zhCN: Record<string, string> = {
   "settings.incognito": "无痕",
   "settings.incognito.description":
     "新无痕会话的默认设置。打开某项能力即默认包含它；仍可在输入框中为每个会话单独调整。",
+  "chat.incognito.agentOutdated":
+    "Agent 版本过旧。请重启应用或更新远程 Agent（开发环境：重新运行 dev:desktop 以重建 Agent）后重试。",
   "settings.incognito.scopeHint":
     "无痕模式默认会启动一个不含下列能力的干净会话（包括 Agent 身份、Harness、运行环境和自动化工具）；你可以在新建会话时重新开启其中任意一项。它不是隐私模式：用量统计、遥测、输入历史和模型日志仍会被记录。",
   "incognito.capability.projectInstructions.label": "项目指令",

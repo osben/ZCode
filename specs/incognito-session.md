@@ -1,6 +1,6 @@
 # Incognito session
 
-Status: slice 6 (2026-10-18, in progress): profile v2 adds four toggles that were core in v1 (`identity`, `harness`, `environment`, `automationTools`), see "Prompt toggles (v2)". Slices 1–5 implemented: shared profile contract and fork setting; CLI storage (`session.fork_incognito`); CLI runtime overrides, inheritance, dream exclusion and the `incognitoSession` runtime capability (apps/zcode-cli/docs/design/v2/incognito-session.md); Host and renderer capability gates and the `incognito` summary/task-meta projection; UI (composer toggle and checklist, prompt-shell tint and chip, prewarm bypass, sidebar/hover-card/session-manager marker, Settings «Incognito», i18n). Draft-intent generation (scenario 18, composer half) and the serialized Settings write harden the UI races found in review. The desktop E2E scenarios (13, 17) are written but have not been run.
+Status: slice 6 (2026-10-18, in progress): the profile has thirteen capability keys; four of them (`identity`, `harness`, `environment`, `automationTools`) gate prompt and tool text that was core before, see "Prompt toggles". Slices 1–5 implemented: shared profile contract and fork setting; CLI storage (`session.fork_incognito`); CLI runtime overrides, inheritance, dream exclusion and the `incognitoSession` runtime capability (apps/zcode-cli/docs/design/v2/incognito-session.md); Host and renderer capability gates and the `incognito` summary/task-meta projection; UI (composer toggle and checklist, prompt-shell tint and chip, prewarm bypass, sidebar/hover-card/session-manager marker, Settings «Incognito», i18n). Draft-intent generation (scenario 18, composer half) and the serialized Settings write harden the UI races found in review. The desktop E2E scenarios (13, 17) are written but have not been run.
 
 ## Problem
 
@@ -37,16 +37,16 @@ Today the only switches for these extras are global or per-project config, and s
 | `memory`                | No memory root: no memory section, no MEMORY.md index, no recall prefetch, no extraction, `/dream` unavailable, no subagent persistent memory. Excluded from dream (see below).                                                                        | `resolveEnabledProjectMemoryRoot`, `core/src/runtime/helpers/project-memory.ts:4`                                                                                       |
 | `outputStyle`           | No output-style system section and no output-style reminders.                                                                                                                                                                                          | `bootstrap/src/output-style.ts:48`, `create-app.ts:300`                                                                                                                 |
 | `systemPromptOverrides` | `~/.zcode/system-prompt/<key>.md` overrides are ignored; built-in section texts are used.                                                                                                                                                              | `loadPersistedSystemPromptOverrides`, `bootstrap/src/system-prompt.ts:30`                                                                                               |
-| `identity`              | No CLI prefix and no identity intro sentence. The safety notice stays (see "Prompt toggles (v2)").                                                                                                                                                     | `ContextBuilder.build`, `core/src/context/builder.ts`                                                                                                                   |
+| `identity`              | No CLI prefix and no identity intro sentence. The safety notice stays (see "Prompt toggles").                                                                                                                                                          | `ContextBuilder.build`, `core/src/context/builder.ts`                                                                                                                   |
 | `harness`               | No `# Harness` block, no desktop context, no dynamic behavior section, no session guidance and no subagent notes. The confirmation paragraph stays as a floor.                                                                                         | `core/src/context/builder.ts`, `core/src/subagent/context-builder.ts`                                                                                                   |
 | `environment`           | No `# Environment` block (cwd, platform, shell, OS, git flag, model line) and no git system context. The execution-worktree line stays.                                                                                                                | `core/src/context/builder.ts`, `core/src/subagent/context-builder.ts`                                                                                                   |
 | `automationTools`       | No `CronCreate`/`CronList`/`CronUpdate`/`CronDelete`, `OffPeakCreate`/`OffPeakList` and the 11 dynamic-workflow tools (`DYNAMIC_WORKFLOW_TOOL_NAMES`, incl. `ListModels`) are registered; the Agent and Task descriptions carry no workflow guidance.  | `registerBuiltInTools`, `core/src/tool/handlers/index.ts`; gates `core/src/runtime/helpers/runtime-tools.ts:74-82`, `core/src/runtime/helpers/tool-allowlist.ts:78-100` |
 
 **Core (never toggleable):** safety notice, current date, context management, built-in tools, permissions and permission mode, model selection, internal mailbox hooks, the execution-worktree isolation line.
 
-### Prompt toggles (v2)
+### Prompt toggles
 
-v1 treated the system prompt's identity, `# Harness` and environment text as core. Profile v2 makes them toggleable so an incognito session can start with no ZCode identity, harness or environment text. Default is off, like every other capability. The rule for each toggle is "what the section owns", and every section below belongs to exactly one owner. Plain sessions render byte-identically (pinned by tests).
+The system prompt's identity, `# Harness` and environment text were core before these toggles existed. The profile makes them toggleable so an incognito session can start with no ZCode identity, harness or environment text. Default is off, like every other capability. The rule for each toggle is "what the section owns", and every section below belongs to exactly one owner. Plain sessions render byte-identically (pinned by tests).
 
 Ownership (main agent, `ContextBuilder.build`; subagents use `SubagentContextBuilder`):
 
@@ -92,10 +92,10 @@ export const INCOGNITO_CAPABILITY_KEYS = [
   "automationTools",
 ] as const;
 
-// `true` = capability included in this session.
+// `true` = capability included in this session. Flat and strict: no version field, so any
+// stored or sent object with an unknown or missing key is rejected (see "Compatibility").
 export const incognitoProfileSchema = z
   .object({
-    version: z.literal(2),
     projectInstructions: z.boolean(),
     skills: z.boolean(),
     hooks: z.boolean(),
@@ -112,8 +112,13 @@ export const incognitoProfileSchema = z
   })
   .strict();
 
-export const INCOGNITO_LOCKDOWN_PROFILE: IncognitoProfile; // version 2, every capability false
+export type IncognitoProfile = z.infer<typeof incognitoProfileSchema>;
+
+export const INCOGNITO_LOCKDOWN_PROFILE: IncognitoProfile; // every capability false
 export const INCOGNITO_UNSUPPORTED_ERROR = "proto.incognitoUnsupported";
+export const INCOGNITO_SESSION_UNSUPPORTED_ERROR = "proto.incognitoUnsupported.sessionCapability";
+export const INCOGNITO_PROMPT_TOGGLES_UNSUPPORTED_ERROR =
+  "proto.incognitoUnsupported.promptToggles";
 export function resolveIncognitoDefaults(
   stored?: Partial<IncognitoCapabilities>,
 ): IncognitoCapabilities;
@@ -124,22 +129,23 @@ export function parseStoredIncognitoProfile(
 ```
 
 - The profile is the **resolved, explicit** value of every capability, never a diff against Settings defaults, so later Settings edits do not change existing sessions.
-- `version` allows a future fork build to add capabilities. A reader that cannot parse a stored profile (unknown version or shape) uses `INCOGNITO_LOCKDOWN_PROFILE` — the most restrictive reading — never "normal session".
+- No `version` field. The strict key set is the compatibility contract: a reader that cannot parse a stored profile (damaged JSON, an unknown key, a missing key) uses `INCOGNITO_LOCKDOWN_PROFILE`, the most restrictive reading, never "normal session".
 
-#### Versioning and compatibility (v1 → v2)
+#### Compatibility
 
-Choice: **bump to version 2 with the four new keys required, and upgrade v1 on read.** Rejected alternatives:
+Choice: **one flat strict profile with the thirteen capability keys and no `version` field.** A version marker only helps a reader that understands it. Strictness makes every reader that does not know the exact key set fail closed, and no reader is asked to interpret a key it does not know. The earlier v1 → v2 upgrade-on-read is removed: it kept two shapes alive for one profile.
 
-- Making the new keys optional in a v1 shape: the strict reader of an older build would then accept a v2 profile as a v1 profile with unknown keys stripped, and run it as a session whose toggles it does not understand. The lockdown fallback only works when the older reader fails, so the version must change.
-- Keeping v1 and treating missing keys as off: that would silently change the meaning of every existing incognito session (identity and harness would disappear mid-life), contrary to "frozen at creation".
+Verified (`packages/shared/test/incognitoProfile.test.ts`): zod 4 keeps `.strict()` through `.extend({ version: z.literal(1) })`, so the pre-toggle reader (nine keys plus `version: 1`) rejects a row with four unknown keys and no `version`. The `version: 2` reader of the toggle build also rejects it, because it requires `version: 2`. Both readers then use their own lockdown profile.
 
 Rules:
 
-1. **Writers** (renderer, Host, CLI `createRecord`) write only v2. The wire schema accepts only v2; an older renderer that sends v1 is rejected by the strict schema (`proto.invalidPayload`) and never creates a session.
-2. **Stored readers** (`parseStoredIncognitoProfile`, used by `session.fork_incognito`): try the v2 strict schema; else try the v1 strict schema and return it **upgraded** to v2 with `identity`, `harness`, `environment` and `automationTools` set to `true` (v1 sessions always ran with them included, so the upgrade preserves their behavior exactly); else `INCOGNITO_LOCKDOWN_PROFILE`. The stored row is not rewritten (it stays v1; the column is set-once).
-3. **Older builds reading a v2 row** fail their v1 strict schema and use their own lockdown (every capability off). They do not run a normal session.
-4. **Older hosts or CLIs** do not advertise the new capability `incognitoProfileV2` (see Protocol), so the renderer and the Host reject before any row is written (`proto.incognitoUnsupported`).
-5. **Settings defaults** (`incognitoDefaults`) gain the four keys. A stored object without them reads as off (the rule for every capability). The patch schema requires all thirteen keys, as before.
+1. **Writers** (renderer, Host, CLI `createRecord`) send and persist only the flat profile. The wire schema is `.strict()`; a sender that still sends the old `version` shape is rejected by the strict schema (`proto.invalidPayload`) and never creates a session.
+2. **Stored readers** (`parseStoredIncognitoProfile`, used by `session.fork_incognito`): parse the flat strict schema; anything else (damaged JSON, an unknown or missing key, a `version` key) returns `INCOGNITO_LOCKDOWN_PROFILE`. There is no upgrade-on-read. The stored row is never rewritten.
+3. **Accepted consequence (legacy rows).** Rows written with the pre-toggle nine-key profile (`{"version":1,…}`) read as lockdown: every capability off, including identity, harness and environment, which those sessions ran with. The development database held two such rows when this was decided (2026-10-18), both test sessions. No row written with `version: 2` existed in that database, so none is affected. Accepted by the user; no tolerant reader is added.
+4. **Older builds reading a new row** fail their own strict reader (missing `version`, or unknown keys) and use their own lockdown. They never run a normal session.
+5. **Older hosts or CLIs** do not advertise `incognitoSession` or `incognitoPromptToggles` (see Protocol), so the renderer and the Host reject before any row is written. The error codes say which flag is missing (see Errors).
+6. **Settings defaults** (`incognitoDefaults`) hold all thirteen keys. A stored object with a missing key reads that capability as off.
+7. **Future changes.** An existing key never changes meaning. A new capability is a new key; a reader that does not know it falls back to lockdown. A change that old readers would misread needs a new capability flag, gated like `incognitoPromptToggles`.
 
 ### Session storage (CLI `~/.zcode/cli/db/db.sqlite`)
 
@@ -153,7 +159,7 @@ Rules:
 ### Fork settings (`~/.zcode/v2/fork-settings.json`)
 
 - New fork key `incognitoDefaults` in `FORK_SETTING_KEYS` (`packages/shared/src/forkAppSettings.ts:14`), never in `appSettingsObjectSchema` / `setting.json`.
-- Value: the capability booleans of the profile without `version`. Effective default: every capability `false`. Reads tolerate a partial or damaged object (a missing capability is off). The patch schema requires every capability: the sidecar merges top-level keys only, so a partial object would replace the stored one and drop the others.
+- Value: the thirteen capability booleans of the profile. Effective default: every capability `false`. Reads tolerate a partial or damaged object (a missing capability is off). The patch schema requires every capability: the sidecar merges top-level keys only, so a partial object would replace the stored one and drop the others.
 
 ### Session summary projection
 
@@ -168,9 +174,9 @@ Rules:
 - Legacy `session/create` (`packages/shared/src/zcode-protocol/index.ts:1927`) gains the same optional field, so the bridge (`bootstrap/src/zcode-protocol/v4-bridge.ts:1443`) and `createRecord` (`server-operations.ts:3503`) carry it explicitly. The handler pick list in `session-mgmt.ts:73` must name it. A create with `importedHistory` persists through `persistImportedSessionHistory`, whose session inputs carry the profile: the `app.resume()` that follows marks the runtime persisted, so first-send persistence never gets a chance to write it.
 - `incognito` is **never** an optional compat field: it must not be added to `SESSION_CREATE_OPTIONAL_COMPAT_FIELDS` or `SESSION_RESUME_OPTIONAL_COMPAT_FIELDS` (`packages/services/src/zcode-agent/zcodeAgentService.ts:440`). If a CLI's `.strict()` schema rejects it, the create fails; the Host must not retry without it.
 - Capability gate, two hops (precedent: `independentPlanState`):
-  1. CLI advertises `incognitoSession: true` and `incognitoProfileV2: true` in runtime capabilities (`zcodeRuntimeCapabilitiesSchema`). `incognitoProfileV2` is the version gate: a CLI with only `incognitoSession` (v1-era) cannot persist or enforce the four v2 toggles.
-  2. Host checks the CLI with an `ensureIncognitoSupport(client)` gate (same shape as `packages/services/src/zcode-agent/independentPlanSupport.ts`) before forwarding a `createSession` that carries `incognito`; the gate requires both flags; failure → `proto.incognitoUnsupported`.
-  3. Host advertises `incognitoSession: true` and `incognitoProfileV2: true` in `hostCapabilitiesSchema` (`packages/shared/src/zcode-protocol-v4/transport.ts`); the renderer transport (`packages/ui/src/v4/agentConversationTransport.ts`) throws `proto.incognitoUnsupported` before sending when the Host does not advertise both.
+  1. CLI advertises `incognitoSession: true` and `incognitoPromptToggles: true` in runtime capabilities (`zcodeRuntimeCapabilitiesSchema`). `incognitoPromptToggles` is the shape gate: it is advertised only by a CLI whose profile schema accepts the thirteen keys. A CLI with only `incognitoSession` (the nine-key era) must not receive a create, because it would reject the payload or read it as lockdown.
+  2. Host checks the CLI with an `ensureIncognitoSupport(client)` gate (same shape as `packages/services/src/zcode-agent/independentPlanSupport.ts`) before forwarding a `createSession` that carries `incognito`; the gate requires both flags, checks `incognitoSession` first, and throws the subcode of the first missing flag (see Errors).
+  3. Host advertises `incognitoSession: true` and `incognitoPromptToggles: true` in `hostCapabilitiesSchema` (`packages/shared/src/zcode-protocol-v4/transport.ts`); the renderer transport (`packages/ui/src/v4/agentConversationTransport.ts`) throws the subcode of the first missing flag before sending (`incognitoSession` is checked first).
 - The Host never rewrites or fills the profile; the renderer sends the resolved profile.
 
 ## Owners and event order
@@ -252,7 +258,11 @@ Ordering constraints:
 - **Settings «Incognito».** New section in the `agentCapabilities` group (`packages/ui/src/settings/settingsPageConfig.ts`), one `SettingsRow` + switch per capability, plus the honest-scope hint (Non-goals). Every write sends the full `incognitoDefaults` object (`resolveIncognitoDefaults(current)` with one capability flipped); the patch schema rejects partial objects. Because a full-object write races with the settings refresh, the section keeps an immediately-updated optimistic draft as the single source for the next write and serializes writes through a promise chain, so quick successive toggles compose instead of the second write erasing the first; the draft resyncs from the refreshed settings once the write queue is idle, and a failed write reverts the draft to the stored defaults.
 - **Mobile Web.** The mobile Web task list currently renders no worktree marker; the incognito marker follows the same treatment (added wherever the worktree marker is rendered, so out of V1 on mobile today). Creating incognito sessions from mobile remote control is out of scope for V1 (toggle hidden in the compact remote shell).
 - **i18n.** All strings in `en-US`, `zh-CN`, `uk-UA`. The turn-off aria-label is `chat.incognito.turnOff` (renamed from `chat.incognito.removeMarker`, same text and translations).
-- **Errors.** `proto.incognitoUnsupported` shows a toast; the draft text and incognito selection are kept.
+- **Errors.** Every capability-gate failure throws a code that starts with `proto.incognitoUnsupported`, so one prefix check matches them all. The suffix says which flag is missing:
+  - `proto.incognitoUnsupported.sessionCapability`: the CLI or Host does not advertise `incognitoSession`. Toast: «This agent version can't start incognito sessions. Update the app or the remote agent and try again.»
+  - `proto.incognitoUnsupported.promptToggles`: `incognitoSession` is advertised but `incognitoPromptToggles` is not, so the agent is a stale build (typically a local desktop agent that was not rebuilt). Toast: «The agent is out of date. Restart the app or update the remote agent (dev: restart dev:desktop to rebuild the agent) and try again.»
+  - A failed capability read keeps the bare `proto.incognitoUnsupported` and shows the sessionCapability text.
+    The codes reach the renderer unchanged: `packages/rpc/src/channelServer.ts` sends `error.message` and `channelClient.ts` rebuilds the error from it. The toast choice is `incognitoUnsupportedMessageId` (`packages/ui/src/lib/incognitoUnsupportedMessage.ts`). Both toasts use the warning variant. The draft text and the incognito selection are kept. Fail-closed is unchanged: no row is written on any of these codes. The toast never shows flag names or code strings. The renderer checks the Host hello and the Host checks the CLI, in the same order: `incognitoSession`, then `incognitoPromptToggles`.
 
 ## Sidebar marker durability
 
@@ -288,8 +298,8 @@ Scenario 23: the web sidebar (no sessions-index observer in-process) shows the i
 7. Settings defaults changed after an incognito session started → that session's behavior unchanged.
 8. Fork, side chat, Task-tool subagent and workflow child of an incognito session → same profile; child rows store it.
 9. Another session in the same workspace runs `/dream` → the incognito session's transcript is not selected.
-10. Stored profile unparsable (unknown version) → session runs with the lockdown profile, not as normal.
-11. CLI without `incognitoSession` capability (older or remote CLI) → create rejected with `proto.incognitoUnsupported`; no session row created.
+10. Stored profile unparsable (damaged JSON, unknown or missing key, a `version` key) → session runs with the lockdown profile, not as normal.
+11. CLI without `incognitoSession` capability (older or remote CLI) → create rejected with `proto.incognitoUnsupported.sessionCapability`; no session row created.
 12. Host without the capability → renderer rejects before sending.
 13. Sidebar shows the incognito marker for incognito sessions, both markers for incognito + worktree, none for normal sessions; at every site that renders the worktree marker.
 14. Database written by the fork, opened by an upstream build → upstream starts normally (ledger and upsert compatibility).
@@ -302,19 +312,20 @@ Scenario 23: the web sidebar (no sessions-index observer in-process) shows the i
 21. A session created incognito in Desktop, resumed in the CLI (TUI `--resume`/`--continue` or headless `-p --resume`) → runs with the frozen profile (no plugins/MCP/hooks/`AGENTS.md`/memory extraction), not as a normal session.
 22. `session/create` with `importedHistory` and `incognito` (both import sources) → the session row stores the profile; a later first send does not overwrite it and the runtime keeps the profile.
 23. Incognito with all thirteen defaults off → the model request's system messages contain the safety notice and the confirmation paragraph, plus `# Context management`; no text containing the CLI prefix, the identity intro, `# Harness`, `# Environment`, `Primary working directory`, `gitStatus:`, `# ZCode Desktop Context`, `# Communicating with the user` or `# Session-specific guidance` (the test asserts each marker is absent in the built messages and in the model-io request).
-24. Each v2 toggle switched on individually → only its own sections return: `identity` → the CLI prefix and intro; `harness` → `# Harness`, desktop context, communication and session guidance; `environment` → `# Environment` and the git system context; `automationTools` → the Cron, OffPeak and dynamic-workflow tool names appear in the registered tool list and the Agent/Task descriptions carry workflow guidance. Each one is asserted against the built prompt or tool list.
-25. Normal session → prompt byte-identical to v1 (the existing snapshot tests for the default prompt, including desktop, subagent and workflow children, must not change).
+24. Each prompt toggle switched on individually → only its own sections return: `identity` → the CLI prefix and intro; `harness` → `# Harness`, desktop context, communication and session guidance; `environment` → `# Environment` and the git system context; `automationTools` → the Cron, OffPeak and dynamic-workflow tool names appear in the registered tool list and the Agent/Task descriptions carry workflow guidance. Each one is asserted against the built prompt or tool list.
+25. Normal session → prompt byte-identical to the pre-change prompt (the existing snapshot tests for the default prompt, including desktop, subagent and workflow children, must not change).
 26. `environment` off with an execution worktree → the prompt keeps the worktree bullet under a `# Environment` heading and nothing else from the environment block; the worktree line stays in subagent environment context.
 27. `harness` off → the confirmation paragraph is present exactly once; `harness` on → it is present exactly once, inside Dynamic Behavior.
-28. A v1 profile row (`{version: 1, …9 keys}`) read by this build → upgraded in memory to v2 with `identity`, `harness`, `environment` and `automationTools` = `true`; the session behaves exactly as before the change. The row stays v1.
-29. A v2 row read by an older build → that build's strict v1 reader rejects it and uses its lockdown profile; a test pins the v1 reader's rejection of version 2.
-30. CLI with `incognitoSession` but without `incognitoProfileV2` → Host create rejected with `proto.incognitoUnsupported`; the renderer rejects a Host hello without `incognitoProfileV2`; no session row is created.
+28. A pre-change nine-key profile row (`{version: 1, …}`) read by this build → lockdown profile (every capability off); the row is not rewritten and no upgrade happens. Covered by a test that pins the lockdown reading.
+29. A 13-key row, or any row with a `version` key, read by an older build → that build's strict reader rejects it and uses its own lockdown. `incognitoProfile.test.ts` reproduces the pre-change reader shape (`.strict()` then `.extend({ version: z.literal(1) })`) and pins the rejection.
+30. CLI with `incognitoSession` but without `incognitoPromptToggles` → Host create rejected with `proto.incognitoUnsupported.promptToggles`; the renderer rejects a Host hello without `incognitoPromptToggles` with the same subcode; no session row is created.
 31. Desktop E2E (written, not run; `manual-review/pending/conversation-session-incognito-draft.test.ts`): clicking the composer icon turns incognito on with no menu and the chip appears; clicking the chip text opens the checklist of thirteen capability rows in `INCOGNITO_CAPABILITY_KEYS` order (the four new rows unchecked by default), with no master row and no Settings link; the × turns incognito off. Settings «Incognito» shows the same thirteen switches; switching `harness` on in Settings and then starting a new incognito draft pre-checks it; the session's first request then contains `# Harness`.
 32. `automationTools` off → the tool names `CronCreate`, `CronList`, `CronUpdate`, `CronDelete`, `OffPeakCreate`, `OffPeakList` and every `DYNAMIC_WORKFLOW_TOOL_NAMES` entry are absent from `getTools()` on the main runtime, on the embedded-search refresh path (`refreshBranchAwareBuiltInTools`) and in the request's tool list; `automationTools` on → present. Subagent and workflow children of an off session stay off (inherited profile).
+33. Gate toasts: `proto.incognitoUnsupported.promptToggles` shows the stale-agent text; `…sessionCapability` and the bare code show the unsupported text; both as warnings, with the draft and incognito selection kept.
 
 ## Validation
 
-- v2 unit tests: `core/tests/incognito-prompt-toggles.test.ts` (main and subagent builder per toggle, automationTools runtime gate through the registered request tools); `shared/test/incognitoProfile.test.ts` (v2 shape, v1 upgrade, v1 reader rejects v2, `incognitoProfileV2` capability); `services/test/runtimeCapabilitySupport.test.ts` (both flags required); `ui/test/agentV4ConnectionTransports.test.ts` (renderer needs `incognitoProfileV2`); `ui/test/v4ComposerIncognitoControl.test.ts` (icon turns on, chip opens capability checklist, × turns off, no master row, no Settings link).
+- Unit tests: `ui/test/incognitoUnsupportedMessage.test.ts` (toast choice per gate subcode, scenario 33); `core/tests/incognito-prompt-toggles.test.ts` (main and subagent builder per toggle, automationTools runtime gate through the registered request tools); `shared/test/incognitoProfile.test.ts` (flat strict shape, `version` rejected, pre-change reader shapes reject 13-key rows, nine-key rows read as lockdown, `incognitoPromptToggles` capability); `services/test/runtimeCapabilitySupport.test.ts` (both flags required); `ui/test/agentV4ConnectionTransports.test.ts` (renderer needs `incognitoPromptToggles`); `ui/test/v4ComposerIncognitoControl.test.ts` (icon turns on, chip opens capability checklist, × turns off, no master row, no Settings link).
 - Measured on the built request (`createContextBuilder` and `createTestAgentRuntime`, 2026-10-18, default test fixtures): system prompt 8,300 chars normal → 3,011 all toggles off (-64%); harness is the largest owner (about 4,600 chars); the request's tool JSON 146,749 chars / 31 tools normal → 67,106 / 16 tools with `automationTools` off (-54%); with `automationTools` on the tool set is back to 31.
 - `pnpm typecheck`, `pnpm lint`, `pnpm architecture:check --changed`, `pnpm fmt:check`.
 - CLI unit: migration test (fresh DB, upstream-shaped DB, ledger coexistence, set-once upsert, 16); context builder per capability (1–5); resume/fork/child inheritance (6–8); dream selection (9); profile decode fallback (10).

@@ -1,6 +1,11 @@
 import { sendWithConversationDelayE2E } from "@/v4/conversationTransportDelayE2E.js";
 import { getLocalTtftObserver } from "@/v4/telemetry/localTtftObserver.js";
-import { calibrateLocalTtftClock, INCOGNITO_UNSUPPORTED_ERROR, localTtftNow } from "@zcode/shared";
+import {
+  calibrateLocalTtftClock,
+  INCOGNITO_PROMPT_TOGGLES_UNSUPPORTED_ERROR,
+  INCOGNITO_SESSION_UNSUPPORTED_ERROR,
+  localTtftNow,
+} from "@zcode/shared";
 /* oxlint-disable eslint(max-lines) -- Keep uploads, chunked reads, and runtime lifecycle within one host boundary for this transport. */
 // Desktop/host implementation of ConversationTransport: bridges to the v4 forwarding surface of IZCodeAgentService
 // (dependency injection keeps host details out of the data layer;
@@ -364,11 +369,14 @@ export function createAgentConversationTransport(
       // Old Hosts strip unknown fields; an incognito create must never run as a normal session.
       if (
         envelope.type === "createSession" &&
-        (envelope.payload as { incognito?: unknown }).incognito !== undefined &&
-        (hello.capabilities.incognitoSession !== true ||
-          hello.capabilities.incognitoProfileV2 !== true)
+        (envelope.payload as { incognito?: unknown }).incognito !== undefined
       ) {
-        throw new Error(INCOGNITO_UNSUPPORTED_ERROR);
+        if (hello.capabilities.incognitoSession !== true) {
+          throw new Error(INCOGNITO_SESSION_UNSUPPORTED_ERROR);
+        }
+        if (hello.capabilities.incognitoPromptToggles !== true) {
+          throw new Error(INCOGNITO_PROMPT_TOGGLES_UNSUPPORTED_ERROR);
+        }
       }
       return sendWithConversationDelayE2E(envelope, () =>
         agentService.sendConversationCommandV4({ ...workspace, envelope }),

@@ -132,7 +132,7 @@ it("opens the capability checklist from the chip text without a master row or Se
   expect(selectDraftIncognito(useDraftIncognitoIntentStore.getState(), "/ws")?.harness).toBe(true);
 });
 
-it("shows the four v2 toggles as checklist rows", () => {
+it("shows the four prompt toggles as checklist rows", () => {
   act(() => {
     useDraftIncognitoIntentStore.getState().activate("/ws", resolveIncognitoDefaults({}));
   });

@@ -8281,6 +8281,8 @@ const enUS: Record<string, string> = {
   "settings.incognito": "Incognito",
   "settings.incognito.description":
     "Defaults for new incognito sessions. Switch a capability on to include it by default; you can still change it for each session in the composer.",
+  "chat.incognito.agentOutdated":
+    "The agent is out of date. Restart the app or update the remote agent (dev: restart dev:desktop to rebuild the agent) and try again.",
   "settings.incognito.scopeHint":
     "Incognito starts a clean session without the extras below, including the agent identity, harness, environment and automation tools. It is not a privacy mode: usage stats, telemetry, input history and model logs are still recorded.",
   "incognito.capability.projectInstructions.label": "Project instructions",

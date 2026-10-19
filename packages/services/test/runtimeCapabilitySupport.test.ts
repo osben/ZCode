@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { INCOGNITO_UNSUPPORTED_ERROR } from "@zcode/shared";
+import {
+  INCOGNITO_PROMPT_TOGGLES_UNSUPPORTED_ERROR,
+  INCOGNITO_SESSION_UNSUPPORTED_ERROR,
+  INCOGNITO_UNSUPPORTED_ERROR,
+} from "@zcode/shared";
 import {
   ensureIncognitoSupport,
   ensureIndependentPlanSupport,
@@ -31,7 +35,7 @@ describe("incognito execution-endpoint capability", () => {
       request: vi.fn().mockResolvedValue({
         independentPlanState: true,
         incognitoSession: true,
-        incognitoProfileV2: true,
+        incognitoPromptToggles: true,
       }),
     };
     await ensureIncognitoSupport(client as never);
@@ -39,28 +43,32 @@ describe("incognito execution-endpoint capability", () => {
     expect(client.request).toHaveBeenCalledTimes(1);
   });
 
-  it("rejects a v1-era CLI that advertises incognitoSession but not the v2 profile flag", async () => {
-    // incognitoProfileV2 is the version gate: such a CLI would read the v2 toggles as absent.
-    const v1Era = {
+  it("rejects a stale CLI that advertises incognitoSession but not the prompt-toggle shape flag", async () => {
+    // incognitoPromptToggles is the shape gate: such a CLI cannot parse the thirteen-key profile.
+    const staleBuild = {
       request: vi.fn().mockResolvedValue({ independentPlanState: true, incognitoSession: true }),
     };
-    await expect(ensureIncognitoSupport(v1Era as never)).rejects.toThrow(
-      INCOGNITO_UNSUPPORTED_ERROR,
+    await expect(ensureIncognitoSupport(staleBuild as never)).rejects.toThrow(
+      INCOGNITO_PROMPT_TOGGLES_UNSUPPORTED_ERROR,
     );
     const v2 = {
-      request: vi.fn().mockResolvedValue({ incognitoSession: true, incognitoProfileV2: true }),
+      request: vi.fn().mockResolvedValue({ incognitoSession: true, incognitoPromptToggles: true }),
     };
     await expect(ensureIncognitoSupport(v2 as never)).resolves.toBeUndefined();
   });
 
-  it("rejects a CLI without the capability or without the capability query", async () => {
+  it("reports a CLI without incognitoSession with the sessionCapability subcode", async () => {
     const older = { request: vi.fn().mockResolvedValue({ independentPlanState: true }) };
     await expect(ensureIncognitoSupport(older as never)).rejects.toThrow(
-      INCOGNITO_UNSUPPORTED_ERROR,
+      INCOGNITO_SESSION_UNSUPPORTED_ERROR,
     );
+  });
+
+  it("keeps the bare code when the capability query itself fails", async () => {
     const oldest = { request: vi.fn().mockRejectedValue(new Error("Method not found")) };
+    // Exact match: the bare code must not carry a subcode.
     await expect(ensureIncognitoSupport(oldest as never)).rejects.toThrow(
-      INCOGNITO_UNSUPPORTED_ERROR,
+      new RegExp(`^${INCOGNITO_UNSUPPORTED_ERROR.replace(/\./g, "\\.")}$`),
     );
   });
 });

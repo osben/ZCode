@@ -128,8 +128,8 @@ export const zcodeRuntimeCapabilitiesSchema = z.object({
   independentPlanState: z.boolean().optional(),
   // This CLI persists and enforces createSession `incognito`; the Host must not forward it otherwise.
   incognitoSession: z.boolean().optional(),
-  // This CLI persists and enforces the v2 profile (identity, harness, environment, automationTools); a v1-era CLI cannot.
-  incognitoProfileV2: z.boolean().optional(),
+  // This CLI parses and enforces the thirteen-key incognito profile (specs/incognito-session.md, Compatibility); a CLI without this flag would reject or misread it.
+  incognitoPromptToggles: z.boolean().optional(),
 });
 export type ZCodeRuntimeCapabilities = z.infer<typeof zcodeRuntimeCapabilitiesSchema>;
 export const zcodeProtocolErrorCodes = {

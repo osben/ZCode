@@ -103,7 +103,7 @@ export class ContextBuilder {
     }
     const isWorkflowActor = workflowActor !== undefined;
     const promptOverrides = isWorkflowActor ? undefined : this.config.systemPromptOverrides;
-    // Incognito toggles for prompt text (specs/incognito-session.md, "Prompt toggles (v2)"). Absent profile = all included.
+    // Incognito toggles for prompt text (specs/incognito-session.md, "Prompt toggles"). Absent profile = all included.
     const incognito = this.config.incognito;
     const identityOff = incognitoExcludes(incognito, "identity");
     const harnessOff = incognitoExcludes(incognito, "harness");
