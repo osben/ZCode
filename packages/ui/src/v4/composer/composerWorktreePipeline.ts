@@ -122,7 +122,7 @@ function isWorktreeOwnedByOtherEntry(
     (entry) =>
       (entry.sessionId ?? undefined) !== (sessionId ?? undefined) &&
       entry.params !== undefined &&
-      (entry.status === "creating" || entry.status === "ready") &&
+      (entry.status === "creating" || entry.status === "ready" || entry.status === "failed") &&
       (entry.params.branchName === branchName ||
         entry.params.targetPath === worktreePath ||
         entry.worktreePath === worktreePath),
