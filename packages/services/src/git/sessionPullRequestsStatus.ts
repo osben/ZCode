@@ -17,9 +17,10 @@ export function unavailableStatus(
   };
 }
 
+// Logs only the stage transition: workspace paths, remote identities, repositories, and PR numbers
+// stay out of logs.
 export function logStageChanges(
   logger: ServiceLogger,
-  workspaceKey: string,
   previous: SessionPullRequest[],
   next: SessionPullRequest[],
 ): void {
@@ -37,9 +38,6 @@ export function logStageChanges(
     const from = previousStageById.get(id) ?? null;
     if (from !== pullRequest.stage) {
       logger.info(undefined, "session pull request stage changed", {
-        workspaceKey,
-        repository: pullRequest.repository,
-        number: pullRequest.number,
         from,
         to: pullRequest.stage,
       });

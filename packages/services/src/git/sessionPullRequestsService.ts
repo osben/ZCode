@@ -324,7 +324,7 @@ export function createSessionPullRequestsService(options: {
             stale: false,
             retryNotBeforeMs: 0,
           });
-          logStageChanges(logger, workspaceKey, previous?.pullRequests ?? [], pullRequests);
+          logStageChanges(logger, previous?.pullRequests ?? [], pullRequests);
         } else if (aggregate?.rateLimited) {
           if (previous) {
             branchEntries.set(key, { ...previous, stale: true });
@@ -515,8 +515,10 @@ export function createSessionPullRequestsService(options: {
       }
       return result;
     } catch (error) {
-      logger.warn(undefined, "session pull requests request failed", {
-        reason: error instanceof Error ? error.message : String(error),
+      // Once per workspace and failure class, like the other gh failures. Only the error class
+      // is logged: messages can embed workspace paths or remote URLs.
+      warnOnce(workspaceKey, "request-error", "session pull requests request failed", {
+        errorName: error instanceof Error ? error.name : "unknown",
       });
       for (const task of request.tasks) {
         if (result[task.taskId] === undefined) {
