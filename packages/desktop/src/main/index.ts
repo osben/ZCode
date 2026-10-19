@@ -243,10 +243,10 @@ import {
 } from "./desktopStabilityTelemetry.js";
 import {
   configureDesktopResourceTelemetry,
-  registerDesktopResourceTelemetry,
   resolveResourceUsageScene,
   stopDesktopResourceTelemetry,
 } from "./desktopResourceTelemetry.js";
+import { setDesktopResourceTelemetryEnabled } from "./desktopResourceTelemetryToggle.js";
 import { registerRendererHeapSampleIpc } from "./processResourceRendererHeapSource.js";
 import {
   registerDesktopZCodeDataSizeTelemetry,
@@ -1130,6 +1130,10 @@ function syncImmediateAppSettings(patch: Partial<AppSettings>) {
   if (typeof patch.keepAwakeWhileRunning === "boolean") {
     keepAwakeWhileRunning = patch.keepAwakeWhileRunning;
     reconcileKeepAwakeBlocker();
+  }
+
+  if (typeof patch.resourceTelemetryEnabled === "boolean") {
+    setDesktopResourceTelemetryEnabled(patch.resourceTelemetryEnabled, logger);
   }
 
   if (typeof patch.receivePreviewUpdates === "boolean") {
@@ -2639,7 +2643,10 @@ app.whenReady().then(async () => {
     armsEnv: mapZCodeEnvToArmsRumEnv(desktopRuntimeEnv),
   });
   registerDesktopStabilityMonitors(logger, crashCapturePaths);
-  registerDesktopResourceTelemetry(logger);
+  // Off by default (fork setting, specs/resource-telemetry-toggle.md); Settings toggles it live.
+  if (bootstrapSettings?.resourceTelemetryEnabled === true) {
+    setDesktopResourceTelemetryEnabled(true, logger);
+  }
   // Entry point for 60-second heap samples from the main-window renderer; lives for the App lifetime and registers once.
   registerRendererHeapSampleIpc();
   const defaultDataBaseDir = process.env.HOME?.trim() || homedir();
