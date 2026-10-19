@@ -271,6 +271,10 @@ action shows the open-failed toast and never falls back to opening the remote pa
 A kept remote session id is not proof of a live binding: the action also fails closed, with the same
 toast and without binding or calling the open path, when the parent's bound remote session is not
 currently attached to the session registry (for example during a remote disconnect).
+On the Web remote-control path, the desktop open handler fails closed for any remote worktree identity (including an
+unparseable `remote:` form): it rejects the workspace-open request before the path-only local open runs, so the
+action shows the open-failed toast. Routing a remote worktree on desktop needs the identity-to-session binding in the
+desktop renderer and is not part of this contract.
 Do not show a worktree duration unless the execution-worktree fact provides one; assistant Thought
 duration is not worktree timing.
 
