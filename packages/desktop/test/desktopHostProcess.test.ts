@@ -403,6 +403,11 @@ it("PRT-010: main 的真实 Host 消息分发即时报告 Bash 完成事实，�
     armsEnv: "prod",
     platform: "darwin",
   });
+  // Telemetry is off by default (resourceTelemetryEnabled); ingest only reports while sampling is running.
+  const { setDesktopResourceTelemetryEnabled } =
+    await import("../src/main/desktopResourceTelemetryToggle.js");
+  const telemetryLogger = { info: vi.fn(), warn: vi.fn() };
+  setDesktopResourceTelemetryEnabled(true, telemetryLogger);
   const child = new MockUtilityProcess();
   electronMock.fork.mockReturnValue(child);
   const win = { id: 7, webContents: { id: 11, postMessage: vi.fn() } };
@@ -448,6 +453,7 @@ it("PRT-010: main 的真实 Host 消息分发即时报告 Bash 完成事实，�
     );
   } finally {
     child.emit("exit", 0);
+    setDesktopResourceTelemetryEnabled(false, telemetryLogger);
     sendCustom.mockRestore();
   }
 });
