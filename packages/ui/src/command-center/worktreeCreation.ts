@@ -21,6 +21,11 @@ import {
   resolveWorktreeIssueMessageId,
 } from "@/command-center/worktreeTaskFlow.js";
 
+/** Error class only for logs: raw messages can carry Git/RPC or transport detail. */
+function errorClassName(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error;
+}
+
 /** Git service surface consumed by the shared creation orchestration (injected for tests). */
 export interface WorktreeCreationGitService {
   createWorktree(params: {
@@ -88,7 +93,7 @@ export async function ensureWorktreeExclusionSafely(
     logger.warn("[WorktreeTask] worktree exclusion request failed", {
       workspacePath,
       targetPath,
-      error: getErrorMessage(error),
+      errorName: errorClassName(error),
     });
   }
 }
@@ -210,7 +215,7 @@ export async function executeWorktreeCreation({
         workspacePath,
         branchName,
         issueCode: issue.code,
-        error: getErrorMessage(error),
+        errorName: errorClassName(error),
       });
     }
   }

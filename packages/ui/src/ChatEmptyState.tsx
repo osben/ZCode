@@ -829,6 +829,11 @@ export function ChatEmptyWorktreeTaskToggle({
         onCheckedChange={(value) => {
           const enabled = value === true;
           setChecked(enabled);
+          if (!enabled) {
+            // The user changed the destination: a frozen Retry destination from a restored failure
+            // must not survive into the next worktree creation (the flag-on control clears it too).
+            useDraftBranchIntentStore.getState().clearFrozenWorktreeIntent(workspaceKey);
+          }
           if (!enabled && (pipeline?.status === "creating" || pipeline?.status === "ready")) {
             // Withdraw: the git call is not cancellable; its result lands with an orphan note
             // and the queued send is dropped (spec: composer-worktree-setup-steps.md).
