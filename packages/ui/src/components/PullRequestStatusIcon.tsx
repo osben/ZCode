@@ -5,6 +5,7 @@ import {
   GitPullRequestDraft,
   type LucideIcon,
 } from "lucide-react";
+import type { ComponentPropsWithoutRef } from "react";
 import type { PullRequestStage, SessionPullRequestHealth } from "@zcode/shared";
 import { cn } from "@/components/lib/utils.js";
 
@@ -95,6 +96,7 @@ export function PullRequestStatusIcon({
   label,
   className,
   iconClassName,
+  ...rest
 }: {
   stage: PullRequestStage;
   health?: SessionPullRequestHealth;
@@ -104,7 +106,7 @@ export function PullRequestStatusIcon({
   label?: string;
   className?: string;
   iconClassName?: string;
-}) {
+} & ComponentPropsWithoutRef<"span">) {
   const Icon = STAGE_ICON[stage];
   const dotClass = dotVariant === "none" ? null : pullRequestHealthDotClass(health, dotVariant);
   return (
@@ -113,6 +115,7 @@ export function PullRequestStatusIcon({
       role={label ? "img" : undefined}
       aria-label={label}
       title={label}
+      {...rest}
     >
       <Icon className={cn(STAGE_TEXT_CLASS[stage], iconClassName ?? "size-3.5")} />
       {dotClass ? <span className={cn("size-1.5 shrink-0 rounded-full", dotClass)} /> : null}

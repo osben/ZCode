@@ -15,6 +15,7 @@ import { TID_TASK_ARCHIVE, TID_TASK_ITEM, testId } from "@zcode/shared";
 import { Badge } from "@/components/ui/badge.js";
 import { IncognitoTaskMarker } from "@/components/IncognitoTaskMarker.js";
 import { WorktreeTaskMarker } from "@/components/WorktreeTaskMarker.js";
+import { TaskPullRequestMarker } from "@/components/TaskPullRequestMarker.js";
 import { Button } from "@/components/ui/button.js";
 import { cn } from "@/components/lib/utils.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
@@ -697,6 +698,7 @@ export const MemoTaskItem = memo(function TaskListItem({
                         // icons (specs/worktree-icon-visibility.md).
                         <WorktreeTaskMarker task={task} />
                       ) : null}
+                      {task.executionWorktree ? <TaskPullRequestMarker task={task} /> : null}
                       {task.incognito ? <IncognitoTaskMarker task={task} /> : null}
                       <span className="mr-1">{taskTimeLabel}</span>
                     </span>
@@ -796,6 +798,7 @@ export const MemoTaskItem = memo(function TaskListItem({
                       // icons (specs/worktree-icon-visibility.md).
                       <WorktreeTaskMarker task={task} />
                     ) : null}
+                    {task.executionWorktree ? <TaskPullRequestMarker task={task} /> : null}
                     {task.incognito ? <IncognitoTaskMarker task={task} /> : null}
                     {taskTimeLabel}
                   </span>
