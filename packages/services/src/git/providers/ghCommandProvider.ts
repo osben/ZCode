@@ -58,7 +58,8 @@ export function createGhCommandProvider(options?: {
   platform?: NodeJS.Platform;
 }): GhCommandProvider {
   const platform = options?.platform ?? process.platform;
-  // Binary detection rarely changes within a Host session; cache the first result.
+  // Only a successful discovery is cached. A missing gh is re-checked on the next call so
+  // installing gh after the Host started takes effect without a restart.
   let cachedGhBinaryPromise: Promise<string | null> | null = null;
 
   function resolveGhBinary(): Promise<string | null> {
@@ -66,7 +67,7 @@ export function createGhCommandProvider(options?: {
       return cachedGhBinaryPromise;
     }
     const env = getGhCommandEnv();
-    cachedGhBinaryPromise = (async () => {
+    const discovery = (async () => {
       for (const candidate of getGhBinaryCandidates()) {
         if (await canExecuteGhCandidate(candidate, env)) {
           return candidate;
@@ -74,7 +75,18 @@ export function createGhCommandProvider(options?: {
       }
       return null;
     })();
-    return cachedGhBinaryPromise;
+    cachedGhBinaryPromise = discovery;
+    const forgetUnlessFound = () => {
+      if (cachedGhBinaryPromise === discovery) {
+        cachedGhBinaryPromise = null;
+      }
+    };
+    void discovery.then((binary) => {
+      if (binary === null) {
+        forgetUnlessFound();
+      }
+    }, forgetUnlessFound);
+    return discovery;
   }
 
   async function run(command: GhCommandExecutionOptions): Promise<GhCommandExecutionResult> {

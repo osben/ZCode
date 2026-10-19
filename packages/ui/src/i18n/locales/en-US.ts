@@ -5285,6 +5285,8 @@ const enUS: Record<string, string> = {
     "The registered worktree for {branchName} at {path} is missing or not usable.",
   "worktreeSetup.reconcile.markerSyncUnavailable":
     "Setup finished at a different worktree path and the session record could not be updated",
+  "worktreeSetup.reservation.conflict":
+    "Another chat is already preparing a worktree with this name. Send again to use a new name.",
   "git.branchSwitcher.appliesOnSend": "Applies when you send the first message",
   "git.branchSwitcher.worktreeIntentHint": "The worktree setup sets the branch for this task",
   "branchSwitchGuard.title": "Switch branch?",
@@ -5599,8 +5601,6 @@ const enUS: Record<string, string> = {
   "chat.toolbar.modelSwitch.lockedByRunningTask.short": "busy",
   "chat.goal.runningBlocked": "Set a goal after the current task finishes.",
   "chat.goal.planModeBlocked": "Goal is unavailable in Plan mode. Switch modes to continue.",
-  "chat.plan.attachmentsBlocked":
-    "The /plan shortcut supports text only for now. Remove attachments or context and try again.",
   "chat.compact.runningBlocked": "Compact context after the current task finishes.",
   "chat.compact.queued": "Compaction queued and will run in order.",
   "chat.compact.duplicateBlocked": "A compaction is already running or queued.",
@@ -7306,7 +7306,7 @@ const enUS: Record<string, string> = {
   "pullRequest.stageClosed": "Closed",
   "pullRequest.prLabel": "PR #{number}",
   "pullRequest.checksFailing": "{count} failing",
-  "pullRequest.checksOptionalFailing": "{count} optional failing",
+  "pullRequest.checksOptionalFailing": "{count} optional checks failing",
   "pullRequest.checksRunning": "Checks running",
   "pullRequest.conflict": "Conflict",
   "pullRequest.approved": "Approved",
@@ -7814,18 +7814,49 @@ const enUS: Record<string, string> = {
     "Loads the selected model in the background so the first recording starts without waiting. A loaded model uses memory until the unload delay below passes.",
   "voiceDictation.postProcess.title": "Post-processing",
   "voiceDictation.postProcess.description":
-    "Rewrites each finished transcript with a language model before it is inserted. Your raw transcript is what goes to the clipboard.",
+    "Rewrites each finished transcript with a language model before it is inserted. With Copy dictated text to the clipboard on, the clipboard gets the raw transcript.",
   "voiceDictation.postProcess.enabled.title": "Process dictated text",
   "voiceDictation.postProcess.enabled.description":
     "If processing fails or takes too long, the raw transcript is inserted instead.",
-  "voiceDictation.postProcess.provider.title": "Model",
+  "voiceDictation.postProcess.provider.title": "Provider",
   "voiceDictation.postProcess.provider.description":
     "Runs on this device; no text leaves your computer.",
   "voiceDictation.postProcess.provider.appleFm": "System model (Apple Foundation Models)",
   "voiceDictation.postProcess.prompt.title": "Prompt",
   "voiceDictation.postProcess.prompt.description":
-    "Use {variable} where the transcript should go. Without it, the transcript is added after the prompt.",
+    "Use {variable} where the transcript should go. The prompt must contain it to save.",
   "voiceDictation.postProcess.prompt.reset": "Reset to default",
+  "voiceDictation.postProcess.status.checking": "Checking availability…",
+  "voiceDictation.postProcess.status.available":
+    "Available on this Mac. Text is processed on this device.",
+  "voiceDictation.postProcess.prompt.save": "Save",
+  "voiceDictation.postProcess.prompt.cancel": "Cancel",
+  "voiceDictation.postProcess.prompt.unsaved": "Unsaved changes",
+  "voiceDictation.postProcess.prompt.counter": "{count} / {max}",
+  "voiceDictation.postProcess.prompt.tooLong": "Shorten the prompt to {max} characters to save it.",
+  "voiceDictation.postProcess.prompt.blank":
+    "The prompt can't be empty. Use Reset to restore the default.",
+  "voiceDictation.postProcess.prompt.noVariable":
+    "The prompt must contain {variable}; it is replaced by the transcript.",
+  "voiceDictation.postProcess.discard.title": "Discard unsaved changes?",
+  "voiceDictation.postProcess.discard.description":
+    "The prompt will go back to the last saved version.",
+  "voiceDictation.postProcess.discard.confirm": "Discard",
+  "voiceDictation.postProcess.reset.title": "Restore the default prompt?",
+  "voiceDictation.postProcess.reset.description":
+    "Your custom prompt will be removed and the built-in default will be used. Unsaved edits are discarded.",
+  "voiceDictation.postProcess.tryIt.title": "Try it",
+  "voiceDictation.postProcess.tryIt.description":
+    "Runs the prompt above on a sample sentence. Unsaved edits are included; nothing is saved.",
+  "voiceDictation.postProcess.tryIt.sample": "Sample text",
+  "voiceDictation.postProcess.tryIt.run": "Run",
+  "voiceDictation.postProcess.tryIt.running": "Running…",
+  "voiceDictation.postProcess.tryIt.failed": "The prompt could not run: {reason}",
+  "voiceDictation.group.dictation.title": "Dictation",
+  "voiceDictation.group.microphone.title": "Microphone",
+  "voiceDictation.group.output.title": "Output",
+  "voiceDictation.memory.title": "Memory",
+  "voiceDictation.shortcut.open": "Open Keyboard Shortcuts",
   "voiceDictation.postProcess.unavailable.unsupportedPlatform":
     "The system model is only available on macOS.",
   "voiceDictation.postProcess.unavailable.helperMissing":
@@ -7878,8 +7909,7 @@ const enUS: Record<string, string> = {
   "voiceDictation.models.remove": "Delete",
   "voiceDictation.models.startingDownload": "Starting download…",
   "voiceDictation.models.useWhenReady": "Use when ready",
-  "voiceDictation.models.cancelUseWhenReady": "Keep current model",
-  "voiceDictation.models.willUseWhenReady": "Will use when ready",
+  "voiceDictation.models.cancelUseWhenReady": "Cancel use when ready",
   "voiceDictation.models.removeConfirm.title": "Delete this model?",
   "voiceDictation.models.removeConfirm.description":
     "{model} will be removed from this device. You can download it again later.",
@@ -7896,6 +7926,8 @@ const enUS: Record<string, string> = {
   "voiceDictation.tooShort": "Recording too short. Keep recording until you finish speaking.",
   "voiceDictation.stillLoading":
     "The speech model was still loading. Start speaking once recording begins.",
+  "voiceDictation.sessionBusyInOtherComposer":
+    "Dictation is already in use in another message box. Stop it there first.",
   "voiceDictation.composer.cancel": "Cancel voice input",
   "voiceDictation.microphoneFailed":
     "Could not access the microphone. Check the input device and permissions.",
@@ -7927,7 +7959,6 @@ const enUS: Record<string, string> = {
   "voiceDictation.composer.processing": "Processing text",
   "voiceDictation.composer.status.processing": "Processing text",
   "voiceDictation.composer.modelStatus.loading": "Speech model loading",
-  "voiceDictation.composer.modelStatus.loaded": "Speech model loaded, voice input starts instantly",
   "settings.computerUse.title": "Computer Use",
   "settings.computerUse.toggleLabel": "Enable Computer Use",
   "settings.computerUse.toggleDescription":
@@ -8102,6 +8133,13 @@ const enUS: Record<string, string> = {
     "This section's file changed outside Settings while you were editing. Reload to discard your draft, or overwrite the file with your draft.",
   "settings.systemPrompt.diskChanged.reload": "Reload from disk",
   "settings.systemPrompt.diskChanged.overwrite": "Overwrite",
+  "settings.systemPrompt.diskChanged.show": "Show disk version",
+  "settings.systemPrompt.diskChanged.viewFirst":
+    "Show the disk version before you can overwrite it.",
+  "settings.systemPrompt.diskChanged.diskVersion":
+    "Disk version. Overwrite replaces this text with your draft.",
+  "settings.systemPrompt.diskChanged.noOverride":
+    "The file on disk has no override text; the built-in default applies.",
   "settings.systemPrompt.saveReason.unchanged": "No changes to save.",
   "settings.systemPrompt.saveReason.diskChanged":
     "Choose Reload from disk or Overwrite above before saving.",

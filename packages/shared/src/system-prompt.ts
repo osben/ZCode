@@ -295,18 +295,27 @@ export function extractSystemPromptPlaceholders(text: string): string[] {
 }
 
 /**
- * Placeholders each editable section supports, derived from its shared default text. A default
- * that carries `{{name}}` means the runtime substitutes it, so an edited draft must keep it to
- * receive the runtime value. Sections with no placeholders map to an empty list.
+ * Keys whose `{{name}}` tokens the runtime actually substitutes (renderSystemPromptTemplate call
+ * sites: memory guidance, memory extraction, dream). Every other key is sent literally, so it has
+ * no placeholder set and the editor must not ask for one.
+ */
+export const SYSTEM_PROMPT_RUNTIME_SUBSTITUTED_KEYS = [
+  "memory-guidance",
+  "memory-extraction",
+  "memory-dream",
+] as const satisfies readonly SystemPromptOverrideKey[];
+
+/**
+ * Placeholders each editable section supports. Keys in SYSTEM_PROMPT_RUNTIME_SUBSTITUTED_KEYS derive
+ * their set from the shared default text (`memory-guidance` from the `default-index` variant, which
+ * carries the same tokens as the semantic-recall variant). Other keys map to an empty list.
  */
 export const SYSTEM_PROMPT_PLACEHOLDERS: Record<SystemPromptOverrideKey, readonly string[]> = {
-  "cli-prefix": extractSystemPromptPlaceholders(SYSTEM_PROMPT_DEFAULTS["cli-prefix"]),
-  "identity-intro": extractSystemPromptPlaceholders(SYSTEM_PROMPT_DEFAULTS["identity-intro"]),
-  harness: extractSystemPromptPlaceholders(SYSTEM_PROMPT_DEFAULTS.harness),
-  communication: extractSystemPromptPlaceholders(SYSTEM_PROMPT_DEFAULTS.communication),
-  "context-management": extractSystemPromptPlaceholders(
-    SYSTEM_PROMPT_DEFAULTS["context-management"],
-  ),
+  "cli-prefix": [],
+  "identity-intro": [],
+  harness: [],
+  communication: [],
+  "context-management": [],
   "memory-guidance": extractSystemPromptPlaceholders(composeMemoryGuidanceDefault("default-index")),
   "memory-extraction": extractSystemPromptPlaceholders(SYSTEM_PROMPT_DEFAULTS["memory-extraction"]),
   "memory-dream": extractSystemPromptPlaceholders(SYSTEM_PROMPT_DEFAULTS["memory-dream"]),

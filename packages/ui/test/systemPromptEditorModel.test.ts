@@ -9,7 +9,7 @@ import {
 } from "@zcode/shared";
 import type { SystemPromptSection } from "@zcode/services";
 import {
-  buildAssembledSystemPromptPreview,
+  buildAssembledSystemPromptText,
   canSaveSystemPromptDraft,
   diffSystemPromptText,
   describeSystemPromptSize,
@@ -17,7 +17,6 @@ import {
   resolveSystemPromptSaveBlockReason,
   validateSystemPromptDraft,
   orderedEditableSystemPromptSections,
-  resolveEffectiveSystemPrompt,
   resolveSystemPromptDefault,
   SYSTEM_PROMPT_SECTION_DISPLAY_ORDER,
   SYSTEM_PROMPT_SECTION_VARIABLE_HINTS,
@@ -89,7 +88,7 @@ describe("systemPromptEditorModel", () => {
   it("keeps an explicit identity override effective with an active Output Style", () => {
     const identity = section("identity-intro", "My identity intro");
 
-    expect(resolveEffectiveSystemPrompt(identity, resolveSystemPromptDefault(identity, true))).toBe(
+    expect(identity.overrideContent ?? resolveSystemPromptDefault(identity, true)).toBe(
       "My identity intro",
     );
   });
@@ -207,16 +206,8 @@ describe("systemPromptEditorModel assembled preview", () => {
       ["identity-intro", "INTRO"],
       ["memory-guidance", "MEM"],
     ]);
-    const preview = buildAssembledSystemPromptPreview(texts);
-    expect(preview.blocks.map((block) => block.key)).toEqual([
-      "cli-prefix",
-      "identity-intro",
-      "harness",
-      "communication",
-      "memory-guidance",
-      "context-management",
-    ]);
-    expect(preview.text).toBe("CLI\n\nINTRO\n\nHARNESS\n\nCOMM\n\nMEM\n\nCM");
-    expect(preview.tokens).toBeGreaterThan(0);
+    expect(buildAssembledSystemPromptText(texts)).toBe(
+      "CLI\n\nINTRO\n\nHARNESS\n\nCOMM\n\nMEM\n\nCM",
+    );
   });
 });

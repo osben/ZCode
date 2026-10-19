@@ -98,6 +98,8 @@ function ToolCallBlockComponent({
   disableSummaryContentAnimation = false,
   animateDiffCountOnMount = false,
   agentSummaryAction,
+  agentUsageSummary,
+  agentUsageSummaryVersion,
   authoritativeAgentType,
   streamingEntranceActive = false,
   streamingEntranceKeyPrefix = "tool",
@@ -143,6 +145,8 @@ function ToolCallBlockComponent({
   disableSummaryContentAnimation?: boolean;
   animateDiffCountOnMount?: boolean;
   agentSummaryAction?: ToolCallBlockRenderContext["agentSummaryAction"];
+  agentUsageSummary?: ToolCallBlockRenderContext["agentUsageSummary"];
+  agentUsageSummaryVersion?: ToolCallBlockRenderContext["agentUsageSummaryVersion"];
   authoritativeAgentType?: ToolCallBlockRenderContext["authoritativeAgentType"];
   streamingEntranceActive?: boolean;
   streamingEntranceKeyPrefix?: string;
@@ -311,6 +315,8 @@ function ToolCallBlockComponent({
       disableSummaryContentAnimation,
       animateDiffCountOnMount,
       agentSummaryAction,
+      agentUsageSummary,
+      agentUsageSummaryVersion,
       authoritativeAgentType,
       onOpenCodeViewer: toolPreviewCodeViewer,
       onOpenFileLink,
@@ -333,6 +339,8 @@ function ToolCallBlockComponent({
     [
       isOfficeMode,
       agentSummaryAction,
+      agentUsageSummary,
+      agentUsageSummaryVersion,
       authoritativeAgentType,
       childToolList,
       codePreviewSettings,

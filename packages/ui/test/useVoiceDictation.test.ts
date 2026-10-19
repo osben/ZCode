@@ -94,6 +94,7 @@ beforeEach(() => {
     finalizeStream: vi.fn().mockResolvedValue({ text: "Hello there", language: "en" }),
     cancelStream: vi.fn().mockResolvedValue(undefined),
     transcribe: vi.fn().mockResolvedValue({ text: "One shot", language: "en" }),
+    getPostProcessAvailability: vi.fn().mockResolvedValue({ status: "available" }),
   };
 });
 
@@ -315,7 +316,25 @@ describe("useVoiceDictation streaming", () => {
     expect(mute.mock.invocationCallOrder[1]).toBeLessThan(chime.mock.invocationCallOrder[1]);
   });
 
+  it("mutes system sound by default when muteWhileRecording is absent", async () => {
+    const onTranscript = vi.fn();
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    const hook = renderHook(() =>
+      useVoiceDictation({ enabled: true, onTranscript, scopeRef: { current: null } }),
+    );
+
+    await act(async () => hook.result.current.start());
+    now.mockReturnValue(1500);
+    await act(async () => hook.result.current.stop());
+
+    expect(mocks.platform.setDictationSystemMute!.mock.calls).toEqual([[true], [false]]);
+  });
+
   it("stays silent for sounds and the mute when the settings are off", async () => {
+    mocks.settings!.voiceDictation = {
+      ...mocks.settings!.voiceDictation,
+      muteWhileRecording: false,
+    };
     const onTranscript = vi.fn();
     const now = vi.spyOn(Date, "now").mockReturnValue(1000);
     const hook = renderHook(() =>
@@ -566,6 +585,51 @@ describe("useVoiceDictation post-processing", () => {
     expect(hook.result.current.phase).toBe("idle");
   });
 
+  it("clears the ghost preview as soon as finalization returns, before the rewrite wait (VD-GHO-05)", async () => {
+    let finish!: (value: { text: string }) => void;
+    mocks.service!.postProcess!.mockImplementation(
+      () => new Promise((resolve) => (finish = resolve)),
+    );
+    const onTranscript = vi.fn();
+    const hook = renderDictation(onTranscript);
+    await speak(hook);
+    await act(async () => mocks.recorder?.options?.onChunk?.(new Float32Array([0.5, 0.25])));
+    await waitFor(() => expect(hook.result.current.preview).not.toBeNull());
+
+    let stopping!: Promise<void>;
+    act(() => {
+      stopping = hook.result.current.stop();
+    });
+    await waitFor(() => expect(hook.result.current.phase).toBe("processing"));
+    expect(hook.result.current.preview).toBeNull();
+    expect(onTranscript).not.toHaveBeenCalled();
+
+    await act(async () => {
+      finish({ text: "Hello there." });
+      await stopping;
+    });
+    expect(onTranscript).toHaveBeenCalledTimes(1);
+  });
+
+  it("inserts the raw transcript without an availability probe when the provider is unavailable (VD-PPR-09)", async () => {
+    // No pre-check on the stop-to-insert path: the Host call decides, and its failure falls back to raw.
+    mocks.service!.postProcess!.mockRejectedValue(
+      new Error("post-processing provider is unavailable"),
+    );
+    const onTranscript = vi.fn();
+    const hook = renderDictation(onTranscript);
+    await speak(hook);
+
+    await act(async () => hook.result.current.stop());
+
+    expect(mocks.service!.getPostProcessAvailability).not.toHaveBeenCalled();
+    expect(mocks.service!.postProcess).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.phase).toBe("idle");
+    expect(onTranscript).toHaveBeenCalledTimes(1);
+    expect(onTranscript).toHaveBeenCalledWith("Hello there", "Hello there");
+    expect(toast).not.toHaveBeenCalled();
+  });
+
   it("uses the user's prompt and provider", async () => {
     mocks.settings = {
       voiceDictation: {
@@ -780,5 +844,105 @@ describe("useVoiceDictation concurrent starts", () => {
     await act(async () => hook.result.current.start());
     expect(mocks.recorderStartCount).toBe(2);
     await waitFor(() => expect(hook.result.current.phase).toBe("recording"));
+  });
+
+  it("refuses a same-composer retry until the cancelled stream's Host cancel settles behind a delayed feed", async () => {
+    let finishFeed!: () => void;
+    mocks.service!.feedStream!.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishFeed = () => resolve({ committed: "", tentative: "" });
+        }),
+    );
+    const hook = renderHook(() =>
+      useVoiceDictation({ enabled: true, onTranscript: vi.fn(), scopeRef: { current: null } }),
+    );
+
+    await act(async () => hook.result.current.start());
+    await waitFor(() => expect(hook.result.current.phase).toBe("recording"));
+    // A microphone chunk starts a feed RPC that stays in flight.
+    act(() => {
+      mocks.recorder?.options?.onChunk?.(new Float32Array(100).fill(0.5));
+    });
+    await waitFor(() => expect(mocks.service!.feedStream).toHaveBeenCalledTimes(1));
+
+    // Escape: the Host cancel is queued behind the in-flight feed, so the old stream is still active.
+    act(() => hook.result.current.cancel());
+    expect(hook.result.current.phase).toBe("idle");
+
+    // The same composer retries before the cancel settles: the start is refused, not sent to the Host.
+    await act(async () => hook.result.current.start());
+    expect(mocks.service!.beginStream).toHaveBeenCalledTimes(1);
+    expect(mocks.service!.cancelStream).not.toHaveBeenCalled();
+
+    // The feed drains, the cancel reaches the Host, and only then does a retry open a new stream.
+    await act(async () => finishFeed());
+    await waitFor(() => expect(mocks.service!.cancelStream).toHaveBeenCalledWith("stream-1"));
+    await act(async () => hook.result.current.start());
+    expect(mocks.service!.beginStream).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(hook.result.current.phase).toBe("recording"));
+  });
+});
+
+describe("useVoiceDictation across two composers", () => {
+  it("refuses a second composer's start while the first composer holds the session", async () => {
+    const onTranscriptMain = vi.fn();
+    const onTranscriptSide = vi.fn();
+    const main = renderHook(() =>
+      useVoiceDictation({
+        enabled: true,
+        onTranscript: onTranscriptMain,
+        scopeRef: { current: null },
+      }),
+    );
+    const side = renderHook(() =>
+      useVoiceDictation({
+        enabled: true,
+        onTranscript: onTranscriptSide,
+        scopeRef: { current: null },
+      }),
+    );
+
+    await act(async () => main.result.current.start());
+    expect(main.result.current.phase).toBe("recording");
+
+    const recorderStartsBefore = mocks.recorderStartCount;
+    await act(async () => side.result.current.start());
+
+    expect(side.result.current.phase).toBe("idle");
+    expect(mocks.recorderStartCount).toBe(recorderStartsBefore);
+    expect(mocks.service?.beginStream).toHaveBeenCalledTimes(1);
+    expect(toast).toHaveBeenCalledWith("voiceDictation.sessionBusyInOtherComposer");
+    expect(main.result.current.phase).toBe("recording");
+  });
+
+  it("lets the second composer start after the first composer finishes", async () => {
+    const onTranscriptMain = vi.fn();
+    const onTranscriptSide = vi.fn();
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    const main = renderHook(() =>
+      useVoiceDictation({
+        enabled: true,
+        onTranscript: onTranscriptMain,
+        scopeRef: { current: null },
+      }),
+    );
+    const side = renderHook(() =>
+      useVoiceDictation({
+        enabled: true,
+        onTranscript: onTranscriptSide,
+        scopeRef: { current: null },
+      }),
+    );
+
+    await act(async () => main.result.current.start());
+    now.mockReturnValue(1500);
+    await act(async () => main.result.current.stop());
+    expect(onTranscriptMain).toHaveBeenCalledTimes(1);
+    expect(onTranscriptSide).not.toHaveBeenCalled();
+
+    now.mockReturnValue(2000);
+    await act(async () => side.result.current.start());
+    expect(side.result.current.phase).toBe("recording");
   });
 });

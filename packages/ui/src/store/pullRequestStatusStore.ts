@@ -11,9 +11,9 @@ import type { SessionPullRequest, SessionPullRequestStatus } from "@zcode/shared
 interface PullRequestStatusState {
   statusByTaskKey: Record<string, SessionPullRequestStatus>;
   /**
-   * Mutation signal: bumped after an in-app git mutation (commit/push) so
-   * probes re-request immediately. The service cache owns the real cadence;
-   * untouched tasks land in its TTL and stay cheap.
+   * Mutation signal: bumped after an in-app git mutation (commit/push). The
+   * hook answers it with a forced probe of the visible worktree tasks, so the
+   * service TTL does not hide a PR the push just opened or updated.
    */
   refreshVersion: number;
   /**
@@ -110,14 +110,16 @@ export function selectTaskPullRequestStatus(
   return state.statusByTaskKey[buildPullRequestTaskKey(workspaceKey, taskId)];
 }
 
-/** Primary pull request of a status entry; the service sorts primary first. */
+/**
+ * Primary pull request of a status entry: the first item, which the service sorts primary first.
+ * Matching by number is wrong here because PR numbers are unique only per repository, and a fork
+ * workflow can list the same number from two repositories.
+ */
 export function selectPrimarySessionPullRequest(
   status: SessionPullRequestStatus | null | undefined,
 ): SessionPullRequest | null {
   if (!status || status.primaryNumber === null) {
     return null;
   }
-  return (
-    status.pullRequests.find((pullRequest) => pullRequest.number === status.primaryNumber) ?? null
-  );
+  return status.pullRequests[0] ?? null;
 }

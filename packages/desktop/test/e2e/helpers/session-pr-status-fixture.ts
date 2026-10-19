@@ -26,8 +26,9 @@ const GITHUB_REMOTE_URL = "https://github.com/e2e-fork/ZCode.git";
  *   base repository `e2e-fork/ZCode` and the head-owner filter keeps the fake PRs;
  * - a fake gh at the fixed ZCODE_GH_BINARY path wired in wdio.conf (POSIX only),
  *   answering `auth status` and the batched GraphQL query with a fixed payload:
- *   open PR #101 with a failing required check plus merged PR #100, for every
- *   branch alias — no scenario branch name has to be known in advance.
+ *   open PR #101 with a failing required check plus merged PR #100, both on
+ *   SESSION_PR_STATUS_BRANCH. Any other branch alias resolves to no PR nodes, so
+ *   the fake answers only for the branch the worktree actually has.
  */
 
 const FAKE_GH_SCRIPT = `#!/bin/sh
@@ -48,28 +49,32 @@ if [ "$command" != "api" ]; then
   exit 0
 fi
 
-OPEN_PR='{"number":101,"url":"https://github.com/e2e-fork/ZCode/pull/101","title":"E2E open pull request","state":"OPEN","isDraft":false,"mergedAt":null,"updatedAt":"2026-10-19T00:00:00Z","mergeable":"MERGEABLE","reviewDecision":null,"additions":10,"deletions":2,"headRefName":"e2e-branch","headRepositoryOwner":{"login":"e2e-fork"},"mergeStateStatus":"BLOCKED","commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"FAILURE","contexts":{"totalCount":2,"nodes":[{"conclusion":"FAILURE","status":"COMPLETED"},{"conclusion":"SUCCESS","status":"COMPLETED"}]}}}}]}}'
-MERGED_PR='{"number":100,"url":"https://github.com/e2e-fork/ZCode/pull/100","title":"E2E merged pull request","state":"MERGED","isDraft":false,"mergedAt":"2026-10-18T00:00:00Z","updatedAt":"2026-10-18T00:00:00Z","mergeable":"UNKNOWN","reviewDecision":null,"additions":5,"deletions":1,"headRefName":"e2e-branch","headRepositoryOwner":{"login":"e2e-fork"},"mergeStateStatus":"UNKNOWN","commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"SUCCESS","contexts":{"totalCount":0,"nodes":[]}}}}]}}'
+OPEN_PR='{"number":101,"url":"https://github.com/e2e-fork/ZCode/pull/101","title":"E2E open pull request","state":"OPEN","isDraft":false,"mergedAt":null,"updatedAt":"2026-10-19T00:00:00Z","mergeable":"MERGEABLE","reviewDecision":null,"additions":10,"deletions":2,"headRefName":"${SESSION_PR_STATUS_BRANCH}","headRepositoryOwner":{"login":"e2e-fork"},"mergeStateStatus":"BLOCKED","commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"FAILURE","contexts":{"totalCount":2,"nodes":[{"conclusion":"FAILURE","status":"COMPLETED"},{"conclusion":"SUCCESS","status":"COMPLETED"}]}}}}]}}'
+MERGED_PR='{"number":100,"url":"https://github.com/e2e-fork/ZCode/pull/100","title":"E2E merged pull request","state":"MERGED","isDraft":false,"mergedAt":"2026-10-18T00:00:00Z","updatedAt":"2026-10-18T00:00:00Z","mergeable":"UNKNOWN","reviewDecision":null,"additions":5,"deletions":1,"headRefName":"${SESSION_PR_STATUS_BRANCH}","headRepositoryOwner":{"login":"e2e-fork"},"mergeStateStatus":"UNKNOWN","commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"SUCCESS","contexts":{"totalCount":0,"nodes":[]}}}}]}}'
 
-aliases=""
+entries=""
 expect_value=0
 for argument in "$@"; do
   if [ "$expect_value" = "1" ]; then
     expect_value=0
     key="\${argument%%=*}"
+    value="\${argument#*=}"
     case "$key" in
-      b*) aliases="$aliases $key" ;;
+      b*)
+        # Only the seeded branch gets PR nodes; every other alias resolves to none.
+        if [ "$value" = "${SESSION_PR_STATUS_BRANCH}" ]; then
+          nodes="[$OPEN_PR,$MERGED_PR]"
+        else
+          nodes="[]"
+        fi
+        entries="$entries\\"$key\\":{\\"nodes\\":$nodes},"
+        ;;
     esac
     continue
   fi
   if [ "$argument" = "-f" ]; then
     expect_value=1
   fi
-done
-
-entries=""
-for alias in $aliases; do
-  entries="$entries\\"$alias\\":{\\"nodes\\":[$OPEN_PR,$MERGED_PR]},"
 done
 printf '{"data":{"repository":{%s},"rateLimit":{"remaining":5000,"resetAt":"2026-10-19T00:00:00Z"}}}\\n' "\${entries%?}"
 exit 0

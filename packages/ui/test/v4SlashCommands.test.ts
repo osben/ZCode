@@ -66,20 +66,24 @@ describe("parseV4VisibleSlashCommand", () => {
     expect(parseV4VisibleSlashCommand("/planner 做普通任务", [])).toBeNull();
   });
 
-  it("rejects /plan when attachments or context are present", () => {
+  it("recognizes /plan with attachments or context for ordinary Plan submission", () => {
     expect(
       parseV4VisibleSlashCommand("/plan 检查附件", [
         { ref: "zcode-artifact://a", fileName: "a.txt", mime: "text/plain", bytes: 1 },
       ]),
     ).toMatchObject({
-      kind: "unsupportedPlanShortcut",
+      kind: "planShortcut",
       task: "检查附件",
     });
     expect(
       parseV4VisibleSlashCommand("/plan 检查网页", [], { contextAttachmentCount: 1 }),
     ).toMatchObject({
-      kind: "unsupportedPlanShortcut",
+      kind: "planShortcut",
       task: "检查网页",
+    });
+    expect(parseV4VisibleSlashCommand("/plan", [{}])).toMatchObject({
+      kind: "planShortcut",
+      task: "",
     });
   });
 

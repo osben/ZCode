@@ -1,236 +1,12 @@
 import assert from "assert/strict";
 import test from "node:test";
-import type { GraphqlPullRequestNode } from "../src/git/sessionPullRequestMapping.js";
-import type { GhCommandProvider } from "../src/git/providers/ghCommandProvider.js";
 import {
-  createSessionPullRequestsService,
-  type SessionPullRequestsGitRunner,
-  type SessionPullRequestsRepo,
-} from "../src/git/sessionPullRequestsService.js";
-import type { ServiceLogger } from "../src/logger/serviceLogger.js";
-
-/**
- * All gh/git interaction is faked: no test may touch the network. The fake gh
- * answers `auth status`, `repo set-default --view`, and `api graphql` from a
- * scripted per-repository branch → nodes map.
- */
-
-function makeNode(overrides: Partial<GraphqlPullRequestNode> = {}): GraphqlPullRequestNode {
-  return {
-    number: 1,
-    url: "https://github.com/osben/ZCode/pull/1",
-    title: "Example",
-    state: "OPEN",
-    isDraft: false,
-    mergedAt: null,
-    updatedAt: "2026-10-18T10:00:00Z",
-    mergeable: "MERGEABLE",
-    reviewDecision: null,
-    additions: 3,
-    deletions: 1,
-    headRefName: "feat/x",
-    headRepositoryOwner: { login: "osben" },
-    mergeStateStatus: "CLEAN",
-    commits: {
-      nodes: [
-        {
-          commit: {
-            statusCheckRollup: {
-              state: "SUCCESS",
-              contexts: { totalCount: 0, nodes: [] },
-            },
-          },
-        },
-      ],
-    },
-    ...overrides,
-  };
-}
-
-interface FakeGhOptions {
-  binary?: string | null;
-  authExitCode?: number;
-  defaultRepoStdout?: string;
-  rateRemaining?: number;
-  rateResetAt?: string;
-  /** Hold the first `api graphql` call until the test resolves it (race tests). */
-  manualFirstApi?: boolean;
-}
-
-type Script = Record<string, Record<string, GraphqlPullRequestNode[]>>;
-
-function createFakeGh(script: Script, options: FakeGhOptions = {}) {
-  const binary = options.binary === undefined ? "/fake/gh" : options.binary;
-  const apiCalls: Array<{ owner: string; name: string; branches: string[] }> = [];
-  let firstApiStartedResolve: (() => void) | null = null;
-  const firstApiStarted = new Promise<void>((resolve) => {
-    firstApiStartedResolve = resolve;
-  });
-  let resolveFirstApi: ((stdout: string) => void) | null = null;
-
-  const gh = {
-    resolveGhBinary: async () => binary,
-    run: async ({ args }: { args: string[] }) => {
-      if (args[0] === "auth") {
-        return {
-          binaryPath: "/fake/gh",
-          stdout: "",
-          stderr: "",
-          exitCode: options.authExitCode ?? 0,
-          timedOut: false,
-        };
-      }
-      if (args[0] === "repo") {
-        return {
-          binaryPath: "/fake/gh",
-          stdout: options.defaultRepoStdout ?? "",
-          stderr: "",
-          exitCode: options.defaultRepoStdout ? 0 : 1,
-          timedOut: false,
-        };
-      }
-
-      const params = new Map<string, string>();
-      for (let index = 0; index < args.length; index += 1) {
-        if (args[index] !== "-f" || index + 1 >= args.length) {
-          continue;
-        }
-        const pair = args[index + 1]!;
-        const equalsIndex = pair.indexOf("=");
-        if (equalsIndex > 0) {
-          params.set(pair.slice(0, equalsIndex), pair.slice(equalsIndex + 1));
-        }
-      }
-      const owner = params.get("owner") ?? "";
-      const name = params.get("name") ?? "";
-      const branches: string[] = [];
-      for (let index = 0; params.has(`b${index}`); index += 1) {
-        branches.push(params.get(`b${index}`)!);
-      }
-      apiCalls.push({ owner, name, branches });
-
-      const repositoryScript = script[`${owner}/${name}`] ?? {};
-      const repository: Record<string, { nodes: unknown[] }> = {};
-      branches.forEach((branch, index) => {
-        repository[`b${index}`] = { nodes: repositoryScript[branch] ?? [] };
-      });
-      const stdout = JSON.stringify({
-        data: {
-          repository,
-          rateLimit: {
-            remaining: options.rateRemaining ?? 5000,
-            resetAt: options.rateResetAt ?? "2026-10-18T12:00:00Z",
-          },
-        },
-      });
-
-      if (options.manualFirstApi && apiCalls.length === 1) {
-        firstApiStartedResolve?.();
-        return new Promise((resolvePromise) => {
-          resolveFirstApi = (value: string) =>
-            resolvePromise({
-              binaryPath: "/fake/gh",
-              stdout: value,
-              stderr: "",
-              exitCode: 0,
-              timedOut: false,
-            });
-        });
-      }
-      return {
-        binaryPath: "/fake/gh",
-        stdout,
-        stderr: "",
-        exitCode: 0,
-        timedOut: false,
-      };
-    },
-  } as unknown as GhCommandProvider;
-
-  return {
-    gh,
-    apiCalls,
-    firstApiStarted,
-    resolveFirstApi: (stdout: string) => resolveFirstApi?.(stdout),
-  };
-}
-
-function createFakeRepo(
-  remotes: Array<{ name: string; url: string }>,
-  headByPath: Record<string, string | null> = {},
-): SessionPullRequestsRepo {
-  return {
-    getRepositoryRemotes: async (workspacePath: string) => ({
-      workspacePath,
-      isGitAvailable: true,
-      isRepository: true,
-      remotes,
-    }),
-    readHeadBranch: async (path: string) => headByPath[path] ?? null,
-  };
-}
-
-const GIT_RUNNER: SessionPullRequestsGitRunner = {
-  // All git config lookups read as unset: the push remote chain falls back to origin.
-  run: async () => ({ exitCode: 1, stdout: "", timedOut: false }),
-};
-
-function createLoggerCapture(): { logger: ServiceLogger; infos: unknown[][]; warns: unknown[][] } {
-  const infos: unknown[][] = [];
-  const warns: unknown[][] = [];
-  return {
-    infos,
-    warns,
-    logger: {
-      debug: () => {},
-      info: (_traceId, ...args: unknown[]) => infos.push(args),
-      warn: (_traceId, ...args: unknown[]) => warns.push(args),
-      error: () => {},
-    },
-  };
-}
-
-function createHarness(
-  script: Script,
-  options?: {
-    gh?: FakeGhOptions;
-    remotes?: Array<{ name: string; url: string }>;
-    headByPath?: Record<string, string | null>;
-    coalesceWindowMs?: number;
-  },
-) {
-  const fakeGh = createFakeGh(script, options?.gh);
-  const logger = createLoggerCapture();
-  let nowMs = 0;
-  const service = createSessionPullRequestsService({
-    repo: createFakeRepo(
-      options?.remotes ?? [{ name: "origin", url: "git@github.com:osben/ZCode.git" }],
-      options?.headByPath,
-    ),
-    gitRunner: GIT_RUNNER,
-    gh: fakeGh.gh,
-    logger: logger.logger,
-    now: () => nowMs,
-    coalesceWindowMs: options?.coalesceWindowMs ?? 10,
-  });
-  return {
-    fakeGh,
-    logger,
-    service,
-    setNow: (value: number) => {
-      nowMs = value;
-    },
-  };
-}
-
-const OPEN_PR = makeNode({ number: 7, headRefName: "feat/x" });
-const MERGED_PR = makeNode({
-  number: 3,
-  headRefName: "feat/x",
-  state: "MERGED",
-  mergedAt: "2026-10-17T00:00:00Z",
-  updatedAt: "2026-10-17T00:00:00Z",
-});
+  createHarness,
+  makeNode,
+  MERGED_PR,
+  OPEN_PR,
+  type Script,
+} from "./helpers/sessionPullRequestsServiceFakes.js";
 
 test("resolves an open pull request for a worktree task branch", async () => {
   const harness = createHarness({ "osben/ZCode": { "feat/x": [OPEN_PR] } });
@@ -587,4 +363,89 @@ test("gh failures serve the previous value stale and warn once", async () => {
   harness.setNow(62_000);
   await harness.service.getSessionPullRequests(request);
   assert.equal(harness.logger.warns.length, 1, "one warn per workspace per failure class");
+});
+
+test("head owner matches case-insensitively against the remote URL spelling", async () => {
+  // The remote URL spells the owner "OSBen"; GitHub logins are case-insensitive.
+  const harness = createHarness(
+    { "OSBen/ZCode": { "feat/x": [OPEN_PR] } },
+    { remotes: [{ name: "origin", url: "git@github.com:OSBen/ZCode.git" }] },
+  );
+  const result = await harness.service.getSessionPullRequests({
+    workspacePath: "/w",
+    tasks: [{ taskId: "t1", branchName: "feat/x", worktreePath: null }],
+  });
+  assert.equal(result.t1?.pullRequests.length, 1, "login osben matches remote owner OSBen");
+});
+
+test("gh exits non-zero with a RATE_LIMITED body: the branch reports rate_limited", async () => {
+  const harness = createHarness({ "osben/ZCode": { "feat/x": [OPEN_PR] } });
+  const gh = harness.fakeGh.gh as unknown as {
+    run: (options: { args: string[] }) => Promise<unknown>;
+  };
+  const originalRun = gh.run;
+  gh.run = async (options: { args: string[] }) => {
+    if (options.args[0] === "api") {
+      // gh prints the GraphQL response on stdout and exits non-zero for GraphQL errors.
+      return {
+        binaryPath: "/fake/gh",
+        stdout: JSON.stringify({
+          data: { repository: null, rateLimit: { remaining: 0, resetAt: "2026-10-18T12:00:00Z" } },
+          errors: [{ type: "RATE_LIMITED", message: "API rate limit exceeded" }],
+        }),
+        stderr: "",
+        exitCode: 1,
+        timedOut: false,
+      };
+    }
+    return originalRun(options);
+  };
+  const result = await harness.service.getSessionPullRequests({
+    workspacePath: "/w",
+    tasks: [{ taskId: "t1", branchName: "feat/x", worktreePath: null }],
+  });
+  assert.equal(result.t1?.state, "rate_limited");
+});
+
+test("a failed refresh keeps the previous value stale and waits out the retry delay", async () => {
+  const harness = createHarness({ "osben/ZCode": { "feat/x": [OPEN_PR] } });
+  const request = {
+    workspacePath: "/w",
+    tasks: [{ taskId: "t1", branchName: "feat/x", worktreePath: null }],
+  };
+  await harness.service.getSessionPullRequests(request);
+
+  let failing = true;
+  let apiCalls = 0;
+  const gh = harness.fakeGh.gh as unknown as {
+    run: (options: { args: string[] }) => Promise<unknown>;
+  };
+  const originalRun = gh.run;
+  gh.run = async (options: { args: string[] }) => {
+    if (options.args[0] === "api") {
+      apiCalls += 1;
+      if (failing) {
+        return { binaryPath: "/fake/gh", stdout: "", stderr: "boom", exitCode: 1, timedOut: false };
+      }
+    }
+    return originalRun(options);
+  };
+
+  // The TTL expired at 60s, so this probe fails and keeps the value stale.
+  harness.setNow(61_000);
+  const failed = await harness.service.getSessionPullRequests(request);
+  assert.equal(apiCalls, 1);
+  assert.equal(failed.t1?.stale, true);
+
+  // The retry delay (60s) applies to the stale entry too: no probe on every request.
+  harness.setNow(100_000);
+  const during = await harness.service.getSessionPullRequests(request);
+  assert.equal(apiCalls, 1, "no gh call before the retry delay passes");
+  assert.equal(during.t1?.primaryNumber, 7, "previous value still served");
+
+  failing = false;
+  harness.setNow(121_001);
+  const recovered = await harness.service.getSessionPullRequests(request);
+  assert.equal(apiCalls, 2, "retry once the delay has passed");
+  assert.equal(recovered.t1?.stale, false);
 });

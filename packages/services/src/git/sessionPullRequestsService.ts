@@ -5,18 +5,21 @@ import type {
   SessionPullRequestsResult,
   SessionPullRequestStatus,
 } from "@zcode/shared";
-import { gitRemoteUrlToRepository } from "@zcode/shared";
 import type { ServiceLogger } from "../logger/serviceLogger.js";
 import { createServiceLogger } from "../logger/serviceLogger.js";
 import type { GhCommandProvider } from "./providers/ghCommandProvider.js";
 import {
-  buildSessionPullRequestsQuery,
   mapGraphqlPullRequest,
-  parseGhGraphqlResponse,
   sessionPullRequestsTtlTier,
   sortSessionPullRequests,
-  type GraphqlPullRequestNode,
 } from "./sessionPullRequestMapping.js";
+import { logStageChanges, unavailableStatus } from "./sessionPullRequestsStatus.js";
+import {
+  createSessionPullRequestsLookup,
+  type BaseRepository,
+  type LabeledNode,
+  type WorkspaceContext,
+} from "./sessionPullRequestsLookup.js";
 
 /**
  * Task-level pull request status service (specs/sidebar-pr-status.md).
@@ -33,12 +36,10 @@ const CACHE_KEY_SEPARATOR = "\u0000";
 const TTL_ACTIVE_MS = 60_000;
 const TTL_NONE_MS = 10 * 60_000;
 const TTL_SETTLED_MS = 30 * 60_000;
-const AVAILABILITY_TTL_MS = 10 * 60_000;
 const ERROR_RETRY_DELAY_MS = 60_000;
 const COALESCE_WINDOW_MS = 250;
 const CHUNK_SIZE = 25;
 const MAX_CONCURRENT_BATCHES = 4;
-const RATE_LIMIT_MIN_REMAINING = 100;
 // Exponential backoff 2 → 32 min when resetAt is unknown.
 const RATE_LIMIT_BACKOFF_STEPS_MS = [2, 4, 8, 16, 32].map((minutes) => minutes * 60_000);
 
@@ -53,19 +54,6 @@ export interface SessionPullRequestsGitRunner {
     args: string[];
     timeoutMs?: number;
   }): Promise<{ exitCode: number | null; stdout: string; timedOut: boolean }>;
-}
-
-interface BaseRepository {
-  host: string;
-  owner: string;
-  name: string;
-}
-
-interface WorkspaceContext {
-  state: "available" | "no_gh" | "auth" | "not_github";
-  checkedAtMs: number;
-  baseRepositories: BaseRepository[];
-  remoteUrlByName: Map<string, string>;
 }
 
 interface BranchEntry {
@@ -87,12 +75,6 @@ interface CoalesceQueue {
 interface InFlightBranch {
   generation: number;
   promise: Promise<void>;
-}
-
-/** One GraphQL node with the label of the base repository it was queried from. */
-interface LabeledNode {
-  repositoryLabel: string;
-  node: GraphqlPullRequestNode;
 }
 
 export interface SessionPullRequestsService {
@@ -123,9 +105,17 @@ export function createSessionPullRequestsService(options: {
   const generationByKey = new Map<string, number>();
   const inflightByBranch = new Map<string, InFlightBranch>();
   const queueByWorkspace = new Map<string, CoalesceQueue>();
-  const contextByWorkspace = new Map<string, WorkspaceContext>();
   const warnedClasses = new Set<string>();
   let rateLimit: { untilMs: number; resetAt: string | null; consecutive: number } | null = null;
+  const lookup = createSessionPullRequestsLookup({
+    repo: options.repo,
+    gitRunner: options.gitRunner,
+    gh: options.gh,
+    logger,
+    now,
+    warnOnce,
+  });
+  const { resolveWorkspaceContext, resolveHeadOwner, runGraphqlBatch } = lookup;
 
   function cacheKey(workspaceKey: string, branch: string): string {
     return `${workspaceKey}${CACHE_KEY_SEPARATOR}${branch}`;
@@ -196,251 +186,17 @@ export function createSessionPullRequestsService(options: {
       // During backoff the last value is served with stale: true; no requests.
       return true;
     }
+    if (now() < entry.retryNotBeforeMs) {
+      // A failed refresh keeps the previous value stale until the retry delay passes.
+      return true;
+    }
     if (entry.state === "ready") {
       return now() - entry.fetchedAtMs < entryTtlMs(entry);
     }
     if (entry.state === "rate_limited") {
       return false;
     }
-    return now() < entry.retryNotBeforeMs;
-  }
-
-  async function readGitConfigValue(workspacePath: string, key: string): Promise<string | null> {
-    const result = await options.gitRunner.run({
-      cwd: workspacePath,
-      args: ["config", "--get", key],
-    });
-    if (result.exitCode !== 0 || result.timedOut) {
-      return null;
-    }
-    return result.stdout.trim() || null;
-  }
-
-  async function readRemoteUrl(workspacePath: string, remoteName: string): Promise<string | null> {
-    const direct = await options.gitRunner.run({
-      cwd: workspacePath,
-      args: ["remote", "get-url", remoteName],
-    });
-    if (direct.exitCode !== 0 || direct.timedOut) {
-      return null;
-    }
-    return direct.stdout.trim() || null;
-  }
-
-  /** Head owner = owner of the branch's push remote (spec: pushRemote → pushDefault → branch remote → origin). */
-  async function resolveHeadOwner(
-    workspacePath: string,
-    branch: string,
-    remoteUrlByName: Map<string, string>,
-  ): Promise<string | null> {
-    const remoteName =
-      (await readGitConfigValue(workspacePath, `branch.${branch}.pushRemote`)) ??
-      (await readGitConfigValue(workspacePath, "remote.pushDefault")) ??
-      (await readGitConfigValue(workspacePath, `branch.${branch}.remote`)) ??
-      "origin";
-    const url = remoteUrlByName.get(remoteName) ?? (await readRemoteUrl(workspacePath, remoteName));
-    if (!url) {
-      return null;
-    }
-    return gitRemoteUrlToRepository(url)?.owner ?? null;
-  }
-
-  async function readGhDefaultRepository(workspacePath: string): Promise<BaseRepository | null> {
-    const result = await options.gh.run({
-      cwd: workspacePath,
-      args: ["repo", "set-default", "--view"],
-    });
-    if (result.timedOut) {
-      return null;
-    }
-    const match = result.stdout.match(/^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\s*$/m);
-    if (!match || !match[1] || !match[2]) {
-      return null;
-    }
-    return { host: "github.com", owner: match[1], name: match[2] };
-  }
-
-  async function resolveWorkspaceContext(
-    workspaceKey: string,
-    workspacePath: string,
-  ): Promise<WorkspaceContext> {
-    const cached = contextByWorkspace.get(workspaceKey);
-    if (cached && now() - cached.checkedAtMs < AVAILABILITY_TTL_MS) {
-      return cached;
-    }
-
-    const ghBinary = await options.gh.resolveGhBinary();
-    if (!ghBinary) {
-      const context: WorkspaceContext = {
-        state: "no_gh",
-        checkedAtMs: now(),
-        baseRepositories: [],
-        remoteUrlByName: new Map(),
-      };
-      contextByWorkspace.set(workspaceKey, context);
-      warnOnce(workspaceKey, "no_gh", "gh binary not found; session pull request status disabled");
-      return context;
-    }
-
-    const auth = await options.gh.run({ cwd: workspacePath, args: ["auth", "status"] });
-    if (auth.exitCode !== 0 || auth.timedOut) {
-      const context: WorkspaceContext = {
-        state: "auth",
-        checkedAtMs: now(),
-        baseRepositories: [],
-        remoteUrlByName: new Map(),
-      };
-      contextByWorkspace.set(workspaceKey, context);
-      warnOnce(
-        workspaceKey,
-        "auth",
-        "gh is not authenticated; session pull request status disabled",
-      );
-      return context;
-    }
-
-    const remotes = await options.repo.getRepositoryRemotes(workspacePath);
-    const remoteUrlByName = new Map<string, string>();
-    const githubRepositories: BaseRepository[] = [];
-    for (const remote of remotes.remotes) {
-      remoteUrlByName.set(remote.name, remote.url);
-      const repository = gitRemoteUrlToRepository(remote.url);
-      if (repository && repository.host === "github.com") {
-        githubRepositories.push({
-          host: repository.host,
-          owner: repository.owner,
-          name: repository.name,
-        });
-      }
-    }
-    if (!remotes.isRepository || githubRepositories.length === 0) {
-      const context: WorkspaceContext = {
-        state: "not_github",
-        checkedAtMs: now(),
-        baseRepositories: [],
-        remoteUrlByName: new Map(),
-      };
-      contextByWorkspace.set(workspaceKey, context);
-      return context;
-    }
-
-    // gh is never asked to guess the repository: the gh default when set,
-    // otherwise every distinct GitHub remote repository (fork workflows).
-    const defaultRepository = await readGhDefaultRepository(workspacePath);
-    const distinct: BaseRepository[] = [];
-    const seen = new Set<string>();
-    for (const repository of defaultRepository
-      ? [defaultRepository, ...githubRepositories]
-      : githubRepositories) {
-      const id = `${repository.owner}/${repository.name}`;
-      if (seen.has(id)) {
-        continue;
-      }
-      seen.add(id);
-      distinct.push(repository);
-    }
-
-    const context: WorkspaceContext = {
-      state: "available",
-      checkedAtMs: now(),
-      baseRepositories: defaultRepository ? distinct.slice(0, 1) : distinct,
-      remoteUrlByName,
-    };
-    contextByWorkspace.set(workspaceKey, context);
-    return context;
-  }
-
-  async function runGraphqlBatch(
-    workspacePath: string,
-    repository: BaseRepository,
-    branches: string[],
-  ): Promise<{
-    outcome: "nodes" | "error" | "rate_limited";
-    nodesByBranch: Map<string, LabeledNode[]>;
-    resetAt: string | null;
-  }> {
-    const query = buildSessionPullRequestsQuery(branches.length);
-    const args = [
-      "api",
-      "graphql",
-      "-f",
-      `query=${query}`,
-      "-f",
-      `owner=${repository.owner}`,
-      "-f",
-      `name=${repository.name}`,
-      ...branches.flatMap((branch, index) => ["-f", `b${index}=${branch}`]),
-    ];
-    const result = await options.gh.run({ cwd: workspacePath, args, hostname: repository.host });
-    logger.debug(undefined, "session pull requests gh graphql", {
-      exitCode: result.exitCode,
-      stdoutLength: result.stdout.length,
-    });
-    if (result.exitCode !== 0 || result.timedOut) {
-      return { outcome: "error", nodesByBranch: new Map(), resetAt: null };
-    }
-    const parsed = parseGhGraphqlResponse(result.stdout);
-    if (!parsed) {
-      return { outcome: "error", nodesByBranch: new Map(), resetAt: null };
-    }
-    const rateLimitInfo = parsed.data?.rateLimit ?? null;
-    const errors = parsed.errors ?? [];
-    const rateLimitedError = errors.some((error) => error.type === "RATE_LIMITED");
-    if (rateLimitedError) {
-      const resetAt = rateLimitInfo?.resetAt ?? null;
-      return { outcome: "rate_limited", nodesByBranch: new Map(), resetAt };
-    }
-    if (errors.length > 0 || !parsed.data?.repository) {
-      return { outcome: "error", nodesByBranch: new Map(), resetAt: null };
-    }
-    if (
-      !rateLimitedError &&
-      typeof rateLimitInfo?.remaining === "number" &&
-      rateLimitInfo.remaining < RATE_LIMIT_MIN_REMAINING
-    ) {
-      // Data still arrived; consume it and back off the next requests.
-      enterRateLimit(rateLimitInfo.resetAt ?? null);
-    }
-    const repositoryLabel = `${repository.owner}/${repository.name}`;
-    const nodesByBranch = new Map<string, LabeledNode[]>();
-    branches.forEach((branch, index) => {
-      const nodes = (parsed.data?.repository?.[`b${index}`]?.nodes ??
-        []) as GraphqlPullRequestNode[];
-      nodesByBranch.set(
-        branch,
-        nodes.map((node) => ({ repositoryLabel, node })),
-      );
-    });
-    return { outcome: "nodes", nodesByBranch, resetAt: null };
-  }
-
-  function logStageChanges(
-    workspaceKey: string,
-    previous: SessionPullRequest[],
-    next: SessionPullRequest[],
-  ): void {
-    if (previous === next) {
-      return;
-    }
-    const previousStageById = new Map(
-      previous.map((pullRequest) => [
-        `${pullRequest.repository}#${pullRequest.number}`,
-        pullRequest.stage,
-      ]),
-    );
-    for (const pullRequest of next) {
-      const id = `${pullRequest.repository}#${pullRequest.number}`;
-      const from = previousStageById.get(id) ?? null;
-      if (from !== pullRequest.stage) {
-        logger.info(undefined, "session pull request stage changed", {
-          workspaceKey,
-          repository: pullRequest.repository,
-          number: pullRequest.number,
-          from,
-          to: pullRequest.stage,
-        });
-      }
-    }
+    return false;
   }
 
   async function flushBranches(
@@ -505,7 +261,12 @@ export function createSessionPullRequestsService(options: {
         while (cursor < jobs.length) {
           const job = jobs[cursor]!;
           cursor += 1;
-          const batch = await runGraphqlBatch(workspacePath, job.repository, job.branches);
+          const batch = await runGraphqlBatch(
+            workspacePath,
+            job.repository,
+            job.branches,
+            enterRateLimit,
+          );
           if (batch.outcome === "rate_limited") {
             enterRateLimit(batch.resetAt);
           }
@@ -550,7 +311,7 @@ export function createSessionPullRequestsService(options: {
                 (labeled) =>
                   headOwner !== null &&
                   labeled.node.headRepositoryOwner?.login != null &&
-                  labeled.node.headRepositoryOwner.login === headOwner,
+                  labeled.node.headRepositoryOwner.login.toLowerCase() === headOwner.toLowerCase(),
               )
               .map((labeled) => mapGraphqlPullRequest(labeled.node, labeled.repositoryLabel))
               .filter((pullRequest): pullRequest is SessionPullRequest => pullRequest !== null),
@@ -563,7 +324,7 @@ export function createSessionPullRequestsService(options: {
             stale: false,
             retryNotBeforeMs: 0,
           });
-          logStageChanges(workspaceKey, previous?.pullRequests ?? [], pullRequests);
+          logStageChanges(logger, workspaceKey, previous?.pullRequests ?? [], pullRequests);
         } else if (aggregate?.rateLimited) {
           if (previous) {
             branchEntries.set(key, { ...previous, stale: true });
@@ -579,7 +340,11 @@ export function createSessionPullRequestsService(options: {
           }
         } else {
           if (previous) {
-            branchEntries.set(key, { ...previous, stale: true });
+            branchEntries.set(key, {
+              ...previous,
+              stale: true,
+              retryNotBeforeMs: timestamp + ERROR_RETRY_DELAY_MS,
+            });
           } else {
             branchEntries.set(key, {
               state: "unavailable",
@@ -645,20 +410,6 @@ export function createSessionPullRequestsService(options: {
     await Promise.all(awaited);
   }
 
-  function unavailableStatus(
-    unavailableReason: "no_gh" | "auth" | "not_github" | "error",
-  ): SessionPullRequestStatus {
-    return {
-      state: "unavailable",
-      unavailableReason,
-      source: "branch",
-      pullRequests: [],
-      primaryNumber: null,
-      fetchedAt: null,
-      stale: false,
-    };
-  }
-
   function assembleTaskStatus(workspaceKey: string, branches: string[]): SessionPullRequestStatus {
     const servingStaleDueToRateLimit = rateLimitActive();
     const entries = branches
@@ -706,21 +457,22 @@ export function createSessionPullRequestsService(options: {
 
     try {
       // Branch set per task: persisted executionWorktree.branchName ∪ live worktree HEAD.
-      const taskBranches: Array<{ taskId: string; branches: string[] }> = [];
-      for (const task of request.tasks) {
-        const branches = new Set<string>();
-        const persisted = task.branchName?.trim();
-        if (persisted) {
-          branches.add(persisted);
-        }
-        if (task.worktreePath) {
-          const live = await options.repo.readHeadBranch(task.worktreePath);
-          if (live) {
-            branches.add(live);
+      const taskBranches = await Promise.all(
+        request.tasks.map(async (task) => {
+          const branches = new Set<string>();
+          const persisted = task.branchName?.trim();
+          if (persisted) {
+            branches.add(persisted);
           }
-        }
-        taskBranches.push({ taskId: task.taskId, branches: [...branches].sort() });
-      }
+          if (task.worktreePath) {
+            const live = await options.repo.readHeadBranch(task.worktreePath);
+            if (live) {
+              branches.add(live);
+            }
+          }
+          return { taskId: task.taskId, branches: [...branches].sort() };
+        }),
+      );
 
       // Forced tasks bypass the TTL: bump generation first so an in-flight
       // pre-force probe can no longer repopulate their entries.

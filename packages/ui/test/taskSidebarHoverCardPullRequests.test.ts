@@ -121,6 +121,36 @@ test("caps at three lines with a more-count and shows the primary review decisio
   expect(html).toContain("pullRequest.moreCount · 2");
 });
 
+test("the review line follows the primary pull request in a multi-PR list", () => {
+  // The primary is the first item (sorted by the service). A second PR with the same number from
+  // another repository must not be picked, because PR numbers are unique only per repository.
+  usePullRequestStatusStore.getState().setWorkspacePullRequestStatuses("/w", {
+    "hover-task": makeStatus(
+      [
+        makePullRequest({ number: 7, repository: "osben/ZCode", reviewDecision: "approved" }),
+        makePullRequest({
+          number: 7,
+          repository: "upstream/ZCode",
+          stage: "open",
+          reviewDecision: "changes_requested",
+          updatedAt: "2026-10-17T00:00:00Z",
+        }),
+        makePullRequest({
+          number: 3,
+          stage: "merged",
+          mergedAt: "2026-10-16T00:00:00Z",
+          updatedAt: "2026-10-16T00:00:00Z",
+          reviewDecision: "changes_requested",
+        }),
+      ],
+      { primaryNumber: 7 },
+    ),
+  });
+  const html = renderCardHtml();
+  expect(html).toContain("pullRequest.approved");
+  expect(html).not.toContain("pullRequest.changesRequested");
+});
+
 test("shows the review line for the primary and the stale note during backoff", () => {
   usePullRequestStatusStore.getState().setWorkspacePullRequestStatuses("/w", {
     "hover-task": makeStatus([makePullRequest({ reviewDecision: "changes_requested" })], {

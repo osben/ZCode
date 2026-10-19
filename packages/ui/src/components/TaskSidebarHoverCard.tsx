@@ -15,6 +15,7 @@ import {
 import { thoughtLevelLabelId } from "@/chat-input-toolbar/thoughtLevelOptions.js";
 import type { IntlInstance } from "@/i18n/IntlProvider.js";
 import { useTaskPullRequestStatus } from "@/hooks/useTaskPullRequestStatus.js";
+import { selectPrimarySessionPullRequest } from "@/store/pullRequestStatusStore.js";
 import { formatTaskRelativeTime } from "@/lib/taskListItemPresentation.js";
 import { getTaskChangeSummary } from "@/lib/taskChangeSummary.js";
 import { providerBrandIconSrc } from "@/lib/oauthProviderIcon.js";
@@ -152,8 +153,7 @@ function PullRequestHoverSection({
   }
   const visible = status.pullRequests.slice(0, PULL_REQUEST_HOVER_MAX_LINES);
   const overflowCount = status.pullRequests.length - visible.length;
-  const primary =
-    status.pullRequests.find((pullRequest) => pullRequest.number === status.primaryNumber) ?? null;
+  const primary = selectPrimarySessionPullRequest(status);
   return (
     <div data-task-hover-pr="list" className="flex min-w-0 flex-col gap-1.5">
       {visible.map((pullRequest) => (

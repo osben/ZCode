@@ -193,6 +193,8 @@ usePullRequestStatuses (UI hook, single subscriber per task key)
 IGitService.getSessionPullRequests  ── on the workspace host (local or remote) ──
    │ cache key: (workspaceIdentity?.trim() || workspacePath) + branch
    │ TTL: 60 s while any PR is open/draft · 10 min for "no PR" · 30 min when all merged/closed
+   │ failed refresh: the previous entry is served stale and no retry is made for 60 s (also for
+   │   stale entries); a GraphQL error body is classified before gh's non-zero exit code
    │ generation counter per key: an in-flight probe never repopulates an invalidated entry
    │ requests within 250 ms are coalesced into one batch per base repository
    ▼
@@ -216,7 +218,7 @@ no indicator until the next successful fetch.
 ## Required vs optional checks (decided 2026-10-18)
 
 Only required checks make the row red. `mergeStateStatus === "UNSTABLE"` means the failing checks are
-all non-required: the dot is warning and the text is `{count} optional failing`. Any other failing
+all non-required: the dot is warning and the text is `{count} optional checks failing`. Any other failing
 state (`BLOCKED`, or `mergeStateStatus` unavailable) stays destructive. The query adds
 `mergeStateStatus` to the `Pr` fragment. The distinction is carried in the contract as
 `checks: "optional_failing"`.
@@ -240,14 +242,14 @@ Icon = lifecycle stage. Dot = health of open/draft PRs.
 | Merged | `GitMerge`             | `--color-pr-merged` |
 | Closed | `GitPullRequestClosed` | `--color-pr-closed` |
 
-| Health                       | Dot (row)   | Text (Git tools, hover)    |
-| ---------------------------- | ----------- | -------------------------- |
-| Required checks failing      | destructive | `{count} failing`          |
-| Only optional checks failing | warning     | `{count} optional failing` |
-| Merge conflict               | destructive | `Conflict`                 |
-| Checks running               | warning     | `Checks running`           |
-| Passing                      | none in row | success dot                |
-| No checks                    | none        | nothing                    |
+| Health                       | Dot (row)   | Text (Git tools, hover)           |
+| ---------------------------- | ----------- | --------------------------------- |
+| Required checks failing      | destructive | `{count} failing`                 |
+| Only optional checks failing | warning     | `{count} optional checks failing` |
+| Merge conflict               | destructive | `Conflict`                        |
+| Checks running               | warning     | `Checks running`                  |
+| Passing                      | none in row | success dot                       |
+| No checks                    | none        | nothing                           |
 
 New tokens in `packages/ui/src/styles.css`, all four themes, as aliases (no new hex values):
 `--color-pr-open` → `--color-success`, `--color-pr-draft` → `--color-foreground-subtle`,
@@ -284,7 +286,7 @@ menu (long press) is the path to the PR list.
 ## i18n
 
 New keys in `en-US`, `zh-CN`, `uk-UA` under `pullRequest.*`: stage labels (`Draft`, `Open`,
-`Merged`, `Closed`), `prLabel` (`PR #{number}`), `checksFailing` (`{count} failing`), `checksOptionalFailing` (`{count} optional failing`),
+`Merged`, `Closed`), `prLabel` (`PR #{number}`), `checksFailing` (`{count} failing`), `checksOptionalFailing` (`{count} optional checks failing`),
 `checksRunning`, `conflict`, `approved`, `changesRequested`, `reviewRequired`, `moreCount`
 (`+{count} more`), `mergedAgo` (`merged {time}`), `sectionTitle` (`Pull requests · {count}`),
 `open` (`Open pull request #{number}`), `copyLink`, `refresh`, `columnTitle` (`PR`),
@@ -325,7 +327,7 @@ URLs of private hosts, or PR titles in `info`/`warn`.
 16. Ten worktree sessions in one repository → one GraphQL request per base repository per refresh
     (two in a checkout with `origin` + `upstream`), not one per session.
 17. Only a non-required check fails (`mergeStateStatus` = `UNSTABLE`) → warning dot and
-    `1 optional failing`, not red.
+    `1 optional checks failing`, not red.
 
 ## Validation
 

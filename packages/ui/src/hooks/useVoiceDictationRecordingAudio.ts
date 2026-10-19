@@ -3,6 +3,7 @@ import { useOptionalPlatform } from "@/hooks/usePlatform.js";
 import { useSettings } from "@/hooks/useSettingService.js";
 import { logger } from "@/logger.js";
 import { playVoiceDictationFeedbackSound } from "@/lib/voiceDictationFeedbackSound.js";
+import { resolveVoiceDictationPreferences } from "@/lib/voiceDictationPreferences.js";
 
 /**
  * Audio feedback and system-mute side channel for voice dictation (spec:
@@ -14,9 +15,8 @@ export function useVoiceDictationRecordingAudio() {
   const platform = useOptionalPlatform();
   const { settings } = useSettings();
   const voice = settings?.voiceDictation;
-  const feedbackSounds = voice?.feedbackSounds === true;
-  const feedbackVolume = voice?.feedbackVolume ?? 70;
-  const muteWhileRecording = voice?.muteWhileRecording === true;
+  const { feedbackSounds, feedbackVolume, muteWhileRecording } =
+    resolveVoiceDictationPreferences(voice);
 
   /** Whether this renderer requested the system output mute and has not released it yet. */
   const systemMuteActiveRef = useRef(false);

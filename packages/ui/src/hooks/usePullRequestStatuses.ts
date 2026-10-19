@@ -62,11 +62,17 @@ export function usePullRequestStatuses(
     .sort();
   const runningTaskKeysSignature = runningTaskKeys.join("\u0000");
 
+  // A git mutation (commit/push) may have opened or updated a PR, so its refresh signal bypasses
+  // the service TTL for every worktree task in view. A plain targets change keeps the TTL.
+  const handledRefreshVersionRef = useRef(refreshVersion);
   useEffect(() => {
     if (!active) {
+      // Left unhandled so the mutation is re-probed on the next activation.
       return;
     }
-    void prober.probe(targets);
+    const gitMutated = handledRefreshVersionRef.current !== refreshVersion;
+    handledRefreshVersionRef.current = refreshVersion;
+    void prober.probe(targets, gitMutated ? { force: true } : undefined);
 
     const onFocus = () => {
       void prober.probe(targets);
@@ -108,19 +114,32 @@ export function usePullRequestStatuses(
     }
   }, [prober, targets, active, runningTaskKeysSignature]);
 
-  // Explicit refresh: only the requested task keys bypass the service TTL.
-  const forceTaskIdList = useMemo(() => {
-    const separator = "::";
-    return forceRefresh.taskKeys
-      .map((taskKey) => taskKey.slice(taskKey.indexOf(separator) + separator.length))
-      .filter((taskId) => taskId.length > 0);
-  }, [forceRefresh]);
+  // Explicit refresh: only the requested tasks bypass the service TTL, once per request. The
+  // version is the signal; a targets change re-runs this effect but must not replay the request.
+  // Task ids come from the targets, not from parsing the composite task key.
+  const handledForceVersionRef = useRef(forceRefresh.version);
   useEffect(() => {
-    if (!active || forceTaskIdList.length === 0) {
+    if (!active || forceRefresh.version === handledForceVersionRef.current) {
       return;
     }
-    void prober.probe(targets, { forceTaskIds: forceTaskIdList });
-  }, [prober, targets, active, forceTaskIdList]);
+    handledForceVersionRef.current = forceRefresh.version;
+    const requested = new Set(forceRefresh.taskKeys);
+    const forceTaskIds = [
+      ...new Set(
+        targets.flatMap((target) =>
+          target.tasks
+            .map((task) => task.input.taskId)
+            .filter((taskId) =>
+              requested.has(buildPullRequestTaskKey(target.workspaceKey, taskId)),
+            ),
+        ),
+      ),
+    ];
+    if (forceTaskIds.length === 0) {
+      return;
+    }
+    void prober.probe(targets, { forceTaskIds });
+  }, [prober, targets, active, forceRefresh]);
 
   // Drop store entries for workspaces that left the sidebar.
   useEffect(() => {

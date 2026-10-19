@@ -127,7 +127,7 @@ function mapChecks(node: GraphqlPullRequestNode): {
   }
 
   // UNSTABLE means every failing check is non-required (decided 2026-10-18):
-  // warning dot + "{count} optional failing" instead of red.
+  // warning dot + "{count} optional checks failing" instead of red.
   const failingChecks: PullRequestChecks =
     node.mergeStateStatus === "UNSTABLE" ? "optional_failing" : "failing";
   if (failingCheckCount > 0) {

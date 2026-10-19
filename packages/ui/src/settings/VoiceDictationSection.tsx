@@ -1,4 +1,5 @@
 /* eslint-disable max-lines -- Voice dictation settings keeps microphone setup and model download/selection state together so their controls stay synchronized. */
+import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LoaderCircle } from "lucide-react";
 import type { VoiceDictationSettings, VoiceModelIdleUnloadMinutes } from "@zcode/shared";
@@ -23,6 +24,7 @@ import {
 import { Switch } from "@/components/ui/switch.js";
 import { Slider } from "@/components/ui/slider.js";
 import { toast } from "@/components/ui/toast.js";
+import { useOpenKeyboardShortcutSettings } from "@/hooks/useOpenVoiceDictationSettings.js";
 import { useServices } from "@/hooks/useServices.js";
 import { useVoiceDictationRuntimeState } from "@/hooks/useVoiceDictationRuntimeState.js";
 import { useSettings } from "@/hooks/useSettingService.js";
@@ -31,7 +33,9 @@ import { logger } from "@/logger.js";
 import { useShortcutCommandLabelParts } from "@/shortcuts/useShortcutBindings.js";
 import { listAudioInputDevices, VoiceDictationRecorder } from "@/lib/voiceDictationRecorder.js";
 import { playVoiceDictationFeedbackSound } from "@/lib/voiceDictationFeedbackSound.js";
-import { SettingsBadge, SettingsGroupCard, SettingsRow } from "@/settings/SettingsPageParts.js";
+import { applyIdleUnloadPreference } from "@/lib/voiceIdleUnload.js";
+import { resolveVoiceDictationPreferences } from "@/lib/voiceDictationPreferences.js";
+import { SettingsGroupCard, SettingsRow } from "@/settings/SettingsPageParts.js";
 import { VoiceDictationPostProcessCard } from "@/settings/VoiceDictationPostProcessCard.js";
 import { VoiceDictationLanguagePicker } from "@/settings/VoiceDictationLanguagePicker.js";
 import { VoiceModelRow } from "@/settings/VoiceDictationModelRow.js";
@@ -45,11 +49,10 @@ const MIC_TEST_DURATION_MS = 3000;
 /** Peaks below this count as no valid sound (about -40 dBFS). */
 const MIC_SILENT_PEAK = 0.01;
 const MODEL_REFRESH_INTERVAL_MS = 500;
-const DEFAULT_FEEDBACK_VOLUME = 70;
 
 /**
- * Voice input settings: input device, microphone test, shortcut and recording mode, transcription
- * models (download / select / remove). Model state and download progress are owned by the services'
+ * Voice input settings in five cards: Dictation, Microphone, Transcription models (with Memory),
+ * Output, and Post-processing. Model state and download progress are owned by the services'
  * IVoiceDictationService; this only polls for display and writes preferences.
  */
 export function VoiceDictationSection({ isDesktop = false }: { isDesktop?: boolean }) {
@@ -61,9 +64,9 @@ export function VoiceDictationSection({ isDesktop = false }: { isDesktop?: boole
           label={intl.formatMessage({ id: "voiceDictation.webUnavailable.title" })}
           description={intl.formatMessage({ id: "voiceDictation.webUnavailable.description" })}
           control={
-            <SettingsBadge>
+            <span className="rounded-md bg-surface px-2.5 py-1 text-ui-base font-medium text-foreground-subtle">
               {intl.formatMessage({ id: "voiceDictation.webUnavailable.badge" })}
-            </SettingsBadge>
+            </span>
           }
         />
       </SettingsGroupCard>
@@ -78,6 +81,7 @@ function DesktopVoiceDictationSection() {
   const { runtimeState } = useVoiceDictationRuntimeState();
   const { settings, update } = useSettings();
   const shortcutParts = useShortcutCommandLabelParts("voiceDictation");
+  const openKeyboardShortcuts = useOpenKeyboardShortcutSettings();
   const voice: VoiceDictationSettings = settings?.voiceDictation ?? {};
   // patchVoice is held for minutes by delayed callbacks such as download completion; merging must be
   // based on the latest settings, otherwise a microphone / language / push-to-talk change made during a
@@ -114,13 +118,15 @@ function DesktopVoiceDictationSection() {
   );
   const modelId = voice.modelId ?? null;
   const microphoneDeviceId = voice.microphoneDeviceId ?? null;
-  const pushToTalk = voice.pushToTalk !== false;
-  const idleUnloadMinutes = voice.idleUnloadMinutes ?? 5;
-  const feedbackSounds = voice.feedbackSounds === true;
-  const savedFeedbackVolume = voice.feedbackVolume ?? DEFAULT_FEEDBACK_VOLUME;
-  const muteWhileRecording = voice.muteWhileRecording === true;
-  const copyToClipboard = voice.copyToClipboard === true;
-  const warmUpOnFocus = voice.warmUpOnFocus !== false;
+  const {
+    pushToTalk,
+    idleUnloadMinutes,
+    feedbackSounds,
+    feedbackVolume: savedFeedbackVolume,
+    muteWhileRecording,
+    copyToClipboard,
+    warmUpOnFocus,
+  } = resolveVoiceDictationPreferences(voice);
 
   const [models, setModels] = useState<VoiceModelListItem[]>([]);
   const [startingDownloadIds, setStartingDownloadIds] = useState<Set<string>>(() => new Set());
@@ -184,15 +190,19 @@ function DesktopVoiceDictationSection() {
     return () => window.clearInterval(timer);
   }, [anyDownloading, hasPendingDownloadRequests, refreshModels]);
 
+  /**
+   * Writes a preference. Resolves true when the write was saved, false when it failed; a failure is
+   * toasted here, and callers that keep unsaved input (the prompt editor) use the result to keep it.
+   */
   const patchVoice = useCallback(
-    async (patch: Partial<VoiceDictationSettings>) => {
+    async (patch: Partial<VoiceDictationSettings>): Promise<boolean> => {
       // useSettings publishes settings === null until the initial load resolves; merging against
       // the empty fallback would persist a voiceDictation object containing only the clicked
       // field and erase every stored preference. Edits wait for the first real snapshot.
       if (!settingsLoadedRef.current) {
         logger.warn("voice dictation settings edit ignored: initial settings not loaded yet");
         toast(intl.formatMessage({ id: "voiceDictation.saveFailed" }));
-        return;
+        return false;
       }
       // The merge must land in the ref synchronously: voiceRef is only refreshed during render, so two
       // rapid edits would share the same stale snapshot before the first update() completes, and the
@@ -209,15 +219,19 @@ function DesktopVoiceDictationSection() {
         patch.language !== undefined ||
         patch.postProcessEnabled !== undefined ||
         patch.postProcessProvider !== undefined ||
-        patch.postProcessPrompt !== undefined
+        // Reset writes undefined on purpose (the key is removed), so test presence, not value.
+        "postProcessPrompt" in patch
       ) {
         setOptimisticTick((tick) => tick + 1);
       }
       try {
         await update({ voiceDictation: merged });
-        if (patch.idleUnloadMinutes !== undefined) {
-          await voiceDictationService?.setIdleUnloadMinutes(patch.idleUnloadMinutes);
+        if (patch.idleUnloadMinutes !== undefined && voiceDictationService) {
+          // Settings are already saved; an older Host without the method keeps its default delay
+          // instead of reporting a save failure (see applyIdleUnloadPreference).
+          await applyIdleUnloadPreference(voiceDictationService, patch.idleUnloadMinutes);
         }
+        return true;
       } catch (error) {
         // A failed write is not rolled back here: any newer pending write re-persists the whole
         // merged object (healing this failure), and once no writes remain the overlay clears and
@@ -233,7 +247,7 @@ function DesktopVoiceDictationSection() {
           // Re-render so controls fall back to the persisted value instead of the failed edit.
           setOptimisticTick((tick) => tick + 1);
         }
-        return;
+        return false;
       } finally {
         pendingVoiceWritesRef.current -= 1;
       }
@@ -485,79 +499,11 @@ function DesktopVoiceDictationSection() {
     namedDevices.some((device) => device.deviceId === microphoneDeviceId);
 
   return (
-    <div className="space-y-5">
-      <section className="space-y-3">
+    <div className="space-y-6">
+      <VoiceSettingsGroup
+        title={intl.formatMessage({ id: "voiceDictation.group.dictation.title" })}
+      >
         <SettingsGroupCard>
-          <SettingsRow
-            label={intl.formatMessage({ id: "voiceDictation.inputDevice.title" })}
-            description={intl.formatMessage({ id: "voiceDictation.inputDevice.description" })}
-            control={
-              <Select
-                value={deviceValue}
-                onValueChange={(value) =>
-                  void patchVoice({ microphoneDeviceId: value === "default" ? null : value })
-                }
-              >
-                <SelectTrigger
-                  aria-label={intl.formatMessage({ id: "voiceDictation.inputDevice.title" })}
-                  className="w-full"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="default">
-                    {intl.formatMessage({ id: "voiceDictation.inputDevice.default" })}
-                  </SelectItem>
-                  {namedDevices.map((device, index) => (
-                    <SelectItem key={device.deviceId} value={device.deviceId}>
-                      {device.label ||
-                        intl.formatMessage(
-                          { id: "voiceDictation.inputDevice.unnamed" },
-                          { index: index + 1 },
-                        )}
-                    </SelectItem>
-                  ))}
-                  {!hasSelectedDevice && microphoneDeviceId ? (
-                    <SelectItem value={microphoneDeviceId}>
-                      {intl.formatMessage({ id: "voiceDictation.inputDevice.unavailable" })}
-                    </SelectItem>
-                  ) : null}
-                </SelectContent>
-              </Select>
-            }
-            detail={
-              micTesting ? (
-                <div className="flex items-center gap-2 text-ui-base text-foreground-subtle">
-                  <LoaderCircle className="size-4 animate-spin" aria-hidden />
-                  <span>{intl.formatMessage({ id: "voiceDictation.micTest.recording" })}</span>
-                  <MicLevelBar level={micLevel} />
-                </div>
-              ) : micPeak !== null ? (
-                <div className="text-ui-base text-foreground-subtle">
-                  {micPeak < MIC_SILENT_PEAK
-                    ? intl.formatMessage({ id: "voiceDictation.micTest.silent" })
-                    : intl.formatMessage(
-                        { id: "voiceDictation.micTest.result" },
-                        { level: Math.round(micPeak * 100) },
-                      )}
-                </div>
-              ) : undefined
-            }
-          />
-          <SettingsRow
-            label={intl.formatMessage({ id: "voiceDictation.micTest.title" })}
-            description={intl.formatMessage({ id: "voiceDictation.micTest.description" })}
-            control={
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={micTesting}
-                onClick={() => void handleMicTest()}
-              >
-                {intl.formatMessage({ id: "voiceDictation.micTest.button" })}
-              </Button>
-            }
-          />
           <SettingsRow
             label={intl.formatMessage({ id: "voiceDictation.shortcut.title" })}
             description={intl.formatMessage({ id: "voiceDictation.shortcut.description" })}
@@ -573,6 +519,16 @@ function DesktopVoiceDictationSection() {
                   {intl.formatMessage({ id: "voiceDictation.shortcut.unassigned" })}
                 </span>
               )
+            }
+            detail={
+              <Button
+                variant="link"
+                size="sm"
+                className="h-auto px-0"
+                onClick={openKeyboardShortcuts}
+              >
+                {intl.formatMessage({ id: "voiceDictation.shortcut.open" })}
+              </Button>
             }
           />
           <SettingsRow
@@ -640,30 +596,77 @@ function DesktopVoiceDictationSection() {
               </div>
             }
           />
+        </SettingsGroupCard>
+      </VoiceSettingsGroup>
+
+      <VoiceSettingsGroup
+        title={intl.formatMessage({ id: "voiceDictation.group.microphone.title" })}
+      >
+        <SettingsGroupCard>
           <SettingsRow
-            label={intl.formatMessage({ id: "voiceDictation.muteWhileRecording.title" })}
-            description={intl.formatMessage({
-              id: "voiceDictation.muteWhileRecording.description",
-            })}
+            label={intl.formatMessage({ id: "voiceDictation.inputDevice.title" })}
+            description={intl.formatMessage({ id: "voiceDictation.inputDevice.description" })}
             control={
-              <Switch
-                aria-label={intl.formatMessage({ id: "voiceDictation.muteWhileRecording.title" })}
-                checked={muteWhileRecording}
-                onCheckedChange={(checked) => void patchVoice({ muteWhileRecording: checked })}
-              />
+              <Select
+                value={deviceValue}
+                onValueChange={(value) =>
+                  void patchVoice({ microphoneDeviceId: value === "default" ? null : value })
+                }
+              >
+                <SelectTrigger
+                  aria-label={intl.formatMessage({ id: "voiceDictation.inputDevice.title" })}
+                  className="w-full"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="default">
+                    {intl.formatMessage({ id: "voiceDictation.inputDevice.default" })}
+                  </SelectItem>
+                  {namedDevices.map((device, index) => (
+                    <SelectItem key={device.deviceId} value={device.deviceId}>
+                      {device.label ||
+                        intl.formatMessage(
+                          { id: "voiceDictation.inputDevice.unnamed" },
+                          { index: index + 1 },
+                        )}
+                    </SelectItem>
+                  ))}
+                  {!hasSelectedDevice && microphoneDeviceId ? (
+                    <SelectItem value={microphoneDeviceId}>
+                      {intl.formatMessage({ id: "voiceDictation.inputDevice.unavailable" })}
+                    </SelectItem>
+                  ) : null}
+                </SelectContent>
+              </Select>
             }
           />
           <SettingsRow
-            label={intl.formatMessage({ id: "voiceDictation.copyToClipboard.title" })}
-            description={intl.formatMessage({ id: "voiceDictation.copyToClipboard.description" })}
+            label={intl.formatMessage({ id: "voiceDictation.micTest.title" })}
+            description={intl.formatMessage({ id: "voiceDictation.micTest.description" })}
+            controlLayout="wide"
             control={
-              <Switch
-                aria-label={intl.formatMessage({ id: "voiceDictation.copyToClipboard.title" })}
-                checked={copyToClipboard}
-                onCheckedChange={(checked) => void patchVoice({ copyToClipboard: checked })}
-              />
+              <div className="flex w-full min-w-0 flex-wrap items-center justify-end gap-3">
+                <MicTestResult testing={micTesting} level={micLevel} peak={micPeak} />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={micTesting}
+                  onClick={() => void handleMicTest()}
+                >
+                  {intl.formatMessage({ id: "voiceDictation.micTest.button" })}
+                </Button>
+              </div>
             }
           />
+        </SettingsGroupCard>
+      </VoiceSettingsGroup>
+
+      <VoiceSettingsGroup
+        title={intl.formatMessage({ id: "voiceDictation.models.title" })}
+        description={intl.formatMessage({ id: "voiceDictation.models.description" })}
+      >
+        <SettingsGroupCard>
           <SettingsRow
             label={intl.formatMessage({ id: "voiceDictation.language.title" })}
             description={intl.formatMessage({ id: "voiceDictation.language.description" })}
@@ -704,6 +707,48 @@ function DesktopVoiceDictationSection() {
               ) : undefined
             }
           />
+          <div className="space-y-3 border-t border-border bg-surface p-4">
+            <VoiceModelFilterBar
+              value={modelFilter}
+              onChange={setModelFilter}
+              hasSelectedLanguages={selectedLanguages.length > 0}
+            />
+            {visibleModels.length === 0 && models.length > 0 ? (
+              <div className="flex flex-col items-center gap-2 rounded-xl border border-card-border bg-card p-6 text-center text-ui-base text-foreground-subtle">
+                <p>{intl.formatMessage({ id: "voiceDictation.models.filter.empty" })}</p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setModelFilter(DEFAULT_VOICE_MODEL_FILTER)}
+                >
+                  {intl.formatMessage({ id: "voiceDictation.models.filter.reset" })}
+                </Button>
+              </div>
+            ) : null}
+            {visibleModels.map((item) => (
+              <VoiceModelRow
+                key={item.descriptor.id}
+                item={item}
+                selected={modelId === item.descriptor.id}
+                runtimeState={runtimeState}
+                startingDownload={startingDownloadIds.has(item.descriptor.id)}
+                pendingUse={pendingUseModelId === item.descriptor.id}
+                recommended={recommendedId === item.descriptor.id}
+                selectedLanguages={selectedLanguages}
+                languageName={languageName}
+                onSelect={() => handleSelectModel(item.descriptor.id)}
+                onUseWhenReady={() => handleUseWhenReady(item.descriptor.id)}
+                onDownload={() => handleDownload(item.descriptor.id)}
+                onCancel={() => handleCancel(item.descriptor.id)}
+                onRemove={() => void handleRemove(item.descriptor.id)}
+              />
+            ))}
+          </div>
+          <div className="border-t border-border px-4 pb-1 pt-3">
+            <h4 className="text-ui-base font-medium text-foreground">
+              {intl.formatMessage({ id: "voiceDictation.memory.title" })}
+            </h4>
+          </div>
           <SettingsRow
             label={intl.formatMessage({ id: "voiceDictation.warmUp.title" })}
             description={intl.formatMessage({ id: "voiceDictation.warmUp.description" })}
@@ -749,67 +794,99 @@ function DesktopVoiceDictationSection() {
             }
           />
         </SettingsGroupCard>
-      </section>
+      </VoiceSettingsGroup>
 
-      <section className="space-y-3">
-        <div>
-          <h3 className="text-ui-base font-medium text-foreground">
-            {intl.formatMessage({ id: "voiceDictation.postProcess.title" })}
-          </h3>
-          <p className="mt-1 text-ui-base leading-6 text-foreground-subtle">
-            {intl.formatMessage({ id: "voiceDictation.postProcess.description" })}
-          </p>
-        </div>
+      <VoiceSettingsGroup title={intl.formatMessage({ id: "voiceDictation.group.output.title" })}>
+        <SettingsGroupCard>
+          <SettingsRow
+            label={intl.formatMessage({ id: "voiceDictation.copyToClipboard.title" })}
+            description={intl.formatMessage({ id: "voiceDictation.copyToClipboard.description" })}
+            control={
+              <Switch
+                aria-label={intl.formatMessage({ id: "voiceDictation.copyToClipboard.title" })}
+                checked={copyToClipboard}
+                onCheckedChange={(checked) => void patchVoice({ copyToClipboard: checked })}
+              />
+            }
+          />
+          <SettingsRow
+            label={intl.formatMessage({ id: "voiceDictation.muteWhileRecording.title" })}
+            description={intl.formatMessage({
+              id: "voiceDictation.muteWhileRecording.description",
+            })}
+            control={
+              <Switch
+                aria-label={intl.formatMessage({ id: "voiceDictation.muteWhileRecording.title" })}
+                checked={muteWhileRecording}
+                onCheckedChange={(checked) => void patchVoice({ muteWhileRecording: checked })}
+              />
+            }
+          />
+        </SettingsGroupCard>
+      </VoiceSettingsGroup>
+
+      <VoiceSettingsGroup
+        title={intl.formatMessage({ id: "voiceDictation.postProcess.title" })}
+        description={intl.formatMessage({ id: "voiceDictation.postProcess.description" })}
+      >
         <VoiceDictationPostProcessCard voice={voiceRef.current} patchVoice={patchVoice} />
-      </section>
+      </VoiceSettingsGroup>
+    </div>
+  );
+}
 
-      <section className="space-y-3">
-        <div>
-          <h3 className="text-ui-base font-medium text-foreground">
-            {intl.formatMessage({ id: "voiceDictation.models.title" })}
-          </h3>
-          <p className="mt-1 text-ui-base leading-6 text-foreground-subtle">
-            {intl.formatMessage({ id: "voiceDictation.models.description" })}
-          </p>
-        </div>
-        <VoiceModelFilterBar
-          value={modelFilter}
-          onChange={setModelFilter}
-          hasSelectedLanguages={selectedLanguages.length > 0}
-        />
-        <div className="space-y-3">
-          {visibleModels.length === 0 && models.length > 0 ? (
-            <div className="flex flex-col items-center gap-2 rounded-xl border border-card-border bg-card p-6 text-center text-ui-base text-foreground-subtle">
-              <p>{intl.formatMessage({ id: "voiceDictation.models.filter.empty" })}</p>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setModelFilter(DEFAULT_VOICE_MODEL_FILTER)}
-              >
-                {intl.formatMessage({ id: "voiceDictation.models.filter.reset" })}
-              </Button>
-            </div>
-          ) : null}
-          {visibleModels.map((item) => (
-            <VoiceModelRow
-              key={item.descriptor.id}
-              item={item}
-              selected={modelId === item.descriptor.id}
-              runtimeState={runtimeState}
-              startingDownload={startingDownloadIds.has(item.descriptor.id)}
-              pendingUse={pendingUseModelId === item.descriptor.id}
-              recommended={recommendedId === item.descriptor.id}
-              selectedLanguages={selectedLanguages}
-              languageName={languageName}
-              onSelect={() => handleSelectModel(item.descriptor.id)}
-              onUseWhenReady={() => handleUseWhenReady(item.descriptor.id)}
-              onDownload={() => handleDownload(item.descriptor.id)}
-              onCancel={() => handleCancel(item.descriptor.id)}
-              onRemove={() => void handleRemove(item.descriptor.id)}
-            />
-          ))}
-        </div>
-      </section>
+/** A titled group of settings cards: the heading and optional description sit above the card. */
+function VoiceSettingsGroup({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="space-y-3">
+      <div>
+        <h3 className="text-ui-base font-medium text-foreground">{title}</h3>
+        {description ? (
+          <p className="mt-1 text-ui-base leading-6 text-foreground-subtle">{description}</p>
+        ) : null}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+/** Status beside the Test microphone button: recording with a live level, the peak, or a silence hint. */
+function MicTestResult({
+  testing,
+  level,
+  peak,
+}: {
+  testing: boolean;
+  level: number;
+  peak: number | null;
+}) {
+  const { intl } = useZCodeIntl();
+  if (testing) {
+    return (
+      <div role="status" className="flex items-center gap-2 text-ui-base text-foreground-subtle">
+        <LoaderCircle className="size-4 animate-spin" aria-hidden />
+        <span>{intl.formatMessage({ id: "voiceDictation.micTest.recording" })}</span>
+        <MicLevelBar level={level} />
+      </div>
+    );
+  }
+  if (peak === null) return null;
+  return (
+    <div role="status" className="min-w-0 text-right text-ui-base text-foreground-subtle">
+      {peak < MIC_SILENT_PEAK
+        ? intl.formatMessage({ id: "voiceDictation.micTest.silent" })
+        : intl.formatMessage(
+            { id: "voiceDictation.micTest.result" },
+            { level: Math.round(peak * 100) },
+          )}
     </div>
   );
 }

@@ -38,6 +38,11 @@ async function prepareWorkspace(root: string): Promise<void> {
 }
 
 test("sessionPullRequestsService resolves PRs through the fake gh and a real git repository", async (t) => {
+  // fake-gh.sh is a POSIX shell script; Windows cannot execute it as the gh binary.
+  if (process.platform === "win32") {
+    t.skip("fake-gh.sh is a POSIX shell script");
+    return;
+  }
   const root = await mkdtemp(join(tmpdir(), "zcode-session-pr-"));
   t.after(async () => {
     await rm(root, { recursive: true, force: true });
