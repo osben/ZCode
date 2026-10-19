@@ -67,6 +67,11 @@ R7. **Dedupe source of truth = provider-visible history.** A nested file counts 
   old tool-result bodies), resume and rewind therefore need no extra synchronization. When the model no longer sees the content,
   the file can be delivered again.
 
+  **Known limitation (v1):** a relative `Read` is keyed against the cwd at the time of the history read, not the cwd when the
+  call ran. If the model reads `packages/foo/AGENTS.md` and then `cd`s, the same file can be delivered once more. The cost is one
+  extra copy inside the context budget; no instruction is lost. Recording the call-time path on the tool-call record would fix it,
+  but that changes the history format used by resume and compaction, so it is deferred.
+
 R8. **Subagents.** Each runtime, including a subagent child, has its own history and therefore its own delivered set. A child does
 not inherit the parent's delivered set, because the child's model never saw the parent's reminders. The child uses the same
 trigger and budget rules. Its startup root exclusions come from its own snapshot plus `subagentContext.userInstructions.sources`.
