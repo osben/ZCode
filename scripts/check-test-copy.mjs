@@ -17,6 +17,8 @@ const localeAllowlist = new Set([
   "packages/ui/test/browser/manual-review/pending/topic-preparation.test.mjs", // bot topic-preparation layout across an en-US and zh-CN viewport/theme matrix
   "packages/ui/test/chatInputContextUsage.test.ts", // formatContextUsageSummary Chinese compact token units
   "packages/ui/test/intlPlural.test.ts", // createIntl zh-CN plural selection rules
+  "packages/ui/test/offPeakNewTaskEntryLocale.test.ts", // off-peak banner, card and draft must stay in one language per zh-CN and en-US
+  "packages/ui/test/remoteConnectionFieldsAuthMethodLayout.test.ts", // SSH auth-method layout compared across zh-CN and en-US labels
   "packages/ui/test/marketingPopupAdapter.test.ts", // Start popup settings button label per locale
   "packages/ui/test/modelProviderCodingPlan.test.ts", // zh-CN date formatting and billing-discount copy resolution
   "packages/ui/test/pluginStoreTryPrompt.test.ts", // localized plugin display label in the try prompt

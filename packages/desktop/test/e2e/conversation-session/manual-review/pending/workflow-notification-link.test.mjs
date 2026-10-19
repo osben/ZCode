@@ -32,7 +32,10 @@ test("完成通知产物链接样式与点击", async () => {
         await summary.innerText(),
         /Workflow completed\s*·\s*Desktop workflow\s*·\s*Desktop startup/s,
       );
-      const link = page.getByTestId("chat-workflow-notification-row-link").getByRole("button");
+      // The row also holds the collapsible summary (role="button"); select only the native artifact button.
+      const link = page
+        .getByTestId("chat-workflow-notification-row-link")
+        .locator("button:has(img)");
       assert.match(await link.locator("img").getAttribute("src"), /markdown/i);
       await link.hover();
       assert.equal(await link.evaluate((n) => getComputedStyle(n).textDecorationLine), "underline");

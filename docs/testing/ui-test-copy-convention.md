@@ -44,6 +44,8 @@ Locale-behavior tests added during the migration (each one asserts zh-CN or a lo
 - `packages/ui/test/browser/manual-review/pending/topic-preparation.test.mjs` — bot topic-preparation layout across an en-US and zh-CN viewport/theme matrix.
 - `packages/ui/test/chatInputContextUsage.test.ts` — formatContextUsageSummary Chinese compact token units.
 - `packages/ui/test/intlPlural.test.ts` — createIntl zh-CN plural selection rules.
+- `packages/ui/test/offPeakNewTaskEntryLocale.test.ts` — off-peak banner, card and draft text stay in one language per zh-CN and en-US.
+- `packages/ui/test/remoteConnectionFieldsAuthMethodLayout.test.ts` — SSH auth-method layout compared across zh-CN and en-US labels.
 - `packages/ui/test/marketingPopupAdapter.test.ts` — Start popup settings button label per locale.
 - `packages/ui/test/modelProviderCodingPlan.test.ts` — zh-CN date formatting and billing-discount copy resolution.
 - `packages/ui/test/pluginStoreTryPrompt.test.ts` — localized plugin display label in the try prompt.
@@ -62,3 +64,11 @@ Run `pnpm test-copy:check` (also part of `pnpm verify:pre-push`). It fails on tw
 - a CJK string passed to a text or role locator (`getByText`, `findByRole({ name })`, and so on). Such a locator must become a `TID_*` test ID or a role/state selector.
 
 The guard ignores test titles, comments and content assertions, because those may validate user-provided fixture data; use `expectedCopy` for assertions about UI copy. Keep intentional locale tests in the explicit allowlist rather than weakening the guard globally. Blocking English copy locators is a separate follow-up and is not enforced yet.
+
+## Running Node-side browser cases
+
+Manual-review browser cases under `packages/ui/test/browser/manual-review/pending/` run in plain Node but import `helpers/uiCopy.ts`, and the `@/` alias only resolves through the TypeScript config. Plain `node --test` therefore fails with `ERR_MODULE_NOT_FOUND` before any case runs. Load the `tsx` loader with the UI tsconfig:
+
+```bash
+CHROME_EXECUTABLE_PATH=<Chromium> TSX_TSCONFIG_PATH=packages/ui/tsconfig.json node --import tsx --test <case file>
+```

@@ -14,10 +14,9 @@ describe("WebRemoteControlFailureScreen", () => {
     );
 
     expect(copy.tone).toBe("danger");
-    expect(copy.title.trim()).not.toBe("");
-    expect(copy.description.trim()).not.toBe("");
-    expect(copy.action.trim()).not.toBe("");
-    expect(copy.nextSteps).not.toHaveLength(0);
+    expect(copy.title).toBe("Desktop Offline");
+    expect(copy.description).toContain("The desktop side disconnected.");
+    expect(copy.action).toBe("Try Again");
   });
 
   it("explains mobile recovery timeout without blaming desktop offline", () => {
@@ -30,9 +29,9 @@ describe("WebRemoteControlFailureScreen", () => {
     );
 
     expect(copy.tone).toBe("warning");
-    expect(copy.title.trim()).not.toBe("");
-    expect(copy.description.trim()).not.toBe("");
-    expect(copy.nextSteps).not.toHaveLength(0);
+    expect(copy.title).toBe("Connection Recovery Timed Out");
+    expect(copy.description).toContain("did not recover its remote control connection in time");
+    expect(copy.description).not.toContain("The desktop side disconnected.");
   });
 
   it("explains KICKED as another mobile controller taking over", () => {
@@ -45,9 +44,8 @@ describe("WebRemoteControlFailureScreen", () => {
     );
 
     expect(copy.tone).toBe("warning");
-    expect(copy.title.trim()).not.toBe("");
-    expect(copy.description.trim()).not.toBe("");
-    expect(copy.action.trim()).not.toBe("");
+    expect(copy.title).toBe("Taken Over By Another Device");
+    expect(copy.description).toContain("Another remote control device connected");
   });
 
   it("renders structured recovery guidance and the relay detail message", () => {
@@ -62,10 +60,9 @@ describe("WebRemoteControlFailureScreen", () => {
       }),
     );
 
-    expect(html).toContain("<main");
-    expect(html).toContain("<h1");
-    expect(html).toContain("<ol");
-    expect(html).toContain("<button");
+    expect(html).toContain("Desktop Offline");
+    expect(html).toContain("What happened");
     expect(html).toContain("Desktop device is offline.");
+    expect(html).toContain("Try Again");
   });
 });

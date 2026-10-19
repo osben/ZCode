@@ -8,7 +8,6 @@ import { createServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { chromium } from "playwright-core";
-import { expectedCopy } from "../../../helpers/uiCopy.js";
 
 const root = fileURLToPath(new URL("../../../../../../", import.meta.url));
 const entry = "/packages/ui/test/browser/manual-review/pending/topic-preparation.fixture.tsx";
@@ -129,10 +128,8 @@ for (const width of [390, 1200]) {
             assert.equal(await el.evaluate((node) => node.scrollWidth <= node.clientWidth), true);
           }
           const waiting = page.locator('[data-topic-preparation="waiting"]');
-          const expand = waiting.getByRole("button", {
-            name: locale === "zh-CN" ? expectedCopy("chat.message.expand") : "Expand",
-            exact: true,
-          });
+          // Select by the collapsed state: the zh-CN fixture renders the Chinese label, which expectedCopy cannot provide.
+          const expand = waiting.getByRole("button", { expanded: false });
           await expand.waitFor();
           await expand.click();
           await page.waitForFunction(() => {

@@ -6,7 +6,7 @@ import type { CloudContentDialogPayload } from "@/components/cloud-content-dialo
 const weekendPlanResultDialogMockResponse = weekendPlanResultDialogFixture;
 
 export interface WeekendPlanResultDialogMockInput {
-  locale: "en-US" | "en-US";
+  locale: "zh-CN" | "en-US";
   planName: string;
   amountLabel: string;
   benefits: string[];
