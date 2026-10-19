@@ -6175,6 +6175,13 @@ export function SessionPane({
                         ) : !isDraft && sessionExecutionWorktree ? (
                           <ConversationWorktreeCreatedNotice
                             branchName={sessionExecutionWorktree.branchName}
+                            currentBranchName={
+                              worktreeGitState.summary
+                                ? worktreeGitState.summary.headRefType === "branch"
+                                  ? worktreeGitState.summary.branchName
+                                  : intl.formatMessage({ id: "git.head.detached" })
+                                : undefined
+                            }
                             path={sessionExecutionWorktree.path}
                           />
                         ) : null}
