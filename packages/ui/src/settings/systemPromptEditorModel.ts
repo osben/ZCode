@@ -228,7 +228,10 @@ export function resolveSystemPromptSaveBlockReason(params: {
 const systemPromptGraphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 export function countSystemPromptCharacters(text: string): number {
-  return [...systemPromptGraphemeSegmenter.segment(text)].length;
+  // Counted in a streaming loop: spreading the segments would retain one record per grapheme.
+  let count = 0;
+  for (const _segment of systemPromptGraphemeSegmenter.segment(text)) count += 1;
+  return count;
 }
 
 /** Size line for a block: grapheme characters plus the approximate token estimate. */

@@ -218,6 +218,9 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     // cannot abort that request, so a second capture must not begin until it has settled. Only that
     // window is guarded: a stale start still loading the model never reaches the recorder.
     if (recorderStartPendingRef.current) return;
+    // A cancelled stream's Host cancel waits for its queued feeds. The lease lets this composer
+    // re-acquire, so a start here would reach beginStream while the old Host stream is still active.
+    if (pendingStreamCancelsRef.current > 0) return;
     if (!voiceDictationService) return;
     if (!modelId) {
       toast(intl.formatMessage({ id: "voiceDictation.noModelSelected" }), {

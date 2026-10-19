@@ -21,13 +21,16 @@ describe("computeGhostLayout (VD-GHO-04)", () => {
       computeGhostLayout({ caret: { left: 20, top: 60, height: 16 }, editor, lineHeight: 20 })
         ?.indent,
     ).toBe(0);
-    const farRight = computeGhostLayout({
-      caret: { left: 580, top: 60, height: 16 },
+  });
+
+  it("keeps the insertion position near the right edge instead of shifting the ghost left", () => {
+    // Caret 390px from the editor's left edge: the ghost starts there and wraps, never moves back over the draft.
+    const nearRight = computeGhostLayout({
+      caret: { left: 100 + 390, top: 60, height: 16 },
       editor,
       lineHeight: 20,
     });
-    // Keep room for at least a short word so the ghost never starts past the right edge.
-    expect(farRight?.indent).toBe(400 - 48);
+    expect(nearRight?.indent).toBe(390);
   });
 
   it("hides the ghost when the caret is scrolled outside the visible editor box", () => {

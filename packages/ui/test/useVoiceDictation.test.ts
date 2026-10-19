@@ -845,6 +845,43 @@ describe("useVoiceDictation concurrent starts", () => {
     expect(mocks.recorderStartCount).toBe(2);
     await waitFor(() => expect(hook.result.current.phase).toBe("recording"));
   });
+
+  it("refuses a same-composer retry until the cancelled stream's Host cancel settles behind a delayed feed", async () => {
+    let finishFeed!: () => void;
+    mocks.service!.feedStream!.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishFeed = () => resolve({ committed: "", tentative: "" });
+        }),
+    );
+    const hook = renderHook(() =>
+      useVoiceDictation({ enabled: true, onTranscript: vi.fn(), scopeRef: { current: null } }),
+    );
+
+    await act(async () => hook.result.current.start());
+    await waitFor(() => expect(hook.result.current.phase).toBe("recording"));
+    // A microphone chunk starts a feed RPC that stays in flight.
+    act(() => {
+      mocks.recorder?.options?.onChunk?.(new Float32Array(100).fill(0.5));
+    });
+    await waitFor(() => expect(mocks.service!.feedStream).toHaveBeenCalledTimes(1));
+
+    // Escape: the Host cancel is queued behind the in-flight feed, so the old stream is still active.
+    act(() => hook.result.current.cancel());
+    expect(hook.result.current.phase).toBe("idle");
+
+    // The same composer retries before the cancel settles: the start is refused, not sent to the Host.
+    await act(async () => hook.result.current.start());
+    expect(mocks.service!.beginStream).toHaveBeenCalledTimes(1);
+    expect(mocks.service!.cancelStream).not.toHaveBeenCalled();
+
+    // The feed drains, the cancel reaches the Host, and only then does a retry open a new stream.
+    await act(async () => finishFeed());
+    await waitFor(() => expect(mocks.service!.cancelStream).toHaveBeenCalledWith("stream-1"));
+    await act(async () => hook.result.current.start());
+    expect(mocks.service!.beginStream).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(hook.result.current.phase).toBe("recording"));
+  });
 });
 
 describe("useVoiceDictation across two composers", () => {

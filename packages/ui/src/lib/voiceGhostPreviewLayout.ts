@@ -6,9 +6,6 @@
  * editor width. All inputs are viewport coordinates, as returned by getBoundingClientRect.
  */
 
-/** Narrowest room kept for the first ghost line; a caret closer than this to the right edge is pulled left. */
-const MIN_FIRST_LINE_PX = 48;
-
 export interface GhostCaretBox {
   left: number;
   top: number;
@@ -50,8 +47,9 @@ export function computeGhostLayout({
   ) {
     return null;
   }
-  const maxIndent = Math.max(0, editor.width - MIN_FIRST_LINE_PX);
-  const indent = Math.min(maxIndent, Math.max(0, caret.left - editor.left));
+  // The indent keeps the insertion position. Near the right edge the ghost wraps to the next line
+  // instead of moving left over the draft, which would cover the text before the caret.
+  const indent = Math.min(editor.width, Math.max(0, caret.left - editor.left));
   // The caret glyph box is shorter than the editor's line box; center it inside the line.
   const leading = Math.max(0, (lineHeight - caret.height) / 2);
   return { top: Math.max(0, caretTopInEditor - leading), indent };

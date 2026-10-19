@@ -115,17 +115,31 @@ function readCaret(editor: LexicalEditor, root: HTMLElement): CaretReading | nul
     }
   }
 
-  // No stored selection: the transcript is appended to the end (see insertEditorPlainTextAtSelection).
-  const lastLine = root.lastElementChild;
-  if (!lastLine) return null;
-  const rect = lastLine.getBoundingClientRect();
+  // No stored selection: the transcript is appended after the last child of the last paragraph
+  // (see $appendPlainText in LexicalChatInput.tsx). Measure that append point, not the paragraph box:
+  // the box's right edge and top are not where the text goes when the paragraph wraps.
+  const lastParagraph = root.lastElementChild;
+  if (!lastParagraph) return null;
   const text = root.textContent ?? "";
-  return {
-    left: rect.right,
-    top: rect.top,
-    height: rect.height,
-    leadingSpace: text.length > 0 && !/\s$/.test(text),
-  };
+  const leadingSpace = text.length > 0 && !/\s$/.test(text);
+  const lastChild = lastParagraph.lastChild;
+  // Empty paragraph (its DOM holds at most a placeholder line break): the append point is its start edge.
+  if (!lastChild || lastParagraph.textContent === "") {
+    const rect = lastParagraph.getBoundingClientRect();
+    return { left: rect.left, top: rect.top, height: rect.height, leadingSpace };
+  }
+  // Collapsed range right after the last child; a trailing mention or line break is a single child,
+  // so the range sits after it rather than inside it.
+  const range = document.createRange();
+  range.setStartAfter(lastChild);
+  range.collapse(true);
+  const rect = range.getClientRects()[0] ?? range.getBoundingClientRect();
+  if (rect && rect.height > 0) {
+    return { left: rect.left, top: rect.top, height: rect.height, leadingSpace };
+  }
+  // Some engines report no box for a collapsed range at an element boundary; use the paragraph's line.
+  const box = lastParagraph.getBoundingClientRect();
+  return { left: box.left, top: box.top, height: box.height, leadingSpace };
 }
 
 /**

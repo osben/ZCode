@@ -33,7 +33,7 @@ Make the existing local desktop dictation flow easier to understand and avoid do
 - If an older local Host reports `Method not found: setIdleUnloadMinutes`, continue dictation using that Host's default unload delay. Do not treat this one missing preference method as a transcription failure.
 - Other errors while applying the preference remain fatal and keep the existing transcription error handling.
 - The Settings save path for the unload delay uses the same `applyIdleUnloadPreference` helper as recording and warm-up. The setting is persisted first; an older Host therefore shows no "save failed" toast (VD-COMPAT-01).
-- `applyIdleUnloadPreference` skips the RPC when the last applied value for the same Host service object is unchanged. Known gap: the Host keeps the delay in memory only and does not read it at startup, so a Host that restarts behind the same service object keeps its default until the value changes. Re-applying on Host restart needs a Host-side signal; it is not part of this change.
+- `applyIdleUnloadPreference` skips the RPC when the last applied value for the same Host service object is unchanged. Applies are queued per Host service object and run one at a time, so the unchanged check compares against the value the previous apply actually sent; a pending apply never suppresses a newer request. Known gap: the Host keeps the delay in memory only and does not read it at startup, so a Host that restarts behind the same service object keeps its default until the value changes. Re-applying on Host restart needs a Host-side signal; it is not part of this change.
 - Older Hosts without `getPostProcessAvailability` or `warmUp` keep their existing handling: post-processing is unavailable with reason `unknown`; warm-up disables itself for the session.
 
 ```mermaid
@@ -115,14 +115,14 @@ This behavior applies to Desktop voice dictation. Web continues to show the exis
 #### Product rules
 
 - The preview is display-only text. It is not part of the Lexical document: it is absent from editor state, `getText`, `getMarkdown`, drafts persistence, and undo/redo history, and it is never submitted by Enter or Send.
-- Placement: the ghost starts at the current caret (the insertion point of the final transcript) and follows the caret when it moves. Wrapped lines use the full editor width.
+- Placement: the ghost starts at the current caret (the insertion point of the final transcript) and follows the caret when it moves. Wrapped lines use the full editor width. A caret near the right edge is not shifted left to make room: the ghost wraps instead. Without a stored selection, the insertion point is the end of the last paragraph's content (the append point), or the start edge of an empty paragraph.
 - Style: committed text uses `text-foreground-subtle`; the tentative suffix uses `text-foreground-subtlest` in italic. Both are grey, non-selectable and `pointer-events-none`. Colors come from DESIGN.md tokens, so light and dark themes follow automatically.
 - Metrics: font family, size, weight, line height and letter spacing are copied from the editor's computed style so ghost lines sit on the editor's own line grid. The ghost is clipped to the editor box; it never changes the editor's layout or height.
 - A leading space is shown when the final insertion would add one (the character before the caret is not whitespace), so the preview matches what will be inserted.
 - Accessibility: the ghost layer is `aria-hidden`. Preview words are not announced one by one. The persistent status live region announces listening/transcribing as before, and the final text reaches assistive technology through the textbox value once it is inserted.
 - User edits while a preview is visible are kept (VD-LIVE-06); the ghost re-anchors to the caret after each editor update, selection change, scroll, or resize.
 - On successful stop the ghost is cleared before post-processing starts, and the final text is inserted once through `insertTextAtSelection`.
-- On cancel, blur, failure, or unmount the ghost is cleared together with the stream; the existing draft is untouched.
+- On cancel, blur, failure, or unmount the ghost is cleared together with the stream; the existing draft is untouched. A new start in the same composer is refused until the cancelled stream's Host cancel has settled, because that cancel waits behind any feed still in flight.
 - The Web remote control engine (Web Speech) uses the same ghost layer because it shares the preview shape.
 
 #### Ownership and event order

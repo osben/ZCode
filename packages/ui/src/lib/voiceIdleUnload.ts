@@ -10,6 +10,12 @@ import { logger } from "@/logger.js";
 let lastApplied: { service: IVoiceDictationService; minutes: VoiceModelIdleUnloadMinutes } | null =
   null;
 
+/**
+ * Tail of the apply queue per Host service object. Applies run one at a time, so the dedupe check
+ * always compares against the value the previous apply actually sent, never against a pending one.
+ */
+const applyQueues = new WeakMap<IVoiceDictationService, Promise<void>>();
+
 /** Test seam: forgets the last applied preference so each test starts with a fresh Host state. */
 export function resetIdleUnloadPreferenceForTests(): void {
   lastApplied = null;
@@ -20,7 +26,21 @@ export function resetIdleUnloadPreferenceForTests(): void {
  * default unload delay (logged), because that preference must never block recording or warm-up;
  * every other failure propagates to the caller. An unchanged value is not sent again.
  */
-export async function applyIdleUnloadPreference(
+export function applyIdleUnloadPreference(
+  service: IVoiceDictationService,
+  minutes: VoiceModelIdleUnloadMinutes,
+): Promise<void> {
+  const previous = applyQueues.get(service) ?? Promise.resolve();
+  const next = previous.then(() => sendIdleUnloadPreference(service, minutes));
+  // The stored tail never rejects, so one failed apply does not stall the applies queued behind it.
+  applyQueues.set(
+    service,
+    next.catch(() => undefined),
+  );
+  return next;
+}
+
+async function sendIdleUnloadPreference(
   service: IVoiceDictationService,
   minutes: VoiceModelIdleUnloadMinutes,
 ): Promise<void> {
