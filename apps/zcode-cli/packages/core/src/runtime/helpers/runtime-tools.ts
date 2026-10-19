@@ -51,11 +51,11 @@ export function initializeRuntimeTooling(
 function registerRuntimeBuiltInTools(runtime: AgentRuntimeInternal, deps: AgentRuntimeDeps): void {
   const nodeReplEnabled = runtime.config.runtimeFeatures?.nodeRepl === true;
   const browserUseEnabled = resolveRuntimeBrowserUseEnabled(runtime, deps);
-  registerBuiltInTools(runtime.registry, {
   // Cron and OffPeak are main-session automation; both also follow the `automationTools` toggle.
   const mainAutomationToolsIncluded =
     runtime.config.taskType !== "subagent_child" &&
     resolveRuntimeAutomationToolsIncluded(runtime.config);
+  registerBuiltInTools(runtime.registry, {
     bashTimeoutPolicy: runtime.config.bashTimeoutPolicy,
     includeSkill: Boolean(runtime.skillPort),
     includeAgent: Boolean(runtime.subagentPort),

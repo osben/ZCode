@@ -317,7 +317,8 @@ export function createWindowHostControllerRuntime(options: {
     resolved: ResolvedWindowHostControllerSource,
     overlays: WindowHostControllerSessionOverlay[],
   ): void {
-    if (resolved.scope.kind !== "local" || !resolved.taskService) return;
+    // Gate only on the owning tasks index: remote sources also carry a taskService and need the durable marker too.
+    if (!resolved.taskService) return;
     const taskIds = overlays
       .filter((overlay) => overlay.incognito)
       .map((overlay) => overlay.taskId);
