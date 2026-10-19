@@ -163,7 +163,9 @@ export function useDraftConfigControl(params: {
             ...draft,
             mode: mode.success && mode.data !== "plan" ? mode.data : "build",
             planEnabled: resolveExecutionState(sessionConfig ?? {}).planEnabled,
-            modelSelection: draft.modelSelection ?? sessionConfig?.modelSelection
+            // Reason: a model chosen before the first snapshot (mode still missing) must survive the initializer;
+            // the inherited selection only fills a draft that has none.
+            modelSelection: draft.modelSelection ?? sessionConfig?.modelSelection,
           };
   }
   if (sessionId !== null && !draft.modelSelection && sessionConfig?.modelSelection) {

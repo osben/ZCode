@@ -799,6 +799,50 @@ describe("useDraftConfigControl slash command hydration", () => {
     act(() => root.unmount());
   });
 
+  it("fork child 在 mode 缺失时已有的模型选择，不被迟到的继承模型覆盖", async () => {
+    const workspacePath = "/fork-child-model-before-mode";
+    const root = createRoot(installMinimalDom());
+    const view = modelSelectionView(1, ["user-model", "inherited-model"], "user-model");
+    const userSelection = { providerId: "provider", modelId: "user-model" };
+    const inheritedSelection = { providerId: "provider", modelId: "inherited-model" };
+    persistV4ComposerDraft(workspacePath, undefined, "fork-child", {
+      text: "follow up",
+      modelSelection: userSelection,
+    });
+    let control: ReturnType<typeof useDraftConfigControl>;
+    function Probe({ config }: { config: Partial<SessionConfigState> }) {
+      control = useDraftConfigControl({
+        workspacePath,
+        sessionId: "fork-child",
+        sessionConfig: config,
+        agentStartupAllowed: false,
+        modelSelectionView: view,
+      });
+      return null;
+    }
+
+    await act(async () => {
+      root.render(createElement(Probe, { config: { mode: "build" } }));
+    });
+    expect(control!.draftConfig).toMatchObject({ mode: "build", modelSelection: userSelection });
+
+    await act(async () => {
+      root.render(
+        createElement(Probe, {
+          config: { mode: "build", modelSelection: inheritedSelection },
+        }),
+      );
+    });
+
+    expect(control!.draftConfig.modelSelection).toEqual(userSelection);
+    expect(readV4ComposerDraft(workspacePath, undefined, "fork-child")).toMatchObject({
+      text: "follow up",
+      mode: "build",
+      modelSelection: userSelection,
+    });
+    act(() => root.unmount());
+  });
+
   it("旧文本草稿保留本地 mode，并从完整 Session config 补齐缺失模型", async () => {
     const workspacePath = "/old-text-draft";
     const root = createRoot(installMinimalDom());
