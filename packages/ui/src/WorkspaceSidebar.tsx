@@ -1727,12 +1727,10 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
                   видимость передаётся пропом: каждое открытие — новая проба. */}
               <BranchMergeStatusProbes workspaceTabs={workspaceTabs} active={isSidebarVisible} />
               {/* Task-level PR status shares the sidebar mount so every surface
-                  reads one store entry per workspace task. */}
-              <PullRequestStatusProbes
-                workspaceTabs={workspaceTabs}
-                sortBy={taskSortBy}
-                active={isSidebarVisible}
-              />
+                  reads one store entry per workspace task. Not gated on sidebar
+                  visibility: the header chip and Git tools read the same store
+                  while the sidebar is collapsed, so they need the probe too. */}
+              <PullRequestStatusProbes workspaceTabs={workspaceTabs} sortBy={taskSortBy} />
               {shouldShowPinnedTasks ? (
                 // Switching the main task area to archive must not hide pinned.
                 // Pinned is a global section and remains visible in archive mode.

@@ -48,6 +48,8 @@ packages/ui/src/Root.tsx
 packages/ui/src/root/useRootPlatformEffects.ts
 packages/ui/src/store/zcodeSessionStoreTypes.ts
 packages/ui/src/store/zcodeSessionStoreWorkspaceSlice.ts
+# Temporary (PR #174 sidebar PR probing): WorkspaceSidebar.tsx is over the limit; split it into sibling modules later and remove this line.
+packages/ui/src/WorkspaceSidebar.tsx
 
 # Owned by this PR (already over the limit before this change): split the file into per-section test modules.
 packages/ui/test/v4ConversationFileSummaryPanel.test.ts

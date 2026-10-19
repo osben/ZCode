@@ -12,7 +12,7 @@ export type { PullRequestStatusTarget };
 
 /**
  * Probes task-level pull request status for the sidebar's workspaces on mount
- * (sidebar open), on window focus, and after in-app git mutations
+ * (while `active`, default true), on window focus, and after in-app git mutations
  * (refreshVersion). The runtime git service owns the observation cadence (TTL
  * cache); this hook only mirrors results into the store — a failed probe marks
  * the entries it owns stale (see createPullRequestStatusProber).

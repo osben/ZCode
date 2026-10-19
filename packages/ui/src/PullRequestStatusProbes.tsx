@@ -13,17 +13,15 @@ import { collectPullRequestStatusTaskCandidates } from "@/lib/pullRequestStatusP
  * Invisible mount that probes task-level pull request status for every open
  * workspace (specs/sidebar-pr-status.md). It reads unbounded timeline, pinned,
  * and archived task lists so status is not limited to rendered sidebar rows.
- * The sidebar panel is hidden with CSS and never unmounts, so reopening is
- * reported through `active`.
+ * Always active while mounted: the header chip and Git tools read the same
+ * store when the sidebar is collapsed, and the sidebar panel never unmounts.
  */
 export function PullRequestStatusProbes({
   workspaceTabs,
   sortBy,
-  active,
 }: {
   workspaceTabs: WorkspaceTabState[];
   sortBy: "created" | "updated";
-  active: boolean;
 }) {
   const baseServices = useBaseWorkspaceServices();
   const timelineTasks = useGlobalTaskList({
@@ -114,6 +112,6 @@ export function PullRequestStatusProbes({
     [taskCandidates, workspaceServiceLookup, workspaceTabs],
   );
 
-  usePullRequestStatuses(targets, { active });
+  usePullRequestStatuses(targets);
   return null;
 }
