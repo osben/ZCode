@@ -1,7 +1,9 @@
 # System prompt section overrides
 
 Status: phase 1 (constants + runtime + storage + service) is implemented. Phase 2 (Settings UI)
-is specified below.
+is specified below and refined in `specs/system-prompt-settings.md`, which is the source of truth
+for the Settings UI behavior and the service revision/conflict contract. Where this document and
+that spec differ on those points, the spec wins.
 
 ## Problem
 
@@ -46,9 +48,9 @@ or omitted in the UI.
 
 ## Storage
 
-| Path                              | Owner                             | Content             |
-| --------------------------------- | --------------------------------- | ------------------- |
-| `~/.zcode/system-prompt/<key>.md` | service (write), bootstrap (read) | plain override body |
+| Path                              | Owner                             | Content                                                              |
+| --------------------------------- | --------------------------------- | -------------------------------------------------------------------- |
+| `~/.zcode/system-prompt/<key>.md` | service (write), bootstrap (read) | plain override body, stored trimmed (the same text the loader reads) |
 
 Keys are a fixed whitelist; filenames derive from that whitelist only (no user-derived
 filename, no sanitization surface).
@@ -66,7 +68,10 @@ Settings' Agent Capabilities group. Do not add tabs between these editors. The S
 page is a desktop Settings surface, like the existing Output Styles editor. Web shows a
 localized unsupported-host state because its Home-only service does not provide
 filesystem-backed system-prompt overrides. The UI must use the existing
-`ISystemPromptService`; no new service, protocol field, or runtime write path is introduced.
+`ISystemPromptService`; no new service, channel, or runtime write path is introduced. The service
+adds optional content revisions and an `expectedRevision` conflict check (see
+`specs/system-prompt-settings.md`, "Service contract"); older hosts without revisions keep working
+without conflict checking.
 
 The section lists exactly the eight keys in `SYSTEM_PROMPT_OVERRIDE_KEYS`. The six main-prompt
 keys come first, ordered by their appearance in `ContextBuilder.build()`: `cli-prefix`,

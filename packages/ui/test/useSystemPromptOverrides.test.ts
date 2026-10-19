@@ -171,3 +171,323 @@ describe("useSystemPromptOverrides", () => {
     expect(remoteService.writeOverride).not.toHaveBeenCalled();
   });
 });
+
+function revisionedService(initialRevision: string | null = "rev-1") {
+  let revision: string | null = initialRevision;
+  let content: string | null = null;
+  const sectionFor = () => ({
+    key: "cli-prefix",
+    defaultContent: "default:cli-prefix",
+    overrideContent: content,
+    filePath: "/host/.zcode/system-prompt/cli-prefix.md",
+    isOverridden: content !== null,
+    revision,
+  });
+  return {
+    setDisk(next: { revision: string | null; content: string | null }) {
+      revision = next.revision;
+      content = next.content;
+    },
+    listSections: vi.fn(async () => ({ sections: [sectionFor()] })),
+    writeOverride: vi.fn(async () => ({ kind: "ok" as const, revision: "rev-2" })),
+    deleteOverride: vi.fn(async () => ({ kind: "ok" as const, revision: null })),
+    getOverridesDirectory: vi.fn(async () => ({ path: "/host/.zcode/system-prompt" })),
+  };
+}
+
+describe("useSystemPromptOverrides revisions and in-place refresh", () => {
+  it("shows the loading state only on the first load, then refreshes in place", async () => {
+    const service = revisionedService();
+    mocks.useBaseWorkspaceServices.mockReturnValue({ systemPromptService: service });
+    const { result } = renderHook(() => useSystemPromptOverrides(localTarget));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    act(() => {
+      result.current.openEditor("cli-prefix", "default:cli-prefix");
+      result.current.setDraft("custom");
+    });
+    await act(() => result.current.saveEditor());
+    await waitFor(() => expect(service.listSections).toHaveBeenCalledTimes(2));
+    expect(result.current.status).toBe("ready");
+    expect(result.current.sections).toHaveLength(1);
+  });
+
+  it("sends the editor's captured revision and skips the check on hosts without revisions", async () => {
+    const service = revisionedService("rev-1");
+    mocks.useBaseWorkspaceServices.mockReturnValue({ systemPromptService: service });
+    const { result } = renderHook(() => useSystemPromptOverrides(localTarget));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    act(() => {
+      result.current.openEditor("cli-prefix", "default:cli-prefix");
+      result.current.setDraft("custom");
+    });
+    await act(() => result.current.saveEditor());
+    expect(service.writeOverride).toHaveBeenCalledWith({
+      key: "cli-prefix",
+      content: "custom",
+      expectedRevision: "rev-1",
+    });
+  });
+
+  it("detects a disk change on refresh, blocks Save, and lets Reload rebase the draft", async () => {
+    const service = revisionedService("rev-1");
+    mocks.useBaseWorkspaceServices.mockReturnValue({ systemPromptService: service });
+    const { result } = renderHook(() => useSystemPromptOverrides(localTarget));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    act(() => {
+      result.current.openEditor("cli-prefix", "default:cli-prefix");
+      result.current.setDraft("my draft");
+    });
+
+    service.setDisk({ revision: "rev-external", content: "edited elsewhere" });
+    await act(() => result.current.reload());
+    await waitFor(() => expect(result.current.editorDiskChanged).toBe(true));
+    expect(result.current.canSaveEditor).toBe(false);
+    expect(result.current.editor?.draft).toBe("my draft");
+
+    act(() => result.current.reloadEditor("edited elsewhere"));
+    expect(result.current.editorDiskChanged).toBe(false);
+    expect(result.current.editorDirty).toBe(false);
+  });
+
+  it("turns a save conflict into the disk-changed state without writing, and Overwrite saves with the current revision", async () => {
+    const service = revisionedService("rev-1");
+    mocks.useBaseWorkspaceServices.mockReturnValue({ systemPromptService: service });
+    const { result } = renderHook(() => useSystemPromptOverrides(localTarget));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    act(() => {
+      result.current.openEditor("cli-prefix", "default:cli-prefix");
+      result.current.setDraft("mine");
+    });
+
+    service.setDisk({ revision: "rev-external", content: "theirs" });
+    service.writeOverride.mockResolvedValueOnce({
+      kind: "conflict",
+      currentRevision: "rev-external",
+    });
+    await act(() => result.current.saveEditor());
+    expect(result.current.editor?.draft).toBe("mine");
+    await waitFor(() => expect(result.current.editorDiskChanged).toBe(true));
+
+    await act(() => result.current.saveEditor({ overwrite: true }));
+    expect(service.writeOverride).toHaveBeenLastCalledWith({
+      key: "cli-prefix",
+      content: "mine",
+      expectedRevision: "rev-external",
+    });
+    expect(mocks.toast).toHaveBeenCalledWith("settings.systemPrompt.saved");
+  });
+
+  it("treats an undefined write result from an older host as success", async () => {
+    const service = makeService();
+    mocks.useBaseWorkspaceServices.mockReturnValue({ systemPromptService: service });
+    const { result } = renderHook(() => useSystemPromptOverrides(localTarget));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    act(() => {
+      result.current.openEditor("cli-prefix", "default:cli-prefix");
+      result.current.setDraft("custom");
+    });
+    await act(() => result.current.saveEditor());
+    expect(result.current.editor).toBeNull();
+    expect(mocks.toast).toHaveBeenCalledWith("settings.systemPrompt.saved");
+  });
+
+  it("restores with the revision the user confirmed and reports a conflict without deleting", async () => {
+    const service = revisionedService("rev-1");
+    service.deleteOverride.mockResolvedValueOnce({ kind: "conflict", currentRevision: "rev-9" });
+    mocks.useBaseWorkspaceServices.mockReturnValue({ systemPromptService: service });
+    const { result } = renderHook(() => useSystemPromptOverrides(localTarget));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    await act(() => result.current.restoreDefault("cli-prefix", "rev-1"));
+    expect(service.deleteOverride).toHaveBeenCalledWith({
+      key: "cli-prefix",
+      expectedRevision: "rev-1",
+    });
+    expect(mocks.toast).toHaveBeenCalledWith("settings.systemPrompt.changedOnDisk");
+  });
+
+  it("reset-all deletes each entry with its confirmed revision and reports partial conflicts", async () => {
+    const service = revisionedService("rev-1");
+    service.deleteOverride
+      .mockResolvedValueOnce({ kind: "ok", revision: null })
+      .mockResolvedValueOnce({ kind: "conflict", currentRevision: "rev-x" });
+    mocks.useBaseWorkspaceServices.mockReturnValue({ systemPromptService: service });
+    const { result } = renderHook(() => useSystemPromptOverrides(localTarget));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    await act(() =>
+      result.current.resetAllCustomized([
+        { key: "cli-prefix", expectedRevision: "rev-1" },
+        { key: "harness", expectedRevision: "rev-h" },
+      ]),
+    );
+    expect(service.deleteOverride).toHaveBeenNthCalledWith(1, {
+      key: "cli-prefix",
+      expectedRevision: "rev-1",
+    });
+    expect(service.deleteOverride).toHaveBeenNthCalledWith(2, {
+      key: "harness",
+      expectedRevision: "rev-h",
+    });
+    expect(mocks.toast).toHaveBeenCalledWith("settings.systemPrompt.resetAllPartial");
+  });
+
+  it("refreshes silently when the window regains focus", async () => {
+    const service = revisionedService("rev-1");
+    mocks.useBaseWorkspaceServices.mockReturnValue({ systemPromptService: service });
+    const { result } = renderHook(() => useSystemPromptOverrides(localTarget));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    const before = service.listSections.mock.calls.length;
+
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await waitFor(() => expect(service.listSections.mock.calls.length).toBe(before + 1));
+    expect(result.current.status).toBe("ready");
+  });
+
+  it("keeps the Changed-on-disk state from a save conflict when the follow-up refresh fails", async () => {
+    const service = revisionedService("rev-1");
+    mocks.useBaseWorkspaceServices.mockReturnValue({ systemPromptService: service });
+    const { result } = renderHook(() => useSystemPromptOverrides(localTarget));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    act(() => {
+      result.current.openEditor("cli-prefix", "default:cli-prefix");
+      result.current.setDraft("mine");
+    });
+
+    service.writeOverride.mockResolvedValueOnce({
+      kind: "conflict",
+      currentRevision: "rev-external",
+    });
+    service.listSections.mockRejectedValueOnce(new Error("offline"));
+    await act(() => result.current.saveEditor());
+    await waitFor(() => expect(service.listSections).toHaveBeenCalledTimes(2));
+
+    expect(result.current.editorDiskChanged).toBe(true);
+    expect(result.current.canSaveEditor).toBe(false);
+    expect(result.current.editor?.draft).toBe("mine");
+
+    await act(() => result.current.saveEditor());
+    expect(service.writeOverride).toHaveBeenCalledTimes(1);
+
+    await act(() => result.current.saveEditor({ overwrite: true }));
+    expect(service.writeOverride).toHaveBeenLastCalledWith({
+      key: "cli-prefix",
+      content: "mine",
+      expectedRevision: "rev-external",
+    });
+  });
+
+  it("overwrites with a conflict revision of null when the file was removed on disk", async () => {
+    const service = revisionedService("rev-1");
+    mocks.useBaseWorkspaceServices.mockReturnValue({ systemPromptService: service });
+    const { result } = renderHook(() => useSystemPromptOverrides(localTarget));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    act(() => {
+      result.current.openEditor("cli-prefix", "default:cli-prefix");
+      result.current.setDraft("mine");
+    });
+
+    service.writeOverride.mockResolvedValueOnce({ kind: "conflict", currentRevision: null });
+    service.listSections.mockRejectedValueOnce(new Error("offline"));
+    await act(() => result.current.saveEditor());
+    await waitFor(() => expect(service.listSections).toHaveBeenCalledTimes(2));
+    expect(result.current.editorDiskChanged).toBe(true);
+
+    await act(() => result.current.saveEditor({ overwrite: true }));
+    expect(service.writeOverride).toHaveBeenLastCalledWith({
+      key: "cli-prefix",
+      content: "mine",
+      expectedRevision: null,
+    });
+  });
+
+  it("keeps a draft the user reopened or edited while a restore was in flight", async () => {
+    const service = revisionedService("rev-1");
+    const pendingDelete = deferred<{ kind: "ok"; revision: string | null }>();
+    service.deleteOverride.mockImplementation(() => pendingDelete.promise);
+    mocks.useBaseWorkspaceServices.mockReturnValue({ systemPromptService: service });
+    const { result } = renderHook(() => useSystemPromptOverrides(localTarget));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    act(() => result.current.openEditor("cli-prefix", "default:cli-prefix"));
+
+    let restore!: Promise<void>;
+    act(() => {
+      restore = result.current.restoreDefault("cli-prefix", "rev-1");
+    });
+    act(() => {
+      result.current.openEditor("cli-prefix", "default:cli-prefix");
+      result.current.setDraft("newer");
+    });
+    await act(async () => {
+      pendingDelete.resolve({ kind: "ok", revision: null });
+      await restore;
+    });
+
+    expect(result.current.editor?.draft).toBe("newer");
+    expect(result.current.editorDirty).toBe(true);
+  });
+
+  it("keeps a draft edited in the same editor while a restore was in flight", async () => {
+    const service = revisionedService("rev-1");
+    const pendingDelete = deferred<{ kind: "ok"; revision: string | null }>();
+    service.deleteOverride.mockImplementation(() => pendingDelete.promise);
+    mocks.useBaseWorkspaceServices.mockReturnValue({ systemPromptService: service });
+    const { result } = renderHook(() => useSystemPromptOverrides(localTarget));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    act(() => result.current.openEditor("cli-prefix", "default:cli-prefix"));
+
+    let restore!: Promise<void>;
+    act(() => {
+      restore = result.current.restoreDefault("cli-prefix", "rev-1");
+    });
+    act(() => result.current.setDraft("typed during restore"));
+    await act(async () => {
+      pendingDelete.resolve({ kind: "ok", revision: null });
+      await restore;
+    });
+
+    expect(result.current.editor?.draft).toBe("typed during restore");
+  });
+
+  it("closes the editor when a restore completes without a newer edit", async () => {
+    const service = revisionedService("rev-1");
+    mocks.useBaseWorkspaceServices.mockReturnValue({ systemPromptService: service });
+    const { result } = renderHook(() => useSystemPromptOverrides(localTarget));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    act(() => result.current.openEditor("cli-prefix", "default:cli-prefix"));
+
+    await act(() => result.current.restoreDefault("cli-prefix", "rev-1"));
+    expect(result.current.editor).toBeNull();
+  });
+
+  it("keeps a draft reopened while a reset-all was in flight", async () => {
+    const service = revisionedService("rev-1");
+    const pendingDelete = deferred<{ kind: "ok"; revision: string | null }>();
+    service.deleteOverride.mockImplementation(() => pendingDelete.promise);
+    mocks.useBaseWorkspaceServices.mockReturnValue({ systemPromptService: service });
+    const { result } = renderHook(() => useSystemPromptOverrides(localTarget));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    act(() => result.current.openEditor("cli-prefix", "default:cli-prefix"));
+
+    let resetAll!: Promise<void>;
+    act(() => {
+      resetAll = result.current.resetAllCustomized([
+        { key: "cli-prefix", expectedRevision: "rev-1" },
+      ]);
+    });
+    act(() => {
+      result.current.openEditor("cli-prefix", "default:cli-prefix");
+      result.current.setDraft("newer");
+    });
+    await act(async () => {
+      pendingDelete.resolve({ kind: "ok", revision: null });
+      await resetAll;
+    });
+
+    expect(result.current.editor?.draft).toBe("newer");
+  });
+});
