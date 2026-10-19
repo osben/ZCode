@@ -48,10 +48,7 @@ export interface SystemPromptRowProps {
   restoring: boolean;
   onToggleRestore: (section: EditableSystemPromptSection) => void;
   onCancelRestore: () => void;
-  onConfirmRestore: (
-    key: EditableSystemPromptSection["key"],
-    revision: string | null | undefined,
-  ) => void;
+  onConfirmRestore: (key: EditableSystemPromptSection["key"]) => void;
   onOpenFolder: () => void;
 }
 
@@ -221,7 +218,7 @@ export function SystemPromptRow({
               size="sm"
               variant="destructive"
               data-testid={testId(TID_SETTINGS_SYSTEM_PROMPT_RESTORE_CONFIRM_ACTION, section.key)}
-              onClick={() => onConfirmRestore(section.key, section.revision)}
+              onClick={() => onConfirmRestore(section.key)}
             >
               {intl.formatMessage({ id: "settings.systemPrompt.restoreConfirm.confirm" })}
             </Button>

@@ -327,6 +327,8 @@ export function useSystemPromptOverrides(
       let failed = 0;
       const restoredKeys = new Set<SystemPromptOverrideKey>();
       for (const entry of entries) {
+        // The pinned host changed mid-reset: stop before touching the new host with the old service.
+        if (epoch !== epochRef.current) break;
         const params =
           entry.expectedRevision === undefined
             ? { key: entry.key }

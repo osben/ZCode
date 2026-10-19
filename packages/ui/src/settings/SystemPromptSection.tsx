@@ -142,6 +142,14 @@ function DesktopSystemPromptSection({
     setPendingReset(null);
   }, [pinnedHostKey]);
 
+  // A confirmation opened on a clean draft must not survive an edit: confirming would discard the draft.
+  useEffect(() => {
+    if (view.editorDirty) {
+      setPendingRestore(null);
+      setPendingReset(null);
+    }
+  }, [view.editorDirty]);
+
   const hasActiveOutputStyle =
     outputStyles.status === "ready" &&
     outputStyles.activeStyleId !== null &&
@@ -334,9 +342,11 @@ function DesktopSystemPromptSection({
                     )
                   }
                   onCancelRestore={() => setPendingRestore(null)}
-                  onConfirmRestore={(key, revision) => {
+                  onConfirmRestore={(key) => {
+                    // Use the revision captured when Restore was opened, not the row's current one.
+                    const captured = pendingRestore;
                     setPendingRestore(null);
-                    void view.restoreDefault(key, revision);
+                    if (captured?.key === key) void view.restoreDefault(key, captured.revision);
                   }}
                   onOpenFolder={() => void openFolder()}
                 />
