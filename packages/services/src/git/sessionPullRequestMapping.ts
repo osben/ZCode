@@ -126,15 +126,33 @@ function mapChecks(node: GraphqlPullRequestNode): {
     }
   }
 
+  // UNSTABLE means every failing check is non-required (decided 2026-10-18):
+  // warning dot + "{count} optional failing" instead of red.
+  const failingChecks: PullRequestChecks =
+    node.mergeStateStatus === "UNSTABLE" ? "optional_failing" : "failing";
   if (failingCheckCount > 0) {
-    // UNSTABLE means every failing check is non-required (decided 2026-10-18):
-    // warning dot + "{count} optional failing" instead of red.
-    const checks: PullRequestChecks =
-      node.mergeStateStatus === "UNSTABLE" ? "optional_failing" : "failing";
-    return { checks, failingCheckCount, totalCheckCount: totalCount };
+    return { checks: failingChecks, failingCheckCount, totalCheckCount: totalCount };
   }
   if (running) {
     return { checks: "running", failingCheckCount, totalCheckCount: totalCount };
+  }
+  // The first 100 contexts can omit the failing one, so the aggregate state decides what the
+  // page cannot show. The count is a lower bound: at least one failing context exists.
+  const aggregateState = rollup?.state ?? null;
+  if (aggregateState === "FAILURE" || aggregateState === "ERROR") {
+    return { checks: failingChecks, failingCheckCount: 1, totalCheckCount: totalCount };
+  }
+  if (aggregateState === "PENDING" || aggregateState === "EXPECTED") {
+    return { checks: "running", failingCheckCount, totalCheckCount: totalCount };
+  }
+  // A truncated page cannot prove that the omitted contexts passed, so only SUCCESS is green.
+  const truncated = totalCount > contexts.length;
+  if (truncated) {
+    return {
+      checks: aggregateState === "SUCCESS" ? "passing" : "running",
+      failingCheckCount,
+      totalCheckCount: totalCount,
+    };
   }
   if (contexts.length > 0 || totalCount > 0) {
     return { checks: "passing", failingCheckCount, totalCheckCount: totalCount };

@@ -38,10 +38,18 @@ export function useSessionManagerPullRequests(
     (state) => state.setWorkspacePullRequestStatuses,
   );
   const dropWorkspaceTasks = usePullRequestStatusStore((state) => state.dropWorkspaceTasks);
+  const markWorkspaceTasksStale = usePullRequestStatusStore(
+    (state) => state.markWorkspaceTasksStale,
+  );
 
   const prober = useMemo(
-    () => createPullRequestStatusProber({ setWorkspacePullRequestStatuses, dropWorkspaceTasks }),
-    [setWorkspacePullRequestStatuses, dropWorkspaceTasks],
+    () =>
+      createPullRequestStatusProber({
+        setWorkspacePullRequestStatuses,
+        dropWorkspaceTasks,
+        markWorkspaceTasksStale,
+      }),
+    [setWorkspacePullRequestStatuses, dropWorkspaceTasks, markWorkspaceTasksStale],
   );
 
   const targets = useMemo<PullRequestStatusTarget[]>(() => {

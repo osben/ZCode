@@ -1,9 +1,11 @@
 import { expect, test } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import type { SessionPullRequest } from "@zcode/shared";
 import {
   PullRequestStatusIcon,
   formatPullRequestHealthText,
+  maxOpenDraftFailingCheckCount,
   pullRequestHealthDotClass,
   pullRequestStageMessageId,
 } from "../src/components/PullRequestStatusIcon.js";
@@ -80,4 +82,16 @@ test("stage message ids cover the four stages", () => {
   expect(pullRequestStageMessageId("open")).toBe("pullRequest.stageOpen");
   expect(pullRequestStageMessageId("merged")).toBe("pullRequest.stageMerged");
   expect(pullRequestStageMessageId("closed")).toBe("pullRequest.stageClosed");
+});
+
+test("failing count follows the aggregate health, not the largest count of any health", () => {
+  const pullRequest = (
+    number: number,
+    checks: SessionPullRequest["checks"],
+    failingCheckCount: number,
+  ) => ({ number, stage: "open", checks, failingCheckCount }) as SessionPullRequest;
+  const pullRequests = [pullRequest(1, "failing", 1), pullRequest(2, "optional_failing", 4)];
+  expect(maxOpenDraftFailingCheckCount(pullRequests, "failing")).toBe(1);
+  expect(maxOpenDraftFailingCheckCount(pullRequests, "optional_failing")).toBe(4);
+  expect(maxOpenDraftFailingCheckCount(pullRequests, "passing")).toBe(0);
 });

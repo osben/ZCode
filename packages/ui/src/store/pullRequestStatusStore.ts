@@ -33,6 +33,11 @@ interface PullRequestStatusState {
     entries: Record<string, SessionPullRequestStatus>,
   ): void;
   dropWorkspaceTasks(workspaceKey: string): void;
+  /**
+   * A failed probe keeps its last answers but marks only the tasks it owns as stale. Dropping the
+   * whole workspace would also erase the other driver's entries, which may still be usable.
+   */
+  markWorkspaceTasksStale(workspaceKey: string, taskIds: readonly string[]): void;
   requestRefresh(): void;
   requestForceRefresh(taskKeys: string[]): void;
 }
@@ -56,6 +61,20 @@ export const usePullRequestStatusStore = create<PullRequestStatusState>((set) =>
         const taskKey = `${prefix}${taskId}`;
         if (next[taskKey] !== status) {
           next[taskKey] = status;
+          changed = true;
+        }
+      }
+      return changed ? { statusByTaskKey: next } : state;
+    }),
+  markWorkspaceTasksStale: (workspaceKey, taskIds) =>
+    set((state) => {
+      let changed = false;
+      const next: Record<string, SessionPullRequestStatus> = { ...state.statusByTaskKey };
+      for (const taskId of taskIds) {
+        const taskKey = buildPullRequestTaskKey(workspaceKey, taskId);
+        const current = next[taskKey];
+        if (current && !current.stale) {
+          next[taskKey] = { ...current, stale: true };
           changed = true;
         }
       }

@@ -100,11 +100,22 @@ export function pullRequestReviewMessageId(decision: SessionPullRequestReviewDec
   return "pullRequest.reviewRequired";
 }
 
-/** Highest failing-check count among the open/draft pull requests; drives the "{count} failing" label. */
-export function maxOpenDraftFailingCheckCount(pullRequests: readonly SessionPullRequest[]): number {
+/**
+ * Highest failing-check count among the open/draft pull requests whose own health is the
+ * aggregate `health`. The label's count and its health word must describe the same pull requests:
+ * one PR with 1 required failure and another with 4 optional failures must not read "4 failing"
+ * while the aggregate says failing.
+ */
+export function maxOpenDraftFailingCheckCount(
+  pullRequests: readonly SessionPullRequest[],
+  health: SessionPullRequestHealth,
+): number {
   let maximum = 0;
   for (const pullRequest of pullRequests) {
-    if (pullRequest.stage === "open" || pullRequest.stage === "draft") {
+    if (
+      (pullRequest.stage === "open" || pullRequest.stage === "draft") &&
+      pullRequest.checks === health
+    ) {
       maximum = Math.max(maximum, pullRequest.failingCheckCount);
     }
   }

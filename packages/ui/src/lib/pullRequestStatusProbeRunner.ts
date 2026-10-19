@@ -24,6 +24,7 @@ export interface PullRequestProbeStore {
     entries: Record<string, SessionPullRequestStatus>,
   ): void;
   dropWorkspaceTasks(workspaceKey: string): void;
+  markWorkspaceTasksStale(workspaceKey: string, taskIds: readonly string[]): void;
 }
 
 /**
@@ -91,7 +92,10 @@ export function createPullRequestStatusProber(
               error instanceof Error ? error.message : error,
             );
           }
-          store.dropWorkspaceTasks(target.workspaceKey);
+          store.markWorkspaceTasksStale(
+            target.workspaceKey,
+            target.tasks.map((task) => task.input.taskId),
+          );
         }
       }),
     );

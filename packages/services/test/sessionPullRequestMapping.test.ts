@@ -183,6 +183,38 @@ test("mapGraphqlPullRequest maps conflicts from mergeable", () => {
   assert.equal(mergeable?.hasConflict, false);
 });
 
+test("checks: a truncated or failing aggregate rollup never reads as passing", () => {
+  const withContexts = (state: string, totalCount: number) =>
+    makeNode({
+      commits: {
+        nodes: [
+          {
+            commit: {
+              statusCheckRollup: {
+                state,
+                contexts: {
+                  totalCount,
+                  nodes: [{ conclusion: "SUCCESS", status: "COMPLETED" }] as never,
+                },
+              },
+            },
+          },
+        ],
+      },
+    });
+  // One green context is visible out of 150; omitted contexts are unproven, so only SUCCESS is green.
+  const truncatedSuccess = mapGraphqlPullRequest(withContexts("SUCCESS", 150), "r");
+  assert.equal(truncatedSuccess?.checks, "passing");
+  const truncatedPending = mapGraphqlPullRequest(withContexts("PENDING", 150), "r");
+  assert.equal(truncatedPending?.checks, "running");
+  const truncatedNoAggregate = mapGraphqlPullRequest(withContexts("", 150), "r");
+  assert.equal(truncatedNoAggregate?.checks, "running");
+  // The aggregate says FAILURE while the visible page is green: the count is a lower bound of one.
+  const hiddenFailure = mapGraphqlPullRequest(withContexts("FAILURE", 150), "r");
+  assert.equal(hiddenFailure?.checks, "failing");
+  assert.equal(hiddenFailure?.failingCheckCount, 1);
+});
+
 test("sorting and primary selection: open > draft > merged > closed, ties by newest", () => {
   const merged = makeNode({ number: 10, state: "MERGED", mergedAt: "2026-10-01T00:00:00Z" });
   const openOld = makeNode({ number: 11, updatedAt: "2026-10-10T00:00:00Z" });

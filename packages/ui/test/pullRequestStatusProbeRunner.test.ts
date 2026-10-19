@@ -67,6 +67,14 @@ function createStoreCapture(): PullRequestProbeStore & {
       entriesByWorkspace.delete(workspaceKey);
       dropped.push(workspaceKey);
     },
+    markWorkspaceTasksStale: (workspaceKey, taskIds) => {
+      const entries = entriesByWorkspace.get(workspaceKey);
+      if (!entries) return;
+      for (const taskId of taskIds) {
+        const current = entries[taskId];
+        if (current) entries[taskId] = { ...current, stale: true };
+      }
+    },
   };
 }
 
@@ -96,7 +104,7 @@ test("successful probe mirrors per-task entries into the store", async () => {
   assert.deepEqual(store.dropped, []);
 });
 
-test("failed probe drops the workspace entries and warns once", async () => {
+test("failed probe marks only its own task entries stale and warns once", async () => {
   const store = createStoreCapture();
   store.entriesByWorkspace.set("w", { t1: READY });
   const warnings: unknown[][] = [];
@@ -110,8 +118,12 @@ test("failed probe drops the workspace entries and warns once", async () => {
     throw new Error("method not found on old host");
   });
   await prober.probe([failing]);
-  assert.equal(store.entriesByWorkspace.has("w"), false, "stale entries removed on failure");
-  assert.deepEqual(store.dropped, ["w"]);
+  assert.deepEqual(
+    store.entriesByWorkspace.get("w"),
+    { t1: { ...READY, stale: true } },
+    "last answer is kept and marked stale",
+  );
+  assert.deepEqual(store.dropped, [], "other drivers' entries are not dropped");
 
   await prober.probe([failing]);
   assert.equal(warnings.length, 1, "repeat failures warn once");

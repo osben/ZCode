@@ -59,7 +59,10 @@ export function ConversationStatusPanelPullRequests({
   if (!status || status.pullRequests.length === 0) {
     return null;
   }
-  const failingCheckCount = maxOpenDraftFailingCheckCount(status.pullRequests);
+  const failingCheckCount = maxOpenDraftFailingCheckCount(
+    status.pullRequests,
+    worstSessionPullRequestHealth(status.pullRequests),
+  );
   return (
     <div data-status-panel-pull-requests="list" className="py-1">
       <div className="flex h-6 w-full items-center gap-2 px-2 text-ui-sm text-foreground-subtle">

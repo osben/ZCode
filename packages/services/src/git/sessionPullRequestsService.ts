@@ -484,12 +484,18 @@ export function createSessionPullRequestsService(options: {
       type BranchAggregate = {
         labeledNodes: LabeledNode[];
         successCount: number;
+        expectedBatches: number;
         rateLimited: boolean;
       };
       const aggregateByBranch = new Map<string, BranchAggregate>(
         branches.map((branch) => [
           branch,
-          { labeledNodes: [], successCount: 0, rateLimited: false },
+          {
+            labeledNodes: [],
+            successCount: 0,
+            expectedBatches: jobs.filter((job) => job.branches.includes(branch)).length,
+            rateLimited: false,
+          },
         ]),
       );
 
@@ -527,7 +533,14 @@ export function createSessionPullRequestsService(options: {
         const branch = branchOfCacheKey(key);
         const aggregate = aggregateByBranch.get(branch);
         const previous = branchEntries.get(key);
-        if (aggregate && aggregate.successCount > 0) {
+        // Reason: a partial aggregate (one repository batch failed or was rate limited) would
+        // drop that repository's PRs and present the gap as fresh data. Replace the cache only
+        // when every batch for the branch succeeded; otherwise the previous entry stays stale.
+        if (
+          aggregate &&
+          aggregate.expectedBatches > 0 &&
+          aggregate.successCount === aggregate.expectedBatches
+        ) {
           const headOwner = ownerByBranch.get(branch) ?? null;
           const pullRequests = sortSessionPullRequests(
             aggregate.labeledNodes

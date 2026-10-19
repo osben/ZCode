@@ -34,12 +34,20 @@ export function usePullRequestStatuses(
     (state) => state.setWorkspacePullRequestStatuses,
   );
   const dropWorkspaceTasks = usePullRequestStatusStore((state) => state.dropWorkspaceTasks);
+  const markWorkspaceTasksStale = usePullRequestStatusStore(
+    (state) => state.markWorkspaceTasksStale,
+  );
   const refreshVersion = usePullRequestStatusStore((state) => state.refreshVersion);
   const forceRefresh = usePullRequestStatusStore((state) => state.forceRefresh);
 
   const prober = useMemo(
-    () => createPullRequestStatusProber({ setWorkspacePullRequestStatuses, dropWorkspaceTasks }),
-    [setWorkspacePullRequestStatuses, dropWorkspaceTasks],
+    () =>
+      createPullRequestStatusProber({
+        setWorkspacePullRequestStatuses,
+        dropWorkspaceTasks,
+        markWorkspaceTasksStale,
+      }),
+    [setWorkspacePullRequestStatuses, dropWorkspaceTasks, markWorkspaceTasksStale],
   );
 
   const targetKeys = targets.map((target) => target.workspaceKey).join("\u0000");

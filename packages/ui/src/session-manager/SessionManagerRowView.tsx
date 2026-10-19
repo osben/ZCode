@@ -147,7 +147,7 @@ export function PullRequestCell({ row, intl }: { row: SessionManagerRow; intl: I
     intl,
     primary,
     health,
-    maxOpenDraftFailingCheckCount(status.pullRequests),
+    maxOpenDraftFailingCheckCount(status.pullRequests, health),
   ).join(" · ");
   return (
     <span className="flex min-w-0 items-center gap-1.5 font-mono text-ui-xs">

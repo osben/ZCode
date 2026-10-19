@@ -34,7 +34,7 @@ export function WorkspaceHeaderPullRequestChip({ task }: { task: ZCodeTaskMeta |
       intl,
       primary,
       health,
-      maxOpenDraftFailingCheckCount(status.pullRequests),
+      maxOpenDraftFailingCheckCount(status.pullRequests, health),
     ),
     ...(status.stale ? [intl.formatMessage({ id: "pullRequest.stale" })] : []),
   ].join(" · ");
