@@ -354,8 +354,6 @@ nodes:
       - "浏览器插件发布"
     docs:
       - "docs/browser-use/2026-08-14-browser-use-plugin-version-0-3-0-spec.md"
-      - "docs/browser-use/2026-08-06-browser-use-plugin-version-0-2-1-spec.md"
-      - "docs/browser-use/2026-08-02-browser-use-plugin-version-0-1-3-spec.md"
       - "apps/zcode-cli/docs/design/v2/plugin-compat.md"
       - "docs/browser-use/2026-07-13-node-repl-mcp-runtime-spec.md"
     codeSeeds:
@@ -407,7 +405,6 @@ nodes:
       - "docs/working-memory/provider-refactor/steps/todo-03-provider-model-ownership-and-property-totality.md"
       - "docs/working-memory/provider-refactor/steps/todo-14-post-refactor-mechanical-zero.md"
       - "docs/working-memory/provider-refactor/steps/todo-55-provider-template-inheritance-cutover.md"
-      - "docs/model-provider-opencode-config.md"
       - "docs/model-request-output-tokens.md"
       - "docs/superpowers/specs/2026-07-10-glm-52-suffixed-variant-media-fallback-design.md"
       - "docs/superpowers/specs/2026-07-17-kimi-k3-model-adapter-design.md"
@@ -530,8 +527,6 @@ nodes:
     docs:
       - "docs/usage-stats-app-coding-plan-split.md"
       - "docs/zai-start-plan-provider.md"
-      - "docs/model-provider-family-merge.md"
-      - "docs/input-model-provider-team-plan-linkage.md"
       - "docs/working-memory/provider-refactor/steps/todo-32-team-plan-settings-effective-provider-boundary.md"
       - "docs/working-memory/provider-refactor/steps/todo-51-provider-access-consumer-and-offpeak-auth-closeout.md"
     codeSeeds:
@@ -586,7 +581,6 @@ nodes:
       - "docs/monitoring/performance-telemetry-catalog.md"
       - "docs/monitoring/business-monitoring.md"
       - "docs/monitoring/event-report-delivery-reliability.md"
-      - "docs/monitoring/zcode-cli-resource-telemetry.md"
       - "docs/monitoring/process-resource-telemetry.md"
       - "docs/monitoring/process-resource-telemetry-fixes.md"
       - "docs/monitoring/zcode-data-size-arms-telemetry.md"
@@ -725,7 +719,6 @@ nodes:
       - "研发效能"
     docs:
       - "docs/product-capability-map.md"
-      - "docs/product-capability-map-engineering-infrastructure.md"
 
   - id: "capability.build-release-engineering"
     kind: "capability"
@@ -737,8 +730,6 @@ nodes:
       - "构建发布"
       - "发版"
     docs:
-      - "docs/product-capability-map-engineering-infrastructure.md"
-      - "docs/desktop/zcode-preview-packaging.md"
     codeSeeds:
       - symbol: "runDesktopProductionBuild"
         file: "packages/desktop/scripts/run-production-build.mjs"
@@ -793,7 +784,6 @@ nodes:
       - "测试自动化"
       - "回放测试"
     docs:
-      - "docs/product-capability-map-engineering-infrastructure.md"
       - "docs/testing/conversation-session-e2e-development-workflow.md"
       - "docs/testing/desktop-e2e-container.md"
     codeSeeds:
@@ -812,9 +802,7 @@ nodes:
       - "质量数据"
       - "覆盖率治理"
     docs:
-      - "docs/product-capability-map-engineering-infrastructure.md"
       - "docs/testing/desktop-e2e-reporting.md"
-      - "docs/testing/e2e-failure-artifact-report-upload.md"
     codeSeeds:
       - symbol: "createE2EReporter"
         file: "packages/desktop/test/e2e/reporting/e2e-reporting.ts"
@@ -1344,7 +1332,6 @@ nodes:
       - "MCP 2026-07-28"
     docs:
       - "docs/mcp-stateless-node-repl.md"
-      - "docs/browser-use/2026-07-28-stateless-browser-use-mcp-spec.md"
       - "docs/browser-use/browser-use-plugin-runtime-boundary.md"
     codeSeeds:
       - symbol: "createNodeReplMcpRuntime"
@@ -1382,7 +1369,6 @@ nodes:
     docs:
       - "docs/monitoring/off-peak-task-telemetry-v1.md"
       - "docs/off-peak-task/spec.md"
-      - "docs/coding-plan-purchase-funnel-telemetry.md"
 
   - id: "capability.off-peak-model-execution"
     kind: "capability"
@@ -1530,8 +1516,6 @@ nodes:
       - "docs/working-memory/provider-refactor/steps/todo-51-provider-access-consumer-and-offpeak-auth-closeout.md"
       - "docs/working-memory/provider-refactor/steps/todo-55-provider-template-inheritance-cutover.md"
       - "docs/model-provider-presets.md"
-      - "docs/model-provider-config-overrides.md"
-      - "docs/model-provider-catalog-metadata.md"
     codeSeeds:
       - file: "packages/provider/src/index.ts"
       - symbol: "ProviderConfigResolver"
@@ -1859,7 +1843,6 @@ nodes:
     docs:
       - "docs/desktop/startup-critical-path.md"
       - "docs/desktop/database-migration-startup-gate-plan.md"
-      - "docs/desktop/database-startup-plan-review.md"
       - "docs/working-memory/provider-refactor/steps/todo-145-global-database-startup-loading.md"
     codeSeeds:
       - symbol: "prepareRuntimeProcessEnvPatch"
@@ -2869,7 +2852,6 @@ nodes:
     label: "Agent-owned BrowserControl session and tab authority"
     docs:
       - "docs/mcp-stateless-node-repl.md"
-      - "docs/browser-use/2026-07-28-stateless-browser-use-mcp-spec.md"
     codeSeeds:
       - symbol: "createProtocolBrowserControlBroker"
         file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol/browser-control-broker.ts"
@@ -3200,7 +3182,6 @@ nodes:
     label: "Workspace-scoped shared stateless node_repl MCP runtime"
     docs:
       - "docs/mcp-stateless-node-repl.md"
-      - "docs/browser-use/2026-07-28-stateless-browser-use-mcp-spec.md"
     codeSeeds:
       - symbol: "NodeMcpAdapter"
         file: "apps/zcode-cli/packages/adapters/src/mcp/index.ts"
@@ -3880,7 +3861,6 @@ nodes:
       - "工作区插件"
     docs:
       - "docs/plugins/workspace-level-plugin-architecture.md"
-      - "docs/plugins/workspace-level-plugin-proposal-comparison.md"
       - "docs/plugin-management-lifecycle-case-catalog.md"
     codeSeeds:
       - symbol: "createConfig"
