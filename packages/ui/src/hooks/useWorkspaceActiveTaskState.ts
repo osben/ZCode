@@ -1,6 +1,7 @@
 import { useMemo, useRef } from "react";
 import { useShallow } from "zustand/react/shallow";
 import type { ZCodeProvider, ZCodeTaskMeta } from "@zcode/shared";
+import { useOptionalServices } from "@/hooks/useServices.js";
 import { useActiveTaskSnapshotMeta } from "@/hooks/useActiveTaskSnapshotMeta.js";
 import { useTaskNativeSessionLogFile } from "@/hooks/useTaskNativeSessionLogFile.js";
 import { useTaskSessionFilePath } from "@/hooks/useTaskSessionFilePath.js";
@@ -13,6 +14,7 @@ import {
   useZCodeSessionStore,
 } from "@/store/zcodeSessionStore.js";
 import { useTaskQueryCacheStore } from "@/store/taskQueryCacheStore.js";
+import { useWorkspaceSessionsIndexItems } from "@/v4/useWorkspaceSessionsIndexItems.js";
 
 interface UseWorkspaceActiveTaskStateParams {
   workspaceAbsPath: string;
@@ -94,6 +96,26 @@ export function useWorkspaceActiveTaskState({
   selectedProvider,
   intl,
 }: UseWorkspaceActiveTaskStateParams) {
+  const agentService = useOptionalServices()?.zcodeAgentService ?? undefined;
+  const sessionIndexScopes = useMemo(
+    () =>
+      workspaceRemoteSessionId && !agentService
+        ? []
+        : [
+            {
+              workspacePath: workspaceAbsPath,
+              ...(workspaceIdentity ? { workspaceIdentity } : {}),
+              ...(workspaceRemoteSessionId ? { endpointKey: workspaceRemoteSessionId } : {}),
+              ...(agentService ? { agentService } : {}),
+            },
+          ],
+    [agentService, workspaceAbsPath, workspaceIdentity, workspaceRemoteSessionId],
+  );
+  const { items: sessionIndexItems } = useWorkspaceSessionsIndexItems(sessionIndexScopes);
+  const activeTaskExecutionWorktree = activeTaskId
+    ? sessionIndexItems.find((task) => task.taskId === activeTaskId)?.executionWorktree
+    : undefined;
+
   // Subscribe to the active task's meta only. App calls this hook, and a whole-bucket subscription re-rendered App
   // on every runtime/usage write. getTaskMeta may merge into a fresh object, so useShallow keeps the result stable.
   const activeTaskMetaFromStore = useZCodeSessionStore(
@@ -144,9 +166,17 @@ export function useWorkspaceActiveTaskState({
     workspaceIdentity,
     activeTaskMeta,
   );
-  const resolvedActiveTaskMeta = useStableResolvedActiveTaskMeta(
-    activeTaskMeta ?? activeTaskSnapshotMeta,
-  );
+  const resolvedTaskMeta = useMemo(() => {
+    const taskMeta = activeTaskMeta ?? activeTaskSnapshotMeta;
+    if (!taskMeta || !activeTaskExecutionWorktree) {
+      return taskMeta;
+    }
+    return {
+      ...taskMeta,
+      executionWorktree: activeTaskExecutionWorktree,
+    };
+  }, [activeTaskExecutionWorktree, activeTaskMeta, activeTaskSnapshotMeta]);
+  const resolvedActiveTaskMeta = useStableResolvedActiveTaskMeta(resolvedTaskMeta);
   // Store cleanup: taskMessagesByTaskId has no writers now that the old ChatView and broadcast
   // message replay have been retired. The live change summary derived from the message stream is
   // always empty; display falls back to task meta.changeSummary from persistence.
