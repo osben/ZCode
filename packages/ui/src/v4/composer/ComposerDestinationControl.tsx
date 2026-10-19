@@ -449,9 +449,7 @@ export function ComposerDestinationControl({
                       useComposerWorktreePipelineStore.getState().withdraw(workspaceKey);
                     }
                     if (worktreeActive) {
-                      useDraftBranchIntentStore
-                        .getState()
-                        .clearFrozenWorktreeIntent(workspaceKey);
+                      useDraftBranchIntentStore.getState().clearFrozenWorktreeIntent(workspaceKey);
                     }
                     useDraftBranchIntentStore
                       .getState()

@@ -429,9 +429,7 @@ describe("worktree mode ON selects the repository main branch as the Base (rende
     fireEvent.click(await screen.findByRole("option", { name: "dev" }));
     await screen.findByText("destination.baseBranch");
     expect(branchRowValue("destination.baseBranch")).toContain("dev");
-    expect(
-      useDraftBranchIntentStore.getState().peekFrozenWorktreeIntent("/repo"),
-    ).toBeUndefined();
+    expect(useDraftBranchIntentStore.getState().peekFrozenWorktreeIntent("/repo")).toBeUndefined();
 
     // Toggling OFF clears the frozen destination and ON re-defaults to main.
     useDraftBranchIntentStore.getState().setFrozenWorktreeIntent("/repo", {
@@ -440,9 +438,7 @@ describe("worktree mode ON selects the repository main branch as the Base (rende
     fireEvent.click(worktreeSwitch());
     await screen.findByText("destination.taskBranch");
     expect(branchRowValue("destination.taskBranch")).toContain("dev");
-    expect(
-      useDraftBranchIntentStore.getState().peekFrozenWorktreeIntent("/repo"),
-    ).toBeUndefined();
+    expect(useDraftBranchIntentStore.getState().peekFrozenWorktreeIntent("/repo")).toBeUndefined();
     fireEvent.click(worktreeSwitch());
     await screen.findByText("destination.baseBranch");
     expect(branchRowValue("destination.baseBranch")).toContain("main");
