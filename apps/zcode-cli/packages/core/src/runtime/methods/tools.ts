@@ -90,32 +90,38 @@ export async function executeTools(
   });
   let results: ToolExecutionResult[] = [];
 
-  while (true) {
-    const next = await generator.next();
-    if (next.done) {
-      results = next.value;
-      break;
-    }
+  try {
+    while (true) {
+      const next = await generator.next();
+      if (next.done) {
+        results = next.value;
+        break;
+      }
 
-    if (next.value.type === "batch_start") {
-      await options?.onBatchStart?.(next.value.toolCallIds);
-      continue;
-    }
+      if (next.value.type === "batch_start") {
+        await options?.onBatchStart?.(next.value.toolCallIds);
+        continue;
+      }
 
-    if (next.value.type === "batch_complete") {
-      const batchResults = next.value.results;
-      const batchCompleteEvent = this.createEvent(
-        SessionEventType.ToolBatchComplete,
-        {
-          toolCallIds: batchResults.map((result) => result.toolCallId as ToolCallId),
-          successCount: batchResults.filter((result) => result.success).length,
-          errorCount: batchResults.filter((result) => !result.success).length,
-        },
-        traceContext,
-      );
-      await this.appendEvent(batchCompleteEvent, traceContext);
-      events.push(batchCompleteEvent);
+      if (next.value.type === "batch_complete") {
+        const batchResults = next.value.results;
+        const batchCompleteEvent = this.createEvent(
+          SessionEventType.ToolBatchComplete,
+          {
+            toolCallIds: batchResults.map((result) => result.toolCallId as ToolCallId),
+            successCount: batchResults.filter((result) => result.success).length,
+            errorCount: batchResults.filter((result) => !result.success).length,
+          },
+          traceContext,
+        );
+        await this.appendEvent(batchCompleteEvent, traceContext);
+        events.push(batchCompleteEvent);
+      }
     }
+  } finally {
+    // The caller commits these results to history before the next model step, so from here on history alone answers
+    // which nested AGENTS.md files the model has seen (context/nested-instructions/tracker.ts).
+    this.nestedInstructionTracker.clearReservations();
   }
 
   this.logger?.debug("executeTools: completed", { resultCount: results.length });
