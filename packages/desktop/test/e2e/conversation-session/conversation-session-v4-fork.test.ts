@@ -29,6 +29,7 @@ import {
   getV4PaneSnapshot,
   prepareV4ConversationE2E,
   sendV4Prompt,
+  waitForV4ComposerSelectionReady,
   waitForV4Fork,
   waitForV4Pane,
   waitForV4TimelineContaining,
@@ -53,6 +54,9 @@ describe("v4 M4 门禁：forkAssistant", () => {
       "父会话没有绑定 sessionId",
     );
     const parentSessionId = parent.sessionId;
+    const parentModelConfig = await getV4ModelConfig();
+    expect(parentModelConfig.model).toBe("GLM-5.2");
+    expect(parentModelConfig.provider).toBeTruthy();
 
     // E11/FX11: the parent session's runtime model is GLM-5.2 and the case-local provider's capabilities are the
     // non-generic three levels. Pin the parent-side baseline first to avoid a false green when the child equals the same wrong fallback.
@@ -75,10 +79,13 @@ describe("v4 M4 门禁：forkAssistant", () => {
     );
     expect(child.sessionId).not.toBe(parentSessionId);
 
-    // Bug regression: a fork child has no legacy task config cache. The old UI, because the session snapshot carried
-    // no model capabilities, could only rebuild from the workspace catalog / generic five levels; in production that
-    // showed five levels, and in this fixture the custom provider catalog would mask it to off/high/max — but neither is the runtime's nothink/high/max.
-    expect(await readThoughtLevelValues()).toEqual(["high", "max", "nothink"]);
+    // The fork child must hydrate the selected model from its authoritative session config, even when there is no legacy task config cache.
+    await waitForV4ComposerSelectionReady();
+    const childModelConfig = await getV4ModelConfig();
+    expect(childModelConfig.provider).toBe(parentModelConfig.provider);
+    expect(childModelConfig.model).toBe(parentModelConfig.model);
+    // Compare the runtime-owned model options instead of hard-coding a spelling for the no-thinking alias.
+    expect(await readThoughtLevelValues()).toEqual(parentThoughtLevels);
     await browser.waitUntil(async () => (await getV4ModelConfig()).thought === "high", {
       timeout: 30000,
       timeoutMsg: "fork child 没有恢复父会话的 high 思考等级",
@@ -91,11 +98,10 @@ describe("v4 M4 门禁：forkAssistant", () => {
       expectedText: childPrompt,
       model: "GLM-5.2",
     });
-    // Fix rationale: GLM-5.2's OpenAI-compatible contract uses reasoning_effort;
-    // the upstream capture's default Anthropic Messages thinking.type assertion would misjudge a successfully returned GLM request as failed.
+    // The provider maps the selected level to reasoning_effort and also keeps its explicit thinking toggle.
     const childRequestJson = childRequest.requestJson as Record<string, unknown>;
     expect(childRequestJson.reasoning_effort).toBe("high");
-    expect(childRequestJson.thinking).toBeUndefined();
+    expect(childRequestJson.thinking).toEqual({ type: "enabled" });
     // Fix rationale: the fork notice originally had no Attachment metadata, so the real request treated it as unlabeled user text.
     const boundaryText = "This session was forked from a previous session message.";
     const messages = childRequestJson.messages as Array<{ role: string; content: string }>;

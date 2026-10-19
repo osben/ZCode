@@ -43,7 +43,7 @@ function buildFailureDetailLines(params: {
   ].filter((line): line is string => typeof line === "string" && line.length > 0);
 }
 
-function WorktreeCreationFailureModalDialog({
+export function WorktreeCreationFailureModalDialog({
   message,
   rawDetail,
   worktreePath,
@@ -157,7 +157,9 @@ function WorktreeCreationFailureModalDialog({
             <SlidersHorizontal className="size-3.5" />
             {intl.formatMessage({ id: "worktreeFailure.changeDestination" })}
           </Button>
-        ) : (
+        ) : savedNotRestored ? null : (
+          // Retry would submit the user's current draft, not the saved message; while the message sits
+          // on the recovery card, the card is the only way to recover it (spec decision 2).
           <Button type="button" variant="default" size="sm" className="gap-1.5" onClick={onRetry}>
             <RotateCcw className="size-3.5" />
             {intl.formatMessage({ id: "worktreeFailure.retry" })}
@@ -215,9 +217,12 @@ export function WorktreeFailureModalHost() {
   }, [activeWorkspaceKey]);
 
   const handleRetry = useCallback(() => {
+    // Defense in depth: the draft composer submits whatever is in the editor, so Retry must never
+    // run while the saved message is only on the recovery card.
+    if (!entry || entry.savedNotRestored) return;
     useWorktreeFailureReturnStore.getState().requestDraftSubmit(activeWorkspaceKey);
     close();
-  }, [activeWorkspaceKey, close]);
+  }, [activeWorkspaceKey, close, entry]);
 
   const handleChangeDestination = useCallback(() => {
     useWorktreeFailureReturnStore.getState().requestDestinationOpen(activeWorkspaceKey);

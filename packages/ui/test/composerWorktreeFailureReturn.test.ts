@@ -257,9 +257,64 @@ describe("composerWorktreeFailureReturn", () => {
     expect(
       useWorktreeFailureReturnStore.getState().restoreRequestByWorkspaceKey[workspacePath],
     ).toBe(1);
+    // The request names the exact recovery record, so the composer never restores another one.
+    expect(useWorktreeFailureReturnStore.getState().restoreScopeByWorkspaceKey[workspacePath]).toBe(
+      pendingScope,
+    );
     expect(
       useZCodeSessionStore.getState().getWorkspaceState(workspacePath, undefined).activeTaskId,
     ).toBeNull();
+  });
+
+  it("aborts the hand-off before any move or tombstone when the intent write is rejected (Buup)", () => {
+    const { services, deleteTask } = createMockServices();
+    registerBaseWorkspaceServices(services);
+    const workspacePath = "/proj/return-write-rejected";
+    const sessionId = "session-return-write-rejected";
+    const submissionId = "submission-return-write-rejected";
+    const { params } = seedFailure({
+      workspacePath,
+      sessionId,
+      submissionId,
+      attemptId: "attempt-1",
+    });
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("quota exceeded", "QuotaExceededError");
+    });
+    try {
+      expect(
+        initiateComposerWorktreeFailureReturn({
+          workspaceKey: workspacePath,
+          sessionId,
+          attemptId: "attempt-1",
+          params,
+          failureMessage: "Could not create the worktree",
+          issueCode: "unknown",
+          rawDetail: null,
+        }),
+      ).toBe(false);
+    } finally {
+      setItem.mockRestore();
+    }
+    // The record stays on the session scope (nothing moved, nothing removed) and no tombstone runs.
+    expect(
+      readV4ComposerDraft(
+        workspacePath,
+        undefined,
+        getV4WorktreeRecoveryScope(sessionId, submissionId),
+      ),
+    ).not.toBeNull();
+    expect(
+      readV4ComposerDraft(
+        workspacePath,
+        undefined,
+        `${V4_WORKTREE_RECOVERY_PENDING_SCOPE}:${submissionId}`,
+      ),
+    ).toBeNull();
+    expect(deleteTask).not.toHaveBeenCalled();
+    expect(
+      useWorktreeFailureReturnStore.getState().modalByWorkspaceKey[workspacePath],
+    ).toBeUndefined();
   });
 
   it("keeps a non-empty main draft untouched and marks the modal saved-not-restored (scenario 20)", async () => {

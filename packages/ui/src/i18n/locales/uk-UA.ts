@@ -4989,6 +4989,8 @@ const ukUA: Record<string, string> = {
   "worktreeFailure.changeDestination": "Змінити гілку/каталог",
   "worktreeFailure.toastTitle": "Не вдалося створити worktree",
   "worktreeFailure.toastOpen": "Відкрити",
+  "worktreeSetup.reservation.conflict":
+    "Інший чат уже готує worktree з цією назвою. Надішліть ще раз, щоб використати нову назву.",
   "git.branchSwitcher.appliesOnSend": "Застосується під час надсилання першого повідомлення",
   "git.branchSwitcher.worktreeIntentHint":
     "Гілку для цього завдання визначає налаштування worktree",
@@ -5306,8 +5308,6 @@ const ukUA: Record<string, string> = {
   "chat.goal.runningBlocked": "Задати мету можна після завершення поточного завдання.",
   "chat.goal.planModeBlocked":
     "Мета недоступна в режимі планування. Змініть режим, щоб продовжити.",
-  "chat.plan.attachmentsBlocked":
-    "Скорочення /plan поки підтримує лише текст. Вилучіть вкладення або контекст і повторіть спробу.",
   "chat.compact.runningBlocked": "Стиснути контекст можна після завершення поточного завдання.",
   "chat.compact.queued": "Стиснення додано в чергу; його буде виконано за порядком.",
   "chat.compact.duplicateBlocked": "Стиснення вже виконується або перебуває в черзі.",

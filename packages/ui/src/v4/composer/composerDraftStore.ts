@@ -36,6 +36,8 @@ export interface V4ComposerRecoveryContexts {
   webElements?: WebElementContextComposerAttachment[];
   pptxElements?: PptxElementReference[];
   pluginUiContexts?: PluginUiModelContext[];
+  /** Shared-context import attached to the frozen submission (same wire shape as the send payload). */
+  sharedContextRefs?: Array<{ kind: "shared_context_import"; context_id: string }>;
 }
 
 /**
@@ -251,7 +253,25 @@ function readRecoveryContexts(value: unknown): V4ComposerRecoveryContexts | unde
   const webElements = ofObjects(value.webElements);
   const pptxElements = ofObjects(value.pptxElements);
   const pluginUiContexts = ofObjects(value.pluginUiContexts);
-  if (!conversationQuotes && !codeComments && !webElements && !pptxElements && !pluginUiContexts) {
+  // Keep only well-formed references: the send payload accepts at most one, and a malformed item
+  // must not turn into a shared_context reference the CLI would reject.
+  const sharedContextRefs = Array.isArray(value.sharedContextRefs)
+    ? value.sharedContextRefs.filter(
+        (item): item is { kind: "shared_context_import"; context_id: string } =>
+          isRecord(item) &&
+          item.kind === "shared_context_import" &&
+          typeof item.context_id === "string" &&
+          item.context_id.length > 0,
+      )
+    : [];
+  if (
+    !conversationQuotes &&
+    !codeComments &&
+    !webElements &&
+    !pptxElements &&
+    !pluginUiContexts &&
+    sharedContextRefs.length === 0
+  ) {
     return undefined;
   }
   return {
@@ -262,6 +282,7 @@ function readRecoveryContexts(value: unknown): V4ComposerRecoveryContexts | unde
     ...(webElements ? { webElements: webElements as WebElementContextComposerAttachment[] } : {}),
     ...(pptxElements ? { pptxElements: pptxElements as PptxElementReference[] } : {}),
     ...(pluginUiContexts ? { pluginUiContexts: pluginUiContexts as PluginUiModelContext[] } : {}),
+    ...(sharedContextRefs.length > 0 ? { sharedContextRefs: sharedContextRefs.slice(0, 1) } : {}),
   };
 }
 
@@ -272,7 +293,8 @@ function hasRecoveryContexts(contexts: V4ComposerRecoveryContexts | undefined): 
       contexts.codeComments?.length ||
       contexts.webElements?.length ||
       contexts.pptxElements?.length ||
-      contexts.pluginUiContexts?.length),
+      contexts.pluginUiContexts?.length ||
+      contexts.sharedContextRefs?.length),
   );
 }
 

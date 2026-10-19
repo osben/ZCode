@@ -57,8 +57,6 @@ export type WorktreeCreationOutcome =
       message: string;
       /** Issue codes the server rejected with (logging only); empty when the request threw. */
       issueCodes: readonly string[];
-      /** Error text from a thrown request (logging only); null when the server rejected. */
-      errorDetail: string | null;
       /** Primary issue code of the rejection; null when the request threw or Git classified nothing. */
       issueCode: string | null;
       /**
@@ -146,6 +144,7 @@ export async function executeWorktreeCreation({
       targetPath,
     });
   } catch (error) {
+    // The raw text stays memory-only in rawDetail (modal details); it is never logged.
     const errorDetail = getErrorMessage(error);
     return {
       kind: "failed",
@@ -153,7 +152,6 @@ export async function executeWorktreeCreation({
         error: errorDetail,
       }),
       issueCodes: [],
-      errorDetail,
       issueCode: null,
       rawDetail: errorDetail,
     };
@@ -195,7 +193,6 @@ export async function executeWorktreeCreation({
               path: existing.path,
             }),
             issueCodes: [issue.code],
-            errorDetail: null,
             issueCode: issue.code,
             rawDetail: issue.detail ?? null,
           };
@@ -235,7 +232,6 @@ export async function executeWorktreeCreation({
           })
         : formatMessage("commandCenter.worktree.error.unknown"),
     issueCodes: result.issues.map((entry) => entry.code),
-    errorDetail: null,
     issueCode: issue?.code ?? null,
     rawDetail: issue?.detail ?? null,
   };

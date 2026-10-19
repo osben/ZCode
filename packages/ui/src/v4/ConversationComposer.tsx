@@ -141,7 +141,6 @@ import {
   getV4WorktreeRecoveryScope,
   persistV4ComposerDraft,
   readV4ComposerDraft,
-  readV4WorktreeRecoveryDrafts,
   V4_DRAFT_SCOPE_ROOT,
   moveV4ComposerDraft,
   type V4ComposerDraft,
@@ -805,6 +804,17 @@ function ConversationComposerImpl({
   // Derive it from the snapshot, which is always available; see resolveAttachableShareContext for rationale and boundaries.
   const activeShareContext = resolveAttachableShareContext(snapshot?.sharedContextImport);
   const pendingShareContext = activeShareContext?.status === "pending" ? activeShareContext : null;
+  // Restore re-attaches a recovered submission's shared context: the failed or queued worktree
+  // submission never reached the CLI, so its reference is still unconsumed, but the session snapshot
+  // may no longer offer it. A restored reference wins for the draft scope it was restored into.
+  const [restoredShareContext, setRestoredShareContext] = useState<{
+    scopeId: string;
+    contextId: string;
+  } | null>(null);
+  const activeShareContextId =
+    (restoredShareContext?.scopeId === draftScopeId ? restoredShareContext.contextId : null) ??
+    pendingShareContext?.contextId ??
+    null;
   const inputApiRef = useRef<LexicalChatInputHandle | null>(null);
   const voiceScopeRef = useRef<HTMLDivElement | null>(null);
   // Streaming ghost preview (specs/voice-dictation.md, "Ghost preview"): display state only; it is
@@ -1355,7 +1365,7 @@ function ConversationComposerImpl({
     hasPptxElementReferences ||
     hasConversationSelectionReferences ||
     hasPluginUiContexts ||
-    Boolean(pendingShareContext);
+    Boolean(activeShareContextId);
   const hasComposerDraftContent =
     text.length > 0 ||
     hasAttachments ||
@@ -1364,7 +1374,7 @@ function ConversationComposerImpl({
     hasPptxElementReferences ||
     hasConversationSelectionReferences ||
     hasPluginUiContexts ||
-    Boolean(pendingShareContext);
+    Boolean(activeShareContextId);
   useEffect(() => {
     onDraftStateChange?.({
       hasContent: hasComposerDraftContent,
@@ -1619,7 +1629,7 @@ function ConversationComposerImpl({
       const hasPendingPptxElementReferences = currentPptxElementReferences.length > 0;
       const currentConversationSelections = conversationSelectionReferences;
       const hasPendingConversationSelections = currentConversationSelections.length > 0;
-      const submittedShareContext = pendingShareContext;
+      const submittedShareContextId = activeShareContextId;
       // After first draft send is accepted, this Composer promotes in place from __draft__ to session scope.
       // If success cleanup reads the mutable ref later, it may clear the new scope by mistake and leave the first input in
       // __draft__, restoring it when the next task is created. Freeze the actual submitted scope at send start.
@@ -1631,7 +1641,8 @@ function ConversationComposerImpl({
         currentCodeCommentContexts.length ||
         currentWebElementContexts.length ||
         currentPptxElementReferences.length ||
-        currentPluginUiContexts.length
+        currentPluginUiContexts.length ||
+        submittedShareContextId
           ? {
               ...(currentConversationSelections.length
                 ? { conversationQuotes: [...currentConversationSelections] }
@@ -1647,6 +1658,16 @@ function ConversationComposerImpl({
                 : {}),
               ...(currentPluginUiContexts.length
                 ? { pluginUiContexts: [...currentPluginUiContexts] }
+                : {}),
+              ...(submittedShareContextId
+                ? {
+                    sharedContextRefs: [
+                      {
+                        kind: "shared_context_import" as const,
+                        context_id: submittedShareContextId,
+                      },
+                    ],
+                  }
                 : {}),
             }
           : undefined;
@@ -1770,6 +1791,30 @@ function ConversationComposerImpl({
         }
         draftSubmissionClaimed = false;
       };
+      // Begin failed before any Host session was reserved (validation or preflight, spec §Preflight).
+      // With an empty editor the frozen draft returns inline, and the queue-time recovery record for
+      // this submission is dropped so the message does not also come back as a card. Text typed while
+      // the reservation was pending is never overwritten (spec decision 2): the card keeps the message.
+      const restoreUnreservedSubmittedDraft = () => {
+        if (!draftSubmissionClaimed) return;
+        if (!isCurrentOwner() || textRef.current.trim().length > 0) {
+          restoreSubmittedDraft();
+          return;
+        }
+        clearV4ComposerDraft(workspacePath, workspaceIdentity, pendingRecoveryScope);
+        updateComposerContentRef.current(submittedDraft);
+        if (editorClearedOptimistically) {
+          if (submittedDraft.editorStateJson)
+            inputApiRef.current?.setEditorStateJson(submittedDraft.editorStateJson);
+          else inputApiRef.current?.setText(submittedDraft.text);
+          updateText(submittedDraft.text);
+        }
+        if (draftPersistClaimRef.current === submissionId) {
+          suppressDraftPersistRef.current = false;
+          draftPersistClaimRef.current = null;
+        }
+        draftSubmissionClaimed = false;
+      };
       const restoreForRetry = () => {
         restoreSubmittedDraft();
         draftSubmissionClaimed = true;
@@ -1796,7 +1841,7 @@ function ConversationComposerImpl({
           !hasPendingPptxElementReferences &&
           !hasPendingConversationSelections &&
           !hasPendingPluginUiContexts &&
-          !submittedShareContext) ||
+          !submittedShareContextId) ||
         pendingRef.current ||
         worktreeQueued ||
         reservingWorktreeRef.current?.epoch === renderedOwnerRef.current.epoch ||
@@ -1841,7 +1886,7 @@ function ConversationComposerImpl({
           };
           preparedSessionIdForSend = currentPreparedSessionId ?? pipeline.sessionId;
         } else if (pipeline?.status === "creating") {
-          // Already queued: exactly one pipeline and one queued send per workspace.
+          // Continue only the preparation bound to this session.
           if (!currentPreparedSessionId && !pipeline.sessionId) return;
           preparedSessionIdForSend = currentPreparedSessionId ?? pipeline.sessionId;
           queueWorktreeSend = true;
@@ -2009,7 +2054,7 @@ function ConversationComposerImpl({
               webElements: currentWebElementContexts,
               pptxElements: currentPptxElementReferences,
               pluginUiContexts: currentPluginUiContexts,
-            }) + (submittedShareContext ? 1 : 0);
+            }) + (submittedShareContextId ? 1 : 0);
           if (trimmed) {
             promptHistoryBeforeSend = readPromptHistoryEntries(workspacePath);
             promptHistoryAfterAppend = appendPromptHistoryEntry(promptHistoryBeforeSend, trimmed);
@@ -2077,12 +2122,12 @@ function ConversationComposerImpl({
                 }
               : {}),
             ...(contextAttachmentCount > 0 ? { contextAttachmentCount } : {}),
-            ...(submittedShareContext
+            ...(submittedShareContextId
               ? {
                   sharedContextRefs: [
                     {
                       kind: "shared_context_import" as const,
-                      context_id: submittedShareContext.contextId,
+                      context_id: submittedShareContextId,
                     },
                   ],
                 }
@@ -2161,6 +2206,11 @@ function ConversationComposerImpl({
           currentCodeCommentContexts.forEach(removeCodeCommentContext);
           currentWebElementContexts.forEach((context) => removeWebElementContext(context.id));
           currentPluginUiContexts.forEach((context) => removePluginUiContext(context.id));
+          if (submittedShareContextId) {
+            setRestoredShareContext((current) =>
+              current?.contextId === submittedShareContextId ? null : current,
+            );
+          }
           currentPptxElementReferences.forEach((reference) =>
             removePptxElementReference(reference.id),
           );
@@ -2212,7 +2262,8 @@ function ConversationComposerImpl({
         }
         claimSubmittedDraft();
         if (!onPrepareWorktreeSession || (!worktreeIntent && !preparedSessionIdForSend)) {
-          restoreSubmittedDraft();
+          if (preparedSessionIdForSend) restoreSubmittedDraft();
+          else restoreUnreservedSubmittedDraft();
           useComposerWorktreePipelineStore
             .getState()
             .markValidationFailed(workspaceKey, "Worktree session preparation is unavailable");
@@ -2278,7 +2329,7 @@ function ConversationComposerImpl({
           }
           if (!begin.ok) {
             setWorktreeQueued(false);
-            restoreSubmittedDraft();
+            restoreUnreservedSubmittedDraft();
             return;
           }
           preparedSessionIdForSend = begin.sessionId;
@@ -2323,8 +2374,7 @@ function ConversationComposerImpl({
           joinedPipeline.worktreePath &&
           joinedPipeline.params
         ) {
-          // A begin that joined an already-ready pipeline (a New-task send reusing a stuck-ready
-          // entry, or an orphaned-ready reuse) must dispatch immediately: no store transition will
+          // A repeat of this submission can find its own pipeline already ready. Dispatch immediately: no store transition will
           // re-run the queued-send effect, so arming the ref would strand the claimed submission
           // with the editor already cleared and no recovery card in the current view.
           clearQueuedSubmissionState();
@@ -2385,7 +2435,7 @@ function ConversationComposerImpl({
       onPrepareWorktreeSession,
       onSyncWorktreePreparation,
       onSendText,
-      pendingShareContext,
+      activeShareContextId,
       provider,
       readPlanIdentitySnapshot,
       removeCodeCommentContext,
@@ -2413,7 +2463,16 @@ function ConversationComposerImpl({
   // contexts (replaced, never merged), and the worktree intent that re-arms Retry/Change.
   const applyWorktreeRecoveryDraft = useCallback(
     (draft: V4ComposerDraft) => {
-      updateComposerContent(draft);
+      // The frozen plan state and mode are part of the submission (spec scenario 22), so they
+      // replace the live values; updateComposerContent would keep the current plan/mode.
+      replaceComposerDraft({
+        ...composerDraft,
+        text: draft.text,
+        editorStateJson: draft.editorStateJson,
+        mention: draft.mention,
+        mode: draft.mode ?? composerDraft.mode,
+        planEnabled: draft.planEnabled ?? composerDraft.planEnabled,
+      });
       if (draft.editorStateJson) inputApiRef.current?.setEditorStateJson(draft.editorStateJson);
       else inputApiRef.current?.setText(draft.text);
       updateText(draft.text);
@@ -2422,6 +2481,12 @@ function ConversationComposerImpl({
       clearWebElementContexts();
       clearPptxElementReferences();
       clearPluginUiContexts();
+      // Restore re-establishes exactly the frozen submission: the next draft's contexts are
+      // replaced, never merged, and the frozen contexts return through the normal add paths.
+      const restoredContextId = draft.recoveryContexts?.sharedContextRefs?.[0]?.context_id;
+      setRestoredShareContext(
+        restoredContextId ? { scopeId: draftScopeId, contextId: restoredContextId } : null,
+      );
       restoreComposerRecoveryContexts(draft.recoveryContexts, {
         sessionId,
         workspaceKey,
@@ -2444,8 +2509,10 @@ function ConversationComposerImpl({
       clearPluginUiContexts,
       clearPptxElementReferences,
       clearWebElementContexts,
+      composerDraft,
+      draftScopeId,
+      replaceComposerDraft,
       sessionId,
-      updateComposerContent,
       updateText,
       workspaceIdentity,
       workspaceKey,
@@ -2461,6 +2528,9 @@ function ConversationComposerImpl({
   const failureReturnRestoreRequest = useWorktreeFailureReturnStore(
     (state) => state.restoreRequestByWorkspaceKey[workspaceKey],
   );
+  const failureReturnRestoreScope = useWorktreeFailureReturnStore(
+    (state) => state.restoreScopeByWorkspaceKey[workspaceKey],
+  );
   const failureReturnSubmitRequest = useWorktreeFailureReturnStore(
     (state) => state.submitRequestByWorkspaceKey[workspaceKey],
   );
@@ -2475,12 +2545,16 @@ function ConversationComposerImpl({
     if (appliedFailureReturnRestoreRef.current >= failureReturnRestoreRequest) return;
     appliedFailureReturnRestoreRef.current = failureReturnRestoreRequest;
     useWorktreeFailureReturnStore.getState().consumeDraftRestoreRequest(workspaceKey);
-    const saved = readV4WorktreeRecoveryDrafts(
+    // The request names the failed submission's recovery scope. Never fall back to another pending
+    // record: the oldest one may belong to an earlier failure, and this failure would stay stranded.
+    if (!failureReturnRestoreScope) return;
+    const savedDraft = readV4ComposerDraft(
       workspacePath,
       workspaceIdentity,
-      V4_DRAFT_SCOPE_ROOT,
-    )[0];
-    if (!saved) return;
+      failureReturnRestoreScope,
+    );
+    if (!savedDraft) return;
+    const saved = { scope: failureReturnRestoreScope, draft: savedDraft };
     rehydrateComposerRecoveryAttachments({
       workspaceKey,
       recoveryScope: saved.scope,
@@ -2497,6 +2571,7 @@ function ConversationComposerImpl({
   }, [
     applyWorktreeRecoveryDraft,
     failureReturnRestoreRequest,
+    failureReturnRestoreScope,
     sessionId,
     workspaceIdentity,
     workspaceKey,
@@ -3074,7 +3149,7 @@ function ConversationComposerImpl({
     removePluginUiContext,
     removePptxElementReference,
     conversationSelectionReferences,
-    pendingShareContext,
+    activeShareContextId,
     webElementContexts,
     pluginUiContexts,
     pptxElementReferences,

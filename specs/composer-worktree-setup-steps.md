@@ -60,14 +60,21 @@ Renderer                  V4 Host / session store        Git service       Agent
 Sends that arrive while the first response is still running follow the ordinary queue/guide
 rules of the already-active session; they never restart preparation or reserve another session.
 
-A Send issued from a fresh draft ("New task") while a preparation pipeline already exists for the
-same workspace must never disappear silently. A `creating` entry joins that reservation and queues
-the new submission under the same prepared session; a `ready` entry routes the submission
-immediately through that same prepared session — the renderer dispatches it against the ready
-worktree without waiting for a store transition, activation admits it, and the entry is consumed;
-a `failed` entry starts a fresh attempt on a freshly reserved session. Every such submission is
-either admitted or surfaced as a visible error with a recovery record — never dropped with no
-session, no recovery record, and no Host call.
+A Send from a fresh draft ("New task") with New Worktree enabled reserves its own prepared session
+and creates its own worktree, even when another session in the same workspace is creating, ready,
+or failed. A workspace match alone never joins another chat's preparation. Reservation idempotency
+uses workspace identity plus the frozen submission ID: repeating that submission joins only its
+own reservation or preparing/ready entry. Distinct submission IDs remain independent, including
+before either reservation ACK arrives. After reservation, session/attempt identity owns Git,
+activation and recovery as before. Existing prepared chats and Retry continue their own session.
+Every submission is either admitted or surfaced with a recoverable error; no new chat silently
+reuses another chat's directory or consumes its pending input.
+
+```text
+new draft A / submission A -> reserve session A -> create worktree A -> activate A once
+new draft B / submission B -> reserve session B -> create worktree B -> activate B once
+repeat submission A       -> join A only (same workspace identity + submission ID)
+```
 
 When Git settles the branch at a path other than the prepared target, readiness goes through the
 marker sync row above: the renderer updates the Host marker to the real path and awaits acceptance
@@ -315,10 +322,10 @@ early transcript persistence or a second accepted-input store.
    Worktree Review reads its scoped repository while workspace-level Git summaries and plain-session
    panes continue to describe the parent checkout, including when both sessions are split onscreen.
 5. Repeated activation, duplicate Send, navigation, remount, and reconnect do not create another
-   session, runtime, worktree, or first-input admission. The per-workspace idempotency guard is
-   acquired before awaiting Host session reservation, so concurrent composers with different
-   submission IDs in one workspace join one reservation; the winning submission ID remains in
-   recovery metadata.
+   session, runtime, worktree, or first-input admission for the same submission. The guard is
+   acquired by workspace identity and submission ID before awaiting Host reservation. Distinct
+   submissions from new chats create distinct sessions/worktrees; a creating or stuck-ready older
+   pipeline remains intact, and each recovery record retains its own submission ID.
 6. Failure and explicit Cancel preserve the session ID and safely restore frozen editor content,
    attachments, and references without replacing newer edits.
 7. Restart during preparation recovers the same session ID, reconstructs renderer pipeline state
@@ -541,6 +548,18 @@ Branch evidence comes from the Git service of the target Host, addressed by `wor
 with the local path fallback — never by path alone — and reuses the existing issue codes and
 message ids; no duplicate strings are introduced.
 
+Begin results: a not-ok begin reserved no Host session. The composer returns the frozen draft inline
+when its editor is still empty, drops the queue-time recovery record for that submission, and clears
+the admission name claim. If text was typed while the reservation was pending, the submission stays
+on the recovery card and the typed text is not overwritten (decision 2). Preflight and the reservation
+conflict both use this path.
+
+Automatic restore: the failure hand-off names the recovery record it moved (the modal store carries
+the pending scope). The composer restores exactly that record and never the oldest pending one. The
+worktree intent is written into the source record before the transfer; a rejected write moves nothing
+and removes nothing, so the failed-row path stays (scenario 19). The restored mode and plan state
+replace the live values (scenario 22).
+
 ### Additional acceptance scenarios
 
 19. Live-renderer failure return: with the armed submission owned by this renderer, a failed Git
@@ -568,3 +587,17 @@ message ids; no duplicate strings are introduced.
     the BUG-GWT-005 protections; none of them triggers removal or the modal flow.
 26. Stale attempts never remove: a hand-off whose attempt is superseded or replaced by a newer
     Host attempt performs no transfer, no Host mutation, and no tombstone.
+
+## Concurrent submission reservation revision (2026-10-19)
+
+- Destination names are reserved per workspace. An admission claims its generated branch name and
+  target path synchronously, before its first await, and keeps them until its store entry holds the
+  frozen params. Live entries (`creating`, `ready`, `failed`) keep their names reserved, because
+  Retry re-runs those params. Name generators check the reservation together with the Git branch
+  list, so two same-tick submissions never select the same name.
+- A name already claimed by an in-flight admission fails that admission instead of reusing it.
+- An existing-worktree outcome for a branch or directory owned by another session's live entry is
+  a conflict, not WT-04 reuse: the attempt fails and the other session's worktree stays untouched.
+- The recovery record also carries the shared-context reference. Restore re-attaches it when the
+  session snapshot no longer offers the pending import; the restored reference is scoped to the
+  draft scope it was restored into and is cleared after an accepted send.

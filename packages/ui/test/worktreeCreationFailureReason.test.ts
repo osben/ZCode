@@ -116,6 +116,5 @@ describe("executeWorktreeCreation failure reason", () => {
     if (outcome.kind !== "failed") throw new Error("expected a failed outcome");
     expect(outcome.issueCode).toBeNull();
     expect(outcome.rawDetail).toBe("rpc unavailable");
-    expect(outcome.errorDetail).toBe("rpc unavailable");
   });
 });

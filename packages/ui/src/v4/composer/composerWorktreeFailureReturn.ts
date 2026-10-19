@@ -151,13 +151,17 @@ export function initiateComposerWorktreeFailureReturn(
     );
     return true;
   };
+  // The worktree intent (Retry/Change prefill) is written into the source record before the move,
+  // so the single transfer carries it. A rejected write aborts before anything is moved or removed.
+  if (
+    !persistV4ComposerDraft(params.workspacePath, params.workspaceIdentity, sessionRecoveryScope, {
+      ...record,
+      worktreeIntent: buildV4WorktreeIntentFromParams(params),
+    })
+  ) {
+    return false;
+  }
   if (!moveRecoveryRecord(sessionRecoveryScope, pendingScope)) return false;
-  // Enrich the transferred record with the worktree intent so Retry/Change prefills; the record
-  // stays continuously present (already moved), and a failed enrich write only drops the prefill.
-  persistV4ComposerDraft(params.workspacePath, params.workspaceIdentity, pendingScope, {
-    ...record,
-    worktreeIntent: buildV4WorktreeIntentFromParams(params),
-  });
 
   // From here the entry is marked: the composer's queued-send effect must not run its own failure
   // handling (Host report + restoreForRetry) for this attempt, or it would re-create the
@@ -213,7 +217,7 @@ export function initiateComposerWorktreeFailureReturn(
       handledFailureKeys.delete(key);
       useComposerWorktreePipelineStore
         .getState()
-        .setReturningToDraft(workspaceKey, sessionId, attemptId, false)
+        .setReturningToDraft(workspaceKey, sessionId, attemptId, false);
       return;
     }
     // Tombstone through the existing Hide path (session-deletion-cascade.md): tasks.deleted=1
@@ -257,7 +261,7 @@ export function initiateComposerWorktreeFailureReturn(
         .startDraft(params.workspacePath, undefined, params.workspaceIdentity);
     }
     if (draftEmpty) {
-      useWorktreeFailureReturnStore.getState().requestDraftRestore(workspaceKey);
+      useWorktreeFailureReturnStore.getState().requestDraftRestore(workspaceKey, pendingScope);
     }
   })();
   return true;

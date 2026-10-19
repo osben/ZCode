@@ -31,12 +31,14 @@ export interface WorktreeFailureReturnModalState {
 interface WorktreeFailureReturnState {
   modalByWorkspaceKey: Record<string, WorktreeFailureReturnModalState>;
   restoreRequestByWorkspaceKey: Record<string, number>;
+  /** Recovery scope of the submission the latest restore request is for (one per workspace). */
+  restoreScopeByWorkspaceKey: Record<string, string>;
   submitRequestByWorkspaceKey: Record<string, number>;
   destinationOpenRequestByWorkspaceKey: Record<string, number>;
   openFailureModal: (workspaceKey: string, state: WorktreeFailureReturnModalState) => void;
   closeFailureModal: (workspaceKey: string) => void;
-  /** Bump the auto-restore request for the workspace's draft composer. */
-  requestDraftRestore: (workspaceKey: string) => void;
+  /** Bump the auto-restore request for the workspace's draft composer, naming the record to restore. */
+  requestDraftRestore: (workspaceKey: string, recoveryScope: string) => void;
   consumeDraftRestoreRequest: (workspaceKey: string) => void;
   /** Bump the submit request for the workspace's draft composer. */
   requestDraftSubmit: (workspaceKey: string) => void;
@@ -65,6 +67,7 @@ function request(record: Record<string, number>, workspaceKey: string): Record<s
 export const useWorktreeFailureReturnStore = create<WorktreeFailureReturnState>((set) => ({
   modalByWorkspaceKey: {},
   restoreRequestByWorkspaceKey: {},
+  restoreScopeByWorkspaceKey: {},
   submitRequestByWorkspaceKey: {},
   destinationOpenRequestByWorkspaceKey: {},
   openFailureModal: (workspaceKey, state) =>
@@ -73,13 +76,18 @@ export const useWorktreeFailureReturnStore = create<WorktreeFailureReturnState>(
     })),
   closeFailureModal: (workspaceKey) =>
     set((current) => ({ modalByWorkspaceKey: omitKey(current.modalByWorkspaceKey, workspaceKey) })),
-  requestDraftRestore: (workspaceKey) =>
+  requestDraftRestore: (workspaceKey, recoveryScope) =>
     set((current) => ({
       restoreRequestByWorkspaceKey: request(current.restoreRequestByWorkspaceKey, workspaceKey),
+      restoreScopeByWorkspaceKey: {
+        ...current.restoreScopeByWorkspaceKey,
+        [workspaceKey]: recoveryScope,
+      },
     })),
   consumeDraftRestoreRequest: (workspaceKey) =>
     set((current) => ({
       restoreRequestByWorkspaceKey: omitKey(current.restoreRequestByWorkspaceKey, workspaceKey),
+      restoreScopeByWorkspaceKey: omitKey(current.restoreScopeByWorkspaceKey, workspaceKey),
     })),
   requestDraftSubmit: (workspaceKey) =>
     set((current) => ({
@@ -107,6 +115,7 @@ export const useWorktreeFailureReturnStore = create<WorktreeFailureReturnState>(
     set((current) => ({
       modalByWorkspaceKey: omitKey(current.modalByWorkspaceKey, workspaceKey),
       restoreRequestByWorkspaceKey: omitKey(current.restoreRequestByWorkspaceKey, workspaceKey),
+      restoreScopeByWorkspaceKey: omitKey(current.restoreScopeByWorkspaceKey, workspaceKey),
       submitRequestByWorkspaceKey: omitKey(current.submitRequestByWorkspaceKey, workspaceKey),
       destinationOpenRequestByWorkspaceKey: omitKey(
         current.destinationOpenRequestByWorkspaceKey,

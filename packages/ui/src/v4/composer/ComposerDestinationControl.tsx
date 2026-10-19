@@ -56,7 +56,10 @@ import {
   type ComposerDraftWorktreeIntent,
   type ComposerWorktreeBeginResult,
 } from "@/v4/composer/composerDraftWorktreeIntent.js";
-import { beginWorktreePipelineCreation } from "@/v4/composer/composerWorktreePipeline.js";
+import {
+  beginWorktreePipelineCreation,
+  isComposerWorktreeNameReserved,
+} from "@/v4/composer/composerWorktreePipeline.js";
 import { useBranchSwitchGuard } from "@/v4/composer/branchSwitchGuard.js";
 import { Check, ChevronDown, ChevronRight, GitBranch, GitGraph, Plus, Split } from "lucide-react";
 
@@ -260,10 +263,21 @@ export function ComposerDestinationControl({
   const computeWorktreeBranchName = useCallback(() => {
     const branchNameSet = new Set(branchesResult?.branches.map((branch) => branch.name) ?? []);
     const generated = generateWorktreeBranchName({
-      isTaken: (raw) => branchNameSet.has(composeBranchName(effectiveLocation.prefix ?? "", raw)),
+      isTaken: (raw) => {
+        const composed = composeBranchName(effectiveLocation.prefix ?? "", raw);
+        return (
+          branchNameSet.has(composed) ||
+          isComposerWorktreeNameReserved({
+            workspaceKey,
+            workspacePath,
+            branchName: composed,
+            effectiveLocation,
+          })
+        );
+      },
     });
     return composeBranchName(effectiveLocation.prefix ?? "", generated);
-  }, [branchesResult, effectiveLocation.prefix]);
+  }, [branchesResult, effectiveLocation, workspaceKey, workspacePath]);
 
   // Register the worktree intent into the shared slot while the mode is on — the same contract the
   // checkbox implements; the composer consumes beginCreation at send. The selected base overrides

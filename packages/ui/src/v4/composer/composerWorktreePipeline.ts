@@ -5,7 +5,7 @@ import { nanoid } from "nanoid";
  *
  * Wraps the shared executeWorktreeCreation orchestration (request shape, issue→message mapping,
  * WT-04 recovery) and writes the outcome into composerWorktreePipelineStore. Reservation is
- * idempotent per workspace, and starts/retries for a prepared session reuse the same promise. The
+ * idempotent per workspace/submission, and starts/retries for a prepared session reuse the same promise. The
  * store is the UI-facing state machine; this module owns the async side effects.
  */
 import { getErrorMessage } from "@/lib/errorMessage.js";
@@ -35,11 +35,103 @@ import {
 import { initiateComposerWorktreeFailureReturn } from "@/v4/composer/composerWorktreeFailureReturn.js";
 
 const inFlightByPipelineKey = new Map<string, Promise<"ready" | "failed">>();
-const beginInFlightByWorkspaceKey = new Map<string, Promise<ComposerWorktreeBeginResult>>();
+const beginInFlightBySubmissionKey = new Map<string, Promise<ComposerWorktreeBeginResult>>();
 /** Sessions whose Retry is waiting on the Host acknowledgement (count per session key). */
 const pendingRetryBySessionKey = new Map<string, number>();
 /** Bound for the advisory queue-time branch probe; a slower RPC degrades to HEAD, never blocks Send. */
 const WORKTREE_PREFLIGHT_PROBE_TIMEOUT_MS = 1500;
+/**
+ * Branch names and target paths claimed by an admission before its store entry exists. Admission
+ * claims them synchronously in beginWorktreePipelineCreation (before its first await), so a name
+ * generator running later in the same tick already sees them; the claim is released once
+ * startPipeline owns the names, or when admission fails.
+ */
+const admissionClaimByNameKey = new Map<string, string>();
+/**
+ * Store entries whose frozen params still reserve their names. Retry re-runs those params, so a
+ * failed entry keeps its names reserved as well.
+ */
+const NAME_RESERVING_STATUSES: ReadonlySet<string> = new Set(["creating", "ready", "failed"]);
+
+function nameClaimKeys(
+  workspaceKey: string,
+  branchName: string,
+  targetPath: string | null,
+): string[] {
+  return [
+    `${workspaceKey}\0branch\0${branchName}`,
+    ...(targetPath === null ? [] : [`${workspaceKey}\0path\0${targetPath}`]),
+  ];
+}
+
+function claimNameKeys(keys: string[], attemptId: string): () => void {
+  for (const key of keys) admissionClaimByNameKey.set(key, attemptId);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    for (const key of keys) {
+      if (admissionClaimByNameKey.get(key) === attemptId) admissionClaimByNameKey.delete(key);
+    }
+  };
+}
+
+/**
+ * Whether a generated branch name or its target path is already reserved in this workspace, by an
+ * admission still in progress or by a live store entry. Name generators check this together with
+ * the Git branch list, so two same-tick or overlapping submissions never choose the same name.
+ */
+export function isComposerWorktreeNameReserved({
+  workspaceKey,
+  workspacePath,
+  branchName,
+  effectiveLocation,
+}: {
+  workspaceKey: string;
+  workspacePath: string;
+  branchName: string;
+  effectiveLocation: EffectiveWorktreeLocation;
+}): boolean {
+  const targetPath = computeWorktreeTargetPath(workspacePath, branchName, effectiveLocation);
+  if (
+    nameClaimKeys(workspaceKey, branchName, targetPath).some((key) =>
+      admissionClaimByNameKey.has(key),
+    )
+  )
+    return true;
+  const workspace =
+    useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey[workspaceKey];
+  return Object.values(workspace?.entriesBySessionKey ?? {}).some(
+    (entry) =>
+      entry.params !== undefined &&
+      NAME_RESERVING_STATUSES.has(entry.status) &&
+      (entry.params.branchName === branchName ||
+        (targetPath !== null && entry.params.targetPath === targetPath)),
+  );
+}
+
+/**
+ * Whether another session's live entry already owns this branch or worktree directory. An
+ * existing-worktree outcome for such a path is another pipeline's directory, not a reusable one.
+ */
+function isWorktreeOwnedByOtherEntry(
+  workspaceKey: string,
+  sessionId: string | undefined,
+  branchName: string,
+  worktreePath: string,
+): boolean {
+  const workspace =
+    useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey[workspaceKey];
+  return Object.values(workspace?.entriesBySessionKey ?? {}).some(
+    (entry) =>
+      (entry.sessionId ?? undefined) !== (sessionId ?? undefined) &&
+      entry.params !== undefined &&
+      (entry.status === "creating" || entry.status === "ready" || entry.status === "failed") &&
+      (entry.params.branchName === branchName ||
+        entry.params.targetPath === worktreePath ||
+        entry.worktreePath === worktreePath),
+  );
+}
 
 function retrySessionKey(workspaceKey: string, sessionId?: string): string {
   return `${workspaceKey}\0${sessionId ?? "unscoped"}`;
@@ -181,6 +273,31 @@ export function startComposerWorktreePipeline({
         return await settleReady(outcome.worktreePath, false);
       }
       if (outcome.kind === "existing-worktree") {
+        // A directory owned by another live pipeline is not WT-04 reuse: two sessions must never
+        // execute in one worktree, so this attempt fails instead of settling ready.
+        if (
+          isWorktreeOwnedByOtherEntry(
+            workspaceKey,
+            sessionId,
+            params.branchName,
+            outcome.worktreePath,
+          )
+        ) {
+          logger.warn("[WorktreePipeline] existing worktree belongs to another pipeline", {
+            workspaceKey,
+            branchName: params.branchName,
+            targetPath: outcome.worktreePath,
+          });
+          useComposerWorktreePipelineStore
+            .getState()
+            .markFailed(
+              workspaceKey,
+              formatMessage("worktreeSetup.reservation.conflict"),
+              sessionId,
+              attemptId,
+            );
+          return "failed";
+        }
         // WT-04 unified: consume the existing directory in place (no draft transfer, no second one).
         logger.info("[WorktreePipeline] reusing existing worktree", {
           workspaceKey,
@@ -189,19 +306,13 @@ export function startComposerWorktreePipeline({
         });
         return await settleReady(outcome.worktreePath, true);
       }
-      if (outcome.errorDetail !== null) {
-        logger.warn("[WorktreePipeline] worktree create request failed", {
-          workspaceKey,
-          branchName: params.branchName,
-          error: outcome.errorDetail,
-        });
-      } else {
-        logger.warn("[WorktreePipeline] worktree creation rejected", {
-          workspaceKey,
-          branchName: params.branchName,
-          issues: outcome.issueCodes,
-        });
-      }
+      // Logs carry issue codes or a classification only. The raw Git/RPC text (rawDetail) lives in
+      // the failure modal's memory state and must not reach production logs.
+      logger.warn("[WorktreePipeline] worktree creation failed", {
+        workspaceKey,
+        branchName: params.branchName,
+        issues: outcome.issueCodes,
+      });
       useComposerWorktreePipelineStore
         .getState()
         .markFailed(workspaceKey, outcome.message, sessionId, attemptId, {
@@ -225,10 +336,11 @@ export function startComposerWorktreePipeline({
       }
       return "failed";
     } catch (error) {
+      // Only the error class is logged: the message can carry filesystem or transport detail.
       logger.warn("[WorktreePipeline] creation orchestration threw", {
         workspaceKey,
         branchName: params.branchName,
-        error: getErrorMessage(error),
+        errorName: error instanceof Error ? error.name : typeof error,
       });
       useComposerWorktreePipelineStore
         .getState()
@@ -240,6 +352,76 @@ export function startComposerWorktreePipeline({
   })();
   inFlightByPipelineKey.set(runKey, attempt);
   return attempt;
+}
+
+/**
+ * Queue-time base-branch preflight with positive evidence only (spec §Preflight): a successfully
+ * loaded branch list proves an unborn HEAD or a missing explicit base. A failed, absent, or hung
+ * probe never blocks Send; the base degrades to HEAD (acceptance scenario 24). The probe is
+ * advisory and bounded, and its raw error is neither logged nor returned.
+ */
+type PreflightFailure = { messageId: string; values: Record<string, string> };
+
+/**
+ * Returns null synchronously when the Git service has no branch probe, so the admission keeps its
+ * synchronous path to prepareSession; otherwise the bounded probe is awaited.
+ */
+function queueTimeBaseBranchPreflight({
+  gitService,
+  workspacePath,
+  baseBranch,
+}: {
+  gitService: WorktreeCreationGitService;
+  workspacePath: string;
+  baseBranch?: string;
+}): Promise<PreflightFailure | null> | null {
+  if (!gitService.getLocalBranches) return null;
+  return probeBaseBranchPreflight(
+    gitService.getLocalBranches.bind(gitService),
+    workspacePath,
+    baseBranch,
+  );
+}
+
+async function probeBaseBranchPreflight(
+  getLocalBranches: NonNullable<WorktreeCreationGitService["getLocalBranches"]>,
+  workspacePath: string,
+  baseBranch: string | undefined,
+): Promise<PreflightFailure | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let branches: GitLocalBranchListResult | null = null;
+  try {
+    branches = await Promise.race([
+      getLocalBranches({ workspacePath }),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), WORKTREE_PREFLIGHT_PROBE_TIMEOUT_MS);
+      }),
+    ]);
+  } catch {
+    branches = null;
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!branches) return null;
+  if (branches.branches.length === 0 && branches.currentBranchName !== null) {
+    // Unborn HEAD: no base (explicit or defaulted) can be forked from. The message already carries
+    // the "repository without commits" hint.
+    return {
+      messageId: "commandCenter.worktree.error.target-branch-not-found",
+      values: { branchName: baseBranch ?? branches.currentBranchName },
+    };
+  }
+  if (
+    baseBranch &&
+    branches.branches.length > 0 &&
+    !branches.branches.some((branch) => branch.name === baseBranch)
+  ) {
+    return {
+      messageId: "commandCenter.worktree.error.target-branch-not-found",
+      values: { branchName: baseBranch },
+    };
+  }
+  return null;
 }
 
 /**
@@ -277,14 +459,21 @@ export function beginWorktreePipelineCreation({
   submissionId?: string;
   formatMessage: (id: string, values?: Record<string, string>) => string;
 }): Promise<ComposerWorktreeBeginResult> {
-  const reservationKey = workspaceKey;
-  const inFlight = beginInFlightByWorkspaceKey.get(reservationKey);
+  const reservationKey = submissionId ? `${workspaceKey}\0${submissionId}` : null;
+  const inFlight = reservationKey ? beginInFlightBySubmissionKey.get(reservationKey) : undefined;
   if (inFlight) return inFlight;
-  const existing = selectComposerWorktreePipeline(
-    useComposerWorktreePipelineStore.getState(),
-    workspaceKey,
-  );
-  if (existing?.sessionId && (existing.status === "creating" || existing.status === "ready")) {
+  // A workspace can contain several new chats. Only the same frozen submission may reuse a reservation.
+  const existing = submissionId
+    ? Object.values(
+        useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey[workspaceKey]
+          ?.entriesBySessionKey ?? {},
+      ).find(
+        (entry) =>
+          entry.params?.submissionId === submissionId &&
+          (entry.status === "creating" || entry.status === "ready"),
+      )
+    : undefined;
+  if (existing?.sessionId) {
     return Promise.resolve({ ok: true, sessionId: existing.sessionId });
   }
 
@@ -308,44 +497,20 @@ export function beginWorktreePipelineCreation({
     if (!targetPath) {
       return failWith("commandCenter.worktree.error.target-path-invalid");
     }
-    // Preflight with positive evidence only (spec §Return to draft on failure): a successfully
-    // loaded branch list proves unborn HEAD (no branches, but a named unborn default) or a missing
-    // explicit base; a failed, absent, or hung probe must NOT block Send — the base degrades to
-    // HEAD (acceptance scenario 9). The probe is advisory, so it is bounded; a slow RPC degrades
-    // like a failed one instead of stalling the send path. Reuses the target-branch-not-found
-    // message, which already carries the "repository without commits" hint.
-    if (gitService.getLocalBranches) {
-      let branches: GitLocalBranchListResult | null = null;
-      try {
-        branches = await Promise.race([
-          gitService.getLocalBranches({ workspacePath }),
-          new Promise<null>((resolve) =>
-            setTimeout(() => resolve(null), WORKTREE_PREFLIGHT_PROBE_TIMEOUT_MS),
-          ),
-        ]);
-      } catch {
-        branches = null;
-      }
-      if (branches) {
-        if (branches.branches.length === 0 && branches.currentBranchName !== null) {
-          // Unborn HEAD: the repository has no commits, so no base (explicit or defaulted) can
-          // be forked from; name the requested base, or the unborn default when none was.
-          return failWith("commandCenter.worktree.error.target-branch-not-found", {
-            branchName: baseBranch ?? branches.currentBranchName,
-          });
-        }
-        if (
-          baseBranch &&
-          branches.branches.length > 0 &&
-          !branches.branches.some((branch) => branch.name === baseBranch)
-        ) {
-          return failWith("commandCenter.worktree.error.target-branch-not-found", {
-            branchName: baseBranch,
-          });
-        }
-      }
+    // Claim the names before the first await: the generator for the next submission runs in a
+    // later task and must see them even while the preflight or prepareSession is still pending.
+    const nameKeys = nameClaimKeys(workspaceKey, branchName, targetPath);
+    if (nameKeys.some((key) => admissionClaimByNameKey.has(key))) {
+      return failWith("worktreeSetup.reservation.conflict");
     }
     const attemptId = nanoid();
+    const releaseNames = claimNameKeys(nameKeys, attemptId);
+    const preflightProbe = queueTimeBaseBranchPreflight({ gitService, workspacePath, baseBranch });
+    const preflightFailure = preflightProbe ? await preflightProbe : null;
+    if (preflightFailure) {
+      releaseNames();
+      return failWith(preflightFailure.messageId, preflightFailure.values);
+    }
     const params = {
       ...(submissionId ? { submissionId } : {}),
       attemptId,
@@ -369,6 +534,7 @@ export function beginWorktreePipelineCreation({
         ...(baseBranch ? { baseBranch } : {}),
       });
     } catch (error) {
+      releaseNames();
       useComposerWorktreePipelineStore
         .getState()
         .markValidationFailed(workspaceKey, getErrorMessage(error));
@@ -381,6 +547,8 @@ export function beginWorktreePipelineCreation({
       createdAt: Date.now(),
       queuedPromptPreview,
     });
+    // The store entry now holds the names (NAME_RESERVING_STATUSES); the claim is no longer needed.
+    releaseNames();
     void startComposerWorktreePipeline({
       gitService,
       workspaceKey,
@@ -391,10 +559,13 @@ export function beginWorktreePipelineCreation({
     });
     return { ok: true, sessionId } as const;
   })();
-  beginInFlightByWorkspaceKey.set(reservationKey, attempt);
+  // Reason: without a submission id there is no frozen submission to dedupe against, so a shared
+  // "legacy" key would hand one new chat another chat's in-flight admission and sessionId.
+  if (reservationKey === null) return attempt;
+  beginInFlightBySubmissionKey.set(reservationKey, attempt);
   const clearInFlight = () => {
-    if (beginInFlightByWorkspaceKey.get(reservationKey) === attempt) {
-      beginInFlightByWorkspaceKey.delete(reservationKey);
+    if (beginInFlightBySubmissionKey.get(reservationKey) === attempt) {
+      beginInFlightBySubmissionKey.delete(reservationKey);
     }
   };
   void attempt.then(clearInFlight, clearInFlight);

@@ -2,7 +2,7 @@
 // state machine transitions (consume-once, withdraw/orphan), runner idempotency and outcome
 // mapping, and stale-creating reconcile.
 // @vitest-environment jsdom
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GitWorktreeCreateResult } from "@zcode/shared";
@@ -10,10 +10,14 @@ import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import {
   armWorktreeSendContinuation,
   peekWorktreeSendContinuation,
+  releaseWorktreeSendContinuation,
   selectComposerWorktreePipeline,
   useComposerWorktreePipelineStore,
 } from "@/store/composerWorktreePipelineStore.js";
+import { generateWorktreeBranchName } from "@/command-center/worktreeNameGenerator.js";
+import { composeBranchName } from "@/command-center/worktreeTaskFlow.js";
 import {
+  isComposerWorktreeNameReserved,
   isComposerWorktreePipelineInFlight,
   beginWorktreePipelineCreation,
   reconcileCreatingComposerWorktreePipeline,
@@ -742,6 +746,7 @@ describe("startComposerWorktreePipeline runner", () => {
       baseBranch: PARAMS.baseBranch,
       baseFromHeadDefault: false,
       queuedPromptPreview: "frozen input",
+      submissionId: "same-submission",
       prepareSession: () => new Promise((resolve) => (resolvePreparation = resolve)),
       formatMessage: (id: string) => id,
     });
@@ -769,6 +774,7 @@ describe("startComposerWorktreePipeline runner", () => {
         branchName: "zcode/another-branch",
         baseFromHeadDefault: true,
         queuedPromptPreview: "second input",
+        submissionId: "same-submission",
         prepareSession: vi.fn(),
         formatMessage: (id: string) => id,
       }),
@@ -789,17 +795,20 @@ describe("startComposerWorktreePipeline runner", () => {
     await vi.waitFor(() => expect(currentPipeline()?.status).toBe("ready"));
   });
 
-  it("joins concurrent reservations by workspace and keeps submission IDs in recovery metadata", async () => {
+  it("isolates concurrent new-chat reservations while deduplicating the same submission", async () => {
     let resolvePreparation: (sessionId: string) => void = () => {};
     const prepareSession = vi.fn(
       () => new Promise<string>((resolve) => (resolvePreparation = resolve)),
     );
-    createWorktree.mockResolvedValue({
-      ok: true,
-      worktreePath: PARAMS.targetPath,
-      branchName: PARAMS.branchName,
-      issues: [],
-    } satisfies GitWorktreeCreateResult);
+    createWorktree.mockImplementation(
+      async ({ targetPath, branchName }) =>
+        ({
+          ok: true,
+          worktreePath: targetPath,
+          branchName,
+          issues: [],
+        }) satisfies GitWorktreeCreateResult,
+    );
     const input = {
       gitService,
       workspaceKey: WORKSPACE_KEY,
@@ -821,36 +830,275 @@ describe("startComposerWorktreePipeline runner", () => {
       formatMessage: (id: string) => id,
     };
     const first = beginWorktreePipelineCreation(input);
-    const secondPrepareSession = vi.fn();
+    expect(beginWorktreePipelineCreation(input)).toBe(first);
+    const secondPrepareSession = vi.fn(async () => "session-prepared-2");
     const second = beginWorktreePipelineCreation({
       ...input,
-      queuedPromptPreview: "a concurrent submission",
+      queuedPromptPreview: "another chat's input",
       submissionId: "submission-2",
+      branchName: "zcode/second",
       prepareSession: secondPrepareSession,
     });
-
-    expect(second).toBe(first);
+    expect(second).not.toBe(first);
+    await expect(second).resolves.toEqual({ ok: true, sessionId: "session-prepared-2" });
+    await vi.waitFor(() => expect(currentPipeline("session-prepared-2")?.status).toBe("ready"));
     expect(prepareSession).toHaveBeenCalledTimes(1);
-    resolvePreparation("session-prepared-1");
-    await expect(second).resolves.toEqual({
-      ok: true,
-      sessionId: "session-prepared-1",
-    });
-    await vi.waitFor(() => expect(currentPipeline()?.status).toBe("ready"));
-    expect(createWorktree).toHaveBeenCalledTimes(1);
-    expect(currentPipeline()?.params?.submissionId).toBe("submission-1");
+    expect(secondPrepareSession).toHaveBeenCalledTimes(1);
 
-    const laterPrepareSession = vi.fn();
+    resolvePreparation("session-prepared-1");
+    await expect(first).resolves.toEqual({ ok: true, sessionId: "session-prepared-1" });
+    await vi.waitFor(() => expect(currentPipeline("session-prepared-1")?.status).toBe("ready"));
+    expect(createWorktree).toHaveBeenCalledTimes(2);
+    expect(currentPipeline("session-prepared-1")?.params?.submissionId).toBe("submission-1");
+    expect(currentPipeline("session-prepared-2")?.params?.submissionId).toBe("submission-2");
+
+    const repeatPrepareSession = vi.fn();
+    await expect(
+      beginWorktreePipelineCreation({
+        ...input,
+        submissionId: "submission-2",
+        prepareSession: repeatPrepareSession,
+      }),
+    ).resolves.toEqual({ ok: true, sessionId: "session-prepared-2" });
+    expect(repeatPrepareSession).not.toHaveBeenCalled();
+    const laterPrepareSession = vi.fn(async () => "session-prepared-3");
     await expect(
       beginWorktreePipelineCreation({
         ...input,
         submissionId: "submission-3",
+        branchName: "zcode/third",
         prepareSession: laterPrepareSession,
       }),
-    ).resolves.toEqual({ ok: true, sessionId: "session-prepared-1" });
-    expect(laterPrepareSession).not.toHaveBeenCalled();
-    expect(secondPrepareSession).not.toHaveBeenCalled();
-    expect(createWorktree).toHaveBeenCalledTimes(1);
+    ).resolves.toEqual({ ok: true, sessionId: "session-prepared-3" });
+    await vi.waitFor(() => expect(currentPipeline("session-prepared-3")?.status).toBe("ready"));
+    expect(createWorktree).toHaveBeenCalledTimes(3);
+    expect(new Set(createWorktree.mock.calls.map(([params]) => params.targetPath)).size).toBe(3);
+  });
+
+  it("does not share an in-flight admission between calls that carry no submission id", async () => {
+    createWorktree.mockImplementation(
+      async ({ targetPath, branchName }) =>
+        ({
+          ok: true,
+          worktreePath: targetPath,
+          branchName,
+          issues: [],
+        }) satisfies GitWorktreeCreateResult,
+    );
+    const input = {
+      gitService,
+      workspaceKey: WORKSPACE_KEY,
+      workspacePath: WORKSPACE_KEY,
+      effectiveLocation: {
+        mode: "sibling" as const,
+        customPath: null,
+        appWorktreesDir: null,
+        prefix: "zcode/",
+        baseBranchDefault: null,
+        hasProjectOverride: false,
+      },
+      baseBranch: PARAMS.baseBranch,
+      baseFromHeadDefault: false,
+      queuedPromptPreview: "legacy input",
+      formatMessage: (id: string) => id,
+    };
+    const firstPrepareSession = vi.fn(async () => "session-legacy-1");
+    const secondPrepareSession = vi.fn(async () => "session-legacy-2");
+    const first = beginWorktreePipelineCreation({
+      ...input,
+      branchName: "zcode/legacy-first",
+      prepareSession: firstPrepareSession,
+    });
+    const second = beginWorktreePipelineCreation({
+      ...input,
+      branchName: "zcode/legacy-second",
+      prepareSession: secondPrepareSession,
+    });
+
+    expect(second).not.toBe(first);
+    await expect(first).resolves.toEqual({ ok: true, sessionId: "session-legacy-1" });
+    await expect(second).resolves.toEqual({ ok: true, sessionId: "session-legacy-2" });
+    expect(firstPrepareSession).toHaveBeenCalledTimes(1);
+    expect(secondPrepareSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives concurrent admissions different generated names so neither reuses the other's worktree", async () => {
+    const effectiveLocation = {
+      mode: "sibling" as const,
+      customPath: null,
+      appWorktreesDir: null,
+      prefix: "zcode/",
+      baseBranchDefault: null,
+      hasProjectOverride: false,
+    };
+    // The generator consumes rolls in groups of three (adjective, pattern, noun): the second
+    // selection first meets the first name (reserved) and then rolls a different one.
+    const rolls = (values: number[]) => {
+      let index = 0;
+      return () => values[index++] ?? 0.99;
+    };
+    const chooseName = (values: number[]) =>
+      generateWorktreeBranchName({
+        isTaken: (raw) =>
+          isComposerWorktreeNameReserved({
+            workspaceKey: WORKSPACE_KEY,
+            workspacePath: WORKSPACE_KEY,
+            branchName: composeBranchName(effectiveLocation.prefix, raw),
+            effectiveLocation,
+          }),
+        random: rolls(values),
+      });
+    const firstRaw = chooseName([0, 0, 0]);
+    const first = composeBranchName(effectiveLocation.prefix, firstRaw);
+    const pendingPrepare: Array<(sessionId: string) => void> = [];
+    const prepareSession = () => new Promise<string>((resolve) => pendingPrepare.push(resolve));
+    const admit = (branchName: string) =>
+      beginWorktreePipelineCreation({
+        gitService,
+        workspaceKey: WORKSPACE_KEY,
+        workspacePath: WORKSPACE_KEY,
+        effectiveLocation,
+        branchName,
+        baseBranch: PARAMS.baseBranch,
+        baseFromHeadDefault: false,
+        queuedPromptPreview: branchName,
+        // Distinct submissions: a shared submission key would dedupe the second admission into the first.
+        submissionId: `submission-${branchName}`,
+        prepareSession,
+        formatMessage: (id: string) => id,
+      });
+    createWorktree.mockImplementation(
+      async ({ targetPath, branchName }) =>
+        ({
+          ok: true,
+          worktreePath: targetPath,
+          branchName,
+          issues: [],
+        }) satisfies GitWorktreeCreateResult,
+    );
+    // Both admissions are in flight before either Git call or store entry exists.
+    const firstAdmission = admit(first);
+    const secondRaw = chooseName([0, 0, 0, 0.99, 0.99, 0.99]);
+    const second = composeBranchName(effectiveLocation.prefix, secondRaw);
+    expect(second).not.toBe(first);
+    const secondAdmission = admit(second);
+    expect(
+      isComposerWorktreeNameReserved({
+        workspaceKey: WORKSPACE_KEY,
+        workspacePath: WORKSPACE_KEY,
+        branchName: first,
+        effectiveLocation,
+      }),
+    ).toBe(true);
+
+    pendingPrepare[0]!("session-first");
+    pendingPrepare[1]!("session-second");
+    await expect(firstAdmission).resolves.toEqual({ ok: true, sessionId: "session-first" });
+    await expect(secondAdmission).resolves.toEqual({ ok: true, sessionId: "session-second" });
+    await vi.waitFor(() => expect(currentPipeline("session-first")?.status).toBe("ready"));
+    await vi.waitFor(() => expect(currentPipeline("session-second")?.status).toBe("ready"));
+
+    const targets = createWorktree.mock.calls.map(([params]) => params.targetPath);
+    expect(new Set(targets).size).toBe(2);
+    expect(currentPipeline("session-first")).toMatchObject({ existing: false });
+    expect(currentPipeline("session-second")).toMatchObject({ existing: false });
+    expect(currentPipeline("session-first")?.params?.targetPath).not.toBe(
+      currentPipeline("session-second")?.params?.targetPath,
+    );
+  });
+
+  it("releases an admission's name claim when preparation fails before the store entry exists", async () => {
+    const effectiveLocation = {
+      mode: "sibling" as const,
+      customPath: null,
+      appWorktreesDir: null,
+      prefix: "zcode/",
+      baseBranchDefault: null,
+      hasProjectOverride: false,
+    };
+    const reserved = () =>
+      isComposerWorktreeNameReserved({
+        workspaceKey: WORKSPACE_KEY,
+        workspacePath: WORKSPACE_KEY,
+        branchName: PARAMS.branchName,
+        effectiveLocation,
+      });
+    const result = await beginWorktreePipelineCreation({
+      gitService,
+      workspaceKey: WORKSPACE_KEY,
+      workspacePath: WORKSPACE_KEY,
+      effectiveLocation,
+      branchName: PARAMS.branchName,
+      baseBranch: PARAMS.baseBranch,
+      baseFromHeadDefault: false,
+      queuedPromptPreview: "frozen input",
+      prepareSession: vi.fn(async () => {
+        throw new Error("host unavailable");
+      }),
+      formatMessage: (id: string) => id,
+    });
+    expect(result).toEqual({ ok: false });
+    expect(reserved()).toBe(false);
+  });
+
+  it("keeps a live pipeline's name reserved and fails an existing-worktree reuse of another session's directory", async () => {
+    useComposerWorktreePipelineStore.getState().startPipeline(WORKSPACE_KEY, {
+      status: "creating",
+      sessionId: "session-owner",
+      params: { ...PARAMS, attemptId: "attempt-owner" },
+      createdAt: 1,
+    });
+    useComposerWorktreePipelineStore
+      .getState()
+      .markReady(WORKSPACE_KEY, PARAMS.targetPath, false, "session-owner", "attempt-owner");
+    expect(
+      isComposerWorktreeNameReserved({
+        workspaceKey: WORKSPACE_KEY,
+        workspacePath: WORKSPACE_KEY,
+        branchName: PARAMS.branchName,
+        effectiveLocation: {
+          mode: "sibling",
+          customPath: null,
+          appWorktreesDir: null,
+          prefix: "zcode/",
+          baseBranchDefault: null,
+          hasProjectOverride: false,
+        },
+      }),
+    ).toBe(true);
+
+    createWorktree.mockResolvedValue({
+      ok: false,
+      worktreePath: null,
+      branchName: null,
+      issues: [{ code: "branch-in-other-worktree", message: "branch checked out elsewhere" }],
+    } satisfies GitWorktreeCreateResult);
+    listWorktrees.mockResolvedValue({
+      isGitAvailable: true,
+      isRepository: true,
+      worktrees: [worktreeEntry(PARAMS.targetPath)],
+    });
+    useComposerWorktreePipelineStore.getState().startPipeline(WORKSPACE_KEY, {
+      status: "creating",
+      sessionId: "session-intruder",
+      params: { ...PARAMS, attemptId: "attempt-intruder" },
+      createdAt: 2,
+    });
+
+    const outcome = await startComposerWorktreePipeline({
+      gitService,
+      workspaceKey: WORKSPACE_KEY,
+      sessionId: "session-intruder",
+      params: { ...PARAMS, attemptId: "attempt-intruder" },
+      formatMessage: (id: string) => id,
+    });
+
+    expect(outcome).toBe("failed");
+    expect(currentPipeline("session-intruder")).toMatchObject({
+      status: "failed",
+      failureMessage: "worktreeSetup.reservation.conflict",
+    });
+    expect(currentPipeline("session-owner")).toMatchObject({ status: "ready" });
   });
 
   it("reuses the in-flight promise for the same workspace (idempotent double-send)", async () => {
@@ -1842,112 +2090,121 @@ describe("BUG-GWT-005: frozen submission admission after failed creation → Ret
     }
   });
 
-  it("BUG-GWT-005: a New-task send while a stuck-ready pipeline exists routes into that prepared session instead of vanishing", async () => {
-    // RT-C5 silent-loss trigger: with a stuck-ready pipeline in the workspace, a Send from the
-    // "New task" empty composer was claimed (editor cleared), joined the ready entry without any
-    // Host call, and then never dispatched — no session, no recovery, no RPC. The submission must
-    // instead be admitted through the same prepared session
-    // (specs/composer-worktree-setup-steps.md §Contract "New task send while a pipeline exists").
-    const stuckSessionId = "session-stuck-ready";
-    const onSendText = vi.fn(async () => "sent" as const);
-    const onPrepareWorktreeSession = vi.fn(async () => "unused-fresh-session");
-    const intent: ComposerDraftWorktreeIntent = {
-      workspaceKey: WORKSPACE_KEY,
-      beginCreation: (queuedPromptPreview, prepareSession, syncPreparedWorktree, submissionId) =>
-        beginWorktreePipelineCreation({
-          gitService,
-          workspaceKey: WORKSPACE_KEY,
-          workspacePath: WORKSPACE_KEY,
-          effectiveLocation: {
-            mode: "sibling",
-            customPath: null,
-            appWorktreesDir: null,
-            prefix: "zcode/",
-            baseBranchDefault: null,
-            hasProjectOverride: false,
+  it.each(["creating", "ready"] as const)(
+    "a new chat creates its own worktree when another pipeline is %s",
+    async (previousStatus) => {
+      const stuckSessionId = "session-stuck-ready";
+      const onSendText = vi.fn(async () => "sent" as const);
+      const onPrepareWorktreeSession = vi.fn(async () => "session-fresh-worktree");
+      const intent: ComposerDraftWorktreeIntent = {
+        workspaceKey: WORKSPACE_KEY,
+        beginCreation: (queuedPromptPreview, prepareSession, syncPreparedWorktree, submissionId) =>
+          beginWorktreePipelineCreation({
+            gitService,
+            workspaceKey: WORKSPACE_KEY,
+            workspacePath: WORKSPACE_KEY,
+            effectiveLocation: {
+              mode: "sibling",
+              customPath: null,
+              appWorktreesDir: null,
+              prefix: "zcode/",
+              baseBranchDefault: null,
+              hasProjectOverride: false,
+            },
+            branchName: PARAMS.branchName,
+            baseBranch: PARAMS.baseBranch,
+            baseFromHeadDefault: false,
+            queuedPromptPreview,
+            prepareSession,
+            ...(syncPreparedWorktree ? { syncPreparedWorktree } : {}),
+            ...(submissionId ? { submissionId } : {}),
+            formatMessage: (id) => id,
+          }),
+      };
+      try {
+        // A previous preparation is stuck ready: its frozen submission lives only in its
+        // session-scoped recovery record, and the entry still owns a validated worktree path.
+        useComposerWorktreePipelineStore.getState().startPipeline(WORKSPACE_KEY, {
+          status: previousStatus,
+          sessionId: stuckSessionId,
+          params: {
+            ...PARAMS,
+            branchName: "zcode/old",
+            targetPath: "/dev/alpha-worktrees/zcode-old",
+            attemptId: "attempt-stuck",
           },
-          branchName: PARAMS.branchName,
-          baseBranch: PARAMS.baseBranch,
-          baseFromHeadDefault: false,
-          queuedPromptPreview,
-          prepareSession,
-          ...(syncPreparedWorktree ? { syncPreparedWorktree } : {}),
-          ...(submissionId ? { submissionId } : {}),
-          formatMessage: (id) => id,
-        }),
-    };
-    try {
-      // A previous preparation is stuck ready: its frozen submission lives only in its
-      // session-scoped recovery record, and the entry still owns a validated worktree path.
-      useComposerWorktreePipelineStore.getState().startPipeline(WORKSPACE_KEY, {
-        status: "ready",
-        sessionId: stuckSessionId,
-        params: { ...PARAMS, attemptId: "attempt-stuck" },
-        worktreePath: PARAMS.targetPath,
-        createdAt: 1,
-      });
-      render(
-        createElement(
-          ZCodeIntlProvider,
-          { initialLocale: "en-US" },
-          createElement(
-            ComposerDraftWorktreeIntentContext.Provider,
-            { value: { current: intent } },
-            createElement(ConversationComposer, {
-              composerDraft: { text: "", updatedAt: 0 },
-              draftMode: true,
-              onSelectModel: vi.fn(),
-              onSelectThought: vi.fn(),
-              onSendText,
-              onPrepareWorktreeSession,
-              onWorktreePreparationFailed: vi.fn(async () => undefined),
-              onStop: vi.fn(),
-              onSwitchMode: vi.fn(),
-              provider: undefined,
-              sessionId: null,
-              snapshot: null,
-              submissionReady: true,
-              updateComposerContent: vi.fn(),
-              replaceComposerDraft: vi.fn(),
-              workspacePath: WORKSPACE_KEY,
-            }),
-          ),
-        ),
-      );
-      await act(async () => {
-        composerMount.editorProps.at(-1)!.onSubmit!("New task text");
-        await flushAsyncWork();
-      });
-      await act(async () => {
-        await vi.waitFor(() => {
-          expect(onSendText).toHaveBeenCalledTimes(1);
+          worktreePath: "/dev/alpha-worktrees/zcode-old",
+          createdAt: 1,
         });
-        await flushAsyncWork();
-      });
+        const previousPipeline = currentPipeline(stuckSessionId);
+        createWorktree.mockResolvedValue({
+          ok: true,
+          worktreePath: PARAMS.targetPath,
+          branchName: PARAMS.branchName,
+          issues: [],
+        });
+        render(
+          createElement(
+            ZCodeIntlProvider,
+            { initialLocale: "en-US" },
+            createElement(
+              ComposerDraftWorktreeIntentContext.Provider,
+              { value: { current: intent } },
+              createElement(ConversationComposer, {
+                composerDraft: { text: "", updatedAt: 0 },
+                draftMode: true,
+                onSelectModel: vi.fn(),
+                onSelectThought: vi.fn(),
+                onSendText,
+                onPrepareWorktreeSession,
+                onWorktreePreparationFailed: vi.fn(async () => undefined),
+                onStop: vi.fn(),
+                onSwitchMode: vi.fn(),
+                provider: undefined,
+                sessionId: null,
+                snapshot: null,
+                submissionReady: true,
+                updateComposerContent: vi.fn(),
+                replaceComposerDraft: vi.fn(),
+                workspacePath: WORKSPACE_KEY,
+              }),
+            ),
+          ),
+        );
+        await act(async () => {
+          composerMount.editorProps.at(-1)!.onSubmit!("New task text");
+          await flushAsyncWork();
+        });
+        await act(async () => {
+          await vi.waitFor(() => {
+            expect(onSendText).toHaveBeenCalledTimes(1);
+          });
+          await flushAsyncWork();
+        });
 
-      // The ready entry was joined (no new reservation, no Git call), and the submission was
-      // admitted through the stuck prepared session exactly once — not dropped.
-      expect(onPrepareWorktreeSession).not.toHaveBeenCalled();
-      expect(createWorktree).not.toHaveBeenCalled();
-      expect(onSendText).toHaveBeenCalledTimes(1);
-      expect(onSendText).toHaveBeenCalledWith(
-        "New task text",
-        expect.objectContaining({
-          executionWorktree: { path: PARAMS.targetPath, branchName: PARAMS.branchName },
-          preparedSessionId: stuckSessionId,
-        }),
-      );
-      expect(currentPipeline(stuckSessionId)?.status).toBe("consumed");
-      // The message was delivered, so it must not linger in any recovery record.
-      expect(
-        readV4WorktreeRecoveryDrafts(WORKSPACE_KEY, undefined, stuckSessionId).some(
-          (entry) => entry.draft.text === "New task text",
-        ),
-      ).toBe(false);
-    } finally {
-      window.localStorage.clear();
-    }
-  });
+        expect(onPrepareWorktreeSession).toHaveBeenCalledTimes(1);
+        expect(createWorktree).toHaveBeenCalledTimes(1);
+        expect(onSendText).toHaveBeenCalledTimes(1);
+        expect(onSendText).toHaveBeenCalledWith(
+          "New task text",
+          expect.objectContaining({
+            executionWorktree: { path: PARAMS.targetPath, branchName: PARAMS.branchName },
+            preparedSessionId: "session-fresh-worktree",
+          }),
+        );
+        expect(currentPipeline(stuckSessionId)).toEqual(previousPipeline);
+        expect(currentPipeline("session-fresh-worktree")?.status).toBe("consumed");
+        // The message was delivered, so it must not linger in any recovery record.
+        expect(
+          readV4WorktreeRecoveryDrafts(WORKSPACE_KEY, undefined, "session-fresh-worktree").some(
+            (entry) => entry.draft.text === "New task text",
+          ),
+        ).toBe(false);
+      } finally {
+        window.localStorage.clear();
+      }
+    },
+  );
 
   it("BUG-GWT-005: the stale Host failed seed for the retried attempt cannot roll back Retry and strand the frozen submission (RT4-C5 live path)", async () => {
     // RT4-C5 live CDP evidence: clicking the real Retry button started the new attempt
@@ -2428,3 +2685,157 @@ describe("worktree failure classification and queue-time preflight", () => {
     expect(result).toEqual({ ok: true, sessionId: "session-preflight-degraded" });
   });
 });
+describe("shared-context-only worktree submission recovery", () => {
+  const SHARED_CONTEXT_ID = "context-shared-recovery";
+  // Minimal pending share import on the composer snapshot; the other fields are the ones the
+  // composer reads on render, and no session-level state is needed for the send path.
+  const snapshotWithSharedContext = (pending: boolean) =>
+    ({
+      sessionId: null,
+      control: {
+        phase: "completedSuccess",
+        sessionEnded: true,
+        canStop: false,
+        stopState: "idle",
+        stopTargetKind: "unknown",
+        activeWorks: [],
+        lastError: null,
+        apiRetry: null,
+      },
+      inputRouting: { mode: "startNow" },
+      meta: { title: "Session", titleSource: "generated" },
+      config: { provider: "", model: "", thought: "", followupMode: "queue", mode: "build" },
+      usage: {
+        contextWindow: null,
+        cumulative: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      },
+      queue: { items: [], autoDrain: true },
+      rows: { totalCount: 0 },
+      sharedContextImport: pending
+        ? {
+            contextId: SHARED_CONTEXT_ID,
+            title: "Shared plan",
+            shareUrl: "https://zcode.example/cn/share/shared1",
+            status: "pending",
+          }
+        : undefined,
+    }) as never;
+
+  it("keeps the shared-context reference in the recovery record and restores it for the retry send", async () => {
+    const preparedSessionId = "session-prepared-shared";
+    const onSendText = vi.fn(async () => "sent" as const);
+    const onPrepareWorktreeSession = vi.fn(async () => preparedSessionId);
+    const intent: ComposerDraftWorktreeIntent = {
+      workspaceKey: WORKSPACE_KEY,
+      beginCreation: (queuedPromptPreview, prepareSession, syncPreparedWorktree, submissionId) =>
+        beginWorktreePipelineCreation({
+          gitService,
+          workspaceKey: WORKSPACE_KEY,
+          workspacePath: WORKSPACE_KEY,
+          effectiveLocation: {
+            mode: "sibling",
+            customPath: null,
+            appWorktreesDir: null,
+            prefix: "zcode/",
+            baseBranchDefault: null,
+            hasProjectOverride: false,
+          },
+          branchName: PARAMS.branchName,
+          baseBranch: PARAMS.baseBranch,
+          baseFromHeadDefault: false,
+          queuedPromptPreview,
+          prepareSession,
+          ...(syncPreparedWorktree ? { syncPreparedWorktree } : {}),
+          ...(submissionId ? { submissionId } : {}),
+          formatMessage: (id) => id,
+        }),
+    };
+    const composerElement = (props: {
+      draftMode: boolean;
+      sessionId: string | null;
+      pending: boolean;
+    }) =>
+      createElement(
+        ZCodeIntlProvider,
+        { initialLocale: "en-US" },
+        createElement(
+          ComposerDraftWorktreeIntentContext.Provider,
+          { value: { current: intent } },
+          // A remount is a fresh composer instance, as on first-send view promotion or reload.
+          createElement(ConversationComposer, {
+            key: props.draftMode ? "draft" : "prepared",
+            composerDraft: { text: "", updatedAt: 0 },
+            draftMode: props.draftMode,
+            onSelectModel: vi.fn(),
+            onSelectThought: vi.fn(),
+            onSendText,
+            onPrepareWorktreeSession,
+            onWorktreePreparationFailed: vi.fn(async () => undefined),
+            onStop: vi.fn(),
+            onSwitchMode: vi.fn(),
+            provider: undefined,
+            sessionId: props.sessionId,
+            snapshot: snapshotWithSharedContext(props.pending),
+            submissionReady: true,
+            updateComposerContent: vi.fn(),
+            replaceComposerDraft: vi.fn(),
+            workspacePath: WORKSPACE_KEY,
+          }),
+        ),
+      );
+    try {
+      useDraftBranchIntentStore.getState().setWorktreeIntentActive(WORKSPACE_KEY, true);
+      // Git preparation fails for the shared-context-only submission (no typed text).
+      createWorktree.mockRejectedValueOnce(
+        new Error(`EACCES: permission denied, mkdir '${PARAMS.targetPath}'`),
+      );
+      const view = render(composerElement({ draftMode: true, sessionId: null, pending: true }));
+      await act(async () => {
+        composerMount.editorProps.at(-1)!.onSubmit!("");
+        await flushSharedContextWork();
+      });
+      await act(async () => {
+        await vi.waitFor(() => {
+          expect(currentPipeline(preparedSessionId)?.status).toBe("failed");
+        });
+      });
+      expect(onSendText).not.toHaveBeenCalled();
+      // The recovery record keeps the reference; without it the draft is dropped on persist.
+      const recovered = readV4WorktreeRecoveryDrafts(WORKSPACE_KEY, undefined, preparedSessionId);
+      expect(recovered).toHaveLength(1);
+      expect(recovered[0]?.draft.recoveryContexts?.sharedContextRefs).toEqual([
+        { kind: "shared_context_import", context_id: SHARED_CONTEXT_ID },
+      ]);
+
+      // App reload: the module-scope armed continuation is gone and the snapshot no longer offers
+      // the pending import, so only the recovery record can re-attach the shared context.
+      releaseWorktreeSendContinuation(WORKSPACE_KEY, preparedSessionId);
+      view.rerender(
+        composerElement({ draftMode: false, sessionId: preparedSessionId, pending: false }),
+      );
+      await act(async () => {
+        await flushSharedContextWork();
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Restore", exact: true }));
+        await flushSharedContextWork();
+      });
+      await act(async () => {
+        composerMount.editorProps.at(-1)!.onSubmit!("");
+        await flushSharedContextWork();
+      });
+      expect(onSendText).toHaveBeenCalledWith(
+        "",
+        expect.objectContaining({
+          sharedContextRefs: [{ kind: "shared_context_import", context_id: SHARED_CONTEXT_ID }],
+        }),
+      );
+    } finally {
+      window.localStorage.clear();
+    }
+  });
+});
+
+function flushSharedContextWork() {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
