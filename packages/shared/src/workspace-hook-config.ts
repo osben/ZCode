@@ -14,6 +14,9 @@ export const WORKSPACE_HOOK_EVENT_NAMES = [
   "PostToolUse",
   "PostToolUseFailure",
   "Stop",
+  "PreCompact",
+  "PostCompact",
+  "SessionEnd",
 ] as const;
 
 export type WorkspaceHookEventName = (typeof WORKSPACE_HOOK_EVENT_NAMES)[number];
@@ -73,6 +76,9 @@ export const workspaceHooksConfigSchema = z
         PostToolUse: z.array(workspaceHookMatcherConfigSchema).optional(),
         PostToolUseFailure: z.array(workspaceHookMatcherConfigSchema).optional(),
         Stop: z.array(workspaceHookMatcherConfigSchema).optional(),
+        PreCompact: z.array(workspaceHookMatcherConfigSchema).optional(),
+        PostCompact: z.array(workspaceHookMatcherConfigSchema).optional(),
+        SessionEnd: z.array(workspaceHookMatcherConfigSchema).optional(),
       })
       .strict()
       .optional(),

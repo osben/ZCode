@@ -32,12 +32,12 @@ export function createSessionMailboxHookRegistrations(options: {
     }
 
     const additionalContext = formatMailboxMessages(messages);
+    // Top-level additionalContext (not hookSpecificOutput): the shared callback serves several
+    // events, and HookSpecificOutput is a per-event discriminated union without a variant for
+    // events that do not support scoped output. Top-level context has identical runtime effect.
     return {
       ...(input.hookEventName === HookEventName.Stop ? { continue: true } : {}),
-      hookSpecificOutput: {
-        additionalContext,
-        hookEventName: input.hookEventName,
-      },
+      additionalContext,
     };
   };
 

@@ -14,6 +14,9 @@ export const WORKSPACE_HOOK_SCHEMA_FIELDS = {
     "PostToolUse",
     "PostToolUseFailure",
     "Stop",
+    "PreCompact",
+    "PostCompact",
+    "SessionEnd",
   ],
   process: ["type", "command", "enabled", "args", "timeoutMs", "statusMessage"],
   command: [
@@ -194,6 +197,9 @@ export const workspaceHookEventNameSchema = z.enum([
   "PostToolUse",
   "PostToolUseFailure",
   "Stop",
+  "PreCompact",
+  "PostCompact",
+  "SessionEnd",
 ]);
 
 const canonicalEntryBaseShape = {

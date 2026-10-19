@@ -287,3 +287,6 @@ docs/testing/unit-test-review/ui-tail.jsonl
 packages/ui/src/project-sidebar/TaskGroupedView.tsx
 packages/ui/src/root/useRemoteWorkspaceHistory.ts
 packages/ui/src/side-pane-full-view/ConversationHost.tsx
+
+apps/zcode-cli/packages/core/src/runtime/methods/compact-active.ts
+apps/zcode-cli/packages/core/src/runtime/methods/index.ts

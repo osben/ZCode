@@ -16,7 +16,7 @@ import { z } from "zod";
 
 export const WORKSPACE_HOOK_TRUST_STORE_SCHEMA_VERSION = 1 as const;
 
-/** Keep in sync with the contracts workspaceHookEventNameSchema (7 existing events). */
+/** Keep in sync with the contracts workspaceHookEventNameSchema (10 existing events). */
 const workspaceHookEventNameSchema = z.enum([
   "SessionStart",
   "UserPromptSubmit",
@@ -25,6 +25,9 @@ const workspaceHookEventNameSchema = z.enum([
   "PostToolUse",
   "PostToolUseFailure",
   "Stop",
+  "PreCompact",
+  "PostCompact",
+  "SessionEnd",
 ]);
 
 const nonEmptyStringSchema = z.string().trim().min(1);

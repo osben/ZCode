@@ -1,19 +1,24 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   HookEventName,
   READ_SESSION_CONTEXT_TOOL_NAME,
   RESPOND_TO_COORDINATOR_TOOL_NAME,
   SEND_MESSAGE_TOOL_NAME,
   SessionEventType,
+  createRootTraceContext,
   createSessionId,
   modelMessageContentToText,
+  type ExecutionPort,
+  type ExecutionResult,
+  type HookInput,
   type ModelMessageContent,
+  type SessionEvent,
   type CoordinatorResponsePort,
   type SubagentPort,
   type SubagentSendMessageRequest,
 } from "@zcode/contracts";
 import { createTestAgentRuntime } from "./test-agent-runtime.js";
-import { createInMemoryHookRunner } from "../src/hooks/index.js";
+import { createConfiguredHookRunner, createInMemoryHookRunner } from "../src/hooks/index.js";
 import { createTestSessionEventStore } from "./test-event-store.js";
 import { respondToCoordinatorToolEntry } from "../src/tool/handlers/respond-to-coordinator.js";
 import { createTestModelFactory } from "./test-runtime-model.js";
@@ -339,6 +344,97 @@ describe("AgentRuntime lifecycle hooks", () => {
     expect(result.response).toBe("answer 4");
     expect(modelCallCount).toBe(4);
     expect(hookCallCount).toBe(4);
+  });
+
+  it("runs SessionEnd hooks with the close reason", async () => {
+    const sessionId = createSessionId("runtime-session-end-hook");
+    const eventStore = createTestSessionEventStore();
+    const inputs: HookInput[] = [];
+    const hookRunner = createInMemoryHookRunner({
+      hooks: [
+        {
+          event: HookEventName.SessionEnd,
+          callback: async (input) => {
+            inputs.push(input);
+            return undefined;
+          },
+        },
+      ],
+    });
+    const runtime = createTestAgentRuntime(sessionId, {}, { eventStore, hookRunner });
+
+    await (
+      runtime as unknown as { runSessionEndHooks(traceContext: unknown): Promise<unknown> }
+    ).runSessionEndHooks(createRootTraceContext({ sessionId }));
+
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]).toMatchObject({
+      hookEventName: HookEventName.SessionEnd,
+      reason: "close",
+      sessionId,
+    });
+  });
+
+  it("caps SessionEnd hooks with a five second shared budget", async () => {
+    vi.useFakeTimers();
+    try {
+      const sessionId = createSessionId("runtime-session-end-hook-budget");
+      const eventStore = createTestSessionEventStore();
+      const hookEvents: SessionEvent[] = [];
+      const started = Promise.withResolvers<AbortSignal>();
+      const executionPort: ExecutionPort = {
+        run: async (_request, options) => {
+          const signal = options?.signal;
+          expect(signal).toBeDefined();
+          started.resolve(signal!);
+          return new Promise<ExecutionResult>((_resolve, reject) => {
+            signal!.addEventListener(
+              "abort",
+              () => reject(new Error("execution aborted")),
+              { once: true },
+            );
+          });
+        },
+      };
+      const runner = createConfiguredHookRunner({
+        config: {
+          enabled: true,
+          events: {
+            SessionEnd: [{ hooks: [{ type: "process", command: "slow-session-end-hook" }] }],
+          },
+          maxOutputBytes: 4096,
+          timeoutMs: 60_000,
+        },
+        emitEvent: async (event) => {
+          hookEvents.push(event);
+        },
+        executionPort,
+        getWorkingDirectory: () => "/workspace",
+      });
+      const runtime = createTestAgentRuntime(sessionId, {}, {
+        eventStore,
+        hookRunner: runner ?? undefined,
+      });
+
+      const dispatch = (
+        runtime as unknown as { runSessionEndHooks(traceContext: unknown): Promise<unknown> }
+      ).runSessionEndHooks(createRootTraceContext({ sessionId }));
+      const executionSignal = await started.promise;
+      expect(executionSignal.aborted).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(executionSignal.aborted).toBe(true);
+      await dispatch;
+      expect(hookEvents).toContainEqual(
+        expect.objectContaining({
+          type: SessionEventType.HookRunFailed,
+          payload: expect.objectContaining({ outcome: "cancelled" }),
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("injects built-in session mailbox context when messaging is enabled", async () => {

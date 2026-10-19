@@ -247,7 +247,7 @@ Lifecycle additional context 以 `hook_context` attachment 注入 message histor
 | Shared 类型（UI）      | `packages/shared/src/hooks.ts`                                                                |
 | 插件兼容规范           | `docs/plugin-hooks-compat.md`                                                                 |
 | v2 设计 / 验收         | `apps/zcode-cli/docs/design/v2/hooks.md`                                                      |
-| 7 事件合同测试         | `apps/zcode-cli/packages/core/tests/hooks-seven-events.test.ts`                               |
+| 10 事件合同测试        | `apps/zcode-cli/packages/core/tests/hooks-event-contract.test.ts`                             |
 | 整体桌面 E2E           | `packages/desktop/test/e2e/conversation-session/conversation-session-hooks-lifecycle.test.ts` |
 
 ---

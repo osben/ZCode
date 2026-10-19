@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { ModelToolSideEffectScope } from "../model/index.js";
 import type { CollaborationMode, RiskLevel } from "../interfaces/session.port.js";
 import type { PermissionUpdate } from "../interfaces/permission.port.js";
+import type { CompactTrigger } from "../compact/index.js";
 import type { SessionId, ToolCallId, TraceId, TurnId } from "../interfaces/shared.js";
 
 export const HookEventName = {
@@ -12,6 +13,9 @@ export const HookEventName = {
   PostToolUse: "PostToolUse",
   PostToolUseFailure: "PostToolUseFailure",
   Stop: "Stop",
+  PreCompact: "PreCompact",
+  PostCompact: "PostCompact",
+  SessionEnd: "SessionEnd",
 } as const;
 
 export type HookEventName = (typeof HookEventName)[keyof typeof HookEventName];
@@ -138,6 +142,26 @@ export interface StopHookInput extends BaseHookInput {
   toolCallCount: number;
 }
 
+export interface PreCompactHookInput extends BaseHookInput {
+  customInstructions?: string;
+  hookEventName: typeof HookEventName.PreCompact;
+  preCompactTokenCount: number;
+  trigger: CompactTrigger;
+}
+
+export interface PostCompactHookInput extends BaseHookInput {
+  hookEventName: typeof HookEventName.PostCompact;
+  postCompactTokenCount: number;
+  preCompactTokenCount: number;
+  trigger: CompactTrigger;
+}
+
+export interface SessionEndHookInput extends BaseHookInput {
+  hookEventName: typeof HookEventName.SessionEnd;
+  /** Only "close" today; reserved for distinguishing exit causes later. */
+  reason: "close";
+}
+
 export type HookInput =
   | PreToolUseHookInput
   | PermissionRequestHookInput
@@ -145,7 +169,10 @@ export type HookInput =
   | PostToolUseFailureHookInput
   | UserPromptSubmitHookInput
   | SessionStartHookInput
-  | StopHookInput;
+  | StopHookInput
+  | PreCompactHookInput
+  | PostCompactHookInput
+  | SessionEndHookInput;
 
 export type PermissionRequestHookDecision =
   | {
@@ -417,6 +444,9 @@ export const HooksRuntimeConfigPatchSchema = z.object({
       PostToolUse: z.array(HookMatcherConfigSchema).optional(),
       PostToolUseFailure: z.array(HookMatcherConfigSchema).optional(),
       Stop: z.array(HookMatcherConfigSchema).optional(),
+      PreCompact: z.array(HookMatcherConfigSchema).optional(),
+      PostCompact: z.array(HookMatcherConfigSchema).optional(),
+      SessionEnd: z.array(HookMatcherConfigSchema).optional(),
     })
     .strict()
     .optional(),
