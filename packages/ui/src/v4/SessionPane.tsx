@@ -6193,6 +6193,7 @@ export function SessionPane({
                             }
                             path={sessionExecutionWorktree.path}
                             workspaceIdentity={workspaceIdentity}
+                            remoteSessionId={remoteSessionId}
                             onOpenWorktree={onCreateTaskInWorkspace}
                           />
                         ) : null}

@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/tooltip.js";
 import { toast } from "@/components/ui/toast.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { bindRemoteWorkspaceIdentity } from "@/store/remoteWorkspaceSessionStore.js";
 
 /** Persistent first-in-history summary after Host activation clears the preparation marker. */
 export function ConversationWorktreeCreatedNotice({
@@ -17,6 +18,7 @@ export function ConversationWorktreeCreatedNotice({
   currentBranchName,
   path,
   workspaceIdentity,
+  remoteSessionId,
   onOpenWorktree,
 }: {
   branchName?: string;
@@ -25,6 +27,8 @@ export function ConversationWorktreeCreatedNotice({
   path: string;
   /** Parent workspace identity; a remote parent yields a remote identity for the worktree path. */
   workspaceIdentity?: string;
+  /** Remote session bound to the parent identity; required to route a remote worktree. */
+  remoteSessionId?: string | null;
   onOpenWorktree?: (path: string, workspaceIdentity?: string) => void | Promise<void>;
 }) {
   const { intl } = useZCodeIntl();
@@ -50,12 +54,24 @@ export function ConversationWorktreeCreatedNotice({
       openFailed();
       return;
     }
+    // A remote worktree tab resolves its session only through the identity binding. Bind the
+    // rebased identity to the parent's session before the open flow starts the draft; without it
+    // the new tab stays remote-waiting and cannot run. A remote parent with no bound session fails
+    // closed for the same reason.
+    const parentRemoteSessionId = remoteSessionId?.trim() ?? "";
+    if (worktreeIdentity !== null) {
+      if (!parentRemoteSessionId) {
+        openFailed();
+        return;
+      }
+      bindRemoteWorkspaceIdentity(worktreeIdentity, parentRemoteSessionId);
+    }
     try {
       await onOpenWorktree(path, worktreeIdentity ?? undefined);
     } catch {
       openFailed();
     }
-  }, [onOpenWorktree, openFailed, path, workspaceIdentity]);
+  }, [onOpenWorktree, openFailed, path, remoteSessionId, workspaceIdentity]);
 
   return (
     <div

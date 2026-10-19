@@ -263,9 +263,11 @@ muted Git worktree marker, the created label and branch, followed by an icon-onl
 tooltip and accessible name. The action opens the exact worktree path through the existing
 path-aware workspace-open contract; it must not simulate a click on the generic Open workspace
 picker. For a remote parent workspace the action also passes the worktree's own remote identity
-(the parent identity re-pointed at the worktree path), because remote identities embed the path. A
-parent identity that claims the remote form but does not parse fails closed: the action shows the
-open-failed toast and never falls back to opening the remote path as a local workspace.
+(the parent identity re-pointed at the worktree path), because remote identities embed the path. The
+notice binds the worktree identity to the parent's bound remote session before it calls the open path,
+because the identity alone does not route the new tab. A parent identity that
+claims the remote form but does not parse, or a remote parent with no bound session, fails closed: the
+action shows the open-failed toast and never falls back to opening the remote path as a local workspace.
 Do not show a worktree duration unless the execution-worktree fact provides one; assistant Thought
 duration is not worktree timing.
 

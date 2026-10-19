@@ -7,6 +7,7 @@ import en from "@/i18n/locales/en-US.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { toast } from "@/components/ui/toast.js";
 import { ConversationWorktreeCreatedNotice } from "@/v4/ConversationWorktreeCreatedNotice.js";
+import { useRemoteWorkspaceSessionStore } from "@/store/remoteWorkspaceSessionStore.js";
 
 vi.mock("@/components/ui/toast.js", () => ({ toast: vi.fn() }));
 
@@ -23,6 +24,7 @@ const OPEN_LABEL = en["commandCenter.worktree.openExisting"];
 function renderNotice(props: {
   path: string;
   workspaceIdentity?: string;
+  remoteSessionId?: string | null;
   onOpenWorktree?: (path: string, workspaceIdentity?: string) => void | Promise<void>;
 }) {
   return render(
@@ -58,6 +60,7 @@ describe("ConversationWorktreeCreatedNotice open action", () => {
     renderNotice({
       path: "/home/dev/repo/.worktrees/feature-a",
       workspaceIdentity: "remote:ssh:devbox:22:dev:/home/dev/repo",
+      remoteSessionId: "session-devbox",
       onOpenWorktree,
     });
 
@@ -68,6 +71,28 @@ describe("ConversationWorktreeCreatedNotice open action", () => {
       "/home/dev/repo/.worktrees/feature-a",
       "remote:ssh:devbox:22:dev:/home/dev/repo/.worktrees/feature-a",
     );
+    // The rebased identity is bound to the parent's session before the open callback runs.
+    expect(
+      useRemoteWorkspaceSessionStore.getState().sessionIdByWorkspaceIdentity[
+        "remote:ssh:devbox:22:dev:/home/dev/repo/.worktrees/feature-a"
+      ],
+    ).toBe("session-devbox");
+  });
+
+  it("fails closed for a remote parent whose session is not bound yet", async () => {
+    const path = "/home/dev/repo/.worktrees/feature-a";
+    const onOpenWorktree = vi.fn();
+    renderNotice({
+      path,
+      workspaceIdentity: "remote:ssh:devbox:22:dev:/home/dev/repo",
+      onOpenWorktree,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: OPEN_LABEL }));
+
+    await waitFor(() => expect(toast).toHaveBeenCalledTimes(1));
+    expect(onOpenWorktree).not.toHaveBeenCalled();
+    expect(String(vi.mocked(toast).mock.calls[0]?.[0])).toContain(path);
   });
 
   it("fails closed for an unparseable remote identity instead of opening the path locally", async () => {
