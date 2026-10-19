@@ -1131,6 +1131,19 @@ describe("fork settings sidecar", () => {
     expect(readJsonFile(forkSettingsFile(home)).memoryIndexAsContext).toBe(false);
   });
 
+  it("reads resourceTelemetryEnabled as false by default and persists it in the sidecar", async () => {
+    const home = makeTempHome();
+    const service = await createSettingServiceInHome(home);
+
+    await expect(service.get()).resolves.toMatchObject({ resourceTelemetryEnabled: false });
+
+    await service.update({ resourceTelemetryEnabled: true });
+
+    expect(readJsonFile(forkSettingsFile(home)).resourceTelemetryEnabled).toBe(true);
+    expect(readJsonFile(settingsFile(home))).not.toHaveProperty("resourceTelemetryEnabled");
+    await expect(service.get()).resolves.toMatchObject({ resourceTelemetryEnabled: true });
+  });
+
   it("stores incognitoDefaults in the sidecar as a whole object and rejects partial writes", async () => {
     // The sidecar merges top-level keys only, so a partial object would replace the stored one and
     // drop the other capabilities; the patch schema therefore requires every capability.

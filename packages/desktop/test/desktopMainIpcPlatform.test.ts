@@ -146,6 +146,40 @@ describe("registerPlatformIpcHandlers", () => {
     });
   });
 
+  it("forwards the fork resourceTelemetryEnabled key through SyncAppSettings", async () => {
+    // appSettingsPatchSchema strips fork keys; the sync handler must admit this one so the Settings
+    // switch reaches main (specs/resource-telemetry-toggle.md).
+    const { registerPlatformIpcHandlers } = await import("../src/main/desktopMainIpcPlatform.js");
+    const syncAppSettings = vi.fn();
+
+    registerPlatformIpcHandlers({
+      logger: { info: vi.fn(), warn: vi.fn() },
+      applyApplicationLocale: vi.fn(async () => {}),
+      focusWorkspaceInExistingWindow: vi.fn(() => ({ activated: false })),
+      windowWorkspaceMap: new Map(),
+      windowUnreadCountMap: new Map(),
+      currentApplicationLocale: () => "en-US",
+      executeDesktopCommand: vi.fn(async () => {}),
+      acknowledgePostUpdateReleaseNotes: vi.fn(async () => {}),
+      syncTaskRealtimeWorkspaceKeys: vi.fn(),
+      getUpdateState: vi.fn(() => ({ status: "idle" })),
+      syncWebRemoteControlWorkspaces: vi.fn(),
+      syncWebRemoteControlTasks: vi.fn(),
+      deviceMid: "test-device-mid",
+      syncAppSettings,
+    });
+
+    const handler = electronMocks.handlers.get(PlatformChannels.SyncAppSettings);
+    expect(handler).toBeDefined();
+    handler?.({}, { resourceTelemetryEnabled: true, keepAwakeWhileRunning: false });
+    handler?.({}, { resourceTelemetryEnabled: "yes" });
+
+    expect(syncAppSettings).toHaveBeenCalledExactlyOnceWith({
+      resourceTelemetryEnabled: true,
+      keepAwakeWhileRunning: false,
+    });
+  });
+
   it("syncs macOS window controls when preload reports startup zoom metrics", async () => {
     const { registerPlatformIpcHandlers } = await import("../src/main/desktopMainIpcPlatform.js");
     const { syncWindowControlsOverlayForZoomLevel } =

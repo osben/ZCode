@@ -24,6 +24,10 @@ interface FinalArmsBridgeWindow extends Window {
   };
 }
 
+interface SyncAppSettingsWindow extends Window {
+  zcode?: { syncAppSettings?: (patch: { resourceTelemetryEnabled?: boolean }) => void };
+}
+
 const PROCESS_WINDOW_EVENT = PROCESS_RESOURCE_EVENT_NAMES.processWindow;
 const SYSTEM_WINDOW_EVENT = PROCESS_RESOURCE_EVENT_NAMES.systemWindow;
 const REQUIRED_ROLES = ["main", "renderer_main", "host"] as const;
@@ -42,6 +46,13 @@ describe("进程资源遥测 ARMS 角色事件", () => {
     this.timeout(WINDOW_WAIT_MS + 60_000);
 
     await waitForDefaultWorkspaceReady(30_000);
+    // Fork: resource telemetry is off by default (specs/resource-telemetry-toggle.md); turn it on
+    // through the same live sync path the Settings switch uses before waiting for a window.
+    await browser.execute(() => {
+      (window as SyncAppSettingsWindow).zcode?.syncAppSettings?.({
+        resourceTelemetryEnabled: true,
+      });
+    });
 
     const bridgeReady = await browser.execute(
       async (suppressed: string[]) => {

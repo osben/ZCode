@@ -177,7 +177,8 @@ export function ingestToolExecResource(
   raw: unknown,
   runtimeSurface: ProcessResourceRuntimeSurface,
 ): void {
-  if (!globalContext) return;
+  // Running sampling timers are the sole "enabled" gate (specs/resource-telemetry-toggle.md).
+  if (!globalContext || !sampleTimer) return;
   const parsed = zcodeToolExecResourceSchema.safeParse(raw);
   if (!parsed.success) return;
   const sample = parsed.data;
@@ -483,6 +484,8 @@ export function stopDesktopResourceTelemetry(options?: {
   /** Normal shutdown: drain partial windows so sample_count remains accurate; do not start new sampling. */
   flushPendingWindows?: boolean;
 }): void {
+  // While disabled nothing may be reported, not even on shutdown: drain only an active session.
+  const drainPendingWindows = options?.flushPendingWindows === true && sampleTimer !== null;
   recentToolExecCompletions.clear();
   if (sampleTimer) {
     clearInterval(sampleTimer);
@@ -492,7 +495,7 @@ export function stopDesktopResourceTelemetry(options?: {
     clearInterval(reportTimer);
     reportTimer = null;
   }
-  if (options?.flushPendingWindows) {
+  if (drainPendingWindows) {
     // Bug cause: after changing to five-minute aggregation, normal shutdown still used the old stop
     // that cleared state immediately, silently losing samples already received in an incomplete
     // window. Drain only in-memory windows here; do not start new sampling or disk scans.

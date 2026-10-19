@@ -54,6 +54,7 @@ export function GeneralSectionContent({
   notificationSoundEnabled,
   closeToTrayOnWindows,
   keepAwakeWhileRunning = false,
+  resourceTelemetryEnabled = false,
   desktopChromiumHardwareAccelerationEnabled = true,
   receivePreviewUpdates,
   autoDownloadAndInstallUpdates,
@@ -101,6 +102,7 @@ export function GeneralSectionContent({
   onTaskAutoArchiveOlderThanDaysChange,
   onCloseToTrayOnWindowsChange,
   onKeepAwakeWhileRunningChange = async () => {},
+  onResourceTelemetryEnabledChange = async () => {},
   onDesktopChromiumHardwareAccelerationChange = async () => {},
   onReceivePreviewUpdatesChange,
   onAutoDownloadAndInstallUpdatesChange,
@@ -122,6 +124,8 @@ export function GeneralSectionContent({
   notificationSoundEnabled: boolean;
   closeToTrayOnWindows: boolean;
   keepAwakeWhileRunning?: boolean;
+  /** Fork setting: main-process resource sampling (specs/resource-telemetry-toggle.md). */
+  resourceTelemetryEnabled?: boolean;
   desktopChromiumHardwareAccelerationEnabled?: boolean;
   receivePreviewUpdates: boolean;
   autoDownloadAndInstallUpdates: boolean;
@@ -179,6 +183,7 @@ export function GeneralSectionContent({
   onTaskAutoArchiveOlderThanDaysChange: (days: number) => Promise<void>;
   onCloseToTrayOnWindowsChange: (enabled: boolean) => Promise<void>;
   onKeepAwakeWhileRunningChange?: (enabled: boolean) => Promise<void>;
+  onResourceTelemetryEnabledChange?: (enabled: boolean) => Promise<void>;
   onDesktopChromiumHardwareAccelerationChange?: (enabled: boolean) => Promise<void>;
   onReceivePreviewUpdatesChange: (enabled: boolean) => Promise<void>;
   onAutoDownloadAndInstallUpdatesChange: (enabled: boolean) => Promise<void>;
@@ -711,6 +716,25 @@ export function GeneralSectionContent({
                 checked={keepAwakeWhileRunning}
                 onCheckedChange={(checked) => {
                   void onKeepAwakeWhileRunningChange(checked);
+                }}
+              />
+            }
+          />
+        ) : null}
+        {isDesktop ? (
+          <SettingsRow
+            label={intl.formatMessage({ id: "settings.resourceTelemetryEnabled" })}
+            description={intl.formatMessage({
+              id: "settings.resourceTelemetryEnabledDescription",
+            })}
+            control={
+              <Switch
+                aria-label={intl.formatMessage({
+                  id: "settings.resourceTelemetryEnabled",
+                })}
+                checked={resourceTelemetryEnabled}
+                onCheckedChange={(checked) => {
+                  void onResourceTelemetryEnabledChange(checked);
                 }}
               />
             }

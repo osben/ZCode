@@ -364,6 +364,22 @@ describe("GeneralSectionContent data directory control", () => {
     expect(onDesktopChromiumHardwareAccelerationChange).toHaveBeenCalledWith(false);
   });
 
+  it("resource telemetry switch is off by default and writes the user's choice back", async () => {
+    // specs/resource-telemetry-toggle.md: the fork setting defaults to off.
+    const onResourceTelemetryEnabledChange = vi.fn(async () => {});
+
+    await renderGeneralSection({ onResourceTelemetryEnabledChange });
+
+    const telemetrySwitch = capturedSwitches.find(
+      (item) => item["aria-label"] === "settings.resourceTelemetryEnabled",
+    );
+    expect(telemetrySwitch?.checked).toBe(false);
+
+    (telemetrySwitch?.onCheckedChange as ((checked: boolean) => void) | undefined)?.(true);
+
+    expect(onResourceTelemetryEnabledChange).toHaveBeenCalledWith(true);
+  });
+
   it("reasoning 默认开启并把用户操作写回设置回调，同时保持 Todo 默认关闭", async () => {
     const onMessageStreamShowReasoningChange = vi.fn(async () => {});
     const onMessageStreamShowTodosChange = vi.fn(async () => {});
