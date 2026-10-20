@@ -116,7 +116,7 @@ export function applyPersistedWorktreeIntent(
   store.setFrozenWorktreeIntent(workspaceKey, {
     branchName: intent.branchName,
     ...(intent.customLocationPath ? { customLocationPath: intent.customLocationPath } : {}),
-    ...(intent.baseFromHeadDefault ? { baseFromHeadDefault: true } : {}),
+    ...(intent.baseFromHeadDefault && !intent.baseBranch ? { baseFromHeadDefault: true } : {}),
   });
 }
 
