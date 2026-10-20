@@ -16,7 +16,7 @@ import type {
   SessionGoal,
   TraceContext,
 } from "../deps.js";
-import { buildRuntimeProviderRequestMessages, throwIfTurnAborted } from "../helpers/index.js";
+import { prepareRuntimeProviderRequest, throwIfTurnAborted } from "../helpers/index.js";
 import { projectMessagesForModelMediaPolicy } from "../helpers/media-budget.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { isRuntimeAttachmentEntry, type RuntimeMessageEntry } from "../../agent/message-history.js";
@@ -96,8 +96,8 @@ async function verifyTargetCompletion(
     traceContext: TraceContext;
   },
 ): Promise<GoalCompletionVerificationOutput> {
-  // The session's default model may change during target verification. Requests, retries, and usage must share
-  // the model snapshot from verification start; do not reread Session Selection after the provider responds.
+  // 目标验证期间也允许切换 session 默认模型；请求、重试和 usage 必须共用
+  // 验证开始时的模型快照，不能在 provider 返回后重新读取 Session Selection。
   const requestedModelSelection = this.getSessionModelSelection();
   const model = createRuntimeModel(this, { selection: requestedModelSelection });
   const modelTraceContext = createChildTraceContext(input.traceContext, {
@@ -129,25 +129,19 @@ async function verifyTargetCompletion(
     ),
     modelTraceContext,
   );
-  const providerMessages = buildRuntimeProviderRequestMessages(this, {
-    entries: [
-      ...withoutTrailingPendingAssistantToolCallEntries(
-        this.messageHistory.borrowReadOnlyRuntimeEntries(),
-      ),
-      {
-        message: {
-          role: "user" as const,
-          content: formatGoalCompletionVerificationPrompt(input.target),
-        },
-      },
-    ],
+  const prepared = prepareRuntimeProviderRequest(this, {
+    entries: withoutTrailingPendingAssistantToolCallEntries(
+      this.messageHistory.borrowReadOnlyRuntimeEntries(),
+    ),
+    prompt: formatGoalCompletionVerificationPrompt(input.target),
+    tools: [],
     applyCacheControl: true,
     model,
-  }).messages;
-  // The verifier consumes full history directly but previously bypassed normal request media policy. Adding capability
-  // checks alone would still let aggregate-limit failures go through fail-open; apply capability and budget projections before the request.
+  });
+  // verifier 直接消费完整历史但曾绕过正常请求的媒体策略；只补 capability
+  // 仍会让聚合超限失败进入 fail-open。请求前统一执行能力和预算投影。
   const messages = projectMessagesForModelMediaPolicy(
-    providerMessages,
+    prepared.request.messages,
     model.properties.inputFormat,
   ).messages;
   const modelRequestEvent = this.createEvent(
@@ -170,7 +164,7 @@ async function verifyTargetCompletion(
     const result = await generateTargetCompletionVerificationText.call(this, {
       abortSignal: input.abortSignal,
       events: input.events,
-      messages,
+      request: { ...prepared.request, messages },
       model,
       traceContext: modelTraceContext,
     });
@@ -256,8 +250,9 @@ async function verifyTargetCompletion(
         ),
         modelTraceContext,
       );
-      // When user Stop or queue "send now" interrupts the goal verifier, there is no ordinary executeTurn cancellation path to pause the target.
-      // If it remains active, a later resumeSession + sendPrompt is treated by the agent as goal continuation, and ordinary user messages keep emitting checkpoints.
+      // 用户 Stop 或队列“立即发送”打断 goal verifier 时，当前没有普通
+      // executeTurn 的取消收口路径会暂停 target。如果仍保持 active，后续
+      // resumeSession + sendPrompt 会被 agent 当成 goal continuation，普通用户消息会继续输出 checkpoint。
       await this.pauseActiveTargetForCancellation(modelTraceContext);
       throw error;
     }
@@ -311,7 +306,7 @@ async function generateTargetCompletionVerificationText(
   input: {
     abortSignal?: AbortSignal;
     events: SessionEvent[];
-    messages: ReturnType<typeof buildRuntimeProviderRequestMessages>["messages"];
+    request: ReturnType<typeof prepareRuntimeProviderRequest>["request"];
     model: Model;
     traceContext: TraceContext;
   },
@@ -335,10 +330,9 @@ async function generateTargetCompletionVerificationText(
       return await runWithModelInvocationContext(invocationContext, () =>
         input.model.generateText({
           abortSignal: input.abortSignal,
-          messages: input.messages,
-        // The Verifier inherits the bound reasoning configuration; do not apply downgrade/cap policies intended for low-cost auxiliary calls.
+          ...input.request,
+          // Verifier 继承已绑定的思考配置，不能套用低成本辅助调用的降档和封顶策略。
           options: { maxOutputTokens: input.model.optionSpecs.maxOutputTokens.max },
-          tools: [],
         }),
       );
     } catch (error) {
@@ -351,8 +345,8 @@ async function generateTargetCompletionVerificationText(
         throw error;
       }
 
-      // Target completion verification runs after the user has seen an assistant iteration. Start Plan busy
-      // is a transient admission concurrency condition; retry briefly instead of treating recoverable contention as completion through fail-open.
+      // 目标完成验证发生在用户已看到 assistant 迭代之后；Start Plan busy
+      // 是 admission 瞬时并发。先短暂重试，避免直接走 fail-open 把可恢复并发误当完成。
       this.logger?.warn("Goal completion verification retrying after Start Plan busy", {
         ...traceContextToLogContext(input.traceContext),
         attempt,
@@ -389,8 +383,8 @@ async function getNextTargetCompletionVerificationIteration(
     (maxIteration, item, index) => Math.max(maxIteration, item.goalIteration ?? index + 1),
     0,
   );
-  // Goal iterations advance through the verifier lifecycle, not ordinary turns or user continuation counts.
-  // Runtime keeps the same number across started/completed/failed_closed/cancelled so the UI and snapshot do not guess independently.
+  // goal 迭代由 verifier lifecycle 推进，而不是普通 turn 或用户继续次数。
+  // runtime 在 started/completed/failed_closed/cancelled 上固定同一个编号，UI 与 snapshot 才不会各自猜。
   return latestIteration + 1;
 }
 

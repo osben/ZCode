@@ -1,7 +1,7 @@
+import type { ToolSearchExecutionContext } from "@zcode/contracts";
 import { createPartId, TurnMachineImpl } from "../deps.js";
 import type {
   MessageId,
-  ModelToolCall,
   ToolCallId,
   TraceContext,
   ToolCall,
@@ -25,18 +25,20 @@ import {
   isOffPeakCreateRestrictedTurn,
   recordCompletedToolBatch,
 } from "./turn-loop-state.js";
+import type { ToolCallInput } from "../../agent/message-history.js";
 import { settleToolResults, type ToolResultPart } from "./tool-result-settlement.js";
 
 export async function executeToolCallsForModelStep(
   this: AgentRuntimeInternal,
   state: RegularTurnLoopState,
   options: {
+    toolSearch?: ToolSearchExecutionContext;
     assistantCreatedAt: number;
     assistantMessageId: MessageId;
     modelTraceContext: TraceContext;
     result: RuntimeModelTextResult;
     streamedToolResults?: StreamedToolExecutionResult[];
-    toolCalls: ModelToolCall[];
+    toolCalls: ToolCallInput[];
   },
 ): Promise<"continue" | "break"> {
   const model = state.model;
@@ -49,6 +51,7 @@ export async function executeToolCallsForModelStep(
     // so the executor hits a registry miss instead of treating the storage placeholder as a real tool.
     name: tc.name,
     input: tc.input,
+    ...(tc.modelCallWrapper ? { modelCallWrapper: tc.modelCallWrapper } : {}),
   }));
   const streamedResultsById = new Map(
     (options.streamedToolResults ?? []).map((entry) => [entry.toolCallId, entry]),
@@ -162,6 +165,7 @@ export async function executeToolCallsForModelStep(
       traceContext: options.modelTraceContext,
       subagentModelOverride: state.subagentModelOverride,
       model: state.model,
+      toolSearch: options.toolSearch,
       onBatchStart: async (toolCallIds) => {
         // The executor still returns cancelled results for an aborted batch, but tool parts that never entered
         // a handler must not be incorrectly marked running.
@@ -182,7 +186,12 @@ export async function executeToolCallsForModelStep(
               callID: toolCall.id,
               declarationIndex: persisted.declarationIndex,
               tool: projectedToolName.toolName,
-              metadata: projectedToolName.metadata,
+              metadata: {
+                ...projectedToolName.metadata,
+                ...(toolCall.modelCallWrapper
+                  ? { modelCallWrapper: toolCall.modelCallWrapper }
+                  : {}),
+              },
               state: {
                 status: "running",
                 input: persisted.input,
@@ -228,7 +237,6 @@ export async function executeToolCallsForModelStep(
     toolCallById,
     streamedResultsById,
   });
-
 
   const stopTurnResult = results.find((result) => result.turnControl?.stopTurnAfterResult === true);
   if (stopTurnResult) {
@@ -288,4 +296,3 @@ export async function executeToolCallsForModelStep(
   });
   return "continue";
 }
-
