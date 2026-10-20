@@ -81,7 +81,9 @@ export type WebRemoteControlStatusKind =
   | "running"
   | "connecting"
   | "active"
-  | "error";
+  | "error"
+  // TEMPORARY relay-decision placeholder (upstream relay v2 member; remove with the relay decision).
+  | "auth-required";
 
 export type WebRemoteControlFailureReason =
   | "session-not-found"
@@ -94,6 +96,9 @@ export type WebRemoteControlFailureReason =
   | "connection-recovery-timeout"
   | "relay-unavailable"
   | "unsupported-action"
+  // TEMPORARY relay-decision placeholder (upstream relay v2 member; remove with the relay decision).
+  | "device-not-owned"
+  | "auth-required"
   | "unexpected-error";
 
 export interface WebRemoteControlFailure {
@@ -779,6 +784,10 @@ export interface WebRemoteControlWorkspaceSwitchOptions {
   mobileNavigationIntent?: WebRemoteControlMobileNavigationIntent;
   /** Used only by the phone's task home; after the target bridge is established, only the unread matching this snapshot is cleared. */
   markTaskReadExpectedUnreadAt?: number;
+  // TEMPORARY relay-decision placeholders (upstream relay v2 members; remove with the relay decision).
+  openFileManager?: boolean;
+  taskHostId?: string;
+  fileTreeTaskId?: string;
 }
 
 export interface WebRemoteControlWorkspaceSwitchResult extends WebRemoteControlSessionCreateResponse {}
