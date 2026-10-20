@@ -55,6 +55,14 @@ export default defineConfig(({ mode }) => {
           replacement: resolve(REPO_ROOT, "packages/ui/src/useTheme.ts"),
         },
         {
+          find: "@zcode/shared/zcode-protocol-v4",
+          replacement: resolve(REPO_ROOT, "packages/shared/src/zcode-protocol-v4/index.ts"),
+        },
+        {
+          find: "@zcode/shared/test-ids",
+          replacement: resolve(REPO_ROOT, "packages/shared/src/test-ids.ts"),
+        },
+        {
           find: "@zcode/ui/conversation-share-readonly",
           replacement: resolve(REPO_ROOT, "packages/share-ui/src/index.ts"),
         },
