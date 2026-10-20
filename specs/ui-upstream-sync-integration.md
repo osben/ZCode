@@ -69,3 +69,9 @@ Theme: `App.tsx` ports the fork's `systemResolvedTheme` state (OS scheme tracked
 Lockfile and manifest: `pnpm-lock.yaml` and `packages/ui/package.json` equal origin/integration (no upstream pin changes; fork pins kept).
 
 Remaining failing tests at this point (not yet triaged to a fix or ledger row): about 117 across 27 files; main groups are `subagentsSection`, `projectTreeBackgroundUnread`, `v4ConversationStatusPanel`, `workspaceHeaderTitleSection`, `useWorkspaceActiveTaskState`, `conversationShareConfirmationDock`, `settingsPageConfig`, `remoteConnectionFieldsDockerRefresh`, `commandCenterSelection`, `useDraftConfigControl`, and about 15 single-case files.
+
+## Decisions taken (confirmed by coordinator)
+
+- DEC-DESTRUCTIVE-ENTER: upstream rule wins. Destructive confirm dialogs do not confirm on Enter from non-interactive content. The fork test case was adapted to assert that rule; the fork's Cancel/Close own-Enter guards are kept.
+- Draft right-sidebar scope regression: accepted for now (UI-2 row).
+- resolvedTheme: fork semantics (systemResolvedTheme state) ported.
