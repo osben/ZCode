@@ -1,5 +1,17 @@
 # Files allowed to exceed the staged-file size limit (scripts/check-staged-file-tokens.mjs).
 # Add one repo-relative path per line.
+
+# Existing generated legal inventories; the generator verifies their inputs and hashes.
+THIRD-PARTY-NOTICES.md
+third-party/inventory.json
+# Existing upstream-sized documents: only the pinned pnpm version changes here.
+UI_PLUGIN.md
+UI_PLUGIN.en.md
+# Existing remote component generator; this repair only adds Linux target selection.
+scripts/prepare-prebuilds.mjs
+# Existing merged service exceeds the limit by 35 bytes; its implementation is unchanged here.
+packages/services/src/highspeed/highspeedCardService.ts
+
 packages/ui/src/ChatEmptyState.tsx
 packages/ui/src/i18n/locales/en-US.ts
 packages/ui/src/i18n/locales/uk-UA.ts

@@ -127,3 +127,45 @@ test("带 peer 或 patch 后缀的版本按基础版本匹配锁文件约束", (
   const installable = createInstallablePackageFilter(constraints, TARGETS);
   assert.equal(installable("@img/sharp-wasm32", "0.34.5(patch_hash=abc)"), false);
 });
+
+test("production peers retain subtrees first expanded below development dependencies", () => {
+  const runtime = { name: "runtime", version: "1.0.0", path: "/modules/runtime" };
+  const packages = productionPackages([
+    {
+      name: "app",
+      dependencies: {
+        sdk: {
+          version: "1.0.0",
+          path: "/modules/sdk",
+          dependencies: {
+            runtime: { ...runtime, path: "/modules/sdk/node_modules/runtime", deduped: true },
+          },
+        },
+      },
+      devDependencies: {
+        runtime: {
+          ...runtime,
+          dependencies: { license: { version: "2.0.0", path: "/modules/license" } },
+        },
+        "dev-only": { version: "1.0.0", path: "/modules/dev-only" },
+      },
+    },
+  ]);
+  assert.deepEqual([...packages.keys()].sort(), ["license@2.0.0", "runtime@1.0.0", "sdk@1.0.0"]);
+});
+
+test("expanded workspace links do not promote development dependencies to production", () => {
+  const packages = productionPackages([
+    {
+      name: "app",
+      dependencies: {
+        library: {
+          version: "link:../library",
+          dependencies: { "dev-only": { version: "1.0.0" } },
+        },
+      },
+    },
+    { name: "library", dependencies: { runtime: { version: "2.0.0" } } },
+  ]);
+  assert.deepEqual([...packages.keys()], ["runtime@2.0.0"]);
+});

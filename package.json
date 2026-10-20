@@ -65,8 +65,8 @@
     "fmt:check": "node scripts/fork-format.mjs --check",
     "knip": "knip",
     "count-lines": "bash scripts/count-lines.sh",
-    "prepare:remote-assets": "pnpm --filter @zcode/server-cli stage:remote-assets",
-    "prepare:remote-assets:linux": "pnpm --filter @zcode/server-cli stage:remote-assets --linux",
+    "prepare:remote-assets": "node scripts/prepare-prebuilds.mjs",
+    "prepare:remote-assets:linux": "node scripts/prepare-prebuilds.mjs --linux",
     "ci:assert-node": "node scripts/assert-node-version.mjs",
     "build:cua": "pnpm --filter @zcode/zcode-cua build",
     "doctor:macos-release": "bash scripts/doctor-macos-release-app.sh",
@@ -120,22 +120,5 @@
   "engines": {
     "node": ">=26.0.0 <27.0.0"
   },
-  "packageManager": "pnpm@10.33.2",
-  "pnpm": {
-    "overrides": {
-      "react": "19.3.0",
-      "react-dom": "19.3.0",
-      "koffi": "2.15.6",
-      "builder-util-runtime": "9.7.0",
-      "extract-zip>yauzl": "3.4.0"
-    },
-    "patchedDependencies": {
-      "@radix-ui/react-collapsible@1.1.12": "patches/@radix-ui__react-collapsible@1.1.12.patch",
-      "vitest@4.1.7": "patches/vitest@4.1.7.patch",
-      "wdio-electron-service@9.2.1": "patches/wdio-electron-service@9.2.1.patch",
-      "@arms/rum-electron@0.0.3": "patches/@arms__rum-electron@0.0.3.patch",
-      "@ai-sdk/openai-compatible@2.0.60": "patches/@ai-sdk__openai-compatible@2.0.60.patch",
-      "@ai-sdk/anthropic@3.0.81": "patches/@ai-sdk__anthropic@3.0.81.patch"
-    }
-  }
+  "packageManager": "pnpm@12.14.0"
 }

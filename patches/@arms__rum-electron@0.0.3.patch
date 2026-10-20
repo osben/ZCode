@@ -1,5 +1,5 @@
 diff --git a/dist/index.mjs b/dist/index.mjs
-index d26925cd014c42b6c6d470f9d2d4d75196203339..ce203cba549db3b21cddf71bb7a2c74190319dde 100644
+index d26925cd014c42b6c6d470f9d2d4d75196203339..795c3f0df7f8fb1ee6584d30d8e658c6195e8cd0 100644
 --- a/dist/index.mjs
 +++ b/dist/index.mjs
 @@ -505,6 +505,48 @@ const p = /* @__PURE__ */ new WeakMap(), _ = class _ {

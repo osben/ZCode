@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { parse as parseYaml } from "yaml";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -76,10 +77,10 @@ describe("desktop e2e Electron service lifecycle", () => {
   });
 
   it("cancels the ContextId timeout after the default execution context is found", () => {
-    const rootPackageJson = JSON.parse(
-      readFileSync(new URL("../../../package.json", import.meta.url), "utf8"),
+    const workspace = parseYaml(
+      readFileSync(new URL("../../../pnpm-workspace.yaml", import.meta.url), "utf8"),
     ) as {
-      pnpm?: { patchedDependencies?: Record<string, string> };
+      patchedDependencies?: Record<string, string>;
     };
     const electronServiceSource = readFileSync(
       new URL("../../../node_modules/wdio-electron-service/dist/esm/index.js", import.meta.url),
@@ -92,7 +93,7 @@ describe("desktop e2e Electron service lifecycle", () => {
 
     // Bug 根因：上游 9.2.1 的 ContextId Promise 成功 resolve 后没有取消 timeout，
     // 定时器仍会在健康 case 运行期间打印误导性的 Timeout exceeded error。
-    expect(rootPackageJson.pnpm?.patchedDependencies?.["wdio-electron-service@9.2.1"]).toBe(
+    expect(workspace.patchedDependencies?.["wdio-electron-service@9.2.1"]).toBe(
       "patches/wdio-electron-service@9.2.1.patch",
     );
     expect(contextIdHandler).toContain("clearTimeout(timeout)");
