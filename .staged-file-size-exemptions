@@ -150,3 +150,4 @@ packages/shared/test/zcodeProtocolV4WorkflowRunsDelta.test.ts
 packages/shared/test/zcodeProtocolV4WorkflowRunsEviction.test.ts
 packages/shared/test/zcodeProtocolV4WorkflowRunsHoles.test.ts
 packages/shared/test/zcodeProtocolV4WorkflowRunsReducer.test.ts
+packages/services/test/zcodeAgentService.test.ts

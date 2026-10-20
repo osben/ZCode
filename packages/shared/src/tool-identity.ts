@@ -48,7 +48,6 @@ export type ZCodeToolFamily =
   | "file-write"
   | "shell"
   | "search"
-  | "web-fetch"
   | "todo"
   | "ask-user-question"
   | "agent"
@@ -68,7 +67,7 @@ const TOOL_FAMILY_BY_NAME: Record<ZCodeKnownToolName, ZCodeToolFamily> = {
   Bash: "shell",
   Glob: "search",
   Grep: "search",
-  WebFetch: "web-fetch",
+  WebFetch: "search",
   WebSearch: "search",
   web_search: "search",
   TodoRead: "todo",

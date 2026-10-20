@@ -5,11 +5,10 @@ it("有效的空响应撤销公开配置，未知字段不会透传", () => {
   expect(parseClientConfigSnapshot({ code: 0, data: null })).toEqual({
     pluginStoreOrder: null,
     zsrcUrl: null,
-    uiPluginRecommendations: [],
   });
   expect(
     parseClientConfigSnapshot({ code: 0, data: { configs: { privateField: "not public" } } }),
-  ).toEqual({ pluginStoreOrder: null, zsrcUrl: null, uiPluginRecommendations: [] });
+  ).toEqual({ pluginStoreOrder: null, zsrcUrl: null });
 });
 
 it("严格校验 envelope 并隔离坏的模式字段", () => {
@@ -29,11 +28,7 @@ it("严格校验 envelope 并隔离坏的模式字段", () => {
         },
       },
     }),
-  ).toEqual({
-    pluginStoreOrder: { work: { categoryOrder: ["finance"] } },
-    zsrcUrl: null,
-    uiPluginRecommendations: [],
-  });
+  ).toEqual({ pluginStoreOrder: { work: { categoryOrder: ["finance"] } }, zsrcUrl: null });
 });
 
 it("读取公开漏洞入口，裁剪空白且不透传其它 zsrc 字段", () => {
@@ -46,11 +41,7 @@ it("读取公开漏洞入口，裁剪空白且不透传其它 zsrc 字段", () =
         },
       },
     }),
-  ).toEqual({
-    pluginStoreOrder: null,
-    zsrcUrl: "https://security.example.test/report",
-    uiPluginRecommendations: [],
-  });
+  ).toEqual({ pluginStoreOrder: null, zsrcUrl: "https://security.example.test/report" });
 });
 
 it.each([
@@ -76,11 +67,7 @@ it.each([
         },
       },
     }),
-  ).toEqual({
-    pluginStoreOrder: { work: { categoryOrder: ["finance"] } },
-    zsrcUrl: null,
-    uiPluginRecommendations: [],
-  });
+  ).toEqual({ pluginStoreOrder: { work: { categoryOrder: ["finance"] } }, zsrcUrl: null });
 });
 
 it("漏洞地址支持带空白的大小写混合 HTTP(S) scheme", () => {
@@ -94,36 +81,4 @@ it("漏洞地址支持带空白的大小写混合 HTTP(S) scheme", () => {
       },
     }).zsrcUrl,
   ).toBe("HtTpS://security.example.test/report");
-});
-
-it("读取 UI 推荐且只保留插件和面板身份", () => {
-  expect(
-    parseClientConfigSnapshot({
-      code: 0,
-      data: {
-        configs: {
-          uiPluginRecommendations: [
-            { pluginId: " panel@example ", surfaceId: " main ", resourceUri: "not trusted" },
-          ],
-        },
-      },
-    }).uiPluginRecommendations,
-  ).toEqual([{ pluginId: "panel@example", surfaceId: "main" }]);
-});
-
-it.each([
-  undefined,
-  null,
-  {},
-  [],
-  [{ pluginId: "p" }],
-  [{ pluginId: "", surfaceId: "s" }],
-  [{ pluginId: "p", surfaceId: 2 }],
-])("无效或空推荐返回空列表：%j", (uiPluginRecommendations) => {
-  const snapshot = parseClientConfigSnapshot({
-    code: 0,
-    data: { configs: { uiPluginRecommendations, zsrc: { url: "https://example.com/report" } } },
-  });
-  expect(snapshot.uiPluginRecommendations).toEqual([]);
-  expect(snapshot.zsrcUrl).toBe("https://example.com/report");
 });

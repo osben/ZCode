@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { RemoteTarget } from "#src/remoteTarget.js";
+import type { RemoteTarget } from "../remoteTarget.js";
 import { publicZCodeErrorCodeSchema } from "./errorCodes.js";
 import { REMOTE_ASSET_INSTALL_MODES } from "../remoteAssetInstallMode.js";
 import { isKnownRemoteResourcePackageId } from "../remoteResourcePackages.js";
