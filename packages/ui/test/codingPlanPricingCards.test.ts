@@ -14,9 +14,8 @@ import {
   resolveCodingPlanProductsFailureSnapshot,
 } from "@/settings/model-provider-section/useCodingPlanProducts.js";
 
-// The native purchase panels (CodingPlanPurchasePanel / CodingPlanProductCards) have been taken
-// offline and purchase moved to a webview dialog; this file keeps only the cases that still target
-// live code.
+// 原生购买面板（CodingPlanPurchasePanel / CodingPlanProductCards）已下线，
+// 购买流程改为 webview 弹窗；本文件只保留仍针对活代码的用例。
 
 afterEach(() => {
   clearCodingPlanProductsCacheForTest();

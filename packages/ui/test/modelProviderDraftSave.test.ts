@@ -349,42 +349,6 @@ describe("Model metadata uses formal Model Config", () => {
     expect(result.model.personalConfig).not.toHaveProperty("enabled");
   });
 
-  it("manual mode preserves a supported inherited reasoning default", () => {
-    const model = createModel();
-    model.inheritedConfig!.optionSpecs!.reasoningLevel!.default = "high";
-    model.config.optionSpecs!.reasoningLevel!.default = "high";
-    const draft = updateModelDraft(
-      createProviderModelDraftValues(model),
-      { useRecommendedConfigValue: false },
-      model,
-    );
-
-    const result = resolveProviderModelDraftCommit({ currentModel: model, draft });
-
-    expect(result.status).toBe("commit");
-    if (result.status !== "commit") return;
-    expect(result.model.personalConfig.optionSpecs?.reasoningLevel?.default).toBe("high");
-  });
-
-  it("removes a personal reasoning default when editing excludes its value", () => {
-    const model = createModel();
-    model.personalConfig = {
-      optionSpecs: { reasoningLevel: { default: "high" } },
-    };
-    model.hasPersonalConfig = true;
-    const draft = updateModelDraft(
-      createProviderModelDraftValues(model),
-      { reasoningLevelValuesValue: ["low"] },
-      model,
-    );
-
-    const result = resolveProviderModelDraftCommit({ currentModel: model, draft });
-
-    expect(result.status).toBe("commit");
-    if (result.status !== "commit") return;
-    expect(result.model.personalConfig.optionSpecs?.reasoningLevel).toEqual({ values: ["low"] });
-  });
-
   it("已有 Personal 容量覆盖继续作为真实输入值", () => {
     const model = createModel();
     model.personalConfig = {

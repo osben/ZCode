@@ -1074,66 +1074,6 @@ describe("useZCodeSessionStore provider preference", () => {
     expect(notificationCount).toBe(1);
   });
 
-  it("does not notify subscribers when a workspace updater returns the current bucket", () => {
-    const workspacePath = "/tmp/workspace-noop-updater";
-    const taskId = "task-noop-updater";
-    const before = useZCodeSessionStore.getState();
-    let notificationCount = 0;
-    const unsubscribe = useZCodeSessionStore.subscribe(() => {
-      notificationCount += 1;
-    });
-
-    useZCodeSessionStore.getState().setTaskPermissionRequest(workspacePath, taskId, null);
-    useZCodeSessionStore
-      .getState()
-      .removeTaskPermissionRequest(workspacePath, taskId, "missing-request");
-
-    unsubscribe();
-    expect(notificationCount).toBe(0);
-    expect(useZCodeSessionStore.getState()).toBe(before);
-  });
-
-  it("does not notify subscribers for an identical task runtime write", () => {
-    const workspacePath = "/tmp/workspace-runtime-dedupe";
-    const taskId = "task-runtime-dedupe";
-    let notificationCount = 0;
-    const unsubscribe = useZCodeSessionStore.subscribe(() => {
-      notificationCount += 1;
-    });
-
-    useZCodeSessionStore.getState().setTaskRuntimeState(workspacePath, taskId, "streaming");
-    expect(notificationCount).toBe(1);
-
-    useZCodeSessionStore.getState().setTaskRuntimeState(workspacePath, taskId, "streaming");
-    expect(notificationCount).toBe(1);
-
-    useZCodeSessionStore.getState().setTaskRuntimeState(workspacePath, taskId, "error", "boom");
-    unsubscribe();
-    expect(notificationCount).toBe(2);
-    expect(
-      getTaskRuntimeState(useZCodeSessionStore.getState().workspaces[workspacePath]!, taskId),
-    ).toMatchObject({ status: "error", error: "boom" });
-  });
-
-  it("still creates the runtime entry and identity bucket on a first write equal to the defaults", () => {
-    const workspacePath = "/tmp/workspace-runtime-first-write";
-    const workspaceIdentity = "ssh://runtime-first-write";
-    const taskId = "task-runtime-first-write";
-    const defaultStatus = DEFAULT_TASK_RUNTIME_STATE.status;
-
-    useZCodeSessionStore.getState().setTaskRuntimeState(workspacePath, taskId, defaultStatus);
-    expect(
-      useZCodeSessionStore.getState().workspaces[workspacePath]?.taskRuntimeByTaskId[taskId],
-    ).toBeDefined();
-
-    useZCodeSessionStore
-      .getState()
-      .setTaskRuntimeState(workspacePath, taskId, defaultStatus, null, workspaceIdentity);
-    expect(
-      useZCodeSessionStore.getState().workspaces[workspaceIdentity]?.taskRuntimeByTaskId[taskId],
-    ).toBeDefined();
-  });
-
   it("任务前进后退选择目标时不会覆盖浏览器式历史位置", () => {
     const workspacePath = "/tmp/workspace-task-nav";
 

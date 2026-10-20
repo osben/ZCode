@@ -67,7 +67,10 @@ describe("ToolCallBody markdown file links", () => {
   });
 });
 
-it.each(["zh-CN", "en-US"] as const)("无宿主图片能力时 %s 展示静态不可用状态", (locale) => {
+it.each([
+  ["zh-CN", "预览不可用"],
+  ["en-US", "Preview unavailable"],
+] as const)("无宿主图片能力时 %s 展示静态不可用状态", (locale, unavailableText) => {
   const toolCall = {
     toolId: "read-image",
     kind: "Read",
@@ -93,7 +96,7 @@ it.each(["zh-CN", "en-US"] as const)("无宿主图片能力时 %s 展示静态�
       ),
     ),
   );
-  expect(html).toContain("Preview unavailable");
+  expect(html).toContain(unavailableText);
   expect(html).not.toMatch(/Loading|正在加载/);
 });
 it("公开图片资源命中时直接渲染图片", () => {

@@ -10,7 +10,6 @@ import { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { ConversationRowView } from "@/v4/ConversationRowView.js";
 import type { ConversationRowRenderContext } from "@/v4/conversationRowContext.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
 
 // docs/dynamic-workflow/transcript-and-notifications.md：子代理 transcript 里的 ask 消息 = 指令正文 +
 // 引擎尾注；行上的 epilogueStart 说边界在哪。正文照常画，尾注折进默认收起的披露。
@@ -60,19 +59,17 @@ describe("ConversationRowView userInput epilogue fold", () => {
     expect(html).toContain(ASK);
     expect(html).not.toContain("Standard for this result");
     expect(html).toContain('aria-expanded="false"');
-    expect(html).toContain(expectedCopy("chat.userInput.epilogue.label"));
+    expect(html).toContain("Workflow engine instructions");
   });
 
   it("opens the fold on click and hides the leading rule of the appended text", () => {
     const { container, getByRole } = render(element(userInputRow({ epilogueStart: ASK.length })));
-    fireEvent.click(getByRole("button", { name: expectedCopy("chat.userInput.epilogue.label") }));
+    fireEvent.click(getByRole("button", { name: "Workflow engine instructions" }));
     const body = container.querySelector('[data-v4-user-input-epilogue-body="true"]');
     expect(body?.textContent).toContain("Standard for this result:");
     expect(body?.textContent?.startsWith("---")).toBe(false);
     expect(
-      getByRole("button", { name: expectedCopy("chat.userInput.epilogue.label") }).getAttribute(
-        "aria-expanded",
-      ),
+      getByRole("button", { name: "Workflow engine instructions" }).getAttribute("aria-expanded"),
     ).toBe("true");
   });
 

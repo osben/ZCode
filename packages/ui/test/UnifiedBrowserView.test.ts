@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
-// UnifiedBrowserView component tests (<webview> + CDP-on-guest architecture).
+// UnifiedBrowserView 组件测试（<webview> + CDP-on-guest 架构）。
 //
-// Covers three core interaction contracts:
-//  1. did-attach → report the guest webContentsId to main as early as possible (browserViewAttachGuest);
-//  2. Address bar enter (form submit) → normalize via normalizeBrowserUrl, then call webview.loadURL;
-//  3. Navigation buttons are driven by webview state (canGoBack) and call webview.goBack directly.
+// 覆盖三条核心交互契约：
+//  1. did-attach → 尽早上报 guest webContentsId 给 main（browserViewAttachGuest）；
+//  2. 地址栏回车（form submit）→ 经 normalizeBrowserUrl 归一化后调 webview.loadURL；
+//  3. 导航按钮由 webview 状态驱动（canGoBack）并直接调用 webview.goBack。
 //
-// Note: the root vitest config only picks up packages/*/test/**/*.test.ts (.ts, not .tsx), so this
-// file uses React.createElement instead of JSX and enables the jsdom environment via this docblock.
+// 注意：根 vitest 只收 packages/*/test/**/*.test.ts（.ts，非 .tsx），故本文件用
+// React.createElement 而非 JSX，并以文件头 docblock 单独启用 jsdom 环境。
 import { createElement, StrictMode, useState } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -19,11 +19,6 @@ import {
 import {
   TID_BROWSER_ADDRESS_INPUT,
   TID_BROWSER_BACK_BUTTON,
-  TID_BROWSER_DEVTOOLS_BUTTON,
-  TID_BROWSER_ELEMENT_PICKER_BUTTON,
-  TID_BROWSER_GUEST_RETRY,
-  TID_BROWSER_MORE_BUTTON,
-  TID_BROWSER_OPEN_EXTERNAL_ITEM,
   TID_BROWSER_LOAD_ERROR,
   TID_BROWSER_LOAD_ERROR_CERT_HINT,
   TID_BROWSER_RESPONSIVE_BUTTON,
@@ -46,8 +41,7 @@ import {
 } from "@zcode/shared/test-ids";
 import { TooltipProvider } from "@/components/ui/tooltip.js";
 
-// Define mock dependencies with vi.hoisted to avoid vi.mock factory restrictions on referencing
-// outer variables.
+// 用 vi.hoisted 定义 mock 依赖，规避 vi.mock 工厂对外部变量的引用限制。
 const h = vi.hoisted(() => {
   const attachGuest = vi.fn().mockResolvedValue(undefined);
   const detachGuest = vi.fn().mockResolvedValue(true);
@@ -124,8 +118,7 @@ vi.mock("@/hooks/useSettingService.js", () => ({
     update: h.updateSettings,
   }),
 }));
-// The intl mock only needs to return message ids as-is to satisfy aria-label / placeholder
-// assertions.
+// intl 只需把 message id 原样返回即可满足 aria-label / placeholder 断言。
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
     intl: {
@@ -139,8 +132,7 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
   }),
 }));
 
-// Static imports come after the mocks: vi.mock is hoisted, so the component under test loads the
-// mocked dependencies.
+// 静态 import 放在 mock 之后：vi.mock 会被提升，故被测组件加载到的是 mock 版依赖。
 import { UnifiedBrowserView } from "@/browser-use/UnifiedBrowserView.js";
 import { HumanBrowserView } from "@/browser-use/HumanBrowserView.js";
 import { BrowserViewportSurface } from "@/browser-use/BrowserViewportSurface.js";
@@ -182,8 +174,7 @@ class FakeResizeObserver {
   }
 }
 
-// BrowserToolbar's icon buttons use ControlHintTooltip (a radix Tooltip), so a TooltipProvider
-// wrapper is required.
+// BrowserToolbar 的图标按钮走 ControlHintTooltip（radix Tooltip），需 TooltipProvider 包裹。
 function createViewElement(
   browserKey = "session-1",
   sessionId?: string,
@@ -247,7 +238,7 @@ function renderHumanView(browserKey = "human-tab-1", agentOpened = false) {
   return render(createHumanViewElement(browserKey, agentOpened));
 }
 
-/** Under jsdom, <webview> is a plain HTMLElement without Electron guest methods; stub them here. */
+/** jsdom 下 <webview> 是普通 HTMLElement，没有 Electron guest 方法；这里补桩。 */
 function stubWebview(el: HTMLElement, over: Record<string, unknown> = {}) {
   Object.assign(el, {
     getWebContentsId: vi.fn(() => 42),
@@ -279,7 +270,7 @@ function fireDidAttach(el: HTMLElement) {
   });
 }
 
-/** Dispatches a main-frame load failure event; Electron's did-fail-load carries isMainFrame and a net error code. */
+/** 派发主 frame 加载失败事件；Electron 的 did-fail-load 带 isMainFrame 与 net error 码。 */
 function fireDidFailLoad(
   el: HTMLElement,
   detail: { errorCode: number; errorDescription: string; validatedURL: string },
@@ -398,16 +389,16 @@ describe("UnifiedBrowserView (<webview>)", () => {
   it("新 human tab 与未提交地址草稿不创建 webview，回车后才创建并导航", () => {
     renderView("browser:empty-draft", "task-a", undefined, true, undefined, undefined, true);
 
-    expect(document.body.textContent).toContain("browser.empty");
+    expect(screen.getByText("browser.empty")).toBeTruthy();
     expect(screen.queryByTestId(TID_BROWSER_WEBVIEW)).toBeNull();
 
     const addressInput = screen.getByTestId(TID_BROWSER_ADDRESS_INPUT);
     fireEvent.change(addressInput, { target: { value: "example.com" } });
-    expect(document.body.textContent).toContain("browser.empty");
+    expect(screen.getByText("browser.empty")).toBeTruthy();
     expect(screen.queryByTestId(TID_BROWSER_WEBVIEW)).toBeNull();
 
     fireEvent.submit(addressInput.closest("form")!);
-    expect(document.body.textContent).not.toContain("browser.empty");
+    expect(screen.queryByText("browser.empty")).toBeNull();
     const webview = stubWebview(screen.getByTestId(TID_BROWSER_WEBVIEW));
     fireDomReady(webview);
     expect(webview.loadURL).toHaveBeenCalledWith("https://example.com");
@@ -435,9 +426,8 @@ describe("UnifiedBrowserView (<webview>)", () => {
       }),
     );
 
-    // Fix rationale: the ref callback runs after the Electron guest attaches, so asserting only the
-    // final mounted DOM would mask that popup permission never reached the guest creation params;
-    // a static marker constrains creation-time attributes.
+    // 修复原因：ref 回调发生在 Electron guest attach 之后，只断言挂载后的最终 DOM
+    // 会掩盖 popup 权限从未进入 guest 创建参数的问题；静态标记可约束创建期属性。
     expect(markup).toContain('<webview allowpopups=""');
   });
 
@@ -484,8 +474,8 @@ describe("UnifiedBrowserView (<webview>)", () => {
     expect(viewport.style.width).toBe("393px");
     expect(viewport.style.height).toBe("852px");
 
-    // The same 20 screen-visual pixels correspond to 20 / 1.1 renderer client px at the +1 level;
-    // after reverse compensation the CSS viewport still only gains 20 px.
+    // 同样 20 个屏幕视觉像素在 +1 档下对应 20 / 1.1 个 renderer client px；
+    // 反向补偿后仍只增加 20 CSS viewport px。
     dragResizeHandle(screen.getByTestId(TID_BROWSER_RESPONSIVE_RESIZE_WIDTH), 20, {
       x: 20 / desktopZoomFactor,
       y: 0,
@@ -735,8 +725,7 @@ describe("UnifiedBrowserView (<webview>)", () => {
       key: "browser-use:tab-1",
       webContentsId: 42,
     });
-    // Electron's native DevToolsSession may still have notifications in flight; destroying the old
-    // node before main ACKs would reopen a UAF window.
+    // Electron 的 native DevToolsSession 还可能有在途通知；main ACK 前销毁旧节点会重开 UAF 窗口。
     expect(screen.getByTestId(TID_BROWSER_WEBVIEW)).toBe(originalWebview);
 
     await act(async () => {
@@ -774,8 +763,8 @@ describe("UnifiedBrowserView (<webview>)", () => {
     });
 
     expect(screen.getByTestId(TID_BROWSER_WEBVIEW)).toBe(originalWebview);
-    expect(document.body.textContent).toContain("browser.guestFailed.title");
-    expect(document.body.textContent).toContain("killed (73)");
+    expect(screen.getByText("browser.guestFailed.title")).toBeTruthy();
+    expect(screen.getByText(/killed \(73\)/)).toBeTruthy();
   });
 
   it("证书失败后再输入非法地址，错误态不沿用上一次的证书指引", () => {
@@ -791,13 +780,13 @@ describe("UnifiedBrowserView (<webview>)", () => {
     });
     expect(screen.getByTestId(TID_BROWSER_LOAD_ERROR_CERT_HINT)).toBeTruthy();
 
-    // The invalid-address error has no net error code; without clearing loadErrorCode, the previous
-    // -202 would stay around and show the misleading "go enable ignore-certificate" hint.
+    // 地址非法这条错误没有 net error 码，若不清 loadErrorCode，就会继续挂着上一次的 -202
+    // 而给出"去开忽略证书校验"的误导指引。
     const addressInput = screen.getByTestId(TID_BROWSER_ADDRESS_INPUT);
     fireEvent.change(addressInput, { target: { value: "javascript:alert(1)" } });
     fireEvent.submit(addressInput.closest("form")!);
 
-    expect(document.body.textContent).toContain("browser.invalidUrl");
+    expect(screen.getByText("browser.invalidUrl")).toBeTruthy();
     expect(screen.queryByTestId(TID_BROWSER_LOAD_ERROR_CERT_HINT)).toBeNull();
   });
 
@@ -812,8 +801,7 @@ describe("UnifiedBrowserView (<webview>)", () => {
     });
     expect(screen.getByTestId(TID_BROWSER_LOAD_ERROR)).toBeTruthy();
 
-    // The guest does not even render a picture; it must yield to a failure state that can rebuild
-    // the guest instead of keep showing "this navigation was denied".
+    // guest 连画面都没有，必须让位给可重建 guest 的失败态，而不是继续画"这次导航被拒"。
     fireRenderProcessGone(webview, "launch-failed");
 
     expect(screen.queryByTestId(TID_BROWSER_LOAD_ERROR)).toBeNull();
@@ -845,11 +833,10 @@ describe("UnifiedBrowserView (<webview>)", () => {
 
     const loadURL = (webview as unknown as { loadURL: ReturnType<typeof vi.fn> }).loadURL;
     loadURL.mockClear();
-    fireEvent.click(screen.getByTestId(TID_BROWSER_LOAD_ERROR).querySelector("button")!);
+    fireEvent.click(screen.getByText("browser.loadError.retry"));
 
     expect(loadURL).toHaveBeenCalledWith(restoreUrl);
-    // The same guest stays in use; a single failed navigation must not rebuild it and drop the
-    // page's web history.
+    // 同一个 guest 继续用，不能因为一次导航失败就重建并丢掉网页历史。
     expect(screen.getByTestId(TID_BROWSER_WEBVIEW)).toBe(webview);
   });
 
@@ -866,9 +853,8 @@ describe("UnifiedBrowserView (<webview>)", () => {
       validatedURL: "https://intranet.test/",
     });
 
-    // Bug cause: errorMessage used to be written only into state with no render consumer, the empty
-    // state was turned off at the same time, and Electron `<webview>` has no Chrome-style security
-    // interstitial, leaving nothing but a solid black chrome-error page.
+    // Bug 原因：errorMessage 过去只写进 state 没有渲染消费者，空置态又被同时关掉，
+    // Electron `<webview>` 也没有 Chrome 的安全插页，最终只剩一张纯黑的 chrome-error 页。
     expect(screen.getByTestId(TID_BROWSER_LOAD_ERROR)).toBeTruthy();
     expect(screen.getByTestId(TID_BROWSER_LOAD_ERROR_CERT_HINT)).toBeTruthy();
     expect(screen.getByTestId(TID_BROWSER_WEBVIEW).className).toContain("hidden");
@@ -910,10 +896,10 @@ describe("UnifiedBrowserView (<webview>)", () => {
 
     fireRenderProcessGone(webview, "launch-failed", 72);
 
-    expect(document.body.textContent).toContain("browser.guestFailed.title");
-    expect(document.body.textContent).toContain("browser.guestFailed.description");
-    expect(document.body.textContent).toContain("launch-failed (72)");
-    expect(document.body.textContent).not.toContain("browser.empty");
+    expect(screen.getByText("browser.guestFailed.title")).toBeTruthy();
+    expect(screen.getByText("browser.guestFailed.description")).toBeTruthy();
+    expect(screen.getByText(/launch-failed \(72\)/)).toBeTruthy();
+    expect(screen.queryByText("browser.empty")).toBeNull();
     expect(screen.getByTestId(TID_BROWSER_WEBVIEW).className).toContain("hidden");
   });
 
@@ -944,13 +930,13 @@ describe("UnifiedBrowserView (<webview>)", () => {
     fireRenderProcessGone(originalWebview, "launch-failed", 72);
     h.attachGuest.mockClear();
     await act(async () => {
-      fireEvent.click(screen.getByTestId(TID_BROWSER_GUEST_RETRY));
+      fireEvent.click(screen.getByRole("button", { name: "browser.guestFailed.retry" }));
       await Promise.resolve();
     });
 
     const retriedWebview = screen.getByTestId(TID_BROWSER_WEBVIEW);
     expect(retriedWebview).not.toBe(originalWebview);
-    expect(document.body.textContent).not.toContain("browser.guestFailed.title");
+    expect(screen.queryByText("browser.guestFailed.title")).toBeNull();
 
     stubWebview(retriedWebview, { getWebContentsId: vi.fn(() => 43) });
     fireDomReady(retriedWebview);
@@ -979,7 +965,7 @@ describe("UnifiedBrowserView (<webview>)", () => {
 
     const replacementWebview = screen.getByTestId(TID_BROWSER_WEBVIEW);
     expect(replacementWebview).not.toBe(originalWebview);
-    expect(document.body.textContent).not.toContain("browser.guestFailed.title");
+    expect(screen.queryByText("browser.guestFailed.title")).toBeNull();
 
     stubWebview(replacementWebview, { getWebContentsId: vi.fn(() => 44) });
     fireDomReady(replacementWebview);
@@ -1018,7 +1004,7 @@ describe("UnifiedBrowserView (<webview>)", () => {
 
     const replacementWebview = screen.getByTestId(TID_BROWSER_WEBVIEW);
     expect(replacementWebview).not.toBe(originalWebview);
-    expect(document.body.textContent).not.toContain("browser.guestFailed.title");
+    expect(screen.queryByText("browser.guestFailed.title")).toBeNull();
     expect(onNavigationRequestHandled).not.toHaveBeenCalled();
 
     let finishNavigation: (() => void) | undefined;
@@ -1046,8 +1032,7 @@ describe("UnifiedBrowserView (<webview>)", () => {
       setZoomFactor,
     });
     fireDomReady(webview);
-    // Let useDesktopZoomFactor's initial async read settle first, so it does not overwrite the zoom
-    // level dispatched below.
+    // 先让 useDesktopZoomFactor 的初始异步读取落定，避免它覆盖下面主动派发的 zoom 档位。
     await act(async () => {
       await Promise.resolve();
     });
@@ -1173,39 +1158,36 @@ describe("UnifiedBrowserView (<webview>)", () => {
   it("地址栏回车触发 webview.loadURL（url 经 normalize）", () => {
     renderView();
     const el = stubWebview(screen.getByTestId(TID_BROWSER_WEBVIEW));
-    // Fire dom-ready first so isReady=true; otherwise navigation is queued instead of calling
-    // loadURL immediately.
+    // 先 dom-ready 让 isReady=true，否则导航会排队而非立即 loadURL。
     fireDomReady(el);
 
     const input = screen.getByTestId(TID_BROWSER_ADDRESS_INPUT) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "example.com" } });
-    // BrowserToolbar is a <form onSubmit>; jsdom does not implement implicit submission, so
-    // submitting the form directly equals pressing Enter.
+    // BrowserToolbar 是 <form onSubmit>；jsdom 不实现隐式提交，直接提交 form 等价于回车语义。
     const form = input.closest("form");
     expect(form).not.toBeNull();
     fireEvent.submit(form as HTMLFormElement);
 
     const loadURL = (el as unknown as { loadURL: ReturnType<typeof vi.fn> }).loadURL;
     expect(loadURL).toHaveBeenCalledTimes(1);
-    // normalizeBrowserUrl completes the scheme for protocol-less input (public domain →
-    // https://example.com).
+    // normalizeBrowserUrl 给无协议输入补全 scheme（公网域名 → https://example.com）。
     expect(loadURL.mock.calls[0][0]).toBe("https://example.com");
   });
 
   it("后退按钮由 webview.canGoBack 驱动，点击调用 webview.goBack", () => {
     renderView();
     const back = screen.getByTestId(TID_BROWSER_BACK_BUTTON) as HTMLButtonElement;
-    // Initially: webview not ready → canGoBack unknown → back disabled.
+    // 初始：webview 未就绪 → canGoBack 未知 → 后退禁用。
     expect(back.disabled).toBe(true);
 
-    // Once canGoBack returns true, dom-ready syncs the state → back enabled.
+    // canGoBack 返回 true 后 dom-ready 同步状态 → 后退可用。
     const el = stubWebview(screen.getByTestId(TID_BROWSER_WEBVIEW), {
       canGoBack: vi.fn(() => true),
     });
     fireDomReady(el);
     expect(back.disabled).toBe(false);
 
-    // Clicking back → drives webview.goBack directly (no longer via main IPC).
+    // 点击后退 → 直接驱动 webview.goBack（不再经 main IPC）。
     fireEvent.click(back);
     const goBack = (el as unknown as { goBack: ReturnType<typeof vi.fn> }).goBack;
     expect(goBack).toHaveBeenCalledTimes(1);
@@ -1214,9 +1196,9 @@ describe("UnifiedBrowserView (<webview>)", () => {
   it("地址栏右侧只常驻自由尺寸、元素选择和更多，并按优先级折叠外部打开与调试", () => {
     renderView();
 
-    const responsiveButton = screen.getByTestId(TID_BROWSER_RESPONSIVE_BUTTON);
-    const elementPickerButton = screen.getByTestId(TID_BROWSER_ELEMENT_PICKER_BUTTON);
-    const moreButton = screen.getByTestId(TID_BROWSER_MORE_BUTTON);
+    const responsiveButton = screen.getByLabelText("browser.responsive.enter");
+    const elementPickerButton = screen.getByLabelText("browser.elementPicker.start");
+    const moreButton = screen.getByLabelText("browser.more");
 
     expect(
       responsiveButton.compareDocumentPosition(elementPickerButton) &
@@ -1225,8 +1207,8 @@ describe("UnifiedBrowserView (<webview>)", () => {
     expect(
       elementPickerButton.compareDocumentPosition(moreButton) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).not.toBe(0);
-    expect(screen.queryByTestId(TID_BROWSER_OPEN_EXTERNAL_ITEM)).toBeNull();
-    expect(screen.queryByTestId(TID_BROWSER_DEVTOOLS_BUTTON)).toBeNull();
+    expect(screen.queryByLabelText("browser.openExternal")).toBeNull();
+    expect(screen.queryByLabelText("browser.devtools")).toBeNull();
 
     fireEvent.pointerDown(moreButton, { button: 0, ctrlKey: false });
 
@@ -1281,13 +1263,12 @@ describe("UnifiedBrowserView (<webview>)", () => {
     const openExternalItem = screen.getByRole("menuitem", {
       name: "browser.openExternal",
     });
-    // Radix only sets aria-disabled="true" when disabled; the enabled state never writes the
-    // attribute.
+    // Radix 只在禁用时设置 aria-disabled="true"，启用态不会写入 false 属性。
     expect(openExternalItem.getAttribute("aria-disabled")).not.toBe("true");
     fireEvent.click(openExternalItem);
     expect(h.openExternal).toHaveBeenCalledWith("file:///workspace/index.html");
 
-    // Selecting an enabled menu item closes the Radix menu; reopen it before verifying DevTools.
+    // 选择可用菜单项后 Radix 会关闭菜单，重新打开后再验证 DevTools。
     fireEvent.pointerDown(screen.getByLabelText("browser.more"), {
       button: 0,
       ctrlKey: false,
@@ -1768,7 +1749,7 @@ describe("UnifiedBrowserView (<webview>)", () => {
     const expectedScale = 568 / 852;
     expect(Number(viewport.dataset.responsiveScale)).toBeCloseTo(expectedScale);
 
-    // An inactive tab's display:none makes ResizeObserver report 0×0; that is not a valid layout.
+    // inactive tab 的 display:none 会让 ResizeObserver 回报 0×0；这不是有效布局。
     act(() => fitObserver?.emit(0, 0));
     expect(Number(viewport.dataset.responsiveScale)).toBeCloseTo(expectedScale);
   });
@@ -2170,7 +2151,7 @@ describe("UnifiedBrowserView (<webview>)", () => {
     const observer = FakeResizeObserver.instances.at(-1);
     expect(observer).toBeDefined();
 
-    // A Browser mounted in the background may still hold the previous non-zero observation.
+    // Browser 后台挂载时可能仍保留上一次非零 observation。
     act(() => observer?.emit(640, 480));
     view.rerender(createViewElement("tab-1", "task-1", operationUntil, true));
     act(() => observer?.emit(800, 600));
@@ -2191,9 +2172,8 @@ describe("UnifiedBrowserView (<webview>)", () => {
     view.rerender(createViewElement("tab-1", "task-1", operationUntil, true, 1));
     const settlingObserver = FakeResizeObserver.instances.at(-1);
     expect(settlingObserver).toBeDefined();
-    // On real hardware the newTab marker is followed by multiple frames of convergence from guest
-    // mounting and the side-pane animation; clearing the baseline only once would mistake the second
-    // frame for a user resize.
+    // 实机上 newTab marker 后仍会经历 guest 挂载和 side-pane 动画的多帧收敛；
+    // 不能只清一次 baseline，否则第二帧会被误认成用户 resize。
     act(() => {
       vi.advanceTimersByTime(220);
       settlingObserver?.emit(780, 600);
@@ -2206,8 +2186,7 @@ describe("UnifiedBrowserView (<webview>)", () => {
     });
     expect(screen.queryByRole("status")).toBeNull();
 
-    // Consecutive callbacks extend the window to at most 500ms; once capped, the marker does not
-    // consume the current active cycle's hint quota.
+    // 连续回调最多延长到 500ms；封顶后 marker 不消费当前 active 周期的提示额度。
     act(() => {
       vi.advanceTimersByTime(11);
       settlingObserver?.emit(700, 600);
@@ -2249,8 +2228,7 @@ describe("UnifiedBrowserView (<webview>)", () => {
         });
       }
     });
-    // Entering free-size mode mounts the control bar and changes the browser region height; this
-    // only establishes a new baseline.
+    // 模型进入自由尺寸会挂载控制条并改变 browser region 高度；这次只建立新基线。
     act(() => observer?.emit(800, 568));
     expect(screen.queryByRole("status")).toBeNull();
 
@@ -2310,8 +2288,8 @@ describe("UnifiedBrowserView (<webview>)", () => {
     });
     expect(screen.queryByRole("status")).toBeNull();
 
-    // Free-size mode was not toggled, so model events do not restart the settling period; once the
-    // settling period of the current mode switch ends, a real pane resize still warns.
+    // 自由尺寸模式没有切换，因此模型事件不会重新开启稳定期；当前模式切换的稳定期结束后，
+    // 真正的 pane resize 仍告警。
     act(() => {
       vi.advanceTimersByTime(301);
       observer?.emit(760, 568);
@@ -2334,7 +2312,7 @@ describe("UnifiedBrowserView (<webview>)", () => {
     expect(warning.textContent).toBe("browser.resizeDuringOperationWarning");
     expect(screen.getByTestId(TID_BROWSER_WEBVIEW).dataset.browserResizeDimmed).toBe("true");
 
-    // Continuous dragging neither refreshes the 3-second timer nor stacks a second warning.
+    // 连续拖拽不会刷新 3 秒计时器或叠加第二条提示。
     act(() => {
       vi.advanceTimersByTime(1_000);
       observer?.emit(650, 600);
@@ -2405,8 +2383,7 @@ describe("UnifiedBrowserView (<webview>)", () => {
         value: Math.round(720 * layoutScale),
       },
     });
-    // The Fit preview keeps scaling the transformed rect, so the logical viewport can only be
-    // recovered from the raw layout.
+    // Fit 预览会继续缩放 transformed rect，因此只能从 raw layout 还原逻辑 viewport。
     vi.spyOn(webview, "getBoundingClientRect").mockReturnValue({
       x: 0,
       y: 0,
@@ -2454,8 +2431,7 @@ describe("UnifiedBrowserView (<webview>)", () => {
     const writes = h.updateSettings.mock.calls.length;
     const logicalSize = () => {
       const frame = screen.getByTestId(TID_BROWSER_RESPONSIVE_VIEWPORT);
-      // Derive the size from the component's actual layout; feeding request.viewport straight to
-      // the webview would mask the normal-mode defect.
+      // 按组件实际布局派生尺寸，不能直接把 request.viewport 填给 webview 掩盖普通模式缺陷。
       return {
         width: Number.parseFloat(frame.style.width) || canvas.width,
         height: Number.parseFloat(frame.style.height) || canvas.height,
@@ -2520,8 +2496,7 @@ describe("UnifiedBrowserView (<webview>)", () => {
       const frame = screen.getByTestId(TID_BROWSER_RESPONSIVE_VIEWPORT);
       expect(frame.style.width).toBe("508px");
       expect(frame.style.height).toBe("855px");
-      // The natural viewport has no metrics-pinned size; do not enlarge the webview and then
-      // reverse-transform to pretend the logical size is unchanged.
+      // 自然 viewport 没有 metrics 固定尺寸，不能扩张 webview 后再反向 transform 假装逻辑尺寸未变。
       expect(Number(webview.dataset.browserLayoutScale)).toBeCloseTo(
         viewportMode === "natural" ? 1 : 1 / resolveDesktopZoomFactor(-2),
       );
@@ -2551,8 +2526,7 @@ describe("UnifiedBrowserView (<webview>)", () => {
     const request = createScreenshotSurfaceRequest({ viewport: { width: 1280, height: 720 } });
     view.rerender(createViewElement("tab-1", "sess-1", undefined, false, undefined, request));
     view.rerender(createViewElement("tab-1", "sess-1", undefined, false, undefined, null));
-    // The fallback metrics are still valid; exiting the temporary layout must not restore desktop
-    // zoom the way leaving user free-size mode does.
+    // fallback metrics 仍有效，临时布局退出不能按退出用户自由尺寸模式恢复 desktop zoom。
     expect(setZoomFactor).not.toHaveBeenCalled();
   });
 
@@ -2604,9 +2578,8 @@ describe("UnifiedBrowserView (<webview>)", () => {
   });
 
   it("窗口被遮挡导致 rAF 冻结时，timer 兜底仍然能 ready", () => {
-    // Regression (3.5.2 browser use screenshot 1500ms timeout): ready used to rely only on rAF; when
-    // the main window is not in the foreground, Chromium freezes the renderer's rAF and ready is
-    // never sent out. This test simulates rAF callbacks that never fire.
+    // 回归（3.5.2 browser use 截图 1500ms 超时）：ready 过去只挂 rAF，主窗口不在前台时
+    // Chromium 冻结 renderer 的 rAF，ready 永远发不出去。这里模拟 rAF 完全不回调。
     vi.useFakeTimers();
     const rafQueue = new Map<number, FrameRequestCallback>();
     let nextRafId = 0;
@@ -2727,9 +2700,8 @@ describe("UnifiedBrowserView (<webview>)", () => {
   });
 
   it("viewport 起初不匹配且没有 resize/dom-ready 时，也会重试到 ready", () => {
-    // Regression: a misaligned viewport used to return immediately, waiting only for
-    // ResizeObserver / dom-ready to restart; if the size never changed again after setViewportSize
-    // there was no second validation chance, burning the full 1500ms timeout.
+    // 回归：viewport 未对齐过去直接 return，只能等 ResizeObserver / dom-ready 重启；
+    // setViewportSize 之后尺寸若不再变化就没有第二次验证机会，白等 1500ms 超时。
     const rafQueue = new Map<number, FrameRequestCallback>();
     let nextRafId = 0;
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
@@ -2767,8 +2739,7 @@ describe("UnifiedBrowserView (<webview>)", () => {
 
     flushOneAnimationFrame();
     expect(h.screenshotSurfaceReady).not.toHaveBeenCalled();
-    // Change only the size without triggering ResizeObserver / dom-ready: verify the retry chain
-    // itself is still alive.
+    // 只改尺寸，不触发 ResizeObserver / dom-ready：验证重试链本身还活着。
     size = { width: 1274, height: 720 };
     flushOneAnimationFrame();
     expect(h.screenshotSurfaceReady).not.toHaveBeenCalled();
