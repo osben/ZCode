@@ -51,6 +51,18 @@ export function ensureIndependentPlanSupport(client: CapabilityClient): Promise<
   );
 }
 
+/**
+ * Older remote CLIs use strict subscribe and reject the history-first field, so the field is
+ * forwarded only after the endpoint advertises `historyFirst`. A failed read answers false.
+ */
+export async function supportsHistoryFirst(client: CapabilityClient): Promise<boolean> {
+  try {
+    return (await readRuntimeCapabilities(client)).historyFirst === true;
+  } catch {
+    return false;
+  }
+}
+
 /** specs/incognito-session.md: an incognito create must never run as a normal session. */
 export async function ensureIncognitoSupport(client: CapabilityClient): Promise<void> {
   let capabilities: ZCodeRuntimeCapabilities;
