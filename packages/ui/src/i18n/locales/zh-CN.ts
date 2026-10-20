@@ -3150,6 +3150,13 @@ const zhCN: Record<string, string> = {
   "settings.migration.failedTitle": "失败详情",
   "settings.migration.reason.session_not_found_or_workspace_mismatch":
     "源会话不存在，或已经不匹配当前 workspace 筛选。",
+  "settings.instructions.title": "指令",
+  "settings.outputStyles.title": "输出风格",
+  "settings.systemPrompt.title": "系统提示词",
+  "settings.incognito": "无痕",
+  "settings.voiceDictation.title": "语音输入",
+  "settings.worktrees.title": "Worktrees",
+  "sessionManager.title": "管理会话",
   "settings.usageTitle": "使用统计",
   "settings.usageDescription": "查看会话活跃度与模型用量的粗略统计。",
   "resourceManager.storage.summaryTotal": "ZCode 总占用",
