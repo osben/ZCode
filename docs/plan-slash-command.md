@@ -1,65 +1,47 @@
-# `/plan` Composer 快捷命令
+# Composer 计划模式快捷入口
 
-## 目标
+## 目标与交互
 
-为桌面端、Web 端和手机 `/remote` 的 V4 Composer 提供可发现的 `/plan` 快捷命令，
-把“切换到 Plan 模式”和“提交一个任务”组合成一次输入操作。
+`/plan` 是输入框列表中「计划模式」操作的搜索词。选中它等价于开启工具栏的标准 Plan 开关。
+列表展示本地化名称「计划模式 / Plan mode」和描述「开启计划模式 / Enable Plan mode」，不展示命令参数语法。
 
-本命令只属于 App Composer 表面，不扩展 CLI TUI、`--prompt` 或 headless 输入入口。
+| 操作                                         | 结果                                                                 |
+| -------------------------------------------- | -------------------------------------------------------------------- |
+| 输入 `/plan`                                 | 展示计划模式操作，不改变当前模式。                                   |
+| Tab、Enter 或点击选中                        | 开启标准 Plan；仅删除当前 slash 搜索 token，关闭列表，保留输入焦点。 |
+| 已开启 Plan 时再次选中                       | 保持开启，不切换为关闭。                                             |
+| 有其他正文、附件或结构化上下文               | 原样保留，不自动发送。                                               |
+| Escape 关闭列表或没有选中                    | 不改变模式。                                                         |
+| 关闭列表后发送原始 `/plan` 或 `/plan <text>` | 作为普通文本发送，保留原文与当前模式，不做隐藏解析。                 |
+| 退出 Plan                                    | 使用现有工具栏开关或 Plan 标记的关闭按钮。                           |
 
-## 语法与结果
+## 唯一状态与执行链路
 
-| 输入                                       | 结果                                                                                                    |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
-| `/plan`                                    | 只开启当前 Composer 的 Plan 标记，不改变权限、不发模型请求。                                            |
-| `/plan <task>`                             | 同一冻结 Submission 携带 `planEnabled=true` 并普通发送任务；provider 和 transcript 只看到 `<task>`。    |
-| `/plan` 或 `/plan <task>` 携带附件/context | 开启 Plan，沿普通发送路径提交任务、全部附件和 context；只有无正文且无 payload 的 `/plan` 才只切换标记。 |
-| 其他文本（例如 `/planner`）                | 按普通文本处理。                                                                                        |
-
-参数名称大小写不敏感，任务正文去除首尾空白但保留内部换行与内容。
-命令被消费后，Composer 清空命令输入；`/plan` 本身不生成 user transcript row。
-原始命令可以保留在本地 prompt history，但不得进入 provider prompt 或 conversation transcript。
-
-## 状态与失败边界
-
-```text
-Composer submit
-      │
-      └─ /plan -> current Composer Draft Plan flag + frozen Submission.planEnabled=true
-           ├─ no task, attachments or context -> mode-only, no model request
-           └─ task or payload -> ordinary sendText(task, frozen attachments/context)
-                ├─ worktree preparation -> same prepared session -> activate once
-                └─ existing/draft session -> canonical CommandInbox admission
+```mermaid
+flowchart TD
+  A[列表选中计划模式] --> B[handleDraftSwitchMode: plan]
+  T[工具栏开启 Plan] --> B
+  B --> C[当前 Composer Draft: planEnabled=true]
+  C --> D[用户另行发送正文与附件]
+  D --> E[标准 Submission 冻结配置]
+  E --> F[标准 sendText 与 Plan runtime]
 ```
 
-发送继续使用现有 config barrier，并在同一冻结 Submission 中携带 Plan 标记；不新增独立配置
-写入路径。真正的配置或 admission 失败仍保留完整 Composer 状态。已开启 Plan 时仍允许发送任务。
+列表选择只编辑当前 Composer Draft，保留权限模式；不发送 prompt，不创建 user row，不提前改变正在运行的 Agent。
+连续选择幂等。新草稿、已有会话、桌面与手机使用同一个动作；只读界面不提供可执行入口。
+发送、排队、失败恢复、Plan 工具限制和 ExitPlanMode 继续遵守标准 Plan 合同。
 
-长文本粘贴自动生成的 `clipboard-text` 附件与普通文件、图片、引用、代码和插件 context 一样保真传递。
-`/plan` 只移除正文开头的快捷命令；不丢弃或重新序列化 payload。附件读取、上传和模型能力校验沿用普通发送。
-空正文但有附件或 context 是有效任务，不能误当作 mode-only 成功清空输入。`sharedContextRefs` 也属于 payload。
+## 目录与跨端边界
 
-worktree 流程的冻结输入仍由 renderer 拥有，Host 继续拥有 prepared session 和 admission：Git ready
-后，同一 session 接纳带 `planEnabled=true` 的输入一次；成功才 consume pipeline 并清除 recovery。
+计划模式由 App 的本地列表操作提供，不再由 CLI 广播 `/plan [task]`。
+`plan` 仍是保留名，避免自定义命令接管这个入口；旧 Agent 广播的同名命令不应遮蔽本地操作。
+技能和子智能体仍使用各自类型的列表条目，精确搜索 plan 时优先选中计划模式操作。
+不增加 wire command、协议字段、配置副本或 Plan 专用发送分支。
+desktop continuous 与手机 remote replayable 复用此 Composer 行为，传输与恢复边界不变。
 
-`/plan` 与工具栏共用当前 Composer 的 Plan 标记和冻结 Submission；不改写权限或新任务的默认值。
-running/queued 输入仍由 CLI runtime `CommandInbox` 按现有 FIFO 接纳，
-不会创建 `/plan` 专用队列或 mode snapshot。
+## 验收
 
-## 跨端边界
-
-desktop local/remote workspace 继续使用可信 `desktop-continuous` attachment，手机 `/remote`
-继续使用可信 `web-remote-replayable` attachment。两端复用同一 Composer 命令顺序，但不改变
-relay、desktop main、Host、workspace identity、remoteSessionId 或 replayable snapshot/gap 责任。
-
-不新增 V4 wire command、协议字段、持久化结构或独立 runtime。
-
-## 验收证据
-
-- slash catalog 显示 `/plan [task]`，选择后插入 `/plan `。
-- draft 空命令只改变模式；已有 session 空命令不产生模型请求或 user row。
-- 带任务时同一 `sendText` 携带 Plan 标记，provider/transcript 只出现任务正文。
-- `/plan <task>` 保留附件和结构化 context；长文本粘贴与手动附件等价。
-- `/plan` 加附件/context（包括 shared context）仍提交 payload；完全空的 `/plan` 不发模型请求。
-- worktree ready 后接纳一次 Plan 输入，清除 queued preview 和 recovery；普通 admission 失败仍保留完整状态。
-- desktop continuous 与 mobile replayable 只在 delivery profile 上不同，最终命令语义一致。
+- 三种选择方式都只开启 Plan，不发送；正文、附件、上下文和焦点保留。
+- 新草稿、已有会话、重复选择、Escape 和原始文本发送有回归证据。
+- 标准发送携带 planEnabled；provider 收到正文与附件并进入标准 Plan runtime。
+- CLI catalog 不再提供 Plan 命令，自定义同名命令不能接管入口。
