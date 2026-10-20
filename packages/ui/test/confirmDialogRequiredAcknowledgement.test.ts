@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConfirmDialogHost } from "@/ConfirmDialog.js";
 import { useConfirmDialogStore } from "@/store/confirmDialogStore.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
+import enUS from "@/i18n/locales/en-US.js";
 
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({ intl: { formatMessage: ({ id }: { id: string }) => id } }),
@@ -65,12 +65,11 @@ describe("ConfirmDialogHost required acknowledgement", () => {
   });
 
   it("renders the remote continuity comparison with concise user-facing copy", () => {
-    const description = expectedCopy("remote.sourceServerBoundaryDescription");
     void useConfirmDialogStore.getState().requestConfirmation({
       presentation: "source-server-boundary",
-      title: expectedCopy("remote.sourceServerBoundaryTitle"),
-      description,
-      confirmLabel: expectedCopy("common.gotIt"),
+      title: enUS["remote.sourceServerBoundaryTitle"],
+      description: enUS["remote.sourceServerBoundaryDescription"],
+      confirmLabel: "Got it",
       requiredAcknowledgement: true,
       showKeyboardHints: false,
     });
@@ -79,14 +78,16 @@ describe("ConfirmDialogHost required acknowledgement", () => {
 
     expect(screen.getByTestId("source-server-boundary-dialog")).toBeTruthy();
 
-    expect(screen.getByText(expectedCopy("remote.sourceServerBoundaryTitle"))).toBeTruthy();
-    expect(screen.getByText(description).textContent).toBe(description);
+    expect(screen.getByText(enUS["remote.sourceServerBoundaryTitle"])).toBeTruthy();
+    expect(screen.getByText(enUS["remote.sourceServerBoundaryDescription"]).textContent).toBe(
+      enUS["remote.sourceServerBoundaryDescription"],
+    );
     expect(screen.getByTestId("source-server-boundary-local").textContent).toContain(
       "remote.sourceServerBoundaryLocalDevice",
     );
     expect(screen.getByTestId("source-server-boundary-remote").textContent).toContain(
       "remote.sourceServerBoundaryRemoteStatus",
     );
-    expect(screen.getByRole("button", { name: expectedCopy("common.gotIt") })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Got it" })).toBeTruthy();
   });
 });

@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { ConversationShareImportNotice } from "@/v4/ConversationShareImportNotice.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
+import { expectedCopy, TEST_LOCALE } from "./helpers/uiCopy.js";
 
 vi.mock("@/OpenSplitButton.js", async () => {
   const React = await import("react");
@@ -39,7 +39,7 @@ const rows = [
     createdAtSeq: 2,
     kind: "userInput" as const,
     origin: "realUser" as const,
-    text: "帮我看下这个报错",
+    text: "Please help me look at this error",
   },
   {
     rowId: 3,
@@ -48,7 +48,7 @@ const rows = [
     createdAt: 3,
     createdAtSeq: 3,
     kind: "assistantText" as const,
-    text: "根因是 signer 被提前释放",
+    text: "The root cause is the signer being released early",
     state: "complete" as const,
   },
 ];
@@ -64,34 +64,38 @@ function render(props: Parameters<typeof ConversationShareImportNotice>[0]) {
 }
 
 describe("conversation share import notice", () => {
-  it("渲染只读的分享对话与分割线", () => {
-    const html = render({ rows, locale: "en-US", onOpenShareUrl: () => {} });
+  it("renders the readonly shared conversation and the divider", () => {
+    const html = render({ rows, locale: TEST_LOCALE, onOpenShareUrl: () => {} });
     expect(html).toContain('data-conversation-share-import-notice="true"');
     expect(html).toContain('data-conversation-share-import-divider="true"');
-    // Reuses the share page renderer: both the user bubble and assistant body should appear.
-    expect(html).toContain("帮我看下这个报错");
-    expect(html).toContain("根因是 signer 被提前释放");
+    // Reuses the share-page renderer: both the user bubble and the assistant body should appear.
+    expect(html).toContain("Please help me look at this error");
+    expect(html).toContain("The root cause is the signer being released early");
     expect(html).toContain(expectedCopy("conversationShare.import.dividerLabel"));
   });
 
-  it("可点击时分割线是 button，不可点击时退化为静态行", () => {
-    expect(render({ rows, locale: "en-US", onOpenShareUrl: () => {} })).toContain(
+  it("renders the divider as a button when clickable and as a static row when not", () => {
+    expect(render({ rows, locale: TEST_LOCALE, onOpenShareUrl: () => {} })).toContain(
       '<button type="button" data-conversation-share-import-divider="true"',
     );
-    const staticHtml = render({ rows, locale: "en-US" });
+    const staticHtml = render({ rows, locale: TEST_LOCALE });
     expect(staticHtml).toContain('data-conversation-share-import-divider="true"');
     expect(staticHtml).not.toContain(
       '<button type="button" data-conversation-share-import-divider="true"',
     );
   });
 
-  it("分割线文案跟随界面语言", () => {
-    expect(render({ rows, locale: "en-US" })).toContain("Imported from share");
+  it.each([
+    ["en-US", "Imported from share"],
+    ["zh-CN", "已从分享导入"],
+  ])("divider copy follows the UI locale (%s)", (locale, dividerCopy) => {
+    expect(render({ rows, locale: locale as "en-US" | "zh-CN" })).toContain(dividerCopy);
   });
 
-  it("不给 artifactUrls：结果物不出现点不开的预览按钮", () => {
-    // Local artifacts live under .zcode-share/<share-id>/shared-artifacts/ and the renderer's preview
-    // button uses window.open, which cannot open local paths; this mirrors the live timeline's ArtifactRowView.
+  it("without artifactUrls: artifacts do not show an unopenable preview button", () => {
+    // Local artifacts live under .zcode-share/<share-id>/shared-artifacts/; the renderer's preview
+    // button uses window.open, which cannot open a local path. This matches the live timeline's
+    // ArtifactRowView behavior.
     const html = render({
       rows: [
         ...rows,
@@ -104,7 +108,7 @@ describe("conversation share import notice", () => {
           kind: "artifact" as const,
           artifactVersionId: "artifact-1",
           logicalArtifactKey: "report",
-          displayName: "报告.pdf",
+          displayName: "report.pdf",
           artifactType: "pdf" as const,
           mimeType: "application/pdf",
           sizeBytes: 1024,
@@ -113,13 +117,13 @@ describe("conversation share import notice", () => {
           state: "current" as const,
         },
       ],
-      locale: "en-US",
+      locale: TEST_LOCALE,
     });
-    expect(html).toContain("报告.pdf");
-    expect(html).not.toContain("预览文件");
+    expect(html).toContain("report.pdf");
+    expect(html).not.toContain(expectedCopy("conversationShare.readonly.artifactPreview"));
   });
 
-  it("给到本地导入路径时，结果物使用正常预览卡片的打开控件", () => {
+  it("with local import paths, artifacts use the normal preview card's open control", () => {
     const html = render({
       rows: [
         ...rows,
@@ -132,7 +136,7 @@ describe("conversation share import notice", () => {
           kind: "artifact" as const,
           artifactVersionId: "artifact-1",
           logicalArtifactKey: "report",
-          displayName: "报告.pdf",
+          displayName: "report.pdf",
           artifactType: "pdf" as const,
           mimeType: "application/pdf",
           sizeBytes: 1024,
@@ -141,17 +145,17 @@ describe("conversation share import notice", () => {
           state: "current" as const,
         },
       ],
-      locale: "en-US",
+      locale: TEST_LOCALE,
       workspacePath: "/workspace",
       artifactWorkspaceRelativePaths: new Map([
-        ["artifact-1", ".zcode-share/share-1/shared-artifacts/报告.pdf"],
+        ["artifact-1", ".zcode-share/share-1/shared-artifacts/report.pdf"],
       ]),
       onOpenCodeViewer: () => undefined,
     });
 
     expect(html).toContain('data-open-split-button="true"');
     expect(html).toContain(
-      'data-target-path="/workspace/.zcode-share/share-1/shared-artifacts/报告.pdf"',
+      'data-target-path="/workspace/.zcode-share/share-1/shared-artifacts/report.pdf"',
     );
   });
 });

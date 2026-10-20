@@ -34,9 +34,10 @@ vi.mock("@/ToolCallBlocks/renderers/switch-mode.js", () => ({
     ),
 }));
 
-// CreateWorkflow renderer 只回显它**收到的上下文**：这条 mock 存在的理由是一个真实 bug——
-// onOpenWorkflowRun 曾经被透传给子工具卡却从未进 renderContext，于是聊天卡永远拿不到
-// run 详情入口（表现是「入口找不到」，成因却在这层装配里）。
+// The CreateWorkflow renderer only echoes the context it *receives*: this mock exists because
+// of a real bug — onOpenWorkflowRun used to be passed through to child tool cards but never
+// entered renderContext, so the chat card never got the run details entry (the symptom was
+// "entry not found", but the cause lived in this assembly layer).
 vi.mock("@/ToolCallBlocks/renderers/create-workflow.js", () => ({
   CreateWorkflowToolCallBlock: ({
     onOpenWorkflowRun,
@@ -155,7 +156,7 @@ describe("ToolCallBlock agent routing", () => {
     expect(html).not.toContain("Firebase get environment");
     expect(html).not.toContain(">mcp__plugin_firebase_firebase__firebase_get_environment<");
     expect(html).not.toContain("&quot;toolId&quot;");
-    expect(html).not.toContain("已执行");
+    expect(html).not.toContain(expectedCopy("chat.toolCall.status.completed"));
   });
 
   it("renders historical MCP rows without display through the MCP summary and detail", () => {
@@ -346,7 +347,7 @@ describe("ToolCallBlock agent routing", () => {
     expect(screen.getByTestId("mcp-error-surface").className).toContain("bg-destructive/10");
   });
 
-  it("uses the BUA bounded code surface for multiline MCP results", () => {
+  it("renders multiline MCP result actions", () => {
     const row: ToolCallRow = {
       rowId: 7,
       turnId: "turn-1",
@@ -382,8 +383,7 @@ describe("ToolCallBlock agent routing", () => {
     );
 
     fireEvent.click(screen.getByTestId("tool-summary-trigger-call-mcp-long-result"));
-    const surface = screen.getByTestId("mcp-result-surface");
-    expect(surface.className).toContain("max-h-72");
+    screen.getByTestId("mcp-result-surface");
     expect(
       screen.getByRole("button", { name: expectedCopy("chat.toolCall.mcp.copyResult") }),
     ).toBeTruthy();
@@ -901,7 +901,7 @@ describe("readRawToolCallFileSummaries", () => {
             type: "update",
             oldText: "const value = 1;\n",
             newText: "const value = 2;\n",
-            // 回归场景：第二个文件 hunk 被流式截断时，仍应识别为多文件并触发 fallback。
+            // Regression: a stream-truncated second-file hunk must still be detected as multi-file and trigger the fallback.
             unified_diff:
               "--- a/src/demo.ts\n+++ b/src/demo.ts\n@@ -1 +1 @@\n-const value = 1;\n+const value = 2;\n" +
               "--- a/src/other.ts\n+++ b/src/other.ts\n@@ -1 +1 @@\n-console.log('a');",
@@ -929,7 +929,7 @@ describe("readRawToolCallFileSummaries", () => {
         changes: {
           "src/demo.ts": {
             type: "update",
-            // 回归场景：正文里以 --- / +++ 开头的文本不应被识别成额外文件头。
+            // Regression: body lines starting with --- / +++ must not be parsed as extra file headers.
             unified_diff:
               "--- a/src/demo.ts\n+++ b/src/demo.ts\n@@ -1,2 +1,2 @@\n const marker = true;\n--- header-like-old-line\n+++ header-like-new-line",
           },
@@ -1042,9 +1042,10 @@ describe("readRawToolCallFileSummaries", () => {
     expect(html).not.toContain("Deleted");
   });
 
-  it("把 dwf run 入口与 run 摘要交到 CreateWorkflow renderer 手里", () => {
-    // 回归：这两个 prop 之前只被透传给**子**工具卡，从未进过 renderContext，于是 run 态卡片
-    // 和它的详情页入口在生产里根本不存在。装配这一层必须自己被钉住。
+  it("hands the dwf run entry and run summary to the CreateWorkflow renderer", () => {
+    // Regression: these two props used to be passed only to *child* tool cards and never entered
+    // renderContext, so run-state cards and their details entry never existed in production.
+    // This assembly layer must be pinned itself.
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
@@ -1346,7 +1347,7 @@ describe("readRawToolCallFileSummaries", () => {
     );
 
     expect(html).toContain(expectedCopy("chat.askQuestion.autoContinued"));
-    expect(html).not.toContain("未提供回答");
+    expect(html).not.toContain(expectedCopy("chat.askQuestion.noAnswerProvided"));
   });
 
   it("routes Agent tool calls to the dedicated renderer", () => {

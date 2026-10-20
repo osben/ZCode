@@ -5,7 +5,9 @@ import { afterEach, expect, it, vi } from "vitest";
 import { ArchiveGroupCard } from "@/project-sidebar/ArchiveGroupCard.js";
 import { buildArchiveGroups, buildArchiveProjectOptions } from "@/project-sidebar/archive-view.js";
 import type { ProjectTree } from "@/project-sidebar/contract.js";
+import zhCN from "@/i18n/locales/zh-CN.js";
 import enUS from "@/i18n/locales/en-US.js";
+import { TEST_LOCALE } from "./helpers/uiCopy.js";
 const mock = vi.hoisted(() => ({ locale: "en-US" }));
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
@@ -14,13 +16,13 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
       formatMessage: ({ id }: { id: string }, values: Record<string, number | string> = {}) =>
         Object.entries(values).reduce(
           (s, [k, v]) => s.replaceAll(`{${k}}`, String(v)),
-          enUS[id] ?? id,
+          (mock.locale === TEST_LOCALE ? enUS : zhCN)[id] ?? id,
         ),
     },
   }),
 }));
 afterEach(cleanup);
-it.each(["en-US"])(
+it.each(["zh-CN", "en-US"])(
   "mounts archived rows only while expanded and preserves pagination: %s",
   (locale) => {
     mock.locale = locale;

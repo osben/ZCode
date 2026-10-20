@@ -7,15 +7,20 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog.js";
 import { RemoteConnectionStatusTag } from "@/remote-connection/RemoteConnectionTags.js";
 import { RemoteConnectionNavigationDot } from "@/remote-connection/RemoteConnectionNavigationDot.js";
 import { resolveRemoteConnectionPresentation } from "@/lib/remoteConnectionPresentation.js";
-import { expectedCopy, TEST_LOCALE } from "./helpers/uiCopy.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 afterEach(cleanup);
 
-it("对话框关闭按钮有本地化名称", () => {
+// zh-CN/en-US pairs: the locale and the expected close-button name both come from the row,
+// so the zh expectation stays as data rather than a locale setup (check-test-copy convention).
+it.each([
+  ["zh-CN", "关闭"],
+  ["en-US", expectedCopy("common.close")],
+] as const)("%s dialog close button has a localized name", (locale, close) => {
   render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: TEST_LOCALE },
+      { initialLocale: locale },
       createElement(
         Dialog,
         { open: true },
@@ -27,25 +32,25 @@ it("对话框关闭按钮有本地化名称", () => {
       ),
     ),
   );
-  expect(screen.getByRole("button", { name: expectedCopy("common.close") })).toBeTruthy();
+  expect(screen.getByRole("button", { name: close })).toBeTruthy();
 });
 
-it("状态变化在 live region 中读出，导航状态点有语义和名称", () => {
+it("status changes are announced in a live region and the navigation dot has semantics and a name", () => {
   const view = (state: "online" | "offline") =>
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: TEST_LOCALE },
+      { initialLocale: "en-US" },
       createElement(RemoteConnectionStatusTag, { status: state }),
       createElement(RemoteConnectionNavigationDot, {
         presentation: resolveRemoteConnectionPresentation({ state }),
       }),
     );
-  const online = expectedCopy("remote.status.online");
-  const offline = expectedCopy("remote.status.offline");
   const { rerender } = render(view("online"));
+  const online = expectedCopy("remote.status.online");
   expect(screen.getByRole("status").textContent).toContain(online);
   expect(screen.getByRole("img", { name: online })).toBeTruthy();
   rerender(view("offline"));
+  const offline = expectedCopy("remote.status.offline");
   expect(screen.getByRole("status").textContent).toContain(offline);
   expect(screen.getByRole("img", { name: offline })).toBeTruthy();
 });

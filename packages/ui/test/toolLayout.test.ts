@@ -15,8 +15,8 @@ describe("ToolLayout", () => {
           toolId: "tool-layout-spacing",
           icon: createElement("span", { "aria-hidden": true }, "icon"),
           forceOpen: true,
-          kindLabel: "已探索",
-          primaryText: "1 个搜索",
+          kindLabel: "Explored",
+          primaryText: "1 search",
           renderContent: () => createElement("div", { className: "tool-detail" }, "detail"),
         }),
       ),
@@ -36,8 +36,8 @@ describe("ToolLayout", () => {
           icon: createElement("span", { "aria-hidden": true }, "icon"),
           canToggle: false,
           forceOpen: true,
-          kindLabel: "已探索",
-          primaryText: "1 个搜索",
+          kindLabel: "Explored",
+          primaryText: "1 search",
           renderContent: () => createElement("div", { className: "tool-detail" }, "detail"),
         }),
       ),
@@ -57,7 +57,7 @@ describe("ToolLayout", () => {
           icon: createElement("span", { "aria-hidden": true }, "icon"),
           canToggle: false,
           isRunning: true,
-          kindLabel: "读取",
+          kindLabel: "Read",
           primaryText: "mod.rs",
         }),
       ),
@@ -66,7 +66,7 @@ describe("ToolLayout", () => {
     expect(html).toContain("icon");
     expect(html).not.toContain("lucide-loader");
     expect(html).not.toContain("animate-spin");
-    expect(html).toContain("读取");
+    expect(html).toContain("Read");
     expect(html).toContain("animated-gradient-text");
   });
 
@@ -79,7 +79,7 @@ describe("ToolLayout", () => {
           toolId: "tool-layout-empty-expanded-summary",
           icon: createElement("span", { "aria-hidden": true }, "icon"),
           forceOpen: true,
-          kindLabel: "终端",
+          kindLabel: "Terminal",
           primaryText: null,
           renderContent: () => createElement("div", null, "detail"),
         }),
@@ -88,7 +88,7 @@ describe("ToolLayout", () => {
 
     expect(html).not.toContain("tool-summary-content");
     expect(html).toMatch(
-      /tool-summary-kind-label[\s\S]*?终端<\/span><svg[^>]*lucide-chevron-right/,
+      /tool-summary-kind-label[\s\S]*?Terminal<\/span><svg[^>]*lucide-chevron-right/,
     );
   });
 
@@ -101,7 +101,7 @@ describe("ToolLayout", () => {
           toolId: "tool-layout-edit-file-priority",
           icon: createElement("span", { "aria-hidden": true }, "icon"),
           canToggle: false,
-          kindLabel: "已编辑",
+          kindLabel: "Edited",
           primaryText: "long-file-name.tsx",
           prioritizePrimaryText: true,
         }),
@@ -122,10 +122,10 @@ describe("ToolLayout", () => {
         createElement(ToolLayout, {
           toolId: "tool-layout-summary-action",
           icon: createElement("span", { "aria-hidden": true }, "icon"),
-          kindLabel: "子智能体",
+          kindLabel: "Subagent",
           primaryText: "Explore workspace",
           summaryAction: {
-            ariaLabel: "在右侧打开",
+            ariaLabel: "Open on the right",
             onActivate: vi.fn(),
             testId: "subagent-summary-action",
           },
@@ -136,7 +136,7 @@ describe("ToolLayout", () => {
 
     expect(html).toContain('data-testid="subagent-summary-action"');
     expect(html).toContain('role="button"');
-    expect(html).toContain('aria-label="在右侧打开"');
+    expect(html).toContain('aria-label="Open on the right"');
     expect(html).not.toContain("aria-expanded");
     expect(html).not.toContain("lucide-chevron-right");
     expect(html).not.toContain("tool-detail");

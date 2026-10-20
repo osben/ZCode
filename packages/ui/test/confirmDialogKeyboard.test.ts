@@ -8,7 +8,9 @@ import { ConfirmDialogHost } from "@/ConfirmDialog.js";
 import { useConfirmDialogStore } from "@/store/confirmDialogStore.js";
 
 vi.mock("@/i18n/IntlProvider.js", () => ({
-  useZCodeIntl: () => ({ intl: { formatMessage: ({ id }: { id: string }) => id } }),
+  useZCodeIntl: () => ({
+    intl: { formatMessage: ({ id }: { id: string }) => id },
+  }),
 }));
 
 afterEach(() => {
@@ -16,16 +18,16 @@ afterEach(() => {
   useConfirmDialogStore.getState().settleConfirmation(false);
 });
 
-describe("破坏性确认键盘防护", () => {
+describe("destructive confirmation keyboard guard", () => {
   it.each([undefined, "automation-confirmation"] as const)(
-    "%s 默认聚焦取消，回车不能确认，显式点击才确认",
+    "%s focuses cancel by default, Enter must not confirm, an explicit click confirms",
     async (presentation) => {
       render(createElement(ConfirmDialogHost));
       let result!: Promise<boolean>;
       act(() => {
         result = useConfirmDialogStore.getState().requestConfirmation({
           title: "Delete",
-          description: "This action cannot be undone",
+          description: "This deletion cannot be undone",
           presentation,
           confirmVariant: "destructive",
           confirmLabel: "Delete",
@@ -40,36 +42,40 @@ describe("破坏性确认键盘防护", () => {
     },
   );
 
-  it.each(["plugin", "storage"] as const)("%s 独立破坏性弹窗也默认聚焦取消", (kind) => {
-    const confirm = vi.fn();
-    render(
-      kind === "plugin"
-        ? createElement(PluginUninstallConfirmDialog, {
-            open: true,
-            pluginName: "test",
-            pending: false,
-            onCancel: vi.fn(),
-            onConfirm: confirm,
-          })
-        : createElement(StorageCleanConfirmDialog, {
-            target: { categoryId: "logs", bytes: 1024 },
-            pending: false,
-            onCancel: vi.fn(),
-            onConfirm: confirm,
-          }),
-    );
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: "common.cancel" }));
-    fireEvent.keyDown(document.activeElement!, { key: "Enter" });
-    expect(confirm).not.toHaveBeenCalled();
-  });
+  it.each(["plugin", "storage"] as const)(
+    "%s standalone destructive dialogs also focus cancel by default",
+    (kind) => {
+      const confirm = vi.fn();
+      render(
+        kind === "plugin"
+          ? createElement(PluginUninstallConfirmDialog, {
+              open: true,
+              pluginName: "test",
+              pending: false,
+              onCancel: vi.fn(),
+              onConfirm: confirm,
+            })
+          : createElement(StorageCleanConfirmDialog, {
+              target: { categoryId: "logs", bytes: 1024 },
+              pending: false,
+              onCancel: vi.fn(),
+              onConfirm: confirm,
+            }),
+      );
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "common.cancel" }));
+      fireEvent.keyDown(document.activeElement!, { key: "Enter" });
+      expect(confirm).not.toHaveBeenCalled();
+    },
+  );
 
-  it("普通确认保留回车快捷键", async () => {
+  it("regular confirmations keep the Enter shortcut", async () => {
     render(createElement(ConfirmDialogHost));
     let result!: Promise<boolean>;
     act(() => {
-      result = useConfirmDialogStore
-        .getState()
-        .requestConfirmation({ title: "连接", description: "连接设备" });
+      result = useConfirmDialogStore.getState().requestConfirmation({
+        title: "Connect",
+        description: "Connect the device",
+      });
     });
     fireEvent.keyDown(window, { key: "Enter" });
     await expect(result).resolves.toBe(true);

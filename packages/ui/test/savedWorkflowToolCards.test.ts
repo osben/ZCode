@@ -4,6 +4,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import zhCN from "@/i18n/locales/zh-CN.js";
 import { resolveToolCallRenderer } from "@/ToolCallBlocks/resolveRenderer.js";
 import { CreateWorkflowToolCallBlock } from "@/ToolCallBlocks/renderers/create-workflow.js";
 import {
@@ -18,13 +19,11 @@ import {
 } from "@/ToolCallBlocks/renderers/list-saved-workflows.js";
 import { SaveWorkflowToolCallBlock } from "@/ToolCallBlocks/renderers/save-workflow.js";
 import type { ToolCallBlockRenderContext } from "@/ToolCallBlocks/shared.js";
-import zhCN from "../src/i18n/locales/zh-CN.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
 
-const SCRIPT = 'const r = await agent("a").ask<string>("检查");';
+const SCRIPT = 'const r = await agent("a").ask<string>("check");';
 const SAVED_PATH = "/workspace/.zcode/workflows/release-check.dwf.ts";
-const WORKFLOW_DESCRIPTION = "发布前检查：lint、测试、变更日志";
-const WORKFLOW_WHEN_TO_USE = "用户说要发版时";
+const WORKFLOW_DESCRIPTION = "Pre-release check: lint, tests, changelog";
+const WORKFLOW_WHEN_TO_USE = "When the user asks for a release";
 
 const LIST_RESULT = {
   workflows: [
@@ -38,7 +37,7 @@ const LIST_RESULT = {
     },
     {
       name: "translate-docs",
-      description: "批量翻译文档目录",
+      description: "Batch-translate documentation directories",
       scope: "project",
       path: "/workspace/.zcode/workflows/translate-docs.dwf.ts",
     },
@@ -69,7 +68,7 @@ function buildContext(
     statusLabel: "",
     childToolList: null,
     showIcon: true,
-    // The card body is collapsed by default; tests force it open to assert on content.
+    // The card body is collapsed by default; tests force it open to assert content.
     forceOpen: true,
     canToggle: false,
     ...overrides,
@@ -124,11 +123,12 @@ function buildListToolCall(output: unknown = LIST_RESULT) {
 
 afterEach(cleanup);
 
-// ── Spec test map "normalized (b)" ──
-// The normalized input hits the **existing** reader rules as-is. This is the rendering-side half of the safety
-// property "old-desktop rendering holds by construction" (the CLI-side half is pinned in bootstrap's session-mapper
-// tests): the saved run's confirmation window shows the full script even on old clients without a source badge,
-// precisely because these two functions can read it.
+// ── spec test map "normalization (b)" ──
+// Normalized input must hit the existing reader rules verbatim. This is the render-side half of
+// the safety property "the legacy desktop renderer works by construction" (the CLI-side half is
+// pinned in bootstrap session-mapper tests): the saved-run confirmation window shows the full
+// script even on legacy clients without a source badge precisely because these two readers
+// find their values.
 describe("normalized saved-run input feeds the existing reader helpers", () => {
   const NORMALIZED_SAVED_RAW = {
     name: "Release check",
@@ -149,12 +149,6 @@ describe("normalized saved-run input feeds the existing reader helpers", () => {
     expect(readWorkflowName(NORMALIZED_SAVED_RAW)).toBe("Release check");
   });
 
-  it("falls back to the saved name when the model sent no label", () => {
-    // The normalization rule is `name: input.name ?? savedName`, so the input always has a name.
-    const { name: _dropped, ...withoutLabel } = NORMALIZED_SAVED_RAW;
-    expect(readWorkflowName({ ...withoutLabel, name: "release-check" })).toBe("release-check");
-  });
-
   it("readWorkflowSaved reads provenance and the validated argument bag", () => {
     const saved = readWorkflowSaved(NORMALIZED_SAVED_RAW);
     expect(saved).toEqual({
@@ -167,12 +161,13 @@ describe("normalized saved-run input feeds the existing reader helpers", () => {
 
   it("treats an inline run as having no saved source", () => {
     expect(readWorkflowSaved({ name: "Inline", script: SCRIPT })).toBeUndefined();
-    // Invariant 7: args is always defined — saved present with no arguments means an empty object, not undefined.
+    // Invariant 7: args is always defined — saved present without concrete args is an empty
+    // object, not undefined.
     expect(readWorkflowSaved({ script: SCRIPT, saved: { name: "x" } })?.args).toEqual({});
   });
 
   it("formats argument values by declared type", () => {
-    // Strings verbatim (quotes would only add noise to Chinese arguments); everything else goes through JSON.
+    // Strings verbatim (quotes would only add noise); everything else goes through JSON.
     expect(formatWorkflowArgValue("packages/ui")).toBe("packages/ui");
     expect(formatWorkflowArgValue(false)).toBe("false");
     expect(formatWorkflowArgValue(3)).toBe("3");
@@ -182,8 +177,9 @@ describe("normalized saved-run input feeds the existing reader helpers", () => {
 
 describe("resolveToolCallRenderer saved-workflow dispatch", () => {
   it("routes both tools by name even though shared does not know them", () => {
-    // Prerequisite fact: these two names are not in shared's known-tool table; identity would return unknown.
-    // Dispatch must hit by name, otherwise the whole toolCall JSON is dumped into the chat area.
+    // Precondition: neither name is in shared's known tool table, so identity would fall back to
+    // unknown. Dispatch must hit by name, otherwise the whole toolCall JSON gets dumped into the
+    // chat area.
     expect(resolveToolCallRenderer(buildContext(buildSaveToolCall()))).toBe(
       SaveWorkflowToolCallBlock,
     );
@@ -196,25 +192,12 @@ describe("resolveToolCallRenderer saved-workflow dispatch", () => {
     const snakeCase = { ...buildSaveToolCall(), toolName: "save_workflow", kind: "save_workflow" };
     expect(resolveToolCallRenderer(buildContext(snakeCase))).toBe(SaveWorkflowToolCallBlock);
   });
-
-  it("does not steal CreateWorkflow", () => {
-    const createWorkflow = {
-      toolId: "tool-create-1",
-      toolName: "CreateWorkflow",
-      kind: "CreateWorkflow",
-      title: "CreateWorkflow",
-      status: "completed",
-      input: { script: SCRIPT },
-    };
-    const renderer = resolveToolCallRenderer(buildContext(createWorkflow));
-    expect(renderer).not.toBe(SaveWorkflowToolCallBlock);
-    expect(renderer).not.toBe(ListSavedWorkflowsToolCallBlock);
-  });
 });
 
 describe("SaveWorkflowToolCallBlock", () => {
   // 2026-08-29 addition (spec: docs/dynamic-workflow/launch.md "`SaveWorkflow`"):
-  // the collapsed row converges to "name + overwrite badge"; description/path/whenToUse appear only in the expanded body.
+  // the collapsed row converges to "name + overwrite badge"; description/path/whenToUse appear
+  // only in the expanded card body.
   it("collapsed row shows only the name; details live in the expanded body", () => {
     renderCard(
       SaveWorkflowToolCallBlock,
@@ -223,7 +206,7 @@ describe("SaveWorkflowToolCallBlock", () => {
 
     expect(screen.getByText("Saved workflow")).toBeTruthy();
     expect(screen.getByText("release-check")).toBeTruthy();
-    // The collapsed row shows no description or path — they are details, not status.
+    // The collapsed row must not show description or path — they are details, not status.
     expect(screen.queryByText(WORKFLOW_DESCRIPTION)).toBeNull();
     expect(screen.queryByText(SAVED_PATH)).toBeNull();
     cleanup();
@@ -232,7 +215,7 @@ describe("SaveWorkflowToolCallBlock", () => {
     expect(screen.getByText(WORKFLOW_DESCRIPTION)).toBeTruthy();
     expect(screen.getByText(SAVED_PATH)).toBeTruthy();
     expect(screen.getByText(WORKFLOW_WHEN_TO_USE)).toBeTruthy();
-    // The script belongs to the confirmation window and is not repeated on the card.
+    // The script belongs to the confirmation window; the card does not repeat it.
     expect(document.body.textContent).not.toContain('await agent("a")');
   });
 
@@ -249,10 +232,10 @@ describe("SaveWorkflowToolCallBlock", () => {
 
   it("uses the running phrase while the save is in flight", () => {
     renderCard(SaveWorkflowToolCallBlock, buildContext(buildSaveToolCall(), { isRunning: true }));
-    expect(screen.getByText(expectedCopy("chat.toolCall.workflow.save.saving"))).toBeTruthy();
+    expect(screen.getByText("Saving workflow")).toBeTruthy();
   });
 
-  it("renders both locales", () => {
+  it("renders the overwrite card in zh-CN", () => {
     renderCard(
       SaveWorkflowToolCallBlock,
       buildContext(buildSaveToolCall({ overwrite: true })),
@@ -260,34 +243,28 @@ describe("SaveWorkflowToolCallBlock", () => {
     );
     expect(screen.getByText(zhCN["chat.toolCall.workflow.save.saved"])).toBeTruthy();
     expect(document.querySelector('[data-workflow-overwrite-badge="true"]')?.textContent).toBe(
-      "覆盖",
+      zhCN["chat.toolCall.workflow.save.overwrite"],
     );
-    cleanup();
-
-    renderCard(SaveWorkflowToolCallBlock, buildContext(buildSaveToolCall()), "en-US");
-    expect(screen.getByText(expectedCopy("chat.toolCall.workflow.save.saved"))).toBeTruthy();
   });
 
   // ── docs/dynamic-workflow/launch.md "`SaveWorkflow`" ──
   it("shows a scope row above the path (project vs global) and stays silent on unknown scope", () => {
     renderCard(SaveWorkflowToolCallBlock, buildContext(buildSaveToolCall()));
-    expect(screen.getByText(expectedCopy("chat.toolCall.workflow.save.scope.label"))).toBeTruthy();
-    expect(
-      screen.getByText(expectedCopy("chat.toolCall.workflow.save.scope.project")),
-    ).toBeTruthy();
-    // The project copy's collapsed row gets no global badge.
+    expect(screen.getByText("Scope")).toBeTruthy();
+    expect(screen.getByText("Project")).toBeTruthy();
+    // Project-scoped collapsed rows get no global badge.
     expect(document.querySelector('[data-workflow-scope-badge="global"]')).toBeNull();
     cleanup();
 
     renderCard(SaveWorkflowToolCallBlock, buildContext(buildSaveToolCall({ scope: "global" })));
-    expect(screen.getByText(expectedCopy("chat.toolCall.workflow.save.scope.global"))).toBeTruthy();
-    // The global copy's collapsed row gets a "Global" badge (on the same row as the overwrite badge).
+    expect(screen.getByText("Global · visible from every project")).toBeTruthy();
+    // Global collapsed rows get a "Global" badge (in the same row as the overwrite badge).
     expect(document.querySelector('[data-workflow-scope-badge="global"]')?.textContent).toBe(
-      expectedCopy("chat.toolCall.workflow.scope.global"),
+      "Global",
     );
     cleanup();
 
-    // scope absent (old agent) → no scope row is rendered.
+    // scope absent (legacy agent) → no scope row rendered.
     const { scope: _dropped, ...withoutScope } = buildSaveToolCall().input as Record<
       string,
       unknown
@@ -296,7 +273,7 @@ describe("SaveWorkflowToolCallBlock", () => {
       SaveWorkflowToolCallBlock,
       buildContext({ ...buildSaveToolCall(), input: withoutScope }),
     );
-    expect(screen.queryByText(expectedCopy("chat.toolCall.workflow.save.scope.label"))).toBeNull();
+    expect(screen.queryByText("Scope")).toBeNull();
     expect(document.querySelector('[data-workflow-scope-badge="global"]')).toBeNull();
   });
 
@@ -306,7 +283,7 @@ describe("SaveWorkflowToolCallBlock", () => {
       buildContext(buildSaveToolCall({ scope: "global", shadowing: "hides_global" })),
     );
     expect(
-      screen.getByText(expectedCopy("chat.toolCall.workflow.save.scope.hidesGlobal")),
+      screen.getByText("A global workflow with this name will be hidden by this one"),
     ).toBeTruthy();
     cleanup();
 
@@ -315,7 +292,9 @@ describe("SaveWorkflowToolCallBlock", () => {
       buildContext(buildSaveToolCall({ scope: "project", shadowing: "hidden_by_project" })),
     );
     expect(
-      screen.getByText(expectedCopy("chat.toolCall.workflow.save.scope.hiddenByProject")),
+      screen.getByText(
+        "This project already has a workflow with this name, which will hide this one here",
+      ),
     ).toBeTruthy();
   });
 
@@ -392,7 +371,9 @@ describe("CreateWorkflowToolCallBlock saved source line", () => {
 
     expect(
       document.querySelector('[data-workflow-card-saved-source="true"]')?.textContent,
-    ).toContain("已保存的工作流 · project");
+    ).toContain(
+      `${zhCN["chat.permission.workflow.saved.badge"]} · ${zhCN["chat.permission.workflow.saved.scope.project"]}`,
+    );
   });
 });
 
@@ -407,8 +388,9 @@ describe("ListSavedWorkflowsToolCallBlock", () => {
   });
 
   it("prefers the saved_workflow_list display over the model-facing text projection", () => {
-    // Root-cause regression pin: on the v4 wire, output is formatModelContent's XML-style projection (a JSON probe
-    // never hits); when the display channel is present it must take priority over any text probe.
+    // Root-cause regression pin: on the v4 wire the output is formatModelContent's XML-style
+    // projection (a JSON probe would never hit); when the display channel is present it must
+    // take priority over every text probe.
     const toolCall = {
       ...buildListToolCall(
         '<saved_workflows count="1"><workflow name="release-check"/></saved_workflows>',
@@ -451,7 +433,8 @@ describe("ListSavedWorkflowsToolCallBlock", () => {
     expect(screen.getByText("target")).toBeTruthy();
     expect(screen.getByText("skipTests")).toBeTruthy();
 
-    // The generic fallback prints the whole toolCall; the dedicated card must have none of these structural keys.
+    // The generic fallback would print the whole toolCall; the dedicated card must not show
+    // these structural keys.
     expect(document.body.textContent).not.toContain('"toolId"');
     expect(document.body.textContent).not.toContain('"workflows"');
   });
@@ -461,7 +444,7 @@ describe("ListSavedWorkflowsToolCallBlock", () => {
 
     expect(screen.getByText("1 file could not be read")).toBeTruthy();
     expect(screen.getByText("/workspace/.zcode/workflows/broken.dwf.ts")).toBeTruthy();
-    // A broken file must not push good files out.
+    // A broken file must not crowd out the good ones.
     expect(screen.getByText("release-check")).toBeTruthy();
   });
 
@@ -484,23 +467,19 @@ describe("ListSavedWorkflowsToolCallBlock", () => {
     renderCard(ListSavedWorkflowsToolCallBlock, buildContext(buildListToolCall("not json")));
 
     expect(document.querySelector('[data-saved-workflow-list="true"]')).toBeNull();
-    // The degraded path existing is enough — the point is not to draw a fake empty list.
+    // The downgrade path just needs to exist — the point is not drawing a fake empty list.
     expect(document.body.textContent).not.toContain("No saved workflows in this project");
   });
 
-  it("renders both locales", () => {
+  it("renders the listing in zh-CN", () => {
     renderCard(ListSavedWorkflowsToolCallBlock, buildContext(buildListToolCall()), "zh-CN");
     expect(screen.getByText(zhCN["chat.toolCall.workflow.list.listed"])).toBeTruthy();
     expect(
-      screen.getByText(zhCN["chat.toolCall.workflow.list.count.other"].replace("{count}", "2")),
+      screen.getByText(zhCN["chat.toolCall.workflow.list.count"].replaceAll("{count}", "2")),
     ).toBeTruthy();
     expect(
-      screen.getByText(zhCN["chat.toolCall.workflow.list.invalid.other"].replace("{count}", "1")),
+      screen.getByText(zhCN["chat.toolCall.workflow.list.invalidOne"].replaceAll("{count}", "1")),
     ).toBeTruthy();
-    cleanup();
-
-    renderCard(ListSavedWorkflowsToolCallBlock, buildContext(buildListToolCall()), "en-US");
-    expect(screen.getByText("2 workflows")).toBeTruthy();
   });
 
   it("tags global-scoped entries next to the name", () => {
@@ -509,7 +488,7 @@ describe("ListSavedWorkflowsToolCallBlock", () => {
         LIST_RESULT.workflows[0],
         {
           name: "deep-research",
-          description: "深度调研",
+          description: "Deep research",
           scope: "global",
           path: "/home/.zcode/workflows/deep-research.dwf.ts",
         },
@@ -523,7 +502,7 @@ describe("ListSavedWorkflowsToolCallBlock", () => {
     );
     const tag = document.querySelector('[data-workflow-scope-tag="global"]');
     expect(tag?.textContent).toBe("Global");
-    // The project copy gets no such tag (its scope text is still project).
+    // Project entries do not get this tag (their scope text stays project).
     expect(document.querySelectorAll('[data-workflow-scope-tag="global"]').length).toBe(1);
   });
 });

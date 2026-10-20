@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProviderModelsSection } from "@/settings/model-provider-section/ProviderCardSections.js";
 import { ProviderModelMetadataDialog } from "@/settings/model-provider-section/ProviderModelMetadataDialog.js";
 import { MODEL_PROVIDER_TEXT_IDLE_TRIGGER_MS } from "@/settings/model-provider-section/useIdleTrigger.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
+import enUS from "@/i18n/locales/en-US.js";
 
 const providerSettingsServiceMock = vi.hoisted(() => ({
   resolveModelConfig: vi.fn(),
@@ -36,7 +36,7 @@ vi.mock("@/components/ui/dialog.js", () => ({
           createElement(
             "button",
             {
-              "aria-label": "模拟关闭弹窗",
+              "aria-label": "Close dialog (mock)",
               onClick: () => onOpenChange?.(false),
               type: "button",
             },
@@ -53,21 +53,32 @@ vi.mock("@/components/ui/dialog.js", () => ({
   DialogTrigger: ({ children }: { children: ReactNode }) => children,
 }));
 
-vi.mock("@/i18n/IntlProvider.js", async () => {
-  const enUS = (await import("@/i18n/locales/en-US.js")).default as Record<string, string>;
-  return {
-    useZCodeIntl: () => ({
-      locale: "en-US",
-      intl: {
-        formatMessage: ({ id }: { id: string }, values?: Record<string, string | number>) =>
-          Object.entries(values ?? {}).reduce(
-            (result, [name, value]) => result.replaceAll(`{${name}}`, String(value)),
-            enUS[id] ?? id,
-          ),
+vi.mock("@/i18n/IntlProvider.js", () => ({
+  useZCodeIntl: () => ({
+    locale: "en-US",
+    intl: {
+      formatMessage: ({ id }: { id: string }) => {
+        const messages: Record<string, string> = {
+          "common.cancel": enUS["common.cancel"],
+          "common.loading": enUS["common.loading"],
+          "common.save": enUS["common.save"],
+          "settings.modelProvider.addModel": enUS["settings.modelProvider.addModel"],
+          "settings.modelProvider.advanced": enUS["settings.modelProvider.advanced"],
+          "settings.modelProvider.contextWindow": enUS["settings.modelProvider.contextWindow"],
+          "settings.modelProvider.editModel": enUS["settings.modelProvider.editModel"],
+          "settings.modelProvider.editModelDescription":
+            enUS["settings.modelProvider.editModelDescription"],
+          "settings.modelProvider.maxOutputTokens": enUS["settings.modelProvider.maxOutputTokens"],
+          "settings.modelProvider.modelId": enUS["settings.modelProvider.modelId"],
+          "settings.modelProvider.models": enUS["settings.modelProvider.models"],
+          "settings.modelProvider.modelDefaultsLoaded":
+            enUS["settings.modelProvider.modelDefaultsLoaded"],
+        };
+        return messages[id] ?? id;
       },
-    }),
-  };
-});
+    },
+  }),
+}));
 
 function createModelConfigResolution(maxOutputTokens = 32_000, contextWindow = 128_000) {
   const optionSpecs = {
@@ -134,21 +145,23 @@ function renderAddModelSection(onAddModel = vi.fn(() => true)) {
     }),
   );
   fireEvent.click(
-    screen.getByRole("button", { name: expectedCopy("settings.modelProvider.addModel") }),
+    screen.getByRole("button", {
+      name: enUS["settings.modelProvider.addModel"],
+    }),
   );
   const contextWindowInput = document.querySelector<HTMLInputElement>('input[inputmode="numeric"]');
-  if (!contextWindowInput) throw new Error("上下文窗口输入框未渲染");
+  if (!contextWindowInput) throw new Error("context window input did not render");
   return {
     contextWindowInput,
     maxOutputTokensInput: screen.getByLabelText(
-      expectedCopy("settings.modelProvider.maxOutputTokens"),
+      enUS["settings.modelProvider.maxOutputTokens"],
     ) as HTMLInputElement,
     modelIdInput: screen.getByPlaceholderText(
-      expectedCopy("settings.modelProvider.modelId"),
+      enUS["settings.modelProvider.modelId"],
     ) as HTMLInputElement,
     onAddModel,
     saveButton: screen.getByRole("button", {
-      name: expectedCopy("settings.modelProvider.save"),
+      name: enUS["common.save"],
     }) as HTMLButtonElement,
   };
 }
@@ -164,7 +177,7 @@ describe("provider model config resolution", () => {
     vi.useRealTimers();
   });
 
-  it("数字字段使用 input，帮助内容位于 label 外并展示推理编辑器", () => {
+  it("numeric fields use input, help sits outside the label and the reasoning editor renders", () => {
     render(
       createElement(ProviderModelMetadataDialog, {
         mode: "edit",
@@ -192,19 +205,19 @@ describe("provider model config resolution", () => {
     );
 
     const maxOutputTokensInput = screen.getByLabelText(
-      expectedCopy("settings.modelProvider.maxOutputTokens"),
+      enUS["settings.modelProvider.maxOutputTokens"],
     );
     expect(maxOutputTokensInput.tagName).toBe("INPUT");
-    expect(
-      screen.getByLabelText(expectedCopy("settings.modelProvider.contextWindow")).tagName,
-    ).toBe("INPUT");
+    expect(screen.getByLabelText(enUS["settings.modelProvider.contextWindow"]).tagName).toBe(
+      "INPUT",
+    );
     for (const help of document.querySelectorAll("[data-model-help]")) {
       expect(help.closest("label")).toBeNull();
     }
     expect(document.querySelector('[data-model-reasoning-level-editor="true"]')).toBeTruthy();
   });
 
-  it("添加模型时等待统一 idle 时间解析并允许覆盖 Config Rule 回填值", async () => {
+  it("add-model waits for the shared idle time to resolve and allows overriding the Config Rule backfill", async () => {
     providerSettingsServiceMock.resolveModelConfig.mockResolvedValue(
       createModelConfigResolution(64_000),
     );
@@ -262,7 +275,7 @@ describe("provider model config resolution", () => {
     });
   });
 
-  it("显式保存会立即解析当前模型并在同一次点击中提交", async () => {
+  it("explicit save resolves the current model immediately and commits in the same click", async () => {
     providerSettingsServiceMock.resolveModelConfig.mockResolvedValue(
       createModelConfigResolution(128_000, 1_000_000),
     );
@@ -286,7 +299,7 @@ describe("provider model config resolution", () => {
     );
   });
 
-  it("迟到的默认配置不会覆盖用户已经修改的布尔字段", async () => {
+  it("a late default config does not clobber boolean fields the user already changed", async () => {
     let finishResolution:
       | ((resolution: ReturnType<typeof createModelConfigResolution>) => void)
       | undefined;
@@ -304,7 +317,7 @@ describe("provider model config resolution", () => {
     });
     fireEvent.click(document.querySelector<HTMLButtonElement>("[data-model-advanced-trigger]")!);
     const webSearch = screen.getByRole("checkbox", {
-      name: expectedCopy("settings.modelProvider.supportsNativeWebSearch"),
+      name: "settings.modelProvider.supportsNativeWebSearch",
     });
     fireEvent.click(webSearch);
     expect(webSearch.getAttribute("aria-checked")).toBe("true");
@@ -323,7 +336,7 @@ describe("provider model config resolution", () => {
     });
   });
 
-  it("允许清空 Config Rule 回填值并以 undefined 提交", async () => {
+  it("clearing a Config Rule backfill is allowed and submits undefined", async () => {
     providerSettingsServiceMock.resolveModelConfig.mockResolvedValue(
       createModelConfigResolution(64_000),
     );
@@ -359,7 +372,7 @@ describe("provider model config resolution", () => {
     );
   });
 
-  it("Config Rule 解析失败时保持空白并恢复手动输入", async () => {
+  it("a failed Config Rule resolution stays blank and restores manual input", async () => {
     providerSettingsServiceMock.resolveModelConfig.mockRejectedValue(
       new Error("config resolution unavailable"),
     );
@@ -377,7 +390,7 @@ describe("provider model config resolution", () => {
     expect(saveButton.disabled).toBe(false);
   });
 
-  it("模型 ID 变化时清除上一模型的 Config Resolution 值", async () => {
+  it("changing the model ID clears the previous model's Config Resolution values", async () => {
     providerSettingsServiceMock.resolveModelConfig
       .mockResolvedValueOnce(createModelConfigResolution(64_000, 256_000))
       .mockResolvedValueOnce(createModelConfigResolution(16_000, 64_000));
@@ -400,7 +413,7 @@ describe("provider model config resolution", () => {
     expect(contextWindowInput.placeholder).toBe("64000");
   });
 
-  it("忽略模型 ID 变化前尚未完成的 Config Rule 解析结果", async () => {
+  it("a Config Rule resolution started before the model ID changed is ignored", async () => {
     let resolveFirstLookup:
       | ((resolution: ReturnType<typeof createModelConfigResolution>) => void)
       | undefined;
@@ -433,7 +446,7 @@ describe("provider model config resolution", () => {
     expect(maxOutputTokensInput.placeholder).toBe("16000");
   });
 
-  it("编辑模型只展示和修改已有值，不触发 catalog 查询", () => {
+  it("editing a model only shows and edits existing values without catalog lookups", () => {
     const onDraftChange = vi.fn();
     const onCommit = vi.fn(() => true);
     render(
@@ -463,10 +476,10 @@ describe("provider model config resolution", () => {
     );
 
     const maxOutputTokensInput = screen.getByLabelText(
-      expectedCopy("settings.modelProvider.maxOutputTokens"),
+      enUS["settings.modelProvider.maxOutputTokens"],
     ) as HTMLInputElement;
 
-    // Todo141：最大输出在基础区，高级仍默认收起；查看/编辑/展开都不应触发 catalog 查询。
+    // Todo141: max output lives in the basic section and advanced stays collapsed; viewing/editing/expanding must not trigger catalog lookups.
     const advanced = document.querySelector<HTMLElement>("[data-model-advanced]")!;
     const trigger = advanced.querySelector<HTMLButtonElement>("[data-model-advanced-trigger]")!;
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
@@ -482,7 +495,7 @@ describe("provider model config resolution", () => {
     expect(providerSettingsServiceMock.resolveModelConfig).not.toHaveBeenCalled();
   });
 
-  it("展示 reasoning 默认配置并且相同解析结果不重复显示成功横幅", async () => {
+  it("shows the reasoning defaults and does not repeat the success banner for the same resolution", async () => {
     const resolution = createModelConfigResolution(128_000, 1_000_000);
     resolution.inheritedConfig.optionSpecs = {
       ...resolution.inheritedConfig.optionSpecs,
@@ -508,17 +521,13 @@ describe("provider model config resolution", () => {
     expect(document.querySelector("textarea")?.getAttribute("placeholder")).toBe(
       "{'reasoning_effort': reasoningLevel}",
     );
-    expect(
-      screen.getAllByText(expectedCopy("settings.modelProvider.modelDefaultsLoaded")),
-    ).toHaveLength(1);
+    expect(screen.getAllByText(enUS["settings.modelProvider.modelDefaultsLoaded"])).toHaveLength(1);
 
     fireEvent.blur(modelIdInput);
     await act(async () => {
       await Promise.resolve();
       await vi.advanceTimersByTimeAsync(3_501);
     });
-    expect(
-      screen.queryByText(expectedCopy("settings.modelProvider.modelDefaultsLoaded")),
-    ).toBeNull();
+    expect(screen.queryByText(enUS["settings.modelProvider.modelDefaultsLoaded"])).toBeNull();
   });
 });

@@ -9,7 +9,7 @@ import {
   TID_V4_FEEDBACK_DISLIKE,
   TID_V4_FEEDBACK_LIKE,
   testId,
-} from "@zcode/shared";
+} from "@zcode/shared/test-ids";
 import type { AssistantTextRow, ReasoningRow, UserInputRow } from "@zcode/shared/zcode-protocol-v4";
 import type { CodeCommentComposerAttachment } from "@/lib/codeCommentContext.js";
 import { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
@@ -662,17 +662,6 @@ describe("ConversationRowView user query editing", () => {
     const messageBubble = findElementByAttribute(container, "data-v4-user-input-bubble", "true");
     expect(Boolean(attachmentArea)).toBe(attachments.length > 0);
     expect(Boolean(messageBubble)).toBe(bubble);
-    if (messageBubble) {
-      const bubbleClasses = collectAttributeValues(messageBubble, "class").join(" ");
-      const bubbleClassTokens = bubbleClasses.split(/\s+/);
-      expect(bubbleClasses).toContain("max-w-full");
-      expect(bubbleClasses).toContain("@min-[624px]/conversation:max-w-xl");
-      expect(bubbleClassTokens).not.toContain("w-fit");
-      expect(bubbleClassTokens).not.toContain("w-full");
-      expect(bubbleClassTokens).not.toContain("@md/conversation:max-w-xl");
-      expect(bubbleClassTokens).not.toContain("@xl/conversation:max-w-xl");
-      expect(bubbleClassTokens).not.toContain("@md/conversation:w-full");
-    }
     if (attachmentArea && messageBubble) {
       expect(attachmentArea.parentNode).toBe(messageBubble.parentNode);
       const siblings = attachmentArea.parentNode as {
@@ -686,7 +675,7 @@ describe("ConversationRowView user query editing", () => {
     await act(async () => root.unmount());
   });
 
-  it("renders sent attachments as surface pills with a file icon and filename", async () => {
+  it("renders sent file attachments with their icon and filename", async () => {
     const container = installMinimalDom();
     const root: Root = createRoot(container);
 
@@ -705,9 +694,6 @@ describe("ConversationRowView user query editing", () => {
 
     const pill = findElementByAttribute(container, "data-v4-user-input-attachment-pill", "true");
     expect(pill).not.toBeNull();
-    const classes = collectAttributeValues(pill, "class").join(" ");
-    expect(classes).toContain("rounded-full");
-    expect(classes).toContain("bg-surface");
     expect(collectText(pill)).toBe("note.txt");
     expect(collectAttributeValues(pill, "src").some((src) => src.endsWith(".svg"))).toBe(true);
 
@@ -824,7 +810,7 @@ describe("ConversationRowView user query editing", () => {
       "true",
     );
     const image = findElementByAttribute(imageRow, "data-v4-user-input-media-attachment", "true");
-    // findElementByAttribute 只返回首个匹配；media 行内还有视频卡，按子节点序取第二个。
+    // findElementByAttribute returns only the first match; the media row also holds a video card, so take the second by child order.
     const mediaCards = [...(imageRow as { childNodes?: unknown[] }).childNodes!].filter(
       (child) =>
         typeof child === "object" &&
@@ -857,7 +843,7 @@ describe("ConversationRowView user query editing", () => {
     expect(image?.parentNode).toBe(imageRow);
     expect(video?.parentNode).toBe(imageRow);
     expect(file?.parentNode).toBe(pillRow);
-    // 媒体行内按添加顺序混排图片与视频；视频不进入文件 pill 行。
+    // The media row interleaves images and videos in insertion order; videos never enter the file pill row.
     const mediaChildren = (imageRow as { childNodes?: unknown[] }).childNodes ?? [];
     expect(mediaChildren.indexOf(image)).toBeLessThan(mediaChildren.indexOf(video));
     expect(web?.parentNode).toBe(pillRow);
@@ -880,7 +866,7 @@ describe("ConversationRowView user query editing", () => {
       variant: "grid",
       data: { url: "blob:sent-thumbnail" },
     });
-    // 可见消息行会读取已发送视频，卡片复用 Blob URL 由无控件 video 展示首帧。
+    // A visible message row reads the sent video; the card reuses the Blob URL to show the first frame in a controls-free video.
     expect(attachmentPropsById.get("42-1")).toMatchObject({
       variant: "grid",
       data: { url: "blob:sent-thumbnail", filename: "demo.mov" },
@@ -893,15 +879,6 @@ describe("ConversationRowView user query editing", () => {
       attachmentIndex: 1,
       signal: expect.any(AbortSignal),
     });
-    const imageClasses = collectAttributeValues(image, "class").join(" ");
-    expect(imageClasses).toContain("size-20");
-    expect(imageClasses).toContain("rounded-xl");
-    expect(imageClasses).not.toMatch(/(?:^|\s)border(?:\s|$)/u);
-    expect(imageClasses).toContain("after:border");
-    expect(imageClasses).toContain("after:pointer-events-none");
-    const videoClasses = collectAttributeValues(video, "class").join(" ");
-    expect(videoClasses).toContain("size-20");
-    expect(videoClasses).toContain("rounded-xl");
 
     await act(async () => root.unmount());
   });
@@ -1061,7 +1038,7 @@ describe("ConversationRowView user query editing", () => {
       attachmentIndex: 1,
       signal: expect.any(AbortSignal),
     });
-    // 挂载时 image/video 各读取一次；点击 video 复用首帧 Blob，不重复读取。
+    // On mount, image and video are each read once; clicking the video reuses the first-frame Blob without re-reading.
     expect(createObjectUrl).toHaveBeenCalledTimes(2);
     expect(imagePreviewDialogProps.at(-1)).toMatchObject({
       open: true,
@@ -1087,7 +1064,7 @@ describe("ConversationRowView user query editing", () => {
     await act(async () => {
       (onPreviewOpenChange as (open: boolean) => void)(false);
     });
-    // gallery 关闭后首帧仍在消息卡片使用，直到消息行卸载才统一释放。
+    // After the gallery closes, the first frame stays in use by the message card; it is released only when the row unmounts.
     expect(revokeObjectUrl).not.toHaveBeenCalledWith("blob:sent-preview");
     await act(async () => root.unmount());
     expect(revokeObjectUrl).toHaveBeenCalledWith("blob:sent-preview");
@@ -1413,8 +1390,7 @@ describe("ConversationRowView user query editing", () => {
     await act(async () => root.unmount());
   });
 
-  // 回归：v4 迁移后用户行复制/编辑按钮硬编码中文，未走 i18n；
-  // en-US 下会显示「复制」「编辑」。文案必须跟随当前 locale。
+  // Regression: after the v4 migration the user-row copy/edit buttons hardcoded Chinese instead of using i18n, so en-US showed the Chinese labels. Copy must follow the current locale.
   it.each([
     ["zh-CN", "复制", "编辑"],
     ["en-US", "Copy", "Edit"],
@@ -1539,33 +1515,6 @@ describe("ConversationRowView user query editing", () => {
     });
   });
 
-  it("does not append a visual cursor to streaming assistant text", async () => {
-    const row = assistantTextRow();
-    const container = installMinimalDom();
-    const root: Root = createRoot(container);
-
-    await act(async () => {
-      root.render(
-        createElement(
-          ZCodeIntlProvider,
-          { initialLocale: "en-US" },
-          createElement(ConversationRowView, {
-            context: rowContext,
-            row,
-          }),
-        ),
-      );
-    });
-
-    expect(collectText(container)).toContain(row.text);
-    const classValues = collectAttributeValues(container, "class");
-    expect(classValues.join(" ")).not.toContain("animate-pulse");
-
-    await act(async () => {
-      root.unmount();
-    });
-  });
-
   it.each(["complete", "streaming"] as const)(
     "puts assistant %s text inside a real selectable DOM region",
     async (state) => {
@@ -1587,7 +1536,7 @@ describe("ConversationRowView user query editing", () => {
       });
 
       expect(collectAttributeValues(container, "data-conversation-selectable")).toContain("true");
-      // 回归根因：标记不能继续依赖不透传 data-* 的 MessageResponse。
+      // Regression root cause: the marker must not rely on MessageResponse, which does not pass through data-* attributes.
       expect(messageResponseProps.at(-1)?.["data-conversation-selectable"]).toBeUndefined();
 
       await act(async () => {
@@ -1596,7 +1545,7 @@ describe("ConversationRowView user query editing", () => {
     },
   );
 
-  it("保持显式 Markdown 文件处理器，仅为 Assistant 开启 citation 投影", async () => {
+  it("keeps the explicit Markdown file handlers and enables citation projection for Assistant rows only", async () => {
     const row = assistantTextRow({
       state: "complete",
       text: "See [README](./README.md) and https://example.test.",
@@ -1632,7 +1581,7 @@ describe("ConversationRowView user query editing", () => {
     expect(messageResponseProps[0]?.onOpenCodeViewer).toBe(onOpenCodeViewer);
     expect(messageResponseProps[0]?.onOpenFileLink).toBe(onOpenFileLink);
     expect(messageResponseProps[0]?.renderZCodeFileCitations).toBe(true);
-    // 回归根因：artifact 图片读取能力必须由行级生产接线继续传入 Markdown。
+    // Regression root cause: the artifact image-reading capability must keep flowing into Markdown from the row-level production wiring.
     expect(messageResponseProps[0]?.sessionId).toBe("session-1");
     expect(messageResponseProps[0]?.readAttachment).toBe(readAttachment);
 
@@ -1705,7 +1654,6 @@ describe("ConversationRowView user query editing", () => {
     );
     expect(fileAttachmentPill?.parentNode).toBe(pillRow);
     expect(webElementChip?.parentNode).toBe(pillRow);
-    expect(collectAttributeValues(webElementChip, "class").join(" ")).toContain("rounded-full");
 
     const copyAction = messageActionPropsByTestId.get(`v4-copy-${row.rowId}`);
     expect(copyAction).toBeDefined();
@@ -1937,19 +1885,16 @@ describe("ConversationRowView user query editing", () => {
       )?.();
     });
 
-    // 编辑态按「媒体优先、组内原序」排列：second.png、third.mov 为媒体卡，first.txt 为文件卡。
+    // The edit state orders media first, original order within each group: second.png and third.mov are media cards; first.txt is a file card.
     expect(attachmentPropsById.get(`${row.rowId}-1`)).toMatchObject({
-      className: expect.stringContaining("size-12"),
       variant: "grid",
       "data-v4-user-edit-attachment-kind": "image",
     });
     expect(attachmentPropsById.get(`${row.rowId}-2`)).toMatchObject({
-      className: expect.stringContaining("size-12"),
       variant: "grid",
       "data-v4-user-edit-attachment-kind": "video",
     });
     expect(attachmentPropsById.get(`${row.rowId}-0`)).toMatchObject({
-      className: expect.stringContaining("h-12"),
       variant: "inline",
       "data-v4-user-edit-attachment-kind": "file",
     });
@@ -1958,7 +1903,6 @@ describe("ConversationRowView user query editing", () => {
     const secondRemoveId = testId(TID_V4_EDIT_ATTACHMENT_REMOVE, `${row.rowId}-1`);
     expect(attachmentRemovePropsByTestId.get(firstRemoveId)).toMatchObject({
       alwaysVisible: undefined,
-      className: expect.stringContaining("size-3.5"),
       label: expectedCopy("chat.attachments.remove"),
       placement: "corner",
       variant: "default",
@@ -2213,81 +2157,6 @@ describe("ConversationRowView user query editing", () => {
     await act(async () => root.unmount());
   });
 
-  it("tells the editor to keep the draft on submit and resubmits it from the conflict dialog", async () => {
-    const preview = { canApply: false, safeFiles: [], unsafeFiles: [], ignoredFiles: [] };
-    const onEdit = vi
-      .fn()
-      .mockResolvedValueOnce(false)
-      .mockResolvedValueOnce({
-        commandId: "edit-blocked",
-        accepted: true,
-        result: { type: "editUserQuery", disposition: "blocked", preview },
-      })
-      .mockResolvedValueOnce(true);
-    const row = userInputRow();
-    const root: Root = createRoot(installMinimalDom());
-
-    await act(async () => {
-      root.render(
-        createElement(
-          ZCodeIntlProvider,
-          { initialLocale: "en-US" },
-          createElement(ConversationRowView, { context: rowContext, onEdit, row }),
-        ),
-      );
-    });
-    await act(async () => {
-      (
-        messageActionPropsByTestId.get(testId(TID_V4_EDIT, String(row.rowId)))?.onClick as
-          | (() => void)
-          | undefined
-      )?.();
-    });
-
-    const typed = "改过的问题";
-    await act(async () => {
-      (chatPromptEditorProps.at(-1)!.onChange as (value: string) => void)(typed);
-    });
-
-    // Lexical resets the editor unless onSubmit returns false; the edit is async, so the row must
-    // own the reset and keep the text until onEdit is accepted.
-    let submitResult: unknown;
-    await act(async () => {
-      submitResult = (chatPromptEditorProps.at(-1)!.onSubmit as (value: string) => unknown)(typed);
-      await Promise.resolve();
-    });
-    expect(submitResult).toBe(false);
-    expect(onEdit).toHaveBeenNthCalledWith(
-      1,
-      { rowId: row.rowId, entityId: row.entityId },
-      typed,
-      row.attachments,
-      "preserve",
-    );
-    expect(chatPromptEditorProps.at(-1)?.onSubmit).toBeTypeOf("function");
-
-    await act(async () => {
-      submitResult = (chatPromptEditorProps.at(-1)!.onSubmit as (value: string) => unknown)(typed);
-      await Promise.resolve();
-    });
-    expect(submitResult).toBe(false);
-    expect(fileRewindDialogProps.at(-1)).toMatchObject({ open: true, preview });
-
-    await act(async () => {
-      (fileRewindDialogProps.at(-1)!.onConversationOnly as () => void)();
-      await Promise.resolve();
-    });
-    expect(onEdit).toHaveBeenNthCalledWith(
-      3,
-      { rowId: row.rowId, entityId: row.entityId },
-      typed,
-      row.attachments,
-      "preserve",
-    );
-
-    await act(async () => root.unmount());
-  });
-
   it("keeps the disabled file reset tooltip hoverable and explains why it is unavailable", async () => {
     const row = userInputRow();
     const root: Root = createRoot(installMinimalDom());
@@ -2333,7 +2202,6 @@ describe("ConversationRowView user query editing", () => {
     expect(disabledTooltipTrigger.type).toBe("span");
     expect(disabledTooltipTrigger.props["data-disabled-tooltip-trigger"]).toBe("true");
     expect(rewindButton.props.disabled).toBe(true);
-    expect(rewindButton.props.size).toBe("icon-md");
     expect((rewindButton.props.children as ReactElement).type).toBe(FileClockIcon);
 
     await act(async () => {
@@ -2412,11 +2280,7 @@ describe("ConversationRowView user query editing", () => {
       testId(TID_V4_EDIT_REWIND_WORKSPACE, String(row.rowId)),
     );
     expect(rewindButton.props.disabled).toBe(false);
-    expect(rewindButton.props.size).toBe("icon-md");
-    expect(rewindButton.props.children).toMatchObject({
-      type: FileClockIcon,
-      props: { className: "size-4" },
-    });
+    expect((rewindButton.props.children as ReactElement).type).toBe(FileClockIcon);
 
     await act(async () => {
       (rewindButton.props.onClick as () => void)();

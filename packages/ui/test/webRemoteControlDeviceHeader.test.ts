@@ -13,9 +13,9 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
 }));
 afterEach(cleanup);
 
-describe("远控设备导航", () => {
+describe("web remote control device navigation", () => {
   it.each([undefined, "", "   "])(
-    "缺失或空名称 %s 显示未命名设备，点击才调用入口命令",
+    "missing or empty name %s shows the unnamed device; the entry command runs only on click",
     (deviceName) => {
       const chooseOtherDevice = vi.fn();
       const page = render(
@@ -30,20 +30,20 @@ describe("远控设备导航", () => {
     },
   );
 
-  it("整行即切换入口：设备名在按钮内单行截断，不再显示“当前设备”前缀", () => {
+  it("the whole row is the switch entry: the device name truncates on one line inside the button, with no current-device prefix", () => {
     const chooseOtherDevice = vi.fn();
     const page = render(
       createElement(WebRemoteControlDeviceHeader, {
-        navigation: { deviceName: "  Dev computer  ", chooseOtherDevice },
+        navigation: { deviceName: "  Dev Machine  ", chooseOtherDevice },
       }),
     );
     const button = page.getByRole("button", { name: "webRemoteControl.switchDevice" });
-    const name = page.getByText("Dev computer");
-    expect(name.textContent).toBe("Dev computer");
+    const name = page.getByText("Dev Machine");
+    expect(name.textContent).toBe("Dev Machine");
     expect(button.contains(name)).toBe(true);
     expect(name.className).toContain("truncate");
     expect(button.getAttribute("title")).toBe("webRemoteControl.switchDevice");
-    expect(button.textContent).toBe("Dev computer");
+    expect(button.textContent).toBe("Dev Machine");
     fireEvent.click(name);
     expect(chooseOtherDevice).toHaveBeenCalledOnce();
   });
@@ -52,7 +52,7 @@ describe("远控设备导航", () => {
     ["darwin", "darwin"],
     ["win32", "win32"],
     [undefined, "unknown"],
-  ])("平台 %s 显示对应设备图标 %s", (devicePlatform, icon) => {
+  ])("platform %s shows the matching device icon %s", (devicePlatform, icon) => {
     const page = render(
       createElement(WebRemoteControlDeviceHeader, {
         navigation: { deviceName: "Mac", devicePlatform, chooseOtherDevice: vi.fn() },

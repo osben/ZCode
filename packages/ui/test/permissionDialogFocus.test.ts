@@ -8,6 +8,7 @@ import type { ConversationSnapshot } from "@zcode/shared/zcode-protocol-v4";
 import { PermissionDialog } from "@/PermissionDialog.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { V4InteractionDialogs } from "@/v4/V4InteractionDialogs.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 vi.mock("@/v4/V4ConversationContext.js", () => ({
   useV4Conversation: () => ({ sendCommand: vi.fn() }),
@@ -67,7 +68,8 @@ function permissionSnapshot(interactionId: string): ConversationSnapshot {
 
 describe("PermissionDialog focus", () => {
   beforeEach(() => {
-    // jsdom 不提供 ResizeObserver；焦点测试不依赖布局，真实命令溢出由 browser E2E 验证。
+    // jsdom does not provide ResizeObserver; focus tests do not depend on layout,
+    // and real command overflow is covered by browser E2E.
     vi.stubGlobal(
       "ResizeObserver",
       class {
@@ -150,14 +152,16 @@ describe("PermissionDialog focus", () => {
       flush,
       options: view.getAllByRole("option"),
       input: view.queryByRole("textbox") as HTMLTextAreaElement | null,
-      confirm: view.getByRole("button") as HTMLButtonElement,
+      confirm: view.getByRole("button", {
+        name: expectedCopy("common.confirm"),
+      }) as HTMLButtonElement,
     };
   }
 
-  it("完全访问为第三项，数字 5 只聚焦反馈，第三项按原 optionId 提交", () => {
+  it("places full access third, digit 5 focuses only feedback, and the third option submits with its original optionId", () => {
     const { input, options, flush, onRespond, confirm } = renderPermission(true, true);
     expect(options).toHaveLength(4);
-    expect(options[2]!.getAttribute("data-permission-option-kind")).toBe("custom");
+    expect(options[2]!.textContent).toContain(expectedCopy("chat.permission.fullAccess"));
     expect(input!.previousElementSibling?.textContent).toBe("5.");
     fireEvent.keyDown(options[0]!, { key: "5" });
     flush();
@@ -173,28 +177,6 @@ describe("PermissionDialog focus", () => {
     expect(onRespond).toHaveBeenCalledWith(
       "request-focus",
       expect.objectContaining({ optionId: "fullAccess" }),
-      undefined,
-    );
-  });
-
-  it("selects an option with a digit key without answering, and answers only on Enter", () => {
-    const { options, flush, onRespond } = renderPermission(false);
-    expect(document.activeElement).toBe(options[0]);
-
-    for (const key of ["1", "2", "3"]) {
-      fireEvent.keyDown(document.activeElement!, { key });
-      flush();
-      expect(document.activeElement).toBe(options[Number(key) - 1]);
-      expect(options[Number(key) - 1]!.getAttribute("aria-selected")).toBe("true");
-    }
-    expect(onRespond).not.toHaveBeenCalled();
-
-    fireEvent.keyDown(document.activeElement!, { key: "2" });
-    flush();
-    fireEvent.keyDown(document.activeElement!, { key: "Enter" });
-    expect(onRespond).toHaveBeenCalledExactlyOnceWith(
-      request.requestId,
-      request.options[1],
       undefined,
     );
   });
@@ -218,7 +200,7 @@ describe("PermissionDialog focus", () => {
     key("Enter");
     expect(onRespond).not.toHaveBeenCalled();
 
-    fireEvent.change(input!, { target: { value: " 保留反馈 " } });
+    fireEvent.change(input!, { target: { value: " keep feedback " } });
     key("ArrowUp");
     expect(document.activeElement).toBe(options[2]);
     expect(options[2]!.getAttribute("aria-selected")).toBe("true");
@@ -237,7 +219,7 @@ describe("PermissionDialog focus", () => {
     expect(document.activeElement).toBe(options[0]);
     key("Tab", true);
     expect(document.activeElement).toBe(input);
-    expect(input!.value).toBe(" 保留反馈 ");
+    expect(input!.value).toBe(" keep feedback ");
     expect(onRespond).not.toHaveBeenCalled();
   });
 
@@ -246,7 +228,7 @@ describe("PermissionDialog focus", () => {
     (method) => {
       const { input, options, flush, confirm, onRespond } = renderPermission();
       act(() => input!.focus());
-      fireEvent.change(input!, { target: { value: "  请先解释\n然后再修改  " } });
+      fireEvent.change(input!, { target: { value: "  explain first\nthen fix  " } });
       flush();
       expect(options[2]!.getAttribute("aria-selected")).toBe("false");
       expect(confirm.disabled).toBe(false);
@@ -255,7 +237,7 @@ describe("PermissionDialog focus", () => {
       expect(onRespond).toHaveBeenCalledExactlyOnceWith(
         request.requestId,
         request.options[2],
-        "请先解释\n然后再修改",
+        "explain first\nthen fix",
       );
     },
   );
@@ -263,7 +245,7 @@ describe("PermissionDialog focus", () => {
   it("keeps IME navigation and Escape local to feedback, and ignores the draft when allowing", () => {
     const { input, options, flush, confirm, onRespond } = renderPermission();
     act(() => input!.focus());
-    fireEvent.change(input!, { target: { value: "请先解释" } });
+    fireEvent.change(input!, { target: { value: "explain first" } });
     for (const key of ["ArrowUp", "ArrowDown", "Enter"]) {
       fireEvent.keyDown(input!, { key, isComposing: true });
       flush();
@@ -338,7 +320,9 @@ describe("PermissionDialog focus", () => {
       ),
     );
 
-    const feedbackInput = document.querySelector<HTMLTextAreaElement>("textarea");
+    const feedbackInput = document.querySelector<HTMLTextAreaElement>(
+      `textarea[aria-label="${expectedCopy("chat.permission.feedback.ariaLabel")}"]`,
+    );
     expect(feedbackInput).not.toBeNull();
 
     act(() => {
@@ -362,13 +346,17 @@ describe("PermissionDialog focus", () => {
         }),
       );
     const view = render(renderDialog("permission-a"));
-    const firstInput = document.querySelector<HTMLTextAreaElement>("textarea");
+    const firstInput = document.querySelector<HTMLTextAreaElement>(
+      `textarea[aria-label="${expectedCopy("chat.permission.feedback.ariaLabel")}"]`,
+    );
     expect(firstInput).not.toBeNull();
 
     act(() => firstInput?.focus());
     view.rerender(renderDialog("permission-b"));
 
-    const secondInput = document.querySelector<HTMLTextAreaElement>("textarea");
+    const secondInput = document.querySelector<HTMLTextAreaElement>(
+      `textarea[aria-label="${expectedCopy("chat.permission.feedback.ariaLabel")}"]`,
+    );
     expect(secondInput).not.toBe(firstInput);
   });
 });

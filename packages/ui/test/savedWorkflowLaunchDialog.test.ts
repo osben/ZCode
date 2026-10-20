@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-// 实参窗（docs/dynamic-workflow/launch.md「The launch dialog」）：按类型出控件、默认值回填、一次收齐错误。
+// The launch dialog (docs/dynamic-workflow/launch.md "The launch dialog"): controls per type,
+// default backfill, and collecting all errors at once.
 import { createElement } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -15,21 +16,21 @@ import {
 } from "@zcode/shared";
 import { testId } from "@zcode/shared/test-ids";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
-import { expectedCopy, TEST_LOCALE } from "./helpers/uiCopy.js";
 import {
   resolveAutomationWorkspaceSelectionKey,
   type AutomationWorkspaceOption,
 } from "@/settings/automationWorkspaceOptions.js";
 import { SavedWorkflowLaunchDialog } from "@/settings/saved-workflows/SavedWorkflowLaunchDialog.js";
 import type { SavedWorkflowLaunchError } from "@/settings/saved-workflows/useSavedWorkflowLauncher.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const ENTRY: ZCodeSavedWorkflowEntry = {
   name: "release-check",
-  description: "发布前检查",
+  description: "Pre-release check",
   scope: "project",
   path: "/repo/.zcode/workflows/release-check.dwf.ts",
   args: {
-    branch: { type: "string", required: true, description: "目标分支" },
+    branch: { type: "string", required: true, description: "Target branch" },
     count: { type: "number", default: 3 },
     dry: { type: "boolean", default: true },
     extra: { type: "json" },
@@ -38,13 +39,16 @@ const ENTRY: ZCodeSavedWorkflowEntry = {
 
 const GLOBAL_ENTRY: ZCodeSavedWorkflowEntry = {
   name: "deep-research",
-  description: "深度调研",
+  description: "Deep research",
   scope: "global",
   path: "/home/.zcode/workflows/deep-research.dwf.ts",
 };
 
-// 实参很多的声明（40 个）：第 13 个是无默认值的必填项，第 31 个是 json，其余都有默认值。
-// 真实窗口里这份表单远高于视口；jsdom 不排版，这里只能断言结构与焦点，高度由桌面 e2e 断言。
+// A declaration with many args (40): the 13th is required without a default,
+// the 31st is json, the rest all have defaults.
+// In a real window this form is far taller than the viewport; jsdom does not
+// lay out, so only structure and focus are asserted here; height is covered by
+// desktop e2e.
 const MANY_ARGS_REQUIRED = "arg12";
 const MANY_ARGS_JSON = "arg30";
 const MANY_ARGS: ZCodeSavedWorkflowArgsDeclaration = {};
@@ -59,7 +63,7 @@ for (let index = 0; index < 40; index += 1) {
 }
 const MANY_ARGS_ENTRY: ZCodeSavedWorkflowEntry = {
   name: "arg-overflow",
-  description: "实参很多",
+  description: "Many arguments",
   scope: "global",
   path: "/home/.zcode/workflows/arg-overflow.dwf.ts",
   args: MANY_ARGS,
@@ -69,10 +73,11 @@ const ALPHA: AutomationWorkspaceOption = { workspacePath: "/repo/alpha", label: 
 const BETA: AutomationWorkspaceOption = { workspacePath: "/repo/beta", label: "Beta" };
 const TARGETS: readonly AutomationWorkspaceOption[] = [ALPHA, BETA];
 
-// jsdom 没有实现 scrollIntoView；校验失败时实参窗会调它，这里记下是谁被滚进了视野。
+// jsdom does not implement scrollIntoView; the launch dialog calls it on
+// validation failure, so record who was scrolled into view.
 const scrollIntoView = vi.fn();
 
-// Radix Dialog 在 jsdom 下需要 ResizeObserver；这里给个空实现。
+// Radix Dialog needs ResizeObserver under jsdom; give it an empty implementation.
 beforeAll(() => {
   (globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class {
     observe() {}
@@ -104,7 +109,7 @@ function mount(
   render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: TEST_LOCALE },
+      { initialLocale: "en-US" },
       createElement(SavedWorkflowLaunchDialog, {
         entry,
         scope: scope ?? entry?.scope ?? "project",
@@ -119,25 +124,25 @@ function mount(
 }
 
 describe("SavedWorkflowLaunchDialog", () => {
-  it("entry 为 null 时不渲染", () => {
+  it("does not render when entry is null", () => {
     mount(null);
     expect(screen.queryByTestId(TID_WORKFLOW_LAUNCH_DIALOG)).toBeNull();
   });
 
-  it("按类型出控件并回填默认值；required 标注；说明可见", () => {
+  it("renders controls per type with backfilled defaults; required marker; description visible", () => {
     mount(ENTRY);
     expect(screen.getByTestId(TID_WORKFLOW_LAUNCH_DIALOG)).toBeTruthy();
-    // 头部 = 名字（mono）+ 作用域徽标 + 说明；不再是「运行 {name}」标题。
+    // Header = name (mono) + scope badge + description; no more "Run {name}" title.
     expect(screen.getByText("release-check")).toBeTruthy();
     expect(screen.getByText(expectedCopy("workflows.hub.launch.scope.project"))).toBeTruthy();
-    expect(document.body.textContent).toContain("发布前检查");
+    expect(screen.getByText("Pre-release check")).toBeTruthy();
     const branch = screen.getByTestId(
       testId(TID_WORKFLOW_LAUNCH_ARG, "branch"),
     ) as HTMLInputElement;
     expect(branch.type).toBe("text");
     expect(branch.value).toBe("");
     expect(screen.getByText(expectedCopy("workflows.hub.launch.required"))).toBeTruthy();
-    expect(document.body.textContent).toContain("目标分支");
+    expect(screen.getByText("Target branch")).toBeTruthy();
     const count = screen.getByTestId(testId(TID_WORKFLOW_LAUNCH_ARG, "count")) as HTMLInputElement;
     expect(count.type).toBe("number");
     expect(count.value).toBe("3");
@@ -148,14 +153,15 @@ describe("SavedWorkflowLaunchDialog", () => {
     expect(extra.tagName).toBe("TEXTAREA");
   });
 
-  it("提交前一次收齐 required 与 json 错误；修正后提交拿到按类型解析的实参", () => {
+  it("collects required and json errors at once before submitting; after fixing them, submit receives type-parsed args", () => {
     const { onSubmit } = mount(ENTRY);
     fireEvent.change(screen.getByTestId(testId(TID_WORKFLOW_LAUNCH_ARG, "extra")), {
       target: { value: "{oops" },
     });
     fireEvent.click(screen.getByTestId(TID_WORKFLOW_LAUNCH_SUBMIT));
     expect(onSubmit).not.toHaveBeenCalled();
-    // 徽标「必填」与错误「必填」同文案：错误出现后应有两处。
+    // The badge "Required" and the error "Required" share copy: after the error
+    // appears there should be two occurrences.
     expect(screen.getAllByText(expectedCopy("workflows.hub.launch.required"))).toHaveLength(2);
     expect(screen.getByText(expectedCopy("workflows.hub.launch.error.invalid_json"))).toBeTruthy();
 
@@ -165,7 +171,7 @@ describe("SavedWorkflowLaunchDialog", () => {
     fireEvent.change(screen.getByTestId(testId(TID_WORKFLOW_LAUNCH_ARG, "extra")), {
       target: { value: '{"a":1}' },
     });
-    // 编辑即清掉该字段的错误提示。
+    // Editing clears that field's error hint.
     expect(screen.getAllByText(expectedCopy("workflows.hub.launch.required"))).toHaveLength(1);
     expect(screen.queryByText(expectedCopy("workflows.hub.launch.error.invalid_json"))).toBeNull();
     fireEvent.change(screen.getByTestId(testId(TID_WORKFLOW_LAUNCH_ARG, "count")), {
@@ -173,26 +179,25 @@ describe("SavedWorkflowLaunchDialog", () => {
     });
     fireEvent.click(screen.getByTestId(TID_WORKFLOW_LAUNCH_SUBMIT));
     expect(onSubmit).toHaveBeenCalledTimes(1);
-    // count 留空 → 不传（服务端按 default 回填）；dry 是 boolean 永远有值。
+    // count left empty → not sent (the server backfills from default); dry is
+    // boolean and always has a value.
     expect(onSubmit.mock.calls[0]?.[1]).toEqual({ branch: "main", dry: true, extra: { a: 1 } });
   });
 
-  it("取消按钮关闭窗口", () => {
+  it("the cancel button closes the dialog", () => {
     const { onOpenChange, onSubmit } = mount(ENTRY);
-    fireEvent.click(
-      screen.getByRole("button", { name: expectedCopy("workflows.hub.launch.cancel") }),
-    );
+    fireEvent.click(screen.getByText(expectedCopy("workflows.hub.launch.cancel")));
     expect(onOpenChange).toHaveBeenCalledWith(false);
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it("不传 targets 时不渲染「运行于」选择器（项目档路径）", () => {
+  it('without targets, no "Run in" selector renders (project-scope path)', () => {
     mount(ENTRY);
     expect(screen.queryByTestId(TID_WORKFLOW_LAUNCH_TARGET)).toBeNull();
     expect(screen.queryByText(expectedCopy("workflows.hub.launch.target"))).toBeNull();
   });
 
-  it("传 targets 时渲染选择器，默认选中 defaultTargetKey", () => {
+  it("with targets, the selector renders and defaults to defaultTargetKey", () => {
     mount(GLOBAL_ENTRY, {
       targets: TARGETS,
       defaultTargetKey: resolveAutomationWorkspaceSelectionKey(BETA),
@@ -202,12 +207,12 @@ describe("SavedWorkflowLaunchDialog", () => {
     expect(trigger.textContent).toContain("Beta");
   });
 
-  it("defaultTargetKey 不在候选里时回落到首个候选", () => {
+  it("falls back to the first candidate when defaultTargetKey is not among the candidates", () => {
     mount(GLOBAL_ENTRY, { targets: TARGETS, defaultTargetKey: "no-such-key" });
     expect(screen.getByTestId(TID_WORKFLOW_LAUNCH_TARGET).textContent).toContain("Alpha");
   });
 
-  it("候选为空时提示并禁用提交", () => {
+  it("hints and disables submit when the candidate list is empty", () => {
     mount(GLOBAL_ENTRY, { targets: [] });
     expect(screen.queryByTestId(TID_WORKFLOW_LAUNCH_TARGET)).toBeNull();
     expect(screen.getByText(expectedCopy("workflows.hub.launch.noLocalProject"))).toBeTruthy();
@@ -216,7 +221,7 @@ describe("SavedWorkflowLaunchDialog", () => {
     );
   });
 
-  it("无实参的全局工作流也弹窗，提交回带选中的项目", () => {
+  it("a global workflow without args also opens the dialog; submit returns with the selected project", () => {
     const { onSubmit } = mount(GLOBAL_ENTRY, {
       targets: TARGETS,
       defaultTargetKey: resolveAutomationWorkspaceSelectionKey(ALPHA),
@@ -228,20 +233,20 @@ describe("SavedWorkflowLaunchDialog", () => {
     expect(onSubmit.mock.calls[0]?.[2]).toEqual(ALPHA);
   });
 
-  it("全局档头部渲染「全局」徽标", () => {
+  it('the global-scope header renders the "Global" badge', () => {
     mount(GLOBAL_ENTRY, { targets: TARGETS, scope: "global" });
     expect(screen.getByText("deep-research")).toBeTruthy();
     expect(screen.getByText(expectedCopy("workflows.hub.launch.scope.global"))).toBeTruthy();
   });
 
-  it("说明文案带项目名：项目档用所属项目名", () => {
+  it("the note carries the project name: project scope uses the owning project", () => {
     mount(ENTRY, { projectLabel: "Beta" });
     expect(
       screen.getByText(expectedCopy("workflows.hub.launch.note", { project: "Beta" })),
     ).toBeTruthy();
   });
 
-  it("说明文案带项目名：全局档用选中的「运行于」项目名", () => {
+  it('the note carries the project name: global scope uses the selected "Run in" project', () => {
     mount(GLOBAL_ENTRY, {
       targets: TARGETS,
       scope: "global",
@@ -252,7 +257,7 @@ describe("SavedWorkflowLaunchDialog", () => {
     ).toBeTruthy();
   });
 
-  it("pending 时禁用提交按钮，且点击不再发起", () => {
+  it("pending disables the submit button and clicking it no longer fires", () => {
     const { onSubmit } = mount(GLOBAL_ENTRY, {
       targets: TARGETS,
       scope: "global",
@@ -265,7 +270,7 @@ describe("SavedWorkflowLaunchDialog", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it("行内错误区按 reason 出标题，并把服务端 message 放进 mono 块", () => {
+  it("the inline error region titles by reason and puts the server message in a mono block", () => {
     const error: SavedWorkflowLaunchError = {
       reason: "compile_failed",
       code: "fault.command.savedWorkflowStartRejected.compile_failed",
@@ -277,7 +282,7 @@ describe("SavedWorkflowLaunchDialog", () => {
     expect(region.textContent).toContain("line 3: boom");
   });
 
-  it("能力缺席错误映射到 unsupported 文案；无 message 时不渲染 mono 块", () => {
+  it("maps the missing-capability error to the unsupported copy; no mono block without a message", () => {
     const error: SavedWorkflowLaunchError = {
       reason: "unsupported",
       code: "fault.command.capabilityUnsupported",
@@ -288,7 +293,7 @@ describe("SavedWorkflowLaunchDialog", () => {
     expect(region.querySelector("pre")).toBeNull();
   });
 
-  it("只有「运行于」与实参字段在滚动区内；说明、错误区、按钮钉在滚动区外", () => {
+  it('only "Run in" and the arg fields live in the scroll area; note, error region and buttons are pinned outside', () => {
     const error: SavedWorkflowLaunchError = {
       reason: "compile_failed",
       code: "fault.command.savedWorkflowStartRejected.compile_failed",
@@ -298,17 +303,18 @@ describe("SavedWorkflowLaunchDialog", () => {
     const dialog = screen.getByTestId(TID_WORKFLOW_LAUNCH_DIALOG);
     const fields = screen.getByTestId(TID_WORKFLOW_LAUNCH_FIELDS);
     expect(dialog.contains(fields)).toBe(true);
-    // 滚动区内：「运行于」与全部 40 个实参字段。
+    // Inside the scroll area: "Run in" and all 40 arg fields.
     expect(fields.contains(screen.getByTestId(TID_WORKFLOW_LAUNCH_TARGET))).toBe(true);
     for (const name of Object.keys(MANY_ARGS)) {
       expect(fields.contains(screen.getByTestId(testId(TID_WORKFLOW_LAUNCH_ARG, name)))).toBe(true);
     }
-    // 滚动区外、窗口内：名字、说明文案、错误区、取消与提交——实参再多它们也不会被顶出视口。
+    // Outside the scroll area but inside the dialog: name, note, error region,
+    // cancel and submit — however many args, they never get pushed out of view.
     const pinned = [
       screen.getByText("arg-overflow"),
       screen.getByText(expectedCopy("workflows.hub.launch.note", { project: "Alpha" })),
       screen.getByTestId(TID_WORKFLOW_LAUNCH_ERROR),
-      screen.getByRole("button", { name: expectedCopy("workflows.hub.launch.cancel") }),
+      screen.getByText(expectedCopy("workflows.hub.launch.cancel")),
       screen.getByTestId(TID_WORKFLOW_LAUNCH_SUBMIT),
     ];
     for (const element of pinned) {
@@ -317,29 +323,31 @@ describe("SavedWorkflowLaunchDialog", () => {
     }
   });
 
-  it("没有「运行于」也没有实参时不渲染滚动区", () => {
+  it('renders no scroll area when there is neither "Run in" nor args', () => {
     mount({ ...GLOBAL_ENTRY, scope: "project" });
     expect(screen.getByTestId(TID_WORKFLOW_LAUNCH_DIALOG)).toBeTruthy();
     expect(screen.queryByTestId(TID_WORKFLOW_LAUNCH_FIELDS)).toBeNull();
   });
 
-  it("校验失败：第一个出错字段被滚进视野并拿到焦点", () => {
+  it("on validation failure: the first invalid field is scrolled into view and focused", () => {
     const { onSubmit } = mount(MANY_ARGS_ENTRY, { targets: TARGETS, scope: "global" });
     const required = screen.getByTestId(testId(TID_WORKFLOW_LAUNCH_ARG, MANY_ARGS_REQUIRED));
     const json = screen.getByTestId(testId(TID_WORKFLOW_LAUNCH_ARG, MANY_ARGS_JSON));
     fireEvent.change(json, { target: { value: "{oops" } });
     fireEvent.click(screen.getByTestId(TID_WORKFLOW_LAUNCH_SUBMIT));
     expect(onSubmit).not.toHaveBeenCalled();
-    // 两个字段都出错：按声明顺序取第一个（必填项），而不是后面的 json。
+    // Both fields are invalid: take the first by declaration order (the
+    // required one), not the later json one.
     expect(document.activeElement).toBe(required);
     expect(scrollIntoView).toHaveBeenCalledTimes(1);
     const revealed = scrollIntoView.mock.contexts[0] as HTMLElement;
-    // 滚进视野的是整行（标签 + 控件 + 错误文案），不只是输入框本身。
+    // What gets scrolled into view is the whole row (label + control + error),
+    // not just the input.
     expect(revealed.contains(required)).toBe(true);
-    expect(revealed.textContent).toContain(expectedCopy("workflows.hub.launch.required"));
+    expect(revealed.textContent).toContain(expectedCopy("workflows.hub.launch.error.required"));
     expect(revealed.contains(json)).toBe(false);
 
-    // 修掉第一个后再提交：轮到下一个出错字段。
+    // Fix the first one and submit again: the next invalid field takes over.
     fireEvent.change(required, { target: { value: "prod" } });
     fireEvent.click(screen.getByTestId(TID_WORKFLOW_LAUNCH_SUBMIT));
     expect(onSubmit).not.toHaveBeenCalled();
@@ -347,7 +355,7 @@ describe("SavedWorkflowLaunchDialog", () => {
     expect(scrollIntoView).toHaveBeenCalledTimes(2);
   });
 
-  it("校验通过时不滚动", () => {
+  it("does not scroll when validation passes", () => {
     const { onSubmit } = mount(ENTRY);
     fireEvent.change(screen.getByTestId(testId(TID_WORKFLOW_LAUNCH_ARG, "branch")), {
       target: { value: "main" },

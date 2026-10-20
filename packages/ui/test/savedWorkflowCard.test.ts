@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// 已保存工作流卡片（docs/dynamic-workflow/launch.md「Cards」）：名字 / 说明 / 上次运行四态 / 实参芯片。
+// Saved workflow card (docs/dynamic-workflow/launch.md "Cards"): name / description / last-run states / argument chips.
 import { createElement, type ReactNode } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -13,11 +13,11 @@ import {
 } from "@zcode/shared";
 import { testId } from "@zcode/shared/test-ids";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 import {
   SavedWorkflowCard,
   SavedWorkflowLastRunBadge,
 } from "@/settings/saved-workflows/SavedWorkflowCard.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
 
 const NOW = 1_700_000_000_000;
 
@@ -52,11 +52,15 @@ function mount(node: ReactNode) {
 }
 
 describe("SavedWorkflowLastRunBadge", () => {
-  it("尚未运行 / 四种终态各有 data 标记", () => {
+  it("never-run and the four terminal states each get their own data marker", () => {
     const { unmount } = mount(
       createElement(SavedWorkflowLastRunBadge, { run: undefined, now: NOW }),
     );
-    expect(document.querySelector('[data-workflow-last-run="never"]')).not.toBeNull();
+    expect(
+      screen
+        .getByText(expectedCopy("workflows.hub.lastRun.never"))
+        .getAttribute("data-workflow-last-run"),
+    ).toBe("never");
     unmount();
     for (const [status, kind] of [
       ["completed", "completed"],
@@ -75,7 +79,7 @@ describe("SavedWorkflowLastRunBadge", () => {
 });
 
 describe("SavedWorkflowCard", () => {
-  it("渲染名字、说明、上次运行与实参芯片（最多 3 个 + +N）", () => {
+  it("renders name, description, last run, and argument chips (at most 3 + +N)", () => {
     mount(
       createElement(SavedWorkflowCard, {
         entry: entry({
@@ -105,7 +109,7 @@ describe("SavedWorkflowCard", () => {
     expect(chips?.textContent).toBe("branchcountdry+2");
   });
 
-  it("整卡点击打开详情；卡面「运行」不冒泡成打开", () => {
+  it("clicking the card opens details; the card Run button does not bubble into open", () => {
     const onOpen = vi.fn();
     const onRun = vi.fn();
     mount(
@@ -128,11 +132,11 @@ describe("SavedWorkflowCard", () => {
     expect(onOpen).toHaveBeenCalledTimes(1);
     fireEvent.keyDown(card, { key: "Enter" });
     expect(onOpen).toHaveBeenCalledTimes(2);
-    // 无实参时不渲染芯片区。
+    // No argument chips section without args.
     expect(card.querySelector('[data-workflow-args="true"]')).toBeNull();
   });
 
-  it("busy 时禁用卡面动作", () => {
+  it("disables card actions while busy", () => {
     mount(
       createElement(SavedWorkflowCard, {
         entry: entry(),
@@ -152,7 +156,7 @@ describe("SavedWorkflowCard", () => {
     ).toBe(true);
   });
 
-  it("传 onMove 时菜单出现作用域项：项目档「提升为全局」，全局档「移到项目…」", () => {
+  it("with onMove the menu offers scope items: promote-to-global for project scope, move-to-project for global scope", () => {
     const onMove = vi.fn();
     const view = mount(
       createElement(SavedWorkflowCard, {
@@ -199,7 +203,7 @@ describe("SavedWorkflowCard", () => {
     );
   });
 
-  it("不传 onMove 时菜单没有移动项", () => {
+  it("without onMove the menu has no move item", () => {
     mount(
       createElement(SavedWorkflowCard, {
         entry: entry(),

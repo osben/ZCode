@@ -12,8 +12,14 @@ export function isReviewedLegacyLicense(pkg) {
 
 // 文档查看器原样分发字体分片并附完整许可；通用分类未收录 OFL 导致导出误阻断。
 // 仅接受已核验的精确依赖，不将所有 OFL 字体放行；材料与分发方式见 third-party/README.md。
+// The UI fonts Inter and JetBrains Mono ship inside the app bundle; each package ships its own
+// OFL-1.1 LICENSE file, which the notice generator copies verbatim into THIRD-PARTY-NOTICES.md.
+const REVIEWED_BUNDLED_FONTS = new Set([
+  "@fontsource/noto-sans-sc@5.3.1",
+  "@fontsource-variable/inter@5.3.0",
+  "@fontsource-variable/jetbrains-mono@5.3.0",
+]);
+
 export function isReviewedBundledFontLicense(pkg) {
-  return (
-    pkg.name === "@fontsource/noto-sans-sc" && pkg.version === "5.3.1" && pkg.license === "OFL-1.1"
-  );
+  return REVIEWED_BUNDLED_FONTS.has(`${pkg.name}@${pkg.version}`) && pkg.license === "OFL-1.1";
 }
