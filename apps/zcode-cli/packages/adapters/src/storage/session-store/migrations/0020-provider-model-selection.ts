@@ -1,6 +1,5 @@
-// This frozen data migration generates SQL only, and the checksum covers the final SQL; do not call mutable account/Registry state.
-// Do not delete or overwrite old objects. Change only the structure of historical message sources; current Session selection uses the existing identity mapping.
-// The `--` comments inside the SQL template are upstream text and feed the shared ledger checksum; never edit or translate them.
+// 冻结的数据迁移只生成 SQL，checksum 覆盖最终 SQL；不调用可变账号/Registry。
+// 旧对象不删除、不覆盖，历史消息来源只换结构，当前 Session 选择才使用既有身份映射。
 const value = (path: string) => `json_extract(data, '$.${path}')`;
 const text = (expression: string) =>
   `(typeof(${expression}) = 'text' and length(trim(${expression})) > 0)`;
@@ -16,7 +15,7 @@ function selection(provider: string, model: string, level: string, label = "NULL
 
 function migratedProvider(input: string): string {
   const provider = `trim(${input})`;
-  // Keep this aligned with the approved migrateLegacyModelProviderId comparison tests; do not change it based on the current connection.
+  // 与已裁决的 migrateLegacyModelProviderId 对照测试；不可按当前连接改写。
   return `case ${provider}
     when 'builtin:bigmodel' then 'bigmodel-api'
     when 'builtin:zai' then 'zai-api'

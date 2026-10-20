@@ -249,3 +249,6 @@ packages/ui/src/WorkspaceSidebarItem.tsx
 packages/ui/src/WorkspaceTimelineTasksSection.tsx
 specs/manage-sessions-table.md
 
+
+# TEMPORARY upstream 3.16.1 sync (PR 7b): the fork store keeps erase, children, usage rollup and compat factories; split with the sync factories removal.
+apps/zcode-cli/packages/adapters/src/storage/session-store/sqlite-session-store.ts
