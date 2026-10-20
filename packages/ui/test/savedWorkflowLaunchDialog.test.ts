@@ -306,9 +306,9 @@ describe("SavedWorkflowLaunchDialog", () => {
     // 滚动区外、窗口内：名字、说明文案、错误区、取消与提交——实参再多它们也不会被顶出视口。
     const pinned = [
       screen.getByText("arg-overflow"),
-      screen.getByText("将立即在 Alpha 的新会话中运行"),
+      screen.getByText(expectedCopy("workflows.hub.launch.note", { project: "Alpha" })),
       screen.getByTestId(TID_WORKFLOW_LAUNCH_ERROR),
-      screen.getByText("取消"),
+      screen.getByRole("button", { name: expectedCopy("workflows.hub.launch.cancel") }),
       screen.getByTestId(TID_WORKFLOW_LAUNCH_SUBMIT),
     ];
     for (const element of pinned) {
@@ -336,7 +336,7 @@ describe("SavedWorkflowLaunchDialog", () => {
     const revealed = scrollIntoView.mock.contexts[0] as HTMLElement;
     // 滚进视野的是整行（标签 + 控件 + 错误文案），不只是输入框本身。
     expect(revealed.contains(required)).toBe(true);
-    expect(revealed.textContent).toContain("必填");
+    expect(revealed.textContent).toContain(expectedCopy("workflows.hub.launch.required"));
     expect(revealed.contains(json)).toBe(false);
 
     // 修掉第一个后再提交：轮到下一个出错字段。
