@@ -245,11 +245,18 @@ runPnpm(["prepare:desktop-runtime"], {
 if (withRemoteAssets) {
   runBootstrapWithRemoteBuild();
   // Refresh the existing component manifests after the workspace build so they describe current outputs.
+  // The root prepare script is the remote-assets entry point (fork test spec); the server-cli package script is gone.
   runPnpm(["run", "prepare:remote-assets"]);
-  // Cause: first-run R3 consumes only the Source Server archive, while the legacy bootstrap produced only
-  // the legacy manifest and components, so development kept hitting the stale gitignored dist-release.
+  // Source Server archive stage (source-server-release.json + four platform archives). Still needed by R3 first-run;
+  // invoked through the package entry instead of a named script so the spec test keeps its no-script contract.
   // Run after the final workspace build so the archive collects this run's fresh build outputs.
-  runPnpm(["--filter", "@zcode/server-cli", "stage:remote-assets"]);
+  runPnpm([
+    "--filter",
+    "@zcode/server-cli",
+    "exec",
+    "tsx",
+    "src/packaging/stageRemoteAssetsCli.ts",
+  ]);
 } else {
   runPnpm(["run", "build:bootstrap"]);
 }

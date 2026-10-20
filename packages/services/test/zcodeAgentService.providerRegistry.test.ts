@@ -886,9 +886,10 @@ describe("createZCodeAgentService provider registry", () => {
       model: { providerId: "e2e-primary", modelId: "deepseek-v4-flash" },
     });
 
+    // Fork adaptation (specs/services-upstream-sync-part4.md, 8c): the fork sends no
+    // provider/refreshRegistry barrier before session/create; the worker assembles its own registry.
     expect(calls).toEqual([
       zcodeProtocolMethods.providerUpdateAccountConfig,
-      zcodeProtocolMethods.providerRefreshRegistry,
       zcodeProtocolMethods.sessionCreate,
     ]);
     expect(request).toHaveBeenNthCalledWith(
@@ -1101,7 +1102,7 @@ describe("createZCodeAgentService provider registry", () => {
   });
 
   it.each(["refreshed", "failed"] as const)(
-    "waits for the worker registry before switching a model with unchanged account config: %s",
+    "switches a model with unchanged account config without a worker registry barrier (refresh outcome: %s)",
     async (refreshResult) => {
       const accountSource = createAccountProviderConfigChangeSource({
         revision: "account-1",
@@ -1180,34 +1181,17 @@ describe("createZCodeAgentService provider registry", () => {
             issuedAt: 2,
           },
         });
-        const outcome = switching.then(
-          (ack) => ({ ack }),
-          (error: unknown) => ({ error }),
-        );
-        await vi.waitFor(() => expect(request).toHaveBeenCalled());
-        expect(request.mock.calls.map(([method]) => method)).toEqual([
-          zcodeProtocolMethods.providerRefreshRegistry,
-        ]);
-        finishRefresh();
-        await expect(outcome).resolves.toMatchObject(
-          refreshResult === "failed"
-            ? { error: new Error("registry refresh failed") }
-            : { ack: { status: "accepted" } },
-        );
+        // Fork adaptation (specs/services-upstream-sync-part4.md, 8c): the fork takes no
+        // refreshRegistry barrier before a model switch. The switch command is sent directly over
+        // v4/command, so neither the refresh result nor its gate can delay or fail it.
+        await expect(switching).resolves.toMatchObject({ status: "accepted" });
         expect(
           request.mock.calls.map(([method, params]) =>
             method === V4_METHODS.command
               ? `${method}:${(params as { type: string }).type}`
               : method,
           ),
-        ).toEqual(
-          refreshResult === "failed"
-            ? [zcodeProtocolMethods.providerRefreshRegistry]
-            : [
-                zcodeProtocolMethods.providerRefreshRegistry,
-                `${V4_METHODS.command}:switchModelConfig`,
-              ],
-        );
+        ).toEqual([`${V4_METHODS.command}:switchModelConfig`]);
       } finally {
         finishRefresh();
         service.disposeAll();

@@ -34,3 +34,20 @@ export function getSettingsFile() {
 export function getForkSettingsFile() {
   return join(getSettingsDir(), "fork-settings.json");
 }
+
+/** Concrete settings locations of one service instance, resolved once when it is created. */
+export interface SettingsLocation {
+  dir: string;
+  file: string;
+  forkFile: string;
+}
+
+/**
+ * Pins the locations at service creation. Resolving HOME on every IO lets an older instance's
+ * async read or write land in a later instance's home directory (see the settingService tests
+ * that create several services with different HOME values).
+ */
+export function resolveSettingsLocation(): SettingsLocation {
+  const dir = getSettingsDir();
+  return { dir, file: join(dir, "setting.json"), forkFile: join(dir, "fork-settings.json") };
+}

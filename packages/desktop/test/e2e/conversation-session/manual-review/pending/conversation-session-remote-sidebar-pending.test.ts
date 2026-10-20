@@ -25,7 +25,7 @@ const artifactDir = resolve(
 const run = promisify(execFile);
 
 /** 只读远端当前 release；走 docker exec，不占用被测 SSH 连接。 */
-async function setAppearance(locale: "zh-CN" | "en-US", theme: "light" | "dark") {
+async function setAppearance(locale: "en-US" | "zh-CN", theme: "light" | "dark") {
   await browser.execute(
     (lang, appearance) => {
       const actions = (
@@ -50,7 +50,7 @@ async function setAppearance(locale: "zh-CN" | "en-US", theme: "light" | "dark")
 
 async function readRemoteCurrentSha(): Promise<string> {
   const container = process.env.ZCODE_E2E_SSH_CONTAINER?.trim();
-  if (!container) throw new Error(`${CASE_MARKER}: 缺少 ZCODE_E2E_SSH_CONTAINER`);
+  if (!container) throw new Error(`${CASE_MARKER}: missing ZCODE_E2E_SSH_CONTAINER`);
   const { stdout } = await run(
     "docker",
     [
@@ -67,7 +67,7 @@ async function readRemoteCurrentSha(): Promise<string> {
   return stdout.trim();
 }
 
-describe(`${CASE_MARKER}: 待处理设备在项目行与详情显示具体原因`, () => {
+describe(`${CASE_MARKER}: pending devices show the specific reason in the project row and details`, () => {
   afterEach(async () => {
     await browser.saveScreenshot(resolve(artifactDir, "last-state.png"));
   });
@@ -77,7 +77,7 @@ describe(`${CASE_MARKER}: 待处理设备在项目行与详情显示具体原因
     await clearAppData();
   });
 
-  it("RDUX-SIDEBAR-PENDING needs-upgrade 显示“需要更新”，详情入口定位设置页设备卡且不自动更新", async function () {
+  it("RDUX-SIDEBAR-PENDING needs-upgrade shows “Update required”; the details entry locates the device card in settings and does not update automatically", async function () {
     this.timeout(15 * 60_000);
     await mkdir(artifactDir, { recursive: true });
     const config = readSSHRuntimeConfig(CASE_MARKER);
@@ -90,11 +90,11 @@ describe(`${CASE_MARKER}: 待处理设备在项目行与详情显示具体原因
     });
     const identity = tab.workspaceIdentity!;
     const sourceId = parseRemoteWorkspaceIdentity(identity)?.sourceServerId;
-    if (!sourceId) throw new Error(`${CASE_MARKER}: 远程项目缺少 Source 身份`);
+    if (!sourceId) throw new Error(`${CASE_MARKER}: remote project is missing its Source identity`);
     const profileId = (await readSettings()).connectionProfiles?.find(
       (profile) => profile.sourceServerId === sourceId,
     )?.profileId;
-    if (!profileId) throw new Error(`${CASE_MARKER}: 找不到设备线路`);
+    if (!profileId) throw new Error(`${CASE_MARKER}: device route not found`);
 
     // 重打包本轮 release，使远端已安装 SHA 与桌面端期望不一致，复现启动重连停在 needs-upgrade。
     const shaBefore = await readRemoteCurrentSha();
@@ -108,13 +108,12 @@ describe(`${CASE_MARKER}: 待处理设备在项目行与详情显示具体原因
       profileId,
     ]).catch(() => undefined);
 
-    await selectTaskOrganizeMode(["项目", "Project"]);
+    await selectTaskOrganizeMode(["Project"]);
     const row = $(`[data-project-workspace-identity=${JSON.stringify(identity)}]`);
     const status = row.$('[data-testid="project-status-label"]');
     await browser.waitUntil(
-      async () =>
-        (await status.isExisting()) && /^(需要更新|Update required)$/u.test(await status.getText()),
-      { timeout: 60_000, timeoutMsg: `${CASE_MARKER}: 项目行没有显示“需要更新”` },
+      async () => (await status.isExisting()) && /^Update required$/u.test(await status.getText()),
+      { timeout: 60_000, timeoutMsg: `${CASE_MARKER}: project row did not show “Update required”` },
     );
     expect(await status.getAttribute("class")).toContain("text-warning-surface-foreground");
     expect(await row.$('[data-remote-state-icon="cloud-alert"]').isExisting()).toBe(true);
@@ -146,19 +145,19 @@ describe(`${CASE_MARKER}: 待处理设备在项目行与详情显示具体原因
         await browser.saveScreenshot(resolve(artifactDir, `pending-${locale}-${theme}.png`));
       }
     }
-    await setAppearance("zh-CN", "dark");
+    await setAppearance("en-US", "dark");
     const outside = await browser.execute(() => ({ x: innerWidth - 24, y: 24 }));
     await browser.action("pointer").move(outside).perform();
     await details.waitForDisplayed({ reverse: true });
     await row.$('[data-testid="virtual-project-toggle"]').moveTo();
     await details.waitForDisplayed();
     const detailsText = await details.getText();
-    expect(detailsText).toMatch(/需要更新|Update required/u);
-    expect(detailsText).not.toMatch(/需要处理|Needs attention/u);
+    expect(detailsText).toMatch(/Update required/u);
+    expect(detailsText).not.toMatch(/Needs attention/u);
     const buttons = await details.$$("button");
     expect(buttons).toHaveLength(1);
     const entry = details.$('[data-testid="remote-identity-device-settings"]');
-    expect(await entry.getText()).toMatch(/更新远端|Update remote device/u);
+    expect(await entry.getText()).toMatch(/Update remote device/u);
     await browser.saveScreenshot(resolve(artifactDir, "pending-details.png"));
 
     await entry.click();
@@ -172,9 +171,12 @@ describe(`${CASE_MARKER}: 待处理设备在项目行与详情显示具体原因
             document.activeElement === document.querySelector(`[data-source-server-card="${id}"]`),
           sourceId,
         ),
-      { timeout: 10_000, timeoutMsg: `${CASE_MARKER}: 设置页没有定位到目标设备卡` },
+      {
+        timeout: 10_000,
+        timeoutMsg: `${CASE_MARKER}: settings page did not locate the target device card`,
+      },
     );
-    expect(await card.getText()).toMatch(/更新远端|Update remote device/u);
+    expect(await card.getText()).toMatch(/Update remote device/u);
     await browser.saveScreenshot(resolve(artifactDir, "device-settings.png"));
     // 入口只负责定位，不能替用户执行更新。
     expect(await readRemoteCurrentSha()).toBe(shaBefore);
