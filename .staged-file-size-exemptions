@@ -212,3 +212,8 @@ packages/ui/src/WorkspacePinnedTasksSection.tsx
 packages/ui/src/WorkspaceSidebarItem.tsx
 packages/ui/src/WorkspaceTimelineTasksSection.tsx
 specs/manage-sessions-table.md
+
+# Composer destination Task/Base row fix: the branch-switcher spec is one contract cross-referenced
+# by file+section from code comments; already over the limit at HEAD (merged via merge commits).
+# Split it into per-section documents later and remove this line.
+specs/composer-branch-switcher-semantics.md

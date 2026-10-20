@@ -431,13 +431,14 @@ describe("worktree mode ON selects the repository main branch as the Base (rende
     expect(branchRowValue("destination.baseBranch")).toContain("dev");
     expect(useDraftBranchIntentStore.getState().peekFrozenWorktreeIntent("/repo")).toBeUndefined();
 
-    // Toggling OFF clears the frozen destination and ON re-defaults to main.
+    // Toggling OFF clears the frozen destination; the task branch row shows intent ?? current —
+    // the Base override is worktree-mode state and never names the task branch (2026-10-19 fix).
     useDraftBranchIntentStore.getState().setFrozenWorktreeIntent("/repo", {
       branchName: "frozen-branch",
     });
     fireEvent.click(worktreeSwitch());
     await screen.findByText("destination.taskBranch");
-    expect(branchRowValue("destination.taskBranch")).toContain("dev");
+    expect(branchRowValue("destination.taskBranch")).toContain("feature/x");
     expect(useDraftBranchIntentStore.getState().peekFrozenWorktreeIntent("/repo")).toBeUndefined();
     fireEvent.click(worktreeSwitch());
     await screen.findByText("destination.baseBranch");
