@@ -382,3 +382,12 @@ packages/ui/test/workflowTimelineHoles.test.ts
 packages/ui/test/workflowTimelineModel.test.ts
 packages/ui/test/workflowTimelineTracks.test.ts
 packages/ui/test/zcodeSessionStore.test.ts
+# TEMPORARY upstream 3.16.1 sync (ui bucket 5)
+packages/ui/src/v4/conversationProjectionStore.ts
+packages/ui/src/Root.tsx
+packages/ui/src/v4/composer/V4ComposerToolbar.tsx
+packages/ui/src/App.tsx
+packages/ui/src/v4/composer/useComposerAttachments.ts
+packages/ui/src/workspace-file-tree/WorkspaceFileTree.tsx
+packages/ui/src/v4/composer/useDraftConfigControl.ts
+packages/ui/src/WorkspaceSidebarFooter.tsx

@@ -4,6 +4,7 @@
  * 不引入第三方库，用 React portal 渲染到 body，3 秒自动消失。
  * 调用方式：`import { toast } from "@/components/ui/toast.js"; toast("message");`
  */
+import { TID_TOAST } from "@zcode/shared";
 import { createRoot } from "react-dom/client";
 import { useEffect, useState } from "react";
 import { Info, TriangleAlert, X } from "lucide-react";
@@ -311,6 +312,7 @@ export function ToastMessageView({
 
   return (
     <div
+      data-testid={TID_TOAST}
       className={cn(
         "rounded-2xl border bg-toast/60 text-ui-base shadow-lg backdrop-blur-xl transition-[transform,opacity] duration-200 ease-[cubic-bezier(0.77,0,0.175,1)] motion-reduce:transform-none motion-reduce:transition-opacity",
         isSourceServerUpdate
@@ -402,7 +404,7 @@ export function ToastMessageView({
           ) : (
             <Info className="size-4 shrink-0 text-foreground-subtle" aria-hidden="true" />
           )}
-          <div className="flex min-w-0 flex-[1_0_0] items-start gap-4 py-3 text-sm">
+          <div className="flex min-w-0 flex-[1_0_0] items-start gap-4 py-3 text-ui-base">
             <div className="min-w-0 flex-1 leading-5">
               <div className="text-foreground">{displayTitle}</div>
               {displayBody ? (
