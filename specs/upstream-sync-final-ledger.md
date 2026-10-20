@@ -540,3 +540,15 @@ The four bots files (18 tests) need the upstream bot workspace model end to end,
 - botsService.groups "preserves historical identity but does not offer tasks outside the current project execution scope" is the same project-scope filter.
 
 Recommendation recorded for the coordinator: decide whether the bot workspace id moves to `[hostId, projectId]` (upstream) or stays on the fork identity (`/remote`). Until then, `botsService.ts` is unchanged in this slice, so production bots behavior is unchanged. Production (`node.ts`) does not pass `projectService` to `createBotsService`, so the upstream bot path is test-only, as it was before this slice.
+
+## UI parity: pins (ui-parity-pins, PR1a)
+
+Spec: `specs/ui-pins-upstream-migration.md`. Upstream project pin (`projects.pinned`) is the only pin writer.
+
+- `packages/services/src/project-storage/forkWorkspacePinMigration.ts` (new): one-time import of `fork_workspace_pins` into project pins. Cases A-E in the spec; marker `9002_fork_pins_to_projects` in the shared `tasks_schema_migration` ledger; checksum mismatch fails loudly. Wired in `packages/services/src/node.ts` as a background run after `projectService` is created; errors are logged and retried on the next start.
+- `ForkWorkspacePinRepo`: adds `readMigrationChecksum` / `writeMigrationChecksum`. `setWorkspacePinned` stays as a storage method, called by tests only. `fork_workspace_pins` is never dropped or written by production code.
+- `zcodeTaskService` contract and `zcodeTaskServiceAdapter`: `listPinnedWorkspaceKeys` and `setWorkspacePinned` removed (no UI caller left). The adapter no longer opens the fork pin DB.
+- Pin order: not migrated. The fork never stored pin order server-side (manual order was sidebar preference). Upstream's `project-sidebar/CONTRACT.md` makes the sidebar preference the owner of display order.
+- Tests: `packages/services/test/forkWorkspacePinMigration.test.ts` (11 cases including idempotency and crash-before-marker).
+- Known failing before this change, unchanged: `botsProjectBinding`, `botsService.groups`, `botsService.messageFlow`, `botsService.permissionsWorkspace` (18 tests, see "Still failing" above; verified identical on the base tree in this branch).
+- `/plan` shortcut: NOT done in this PR. See the PR1b note below.

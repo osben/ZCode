@@ -87,6 +87,29 @@ export class ForkWorkspacePinRepo {
     return rows.map((row) => row.workspace_key);
   }
 
+  /** Checksum recorded in the shared ledger for a fork migration id, or null when it has not run. */
+  async readMigrationChecksum(id: string): Promise<string | null> {
+    await this.ensureReady();
+    const row = this.getDatabase()
+      .prepare("SELECT checksum FROM tasks_schema_migration WHERE id=?")
+      .get(id) as { checksum: string } | undefined;
+    return row?.checksum ?? null;
+  }
+
+  async writeMigrationChecksum(id: string, checksum: string): Promise<void> {
+    await this.ensureReady();
+    const db = this.getDatabase();
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      db.prepare("INSERT INTO tasks_schema_migration VALUES (?,?,?)").run(id, checksum, Date.now());
+      db.exec("COMMIT");
+    } catch (error) {
+      rollbackQuietly(db);
+      throw error;
+    }
+  }
+
+  /** Storage-layer write for tests only. Production code never writes fork pins (see specs/ui-pins-upstream-migration.md). */
   async setWorkspacePinned(params: { workspaceKey: string; pinned: boolean }): Promise<void> {
     await this.ensureReady();
     const db = this.getDatabase();
