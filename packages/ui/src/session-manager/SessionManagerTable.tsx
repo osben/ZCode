@@ -1,4 +1,4 @@
-import { memo, useRef } from "react";
+import { memo, useMemo, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ChevronDown, ChevronRight, Folder, Star } from "lucide-react";
 import { cn } from "@/components/lib/utils.js";
@@ -11,7 +11,12 @@ import {
   SESSION_MANAGER_SORTABLE_COLUMNS,
   sessionManagerColumnLabelId,
 } from "./sessionManagerColumns.js";
-import type { FlattenedSessionManagerRow, SessionManagerRow } from "./sessionManagerModel.js";
+import { useSessionManagerPullRequests } from "./useSessionManagerPullRequests.js";
+import {
+  buildSessionManagerVisibleRowSignature,
+  type FlattenedSessionManagerRow,
+  type SessionManagerRow,
+} from "./sessionManagerModel.js";
 import type {
   SessionManagerSortColumn,
   SessionManagerSortDirection,
@@ -89,6 +94,26 @@ export function SessionManagerTable(props: SessionManagerTableProps) {
   });
   const gridTemplate = buildSessionManagerGridTemplate(props.columns);
   const visibleColumns = props.columns;
+
+  // PR status is requested only for the virtualizer's visible rows; keyed by
+  // the visible composite row keys so scroll frames without membership changes
+  // do not re-fire probes (the service TTL absorbs the rest).
+  const visibleRowSignature = buildSessionManagerVisibleRowSignature(
+    props.flatRows,
+    virtualizer.getVirtualItems().map((virtualItem) => virtualItem.index),
+  );
+  const visibleRows = useMemo(
+    () =>
+      virtualizer.getVirtualItems().flatMap((virtualItem) => {
+        const item = props.flatRows[virtualItem.index];
+        return item?.kind === "row" ? [item.row] : [];
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- content-addressed by the visible row-key set; the virtualizer re-reads during render
+    [visibleRowSignature, props.flatRows],
+  );
+  useSessionManagerPullRequests(visibleRows, {
+    active: props.columns.includes("pullRequests"),
+  });
 
   return (
     <div

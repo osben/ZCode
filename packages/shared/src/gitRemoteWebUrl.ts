@@ -31,3 +31,30 @@ function buildRepositoryWebUrl(host: string, rawPath: string): string | null {
   if (!webHost || !path) return null;
   return `https://${webHost}/${path}`;
 }
+
+export interface GitRemoteRepository {
+  /** Lowercase host; ssh.github.com is normalized to github.com. */
+  host: string;
+  owner: string;
+  name: string;
+}
+
+/**
+ * Structured { host, owner, name } for supported remote syntaxes, sharing the web-URL
+ * normalization (GHE hosts, SSH over 443, SCP-style URLs). Nested group paths keep the
+ * first segment as owner and the last as name.
+ */
+export function gitRemoteUrlToRepository(rawUrl: string): GitRemoteRepository | null {
+  const webUrl = gitRemoteUrlToWebUrl(rawUrl);
+  if (!webUrl) return null;
+  const withoutScheme = webUrl.slice("https://".length);
+  const hostEnd = withoutScheme.indexOf("/");
+  if (hostEnd <= 0) return null;
+  const host = withoutScheme.slice(0, hostEnd);
+  const segments = withoutScheme
+    .slice(hostEnd + 1)
+    .split("/")
+    .filter((segment) => segment.length > 0);
+  if (segments.length < 2) return null;
+  return { host, owner: segments[0] ?? "", name: segments[segments.length - 1] ?? "" };
+}

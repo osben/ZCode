@@ -1,12 +1,21 @@
 import { Cpu, FileDiff, GitBranch } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import type { ZCodeTaskMeta } from "@zcode/shared";
+import type { SessionPullRequest, SessionPullRequestStatus, ZCodeTaskMeta } from "@zcode/shared";
+import { worstSessionPullRequestHealth } from "@zcode/shared";
 import { TooltipContent } from "@/components/ui/tooltip.js";
 import { IncognitoTaskMarker } from "@/components/IncognitoTaskMarker.js";
 import { WorktreeTaskMarker } from "@/components/WorktreeTaskMarker.js";
+import {
+  PullRequestStatusIcon,
+  formatPullRequestHealthText,
+  pullRequestReviewMessageId,
+  pullRequestStageMessageId,
+} from "@/components/PullRequestStatusIcon.js";
 import { thoughtLevelLabelId } from "@/chat-input-toolbar/thoughtLevelOptions.js";
 import type { IntlInstance } from "@/i18n/IntlProvider.js";
+import { useTaskPullRequestStatus } from "@/hooks/useTaskPullRequestStatus.js";
+import { selectPrimarySessionPullRequest } from "@/store/pullRequestStatusStore.js";
 import { formatTaskRelativeTime } from "@/lib/taskListItemPresentation.js";
 import { getTaskChangeSummary } from "@/lib/taskChangeSummary.js";
 import { providerBrandIconSrc } from "@/lib/oauthProviderIcon.js";
@@ -17,8 +26,8 @@ import type { TaskListRowActivity } from "@/v4/taskListRowActivity.js";
 /**
  * Sidebar task hover card (specs/task-hover-card-layout.md): three detail lines under the row —
  * title + worktree marker + relative time, branch + change stats, provider + model + thought
- * level. The sidebar row owns run-state signaling; the card keeps only the resolved status as a
- * probe attribute.
+ * level, then the session's pull requests (specs/sidebar-pr-status.md). The sidebar row owns
+ * run-state signaling; the card keeps only the resolved status as a probe attribute.
  */
 export function TaskSidebarHoverCard({
   task,
@@ -36,6 +45,7 @@ export function TaskSidebarHoverCard({
   const changeParts = formatGroupedTaskHoverChangeParts(getTaskChangeSummary(task));
   const branchLabel = task.executionWorktree?.branchName;
   const lastActivity = activity?.lastActivityAt ?? task.updatedAt;
+  const pullRequestStatus = useTaskPullRequestStatus(task);
   const taskTitle =
     task.title ||
     intl.formatMessage({
@@ -101,9 +111,102 @@ export function TaskSidebarHoverCard({
           </InfoRow>
         ) : null}
 
-        {/* TODO: Show PR number/status once task metadata has a trustworthy source. */}
+        <PullRequestHoverSection task={task} status={pullRequestStatus} intl={intl} />
       </div>
     </TooltipContent>
+  );
+}
+
+const PULL_REQUEST_HOVER_MAX_LINES = 3;
+
+function PullRequestHoverSection({
+  task,
+  status,
+  intl,
+}: {
+  task: ZCodeTaskMeta;
+  status: SessionPullRequestStatus | undefined;
+  intl: Pick<IntlInstance, "formatMessage">;
+}) {
+  if (!task.executionWorktree) {
+    return null;
+  }
+  if (
+    status?.state === "unavailable" &&
+    (status.unavailableReason === "no_gh" || status.unavailableReason === "auth")
+  ) {
+    // The feature must never fail silently: worktree sessions show one muted
+    // line when gh is missing or unauthenticated (spec scope rule 3).
+    return (
+      <div data-task-hover-pr="unavailable" className="text-ui-sm text-foreground-subtlest">
+        {intl.formatMessage({
+          id:
+            status.unavailableReason === "no_gh"
+              ? "pullRequest.unavailableNoGh"
+              : "pullRequest.unavailableAuth",
+        })}
+      </div>
+    );
+  }
+  if (!status || status.pullRequests.length === 0) {
+    return null;
+  }
+  const visible = status.pullRequests.slice(0, PULL_REQUEST_HOVER_MAX_LINES);
+  const overflowCount = status.pullRequests.length - visible.length;
+  const primary = selectPrimarySessionPullRequest(status);
+  return (
+    <div data-task-hover-pr="list" className="flex min-w-0 flex-col gap-1.5">
+      {visible.map((pullRequest) => (
+        <PullRequestHoverLine
+          key={`${pullRequest.repository}#${pullRequest.number}`}
+          pullRequest={pullRequest}
+          intl={intl}
+        />
+      ))}
+      {overflowCount > 0 ? (
+        <div className="text-ui-sm text-foreground-subtlest">
+          {intl.formatMessage({ id: "pullRequest.moreCount" }, { count: String(overflowCount) })}
+        </div>
+      ) : null}
+      {primary?.reviewDecision ? (
+        <div className="text-ui-sm text-foreground-subtle">
+          {intl.formatMessage({ id: pullRequestReviewMessageId(primary.reviewDecision) })}
+        </div>
+      ) : null}
+      {status.stale ? (
+        <div className="text-ui-sm text-foreground-subtlest">
+          {intl.formatMessage({ id: "pullRequest.stale" })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function PullRequestHoverLine({
+  pullRequest,
+  intl,
+}: {
+  pullRequest: SessionPullRequest;
+  intl: Pick<IntlInstance, "formatMessage">;
+}) {
+  const health = worstSessionPullRequestHealth([pullRequest]);
+  const healthText = formatPullRequestHealthText(intl, health, pullRequest.failingCheckCount);
+  return (
+    <div className="flex min-w-0 items-center gap-2 text-ui-base">
+      <PullRequestStatusIcon
+        stage={pullRequest.stage}
+        health={health}
+        dotVariant="detail"
+        iconClassName="size-4"
+      />
+      <span className="min-w-0 truncate">
+        {`#${pullRequest.number}`} ·{" "}
+        {intl.formatMessage({ id: pullRequestStageMessageId(pullRequest.stage) })}
+      </span>
+      {healthText ? (
+        <span className="ml-auto shrink-0 text-foreground-subtle">{healthText}</span>
+      ) : null}
+    </div>
   );
 }
 

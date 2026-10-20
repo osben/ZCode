@@ -1,5 +1,6 @@
 import { WorkspaceContextPath } from "@/WorkspaceHeaderSections/WorkspaceContextPath.js";
 import { WorkspaceLastActivity } from "@/WorkspaceHeaderSections/WorkspaceLastActivity.js";
+import { WorkspaceHeaderPullRequestChip } from "@/WorkspaceHeaderPullRequestChip.js";
 /* eslint-disable max-lines -- The Header title area currently handles the task menu, path context, and workspace-level status hints; keep it in one file for now to avoid regressions while moving the menu flow. */
 import {
   TID_WORKSPACE_MORE_BUTTON,
@@ -523,6 +524,9 @@ export function WorkspaceHeaderTitleSection({
           </>
         ) : null} */}
       </h1>
+      <WorkspaceHeaderPullRequestChip
+        task={activeTaskMeta?.taskId === activeTaskId ? activeTaskMeta : null}
+      />
       <div className="flex min-w-0 shrink-0 items-center gap-1">
         {!isDraftNewTask ? (
           <DropdownMenu open={taskMenuOpen} onOpenChange={setTaskMenuOpen}>

@@ -82,6 +82,67 @@ docs/v4-refactor/m5-composer-parity.md
 packages/ui/src/v4/composer/useDraftConfigControl.ts
 packages/ui/test/useDraftConfigControl.test.ts
 
+# Temporary (PR #174 merge): integration-owned files over the size limit. Split each file later and remove its line.
+# Temporary (integration-owned, split later): files over 20000 bytes already on origin/integration; split each later and remove its line.
+docs/conversation-session-ui-testid-contract.md
+packages/desktop/test/e2e/automations-workflows-hub.test.ts
+packages/desktop/test/e2e/coding-plan-team-usage.test.ts
+packages/desktop/test/e2e/conversation-session/conversation-session-built-in-subagent-model-overrides.test.ts
+packages/desktop/test/e2e/conversation-session/conversation-session-hooks-lifecycle.test.ts
+packages/desktop/test/e2e/conversation-session/conversation-session-model-trajectory-viewer.test.ts
+packages/ui/src/App.tsx
+packages/ui/src/WorkspaceSidebarFooter.tsx
+packages/ui/src/app-shell/WorkspaceShellLayout.tsx
+packages/ui/src/settings/AutomationsSection.tsx
+packages/ui/src/settings/model-provider-section/StatusCards.tsx
+packages/ui/src/v4/V4WorkspaceChatArea.tsx
+packages/ui/src/v4/WorkbenchPane.tsx
+packages/ui/test/UnifiedBrowserView.test.ts
+packages/ui/test/agentToolCallBlock.test.ts
+packages/ui/test/codingPlanQuotaResetAutoPlayBroadcast.test.ts
+packages/ui/test/conversationShareReadonlyTimeline.test.ts
+packages/ui/test/conversationShareSelection.test.ts
+packages/ui/test/createWorkflowToolCallBlock.test.ts
+packages/ui/test/feedbackSubmissionJob.test.ts
+packages/ui/test/highspeed/sessionPaneHighspeedActivation.test.ts
+packages/ui/test/hooksSection.test.ts
+packages/ui/test/memorySettingsSection.test.ts
+packages/ui/test/messageResponseStreamdownMode.test.ts
+packages/ui/test/messageTaskControlToolCallBlock.test.ts
+packages/ui/test/modelProviderCodingPlan.test.ts
+packages/ui/test/modelProviderModelRowEditor.test.ts
+packages/ui/test/modelTrajectoryPaneParts.test.ts
+packages/ui/test/permissionDialog.test.ts
+packages/ui/test/pptxPreviewViewerLifecycle.test.ts
+packages/ui/test/providerModelMetadataDialog.test.ts
+packages/ui/test/savedWorkflowToolCards.test.ts
+packages/ui/test/savedWorkflowsSection.test.ts
+packages/ui/test/toolCallBlocks.test.ts
+packages/ui/test/updateStatusButton.test.ts
+packages/ui/test/updateStatusButtonReleaseNotesCache.test.ts
+packages/ui/test/useCodingPlanQuotaResetUi.test.ts
+packages/ui/test/v4AssistantPreviewCards.test.ts
+packages/ui/test/v4ComposerToolbarRecovery.test.ts
+packages/ui/test/v4ConversationComposerPromptHistory.test.ts
+packages/ui/test/v4ConversationDraftSuggestedPromptsContainer.test.ts
+packages/ui/test/v4ConversationRowViewUserEdit.test.ts
+packages/ui/test/v4ConversationStatusPanel.test.ts
+packages/ui/test/v4ConversationTimelineScrollMemory.test.ts
+packages/ui/test/v4ConversationTurnGroup.test.ts
+packages/ui/test/v4SessionPaneComposerContinuity.test.ts
+packages/ui/test/v4SessionPaneEditUserQuery.test.ts
+packages/ui/test/v4SessionPaneLayoutParity.test.ts
+packages/ui/test/workflowArtifactSidePane.test.ts
+packages/ui/test/workflowAskSettings.test.ts
+packages/ui/test/workflowObservationToolCards.test.ts
+packages/ui/test/workflowParticipantModel.test.ts
+packages/ui/test/workflowPermissionBlock.test.ts
+packages/ui/test/workflowRunDigest.test.ts
+packages/ui/test/workflowRunSettingsPopover.test.ts
+packages/ui/test/workflowRunSidePane.test.ts
+packages/ui/test/workspaceSidebarRemoteNotice.test.ts
+packages/web/src/share/ConversationShareLandingPage.tsx
+packages/web/test/externalRelayFrameGapRecovery.test.ts
 # Temporary: integration-owned files over the staged-file size limit, added so the integration merge can land.
 # Each is to be split into smaller modules later and removed from this list.
 apps/zcode-cli/docs/design/v2/tool/00-tool-change-chain.md
@@ -106,8 +167,21 @@ packages/ui/test/systemPromptSection.test.ts
 packages/ui/test/useSystemPromptOverrides.test.ts
 packages/ui/test/useVoiceDictation.test.ts
 packages/ui/test/v4ConversationTelemetrySupervisor.test.ts
-specs/nested-agents-md.md
 specs/system-prompt-settings.md
 specs/voice-dictation.md
+packages/client/src/globals.d.ts
+packages/desktop/src/main/desktopOAuthDeepLink.ts
+packages/desktop/src/main/index.ts
+packages/desktop/src/preload/index.ts
+packages/shared/src/channels.ts
+packages/shared/src/platform.ts
+packages/ui/src/Root.tsx
+packages/ui/src/root/useRootPlatformEffects.ts
+packages/ui/src/store/zcodeSessionStoreTypes.ts
+packages/ui/src/store/zcodeSessionStoreWorkspaceSlice.ts
+# Temporary (PR #174 sidebar PR probing): WorkspaceSidebar.tsx is over the limit; split it into sibling modules later and remove this line.
+packages/ui/src/WorkspaceSidebar.tsx
+
+specs/nested-agents-md.md
 # Owned by this PR (already over the limit before this change): split the file into per-section test modules.
 packages/ui/test/v4ConversationFileSummaryPanel.test.ts
