@@ -23,8 +23,7 @@ function fanOutNames(scriptText: string) {
 
 /** Assertion for clean scripts: no duplicate-name diagnostics and the whole analysis passes (the graph is still produced). */
 function expectClean(scriptText: string): void {
-  const { hits, result } = duplicates(scriptText);
-  expect(hits).toEqual([]);
+  const { result } = duplicates(scriptText);
   expect(result.diagnostics).toEqual([]);
   expect(result.ok).toBe(true);
 }
@@ -194,7 +193,9 @@ describe("static actor names inside a fan-out (compile-time)", () => {
   });
 
   it("leaves a literal name outside any fan-out alone (single site = runtime's business)", () => {
-    expectClean(`const reviewer = agent("reviewer");\nreturn await reviewer.ask<string>("Review.");`);
+    expectClean(
+      `const reviewer = agent("reviewer");\nreturn await reviewer.ask<string>("Review.");`,
+    );
   });
 
   it("reports one diagnostic per site, preferring the fan-out clause over the duplicate one", () => {

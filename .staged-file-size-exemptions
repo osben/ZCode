@@ -258,3 +258,19 @@ apps/zcode-cli/packages/adapters/tests/session-store.test.ts
 apps/zcode-cli/packages/adapters/tests/fixtures/session-db/fork-head-execution-worktree.sqlite
 apps/zcode-cli/packages/adapters/tests/fixtures/session-db/fork-translated-0020.sqlite
 apps/zcode-cli/packages/adapters/tests/fixtures/session-db/upstream-3.16.1.sqlite
+# TEMPORARY upstream 3.16.1 sync: oversize upstream-owned files (differ from the 0a1fc56d blob only by fork edits); split in the final sync PR.
+apps/zcode-cli/packages/adapters/src/config/schema.ts
+apps/zcode-cli/packages/adapters/src/mcp/index.ts
+apps/zcode-cli/packages/adapters/src/mcp/pool.ts
+apps/zcode-cli/packages/adapters/src/model/runner-generate.ts
+apps/zcode-cli/packages/adapters/src/model/runner-stream.ts
+apps/zcode-cli/packages/adapters/src/plugins/marketplace.ts
+apps/zcode-cli/packages/adapters/tests/auth.test.ts
+apps/zcode-cli/packages/adapters/tests/config.test.ts
+apps/zcode-cli/packages/adapters/tests/runner.test.ts
+apps/zcode-cli/packages/contracts/src/events/session.events.ts
+apps/zcode-cli/packages/contracts/src/interfaces/mcp.port.ts
+apps/zcode-cli/packages/contracts/src/interfaces/session-store.port.ts
+apps/zcode-cli/packages/contracts/src/model/index.ts
+apps/zcode-cli/packages/contracts/src/tools/create-workflow.ts
+apps/zcode-cli/packages/dynamic-workflow/tests/hole-sites.test.ts
