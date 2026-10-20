@@ -12,6 +12,7 @@ import type {
   WindowHostControllerFrame,
   WindowHostControllerTaskListItem,
   WindowHostControllerTaskListResult,
+  WindowHostTaskUnreadSignal,
 } from "./windowController.js";
 import type { IZCodeAgentService } from "../zcode-agent/zcodeAgent.js";
 import type { IZCodeTaskService } from "../session/zcodeTaskService.js";
@@ -834,9 +835,29 @@ export function createWindowHostControllerRuntime(options: {
 
   function createAttachmentService(): IWindowControllerService & { dispose(): void } {
     const frameEmitter = new Emitter<WindowHostControllerFrame>();
+    // Live-only unread signal (never replayed by snapshots). No producer is wired in the fork yet; the
+    // unread mutation path still goes through setTaskUnread. Wiring it is part of the UI sidebar PR.
+    const unreadSignalEmitter = new Emitter<WindowHostTaskUnreadSignal>();
     const subscriptions = new Map<string, { dispose(): void }>();
     return {
       listTaskList,
+      async getTaskMeta({ address }) {
+        // Projection-backed read; the owner-direct lookup needed for unread compare-and-swap is deferred.
+        return (
+          projection
+            .getTasks()
+            .find(
+              (row) =>
+                row.address.taskId === address.taskId &&
+                row.address.workspacePath === address.workspacePath &&
+                row.address.workspaceIdentity === address.workspaceIdentity &&
+                row.address.remoteSessionId === address.remoteSessionId,
+            )?.meta ?? null
+        );
+      },
+      onDynamicTaskUnreadSignal() {
+        return unreadSignalEmitter.event;
+      },
       async deleteArchivedTasks({ address, taskIds }) {
         if (taskIds.length === 0) {
           return { deletedTaskIds: [], skippedTaskIds: [], failedTaskIds: [] };
@@ -918,6 +939,7 @@ export function createWindowHostControllerRuntime(options: {
         }
         subscriptions.clear();
         frameEmitter.dispose();
+        unreadSignalEmitter.dispose();
       },
     };
   }

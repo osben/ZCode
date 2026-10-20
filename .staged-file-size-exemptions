@@ -227,6 +227,8 @@ packages/services/src/node.ts
 packages/services/src/setting/settingService.ts
 packages/services/src/oauth/oauthService.ts
 packages/services/src/oauth/repo/oauthCredentialRepo.ts
+packages/services/src/window-controller/windowHostControllerService.ts
+packages/services/src/window-controller/windowController.ts
 
 
 # Temporary: fork provider and feature-graph data files restored to their PR 0 content in the upstream tooling PR; the guard blocks them as modifications. Split later.
