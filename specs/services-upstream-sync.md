@@ -54,6 +54,13 @@ Deferred in 8c (kept at fork HEAD):
 - Upstream `independentPlanSupport.ts`: not restored (see above).
 - `projectId` on `createAutomation` and `prepareProjectExecution` on `AutomationService`: upstream project binding for automations, deferred with the project PR.
 
+### Coordinator decisions applied after 8c (recorded for the next PR)
+
+- Task-state single writer: the fork `zcodeTask*` path stays the only writer. Upstream `task-facts` (`createTaskFacts`, `mutateSessionFacts`) stays unwired until the UI sidebar PR. `zcodeTaskServiceAdapter.ts` and `zcodeTaskIndexSyncer.ts` remain at fork HEAD in 8c, because the three-way merge is not a clean non-ownership subset.
+- `packages/server/src/http.ts`: `/api/connect-remote` and `/ws/remote/:id` are kept (fork remote features and bots `/remote` depend on them; `specs/bot-remote-command.md`). Remaining upstream hunks are not in 8c: one wires `workspaceIdentityMapper` from the standalone host, one takes `serverId` from options. Both need the server-cli wiring, so the hand merge and the fork-route test are the next PR's work.
+- `session/taskIndexRepo.ts` non-group hunks: deferred to the UI sidebar PR, together with the grouped view they depend on.
+- `bots/botsService.ts`: `BotsRepo.updateContext` and the project binding are not added in 8c. `botsRepo` is not merged, and the project binding needs the project runtime wiring. Fork `/remote` is unchanged. The next PR adds these as optional deps and must keep `specs/bot-remote-command.md` tests passing.
+
 ## Deferred from 8b (historical; superseded by the 8c status above where they overlap)
 
 Each file below keeps its fork HEAD version. A fork-wins three-way merge was tried and rejected: upstream deletions of lines the fork still uses left files syntactically broken or referring to missing members. The remaining work needs per-hunk review.
